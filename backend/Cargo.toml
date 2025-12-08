@@ -1,0 +1,18 @@
+[package]
+name = "workspace-backend"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.95"
+clap = { version = "4.5.49", features = ["derive", "env"] }
+clap_complete = "4.5.23"
+config = { version = "0.15.18", features = ["toml"] }
+dirs = "5.0.1"
+env_logger = "0.11.5"
+log = "0.4.22"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
+shellexpand = "3.1.0"
+serde_yaml = "0.9.34"
+toml = "0.8.19"
