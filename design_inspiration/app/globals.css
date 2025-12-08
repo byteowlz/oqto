@@ -1,0 +1,86 @@
+/* Complete rewrite for Tailwind v3 with HSL color values */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 96%;
+    --foreground: 195 7% 41%;
+    --card: 0 0% 90%;
+    --card-foreground: 195 7% 41%;
+    --popover: 0 0% 96%;
+    --popover-foreground: 195 7% 41%;
+    --primary: 195 38% 76%;
+    --primary-foreground: 200 12% 22%;
+    --secondary: 198 44% 85%;
+    --secondary-foreground: 200 8% 4%;
+    --muted: 0 0% 88%;
+    --muted-foreground: 195 5% 60%;
+    --accent: 198 35% 81%;
+    --accent-foreground: 200 12% 22%;
+    --destructive: 5 30% 37%;
+    --destructive-foreground: 200 12% 22%;
+    --border: 0 0% 82%;
+    --input: 0 0% 88%;
+    --ring: 213 24% 76%;
+    --radius: 0;
+    --chart-1: 207 59% 82%;
+    --chart-2: 5 52% 26%;
+    --chart-3: 283 18% 72%;
+    --chart-4: 30 47% 93%;
+    --chart-5: 213 24% 76%;
+    --sidebar-background: 0 0% 90%;
+    --sidebar-foreground: 195 7% 41%;
+    --sidebar-primary: 213 24% 76%;
+    --sidebar-primary-foreground: 200 12% 22%;
+    --sidebar-accent: 350 12% 40%;
+    --sidebar-accent-foreground: 0 0% 90%;
+    --sidebar-border: 0 0% 82%;
+    --sidebar-ring: 213 24% 76%;
+  }
+
+  .dark {
+    --background: 210 10% 11%;
+    --foreground: 200 6% 74%;
+    --card: 204 10% 23%;
+    --card-foreground: 200 6% 74%;
+    --popover: 202 12% 22%;
+    --popover-foreground: 200 6% 74%;
+    --primary: 195 38% 73%;
+    --primary-foreground: 210 10% 11%;
+    --secondary: 195 32% 80%;
+    --secondary-foreground: 210 10% 11%;
+    --muted: 200 10% 33%;
+    --muted-foreground: 195 18% 71%;
+    --accent: 206 14% 57%;
+    --accent-foreground: 202 12% 22%;
+    --destructive: 0 38% 73%;
+    --destructive-foreground: 200 6% 74%;
+    --border: 205 9% 28%;
+    --input: 200 10% 33%;
+    --ring: 200 16% 59%;
+    --chart-1: 195 38% 73%;
+    --chart-2: 3 55% 71%;
+    --chart-3: 280 14% 63%;
+    --chart-4: 25 25% 84%;
+    --chart-5: 195 32% 80%;
+    --sidebar-background: 200 9% 22%;
+    --sidebar-foreground: 200 6% 74%;
+    --sidebar-primary: 195 38% 73%;
+    --sidebar-primary-foreground: 202 12% 22%;
+    --sidebar-accent: 350 12% 40%;
+    --sidebar-accent-foreground: 200 6% 74%;
+    --sidebar-border: 200 10% 40%;
+    --sidebar-ring: 195 38% 73%;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+  }
+}

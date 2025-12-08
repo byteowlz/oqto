@@ -1,0 +1,79 @@
+# Example configuration for the template CLI.
+# Copy this file to $XDG_CONFIG_HOME/workspace-backend/config.toml and adjust as needed.
+
+"$schema" = "https://raw.githubusercontent.com/byteowlz/schemas/refs/heads/main/octo/octo.backend.config.schema.json"
+
+profile = "default"
+
+[logging]
+# Valid levels: error, warn, info, debug, trace
+level = "info"
+# Optional path for log file output; supports ~ and environment variables.
+# file = "~/Library/Logs/workspace-backend.log"
+
+[runtime]
+# Override the worker pool size; defaults to logical CPU count when unset.
+# parallelism = 8
+# Timeout in seconds for long-running operations.
+timeout = 60
+fail_fast = true
+
+[paths]
+# Uncomment to move persistent data/state to custom directories.
+# data_dir = "$XDG_DATA_HOME/workspace-backend"
+# state_dir = "$XDG_STATE_HOME/workspace-backend"
+
+[container]
+# Container runtime: "docker" or "podman" (auto-detected if not specified)
+# runtime = "docker"
+# Custom path to the container runtime binary (optional)
+# binary = "/usr/local/bin/docker"
+# Default container image for sessions
+default_image = "opencode-dev:latest"
+# Base port for allocating session ports (each session uses 3 consecutive ports)
+base_port = 41820
+
+[eavs]
+# EAVS (LLM proxy) configuration - runs on host, not in containers
+# Enable EAVS integration for session virtual keys
+enabled = true
+# URL of the EAVS server (accessible from host)
+base_url = "http://localhost:41800"
+# URL for containers to reach EAVS (via Docker host networking)
+# For Docker: http://host.docker.internal:41800
+# For Podman (4.1+): http://host.containers.internal:41800
+container_url = "http://host.containers.internal:41800"
+# Master key for EAVS admin operations (create/revoke keys)
+# IMPORTANT: Change this in production! Can also be set via EAVS_MASTER_KEY env var.
+# master_key = "your-master-key-here"
+# Default session budget limit in USD (optional)
+default_session_budget_usd = 10.0
+# Default session rate limit in requests per minute (optional)
+default_session_rpm = 60
+
+[auth]
+# Enable development mode (uses dev_users for authentication, relaxed security)
+# Set to false for production deployments
+dev_mode = true
+
+# JWT secret for signing tokens (REQUIRED when dev_mode = false)
+# Must be at least 32 characters. Generate with: openssl rand -base64 48
+# Can be a literal value or reference an environment variable with env: prefix
+# jwt_secret = "your-secure-secret-at-least-32-characters-long"
+# jwt_secret = "env:AUTH_JWT_SECRET"  # Reads from AUTH_JWT_SECRET environment variable
+
+# OIDC configuration (optional, for external auth providers)
+# oidc_issuer = "https://your-auth-provider.com"
+# oidc_audience = "your-app-id"
+
+# CORS allowed origins (defaults to localhost:3000 and localhost:8080 in dev mode)
+# allowed_origins = ["https://your-domain.com"]
+
+# Development users (only used when dev_mode = true)
+# These are created with bcrypt-hashed passwords at startup
+# [[auth.dev_users]]
+# id = "dev"
+# name = "Developer"
+# email = "dev@localhost"
+# password_hash = "$2b$12$..." # Use htpasswd -nbBC 12 username password | cut -d: -f2
+# role = "admin"

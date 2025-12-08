@@ -1,0 +1,131 @@
+# Stage 1: Build fileserver
+# Run from repository root: docker build -f container/Dockerfile.arm64 .
+FROM rust:1.83-slim AS rust-builder
+
+WORKDIR /build
+
+# Build fileserver
+COPY fileserver/Cargo.toml fileserver/Cargo.lock ./
+COPY fileserver/src ./src
+RUN cargo build --release
+
+# Stage 2: Main container
+# Minimal container with opencode and development tools
+# ARM64/Apple Silicon compatible
+FROM fedora:latest
+
+# Build arguments
+ARG USERNAME=dev
+ARG USER_UID=1000
+ARG USER_GID=1000
+ARG OPENCODE_PORT=41820
+ARG FILESERVER_PORT=41821
+ARG TTYD_PORT=41822
+
+# Environment variables
+ENV LANG=en_US.UTF-8
+ENV LC_ALL=en_US.UTF-8
+ENV TERM=xterm-256color
+ENV SHELL=/bin/bash
+ENV XDG_CONFIG_HOME=/home/${USERNAME}/.config
+ENV XDG_DATA_HOME=/home/${USERNAME}/.local/share
+ENV XDG_STATE_HOME=/home/${USERNAME}/.local/state
+ENV XDG_CACHE_HOME=/home/${USERNAME}/.cache
+ENV OPENCODE_PORT=${OPENCODE_PORT}
+ENV FILESERVER_PORT=${FILESERVER_PORT}
+ENV TTYD_PORT=${TTYD_PORT}
+
+# Update system and install base packages
+RUN dnf update -y && \
+    dnf install -y \
+        @development-tools \
+        git \
+        curl \
+        wget \
+        unzip \
+        openssh-clients \
+        sudo \
+        ripgrep \
+        fd-find \
+        neovim \
+        zoxide \
+        ffmpegthumbnailer \
+        unar \
+        jq \
+        poppler-utils \
+        ImageMagick \
+        python3 \
+        python3-pip \
+        nodejs \
+        npm \
+        golang \
+        glibc-langpack-en \
+    && dnf clean all
+
+# Copy fileserver binary from builder stage
+COPY --from=rust-builder /build/target/release/fileserver /usr/local/bin/fileserver
+RUN chmod +x /usr/local/bin/fileserver
+
+# Install starship prompt
+RUN curl -sS https://starship.rs/install.sh | sh -s -- -y
+
+# Install yazi file manager (ARM64)
+RUN cd /tmp && \
+    curl -sLO $(curl -s https://api.github.com/repos/sxyazi/yazi/releases/latest | jq -r '.assets[] | select(.name == "yazi-aarch64-unknown-linux-gnu.zip") | .browser_download_url') && \
+    unzip -q yazi-aarch64-unknown-linux-gnu.zip && \
+    mv yazi-aarch64-unknown-linux-gnu/yazi yazi-aarch64-unknown-linux-gnu/ya /usr/local/bin/ && \
+    rm -rf yazi-aarch64-unknown-linux-gnu*
+
+# Install ttyd for web-based terminal (ARM64)
+RUN cd /tmp && \
+    curl -sLO $(curl -s https://api.github.com/repos/tsl0922/ttyd/releases/latest | jq -r '.assets[] | select(.name | contains("aarch64")) | .browser_download_url') && \
+    chmod +x ttyd.aarch64 && \
+    mv ttyd.aarch64 /usr/local/bin/ttyd
+
+# Create non-root user
+RUN groupadd --gid ${USER_GID} ${USERNAME} && \
+    useradd --uid ${USER_UID} --gid ${USER_GID} -m ${USERNAME} && \
+    echo "${USERNAME} ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers.d/${USERNAME} && \
+    chmod 0440 /etc/sudoers.d/${USERNAME}
+
+# Create XDG directories
+RUN mkdir -p /home/${USERNAME}/.config \
+             /home/${USERNAME}/.local/share \
+             /home/${USERNAME}/.local/state \
+             /home/${USERNAME}/.cache \
+             /home/${USERNAME}/workspace && \
+    chown -R ${USERNAME}:${USERNAME} /home/${USERNAME}
+
+# Switch to non-root user for opencode installation
+USER ${USERNAME}
+WORKDIR /home/${USERNAME}
+
+# Install opencode via the official installer
+RUN curl -fsSL https://opencode.ai/install | bash
+
+# Add opencode to PATH
+ENV PATH="/home/${USERNAME}/.opencode/bin:/home/${USERNAME}/.local/bin:${PATH}"
+
+# Copy configuration files
+COPY --chown=${USERNAME}:${USERNAME} .config/ /home/${USERNAME}/.config/
+
+# Configure shell with starship and zoxide
+RUN echo 'eval "$(starship init bash)"' >> /home/${USERNAME}/.bashrc && \
+    echo 'eval "$(zoxide init bash)"' >> /home/${USERNAME}/.bashrc && \
+    echo 'alias vim="nvim"' >> /home/${USERNAME}/.bashrc && \
+    echo 'alias vi="nvim"' >> /home/${USERNAME}/.bashrc
+
+# Copy entrypoint script
+COPY --chown=${USERNAME}:${USERNAME} entrypoint.sh /home/${USERNAME}/entrypoint.sh
+RUN chmod +x /home/${USERNAME}/entrypoint.sh
+
+# Working directory
+WORKDIR /home/${USERNAME}/workspace
+
+# Expose ports for opencode serve, file server, and ttyd terminal
+EXPOSE ${OPENCODE_PORT}
+EXPOSE ${FILESERVER_PORT}
+EXPOSE ${TTYD_PORT}
+
+# Entrypoint
+ENTRYPOINT ["/home/dev/entrypoint.sh"]

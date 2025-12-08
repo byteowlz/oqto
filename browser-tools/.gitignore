@@ -1,0 +1,10 @@
+node_modules/
+.env 
+.DS_Store
+__pycache__/Applications/*.py[oc]
+build/
+dist/
+wheels/ 
+*.egg-info
+.venv/
+.vscode/
