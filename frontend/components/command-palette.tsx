@@ -1,0 +1,207 @@
+"use client"
+
+import { useCallback, useEffect, useState } from "react"
+import {
+  FolderKanban,
+  MessageSquare,
+  Bot,
+  Shield,
+  Plus,
+  SunMedium,
+  MoonStar,
+  Globe2,
+  Settings,
+  Search,
+} from "lucide-react"
+import {
+  CommandDialog,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+  CommandSeparator,
+  CommandShortcut,
+} from "@/components/ui/command"
+import { useApp } from "@/components/app-context"
+
+interface CommandPaletteProps {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+}
+
+export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
+  const {
+    apps,
+    setActiveAppId,
+    locale,
+    setLocale,
+    opencodeSessions,
+    setSelectedChatSessionId,
+    createNewChat,
+  } = useApp()
+
+  const [theme, setThemeState] = useState<"light" | "dark">("dark")
+
+  useEffect(() => {
+    const stored = localStorage.getItem("theme")
+    if (stored === "light" || stored === "dark") {
+      setThemeState(stored)
+    }
+  }, [open])
+
+  const toggleTheme = useCallback(() => {
+    const next = theme === "dark" ? "light" : "dark"
+    document.documentElement.classList.add("no-transitions")
+    document.documentElement.classList.toggle("dark", next === "dark")
+    localStorage.setItem("theme", next)
+    setThemeState(next)
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        document.documentElement.classList.remove("no-transitions")
+      })
+    })
+    onOpenChange(false)
+  }, [theme, onOpenChange])
+
+  const toggleLocale = useCallback(() => {
+    const next = locale === "de" ? "en" : "de"
+    setLocale(next)
+    onOpenChange(false)
+  }, [locale, setLocale, onOpenChange])
+
+  const handleNavigation = useCallback((appId: string) => {
+    setActiveAppId(appId)
+    onOpenChange(false)
+  }, [setActiveAppId, onOpenChange])
+
+  const handleNewChat = useCallback(async () => {
+    await createNewChat()
+    setActiveAppId("sessions")
+    onOpenChange(false)
+  }, [createNewChat, setActiveAppId, onOpenChange])
+
+  const handleSelectSession = useCallback((sessionId: string) => {
+    setSelectedChatSessionId(sessionId)
+    setActiveAppId("sessions")
+    onOpenChange(false)
+  }, [setSelectedChatSessionId, setActiveAppId, onOpenChange])
+
+  const getAppIcon = (appId: string) => {
+    switch (appId) {
+      case "projects":
+        return FolderKanban
+      case "sessions":
+        return MessageSquare
+      case "workspaces":
+        return Bot
+      case "admin":
+        return Shield
+      default:
+        return FolderKanban
+    }
+  }
+
+  return (
+    <CommandDialog
+      open={open}
+      onOpenChange={onOpenChange}
+      title={locale === "de" ? "Befehlspalette" : "Command Palette"}
+      description={locale === "de" ? "Suchen Sie nach einem Befehl..." : "Search for a command..."}
+    >
+      <CommandInput
+        placeholder={locale === "de" ? "Befehl eingeben oder suchen..." : "Type a command or search..."}
+      />
+      <CommandList>
+        <CommandEmpty>
+          {locale === "de" ? "Keine Ergebnisse gefunden." : "No results found."}
+        </CommandEmpty>
+
+        <CommandGroup heading={locale === "de" ? "Aktionen" : "Actions"}>
+          <CommandItem onSelect={handleNewChat}>
+            <Plus className="mr-2 h-4 w-4" />
+            <span>{locale === "de" ? "Neuer Chat" : "New Chat"}</span>
+            <CommandShortcut>N</CommandShortcut>
+          </CommandItem>
+          <CommandItem onSelect={toggleTheme}>
+            {theme === "dark" ? (
+              <SunMedium className="mr-2 h-4 w-4" />
+            ) : (
+              <MoonStar className="mr-2 h-4 w-4" />
+            )}
+            <span>
+              {locale === "de"
+                ? `Zu ${theme === "dark" ? "hellem" : "dunklem"} Modus wechseln`
+                : `Switch to ${theme === "dark" ? "light" : "dark"} mode`}
+            </span>
+          </CommandItem>
+          <CommandItem onSelect={toggleLocale}>
+            <Globe2 className="mr-2 h-4 w-4" />
+            <span>
+              {locale === "de"
+                ? "Sprache wechseln (EN)"
+                : "Change language (DE)"}
+            </span>
+          </CommandItem>
+        </CommandGroup>
+
+        <CommandSeparator />
+
+        <CommandGroup heading={locale === "de" ? "Navigation" : "Navigation"}>
+          {apps.map((app) => {
+            const Icon = getAppIcon(app.id)
+            const label = typeof app.label === "string" 
+              ? app.label 
+              : locale === "en" ? app.label.en : app.label.de
+            return (
+              <CommandItem key={app.id} onSelect={() => handleNavigation(app.id)}>
+                <Icon className="mr-2 h-4 w-4" />
+                <span>{label}</span>
+              </CommandItem>
+            )
+          })}
+        </CommandGroup>
+
+        {opencodeSessions.length > 0 && (
+          <>
+            <CommandSeparator />
+            <CommandGroup heading={locale === "de" ? "Letzte Chats" : "Recent Chats"}>
+              {opencodeSessions.slice(0, 5).map((session) => (
+                <CommandItem
+                  key={session.id}
+                  onSelect={() => handleSelectSession(session.id)}
+                >
+                  <MessageSquare className="mr-2 h-4 w-4" />
+                  <span className="truncate">{session.title || "Untitled"}</span>
+                  <span className="ml-2 text-xs text-muted-foreground">
+                    {session.id.slice(0, 8)}
+                  </span>
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </>
+        )}
+      </CommandList>
+    </CommandDialog>
+  )
+}
+
+// Hook for keyboard shortcut
+export function useCommandPalette() {
+  const [open, setOpen] = useState(false)
+
+  useEffect(() => {
+    const down = (e: KeyboardEvent) => {
+      // Cmd+K on Mac, Ctrl+K on Windows/Linux
+      if (e.key === "k" && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault()
+        setOpen((prev) => !prev)
+      }
+    }
+
+    document.addEventListener("keydown", down)
+    return () => document.removeEventListener("keydown", down)
+  }, [])
+
+  return { open, setOpen }
+}

@@ -1,0 +1,62 @@
+# Compose file for ARM64/Apple Silicon with Caddy reverse proxy
+# Works with both Docker and Podman:
+#   Docker (macOS dev):  docker compose -f docker-compose.arm64.yml up
+#   Podman (Linux prod): podman-compose -f docker-compose.arm64.yml up
+
+networks:
+  # Public network - Caddy connects here and exposes ports
+  opencode-public:
+    driver: bridge
+  # Internal network - containers communicate without host exposure
+  opencode-internal:
+    driver: bridge
+    internal: true
+
+services:
+  # Caddy reverse proxy - single entry point for all containers
+  caddy:
+    image: caddy:2-alpine
+    container_name: opencode-caddy
+    restart: unless-stopped
+    ports:
+      - "41800:80"    # HTTP
+      - "41801:443"   # HTTPS
+      - "41802:2019"  # Admin API for dynamic route management
+    volumes:
+      - ./caddy/caddy.json:/etc/caddy/caddy.json:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    command: ["caddy", "run", "--config", "/etc/caddy/caddy.json"]
+    networks:
+      - opencode-public
+      - opencode-internal
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # Template container - use this as a reference for spawning new containers
+  # In production, the Rust backend will spawn these dynamically
+  opencode-template:
+    build:
+      context: .
+      dockerfile: Dockerfile.arm64
+      args:
+        USERNAME: dev
+        USER_UID: 1000
+        USER_GID: 1000
+    image: opencode-dev:arm64
+    # Container is not started by default - it's a template
+    profiles:
+      - template
+    networks:
+      - opencode-internal
+    volumes:
+      - ./workspace:/home/dev/workspace
+    stdin_open: true
+    tty: true
+
+volumes:
+  caddy_data:
+  caddy_config:

@@ -1,0 +1,62 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "fileserver-config.schema.json",
+  "title": "Fileserver Configuration",
+  "description": "Configuration schema for the fileserver application",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "Reference to the JSON schema for validation and LSP completions"
+    },
+    "max_upload_size": {
+      "type": "integer",
+      "description": "Maximum file size for uploads in bytes",
+      "minimum": 1,
+      "default": 104857600,
+      "examples": [104857600, 52428800, 209715200]
+    },
+    "max_depth": {
+      "type": "integer",
+      "description": "Maximum depth for directory traversal",
+      "minimum": 1,
+      "default": 20
+    },
+    "hidden_extensions": {
+      "type": "array",
+      "description": "File extensions to hide (compiled/binary files)",
+      "items": {
+        "type": "string",
+        "pattern": "^\\."
+      },
+      "default": [".pyc", ".pyo", ".o", ".so", ".dylib"],
+      "examples": [[".pyc", ".pyo", ".o", ".so", ".dylib", ".dll", ".exe", ".class"]]
+    },
+    "hidden_dirs": {
+      "type": "array",
+      "description": "Directories to always hide",
+      "items": {
+        "type": "string"
+      },
+      "default": [".git", "node_modules", "__pycache__", ".cache", "target", ".venv", "venv"],
+      "examples": [[".git", "node_modules", "__pycache__", ".cache", "target", ".venv", "venv", ".idea", ".vscode"]]
+    },
+    "office_extensions": {
+      "type": "array",
+      "description": "Office/document extensions for simple view mode. These are the only files shown when mode=simple.",
+      "items": {
+        "type": "string",
+        "pattern": "^\\."
+      },
+      "default": [
+        ".txt", ".md", ".pdf", ".doc", ".docx", ".odt", ".rtf",
+        ".csv", ".xls", ".xlsx", ".ods",
+        ".ppt", ".pptx", ".odp",
+        ".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp",
+        ".json", ".xml", ".yaml", ".yml"
+      ],
+      "examples": [[".txt", ".md", ".pdf", ".doc", ".docx", ".csv", ".xls", ".xlsx", ".png", ".jpg", ".json"]]
+    }
+  },
+  "additionalProperties": false
+}

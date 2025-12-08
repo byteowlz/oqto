@@ -1,0 +1,27 @@
+# Caddy configuration for OpenCode container routing
+# Routes are managed dynamically via the Caddy Admin API
+#
+# Admin API endpoints (default: localhost:2019):
+#   POST /config/apps/http/servers/srv0/routes/0 - Add route at beginning
+#   DELETE /id/container-{id} - Remove route by ID
+#   GET /config/ - View current config
+
+{
+	# Global options
+	admin 0.0.0.0:2019  # Admin API for dynamic route management
+	auto_https off       # Disable auto HTTPS for local dev (enable in prod)
+}
+
+# Main server - container routes added dynamically via API take precedence
+:80 {
+	# Health check endpoint (specific path, checked first)
+	@health path /health
+	handle @health {
+		respond "OK" 200
+	}
+
+	# Default fallback (only if no other route matches)
+	handle {
+		respond "Container not found" 404
+	}
+}
