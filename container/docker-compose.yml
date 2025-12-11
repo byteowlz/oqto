@@ -1,0 +1,26 @@
+services:
+  opencode:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        USERNAME: dev
+        USER_UID: 1000
+        USER_GID: 1000
+        OPENCODE_PORT: 8080
+        FILESERVER_PORT: 8081
+    container_name: opencode-dev
+    hostname: opencode-dev
+    env_file:
+      - .env
+    ports:
+      - "${OPENCODE_PORT:-8080}:8080"
+      - "${FILESERVER_PORT:-8081}:8081"
+    volumes:
+      # Mount workspace directory
+      - ./workspace:/home/dev/workspace
+      # Optional: Mount additional config overrides
+      # - ./custom-config:/home/dev/.config/opencode:ro
+    stdin_open: true
+    tty: true
+    restart: unless-stopped
