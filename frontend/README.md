@@ -1,36 +1,63 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# AI Agent Workspace Frontend
 
-## Getting Started
+A Next.js 15 (App Router) experience for managing AI workspaces, live agent chat, and remote terminals hosted inside Podman containers. The UI now talks directly to an opencode server, streams events over SSE, browses files through the colocated file server, and embeds a Ghostty-powered terminal connected to the container PTY.
 
-First, run the development server:
+## Prerequisites
+
+- **Node.js / Bun** – the project uses Bun scripts (`bun dev`, `bun lint`, etc.)
+- **Running container** that exposes:
+  - `opencode serve -p <PORT>` (HTTP + SSE)
+  - WebSocket endpoint that bridges to the container PTY (e.g., `ttyd` or custom gateway)
+  - File server capable of returning JSON trees + raw file content from the workspace root
+
+## Environment Variables
+
+Create a `.env.local` with the endpoints that match your Podman container:
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
+NEXT_PUBLIC_OPENCODE_BASE_URL=http://localhost:4096
+NEXT_PUBLIC_TERMINAL_WS_URL=ws://localhost:9090/ws
+NEXT_PUBLIC_FILE_SERVER_URL=http://localhost:9000
+```
+
+| Variable | Purpose |
+| -------- | ------- |
+| `NEXT_PUBLIC_OPENCODE_BASE_URL` | Base URL for the opencode REST + SSE API (`/session`, `/event`, etc.). |
+| `NEXT_PUBLIC_TERMINAL_WS_URL` | WebSocket address that forwards raw PTY bytes. The Ghostty terminal streams directly to this socket. |
+| `NEXT_PUBLIC_FILE_SERVER_URL` | HTTP server rooted at the same workspace folder the container starts in. Must expose `/tree?path=` and `/file?path=` helpers. |
+
+## Local Development
+
+```bash
+bun install
 bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+The app runs on [http://localhost:3000](http://localhost:3000) and immediately begins calling the configured services. Use `bun lint` to run the ESLint suite.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Testing with Podman
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+A ready-to-run container definition lives in `Dockerfile` with the companion launcher script at `scripts/entrypoint.sh`. It installs opencode, ttyd, and the file tooling described in the architecture notes.
 
-## Learn More
+1. Build the image:
+   ```bash
+   podman build -t ai-agent-workspace .
+   ```
+2. Run it and expose the default ports (opencode 4096, file server 9000, ttyd 9090). Mount a host workspace if desired:
+   ```bash
+   podman run --rm -it \
+     -p 4096:4096 -p 9000:9000 -p 9090:9090 \
+     -v $(pwd)/sandbox:/workspace \
+     ai-agent-workspace
+   ```
+   Environment overrides such as `OPENCODE_PORT`, `FILE_SERVER_PORT`, or `TTYD_PORT` can be passed via `-e` flags.
+3. Point the frontend env vars at `localhost` as shown above. The app will connect to the running container automatically.
 
-To learn more about Next.js, take a look at the following resources:
+## Project Structure Highlights
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+- `apps/` – pluggable app modules (Workspaces, Sessions, Admin) registered through `lib/app-registry`.
+- `components/terminal/ghostty-terminal.tsx` – Ghostty + WebSocket terminal wrapper.
+- `lib/opencode-client.ts` – Thin client for opencode REST/SSE workflows.
+- `app/sessions/*` – File tree browser, terminal view, and preview surface wired to live services.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Refer to the documents inside `history/` for deeper architecture notes on opencode and Ghostty integrations.
