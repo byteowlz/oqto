@@ -3,7 +3,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { FileText, Terminal, Eye, Send, RefreshCw } from "lucide-react"
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
+import { Badge } from "@/components/ui/badge"
+import { FileText, Terminal, Eye, Send, RefreshCw, ChevronDown, User, Bot, Clock, Hash } from "lucide-react"
 import { useApp } from "@/components/app-context"
 import { FileTreeView } from "@/app/sessions/FileTreeView"
 import { TerminalView } from "@/app/sessions/TerminalView"
@@ -168,20 +171,10 @@ export function SessionsApp() {
             </Button>
           </div>
 
-          <div className="flex-1 rounded-lg bg-[#0f1412] border border-[#1f2a27] p-4 overflow-y-auto space-y-4 min-h-0">
+          <div className="flex-1 rounded-lg bg-[#0f1412] border border-[#1f2a27] p-4 overflow-y-auto space-y-3 min-h-0">
             {messages.length === 0 && <div className="text-sm text-muted-foreground">{t.noMessages}</div>}
-            {messages.map((msg) => (
-              <div key={msg.id} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
-                <div
-                  className={`max-w-[80%] rounded-lg px-4 py-3 text-sm whitespace-pre-wrap ${
-                    msg.role === "user"
-                      ? "bg-[#193026] text-[#e3f6ed] border border-[#2d5c47]"
-                      : "bg-[#141a18] text-[#d5f0e4] border border-[#1f2a27]"
-                  }`}
-                >
-                  {msg.content || msg.parts?.map((part) => part.text).join("\n")}
-                </div>
-              </div>
+            {messages.map((msg, index) => (
+              <MessageCard key={msg.id} message={msg} index={index} />
             ))}
           </div>
 
@@ -255,6 +248,101 @@ export function SessionsApp() {
         </div>
       </div>
     </div>
+  )
+}
+
+function MessageCard({ message, index }: { message: OpenCodeMessage; index: number }) {
+  const [isOpen, setIsOpen] = useState(true)
+  const isUser = message.role === "user"
+  const content = message.content || message.parts?.map((part) => part.text).join("\n") || ""
+  const preview = content.length > 120 ? content.slice(0, 120) + "..." : content
+  const createdAt = message.createdAt ? new Date(message.createdAt) : null
+
+  return (
+    <Collapsible open={isOpen} onOpenChange={setIsOpen}>
+      <Card
+        className={`border transition-all duration-200 py-0 gap-0 ${
+          isUser
+            ? "bg-[#182922] border-[#2d5c47] hover:border-[#3ba77c]"
+            : "bg-[#141a18] border-[#1f2a27] hover:border-[#2a3632]"
+        }`}
+      >
+        <CollapsibleTrigger asChild>
+          <CardHeader className="cursor-pointer select-none px-4 py-3 hover:bg-[#1a221f] rounded-t-xl transition-colors">
+            <div className="flex items-center justify-between w-full">
+              <div className="flex items-center gap-3">
+                <div
+                  className={`p-2 rounded-lg ${
+                    isUser ? "bg-[#2d5c47]/50" : "bg-[#1f2a27]"
+                  }`}
+                >
+                  {isUser ? (
+                    <User className="w-4 h-4 text-[#6ee7b7]" />
+                  ) : (
+                    <Bot className="w-4 h-4 text-[#3ba77c]" />
+                  )}
+                </div>
+                <div className="flex flex-col gap-1">
+                  <div className="flex items-center gap-2">
+                    <CardTitle className="text-sm font-medium text-[#d5f0e4]">
+                      {isUser ? "You" : "Assistant"}
+                    </CardTitle>
+                    <Badge
+                      variant="outline"
+                      className={`text-[10px] px-1.5 py-0 ${
+                        isUser
+                          ? "border-[#2d5c47] text-[#6ee7b7]"
+                          : "border-[#2a3632] text-[#9aa8a3]"
+                      }`}
+                    >
+                      #{index + 1}
+                    </Badge>
+                  </div>
+                  <CardDescription className="text-xs text-[#6b7974] flex items-center gap-2">
+                    {createdAt && (
+                      <>
+                        <Clock className="w-3 h-3" />
+                        {createdAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                      </>
+                    )}
+                    {message.parts && message.parts.length > 0 && (
+                      <>
+                        <span className="text-[#3a4540]">|</span>
+                        <Hash className="w-3 h-3" />
+                        {message.parts.length} part{message.parts.length > 1 ? "s" : ""}
+                      </>
+                    )}
+                  </CardDescription>
+                </div>
+              </div>
+              <ChevronDown
+                className={`w-4 h-4 text-[#6b7974] transition-transform duration-200 ${
+                  isOpen ? "rotate-180" : ""
+                }`}
+              />
+            </div>
+          </CardHeader>
+        </CollapsibleTrigger>
+
+        <CollapsibleContent>
+          <CardContent className="px-4 pb-4 pt-0">
+            <div className="pl-11">
+              <div className="text-sm text-[#d5f0e4] whitespace-pre-wrap leading-relaxed">
+                {content}
+              </div>
+            </div>
+          </CardContent>
+        </CollapsibleContent>
+
+        {!isOpen && (
+          <CardContent className="px-4 pb-3 pt-0">
+            <div className="pl-11">
+              <p className="text-sm text-[#6b7974] italic truncate">{preview}</p>
+            </div>
+          </CardContent>
+        )}
+      </Card>
+    </Collapsible>
   )
 }
 

@@ -93,7 +93,7 @@ function AppShell() {
                 onClick={() => setActiveAppId(app.id)}
                 className={`w-full rounded-[12px] px-4 py-3 text-sm font-semibold tracking-wide transition flex items-center gap-2 ${
                   isActive ? "text-[#f2f5f3] ring-2 ring-[#3ba77c]" : "text-[#dfe5e1] hover:bg-[#222624]"
-                }`}
+                } ${sidebarCollapsed ? "justify-center" : ""}`}
                 style={{
                   backgroundColor: isActive ? "#222624" : navIdle,
                   border: isActive ? "1px solid #3ba77c" : "1px solid transparent",

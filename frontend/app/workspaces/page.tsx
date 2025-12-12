@@ -1,3 +1,14 @@
 "use client"
 
-export { WorkspacesApp as default } from "@/apps/workspaces"
+import { WorkspacesApp } from "@/apps/workspaces"
+import { AppProvider } from "@/components/app-context"
+
+export default function WorkspacesPage() {
+  return (
+    <AppProvider>
+      <div className="p-6">
+        <WorkspacesApp />
+      </div>
+    </AppProvider>
+  )
+}

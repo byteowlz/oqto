@@ -33,7 +33,9 @@ export class AppRegistry {
       if (weightA !== weightB) {
         return weightA - weightB
       }
-      return a.label.localeCompare(b.label)
+      const labelA = typeof a.label === "string" ? a.label : a.label.en
+      const labelB = typeof b.label === "string" ? b.label : b.label.en
+      return labelA.localeCompare(labelB)
     })
   }
 }

@@ -43,7 +43,7 @@ export function ProjectsApp() {
           <div className="flex flex-row gap-6 items-stretch">
             {/* Projektliste */}
             <section
-              className="lg:flex-[3] lg:min-w-[360px] flex flex-col gap-4 rounded-[14px] p-4 md:p-5 shadow-[0_18px_40px_rgba(0,0,0,0.55)]"
+              className="lg:flex-[2] lg:min-w-[300px] flex flex-col gap-4 rounded-[14px] p-4 md:p-5 shadow-[0_18px_40px_rgba(0,0,0,0.55)]"
               style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
             >
               <header className="flex flex-col gap-3">
@@ -102,7 +102,7 @@ export function ProjectsApp() {
 
             {/* Dokumenten-Funnel */}
             <section
-              className="lg:flex-[2] lg:min-w-[300px] flex flex-col gap-4 rounded-[14px] p-4 md:p-5 shadow-[0_18px_40px_rgba(0,0,0,0.55)]"
+              className="lg:flex-[3] lg:min-w-[360px] flex flex-col gap-4 rounded-[14px] p-4 md:p-5 shadow-[0_18px_40px_rgba(0,0,0,0.55)]"
               style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
             >
               <header className="flex items-center justify-between">
