@@ -14,11 +14,9 @@ import { MarkdownRenderer, CopyButton } from "@/components/ui/markdown-renderer"
 import { ToolCallCard } from "@/components/ui/tool-call-card"
 import { cn } from "@/lib/utils"
 import {
-  fetchSessions,
   fetchMessages,
   sendMessageAsync,
   subscribeToEvents,
-  type OpenCodeSession,
   type OpenCodeMessageWithParts,
   type OpenCodePart,
 } from "@/lib/opencode-client"
@@ -66,9 +64,7 @@ function groupMessages(messages: OpenCodeMessageWithParts[]): MessageGroup[] {
 }
 
 export function SessionsApp() {
-  const { locale } = useApp()
-  const [sessions, setSessions] = useState<OpenCodeSession[]>([])
-  const [selectedSessionId, setSelectedSessionId] = useState<string>("")
+  const { locale, sessions, selectedSessionId, setSelectedSessionId, refreshSessions } = useApp()
   const [messages, setMessages] = useState<OpenCodeMessageWithParts[]>([])
   const [messageInput, setMessageInput] = useState("")
   const [chatState, setChatState] = useState<"idle" | "sending">("idle")
@@ -119,19 +115,6 @@ export function SessionsApp() {
   )
   const t = copy[locale]
 
-  const loadSessions = useCallback(async () => {
-    if (!hasOpencode) return
-    try {
-      const data = await fetchSessions()
-      setSessions(data)
-      if (!selectedSessionId && data.length > 0) {
-        setSelectedSessionId(data[0].id)
-      }
-    } catch (err) {
-      setStatus((err as Error).message)
-    }
-  }, [selectedSessionId])
-
   const loadMessages = useCallback(async () => {
     if (!hasOpencode || !selectedSessionId) return
     try {
@@ -157,10 +140,6 @@ export function SessionsApp() {
   }, [])
 
   useEffect(() => {
-    loadSessions()
-  }, [loadSessions])
-
-  useEffect(() => {
     loadMessages()
   }, [loadMessages])
 
@@ -183,7 +162,6 @@ export function SessionsApp() {
     const unsubscribe = subscribeToEvents((event) => {
       const eventType = event.type as string
       if (eventType?.startsWith("session")) {
-        loadSessions()
         // Reset sending state when session becomes idle
         if (eventType === "session.idle" || eventType === "session.status") {
           setChatState("idle")
@@ -194,7 +172,7 @@ export function SessionsApp() {
       }
     })
     return unsubscribe
-  }, [loadMessages, loadSessions])
+  }, [loadMessages])
 
   const selectedSession = useMemo(
     () => sessions.find((session) => session.id === selectedSessionId),
@@ -265,7 +243,7 @@ export function SessionsApp() {
           ))}
           {sessions.length === 0 && <option value="">{t.noSessions}</option>}
         </select>
-        <Button variant="outline" size="sm" onClick={loadSessions} className="gap-2 text-muted-foreground hover:text-foreground">
+        <Button variant="outline" size="sm" onClick={refreshSessions} className="gap-2 text-muted-foreground hover:text-foreground">
           <RefreshCw className="w-4 h-4" />
           <span className="hidden sm:inline">{t.refresh}</span>
         </Button>

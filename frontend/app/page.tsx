@@ -13,18 +13,27 @@ import {
   Shield,
   Menu,
   X,
+  Clock,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { ClientOnly } from "@/components/client-only"
 import { AppProvider, useApp } from "@/components/app-context"
+import { cn } from "@/lib/utils"
 import "@/apps"
 
 function AppShell() {
-  const { apps, activeAppId, setActiveAppId, activeApp, locale, setLocale, resolveText } = useApp()
+  const { apps, activeAppId, setActiveAppId, activeApp, locale, setLocale, resolveText, sessions, selectedSessionId, setSelectedSessionId } = useApp()
   const [theme, setTheme] = useState<"light" | "dark">("dark")
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const ActiveComponent = activeApp?.component ?? null
+
+  // Handle session click - select session and switch to chats view
+  const handleSessionClick = (sessionId: string) => {
+    setSelectedSessionId(sessionId)
+    setActiveAppId("sessions")
+    setMobileMenuOpen(false)
+  }
 
   useEffect(() => {
     const stored = window.localStorage.getItem("theme")
@@ -107,7 +116,7 @@ function AppShell() {
           </Button>
         </div>
         
-        <nav className="flex-1 w-full space-y-3 px-4 pt-6">
+        <nav className="flex-1 w-full space-y-3 px-4 pt-6 overflow-y-auto">
           {apps.map((app) => {
             const isActive = activeAppId === app.id
             const Icon = navIconFor(app.id)
@@ -128,6 +137,39 @@ function AppShell() {
               </button>
             )
           })}
+
+          {/* Session history in mobile menu */}
+          {sessions.length > 0 && (
+            <div className="pt-4 border-t border-[#2a3632]">
+              <div className="flex items-center gap-2 px-4 py-2">
+                <span className="text-xs uppercase tracking-wide text-[#6b7974]">
+                  {locale === "de" ? "Verlauf" : "History"}
+                </span>
+                <span className="text-xs text-[#4a5550]">({sessions.length})</span>
+              </div>
+              <div className="space-y-1">
+                {sessions.slice(0, 10).map((session) => {
+                  const isSelected = selectedSessionId === session.id
+                  return (
+                    <button
+                      key={session.id}
+                      onClick={() => handleSessionClick(session.id)}
+                      className={cn(
+                        "w-full px-4 py-3 text-left transition-colors",
+                        isSelected 
+                          ? "bg-[#1b2d26] text-[#d5f0e4]" 
+                          : "text-[#9aa8a3] hover:bg-[#222624]"
+                      )}
+                    >
+                      <div className="text-sm truncate">
+                        {session.title || `Session ${session.id.slice(0, 8)}`}
+                      </div>
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          )}
         </nav>
 
         <div className="w-full px-4 pb-8 space-y-3">
@@ -174,7 +216,7 @@ function AppShell() {
             {sidebarCollapsed ? <PanelRightClose className="w-4 h-4" /> : <PanelLeftClose className="w-4 h-4" />}
           </Button>
         </div>
-        <nav className={`w-full space-y-3 ${sidebarCollapsed ? "px-2" : "px-4"} pt-6`}>
+        <nav className={`w-full space-y-2 ${sidebarCollapsed ? "px-2" : "px-4"} pt-6`}>
           {apps.map((app) => {
             const isActive = activeAppId === app.id
             const Icon = navIconFor(app.id)
@@ -197,7 +239,62 @@ function AppShell() {
           })}
         </nav>
 
-        <div className={`w-full ${sidebarCollapsed ? "px-2 pb-4" : "px-4 pb-6"} space-y-3 mt-6`}>
+        {/* Session history list */}
+        {!sidebarCollapsed && sessions.length > 0 && (
+          <div className="w-full px-4 mt-4 flex-1 min-h-0 flex flex-col">
+            <div className="flex items-center gap-2 py-2 border-t border-[#2a3632]">
+              <span className="text-xs uppercase tracking-wide text-[#6b7974]">
+                {locale === "de" ? "Verlauf" : "History"}
+              </span>
+              <span className="text-xs text-[#4a5550]">({sessions.length})</span>
+            </div>
+            <div className="flex-1 overflow-y-auto space-y-1 pr-1 -mr-1">
+              {sessions.slice(0, 20).map((session) => {
+                const isSelected = selectedSessionId === session.id
+                const updatedAt = session.time?.updated ? new Date(session.time.updated) : null
+                return (
+                  <button
+                    key={session.id}
+                    onClick={() => handleSessionClick(session.id)}
+                    className={cn(
+                      "w-full px-3 py-2 text-left rounded-md transition-colors",
+                      isSelected 
+                        ? "bg-[#1b2d26] border border-[#3ba77c] text-[#d5f0e4]" 
+                        : "text-[#9aa8a3] hover:bg-[#222624] border border-transparent"
+                    )}
+                  >
+                    <div className="text-sm truncate font-medium">
+                      {session.title || `Session ${session.id.slice(0, 8)}`}
+                    </div>
+                    {updatedAt && (
+                      <div className="flex items-center gap-1 text-[10px] text-[#6b7974] mt-0.5">
+                        <Clock className="w-3 h-3" />
+                        {updatedAt.toLocaleDateString()} {updatedAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                      </div>
+                    )}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Collapsed session indicator */}
+        {sidebarCollapsed && sessions.length > 0 && (
+          <div className="w-full px-2 mt-4">
+            <div className="border-t border-[#2a3632] pt-2">
+              <button
+                onClick={() => setSidebarCollapsed(false)}
+                className="w-full p-2 text-[#6b7974] hover:text-[#9aa8a3] transition-colors"
+                title={locale === "de" ? "Verlauf anzeigen" : "Show history"}
+              >
+                <Clock className="w-4 h-4 mx-auto" />
+              </button>
+            </div>
+          </div>
+        )}
+
+        <div className={`w-full ${sidebarCollapsed ? "px-2 pb-4" : "px-4 pb-6"} space-y-3 mt-auto pt-4`}>
           <Button
             variant="ghost"
             size="sm"
