@@ -1,21 +1,43 @@
 const trimTrailingSlash = (value?: string) => value?.replace(/\/$/, "") ?? ""
 
-// Use proxy path to avoid CORS issues, fall back to direct URL for SSR
-const getOpencodeUrl = () => {
-  if (typeof window !== "undefined") {
-    // Client-side: use the proxy
-    return "/api/opencode"
+// Get the base Caddy URL for container routing
+const getCaddyBaseUrl = () => {
+  return trimTrailingSlash(process.env.NEXT_PUBLIC_CADDY_BASE_URL) || ""
+}
+
+// Build container-specific URLs
+// containerId is optional - if not provided, falls back to legacy direct URLs
+export const getContainerUrls = (containerId?: string) => {
+  const caddyBase = getCaddyBaseUrl()
+  
+  if (containerId && caddyBase) {
+    // Route through Caddy with container-specific paths
+    const basePath = `/c/${containerId}`
+    return {
+      opencodeBaseUrl: `${basePath}/api`,
+      fileServerBaseUrl: `${basePath}/files`,
+      terminalWsUrl: `${caddyBase.replace(/^http/, 'ws')}${basePath}/term`,
+    }
   }
-  // Server-side: use the direct URL
-  return trimTrailingSlash(process.env.NEXT_PUBLIC_OPENCODE_BASE_URL)
+  
+  // Fallback to legacy direct URLs (local dev without Caddy)
+  return {
+    opencodeBaseUrl: typeof window !== "undefined" 
+      ? "/api/opencode" 
+      : trimTrailingSlash(process.env.NEXT_PUBLIC_OPENCODE_BASE_URL),
+    fileServerBaseUrl: trimTrailingSlash(process.env.NEXT_PUBLIC_FILE_SERVER_URL),
+    terminalWsUrl: trimTrailingSlash(process.env.NEXT_PUBLIC_TERMINAL_WS_URL),
+  }
 }
 
+// Legacy config for backwards compatibility (uses default/no container)
 export const appConfig = {
-  opencodeBaseUrl: getOpencodeUrl(),
-  terminalWsUrl: trimTrailingSlash(process.env.NEXT_PUBLIC_TERMINAL_WS_URL),
-  fileServerBaseUrl: trimTrailingSlash(process.env.NEXT_PUBLIC_FILE_SERVER_URL),
+  ...getContainerUrls(),
+  caddyBaseUrl: getCaddyBaseUrl(),
 }
 
-export const hasOpencode = Boolean(process.env.NEXT_PUBLIC_OPENCODE_BASE_URL)
-export const hasTerminal = Boolean(appConfig.terminalWsUrl)
-export const hasFileServer = Boolean(appConfig.fileServerBaseUrl)
+// Feature flags
+export const hasOpencode = Boolean(process.env.NEXT_PUBLIC_OPENCODE_BASE_URL || process.env.NEXT_PUBLIC_CADDY_BASE_URL)
+export const hasTerminal = Boolean(process.env.NEXT_PUBLIC_TERMINAL_WS_URL || process.env.NEXT_PUBLIC_CADDY_BASE_URL)
+export const hasFileServer = Boolean(process.env.NEXT_PUBLIC_FILE_SERVER_URL || process.env.NEXT_PUBLIC_CADDY_BASE_URL)
+export const hasCaddy = Boolean(process.env.NEXT_PUBLIC_CADDY_BASE_URL)

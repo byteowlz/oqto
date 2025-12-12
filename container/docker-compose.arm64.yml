@@ -1,5 +1,5 @@
-# Default compose file for x86_64 with Caddy reverse proxy
-# Usage: podman-compose up
+# Compose file for ARM64/Apple Silicon with Caddy reverse proxy
+# Usage: podman-compose -f docker-compose.arm64.yml up
 
 networks:
   # Public network - Caddy connects here and exposes ports
@@ -39,12 +39,12 @@ services:
   opencode-template:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.arm64
       args:
         USERNAME: dev
         USER_UID: 1000
         USER_GID: 1000
-    image: opencode-dev:x86_64
+    image: opencode-dev:arm64
     # Container is not started by default - it's a template
     profiles:
       - template

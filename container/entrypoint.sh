@@ -2,13 +2,15 @@
 set -e
 
 # Default ports
-OPENCODE_PORT="${OPENCODE_PORT:-8080}"
-FILESERVER_PORT="${FILESERVER_PORT:-8081}"
+OPENCODE_PORT="${OPENCODE_PORT:-41820}"
+FILESERVER_PORT="${FILESERVER_PORT:-41821}"
+TTYD_PORT="${TTYD_PORT:-41822}"
 WORKSPACE_DIR="${WORKSPACE_DIR:-/home/dev/workspace}"
 
 echo "Starting OpenCode development container..."
 echo "OpenCode server port: ${OPENCODE_PORT}"
 echo "File server port: ${FILESERVER_PORT}"
+echo "TTY terminal port: ${TTYD_PORT}"
 echo "Workspace directory: ${WORKSPACE_DIR}"
 
 # Ensure workspace directory exists
@@ -28,9 +30,19 @@ echo "Starting file server on port ${FILESERVER_PORT}..."
 python -m http.server "${FILESERVER_PORT}" --bind 0.0.0.0 --directory "${WORKSPACE_DIR}" &
 FILE_SERVER_PID=$!
 
-# Give file server a moment to start
+# Start ttyd web terminal in the background
+echo "Starting ttyd terminal on port ${TTYD_PORT}..."
+ttyd \
+    --port "${TTYD_PORT}" \
+    --interface 0.0.0.0 \
+    --writable \
+    --cwd "${WORKSPACE_DIR}" \
+    bash -l &
+TTYD_PID=$!
+
+# Give services a moment to start
 sleep 1
 
 # Start opencode serve in the foreground
 echo "Starting opencode serve on port ${OPENCODE_PORT}..."
-exec opencode serve --port "${OPENCODE_PORT}" --host 0.0.0.0
+exec /home/dev/.opencode/bin/opencode serve --port "${OPENCODE_PORT}" --hostname 0.0.0.0

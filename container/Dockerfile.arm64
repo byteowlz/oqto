@@ -1,6 +1,6 @@
-# Minimal Arch Linux container with opencode and development tools
-# x86_64 only (Arch Linux does not support ARM64)
-FROM archlinux:latest
+# Minimal container with opencode and development tools
+# ARM64/Apple Silicon compatible
+FROM fedora:latest
 
 # Build arguments
 ARG USERNAME=dev
@@ -24,33 +24,47 @@ ENV FILESERVER_PORT=${FILESERVER_PORT}
 ENV TTYD_PORT=${TTYD_PORT}
 
 # Update system and install base packages
-RUN pacman -Syu --noconfirm && \
-    pacman -S --noconfirm \
-        base-devel \
+RUN dnf update -y && \
+    dnf install -y \
+        @development-tools \
         git \
         curl \
         wget \
         unzip \
-        openssh \
+        openssh-clients \
         sudo \
         ripgrep \
-        fd \
+        fd-find \
         neovim \
         zoxide \
-        starship \
-        yazi \
         ffmpegthumbnailer \
         unar \
         jq \
-        poppler \
-        imagemagick \
-        python \
-        python-pip \
+        poppler-utils \
+        ImageMagick \
+        python3 \
+        python3-pip \
         nodejs \
         npm \
-        go \
-        ttyd \
-    && pacman -Scc --noconfirm
+        golang \
+        glibc-langpack-en \
+    && dnf clean all
+
+# Install starship prompt
+RUN curl -sS https://starship.rs/install.sh | sh -s -- -y
+
+# Install yazi file manager (ARM64)
+RUN cd /tmp && \
+    curl -sLO $(curl -s https://api.github.com/repos/sxyazi/yazi/releases/latest | jq -r '.assets[] | select(.name == "yazi-aarch64-unknown-linux-gnu.zip") | .browser_download_url') && \
+    unzip -q yazi-aarch64-unknown-linux-gnu.zip && \
+    mv yazi-aarch64-unknown-linux-gnu/yazi yazi-aarch64-unknown-linux-gnu/ya /usr/local/bin/ && \
+    rm -rf yazi-aarch64-unknown-linux-gnu*
+
+# Install ttyd for web-based terminal (ARM64)
+RUN cd /tmp && \
+    curl -sLO $(curl -s https://api.github.com/repos/tsl0922/ttyd/releases/latest | jq -r '.assets[] | select(.name | contains("aarch64")) | .browser_download_url') && \
+    chmod +x ttyd.aarch64 && \
+    mv ttyd.aarch64 /usr/local/bin/ttyd
 
 # Create non-root user
 RUN groupadd --gid ${USER_GID} ${USERNAME} && \

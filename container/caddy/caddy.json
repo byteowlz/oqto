@@ -1,0 +1,28 @@
+{
+  "admin": {
+    "listen": "0.0.0.0:2019"
+  },
+  "apps": {
+    "http": {
+      "servers": {
+        "srv0": {
+          "listen": [":80"],
+          "routes": [
+            {
+              "@id": "health",
+              "match": [{"path": ["/health"]}],
+              "handle": [{"handler": "static_response", "body": "OK", "status_code": 200}]
+            }
+          ],
+          "errors": {
+            "routes": [
+              {
+                "handle": [{"handler": "static_response", "body": "Container not found", "status_code": 404}]
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+}
