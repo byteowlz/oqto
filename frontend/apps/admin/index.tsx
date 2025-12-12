@@ -36,7 +36,7 @@ export function AdminApp() {
   ]
 
   return (
-    <div className="flex flex-col gap-4 h-full min-h-0">
+    <div className="flex flex-col gap-4 h-full min-h-0 p-4 md:p-6">
       <div>
         <h1 className="text-2xl font-bold text-foreground tracking-wider">ADMIN DASHBOARD</h1>
         <p className="text-sm text-muted-foreground">Platform monitoring and management</p>

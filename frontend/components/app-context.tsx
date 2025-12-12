@@ -22,25 +22,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const activeApp = apps.find((app) => app.id === activeAppId) ?? apps[0]
 
   useEffect(() => {
-    const storedLocale = typeof window !== "undefined" ? localStorage.getItem("locale") : null
+    const storedLocale = window.localStorage.getItem("locale")
     const initialLocale: Locale = storedLocale === "en" ? "en" : "de"
     setLocaleState(initialLocale)
-    if (typeof document !== "undefined") {
-      document.documentElement.lang = initialLocale
-    }
+    document.documentElement.lang = initialLocale
   }, [])
 
   const setLocale = useCallback((next: Locale) => {
     setLocaleState(next)
-    if (typeof document !== "undefined") {
-      document.documentElement.lang = next
-    }
-    if (typeof window !== "undefined") {
-      try {
-        localStorage.setItem("locale", next)
-      } catch {
-        // ignore storage failures
-      }
+    document.documentElement.lang = next
+    try {
+      window.localStorage.setItem("locale", next)
+    } catch {
+      // ignore storage failures
     }
   }, [])
 

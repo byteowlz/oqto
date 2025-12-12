@@ -37,12 +37,12 @@
   --color-popover: var(--popover);
   --color-card-foreground: var(--card-foreground);
   --color-card: var(--card);
-  --radius-sm: calc(var(--radius) - 4px);
-  --radius-md: calc(var(--radius) - 2px);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) + 4px);
+  --radius-sm: 0;
+  --radius-md: 0;
+  --radius-lg: 0;
+  --radius-xl: 0;
   --font-serif: JetBrains Mono, ui-monospace, monospace;
-  --radius: 0.3rem;
+  --radius: 0;
   --tracking-tighter: calc(var(--tracking-normal) - 0.05em);
   --tracking-tight: calc(var(--tracking-normal) - 0.025em);
   --tracking-wide: calc(var(--tracking-normal) + 0.025em);
@@ -69,7 +69,7 @@
 }
 
 :root {
-  --radius: 0.3rem;
+  --radius: 0;
   --background: oklch(0.9702 0 0);
   --foreground: oklch(0.5180 0.0127 226.1559);
   --card: oklch(0.9249 0 0);
@@ -157,7 +157,7 @@
   --sidebar-border: #2d312f;
   --sidebar-ring: #3ba77c;
   --destructive-foreground: #f2f5f3;
-  --radius: 0.3rem;
+  --radius: 0;
   --font-sans: JetBrains Mono, ui-monospace, monospace;
   --font-serif: JetBrains Mono, ui-monospace, monospace;
   --font-mono: JetBrains Mono, ui-monospace, monospace;
@@ -182,6 +182,7 @@
 @layer base {
   * {
     @apply border-border outline-ring/50;
+    border-radius: 0 !important;
   }
   body {
     @apply bg-background text-foreground;

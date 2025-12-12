@@ -15,17 +15,18 @@ import { hasOpencode } from "@/lib/config"
 import {
   fetchSessions,
   fetchMessages,
-  sendMessage,
+  sendMessageAsync,
   subscribeToEvents,
   type OpenCodeSession,
-  type OpenCodeMessage,
+  type OpenCodeMessageWithParts,
+  type OpenCodePart,
 } from "@/lib/opencode-client"
 
 export function SessionsApp() {
   const { locale } = useApp()
   const [sessions, setSessions] = useState<OpenCodeSession[]>([])
   const [selectedSessionId, setSelectedSessionId] = useState<string>("")
-  const [messages, setMessages] = useState<OpenCodeMessage[]>([])
+  const [messages, setMessages] = useState<OpenCodeMessageWithParts[]>([])
   const [messageInput, setMessageInput] = useState("")
   const [chatState, setChatState] = useState<"idle" | "sending">("idle")
   const [activeView, setActiveView] = useState<"files" | "terminal" | "preview">("files")
@@ -99,10 +100,15 @@ export function SessionsApp() {
   useEffect(() => {
     if (!hasOpencode) return
     const unsubscribe = subscribeToEvents((event) => {
-      if (event.type?.startsWith("session")) {
+      const eventType = event.type as string
+      if (eventType?.startsWith("session")) {
         loadSessions()
+        // Reset sending state when session becomes idle
+        if (eventType === "session.idle" || eventType === "session.status") {
+          setChatState("idle")
+        }
       }
-      if (event.type?.startsWith("message")) {
+      if (eventType?.startsWith("message")) {
         loadMessages()
       }
     })
@@ -117,33 +123,37 @@ export function SessionsApp() {
   const handleSend = async () => {
     if (!selectedSessionId || !messageInput.trim()) return
     setChatState("sending")
+    setStatus("")
     try {
-      await sendMessage(selectedSessionId, messageInput.trim())
+      // Use async send - the response will come via SSE events
+      await sendMessageAsync(selectedSessionId, messageInput.trim())
       setMessageInput("")
-      await loadMessages()
+      // Messages will be updated via SSE events
     } catch (err) {
       setStatus((err as Error).message)
-    } finally {
       setChatState("idle")
     }
+    // Don't set idle here - wait for SSE session.idle event
   }
 
   if (!hasOpencode) {
     return (
-      <div className="p-6 text-sm text-muted-foreground bg-[#161c1a] border border-[#1f2a27] rounded-xl">
-        {t.configNotice} <code className="font-semibold">NEXT_PUBLIC_OPENCODE_BASE_URL</code>
+      <div className="p-4 md:p-6">
+        <div className="p-6 text-sm text-muted-foreground bg-[#161c1a] border border-[#1f2a27]">
+          {t.configNotice} <code className="font-semibold">NEXT_PUBLIC_OPENCODE_BASE_URL</code>
+        </div>
       </div>
     )
   }
 
   return (
-    <div className="flex flex-col gap-4 h-full min-h-0">
+    <div className="flex flex-col gap-4 h-full min-h-0 p-4 md:p-6">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-semibold text-[#d5f0e4] tracking-wider">{t.title}</h1>
           {selectedSession && (
             <p className="text-sm text-muted-foreground">
-              {selectedSession.title || selectedSession.id} • {t.statusPrefix} {new Date(selectedSession.updated).toLocaleString()}
+              {selectedSession.title || selectedSession.id} • {t.statusPrefix} {selectedSession.time?.updated ? new Date(selectedSession.time.updated).toLocaleString() : "-"}
             </p>
           )}
         </div>
@@ -174,7 +184,7 @@ export function SessionsApp() {
           <div className="flex-1 rounded-lg bg-[#0f1412] border border-[#1f2a27] p-4 overflow-y-auto space-y-3 min-h-0">
             {messages.length === 0 && <div className="text-sm text-muted-foreground">{t.noMessages}</div>}
             {messages.map((msg, index) => (
-              <MessageCard key={msg.id} message={msg} index={index} />
+              <MessageCard key={msg.info.id} message={msg} index={index} />
             ))}
           </div>
 
@@ -251,12 +261,20 @@ export function SessionsApp() {
   )
 }
 
-function MessageCard({ message, index }: { message: OpenCodeMessage; index: number }) {
+function MessageCard({ message, index }: { message: OpenCodeMessageWithParts; index: number }) {
   const [isOpen, setIsOpen] = useState(true)
-  const isUser = message.role === "user"
-  const content = message.content || message.parts?.map((part) => part.text).join("\n") || ""
+  const { info, parts } = message
+  const isUser = info.role === "user"
+  
+  // Extract text content from parts
+  const textParts = parts.filter((p): p is OpenCodePart & { type: "text"; text: string } => 
+    p.type === "text" && typeof p.text === "string"
+  )
+  const content = textParts.map((p) => p.text).join("\n") || ""
   const preview = content.length > 120 ? content.slice(0, 120) + "..." : content
-  const createdAt = message.createdAt ? new Date(message.createdAt) : null
+  
+  // Get created time from info.time.created (Unix ms)
+  const createdAt = info.time?.created ? new Date(info.time.created) : null
 
   return (
     <Collapsible open={isOpen} onOpenChange={setIsOpen}>
@@ -299,17 +317,17 @@ function MessageCard({ message, index }: { message: OpenCodeMessage; index: numb
                     </Badge>
                   </div>
                   <CardDescription className="text-xs text-[#6b7974] flex items-center gap-2">
-                    {createdAt && (
+                    {createdAt && !isNaN(createdAt.getTime()) && (
                       <>
                         <Clock className="w-3 h-3" />
                         {createdAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                       </>
                     )}
-                    {message.parts && message.parts.length > 0 && (
+                    {parts.length > 0 && (
                       <>
                         <span className="text-[#3a4540]">|</span>
                         <Hash className="w-3 h-3" />
-                        {message.parts.length} part{message.parts.length > 1 ? "s" : ""}
+                        {parts.length} part{parts.length > 1 ? "s" : ""}
                       </>
                     )}
                   </CardDescription>
@@ -328,7 +346,7 @@ function MessageCard({ message, index }: { message: OpenCodeMessage; index: numb
           <CardContent className="px-4 pb-4 pt-0">
             <div className="pl-11">
               <div className="text-sm text-[#d5f0e4] whitespace-pre-wrap leading-relaxed">
-                {content}
+                {content || <span className="text-[#6b7974] italic">No text content</span>}
               </div>
             </div>
           </CardContent>
@@ -337,7 +355,7 @@ function MessageCard({ message, index }: { message: OpenCodeMessage; index: numb
         {!isOpen && (
           <CardContent className="px-4 pb-3 pt-0">
             <div className="pl-11">
-              <p className="text-sm text-[#6b7974] italic truncate">{preview}</p>
+              <p className="text-sm text-[#6b7974] italic truncate">{preview || "No text content"}</p>
             </div>
           </CardContent>
         )}
