@@ -1,8 +1,11 @@
 import type { ComponentType } from "react"
 
+export type Locale = "de" | "en"
+export type LocalizedText = string | { de: string; en: string }
+
 export interface AppDefinition {
   id: string
-  label: string
+  label: LocalizedText
   description?: string
   component: ComponentType
   routes?: string[]

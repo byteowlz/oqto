@@ -1,30 +1,40 @@
 import { appRegistry } from "@/lib/app-registry"
+import { ProjectsApp } from "@/apps/projects"
 import { WorkspacesApp } from "@/apps/workspaces"
 import { SessionsApp } from "@/apps/sessions"
 import { AdminApp } from "@/apps/admin"
 
 appRegistry
   .register({
-    id: "workspaces",
-    label: "Workspaces",
-    description: "Manage and launch project workspaces",
-    component: WorkspacesApp,
-    routes: ["/workspaces"],
+    id: "projects",
+    label: { de: "Projekte", en: "Projects" },
+    description: "Projektübersicht und Startpunkte",
+    component: ProjectsApp,
+    routes: ["/projects"],
+    permissions: ["user"],
+    priority: 5,
+  })
+  .register({
+    id: "sessions",
+    label: { de: "Chats", en: "Chats" },
+    description: "Monitor live agent sessions",
+    component: SessionsApp,
+    routes: ["/sessions"],
     permissions: ["user"],
     priority: 10,
   })
   .register({
-    id: "sessions",
-    label: "Active Sessions",
-    description: "Monitor live agent sessions",
-    component: SessionsApp,
-    routes: ["/sessions"],
+    id: "workspaces",
+    label: { de: "Agents", en: "Agents" },
+    description: "Manage and launch project workspaces",
+    component: WorkspacesApp,
+    routes: ["/workspaces"],
     permissions: ["user"],
     priority: 20,
   })
   .register({
     id: "admin",
-    label: "Admin Panel",
+    label: { de: "Admin Space", en: "Admin Space" },
     description: "Platform telemetry and controls",
     component: AdminApp,
     routes: ["/admin"],

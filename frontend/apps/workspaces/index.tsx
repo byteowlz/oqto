@@ -1,14 +1,41 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useMemo } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Search, Plus, FolderOpen, Clock, MoreHorizontal } from "lucide-react"
+import { useApp } from "@/components/app-context"
 
 export function WorkspacesApp() {
+  const { locale } = useApp()
   const [searchTerm, setSearchTerm] = useState("")
   const [selectedWorkspace, setSelectedWorkspace] = useState<string | null>(null)
+
+  const copy = useMemo(
+    () => ({
+      de: {
+        title: "AGENTEN",
+        subtitle: "Arbeitsbereich und Agenten-Template wählen",
+        newWorkspace: "Neuer Workspace",
+        searchPlaceholder: "Workspaces durchsuchen...",
+        openWorkspace: "Workspace öffnen",
+        selectTemplate: "Agenten-Template wählen",
+        chooseTemplate: "Agenten-Template auswählen",
+      },
+      en: {
+        title: "AGENTS",
+        subtitle: "Pick a workspace and agent template",
+        newWorkspace: "New Workspace",
+        searchPlaceholder: "Search workspaces...",
+        openWorkspace: "Open workspace",
+        selectTemplate: "Select agent template",
+        chooseTemplate: "Choose agent template",
+      },
+    }),
+    [],
+  )
+  const t = copy[locale]
 
   const workspaces = [
     {
@@ -58,77 +85,68 @@ export function WorkspacesApp() {
   const filteredWorkspaces = workspaces.filter((ws) => ws.name.toLowerCase().includes(searchTerm.toLowerCase()))
 
   return (
-    <div className="p-6 space-y-6 bg-background min-h-screen">
+    <div className="flex flex-col gap-4 h-full min-h-0">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-foreground tracking-wider">MY WORKSPACES</h1>
-          <p className="text-sm text-muted-foreground">Select a workspace to start an agent session</p>
+          <h1 className="text-2xl font-bold text-foreground tracking-wider">{t.title}</h1>
+          <p className="text-sm text-muted-foreground">{t.subtitle}</p>
         </div>
-        <Button className="bg-primary hover:bg-primary/90 text-primary-foreground">
+        <Button className="bg-primary hover:bg-primary/80 text-primary-foreground">
           <Plus className="w-4 h-4 mr-2" />
-          New Workspace
+          {t.newWorkspace}
         </Button>
       </div>
 
-      <Card className="bg-card border-border">
-        <CardContent className="p-4">
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-            <Input
-              placeholder="Search workspaces..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="pl-10 bg-background border-input text-foreground placeholder-muted-foreground"
-            />
-          </div>
-        </CardContent>
-      </Card>
+      <div className="bg-[#161c1a] border border-[#1f2a27] rounded-xl p-4">
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+          <Input
+            placeholder={t.searchPlaceholder}
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="pl-10 bg-[#0f1412] border-[#1f2a27] text-foreground placeholder:text-[#6b7974]"
+          />
+        </div>
+      </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {filteredWorkspaces.map((workspace) => (
-          <Card
+          <div
             key={workspace.id}
-            className="bg-card border-border hover:border-primary transition-all cursor-pointer group"
+            className="bg-[#161c1a] border border-[#1f2a27] rounded-xl p-4 flex flex-col gap-3 hover:border-[#3ba77c] hover:bg-[#131a17] transition cursor-pointer"
             onClick={() => setSelectedWorkspace(workspace.id)}
           >
-            <CardHeader className="pb-3">
-              <div className="flex items-start justify-between">
-                <FolderOpen className="w-8 h-8 text-primary mb-2" />
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="text-muted-foreground hover:text-primary opacity-0 group-hover:opacity-100 transition-opacity"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                  }}
-                >
-                  <MoreHorizontal className="w-4 h-4" />
-                </Button>
-              </div>
-              <CardTitle className="text-base text-foreground">{workspace.name}</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-2 text-sm text-muted-foreground">
-                <div className="flex items-center gap-2">
-                  <Clock className="w-3 h-3" />
-                  <span className="text-xs">{workspace.lastModified}</span>
-                </div>
-                <div className="flex justify-between text-xs">
-                  <span>{workspace.files} files</span>
-                  <span className="text-muted-foreground">{workspace.size}</span>
-                </div>
-              </div>
+            <div className="flex items-start justify-between">
+              <FolderOpen className="w-6 h-6 text-[#3ba77c]" />
               <Button
-                className="w-full mt-4 bg-primary hover:bg-primary/90 text-primary-foreground"
+                variant="ghost"
+                size="icon"
+                className="text-muted-foreground hover:text-primary"
                 onClick={(e) => {
                   e.stopPropagation()
-                  setSelectedWorkspace(workspace.id)
                 }}
               >
-                Open Workspace
+                <MoreHorizontal className="w-4 h-4" />
               </Button>
-            </CardContent>
-          </Card>
+            </div>
+            <div>
+              <div className="text-base font-semibold text-foreground">{workspace.name}</div>
+              <div className="text-xs text-muted-foreground mt-1">{workspace.lastModified}</div>
+            </div>
+            <div className="flex justify-between text-xs text-muted-foreground">
+              <span>{workspace.files} files</span>
+              <span>{workspace.size}</span>
+            </div>
+            <Button
+              className="w-full bg-primary hover:bg-primary/80 text-primary-foreground"
+              onClick={(e) => {
+                e.stopPropagation()
+                setSelectedWorkspace(workspace.id)
+              }}
+            >
+              {t.openWorkspace}
+            </Button>
+          </div>
         ))}
       </div>
 
@@ -140,6 +158,20 @@ export function WorkspacesApp() {
 }
 
 function AgentTemplateSelector({ onClose }: { workspaceId: string; onClose: () => void }) {
+  const { locale } = useApp()
+  const copy = useMemo(
+    () => ({
+      de: {
+        selectTemplate: "Agenten-Template wählen",
+        chooseTemplate: "Agenten-Template auswählen",
+      },
+      en: {
+        selectTemplate: "Select agent template",
+        chooseTemplate: "Choose agent template",
+      },
+    }),
+    [],
+  )
   const templates = [
     {
       id: "coding-copilot",
@@ -173,8 +205,8 @@ function AgentTemplateSelector({ onClose }: { workspaceId: string; onClose: () =
         <CardHeader>
           <div className="flex items-center justify-between">
             <div>
-              <CardTitle className="text-xl font-bold text-foreground tracking-wider">SELECT AGENT TEMPLATE</CardTitle>
-              <p className="text-sm text-muted-foreground mt-1">Choose an AI agent configuration for this workspace</p>
+              <CardTitle className="text-xl font-bold text-foreground tracking-wider">{copy[locale].selectTemplate}</CardTitle>
+              <p className="text-sm text-muted-foreground mt-1">{copy[locale].chooseTemplate}</p>
             </div>
             <Button variant="ghost" onClick={onClose} className="text-muted-foreground hover:text-foreground">
               X
