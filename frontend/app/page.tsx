@@ -1,98 +1,142 @@
 "use client"
 
-import { useState } from "react"
-import { ChevronRight, Bell, RefreshCw } from "lucide-react"
+import { useEffect, useState } from "react"
+import {
+  SunMedium,
+  MoonStar,
+  Globe2,
+  PanelLeftClose,
+  PanelRightClose,
+  FolderKanban,
+  MessageSquare,
+  Bot,
+  Shield,
+} from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { AppProvider, useApp } from "@/components/app-context"
 import "@/apps"
 
 function AppShell() {
-  const { apps, activeAppId, setActiveAppId, activeApp } = useApp()
+  const { apps, activeAppId, setActiveAppId, activeApp, locale, setLocale, resolveText } = useApp()
+  const [theme, setTheme] = useState<"light" | "dark">("dark")
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const ActiveComponent = activeApp?.component ?? null
 
-  return (
-    <div className="flex h-screen">
-      <div
-        className={`${sidebarCollapsed ? "w-16" : "w-72"} bg-sidebar border-r border-sidebar-border transition-all duration-300 fixed md:relative z-50 md:z-auto h-full md:h-auto`}
-      >
-        <div className="p-4">
-          <div className="flex items-center justify-between mb-8">
-            <div className={`${sidebarCollapsed ? "hidden" : "block"}`}>
-              <h1 className="text-primary font-bold text-lg tracking-wider">AGENT WORKSPACE</h1>
-              <p className="text-muted-foreground text-xs">v1.0.0 INTERNAL</p>
-            </div>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
-              className="text-muted-foreground hover:text-primary"
-            >
-              <ChevronRight className={`w-4 h-4 transition-transform ${sidebarCollapsed ? "" : "rotate-180"}`} />
-            </Button>
-          </div>
+  useEffect(() => {
+    const stored = typeof window !== "undefined" ? localStorage.getItem("theme") : null
+    const prefersDark = window.matchMedia?.("(prefers-color-scheme: dark)").matches
+    const initial = stored === "light" || stored === "dark" ? stored : prefersDark ? "dark" : "light"
+    document.documentElement.classList.toggle("dark", initial === "dark")
+    setTheme(initial)
+  }, [])
 
-          <nav className="space-y-2">
-            {apps.map((app) => (
+  const toggleTheme = () => {
+    setTheme((prev) => {
+      const next = prev === "dark" ? "light" : "dark"
+      document.documentElement.classList.toggle("dark", next === "dark")
+      localStorage.setItem("theme", next)
+      return next
+    })
+  }
+
+  const toggleLocale = () => {
+    const next = locale === "de" ? "en" : "de"
+    setLocale(next)
+  }
+
+  const sidebarWidth = sidebarCollapsed ? "4.5rem" : "16.25rem"
+  const shellBg = "var(--background)"
+  const sidebarBg = "var(--sidebar, #181b1a)"
+  const navIdle = "var(--sidebar, #181b1a)"
+  const navIconFor = (id: string) => {
+    switch (id) {
+      case "projects":
+        return FolderKanban
+      case "sessions":
+        return MessageSquare
+      case "workspaces":
+        return Bot
+      case "admin":
+        return Shield
+      default:
+        return FolderKanban
+    }
+  }
+
+  return (
+    <div className="flex min-h-screen bg-[#222624] text-foreground">
+      <aside
+        className={`fixed inset-y-0 left-0 flex flex-col transition-all duration-200 z-40 ${
+          sidebarCollapsed ? "w-[4.5rem] items-center" : "w-[16.25rem] items-center"
+        }`}
+        style={{ backgroundColor: sidebarBg }}
+      >
+        <div className="h-16 w-full flex items-center justify-between px-4">
+          {!sidebarCollapsed && <img src="/Logo_Green-02.png" alt="Fraunhofer IEM" className="h-10 w-auto" />}
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label="Sidebar umschalten"
+            onClick={() => setSidebarCollapsed((prev) => !prev)}
+            className="text-muted-foreground hover:text-primary"
+          >
+            {sidebarCollapsed ? <PanelRightClose className="w-4 h-4" /> : <PanelLeftClose className="w-4 h-4" />}
+          </Button>
+        </div>
+        <nav className={`w-full space-y-3 ${sidebarCollapsed ? "px-2" : "px-4"} pt-6`}>
+          {apps.map((app) => {
+            const isActive = activeAppId === app.id
+            const Icon = navIconFor(app.id)
+            return (
               <button
                 key={app.id}
                 onClick={() => setActiveAppId(app.id)}
-                className={`w-full flex items-center gap-3 p-3 rounded transition-colors text-left tracking-wider text-xs ${
-                  activeAppId === app.id
-                    ? "bg-primary text-primary-foreground"
-                    : "text-muted-foreground hover:text-foreground hover:bg-accent"
+                className={`w-full rounded-[12px] px-4 py-3 text-sm font-semibold tracking-wide transition flex items-center gap-2 ${
+                  isActive ? "text-[#f2f5f3] ring-2 ring-[#3ba77c]" : "text-[#dfe5e1] hover:bg-[#222624]"
                 }`}
+                style={{
+                  backgroundColor: isActive ? "#222624" : navIdle,
+                  border: isActive ? "1px solid #3ba77c" : "1px solid transparent",
+                }}
               >
-                {sidebarCollapsed ? (
-                  <span className="mx-auto text-sm font-semibold">{app.label.slice(0, 2).toUpperCase()}</span>
-                ) : (
-                  <div className="flex flex-col">
-                    <span className="font-semibold text-sm">{app.label.toUpperCase()}</span>
-                    {app.description && (
-                      <span className="text-[10px] uppercase text-muted-foreground/70">{app.description}</span>
-                    )}
-                  </div>
-                )}
+                <Icon className="w-4 h-4 shrink-0" />
+                {!sidebarCollapsed && <span className="truncate">{resolveText(app.label)}</span>}
               </button>
-            ))}
-          </nav>
+            )
+          })}
+        </nav>
 
-          {!sidebarCollapsed && (
-            <div className="mt-8 p-4 bg-card border border-border rounded">
-              <div className="flex items-center gap-2 mb-2">
-                <div className="w-2 h-2 bg-primary rounded-full animate-pulse"></div>
-                <span className="text-xs text-foreground">PLATFORM ONLINE</span>
-              </div>
-              <div className="text-xs text-muted-foreground">
-                <div>UPTIME: 72:14:33</div>
-                <div>WORKSPACES: 24 ACTIVE</div>
-                <div>SESSIONS: 7 RUNNING</div>
-              </div>
-            </div>
-          )}
+        <div className={`w-full ${sidebarCollapsed ? "px-2 pb-4" : "px-4 pb-6"} space-y-3 mt-6`}>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={toggleLocale}
+            aria-label="Sprache wechseln"
+            className="w-full justify-start text-muted-foreground hover:text-primary"
+            style={{ justifyContent: sidebarCollapsed ? "center" : "flex-start" }}
+          >
+            <Globe2 className="w-4 h-4" />
+            {!sidebarCollapsed && <span className="text-sm font-semibold">{locale === "de" ? "ENG" : "DE"}</span>}
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={toggleTheme}
+            aria-pressed={theme === "dark"}
+            className="w-full justify-start text-muted-foreground hover:text-primary"
+            style={{ justifyContent: sidebarCollapsed ? "center" : "flex-start" }}
+          >
+            {theme === "dark" ? <SunMedium className="w-4 h-4" /> : <MoonStar className="w-4 h-4" />}
+            {!sidebarCollapsed && <span className="text-sm font-semibold">Theme</span>}
+          </Button>
         </div>
-      </div>
+      </aside>
 
-      {!sidebarCollapsed && <div className="fixed inset-0 bg-black/50 z-40 md:hidden" onClick={() => setSidebarCollapsed(true)} />}
-
-      <div className={`flex-1 flex flex-col ${!sidebarCollapsed ? "md:ml-0" : ""}`}>
-        <div className="h-16 bg-card border-b border-border flex items-center justify-between px-6">
-          <div className="text-sm text-muted-foreground">
-            AI AGENT WORKSPACE / <span className="text-primary uppercase">{activeApp?.label ?? ""}</span>
+      <div className="flex-1 flex flex-col min-h-0 overflow-hidden" style={{ backgroundColor: shellBg }}>
+        <div className="flex-1 min-h-0 overflow-auto" style={{ paddingLeft: sidebarWidth }}>
+          <div className="min-h-full">
+            {ActiveComponent ? <ActiveComponent /> : <EmptyState />}
           </div>
-          <div className="flex items-center gap-4">
-            <div className="text-xs text-muted-foreground">LAST UPDATE: 12/08/2025 20:00 UTC</div>
-            <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-primary">
-              <Bell className="w-4 h-4" />
-            </Button>
-            <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-primary">
-              <RefreshCw className="w-4 h-4" />
-            </Button>
-          </div>
-        </div>
-
-        <div className="flex-1 overflow-auto">
-          {ActiveComponent ? <ActiveComponent /> : <EmptyState />}
         </div>
       </div>
     </div>

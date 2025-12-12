@@ -16,7 +16,7 @@ export default function RootLayout({
   children: React.ReactNode
 }) {
   return (
-    <html lang="en" className="dark">
+    <html lang="de" className="dark">
       <body className={`${jetbrainsMono.className} antialiased bg-background text-foreground`}>
         {children}
       </body>
