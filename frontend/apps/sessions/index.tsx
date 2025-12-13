@@ -253,7 +253,7 @@ export function SessionsApp() {
         <div 
           ref={messagesContainerRef}
           onScroll={handleScroll}
-          className="h-full rounded-lg bg-[#0f1412] border border-[#1f2a27] p-4 overflow-y-auto space-y-6"
+          className="h-full rounded-lg bg-[#0f1412] border border-[#1f2a27] p-4 overflow-y-auto space-y-6 scrollbar-hide"
         >
           {messages.length === 0 && <div className="text-sm text-muted-foreground">{t.noMessages}</div>}
           {messageGroups.map((group, groupIndex) => (
