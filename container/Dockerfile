@@ -25,46 +25,45 @@ ENV TTYD_PORT=${TTYD_PORT}
 
 # Update system and install base packages
 RUN pacman -Syu --noconfirm && \
-    pacman -S --noconfirm \
-        base-devel \
-        git \
-        curl \
-        wget \
-        unzip \
-        openssh \
-        sudo \
-        ripgrep \
-        fd \
-        neovim \
-        zoxide \
-        starship \
-        yazi \
-        ffmpegthumbnailer \
-        unar \
-        jq \
-        poppler \
-        imagemagick \
-        python \
-        python-pip \
-        nodejs \
-        npm \
-        go \
-        ttyd \
-    && pacman -Scc --noconfirm
+  pacman -S --noconfirm \
+  base-devel \
+  git \
+  curl \
+  wget \
+  unzip \
+  openssh \
+  sudo \
+  ripgrep \
+  fd \
+  neovim \
+  zoxide \
+  starship \
+  yazi \
+  ffmpegthumbnailer \
+  jq \
+  poppler \
+  imagemagick \
+  python \
+  python-pip \
+  nodejs \
+  npm \
+  go \
+  ttyd \
+  && pacman -Scc --noconfirm
 
 # Create non-root user
 RUN groupadd --gid ${USER_GID} ${USERNAME} && \
-    useradd --uid ${USER_UID} --gid ${USER_GID} -m ${USERNAME} && \
-    echo "${USERNAME} ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers.d/${USERNAME} && \
-    chmod 0440 /etc/sudoers.d/${USERNAME}
+  useradd --uid ${USER_UID} --gid ${USER_GID} -m ${USERNAME} && \
+  echo "${USERNAME} ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers.d/${USERNAME} && \
+  chmod 0440 /etc/sudoers.d/${USERNAME}
 
 # Create XDG directories
 RUN mkdir -p /home/${USERNAME}/.config \
-             /home/${USERNAME}/.local/share \
-             /home/${USERNAME}/.local/state \
-             /home/${USERNAME}/.cache \
-             /home/${USERNAME}/workspace && \
-    chown -R ${USERNAME}:${USERNAME} /home/${USERNAME}
+  /home/${USERNAME}/.local/share \
+  /home/${USERNAME}/.local/state \
+  /home/${USERNAME}/.cache \
+  /home/${USERNAME}/workspace && \
+  chown -R ${USERNAME}:${USERNAME} /home/${USERNAME}
 
 # Switch to non-root user for opencode installation
 USER ${USERNAME}
@@ -81,9 +80,9 @@ COPY --chown=${USERNAME}:${USERNAME} .config/ /home/${USERNAME}/.config/
 
 # Configure shell with starship and zoxide
 RUN echo 'eval "$(starship init bash)"' >> /home/${USERNAME}/.bashrc && \
-    echo 'eval "$(zoxide init bash)"' >> /home/${USERNAME}/.bashrc && \
-    echo 'alias vim="nvim"' >> /home/${USERNAME}/.bashrc && \
-    echo 'alias vi="nvim"' >> /home/${USERNAME}/.bashrc
+  echo 'eval "$(zoxide init bash)"' >> /home/${USERNAME}/.bashrc && \
+  echo 'alias vim="nvim"' >> /home/${USERNAME}/.bashrc && \
+  echo 'alias vi="nvim"' >> /home/${USERNAME}/.bashrc
 
 # Copy entrypoint script
 COPY --chown=${USERNAME}:${USERNAME} entrypoint.sh /home/${USERNAME}/entrypoint.sh
