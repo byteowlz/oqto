@@ -69,6 +69,7 @@ impl SessionRepository {
     }
 
     /// Get a session by container ID.
+    #[allow(dead_code)]
     pub async fn get_by_container_id(&self, container_id: &str) -> Result<Option<Session>> {
         let session = sqlx::query_as::<_, Session>(
             r#"
@@ -106,6 +107,7 @@ impl SessionRepository {
     }
 
     /// List active sessions (starting or running).
+    #[allow(dead_code)]
     pub async fn list_active(&self) -> Result<Vec<Session>> {
         let sessions = sqlx::query_as::<_, Session>(
             r#"
@@ -125,6 +127,7 @@ impl SessionRepository {
     }
 
     /// List sessions by user.
+    #[allow(dead_code)]
     pub async fn list_by_user(&self, user_id: &str) -> Result<Vec<Session>> {
         let sessions = sqlx::query_as::<_, Session>(
             r#"

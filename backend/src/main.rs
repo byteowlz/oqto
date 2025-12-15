@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
 
 mod api;
+mod auth;
 mod db;
 mod podman;
 mod session;
@@ -414,12 +415,7 @@ fn handle_run(ctx: &mut RuntimeContext, cmd: RunCommand) -> Result<()> {
         )
     };
 
-    if ctx.common.json || ctx.common.yaml {
-        println!("{}", output);
-    } else {
-        println!("{output}");
-    }
-
+    println!("{output}");
     Ok(())
 }
 
@@ -492,6 +488,11 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     info!("Database path: {}", db_path.display());
     let database = db::Database::new(&db_path).await?;
     
+    // Initialize authentication
+    let auth_config = auth::AuthConfig::default();
+    info!("Auth mode: {}", if auth_config.dev_mode { "development" } else { "production" });
+    let auth_state = auth::AuthState::new(auth_config);
+    
     // Initialize services
     let podman = podman::Podman::new();
     
@@ -511,7 +512,7 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     let session_service = session::SessionService::new(session_repo, podman, session_config);
     
     // Create app state
-    let state = api::AppState::new(session_service);
+    let state = api::AppState::new(session_service, auth_state);
     
     // Create router
     let app = api::create_router(state);

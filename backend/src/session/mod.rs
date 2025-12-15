@@ -7,6 +7,8 @@ mod models;
 mod repository;
 mod service;
 
-pub use models::{Session, SessionConfig, SessionStatus, CreateSessionRequest};
+pub use models::{CreateSessionRequest, Session};
+#[allow(unused_imports)]
+pub use models::SessionStatus;
 pub use repository::SessionRepository;
 pub use service::{SessionService, SessionServiceConfig};

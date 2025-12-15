@@ -1,0 +1,15 @@
+//! Authentication module.
+//!
+//! Provides JWT validation middleware with support for:
+//! - OIDC token validation (production)
+//! - Dev bypass mode with configurable test users
+
+mod claims;
+mod config;
+mod error;
+mod middleware;
+
+pub use claims::{Claims, Role};
+pub use config::{AuthConfig, DevUser};
+pub use error::AuthError;
+pub use middleware::{auth_middleware, AuthState, CurrentUser, RequireAdmin};

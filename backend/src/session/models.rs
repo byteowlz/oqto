@@ -1,6 +1,6 @@
 //! Session data models.
 
-use chrono::{DateTime, Utc};
+
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 
@@ -88,6 +88,7 @@ pub struct Session {
 
 /// Configuration for creating a new session.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(dead_code)]
 pub struct SessionConfig {
     /// Path to the workspace directory to mount.
     pub workspace_path: String,
@@ -126,6 +127,7 @@ pub struct CreateSessionRequest {
 
 /// Response from session creation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(dead_code)]
 pub struct SessionResponse {
     /// Session information.
     #[serde(flatten)]
@@ -136,6 +138,7 @@ pub struct SessionResponse {
 
 /// URLs for accessing session services.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(dead_code)]
 pub struct SessionUrls {
     /// URL for opencode API.
     pub opencode: String,
@@ -157,6 +160,7 @@ impl Session {
     }
 
     /// Get the URLs for this session.
+    #[allow(dead_code)]
     pub fn urls(&self, host: &str) -> SessionUrls {
         SessionUrls {
             opencode: format!("http://{}:{}", host, self.opencode_port),

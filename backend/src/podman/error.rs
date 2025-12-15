@@ -7,6 +7,7 @@ pub type PodmanResult<T> = Result<T, PodmanError>;
 
 /// Errors that can occur during Podman operations.
 #[derive(Debug, Error)]
+#[allow(dead_code)]
 pub enum PodmanError {
     /// The podman command failed.
     #[error("podman {command} failed: {message}")]

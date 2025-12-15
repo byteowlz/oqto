@@ -5,7 +5,9 @@
 mod container;
 mod error;
 
-pub use container::{Container, ContainerConfig, ContainerState, ContainerStats, PortMapping};
+pub use container::{Container, ContainerConfig, ContainerStats};
+#[allow(unused_imports)]
+pub use container::PortMapping;
 pub use error::{PodmanError, PodmanResult};
 
 use std::process::Stdio;
@@ -33,6 +35,7 @@ impl Podman {
     }
 
     /// Create a new Podman client with a custom binary path.
+    #[allow(dead_code)]
     pub fn with_binary(binary: impl Into<String>) -> Self {
         Self {
             binary: binary.into(),
@@ -204,6 +207,7 @@ impl Podman {
     }
 
     /// List containers.
+    #[allow(dead_code)]
     pub async fn list_containers(&self, all: bool) -> PodmanResult<Vec<Container>> {
         let mut args = vec!["ps", "--format", "json"];
         
@@ -242,6 +246,7 @@ impl Podman {
     }
 
     /// Get container by ID or name.
+    #[allow(dead_code)]
     pub async fn get_container(&self, id_or_name: &str) -> PodmanResult<Option<Container>> {
         let output = Command::new(&self.binary)
             .args(["inspect", "--format", "json", id_or_name])
@@ -267,6 +272,7 @@ impl Podman {
     }
 
     /// Get container logs.
+    #[allow(dead_code)]
     pub async fn get_logs(&self, container_id: &str, tail: Option<u32>) -> PodmanResult<String> {
         let mut args = vec!["logs"];
         
@@ -297,6 +303,7 @@ impl Podman {
     }
 
     /// Get container stats (single snapshot).
+    #[allow(dead_code)]
     pub async fn get_stats(&self, container_id: &str) -> PodmanResult<ContainerStats> {
         let output = Command::new(&self.binary)
             .args(["stats", "--no-stream", "--format", "json", container_id])
@@ -327,6 +334,7 @@ impl Podman {
     }
 
     /// Check if an image exists locally.
+    #[allow(dead_code)]
     pub async fn image_exists(&self, image: &str) -> PodmanResult<bool> {
         let output = Command::new(&self.binary)
             .args(["image", "exists", image])
@@ -343,6 +351,7 @@ impl Podman {
     }
 
     /// Pull an image.
+    #[allow(dead_code)]
     pub async fn pull_image(&self, image: &str) -> PodmanResult<()> {
         let output = Command::new(&self.binary)
             .args(["pull", image])

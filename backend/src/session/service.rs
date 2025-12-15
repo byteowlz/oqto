@@ -187,6 +187,7 @@ impl SessionService {
     }
 
     /// List active sessions.
+    #[allow(dead_code)]
     pub async fn list_active_sessions(&self) -> Result<Vec<Session>> {
         self.repo.list_active().await
     }
@@ -207,6 +208,7 @@ impl SessionService {
     }
 
     /// Cleanup stale sessions (containers that no longer exist).
+    #[allow(dead_code)]
     pub async fn cleanup_stale_sessions(&self) -> Result<usize> {
         let active = self.repo.list_active().await?;
         let mut cleaned = 0;

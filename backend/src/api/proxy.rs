@@ -158,7 +158,7 @@ async fn handle_terminal_proxy(
                     }
                 }
                 Ok(AxumMessage::Binary(data)) => {
-                    if ttyd_write.send(TungsteniteMessage::Binary(data.into())).await.is_err() {
+                    if ttyd_write.send(TungsteniteMessage::Binary(data)).await.is_err() {
                         break;
                     }
                 }

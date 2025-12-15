@@ -43,6 +43,7 @@ impl Database {
     }
 
     /// Create an in-memory database (for testing).
+    #[allow(dead_code)]
     pub async fn in_memory() -> Result<Self> {
         let options = SqliteConnectOptions::from_str("sqlite::memory:")
             .context("parsing in-memory database URL")?

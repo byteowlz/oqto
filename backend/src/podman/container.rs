@@ -30,6 +30,7 @@ impl PortMapping {
     }
 
     /// Create a UDP port mapping.
+    #[allow(dead_code)]
     pub fn udp(host_port: u16, container_port: u16) -> Self {
         Self {
             host_port,
@@ -59,6 +60,7 @@ pub struct ContainerConfig {
     /// Working directory inside the container.
     pub workdir: Option<String>,
     /// Labels for the container.
+    #[allow(dead_code)]
     pub labels: HashMap<String, String>,
 }
 
@@ -84,6 +86,7 @@ impl ContainerConfig {
     }
 
     /// Set the command to run.
+    #[allow(dead_code)]
     pub fn command(mut self, cmd: Vec<String>) -> Self {
         self.command = cmd;
         self
@@ -96,6 +99,7 @@ impl ContainerConfig {
     }
 
     /// Add multiple environment variables.
+    #[allow(dead_code)]
     pub fn envs(mut self, envs: HashMap<String, String>) -> Self {
         self.env.extend(envs);
         self
@@ -114,12 +118,14 @@ impl ContainerConfig {
     }
 
     /// Set the working directory.
+    #[allow(dead_code)]
     pub fn workdir(mut self, workdir: impl Into<String>) -> Self {
         self.workdir = Some(workdir.into());
         self
     }
 
     /// Add a label.
+    #[allow(dead_code)]
     pub fn label(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.labels.insert(key.into(), value.into());
         self
@@ -127,8 +133,9 @@ impl ContainerConfig {
 }
 
 /// Container state.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[allow(dead_code)]
 pub enum ContainerState {
     /// Container is being created.
     Created,
@@ -145,6 +152,7 @@ pub enum ContainerState {
     /// Container is dead.
     Dead,
     /// Unknown state.
+    #[default]
     #[serde(other)]
     Unknown,
 }
@@ -167,6 +175,7 @@ impl std::fmt::Display for ContainerState {
 /// Container information from podman ps/inspect.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
+#[allow(dead_code)]
 pub struct Container {
     /// Container ID.
     #[serde(alias = "Id")]
@@ -197,14 +206,9 @@ pub struct Container {
     pub ports: Vec<ContainerPort>,
 }
 
-impl Default for ContainerState {
-    fn default() -> Self {
-        ContainerState::Unknown
-    }
-}
-
 /// Port binding information.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(dead_code)]
 pub struct ContainerPort {
     /// Host IP.
     #[serde(default, rename = "hostIP")]
@@ -223,6 +227,7 @@ pub struct ContainerPort {
 /// Container resource statistics.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
+#[allow(dead_code)]
 pub struct ContainerStats {
     /// Container ID.
     #[serde(alias = "ContainerID", alias = "Container")]

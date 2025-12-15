@@ -3,11 +3,11 @@
 use axum::{
     extract::{Path, State},
     http::StatusCode,
-    response::IntoResponse,
     Json,
 };
 use serde::{Deserialize, Serialize};
 
+use crate::auth::{AuthError, CurrentUser, RequireAdmin};
 use crate::session::{CreateSessionRequest, Session};
 
 use super::state::AppState;
@@ -182,6 +182,119 @@ pub async fn delete_session(
                 StatusCode::NOT_FOUND
             } else if e.to_string().contains("active") {
                 StatusCode::CONFLICT
+            } else {
+                StatusCode::INTERNAL_SERVER_ERROR
+            };
+            (status, Json(ErrorResponse::new(e.to_string())))
+        })?;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+// ============================================================================
+// Authentication Handlers
+// ============================================================================
+
+/// Login request for dev mode.
+#[derive(Debug, Deserialize)]
+pub struct LoginRequest {
+    pub username: String,
+    pub password: String,
+}
+
+/// Login response.
+#[derive(Debug, Serialize)]
+pub struct LoginResponse {
+    pub token: String,
+    pub user: UserInfo,
+}
+
+/// User info in login response.
+#[derive(Debug, Serialize)]
+pub struct UserInfo {
+    pub id: String,
+    pub name: String,
+    pub email: String,
+    pub role: String,
+}
+
+/// Dev mode login endpoint.
+pub async fn dev_login(
+    State(state): State<AppState>,
+    Json(request): Json<LoginRequest>,
+) -> Result<Json<LoginResponse>, AuthError> {
+    // Only works in dev mode
+    if !state.auth.is_dev_mode() {
+        return Err(AuthError::InvalidCredentials);
+    }
+    
+    // Validate credentials
+    let user = state.auth
+        .validate_dev_credentials(&request.username, &request.password)
+        .ok_or(AuthError::InvalidCredentials)?;
+    
+    // Generate token
+    let token = state.auth.generate_dev_token(user)?;
+    
+    Ok(Json(LoginResponse {
+        token,
+        user: UserInfo {
+            id: user.id.clone(),
+            name: user.name.clone(),
+            email: user.email.clone(),
+            role: user.role.to_string(),
+        },
+    }))
+}
+
+/// Get current user info.
+#[allow(dead_code)]
+pub async fn get_current_user(
+    user: CurrentUser,
+) -> Json<UserInfo> {
+    Json(UserInfo {
+        id: user.id().to_string(),
+        name: user.display_name().to_string(),
+        email: user.claims.email.clone().unwrap_or_default(),
+        role: user.role().to_string(),
+    })
+}
+
+// ============================================================================
+// Admin Handlers
+// ============================================================================
+
+/// List all sessions (admin only).
+pub async fn admin_list_sessions(
+    State(state): State<AppState>,
+    RequireAdmin(_user): RequireAdmin,
+) -> Result<Json<Vec<Session>>, (StatusCode, Json<ErrorResponse>)> {
+    state
+        .sessions
+        .list_sessions()
+        .await
+        .map(Json)
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse::new(e.to_string())),
+            )
+        })
+}
+
+/// Force stop a session (admin only).
+pub async fn admin_force_stop_session(
+    State(state): State<AppState>,
+    RequireAdmin(_user): RequireAdmin,
+    Path(session_id): Path<String>,
+) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
+    state
+        .sessions
+        .stop_session(&session_id)
+        .await
+        .map_err(|e| {
+            let status = if e.to_string().contains("not found") {
+                StatusCode::NOT_FOUND
             } else {
                 StatusCode::INTERNAL_SERVER_ERROR
             };

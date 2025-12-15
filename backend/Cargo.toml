@@ -3,6 +3,14 @@ name = "workspace-backend"
 version = "0.1.0"
 edition = "2024"
 
+[[bin]]
+name = "workspace-backend"
+path = "src/main.rs"
+
+[lib]
+name = "workspace_backend"
+path = "src/lib.rs"
+
 [dependencies]
 # Error handling
 anyhow = "1.0.95"
@@ -50,3 +58,12 @@ chrono = { version = "0.4", features = ["serde"] }
 async-trait = "0.1"
 futures = "0.3"
 tokio-tungstenite = "0.26"
+
+# Authentication
+jsonwebtoken = "9"
+base64 = "0.22"
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
+axum-test = "17"
+tempfile = "3"
