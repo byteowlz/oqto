@@ -84,6 +84,11 @@ RUN echo 'eval "$(starship init bash)"' >> /home/${USERNAME}/.bashrc && \
   echo 'alias vim="nvim"' >> /home/${USERNAME}/.bashrc && \
   echo 'alias vi="nvim"' >> /home/${USERNAME}/.bashrc
 
+# Copy fileserver binary (pre-built for target architecture)
+# Build with: cd fileserver && cargo build --release --target x86_64-unknown-linux-gnu
+# COPY --chown=${USERNAME}:${USERNAME} fileserver/target/x86_64-unknown-linux-gnu/release/fileserver /usr/local/bin/fileserver
+# For now, we'll use the fallback Python http.server until fileserver is built into CI
+
 # Copy entrypoint script
 COPY --chown=${USERNAME}:${USERNAME} entrypoint.sh /home/${USERNAME}/entrypoint.sh
 RUN chmod +x /home/${USERNAME}/entrypoint.sh

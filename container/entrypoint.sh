@@ -27,7 +27,14 @@ trap cleanup SIGTERM SIGINT
 
 # Start file server in the background
 echo "Starting file server on port ${FILESERVER_PORT}..."
-python -m http.server "${FILESERVER_PORT}" --bind 0.0.0.0 --directory "${WORKSPACE_DIR}" &
+if command -v fileserver &> /dev/null; then
+    # Use our custom Rust fileserver
+    fileserver --port "${FILESERVER_PORT}" --bind 0.0.0.0 --root "${WORKSPACE_DIR}" &
+else
+    # Fallback to Python http.server (limited functionality)
+    echo "Warning: fileserver binary not found, using Python fallback (no /tree or upload support)"
+    python -m http.server "${FILESERVER_PORT}" --bind 0.0.0.0 --directory "${WORKSPACE_DIR}" &
+fi
 FILE_SERVER_PID=$!
 
 # Start ttyd web terminal in the background
