@@ -2,7 +2,7 @@
 
 use axum::{
     Router, middleware,
-    routing::{delete, get, post},
+    routing::{delete, get, post, put},
 };
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::{DefaultMakeSpan, DefaultOnRequest, DefaultOnResponse, TraceLayer};
@@ -70,12 +70,24 @@ pub fn create_router(state: AppState) -> Router {
             get(proxy::proxy_terminal_ws),
         )
         .route("/session/{session_id}/term", get(proxy::proxy_terminal_ws))
-        // Admin routes
+        // User profile routes (authenticated users)
+        .route("/me", get(handlers::get_me))
+        .route("/me", put(handlers::update_me))
+        // Admin routes - sessions
         .route("/admin/sessions", get(handlers::admin_list_sessions))
         .route(
             "/admin/sessions/{session_id}",
             delete(handlers::admin_force_stop_session),
         )
+        // Admin routes - user management
+        .route("/admin/users", get(handlers::list_users))
+        .route("/admin/users", post(handlers::create_user))
+        .route("/admin/users/stats", get(handlers::get_user_stats))
+        .route("/admin/users/{user_id}", get(handlers::get_user))
+        .route("/admin/users/{user_id}", put(handlers::update_user))
+        .route("/admin/users/{user_id}", delete(handlers::delete_user))
+        .route("/admin/users/{user_id}/deactivate", post(handlers::deactivate_user))
+        .route("/admin/users/{user_id}/activate", post(handlers::activate_user))
         .layer(middleware::from_fn_with_state(
             auth_state.clone(),
             auth_middleware,

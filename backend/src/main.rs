@@ -19,6 +19,7 @@ mod auth;
 mod db;
 mod podman;
 mod session;
+mod user;
 
 const APP_NAME: &str = env!("CARGO_PKG_NAME");
 
@@ -548,8 +549,12 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     let session_repo = session::SessionRepository::new(database.pool().clone());
     let session_service = session::SessionService::new(session_repo, podman, session_config);
 
+    // Initialize user service
+    let user_repo = user::UserRepository::new(database.pool().clone());
+    let user_service = user::UserService::new(user_repo);
+
     // Create app state
-    let state = api::AppState::new(session_service, auth_state);
+    let state = api::AppState::new(session_service, user_service, auth_state);
 
     // Create router
     let app = api::create_router(state);

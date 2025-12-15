@@ -6,6 +6,7 @@ use workspace_backend::auth::{AuthConfig, AuthState};
 use workspace_backend::db::Database;
 use workspace_backend::podman::Podman;
 use workspace_backend::session::{SessionRepository, SessionService, SessionServiceConfig};
+use workspace_backend::user::{UserRepository, UserService};
 
 /// Create a test application with all services initialized.
 pub async fn test_app() -> Router {
@@ -24,8 +25,12 @@ pub async fn test_app() -> Router {
     let session_repo = SessionRepository::new(db.pool().clone());
     let session_service = SessionService::new(session_repo, podman, session_config);
 
+    // Create user service
+    let user_repo = UserRepository::new(db.pool().clone());
+    let user_service = UserService::new(user_repo);
+
     // Create app state and router
-    let state = api::AppState::new(session_service, auth_state);
+    let state = api::AppState::new(session_service, user_service, auth_state);
     api::create_router(state)
 }
 
@@ -46,7 +51,11 @@ pub async fn test_app_with_token() -> (Router, String) {
     let session_repo = SessionRepository::new(db.pool().clone());
     let session_service = SessionService::new(session_repo, podman, session_config);
 
-    let state = api::AppState::new(session_service, auth_state);
+    // Create user service
+    let user_repo = UserRepository::new(db.pool().clone());
+    let user_service = UserService::new(user_repo);
+
+    let state = api::AppState::new(session_service, user_service, auth_state);
     (api::create_router(state), token)
 }
 
@@ -67,6 +76,10 @@ pub async fn test_app_with_user_token() -> (Router, String) {
     let session_repo = SessionRepository::new(db.pool().clone());
     let session_service = SessionService::new(session_repo, podman, session_config);
 
-    let state = api::AppState::new(session_service, auth_state);
+    // Create user service
+    let user_repo = UserRepository::new(db.pool().clone());
+    let user_service = UserService::new(user_repo);
+
+    let state = api::AppState::new(session_service, user_service, auth_state);
     (api::create_router(state), token)
 }

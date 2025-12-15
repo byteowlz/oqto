@@ -8,3 +8,4 @@ pub mod db;
 pub mod podman;
 pub mod session;
 pub mod storage;
+pub mod user;

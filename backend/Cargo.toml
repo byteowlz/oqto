@@ -63,6 +63,8 @@ tokio-stream = "0.1"
 # Authentication
 jsonwebtoken = "9"
 base64 = "0.22"
+bcrypt = "0.16"
+nanoid = "0.4"
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }

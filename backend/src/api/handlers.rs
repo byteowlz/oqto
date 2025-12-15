@@ -2,7 +2,7 @@
 
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::{StatusCode, header::SET_COOKIE},
     response::AppendHeaders,
     response::IntoResponse,
@@ -12,6 +12,9 @@ use tracing::{info, instrument};
 
 use crate::auth::{AuthError, CurrentUser, RequireAdmin};
 use crate::session::{CreateSessionRequest, Session};
+use crate::user::{
+    CreateUserRequest, UpdateUserRequest, UserInfo as DbUserInfo, UserListQuery, UserStats,
+};
 
 use super::error::{ApiError, ApiResult};
 use super::state::AppState;
@@ -245,4 +248,232 @@ pub async fn admin_force_stop_session(
 
     info!(session_id = %session_id, "Admin force stopped session");
     Ok(StatusCode::NO_CONTENT)
+}
+
+// ============================================================================
+// User Management Handlers
+// ============================================================================
+
+/// List all users (admin only).
+#[instrument(skip(state, _user))]
+pub async fn list_users(
+    State(state): State<AppState>,
+    RequireAdmin(_user): RequireAdmin,
+    Query(query): Query<UserListQuery>,
+) -> ApiResult<Json<Vec<DbUserInfo>>> {
+    let users = state.users.list_users(query).await.map_err(|e| {
+        ApiError::internal(e.to_string())
+    })?;
+
+    let user_infos: Vec<DbUserInfo> = users.into_iter().map(|u| u.into()).collect();
+    info!(count = user_infos.len(), "Listed users");
+    Ok(Json(user_infos))
+}
+
+/// Get a specific user (admin only).
+#[instrument(skip(state, _user))]
+pub async fn get_user(
+    State(state): State<AppState>,
+    RequireAdmin(_user): RequireAdmin,
+    Path(user_id): Path<String>,
+) -> ApiResult<Json<DbUserInfo>> {
+    state
+        .users
+        .get_user(&user_id)
+        .await
+        .map_err(|e| ApiError::internal(e.to_string()))?
+        .map(|u| Json(u.into()))
+        .ok_or_else(|| ApiError::not_found(format!("User {} not found", user_id)))
+}
+
+/// Create a new user (admin only).
+#[instrument(skip(state, _user, request), fields(username = ?request.username))]
+pub async fn create_user(
+    State(state): State<AppState>,
+    RequireAdmin(_user): RequireAdmin,
+    Json(request): Json<CreateUserRequest>,
+) -> ApiResult<(StatusCode, Json<DbUserInfo>)> {
+    let user = state.users.create_user(request).await.map_err(|e| {
+        let msg = e.to_string();
+        if msg.contains("already taken") || msg.contains("already registered") {
+            ApiError::conflict(msg)
+        } else if msg.contains("Invalid") {
+            ApiError::bad_request(msg)
+        } else {
+            ApiError::internal(msg)
+        }
+    })?;
+
+    info!(user_id = %user.id, "Created new user");
+    Ok((StatusCode::CREATED, Json(user.into())))
+}
+
+/// Update a user (admin only).
+#[instrument(skip(state, _user, request))]
+pub async fn update_user(
+    State(state): State<AppState>,
+    RequireAdmin(_user): RequireAdmin,
+    Path(user_id): Path<String>,
+    Json(request): Json<UpdateUserRequest>,
+) -> ApiResult<Json<DbUserInfo>> {
+    let user = state.users.update_user(&user_id, request).await.map_err(|e| {
+        let msg = e.to_string();
+        if msg.contains("not found") {
+            ApiError::not_found(msg)
+        } else if msg.contains("already taken") || msg.contains("already registered") {
+            ApiError::conflict(msg)
+        } else if msg.contains("Invalid") {
+            ApiError::bad_request(msg)
+        } else {
+            ApiError::internal(msg)
+        }
+    })?;
+
+    info!(user_id = %user.id, "Updated user");
+    Ok(Json(user.into()))
+}
+
+/// Delete a user (admin only).
+#[instrument(skip(state, _user))]
+pub async fn delete_user(
+    State(state): State<AppState>,
+    RequireAdmin(_user): RequireAdmin,
+    Path(user_id): Path<String>,
+) -> ApiResult<StatusCode> {
+    state.users.delete_user(&user_id).await.map_err(|e| {
+        let msg = e.to_string();
+        if msg.contains("not found") {
+            ApiError::not_found(msg)
+        } else {
+            ApiError::internal(msg)
+        }
+    })?;
+
+    info!(user_id = %user_id, "Deleted user");
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Deactivate a user (admin only).
+#[instrument(skip(state, _user))]
+pub async fn deactivate_user(
+    State(state): State<AppState>,
+    RequireAdmin(_user): RequireAdmin,
+    Path(user_id): Path<String>,
+) -> ApiResult<Json<DbUserInfo>> {
+    let user = state.users.deactivate_user(&user_id).await.map_err(|e| {
+        let msg = e.to_string();
+        if msg.contains("not found") {
+            ApiError::not_found(msg)
+        } else {
+            ApiError::internal(msg)
+        }
+    })?;
+
+    info!(user_id = %user.id, "Deactivated user");
+    Ok(Json(user.into()))
+}
+
+/// Activate a user (admin only).
+#[instrument(skip(state, _user))]
+pub async fn activate_user(
+    State(state): State<AppState>,
+    RequireAdmin(_user): RequireAdmin,
+    Path(user_id): Path<String>,
+) -> ApiResult<Json<DbUserInfo>> {
+    let user = state.users.activate_user(&user_id).await.map_err(|e| {
+        let msg = e.to_string();
+        if msg.contains("not found") {
+            ApiError::not_found(msg)
+        } else {
+            ApiError::internal(msg)
+        }
+    })?;
+
+    info!(user_id = %user.id, "Activated user");
+    Ok(Json(user.into()))
+}
+
+/// Get user statistics (admin only).
+#[instrument(skip(state, _user))]
+pub async fn get_user_stats(
+    State(state): State<AppState>,
+    RequireAdmin(_user): RequireAdmin,
+) -> ApiResult<Json<UserStats>> {
+    let stats = state.users.get_stats().await.map_err(|e| {
+        ApiError::internal(e.to_string())
+    })?;
+
+    Ok(Json(stats))
+}
+
+/// Get current user profile.
+#[instrument(skip(state, user))]
+pub async fn get_me(
+    State(state): State<AppState>,
+    user: CurrentUser,
+) -> ApiResult<Json<DbUserInfo>> {
+    // Try to get user from database
+    if let Some(db_user) = state.users.get_user(user.id()).await.map_err(|e| {
+        ApiError::internal(e.to_string())
+    })? {
+        return Ok(Json(db_user.into()));
+    }
+
+    // Fallback to creating UserInfo from JWT claims
+    Ok(Json(DbUserInfo {
+        id: user.id().to_string(),
+        username: user.claims.preferred_username.clone().unwrap_or_else(|| user.id().to_string()),
+        email: user.claims.email.clone().unwrap_or_default(),
+        display_name: user.display_name().to_string(),
+        avatar_url: None,
+        role: user.role().into(),
+        is_active: true,
+        created_at: String::new(),
+        last_login_at: None,
+    }))
+}
+
+/// Update current user profile.
+#[instrument(skip(state, user, request))]
+pub async fn update_me(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Json(request): Json<UpdateMeRequest>,
+) -> ApiResult<Json<DbUserInfo>> {
+    // Only allow updating display_name, avatar_url, and settings
+    let update = UpdateUserRequest {
+        display_name: request.display_name,
+        avatar_url: request.avatar_url,
+        settings: request.settings,
+        ..Default::default()
+    };
+
+    let updated = state.users.update_user(user.id(), update).await.map_err(|e| {
+        let msg = e.to_string();
+        if msg.contains("not found") {
+            ApiError::not_found(msg)
+        } else {
+            ApiError::internal(msg)
+        }
+    })?;
+
+    Ok(Json(updated.into()))
+}
+
+/// Request body for updating own profile.
+#[derive(Debug, Deserialize)]
+pub struct UpdateMeRequest {
+    pub display_name: Option<String>,
+    pub avatar_url: Option<String>,
+    pub settings: Option<String>,
+}
+
+// Helper to convert auth Role to user Role
+impl From<crate::auth::Role> for crate::user::UserRole {
+    fn from(role: crate::auth::Role) -> Self {
+        match role {
+            crate::auth::Role::Admin => crate::user::UserRole::Admin,
+            crate::auth::Role::User => crate::user::UserRole::User,
+        }
+    }
 }

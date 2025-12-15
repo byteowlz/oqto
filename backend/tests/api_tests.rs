@@ -335,3 +335,516 @@ async fn test_delete_nonexistent_session() {
 
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
 }
+
+// ============================================================================
+// User Management Tests
+// ============================================================================
+
+/// Test that user list endpoint requires admin role.
+#[tokio::test]
+async fn test_list_users_requires_admin() {
+    let app = test_app().await;
+
+    // Try with regular user
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/admin/users")
+                .method(Method::GET)
+                .header("X-Dev-User", "user")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+}
+
+/// Test listing users with admin role.
+#[tokio::test]
+async fn test_list_users_with_admin() {
+    let app = test_app().await;
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/admin/users")
+                .method(Method::GET)
+                .header("X-Dev-User", "dev")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let json: Value = serde_json::from_slice(&body).unwrap();
+
+    assert!(json.is_array());
+}
+
+/// Test creating a new user.
+#[tokio::test]
+async fn test_create_user() {
+    let app = test_app().await;
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/admin/users")
+                .method(Method::POST)
+                .header("X-Dev-User", "dev")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    serde_json::to_string(&json!({
+                        "username": "newuser",
+                        "email": "newuser@example.com",
+                        "password": "password123",
+                        "display_name": "New User"
+                    }))
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::CREATED);
+
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let json: Value = serde_json::from_slice(&body).unwrap();
+
+    assert!(json["id"].is_string());
+    assert_eq!(json["username"], "newuser");
+    assert_eq!(json["email"], "newuser@example.com");
+    assert_eq!(json["display_name"], "New User");
+    assert_eq!(json["role"], "user");
+    assert_eq!(json["is_active"], true);
+}
+
+/// Test creating user with duplicate username returns conflict.
+#[tokio::test]
+async fn test_create_user_duplicate_username() {
+    let app = test_app().await;
+
+    // Create first user
+    let create_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/admin/users")
+                .method(Method::POST)
+                .header("X-Dev-User", "dev")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    serde_json::to_string(&json!({
+                        "username": "duplicate",
+                        "email": "first@example.com",
+                        "password": "password123"
+                    }))
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(create_response.status(), StatusCode::CREATED);
+
+    // Try to create with same username
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/admin/users")
+                .method(Method::POST)
+                .header("X-Dev-User", "dev")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    serde_json::to_string(&json!({
+                        "username": "duplicate",
+                        "email": "second@example.com",
+                        "password": "password123"
+                    }))
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+}
+
+/// Test creating user with invalid username returns bad request.
+#[tokio::test]
+async fn test_create_user_invalid_username() {
+    let app = test_app().await;
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/admin/users")
+                .method(Method::POST)
+                .header("X-Dev-User", "dev")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    serde_json::to_string(&json!({
+                        "username": "ab",  // too short
+                        "email": "user@example.com",
+                        "password": "password123"
+                    }))
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+/// Test getting user stats.
+#[tokio::test]
+async fn test_user_stats() {
+    let app = test_app().await;
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/admin/users/stats")
+                .method(Method::GET)
+                .header("X-Dev-User", "dev")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let json: Value = serde_json::from_slice(&body).unwrap();
+
+    assert!(json["total"].is_i64());
+    assert!(json["admins"].is_i64());
+    assert!(json["users"].is_i64());
+}
+
+/// Test getting a specific user.
+#[tokio::test]
+async fn test_get_user() {
+    let app = test_app().await;
+
+    // Create a user first
+    let create_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/admin/users")
+                .method(Method::POST)
+                .header("X-Dev-User", "dev")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    serde_json::to_string(&json!({
+                        "username": "gettest",
+                        "email": "gettest@example.com",
+                        "password": "password123"
+                    }))
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let body = axum::body::to_bytes(create_response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let created: Value = serde_json::from_slice(&body).unwrap();
+    let user_id = created["id"].as_str().unwrap();
+
+    // Now get the user
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/admin/users/{}", user_id))
+                .method(Method::GET)
+                .header("X-Dev-User", "dev")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let json: Value = serde_json::from_slice(&body).unwrap();
+
+    assert_eq!(json["id"], user_id);
+    assert_eq!(json["username"], "gettest");
+}
+
+/// Test getting a non-existent user returns 404.
+#[tokio::test]
+async fn test_get_nonexistent_user() {
+    let app = test_app().await;
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/admin/users/nonexistent-id")
+                .method(Method::GET)
+                .header("X-Dev-User", "dev")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+/// Test updating a user.
+#[tokio::test]
+async fn test_update_user() {
+    let app = test_app().await;
+
+    // Create a user first
+    let create_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/admin/users")
+                .method(Method::POST)
+                .header("X-Dev-User", "dev")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    serde_json::to_string(&json!({
+                        "username": "updatetest",
+                        "email": "updatetest@example.com",
+                        "password": "password123"
+                    }))
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let body = axum::body::to_bytes(create_response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let created: Value = serde_json::from_slice(&body).unwrap();
+    let user_id = created["id"].as_str().unwrap();
+
+    // Update the user
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/admin/users/{}", user_id))
+                .method(Method::PUT)
+                .header("X-Dev-User", "dev")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    serde_json::to_string(&json!({
+                        "display_name": "Updated Name",
+                        "role": "admin"
+                    }))
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let json: Value = serde_json::from_slice(&body).unwrap();
+
+    assert_eq!(json["display_name"], "Updated Name");
+    assert_eq!(json["role"], "admin");
+}
+
+/// Test deleting a user.
+#[tokio::test]
+async fn test_delete_user() {
+    let app = test_app().await;
+
+    // Create a user first
+    let create_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/admin/users")
+                .method(Method::POST)
+                .header("X-Dev-User", "dev")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    serde_json::to_string(&json!({
+                        "username": "deletetest",
+                        "email": "deletetest@example.com",
+                        "password": "password123"
+                    }))
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let body = axum::body::to_bytes(create_response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let created: Value = serde_json::from_slice(&body).unwrap();
+    let user_id = created["id"].as_str().unwrap();
+
+    // Delete the user
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/admin/users/{}", user_id))
+                .method(Method::DELETE)
+                .header("X-Dev-User", "dev")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+    // Verify user is gone
+    let get_response = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/admin/users/{}", user_id))
+                .method(Method::GET)
+                .header("X-Dev-User", "dev")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(get_response.status(), StatusCode::NOT_FOUND);
+}
+
+/// Test deactivating and activating a user.
+#[tokio::test]
+async fn test_deactivate_activate_user() {
+    let app = test_app().await;
+
+    // Create a user first
+    let create_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/admin/users")
+                .method(Method::POST)
+                .header("X-Dev-User", "dev")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    serde_json::to_string(&json!({
+                        "username": "deactivatetest",
+                        "email": "deactivatetest@example.com",
+                        "password": "password123"
+                    }))
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let body = axum::body::to_bytes(create_response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let created: Value = serde_json::from_slice(&body).unwrap();
+    let user_id = created["id"].as_str().unwrap();
+
+    // Deactivate the user
+    let deactivate_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/admin/users/{}/deactivate", user_id))
+                .method(Method::POST)
+                .header("X-Dev-User", "dev")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(deactivate_response.status(), StatusCode::OK);
+
+    let body = axum::body::to_bytes(deactivate_response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let json: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["is_active"], false);
+
+    // Activate the user
+    let activate_response = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/admin/users/{}/activate", user_id))
+                .method(Method::POST)
+                .header("X-Dev-User", "dev")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(activate_response.status(), StatusCode::OK);
+
+    let body = axum::body::to_bytes(activate_response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let json: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["is_active"], true);
+}
+
+/// Test getting current user profile.
+#[tokio::test]
+async fn test_get_me() {
+    let app = test_app().await;
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/me")
+                .method(Method::GET)
+                .header("X-Dev-User", "dev")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let json: Value = serde_json::from_slice(&body).unwrap();
+
+    assert_eq!(json["id"], "dev");
+}
