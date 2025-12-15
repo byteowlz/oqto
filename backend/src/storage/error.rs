@@ -11,23 +11,23 @@ pub enum StorageError {
     /// File or directory not found.
     #[error("not found: {0}")]
     NotFound(String),
-    
+
     /// Permission denied.
     #[error("permission denied: {0}")]
     PermissionDenied(String),
-    
+
     /// Path already exists.
     #[error("already exists: {0}")]
     AlreadyExists(String),
-    
+
     /// IO error.
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
-    
+
     /// Invalid path.
     #[error("invalid path: {0}")]
     InvalidPath(String),
-    
+
     /// Storage backend error.
     #[error("backend error: {0}")]
     Backend(String),

@@ -7,11 +7,22 @@ use axum::{
     response::Response,
 };
 use chrono::Utc;
-use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
+use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
 use log::{debug, warn};
 use std::sync::Arc;
 
 use super::{AuthConfig, AuthError, Claims, DevUser, Role};
+
+fn token_from_cookie_header<'a>(cookie_header: &'a str, cookie_name: &str) -> Option<&'a str> {
+    cookie_header.split(';').map(str::trim).find_map(|pair| {
+        let (name, value) = pair.split_once('=')?;
+        if name.trim() == cookie_name {
+            Some(value.trim())
+        } else {
+            None
+        }
+    })
+}
 
 /// Authentication state shared across handlers.
 #[derive(Clone)]
@@ -27,35 +38,36 @@ impl AuthState {
             .jwt_secret
             .as_ref()
             .map(|s| DecodingKey::from_secret(s.as_bytes()));
-        
+
         Self {
             config: Arc::new(config),
             decoding_key,
         }
     }
-    
+
     /// Check if dev mode is enabled.
     pub fn is_dev_mode(&self) -> bool {
         self.config.dev_mode
     }
-    
+
     /// Get dev users.
     #[allow(dead_code)]
     pub fn dev_users(&self) -> &[DevUser] {
         &self.config.dev_users
     }
-    
+
     /// Validate credentials in dev mode.
     pub fn validate_dev_credentials(&self, username: &str, password: &str) -> Option<&DevUser> {
         if !self.config.dev_mode {
             return None;
         }
-        
-        self.config.dev_users.iter().find(|u| {
-            (u.id == username || u.email == username) && u.password == password
-        })
+
+        self.config
+            .dev_users
+            .iter()
+            .find(|u| (u.id == username || u.email == username) && u.password == password)
     }
-    
+
     /// Validate a JWT token.
     pub fn validate_token(&self, token: &str) -> Result<Claims, AuthError> {
         // In dev mode with no token, try to find a matching dev user header
@@ -65,35 +77,38 @@ impl AuthState {
                 return self.get_dev_user_claims(user_id);
             }
         }
-        
+
         // Validate JWT
-        let decoding_key = self.decoding_key.as_ref()
+        let decoding_key = self
+            .decoding_key
+            .as_ref()
             .ok_or_else(|| AuthError::Internal("no JWT secret configured".to_string()))?;
-        
+
         let mut validation = Validation::new(Algorithm::HS256);
         validation.validate_exp = true;
         validation.validate_nbf = false;
         validation.required_spec_claims.clear(); // Allow missing iss/aud
-        
-        let token_data = decode::<Claims>(token, decoding_key, &validation)
-            .map_err(|e| {
-                warn!("JWT validation failed: {:?}", e);
-                match e.kind() {
-                    jsonwebtoken::errors::ErrorKind::ExpiredSignature => AuthError::TokenExpired,
-                    _ => AuthError::InvalidToken(e.to_string()),
-                }
-            })?;
-        
+
+        let token_data = decode::<Claims>(token, decoding_key, &validation).map_err(|e| {
+            warn!("JWT validation failed: {:?}", e);
+            match e.kind() {
+                jsonwebtoken::errors::ErrorKind::ExpiredSignature => AuthError::TokenExpired,
+                _ => AuthError::InvalidToken(e.to_string()),
+            }
+        })?;
+
         Ok(token_data.claims)
     }
-    
+
     /// Get claims for a dev user.
     fn get_dev_user_claims(&self, user_id: &str) -> Result<Claims, AuthError> {
-        let user = self.config.dev_users
+        let user = self
+            .config
+            .dev_users
             .iter()
             .find(|u| u.id == user_id)
             .ok_or(AuthError::UserNotFound)?;
-        
+
         Ok(Claims {
             sub: user.id.clone(),
             iss: Some("dev".to_string()),
@@ -109,14 +124,17 @@ impl AuthState {
             role: Some(user.role.to_string()),
         })
     }
-    
+
     /// Generate a dev token for a user.
     pub fn generate_dev_token(&self, user: &DevUser) -> Result<String, AuthError> {
-        use jsonwebtoken::{encode, EncodingKey, Header};
-        
-        let secret = self.config.jwt_secret.as_ref()
+        use jsonwebtoken::{EncodingKey, Header, encode};
+
+        let secret = self
+            .config
+            .jwt_secret
+            .as_ref()
             .ok_or_else(|| AuthError::Internal("no JWT secret configured".to_string()))?;
-        
+
         let claims = Claims {
             sub: user.id.clone(),
             iss: Some("dev".to_string()),
@@ -131,12 +149,13 @@ impl AuthState {
             roles: vec![user.role.to_string()],
             role: Some(user.role.to_string()),
         };
-        
+
         encode(
             &Header::default(),
             &claims,
             &EncodingKey::from_secret(secret.as_bytes()),
-        ).map_err(|e| AuthError::Internal(e.to_string()))
+        )
+        .map_err(|e| AuthError::Internal(e.to_string()))
     }
 }
 
@@ -152,17 +171,17 @@ impl CurrentUser {
     pub fn id(&self) -> &str {
         &self.claims.sub
     }
-    
+
     /// Get the user's role.
     pub fn role(&self) -> Role {
         self.claims.effective_role()
     }
-    
+
     /// Check if user is admin.
     pub fn is_admin(&self) -> bool {
         self.claims.is_admin()
     }
-    
+
     /// Get display name.
     pub fn display_name(&self) -> &str {
         self.claims.display_name()
@@ -198,18 +217,31 @@ pub async fn auth_middleware(
         .headers()
         .get(AUTHORIZATION)
         .and_then(|h| h.to_str().ok());
-    
+
+    // Allow cookie-based auth for browser clients (EventSource/WebSocket don't support custom headers).
+    let cookie_token = req
+        .headers()
+        .get(axum::http::header::COOKIE)
+        .and_then(|h| h.to_str().ok())
+        .and_then(|cookie_header| token_from_cookie_header(cookie_header, "auth_token"));
+
     let claims = if let Some(header) = auth_header {
         // Parse Bearer token
         let token = header
             .strip_prefix("Bearer ")
             .ok_or(AuthError::InvalidAuthHeader)?;
-        
+
         // Validate token
+        auth.validate_token(token)?
+    } else if let Some(token) = cookie_token {
         auth.validate_token(token)?
     } else if auth.is_dev_mode() {
         // In dev mode, allow X-Dev-User header
-        if let Some(user_id) = req.headers().get("X-Dev-User").and_then(|h| h.to_str().ok()) {
+        if let Some(user_id) = req
+            .headers()
+            .get("X-Dev-User")
+            .and_then(|h| h.to_str().ok())
+        {
             debug!("Using dev user: {}", user_id);
             auth.validate_token(&format!("dev:{}", user_id))?
         } else {
@@ -218,11 +250,11 @@ pub async fn auth_middleware(
     } else {
         return Err(AuthError::MissingAuthHeader);
     };
-    
+
     // Inject current user into extensions
     let user = CurrentUser { claims };
     req.extensions_mut().insert(user);
-    
+
     Ok(next.run(req).await)
 }
 
@@ -244,13 +276,13 @@ where
             .get::<CurrentUser>()
             .cloned()
             .ok_or(AuthError::MissingAuthHeader)?;
-        
+
         if !user.is_admin() {
             return Err(AuthError::InsufficientPermissions(
-                "admin role required".to_string()
+                "admin role required".to_string(),
             ));
         }
-        
+
         Ok(RequireAdmin(user))
     }
 }
@@ -270,16 +302,16 @@ mod tests {
     fn test_validate_dev_credentials() {
         let config = AuthConfig::default();
         let state = AuthState::new(config);
-        
+
         // Valid credentials
         let user = state.validate_dev_credentials("dev", "dev");
         assert!(user.is_some());
         assert_eq!(user.unwrap().role, Role::Admin);
-        
+
         // Valid email credentials
         let user = state.validate_dev_credentials("user@localhost", "user");
         assert!(user.is_some());
-        
+
         // Invalid credentials
         let user = state.validate_dev_credentials("dev", "wrong");
         assert!(user.is_none());
@@ -289,10 +321,10 @@ mod tests {
     fn test_generate_and_validate_token() {
         let config = AuthConfig::default();
         let state = AuthState::new(config);
-        
+
         let dev_user = &state.dev_users()[0];
         let token = state.generate_dev_token(dev_user).unwrap();
-        
+
         let claims = state.validate_token(&token).unwrap();
         assert_eq!(claims.sub, dev_user.id);
         assert!(claims.is_admin());
@@ -302,11 +334,11 @@ mod tests {
     fn test_dev_token_validation() {
         let config = AuthConfig::default();
         let state = AuthState::new(config);
-        
+
         // Valid dev token
         let claims = state.validate_token("dev:dev").unwrap();
         assert_eq!(claims.sub, "dev");
-        
+
         // Invalid dev token (unknown user)
         let result = state.validate_token("dev:unknown");
         assert!(result.is_err());
@@ -328,7 +360,7 @@ mod tests {
             roles: vec!["admin".to_string()],
             role: None,
         };
-        
+
         let user = CurrentUser { claims };
         assert_eq!(user.id(), "user1");
         assert!(user.is_admin());

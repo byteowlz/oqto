@@ -1,5 +1,3 @@
-import { appConfig } from "@/lib/config"
-
 // Session type matching actual API response
 export type OpenCodeSession = {
   id: string
@@ -75,9 +73,11 @@ export type OpenCodeMessageWithParts = {
   parts: OpenCodePart[]
 }
 
-const base = () => {
-  if (!appConfig.opencodeBaseUrl) throw new Error("NEXT_PUBLIC_OPENCODE_BASE_URL is not configured")
-  return appConfig.opencodeBaseUrl
+const trimTrailingSlash = (value: string) => value.replace(/\/$/, "")
+
+const base = (opencodeBaseUrl: string) => {
+  if (!opencodeBaseUrl) throw new Error("OpenCode base URL is not configured")
+  return trimTrailingSlash(opencodeBaseUrl)
 }
 
 async function handleResponse<T>(res: Response): Promise<T> {
@@ -97,20 +97,25 @@ async function handleResponse<T>(res: Response): Promise<T> {
   return res.json()
 }
 
-export async function fetchSessions(): Promise<OpenCodeSession[]> {
-  const res = await fetch(`${base()}/session`, { cache: "no-store" })
+export async function fetchSessions(opencodeBaseUrl: string): Promise<OpenCodeSession[]> {
+  const res = await fetch(`${base(opencodeBaseUrl)}/session`, { cache: "no-store" })
   return handleResponse<OpenCodeSession[]>(res)
 }
 
-export async function fetchMessages(sessionId: string): Promise<OpenCodeMessageWithParts[]> {
+export async function fetchMessages(opencodeBaseUrl: string, sessionId: string): Promise<OpenCodeMessageWithParts[]> {
   // Correct endpoint is /message (singular), not /messages
-  const res = await fetch(`${base()}/session/${sessionId}/message`, { cache: "no-store" })
+  const res = await fetch(`${base(opencodeBaseUrl)}/session/${sessionId}/message`, { cache: "no-store" })
   return handleResponse<OpenCodeMessageWithParts[]>(res)
 }
 
-export async function sendMessage(sessionId: string, content: string, model?: { providerID: string; modelID: string }) {
+export async function sendMessage(
+  opencodeBaseUrl: string,
+  sessionId: string,
+  content: string,
+  model?: { providerID: string; modelID: string },
+) {
   // Correct endpoint is /message with POST, body contains parts array
-  const res = await fetch(`${base()}/session/${sessionId}/message`, {
+  const res = await fetch(`${base(opencodeBaseUrl)}/session/${sessionId}/message`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -121,9 +126,14 @@ export async function sendMessage(sessionId: string, content: string, model?: { 
   return handleResponse<OpenCodeMessageWithParts>(res)
 }
 
-export async function sendMessageAsync(sessionId: string, content: string, model?: { providerID: string; modelID: string }) {
+export async function sendMessageAsync(
+  opencodeBaseUrl: string,
+  sessionId: string,
+  content: string,
+  model?: { providerID: string; modelID: string },
+) {
   // Async version - returns immediately, use SSE for updates
-  const res = await fetch(`${base()}/session/${sessionId}/prompt_async`, {
+  const res = await fetch(`${base(opencodeBaseUrl)}/session/${sessionId}/prompt_async`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -139,15 +149,15 @@ export async function sendMessageAsync(sessionId: string, content: string, model
   return true
 }
 
-export async function abortSession(sessionId: string): Promise<boolean> {
-  const res = await fetch(`${base()}/session/${sessionId}/abort`, {
+export async function abortSession(opencodeBaseUrl: string, sessionId: string): Promise<boolean> {
+  const res = await fetch(`${base(opencodeBaseUrl)}/session/${sessionId}/abort`, {
     method: "POST",
   })
   return handleResponse<boolean>(res)
 }
 
-export async function createSession(title?: string, parentID?: string): Promise<OpenCodeSession> {
-  const res = await fetch(`${base()}/session`, {
+export async function createSession(opencodeBaseUrl: string, title?: string, parentID?: string): Promise<OpenCodeSession> {
+  const res = await fetch(`${base(opencodeBaseUrl)}/session`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ title, parentID }),
@@ -157,15 +167,14 @@ export async function createSession(title?: string, parentID?: string): Promise<
 
 export type EventCallback = (event: { type: string; properties: unknown }) => void
 
-export function subscribeToEvents(callback: EventCallback) {
-  if (!appConfig.opencodeBaseUrl) return () => {}
-  const source = new EventSource(`${appConfig.opencodeBaseUrl}/event`)
+export function subscribeToEvents(opencodeBaseUrl: string, callback: EventCallback) {
+  const source = new EventSource(`${base(opencodeBaseUrl)}/event`)
   
   source.onmessage = (event) => {
     try {
       const parsed = JSON.parse(event.data)
       callback(parsed)
-    } catch (err) {
+    } catch {
       // SSE can send non-JSON data like connection keep-alives, ignore those
       console.debug("Non-JSON SSE data:", event.data)
     }

@@ -1,9 +1,8 @@
 //! API route definitions.
 
 use axum::{
-    middleware,
+    Router, middleware,
     routing::{delete, get, post},
-    Router,
 };
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
@@ -21,7 +20,7 @@ pub fn create_router(state: AppState) -> Router {
         .allow_origin(Any)
         .allow_methods(Any)
         .allow_headers(Any);
-    
+
     // Clone auth state for middleware
     let auth_state = state.auth.clone();
 
@@ -43,18 +42,37 @@ pub fn create_router(state: AppState) -> Router {
                 .put(proxy::proxy_opencode)
                 .delete(proxy::proxy_opencode),
         )
+        // PRD-compatible proxy routes
+        .route(
+            "/session/{session_id}/code/{*path}",
+            get(proxy::proxy_opencode)
+                .post(proxy::proxy_opencode)
+                .put(proxy::proxy_opencode)
+                .delete(proxy::proxy_opencode),
+        )
         .route(
             "/sessions/{session_id}/files/{*path}",
+            get(proxy::proxy_fileserver),
+        )
+        .route(
+            "/session/{session_id}/files/{*path}",
             get(proxy::proxy_fileserver),
         )
         .route(
             "/sessions/{session_id}/terminal",
             get(proxy::proxy_terminal_ws),
         )
+        .route("/session/{session_id}/term", get(proxy::proxy_terminal_ws))
         // Admin routes
         .route("/admin/sessions", get(handlers::admin_list_sessions))
-        .route("/admin/sessions/{session_id}", delete(handlers::admin_force_stop_session))
-        .layer(middleware::from_fn_with_state(auth_state.clone(), auth_middleware))
+        .route(
+            "/admin/sessions/{session_id}",
+            delete(handlers::admin_force_stop_session),
+        )
+        .layer(middleware::from_fn_with_state(
+            auth_state.clone(),
+            auth_middleware,
+        ))
         .with_state(state.clone());
 
     // Public routes (no authentication)

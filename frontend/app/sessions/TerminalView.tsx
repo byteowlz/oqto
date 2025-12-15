@@ -2,7 +2,8 @@
 
 import { useMemo } from "react"
 import dynamic from "next/dynamic"
-import { appConfig, hasOpencode } from "@/lib/config"
+import { controlPlaneDirectBaseUrl, terminalProxyPath } from "@/lib/control-plane-client"
+import { toAbsoluteWsUrl } from "@/lib/url"
 
 const GhosttyTerminal = dynamic(
   () => import("@/components/terminal/ghostty-terminal").then((mod) => mod.GhosttyTerminal),
@@ -16,20 +17,12 @@ interface TerminalViewProps {
 export function TerminalView({ sessionId }: TerminalViewProps) {
   const wsUrl = useMemo(() => {
     if (!sessionId) return ""
-    // Use backend WS proxy: ws://backend/sessions/{sessionId}/terminal
-    const base = appConfig.opencodeBaseUrl
-    if (!base) return ""
-    const wsBase = base.replace(/^http/, 'ws')
-    return `${wsBase}/sessions/${sessionId}/terminal`
+    const directBase = controlPlaneDirectBaseUrl()
+    if (directBase) {
+      return toAbsoluteWsUrl(`${directBase}${terminalProxyPath(sessionId)}`)
+    }
+    return toAbsoluteWsUrl(`/api${terminalProxyPath(sessionId)}`)
   }, [sessionId])
-
-  if (!hasOpencode) {
-    return (
-      <div className="h-full bg-black/70 rounded p-4 text-sm font-mono text-red-300">
-        Configure <code className="font-bold">NEXT_PUBLIC_OPENCODE_BASE_URL</code> to connect to the control plane.
-      </div>
-    )
-  }
 
   if (!sessionId) {
     return (

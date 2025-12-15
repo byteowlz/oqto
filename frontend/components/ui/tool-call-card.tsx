@@ -4,7 +4,7 @@ import { useState } from "react"
 import { 
   ChevronRight, Loader2, CheckCircle2, XCircle, Clock, Wrench, Square, CheckSquare, CircleDot, 
   FileText, FilePlus, FileEdit, FolderOpen, Search, Terminal, ListTodo, Globe, Bot, 
-  GitBranch, MessageSquare, Clipboard, Eye, BookOpen
+  GitBranch
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import type { OpenCodePart } from "@/lib/opencode-client"
@@ -518,7 +518,7 @@ function formatDuration(start: number | undefined, end: number | undefined): str
 
 export function ToolCallCard({ part, defaultCollapsed = true, hideTodoTools = false }: ToolCallCardProps) {
   const [isOpen, setIsOpen] = useState(!defaultCollapsed)
-  const { tool, state, callID } = part
+  const { tool, state } = part
 
   const toolName = tool || "Unknown Tool"
   const status = state?.status

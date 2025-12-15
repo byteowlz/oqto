@@ -47,7 +47,7 @@ export function MarkdownRenderer({ content, className }: MarkdownRendererProps) 
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
-          code({ node, className, children, ...props }) {
+          code({ className, children, ...props }) {
             const match = /language-(\w+)/.exec(className || "")
             const codeString = String(children).replace(/\n$/, "")
             const isInline = !match && !codeString.includes("\n")

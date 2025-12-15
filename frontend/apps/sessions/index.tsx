@@ -9,7 +9,6 @@ import { useApp } from "@/components/app-context"
 import { FileTreeView } from "@/app/sessions/FileTreeView"
 import { TerminalView } from "@/app/sessions/TerminalView"
 import { PreviewView } from "@/app/sessions/PreviewView"
-import { hasOpencode } from "@/lib/config"
 import { MarkdownRenderer, CopyButton } from "@/components/ui/markdown-renderer"
 import { ToolCallCard } from "@/components/ui/tool-call-card"
 import { cn } from "@/lib/utils"
@@ -35,6 +34,8 @@ type MessageGroup = {
   messages: OpenCodeMessageWithParts[]
   startIndex: number
 }
+
+type ActiveView = "chat" | "files" | "terminal" | "preview" | "tasks"
 
 function groupMessages(messages: OpenCodeMessageWithParts[]): MessageGroup[] {
   const groups: MessageGroup[] = []
@@ -63,12 +64,57 @@ function groupMessages(messages: OpenCodeMessageWithParts[]): MessageGroup[] {
   return groups
 }
 
+function TabButton({
+  activeView,
+  onSelect,
+  view,
+  icon: Icon,
+  label,
+  badge,
+}: {
+  activeView: ActiveView
+  onSelect: (view: ActiveView) => void
+  view: ActiveView
+  icon: React.ComponentType<{ className?: string }>
+  label: string
+  badge?: number
+}) {
+  return (
+    <Button
+      variant="ghost"
+      size="sm"
+      onClick={() => onSelect(view)}
+      className={`flex-1 justify-center rounded-md px-2 relative ${
+        activeView === view
+          ? "bg-[#1b2d26] text-[#d5f0e4] border border-[#3ba77c]"
+          : "text-[#9aa8a3] border border-transparent hover:border-[#264036] hover:bg-[#131a17]"
+      }`}
+    >
+      <Icon className="w-4 h-4" />
+      <span className="hidden sm:inline ml-1">{label}</span>
+      {badge !== undefined && badge > 0 && (
+        <span className="absolute -top-1 -right-1 w-4 h-4 bg-pink-500 text-white text-[10px] rounded-full flex items-center justify-center">
+          {badge}
+        </span>
+      )}
+    </Button>
+  )
+}
+
 export function SessionsApp() {
-  const { locale, sessions, selectedSessionId, setSelectedSessionId, refreshSessions } = useApp()
+  const {
+    locale,
+    workspaceSessions,
+    selectedWorkspaceSessionId,
+    setSelectedWorkspaceSessionId,
+    refreshWorkspaceSessions,
+    opencodeBaseUrl,
+    selectedChatSessionId,
+  } = useApp()
   const [messages, setMessages] = useState<OpenCodeMessageWithParts[]>([])
   const [messageInput, setMessageInput] = useState("")
   const [chatState, setChatState] = useState<"idle" | "sending">("idle")
-  const [activeView, setActiveView] = useState<"chat" | "files" | "terminal" | "preview" | "tasks">("chat")
+  const [activeView, setActiveView] = useState<ActiveView>("chat")
   const [status, setStatus] = useState<string>("")
   const [showScrollToBottom, setShowScrollToBottom] = useState(false)
   const messagesContainerRef = useRef<HTMLDivElement>(null)
@@ -90,7 +136,7 @@ export function SessionsApp() {
         tasks: "Aufgaben",
         noSessions: "Keine Sessions verfugbar",
         statusPrefix: "Aktualisiert",
-        configNotice: "NEXT_PUBLIC_OPENCODE_BASE_URL konfigurieren, um das Control Plane zu verbinden.",
+        configNotice: "Control Plane Backend starten, um Sessions zu laden.",
         noTasks: "Keine Aufgaben vorhanden.",
       },
       en: {
@@ -107,7 +153,7 @@ export function SessionsApp() {
         tasks: "Tasks",
         noSessions: "No sessions available",
         statusPrefix: "Updated",
-        configNotice: "Configure NEXT_PUBLIC_OPENCODE_BASE_URL to connect to the control plane.",
+        configNotice: "Start the control plane backend to load sessions.",
         noTasks: "No tasks yet.",
       },
     }),
@@ -116,14 +162,14 @@ export function SessionsApp() {
   const t = copy[locale]
 
   const loadMessages = useCallback(async () => {
-    if (!hasOpencode || !selectedSessionId) return
+    if (!opencodeBaseUrl || !selectedChatSessionId) return
     try {
-      const data = await fetchMessages(selectedSessionId)
+      const data = await fetchMessages(opencodeBaseUrl, selectedChatSessionId)
       setMessages(data)
     } catch (err) {
       setStatus((err as Error).message)
     }
-  }, [selectedSessionId])
+  }, [opencodeBaseUrl, selectedChatSessionId])
 
   const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
     messagesEndRef.current?.scrollIntoView({ behavior })
@@ -158,8 +204,8 @@ export function SessionsApp() {
   }, [messages, scrollToBottom])
 
   useEffect(() => {
-    if (!hasOpencode) return
-    const unsubscribe = subscribeToEvents((event) => {
+    if (!opencodeBaseUrl) return
+    const unsubscribe = subscribeToEvents(opencodeBaseUrl, (event) => {
       const eventType = event.type as string
       if (eventType?.startsWith("session")) {
         // Reset sending state when session becomes idle
@@ -172,12 +218,12 @@ export function SessionsApp() {
       }
     })
     return unsubscribe
-  }, [loadMessages])
+  }, [opencodeBaseUrl, loadMessages])
 
-  const selectedSession = useMemo(
-    () => sessions.find((session) => session.id === selectedSessionId),
-    [sessions, selectedSessionId],
-  )
+  const selectedSession = useMemo(() => {
+    if (!selectedWorkspaceSessionId) return undefined
+    return workspaceSessions.find((session) => session.id === selectedWorkspaceSessionId)
+  }, [workspaceSessions, selectedWorkspaceSessionId])
 
   const messageGroups = useMemo(() => groupMessages(messages), [messages])
 
@@ -200,12 +246,12 @@ export function SessionsApp() {
   }, [messages])
 
   const handleSend = async () => {
-    if (!selectedSessionId || !messageInput.trim()) return
+    if (!opencodeBaseUrl || !selectedChatSessionId || !messageInput.trim()) return
     setChatState("sending")
     setStatus("")
     try {
       // Use async send - the response will come via SSE events
-      await sendMessageAsync(selectedSessionId, messageInput.trim())
+      await sendMessageAsync(opencodeBaseUrl, selectedChatSessionId, messageInput.trim())
       setMessageInput("")
       // Scroll to bottom after sending
       setTimeout(() => scrollToBottom(), 100)
@@ -216,11 +262,11 @@ export function SessionsApp() {
     // Don't set idle here - wait for SSE session.idle event
   }
 
-  if (!hasOpencode) {
+  if (workspaceSessions.length === 0) {
     return (
       <div className="p-4 md:p-6">
         <div className="p-6 text-sm text-muted-foreground bg-[#161c1a] border border-[#1f2a27]">
-          {t.configNotice} <code className="font-semibold">NEXT_PUBLIC_OPENCODE_BASE_URL</code>
+          {t.configNotice}
         </div>
       </div>
     )
@@ -233,17 +279,22 @@ export function SessionsApp() {
         <label className="text-xs uppercase tracking-wide text-muted-foreground">Session</label>
         <select
           className="bg-[#0f1412] border border-[#1f2a27] text-sm text-[#d5f0e4] rounded-md px-3 py-2 outline-none focus:border-[#3ba77c] flex-1 min-w-0 max-w-xs"
-          value={selectedSessionId}
-          onChange={(e) => setSelectedSessionId(e.target.value)}
+          value={selectedWorkspaceSessionId}
+          onChange={(e) => setSelectedWorkspaceSessionId(e.target.value)}
         >
-          {sessions.map((session) => (
+          {workspaceSessions.map((session) => (
             <option key={session.id} value={session.id}>
-              {session.title || session.id}
+              {session.container_name} [{session.status}]
             </option>
           ))}
-          {sessions.length === 0 && <option value="">{t.noSessions}</option>}
+          {workspaceSessions.length === 0 && <option value="">{t.noSessions}</option>}
         </select>
-        <Button variant="outline" size="sm" onClick={refreshSessions} className="gap-2 text-muted-foreground hover:text-foreground">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={refreshWorkspaceSessions}
+          className="gap-2 text-muted-foreground hover:text-foreground"
+        >
           <RefreshCw className="w-4 h-4" />
           <span className="hidden sm:inline">{t.refresh}</span>
         </Button>
@@ -256,8 +307,8 @@ export function SessionsApp() {
           className="h-full rounded-lg bg-[#0f1412] border border-[#1f2a27] p-4 overflow-y-auto space-y-6 scrollbar-hide"
         >
           {messages.length === 0 && <div className="text-sm text-muted-foreground">{t.noMessages}</div>}
-          {messageGroups.map((group, groupIndex) => (
-            <MessageGroupCard key={`${group.role}-${group.startIndex}`} group={group} groupIndex={groupIndex} />
+          {messageGroups.map((group) => (
+            <MessageGroupCard key={`${group.role}-${group.startIndex}`} group={group} />
           ))}
           <div ref={messagesEndRef} />
         </div>
@@ -298,38 +349,6 @@ export function SessionsApp() {
     </div>
   )
 
-  // Tab button component for reuse
-  const TabButton = ({ 
-    view, 
-    icon: Icon, 
-    label, 
-    badge 
-  }: { 
-    view: typeof activeView
-    icon: React.ComponentType<{ className?: string }>
-    label: string
-    badge?: number 
-  }) => (
-    <Button
-      variant="ghost"
-      size="sm"
-      onClick={() => setActiveView(view)}
-      className={`flex-1 justify-center rounded-md px-2 relative ${
-        activeView === view
-          ? "bg-[#1b2d26] text-[#d5f0e4] border border-[#3ba77c]"
-          : "text-[#9aa8a3] border border-transparent hover:border-[#264036] hover:bg-[#131a17]"
-      }`}
-    >
-      <Icon className="w-4 h-4" />
-      <span className="hidden sm:inline ml-1">{label}</span>
-      {badge !== undefined && badge > 0 && (
-        <span className="absolute -top-1 -right-1 w-4 h-4 bg-pink-500 text-white text-[10px] rounded-full flex items-center justify-center">
-          {badge}
-        </span>
-      )}
-    </Button>
-  )
-
   const incompleteTasks = latestTodos.filter(t => t.status !== "completed" && t.status !== "cancelled").length
 
   return (
@@ -337,10 +356,12 @@ export function SessionsApp() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="min-w-0">
-          <h1 className="text-lg sm:text-xl font-semibold text-[#d5f0e4] tracking-wider truncate">{selectedSession?.title || t.title}</h1>
+          <h1 className="text-lg sm:text-xl font-semibold text-[#d5f0e4] tracking-wider truncate">
+            {selectedSession ? selectedSession.container_name : t.title}
+          </h1>
           {selectedSession && (
             <p className="text-xs sm:text-sm text-muted-foreground truncate">
-              {t.statusPrefix} {selectedSession.time?.updated ? new Date(selectedSession.time.updated).toLocaleString() : "-"}
+              {t.statusPrefix} {selectedSession.status} · {new Date(selectedSession.created_at).toLocaleString()}
             </p>
           )}
         </div>
@@ -351,17 +372,17 @@ export function SessionsApp() {
       <div className="flex-1 min-h-0 flex flex-col lg:hidden">
         {/* Mobile tabs */}
         <div className="flex gap-1 p-2 bg-[#161c1a] border border-[#1f2a27] rounded-t-xl">
-          <TabButton view="chat" icon={MessageSquare} label={t.chat} />
-          <TabButton view="files" icon={FileText} label={t.files} />
-          <TabButton view="terminal" icon={Terminal} label={t.terminal} />
-          <TabButton view="tasks" icon={ListTodo} label={t.tasks} badge={incompleteTasks} />
+          <TabButton activeView={activeView} onSelect={setActiveView} view="chat" icon={MessageSquare} label={t.chat} />
+          <TabButton activeView={activeView} onSelect={setActiveView} view="files" icon={FileText} label={t.files} />
+          <TabButton activeView={activeView} onSelect={setActiveView} view="terminal" icon={Terminal} label={t.terminal} />
+          <TabButton activeView={activeView} onSelect={setActiveView} view="tasks" icon={ListTodo} label={t.tasks} badge={incompleteTasks} />
         </div>
         
         {/* Mobile content */}
         <div className="flex-1 min-h-0 bg-[#161c1a] border border-t-0 border-[#1f2a27] rounded-b-xl p-3 sm:p-4 overflow-hidden">
           {activeView === "chat" && ChatContent}
            {activeView === "files" && <FileTreeView />}
-           {activeView === "terminal" && <TerminalView sessionId={selectedSessionId} />}
+           {activeView === "terminal" && <TerminalView sessionId={selectedWorkspaceSessionId} />}
            {activeView === "preview" && <PreviewView />}
            {activeView === "tasks" && <TodoListView todos={latestTodos} emptyMessage={t.noTasks} />}
         </div>
@@ -377,14 +398,14 @@ export function SessionsApp() {
         {/* Sidebar panel */}
         <div className="w-[320px] xl:w-[360px] shrink-0 bg-[#161c1a] border border-[#1f2a27] rounded-xl flex flex-col min-h-0">
           <div className="flex gap-1 p-2 border-b border-[#1f2a27]">
-            <TabButton view="files" icon={FileText} label={t.files} />
-            <TabButton view="terminal" icon={Terminal} label={t.terminal} />
-            <TabButton view="preview" icon={Eye} label={t.preview} />
-            <TabButton view="tasks" icon={ListTodo} label={t.tasks} badge={incompleteTasks} />
+            <TabButton activeView={activeView} onSelect={setActiveView} view="files" icon={FileText} label={t.files} />
+            <TabButton activeView={activeView} onSelect={setActiveView} view="terminal" icon={Terminal} label={t.terminal} />
+            <TabButton activeView={activeView} onSelect={setActiveView} view="preview" icon={Eye} label={t.preview} />
+            <TabButton activeView={activeView} onSelect={setActiveView} view="tasks" icon={ListTodo} label={t.tasks} badge={incompleteTasks} />
           </div>
           <div className="flex-1 min-h-0 overflow-hidden">
              {activeView === "files" && <FileTreeView />}
-             {activeView === "terminal" && <TerminalView sessionId={selectedSessionId} />}
+             {activeView === "terminal" && <TerminalView sessionId={selectedWorkspaceSessionId} />}
              {activeView === "preview" && <PreviewView />}
              {activeView === "tasks" && <TodoListView todos={latestTodos} emptyMessage={t.noTasks} />}
             {/* If chat is selected on desktop (shouldn't happen normally), show files */}
@@ -396,7 +417,7 @@ export function SessionsApp() {
   )
 }
 
-function MessageGroupCard({ group, groupIndex }: { group: MessageGroup; groupIndex: number }) {
+function MessageGroupCard({ group }: { group: MessageGroup }) {
   const isUser = group.role === "user"
   
   // Get created time from first message
@@ -598,15 +619,6 @@ function OtherPartCard({ part }: { part: OpenCodePart }) {
       )}
     </div>
   )
-}
-
-function getPriorityColor(priority: string) {
-  switch (priority) {
-    case "high": return "text-red-400"
-    case "medium": return "text-yellow-400"
-    case "low": return "text-[#6b7974]"
-    default: return "text-[#9aa8a3]"
-  }
 }
 
 function TodoListView({ todos, emptyMessage }: { todos: TodoItem[]; emptyMessage: string }) {

@@ -5,9 +5,9 @@
 mod container;
 mod error;
 
-pub use container::{Container, ContainerConfig, ContainerStats};
 #[allow(unused_imports)]
 pub use container::PortMapping;
+pub use container::{Container, ContainerConfig, ContainerStats};
 pub use error::{PodmanError, PodmanResult};
 
 use std::process::Stdio;
@@ -141,15 +141,19 @@ impl Podman {
     }
 
     /// Stop a running container.
-    pub async fn stop_container(&self, container_id: &str, timeout: Option<u32>) -> PodmanResult<()> {
+    pub async fn stop_container(
+        &self,
+        container_id: &str,
+        timeout: Option<u32>,
+    ) -> PodmanResult<()> {
         let mut args = vec!["stop"];
-        
+
         if let Some(t) = timeout {
             args.push("-t");
             let timeout_str = t.to_string();
             args.push(Box::leak(timeout_str.into_boxed_str()));
         }
-        
+
         args.push(container_id);
 
         let output = Command::new(&self.binary)
@@ -177,11 +181,11 @@ impl Podman {
     /// Remove a container.
     pub async fn remove_container(&self, container_id: &str, force: bool) -> PodmanResult<()> {
         let mut args = vec!["rm"];
-        
+
         if force {
             args.push("-f");
         }
-        
+
         args.push(container_id);
 
         let output = Command::new(&self.binary)
@@ -210,7 +214,7 @@ impl Podman {
     #[allow(dead_code)]
     pub async fn list_containers(&self, all: bool) -> PodmanResult<Vec<Container>> {
         let mut args = vec!["ps", "--format", "json"];
-        
+
         if all {
             args.push("-a");
         }
@@ -239,8 +243,8 @@ impl Podman {
             return Ok(vec![]);
         }
 
-        let containers: Vec<Container> = serde_json::from_str(&stdout)
-            .map_err(|e| PodmanError::ParseError(e.to_string()))?;
+        let containers: Vec<Container> =
+            serde_json::from_str(&stdout).map_err(|e| PodmanError::ParseError(e.to_string()))?;
 
         Ok(containers)
     }
@@ -265,8 +269,8 @@ impl Podman {
         }
 
         let stdout = String::from_utf8_lossy(&output.stdout);
-        let containers: Vec<Container> = serde_json::from_str(&stdout)
-            .map_err(|e| PodmanError::ParseError(e.to_string()))?;
+        let containers: Vec<Container> =
+            serde_json::from_str(&stdout).map_err(|e| PodmanError::ParseError(e.to_string()))?;
 
         Ok(containers.into_iter().next())
     }
@@ -275,13 +279,13 @@ impl Podman {
     #[allow(dead_code)]
     pub async fn get_logs(&self, container_id: &str, tail: Option<u32>) -> PodmanResult<String> {
         let mut args = vec!["logs"];
-        
+
         if let Some(n) = tail {
             args.push("--tail");
             let tail_str = n.to_string();
             args.push(Box::leak(tail_str.into_boxed_str()));
         }
-        
+
         args.push(container_id);
 
         let output = Command::new(&self.binary)
@@ -298,7 +302,7 @@ impl Podman {
         // Logs command outputs to stderr for container stderr
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
-        
+
         Ok(format!("{}{}", stdout, stderr))
     }
 
@@ -325,12 +329,13 @@ impl Podman {
         }
 
         let stdout = String::from_utf8_lossy(&output.stdout);
-        let stats: Vec<ContainerStats> = serde_json::from_str(&stdout)
-            .map_err(|e| PodmanError::ParseError(e.to_string()))?;
+        let stats: Vec<ContainerStats> =
+            serde_json::from_str(&stdout).map_err(|e| PodmanError::ParseError(e.to_string()))?;
 
-        stats.into_iter().next().ok_or_else(|| {
-            PodmanError::ContainerNotFound(container_id.to_string())
-        })
+        stats
+            .into_iter()
+            .next()
+            .ok_or_else(|| PodmanError::ContainerNotFound(container_id.to_string()))
     }
 
     /// Check if an image exists locally.

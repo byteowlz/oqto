@@ -1,9 +1,11 @@
 //! API request handlers.
 
 use axum::{
-    extract::{Path, State},
-    http::StatusCode,
     Json,
+    extract::{Path, State},
+    http::{StatusCode, header::SET_COOKIE},
+    response::AppendHeaders,
+    response::IntoResponse,
 };
 use serde::{Deserialize, Serialize};
 
@@ -59,10 +61,11 @@ pub struct SessionUrls {
 
 impl SessionWithUrls {
     pub fn from_session(session: Session, host: &str) -> Self {
+        let _ = host;
         let urls = SessionUrls {
-            opencode: format!("http://{}:{}", host, session.opencode_port),
-            fileserver: format!("http://{}:{}", host, session.fileserver_port),
-            terminal: format!("ws://{}:{}", host, session.ttyd_port),
+            opencode: format!("/session/{}/code", session.id),
+            fileserver: format!("/session/{}/files", session.id),
+            terminal: format!("/session/{}/term", session.id),
         };
         Self { session, urls }
     }
@@ -72,17 +75,12 @@ impl SessionWithUrls {
 pub async fn list_sessions(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<Session>>, (StatusCode, Json<ErrorResponse>)> {
-    state
-        .sessions
-        .list_sessions()
-        .await
-        .map(Json)
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse::new(e.to_string())),
-            )
-        })
+    state.sessions.list_sessions().await.map(Json).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse::new(e.to_string())),
+        )
+    })
 }
 
 /// Get a specific session.
@@ -114,16 +112,12 @@ pub async fn create_session(
     State(state): State<AppState>,
     Json(request): Json<CreateSessionRequest>,
 ) -> Result<(StatusCode, Json<SessionWithUrls>), (StatusCode, Json<ErrorResponse>)> {
-    let session = state
-        .sessions
-        .create_session(request)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse::new(e.to_string())),
-            )
-        })?;
+    let session = state.sessions.create_session(request).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse::new(e.to_string())),
+        )
+    })?;
 
     // TODO: Get actual host from request headers
     let response = SessionWithUrls::from_session(session, "localhost");
@@ -136,16 +130,12 @@ pub async fn stop_session(
     Path(session_id): Path<String>,
 ) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
     // First check if session exists
-    let session = state
-        .sessions
-        .get_session(&session_id)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse::new(e.to_string())),
-            )
-        })?;
+    let session = state.sessions.get_session(&session_id).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse::new(e.to_string())),
+        )
+    })?;
 
     if session.is_none() {
         return Err((
@@ -222,36 +212,44 @@ pub struct UserInfo {
 pub async fn dev_login(
     State(state): State<AppState>,
     Json(request): Json<LoginRequest>,
-) -> Result<Json<LoginResponse>, AuthError> {
+) -> Result<impl IntoResponse, AuthError> {
     // Only works in dev mode
     if !state.auth.is_dev_mode() {
         return Err(AuthError::InvalidCredentials);
     }
-    
+
     // Validate credentials
-    let user = state.auth
+    let user = state
+        .auth
         .validate_dev_credentials(&request.username, &request.password)
         .ok_or(AuthError::InvalidCredentials)?;
-    
+
     // Generate token
     let token = state.auth.generate_dev_token(user)?;
-    
-    Ok(Json(LoginResponse {
+
+    let cookie = format!(
+        "auth_token={}; Path=/; HttpOnly; SameSite=Lax; Max-Age={}",
         token,
-        user: UserInfo {
-            id: user.id.clone(),
-            name: user.name.clone(),
-            email: user.email.clone(),
-            role: user.role.to_string(),
-        },
-    }))
+        60 * 60 * 24
+    );
+
+    Ok((
+        AppendHeaders([(SET_COOKIE, cookie)]),
+        Json(LoginResponse {
+            token,
+            user: UserInfo {
+                id: user.id.clone(),
+                name: user.name.clone(),
+                email: user.email.clone(),
+                role: user.role.to_string(),
+            },
+        }),
+    ))
 }
 
 /// Get current user info.
 #[allow(dead_code)]
-pub async fn get_current_user(
-    user: CurrentUser,
-) -> Json<UserInfo> {
+pub async fn get_current_user(user: CurrentUser) -> Json<UserInfo> {
     Json(UserInfo {
         id: user.id().to_string(),
         name: user.display_name().to_string(),
@@ -269,17 +267,12 @@ pub async fn admin_list_sessions(
     State(state): State<AppState>,
     RequireAdmin(_user): RequireAdmin,
 ) -> Result<Json<Vec<Session>>, (StatusCode, Json<ErrorResponse>)> {
-    state
-        .sessions
-        .list_sessions()
-        .await
-        .map(Json)
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse::new(e.to_string())),
-            )
-        })
+    state.sessions.list_sessions().await.map(Json).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse::new(e.to_string())),
+        )
+    })
 }
 
 /// Force stop a session (admin only).

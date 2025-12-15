@@ -12,4 +12,4 @@ mod middleware;
 pub use claims::{Claims, Role};
 pub use config::{AuthConfig, DevUser};
 pub use error::AuthError;
-pub use middleware::{auth_middleware, AuthState, CurrentUser, RequireAdmin};
+pub use middleware::{AuthState, CurrentUser, RequireAdmin, auth_middleware};

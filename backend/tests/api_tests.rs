@@ -2,9 +2,9 @@
 
 use axum::{
     body::Body,
-    http::{header, Method, Request, StatusCode},
+    http::{Method, Request, StatusCode, header},
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tower::ServiceExt;
 
 mod common;
@@ -14,7 +14,7 @@ use common::test_app;
 #[tokio::test]
 async fn test_health_endpoint() {
     let app = test_app().await;
-    
+
     let response = app
         .oneshot(
             Request::builder()
@@ -25,12 +25,14 @@ async fn test_health_endpoint() {
         )
         .await
         .unwrap();
-    
+
     assert_eq!(response.status(), StatusCode::OK);
-    
-    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
+
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
     let json: Value = serde_json::from_slice(&body).unwrap();
-    
+
     assert_eq!(json["status"], "ok");
     assert!(json["version"].is_string());
 }
@@ -39,7 +41,7 @@ async fn test_health_endpoint() {
 #[tokio::test]
 async fn test_dev_login_success() {
     let app = test_app().await;
-    
+
     let response = app
         .oneshot(
             Request::builder()
@@ -50,18 +52,29 @@ async fn test_dev_login_success() {
                     serde_json::to_string(&json!({
                         "username": "dev",
                         "password": "dev"
-                    })).unwrap()
+                    }))
+                    .unwrap(),
                 ))
                 .unwrap(),
         )
         .await
         .unwrap();
-    
+
     assert_eq!(response.status(), StatusCode::OK);
-    
-    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
+
+    let cookie = response
+        .headers()
+        .get(header::SET_COOKIE)
+        .and_then(|h| h.to_str().ok())
+        .unwrap_or_default()
+        .to_string();
+    assert!(cookie.contains("auth_token="));
+
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
     let json: Value = serde_json::from_slice(&body).unwrap();
-    
+
     assert!(json["token"].is_string());
     assert_eq!(json["user"]["id"], "dev");
     assert_eq!(json["user"]["role"], "admin");
@@ -71,7 +84,7 @@ async fn test_dev_login_success() {
 #[tokio::test]
 async fn test_dev_login_invalid_credentials() {
     let app = test_app().await;
-    
+
     let response = app
         .oneshot(
             Request::builder()
@@ -82,13 +95,14 @@ async fn test_dev_login_invalid_credentials() {
                     serde_json::to_string(&json!({
                         "username": "dev",
                         "password": "wrong"
-                    })).unwrap()
+                    }))
+                    .unwrap(),
                 ))
                 .unwrap(),
         )
         .await
         .unwrap();
-    
+
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }
 
@@ -96,7 +110,7 @@ async fn test_dev_login_invalid_credentials() {
 #[tokio::test]
 async fn test_sessions_requires_auth() {
     let app = test_app().await;
-    
+
     let response = app
         .oneshot(
             Request::builder()
@@ -107,7 +121,7 @@ async fn test_sessions_requires_auth() {
         )
         .await
         .unwrap();
-    
+
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }
 
@@ -115,7 +129,7 @@ async fn test_sessions_requires_auth() {
 #[tokio::test]
 async fn test_list_sessions_with_auth() {
     let (app, token) = common::test_app_with_token().await;
-    
+
     let response = app
         .oneshot(
             Request::builder()
@@ -127,12 +141,14 @@ async fn test_list_sessions_with_auth() {
         )
         .await
         .unwrap();
-    
+
     assert_eq!(response.status(), StatusCode::OK);
-    
-    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
+
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
     let json: Value = serde_json::from_slice(&body).unwrap();
-    
+
     assert!(json.is_array());
 }
 
@@ -140,7 +156,7 @@ async fn test_list_sessions_with_auth() {
 #[tokio::test]
 async fn test_list_sessions_with_dev_header() {
     let app = test_app().await;
-    
+
     let response = app
         .oneshot(
             Request::builder()
@@ -152,7 +168,56 @@ async fn test_list_sessions_with_dev_header() {
         )
         .await
         .unwrap();
-    
+
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+/// Test listing sessions with cookie-based authentication.
+#[tokio::test]
+async fn test_list_sessions_with_cookie_auth() {
+    let app = test_app().await;
+
+    let login = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/auth/login")
+                .method(Method::POST)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    serde_json::to_string(&json!({
+                        "username": "dev",
+                        "password": "dev"
+                    }))
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(login.status(), StatusCode::OK);
+
+    let set_cookie = login
+        .headers()
+        .get(header::SET_COOKIE)
+        .and_then(|h| h.to_str().ok())
+        .unwrap_or_default();
+    let cookie_pair = set_cookie.split(';').next().unwrap_or_default();
+    assert!(cookie_pair.starts_with("auth_token="));
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/sessions")
+                .method(Method::GET)
+                .header(header::COOKIE, cookie_pair)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
     assert_eq!(response.status(), StatusCode::OK);
 }
 
@@ -160,7 +225,7 @@ async fn test_list_sessions_with_dev_header() {
 #[tokio::test]
 async fn test_admin_sessions_requires_admin() {
     let (app, _token) = common::test_app_with_user_token().await;
-    
+
     let response = app
         .oneshot(
             Request::builder()
@@ -172,7 +237,7 @@ async fn test_admin_sessions_requires_admin() {
         )
         .await
         .unwrap();
-    
+
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
 }
 
@@ -180,7 +245,7 @@ async fn test_admin_sessions_requires_admin() {
 #[tokio::test]
 async fn test_admin_sessions_with_admin() {
     let app = test_app().await;
-    
+
     let response = app
         .oneshot(
             Request::builder()
@@ -192,7 +257,7 @@ async fn test_admin_sessions_with_admin() {
         )
         .await
         .unwrap();
-    
+
     assert_eq!(response.status(), StatusCode::OK);
 }
 
@@ -200,7 +265,7 @@ async fn test_admin_sessions_with_admin() {
 #[tokio::test]
 async fn test_get_nonexistent_session() {
     let app = test_app().await;
-    
+
     let response = app
         .oneshot(
             Request::builder()
@@ -212,15 +277,50 @@ async fn test_get_nonexistent_session() {
         )
         .await
         .unwrap();
-    
+
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+/// Test PRD-compatible proxy routes return 404 for unknown sessions.
+#[tokio::test]
+async fn test_prd_proxy_routes_unknown_session() {
+    let app = test_app().await;
+
+    let opencode = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/session/nonexistent/code/session")
+                .method(Method::GET)
+                .header("X-Dev-User", "dev")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(opencode.status(), StatusCode::NOT_FOUND);
+
+    let files = app
+        .oneshot(
+            Request::builder()
+                .uri("/session/nonexistent/files/tree")
+                .method(Method::GET)
+                .header("X-Dev-User", "dev")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(files.status(), StatusCode::NOT_FOUND);
 }
 
 /// Test deleting a non-existent session returns 404.
 #[tokio::test]
 async fn test_delete_nonexistent_session() {
     let app = test_app().await;
-    
+
     let response = app
         .oneshot(
             Request::builder()
@@ -232,6 +332,6 @@ async fn test_delete_nonexistent_session() {
         )
         .await
         .unwrap();
-    
+
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
 }

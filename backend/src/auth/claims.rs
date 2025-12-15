@@ -41,46 +41,46 @@ impl std::str::FromStr for Role {
 pub struct Claims {
     /// Subject (user ID).
     pub sub: String,
-    
+
     /// Issuer.
     #[serde(default)]
     pub iss: Option<String>,
-    
+
     /// Audience.
     #[serde(default)]
     pub aud: Option<Vec<String>>,
-    
+
     /// Expiration time (as Unix timestamp).
     pub exp: i64,
-    
+
     /// Issued at (as Unix timestamp).
     #[serde(default)]
     pub iat: Option<i64>,
-    
+
     /// Not before (as Unix timestamp).
     #[serde(default)]
     pub nbf: Option<i64>,
-    
+
     /// JWT ID.
     #[serde(default)]
     pub jti: Option<String>,
-    
+
     /// User's email.
     #[serde(default)]
     pub email: Option<String>,
-    
+
     /// User's name.
     #[serde(default)]
     pub name: Option<String>,
-    
+
     /// User's preferred username.
     #[serde(default)]
     pub preferred_username: Option<String>,
-    
+
     /// User's roles.
     #[serde(default)]
     pub roles: Vec<String>,
-    
+
     /// Custom role claim (alternative to roles array).
     #[serde(default)]
     pub role: Option<String>,
@@ -95,22 +95,22 @@ impl Claims {
                 return Role::Admin;
             }
         }
-        
+
         // Check roles array
         for role in &self.roles {
             if role.to_lowercase() == "admin" {
                 return Role::Admin;
             }
         }
-        
+
         Role::User
     }
-    
+
     /// Check if the user has admin role.
     pub fn is_admin(&self) -> bool {
         self.effective_role() == Role::Admin
     }
-    
+
     /// Get the display name for the user.
     pub fn display_name(&self) -> &str {
         self.name

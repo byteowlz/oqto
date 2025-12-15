@@ -35,12 +35,7 @@ pub async fn proxy_opencode(
         return Err(StatusCode::SERVICE_UNAVAILABLE);
     }
 
-    let target_uri = format!(
-        "http://localhost:{}/{}",
-        session.opencode_port, path
-    );
-
-    proxy_request(req, &target_uri).await
+    proxy_request(req, session.opencode_port as u16, &path).await
 }
 
 /// Proxy HTTP requests to a session's file server.
@@ -64,19 +59,24 @@ pub async fn proxy_fileserver(
         return Err(StatusCode::SERVICE_UNAVAILABLE);
     }
 
-    let target_uri = format!(
-        "http://localhost:{}/{}",
-        session.fileserver_port, path
-    );
-
-    proxy_request(req, &target_uri).await
+    proxy_request(req, session.fileserver_port as u16, &path).await
 }
 
 /// Generic HTTP proxy function.
-async fn proxy_request(mut req: Request<Body>, target_uri: &str) -> Result<Response, StatusCode> {
+async fn proxy_request(
+    mut req: Request<Body>,
+    target_port: u16,
+    target_path: &str,
+) -> Result<Response, StatusCode> {
+    let query = req.uri().query().unwrap_or("");
+    let mut target_uri = format!("http://localhost:{}/{}", target_port, target_path);
+    if !query.is_empty() {
+        target_uri.push('?');
+        target_uri.push_str(query);
+    }
+
     debug!("Proxying request to {}", target_uri);
 
-    // Parse target URI
     let uri: Uri = target_uri.parse().map_err(|e| {
         error!("Invalid target URI {}: {:?}", target_uri, e);
         StatusCode::INTERNAL_SERVER_ERROR
@@ -85,9 +85,17 @@ async fn proxy_request(mut req: Request<Body>, target_uri: &str) -> Result<Respo
     // Update the request URI
     *req.uri_mut() = uri;
 
+    // Ensure Host header matches the target authority.
+    if let Some(authority) = req.uri().authority() {
+        let value = axum::http::HeaderValue::from_str(authority.as_str()).map_err(|e| {
+            error!("Invalid Host header value {}: {:?}", authority.as_str(), e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+        req.headers_mut().insert(axum::http::header::HOST, value);
+    }
+
     // Create HTTP client
-    let client: Client<_, Body> = Client::builder(TokioExecutor::new())
-        .build_http();
+    let client: Client<_, Body> = Client::builder(TokioExecutor::new()).build_http();
 
     // Forward the request
     let response = client.request(req).await.map_err(|e| {
@@ -117,7 +125,10 @@ pub async fn proxy_terminal_ws(
         .ok_or(StatusCode::NOT_FOUND)?;
 
     if !session.is_active() {
-        warn!("Attempted to proxy terminal to inactive session {}", session_id);
+        warn!(
+            "Attempted to proxy terminal to inactive session {}",
+            session_id
+        );
         return Err(StatusCode::SERVICE_UNAVAILABLE);
     }
 
@@ -153,12 +164,20 @@ async fn handle_terminal_proxy(
         while let Some(msg) = client_read.next().await {
             match msg {
                 Ok(AxumMessage::Text(text)) => {
-                    if ttyd_write.send(TungsteniteMessage::Text(text.to_string().into())).await.is_err() {
+                    if ttyd_write
+                        .send(TungsteniteMessage::Text(text.to_string().into()))
+                        .await
+                        .is_err()
+                    {
                         break;
                     }
                 }
                 Ok(AxumMessage::Binary(data)) => {
-                    if ttyd_write.send(TungsteniteMessage::Binary(data)).await.is_err() {
+                    if ttyd_write
+                        .send(TungsteniteMessage::Binary(data))
+                        .await
+                        .is_err()
+                    {
                         break;
                     }
                 }
@@ -174,12 +193,20 @@ async fn handle_terminal_proxy(
         while let Some(msg) = ttyd_read.next().await {
             match msg {
                 Ok(TungsteniteMessage::Text(text)) => {
-                    if client_write.send(AxumMessage::Text(text.to_string().into())).await.is_err() {
+                    if client_write
+                        .send(AxumMessage::Text(text.to_string().into()))
+                        .await
+                        .is_err()
+                    {
                         break;
                     }
                 }
                 Ok(TungsteniteMessage::Binary(data)) => {
-                    if client_write.send(AxumMessage::Binary(data.to_vec().into())).await.is_err() {
+                    if client_write
+                        .send(AxumMessage::Binary(data.to_vec().into()))
+                        .await
+                        .is_err()
+                    {
                         break;
                     }
                 }
@@ -201,12 +228,17 @@ async fn handle_terminal_proxy(
 
 /// SSE events stream for opencode.
 pub async fn opencode_events(
-    State(state): State<AppState>,
-) -> Result<Sse<impl tokio_stream::Stream<Item = Result<axum::response::sse::Event, std::convert::Infallible>>>, StatusCode> {
+    State(_state): State<AppState>,
+) -> Result<
+    Sse<
+        impl tokio_stream::Stream<Item = Result<axum::response::sse::Event, std::convert::Infallible>>,
+    >,
+    StatusCode,
+> {
     use axum::response::sse::Event;
     use std::time::Duration;
     use tokio::time;
-    use tokio_stream::{wrappers::IntervalStream, StreamExt};
+    use tokio_stream::{StreamExt, wrappers::IntervalStream};
 
     // For now, send a keep-alive every 30 seconds
     // TODO: Aggregate events from all active opencode sessions

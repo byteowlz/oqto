@@ -1,6 +1,5 @@
 //! Session data models.
 
-
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 
@@ -116,7 +115,8 @@ impl Default for SessionConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateSessionRequest {
     /// Path to the workspace directory.
-    pub workspace_path: String,
+    #[serde(default)]
+    pub workspace_path: Option<String>,
     /// Container image to use (optional, defaults to opencode-dev).
     #[serde(default)]
     pub image: Option<String>,
@@ -156,7 +156,10 @@ impl Session {
 
     /// Check if the session is active (running or starting).
     pub fn is_active(&self) -> bool {
-        matches!(self.status, SessionStatus::Starting | SessionStatus::Running)
+        matches!(
+            self.status,
+            SessionStatus::Starting | SessionStatus::Running
+        )
     }
 
     /// Get the URLs for this session.

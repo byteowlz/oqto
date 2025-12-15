@@ -2,8 +2,14 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react"
 import { appRegistry, type AppDefinition, type Locale, type LocalizedText } from "@/lib/app-registry"
-import { fetchSessions, subscribeToEvents, type OpenCodeSession } from "@/lib/opencode-client"
-import { hasOpencode } from "@/lib/config"
+import { createSession, fetchSessions, subscribeToEvents } from "@/lib/opencode-client"
+import {
+  createWorkspaceSession,
+  devLogin,
+  listWorkspaceSessions,
+  opencodeProxyBaseUrl,
+  type WorkspaceSession,
+} from "@/lib/control-plane-client"
 
 interface AppContextValue {
   apps: AppDefinition[]
@@ -13,11 +19,12 @@ interface AppContextValue {
   locale: Locale
   setLocale: (locale: Locale) => void
   resolveText: (value: LocalizedText) => string
-  // Session state
-  sessions: OpenCodeSession[]
-  selectedSessionId: string
-  setSelectedSessionId: (id: string) => void
-  refreshSessions: () => Promise<void>
+  workspaceSessions: WorkspaceSession[]
+  selectedWorkspaceSessionId: string
+  setSelectedWorkspaceSessionId: (id: string) => void
+  opencodeBaseUrl: string
+  selectedChatSessionId: string
+  refreshWorkspaceSessions: () => Promise<void>
 }
 
 const AppContext = createContext<AppContextValue | null>(null)
@@ -28,47 +35,92 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [activeAppId, setActiveAppId] = useState(() => apps[0]?.id ?? "")
   const activeApp = apps.find((app) => app.id === activeAppId) ?? apps[0]
   
-  // Session state
-  const [sessions, setSessions] = useState<OpenCodeSession[]>([])
-  const [selectedSessionId, setSelectedSessionId] = useState<string>("")
+  const [workspaceSessions, setWorkspaceSessions] = useState<WorkspaceSession[]>([])
+  const [selectedWorkspaceSessionId, setSelectedWorkspaceSessionId] = useState<string>("")
+  const [selectedChatSessionId, setSelectedChatSessionId] = useState<string>("")
+
+  const opencodeBaseUrl = useMemo(() => {
+    if (!selectedWorkspaceSessionId) return ""
+    return opencodeProxyBaseUrl(selectedWorkspaceSessionId)
+  }, [selectedWorkspaceSessionId])
 
   useEffect(() => {
     const storedLocale = window.localStorage.getItem("locale")
     const initialLocale: Locale = storedLocale === "en" ? "en" : "de"
     setLocaleState(initialLocale)
     document.documentElement.lang = initialLocale
+
+    const storedWorkspaceSessionId = window.localStorage.getItem("workspaceSessionId") ?? ""
+    if (storedWorkspaceSessionId) {
+      setSelectedWorkspaceSessionId(storedWorkspaceSessionId)
+    }
   }, [])
 
-  // Load sessions on mount
-  const refreshSessions = useCallback(async () => {
-    if (!hasOpencode) return
+  const refreshWorkspaceSessions = useCallback(async () => {
     try {
-      const data = await fetchSessions()
-      setSessions(data)
-      // Auto-select first session if none selected
-      if (!selectedSessionId && data.length > 0) {
-        setSelectedSessionId(data[0].id)
+      await devLogin().catch(() => false)
+      let data = await listWorkspaceSessions()
+
+      if (data.length === 0) {
+        await createWorkspaceSession().catch(() => undefined)
+        data = await listWorkspaceSessions()
+      }
+      setWorkspaceSessions(data)
+
+      if (data.length > 0) {
+        setSelectedWorkspaceSessionId((current) => current || data[0].id)
       }
     } catch (err) {
       console.error("Failed to load sessions:", err)
     }
-  }, [selectedSessionId])
+  }, [])
 
   useEffect(() => {
-    refreshSessions()
-  }, [refreshSessions])
+    refreshWorkspaceSessions()
+  }, [refreshWorkspaceSessions])
 
-  // Subscribe to session events
   useEffect(() => {
-    if (!hasOpencode) return
-    const unsubscribe = subscribeToEvents((event) => {
+    if (!opencodeBaseUrl) return
+    const unsubscribe = subscribeToEvents(opencodeBaseUrl, (event) => {
       const eventType = event.type as string
       if (eventType?.startsWith("session")) {
-        refreshSessions()
+        refreshWorkspaceSessions()
       }
     })
     return unsubscribe
-  }, [refreshSessions])
+  }, [opencodeBaseUrl, refreshWorkspaceSessions])
+
+  useEffect(() => {
+    if (!selectedWorkspaceSessionId) return
+    window.localStorage.setItem("workspaceSessionId", selectedWorkspaceSessionId)
+  }, [selectedWorkspaceSessionId])
+
+  useEffect(() => {
+    if (!opencodeBaseUrl) return
+
+    let cancelled = false
+    async function ensureChatSession() {
+      try {
+        const sessions = await fetchSessions(opencodeBaseUrl)
+        if (cancelled) return
+        if (sessions.length > 0) {
+          setSelectedChatSessionId(sessions[0].id)
+          return
+        }
+
+        const created = await createSession(opencodeBaseUrl, "Workspace Session")
+        if (cancelled) return
+        setSelectedChatSessionId(created.id)
+      } catch (err) {
+        if (!cancelled) console.error("Failed to load chat session:", err)
+      }
+    }
+
+    ensureChatSession()
+    return () => {
+      cancelled = true
+    }
+  }, [opencodeBaseUrl])
 
   const setLocale = useCallback((next: Locale) => {
     setLocaleState(next)
@@ -97,12 +149,26 @@ export function AppProvider({ children }: { children: ReactNode }) {
       locale,
       setLocale,
       resolveText,
-      sessions,
-      selectedSessionId,
-      setSelectedSessionId,
-      refreshSessions,
+      workspaceSessions,
+      selectedWorkspaceSessionId,
+      setSelectedWorkspaceSessionId,
+      opencodeBaseUrl,
+      selectedChatSessionId,
+      refreshWorkspaceSessions,
     }),
-    [apps, activeAppId, activeApp, locale, setLocale, resolveText, sessions, selectedSessionId, refreshSessions],
+    [
+      apps,
+      activeAppId,
+      activeApp,
+      locale,
+      setLocale,
+      resolveText,
+      workspaceSessions,
+      selectedWorkspaceSessionId,
+      opencodeBaseUrl,
+      selectedChatSessionId,
+      refreshWorkspaceSessions,
+    ],
   )
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>

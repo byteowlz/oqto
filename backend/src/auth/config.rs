@@ -1,7 +1,7 @@
 //! Authentication configuration.
 
-use serde::{Deserialize, Serialize};
 use super::Role;
+use serde::{Deserialize, Serialize};
 
 /// Authentication configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -9,16 +9,16 @@ use super::Role;
 pub struct AuthConfig {
     /// Enable development mode (bypass JWT validation).
     pub dev_mode: bool,
-    
+
     /// JWT secret for HS256 (used in dev mode or simple setups).
     pub jwt_secret: Option<String>,
-    
+
     /// OIDC issuer URL (for RS256 with JWKS).
     pub oidc_issuer: Option<String>,
-    
+
     /// OIDC audience.
     pub oidc_audience: Option<String>,
-    
+
     /// Development users (only used in dev mode).
     pub dev_users: Vec<DevUser>,
 }
@@ -68,7 +68,13 @@ pub struct DevUser {
 impl DevUser {
     /// Create a new dev user.
     #[allow(dead_code)]
-    pub fn new(id: impl Into<String>, name: impl Into<String>, email: impl Into<String>, password: impl Into<String>, role: Role) -> Self {
+    pub fn new(
+        id: impl Into<String>,
+        name: impl Into<String>,
+        email: impl Into<String>,
+        password: impl Into<String>,
+        role: Role,
+    ) -> Self {
         Self {
             id: id.into(),
             name: name.into(),

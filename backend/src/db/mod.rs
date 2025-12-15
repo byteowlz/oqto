@@ -23,7 +23,7 @@ impl Database {
         }
 
         let database_url = format!("sqlite://{}?mode=rwc", path.display());
-        
+
         let options = SqliteConnectOptions::from_str(&database_url)
             .context("parsing database URL")?
             .create_if_missing(true)
@@ -38,7 +38,7 @@ impl Database {
 
         let db = Self { pool };
         db.run_migrations().await?;
-        
+
         Ok(db)
     }
 
@@ -57,7 +57,7 @@ impl Database {
 
         let db = Self { pool };
         db.run_migrations().await?;
-        
+
         Ok(db)
     }
 

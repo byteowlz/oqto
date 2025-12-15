@@ -4,7 +4,7 @@ import { useState, useMemo } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Search, Plus, FolderOpen, Clock, MoreHorizontal } from "lucide-react"
+import { Search, Plus, FolderOpen, MoreHorizontal } from "lucide-react"
 import { useApp } from "@/components/app-context"
 
 export function WorkspacesApp() {

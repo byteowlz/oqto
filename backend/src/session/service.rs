@@ -24,6 +24,8 @@ pub struct SessionServiceConfig {
     pub default_image: String,
     /// Base port for allocating session ports.
     pub base_port: i64,
+    /// Default workspace directory to mount when none is provided.
+    pub default_workspace_path: String,
     /// Default user ID for sessions.
     pub default_user_id: String,
 }
@@ -33,6 +35,7 @@ impl Default for SessionServiceConfig {
         Self {
             default_image: DEFAULT_IMAGE.to_string(),
             base_port: DEFAULT_BASE_PORT,
+            default_workspace_path: ".".to_string(),
             default_user_id: "default".to_string(),
         }
     }
@@ -61,13 +64,26 @@ impl SessionService {
         let session_id = Uuid::new_v4().to_string();
         let container_name = format!("opencode-{}", &session_id[..8]);
 
+        let workspace_path = request
+            .workspace_path
+            .unwrap_or_else(|| self.config.default_workspace_path.clone());
+
+        if !std::path::Path::new(&workspace_path).exists() {
+            anyhow::bail!("workspace path does not exist: {}", workspace_path);
+        }
+
         // Find available ports
-        let base_port = self.repo.find_free_port_range(self.config.base_port).await?;
+        let base_port = self
+            .repo
+            .find_free_port_range(self.config.base_port)
+            .await?;
         let opencode_port = base_port;
         let fileserver_port = base_port + 1;
         let ttyd_port = base_port + 2;
 
-        let image = request.image.unwrap_or_else(|| self.config.default_image.clone());
+        let image = request
+            .image
+            .unwrap_or_else(|| self.config.default_image.clone());
 
         // Create session record
         let session = Session {
@@ -75,7 +91,7 @@ impl SessionService {
             container_id: None,
             container_name: container_name.clone(),
             user_id: self.config.default_user_id.clone(),
-            workspace_path: request.workspace_path.clone(),
+            workspace_path,
             image: image.clone(),
             opencode_port,
             fileserver_port,
@@ -100,8 +116,14 @@ impl SessionService {
         let session_clone = session.clone();
         tokio::spawn(async move {
             if let Err(e) = service.start_container(&session_clone).await {
-                error!("Failed to start container for session {}: {:?}", session_clone.id, e);
-                let _ = service.repo.mark_failed(&session_clone.id, &e.to_string()).await;
+                error!(
+                    "Failed to start container for session {}: {:?}",
+                    session_clone.id, e
+                );
+                let _ = service
+                    .repo
+                    .mark_failed(&session_clone.id, &e.to_string())
+                    .await;
             }
         });
 
@@ -125,7 +147,10 @@ impl SessionService {
             .env("TTYD_PORT", "41822");
 
         // Create and start the container
-        let container_id = self.podman.create_container(&config).await
+        let container_id = self
+            .podman
+            .create_container(&config)
+            .await
             .context("creating container")?;
 
         info!(
@@ -134,7 +159,9 @@ impl SessionService {
         );
 
         // Update session with container ID
-        self.repo.set_container_id(&session.id, &container_id).await?;
+        self.repo
+            .set_container_id(&session.id, &container_id)
+            .await?;
 
         // Wait a moment for services to start
         tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
@@ -147,16 +174,24 @@ impl SessionService {
 
     /// Stop a session and its container.
     pub async fn stop_session(&self, session_id: &str) -> Result<()> {
-        let session = self.repo.get(session_id).await?
+        let session = self
+            .repo
+            .get(session_id)
+            .await?
             .ok_or_else(|| anyhow::anyhow!("session not found: {}", session_id))?;
 
         if session.is_terminal() {
-            warn!("Session {} is already in terminal state: {:?}", session_id, session.status);
+            warn!(
+                "Session {} is already in terminal state: {:?}",
+                session_id, session.status
+            );
             return Ok(());
         }
 
         info!("Stopping session {}", session_id);
-        self.repo.update_status(session_id, SessionStatus::Stopping).await?;
+        self.repo
+            .update_status(session_id, SessionStatus::Stopping)
+            .await?;
 
         // Stop the container if it exists
         if let Some(ref container_id) = session.container_id {
@@ -194,7 +229,10 @@ impl SessionService {
 
     /// Delete a session (must be stopped first).
     pub async fn delete_session(&self, session_id: &str) -> Result<()> {
-        let session = self.repo.get(session_id).await?
+        let session = self
+            .repo
+            .get(session_id)
+            .await?
             .ok_or_else(|| anyhow::anyhow!("session not found: {}", session_id))?;
 
         if session.is_active() {

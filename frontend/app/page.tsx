@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import Image from "next/image"
 import {
   SunMedium,
   MoonStar,
@@ -16,13 +17,23 @@ import {
   Clock,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { ClientOnly } from "@/components/client-only"
 import { AppProvider, useApp } from "@/components/app-context"
 import { cn } from "@/lib/utils"
 import "@/apps"
 
 function AppShell() {
-  const { apps, activeAppId, setActiveAppId, activeApp, locale, setLocale, resolveText, sessions, selectedSessionId, setSelectedSessionId } = useApp()
+  const {
+    apps,
+    activeAppId,
+    setActiveAppId,
+    activeApp,
+    locale,
+    setLocale,
+    resolveText,
+    workspaceSessions,
+    selectedWorkspaceSessionId,
+    setSelectedWorkspaceSessionId,
+  } = useApp()
   const [theme, setTheme] = useState<"light" | "dark">("dark")
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
@@ -30,7 +41,7 @@ function AppShell() {
 
   // Handle session click - select session and switch to chats view
   const handleSessionClick = (sessionId: string) => {
-    setSelectedSessionId(sessionId)
+    setSelectedWorkspaceSessionId(sessionId)
     setActiveAppId("sessions")
     setMobileMenuOpen(false)
   }
@@ -57,7 +68,6 @@ function AppShell() {
     setLocale(next)
   }
 
-  const sidebarWidth = sidebarCollapsed ? "4.5rem" : "16.25rem"
   const shellBg = "var(--background)"
   const sidebarBg = "var(--sidebar, #181b1a)"
   const navIdle = "var(--sidebar, #181b1a)"
@@ -94,7 +104,7 @@ function AppShell() {
         >
           <Menu className="w-5 h-5" />
         </Button>
-        <img src="/Logo_Green-02.png" alt="Fraunhofer IEM" className="h-8 w-auto" />
+        <Image src="/Logo_Green-02.png" alt="Fraunhofer IEM" width={160} height={32} className="h-8 w-auto" priority />
       </header>
 
       {/* Mobile fullscreen menu */}
@@ -104,7 +114,7 @@ function AppShell() {
         style={{ backgroundColor: sidebarBg }}
       >
         <div className="h-14 flex items-center justify-between px-4">
-          <img src="/Logo_Green-02.png" alt="Fraunhofer IEM" className="h-8 w-auto" />
+          <Image src="/Logo_Green-02.png" alt="Fraunhofer IEM" width={160} height={32} className="h-8 w-auto" priority />
           <Button
             variant="ghost"
             size="icon"
@@ -139,17 +149,17 @@ function AppShell() {
           })}
 
           {/* Session history in mobile menu */}
-          {sessions.length > 0 && (
+          {workspaceSessions.length > 0 && (
             <div className="pt-4 border-t border-[#2a3632]">
               <div className="flex items-center gap-2 px-4 py-2">
                 <span className="text-xs uppercase tracking-wide text-[#6b7974]">
                   {locale === "de" ? "Verlauf" : "History"}
                 </span>
-                <span className="text-xs text-[#4a5550]">({sessions.length})</span>
+                <span className="text-xs text-[#4a5550]">({workspaceSessions.length})</span>
               </div>
               <div className="space-y-1">
-                {sessions.slice(0, 10).map((session) => {
-                  const isSelected = selectedSessionId === session.id
+                {workspaceSessions.slice(0, 10).map((session) => {
+                  const isSelected = selectedWorkspaceSessionId === session.id
                   return (
                     <button
                       key={session.id}
@@ -162,7 +172,7 @@ function AppShell() {
                       )}
                     >
                       <div className="text-sm truncate">
-                        {session.title || `Session ${session.id.slice(0, 8)}`}
+                        {session.container_name || `Session ${session.id.slice(0, 8)}`}
                       </div>
                     </button>
                   )
@@ -205,7 +215,16 @@ function AppShell() {
         style={{ backgroundColor: sidebarBg }}
       >
         <div className="h-16 w-full flex items-center justify-between px-4">
-          {!sidebarCollapsed && <img src="/Logo_Green-02.png" alt="Fraunhofer IEM" className="h-10 w-auto" />}
+          {!sidebarCollapsed && (
+            <Image
+              src="/Logo_Green-02.png"
+              alt="Fraunhofer IEM"
+              width={200}
+              height={40}
+              className="h-10 w-auto"
+              priority
+            />
+          )}
           <Button
             variant="ghost"
             size="icon"
@@ -240,18 +259,18 @@ function AppShell() {
         </nav>
 
         {/* Session history list */}
-        {!sidebarCollapsed && sessions.length > 0 && (
+        {!sidebarCollapsed && workspaceSessions.length > 0 && (
           <div className="w-full px-4 mt-4 flex-1 min-h-0 flex flex-col">
             <div className="flex items-center gap-2 py-2 border-t border-[#2a3632]">
               <span className="text-xs uppercase tracking-wide text-[#6b7974]">
                 {locale === "de" ? "Verlauf" : "History"}
               </span>
-              <span className="text-xs text-[#4a5550]">({sessions.length})</span>
+              <span className="text-xs text-[#4a5550]">({workspaceSessions.length})</span>
             </div>
             <div className="flex-1 overflow-y-auto space-y-1 pr-1 -mr-1">
-              {sessions.slice(0, 20).map((session) => {
-                const isSelected = selectedSessionId === session.id
-                const updatedAt = session.time?.updated ? new Date(session.time.updated) : null
+              {workspaceSessions.slice(0, 20).map((session) => {
+                const isSelected = selectedWorkspaceSessionId === session.id
+                const createdAt = session.created_at ? new Date(session.created_at) : null
                 return (
                   <button
                     key={session.id}
@@ -264,12 +283,12 @@ function AppShell() {
                     )}
                   >
                     <div className="text-sm truncate font-medium">
-                      {session.title || `Session ${session.id.slice(0, 8)}`}
+                      {session.container_name || `Session ${session.id.slice(0, 8)}`}
                     </div>
-                    {updatedAt && (
+                    {createdAt && (
                       <div className="flex items-center gap-1 text-[10px] text-[#6b7974] mt-0.5">
                         <Clock className="w-3 h-3" />
-                        {updatedAt.toLocaleDateString()} {updatedAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                        {createdAt.toLocaleDateString()} {createdAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                       </div>
                     )}
                   </button>
@@ -280,7 +299,7 @@ function AppShell() {
         )}
 
         {/* Collapsed session indicator */}
-        {sidebarCollapsed && sessions.length > 0 && (
+        {sidebarCollapsed && workspaceSessions.length > 0 && (
           <div className="w-full px-2 mt-4">
             <div className="border-t border-[#2a3632] pt-2">
               <button
@@ -349,10 +368,8 @@ function EmptyState() {
 
 export default function AgentWorkspacePlatform() {
   return (
-    <ClientOnly>
-      <AppProvider>
-        <AppShell />
-      </AppProvider>
-    </ClientOnly>
+    <AppProvider>
+      <AppShell />
+    </AppProvider>
   )
 }

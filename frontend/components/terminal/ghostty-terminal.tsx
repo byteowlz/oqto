@@ -1,9 +1,11 @@
 "use client"
 
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react"
-import { Terminal, FitAddon, init } from "ghostty-web"
+import { Terminal, FitAddon, Ghostty } from "ghostty-web"
 
-const ghosttyReady = init()
+const ghosttyReady: Promise<Ghostty> = (Ghostty as unknown as { loadFromPath: (path: string) => Promise<Ghostty> }).loadFromPath(
+  "/ghostty-vt.wasm",
+)
 
 export type GhosttyTerminalHandle = {
   focus: () => void
@@ -36,7 +38,7 @@ export const GhosttyTerminal = forwardRef<GhosttyTerminalHandle, GhosttyTerminal
       let disposed = false
 
       async function bootstrap() {
-        await ghosttyReady
+        const ghostty = await ghosttyReady
         if (!decoderRef.current) {
           decoderRef.current = new TextDecoder()
         }
@@ -44,6 +46,7 @@ export const GhosttyTerminal = forwardRef<GhosttyTerminalHandle, GhosttyTerminal
 
 
         const terminal = new Terminal({
+          ghostty,
           fontFamily,
           fontSize,
           cursorBlink: true,

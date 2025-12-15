@@ -112,7 +112,11 @@ impl ContainerConfig {
     }
 
     /// Add a volume mount.
-    pub fn volume(mut self, host_path: impl Into<String>, container_path: impl Into<String>) -> Self {
+    pub fn volume(
+        mut self,
+        host_path: impl Into<String>,
+        container_path: impl Into<String>,
+    ) -> Self {
         self.volumes.push((host_path.into(), container_path.into()));
         self
     }

@@ -154,6 +154,9 @@ struct ServeCommand {
     /// Base port for session allocation
     #[arg(long, default_value = "41820")]
     base_port: u16,
+    /// Default workspace directory to mount for new sessions
+    #[arg(long, default_value = ".", value_name = "PATH")]
+    workspace_root: PathBuf,
 }
 
 #[derive(Debug, Clone, Args)]
@@ -482,53 +485,69 @@ fn handle_completions(shell: Shell) -> Result<()> {
 
 async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     info!("Starting workspace backend server...");
-    
+
     // Initialize database
     let db_path = ctx.paths.data_dir.join("sessions.db");
     info!("Database path: {}", db_path.display());
     let database = db::Database::new(&db_path).await?;
-    
+
     // Initialize authentication
     let auth_config = auth::AuthConfig::default();
-    info!("Auth mode: {}", if auth_config.dev_mode { "development" } else { "production" });
+    info!(
+        "Auth mode: {}",
+        if auth_config.dev_mode {
+            "development"
+        } else {
+            "production"
+        }
+    );
     let auth_state = auth::AuthState::new(auth_config);
-    
+
     // Initialize services
     let podman = podman::Podman::new();
-    
+
     // Check podman is available
     match podman.health_check().await {
         Ok(_) => info!("Podman is available"),
-        Err(e) => log::warn!("Podman health check failed: {:?}. Container operations may fail.", e),
+        Err(e) => log::warn!(
+            "Podman health check failed: {:?}. Container operations may fail.",
+            e
+        ),
     }
-    
+
     let session_config = session::SessionServiceConfig {
         default_image: cmd.image.clone(),
         base_port: cmd.base_port as i64,
+        default_workspace_path: cmd
+            .workspace_root
+            .canonicalize()
+            .unwrap_or(cmd.workspace_root)
+            .to_string_lossy()
+            .to_string(),
         default_user_id: "default".to_string(),
     };
-    
+
     let session_repo = session::SessionRepository::new(database.pool().clone());
     let session_service = session::SessionService::new(session_repo, podman, session_config);
-    
+
     // Create app state
     let state = api::AppState::new(session_service, auth_state);
-    
+
     // Create router
     let app = api::create_router(state);
-    
+
     // Bind and serve
     let addr: SocketAddr = format!("{}:{}", cmd.host, cmd.port)
         .parse()
         .context("invalid address")?;
-    
+
     info!("Listening on http://{}", addr);
-    
-    let listener = TcpListener::bind(addr).await.context("binding to address")?;
-    axum::serve(listener, app)
+
+    let listener = TcpListener::bind(addr)
         .await
-        .context("running server")?;
-    
+        .context("binding to address")?;
+    axum::serve(listener, app).await.context("running server")?;
+
     Ok(())
 }
 
