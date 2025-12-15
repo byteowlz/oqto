@@ -4,7 +4,7 @@ use axum::{
     body::Body,
     extract::{Path, State, WebSocketUpgrade},
     http::{Request, StatusCode, Uri},
-    response::{IntoResponse, Response},
+    response::{IntoResponse, Response, Sse},
 };
 use futures::{SinkExt, StreamExt};
 use hyper_util::client::legacy::Client;
@@ -197,4 +197,23 @@ async fn handle_terminal_proxy(
     }
 
     Ok(())
+}
+
+/// SSE events stream for opencode.
+pub async fn opencode_events(
+    State(state): State<AppState>,
+) -> Result<Sse<impl tokio_stream::Stream<Item = Result<axum::response::sse::Event, std::convert::Infallible>>>, StatusCode> {
+    use axum::response::sse::Event;
+    use std::time::Duration;
+    use tokio::time;
+    use tokio_stream::{wrappers::IntervalStream, StreamExt};
+
+    // For now, send a keep-alive every 30 seconds
+    // TODO: Aggregate events from all active opencode sessions
+    let interval = time::interval(Duration::from_secs(30));
+    let stream = StreamExt::map(IntervalStream::new(interval), |_| {
+        Ok(Event::default().data("{\"type\":\"keepalive\"}"))
+    });
+
+    Ok(Sse::new(stream))
 }

@@ -360,10 +360,10 @@ export function SessionsApp() {
         {/* Mobile content */}
         <div className="flex-1 min-h-0 bg-[#161c1a] border border-t-0 border-[#1f2a27] rounded-b-xl p-3 sm:p-4 overflow-hidden">
           {activeView === "chat" && ChatContent}
-          {activeView === "files" && <FileTreeView />}
-          {activeView === "terminal" && <TerminalView />}
-          {activeView === "preview" && <PreviewView />}
-          {activeView === "tasks" && <TodoListView todos={latestTodos} emptyMessage={t.noTasks} />}
+           {activeView === "files" && <FileTreeView />}
+           {activeView === "terminal" && <TerminalView sessionId={selectedSessionId} />}
+           {activeView === "preview" && <PreviewView />}
+           {activeView === "tasks" && <TodoListView todos={latestTodos} emptyMessage={t.noTasks} />}
         </div>
       </div>
 
@@ -383,10 +383,10 @@ export function SessionsApp() {
             <TabButton view="tasks" icon={ListTodo} label={t.tasks} badge={incompleteTasks} />
           </div>
           <div className="flex-1 min-h-0 overflow-hidden">
-            {activeView === "files" && <FileTreeView />}
-            {activeView === "terminal" && <TerminalView />}
-            {activeView === "preview" && <PreviewView />}
-            {activeView === "tasks" && <TodoListView todos={latestTodos} emptyMessage={t.noTasks} />}
+             {activeView === "files" && <FileTreeView />}
+             {activeView === "terminal" && <TerminalView sessionId={selectedSessionId} />}
+             {activeView === "preview" && <PreviewView />}
+             {activeView === "tasks" && <TodoListView todos={latestTodos} emptyMessage={t.noTasks} />}
             {/* If chat is selected on desktop (shouldn't happen normally), show files */}
             {activeView === "chat" && <FileTreeView />}
           </div>

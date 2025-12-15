@@ -58,6 +58,7 @@ chrono = { version = "0.4", features = ["serde"] }
 async-trait = "0.1"
 futures = "0.3"
 tokio-tungstenite = "0.26"
+tokio-stream = "0.1"
 
 # Authentication
 jsonwebtoken = "9"

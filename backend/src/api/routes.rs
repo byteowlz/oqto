@@ -33,6 +33,8 @@ pub fn create_router(state: AppState) -> Router {
         .route("/sessions/{session_id}", get(handlers::get_session))
         .route("/sessions/{session_id}", delete(handlers::delete_session))
         .route("/sessions/{session_id}/stop", post(handlers::stop_session))
+        // Opencode events
+        .route("/opencode/event", get(proxy::opencode_events))
         // Proxy routes
         .route(
             "/sessions/{session_id}/opencode/{*path}",

@@ -5,7 +5,7 @@ const nextConfig: NextConfig = {
     // Base URL for the Caddy proxy (handles all container routing)
     NEXT_PUBLIC_CADDY_BASE_URL: process.env.NEXT_PUBLIC_CADDY_BASE_URL || "http://localhost",
     // Legacy direct URLs (for local dev without Caddy)
-    NEXT_PUBLIC_OPENCODE_BASE_URL: process.env.NEXT_PUBLIC_OPENCODE_BASE_URL || "http://localhost:41820",
+    NEXT_PUBLIC_OPENCODE_BASE_URL: process.env.NEXT_PUBLIC_OPENCODE_BASE_URL || "http://localhost:8080",
     NEXT_PUBLIC_FILESERVER_BASE_URL: process.env.NEXT_PUBLIC_FILESERVER_BASE_URL || "http://localhost:41821",
     NEXT_PUBLIC_TERMINAL_WS_URL: process.env.NEXT_PUBLIC_TERMINAL_WS_URL || "ws://localhost:41822",
   },
