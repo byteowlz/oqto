@@ -9,7 +9,7 @@ use anyhow::{Context, Result, anyhow};
 use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
 use clap_complete::Shell;
 use config::{Config, Environment, File, FileFormat};
-use env_logger::fmt::WriteStyle;
+
 use log::{LevelFilter, debug, info};
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
@@ -208,43 +208,61 @@ impl RuntimeContext {
     }
 
     fn init_logging(&self) -> Result<()> {
+        use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+
         if self.common.quiet {
             log::set_max_level(LevelFilter::Off);
             return Ok(());
         }
 
+        // Determine filter level
+        let level = match self.effective_log_level() {
+            LevelFilter::Off => "off",
+            LevelFilter::Error => "error",
+            LevelFilter::Warn => "warn",
+            LevelFilter::Info => "info",
+            LevelFilter::Debug => "debug",
+            LevelFilter::Trace => "trace",
+        };
+
+        let env_filter = EnvFilter::try_from_default_env()
+            .unwrap_or_else(|_| EnvFilter::new(format!("workspace_backend={level},tower_http={level}")));
+
+        // Use JSON output if --json flag is set, otherwise pretty format
+        if self.common.json {
+            tracing_subscriber::registry()
+                .with(env_filter)
+                .with(tracing_subscriber::fmt::layer().json())
+                .try_init()
+                .ok();
+        } else {
+            let force_color = matches!(self.common.color, ColorOption::Always)
+                || env::var_os("FORCE_COLOR").is_some();
+            let disable_color = self.common.no_color
+                || matches!(self.common.color, ColorOption::Never)
+                || env::var_os("NO_COLOR").is_some()
+                || (!force_color && !io::stderr().is_terminal());
+
+            tracing_subscriber::registry()
+                .with(env_filter)
+                .with(
+                    tracing_subscriber::fmt::layer()
+                        .with_ansi(!disable_color)
+                        .with_target(self.common.diagnostics)
+                        .with_file(self.common.diagnostics)
+                        .with_line_number(self.common.diagnostics),
+                )
+                .try_init()
+                .ok();
+        }
+
+        // Also init env_logger for compatibility with log crate users
         let mut builder =
             env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"));
-
         builder.filter_level(self.effective_log_level());
+        builder.try_init().ok();
 
-        let force_color = matches!(self.common.color, ColorOption::Always)
-            || env::var_os("FORCE_COLOR").is_some();
-        let disable_color = self.common.no_color
-            || matches!(self.common.color, ColorOption::Never)
-            || env::var_os("NO_COLOR").is_some()
-            || (!force_color && !io::stderr().is_terminal());
-
-        if disable_color {
-            builder.write_style(WriteStyle::Never);
-        } else if force_color {
-            builder.write_style(WriteStyle::Always);
-        } else {
-            builder.write_style(WriteStyle::Auto);
-        }
-
-        if self.common.diagnostics {
-            builder.format_timestamp_millis();
-            builder.format_module_path(true);
-            builder.format_target(true);
-        }
-
-        builder.try_init().or_else(|err| {
-            if self.common.verbose > 0 {
-                eprintln!("logger already initialized: {err}");
-            }
-            Ok(())
-        })
+        Ok(())
     }
 
     fn effective_log_level(&self) -> LevelFilter {

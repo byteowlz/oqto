@@ -1,3 +1,22 @@
+# Stage 1: Build fileserver
+# Run from repository root: docker build -f container/Dockerfile .
+FROM rust:1.83-slim AS fileserver-builder
+
+WORKDIR /build
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy fileserver source (build context must be repository root)
+COPY fileserver/Cargo.toml fileserver/Cargo.lock ./
+COPY fileserver/src ./src
+
+# Build release binary
+RUN cargo build --release
+
+# Stage 2: Main container
 # Minimal Arch Linux container with opencode and development tools
 # x86_64 only (Arch Linux does not support ARM64)
 FROM archlinux:latest
@@ -51,6 +70,10 @@ RUN pacman -Syu --noconfirm && \
   ttyd \
   && pacman -Scc --noconfirm
 
+# Copy fileserver binary from builder stage
+COPY --from=fileserver-builder /build/target/release/fileserver /usr/local/bin/fileserver
+RUN chmod +x /usr/local/bin/fileserver
+
 # Create non-root user
 RUN groupadd --gid ${USER_GID} ${USERNAME} && \
   useradd --uid ${USER_UID} --gid ${USER_GID} -m ${USERNAME} && \
@@ -75,8 +98,8 @@ RUN curl -fsSL https://opencode.ai/install | bash
 # Add opencode to PATH
 ENV PATH="/home/${USERNAME}/.opencode/bin:/home/${USERNAME}/.local/bin:${PATH}"
 
-# Copy configuration files
-COPY --chown=${USERNAME}:${USERNAME} .config/ /home/${USERNAME}/.config/
+# Copy configuration files (from container directory in build context)
+COPY --chown=${USERNAME}:${USERNAME} container/.config/ /home/${USERNAME}/.config/
 
 # Configure shell with starship and zoxide
 RUN echo 'eval "$(starship init bash)"' >> /home/${USERNAME}/.bashrc && \
@@ -84,13 +107,10 @@ RUN echo 'eval "$(starship init bash)"' >> /home/${USERNAME}/.bashrc && \
   echo 'alias vim="nvim"' >> /home/${USERNAME}/.bashrc && \
   echo 'alias vi="nvim"' >> /home/${USERNAME}/.bashrc
 
-# Copy fileserver binary (pre-built for target architecture)
-# Build with: cd fileserver && cargo build --release --target x86_64-unknown-linux-gnu
-# COPY --chown=${USERNAME}:${USERNAME} fileserver/target/x86_64-unknown-linux-gnu/release/fileserver /usr/local/bin/fileserver
-# For now, we'll use the fallback Python http.server until fileserver is built into CI
+# fileserver binary is already installed from the builder stage above
 
-# Copy entrypoint script
-COPY --chown=${USERNAME}:${USERNAME} entrypoint.sh /home/${USERNAME}/entrypoint.sh
+# Copy entrypoint script (from container directory in build context)
+COPY --chown=${USERNAME}:${USERNAME} container/entrypoint.sh /home/${USERNAME}/entrypoint.sh
 RUN chmod +x /home/${USERNAME}/entrypoint.sh
 
 # Working directory

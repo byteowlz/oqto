@@ -8,10 +8,12 @@ use axum::{
     response::IntoResponse,
 };
 use serde::{Deserialize, Serialize};
+use tracing::{info, instrument};
 
 use crate::auth::{AuthError, CurrentUser, RequireAdmin};
 use crate::session::{CreateSessionRequest, Session};
 
+use super::error::{ApiError, ApiResult};
 use super::state::AppState;
 
 /// Health check response.
@@ -27,20 +29,6 @@ pub async fn health() -> Json<HealthResponse> {
         status: "ok".to_string(),
         version: env!("CARGO_PKG_VERSION").to_string(),
     })
-}
-
-/// Error response.
-#[derive(Debug, Serialize)]
-pub struct ErrorResponse {
-    pub error: String,
-}
-
-impl ErrorResponse {
-    pub fn new(message: impl Into<String>) -> Self {
-        Self {
-            error: message.into(),
-        }
-    }
 }
 
 /// Session response with URLs.
@@ -72,52 +60,35 @@ impl SessionWithUrls {
 }
 
 /// List all sessions.
-pub async fn list_sessions(
-    State(state): State<AppState>,
-) -> Result<Json<Vec<Session>>, (StatusCode, Json<ErrorResponse>)> {
-    state.sessions.list_sessions().await.map(Json).map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse::new(e.to_string())),
-        )
-    })
+#[instrument(skip(state))]
+pub async fn list_sessions(State(state): State<AppState>) -> ApiResult<Json<Vec<Session>>> {
+    let sessions = state.sessions.list_sessions().await?;
+    info!(count = sessions.len(), "Listed sessions");
+    Ok(Json(sessions))
 }
 
 /// Get a specific session.
+#[instrument(skip(state))]
 pub async fn get_session(
     State(state): State<AppState>,
     Path(session_id): Path<String>,
-) -> Result<Json<Session>, (StatusCode, Json<ErrorResponse>)> {
+) -> ApiResult<Json<Session>> {
     state
         .sessions
         .get_session(&session_id)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse::new(e.to_string())),
-            )
-        })?
+        .await?
         .map(Json)
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(ErrorResponse::new("session not found")),
-            )
-        })
+        .ok_or_else(|| ApiError::not_found(format!("Session {} not found", session_id)))
 }
 
 /// Create a new session.
+#[instrument(skip(state, request), fields(workspace_path = ?request.workspace_path))]
 pub async fn create_session(
     State(state): State<AppState>,
     Json(request): Json<CreateSessionRequest>,
-) -> Result<(StatusCode, Json<SessionWithUrls>), (StatusCode, Json<ErrorResponse>)> {
-    let session = state.sessions.create_session(request).await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse::new(e.to_string())),
-        )
-    })?;
+) -> ApiResult<(StatusCode, Json<SessionWithUrls>)> {
+    let session = state.sessions.create_session(request).await?;
+    info!(session_id = %session.id, "Created new session");
 
     // TODO: Get actual host from request headers
     let response = SessionWithUrls::from_session(session, "localhost");
@@ -125,59 +96,42 @@ pub async fn create_session(
 }
 
 /// Stop a session.
+#[instrument(skip(state))]
 pub async fn stop_session(
     State(state): State<AppState>,
     Path(session_id): Path<String>,
-) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
+) -> ApiResult<StatusCode> {
     // First check if session exists
-    let session = state.sessions.get_session(&session_id).await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse::new(e.to_string())),
-        )
-    })?;
+    let session = state.sessions.get_session(&session_id).await?;
 
     if session.is_none() {
-        return Err((
-            StatusCode::NOT_FOUND,
-            Json(ErrorResponse::new("session not found")),
-        ));
+        return Err(ApiError::not_found(format!("Session {} not found", session_id)));
     }
 
-    state
-        .sessions
-        .stop_session(&session_id)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse::new(e.to_string())),
-            )
-        })?;
+    state.sessions.stop_session(&session_id).await?;
+    info!(session_id = %session_id, "Stopped session");
 
     Ok(StatusCode::NO_CONTENT)
 }
 
 /// Delete a session.
+#[instrument(skip(state))]
 pub async fn delete_session(
     State(state): State<AppState>,
     Path(session_id): Path<String>,
-) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
-    state
-        .sessions
-        .delete_session(&session_id)
-        .await
-        .map_err(|e| {
-            let status = if e.to_string().contains("not found") {
-                StatusCode::NOT_FOUND
-            } else if e.to_string().contains("active") {
-                StatusCode::CONFLICT
-            } else {
-                StatusCode::INTERNAL_SERVER_ERROR
-            };
-            (status, Json(ErrorResponse::new(e.to_string())))
-        })?;
+) -> ApiResult<StatusCode> {
+    state.sessions.delete_session(&session_id).await.map_err(|e| {
+        let msg = e.to_string();
+        if msg.contains("not found") {
+            ApiError::not_found(msg)
+        } else if msg.contains("active") {
+            ApiError::conflict(msg)
+        } else {
+            ApiError::internal(msg)
+        }
+    })?;
 
+    info!(session_id = %session_id, "Deleted session");
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -263,36 +217,32 @@ pub async fn get_current_user(user: CurrentUser) -> Json<UserInfo> {
 // ============================================================================
 
 /// List all sessions (admin only).
+#[instrument(skip(state, _user))]
 pub async fn admin_list_sessions(
     State(state): State<AppState>,
     RequireAdmin(_user): RequireAdmin,
-) -> Result<Json<Vec<Session>>, (StatusCode, Json<ErrorResponse>)> {
-    state.sessions.list_sessions().await.map(Json).map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse::new(e.to_string())),
-        )
-    })
+) -> ApiResult<Json<Vec<Session>>> {
+    let sessions = state.sessions.list_sessions().await?;
+    info!(count = sessions.len(), "Admin listed all sessions");
+    Ok(Json(sessions))
 }
 
 /// Force stop a session (admin only).
+#[instrument(skip(state, _user))]
 pub async fn admin_force_stop_session(
     State(state): State<AppState>,
     RequireAdmin(_user): RequireAdmin,
     Path(session_id): Path<String>,
-) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
-    state
-        .sessions
-        .stop_session(&session_id)
-        .await
-        .map_err(|e| {
-            let status = if e.to_string().contains("not found") {
-                StatusCode::NOT_FOUND
-            } else {
-                StatusCode::INTERNAL_SERVER_ERROR
-            };
-            (status, Json(ErrorResponse::new(e.to_string())))
-        })?;
+) -> ApiResult<StatusCode> {
+    state.sessions.stop_session(&session_id).await.map_err(|e| {
+        let msg = e.to_string();
+        if msg.contains("not found") {
+            ApiError::not_found(msg)
+        } else {
+            ApiError::internal(msg)
+        }
+    })?;
 
+    info!(session_id = %session_id, "Admin force stopped session");
     Ok(StatusCode::NO_CONTENT)
 }

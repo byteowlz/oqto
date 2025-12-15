@@ -1,0 +1,132 @@
+{
+  "common": {
+    "loading": "Laden...",
+    "error": "Fehler",
+    "save": "Speichern",
+    "cancel": "Abbrechen",
+    "delete": "Loeschen",
+    "edit": "Bearbeiten",
+    "create": "Erstellen",
+    "search": "Suchen",
+    "filter": "Filtern",
+    "refresh": "Aktualisieren",
+    "close": "Schliessen",
+    "open": "Oeffnen",
+    "back": "Zurueck",
+    "next": "Weiter",
+    "previous": "Zurueck",
+    "yes": "Ja",
+    "no": "Nein",
+    "confirm": "Bestaetigen",
+    "submit": "Absenden",
+    "reset": "Zuruecksetzen",
+    "copy": "Kopieren",
+    "copied": "Kopiert!",
+    "download": "Herunterladen",
+    "upload": "Hochladen"
+  },
+  "navigation": {
+    "home": "Startseite",
+    "sessions": "Sitzungen",
+    "workspaces": "Arbeitsbereiche",
+    "projects": "Projekte",
+    "admin": "Administration",
+    "settings": "Einstellungen",
+    "logout": "Abmelden"
+  },
+  "sessions": {
+    "title": "Sitzungen",
+    "newSession": "Neue Sitzung",
+    "noSessions": "Noch keine Sitzungen",
+    "createFirst": "Erstellen Sie Ihre erste Sitzung, um zu beginnen",
+    "status": {
+      "pending": "Ausstehend",
+      "starting": "Startet",
+      "running": "Aktiv",
+      "stopping": "Wird beendet",
+      "stopped": "Beendet",
+      "failed": "Fehlgeschlagen"
+    },
+    "actions": {
+      "start": "Sitzung starten",
+      "stop": "Sitzung beenden",
+      "restart": "Sitzung neu starten",
+      "delete": "Sitzung loeschen"
+    },
+    "chat": {
+      "placeholder": "Nachricht eingeben...",
+      "send": "Senden",
+      "thinking": "Denkt nach...",
+      "noMessages": "Noch keine Nachrichten. Starten Sie die Konversation!"
+    }
+  },
+  "workspaces": {
+    "title": "Arbeitsbereiche",
+    "newWorkspace": "Neuer Arbeitsbereich",
+    "noWorkspaces": "Noch keine Arbeitsbereiche",
+    "createFirst": "Erstellen Sie Ihren ersten Arbeitsbereich, um zu beginnen",
+    "selectTemplate": "Vorlage auswaehlen",
+    "templates": {
+      "codingCopilot": {
+        "name": "Coding Copilot",
+        "description": "KI-gestuetzte Programmierung mit Terminal-Zugriff"
+      },
+      "researchAssistant": {
+        "name": "Recherche-Assistent",
+        "description": "Recherche und Dokumentensynthese"
+      },
+      "meetingSynthesizer": {
+        "name": "Meeting-Synthesizer",
+        "description": "Besprechungsnotizen und Aktionspunkte"
+      }
+    }
+  },
+  "files": {
+    "title": "Dateien",
+    "noFiles": "Keine Dateien in diesem Verzeichnis",
+    "preview": "Vorschau",
+    "download": "Herunterladen",
+    "upload": "Datei hochladen",
+    "newFile": "Neue Datei",
+    "newFolder": "Neuer Ordner",
+    "rename": "Umbenennen",
+    "delete": "Loeschen",
+    "openInEditor": "Im Editor oeffnen"
+  },
+  "terminal": {
+    "title": "Terminal",
+    "connecting": "Verbinde mit Terminal...",
+    "connected": "Verbunden",
+    "disconnected": "Getrennt",
+    "reconnect": "Neu verbinden"
+  },
+  "admin": {
+    "title": "Admin-Dashboard",
+    "overview": "Uebersicht",
+    "sessions": "Alle Sitzungen",
+    "metrics": "Metriken",
+    "users": "Benutzer",
+    "activeSessions": "Aktive Sitzungen",
+    "totalUsers": "Benutzer gesamt",
+    "cpuUsage": "CPU-Auslastung",
+    "memoryUsage": "Speicherauslastung",
+    "killSession": "Sitzung beenden",
+    "forceStop": "Sofort beenden"
+  },
+  "errors": {
+    "generic": "Etwas ist schiefgelaufen. Bitte versuchen Sie es erneut.",
+    "network": "Netzwerkfehler. Bitte ueberpruefen Sie Ihre Verbindung.",
+    "unauthorized": "Sie sind nicht berechtigt, diese Aktion auszufuehren.",
+    "notFound": "Die angeforderte Ressource wurde nicht gefunden.",
+    "sessionFailed": "Sitzung konnte nicht gestartet werden. Bitte versuchen Sie es erneut."
+  },
+  "theme": {
+    "light": "Hell",
+    "dark": "Dunkel",
+    "system": "System"
+  },
+  "language": {
+    "en": "Englisch",
+    "de": "Deutsch"
+  }
+}

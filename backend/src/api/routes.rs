@@ -5,7 +5,8 @@ use axum::{
     routing::{delete, get, post},
 };
 use tower_http::cors::{Any, CorsLayer};
-use tower_http::trace::TraceLayer;
+use tower_http::trace::{DefaultMakeSpan, DefaultOnRequest, DefaultOnResponse, TraceLayer};
+use tracing::Level;
 
 use crate::auth::auth_middleware;
 
@@ -20,6 +21,12 @@ pub fn create_router(state: AppState) -> Router {
         .allow_origin(Any)
         .allow_methods(Any)
         .allow_headers(Any);
+
+    // Tracing layer with request IDs and timing
+    let trace_layer = TraceLayer::new_for_http()
+        .make_span_with(DefaultMakeSpan::new().level(Level::INFO))
+        .on_request(DefaultOnRequest::new().level(Level::INFO))
+        .on_response(DefaultOnResponse::new().level(Level::INFO));
 
     // Clone auth state for middleware
     let auth_state = state.auth.clone();
@@ -85,5 +92,5 @@ pub fn create_router(state: AppState) -> Router {
         .merge(public_routes)
         .merge(protected_routes)
         .layer(cors)
-        .layer(TraceLayer::new_for_http())
+        .layer(trace_layer)
 }

@@ -1,5 +1,7 @@
 import type React from "react"
 import type { Metadata } from "next"
+import { getLocale, getMessages } from "next-intl/server"
+import { Providers } from "@/components/providers"
 import "./globals.css"
 
 export const metadata: Metadata = {
@@ -7,20 +9,21 @@ export const metadata: Metadata = {
   description: "Secure, scalable platform for AI agent collaboration and workspace management",
 }
 
-function RootLayoutInner({
+export default async function RootLayout({
   children,
 }: {
   children: React.ReactNode
 }) {
+  const locale = await getLocale()
+  const messages = await getMessages()
+
   return (
-    <html lang="de" className="dark" suppressHydrationWarning>
+    <html lang={locale} className="dark" suppressHydrationWarning>
       <body className="font-mono antialiased bg-background text-foreground">
-        {children}
+        <Providers locale={locale} messages={messages}>
+          {children}
+        </Providers>
       </body>
     </html>
   )
-}
-
-export default function RootLayout(props: { children: React.ReactNode }) {
-  return <RootLayoutInner {...props} />
 }
