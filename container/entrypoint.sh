@@ -5,19 +5,45 @@ set -e
 OPENCODE_PORT="${OPENCODE_PORT:-41820}"
 FILESERVER_PORT="${FILESERVER_PORT:-41821}"
 TTYD_PORT="${TTYD_PORT:-41822}"
-EAVS_PORT="${EAVS_PORT:-41823}"
 WORKSPACE_DIR="${WORKSPACE_DIR:-/home/dev/workspace}"
+
+# EAVS configuration (host-based proxy)
+# EAVS_URL - URL to the host EAVS proxy (e.g., http://host.docker.internal:41800)
+# EAVS_VIRTUAL_KEY - Virtual key for this session (created by backend)
 
 echo "Starting OpenCode development container..."
 echo "OpenCode server port: ${OPENCODE_PORT}"
 echo "File server port: ${FILESERVER_PORT}"
 echo "TTY terminal port: ${TTYD_PORT}"
-echo "EAVS proxy port: ${EAVS_PORT}"
 echo "Workspace directory: ${WORKSPACE_DIR}"
+if [ -n "${EAVS_URL}" ]; then
+    echo "EAVS proxy URL: ${EAVS_URL}"
+fi
 
 # Ensure workspace directory exists
 mkdir -p "${WORKSPACE_DIR}"
 cd "${WORKSPACE_DIR}"
+
+# Configure opencode to use EAVS proxy if available
+if [ -n "${EAVS_URL}" ] && [ -n "${EAVS_VIRTUAL_KEY}" ]; then
+    echo "Configuring OpenCode to use EAVS proxy..."
+    mkdir -p /home/dev/.config/opencode
+    cat > /home/dev/.config/opencode/opencode.json <<EOF
+{
+  "provider": {
+    "anthropic": {
+      "baseURL": "${EAVS_URL}/v1"
+    },
+    "openai": {
+      "baseURL": "${EAVS_URL}/v1"
+    }
+  }
+}
+EOF
+    # Set the virtual key as the API key for providers
+    export ANTHROPIC_API_KEY="${EAVS_VIRTUAL_KEY}"
+    export OPENAI_API_KEY="${EAVS_VIRTUAL_KEY}"
+fi
 
 # Function to cleanup background processes on exit
 cleanup() {
@@ -26,15 +52,6 @@ cleanup() {
     exit 0
 }
 trap cleanup SIGTERM SIGINT
-
-# Start EAVS (LLM proxy) in the background
-echo "Starting EAVS proxy on port ${EAVS_PORT}..."
-if command -v eavs &> /dev/null; then
-    eavs serve --host 0.0.0.0 --port "${EAVS_PORT}" &
-    EAVS_PID=$!
-else
-    echo "Warning: eavs binary not found, LLM proxying will not be available"
-fi
 
 # Start file server in the background
 echo "Starting file server on port ${FILESERVER_PORT}..."

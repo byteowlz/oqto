@@ -418,6 +418,7 @@ struct AppConfig {
     runtime: RuntimeConfig,
     paths: PathsConfig,
     container: ContainerRuntimeConfig,
+    eavs: Option<EavsConfig>,
 }
 
 impl AppConfig {
@@ -437,8 +438,36 @@ impl Default for AppConfig {
             runtime: RuntimeConfig::default(),
             paths: PathsConfig::default(),
             container: ContainerRuntimeConfig::default(),
+            eavs: None,
         }
     }
+}
+
+/// EAVS (LLM proxy) configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct EavsConfig {
+    /// Whether EAVS integration is enabled.
+    #[serde(default = "default_true")]
+    enabled: bool,
+    /// URL of the EAVS server (e.g., "http://localhost:41800").
+    #[serde(default = "default_eavs_base_url")]
+    base_url: String,
+    /// URL for containers to reach EAVS (e.g., "http://host.docker.internal:41800").
+    container_url: Option<String>,
+    /// Master key for EAVS admin operations.
+    master_key: Option<String>,
+    /// Default session budget limit in USD.
+    default_session_budget_usd: Option<f64>,
+    /// Default session rate limit in requests per minute.
+    default_session_rpm: Option<u32>,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_eavs_base_url() -> String {
+    "http://localhost:41800".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -776,10 +805,36 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
             .to_string_lossy()
             .to_string(),
         default_user_id: "default".to_string(),
+        default_session_budget_usd: ctx.config.eavs.as_ref().and_then(|e| e.default_session_budget_usd),
+        default_session_rpm: ctx.config.eavs.as_ref().and_then(|e| e.default_session_rpm),
+        eavs_container_url: ctx.config.eavs.as_ref().and_then(|e| e.container_url.clone()),
     };
 
     let session_repo = session::SessionRepository::new(database.pool().clone());
-    let session_service = session::SessionService::new(session_repo, container_runtime, session_config);
+
+    // Initialize EAVS client if configured
+    let eavs_client = if let Some(ref eavs_config) = ctx.config.eavs {
+        if eavs_config.enabled {
+            if let Some(ref master_key) = eavs_config.master_key {
+                Some(eavs::EavsClient::new(&eavs_config.base_url, master_key))
+            } else if let Ok(master_key) = std::env::var("EAVS_MASTER_KEY") {
+                Some(eavs::EavsClient::new(&eavs_config.base_url, master_key))
+            } else {
+                log::warn!("EAVS enabled but no master_key configured (set eavs.master_key or EAVS_MASTER_KEY env var)");
+                None
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let session_service = if let Some(eavs) = eavs_client {
+        session::SessionService::with_eavs(session_repo, container_runtime, eavs, session_config)
+    } else {
+        session::SessionService::new(session_repo, container_runtime, session_config)
+    };
 
     // Initialize user service
     let user_repo = user::UserRepository::new(database.pool().clone());

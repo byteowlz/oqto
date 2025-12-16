@@ -2,6 +2,12 @@
 # Works with both Docker and Podman:
 #   Docker (macOS dev):  docker compose up
 #   Podman (Linux prod): podman-compose up
+#
+# Architecture:
+#   - Caddy: Reverse proxy, single entry point for all containers
+#   - EAVS: LLM proxy, manages virtual keys and usage tracking
+#   - Backend: Orchestrates containers, creates EAVS keys per session
+#   - Containers: Run opencode with EAVS virtual key for LLM access
 
 networks:
   # Public network - Caddy connects here and exposes ports
@@ -13,6 +19,35 @@ networks:
     internal: true
 
 services:
+  # EAVS - LLM proxy for virtual keys and usage tracking
+  # All containers route LLM traffic through EAVS using virtual keys
+  # Backend creates/revokes keys via admin API
+  eavs:
+    image: ghcr.io/eavs/eavs:latest  # TODO: Replace with actual image
+    container_name: opencode-eavs
+    restart: unless-stopped
+    ports:
+      - "41800:3000"  # EAVS API (accessible from host and containers via host.docker.internal)
+    environment:
+      # Master key for admin operations (create/revoke virtual keys)
+      - EAVS_MASTER_KEY=${EAVS_MASTER_KEY:-dev-master-key-change-in-production}
+      # Upstream LLM provider keys
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      # Optional: Other providers
+      # - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      # - AZURE_OPENAI_API_KEY=${AZURE_OPENAI_API_KEY}
+    volumes:
+      - eavs_data:/data
+    networks:
+      - opencode-public
+      - opencode-internal
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
   # Caddy reverse proxy - single entry point for all containers
   caddy:
     image: caddy:2-alpine
@@ -60,3 +95,4 @@ services:
 volumes:
   caddy_data:
   caddy_config:
+  eavs_data:

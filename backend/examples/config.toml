@@ -30,3 +30,21 @@ fail_fast = true
 default_image = "opencode-dev:latest"
 # Base port for allocating session ports (each session uses 3 consecutive ports)
 base_port = 41820
+
+[eavs]
+# EAVS (LLM proxy) configuration - runs on host, not in containers
+# Enable EAVS integration for session virtual keys
+enabled = true
+# URL of the EAVS server (accessible from host)
+base_url = "http://localhost:41800"
+# URL for containers to reach EAVS (via Docker host networking)
+# For Docker: http://host.docker.internal:41800
+# For Podman: http://host.containers.internal:41800
+container_url = "http://host.docker.internal:41800"
+# Master key for EAVS admin operations (create/revoke keys)
+# IMPORTANT: Change this in production! Can also be set via EAVS_MASTER_KEY env var.
+# master_key = "your-master-key-here"
+# Default session budget limit in USD (optional)
+default_session_budget_usd = 10.0
+# Default session rate limit in requests per minute (optional)
+default_session_rpm = 60

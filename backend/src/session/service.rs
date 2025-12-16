@@ -33,6 +33,8 @@ pub struct SessionServiceConfig {
     pub default_session_budget_usd: Option<f64>,
     /// Default rate limit per session (requests per minute).
     pub default_session_rpm: Option<u32>,
+    /// URL for containers to reach EAVS (e.g., http://host.docker.internal:41800).
+    pub eavs_container_url: Option<String>,
 }
 
 impl Default for SessionServiceConfig {
@@ -44,6 +46,7 @@ impl Default for SessionServiceConfig {
             default_user_id: "default".to_string(),
             default_session_budget_usd: Some(10.0),
             default_session_rpm: Some(60),
+            eavs_container_url: None,
         }
     }
 }
@@ -96,7 +99,8 @@ impl SessionService {
             anyhow::bail!("workspace path does not exist: {}", workspace_path);
         }
 
-        // Find available ports (now 4 ports: opencode, fileserver, ttyd, eavs)
+        // Find available ports (3 ports: opencode, fileserver, ttyd)
+        // Note: EAVS runs on host, not per-container
         let base_port = self
             .repo
             .find_free_port_range(self.config.base_port)
@@ -104,14 +108,13 @@ impl SessionService {
         let opencode_port = base_port;
         let fileserver_port = base_port + 1;
         let ttyd_port = base_port + 2;
-        let eavs_port = base_port + 3;
 
         let image = request
             .image
             .unwrap_or_else(|| self.config.default_image.clone());
 
         // Create EAVS virtual key if EAVS is configured
-        let (eavs_key_id, eavs_key_hash, eavs_virtual_key) = if let Some(ref eavs) = self.eavs {
+        let (eavs_key_id, eavs_key_hash, eavs_virtual_key) = if self.eavs.is_some() {
             match self.create_eavs_key(&session_id).await {
                 Ok((key_id, key_hash, key_value)) => {
                     info!("Created EAVS key {} for session {}", key_id, session_id);
@@ -137,7 +140,7 @@ impl SessionService {
             opencode_port,
             fileserver_port,
             ttyd_port,
-            eavs_port: Some(eavs_port),
+            eavs_port: None, // EAVS runs on host, not per-container
             eavs_key_id,
             eavs_key_hash,
             eavs_virtual_key,
@@ -152,8 +155,8 @@ impl SessionService {
         self.repo.create(&session).await?;
 
         info!(
-            "Created session {} with ports {}/{}/{}/{}",
-            session_id, opencode_port, fileserver_port, ttyd_port, eavs_port
+            "Created session {} with ports {}/{}/{}",
+            session_id, opencode_port, fileserver_port, ttyd_port
         );
 
         // Start the container in the background
@@ -204,8 +207,6 @@ impl SessionService {
     async fn start_container(&self, session: &Session) -> Result<()> {
         debug!("Starting container for session {}", session.id);
 
-        let eavs_port = session.eavs_port.unwrap_or(41823);
-
         // Build container config
         let mut config = ContainerConfig::new(&session.image)
             .name(&session.container_name)
@@ -213,14 +214,15 @@ impl SessionService {
             .port(session.opencode_port as u16, 41820)
             .port(session.fileserver_port as u16, 41821)
             .port(session.ttyd_port as u16, 41822)
-            .port(eavs_port as u16, 41823)
             .volume(&session.workspace_path, "/home/dev/workspace")
             .env("OPENCODE_PORT", "41820")
             .env("FILESERVER_PORT", "41821")
-            .env("TTYD_PORT", "41822")
-            .env("EAVS_PORT", "41823");
+            .env("TTYD_PORT", "41822");
 
-        // Pass EAVS virtual key to container if available
+        // Pass EAVS URL and virtual key to container if available
+        if let Some(ref eavs_url) = self.config.eavs_container_url {
+            config = config.env("EAVS_URL", eavs_url);
+        }
         if let Some(ref virtual_key) = session.eavs_virtual_key {
             config = config.env("EAVS_VIRTUAL_KEY", virtual_key);
         }
@@ -274,6 +276,14 @@ impl SessionService {
         self.repo
             .update_status(session_id, SessionStatus::Stopping)
             .await?;
+
+        // Revoke EAVS key if it exists
+        if let (Some(eavs), Some(key_id)) = (&self.eavs, &session.eavs_key_id) {
+            match eavs.revoke_key(key_id).await {
+                Ok(()) => info!("Revoked EAVS key {} for session {}", key_id, session_id),
+                Err(e) => warn!("Failed to revoke EAVS key {} for session {}: {:?}", key_id, session_id, e),
+            }
+        }
 
         // Stop the container if it exists
         if let Some(ref container_id) = session.container_id {

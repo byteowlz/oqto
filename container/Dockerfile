@@ -1,4 +1,4 @@
-# Stage 1: Build Rust binaries (fileserver and eavs)
+# Stage 1: Build fileserver
 # Run from repository root: docker build -f container/Dockerfile .
 FROM rust:1.83-slim AS rust-builder
 
@@ -10,15 +10,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Build fileserver
-WORKDIR /build/fileserver
 COPY fileserver/Cargo.toml fileserver/Cargo.lock ./
 COPY fileserver/src ./src
-RUN cargo build --release
-
-# Build eavs (LLM proxy with virtual keys)
-WORKDIR /build/eavs
-COPY eavs/Cargo.toml eavs/Cargo.lock ./
-COPY eavs/src ./src
 RUN cargo build --release
 
 # Stage 2: Main container
@@ -33,7 +26,6 @@ ARG USER_GID=1000
 ARG OPENCODE_PORT=41820
 ARG FILESERVER_PORT=41821
 ARG TTYD_PORT=41822
-ARG EAVS_PORT=41823
 
 # Environment variables
 ENV LANG=en_US.UTF-8
@@ -47,7 +39,8 @@ ENV XDG_CACHE_HOME=/home/${USERNAME}/.cache
 ENV OPENCODE_PORT=${OPENCODE_PORT}
 ENV FILESERVER_PORT=${FILESERVER_PORT}
 ENV TTYD_PORT=${TTYD_PORT}
-ENV EAVS_PORT=${EAVS_PORT}
+# EAVS_URL is set by orchestrator - points to host EAVS instance
+ENV EAVS_URL=""
 
 # Update system and install base packages
 RUN pacman -Syu --noconfirm && \
