@@ -1,7 +1,7 @@
-"use client"
+"use client";
 
-import { useEffect, useRef, useState } from "react"
-import Image from "next/image"
+import { useEffect, useRef, useState } from "react";
+import Image from "next/image";
 import {
   SunMedium,
   MoonStar,
@@ -16,25 +16,25 @@ import {
   X,
   Clock,
   Snowflake,
-} from "lucide-react"
-import { Button } from "@/components/ui/button"
-import { AppProvider, useApp } from "@/components/app-context"
-import { cn } from "@/lib/utils"
-import "@/apps"
+} from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { AppProvider, useApp } from "@/components/app-context";
+import { cn } from "@/lib/utils";
+import "@/apps";
 
 function SnowOverlay({ intensity = 0.5 }: { intensity?: number }) {
-  const clamped = Math.max(0, Math.min(1, intensity))
-  const count = Math.round(90 + 150 * clamped)
-  const speedFactor = 1.05 - clamped * 0.35
-  const flakes = Array.from({ length: count })
+  const clamped = Math.max(0, Math.min(1, intensity));
+  const count = Math.round(90 + 150 * clamped);
+  const speedFactor = 1.05 - clamped * 0.35;
+  const flakes = Array.from({ length: count });
   return (
     <>
       <div className="pointer-events-none fixed inset-0 z-50 overflow-hidden">
         {flakes.map((_, i) => {
-          const size = Math.random() * 3 + 2 + clamped
-          const left = Math.random() * 100
-          const duration = (Math.random() * 6 + 5) * speedFactor
-          const delay = Math.random() * 6
+          const size = Math.random() * 3 + 2 + clamped;
+          const left = Math.random() * 100;
+          const duration = (Math.random() * 6 + 5) * speedFactor;
+          const delay = Math.random() * 6;
           return (
             <span
               key={i}
@@ -47,7 +47,7 @@ function SnowOverlay({ intensity = 0.5 }: { intensity?: number }) {
                 animationDelay: `${delay}s`,
               }}
             />
-          )
+          );
         })}
       </div>
       <style jsx global>{`
@@ -68,7 +68,7 @@ function SnowOverlay({ intensity = 0.5 }: { intensity?: number }) {
         }
       `}</style>
     </>
-  )
+  );
 }
 
 function AppShell() {
@@ -83,156 +83,166 @@ function AppShell() {
     workspaceSessions,
     selectedWorkspaceSessionId,
     setSelectedWorkspaceSessionId,
-  } = useApp()
-  const [theme, setTheme] = useState<"light" | "dark">("dark")
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
-  const ActiveComponent = activeApp?.component ?? null
+  } = useApp();
+  const [theme, setTheme] = useState<"light" | "dark">("dark");
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const ActiveComponent = activeApp?.component ?? null;
 
   // JAK Christmas feature
-  const [showJakSnow, setShowJakSnow] = useState(false)
-  const jakAudioRef = useRef<HTMLAudioElement | null>(null)
-  const [jakVolume, setJakVolume] = useState(0.5)
+  const [showJakSnow, setShowJakSnow] = useState(false);
+  const jakAudioRef = useRef<HTMLAudioElement | null>(null);
+  const [jakVolume, setJakVolume] = useState(0.5);
 
   // Loading bar
-  const [barVisible, setBarVisible] = useState(true)
-  const [barWidth, setBarWidth] = useState(0)
-  const [barFade, setBarFade] = useState(false)
+  const [barVisible, setBarVisible] = useState(true);
+  const [barWidth, setBarWidth] = useState(0);
+  const [barFade, setBarFade] = useState(false);
 
   // Handle session click - select session and switch to chats view
   const handleSessionClick = (sessionId: string) => {
-    setSelectedWorkspaceSessionId(sessionId)
-    setActiveAppId("sessions")
-    setMobileMenuOpen(false)
-  }
+    setSelectedWorkspaceSessionId(sessionId);
+    setActiveAppId("sessions");
+    setMobileMenuOpen(false);
+  };
 
   useEffect(() => {
-    if (typeof window === "undefined") return
-    
+    if (typeof window === "undefined") return;
+
     // Theme initialization - respect saved preference or system preference
-    const stored = localStorage.getItem("theme")
-    const prefersDark = window.matchMedia?.("(prefers-color-scheme: dark)").matches
-    const initial = stored === "light" || stored === "dark" ? stored : prefersDark ? "dark" : "light"
-    document.documentElement.classList.toggle("dark", initial === "dark")
-    setTheme(initial)
+    const stored = localStorage.getItem("theme");
+    const prefersDark = window.matchMedia?.(
+      "(prefers-color-scheme: dark)",
+    ).matches;
+    const initial =
+      stored === "light" || stored === "dark"
+        ? stored
+        : prefersDark
+          ? "dark"
+          : "light";
+    document.documentElement.classList.toggle("dark", initial === "dark");
+    setTheme(initial);
 
     // Load saved JAK volume
-    const storedVol = localStorage.getItem("jakVolume")
-    const volNum = storedVol ? Number(storedVol) : NaN
+    const storedVol = localStorage.getItem("jakVolume");
+    const volNum = storedVol ? Number(storedVol) : NaN;
     if (!Number.isNaN(volNum) && volNum >= 0 && volNum <= 1) {
-      setJakVolume(volNum)
+      setJakVolume(volNum);
       if (jakAudioRef.current) {
-        jakAudioRef.current.volume = volNum
+        jakAudioRef.current.volume = volNum;
       }
     }
 
     // Top loading bar animation
-    setBarVisible(true)
-    setBarWidth(25)
-    const growTimer = window.setTimeout(() => setBarWidth(80), 150)
+    setBarVisible(true);
+    setBarWidth(25);
+    const growTimer = window.setTimeout(() => setBarWidth(80), 150);
     const finish = () => {
-      setBarWidth(100)
-      setBarFade(true)
-      window.setTimeout(() => setBarVisible(false), 500)
-    }
-    window.addEventListener("load", finish, { once: true })
-    const fallback = window.setTimeout(finish, 1600)
+      setBarWidth(100);
+      setBarFade(true);
+      window.setTimeout(() => setBarVisible(false), 500);
+    };
+    window.addEventListener("load", finish, { once: true });
+    const fallback = window.setTimeout(finish, 1600);
     return () => {
-      window.clearTimeout(growTimer)
-      window.clearTimeout(fallback)
-      window.removeEventListener("load", finish)
-    }
-  }, [])
+      window.clearTimeout(growTimer);
+      window.clearTimeout(fallback);
+      window.removeEventListener("load", finish);
+    };
+  }, []);
 
   const toggleTheme = () => {
     setTheme((prev) => {
-      const next = prev === "dark" ? "light" : "dark"
+      const next = prev === "dark" ? "light" : "dark";
       // Disable transitions during theme switch
-      document.documentElement.classList.add("no-transitions")
-      document.documentElement.classList.toggle("dark", next === "dark")
-      localStorage.setItem("theme", next)
+      document.documentElement.classList.add("no-transitions");
+      document.documentElement.classList.toggle("dark", next === "dark");
+      localStorage.setItem("theme", next);
       // Re-enable transitions after a brief delay
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
-          document.documentElement.classList.remove("no-transitions")
-        })
-      })
-      return next
-    })
-  }
+          document.documentElement.classList.remove("no-transitions");
+        });
+      });
+      return next;
+    });
+  };
 
   const toggleLocale = () => {
-    const next = locale === "de" ? "en" : "de"
-    setLocale(next)
-  }
+    const next = locale === "de" ? "en" : "de";
+    setLocale(next);
+  };
 
   const toggleJakSnow = () => {
     setShowJakSnow((prev) => {
-      const next = !prev
-      let audio = jakAudioRef.current
+      const next = !prev;
+      let audio = jakAudioRef.current;
       if (!audio) {
-        audio = new Audio("/audio/jingle-bells.mp3")
-        audio.loop = true
-        audio.preload = "auto"
-        audio.volume = jakVolume
-        jakAudioRef.current = audio
+        audio = new Audio("/audio/jingle-bells.mp3");
+        audio.loop = true;
+        audio.preload = "auto";
+        audio.volume = jakVolume;
+        jakAudioRef.current = audio;
       }
       if (audio) {
         if (next) {
-          audio.currentTime = 0
-          audio.muted = false
-          audio.volume = jakVolume
+          audio.currentTime = 0;
+          audio.muted = false;
+          audio.volume = jakVolume;
           audio
             .play()
             .then(() => {
               // playback started
             })
             .catch((err) => {
-              console.error("JAK audio playback blocked", err)
-            })
+              console.error("JAK audio playback blocked", err);
+            });
         } else {
-          audio.pause()
-          audio.currentTime = 0
+          audio.pause();
+          audio.currentTime = 0;
         }
       }
-      return next
-    })
-  }
+      return next;
+    });
+  };
 
-  const shellBg = "var(--background)"
-  const sidebarBg = "var(--sidebar, #181b1a)"
-  const navIdle = "var(--sidebar, #181b1a)"
-  const sidebarHover = "rgba(59, 167, 124, 0.12)"
-  const sidebarHoverBorder = "transparent"
-  const navText = "var(--sidebar-foreground, #dfe5e1)"
-  const navActiveBg = "#3ba77c"
-  const navActiveText = "#0b0f0d"
-  const navActiveBorder = "#3ba77c"
+  const shellBg = "var(--background)";
+  const sidebarBg = "var(--sidebar, #181b1a)";
+  const navIdle = "var(--sidebar, #181b1a)";
+  const sidebarHover = "rgba(59, 167, 124, 0.12)";
+  const sidebarHoverBorder = "transparent";
+  const navText = "var(--sidebar-foreground, #dfe5e1)";
+  const navActiveBg = "#3ba77c";
+  const navActiveText = "#0b0f0d";
+  const navActiveBorder = "#3ba77c";
 
   const navIconFor = (id: string) => {
     switch (id) {
       case "projects":
-        return FolderKanban
+        return FolderKanban;
       case "sessions":
-        return MessageSquare
+        return MessageSquare;
       case "workspaces":
-        return Bot
+        return Bot;
       case "admin":
-        return Shield
+        return Shield;
       default:
-        return FolderKanban
+        return FolderKanban;
     }
-  }
+  };
 
   const handleMobileNavClick = (appId: string) => {
-    setActiveAppId(appId)
-    setMobileMenuOpen(false)
-  }
+    setActiveAppId(appId);
+    setMobileMenuOpen(false);
+  };
 
   return (
     <div className="flex min-h-screen bg-background text-foreground">
       {/* Mobile header */}
-      <header className="fixed top-0 left-0 right-0 h-14 flex items-center justify-between px-4 z-50 md:hidden" style={{ backgroundColor: sidebarBg }}>
+      <header
+        className="fixed top-0 left-0 right-0 h-14 flex items-center justify-between px-4 z-50 md:hidden"
+        style={{ backgroundColor: sidebarBg }}
+      >
         <Button
           variant="ghost"
           size="icon"
@@ -242,122 +252,159 @@ function AppShell() {
         >
           <Menu className="w-5 h-5" />
         </Button>
-        <Image src="/Logo_Green-02.png" alt="Fraunhofer IEM" width={160} height={32} className="h-8 w-auto" priority />
+        <Image
+          src="/Logo_Green-02.png"
+          alt="Fraunhofer IEM"
+          width={160}
+          height={32}
+          className="h-8 w-auto"
+          priority
+        />
       </header>
 
       {/* Mobile fullscreen menu */}
       {mobileMenuOpen && (
-      <div
-        className="fixed inset-0 z-50 flex flex-col md:hidden"
-        style={{ backgroundColor: sidebarBg }}
-      >
-        <div className="h-14 flex items-center justify-between px-4">
-          <Image src="/Logo_Green-02.png" alt="Fraunhofer IEM" width={160} height={32} className="h-8 w-auto" priority />
-          <Button
-            variant="ghost"
-            size="icon"
-            aria-label="Close menu"
-            onClick={() => setMobileMenuOpen(false)}
-            className="text-muted-foreground hover:text-primary"
-          >
-            <X className="w-5 h-5" />
-          </Button>
-        </div>
-        
-        <nav className="flex-1 w-full space-y-3 px-4 pt-6 overflow-y-auto">
-          {apps.map((app) => {
-            const isActive = activeAppId === app.id
-            const Icon = navIconFor(app.id)
-            return (
-              <button
-                key={app.id}
-                onClick={() => handleMobileNavClick(app.id)}
-                className="w-full rounded-none px-4 py-4 text-base font-semibold tracking-wide transition flex items-center gap-3"
-                style={{
-                  backgroundColor: isActive ? navActiveBg : navIdle,
-                  color: isActive ? navActiveText : navText,
-                  border: isActive ? `1px solid ${navActiveBorder}` : "1px solid transparent",
-                }}
-              >
-                <Icon className="w-5 h-5 shrink-0" />
-                <span>{resolveText(app.label)}</span>
-              </button>
-            )
-          })}
+        <div
+          className="fixed inset-0 z-50 flex flex-col md:hidden"
+          style={{ backgroundColor: sidebarBg }}
+        >
+          <div className="h-14 flex items-center justify-between px-4">
+            <Image
+              src="/Logo_Green-02.png"
+              alt="Fraunhofer IEM"
+              width={160}
+              height={32}
+              className="h-8 w-auto"
+              priority
+            />
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="Close menu"
+              onClick={() => setMobileMenuOpen(false)}
+              className="text-muted-foreground hover:text-primary"
+            >
+              <X className="w-5 h-5" />
+            </Button>
+          </div>
 
-          {/* Session history in mobile menu */}
-          {workspaceSessions.length > 0 && (
-            <div className="pt-4 border-t border-sidebar-border">
-              <div className="flex items-center gap-2 px-4 py-2">
-                <span className="text-xs uppercase tracking-wide text-muted-foreground">
-                  {locale === "de" ? "Verlauf" : "History"}
-                </span>
-                <span className="text-xs text-muted-foreground/50">({workspaceSessions.length})</span>
-              </div>
-              <div className="space-y-1">
-                {workspaceSessions.slice(0, 10).map((session) => {
-                  const isSelected = selectedWorkspaceSessionId === session.id
-                  return (
-                    <button
-                      key={session.id}
-                      onClick={() => handleSessionClick(session.id)}
-                      className={cn(
-                        "w-full px-4 py-3 text-left transition-colors",
-                        isSelected 
-                          ? "bg-primary/15 text-foreground" 
-                          : "text-muted-foreground hover:bg-sidebar-accent"
-                      )}
-                    >
-                      <div className="text-sm truncate">
-                        {session.container_name || `Session ${session.id.slice(0, 8)}`}
-                      </div>
-                    </button>
-                  )
-                })}
-              </div>
-            </div>
-          )}
-        </nav>
+          <nav className="flex-1 w-full space-y-3 px-4 pt-6 overflow-y-auto">
+            {apps.map((app) => {
+              const isActive = activeAppId === app.id;
+              const Icon = navIconFor(app.id);
+              return (
+                <button
+                  key={app.id}
+                  onClick={() => handleMobileNavClick(app.id)}
+                  className="w-full rounded-none px-4 py-4 text-base font-semibold tracking-wide transition flex items-center gap-3"
+                  style={{
+                    backgroundColor: isActive ? navActiveBg : navIdle,
+                    color: isActive ? navActiveText : navText,
+                    border: isActive
+                      ? `1px solid ${navActiveBorder}`
+                      : "1px solid transparent",
+                  }}
+                >
+                  <Icon className="w-5 h-5 shrink-0" />
+                  <span>{resolveText(app.label)}</span>
+                </button>
+              );
+            })}
 
-        <div className="w-full px-4 pb-8 space-y-3">
-          <div className="h-px w-full bg-primary/50 mt-2" />
-          <Button
-            variant="ghost"
-            size="lg"
-            onClick={() => { toggleLocale(); setMobileMenuOpen(false); }}
-            aria-label="Sprache wechseln"
-            className="w-full justify-start text-muted-foreground hover:text-primary py-4"
-          >
-            <Globe2 className="w-5 h-5" />
-            <span className="text-base font-semibold">{locale === "de" ? "ENG" : "DE"}</span>
-          </Button>
-          <Button
-            variant="ghost"
-            size="lg"
-            onClick={() => { toggleTheme(); setMobileMenuOpen(false); }}
-            aria-pressed={theme === "dark"}
-            className="w-full justify-start text-muted-foreground hover:text-primary py-4"
-          >
-            {theme === "dark" ? <SunMedium className="w-5 h-5" /> : <MoonStar className="w-5 h-5" />}
-            <span className="text-base font-semibold">Theme</span>
-          </Button>
-          <Button
-            variant="ghost"
-            size="lg"
-            onClick={() => { toggleJakSnow(); setMobileMenuOpen(false); }}
-            className="w-full justify-start text-muted-foreground hover:text-primary py-4"
-          >
-            <Snowflake className="w-5 h-5" />
-            <span className="text-base font-semibold">JAK</span>
-          </Button>
+            {/* Session history in mobile menu */}
+            {workspaceSessions.length > 0 && (
+              <div className="pt-4 border-t border-sidebar-border">
+                <div className="flex items-center gap-2 px-4 py-2">
+                  <span className="text-xs uppercase tracking-wide text-muted-foreground">
+                    {locale === "de" ? "Verlauf" : "History"}
+                  </span>
+                  <span className="text-xs text-muted-foreground/50">
+                    ({workspaceSessions.length})
+                  </span>
+                </div>
+                <div className="space-y-1">
+                  {workspaceSessions.slice(0, 10).map((session) => {
+                    const isSelected =
+                      selectedWorkspaceSessionId === session.id;
+                    return (
+                      <button
+                        key={session.id}
+                        onClick={() => handleSessionClick(session.id)}
+                        className={cn(
+                          "w-full px-4 py-3 text-left transition-colors",
+                          isSelected
+                            ? "bg-primary/15 text-foreground"
+                            : "text-muted-foreground hover:bg-sidebar-accent",
+                        )}
+                      >
+                        <div className="text-sm truncate">
+                          {session.container_name ||
+                            `Session ${session.id.slice(0, 8)}`}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </nav>
+
+          <div className="w-full px-4 pb-8 space-y-3">
+            <div className="h-px w-full bg-primary/50 mt-2" />
+            <Button
+              variant="ghost"
+              size="lg"
+              onClick={() => {
+                toggleLocale();
+                setMobileMenuOpen(false);
+              }}
+              aria-label="Sprache wechseln"
+              className="w-full justify-start text-muted-foreground hover:text-primary py-4"
+            >
+              <Globe2 className="w-5 h-5" />
+              <span className="text-base font-semibold">
+                {locale === "de" ? "EN" : "DE"}
+              </span>
+            </Button>
+            <Button
+              variant="ghost"
+              size="lg"
+              onClick={() => {
+                toggleTheme();
+                setMobileMenuOpen(false);
+              }}
+              aria-pressed={theme === "dark"}
+              className="w-full justify-start text-muted-foreground hover:text-primary py-4"
+            >
+              {theme === "dark" ? (
+                <SunMedium className="w-5 h-5" />
+              ) : (
+                <MoonStar className="w-5 h-5" />
+              )}
+              <span className="text-base font-semibold">Theme</span>
+            </Button>
+            <Button
+              variant="ghost"
+              size="lg"
+              onClick={() => {
+                toggleJakSnow();
+                setMobileMenuOpen(false);
+              }}
+              className="w-full justify-start text-muted-foreground hover:text-primary py-4"
+            >
+              <Snowflake className="w-5 h-5" />
+              <span className="text-base font-semibold">JAK</span>
+            </Button>
+          </div>
         </div>
-      </div>
       )}
 
       {/* Desktop sidebar */}
       <aside
         className={`fixed inset-y-0 left-0 flex-col transition-all duration-200 z-40 hidden md:flex ${
-          sidebarCollapsed ? "w-[4.5rem] items-center" : "w-[16.25rem] items-center"
+          sidebarCollapsed
+            ? "w-[4.5rem] items-center"
+            : "w-[16.25rem] items-center"
         }`}
         style={{ backgroundColor: sidebarBg }}
       >
@@ -379,13 +426,19 @@ function AppShell() {
             onClick={() => setSidebarCollapsed((prev) => !prev)}
             className="text-muted-foreground hover:text-primary"
           >
-            {sidebarCollapsed ? <PanelRightClose className="w-4 h-4" /> : <PanelLeftClose className="w-4 h-4" />}
+            {sidebarCollapsed ? (
+              <PanelRightClose className="w-4 h-4" />
+            ) : (
+              <PanelLeftClose className="w-4 h-4" />
+            )}
           </Button>
         </div>
-        <nav className={`w-full space-y-3 ${sidebarCollapsed ? "px-2" : "px-4"} pt-6 pb-4`}>
+        <nav
+          className={`w-full space-y-3 ${sidebarCollapsed ? "px-2" : "px-4"} pt-6 pb-4`}
+        >
           {apps.map((app) => {
-            const isActive = activeAppId === app.id
-            const Icon = navIconFor(app.id)
+            const isActive = activeAppId === app.id;
+            const Icon = navIconFor(app.id);
             return (
               <button
                 key={app.id}
@@ -396,25 +449,29 @@ function AppShell() {
                 style={{
                   backgroundColor: isActive ? navActiveBg : navIdle,
                   color: isActive ? navActiveText : navText,
-                  border: isActive ? `1px solid ${navActiveBorder}` : "1px solid transparent",
+                  border: isActive
+                    ? `1px solid ${navActiveBorder}`
+                    : "1px solid transparent",
                 }}
                 onMouseEnter={(e) => {
                   if (!isActive) {
-                    e.currentTarget.style.backgroundColor = sidebarHover
-                    e.currentTarget.style.border = `1px solid ${sidebarHoverBorder}`
+                    e.currentTarget.style.backgroundColor = sidebarHover;
+                    e.currentTarget.style.border = `1px solid ${sidebarHoverBorder}`;
                   }
                 }}
                 onMouseLeave={(e) => {
                   if (!isActive) {
-                    e.currentTarget.style.backgroundColor = navIdle
-                    e.currentTarget.style.border = "1px solid transparent"
+                    e.currentTarget.style.backgroundColor = navIdle;
+                    e.currentTarget.style.border = "1px solid transparent";
                   }
                 }}
               >
                 <Icon className="w-4 h-4 shrink-0" />
-                {!sidebarCollapsed && <span className="truncate">{resolveText(app.label)}</span>}
+                {!sidebarCollapsed && (
+                  <span className="truncate">{resolveText(app.label)}</span>
+                )}
               </button>
-            )
+            );
           })}
         </nav>
 
@@ -425,34 +482,43 @@ function AppShell() {
               <span className="text-xs uppercase tracking-wide text-muted-foreground">
                 {locale === "de" ? "Verlauf" : "History"}
               </span>
-              <span className="text-xs text-muted-foreground/50">({workspaceSessions.length})</span>
+              <span className="text-xs text-muted-foreground/50">
+                ({workspaceSessions.length})
+              </span>
             </div>
             <div className="flex-1 overflow-y-auto space-y-1 pr-1 -mr-1">
               {workspaceSessions.slice(0, 20).map((session) => {
-                const isSelected = selectedWorkspaceSessionId === session.id
-                const createdAt = session.created_at ? new Date(session.created_at) : null
+                const isSelected = selectedWorkspaceSessionId === session.id;
+                const createdAt = session.created_at
+                  ? new Date(session.created_at)
+                  : null;
                 return (
                   <button
                     key={session.id}
                     onClick={() => handleSessionClick(session.id)}
                     className={cn(
                       "w-full px-3 py-2 text-left rounded-none transition-colors",
-                      isSelected 
-                        ? "bg-primary/15 border border-primary text-foreground" 
-                        : "text-muted-foreground hover:bg-sidebar-accent border border-transparent"
+                      isSelected
+                        ? "bg-primary/15 border border-primary text-foreground"
+                        : "text-muted-foreground hover:bg-sidebar-accent border border-transparent",
                     )}
                   >
                     <div className="text-sm truncate font-medium">
-                      {session.container_name || `Session ${session.id.slice(0, 8)}`}
+                      {session.container_name ||
+                        `Session ${session.id.slice(0, 8)}`}
                     </div>
                     {createdAt && (
                       <div className="flex items-center gap-1 text-[10px] text-muted-foreground mt-0.5">
                         <Clock className="w-3 h-3" />
-                        {createdAt.toLocaleDateString()} {createdAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                        {createdAt.toLocaleDateString()}{" "}
+                        {createdAt.toLocaleTimeString([], {
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })}
                       </div>
                     )}
                   </button>
-                )
+                );
               })}
             </div>
           </div>
@@ -473,7 +539,9 @@ function AppShell() {
           </div>
         )}
 
-        <div className={`w-full ${sidebarCollapsed ? "px-2 pb-4" : "px-4 pb-6"} space-y-3 mt-auto pt-4`}>
+        <div
+          className={`w-full ${sidebarCollapsed ? "px-2 pb-4" : "px-4 pb-6"} space-y-3 mt-auto pt-4`}
+        >
           <div className="h-px w-full bg-primary/50 mt-2" />
           <Button
             variant="ghost"
@@ -488,16 +556,20 @@ function AppShell() {
               color: navText,
             }}
             onMouseEnter={(e) => {
-              e.currentTarget.style.backgroundColor = sidebarHover
-              e.currentTarget.style.border = `1px solid ${sidebarHoverBorder}`
+              e.currentTarget.style.backgroundColor = sidebarHover;
+              e.currentTarget.style.border = `1px solid ${sidebarHoverBorder}`;
             }}
             onMouseLeave={(e) => {
-              e.currentTarget.style.backgroundColor = navIdle
-              e.currentTarget.style.border = "1px solid transparent"
+              e.currentTarget.style.backgroundColor = navIdle;
+              e.currentTarget.style.border = "1px solid transparent";
             }}
           >
             <Globe2 className="w-4 h-4 shrink-0" />
-            {!sidebarCollapsed && <span className="text-sm font-medium">{locale === "de" ? "ENG" : "DE"}</span>}
+            {!sidebarCollapsed && (
+              <span className="text-sm font-medium">
+                {locale === "de" ? "ENG" : "DE"}
+              </span>
+            )}
           </Button>
           <Button
             variant="ghost"
@@ -512,16 +584,22 @@ function AppShell() {
               color: navText,
             }}
             onMouseEnter={(e) => {
-              e.currentTarget.style.backgroundColor = sidebarHover
-              e.currentTarget.style.border = `1px solid ${sidebarHoverBorder}`
+              e.currentTarget.style.backgroundColor = sidebarHover;
+              e.currentTarget.style.border = `1px solid ${sidebarHoverBorder}`;
             }}
             onMouseLeave={(e) => {
-              e.currentTarget.style.backgroundColor = navIdle
-              e.currentTarget.style.border = "1px solid transparent"
+              e.currentTarget.style.backgroundColor = navIdle;
+              e.currentTarget.style.border = "1px solid transparent";
             }}
           >
-            {theme === "dark" ? <SunMedium className="w-4 h-4 shrink-0" /> : <MoonStar className="w-4 h-4 shrink-0" />}
-            {!sidebarCollapsed && <span className="text-sm font-medium">Theme</span>}
+            {theme === "dark" ? (
+              <SunMedium className="w-4 h-4 shrink-0" />
+            ) : (
+              <MoonStar className="w-4 h-4 shrink-0" />
+            )}
+            {!sidebarCollapsed && (
+              <span className="text-sm font-medium">Theme</span>
+            )}
           </Button>
           <div className="flex items-center gap-2">
             <Button
@@ -536,16 +614,18 @@ function AppShell() {
                 color: navText,
               }}
               onMouseEnter={(e) => {
-                e.currentTarget.style.backgroundColor = sidebarHover
-                e.currentTarget.style.border = `1px solid ${sidebarHoverBorder}`
+                e.currentTarget.style.backgroundColor = sidebarHover;
+                e.currentTarget.style.border = `1px solid ${sidebarHoverBorder}`;
               }}
               onMouseLeave={(e) => {
-                e.currentTarget.style.backgroundColor = navIdle
-                e.currentTarget.style.border = "1px solid transparent"
+                e.currentTarget.style.backgroundColor = navIdle;
+                e.currentTarget.style.border = "1px solid transparent";
               }}
             >
               <Snowflake className="w-4 h-4 shrink-0" />
-              {!sidebarCollapsed && <span className="text-sm font-medium">JAK</span>}
+              {!sidebarCollapsed && (
+                <span className="text-sm font-medium">JAK</span>
+              )}
               {sidebarCollapsed && <span className="sr-only">JAK</span>}
             </Button>
             {!sidebarCollapsed && showJakSnow && (
@@ -556,12 +636,12 @@ function AppShell() {
                 step={0.05}
                 value={jakVolume}
                 onChange={(e) => {
-                  const vol = Number(e.target.value)
-                  if (Number.isNaN(vol)) return
-                  setJakVolume(vol)
-                  localStorage.setItem("jakVolume", String(vol))
+                  const vol = Number(e.target.value);
+                  if (Number.isNaN(vol)) return;
+                  setJakVolume(vol);
+                  localStorage.setItem("jakVolume", String(vol));
                   if (jakAudioRef.current) {
-                    jakAudioRef.current.volume = vol
+                    jakAudioRef.current.volume = vol;
                   }
                 }}
                 className="w-[100px]"
@@ -574,8 +654,11 @@ function AppShell() {
       </aside>
 
       {/* Main content */}
-      <div className="flex-1 flex flex-col min-h-0 overflow-hidden" style={{ backgroundColor: shellBg }}>
-        <div 
+      <div
+        className="flex-1 flex flex-col min-h-0 overflow-hidden"
+        style={{ backgroundColor: shellBg }}
+      >
+        <div
           className={`flex-1 min-h-0 overflow-auto pt-14 md:pt-0 transition-all duration-200 ${
             sidebarCollapsed ? "md:pl-[4.5rem]" : "md:pl-[16.25rem]"
           }`}
@@ -588,10 +671,16 @@ function AppShell() {
 
       {/* Snow overlay */}
       {showJakSnow && <SnowOverlay intensity={jakVolume} />}
-      
+
       {/* Hidden audio element for JAK snow feature */}
-      <audio ref={jakAudioRef} src="/audio/jingle-bells.mp3" loop preload="auto" className="hidden" />
-      
+      <audio
+        ref={jakAudioRef}
+        src="/audio/jingle-bells.mp3"
+        loop
+        preload="auto"
+        className="hidden"
+      />
+
       {/* Loading bar */}
       {barVisible && (
         <div className="fixed left-0 top-0 z-[100] w-full pointer-events-none">
@@ -609,7 +698,7 @@ function AppShell() {
         </div>
       )}
     </div>
-  )
+  );
 }
 
 function EmptyState() {
@@ -617,10 +706,12 @@ function EmptyState() {
     <div className="flex items-center justify-center h-full">
       <div className="text-center space-y-2">
         <p className="text-sm text-muted-foreground">No apps registered</p>
-        <p className="text-xs text-muted-foreground">Register an app in apps/index.ts to get started.</p>
+        <p className="text-xs text-muted-foreground">
+          Register an app in apps/index.ts to get started.
+        </p>
       </div>
     </div>
-  )
+  );
 }
 
 export default function AgentWorkspacePlatform() {
@@ -628,5 +719,5 @@ export default function AgentWorkspacePlatform() {
     <AppProvider>
       <AppShell />
     </AppProvider>
-  )
+  );
 }

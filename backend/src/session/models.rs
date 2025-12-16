@@ -56,7 +56,7 @@ impl std::str::FromStr for SessionStatus {
 pub struct Session {
     /// Unique session ID.
     pub id: String,
-    /// Podman container ID (once started).
+    /// Container ID (once started).
     pub container_id: Option<String>,
     /// Container name.
     pub container_name: String,
@@ -72,6 +72,15 @@ pub struct Session {
     pub fileserver_port: i64,
     /// Port for ttyd terminal.
     pub ttyd_port: i64,
+    /// Port for EAVS LLM proxy.
+    pub eavs_port: Option<i64>,
+    /// EAVS virtual key ID (human-readable, e.g., "cold-lamp").
+    pub eavs_key_id: Option<String>,
+    /// EAVS virtual key hash (for API lookups).
+    pub eavs_key_hash: Option<String>,
+    /// EAVS virtual key value (only set during container creation).
+    #[serde(skip_serializing)]
+    pub eavs_virtual_key: Option<String>,
     /// Current session status.
     #[sqlx(try_from = "String")]
     pub status: SessionStatus,

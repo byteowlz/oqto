@@ -16,9 +16,10 @@ use tokio::net::TcpListener;
 
 mod api;
 mod auth;
-mod db;
-mod invite;
 mod container;
+mod db;
+mod eavs;
+mod invite;
 mod session;
 mod user;
 

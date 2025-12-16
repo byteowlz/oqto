@@ -7,6 +7,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::container::{ContainerConfig, ContainerRuntime};
+use crate::eavs::{CreateKeyRequest, EavsClient, KeyPermissions};
 
 use super::models::{CreateSessionRequest, Session, SessionStatus};
 use super::repository::SessionRepository;
@@ -28,6 +29,10 @@ pub struct SessionServiceConfig {
     pub default_workspace_path: String,
     /// Default user ID for sessions.
     pub default_user_id: String,
+    /// Default budget limit per session in USD.
+    pub default_session_budget_usd: Option<f64>,
+    /// Default rate limit per session (requests per minute).
+    pub default_session_rpm: Option<u32>,
 }
 
 impl Default for SessionServiceConfig {
@@ -37,6 +42,8 @@ impl Default for SessionServiceConfig {
             base_port: DEFAULT_BASE_PORT,
             default_workspace_path: ".".to_string(),
             default_user_id: "default".to_string(),
+            default_session_budget_usd: Some(10.0),
+            default_session_rpm: Some(60),
         }
     }
 }
@@ -46,6 +53,7 @@ impl Default for SessionServiceConfig {
 pub struct SessionService {
     repo: SessionRepository,
     runtime: Arc<ContainerRuntime>,
+    eavs: Option<Arc<EavsClient>>,
     config: SessionServiceConfig,
 }
 
@@ -55,6 +63,22 @@ impl SessionService {
         Self {
             repo,
             runtime: Arc::new(runtime),
+            eavs: None,
+            config,
+        }
+    }
+
+    /// Create a new session service with EAVS integration.
+    pub fn with_eavs(
+        repo: SessionRepository,
+        runtime: ContainerRuntime,
+        eavs: EavsClient,
+        config: SessionServiceConfig,
+    ) -> Self {
+        Self {
+            repo,
+            runtime: Arc::new(runtime),
+            eavs: Some(Arc::new(eavs)),
             config,
         }
     }
@@ -72,7 +96,7 @@ impl SessionService {
             anyhow::bail!("workspace path does not exist: {}", workspace_path);
         }
 
-        // Find available ports
+        // Find available ports (now 4 ports: opencode, fileserver, ttyd, eavs)
         let base_port = self
             .repo
             .find_free_port_range(self.config.base_port)
@@ -80,10 +104,27 @@ impl SessionService {
         let opencode_port = base_port;
         let fileserver_port = base_port + 1;
         let ttyd_port = base_port + 2;
+        let eavs_port = base_port + 3;
 
         let image = request
             .image
             .unwrap_or_else(|| self.config.default_image.clone());
+
+        // Create EAVS virtual key if EAVS is configured
+        let (eavs_key_id, eavs_key_hash, eavs_virtual_key) = if let Some(ref eavs) = self.eavs {
+            match self.create_eavs_key(&session_id).await {
+                Ok((key_id, key_hash, key_value)) => {
+                    info!("Created EAVS key {} for session {}", key_id, session_id);
+                    (Some(key_id), Some(key_hash), Some(key_value))
+                }
+                Err(e) => {
+                    warn!("Failed to create EAVS key for session {}: {:?}", session_id, e);
+                    (None, None, None)
+                }
+            }
+        } else {
+            (None, None, None)
+        };
 
         // Create session record
         let session = Session {
@@ -96,6 +137,10 @@ impl SessionService {
             opencode_port,
             fileserver_port,
             ttyd_port,
+            eavs_port: Some(eavs_port),
+            eavs_key_id,
+            eavs_key_hash,
+            eavs_virtual_key,
             status: SessionStatus::Pending,
             created_at: Utc::now().to_rfc3339(),
             started_at: None,
@@ -107,8 +152,8 @@ impl SessionService {
         self.repo.create(&session).await?;
 
         info!(
-            "Created session {} with ports {}/{}/{}",
-            session_id, opencode_port, fileserver_port, ttyd_port
+            "Created session {} with ports {}/{}/{}/{}",
+            session_id, opencode_port, fileserver_port, ttyd_port, eavs_port
         );
 
         // Start the container in the background
@@ -130,21 +175,55 @@ impl SessionService {
         Ok(session)
     }
 
+    /// Create an EAVS virtual key for a session.
+    async fn create_eavs_key(&self, session_id: &str) -> Result<(String, String, String)> {
+        let eavs = self.eavs.as_ref().context("EAVS client not configured")?;
+
+        // Build permissions based on config
+        let mut permissions = KeyPermissions::default();
+        if let Some(budget) = self.config.default_session_budget_usd {
+            permissions.max_budget_usd = Some(budget);
+        }
+        if let Some(rpm) = self.config.default_session_rpm {
+            permissions.rpm_limit = Some(rpm);
+        }
+
+        let request = CreateKeyRequest::new(format!("session-{}", &session_id[..8]))
+            .permissions(permissions)
+            .metadata(serde_json::json!({
+                "session_id": session_id,
+                "created_by": "workspace-backend"
+            }));
+
+        let response = eavs.create_key(request).await?;
+
+        Ok((response.key_id, response.key_hash, response.key))
+    }
+
     /// Start a container for the given session.
     async fn start_container(&self, session: &Session) -> Result<()> {
         debug!("Starting container for session {}", session.id);
 
+        let eavs_port = session.eavs_port.unwrap_or(41823);
+
         // Build container config
-        let config = ContainerConfig::new(&session.image)
+        let mut config = ContainerConfig::new(&session.image)
             .name(&session.container_name)
             .hostname(&session.container_name)
             .port(session.opencode_port as u16, 41820)
             .port(session.fileserver_port as u16, 41821)
             .port(session.ttyd_port as u16, 41822)
+            .port(eavs_port as u16, 41823)
             .volume(&session.workspace_path, "/home/dev/workspace")
             .env("OPENCODE_PORT", "41820")
             .env("FILESERVER_PORT", "41821")
-            .env("TTYD_PORT", "41822");
+            .env("TTYD_PORT", "41822")
+            .env("EAVS_PORT", "41823");
+
+        // Pass EAVS virtual key to container if available
+        if let Some(ref virtual_key) = session.eavs_virtual_key {
+            config = config.env("EAVS_VIRTUAL_KEY", virtual_key);
+        }
 
         // Create and start the container
         let container_id = self
@@ -162,6 +241,9 @@ impl SessionService {
         self.repo
             .set_container_id(&session.id, &container_id)
             .await?;
+
+        // Clear the virtual key from the session record (security: don't persist it)
+        self.repo.clear_eavs_virtual_key(&session.id).await?;
 
         // Wait a moment for services to start
         tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
