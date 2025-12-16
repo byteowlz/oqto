@@ -1,3 +1,41 @@
+// ============================================================================
+// Auth Types
+// ============================================================================
+
+export type UserInfo = {
+  id: string
+  name: string
+  email: string
+  role: string
+}
+
+export type LoginRequest = {
+  username: string
+  password: string
+}
+
+export type LoginResponse = {
+  token: string
+  user: UserInfo
+}
+
+export type RegisterRequest = {
+  username: string
+  email: string
+  password: string
+  invite_code: string
+  display_name?: string
+}
+
+export type RegisterResponse = {
+  token: string
+  user: UserInfo
+}
+
+// ============================================================================
+// Session Types
+// ============================================================================
+
 export type WorkspaceSessionStatus = "pending" | "starting" | "running" | "stopping" | "stopped" | "failed"
 
 export type WorkspaceSession = {
@@ -42,13 +80,57 @@ async function readApiError(res: Response): Promise<string> {
   return (await res.text().catch(() => res.statusText)) || res.statusText
 }
 
-export async function devLogin(): Promise<boolean> {
+// ============================================================================
+// Auth API
+// ============================================================================
+
+export async function login(request: LoginRequest): Promise<LoginResponse> {
   const res = await fetch(`/api/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ username: "dev", password: "dev" }),
+    body: JSON.stringify(request),
+    credentials: "include",
   })
-  return res.ok
+  if (!res.ok) throw new Error(await readApiError(res))
+  return res.json()
+}
+
+export async function register(request: RegisterRequest): Promise<RegisterResponse> {
+  const res = await fetch(`/api/auth/register`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(request),
+    credentials: "include",
+  })
+  if (!res.ok) throw new Error(await readApiError(res))
+  return res.json()
+}
+
+export async function logout(): Promise<void> {
+  const res = await fetch(`/api/auth/logout`, {
+    method: "POST",
+    credentials: "include",
+  })
+  if (!res.ok) throw new Error(await readApiError(res))
+}
+
+export async function getCurrentUser(): Promise<UserInfo | null> {
+  const res = await fetch(`/api/me`, {
+    credentials: "include",
+  })
+  if (res.status === 401) return null
+  if (!res.ok) throw new Error(await readApiError(res))
+  return res.json()
+}
+
+/** @deprecated Use login() instead */
+export async function devLogin(): Promise<boolean> {
+  try {
+    await login({ username: "dev", password: "devpassword123" })
+    return true
+  } catch {
+    return false
+  }
 }
 
 export async function listWorkspaceSessions(): Promise<WorkspaceSession[]> {
