@@ -133,6 +133,17 @@ impl AuthState {
 
     /// Generate a dev token for a user.
     pub fn generate_dev_token(&self, user: &DevUser) -> Result<String, AuthError> {
+        self.generate_token(&user.id, &user.email, &user.name, &user.role.to_string())
+    }
+
+    /// Generate a JWT token for any user.
+    pub fn generate_token(
+        &self,
+        user_id: &str,
+        email: &str,
+        name: &str,
+        role: &str,
+    ) -> Result<String, AuthError> {
         use jsonwebtoken::{EncodingKey, Header, encode};
 
         let secret = self
@@ -142,18 +153,18 @@ impl AuthState {
             .ok_or_else(|| AuthError::Internal("no JWT secret configured".to_string()))?;
 
         let claims = Claims {
-            sub: user.id.clone(),
-            iss: Some("dev".to_string()),
+            sub: user_id.to_string(),
+            iss: Some("workspace-backend".to_string()),
             aud: None,
             exp: Utc::now().timestamp() + 3600 * 24, // 24 hours
             iat: Some(Utc::now().timestamp()),
             nbf: None,
             jti: None,
-            email: Some(user.email.clone()),
-            name: Some(user.name.clone()),
-            preferred_username: Some(user.id.clone()),
-            roles: vec![user.role.to_string()],
-            role: Some(user.role.to_string()),
+            email: Some(email.to_string()),
+            name: Some(name.to_string()),
+            preferred_username: Some(user_id.to_string()),
+            roles: vec![role.to_string()],
+            role: Some(role.to_string()),
         };
 
         encode(

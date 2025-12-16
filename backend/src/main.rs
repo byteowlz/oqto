@@ -17,6 +17,7 @@ use tokio::net::TcpListener;
 mod api;
 mod auth;
 mod db;
+mod invite;
 mod podman;
 mod session;
 mod user;
@@ -35,6 +36,11 @@ async fn async_main(ctx: RuntimeContext, cmd: ServeCommand) -> Result<()> {
     handle_serve(&ctx, cmd).await
 }
 
+#[tokio::main]
+async fn async_invite_codes(ctx: RuntimeContext, cmd: InviteCodesCommand) -> Result<()> {
+    handle_invite_codes(&ctx, cmd).await
+}
+
 fn try_main() -> Result<()> {
     let cli = Cli::parse();
 
@@ -47,6 +53,7 @@ fn try_main() -> Result<()> {
         Command::Run(cmd) => handle_run(&mut ctx, cmd),
         Command::Init(cmd) => handle_init(&ctx, cmd),
         Command::Config { command } => handle_config(&ctx, command),
+        Command::InviteCodes { command } => async_invite_codes(ctx, command),
         Command::Completions { shell } => handle_completions(shell),
     }
 }
@@ -134,6 +141,11 @@ enum Command {
         #[command(subcommand)]
         command: ConfigCommand,
     },
+    /// Manage invite codes for user registration
+    InviteCodes {
+        #[command(subcommand)]
+        command: InviteCodesCommand,
+    },
     /// Generate shell completions
     Completions {
         #[arg(value_enum)]
@@ -185,6 +197,54 @@ enum ConfigCommand {
     Path,
     /// Regenerate the default configuration file
     Reset,
+}
+
+#[derive(Debug, Subcommand)]
+enum InviteCodesCommand {
+    /// Generate new invite codes
+    Generate(InviteCodesGenerateCommand),
+    /// List existing invite codes
+    List(InviteCodesListCommand),
+    /// Revoke an invite code
+    Revoke(InviteCodesRevokeCommand),
+}
+
+#[derive(Debug, Clone, Args)]
+struct InviteCodesGenerateCommand {
+    /// Number of codes to generate
+    #[arg(short, long, default_value = "1")]
+    count: u32,
+    /// Number of uses per code
+    #[arg(short = 'u', long, default_value = "1")]
+    uses_per_code: i32,
+    /// Expiration time (e.g., "7d", "24h", "30m")
+    #[arg(short, long)]
+    expires_in: Option<String>,
+    /// Prefix for generated codes
+    #[arg(short, long)]
+    prefix: Option<String>,
+    /// Note/label for the codes
+    #[arg(short, long)]
+    note: Option<String>,
+    /// Admin user ID creating the codes
+    #[arg(long, default_value = "usr_admin")]
+    admin_id: String,
+}
+
+#[derive(Debug, Clone, Args)]
+struct InviteCodesListCommand {
+    /// Filter by validity (valid, invalid, all)
+    #[arg(short, long, default_value = "all")]
+    filter: String,
+    /// Maximum number of codes to list
+    #[arg(short, long, default_value = "100")]
+    limit: i64,
+}
+
+#[derive(Debug, Clone, Args)]
+struct InviteCodesRevokeCommand {
+    /// ID of the invite code to revoke
+    code_id: String,
 }
 
 #[derive(Debug, Clone)]
@@ -502,6 +562,132 @@ fn handle_completions(shell: Shell) -> Result<()> {
     Ok(())
 }
 
+async fn handle_invite_codes(ctx: &RuntimeContext, cmd: InviteCodesCommand) -> Result<()> {
+    // Initialize database
+    let db_path = ctx.paths.data_dir.join("sessions.db");
+    let database = db::Database::new(&db_path).await?;
+    let invite_repo = invite::InviteCodeRepository::new(database.pool().clone());
+
+    match cmd {
+        InviteCodesCommand::Generate(gen_cmd) => {
+            // Parse expiration duration
+            let expires_in_secs = gen_cmd.expires_in.as_ref().map(|s| parse_duration(s)).transpose()?;
+
+            let codes = invite_repo
+                .create_batch(
+                    gen_cmd.count,
+                    gen_cmd.uses_per_code,
+                    expires_in_secs,
+                    gen_cmd.prefix.as_deref(),
+                    gen_cmd.note.as_deref(),
+                    &gen_cmd.admin_id,
+                )
+                .await?;
+
+            if ctx.common.json {
+                let output: Vec<_> = codes
+                    .iter()
+                    .map(|c| serde_json::json!({
+                        "id": c.id,
+                        "code": c.code,
+                        "uses_remaining": c.uses_remaining,
+                        "expires_at": c.expires_at,
+                    }))
+                    .collect();
+                println!("{}", serde_json::to_string_pretty(&output)?);
+            } else {
+                println!("Generated {} invite code(s):", codes.len());
+                println!();
+                for code in &codes {
+                    println!("{}", code.code);
+                }
+                if codes.len() > 1 {
+                    println!();
+                    println!("Use --json for machine-readable output");
+                }
+            }
+        }
+        InviteCodesCommand::List(list_cmd) => {
+            let valid_filter = match list_cmd.filter.as_str() {
+                "valid" => Some(true),
+                "invalid" => Some(false),
+                _ => None,
+            };
+
+            let query = invite::InviteCodeListQuery {
+                valid: valid_filter,
+                limit: Some(list_cmd.limit),
+                ..Default::default()
+            };
+
+            let codes = invite_repo.list(query).await?;
+
+            if ctx.common.json {
+                let output: Vec<_> = codes
+                    .iter()
+                    .map(|c| serde_json::json!({
+                        "id": c.id,
+                        "code": c.code,
+                        "uses_remaining": c.uses_remaining,
+                        "max_uses": c.max_uses,
+                        "expires_at": c.expires_at,
+                        "created_at": c.created_at,
+                        "is_valid": c.is_valid(),
+                    }))
+                    .collect();
+                println!("{}", serde_json::to_string_pretty(&output)?);
+            } else {
+                println!("{:<16} {:<12} {:>5}/{:<5} {:>8} {}", "ID", "CODE", "USED", "MAX", "VALID", "EXPIRES");
+                println!("{}", "-".repeat(70));
+                for code in &codes {
+                    let used = code.max_uses - code.uses_remaining;
+                    let valid = if code.is_valid() { "yes" } else { "no" };
+                    let expires = code.expires_at.as_deref().unwrap_or("never");
+                    println!(
+                        "{:<16} {:<12} {:>5}/{:<5} {:>8} {}",
+                        code.id, code.code, used, code.max_uses, valid, expires
+                    );
+                }
+                println!();
+                println!("Total: {} codes", codes.len());
+            }
+        }
+        InviteCodesCommand::Revoke(revoke_cmd) => {
+            invite_repo.revoke(&revoke_cmd.code_id).await?;
+
+            if ctx.common.json {
+                println!(r#"{{"status": "revoked", "id": "{}"}}"#, revoke_cmd.code_id);
+            } else {
+                println!("Revoked invite code: {}", revoke_cmd.code_id);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Parse a duration string like "7d", "24h", "30m" into seconds.
+fn parse_duration(s: &str) -> Result<i64> {
+    let s = s.trim();
+    if s.is_empty() {
+        return Err(anyhow!("empty duration string"));
+    }
+
+    let (num_str, unit) = s.split_at(s.len() - 1);
+    let num: i64 = num_str.parse().context("invalid duration number")?;
+
+    let seconds = match unit {
+        "s" => num,
+        "m" => num * 60,
+        "h" => num * 3600,
+        "d" => num * 86400,
+        "w" => num * 604800,
+        _ => return Err(anyhow!("invalid duration unit '{}', use s/m/h/d/w", unit)),
+    };
+
+    Ok(seconds)
+}
+
 async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     info!("Starting workspace backend server...");
 
@@ -553,8 +739,11 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     let user_repo = user::UserRepository::new(database.pool().clone());
     let user_service = user::UserService::new(user_repo);
 
+    // Initialize invite code repository
+    let invite_repo = invite::InviteCodeRepository::new(database.pool().clone());
+
     // Create app state
-    let state = api::AppState::new(session_service, user_service, auth_state);
+    let state = api::AppState::new(session_service, user_service, invite_repo, auth_state);
 
     // Create router
     let app = api::create_router(state);

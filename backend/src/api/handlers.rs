@@ -212,6 +212,162 @@ pub async fn get_current_user(user: CurrentUser) -> Json<UserInfo> {
     })
 }
 
+/// Registration request.
+#[derive(Debug, Deserialize)]
+pub struct RegisterRequest {
+    pub username: String,
+    pub email: String,
+    pub password: String,
+    pub invite_code: String,
+    pub display_name: Option<String>,
+}
+
+/// Registration response.
+#[derive(Debug, Serialize)]
+pub struct RegisterResponse {
+    pub token: String,
+    pub user: UserInfo,
+}
+
+/// Register a new user with invite code.
+#[instrument(skip(state, request), fields(username = %request.username))]
+pub async fn register(
+    State(state): State<AppState>,
+    Json(request): Json<RegisterRequest>,
+) -> ApiResult<impl IntoResponse> {
+    // Validate invite code first
+    let is_valid = state.invites.validate(&request.invite_code).await?;
+    if !is_valid {
+        return Err(ApiError::bad_request("Invalid or expired invite code"));
+    }
+
+    // Create the user
+    let user = state
+        .users
+        .create_user(CreateUserRequest {
+            username: request.username.clone(),
+            email: request.email.clone(),
+            password: Some(request.password),
+            display_name: request.display_name,
+            role: None, // Default to user role
+            external_id: None,
+        })
+        .await?;
+
+    // Consume the invite code
+    state.invites.consume(&request.invite_code, &user.id).await?;
+
+    // Generate JWT token for the new user
+    let token = state.auth.generate_token(&user.id, &user.email, &user.display_name, &user.role.to_string())?;
+
+    // Build cookie
+    let secure_flag = if state.auth.is_dev_mode() { "" } else { " Secure;" };
+    let cookie = format!(
+        "auth_token={}; Path=/; HttpOnly; SameSite=Lax;{} Max-Age={}",
+        token,
+        secure_flag,
+        60 * 60 * 24 // 24 hours
+    );
+
+    info!(user_id = %user.id, username = %user.username, "User registered successfully");
+
+    Ok((
+        StatusCode::CREATED,
+        AppendHeaders([(SET_COOKIE, cookie)]),
+        Json(RegisterResponse {
+            token,
+            user: UserInfo {
+                id: user.id,
+                name: user.display_name,
+                email: user.email,
+                role: user.role.to_string(),
+            },
+        }),
+    ))
+}
+
+/// Login endpoint (works with database users).
+#[instrument(skip(state, request), fields(username = %request.username))]
+pub async fn login(
+    State(state): State<AppState>,
+    Json(request): Json<LoginRequest>,
+) -> ApiResult<impl IntoResponse> {
+    // Try to verify against database users first
+    let user = state
+        .users
+        .verify_credentials(&request.username, &request.password)
+        .await?;
+
+    let (token, user_info) = match user {
+        Some(db_user) => {
+            // Database user found and verified
+            let token = state.auth.generate_token(
+                &db_user.id,
+                &db_user.email,
+                &db_user.display_name,
+                &db_user.role.to_string(),
+            )?;
+            let user_info = UserInfo {
+                id: db_user.id,
+                name: db_user.display_name,
+                email: db_user.email,
+                role: db_user.role.to_string(),
+            };
+            (token, user_info)
+        }
+        None => {
+            // Fall back to dev mode credentials if enabled
+            if state.auth.is_dev_mode() {
+                let dev_user = state
+                    .auth
+                    .validate_dev_credentials(&request.username, &request.password)
+                    .ok_or_else(|| ApiError::unauthorized("Invalid username or password"))?;
+
+                let token = state.auth.generate_dev_token(dev_user)?;
+                let user_info = UserInfo {
+                    id: dev_user.id.clone(),
+                    name: dev_user.name.clone(),
+                    email: dev_user.email.clone(),
+                    role: dev_user.role.to_string(),
+                };
+                (token, user_info)
+            } else {
+                return Err(ApiError::unauthorized("Invalid username or password"));
+            }
+        }
+    };
+
+    // Build cookie
+    let secure_flag = if state.auth.is_dev_mode() { "" } else { " Secure;" };
+    let cookie = format!(
+        "auth_token={}; Path=/; HttpOnly; SameSite=Lax;{} Max-Age={}",
+        token,
+        secure_flag,
+        60 * 60 * 24 // 24 hours
+    );
+
+    info!(user_id = %user_info.id, "User logged in successfully");
+
+    Ok((
+        AppendHeaders([(SET_COOKIE, cookie)]),
+        Json(LoginResponse {
+            token,
+            user: user_info,
+        }),
+    ))
+}
+
+/// Logout endpoint (clears auth cookie).
+pub async fn logout() -> impl IntoResponse {
+    // Clear the auth cookie by setting it to empty with immediate expiry
+    let cookie = "auth_token=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0";
+    
+    (
+        AppendHeaders([(SET_COOKIE, cookie.to_string())]),
+        StatusCode::NO_CONTENT,
+    )
+}
+
 // ============================================================================
 // Admin Handlers
 // ============================================================================
@@ -421,4 +577,122 @@ impl From<crate::auth::Role> for crate::user::UserRole {
             crate::auth::Role::User => crate::user::UserRole::User,
         }
     }
+}
+
+// ============================================================================
+// Invite Code Management Handlers (Admin)
+// ============================================================================
+
+use crate::invite::{
+    BatchCreateInviteCodesRequest, CreateInviteCodeRequest, InviteCodeListQuery, InviteCodeSummary,
+};
+
+/// List all invite codes (admin only).
+#[instrument(skip(state, user))]
+pub async fn list_invite_codes(
+    State(state): State<AppState>,
+    RequireAdmin(user): RequireAdmin,
+    Query(query): Query<InviteCodeListQuery>,
+) -> ApiResult<Json<Vec<InviteCodeSummary>>> {
+    let _ = user;
+    let codes = state.invites.list(query).await?;
+    let summaries: Vec<InviteCodeSummary> = codes.into_iter().map(|c| c.into()).collect();
+    info!(count = summaries.len(), "Listed invite codes");
+    Ok(Json(summaries))
+}
+
+/// Create a single invite code (admin only).
+#[instrument(skip(state, user, request))]
+pub async fn create_invite_code(
+    State(state): State<AppState>,
+    RequireAdmin(user): RequireAdmin,
+    Json(request): Json<CreateInviteCodeRequest>,
+) -> ApiResult<(StatusCode, Json<InviteCodeSummary>)> {
+    let code = state.invites.create(request, user.id()).await?;
+    info!(code_id = %code.id, "Created invite code");
+    Ok((StatusCode::CREATED, Json(code.into())))
+}
+
+/// Create multiple invite codes at once (admin only).
+#[instrument(skip(state, user, request))]
+pub async fn create_invite_codes_batch(
+    State(state): State<AppState>,
+    RequireAdmin(user): RequireAdmin,
+    Json(request): Json<BatchCreateInviteCodesRequest>,
+) -> ApiResult<(StatusCode, Json<Vec<InviteCodeSummary>>)> {
+    let codes = state
+        .invites
+        .create_batch(
+            request.count,
+            request.uses_per_code,
+            request.expires_in_secs,
+            request.prefix.as_deref(),
+            request.note.as_deref(),
+            user.id(),
+        )
+        .await?;
+
+    let summaries: Vec<InviteCodeSummary> = codes.into_iter().map(|c| c.into()).collect();
+    info!(count = summaries.len(), "Created batch of invite codes");
+    Ok((StatusCode::CREATED, Json(summaries)))
+}
+
+/// Get a specific invite code (admin only).
+#[instrument(skip(state, user))]
+pub async fn get_invite_code(
+    State(state): State<AppState>,
+    RequireAdmin(user): RequireAdmin,
+    Path(code_id): Path<String>,
+) -> ApiResult<Json<InviteCodeSummary>> {
+    let _ = user;
+    state
+        .invites
+        .get(&code_id)
+        .await?
+        .map(|c| Json(c.into()))
+        .ok_or_else(|| ApiError::not_found(format!("Invite code {} not found", code_id)))
+}
+
+/// Revoke an invite code (admin only).
+#[instrument(skip(state, user))]
+pub async fn revoke_invite_code(
+    State(state): State<AppState>,
+    RequireAdmin(user): RequireAdmin,
+    Path(code_id): Path<String>,
+) -> ApiResult<StatusCode> {
+    let _ = user;
+    state.invites.revoke(&code_id).await?;
+    info!(code_id = %code_id, "Revoked invite code");
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Delete an invite code (admin only).
+#[instrument(skip(state, user))]
+pub async fn delete_invite_code(
+    State(state): State<AppState>,
+    RequireAdmin(user): RequireAdmin,
+    Path(code_id): Path<String>,
+) -> ApiResult<StatusCode> {
+    let _ = user;
+    state.invites.delete(&code_id).await?;
+    info!(code_id = %code_id, "Deleted invite code");
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Get invite code statistics (admin only).
+#[derive(Debug, Serialize)]
+pub struct InviteCodeStats {
+    pub total: i64,
+    pub valid: i64,
+}
+
+#[instrument(skip(state, user))]
+pub async fn get_invite_code_stats(
+    State(state): State<AppState>,
+    RequireAdmin(user): RequireAdmin,
+) -> ApiResult<Json<InviteCodeStats>> {
+    let _ = user;
+    let total = state.invites.count().await?;
+    let valid = state.invites.count_valid().await?;
+    Ok(Json(InviteCodeStats { total, valid }))
 }

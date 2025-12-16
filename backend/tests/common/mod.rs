@@ -4,6 +4,7 @@ use axum::Router;
 use workspace_backend::api;
 use workspace_backend::auth::{AuthConfig, AuthState};
 use workspace_backend::db::Database;
+use workspace_backend::invite::InviteCodeRepository;
 use workspace_backend::podman::Podman;
 use workspace_backend::session::{SessionRepository, SessionService, SessionServiceConfig};
 use workspace_backend::user::{UserRepository, UserService};
@@ -37,8 +38,11 @@ pub async fn test_app() -> Router {
     let user_repo = UserRepository::new(db.pool().clone());
     let user_service = UserService::new(user_repo);
 
+    // Create invite code repository
+    let invite_repo = InviteCodeRepository::new(db.pool().clone());
+
     // Create app state and router
-    let state = api::AppState::new(session_service, user_service, auth_state);
+    let state = api::AppState::new(session_service, user_service, invite_repo, auth_state);
     api::create_router(state)
 }
 
@@ -63,7 +67,10 @@ pub async fn test_app_with_token() -> (Router, String) {
     let user_repo = UserRepository::new(db.pool().clone());
     let user_service = UserService::new(user_repo);
 
-    let state = api::AppState::new(session_service, user_service, auth_state);
+    // Create invite code repository
+    let invite_repo = InviteCodeRepository::new(db.pool().clone());
+
+    let state = api::AppState::new(session_service, user_service, invite_repo, auth_state);
     (api::create_router(state), token)
 }
 
@@ -88,6 +95,9 @@ pub async fn test_app_with_user_token() -> (Router, String) {
     let user_repo = UserRepository::new(db.pool().clone());
     let user_service = UserService::new(user_repo);
 
-    let state = api::AppState::new(session_service, user_service, auth_state);
+    // Create invite code repository
+    let invite_repo = InviteCodeRepository::new(db.pool().clone());
+
+    let state = api::AppState::new(session_service, user_service, invite_repo, auth_state);
     (api::create_router(state), token)
 }

@@ -186,6 +186,36 @@ impl From<anyhow::Error> for ApiError {
     }
 }
 
+/// Convert auth errors to API errors.
+impl From<crate::auth::AuthError> for ApiError {
+    fn from(err: crate::auth::AuthError) -> Self {
+        use crate::auth::AuthError;
+        match err {
+            AuthError::MissingAuthHeader | AuthError::InvalidAuthHeader => {
+                ApiError::Unauthorized("Missing or invalid authorization".to_string())
+            }
+            AuthError::InvalidToken(msg) => {
+                ApiError::Unauthorized(format!("Invalid token: {}", msg))
+            }
+            AuthError::TokenExpired => {
+                ApiError::Unauthorized("Token has expired".to_string())
+            }
+            AuthError::InvalidCredentials => {
+                ApiError::Unauthorized("Invalid credentials".to_string())
+            }
+            AuthError::UserNotFound => {
+                ApiError::Unauthorized("User not found".to_string())
+            }
+            AuthError::InsufficientPermissions(msg) => {
+                ApiError::Forbidden(msg)
+            }
+            AuthError::Internal(msg) => {
+                ApiError::Internal(format!("Authentication error: {}", msg))
+            }
+        }
+    }
+}
+
 /// Result type for API handlers
 pub type ApiResult<T> = Result<T, ApiError>;
 

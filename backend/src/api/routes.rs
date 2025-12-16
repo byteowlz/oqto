@@ -86,6 +86,14 @@ pub fn create_router(state: AppState) -> Router {
         .route("/admin/users/{user_id}", delete(handlers::delete_user))
         .route("/admin/users/{user_id}/deactivate", post(handlers::deactivate_user))
         .route("/admin/users/{user_id}/activate", post(handlers::activate_user))
+        // Admin routes - invite code management
+        .route("/admin/invite-codes", get(handlers::list_invite_codes))
+        .route("/admin/invite-codes", post(handlers::create_invite_code))
+        .route("/admin/invite-codes/batch", post(handlers::create_invite_codes_batch))
+        .route("/admin/invite-codes/stats", get(handlers::get_invite_code_stats))
+        .route("/admin/invite-codes/{code_id}", get(handlers::get_invite_code))
+        .route("/admin/invite-codes/{code_id}", delete(handlers::delete_invite_code))
+        .route("/admin/invite-codes/{code_id}/revoke", post(handlers::revoke_invite_code))
         .layer(middleware::from_fn_with_state(
             auth_state.clone(),
             auth_middleware,
@@ -95,7 +103,11 @@ pub fn create_router(state: AppState) -> Router {
     // Public routes (no authentication)
     let public_routes = Router::new()
         .route("/health", get(handlers::health))
-        .route("/auth/login", post(handlers::dev_login))
+        .route("/auth/login", post(handlers::login))
+        .route("/auth/register", post(handlers::register))
+        .route("/auth/logout", post(handlers::logout))
+        // Keep dev_login for backwards compatibility
+        .route("/auth/dev-login", post(handlers::dev_login))
         .with_state(state);
 
     Router::new()
