@@ -123,16 +123,8 @@ pub async fn delete_session(
     State(state): State<AppState>,
     Path(session_id): Path<String>,
 ) -> ApiResult<StatusCode> {
-    state.sessions.delete_session(&session_id).await.map_err(|e| {
-        let msg = e.to_string();
-        if msg.contains("not found") {
-            ApiError::not_found(msg)
-        } else if msg.contains("active") {
-            ApiError::conflict(msg)
-        } else {
-            ApiError::internal(msg)
-        }
-    })?;
+    // Uses centralized From<anyhow::Error> conversion
+    state.sessions.delete_session(&session_id).await?;
 
     info!(session_id = %session_id, "Deleted session");
     Ok(StatusCode::NO_CONTENT)
@@ -184,9 +176,14 @@ pub async fn dev_login(
     // Generate token
     let token = state.auth.generate_dev_token(user)?;
 
+    // Build cookie with security flags
+    // In dev mode, omit Secure flag to allow http://localhost
+    // In production, always include Secure flag
+    let secure_flag = if state.auth.is_dev_mode() { "" } else { " Secure;" };
     let cookie = format!(
-        "auth_token={}; Path=/; HttpOnly; SameSite=Lax; Max-Age={}",
+        "auth_token={}; Path=/; HttpOnly; SameSite=Lax;{} Max-Age={}",
         token,
+        secure_flag,
         60 * 60 * 24
     );
 
@@ -237,14 +234,8 @@ pub async fn admin_force_stop_session(
     RequireAdmin(_user): RequireAdmin,
     Path(session_id): Path<String>,
 ) -> ApiResult<StatusCode> {
-    state.sessions.stop_session(&session_id).await.map_err(|e| {
-        let msg = e.to_string();
-        if msg.contains("not found") {
-            ApiError::not_found(msg)
-        } else {
-            ApiError::internal(msg)
-        }
-    })?;
+    // Uses centralized From<anyhow::Error> conversion
+    state.sessions.stop_session(&session_id).await?;
 
     info!(session_id = %session_id, "Admin force stopped session");
     Ok(StatusCode::NO_CONTENT)
@@ -261,9 +252,8 @@ pub async fn list_users(
     RequireAdmin(_user): RequireAdmin,
     Query(query): Query<UserListQuery>,
 ) -> ApiResult<Json<Vec<DbUserInfo>>> {
-    let users = state.users.list_users(query).await.map_err(|e| {
-        ApiError::internal(e.to_string())
-    })?;
+    // Uses centralized From<anyhow::Error> conversion
+    let users = state.users.list_users(query).await?;
 
     let user_infos: Vec<DbUserInfo> = users.into_iter().map(|u| u.into()).collect();
     info!(count = user_infos.len(), "Listed users");
@@ -277,11 +267,11 @@ pub async fn get_user(
     RequireAdmin(_user): RequireAdmin,
     Path(user_id): Path<String>,
 ) -> ApiResult<Json<DbUserInfo>> {
+    // Uses centralized From<anyhow::Error> conversion
     state
         .users
         .get_user(&user_id)
-        .await
-        .map_err(|e| ApiError::internal(e.to_string()))?
+        .await?
         .map(|u| Json(u.into()))
         .ok_or_else(|| ApiError::not_found(format!("User {} not found", user_id)))
 }
@@ -293,16 +283,8 @@ pub async fn create_user(
     RequireAdmin(_user): RequireAdmin,
     Json(request): Json<CreateUserRequest>,
 ) -> ApiResult<(StatusCode, Json<DbUserInfo>)> {
-    let user = state.users.create_user(request).await.map_err(|e| {
-        let msg = e.to_string();
-        if msg.contains("already taken") || msg.contains("already registered") {
-            ApiError::conflict(msg)
-        } else if msg.contains("Invalid") {
-            ApiError::bad_request(msg)
-        } else {
-            ApiError::internal(msg)
-        }
-    })?;
+    // Uses centralized From<anyhow::Error> conversion
+    let user = state.users.create_user(request).await?;
 
     info!(user_id = %user.id, "Created new user");
     Ok((StatusCode::CREATED, Json(user.into())))
@@ -316,18 +298,8 @@ pub async fn update_user(
     Path(user_id): Path<String>,
     Json(request): Json<UpdateUserRequest>,
 ) -> ApiResult<Json<DbUserInfo>> {
-    let user = state.users.update_user(&user_id, request).await.map_err(|e| {
-        let msg = e.to_string();
-        if msg.contains("not found") {
-            ApiError::not_found(msg)
-        } else if msg.contains("already taken") || msg.contains("already registered") {
-            ApiError::conflict(msg)
-        } else if msg.contains("Invalid") {
-            ApiError::bad_request(msg)
-        } else {
-            ApiError::internal(msg)
-        }
-    })?;
+    // Uses centralized From<anyhow::Error> conversion
+    let user = state.users.update_user(&user_id, request).await?;
 
     info!(user_id = %user.id, "Updated user");
     Ok(Json(user.into()))
@@ -340,14 +312,8 @@ pub async fn delete_user(
     RequireAdmin(_user): RequireAdmin,
     Path(user_id): Path<String>,
 ) -> ApiResult<StatusCode> {
-    state.users.delete_user(&user_id).await.map_err(|e| {
-        let msg = e.to_string();
-        if msg.contains("not found") {
-            ApiError::not_found(msg)
-        } else {
-            ApiError::internal(msg)
-        }
-    })?;
+    // Uses centralized From<anyhow::Error> conversion
+    state.users.delete_user(&user_id).await?;
 
     info!(user_id = %user_id, "Deleted user");
     Ok(StatusCode::NO_CONTENT)
@@ -360,14 +326,8 @@ pub async fn deactivate_user(
     RequireAdmin(_user): RequireAdmin,
     Path(user_id): Path<String>,
 ) -> ApiResult<Json<DbUserInfo>> {
-    let user = state.users.deactivate_user(&user_id).await.map_err(|e| {
-        let msg = e.to_string();
-        if msg.contains("not found") {
-            ApiError::not_found(msg)
-        } else {
-            ApiError::internal(msg)
-        }
-    })?;
+    // Uses centralized From<anyhow::Error> conversion
+    let user = state.users.deactivate_user(&user_id).await?;
 
     info!(user_id = %user.id, "Deactivated user");
     Ok(Json(user.into()))
@@ -380,14 +340,8 @@ pub async fn activate_user(
     RequireAdmin(_user): RequireAdmin,
     Path(user_id): Path<String>,
 ) -> ApiResult<Json<DbUserInfo>> {
-    let user = state.users.activate_user(&user_id).await.map_err(|e| {
-        let msg = e.to_string();
-        if msg.contains("not found") {
-            ApiError::not_found(msg)
-        } else {
-            ApiError::internal(msg)
-        }
-    })?;
+    // Uses centralized From<anyhow::Error> conversion
+    let user = state.users.activate_user(&user_id).await?;
 
     info!(user_id = %user.id, "Activated user");
     Ok(Json(user.into()))
@@ -399,9 +353,8 @@ pub async fn get_user_stats(
     State(state): State<AppState>,
     RequireAdmin(_user): RequireAdmin,
 ) -> ApiResult<Json<UserStats>> {
-    let stats = state.users.get_stats().await.map_err(|e| {
-        ApiError::internal(e.to_string())
-    })?;
+    // Uses centralized From<anyhow::Error> conversion
+    let stats = state.users.get_stats().await?;
 
     Ok(Json(stats))
 }
@@ -412,10 +365,8 @@ pub async fn get_me(
     State(state): State<AppState>,
     user: CurrentUser,
 ) -> ApiResult<Json<DbUserInfo>> {
-    // Try to get user from database
-    if let Some(db_user) = state.users.get_user(user.id()).await.map_err(|e| {
-        ApiError::internal(e.to_string())
-    })? {
+    // Try to get user from database (uses centralized From<anyhow::Error> conversion)
+    if let Some(db_user) = state.users.get_user(user.id()).await? {
         return Ok(Json(db_user.into()));
     }
 
@@ -448,14 +399,8 @@ pub async fn update_me(
         ..Default::default()
     };
 
-    let updated = state.users.update_user(user.id(), update).await.map_err(|e| {
-        let msg = e.to_string();
-        if msg.contains("not found") {
-            ApiError::not_found(msg)
-        } else {
-            ApiError::internal(msg)
-        }
-    })?;
+    // Uses centralized From<anyhow::Error> conversion
+    let updated = state.users.update_user(user.id(), update).await?;
 
     Ok(Json(updated.into()))
 }

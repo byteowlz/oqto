@@ -51,7 +51,7 @@ async fn test_dev_login_success() {
                 .body(Body::from(
                     serde_json::to_string(&json!({
                         "username": "dev",
-                        "password": "dev"
+                        "password": "devpassword123"  // Updated to new password
                     }))
                     .unwrap(),
                 ))
@@ -187,7 +187,7 @@ async fn test_list_sessions_with_cookie_auth() {
                 .body(Body::from(
                     serde_json::to_string(&json!({
                         "username": "dev",
-                        "password": "dev"
+                        "password": "devpassword123"  // Updated to new password
                     }))
                     .unwrap(),
                 ))

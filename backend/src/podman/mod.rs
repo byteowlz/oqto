@@ -68,57 +68,58 @@ impl Podman {
 
     /// Create and start a new container.
     pub async fn create_container(&self, config: &ContainerConfig) -> PodmanResult<String> {
-        let mut args = vec!["run", "-d"];
+        // Use owned strings to avoid memory leaks from Box::leak
+        let mut owned_args: Vec<String> = Vec::new();
+        
+        owned_args.push("run".to_string());
+        owned_args.push("-d".to_string());
 
         // Container name
         if let Some(ref name) = config.name {
-            args.push("--name");
-            args.push(name);
+            owned_args.push("--name".to_string());
+            owned_args.push(name.clone());
         }
 
         // Hostname
         if let Some(ref hostname) = config.hostname {
-            args.push("--hostname");
-            args.push(hostname);
+            owned_args.push("--hostname".to_string());
+            owned_args.push(hostname.clone());
         }
 
         // Port mappings
         for port in &config.ports {
-            args.push("-p");
-            let port_str = format!("{}:{}", port.host_port, port.container_port);
-            args.push(Box::leak(port_str.into_boxed_str()));
+            owned_args.push("-p".to_string());
+            owned_args.push(format!("{}:{}", port.host_port, port.container_port));
         }
 
         // Volume mounts
         for (host, container) in &config.volumes {
-            args.push("-v");
-            let vol_str = format!("{}:{}:Z", host, container);
-            args.push(Box::leak(vol_str.into_boxed_str()));
+            owned_args.push("-v".to_string());
+            owned_args.push(format!("{}:{}:Z", host, container));
         }
 
         // Environment variables
         for (key, value) in &config.env {
-            args.push("-e");
-            let env_str = format!("{}={}", key, value);
-            args.push(Box::leak(env_str.into_boxed_str()));
+            owned_args.push("-e".to_string());
+            owned_args.push(format!("{}={}", key, value));
         }
 
         // Working directory
         if let Some(ref workdir) = config.workdir {
-            args.push("-w");
-            args.push(workdir);
+            owned_args.push("-w".to_string());
+            owned_args.push(workdir.clone());
         }
 
         // Image
-        args.push(&config.image);
+        owned_args.push(config.image.clone());
 
         // Command
         for cmd in &config.command {
-            args.push(cmd);
+            owned_args.push(cmd.clone());
         }
 
         let output = Command::new(&self.binary)
-            .args(&args)
+            .args(&owned_args)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .output()
@@ -146,18 +147,18 @@ impl Podman {
         container_id: &str,
         timeout: Option<u32>,
     ) -> PodmanResult<()> {
-        let mut args = vec!["stop"];
+        // Use owned strings to avoid memory leaks
+        let mut owned_args: Vec<String> = vec!["stop".to_string()];
 
         if let Some(t) = timeout {
-            args.push("-t");
-            let timeout_str = t.to_string();
-            args.push(Box::leak(timeout_str.into_boxed_str()));
+            owned_args.push("-t".to_string());
+            owned_args.push(t.to_string());
         }
 
-        args.push(container_id);
+        owned_args.push(container_id.to_string());
 
         let output = Command::new(&self.binary)
-            .args(&args)
+            .args(&owned_args)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .output()
@@ -278,18 +279,18 @@ impl Podman {
     /// Get container logs.
     #[allow(dead_code)]
     pub async fn get_logs(&self, container_id: &str, tail: Option<u32>) -> PodmanResult<String> {
-        let mut args = vec!["logs"];
+        // Use owned strings to avoid memory leaks
+        let mut owned_args: Vec<String> = vec!["logs".to_string()];
 
         if let Some(n) = tail {
-            args.push("--tail");
-            let tail_str = n.to_string();
-            args.push(Box::leak(tail_str.into_boxed_str()));
+            owned_args.push("--tail".to_string());
+            owned_args.push(n.to_string());
         }
 
-        args.push(container_id);
+        owned_args.push(container_id.to_string());
 
         let output = Command::new(&self.binary)
-            .args(&args)
+            .args(&owned_args)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .output()

@@ -97,6 +97,48 @@ impl ApiError {
             Self::BadGateway(_) => "BAD_GATEWAY",
         }
     }
+
+    /// Categorize an anyhow error into the appropriate ApiError variant.
+    /// This uses pattern matching on error messages to determine the category.
+    /// 
+    /// Patterns recognized:
+    /// - "not found" -> NotFound
+    /// - "already taken" / "already registered" / "already exists" -> Conflict  
+    /// - "invalid" / validation errors -> BadRequest
+    /// - "active" (for session operations) -> Conflict
+    /// - "unauthorized" / "authentication" -> Unauthorized
+    /// - "forbidden" / "permission" -> Forbidden
+    /// - "unavailable" / "connection refused" -> ServiceUnavailable
+    /// - Default -> Internal
+    pub fn from_anyhow(err: anyhow::Error) -> Self {
+        let msg = err.to_string();
+        let msg_lower = msg.to_lowercase();
+
+        // Check for specific patterns in priority order
+        if msg_lower.contains("not found") {
+            ApiError::NotFound(msg)
+        } else if msg_lower.contains("already taken") 
+            || msg_lower.contains("already registered")
+            || msg_lower.contains("already exists")
+            || (msg_lower.contains("active") && (msg_lower.contains("session") || msg_lower.contains("delete")))
+        {
+            ApiError::Conflict(msg)
+        } else if msg_lower.contains("invalid") 
+            || msg_lower.contains("must be")
+            || msg_lower.contains("cannot")
+            || msg_lower.contains("does not exist") // e.g., "workspace path does not exist"
+        {
+            ApiError::BadRequest(msg)
+        } else if msg_lower.contains("unauthorized") || msg_lower.contains("authentication") {
+            ApiError::Unauthorized(msg)
+        } else if msg_lower.contains("forbidden") || msg_lower.contains("permission") {
+            ApiError::Forbidden(msg)
+        } else if msg_lower.contains("unavailable") || msg_lower.contains("connection refused") {
+            ApiError::ServiceUnavailable(msg)
+        } else {
+            ApiError::Internal(msg)
+        }
+    }
 }
 
 /// Structured error response.
@@ -137,27 +179,85 @@ impl IntoResponse for ApiError {
     }
 }
 
-/// Convert anyhow errors to API errors
+/// Convert anyhow errors to API errors using the centralized categorization logic.
 impl From<anyhow::Error> for ApiError {
     fn from(err: anyhow::Error) -> Self {
-        let msg = err.to_string();
-
-        // Try to determine the appropriate error type from the message
-        if msg.to_lowercase().contains("not found") {
-            ApiError::NotFound(msg)
-        } else if msg.to_lowercase().contains("unauthorized") || msg.to_lowercase().contains("authentication") {
-            ApiError::Unauthorized(msg)
-        } else if msg.to_lowercase().contains("forbidden") || msg.to_lowercase().contains("permission") {
-            ApiError::Forbidden(msg)
-        } else if msg.to_lowercase().contains("conflict") || msg.to_lowercase().contains("already exists") {
-            ApiError::Conflict(msg)
-        } else if msg.to_lowercase().contains("unavailable") || msg.to_lowercase().contains("connection refused") {
-            ApiError::ServiceUnavailable(msg)
-        } else {
-            ApiError::Internal(msg)
-        }
+        Self::from_anyhow(err)
     }
 }
 
 /// Result type for API handlers
 pub type ApiResult<T> = Result<T, ApiError>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_error_categorization_not_found() {
+        let err = anyhow::anyhow!("Session not found: abc123");
+        let api_err = ApiError::from_anyhow(err);
+        assert!(matches!(api_err, ApiError::NotFound(_)));
+    }
+
+    #[test]
+    fn test_error_categorization_conflict_taken() {
+        let err = anyhow::anyhow!("Username 'admin' is already taken.");
+        let api_err = ApiError::from_anyhow(err);
+        assert!(matches!(api_err, ApiError::Conflict(_)));
+    }
+
+    #[test]
+    fn test_error_categorization_conflict_registered() {
+        let err = anyhow::anyhow!("Email 'user@example.com' is already registered.");
+        let api_err = ApiError::from_anyhow(err);
+        assert!(matches!(api_err, ApiError::Conflict(_)));
+    }
+
+    #[test]
+    fn test_error_categorization_conflict_active_session() {
+        let err = anyhow::anyhow!("cannot delete active session, stop it first");
+        let api_err = ApiError::from_anyhow(err);
+        assert!(matches!(api_err, ApiError::Conflict(_)));
+    }
+
+    #[test]
+    fn test_error_categorization_bad_request_invalid() {
+        let err = anyhow::anyhow!("Invalid username format.");
+        let api_err = ApiError::from_anyhow(err);
+        assert!(matches!(api_err, ApiError::BadRequest(_)));
+    }
+
+    #[test]
+    fn test_error_categorization_bad_request_must_be() {
+        let err = anyhow::anyhow!("Password must be at least 6 characters.");
+        let api_err = ApiError::from_anyhow(err);
+        assert!(matches!(api_err, ApiError::BadRequest(_)));
+    }
+
+    #[test]
+    fn test_error_categorization_bad_request_workspace() {
+        let err = anyhow::anyhow!("workspace path does not exist: /foo/bar");
+        let api_err = ApiError::from_anyhow(err);
+        assert!(matches!(api_err, ApiError::BadRequest(_)));
+    }
+
+    #[test]
+    fn test_error_categorization_internal_default() {
+        let err = anyhow::anyhow!("Something went wrong");
+        let api_err = ApiError::from_anyhow(err);
+        assert!(matches!(api_err, ApiError::Internal(_)));
+    }
+
+    #[test]
+    fn test_error_response_status_codes() {
+        assert_eq!(ApiError::not_found("").status_code(), StatusCode::NOT_FOUND);
+        assert_eq!(ApiError::bad_request("").status_code(), StatusCode::BAD_REQUEST);
+        assert_eq!(ApiError::unauthorized("").status_code(), StatusCode::UNAUTHORIZED);
+        assert_eq!(ApiError::forbidden("").status_code(), StatusCode::FORBIDDEN);
+        assert_eq!(ApiError::conflict("").status_code(), StatusCode::CONFLICT);
+        assert_eq!(ApiError::service_unavailable("").status_code(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(ApiError::internal("").status_code(), StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(ApiError::bad_gateway("").status_code(), StatusCode::BAD_GATEWAY);
+    }
+}

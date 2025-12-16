@@ -8,13 +8,21 @@ use workspace_backend::podman::Podman;
 use workspace_backend::session::{SessionRepository, SessionService, SessionServiceConfig};
 use workspace_backend::user::{UserRepository, UserService};
 
+/// Create a test AuthConfig with a JWT secret for testing.
+fn test_auth_config() -> AuthConfig {
+    let mut config = AuthConfig::default();
+    // Set a JWT secret for tests (required for token generation)
+    config.jwt_secret = Some("test-secret-for-integration-tests-minimum-32-chars".to_string());
+    config
+}
+
 /// Create a test application with all services initialized.
 pub async fn test_app() -> Router {
     // Use in-memory database for tests
     let db = Database::in_memory().await.unwrap();
 
-    // Create auth state in dev mode
-    let auth_config = AuthConfig::default();
+    // Create auth state in dev mode with JWT secret
+    let auth_config = test_auth_config();
     let auth_state = AuthState::new(auth_config);
 
     // Create podman client (won't actually be used in unit tests)
@@ -38,7 +46,7 @@ pub async fn test_app() -> Router {
 pub async fn test_app_with_token() -> (Router, String) {
     let db = Database::in_memory().await.unwrap();
 
-    let auth_config = AuthConfig::default();
+    let auth_config = test_auth_config();
     let auth_state = AuthState::new(auth_config);
 
     // Generate token for dev user
@@ -63,7 +71,7 @@ pub async fn test_app_with_token() -> (Router, String) {
 pub async fn test_app_with_user_token() -> (Router, String) {
     let db = Database::in_memory().await.unwrap();
 
-    let auth_config = AuthConfig::default();
+    let auth_config = test_auth_config();
     let auth_state = AuthState::new(auth_config);
 
     // Generate token for regular user (second dev user)

@@ -56,7 +56,13 @@ impl AuthState {
         &self.config.dev_users
     }
 
+    /// Get allowed CORS origins from config.
+    pub fn allowed_origins(&self) -> &[String] {
+        &self.config.allowed_origins
+    }
+
     /// Validate credentials in dev mode.
+    /// Uses bcrypt password verification for security.
     pub fn validate_dev_credentials(&self, username: &str, password: &str) -> Option<&DevUser> {
         if !self.config.dev_mode {
             return None;
@@ -65,7 +71,7 @@ impl AuthState {
         self.config
             .dev_users
             .iter()
-            .find(|u| (u.id == username || u.email == username) && u.password == password)
+            .find(|u| (u.id == username || u.email == username) && u.verify_password(password))
     }
 
     /// Validate a JWT token.
@@ -303,13 +309,13 @@ mod tests {
         let config = AuthConfig::default();
         let state = AuthState::new(config);
 
-        // Valid credentials
-        let user = state.validate_dev_credentials("dev", "dev");
+        // Valid credentials (using the default dev passwords)
+        let user = state.validate_dev_credentials("dev", "devpassword123");
         assert!(user.is_some());
         assert_eq!(user.unwrap().role, Role::Admin);
 
         // Valid email credentials
-        let user = state.validate_dev_credentials("user@localhost", "user");
+        let user = state.validate_dev_credentials("user@localhost", "userpassword123");
         assert!(user.is_some());
 
         // Invalid credentials
@@ -319,7 +325,9 @@ mod tests {
 
     #[test]
     fn test_generate_and_validate_token() {
-        let config = AuthConfig::default();
+        // Create config with a JWT secret for testing
+        let mut config = AuthConfig::default();
+        config.jwt_secret = Some("test-secret-for-unit-tests-minimum-32-chars-long".to_string());
         let state = AuthState::new(config);
 
         let dev_user = &state.dev_users()[0];

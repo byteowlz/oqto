@@ -31,6 +31,10 @@ walkdir = "2"
 # Async utilities
 futures = "0.3"
 bytes = "1"
+tokio-util = { version = "0.7", features = ["io"] }
+
+[dev-dependencies]
+tempfile = "3"
 
 [profile.release]
 lto = true

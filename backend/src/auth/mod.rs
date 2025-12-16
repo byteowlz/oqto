@@ -10,6 +10,6 @@ mod error;
 mod middleware;
 
 pub use claims::{Claims, Role};
-pub use config::{AuthConfig, DevUser};
+pub use config::{AuthConfig, ConfigValidationError, DevUser};
 pub use error::AuthError;
 pub use middleware::{AuthState, CurrentUser, RequireAdmin, auth_middleware};
