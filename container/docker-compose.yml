@@ -1,5 +1,7 @@
 # Default compose file for x86_64 with Caddy reverse proxy
-# Usage: podman-compose up
+# Works with both Docker and Podman:
+#   Docker (macOS dev):  docker compose up
+#   Podman (Linux prod): podman-compose up
 
 networks:
   # Public network - Caddy connects here and exposes ports

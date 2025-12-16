@@ -122,6 +122,9 @@
   --shadow-xl: 0rem 0.5rem 0px 0rem hsl(209.4545 59.1398% 81.7647% / 0.00), 0rem 8px 10px -1px hsl(209.4545 59.1398% 81.7647% / 0.00);
   --shadow-2xl: 0rem 0.5rem 0px 0rem hsl(209.4545 59.1398% 81.7647% / 0.00);
   --tracking-normal: 0em;
+  /* Panel variables for light mode */
+  --panel: #ffffff;
+  --panel-strong: #eef0ef;
 }
 
 .dark {
@@ -177,6 +180,9 @@
   --shadow-lg: 0 10px 24px rgba(0, 0, 0, 0.2);
   --shadow-xl: 0 14px 30px rgba(0, 0, 0, 0.22);
   --shadow-2xl: 0 18px 40px rgba(0, 0, 0, 0.24);
+  /* Panel variables for dark mode */
+  --panel: #161c1a;
+  --panel-strong: #222624;
 }
 
 @layer base {
@@ -197,4 +203,10 @@
 }
 .scrollbar-hide::-webkit-scrollbar {
   display: none;
+}
+
+/* Disable transitions during theme switch */
+.no-transitions,
+.no-transitions * {
+  transition: none !important;
 }

@@ -6,7 +6,7 @@ use log::{debug, error, info, warn};
 use std::sync::Arc;
 use uuid::Uuid;
 
-use crate::podman::{ContainerConfig, Podman};
+use crate::container::{ContainerConfig, ContainerRuntime};
 
 use super::models::{CreateSessionRequest, Session, SessionStatus};
 use super::repository::SessionRepository;
@@ -45,16 +45,16 @@ impl Default for SessionServiceConfig {
 #[derive(Clone)]
 pub struct SessionService {
     repo: SessionRepository,
-    podman: Arc<Podman>,
+    runtime: Arc<ContainerRuntime>,
     config: SessionServiceConfig,
 }
 
 impl SessionService {
     /// Create a new session service.
-    pub fn new(repo: SessionRepository, podman: Podman, config: SessionServiceConfig) -> Self {
+    pub fn new(repo: SessionRepository, runtime: ContainerRuntime, config: SessionServiceConfig) -> Self {
         Self {
             repo,
-            podman: Arc::new(podman),
+            runtime: Arc::new(runtime),
             config,
         }
     }
@@ -148,7 +148,7 @@ impl SessionService {
 
         // Create and start the container
         let container_id = self
-            .podman
+            .runtime
             .create_container(&config)
             .await
             .context("creating container")?;
@@ -195,12 +195,12 @@ impl SessionService {
 
         // Stop the container if it exists
         if let Some(ref container_id) = session.container_id {
-            if let Err(e) = self.podman.stop_container(container_id, Some(10)).await {
+            if let Err(e) = self.runtime.stop_container(container_id, Some(10)).await {
                 warn!("Failed to stop container {}: {:?}", container_id, e);
             }
 
             // Remove the container
-            if let Err(e) = self.podman.remove_container(container_id, true).await {
+            if let Err(e) = self.runtime.remove_container(container_id, true).await {
                 warn!("Failed to remove container {}: {:?}", container_id, e);
             }
         }
@@ -254,7 +254,7 @@ impl SessionService {
         for session in active {
             if let Some(ref container_id) = session.container_id {
                 // Check if container still exists
-                match self.podman.get_container(container_id).await {
+                match self.runtime.get_container(container_id).await {
                     Ok(Some(_)) => continue, // Container exists, skip
                     Ok(None) => {
                         warn!(

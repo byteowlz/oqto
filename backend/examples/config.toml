@@ -20,3 +20,13 @@ fail_fast = true
 # Uncomment to move persistent data/state to custom directories.
 # data_dir = "$XDG_DATA_HOME/workspace-backend"
 # state_dir = "$XDG_STATE_HOME/workspace-backend"
+
+[container]
+# Container runtime: "docker" or "podman" (auto-detected if not specified)
+# runtime = "docker"
+# Custom path to the container runtime binary (optional)
+# binary = "/usr/local/bin/docker"
+# Default container image for sessions
+default_image = "opencode-dev:latest"
+# Base port for allocating session ports (each session uses 3 consecutive ports)
+base_port = 41820

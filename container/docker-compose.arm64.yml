@@ -1,5 +1,7 @@
 # Compose file for ARM64/Apple Silicon with Caddy reverse proxy
-# Usage: podman-compose -f docker-compose.arm64.yml up
+# Works with both Docker and Podman:
+#   Docker (macOS dev):  docker compose -f docker-compose.arm64.yml up
+#   Podman (Linux prod): podman-compose -f docker-compose.arm64.yml up
 
 networks:
   # Public network - Caddy connects here and exposes ports

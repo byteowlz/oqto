@@ -1,6 +1,7 @@
-//! Podman container management module.
+//! Container runtime management module.
 //!
-//! Provides an async interface to manage containers via the podman CLI.
+//! Provides an async interface to manage containers via Docker or Podman CLI.
+//! The runtime is auto-detected or can be configured explicitly.
 
 mod container;
 mod error;
@@ -8,56 +9,153 @@ mod error;
 #[allow(unused_imports)]
 pub use container::PortMapping;
 pub use container::{Container, ContainerConfig, ContainerStats};
-pub use error::{PodmanError, PodmanResult};
+pub use error::{ContainerError, ContainerResult};
 
+use serde::{Deserialize, Serialize};
 use std::process::Stdio;
 use tokio::process::Command;
 
-/// Podman client for managing containers.
+/// Container runtime type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RuntimeType {
+    /// Docker runtime (default for macOS/Windows dev)
+    Docker,
+    /// Podman runtime (default for Linux prod)
+    #[default]
+    Podman,
+}
+
+impl RuntimeType {
+    /// Get the default binary name for this runtime.
+    pub fn default_binary(&self) -> &'static str {
+        match self {
+            RuntimeType::Docker => "docker",
+            RuntimeType::Podman => "podman",
+        }
+    }
+
+    /// Whether this runtime requires SELinux volume labels (:Z suffix).
+    pub fn needs_selinux_labels(&self) -> bool {
+        match self {
+            RuntimeType::Docker => false,
+            RuntimeType::Podman => true,
+        }
+    }
+}
+
+impl std::fmt::Display for RuntimeType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RuntimeType::Docker => write!(f, "docker"),
+            RuntimeType::Podman => write!(f, "podman"),
+        }
+    }
+}
+
+/// Container runtime client for managing containers.
+/// 
+/// Supports both Docker and Podman with automatic detection.
 #[derive(Debug, Clone)]
-pub struct Podman {
-    /// Path to the podman binary
+pub struct ContainerRuntime {
+    /// The runtime type (docker or podman)
+    runtime_type: RuntimeType,
+    /// Path to the container binary
     binary: String,
 }
 
-impl Default for Podman {
+impl Default for ContainerRuntime {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl Podman {
-    /// Create a new Podman client.
+impl ContainerRuntime {
+    /// Create a new container runtime with auto-detection.
+    /// 
+    /// Tries Docker first (for macOS dev), then falls back to Podman.
     pub fn new() -> Self {
-        Self {
-            binary: "podman".to_string(),
+        // Try to detect which runtime is available
+        // Prefer Docker on macOS (dev environment)
+        #[cfg(target_os = "macos")]
+        {
+            if Self::is_binary_available("docker") {
+                return Self {
+                    runtime_type: RuntimeType::Docker,
+                    binary: "docker".to_string(),
+                };
+            }
+        }
+
+        // Default to Podman on Linux or if Docker isn't available
+        if Self::is_binary_available("podman") {
+            Self {
+                runtime_type: RuntimeType::Podman,
+                binary: "podman".to_string(),
+            }
+        } else if Self::is_binary_available("docker") {
+            Self {
+                runtime_type: RuntimeType::Docker,
+                binary: "docker".to_string(),
+            }
+        } else {
+            // Fall back to podman, will fail at runtime
+            Self {
+                runtime_type: RuntimeType::Podman,
+                binary: "podman".to_string(),
+            }
         }
     }
 
-    /// Create a new Podman client with a custom binary path.
-    #[allow(dead_code)]
-    pub fn with_binary(binary: impl Into<String>) -> Self {
+    /// Create a container runtime with a specific type.
+    pub fn with_type(runtime_type: RuntimeType) -> Self {
         Self {
+            binary: runtime_type.default_binary().to_string(),
+            runtime_type,
+        }
+    }
+
+    /// Create a container runtime with a custom binary path.
+    #[allow(dead_code)]
+    pub fn with_binary(runtime_type: RuntimeType, binary: impl Into<String>) -> Self {
+        Self {
+            runtime_type,
             binary: binary.into(),
         }
     }
 
-    /// Check if podman is available and working.
-    pub async fn health_check(&self) -> PodmanResult<String> {
+    /// Get the runtime type.
+    pub fn runtime_type(&self) -> RuntimeType {
+        self.runtime_type
+    }
+
+    /// Check if a binary is available in PATH.
+    fn is_binary_available(name: &str) -> bool {
+        std::process::Command::new("which")
+            .arg(name)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
+
+    /// Check if the container runtime is available and working.
+    pub async fn health_check(&self) -> ContainerResult<String> {
         let output = Command::new(&self.binary)
             .args(["version", "--format", "json"])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .output()
             .await
-            .map_err(|e| PodmanError::CommandFailed {
+            .map_err(|e| ContainerError::CommandFailed {
                 command: "version".to_string(),
                 message: e.to_string(),
             })?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(PodmanError::CommandFailed {
+            return Err(ContainerError::CommandFailed {
                 command: "version".to_string(),
                 message: stderr.to_string(),
             });
@@ -67,10 +165,9 @@ impl Podman {
     }
 
     /// Create and start a new container.
-    pub async fn create_container(&self, config: &ContainerConfig) -> PodmanResult<String> {
-        // Use owned strings to avoid memory leaks from Box::leak
+    pub async fn create_container(&self, config: &ContainerConfig) -> ContainerResult<String> {
         let mut owned_args: Vec<String> = Vec::new();
-        
+
         owned_args.push("run".to_string());
         owned_args.push("-d".to_string());
 
@@ -92,10 +189,14 @@ impl Podman {
             owned_args.push(format!("{}:{}", port.host_port, port.container_port));
         }
 
-        // Volume mounts
+        // Volume mounts - handle SELinux labels for Podman
         for (host, container) in &config.volumes {
             owned_args.push("-v".to_string());
-            owned_args.push(format!("{}:{}:Z", host, container));
+            if self.runtime_type.needs_selinux_labels() {
+                owned_args.push(format!("{}:{}:Z", host, container));
+            } else {
+                owned_args.push(format!("{}:{}", host, container));
+            }
         }
 
         // Environment variables
@@ -124,14 +225,14 @@ impl Podman {
             .stderr(Stdio::piped())
             .output()
             .await
-            .map_err(|e| PodmanError::CommandFailed {
+            .map_err(|e| ContainerError::CommandFailed {
                 command: "run".to_string(),
                 message: e.to_string(),
             })?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(PodmanError::CommandFailed {
+            return Err(ContainerError::CommandFailed {
                 command: "run".to_string(),
                 message: stderr.to_string(),
             });
@@ -146,8 +247,7 @@ impl Podman {
         &self,
         container_id: &str,
         timeout: Option<u32>,
-    ) -> PodmanResult<()> {
-        // Use owned strings to avoid memory leaks
+    ) -> ContainerResult<()> {
         let mut owned_args: Vec<String> = vec!["stop".to_string()];
 
         if let Some(t) = timeout {
@@ -163,14 +263,14 @@ impl Podman {
             .stderr(Stdio::piped())
             .output()
             .await
-            .map_err(|e| PodmanError::CommandFailed {
+            .map_err(|e| ContainerError::CommandFailed {
                 command: "stop".to_string(),
                 message: e.to_string(),
             })?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(PodmanError::CommandFailed {
+            return Err(ContainerError::CommandFailed {
                 command: "stop".to_string(),
                 message: stderr.to_string(),
             });
@@ -180,7 +280,7 @@ impl Podman {
     }
 
     /// Remove a container.
-    pub async fn remove_container(&self, container_id: &str, force: bool) -> PodmanResult<()> {
+    pub async fn remove_container(&self, container_id: &str, force: bool) -> ContainerResult<()> {
         let mut args = vec!["rm"];
 
         if force {
@@ -195,14 +295,14 @@ impl Podman {
             .stderr(Stdio::piped())
             .output()
             .await
-            .map_err(|e| PodmanError::CommandFailed {
+            .map_err(|e| ContainerError::CommandFailed {
                 command: "rm".to_string(),
                 message: e.to_string(),
             })?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(PodmanError::CommandFailed {
+            return Err(ContainerError::CommandFailed {
                 command: "rm".to_string(),
                 message: stderr.to_string(),
             });
@@ -213,7 +313,7 @@ impl Podman {
 
     /// List containers.
     #[allow(dead_code)]
-    pub async fn list_containers(&self, all: bool) -> PodmanResult<Vec<Container>> {
+    pub async fn list_containers(&self, all: bool) -> ContainerResult<Vec<Container>> {
         let mut args = vec!["ps", "--format", "json"];
 
         if all {
@@ -226,14 +326,14 @@ impl Podman {
             .stderr(Stdio::piped())
             .output()
             .await
-            .map_err(|e| PodmanError::CommandFailed {
+            .map_err(|e| ContainerError::CommandFailed {
                 command: "ps".to_string(),
                 message: e.to_string(),
             })?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(PodmanError::CommandFailed {
+            return Err(ContainerError::CommandFailed {
                 command: "ps".to_string(),
                 message: stderr.to_string(),
             });
@@ -245,21 +345,21 @@ impl Podman {
         }
 
         let containers: Vec<Container> =
-            serde_json::from_str(&stdout).map_err(|e| PodmanError::ParseError(e.to_string()))?;
+            serde_json::from_str(&stdout).map_err(|e| ContainerError::ParseError(e.to_string()))?;
 
         Ok(containers)
     }
 
     /// Get container by ID or name.
     #[allow(dead_code)]
-    pub async fn get_container(&self, id_or_name: &str) -> PodmanResult<Option<Container>> {
+    pub async fn get_container(&self, id_or_name: &str) -> ContainerResult<Option<Container>> {
         let output = Command::new(&self.binary)
             .args(["inspect", "--format", "json", id_or_name])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .output()
             .await
-            .map_err(|e| PodmanError::CommandFailed {
+            .map_err(|e| ContainerError::CommandFailed {
                 command: "inspect".to_string(),
                 message: e.to_string(),
             })?;
@@ -271,15 +371,14 @@ impl Podman {
 
         let stdout = String::from_utf8_lossy(&output.stdout);
         let containers: Vec<Container> =
-            serde_json::from_str(&stdout).map_err(|e| PodmanError::ParseError(e.to_string()))?;
+            serde_json::from_str(&stdout).map_err(|e| ContainerError::ParseError(e.to_string()))?;
 
         Ok(containers.into_iter().next())
     }
 
     /// Get container logs.
     #[allow(dead_code)]
-    pub async fn get_logs(&self, container_id: &str, tail: Option<u32>) -> PodmanResult<String> {
-        // Use owned strings to avoid memory leaks
+    pub async fn get_logs(&self, container_id: &str, tail: Option<u32>) -> ContainerResult<String> {
         let mut owned_args: Vec<String> = vec!["logs".to_string()];
 
         if let Some(n) = tail {
@@ -295,7 +394,7 @@ impl Podman {
             .stderr(Stdio::piped())
             .output()
             .await
-            .map_err(|e| PodmanError::CommandFailed {
+            .map_err(|e| ContainerError::CommandFailed {
                 command: "logs".to_string(),
                 message: e.to_string(),
             })?;
@@ -309,21 +408,21 @@ impl Podman {
 
     /// Get container stats (single snapshot).
     #[allow(dead_code)]
-    pub async fn get_stats(&self, container_id: &str) -> PodmanResult<ContainerStats> {
+    pub async fn get_stats(&self, container_id: &str) -> ContainerResult<ContainerStats> {
         let output = Command::new(&self.binary)
             .args(["stats", "--no-stream", "--format", "json", container_id])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .output()
             .await
-            .map_err(|e| PodmanError::CommandFailed {
+            .map_err(|e| ContainerError::CommandFailed {
                 command: "stats".to_string(),
                 message: e.to_string(),
             })?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(PodmanError::CommandFailed {
+            return Err(ContainerError::CommandFailed {
                 command: "stats".to_string(),
                 message: stderr.to_string(),
             });
@@ -331,24 +430,24 @@ impl Podman {
 
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stats: Vec<ContainerStats> =
-            serde_json::from_str(&stdout).map_err(|e| PodmanError::ParseError(e.to_string()))?;
+            serde_json::from_str(&stdout).map_err(|e| ContainerError::ParseError(e.to_string()))?;
 
         stats
             .into_iter()
             .next()
-            .ok_or_else(|| PodmanError::ContainerNotFound(container_id.to_string()))
+            .ok_or_else(|| ContainerError::ContainerNotFound(container_id.to_string()))
     }
 
     /// Check if an image exists locally.
     #[allow(dead_code)]
-    pub async fn image_exists(&self, image: &str) -> PodmanResult<bool> {
+    pub async fn image_exists(&self, image: &str) -> ContainerResult<bool> {
         let output = Command::new(&self.binary)
             .args(["image", "exists", image])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .output()
             .await
-            .map_err(|e| PodmanError::CommandFailed {
+            .map_err(|e| ContainerError::CommandFailed {
                 command: "image exists".to_string(),
                 message: e.to_string(),
             })?;
@@ -358,21 +457,21 @@ impl Podman {
 
     /// Pull an image.
     #[allow(dead_code)]
-    pub async fn pull_image(&self, image: &str) -> PodmanResult<()> {
+    pub async fn pull_image(&self, image: &str) -> ContainerResult<()> {
         let output = Command::new(&self.binary)
             .args(["pull", image])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .output()
             .await
-            .map_err(|e| PodmanError::CommandFailed {
+            .map_err(|e| ContainerError::CommandFailed {
                 command: "pull".to_string(),
                 message: e.to_string(),
             })?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(PodmanError::CommandFailed {
+            return Err(ContainerError::CommandFailed {
                 command: "pull".to_string(),
                 message: stderr.to_string(),
             });
@@ -387,11 +486,17 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn test_podman_health_check() {
-        let podman = Podman::new();
-        // This test will only pass if podman is installed
-        if let Ok(version) = podman.health_check().await {
+    async fn test_container_runtime_health_check() {
+        let runtime = ContainerRuntime::new();
+        // This test will only pass if docker or podman is installed
+        if let Ok(version) = runtime.health_check().await {
             assert!(!version.is_empty());
         }
+    }
+
+    #[test]
+    fn test_runtime_type_selinux() {
+        assert!(!RuntimeType::Docker.needs_selinux_labels());
+        assert!(RuntimeType::Podman.needs_selinux_labels());
     }
 }

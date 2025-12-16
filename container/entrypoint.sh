@@ -5,12 +5,14 @@ set -e
 OPENCODE_PORT="${OPENCODE_PORT:-41820}"
 FILESERVER_PORT="${FILESERVER_PORT:-41821}"
 TTYD_PORT="${TTYD_PORT:-41822}"
+EAVS_PORT="${EAVS_PORT:-41823}"
 WORKSPACE_DIR="${WORKSPACE_DIR:-/home/dev/workspace}"
 
 echo "Starting OpenCode development container..."
 echo "OpenCode server port: ${OPENCODE_PORT}"
 echo "File server port: ${FILESERVER_PORT}"
 echo "TTY terminal port: ${TTYD_PORT}"
+echo "EAVS proxy port: ${EAVS_PORT}"
 echo "Workspace directory: ${WORKSPACE_DIR}"
 
 # Ensure workspace directory exists
@@ -24,6 +26,15 @@ cleanup() {
     exit 0
 }
 trap cleanup SIGTERM SIGINT
+
+# Start EAVS (LLM proxy) in the background
+echo "Starting EAVS proxy on port ${EAVS_PORT}..."
+if command -v eavs &> /dev/null; then
+    eavs serve --host 0.0.0.0 --port "${EAVS_PORT}" &
+    EAVS_PID=$!
+else
+    echo "Warning: eavs binary not found, LLM proxying will not be available"
+fi
 
 # Start file server in the background
 echo "Starting file server on port ${FILESERVER_PORT}..."

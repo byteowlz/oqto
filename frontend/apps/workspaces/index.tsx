@@ -1,36 +1,43 @@
 "use client"
 
 import { useState, useMemo } from "react"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Search, Plus, FolderOpen, MoreHorizontal } from "lucide-react"
+import { Search, Plus, ChevronLeft } from "lucide-react"
 import { useApp } from "@/components/app-context"
+import { cn } from "@/lib/utils"
 
 export function WorkspacesApp() {
   const { locale } = useApp()
   const [searchTerm, setSearchTerm] = useState("")
   const [selectedWorkspace, setSelectedWorkspace] = useState<string | null>(null)
+  const [mobileView, setMobileView] = useState<"list" | "details">("list")
 
   const copy = useMemo(
     () => ({
       de: {
-        title: "AGENTEN",
-        subtitle: "Arbeitsbereich und Agenten-Template wählen",
-        newWorkspace: "Neuer Workspace",
-        searchPlaceholder: "Workspaces durchsuchen...",
-        openWorkspace: "Workspace öffnen",
-        selectTemplate: "Agenten-Template wählen",
-        chooseTemplate: "Agenten-Template auswählen",
+        searchPlaceholder: "Agents durchsuchen",
+        createAgent: "Agent erstellen",
+        lastModified: "Zuletzt geändert",
+        scope: "Umfang",
+        files: "Dateien",
+        templates: "Agenten-Templates",
+        startAgent: "Agent starten",
+        persona: "Persona",
+        back: "Zurück",
+        selectWorkspace: "Wähle einen Workspace aus der Liste",
       },
       en: {
-        title: "AGENTS",
-        subtitle: "Pick a workspace and agent template",
-        newWorkspace: "New Workspace",
-        searchPlaceholder: "Search workspaces...",
-        openWorkspace: "Open workspace",
-        selectTemplate: "Select agent template",
-        chooseTemplate: "Choose agent template",
+        searchPlaceholder: "Search agents",
+        createAgent: "Create Agent",
+        lastModified: "Last modified",
+        scope: "Scope",
+        files: "files",
+        templates: "Agent Templates",
+        startAgent: "Start Agent",
+        persona: "Persona",
+        back: "Back",
+        selectWorkspace: "Select a workspace from the list",
       },
     }),
     [],
@@ -82,166 +89,210 @@ export function WorkspacesApp() {
     },
   ]
 
+  const templates = [
+    {
+      id: "coding-copilot",
+      name: "Coding Copilot",
+      tag: "[DEV]",
+      description: locale === "de" 
+        ? "Vollständige Entwicklungsumgebung mit Terminal, Git und Code-Editing."
+        : "Full development environment with terminal, Git and code editing.",
+      persona: "Senior Software Engineer",
+      capabilities: locale === "de"
+        ? ["Shell Access", "Git", "Code Editing", "Netzwerkzugriff"]
+        : ["Shell Access", "Git", "Code Editing", "Network Access"],
+    },
+    {
+      id: "research-assistant",
+      name: "Research Assistant",
+      tag: "[RES]",
+      description: locale === "de"
+        ? "Dokumenten-Analyse und Recherche in sicherer Umgebung."
+        : "Document analysis and research in a safe environment.",
+      persona: "Research Analyst",
+      capabilities: locale === "de"
+        ? ["Dokumenten-lesen", "Websuche", "Zusammenfassung"]
+        : ["Document Reading", "Web Search", "Summarization"],
+    },
+    {
+      id: "meeting-synth",
+      name: "Meeting Synthesizer",
+      tag: "[MTG]",
+      description: locale === "de"
+        ? "Transkript-Analyse und Meeting-Zusammenfassungen."
+        : "Transcript analysis and meeting summaries.",
+      persona: "Executive Assistant",
+      capabilities: locale === "de"
+        ? ["Transkript Parsing", "Action Items", "Kein Code"]
+        : ["Transcript Parsing", "Action Items", "No Code"],
+    },
+  ]
+
   const filteredWorkspaces = workspaces.filter((ws) => ws.name.toLowerCase().includes(searchTerm.toLowerCase()))
+  const selectedWs = workspaces.find((ws) => ws.id === selectedWorkspace)
 
-  return (
-    <div className="flex flex-col gap-4 h-full min-h-0 p-4 md:p-6">
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground tracking-wider">{t.title}</h1>
-          <p className="text-sm text-muted-foreground">{t.subtitle}</p>
-        </div>
-        <Button className="bg-primary hover:bg-primary/80 text-primary-foreground">
-          <Plus className="w-4 h-4 mr-2" />
-          {t.newWorkspace}
-        </Button>
-      </div>
+  const handleWorkspaceSelect = (workspaceId: string) => {
+    setSelectedWorkspace(workspaceId)
+    setMobileView("details")
+  }
 
-      <div className="bg-[#161c1a] border border-[#1f2a27] rounded-xl p-4">
+  // Workspace List Component
+  const WorkspaceList = (
+    <div className="flex flex-col h-full bg-background">
+      {/* Search */}
+      <div className="p-4">
         <div className="relative">
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input
             placeholder={t.searchPlaceholder}
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="pl-10 bg-[#0f1412] border-[#1f2a27] text-foreground placeholder:text-[#6b7974]"
+            className="pl-9 h-10 bg-transparent border-border text-foreground placeholder:text-muted-foreground"
           />
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {filteredWorkspaces.map((workspace) => (
-          <div
-            key={workspace.id}
-            className="bg-[#161c1a] border border-[#1f2a27] rounded-xl p-4 flex flex-col gap-3 hover:border-[#3ba77c] hover:bg-[#131a17] transition cursor-pointer"
-            onClick={() => setSelectedWorkspace(workspace.id)}
-          >
-            <div className="flex items-start justify-between">
-              <FolderOpen className="w-6 h-6 text-[#3ba77c]" />
-              <Button
-                variant="ghost"
-                size="icon"
-                className="text-muted-foreground hover:text-primary"
-                onClick={(e) => {
-                  e.stopPropagation()
-                }}
-              >
-                <MoreHorizontal className="w-4 h-4" />
-              </Button>
-            </div>
-            <div>
-              <div className="text-base font-semibold text-foreground">{workspace.name}</div>
-              <div className="text-xs text-muted-foreground mt-1">{workspace.lastModified}</div>
-            </div>
-            <div className="flex justify-between text-xs text-muted-foreground">
-              <span>{workspace.files} files</span>
-              <span>{workspace.size}</span>
-            </div>
-            <Button
-              className="w-full bg-primary hover:bg-primary/80 text-primary-foreground"
-              onClick={(e) => {
-                e.stopPropagation()
-                setSelectedWorkspace(workspace.id)
-              }}
-            >
-              {t.openWorkspace}
-            </Button>
-          </div>
-        ))}
+      {/* Create Agent Button */}
+      <div className="px-4 pb-4">
+        <button className="w-full flex items-center justify-between px-4 py-3 text-sm text-foreground hover:bg-primary/10 transition-colors">
+          <span className="flex items-center gap-2">
+            <Plus className="w-4 h-4" />
+            {t.createAgent}
+          </span>
+        </button>
       </div>
 
-      {selectedWorkspace && (
-        <AgentTemplateSelector workspaceId={selectedWorkspace} onClose={() => setSelectedWorkspace(null)} />
+      {/* Workspace List */}
+      <div className="flex-1 overflow-y-auto px-4 space-y-2">
+        {filteredWorkspaces.map((workspace) => {
+          const isSelected = selectedWorkspace === workspace.id
+          return (
+            <button
+              key={workspace.id}
+              onClick={() => handleWorkspaceSelect(workspace.id)}
+              className={cn(
+                "w-full text-left p-3 transition-colors",
+                isSelected 
+                  ? "bg-primary text-primary-foreground" 
+                  : "text-foreground hover:bg-primary/10"
+              )}
+            >
+              <div className="font-medium text-sm">{workspace.name}</div>
+              <div className={cn(
+                "text-xs mt-1",
+                isSelected ? "text-primary-foreground/70" : "text-muted-foreground"
+              )}>
+                {workspace.lastModified}
+              </div>
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
+
+  // Workspace Details + Templates Component
+  const WorkspaceDetails = (
+    <div className="flex flex-col h-full bg-background">
+      {selectedWs ? (
+        <>
+          {/* Workspace Header */}
+          <div className="p-4 md:p-6 border-b border-border">
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => setMobileView("list")}
+                className="md:hidden p-2 -ml-2 text-muted-foreground hover:text-foreground"
+              >
+                <ChevronLeft className="w-5 h-5" />
+              </button>
+              <div>
+                <h1 className="text-lg md:text-xl font-semibold text-foreground">{selectedWs.name}</h1>
+                <div className="text-sm text-muted-foreground mt-1">
+                  {t.lastModified}: {selectedWs.lastModified}
+                </div>
+                <div className="text-sm text-muted-foreground">
+                  {t.scope}: {selectedWs.files} {t.files}, {selectedWs.size}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Templates Section */}
+          <div className="flex-1 overflow-y-auto p-4 md:p-6">
+            <h2 className="text-sm font-medium text-muted-foreground mb-4">{t.templates}</h2>
+            
+            <div className="space-y-4 md:space-y-6">
+              {templates.map((template) => (
+                <div
+                  key={template.id}
+                  className="border border-border bg-card p-4"
+                >
+                  <div className="flex items-start gap-2 mb-2">
+                    <span className="text-primary font-mono text-sm">{template.tag}</span>
+                    <span className="text-foreground font-medium">{template.name}</span>
+                  </div>
+                  
+                  <p className="text-sm text-muted-foreground mb-3">
+                    {template.description}
+                  </p>
+                  
+                  <div className="text-sm mb-3">
+                    <span className="text-muted-foreground">{t.persona}: </span>
+                    <span className="text-primary">{template.persona}</span>
+                  </div>
+                  
+                  <div className="flex flex-wrap gap-2 mb-4">
+                    {template.capabilities.map((cap) => (
+                      <span 
+                        key={cap} 
+                        className="text-xs px-2 py-1 bg-muted text-muted-foreground"
+                      >
+                        {cap}
+                      </span>
+                    ))}
+                  </div>
+
+                  <Button 
+                    className="w-full bg-primary hover:bg-primary/90 text-primary-foreground"
+                  >
+                    {t.startAgent}
+                  </Button>
+                </div>
+              ))}
+            </div>
+          </div>
+        </>
+      ) : (
+        /* Empty State */
+        <div className="flex-1 flex items-center justify-center p-6">
+          <div className="text-center text-muted-foreground">
+            <p className="text-sm">{t.selectWorkspace}</p>
+          </div>
+        </div>
       )}
     </div>
   )
-}
-
-function AgentTemplateSelector({ onClose }: { workspaceId: string; onClose: () => void }) {
-  const { locale } = useApp()
-  const copy = useMemo(
-    () => ({
-      de: {
-        selectTemplate: "Agenten-Template wählen",
-        chooseTemplate: "Agenten-Template auswählen",
-      },
-      en: {
-        selectTemplate: "Select agent template",
-        chooseTemplate: "Choose agent template",
-      },
-    }),
-    [],
-  )
-  const templates = [
-    {
-      id: "coding-copilot",
-      name: "Coding Copilot",
-      description: "Full development environment with terminal access, Git, and code editing tools",
-      persona: "Senior Software Engineer",
-      capabilities: ["Shell Access", "Git Operations", "Code Editing", "Full Network Access"],
-      icon: "[DEV]",
-    },
-    {
-      id: "research-assistant",
-      name: "Research Assistant",
-      description: "Document analysis and research tool with read-only access and safe environment",
-      persona: "Research Analyst",
-      capabilities: ["Document Reading", "Web Search", "Summarization", "Safe Environment"],
-      icon: "[RES]",
-    },
-    {
-      id: "meeting-synth",
-      name: "Meeting Synthesizer",
-      description: "Transcript analysis and meeting summary generation",
-      persona: "Executive Secretary",
-      capabilities: ["Transcript Parsing", "Summarization", "Action Items", "No Code Execution"],
-      icon: "[MTG]",
-    },
-  ]
 
   return (
-    <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-50">
-      <Card className="bg-card border-border w-full max-w-4xl max-h-[90vh] overflow-y-auto">
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <div>
-              <CardTitle className="text-xl font-bold text-foreground tracking-wider">{copy[locale].selectTemplate}</CardTitle>
-              <p className="text-sm text-muted-foreground mt-1">{copy[locale].chooseTemplate}</p>
-            </div>
-            <Button variant="ghost" onClick={onClose} className="text-muted-foreground hover:text-foreground">
-              X
-            </Button>
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {templates.map((template) => (
-            <Card key={template.id} className="bg-muted border-border hover:border-primary transition-all cursor-pointer">
-              <CardContent className="p-6">
-                <div className="flex items-start gap-4">
-                  <div className="text-xl font-bold text-primary font-mono">{template.icon}</div>
-                  <div className="flex-1">
-                    <h3 className="text-lg font-bold text-foreground mb-1">{template.name}</h3>
-                    <p className="text-sm text-muted-foreground mb-3">{template.description}</p>
-                    <div className="mb-3">
-                      <span className="text-xs text-muted-foreground uppercase tracking-wider">Persona: </span>
-                      <span className="text-xs text-primary">{template.persona}</span>
-                    </div>
-                    <div className="flex flex-wrap gap-2 mb-4">
-                      {template.capabilities.map((cap) => (
-                        <span key={cap} className="text-xs px-2 py-1 bg-accent text-accent-foreground rounded tracking-wider">
-                          {cap}
-                        </span>
-                      ))}
-                    </div>
-                    <Button className="bg-primary hover:bg-primary/90 text-primary-foreground">Start Session</Button>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
-        </CardContent>
-      </Card>
-    </div>
+    <>
+      {/* Mobile Layout - Show one view at a time */}
+      <div className="md:hidden h-full w-full overflow-hidden">
+        {mobileView === "list" ? WorkspaceList : WorkspaceDetails}
+      </div>
+
+      {/* Desktop Layout - Side by side */}
+      <div className="hidden md:flex h-full w-full overflow-hidden">
+        {/* Column 1: Workspace List */}
+        <div className="w-[280px] min-w-[280px] border-r border-border">
+          {WorkspaceList}
+        </div>
+
+        {/* Column 2: Workspace Details + Templates */}
+        <div className="flex-1">
+          {WorkspaceDetails}
+        </div>
+      </div>
+    </>
   )
 }
 

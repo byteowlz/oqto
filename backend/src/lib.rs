@@ -6,7 +6,7 @@ pub mod api;
 pub mod auth;
 pub mod db;
 pub mod invite;
-pub mod podman;
+pub mod container;
 pub mod session;
 pub mod storage;
 pub mod user;

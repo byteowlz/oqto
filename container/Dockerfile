@@ -1,6 +1,6 @@
-# Stage 1: Build fileserver
+# Stage 1: Build Rust binaries (fileserver and eavs)
 # Run from repository root: docker build -f container/Dockerfile .
-FROM rust:1.83-slim AS fileserver-builder
+FROM rust:1.83-slim AS rust-builder
 
 WORKDIR /build
 
@@ -9,11 +9,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy fileserver source (build context must be repository root)
+# Build fileserver
+WORKDIR /build/fileserver
 COPY fileserver/Cargo.toml fileserver/Cargo.lock ./
 COPY fileserver/src ./src
+RUN cargo build --release
 
-# Build release binary
+# Build eavs (LLM proxy with virtual keys)
+WORKDIR /build/eavs
+COPY eavs/Cargo.toml eavs/Cargo.lock ./
+COPY eavs/src ./src
 RUN cargo build --release
 
 # Stage 2: Main container
@@ -28,6 +33,7 @@ ARG USER_GID=1000
 ARG OPENCODE_PORT=41820
 ARG FILESERVER_PORT=41821
 ARG TTYD_PORT=41822
+ARG EAVS_PORT=41823
 
 # Environment variables
 ENV LANG=en_US.UTF-8
@@ -41,6 +47,7 @@ ENV XDG_CACHE_HOME=/home/${USERNAME}/.cache
 ENV OPENCODE_PORT=${OPENCODE_PORT}
 ENV FILESERVER_PORT=${FILESERVER_PORT}
 ENV TTYD_PORT=${TTYD_PORT}
+ENV EAVS_PORT=${EAVS_PORT}
 
 # Update system and install base packages
 RUN pacman -Syu --noconfirm && \
@@ -70,9 +77,10 @@ RUN pacman -Syu --noconfirm && \
   ttyd \
   && pacman -Scc --noconfirm
 
-# Copy fileserver binary from builder stage
-COPY --from=fileserver-builder /build/target/release/fileserver /usr/local/bin/fileserver
-RUN chmod +x /usr/local/bin/fileserver
+# Copy binaries from builder stage
+COPY --from=rust-builder /build/fileserver/target/release/fileserver /usr/local/bin/fileserver
+COPY --from=rust-builder /build/eavs/target/release/eavs /usr/local/bin/eavs
+RUN chmod +x /usr/local/bin/fileserver /usr/local/bin/eavs
 
 # Create non-root user
 RUN groupadd --gid ${USER_GID} ${USERNAME} && \
@@ -116,10 +124,11 @@ RUN chmod +x /home/${USERNAME}/entrypoint.sh
 # Working directory
 WORKDIR /home/${USERNAME}/workspace
 
-# Expose ports for opencode serve, file server, and ttyd terminal
+# Expose ports for opencode serve, file server, ttyd terminal, and eavs proxy
 EXPOSE ${OPENCODE_PORT}
 EXPOSE ${FILESERVER_PORT}
 EXPOSE ${TTYD_PORT}
+EXPOSE ${EAVS_PORT}
 
 # Entrypoint
 ENTRYPOINT ["/home/dev/entrypoint.sh"]

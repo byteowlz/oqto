@@ -84,11 +84,12 @@ function TabButton({
       variant="ghost"
       size="sm"
       onClick={() => onSelect(view)}
-      className={`flex-1 justify-center rounded-md px-2 relative ${
+      className={cn(
+        "flex-1 justify-center rounded-md px-2 relative",
         activeView === view
-          ? "bg-[#1b2d26] text-[#d5f0e4] border border-[#3ba77c]"
-          : "text-[#9aa8a3] border border-transparent hover:border-[#264036] hover:bg-[#131a17]"
-      }`}
+          ? "bg-primary/15 text-foreground border border-primary"
+          : "text-muted-foreground border border-transparent hover:border-border hover:bg-muted/50"
+      )}
     >
       <Icon className="w-4 h-4" />
       <span className="hidden sm:inline ml-1">{label}</span>
@@ -265,7 +266,7 @@ export function SessionsApp() {
   if (workspaceSessions.length === 0) {
     return (
       <div className="p-4 md:p-6">
-        <div className="p-6 text-sm text-muted-foreground bg-[#161c1a] border border-[#1f2a27]">
+        <div className="p-6 text-sm text-muted-foreground bg-card border border-border">
           {t.configNotice}
         </div>
       </div>
@@ -278,7 +279,7 @@ export function SessionsApp() {
       <div className="flex flex-wrap items-center gap-3">
         <label className="text-xs uppercase tracking-wide text-muted-foreground">Session</label>
         <select
-          className="bg-[#0f1412] border border-[#1f2a27] text-sm text-[#d5f0e4] rounded-md px-3 py-2 outline-none focus:border-[#3ba77c] flex-1 min-w-0 max-w-xs"
+          className="bg-muted border border-border text-sm text-foreground rounded-md px-3 py-2 outline-none focus:border-primary flex-1 min-w-0 max-w-xs"
           value={selectedWorkspaceSessionId}
           onChange={(e) => setSelectedWorkspaceSessionId(e.target.value)}
         >
@@ -304,7 +305,7 @@ export function SessionsApp() {
         <div 
           ref={messagesContainerRef}
           onScroll={handleScroll}
-          className="h-full rounded-lg bg-[#0f1412] border border-[#1f2a27] p-4 overflow-y-auto space-y-6 scrollbar-hide"
+          className="h-full bg-muted/30 border border-border p-4 overflow-y-auto space-y-6 scrollbar-hide"
         >
           {messages.length === 0 && <div className="text-sm text-muted-foreground">{t.noMessages}</div>}
           {messageGroups.map((group) => (
@@ -317,7 +318,7 @@ export function SessionsApp() {
         {showScrollToBottom && (
           <button
             onClick={() => scrollToBottom()}
-            className="absolute bottom-4 right-4 flex items-center gap-2 px-3 py-2 rounded-full bg-[#2d5c47] hover:bg-[#2f6950] text-[#e3f6ed] text-sm font-medium shadow-lg transition-all duration-200 border border-[#3ba77c]/30"
+            className="absolute bottom-4 right-4 flex items-center gap-2 px-3 py-2 rounded-full bg-primary hover:bg-primary/90 text-primary-foreground text-sm font-medium shadow-lg transition-all duration-200"
           >
             <ArrowDown className="w-4 h-4" />
             <span className="hidden sm:inline">Jump to bottom</span>
@@ -335,12 +336,12 @@ export function SessionsApp() {
               handleSend()
             }
           }}
-          className="flex-1 bg-[#111714] border-[#1f2a27] text-[#d5f0e4] placeholder:text-[#6b7974]"
+          className="flex-1 bg-background border-border text-foreground placeholder:text-muted-foreground"
         />
         <Button
           onClick={handleSend}
           disabled={chatState === "sending"}
-          className="bg-[#2d5c47] hover:bg-[#2f6950] text-[#e3f6ed]"
+          className="bg-primary hover:bg-primary/90 text-primary-foreground"
         >
           <Send className="w-4 h-4 sm:mr-2" />
           <span className="hidden sm:inline">{t.send}</span>
@@ -356,7 +357,7 @@ export function SessionsApp() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="min-w-0">
-          <h1 className="text-lg sm:text-xl font-semibold text-[#d5f0e4] tracking-wider truncate">
+          <h1 className="text-lg sm:text-xl font-semibold text-foreground tracking-wider truncate">
             {selectedSession ? selectedSession.container_name : t.title}
           </h1>
           {selectedSession && (
@@ -371,7 +372,7 @@ export function SessionsApp() {
       {/* Mobile layout: single panel with tabs */}
       <div className="flex-1 min-h-0 flex flex-col lg:hidden">
         {/* Mobile tabs */}
-        <div className="flex gap-1 p-2 bg-[#161c1a] border border-[#1f2a27] rounded-t-xl">
+        <div className="flex gap-1 p-2 bg-card border border-border rounded-t-xl">
           <TabButton activeView={activeView} onSelect={setActiveView} view="chat" icon={MessageSquare} label={t.chat} />
           <TabButton activeView={activeView} onSelect={setActiveView} view="files" icon={FileText} label={t.files} />
           <TabButton activeView={activeView} onSelect={setActiveView} view="terminal" icon={Terminal} label={t.terminal} />
@@ -379,7 +380,7 @@ export function SessionsApp() {
         </div>
         
         {/* Mobile content */}
-        <div className="flex-1 min-h-0 bg-[#161c1a] border border-t-0 border-[#1f2a27] rounded-b-xl p-3 sm:p-4 overflow-hidden">
+        <div className="flex-1 min-h-0 bg-card border border-t-0 border-border rounded-b-xl p-3 sm:p-4 overflow-hidden">
           {activeView === "chat" && ChatContent}
            {activeView === "files" && <FileTreeView />}
            {activeView === "terminal" && <TerminalView sessionId={selectedWorkspaceSessionId} />}
@@ -391,13 +392,13 @@ export function SessionsApp() {
       {/* Desktop layout: side by side */}
       <div className="hidden lg:flex flex-1 min-h-0 gap-4">
         {/* Chat panel */}
-        <div className="flex-1 bg-[#161c1a] border border-[#1f2a27] rounded-xl p-4 xl:p-6 flex flex-col min-h-0">
+        <div className="flex-1 bg-card border border-border p-4 xl:p-6 flex flex-col min-h-0">
           {ChatContent}
         </div>
 
         {/* Sidebar panel */}
-        <div className="w-[320px] xl:w-[360px] shrink-0 bg-[#161c1a] border border-[#1f2a27] rounded-xl flex flex-col min-h-0">
-          <div className="flex gap-1 p-2 border-b border-[#1f2a27]">
+        <div className="w-[320px] xl:w-[360px] shrink-0 bg-card border border-border flex flex-col min-h-0">
+          <div className="flex gap-1 p-2 border-b border-border">
             <TabButton activeView={activeView} onSelect={setActiveView} view="files" icon={FileText} label={t.files} />
             <TabButton activeView={activeView} onSelect={setActiveView} view="terminal" icon={Terminal} label={t.terminal} />
             <TabButton activeView={activeView} onSelect={setActiveView} view="preview" icon={Eye} label={t.preview} />
@@ -468,32 +469,32 @@ function MessageGroupCard({ group }: { group: MessageGroup }) {
   return (
     <div
       className={cn(
-        "rounded-xl transition-all duration-200",
+        "transition-all duration-200",
         isUser 
-          ? "ml-8 bg-[#182922] border border-[#2d5c47]" 
-          : "mr-8 bg-[#141a18] border border-[#1f2a27]"
+          ? "ml-8 bg-primary/10 border border-primary/30" 
+          : "mr-8 bg-muted/50 border border-border"
       )}
     >
       {/* Header */}
       <div className={cn(
         "flex items-center gap-3 px-4 py-3 border-b",
-        isUser ? "border-[#2d5c47]/50" : "border-[#1f2a27]"
+        isUser ? "border-primary/20" : "border-border"
       )}>
         <div
           className={cn(
-            "p-2 rounded-lg",
-            isUser ? "bg-[#2d5c47]/50" : "bg-[#1f2a27]"
+            "p-2",
+            isUser ? "bg-primary/20" : "bg-muted"
           )}
         >
           {isUser ? (
-            <User className="w-4 h-4 text-[#6ee7b7]" />
+            <User className="w-4 h-4 text-primary" />
           ) : (
-            <Bot className="w-4 h-4 text-[#3ba77c]" />
+            <Bot className="w-4 h-4 text-primary" />
           )}
         </div>
         <div className="flex-1">
           <div className="flex items-center gap-2">
-            <span className="text-sm font-medium text-[#d5f0e4]">
+            <span className="text-sm font-medium text-foreground">
               {isUser ? "You" : "Assistant"}
             </span>
             {group.messages.length > 1 && (
@@ -502,8 +503,8 @@ function MessageGroupCard({ group }: { group: MessageGroup }) {
                 className={cn(
                   "text-[10px] px-1.5 py-0",
                   isUser
-                    ? "border-[#2d5c47] text-[#6ee7b7]"
-                    : "border-[#2a3632] text-[#9aa8a3]"
+                    ? "border-primary/30 text-primary"
+                    : "border-border text-muted-foreground"
                 )}
               >
                 {group.messages.length} messages
@@ -511,7 +512,7 @@ function MessageGroupCard({ group }: { group: MessageGroup }) {
             )}
           </div>
           {createdAt && !isNaN(createdAt.getTime()) && (
-            <div className="text-xs text-[#6b7974] flex items-center gap-1 mt-0.5">
+            <div className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5">
               <Clock className="w-3 h-3" />
               {createdAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
             </div>
@@ -527,7 +528,7 @@ function MessageGroupCard({ group }: { group: MessageGroup }) {
       {/* Content - render segments in order */}
       <div className="px-4 py-3 group space-y-3">
         {segments.length === 0 && (
-          <span className="text-[#6b7974] italic text-sm">No content</span>
+          <span className="text-muted-foreground italic text-sm">No content</span>
         )}
         
         {segments.map((segment, idx) => {
@@ -536,7 +537,7 @@ function MessageGroupCard({ group }: { group: MessageGroup }) {
               <div key={`text-${idx}`} className="relative group/text">
                 <MarkdownRenderer 
                   content={segment.content} 
-                  className="text-sm text-[#d5f0e4] leading-relaxed pr-8"
+                  className="text-sm text-foreground leading-relaxed pr-8"
                 />
                 {/* Floating copy button - positioned to not overlap text */}
                 <div className="absolute top-0 right-0 opacity-0 group-hover/text:opacity-100 transition-opacity">
@@ -596,23 +597,23 @@ function OtherPartCard({ part }: { part: OpenCodePart }) {
   if (!content) return null
 
   return (
-    <div className="rounded-lg border border-[#2a3632] bg-[#141a18] overflow-hidden">
+    <div className="border border-border bg-muted/30 overflow-hidden">
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-[#1a221f] transition-colors"
+        className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-muted/50 transition-colors"
       >
         <ChevronDown 
           className={cn(
-            "w-4 h-4 text-[#6b7974] transition-transform",
+            "w-4 h-4 text-muted-foreground transition-transform",
             isOpen && "rotate-180"
           )}
         />
-        <span className="text-xs uppercase tracking-wide text-[#6b7974]">{getPartLabel()}</span>
+        <span className="text-xs uppercase tracking-wide text-muted-foreground">{getPartLabel()}</span>
       </button>
       
       {isOpen && (
-        <div className="px-3 pb-3 border-t border-[#2a3632]">
-          <pre className="text-xs text-[#9aa8a3] mt-2 whitespace-pre-wrap overflow-x-auto">
+        <div className="px-3 pb-3 border-t border-border">
+          <pre className="text-xs text-muted-foreground mt-2 whitespace-pre-wrap overflow-x-auto">
             {content}
           </pre>
         </div>
@@ -635,8 +636,8 @@ function TodoListView({ todos, emptyMessage }: { todos: TodoItem[]; emptyMessage
     return (
       <div className="flex items-center justify-center h-full p-4">
         <div className="text-center">
-          <ListTodo className="w-12 h-12 text-[#2a3632] mx-auto mb-3" />
-          <p className="text-sm text-[#6b7974]">{emptyMessage}</p>
+          <ListTodo className="w-12 h-12 text-muted-foreground/30 mx-auto mb-3" />
+          <p className="text-sm text-muted-foreground">{emptyMessage}</p>
         </div>
       </div>
     )
@@ -645,24 +646,24 @@ function TodoListView({ todos, emptyMessage }: { todos: TodoItem[]; emptyMessage
   return (
     <div className="flex flex-col h-full">
       {/* Summary header */}
-      <div className="p-3 border-b border-[#1f2a27] bg-[#0f1412]">
+      <div className="p-3 border-b border-border bg-muted/30">
         <div className="flex items-center justify-between text-xs">
-          <span className="text-[#6b7974]">{summary.total} tasks</span>
+          <span className="text-muted-foreground">{summary.total} tasks</span>
           <div className="flex items-center gap-3">
             {summary.inProgress > 0 && (
-              <span className="flex items-center gap-1 text-[#3ba77c]">
+              <span className="flex items-center gap-1 text-primary">
                 <CircleDot className="w-3 h-3" />
                 {summary.inProgress}
               </span>
             )}
             {summary.pending > 0 && (
-              <span className="flex items-center gap-1 text-[#6b7974]">
+              <span className="flex items-center gap-1 text-muted-foreground">
                 <Square className="w-3 h-3" />
                 {summary.pending}
               </span>
             )}
             {summary.completed > 0 && (
-              <span className="flex items-center gap-1 text-[#3ba77c]">
+              <span className="flex items-center gap-1 text-primary">
                 <CheckSquare className="w-3 h-3" />
                 {summary.completed}
               </span>
@@ -677,23 +678,23 @@ function TodoListView({ todos, emptyMessage }: { todos: TodoItem[]; emptyMessage
           <div 
             key={todo.id || idx} 
             className={cn(
-              "flex items-start gap-2 p-2 rounded-lg transition-colors",
-              todo.status === "in_progress" && "bg-[#182922] border border-[#2d5c47]",
+              "flex items-start gap-2 p-2 transition-colors",
+              todo.status === "in_progress" && "bg-primary/10 border border-primary/30",
               todo.status === "completed" && "opacity-50",
               todo.status === "cancelled" && "opacity-40",
-              todo.status === "pending" && "bg-[#141a18] border border-[#1f2a27]"
+              todo.status === "pending" && "bg-muted/30 border border-border"
             )}
           >
             {/* Status icon */}
             <div className="flex-shrink-0 mt-0.5">
               {todo.status === "completed" ? (
-                <CheckSquare className="w-4 h-4 text-[#3ba77c]" />
+                <CheckSquare className="w-4 h-4 text-primary" />
               ) : todo.status === "in_progress" ? (
-                <CircleDot className="w-4 h-4 text-[#3ba77c] animate-pulse" />
+                <CircleDot className="w-4 h-4 text-primary animate-pulse" />
               ) : todo.status === "cancelled" ? (
-                <XCircle className="w-4 h-4 text-[#6b7974]" />
+                <XCircle className="w-4 h-4 text-muted-foreground" />
               ) : (
-                <Square className="w-4 h-4 text-[#6b7974]" />
+                <Square className="w-4 h-4 text-muted-foreground" />
               )}
             </div>
             
@@ -701,7 +702,7 @@ function TodoListView({ todos, emptyMessage }: { todos: TodoItem[]; emptyMessage
             <div className="flex-1 min-w-0">
               <p className={cn(
                 "text-sm leading-relaxed",
-                todo.status === "completed" ? "text-[#6b7974] line-through" : "text-[#d5f0e4]",
+                todo.status === "completed" ? "text-muted-foreground line-through" : "text-foreground",
                 todo.status === "cancelled" && "line-through"
               )}>
                 {todo.content}
@@ -711,10 +712,10 @@ function TodoListView({ todos, emptyMessage }: { todos: TodoItem[]; emptyMessage
             {/* Priority badge */}
             {todo.priority && (
               <span className={cn(
-                "text-[10px] uppercase tracking-wide flex-shrink-0 px-1.5 py-0.5 rounded",
+                "text-[10px] uppercase tracking-wide flex-shrink-0 px-1.5 py-0.5",
                 todo.priority === "high" && "bg-red-400/10 text-red-400",
                 todo.priority === "medium" && "bg-yellow-400/10 text-yellow-400",
-                todo.priority === "low" && "bg-[#2a3632] text-[#6b7974]"
+                todo.priority === "low" && "bg-muted text-muted-foreground"
               )}>
                 {todo.priority}
               </span>

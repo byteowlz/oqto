@@ -18,7 +18,7 @@ mod api;
 mod auth;
 mod db;
 mod invite;
-mod podman;
+mod container;
 mod session;
 mod user;
 
@@ -416,6 +416,7 @@ struct AppConfig {
     logging: LoggingConfig,
     runtime: RuntimeConfig,
     paths: PathsConfig,
+    container: ContainerRuntimeConfig,
 }
 
 impl AppConfig {
@@ -434,6 +435,7 @@ impl Default for AppConfig {
             logging: LoggingConfig::default(),
             runtime: RuntimeConfig::default(),
             paths: PathsConfig::default(),
+            container: ContainerRuntimeConfig::default(),
         }
     }
 }
@@ -477,6 +479,30 @@ impl Default for RuntimeConfig {
 struct PathsConfig {
     data_dir: Option<String>,
     state_dir: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+struct ContainerRuntimeConfig {
+    /// Container runtime type: "docker" or "podman" (auto-detected if not set)
+    runtime: Option<container::RuntimeType>,
+    /// Custom path to the container runtime binary
+    binary: Option<String>,
+    /// Default container image for sessions
+    default_image: String,
+    /// Base port for allocating session ports
+    base_port: u16,
+}
+
+impl Default for ContainerRuntimeConfig {
+    fn default() -> Self {
+        Self {
+            runtime: None,
+            binary: None,
+            default_image: "opencode-dev:latest".to_string(),
+            base_port: 41820,
+        }
+    }
 }
 
 fn handle_run(ctx: &mut RuntimeContext, cmd: RunCommand) -> Result<()> {
@@ -708,21 +734,40 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     );
     let auth_state = auth::AuthState::new(auth_config);
 
-    // Initialize services
-    let podman = podman::Podman::new();
+    // Initialize container runtime from config or auto-detect
+    let container_runtime = match (&ctx.config.container.runtime, &ctx.config.container.binary) {
+        (Some(rt), Some(binary)) => container::ContainerRuntime::with_binary(*rt, binary.clone()),
+        (Some(rt), None) => container::ContainerRuntime::with_type(*rt),
+        (None, _) => container::ContainerRuntime::new(),
+    };
 
-    // Check podman is available
-    match podman.health_check().await {
-        Ok(_) => info!("Podman is available"),
+    // Check container runtime is available
+    match container_runtime.health_check().await {
+        Ok(_) => info!(
+            "Container runtime ({}) is available",
+            container_runtime.runtime_type()
+        ),
         Err(e) => log::warn!(
-            "Podman health check failed: {:?}. Container operations may fail.",
+            "Container runtime health check failed: {:?}. Container operations may fail.",
             e
         ),
     }
 
+    // Session config: CLI args override config file values
+    let default_image = if cmd.image != "opencode-dev:latest" {
+        cmd.image.clone()
+    } else {
+        ctx.config.container.default_image.clone()
+    };
+    let base_port = if cmd.base_port != 41820 {
+        cmd.base_port as i64
+    } else {
+        ctx.config.container.base_port as i64
+    };
+
     let session_config = session::SessionServiceConfig {
-        default_image: cmd.image.clone(),
-        base_port: cmd.base_port as i64,
+        default_image,
+        base_port,
         default_workspace_path: cmd
             .workspace_root
             .canonicalize()
@@ -733,7 +778,7 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     };
 
     let session_repo = session::SessionRepository::new(database.pool().clone());
-    let session_service = session::SessionService::new(session_repo, podman, session_config);
+    let session_service = session::SessionService::new(session_repo, container_runtime, session_config);
 
     // Initialize user service
     let user_repo = user::UserRepository::new(database.pool().clone());

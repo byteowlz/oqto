@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import Image from "next/image"
 import {
   SunMedium,
@@ -15,11 +15,61 @@ import {
   Menu,
   X,
   Clock,
+  Snowflake,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { AppProvider, useApp } from "@/components/app-context"
 import { cn } from "@/lib/utils"
 import "@/apps"
+
+function SnowOverlay({ intensity = 0.5 }: { intensity?: number }) {
+  const clamped = Math.max(0, Math.min(1, intensity))
+  const count = Math.round(90 + 150 * clamped)
+  const speedFactor = 1.05 - clamped * 0.35
+  const flakes = Array.from({ length: count })
+  return (
+    <>
+      <div className="pointer-events-none fixed inset-0 z-50 overflow-hidden">
+        {flakes.map((_, i) => {
+          const size = Math.random() * 3 + 2 + clamped
+          const left = Math.random() * 100
+          const duration = (Math.random() * 6 + 5) * speedFactor
+          const delay = Math.random() * 6
+          return (
+            <span
+              key={i}
+              className="absolute rounded-full bg-white opacity-70 animate-snowfall"
+              style={{
+                width: size,
+                height: size,
+                left: `${left}%`,
+                animationDuration: `${duration}s`,
+                animationDelay: `${delay}s`,
+              }}
+            />
+          )
+        })}
+      </div>
+      <style jsx global>{`
+        @keyframes snowfall {
+          0% {
+            transform: translateY(-10%);
+            opacity: 0.9;
+          }
+          100% {
+            transform: translateY(110vh);
+            opacity: 0.1;
+          }
+        }
+        .animate-snowfall {
+          animation-name: snowfall;
+          animation-timing-function: linear;
+          animation-iteration-count: infinite;
+        }
+      `}</style>
+    </>
+  )
+}
 
 function AppShell() {
   const {
@@ -39,6 +89,16 @@ function AppShell() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const ActiveComponent = activeApp?.component ?? null
 
+  // JAK Christmas feature
+  const [showJakSnow, setShowJakSnow] = useState(false)
+  const jakAudioRef = useRef<HTMLAudioElement | null>(null)
+  const [jakVolume, setJakVolume] = useState(0.5)
+
+  // Loading bar
+  const [barVisible, setBarVisible] = useState(true)
+  const [barWidth, setBarWidth] = useState(0)
+  const [barFade, setBarFade] = useState(false)
+
   // Handle session click - select session and switch to chats view
   const handleSessionClick = (sessionId: string) => {
     setSelectedWorkspaceSessionId(sessionId)
@@ -47,18 +107,56 @@ function AppShell() {
   }
 
   useEffect(() => {
-    const stored = window.localStorage.getItem("theme")
+    if (typeof window === "undefined") return
+    
+    // Theme initialization - respect saved preference or system preference
+    const stored = localStorage.getItem("theme")
     const prefersDark = window.matchMedia?.("(prefers-color-scheme: dark)").matches
     const initial = stored === "light" || stored === "dark" ? stored : prefersDark ? "dark" : "light"
     document.documentElement.classList.toggle("dark", initial === "dark")
     setTheme(initial)
+
+    // Load saved JAK volume
+    const storedVol = localStorage.getItem("jakVolume")
+    const volNum = storedVol ? Number(storedVol) : NaN
+    if (!Number.isNaN(volNum) && volNum >= 0 && volNum <= 1) {
+      setJakVolume(volNum)
+      if (jakAudioRef.current) {
+        jakAudioRef.current.volume = volNum
+      }
+    }
+
+    // Top loading bar animation
+    setBarVisible(true)
+    setBarWidth(25)
+    const growTimer = window.setTimeout(() => setBarWidth(80), 150)
+    const finish = () => {
+      setBarWidth(100)
+      setBarFade(true)
+      window.setTimeout(() => setBarVisible(false), 500)
+    }
+    window.addEventListener("load", finish, { once: true })
+    const fallback = window.setTimeout(finish, 1600)
+    return () => {
+      window.clearTimeout(growTimer)
+      window.clearTimeout(fallback)
+      window.removeEventListener("load", finish)
+    }
   }, [])
 
   const toggleTheme = () => {
     setTheme((prev) => {
       const next = prev === "dark" ? "light" : "dark"
+      // Disable transitions during theme switch
+      document.documentElement.classList.add("no-transitions")
       document.documentElement.classList.toggle("dark", next === "dark")
-      window.localStorage.setItem("theme", next)
+      localStorage.setItem("theme", next)
+      // Re-enable transitions after a brief delay
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          document.documentElement.classList.remove("no-transitions")
+        })
+      })
       return next
     })
   }
@@ -68,9 +166,49 @@ function AppShell() {
     setLocale(next)
   }
 
+  const toggleJakSnow = () => {
+    setShowJakSnow((prev) => {
+      const next = !prev
+      let audio = jakAudioRef.current
+      if (!audio) {
+        audio = new Audio("/audio/jingle-bells.mp3")
+        audio.loop = true
+        audio.preload = "auto"
+        audio.volume = jakVolume
+        jakAudioRef.current = audio
+      }
+      if (audio) {
+        if (next) {
+          audio.currentTime = 0
+          audio.muted = false
+          audio.volume = jakVolume
+          audio
+            .play()
+            .then(() => {
+              // playback started
+            })
+            .catch((err) => {
+              console.error("JAK audio playback blocked", err)
+            })
+        } else {
+          audio.pause()
+          audio.currentTime = 0
+        }
+      }
+      return next
+    })
+  }
+
   const shellBg = "var(--background)"
   const sidebarBg = "var(--sidebar, #181b1a)"
   const navIdle = "var(--sidebar, #181b1a)"
+  const sidebarHover = "rgba(59, 167, 124, 0.12)"
+  const sidebarHoverBorder = "transparent"
+  const navText = "var(--sidebar-foreground, #dfe5e1)"
+  const navActiveBg = "#3ba77c"
+  const navActiveText = "#0b0f0d"
+  const navActiveBorder = "#3ba77c"
+
   const navIconFor = (id: string) => {
     switch (id) {
       case "projects":
@@ -92,7 +230,7 @@ function AppShell() {
   }
 
   return (
-    <div className="flex min-h-screen bg-[#222624] text-foreground">
+    <div className="flex min-h-screen bg-background text-foreground">
       {/* Mobile header */}
       <header className="fixed top-0 left-0 right-0 h-14 flex items-center justify-between px-4 z-50 md:hidden" style={{ backgroundColor: sidebarBg }}>
         <Button
@@ -134,12 +272,11 @@ function AppShell() {
               <button
                 key={app.id}
                 onClick={() => handleMobileNavClick(app.id)}
-                className={`w-full px-4 py-4 text-base font-semibold tracking-wide transition flex items-center gap-3 ${
-                  isActive ? "text-[#f2f5f3] ring-2 ring-[#3ba77c]" : "text-[#dfe5e1] hover:bg-[#222624]"
-                }`}
+                className="w-full rounded-none px-4 py-4 text-base font-semibold tracking-wide transition flex items-center gap-3"
                 style={{
-                  backgroundColor: isActive ? "#222624" : navIdle,
-                  border: isActive ? "1px solid #3ba77c" : "1px solid transparent",
+                  backgroundColor: isActive ? navActiveBg : navIdle,
+                  color: isActive ? navActiveText : navText,
+                  border: isActive ? `1px solid ${navActiveBorder}` : "1px solid transparent",
                 }}
               >
                 <Icon className="w-5 h-5 shrink-0" />
@@ -150,12 +287,12 @@ function AppShell() {
 
           {/* Session history in mobile menu */}
           {workspaceSessions.length > 0 && (
-            <div className="pt-4 border-t border-[#2a3632]">
+            <div className="pt-4 border-t border-sidebar-border">
               <div className="flex items-center gap-2 px-4 py-2">
-                <span className="text-xs uppercase tracking-wide text-[#6b7974]">
+                <span className="text-xs uppercase tracking-wide text-muted-foreground">
                   {locale === "de" ? "Verlauf" : "History"}
                 </span>
-                <span className="text-xs text-[#4a5550]">({workspaceSessions.length})</span>
+                <span className="text-xs text-muted-foreground/50">({workspaceSessions.length})</span>
               </div>
               <div className="space-y-1">
                 {workspaceSessions.slice(0, 10).map((session) => {
@@ -167,8 +304,8 @@ function AppShell() {
                       className={cn(
                         "w-full px-4 py-3 text-left transition-colors",
                         isSelected 
-                          ? "bg-[#1b2d26] text-[#d5f0e4]" 
-                          : "text-[#9aa8a3] hover:bg-[#222624]"
+                          ? "bg-primary/15 text-foreground" 
+                          : "text-muted-foreground hover:bg-sidebar-accent"
                       )}
                     >
                       <div className="text-sm truncate">
@@ -183,6 +320,7 @@ function AppShell() {
         </nav>
 
         <div className="w-full px-4 pb-8 space-y-3">
+          <div className="h-px w-full bg-primary/50 mt-2" />
           <Button
             variant="ghost"
             size="lg"
@@ -202,6 +340,15 @@ function AppShell() {
           >
             {theme === "dark" ? <SunMedium className="w-5 h-5" /> : <MoonStar className="w-5 h-5" />}
             <span className="text-base font-semibold">Theme</span>
+          </Button>
+          <Button
+            variant="ghost"
+            size="lg"
+            onClick={() => { toggleJakSnow(); setMobileMenuOpen(false); }}
+            className="w-full justify-start text-muted-foreground hover:text-primary py-4"
+          >
+            <Snowflake className="w-5 h-5" />
+            <span className="text-base font-semibold">JAK</span>
           </Button>
         </div>
       </div>
@@ -235,7 +382,7 @@ function AppShell() {
             {sidebarCollapsed ? <PanelRightClose className="w-4 h-4" /> : <PanelLeftClose className="w-4 h-4" />}
           </Button>
         </div>
-        <nav className={`w-full space-y-2 ${sidebarCollapsed ? "px-2" : "px-4"} pt-6`}>
+        <nav className={`w-full space-y-3 ${sidebarCollapsed ? "px-2" : "px-4"} pt-6 pb-4`}>
           {apps.map((app) => {
             const isActive = activeAppId === app.id
             const Icon = navIconFor(app.id)
@@ -243,12 +390,25 @@ function AppShell() {
               <button
                 key={app.id}
                 onClick={() => setActiveAppId(app.id)}
-                className={`w-full px-4 py-3 text-sm font-semibold tracking-wide transition flex items-center gap-2 ${
-                  isActive ? "text-[#f2f5f3] ring-2 ring-[#3ba77c]" : "text-[#dfe5e1] hover:bg-[#222624]"
-                } ${sidebarCollapsed ? "justify-center" : ""}`}
+                className={`w-full px-4 py-3 text-sm font-medium tracking-wide transition-colors flex items-center gap-2 ${
+                  sidebarCollapsed ? "justify-center" : ""
+                }`}
                 style={{
-                  backgroundColor: isActive ? "#222624" : navIdle,
-                  border: isActive ? "1px solid #3ba77c" : "1px solid transparent",
+                  backgroundColor: isActive ? navActiveBg : navIdle,
+                  color: isActive ? navActiveText : navText,
+                  border: isActive ? `1px solid ${navActiveBorder}` : "1px solid transparent",
+                }}
+                onMouseEnter={(e) => {
+                  if (!isActive) {
+                    e.currentTarget.style.backgroundColor = sidebarHover
+                    e.currentTarget.style.border = `1px solid ${sidebarHoverBorder}`
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (!isActive) {
+                    e.currentTarget.style.backgroundColor = navIdle
+                    e.currentTarget.style.border = "1px solid transparent"
+                  }
                 }}
               >
                 <Icon className="w-4 h-4 shrink-0" />
@@ -261,11 +421,11 @@ function AppShell() {
         {/* Session history list */}
         {!sidebarCollapsed && workspaceSessions.length > 0 && (
           <div className="w-full px-4 mt-4 flex-1 min-h-0 flex flex-col">
-            <div className="flex items-center gap-2 py-2 border-t border-[#2a3632]">
-              <span className="text-xs uppercase tracking-wide text-[#6b7974]">
+            <div className="flex items-center gap-2 py-2 border-t border-sidebar-border">
+              <span className="text-xs uppercase tracking-wide text-muted-foreground">
                 {locale === "de" ? "Verlauf" : "History"}
               </span>
-              <span className="text-xs text-[#4a5550]">({workspaceSessions.length})</span>
+              <span className="text-xs text-muted-foreground/50">({workspaceSessions.length})</span>
             </div>
             <div className="flex-1 overflow-y-auto space-y-1 pr-1 -mr-1">
               {workspaceSessions.slice(0, 20).map((session) => {
@@ -276,17 +436,17 @@ function AppShell() {
                     key={session.id}
                     onClick={() => handleSessionClick(session.id)}
                     className={cn(
-                      "w-full px-3 py-2 text-left rounded-md transition-colors",
+                      "w-full px-3 py-2 text-left rounded-none transition-colors",
                       isSelected 
-                        ? "bg-[#1b2d26] border border-[#3ba77c] text-[#d5f0e4]" 
-                        : "text-[#9aa8a3] hover:bg-[#222624] border border-transparent"
+                        ? "bg-primary/15 border border-primary text-foreground" 
+                        : "text-muted-foreground hover:bg-sidebar-accent border border-transparent"
                     )}
                   >
                     <div className="text-sm truncate font-medium">
                       {session.container_name || `Session ${session.id.slice(0, 8)}`}
                     </div>
                     {createdAt && (
-                      <div className="flex items-center gap-1 text-[10px] text-[#6b7974] mt-0.5">
+                      <div className="flex items-center gap-1 text-[10px] text-muted-foreground mt-0.5">
                         <Clock className="w-3 h-3" />
                         {createdAt.toLocaleDateString()} {createdAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                       </div>
@@ -301,10 +461,10 @@ function AppShell() {
         {/* Collapsed session indicator */}
         {sidebarCollapsed && workspaceSessions.length > 0 && (
           <div className="w-full px-2 mt-4">
-            <div className="border-t border-[#2a3632] pt-2">
+            <div className="border-t border-sidebar-border pt-2">
               <button
                 onClick={() => setSidebarCollapsed(false)}
-                className="w-full p-2 text-[#6b7974] hover:text-[#9aa8a3] transition-colors"
+                className="w-full p-2 text-muted-foreground hover:text-foreground transition-colors"
                 title={locale === "de" ? "Verlauf anzeigen" : "Show history"}
               >
                 <Clock className="w-4 h-4 mx-auto" />
@@ -314,28 +474,102 @@ function AppShell() {
         )}
 
         <div className={`w-full ${sidebarCollapsed ? "px-2 pb-4" : "px-4 pb-6"} space-y-3 mt-auto pt-4`}>
+          <div className="h-px w-full bg-primary/50 mt-2" />
           <Button
             variant="ghost"
-            size="sm"
+            size="default"
             onClick={toggleLocale}
             aria-label="Sprache wechseln"
-            className="w-full justify-start text-muted-foreground hover:text-primary"
-            style={{ justifyContent: sidebarCollapsed ? "center" : "flex-start" }}
+            className="w-full px-4 py-3 text-sm font-medium flex items-center gap-2 transition-colors"
+            style={{
+              justifyContent: sidebarCollapsed ? "center" : "flex-start",
+              backgroundColor: navIdle,
+              border: "1px solid transparent",
+              color: navText,
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.backgroundColor = sidebarHover
+              e.currentTarget.style.border = `1px solid ${sidebarHoverBorder}`
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.backgroundColor = navIdle
+              e.currentTarget.style.border = "1px solid transparent"
+            }}
           >
-            <Globe2 className="w-4 h-4" />
-            {!sidebarCollapsed && <span className="text-sm font-semibold">{locale === "de" ? "ENG" : "DE"}</span>}
+            <Globe2 className="w-4 h-4 shrink-0" />
+            {!sidebarCollapsed && <span className="text-sm font-medium">{locale === "de" ? "ENG" : "DE"}</span>}
           </Button>
           <Button
             variant="ghost"
-            size="sm"
+            size="default"
             onClick={toggleTheme}
             aria-pressed={theme === "dark"}
-            className="w-full justify-start text-muted-foreground hover:text-primary"
-            style={{ justifyContent: sidebarCollapsed ? "center" : "flex-start" }}
+            className="w-full px-4 py-3 text-sm font-medium flex items-center gap-2 transition-colors"
+            style={{
+              justifyContent: sidebarCollapsed ? "center" : "flex-start",
+              backgroundColor: navIdle,
+              border: "1px solid transparent",
+              color: navText,
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.backgroundColor = sidebarHover
+              e.currentTarget.style.border = `1px solid ${sidebarHoverBorder}`
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.backgroundColor = navIdle
+              e.currentTarget.style.border = "1px solid transparent"
+            }}
           >
-            {theme === "dark" ? <SunMedium className="w-4 h-4" /> : <MoonStar className="w-4 h-4" />}
-            {!sidebarCollapsed && <span className="text-sm font-semibold">Theme</span>}
+            {theme === "dark" ? <SunMedium className="w-4 h-4 shrink-0" /> : <MoonStar className="w-4 h-4 shrink-0" />}
+            {!sidebarCollapsed && <span className="text-sm font-medium">Theme</span>}
           </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="ghost"
+              size="default"
+              onClick={toggleJakSnow}
+              className="px-4 py-3 text-sm font-medium flex items-center gap-2 transition-colors flex-1"
+              style={{
+                justifyContent: sidebarCollapsed ? "center" : "flex-start",
+                backgroundColor: navIdle,
+                border: "1px solid transparent",
+                color: navText,
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.backgroundColor = sidebarHover
+                e.currentTarget.style.border = `1px solid ${sidebarHoverBorder}`
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.backgroundColor = navIdle
+                e.currentTarget.style.border = "1px solid transparent"
+              }}
+            >
+              <Snowflake className="w-4 h-4 shrink-0" />
+              {!sidebarCollapsed && <span className="text-sm font-medium">JAK</span>}
+              {sidebarCollapsed && <span className="sr-only">JAK</span>}
+            </Button>
+            {!sidebarCollapsed && showJakSnow && (
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.05}
+                value={jakVolume}
+                onChange={(e) => {
+                  const vol = Number(e.target.value)
+                  if (Number.isNaN(vol)) return
+                  setJakVolume(vol)
+                  localStorage.setItem("jakVolume", String(vol))
+                  if (jakAudioRef.current) {
+                    jakAudioRef.current.volume = vol
+                  }
+                }}
+                className="w-[100px]"
+                style={{ accentColor: "var(--foreground)" }}
+                aria-label="JAK Lautstarke"
+              />
+            )}
+          </div>
         </div>
       </aside>
 
@@ -346,11 +580,34 @@ function AppShell() {
             sidebarCollapsed ? "md:pl-[4.5rem]" : "md:pl-[16.25rem]"
           }`}
         >
-          <div className="min-h-full">
+          <div className="min-h-full w-full">
             {ActiveComponent ? <ActiveComponent /> : <EmptyState />}
           </div>
         </div>
       </div>
+
+      {/* Snow overlay */}
+      {showJakSnow && <SnowOverlay intensity={jakVolume} />}
+      
+      {/* Hidden audio element for JAK snow feature */}
+      <audio ref={jakAudioRef} src="/audio/jingle-bells.mp3" loop preload="auto" className="hidden" />
+      
+      {/* Loading bar */}
+      {barVisible && (
+        <div className="fixed left-0 top-0 z-[100] w-full pointer-events-none">
+          <div
+            style={{
+              height: "2px",
+              width: `${barWidth}%`,
+              maxWidth: "100%",
+              backgroundColor: "var(--sidebar-ring, #3ba77c)",
+              opacity: barFade ? 0 : 1,
+              boxShadow: "0 0 12px rgba(59,167,124,0.6)",
+              transition: "width 320ms ease, opacity 450ms ease",
+            }}
+          />
+        </div>
+      )}
     </div>
   )
 }

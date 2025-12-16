@@ -1,41 +1,28 @@
-# Rust CLI Template
+# Workspace Backend
 
-This repository provides a batteries-included starting point for building cross-platform Rust CLIs. It is designed to be opinionated about developer experience while remaining easy to extend.
+Backend server for the AI Agent Workspace Platform. Orchestrates containerized development environments with opencode, fileserver, and web terminal access.
 
 ## Quick Start
 
-- Install the latest stable Rust toolchain (`rustup default stable`).
-- Fetch dependencies and verify the build:
+```bash
+# Install Rust
+rustup default stable
 
-  ```bash
-  cargo test
-  ```
+# Build and run
+cargo run -- serve
 
-- Run the CLI in place:
-
-  ```bash
-  cargo run -- run
-  ```
-
-- Scaffold a fresh project from this template:
-
-  ```bash
-  scripts/new-cli.sh my-cli
-  ```
-
-  ```powershell
-  pwsh scripts/new-cli.ps1 my-cli
-  ```
+# Or with custom options
+cargo run -- serve --port 8080 --workspace-root ~/projects
+```
 
 ## Features
 
-- `clap`-powered command interface with shared global flags (`-q`, `-v`, `--debug`, `--trace`, `--json`, `--yaml`, `--no-color`, `--dry-run`, `--yes`).
-- `config`-based configuration loader that creates `$XDG_CONFIG_HOME/workspace-backend/config.toml` (or platform equivalents) on first run.
-- Environment overrides using the `WORKSPACE_BACKEND__*` prefix; e.g. `WORKSPACE_BACKEND__LOGGING__LEVEL=debug`.
-- Configurable data and state directories that honor XDG locations on Unix and the appropriate directories on Windows.
-- Shell completion generation via `cargo run -- completions <shell>`.
-- Logging, runtime limits, and diagnostics output ready to customize for your workflow.
-- `scripts/new-cli.sh` to clone the template with a new crate name and paths.
+- Session orchestration with Docker (macOS dev) or Podman (Linux prod)
+- Per-session containerized environments with opencode, fileserver, and ttyd
+- JWT-based authentication with invite code registration
+- Automatic container runtime detection (Docker preferred on macOS)
+- RESTful API for session management
+- Proxy endpoints for opencode, files, and terminal access
 
 ## CLI Overview
 
@@ -45,12 +32,33 @@ cargo run -- --help
 
 Key subcommands:
 
-- `run [TASK]` – executes the primary workflow with optional profile overrides.
-- `init` – creates or refreshes the config file (use `--force` or `--yes` to overwrite).
-- `config show|path|reset` – inspects the effective configuration.
-- `completions <shell>` – emits shell completions to stdout (`bash`, `zsh`, `fish`, `powershell`, `elvish`).
+- `serve` - Start the HTTP API server
+- `init` - Create config directories and default files
+- `config show|path|reset` - Inspect the effective configuration
+- `invite-codes generate|list|revoke` - Manage user invite codes
+- `completions <shell>` - Emit shell completions
 
-Global flags apply to every subcommand, enabling quiet mode, stacked verbosity (`-vv`), trace logging, dry runs, JSON/YAML output, color control, progress suppression, and timeouts.
+## Container Runtime
+
+The backend automatically detects and uses the appropriate container runtime:
+
+- **macOS (dev)**: Prefers Docker Desktop
+- **Linux (prod)**: Prefers Podman
+
+You can override this in config.toml:
+
+```toml
+[container]
+runtime = "docker"  # or "podman"
+# binary = "/usr/local/bin/docker"  # optional custom path
+default_image = "opencode-dev:latest"
+base_port = 41820
+```
+
+Or via environment variables:
+```bash
+WORKSPACE_BACKEND__CONTAINER__RUNTIME=docker
+```
 
 ## Configuration
 
@@ -85,16 +93,29 @@ Global flags apply to every subcommand, enabling quiet mode, stacked verbosity (
   cargo run -- completions bash > target/workspace-backend.bash
   ```
 
-## Scaffold New Projects
-
-- Run `scripts/new-cli.sh my-cli` (Unix shells) or `pwsh scripts/new-cli.ps1 my-cli` (Windows/PowerShell) to copy the template into `./my-cli` with all configuration files updated to the new crate name.
-- Provide `--path /some/where` (or `-Path C:\work\my-cli`) to choose a different destination directory.
-- Requirements: `python3` for the shell script, PowerShell 7 (`pwsh`) for the Windows script.
-
 ## Project Structure
 
-- `src/main.rs` – CLI entry point, argument parsing, config loading, and command handlers.
-- `examples/config.toml` – commented configuration template.
-- `Cargo.toml` – dependencies and metadata for the template crate.
+```
+backend/
+  src/
+    api/          # HTTP routes and handlers
+    auth/         # JWT authentication
+    container/    # Docker/Podman runtime abstraction
+    db/           # SQLite database
+    invite/       # Invite code management
+    session/      # Session orchestration
+    user/         # User management
+  examples/
+    config.toml   # Example configuration
+  migrations/     # SQL migrations
+```
 
-Feel free to fork this template and tailor the commands, config schema, or runtime behavior to your project's needs.
+## API Endpoints
+
+- `POST /api/sessions` - Create a new session
+- `GET /api/sessions` - List all sessions
+- `GET /api/sessions/:id` - Get session details
+- `DELETE /api/sessions/:id` - Stop and remove a session
+- `GET /sessions/:id/opencode/*` - Proxy to opencode
+- `GET /sessions/:id/files/*` - Proxy to fileserver
+- `GET /sessions/:id/terminal` - WebSocket proxy to ttyd
