@@ -419,6 +419,7 @@ struct AppConfig {
     paths: PathsConfig,
     container: ContainerRuntimeConfig,
     eavs: Option<EavsConfig>,
+    auth: auth::AuthConfig,
 }
 
 impl AppConfig {
@@ -439,6 +440,7 @@ impl Default for AppConfig {
             paths: PathsConfig::default(),
             container: ContainerRuntimeConfig::default(),
             eavs: None,
+            auth: auth::AuthConfig::default(),
         }
     }
 }
@@ -752,8 +754,9 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     info!("Database path: {}", db_path.display());
     let database = db::Database::new(&db_path).await?;
 
-    // Initialize authentication
-    let auth_config = auth::AuthConfig::default();
+    // Initialize authentication from config
+    let auth_config = ctx.config.auth.clone();
+    auth_config.validate().context("Invalid auth configuration")?;
     info!(
         "Auth mode: {}",
         if auth_config.dev_mode {

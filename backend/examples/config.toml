@@ -48,3 +48,30 @@ container_url = "http://host.docker.internal:41800"
 default_session_budget_usd = 10.0
 # Default session rate limit in requests per minute (optional)
 default_session_rpm = 60
+
+[auth]
+# Enable development mode (uses dev_users for authentication, relaxed security)
+# Set to false for production deployments
+dev_mode = true
+
+# JWT secret for signing tokens (REQUIRED when dev_mode = false)
+# Must be at least 32 characters. Generate with: openssl rand -base64 48
+# Can be a literal value or reference an environment variable with env: prefix
+# jwt_secret = "your-secure-secret-at-least-32-characters-long"
+# jwt_secret = "env:AUTH_JWT_SECRET"  # Reads from AUTH_JWT_SECRET environment variable
+
+# OIDC configuration (optional, for external auth providers)
+# oidc_issuer = "https://your-auth-provider.com"
+# oidc_audience = "your-app-id"
+
+# CORS allowed origins (defaults to localhost:3000 and localhost:8080 in dev mode)
+# allowed_origins = ["https://your-domain.com"]
+
+# Development users (only used when dev_mode = true)
+# These are created with bcrypt-hashed passwords at startup
+# [[auth.dev_users]]
+# id = "dev"
+# name = "Developer"
+# email = "dev@localhost"
+# password_hash = "$2b$12$..." # Use htpasswd -nbBC 12 username password | cut -d: -f2
+# role = "admin"

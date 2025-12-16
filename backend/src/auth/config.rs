@@ -62,17 +62,38 @@ impl Default for AuthConfig {
 }
 
 impl AuthConfig {
+    /// Resolve the JWT secret, expanding `env:VAR_NAME` syntax.
+    /// Returns the resolved secret or None if not configured.
+    pub fn resolve_jwt_secret(&self) -> Result<Option<String>, ConfigValidationError> {
+        match &self.jwt_secret {
+            None => Ok(None),
+            Some(value) => {
+                if let Some(var_name) = value.strip_prefix("env:") {
+                    match std::env::var(var_name) {
+                        Ok(secret) if !secret.is_empty() => Ok(Some(secret)),
+                        Ok(_) => Err(ConfigValidationError::EnvVarEmpty(var_name.to_string())),
+                        Err(_) => Err(ConfigValidationError::EnvVarNotFound(var_name.to_string())),
+                    }
+                } else {
+                    Ok(Some(value.clone()))
+                }
+            }
+        }
+    }
+
     /// Validate the configuration.
     /// Returns an error if the configuration is invalid for the current mode.
     pub fn validate(&self) -> Result<(), ConfigValidationError> {
         if !self.dev_mode {
             // In production mode, JWT secret is required
-            if self.jwt_secret.is_none() {
+            let secret = self.resolve_jwt_secret()?;
+            
+            if secret.is_none() {
                 return Err(ConfigValidationError::MissingJwtSecret);
             }
 
             // Check that the JWT secret is not the old insecure default
-            if let Some(ref secret) = self.jwt_secret {
+            if let Some(ref secret) = secret {
                 if secret == "dev-secret-change-in-production" {
                     return Err(ConfigValidationError::InsecureJwtSecret);
                 }
@@ -118,6 +139,10 @@ pub enum ConfigValidationError {
     InsecureJwtSecret,
     /// JWT secret is too short (minimum 32 characters).
     JwtSecretTooShort,
+    /// Environment variable not found (for `env:VAR_NAME` syntax).
+    EnvVarNotFound(String),
+    /// Environment variable is empty (for `env:VAR_NAME` syntax).
+    EnvVarEmpty(String),
 }
 
 impl std::fmt::Display for ConfigValidationError {
@@ -131,6 +156,12 @@ impl std::fmt::Display for ConfigValidationError {
             }
             Self::JwtSecretTooShort => {
                 write!(f, "JWT secret must be at least 32 characters long for security.")
+            }
+            Self::EnvVarNotFound(var) => {
+                write!(f, "Environment variable '{}' not found (referenced via env:{} in config).", var, var)
+            }
+            Self::EnvVarEmpty(var) => {
+                write!(f, "Environment variable '{}' is empty (referenced via env:{} in config).", var, var)
             }
         }
     }
@@ -293,5 +324,70 @@ mod tests {
         assert_eq!(secret.len(), 64);
         // Should be alphanumeric
         assert!(secret.chars().all(|c| c.is_ascii_alphanumeric()));
+    }
+
+    #[test]
+    fn test_resolve_jwt_secret_literal() {
+        let mut config = AuthConfig::default();
+        config.jwt_secret = Some("my-literal-secret".to_string());
+        
+        let resolved = config.resolve_jwt_secret().unwrap();
+        assert_eq!(resolved, Some("my-literal-secret".to_string()));
+    }
+
+    #[test]
+    fn test_resolve_jwt_secret_env_var() {
+        // Set a test env var
+        // SAFETY: This is a test-only environment variable with a unique name
+        unsafe {
+            std::env::set_var("TEST_JWT_SECRET_12345", "secret-from-env-var-at-least-32-chars");
+        }
+        
+        let mut config = AuthConfig::default();
+        config.jwt_secret = Some("env:TEST_JWT_SECRET_12345".to_string());
+        
+        let resolved = config.resolve_jwt_secret().unwrap();
+        assert_eq!(resolved, Some("secret-from-env-var-at-least-32-chars".to_string()));
+        
+        // Clean up
+        // SAFETY: Cleaning up test environment variable
+        unsafe {
+            std::env::remove_var("TEST_JWT_SECRET_12345");
+        }
+    }
+
+    #[test]
+    fn test_resolve_jwt_secret_env_var_not_found() {
+        let mut config = AuthConfig::default();
+        config.jwt_secret = Some("env:NONEXISTENT_VAR_12345".to_string());
+        
+        let result = config.resolve_jwt_secret();
+        assert_eq!(result.unwrap_err(), ConfigValidationError::EnvVarNotFound("NONEXISTENT_VAR_12345".to_string()));
+    }
+
+    #[test]
+    fn test_resolve_jwt_secret_env_var_empty() {
+        // SAFETY: This is a test-only environment variable with a unique name
+        unsafe {
+            std::env::set_var("TEST_EMPTY_JWT_SECRET", "");
+        }
+        
+        let mut config = AuthConfig::default();
+        config.jwt_secret = Some("env:TEST_EMPTY_JWT_SECRET".to_string());
+        
+        let result = config.resolve_jwt_secret();
+        assert_eq!(result.unwrap_err(), ConfigValidationError::EnvVarEmpty("TEST_EMPTY_JWT_SECRET".to_string()));
+        
+        // SAFETY: Cleaning up test environment variable
+        unsafe {
+            std::env::remove_var("TEST_EMPTY_JWT_SECRET");
+        }
+    }
+
+    #[test]
+    fn test_resolve_jwt_secret_none() {
+        let config = AuthConfig::default();
+        let resolved = config.resolve_jwt_secret().unwrap();
+        assert_eq!(resolved, None);
     }
 }

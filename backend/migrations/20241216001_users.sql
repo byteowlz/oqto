@@ -42,7 +42,7 @@ VALUES (
     'Administrator',
     'admin',
     -- bcrypt hash of 'admin' with cost 4 (for dev speed)
-    '$2b$04$xJwX6xvF7A8.K1G3A2sPheVb.tXvS5d5.9v8mD7aG8LQVZn2Yn5hO'
+    '$2y$04$ynG2vPKhOB4JEz7zekBVWOS3.dzY2fE11lsSpoPGiGrhIv4uAl.PS'
 );
 
 -- Insert default regular user (for dev mode)  
@@ -54,5 +54,5 @@ VALUES (
     'Developer',
     'user',
     -- bcrypt hash of 'dev' with cost 4
-    '$2b$04$ABC123DEF456GHI789JKLMNOPQRSTUVWXYZabcdefghijklmnopqrst'
+    '$2y$04$UDO0uMncBrVNxHtRT1MIUuAHw.JYKkP57W6geyrYfP747xTIUl06u'
 );

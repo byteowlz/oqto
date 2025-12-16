@@ -33,7 +33,13 @@ pub struct AuthState {
 
 impl AuthState {
     /// Create new auth state from config.
-    pub fn new(config: AuthConfig) -> Self {
+    /// Resolves `env:VAR_NAME` syntax in jwt_secret at construction time.
+    pub fn new(mut config: AuthConfig) -> Self {
+        // Resolve jwt_secret if it uses env: syntax
+        if let Ok(Some(resolved)) = config.resolve_jwt_secret() {
+            config.jwt_secret = Some(resolved);
+        }
+        
         let decoding_key = config
             .jwt_secret
             .as_ref()
