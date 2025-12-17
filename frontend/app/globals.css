@@ -1,7 +1,8 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 
-/* JetBrainsMono Nerd Font */
+/* JetBrainsMono Nerd Font - Optional custom fonts
+   If fonts are not available in /public/fonts/, the system will fallback to ui-monospace */
 @font-face {
   font-family: "JetBrainsMono Nerd Font";
   src: url("/fonts/JetBrainsMonoNerdFont-Regular.ttf") format("truetype");

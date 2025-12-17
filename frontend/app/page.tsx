@@ -258,8 +258,10 @@ function AppShell() {
       if (!audio) {
         audio = new Audio("/audio/jingle-bells.mp3");
         audio.loop = true;
-        audio.preload = "auto";
+        audio.preload = "none";
         audio.volume = jakVolume;
+        // Silently handle errors (file may not exist)
+        audio.onerror = () => {};
         jakAudioRef.current = audio;
       }
       if (audio) {
@@ -272,8 +274,8 @@ function AppShell() {
             .then(() => {
               // playback started
             })
-            .catch((err) => {
-              console.error("JAK audio playback blocked", err);
+            .catch(() => {
+              // Audio playback blocked or file not found - fail silently
             });
         } else {
           audio.pause();
@@ -831,12 +833,12 @@ function AppShell() {
       {/* Snow overlay */}
       {showJakSnow && <SnowOverlay intensity={jakVolume} />}
 
-      {/* Hidden audio element for JAK snow feature */}
+      {/* Hidden audio element for JAK snow feature - optional, fails silently if file not present */}
       <audio
         ref={jakAudioRef}
         src="/audio/jingle-bells.mp3"
         loop
-        preload="auto"
+        preload="none"
         className="hidden"
       />
 

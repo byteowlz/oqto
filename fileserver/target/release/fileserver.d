@@ -1,0 +1,1 @@
+/home/wismut/Code/agent-workspace/fileserver/target/release/fileserver: /home/wismut/Code/agent-workspace/fileserver/src/config.rs /home/wismut/Code/agent-workspace/fileserver/src/error.rs /home/wismut/Code/agent-workspace/fileserver/src/handlers.rs /home/wismut/Code/agent-workspace/fileserver/src/main.rs /home/wismut/Code/agent-workspace/fileserver/src/routes.rs

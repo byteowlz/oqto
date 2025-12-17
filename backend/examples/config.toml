@@ -41,8 +41,8 @@ enabled = true
 base_url = "http://localhost:41800"
 # URL for containers to reach EAVS (via Docker host networking)
 # For Docker: http://host.docker.internal:41800
-# For Podman: http://host.containers.internal:41800
-container_url = "http://host.docker.internal:41800"
+# For Podman (4.1+): http://host.containers.internal:41800
+container_url = "http://host.containers.internal:41800"
 # Master key for EAVS admin operations (create/revoke keys)
 # IMPORTANT: Change this in production! Can also be set via EAVS_MASTER_KEY env var.
 # master_key = "your-master-key-here"
