@@ -9,6 +9,7 @@ import { useApp } from "@/components/app-context"
 import { FileTreeView } from "@/app/sessions/FileTreeView"
 import { TerminalView } from "@/app/sessions/TerminalView"
 import { PreviewView } from "@/app/sessions/PreviewView"
+import { useIsMobile } from "@/hooks/use-mobile"
 import { MarkdownRenderer, CopyButton } from "@/components/ui/markdown-renderer"
 import { ToolCallCard } from "@/components/ui/tool-call-card"
 import { cn } from "@/lib/utils"
@@ -20,6 +21,7 @@ import {
   type OpenCodeMessageWithParts,
   type OpenCodePart,
 } from "@/lib/opencode-client"
+import { controlPlaneDirectBaseUrl } from "@/lib/control-plane-client"
 
 // Todo item structure
 interface TodoItem {
@@ -115,6 +117,7 @@ export function SessionsApp() {
     selectedChatSessionId,
     selectedChatSession,
     refreshOpencodeSessions,
+    authToken,
   } = useApp()
   const [messages, setMessages] = useState<OpenCodeMessageWithParts[]>([])
   const [messageInput, setMessageInput] = useState("")
@@ -122,8 +125,18 @@ export function SessionsApp() {
   const [activeView, setActiveView] = useState<ActiveView>("chat")
   const [status, setStatus] = useState<string>("")
   const [showScrollToBottom, setShowScrollToBottom] = useState(false)
+  const [previewFilePath, setPreviewFilePath] = useState<string | null>(null)
   const messagesContainerRef = useRef<HTMLDivElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  
+  // Track if we're on mobile layout (below lg breakpoint = 1024px)
+  const isMobileLayout = useIsMobile()
+  
+  // Handler for previewing a file from FileTreeView
+  const handlePreviewFile = useCallback((filePath: string) => {
+    setPreviewFilePath(filePath)
+    setActiveView("preview")
+  }, [])
 
   const copy = useMemo(
     () => ({
@@ -257,64 +270,91 @@ export function SessionsApp() {
 
   useEffect(() => {
     if (!opencodeBaseUrl) return
-    const unsubscribe = subscribeToEvents(opencodeBaseUrl, (event) => {
-      const eventType = event.type as string
-      
-      if (eventType === "transport.mode") {
-        const props = event.properties as { mode?: "sse" | "polling" } | null
-        if (props?.mode) setEventsTransportMode(props.mode)
-        return
-      }
+    const unsubscribe = subscribeToEvents(
+      opencodeBaseUrl, 
+      (event) => {
+        const eventType = event.type as string
+        
+        if (eventType === "transport.mode") {
+          const props = event.properties as { mode?: "sse" | "polling" } | null
+          if (props?.mode) setEventsTransportMode(props.mode)
+          return
+        }
 
-      if (eventType === "session.idle") {
-        setChatState("idle")
-        // Invalidate cache and force refresh on idle
-        if (opencodeBaseUrl && selectedChatSessionId) {
-          invalidateMessageCache(opencodeBaseUrl, selectedChatSessionId)
+        if (eventType === "session.idle") {
+          setChatState("idle")
+          // Invalidate cache and force refresh on idle
+          if (opencodeBaseUrl && selectedChatSessionId) {
+            invalidateMessageCache(opencodeBaseUrl, selectedChatSessionId)
+          }
+          loadMessages()
+          refreshOpencodeSessions()
+        } else if (eventType === "session.busy") {
+          setChatState("sending")
         }
-        loadMessages()
-        refreshOpencodeSessions()
-      } else if (eventType === "session.busy") {
-        setChatState("sending")
-      }
-      // Refresh messages on any message event
-      if (eventType?.startsWith("message")) {
-        // Invalidate cache when messages change
-        if (opencodeBaseUrl && selectedChatSessionId) {
-          invalidateMessageCache(opencodeBaseUrl, selectedChatSessionId)
+        // Refresh messages on any message event
+        if (eventType?.startsWith("message")) {
+          // Invalidate cache when messages change
+          if (opencodeBaseUrl && selectedChatSessionId) {
+            invalidateMessageCache(opencodeBaseUrl, selectedChatSessionId)
+          }
+          // Coalesce refreshes to avoid hammering the server during streaming updates.
+          requestMessageRefresh(1000)
         }
-        // Coalesce refreshes to avoid hammering the server during streaming updates.
-        requestMessageRefresh(1000)
-      }
-    })
+      },
+      authToken,
+      controlPlaneDirectBaseUrl(),
+    )
     return unsubscribe
-  }, [opencodeBaseUrl, loadMessages, refreshOpencodeSessions, requestMessageRefresh])
+  }, [authToken, opencodeBaseUrl, selectedChatSessionId, loadMessages, refreshOpencodeSessions, requestMessageRefresh])
 
-  // Fallback polling for message updates while assistant is working (when SSE isn't available).
+  // Poll for message updates while assistant is working.
+  // This runs regardless of SSE status since SSE is unreliable through the proxy.
   useEffect(() => {
     if (chatState !== "sending" || !opencodeBaseUrl || !selectedChatSessionId) return
 
-    if (eventsTransportMode === "sse") return
-
     let active = true
-    let delayMs = 2000
+    let delayMs = 1000
     let timer: number | null = null
 
     const tick = async () => {
       if (!active) return
-      await loadMessages()
+      try {
+        // Invalidate cache and fetch fresh data
+        invalidateMessageCache(opencodeBaseUrl, selectedChatSessionId)
+        const freshMessages = await fetchMessages(opencodeBaseUrl, selectedChatSessionId, { skipCache: true })
+        if (!active) return
+        
+        setMessages(freshMessages)
+        
+        // Check if the latest assistant message is completed
+        const lastMessage = freshMessages[freshMessages.length - 1]
+        if (lastMessage?.info.role === "assistant") {
+          const assistantInfo = lastMessage.info as { time?: { completed?: number } }
+          if (assistantInfo.time?.completed) {
+            // Assistant is done, set to idle
+            setChatState("idle")
+            refreshOpencodeSessions()
+            return // Stop polling
+          }
+        }
+      } catch {
+        // Ignore errors, will retry
+      }
+      
       if (!active) return
-      delayMs = Math.min(10_000, Math.round(delayMs * 1.3))
+      delayMs = Math.min(3000, Math.round(delayMs * 1.1))
       timer = window.setTimeout(() => void tick(), delayMs) as unknown as number
     }
 
-    timer = window.setTimeout(() => void tick(), delayMs) as unknown as number
+    // Start polling immediately
+    void tick()
 
     return () => {
       active = false
       if (timer) window.clearTimeout(timer)
     }
-  }, [chatState, eventsTransportMode, opencodeBaseUrl, selectedChatSessionId, loadMessages])
+  }, [chatState, opencodeBaseUrl, selectedChatSessionId, refreshOpencodeSessions])
 
   useEffect(() => {
     return () => {
@@ -380,7 +420,8 @@ export function SessionsApp() {
     try {
       // Use async send - the response will come via SSE events
       await sendMessageAsync(opencodeBaseUrl, selectedChatSessionId, messageText)
-      // Refresh messages to get the real message IDs
+      // Invalidate cache and refresh messages to get the real message IDs
+      invalidateMessageCache(opencodeBaseUrl, selectedChatSessionId)
       loadMessages()
     } catch (err) {
       setStatus((err as Error).message)
@@ -476,18 +517,24 @@ export function SessionsApp() {
         {/* Mobile tabs */}
         <div className="flex gap-1 p-2 bg-card border border-border rounded-t-xl">
           <TabButton activeView={activeView} onSelect={setActiveView} view="chat" icon={MessageSquare} label={t.chat} />
-          <TabButton activeView={activeView} onSelect={setActiveView} view="files" icon={FileText} label={t.files} />
-          <TabButton activeView={activeView} onSelect={setActiveView} view="terminal" icon={Terminal} label={t.terminal} />
           <TabButton activeView={activeView} onSelect={setActiveView} view="tasks" icon={ListTodo} label={t.tasks} badge={incompleteTasks} />
+          <TabButton activeView={activeView} onSelect={setActiveView} view="files" icon={FileText} label={t.files} />
+          <TabButton activeView={activeView} onSelect={setActiveView} view="preview" icon={Eye} label={t.preview} />
+          <TabButton activeView={activeView} onSelect={setActiveView} view="terminal" icon={Terminal} label={t.terminal} />
         </div>
         
         {/* Mobile content */}
         <div className="flex-1 min-h-0 bg-card border border-t-0 border-border rounded-b-xl p-3 sm:p-4 overflow-hidden">
           {activeView === "chat" && ChatContent}
-           {activeView === "files" && <FileTreeView />}
-           {activeView === "terminal" && <TerminalView sessionId={selectedWorkspaceSessionId} />}
-           {activeView === "preview" && <PreviewView />}
-           {activeView === "tasks" && <TodoListView todos={latestTodos} emptyMessage={t.noTasks} />}
+          {activeView === "files" && <FileTreeView onPreviewFile={handlePreviewFile} />}
+          {activeView === "preview" && <PreviewView filePath={previewFilePath} />}
+          {activeView === "tasks" && <TodoListView todos={latestTodos} emptyMessage={t.noTasks} />}
+          {/* Terminal only rendered in mobile layout when isMobileLayout is true */}
+          {isMobileLayout && (
+            <div className={activeView === "terminal" ? "h-full" : "hidden"}>
+              <TerminalView sessionId={selectedWorkspaceSessionId} />
+            </div>
+          )}
         </div>
       </div>
 
@@ -501,18 +548,22 @@ export function SessionsApp() {
         {/* Sidebar panel */}
         <div className="flex-[2] min-w-[320px] max-w-[420px] bg-card border border-border flex flex-col min-h-0">
           <div className="flex gap-1 p-2 border-b border-border">
-            <TabButton activeView={activeView} onSelect={setActiveView} view="files" icon={FileText} label={t.files} hideLabel />
-            <TabButton activeView={activeView} onSelect={setActiveView} view="terminal" icon={Terminal} label={t.terminal} hideLabel />
-            <TabButton activeView={activeView} onSelect={setActiveView} view="preview" icon={Eye} label={t.preview} hideLabel />
             <TabButton activeView={activeView} onSelect={setActiveView} view="tasks" icon={ListTodo} label={t.tasks} badge={incompleteTasks} hideLabel />
+            <TabButton activeView={activeView} onSelect={setActiveView} view="files" icon={FileText} label={t.files} hideLabel />
+            <TabButton activeView={activeView} onSelect={setActiveView} view="preview" icon={Eye} label={t.preview} hideLabel />
+            <TabButton activeView={activeView} onSelect={setActiveView} view="terminal" icon={Terminal} label={t.terminal} hideLabel />
           </div>
           <div className="flex-1 min-h-0 overflow-hidden">
-             {activeView === "files" && <FileTreeView />}
-             {activeView === "terminal" && <TerminalView sessionId={selectedWorkspaceSessionId} />}
-             {activeView === "preview" && <PreviewView />}
-             {activeView === "tasks" && <TodoListView todos={latestTodos} emptyMessage={t.noTasks} />}
-            {/* If chat is selected on desktop (shouldn't happen normally), show files */}
-            {activeView === "chat" && <FileTreeView />}
+            {activeView === "files" && <FileTreeView onPreviewFile={handlePreviewFile} />}
+            {activeView === "preview" && <PreviewView filePath={previewFilePath} />}
+            {activeView === "tasks" && <TodoListView todos={latestTodos} emptyMessage={t.noTasks} />}
+            {activeView === "chat" && <TodoListView todos={latestTodos} emptyMessage={t.noTasks} />}
+            {/* Terminal only rendered in desktop layout when isMobileLayout is false */}
+            {!isMobileLayout && (
+              <div className={activeView === "terminal" ? "h-full" : "hidden"}>
+                <TerminalView sessionId={selectedWorkspaceSessionId} />
+              </div>
+            )}
           </div>
         </div>
       </div>

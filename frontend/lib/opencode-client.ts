@@ -329,6 +329,8 @@ export function subscribeToEvents(
   }
 
   let eventSource: EventSource | null = null
+  // Use direct control plane URL for SSE to avoid Next.js proxy buffering issues.
+  // CORS is configured on the backend to allow localhost:3000.
   const sseUrl = (() => {
     const direct = trimTrailingSlash(directControlPlaneUrl ?? "")
     const sessionId = extractWorkspaceSessionIdFromOpencodeBaseUrl(opencodeBaseUrl)
@@ -342,9 +344,11 @@ export function subscribeToEvents(
   })()
 
   const startSse = () => {
+    console.log("[SSE] Starting SSE connection to:", sseUrl)
     try {
       eventSource = new EventSource(sseUrl, { withCredentials: true })
-    } catch {
+    } catch (err) {
+      console.error("[SSE] EventSource constructor failed:", err)
       eventSource = null
       setTransportMode("polling", "eventsource_constructor_failed")
       poll()
@@ -352,12 +356,14 @@ export function subscribeToEvents(
     }
 
     eventSource.onopen = () => {
+      console.log("[SSE] Connection opened")
       pollDelayMs = minPollDelayMs
       stopPolling()
       setTransportMode("sse", "connected")
     }
 
     eventSource.onmessage = (event) => {
+      console.log("[SSE] Message received:", event.data?.substring?.(0, 100))
       const parsed = tryParseJson(event.data)
 
       if (parsed && typeof parsed === "object" && parsed !== null && "type" in parsed) {
@@ -369,7 +375,8 @@ export function subscribeToEvents(
       callback({ type: "message.updated", properties: parsed ?? { raw: event.data } })
     }
 
-    eventSource.onerror = () => {
+    eventSource.onerror = (err) => {
+      console.error("[SSE] Connection error:", err)
       // If SSE isn't available (dev proxy/config), fall back to polling.
       if (eventSource) {
         eventSource.close()

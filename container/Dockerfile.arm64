@@ -1,3 +1,15 @@
+# Stage 1: Build fileserver
+# Run from repository root: docker build -f container/Dockerfile.arm64 .
+FROM rust:1.83-slim AS rust-builder
+
+WORKDIR /build
+
+# Build fileserver
+COPY fileserver/Cargo.toml fileserver/Cargo.lock ./
+COPY fileserver/src ./src
+RUN cargo build --release
+
+# Stage 2: Main container
 # Minimal container with opencode and development tools
 # ARM64/Apple Silicon compatible
 FROM fedora:latest
@@ -49,6 +61,10 @@ RUN dnf update -y && \
         golang \
         glibc-langpack-en \
     && dnf clean all
+
+# Copy fileserver binary from builder stage
+COPY --from=rust-builder /build/target/release/fileserver /usr/local/bin/fileserver
+RUN chmod +x /usr/local/bin/fileserver
 
 # Install starship prompt
 RUN curl -sS https://starship.rs/install.sh | sh -s -- -y

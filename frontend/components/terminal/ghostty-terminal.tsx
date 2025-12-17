@@ -262,7 +262,9 @@ export const GhosttyTerminal = forwardRef<GhosttyTerminalHandle, GhosttyTerminal
                 setStatus("connected")
               }
 
-              if (session.terminal) {
+              // Fit terminal to container and send size to server
+              if (session.fitAddon && session.terminal) {
+                session.fitAddon.fit()
                 const { cols, rows } = session.terminal
                 const resizeMsg = JSON.stringify({ columns: cols, rows })
                 socket.send(resizeMsg)
@@ -305,43 +307,55 @@ export const GhosttyTerminal = forwardRef<GhosttyTerminalHandle, GhosttyTerminal
     }, [authToken, wsUrl, handleMessage, sessionId, getSession])
 
     // Cleanup resources on unmount (or when switching sessionId).
+    // Use delayed cleanup to handle React Strict Mode double-mounting.
     useEffect(() => {
       const currentSessionId = sessionId
-      const session = getSession()
+      let cleanupTimeout: ReturnType<typeof setTimeout> | null = null
+      
       return () => {
         mountedRef.current = false
-        if (session.reconnectTimeout) {
-          clearTimeout(session.reconnectTimeout)
-          session.reconnectTimeout = null
-        }
-        if (session.socket) {
-          try {
-            session.socket.onopen = null
-            session.socket.onmessage = null
-            session.socket.onerror = null
-            session.socket.onclose = null
-            session.socket.close()
-          } catch {
-            // ignore close errors
-          }
-          session.socket = null
-        }
-        if (session.terminal) {
-          try {
-            session.terminal.dispose()
-          } catch {
-            // ignore dispose errors
-          }
-          session.terminal = null
-        }
-        session.fitAddon = null
-        session.isConnecting = false
-        session.reconnectAttempts = 0
         
-        // Remove from the map to prevent memory leak
-        sessionConnections.delete(currentSessionId)
+        // Delay cleanup to allow for React Strict Mode remount
+        cleanupTimeout = setTimeout(() => {
+          const session = sessionConnections.get(currentSessionId)
+          if (!session) return
+          
+          // Only cleanup if not remounted (mountedRef would be true if remounted)
+          if (mountedRef.current) return
+          
+          if (session.reconnectTimeout) {
+            clearTimeout(session.reconnectTimeout)
+            session.reconnectTimeout = null
+          }
+          if (session.socket) {
+            try {
+              session.socket.onopen = null
+              session.socket.onmessage = null
+              session.socket.onerror = null
+              session.socket.onclose = null
+              session.socket.close()
+            } catch {
+              // ignore close errors
+            }
+            session.socket = null
+          }
+          if (session.terminal) {
+            try {
+              session.terminal.dispose()
+            } catch {
+              // ignore dispose errors
+            }
+            session.terminal = null
+          }
+          session.fitAddon = null
+          session.isConnecting = false
+          session.reconnectAttempts = 0
+          
+          // Remove from the map to prevent memory leak
+          sessionConnections.delete(currentSessionId)
+        }, 100) // Small delay to allow strict mode remount
       }
-    }, [getSession, sessionId])
+    }, [sessionId])
 
     // Handle resize observer separately with throttling
     useEffect(() => {

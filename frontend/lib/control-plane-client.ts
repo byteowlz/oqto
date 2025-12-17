@@ -164,3 +164,7 @@ export function opencodeProxyBaseUrl(sessionId: string) {
 export function terminalProxyPath(sessionId: string) {
   return `/session/${sessionId}/term`
 }
+
+export function fileserverProxyBaseUrl(sessionId: string) {
+  return `/api/session/${sessionId}/files`
+}

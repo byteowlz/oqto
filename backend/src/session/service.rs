@@ -465,6 +465,68 @@ impl SessionService {
                 }
                 Ok(session)
             }
+            // Container is stopped/exited - attempt to restart it
+            Ok(Some(status)) if status == "exited" || status == "stopped" || status == "dead" => {
+                info!(
+                    "Container {} for session {} is {} - attempting restart",
+                    container_id, session.id, status
+                );
+
+                // Mark session as starting while we restart
+                self.repo
+                    .update_status(&session.id, SessionStatus::Starting)
+                    .await?;
+
+                // Spawn the restart in the background to avoid blocking the request
+                let service = self.clone();
+                let session_id = session.id.clone();
+                let container_id_owned = container_id.clone();
+                let opencode_port = session.opencode_port as u16;
+                let ttyd_port = session.ttyd_port as u16;
+
+                tokio::spawn(async move {
+                    // Start the container
+                    if let Err(e) = service.runtime.start_container(&container_id_owned).await {
+                        error!(
+                            "Failed to restart container {} for session {}: {:?}",
+                            container_id_owned, session_id, e
+                        );
+                        let _ = service
+                            .repo
+                            .mark_failed(&session_id, &format!("restart failed: {}", e))
+                            .await;
+                        return;
+                    }
+
+                    info!("Container {} restarted, waiting for services", container_id_owned);
+
+                    // Wait for services to become ready
+                    if let Err(e) = service
+                        .wait_for_session_services(opencode_port, ttyd_port)
+                        .await
+                    {
+                        error!(
+                            "Services not ready after restart for session {}: {:?}",
+                            session_id, e
+                        );
+                        let _ = service
+                            .repo
+                            .mark_failed(&session_id, &format!("services not ready after restart: {}", e))
+                            .await;
+                        return;
+                    }
+
+                    // Mark as running
+                    if let Err(e) = service.repo.mark_running(&session_id).await {
+                        error!("Failed to mark session {} as running: {:?}", session_id, e);
+                    } else {
+                        info!("Session {} successfully restarted", session_id);
+                    }
+                });
+
+                // Return session with Starting status
+                Ok(self.repo.get(&session.id).await?.unwrap_or(session))
+            }
             Ok(Some(status)) => {
                 let message = format!("container not running (status={})", status);
                 self.repo.mark_failed(&session.id, &message).await?;

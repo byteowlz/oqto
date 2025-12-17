@@ -319,6 +319,32 @@ impl ContainerRuntime {
         Ok(())
     }
 
+    /// Start a stopped container.
+    pub async fn start_container(&self, container_id: &str) -> ContainerResult<()> {
+        validate_container_id_or_name(container_id)?;
+
+        let output = Command::new(&self.binary)
+            .args(["start", container_id])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .await
+            .map_err(|e| ContainerError::CommandFailed {
+                command: "start".to_string(),
+                message: e.to_string(),
+            })?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(ContainerError::CommandFailed {
+                command: "start".to_string(),
+                message: stderr.to_string(),
+            });
+        }
+
+        Ok(())
+    }
+
     /// Remove a container.
     pub async fn remove_container(&self, container_id: &str, force: bool) -> ContainerResult<()> {
         validate_container_id_or_name(container_id)?;
