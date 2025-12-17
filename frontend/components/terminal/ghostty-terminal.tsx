@@ -68,7 +68,10 @@ interface GhosttyTerminalProps {
 export const GhosttyTerminal = forwardRef<GhosttyTerminalHandle, GhosttyTerminalProps>(
   ({ wsUrl, authToken, fontFamily = "JetBrainsMono Nerd Font", fontSize = 14, className }, ref) => {
     const containerRef = useRef<HTMLDivElement | null>(null)
-    const [status, setStatus] = useState<"waiting" | "connecting" | "connected" | "error">("waiting")
+    // Start with "connecting" if we have a wsUrl, "waiting" otherwise
+    const [status, setStatus] = useState<"waiting" | "connecting" | "connected" | "error">(() => 
+      wsUrl ? "connecting" : "waiting"
+    )
     const mountedRef = useRef(true)
 
     const wsUrlRef = useRef(wsUrl)
@@ -147,10 +150,12 @@ export const GhosttyTerminal = forwardRef<GhosttyTerminalHandle, GhosttyTerminal
         // Skip if already have a usable socket
         if (isSocketUsable) {
           console.log(`Terminal [${sessionId}]: socket already ${socketState === WebSocket.OPEN ? 'open' : 'connecting'}, skipping`)
-          if (socketState === WebSocket.OPEN) {
-            setStatus("connected")
-          } else {
-            setStatus("connecting")
+          if (mountedRef.current) {
+            if (socketState === WebSocket.OPEN) {
+              setStatus("connected")
+            } else {
+              setStatus("connecting")
+            }
           }
           return
         }
@@ -165,6 +170,9 @@ export const GhosttyTerminal = forwardRef<GhosttyTerminalHandle, GhosttyTerminal
           console.log(`Terminal [${sessionId}]: no wsUrl, waiting...`)
           return
         }
+        
+        // Update status to connecting as we start setup
+        if (mountedRef.current) setStatus("connecting")
 
         // Double-check we're not already setting up
         if (session.isConnecting) {
@@ -381,12 +389,14 @@ export const GhosttyTerminal = forwardRef<GhosttyTerminalHandle, GhosttyTerminal
     return (
       <div className={`relative h-full w-full bg-black rounded ${className ?? ""}`}>
         <div ref={containerRef} className="h-full w-full" />
-        <div className="absolute top-2 right-2 text-xs font-mono text-white/60">
-          {status === "waiting" && "Waiting..."}
-          {status === "connecting" && "Connecting..."}
-          {status === "connected" && "Connected"}
-          {status === "error" && "Disconnected"}
-        </div>
+        {/* Only show status indicator when not connected */}
+        {status !== "connected" && (
+          <div className="absolute top-2 right-2 text-xs font-mono text-white/60">
+            {status === "waiting" && "Waiting..."}
+            {status === "connecting" && "Connecting..."}
+            {status === "error" && "Disconnected"}
+          </div>
+        )}
       </div>
     )
   },

@@ -209,6 +209,29 @@ export async function createSession(opencodeBaseUrl: string, title?: string, par
   return handleResponse<OpenCodeSession>(res)
 }
 
+export async function deleteSession(opencodeBaseUrl: string, sessionId: string): Promise<void> {
+  const res = await fetch(`${base(opencodeBaseUrl)}/session/${sessionId}`, {
+    method: "DELETE",
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => res.statusText)
+    throw new Error(text || `Request failed with ${res.status}`)
+  }
+}
+
+export async function updateSession(
+  opencodeBaseUrl: string,
+  sessionId: string,
+  updates: { title?: string }
+): Promise<OpenCodeSession> {
+  const res = await fetch(`${base(opencodeBaseUrl)}/session/${sessionId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(updates),
+  })
+  return handleResponse<OpenCodeSession>(res)
+}
+
 export type EventCallback = (event: { type: string; properties: unknown }) => void
 
 type SessionStatusMap = Record<string, { status: string }>

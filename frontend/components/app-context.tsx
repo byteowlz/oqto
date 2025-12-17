@@ -2,7 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react"
 import { appRegistry, type AppDefinition, type Locale, type LocalizedText } from "@/lib/app-registry"
-import { createSession, fetchSessions, subscribeToEvents, type OpenCodeSession } from "@/lib/opencode-client"
+import { createSession, deleteSession, updateSession, fetchSessions, subscribeToEvents, type OpenCodeSession } from "@/lib/opencode-client"
 import {
   createWorkspaceSession,
   controlPlaneDirectBaseUrl,
@@ -31,6 +31,8 @@ interface AppContextValue {
   refreshWorkspaceSessions: () => Promise<void>
   refreshOpencodeSessions: () => Promise<void>
   createNewChat: () => Promise<OpenCodeSession | null>
+  deleteChatSession: (sessionId: string) => Promise<boolean>
+  renameChatSession: (sessionId: string, title: string) => Promise<boolean>
   authToken: string | null
 }
 
@@ -196,6 +198,36 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }, [opencodeBaseUrl])
 
+  const deleteChatSession = useCallback(async (sessionId: string): Promise<boolean> => {
+    if (!opencodeBaseUrl) return false
+    try {
+      await deleteSession(opencodeBaseUrl, sessionId)
+      setOpencodeSessions((prev) => prev.filter((s) => s.id !== sessionId))
+      // If we deleted the selected session, select another one
+      setSelectedChatSessionId((current) => {
+        if (current !== sessionId) return current
+        const remaining = opencodeSessions.filter((s) => s.id !== sessionId)
+        return remaining.length > 0 ? remaining[0].id : ""
+      })
+      return true
+    } catch (err) {
+      console.error("Failed to delete chat session:", err)
+      return false
+    }
+  }, [opencodeBaseUrl, opencodeSessions])
+
+  const renameChatSession = useCallback(async (sessionId: string, title: string): Promise<boolean> => {
+    if (!opencodeBaseUrl) return false
+    try {
+      const updated = await updateSession(opencodeBaseUrl, sessionId, { title })
+      setOpencodeSessions((prev) => prev.map((s) => s.id === sessionId ? updated : s))
+      return true
+    } catch (err) {
+      console.error("Failed to rename chat session:", err)
+      return false
+    }
+  }, [opencodeBaseUrl])
+
   useEffect(() => {
     refreshOpencodeSessions()
   }, [refreshOpencodeSessions])
@@ -238,6 +270,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       refreshWorkspaceSessions,
       refreshOpencodeSessions,
       createNewChat,
+      deleteChatSession,
+      renameChatSession,
       authToken,
     }),
     [
@@ -256,6 +290,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       refreshWorkspaceSessions,
       refreshOpencodeSessions,
       createNewChat,
+      deleteChatSession,
+      renameChatSession,
       authToken,
     ],
   )

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import Image from "next/image";
 import {
   SunMedium,
@@ -30,7 +30,27 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
+import { CommandPalette, useCommandPalette } from "@/components/command-palette";
 import "@/apps";
 
 function SnowOverlay({ intensity = 0.5 }: { intensity?: number }) {
@@ -95,6 +115,8 @@ function AppShell() {
     selectedChatSessionId,
     setSelectedChatSessionId,
     createNewChat,
+    deleteChatSession,
+    renameChatSession,
   } = useApp();
   const [theme, setTheme] = useState<"light" | "dark">("dark");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -111,6 +133,15 @@ function AppShell() {
   const [barWidth, setBarWidth] = useState(0);
   const [barFade, setBarFade] = useState(false);
 
+  // Dialog states
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [renameDialogOpen, setRenameDialogOpen] = useState(false);
+  const [targetSessionId, setTargetSessionId] = useState<string>("");
+  const [renameValue, setRenameValue] = useState("");
+
+  // Command palette
+  const { open: commandPaletteOpen, setOpen: setCommandPaletteOpen } = useCommandPalette();
+
   // Handle session click - select session and switch to chats view
   const handleSessionClick = (sessionId: string) => {
     setSelectedChatSessionId(sessionId);
@@ -118,21 +149,40 @@ function AppShell() {
     setMobileMenuOpen(false);
   };
 
-  // Context menu handlers (placeholders for now)
+  // Context menu handlers
   const handlePinSession = (sessionId: string) => {
     console.log("Pin session:", sessionId);
-    // TODO: Implement pin functionality
+    // TODO: Implement pin functionality - requires backend support
   };
 
-  const handleRenameSession = (sessionId: string) => {
-    console.log("Rename session:", sessionId);
-    // TODO: Implement rename functionality
-  };
+  const handleRenameSession = useCallback((sessionId: string) => {
+    const session = opencodeSessions.find((s) => s.id === sessionId);
+    setTargetSessionId(sessionId);
+    setRenameValue(session?.title || "");
+    setRenameDialogOpen(true);
+  }, [opencodeSessions]);
 
-  const handleDeleteSession = (sessionId: string) => {
-    console.log("Delete session:", sessionId);
-    // TODO: Implement delete functionality
-  };
+  const handleConfirmRename = useCallback(async () => {
+    if (targetSessionId && renameValue.trim()) {
+      await renameChatSession(targetSessionId, renameValue.trim());
+    }
+    setRenameDialogOpen(false);
+    setTargetSessionId("");
+    setRenameValue("");
+  }, [targetSessionId, renameValue, renameChatSession]);
+
+  const handleDeleteSession = useCallback((sessionId: string) => {
+    setTargetSessionId(sessionId);
+    setDeleteDialogOpen(true);
+  }, []);
+
+  const handleConfirmDelete = useCallback(async () => {
+    if (targetSessionId) {
+      await deleteChatSession(targetSessionId);
+    }
+    setDeleteDialogOpen(false);
+    setTargetSessionId("");
+  }, [targetSessionId, deleteChatSession]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -806,6 +856,67 @@ function AppShell() {
           />
         </div>
       )}
+
+      {/* Command palette */}
+      <CommandPalette open={commandPaletteOpen} onOpenChange={setCommandPaletteOpen} />
+
+      {/* Delete confirmation dialog */}
+      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {locale === "de" ? "Chat loschen?" : "Delete chat?"}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {locale === "de"
+                ? "Diese Aktion kann nicht ruckgangig gemacht werden. Der Chat wird dauerhaft geloscht."
+                : "This action cannot be undone. The chat will be permanently deleted."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>
+              {locale === "de" ? "Abbrechen" : "Cancel"}
+            </AlertDialogCancel>
+            <AlertDialogAction onClick={handleConfirmDelete}>
+              {locale === "de" ? "Loschen" : "Delete"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Rename dialog */}
+      <Dialog open={renameDialogOpen} onOpenChange={setRenameDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {locale === "de" ? "Chat umbenennen" : "Rename chat"}
+            </DialogTitle>
+            <DialogDescription>
+              {locale === "de"
+                ? "Geben Sie einen neuen Namen fur diesen Chat ein."
+                : "Enter a new name for this chat."}
+            </DialogDescription>
+          </DialogHeader>
+          <Input
+            value={renameValue}
+            onChange={(e) => setRenameValue(e.target.value)}
+            placeholder={locale === "de" ? "Chat-Titel" : "Chat title"}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                handleConfirmRename();
+              }
+            }}
+          />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRenameDialogOpen(false)}>
+              {locale === "de" ? "Abbrechen" : "Cancel"}
+            </Button>
+            <Button onClick={handleConfirmRename}>
+              {locale === "de" ? "Speichern" : "Save"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
