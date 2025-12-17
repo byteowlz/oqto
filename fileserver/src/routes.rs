@@ -19,4 +19,7 @@ pub fn file_routes() -> Router<AppState> {
         .route("/file", delete(handlers::delete_file))
         // Directory operations
         .route("/mkdir", put(handlers::create_dir))
+        // Download operations
+        .route("/download", get(handlers::download))
+        .route("/download-zip", get(handlers::download_zip))
 }

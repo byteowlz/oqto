@@ -6,6 +6,15 @@ import { AdminApp } from "@/apps/admin"
 
 appRegistry
   .register({
+    id: "sessions",
+    label: { de: "Chats", en: "Chats" },
+    description: "Monitor live agent sessions",
+    component: SessionsApp,
+    routes: ["/sessions"],
+    permissions: ["user"],
+    priority: 1,
+  })
+  .register({
     id: "projects",
     label: { de: "Projekte", en: "Projects" },
     description: "Projektübersicht und Startpunkte",
@@ -13,15 +22,6 @@ appRegistry
     routes: ["/projects"],
     permissions: ["user"],
     priority: 5,
-  })
-  .register({
-    id: "sessions",
-    label: { de: "Chats", en: "Chats" },
-    description: "Monitor live agent sessions",
-    component: SessionsApp,
-    routes: ["/sessions"],
-    permissions: ["user"],
-    priority: 10,
   })
   .register({
     id: "workspaces",

@@ -33,6 +33,9 @@ futures = "0.3"
 bytes = "1"
 tokio-util = { version = "0.7", features = ["io"] }
 
+# Zip support
+zip = { version = "2.2", default-features = false, features = ["deflate"] }
+
 [dev-dependencies]
 tempfile = "3"
 

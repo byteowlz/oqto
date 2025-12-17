@@ -1,3 +1,4 @@
+use std::io::{Cursor, Write};
 use std::path::{Path, PathBuf, Component};
 
 use axum::{
@@ -13,6 +14,8 @@ use tokio::io::AsyncWriteExt;
 use tokio_util::io::ReaderStream;
 use tracing::{debug, error, info, warn};
 use walkdir::WalkDir;
+use zip::write::SimpleFileOptions;
+use zip::ZipWriter;
 
 use crate::error::FileServerError;
 use crate::AppState;
@@ -100,6 +103,23 @@ pub struct SuccessResponse {
 pub struct HealthResponse {
     pub status: &'static str,
     pub root: String,
+}
+
+/// Query parameters for download endpoint
+#[derive(Debug, Deserialize)]
+pub struct DownloadQuery {
+    /// Path relative to root (for single file/directory download)
+    pub path: String,
+}
+
+/// Query parameters for multi-file zip download
+#[derive(Debug, Deserialize)]
+pub struct DownloadZipQuery {
+    /// Comma-separated list of paths to include in the zip
+    pub paths: String,
+    /// Optional name for the zip file (defaults to "download.zip")
+    #[serde(default)]
+    pub name: Option<String>,
 }
 
 // ============================================================================
@@ -715,6 +735,192 @@ pub async fn create_dir(
         message: format!("Created directory: {}", query.path),
         path: Some(query.path),
     }))
+}
+
+/// GET /download - Download a single file or directory as zip
+/// 
+/// For files: returns the file with Content-Disposition: attachment
+/// For directories: returns a zip archive of the directory
+pub async fn download(
+    State(state): State<AppState>,
+    Query(query): Query<DownloadQuery>,
+) -> Result<Response, FileServerError> {
+    let path = resolve_and_verify_path(&state.root_dir, &query.path)?;
+
+    if !path.exists() {
+        return Err(FileServerError::NotFound(query.path));
+    }
+
+    let file_name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "download".to_string());
+
+    if path.is_file() {
+        // Single file download
+        debug!("Downloading file: {}", path.display());
+
+        let metadata = fs::metadata(&path).await.map_err(FileServerError::Io)?;
+        let file_size = metadata.len();
+        let file = fs::File::open(&path).await.map_err(FileServerError::Io)?;
+        let stream = ReaderStream::new(file);
+        let body = Body::from_stream(stream);
+
+        let mime = mime_guess::from_path(&path)
+            .first_or_octet_stream()
+            .to_string();
+
+        let safe_filename = file_name.replace('"', "'");
+
+        Ok((
+            StatusCode::OK,
+            [
+                (header::CONTENT_TYPE, mime),
+                (header::CONTENT_LENGTH, file_size.to_string()),
+                (
+                    header::CONTENT_DISPOSITION,
+                    format!("attachment; filename=\"{}\"", safe_filename),
+                ),
+            ],
+            body,
+        )
+            .into_response())
+    } else {
+        // Directory download - create zip
+        debug!("Downloading directory as zip: {}", path.display());
+
+        let zip_name = format!("{}.zip", file_name);
+        let safe_zip_name = zip_name.replace('"', "'");
+
+        // Create zip in memory
+        let zip_data = create_zip_from_paths(&state.root_dir, &[path.clone()])?;
+
+        Ok((
+            StatusCode::OK,
+            [
+                (header::CONTENT_TYPE, "application/zip".to_string()),
+                (header::CONTENT_LENGTH, zip_data.len().to_string()),
+                (
+                    header::CONTENT_DISPOSITION,
+                    format!("attachment; filename=\"{}\"", safe_zip_name),
+                ),
+            ],
+            zip_data,
+        )
+            .into_response())
+    }
+}
+
+/// GET /download-zip - Download multiple files/directories as a single zip
+pub async fn download_zip(
+    State(state): State<AppState>,
+    Query(query): Query<DownloadZipQuery>,
+) -> Result<Response, FileServerError> {
+    // Parse comma-separated paths
+    let paths: Vec<&str> = query.paths.split(',').map(|s| s.trim()).collect();
+    
+    if paths.is_empty() {
+        return Err(FileServerError::InvalidPath("No paths provided".to_string()));
+    }
+
+    // Resolve and verify all paths
+    let mut resolved_paths = Vec::new();
+    for path_str in &paths {
+        let resolved = resolve_and_verify_path(&state.root_dir, path_str)?;
+        if !resolved.exists() {
+            return Err(FileServerError::NotFound(path_str.to_string()));
+        }
+        resolved_paths.push(resolved);
+    }
+
+    debug!("Downloading {} items as zip", resolved_paths.len());
+
+    // Create zip
+    let zip_data = create_zip_from_paths(&state.root_dir, &resolved_paths)?;
+
+    let zip_name = query.name.unwrap_or_else(|| "download.zip".to_string());
+    let safe_zip_name = zip_name.replace('"', "'");
+
+    Ok((
+        StatusCode::OK,
+        [
+            (header::CONTENT_TYPE, "application/zip".to_string()),
+            (header::CONTENT_LENGTH, zip_data.len().to_string()),
+            (
+                header::CONTENT_DISPOSITION,
+                format!("attachment; filename=\"{}\"", safe_zip_name),
+            ),
+        ],
+        zip_data,
+    )
+        .into_response())
+}
+
+/// Create a zip archive from a list of paths (files or directories)
+fn create_zip_from_paths(root: &Path, paths: &[PathBuf]) -> Result<Vec<u8>, FileServerError> {
+    let buffer = Cursor::new(Vec::new());
+    let mut zip = ZipWriter::new(buffer);
+    let options = SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated)
+        .unix_permissions(0o644);
+
+    for path in paths {
+        if path.is_file() {
+            // Add single file
+            let relative = get_relative_path(root, path);
+            let file_name = if relative.is_empty() {
+                path.file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "file".to_string())
+            } else {
+                relative
+            };
+            
+            let data = std::fs::read(path).map_err(FileServerError::Io)?;
+            zip.start_file(&file_name, options).map_err(|e| {
+                FileServerError::Io(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
+            })?;
+            zip.write_all(&data).map_err(FileServerError::Io)?;
+        } else if path.is_dir() {
+            // Add directory recursively
+            add_directory_to_zip(&mut zip, root, path, options)?;
+        }
+    }
+
+    let result = zip.finish().map_err(|e| {
+        FileServerError::Io(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
+    })?;
+
+    Ok(result.into_inner())
+}
+
+/// Recursively add a directory to a zip archive
+fn add_directory_to_zip(
+    zip: &mut ZipWriter<Cursor<Vec<u8>>>,
+    root: &Path,
+    dir: &Path,
+    options: SimpleFileOptions,
+) -> Result<(), FileServerError> {
+    for entry in WalkDir::new(dir).into_iter().filter_map(|e| e.ok()) {
+        let entry_path = entry.path();
+        let relative = get_relative_path(root, entry_path);
+
+        if entry_path.is_file() {
+            let data = std::fs::read(entry_path).map_err(FileServerError::Io)?;
+            zip.start_file(&relative, options).map_err(|e| {
+                FileServerError::Io(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
+            })?;
+            zip.write_all(&data).map_err(FileServerError::Io)?;
+        } else if entry_path.is_dir() && entry_path != dir {
+            // Add directory entry (trailing slash)
+            let dir_name = format!("{}/", relative);
+            zip.add_directory(&dir_name, options).map_err(|e| {
+                FileServerError::Io(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
+            })?;
+        }
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]

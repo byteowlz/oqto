@@ -331,11 +331,11 @@ function AppShell() {
           <Menu className="w-5 h-5" />
         </Button>
         <Image
-          src="/octo_logo_banner_white.svg"
-          alt="Workspace"
-          width={32}
+          src={theme === "dark" ? "/octo_logo_new_white.png" : "/octo_logo_new_black.png"}
+          alt="OCTO"
+          width={80}
           height={32}
-          className="h-8 w-8"
+          className="h-8 w-auto object-contain"
           priority
           unoptimized
         />
@@ -349,11 +349,11 @@ function AppShell() {
         >
           <div className="h-14 flex items-center justify-between px-4">
             <Image
-              src="/octo_logo_banner_white.svg"
-              alt="Workspace"
-              width={32}
+              src={theme === "dark" ? "/octo_logo_new_white.png" : "/octo_logo_new_black.png"}
+              alt="OCTO"
+              width={80}
               height={32}
-              className="h-8 w-8"
+              className="h-8 w-auto object-contain"
               priority
               unoptimized
             />
@@ -517,14 +517,14 @@ function AppShell() {
         }`}
         style={{ backgroundColor: sidebarBg }}
       >
-        <div className="h-16 w-full flex items-center justify-between px-4">
+        <div className="h-24 w-full flex items-center justify-center px-4 relative">
           {!sidebarCollapsed && (
             <Image
-              src="/octo_logo_white.svg"
-              alt="Workspace"
-              width={96}
-              height={96}
-              className="flex flex-row flex-centered h-15 w-15"
+              src={theme === "dark" ? "/octo_logo_new_white.png" : "/octo_logo_new_black.png"}
+              alt="OCTO"
+              width={240}
+              height={80}
+              className="h-20 w-auto object-contain"
               priority
               unoptimized
             />
@@ -534,7 +534,7 @@ function AppShell() {
             size="icon"
             aria-label="Sidebar umschalten"
             onClick={() => setSidebarCollapsed((prev) => !prev)}
-            className="text-muted-foreground hover:text-primary"
+            className="text-muted-foreground hover:text-primary absolute right-4"
           >
             {sidebarCollapsed ? (
               <PanelRightClose className="w-4 h-4" />

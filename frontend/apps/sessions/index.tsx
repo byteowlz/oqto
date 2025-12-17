@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { FileText, Terminal, Eye, Send, ChevronDown, User, Bot, Clock, ArrowDown, ListTodo, Square, CheckSquare, CircleDot, XCircle, MessageSquare, Loader2 } from "lucide-react"
 import { useApp } from "@/components/app-context"
-import { FileTreeView } from "@/app/sessions/FileTreeView"
+import { FileTreeView, type FileTreeState, initialFileTreeState } from "@/app/sessions/FileTreeView"
 import { TerminalView } from "@/app/sessions/TerminalView"
 import { PreviewView } from "@/app/sessions/PreviewView"
 import { useIsMobile } from "@/hooks/use-mobile"
@@ -126,6 +126,7 @@ export function SessionsApp() {
   const [status, setStatus] = useState<string>("")
   const [showScrollToBottom, setShowScrollToBottom] = useState(false)
   const [previewFilePath, setPreviewFilePath] = useState<string | null>(null)
+  const [fileTreeState, setFileTreeState] = useState<FileTreeState>(initialFileTreeState)
   const messagesContainerRef = useRef<HTMLDivElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   
@@ -136,6 +137,11 @@ export function SessionsApp() {
   const handlePreviewFile = useCallback((filePath: string) => {
     setPreviewFilePath(filePath)
     setActiveView("preview")
+  }, [])
+  
+  // Handler for file tree state changes (for persistence)
+  const handleFileTreeStateChange = useCallback((newState: FileTreeState) => {
+    setFileTreeState(newState)
   }, [])
 
   const copy = useMemo(
@@ -526,7 +532,7 @@ export function SessionsApp() {
         {/* Mobile content */}
         <div className="flex-1 min-h-0 bg-card border border-t-0 border-border rounded-b-xl p-3 sm:p-4 overflow-hidden">
           {activeView === "chat" && ChatContent}
-          {activeView === "files" && <FileTreeView onPreviewFile={handlePreviewFile} />}
+          {activeView === "files" && <FileTreeView onPreviewFile={handlePreviewFile} state={fileTreeState} onStateChange={handleFileTreeStateChange} />}
           {activeView === "preview" && <PreviewView filePath={previewFilePath} />}
           {activeView === "tasks" && <TodoListView todos={latestTodos} emptyMessage={t.noTasks} />}
           {/* Terminal only rendered in mobile layout when isMobileLayout is true */}
@@ -554,7 +560,7 @@ export function SessionsApp() {
             <TabButton activeView={activeView} onSelect={setActiveView} view="terminal" icon={Terminal} label={t.terminal} hideLabel />
           </div>
           <div className="flex-1 min-h-0 overflow-hidden">
-            {activeView === "files" && <FileTreeView onPreviewFile={handlePreviewFile} />}
+            {activeView === "files" && <FileTreeView onPreviewFile={handlePreviewFile} state={fileTreeState} onStateChange={handleFileTreeStateChange} />}
             {activeView === "preview" && <PreviewView filePath={previewFilePath} />}
             {activeView === "tasks" && <TodoListView todos={latestTodos} emptyMessage={t.noTasks} />}
             {activeView === "chat" && <TodoListView todos={latestTodos} emptyMessage={t.noTasks} />}

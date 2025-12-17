@@ -9,10 +9,10 @@ const Json = (props: SVGProps<SVGSVGElement>) => (
     <defs>
       <linearGradient id="a">
         <stop offset="0" />
-        <stop offset="1" stop-color="#fff" />
+        <stop offset="1" stopColor="#fff" />
       </linearGradient>
       <linearGradient
-        xlink:href="#a"
+        xlinkHref="#a"
         id="c"
         x1="-553.27"
         x2="-666.12"
@@ -22,7 +22,7 @@ const Json = (props: SVGProps<SVGSVGElement>) => (
         gradientUnits="userSpaceOnUse"
       />
       <linearGradient
-        xlink:href="#a"
+        xlinkHref="#a"
         id="b"
         x1="-666.12"
         x2="-553.27"
