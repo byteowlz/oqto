@@ -3,9 +3,9 @@
 use axum::Router;
 use workspace_backend::api;
 use workspace_backend::auth::{AuthConfig, AuthState};
+use workspace_backend::container::ContainerRuntime;
 use workspace_backend::db::Database;
 use workspace_backend::invite::InviteCodeRepository;
-use workspace_backend::podman::Podman;
 use workspace_backend::session::{SessionRepository, SessionService, SessionServiceConfig};
 use workspace_backend::user::{UserRepository, UserService};
 
@@ -26,13 +26,13 @@ pub async fn test_app() -> Router {
     let auth_config = test_auth_config();
     let auth_state = AuthState::new(auth_config);
 
-    // Create podman client (won't actually be used in unit tests)
-    let podman = Podman::new();
+    // Create container runtime (won't actually be used in unit tests)
+    let runtime = ContainerRuntime::new();
 
     // Create session service
     let session_config = SessionServiceConfig::default();
     let session_repo = SessionRepository::new(db.pool().clone());
-    let session_service = SessionService::new(session_repo, podman, session_config);
+    let session_service = SessionService::new(session_repo, runtime, session_config);
 
     // Create user service
     let user_repo = UserRepository::new(db.pool().clone());
@@ -58,10 +58,10 @@ pub async fn test_app_with_token() -> (Router, String) {
         .generate_dev_token(&auth_state.dev_users()[0])
         .unwrap();
 
-    let podman = Podman::new();
+    let runtime = ContainerRuntime::new();
     let session_config = SessionServiceConfig::default();
     let session_repo = SessionRepository::new(db.pool().clone());
-    let session_service = SessionService::new(session_repo, podman, session_config);
+    let session_service = SessionService::new(session_repo, runtime, session_config);
 
     // Create user service
     let user_repo = UserRepository::new(db.pool().clone());
@@ -86,10 +86,10 @@ pub async fn test_app_with_user_token() -> (Router, String) {
         .generate_dev_token(&auth_state.dev_users()[1])
         .unwrap();
 
-    let podman = Podman::new();
+    let runtime = ContainerRuntime::new();
     let session_config = SessionServiceConfig::default();
     let session_repo = SessionRepository::new(db.pool().clone());
-    let session_service = SessionService::new(session_repo, podman, session_config);
+    let session_service = SessionService::new(session_repo, runtime, session_config);
 
     // Create user service
     let user_repo = UserRepository::new(db.pool().clone());

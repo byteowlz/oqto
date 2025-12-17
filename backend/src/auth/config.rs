@@ -29,6 +29,21 @@ pub struct AuthConfig {
     pub allowed_origins: Vec<String>,
 }
 
+/// Pre-computed bcrypt hashes for default dev users.
+/// These are generated at cost=12 (bcrypt::DEFAULT_COST) and prevent
+/// expensive hashing operations during startup.
+/// 
+/// To regenerate these hashes (if passwords change), run:
+/// `cargo test --lib -- auth::config::tests::test_generate_dev_user_hashes --nocapture --ignored`
+mod default_hashes {
+    /// Hash for "devpassword123" at cost=12
+    pub const DEV_USER_HASH: &str =
+        "$2b$12$dC24FO4a.jD2fihWiOGvw.S1gh7N9gjgDOgJV7bpsb4pShSelaOQm";
+    /// Hash for "userpassword123" at cost=12
+    pub const USER_USER_HASH: &str =
+        "$2b$12$cdHA.mL5NAVw6.nusi3GROIo619dutPvD57OKzXmdxdmV4DDaxk82";
+}
+
 impl Default for AuthConfig {
     fn default() -> Self {
         Self {
@@ -38,18 +53,18 @@ impl Default for AuthConfig {
             oidc_issuer: None,
             oidc_audience: None,
             dev_users: vec![
-                DevUser::new_with_plaintext(
+                DevUser::new(
                     "dev",
                     "Developer",
                     "dev@localhost",
-                    "devpassword123",
+                    default_hashes::DEV_USER_HASH,
                     Role::Admin,
                 ),
-                DevUser::new_with_plaintext(
+                DevUser::new(
                     "user",
                     "Test User",
                     "user@localhost",
-                    "userpassword123",
+                    default_hashes::USER_USER_HASH,
                     Role::User,
                 ),
             ],
@@ -107,26 +122,24 @@ impl AuthConfig {
         Ok(())
     }
 
-    /// Generate a secure random JWT secret.
+    /// Generate a secure random JWT secret using cryptographically secure RNG.
+    ///
+    /// Uses the `rand` crate with `ThreadRng` which is backed by the OS's
+    /// cryptographically secure random number generator (via `getrandom`).
     #[allow(dead_code)]
     pub fn generate_jwt_secret() -> String {
-        use std::collections::hash_map::RandomState;
-        use std::hash::{BuildHasher, Hasher};
-        
-        let mut result = String::with_capacity(64);
-        let chars: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-        
-        for _ in 0..64 {
-            let hasher = RandomState::new();
-            let mut h = hasher.build_hasher();
-            h.write_u64(std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos() as u64);
-            let idx = (h.finish() as usize) % chars.len();
-            result.push(chars[idx] as char);
-        }
-        result
+        use rand::Rng;
+
+        const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+        const SECRET_LENGTH: usize = 64;
+
+        let mut rng = rand::rng();
+        (0..SECRET_LENGTH)
+            .map(|_| {
+                let idx = rng.random_range(0..CHARSET.len());
+                CHARSET[idx] as char
+            })
+            .collect()
     }
 }
 
@@ -187,7 +200,6 @@ pub struct DevUser {
 
 impl DevUser {
     /// Create a new dev user with a pre-hashed password.
-    #[allow(dead_code)]
     pub fn new(
         id: impl Into<String>,
         name: impl Into<String>,
@@ -206,6 +218,10 @@ impl DevUser {
 
     /// Create a new dev user with a plaintext password (will be hashed).
     /// This is a convenience method for creating users programmatically.
+    /// 
+    /// Note: This is intentionally not used in Default::default() to avoid
+    /// expensive bcrypt hashing at startup. Use pre-computed hashes instead.
+    #[allow(dead_code)]
     pub fn new_with_plaintext(
         id: impl Into<String>,
         name: impl Into<String>,
@@ -245,6 +261,35 @@ mod tests {
     }
 
     #[test]
+    fn test_default_dev_users_precomputed_hashes() {
+        // Verify that the pre-computed hashes in default_hashes match the expected passwords
+        // This ensures we didn't accidentally break the default credentials
+        let config = AuthConfig::default();
+
+        // Dev user should authenticate with "devpassword123"
+        let dev_user = config.dev_users.iter().find(|u| u.id == "dev").unwrap();
+        assert!(
+            dev_user.verify_password("devpassword123"),
+            "Pre-computed hash for dev user should verify against 'devpassword123'"
+        );
+        assert!(
+            !dev_user.verify_password("wrongpassword"),
+            "Dev user should not verify with wrong password"
+        );
+
+        // Regular user should authenticate with "userpassword123"
+        let user = config.dev_users.iter().find(|u| u.id == "user").unwrap();
+        assert!(
+            user.verify_password("userpassword123"),
+            "Pre-computed hash for user should verify against 'userpassword123'"
+        );
+        assert!(
+            !user.verify_password("wrongpassword"),
+            "User should not verify with wrong password"
+        );
+    }
+
+    #[test]
     fn test_dev_user_new_with_plaintext() {
         let user = DevUser::new_with_plaintext("test", "Test", "test@example.com", "testpass123", Role::Admin);
         assert_eq!(user.id, "test");
@@ -264,6 +309,20 @@ mod tests {
         // Wrong password should not verify
         assert!(!user.verify_password("wrongpassword"));
         assert!(!user.verify_password(""));
+    }
+
+    #[test]
+    #[ignore] // Only run manually to generate hashes
+    fn test_generate_dev_user_hashes() {
+        // Generate and print bcrypt hashes for default dev users
+        // These can be used as pre-computed hashes to avoid hashing at startup
+        let dev_hash = bcrypt::hash("devpassword123", bcrypt::DEFAULT_COST).unwrap();
+        let user_hash = bcrypt::hash("userpassword123", bcrypt::DEFAULT_COST).unwrap();
+        println!("DEV_USER_HASH: {}", dev_hash);
+        println!("USER_USER_HASH: {}", user_hash);
+        // Verify they work
+        assert!(bcrypt::verify("devpassword123", &dev_hash).unwrap());
+        assert!(bcrypt::verify("userpassword123", &user_hash).unwrap());
     }
 
     #[test]
@@ -319,11 +378,84 @@ mod tests {
     }
 
     #[test]
-    fn test_generate_jwt_secret() {
+    fn test_generate_jwt_secret_length_and_charset() {
         let secret = AuthConfig::generate_jwt_secret();
-        assert_eq!(secret.len(), 64);
+        assert_eq!(secret.len(), 64, "Secret should be 64 characters long");
         // Should be alphanumeric
-        assert!(secret.chars().all(|c| c.is_ascii_alphanumeric()));
+        assert!(
+            secret.chars().all(|c| c.is_ascii_alphanumeric()),
+            "Secret should only contain alphanumeric characters"
+        );
+    }
+
+    #[test]
+    fn test_generate_jwt_secret_uniqueness() {
+        // Generate multiple secrets and ensure they're all different
+        let secrets: Vec<String> = (0..100).map(|_| AuthConfig::generate_jwt_secret()).collect();
+
+        // Check that all secrets are unique
+        let mut unique_secrets = secrets.clone();
+        unique_secrets.sort();
+        unique_secrets.dedup();
+        assert_eq!(
+            unique_secrets.len(),
+            secrets.len(),
+            "All generated secrets should be unique"
+        );
+    }
+
+    #[test]
+    fn test_generate_jwt_secret_entropy() {
+        // Generate a secret and check that it has reasonable character distribution
+        // This is a basic sanity check, not a formal entropy test
+        let secret = AuthConfig::generate_jwt_secret();
+
+        // Count character types
+        let uppercase_count = secret.chars().filter(|c| c.is_ascii_uppercase()).count();
+        let lowercase_count = secret.chars().filter(|c| c.is_ascii_lowercase()).count();
+        let digit_count = secret.chars().filter(|c| c.is_ascii_digit()).count();
+
+        // With 64 chars from a 62-char alphabet, we expect roughly:
+        // - 26/62 * 64 ≈ 27 uppercase
+        // - 26/62 * 64 ≈ 27 lowercase
+        // - 10/62 * 64 ≈ 10 digits
+        // Allow for variance but ensure we have at least some of each type
+        // (probability of having 0 of any type in 64 chars is astronomically low)
+        assert!(
+            uppercase_count > 0,
+            "Secret should contain at least one uppercase letter"
+        );
+        assert!(
+            lowercase_count > 0,
+            "Secret should contain at least one lowercase letter"
+        );
+        assert!(
+            digit_count > 0,
+            "Secret should contain at least one digit"
+        );
+    }
+
+    #[test]
+    fn test_generate_jwt_secret_sufficient_for_hmac() {
+        // HMAC-SHA256 requires at least 32 bytes of entropy
+        // Our 64-character alphanumeric secret provides ~370 bits of entropy
+        // (log2(62^64) ≈ 381 bits), which is more than sufficient
+        let secret = AuthConfig::generate_jwt_secret();
+
+        // Verify the secret meets minimum length requirements
+        assert!(
+            secret.len() >= 32,
+            "Secret should be at least 32 characters for HMAC-SHA256"
+        );
+
+        // Verify it passes our own validation
+        let mut config = AuthConfig::default();
+        config.dev_mode = false;
+        config.jwt_secret = Some(secret);
+        assert!(
+            config.validate().is_ok(),
+            "Generated secret should pass validation"
+        );
     }
 
     #[test]

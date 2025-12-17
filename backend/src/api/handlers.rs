@@ -8,7 +8,7 @@ use axum::{
     response::IntoResponse,
 };
 use serde::{Deserialize, Serialize};
-use tracing::{info, instrument};
+use tracing::{info, instrument, warn};
 
 use crate::auth::{AuthError, CurrentUser, RequireAdmin};
 use crate::session::{CreateSessionRequest, Session};
@@ -230,19 +230,27 @@ pub struct RegisterResponse {
 }
 
 /// Register a new user with invite code.
+///
+/// This operation is designed to be safe against race conditions:
+/// 1. Atomically consume the invite code (prevents double-use)
+/// 2. Create the user
+/// 3. If user creation fails, restore the invite code use
 #[instrument(skip(state, request), fields(username = %request.username))]
 pub async fn register(
     State(state): State<AppState>,
     Json(request): Json<RegisterRequest>,
 ) -> ApiResult<impl IntoResponse> {
-    // Validate invite code first
-    let is_valid = state.invites.validate(&request.invite_code).await?;
-    if !is_valid {
-        return Err(ApiError::bad_request("Invalid or expired invite code"));
-    }
+    // Atomically consume the invite code first.
+    // This prevents TOCTOU race conditions where two requests could both
+    // validate and then both try to use the same single-use code.
+    let _invite_code_id = state
+        .invites
+        .try_consume_atomic(&request.invite_code, "pending") // Use "pending" as placeholder
+        .await
+        .map_err(|e| ApiError::bad_request(e.to_string()))?;
 
     // Create the user
-    let user = state
+    let user = match state
         .users
         .create_user(CreateUserRequest {
             username: request.username.clone(),
@@ -252,10 +260,34 @@ pub async fn register(
             role: None, // Default to user role
             external_id: None,
         })
-        .await?;
+        .await
+    {
+        Ok(user) => user,
+        Err(e) => {
+            // User creation failed - restore the invite code use
+            // This is best-effort; if it fails, we log but don't change the error
+            if let Err(restore_err) = state.invites.restore_use(&request.invite_code).await {
+                warn!(
+                    "Failed to restore invite code use after user creation failure: {:?}",
+                    restore_err
+                );
+            }
+            return Err(e.into());
+        }
+    };
 
-    // Consume the invite code
-    state.invites.consume(&request.invite_code, &user.id).await?;
+    // Update the invite code to record the actual user ID
+    // This is informational and not critical for correctness
+    if let Err(e) = sqlx::query(
+        "UPDATE invite_codes SET used_by = ? WHERE code = ?",
+    )
+    .bind(&user.id)
+    .bind(&request.invite_code)
+    .execute(state.invites.pool())
+    .await
+    {
+        warn!("Failed to update invite code used_by: {:?}", e);
+    }
 
     // Generate JWT token for the new user
     let token = state.auth.generate_token(&user.id, &user.email, &user.display_name, &user.role.to_string())?;

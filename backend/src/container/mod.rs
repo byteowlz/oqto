@@ -11,6 +11,9 @@ pub use container::PortMapping;
 pub use container::{Container, ContainerConfig, ContainerStats};
 pub use error::{ContainerError, ContainerResult};
 
+// Re-export validation function for use in this module
+use container::validate_image_name;
+
 use serde::{Deserialize, Serialize};
 use std::process::Stdio;
 use tokio::process::Command;
@@ -51,6 +54,35 @@ impl std::fmt::Display for RuntimeType {
             RuntimeType::Podman => write!(f, "podman"),
         }
     }
+}
+
+/// Validate a container ID or name.
+///
+/// Container IDs are hex strings (12 or 64 chars for docker/podman).
+/// Container names follow the same rules as container creation.
+fn validate_container_id_or_name(id: &str) -> ContainerResult<()> {
+    if id.is_empty() {
+        return Err(ContainerError::InvalidInput(
+            "container ID or name cannot be empty".to_string(),
+        ));
+    }
+
+    if id.len() > 128 {
+        return Err(ContainerError::InvalidInput(
+            "container ID or name exceeds maximum length".to_string(),
+        ));
+    }
+
+    // Container IDs are hex, container names are alphanumeric with - and _
+    let valid_chars = |c: char| c.is_ascii_alphanumeric() || c == '-' || c == '_';
+    if !id.chars().all(valid_chars) {
+        return Err(ContainerError::InvalidInput(format!(
+            "container ID or name '{}' contains invalid characters",
+            id
+        )));
+    }
+
+    Ok(())
 }
 
 /// Container runtime client for managing containers.
@@ -165,7 +197,13 @@ impl ContainerRuntime {
     }
 
     /// Create and start a new container.
+    ///
+    /// The configuration is validated before creating the container to prevent
+    /// injection attacks and ensure all inputs are well-formed.
     pub async fn create_container(&self, config: &ContainerConfig) -> ContainerResult<String> {
+        // Validate all inputs before creating the container
+        config.validate()?;
+
         let mut owned_args: Vec<String> = Vec::new();
 
         owned_args.push("run".to_string());
@@ -248,6 +286,8 @@ impl ContainerRuntime {
         container_id: &str,
         timeout: Option<u32>,
     ) -> ContainerResult<()> {
+        validate_container_id_or_name(container_id)?;
+
         let mut owned_args: Vec<String> = vec!["stop".to_string()];
 
         if let Some(t) = timeout {
@@ -281,6 +321,8 @@ impl ContainerRuntime {
 
     /// Remove a container.
     pub async fn remove_container(&self, container_id: &str, force: bool) -> ContainerResult<()> {
+        validate_container_id_or_name(container_id)?;
+
         let mut args = vec!["rm"];
 
         if force {
@@ -353,6 +395,8 @@ impl ContainerRuntime {
     /// Get container by ID or name.
     #[allow(dead_code)]
     pub async fn get_container(&self, id_or_name: &str) -> ContainerResult<Option<Container>> {
+        validate_container_id_or_name(id_or_name)?;
+
         let output = Command::new(&self.binary)
             .args(["inspect", "--format", "json", id_or_name])
             .stdout(Stdio::piped())
@@ -379,6 +423,8 @@ impl ContainerRuntime {
     /// Get container logs.
     #[allow(dead_code)]
     pub async fn get_logs(&self, container_id: &str, tail: Option<u32>) -> ContainerResult<String> {
+        validate_container_id_or_name(container_id)?;
+
         let mut owned_args: Vec<String> = vec!["logs".to_string()];
 
         if let Some(n) = tail {
@@ -409,6 +455,8 @@ impl ContainerRuntime {
     /// Get container stats (single snapshot).
     #[allow(dead_code)]
     pub async fn get_stats(&self, container_id: &str) -> ContainerResult<ContainerStats> {
+        validate_container_id_or_name(container_id)?;
+
         let output = Command::new(&self.binary)
             .args(["stats", "--no-stream", "--format", "json", container_id])
             .stdout(Stdio::piped())
@@ -441,6 +489,8 @@ impl ContainerRuntime {
     /// Check if an image exists locally.
     #[allow(dead_code)]
     pub async fn image_exists(&self, image: &str) -> ContainerResult<bool> {
+        validate_image_name(image)?;
+
         let output = Command::new(&self.binary)
             .args(["image", "exists", image])
             .stdout(Stdio::piped())
@@ -458,6 +508,8 @@ impl ContainerRuntime {
     /// Pull an image.
     #[allow(dead_code)]
     pub async fn pull_image(&self, image: &str) -> ContainerResult<()> {
+        validate_image_name(image)?;
+
         let output = Command::new(&self.binary)
             .args(["pull", image])
             .stdout(Stdio::piped())

@@ -18,6 +18,12 @@ impl InviteCodeRepository {
         Self { pool }
     }
 
+    /// Get a reference to the database pool.
+    /// Used for operations that need direct database access within transactions.
+    pub fn pool(&self) -> &SqlitePool {
+        &self.pool
+    }
+
     /// Generate a new invite code ID.
     fn generate_id() -> String {
         format!("inv_{}", nanoid::nanoid!(12))
@@ -209,6 +215,10 @@ impl InviteCodeRepository {
 
     /// Consume an invite code (decrement uses, record user).
     /// Returns the updated invite code if successful.
+    ///
+    /// Note: This method has a TOCTOU vulnerability when used standalone.
+    /// For registration, use `try_consume_atomic` instead.
+    #[allow(dead_code)] // Used in tests
     #[instrument(skip(self))]
     pub async fn consume(&self, code: &str, user_id: &str) -> Result<InviteCode> {
         // First, get the code and validate it
@@ -248,11 +258,97 @@ impl InviteCodeRepository {
             .ok_or_else(|| anyhow::anyhow!("Invite code not found after consumption"))
     }
 
+    /// Atomically try to consume an invite code.
+    ///
+    /// This method uses a single UPDATE with WHERE conditions to atomically
+    /// validate AND consume the invite code, preventing TOCTOU race conditions.
+    ///
+    /// Returns:
+    /// - Ok(invite_code_id) if the code was successfully consumed
+    /// - Err with appropriate message if code is invalid, expired, or exhausted
+    #[instrument(skip(self))]
+    pub async fn try_consume_atomic(&self, code: &str, user_id: &str) -> Result<String> {
+        // Atomically try to consume the invite code.
+        // The WHERE clause ensures we only update if:
+        // 1. The code exists
+        // 2. uses_remaining > 0
+        // 3. Either not expired OR no expiry set
+        let result = sqlx::query(
+            r#"
+            UPDATE invite_codes
+            SET uses_remaining = uses_remaining - 1,
+                used_by = ?,
+                last_used_at = datetime('now')
+            WHERE code = ?
+              AND uses_remaining > 0
+              AND (expires_at IS NULL OR expires_at > datetime('now'))
+            "#,
+        )
+        .bind(user_id)
+        .bind(code)
+        .execute(&self.pool)
+        .await
+        .context("Failed to consume invite code")?;
+
+        if result.rows_affected() == 0 {
+            // No rows affected means either:
+            // 1. Code doesn't exist
+            // 2. Code is exhausted (uses_remaining <= 0)
+            // 3. Code is expired
+            // Check which case to return appropriate error
+            let invite = self.get_by_code(code).await?;
+            match invite {
+                None => Err(anyhow::anyhow!("Invite code not found")),
+                Some(invite) if invite.is_exhausted() => {
+                    Err(anyhow::anyhow!("Invite code has been fully used"))
+                }
+                Some(invite) if invite.is_expired() => {
+                    Err(anyhow::anyhow!("Invite code has expired"))
+                }
+                Some(_) => Err(anyhow::anyhow!("Invite code is invalid")),
+            }
+        } else {
+            // Get the invite code ID for reference
+            let invite = self
+                .get_by_code(code)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("Invite code not found after consumption"))?;
+            Ok(invite.id)
+        }
+    }
+
     /// Validate an invite code without consuming it.
+    #[allow(dead_code)] // Kept for API completeness
     #[instrument(skip(self))]
     pub async fn validate(&self, code: &str) -> Result<bool> {
         let invite = self.get_by_code(code).await?;
         Ok(invite.map(|i| i.is_valid()).unwrap_or(false))
+    }
+
+    /// Restore a consumed invite code use (add back 1 use).
+    ///
+    /// This is used for rollback scenarios where the invite code was consumed
+    /// but the subsequent operation (like user creation) failed.
+    #[instrument(skip(self))]
+    pub async fn restore_use(&self, code: &str) -> Result<()> {
+        let result = sqlx::query(
+            r#"
+            UPDATE invite_codes
+            SET uses_remaining = uses_remaining + 1
+            WHERE code = ? AND uses_remaining < max_uses
+            "#,
+        )
+        .bind(code)
+        .execute(&self.pool)
+        .await
+        .context("Failed to restore invite code use")?;
+
+        if result.rows_affected() == 0 {
+            // Code doesn't exist or already at max uses - log but don't fail
+            debug!("restore_use: no rows affected for code {}", code);
+        }
+
+        Ok(())
     }
 
     /// Revoke an invite code (set uses_remaining to 0).
@@ -510,5 +606,210 @@ mod tests {
 
         // Invalid code
         assert!(!repo.validate("NONEXISTENT").await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_try_consume_atomic() {
+        let pool = setup_test_db().await;
+        let repo = InviteCodeRepository::new(pool.clone());
+
+        // Create a test user to consume the code
+        sqlx::query(
+            r#"
+            INSERT INTO users (id, username, email, display_name, role)
+            VALUES ('usr_test', 'testuser', 'test@test.com', 'Test User', 'user')
+            "#,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let request = CreateInviteCodeRequest {
+            code: Some("ATOMIC1".to_string()),
+            max_uses: 1, // Single use only
+            expires_in_secs: None,
+            note: None,
+        };
+
+        repo.create(request, "usr_admin").await.unwrap();
+
+        // First atomic consume should succeed
+        let result = repo.try_consume_atomic("ATOMIC1", "usr_test").await;
+        assert!(result.is_ok(), "First atomic consume should succeed");
+
+        // Second atomic consume should fail (already used)
+        let result = repo.try_consume_atomic("ATOMIC1", "usr_test").await;
+        assert!(result.is_err(), "Second atomic consume should fail");
+        assert!(
+            result.unwrap_err().to_string().contains("fully used"),
+            "Should report code is fully used"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_try_consume_atomic_nonexistent() {
+        let pool = setup_test_db().await;
+        let repo = InviteCodeRepository::new(pool);
+
+        // Try to consume a code that doesn't exist
+        let result = repo.try_consume_atomic("NONEXISTENT", "usr_test").await;
+        assert!(result.is_err(), "Should fail for nonexistent code");
+        assert!(
+            result.unwrap_err().to_string().contains("not found"),
+            "Should report code not found"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_try_consume_atomic_multi_use() {
+        let pool = setup_test_db().await;
+        let repo = InviteCodeRepository::new(pool.clone());
+
+        // Create test users
+        sqlx::query(
+            r#"
+            INSERT INTO users (id, username, email, display_name, role)
+            VALUES 
+                ('usr_test1', 'testuser1', 'test1@test.com', 'Test User 1', 'user'),
+                ('usr_test2', 'testuser2', 'test2@test.com', 'Test User 2', 'user'),
+                ('usr_test3', 'testuser3', 'test3@test.com', 'Test User 3', 'user')
+            "#,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let request = CreateInviteCodeRequest {
+            code: Some("MULTI3".to_string()),
+            max_uses: 3, // Three uses
+            expires_in_secs: None,
+            note: None,
+        };
+
+        repo.create(request, "usr_admin").await.unwrap();
+
+        // Three atomic consumes should succeed
+        assert!(repo.try_consume_atomic("MULTI3", "usr_test1").await.is_ok());
+        assert!(repo.try_consume_atomic("MULTI3", "usr_test2").await.is_ok());
+        assert!(repo.try_consume_atomic("MULTI3", "usr_test3").await.is_ok());
+
+        // Fourth should fail
+        let result = repo.try_consume_atomic("MULTI3", "usr_test1").await;
+        assert!(result.is_err(), "Fourth atomic consume should fail");
+    }
+
+    #[tokio::test]
+    async fn test_restore_use() {
+        let pool = setup_test_db().await;
+        let repo = InviteCodeRepository::new(pool.clone());
+
+        // Create a test user
+        sqlx::query(
+            r#"
+            INSERT INTO users (id, username, email, display_name, role)
+            VALUES ('usr_test', 'testuser', 'test@test.com', 'Test User', 'user')
+            "#,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let request = CreateInviteCodeRequest {
+            code: Some("RESTORE1".to_string()),
+            max_uses: 1,
+            expires_in_secs: None,
+            note: None,
+        };
+
+        repo.create(request, "usr_admin").await.unwrap();
+
+        // Consume the code
+        assert!(repo.try_consume_atomic("RESTORE1", "usr_test").await.is_ok());
+
+        // Verify it's exhausted
+        let invite = repo.get_by_code("RESTORE1").await.unwrap().unwrap();
+        assert_eq!(invite.uses_remaining, 0);
+
+        // Restore the use
+        repo.restore_use("RESTORE1").await.unwrap();
+
+        // Verify it's restored
+        let invite = repo.get_by_code("RESTORE1").await.unwrap().unwrap();
+        assert_eq!(invite.uses_remaining, 1);
+
+        // Can consume again
+        assert!(repo.try_consume_atomic("RESTORE1", "usr_test").await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_atomic_consume() {
+        use std::sync::Arc;
+        use tokio::sync::Barrier;
+
+        let pool = setup_test_db().await;
+        let repo = Arc::new(InviteCodeRepository::new(pool.clone()));
+
+        // Create test users
+        for i in 1..=10 {
+            sqlx::query(
+                r#"
+                INSERT INTO users (id, username, email, display_name, role)
+                VALUES (?, ?, ?, ?, 'user')
+                "#,
+            )
+            .bind(format!("usr_test{}", i))
+            .bind(format!("testuser{}", i))
+            .bind(format!("test{}@test.com", i))
+            .bind(format!("Test User {}", i))
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        // Create a single-use invite code
+        let request = CreateInviteCodeRequest {
+            code: Some("CONCURRENT1".to_string()),
+            max_uses: 1,
+            expires_in_secs: None,
+            note: None,
+        };
+        repo.create(request, "usr_admin").await.unwrap();
+
+        // Spawn 10 concurrent tasks trying to consume the same code
+        let barrier = Arc::new(Barrier::new(10));
+        let mut handles = Vec::new();
+
+        for i in 1..=10 {
+            let repo_clone = Arc::clone(&repo);
+            let barrier_clone = Arc::clone(&barrier);
+            let user_id = format!("usr_test{}", i);
+
+            let handle = tokio::spawn(async move {
+                // Wait for all tasks to be ready
+                barrier_clone.wait().await;
+                // Try to consume
+                repo_clone.try_consume_atomic("CONCURRENT1", &user_id).await
+            });
+            handles.push(handle);
+        }
+
+        // Collect results
+        let mut success_count = 0;
+        let mut failure_count = 0;
+
+        for handle in handles {
+            match handle.await.unwrap() {
+                Ok(_) => success_count += 1,
+                Err(_) => failure_count += 1,
+            }
+        }
+
+        // Exactly one should succeed (the first one to get the lock)
+        assert_eq!(success_count, 1, "Exactly one concurrent consumer should succeed");
+        assert_eq!(failure_count, 9, "Nine concurrent consumers should fail");
+
+        // Verify the code is exhausted
+        let invite = repo.get_by_code("CONCURRENT1").await.unwrap().unwrap();
+        assert_eq!(invite.uses_remaining, 0);
     }
 }

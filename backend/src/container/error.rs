@@ -29,6 +29,10 @@ pub enum ContainerError {
     #[error("no container runtime available (docker or podman)")]
     NoRuntimeAvailable,
 
+    /// Invalid input provided.
+    #[error("invalid input: {0}")]
+    InvalidInput(String),
+
     /// Generic IO error.
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),

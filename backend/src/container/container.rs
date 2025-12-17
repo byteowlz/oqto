@@ -3,6 +3,8 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+use super::error::{ContainerError, ContainerResult};
+
 /// Port mapping configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PortMapping {
@@ -71,6 +73,43 @@ impl ContainerConfig {
             image: image.into(),
             ..Default::default()
         }
+    }
+
+    /// Validate all container configuration fields.
+    ///
+    /// This should be called before creating a container to ensure all inputs
+    /// are safe and well-formed.
+    pub fn validate(&self) -> ContainerResult<()> {
+        // Validate image name
+        validate_image_name(&self.image)?;
+
+        // Validate container name if provided
+        if let Some(ref name) = self.name {
+            validate_container_name(name)?;
+        }
+
+        // Validate hostname if provided
+        if let Some(ref hostname) = self.hostname {
+            validate_hostname(hostname)?;
+        }
+
+        // Validate environment variable keys
+        for key in self.env.keys() {
+            validate_env_var_key(key)?;
+        }
+
+        // Validate volume paths
+        for (host_path, container_path) in &self.volumes {
+            validate_volume_path(host_path, "host")?;
+            validate_volume_path(container_path, "container")?;
+        }
+
+        // Validate working directory if provided
+        if let Some(ref workdir) = self.workdir {
+            validate_container_path(workdir)?;
+        }
+
+        Ok(())
     }
 
     /// Set the container name.
@@ -264,4 +303,379 @@ pub struct ContainerStats {
     /// Number of PIDs.
     #[serde(default, alias = "PIDs")]
     pub pids: String,
+}
+
+// ============================================================================
+// Input Validation Functions
+// ============================================================================
+
+/// Validate a Docker/OCI image name.
+///
+/// Image names follow the pattern: `[registry/][namespace/]name[:tag][@digest]`
+/// Valid characters: alphanumeric, `.`, `-`, `_`, `/`, `:`, `@`
+///
+/// Examples:
+/// - `ubuntu:latest`
+/// - `myregistry.io/myimage:v1.0`
+/// - `library/nginx`
+pub fn validate_image_name(image: &str) -> ContainerResult<()> {
+    if image.is_empty() {
+        return Err(ContainerError::InvalidInput(
+            "image name cannot be empty".to_string(),
+        ));
+    }
+
+    if image.len() > 256 {
+        return Err(ContainerError::InvalidInput(
+            "image name exceeds maximum length of 256 characters".to_string(),
+        ));
+    }
+
+    // Check for valid characters
+    let valid_chars = |c: char| {
+        c.is_ascii_alphanumeric()
+            || c == '.'
+            || c == '-'
+            || c == '_'
+            || c == '/'
+            || c == ':'
+            || c == '@'
+    };
+
+    if !image.chars().all(valid_chars) {
+        return Err(ContainerError::InvalidInput(format!(
+            "image name '{}' contains invalid characters; only alphanumeric, '.', '-', '_', '/', ':', '@' are allowed",
+            image
+        )));
+    }
+
+    // Check for dangerous patterns
+    if image.contains("..") {
+        return Err(ContainerError::InvalidInput(
+            "image name cannot contain '..'".to_string(),
+        ));
+    }
+
+    Ok(())
+}
+
+/// Validate a container name.
+///
+/// Container names must be alphanumeric with hyphens and underscores.
+/// They must start with a letter or underscore.
+fn validate_container_name(name: &str) -> ContainerResult<()> {
+    if name.is_empty() {
+        return Err(ContainerError::InvalidInput(
+            "container name cannot be empty".to_string(),
+        ));
+    }
+
+    if name.len() > 128 {
+        return Err(ContainerError::InvalidInput(
+            "container name exceeds maximum length of 128 characters".to_string(),
+        ));
+    }
+
+    // Must start with alphanumeric or underscore
+    let first_char = name.chars().next().unwrap();
+    if !first_char.is_ascii_alphanumeric() && first_char != '_' {
+        return Err(ContainerError::InvalidInput(
+            "container name must start with an alphanumeric character or underscore".to_string(),
+        ));
+    }
+
+    // Only alphanumeric, hyphens, underscores
+    let valid_chars = |c: char| c.is_ascii_alphanumeric() || c == '-' || c == '_';
+    if !name.chars().all(valid_chars) {
+        return Err(ContainerError::InvalidInput(format!(
+            "container name '{}' contains invalid characters; only alphanumeric, '-', '_' are allowed",
+            name
+        )));
+    }
+
+    Ok(())
+}
+
+/// Validate a hostname.
+///
+/// Hostnames follow RFC 1123: alphanumeric with hyphens, max 63 chars per label.
+fn validate_hostname(hostname: &str) -> ContainerResult<()> {
+    if hostname.is_empty() {
+        return Err(ContainerError::InvalidInput(
+            "hostname cannot be empty".to_string(),
+        ));
+    }
+
+    if hostname.len() > 253 {
+        return Err(ContainerError::InvalidInput(
+            "hostname exceeds maximum length of 253 characters".to_string(),
+        ));
+    }
+
+    // Check each label
+    for label in hostname.split('.') {
+        if label.is_empty() {
+            return Err(ContainerError::InvalidInput(
+                "hostname cannot have empty labels".to_string(),
+            ));
+        }
+
+        if label.len() > 63 {
+            return Err(ContainerError::InvalidInput(
+                "hostname label exceeds maximum length of 63 characters".to_string(),
+            ));
+        }
+
+        // Must start and end with alphanumeric
+        let first = label.chars().next().unwrap();
+        let last = label.chars().last().unwrap();
+        if !first.is_ascii_alphanumeric() || !last.is_ascii_alphanumeric() {
+            return Err(ContainerError::InvalidInput(
+                "hostname labels must start and end with alphanumeric characters".to_string(),
+            ));
+        }
+
+        // Only alphanumeric and hyphens
+        let valid_chars = |c: char| c.is_ascii_alphanumeric() || c == '-';
+        if !label.chars().all(valid_chars) {
+            return Err(ContainerError::InvalidInput(format!(
+                "hostname '{}' contains invalid characters",
+                hostname
+            )));
+        }
+    }
+
+    Ok(())
+}
+
+/// Validate an environment variable key.
+///
+/// Environment variable names should follow POSIX conventions:
+/// alphanumeric and underscores, starting with a letter or underscore.
+fn validate_env_var_key(key: &str) -> ContainerResult<()> {
+    if key.is_empty() {
+        return Err(ContainerError::InvalidInput(
+            "environment variable key cannot be empty".to_string(),
+        ));
+    }
+
+    if key.len() > 256 {
+        return Err(ContainerError::InvalidInput(
+            "environment variable key exceeds maximum length of 256 characters".to_string(),
+        ));
+    }
+
+    // Must start with letter or underscore
+    let first_char = key.chars().next().unwrap();
+    if !first_char.is_ascii_alphabetic() && first_char != '_' {
+        return Err(ContainerError::InvalidInput(format!(
+            "environment variable key '{}' must start with a letter or underscore",
+            key
+        )));
+    }
+
+    // Only alphanumeric and underscores
+    let valid_chars = |c: char| c.is_ascii_alphanumeric() || c == '_';
+    if !key.chars().all(valid_chars) {
+        return Err(ContainerError::InvalidInput(format!(
+            "environment variable key '{}' contains invalid characters; only alphanumeric and '_' are allowed",
+            key
+        )));
+    }
+
+    Ok(())
+}
+
+/// Validate a volume path (host or container side).
+fn validate_volume_path(path: &str, side: &str) -> ContainerResult<()> {
+    if path.is_empty() {
+        return Err(ContainerError::InvalidInput(format!(
+            "{} volume path cannot be empty",
+            side
+        )));
+    }
+
+    if path.len() > 4096 {
+        return Err(ContainerError::InvalidInput(format!(
+            "{} volume path exceeds maximum length of 4096 characters",
+            side
+        )));
+    }
+
+    // Check for null bytes
+    if path.contains('\0') {
+        return Err(ContainerError::InvalidInput(format!(
+            "{} volume path cannot contain null bytes",
+            side
+        )));
+    }
+
+    // Check for dangerous shell metacharacters
+    let dangerous_chars = ['$', '`', '!', '&', '|', ';', '<', '>', '(', ')', '{', '}', '[', ']', '*', '?', '\\', '"', '\'', '\n', '\r'];
+    for c in dangerous_chars.iter() {
+        if path.contains(*c) {
+            return Err(ContainerError::InvalidInput(format!(
+                "{} volume path contains dangerous character '{}'",
+                side, c
+            )));
+        }
+    }
+
+    Ok(())
+}
+
+/// Validate a container-internal path.
+fn validate_container_path(path: &str) -> ContainerResult<()> {
+    if path.is_empty() {
+        return Err(ContainerError::InvalidInput(
+            "container path cannot be empty".to_string(),
+        ));
+    }
+
+    // Must be absolute
+    if !path.starts_with('/') {
+        return Err(ContainerError::InvalidInput(
+            "container path must be absolute (start with '/')".to_string(),
+        ));
+    }
+
+    // Check for null bytes
+    if path.contains('\0') {
+        return Err(ContainerError::InvalidInput(
+            "container path cannot contain null bytes".to_string(),
+        ));
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod validation_tests {
+    use super::*;
+
+    #[test]
+    fn test_validate_image_name_valid() {
+        assert!(validate_image_name("ubuntu").is_ok());
+        assert!(validate_image_name("ubuntu:latest").is_ok());
+        assert!(validate_image_name("ubuntu:20.04").is_ok());
+        assert!(validate_image_name("library/nginx").is_ok());
+        assert!(validate_image_name("myregistry.io/myimage:v1.0").is_ok());
+        assert!(validate_image_name("gcr.io/project/image@sha256:abc123").is_ok());
+        assert!(validate_image_name("my-image_v1").is_ok());
+    }
+
+    #[test]
+    fn test_validate_image_name_invalid() {
+        assert!(validate_image_name("").is_err());
+        assert!(validate_image_name("image with spaces").is_err());
+        assert!(validate_image_name("image;rm -rf /").is_err());
+        assert!(validate_image_name("image$(whoami)").is_err());
+        assert!(validate_image_name("image`id`").is_err());
+        assert!(validate_image_name("../../../etc/passwd").is_err());
+    }
+
+    #[test]
+    fn test_validate_container_name_valid() {
+        assert!(validate_container_name("mycontainer").is_ok());
+        assert!(validate_container_name("my-container").is_ok());
+        assert!(validate_container_name("my_container").is_ok());
+        assert!(validate_container_name("container123").is_ok());
+        assert!(validate_container_name("_private").is_ok());
+    }
+
+    #[test]
+    fn test_validate_container_name_invalid() {
+        assert!(validate_container_name("").is_err());
+        assert!(validate_container_name("-starts-with-dash").is_err());
+        assert!(validate_container_name("contains spaces").is_err());
+        assert!(validate_container_name("has;semicolon").is_err());
+        assert!(validate_container_name("$(whoami)").is_err());
+    }
+
+    #[test]
+    fn test_validate_hostname_valid() {
+        assert!(validate_hostname("localhost").is_ok());
+        assert!(validate_hostname("my-host").is_ok());
+        assert!(validate_hostname("host.example.com").is_ok());
+        assert!(validate_hostname("sub1.sub2.example.com").is_ok());
+    }
+
+    #[test]
+    fn test_validate_hostname_invalid() {
+        assert!(validate_hostname("").is_err());
+        assert!(validate_hostname("-invalid").is_err());
+        assert!(validate_hostname("invalid-").is_err());
+        assert!(validate_hostname("has spaces").is_err());
+        assert!(validate_hostname("..").is_err());
+    }
+
+    #[test]
+    fn test_validate_env_var_key_valid() {
+        assert!(validate_env_var_key("PATH").is_ok());
+        assert!(validate_env_var_key("MY_VAR").is_ok());
+        assert!(validate_env_var_key("_PRIVATE").is_ok());
+        assert!(validate_env_var_key("VAR123").is_ok());
+    }
+
+    #[test]
+    fn test_validate_env_var_key_invalid() {
+        assert!(validate_env_var_key("").is_err());
+        assert!(validate_env_var_key("123VAR").is_err());
+        assert!(validate_env_var_key("MY-VAR").is_err());
+        assert!(validate_env_var_key("MY VAR").is_err());
+        assert!(validate_env_var_key("$(whoami)").is_err());
+    }
+
+    #[test]
+    fn test_validate_volume_path_valid() {
+        assert!(validate_volume_path("/home/user/data", "host").is_ok());
+        assert!(validate_volume_path("./relative/path", "host").is_ok());
+        assert!(validate_volume_path("/var/lib/data", "container").is_ok());
+    }
+
+    #[test]
+    fn test_validate_volume_path_invalid() {
+        assert!(validate_volume_path("", "host").is_err());
+        assert!(validate_volume_path("/path;rm -rf /", "host").is_err());
+        assert!(validate_volume_path("/path$(whoami)", "host").is_err());
+        assert!(validate_volume_path("/path`id`", "host").is_err());
+        assert!(validate_volume_path("/path\0null", "host").is_err());
+    }
+
+    #[test]
+    fn test_validate_container_path_valid() {
+        assert!(validate_container_path("/home/user").is_ok());
+        assert!(validate_container_path("/var/lib/data").is_ok());
+        assert!(validate_container_path("/").is_ok());
+    }
+
+    #[test]
+    fn test_validate_container_path_invalid() {
+        assert!(validate_container_path("").is_err());
+        assert!(validate_container_path("relative/path").is_err());
+        assert!(validate_container_path("/path\0null").is_err());
+    }
+
+    #[test]
+    fn test_container_config_validate() {
+        let config = ContainerConfig::new("ubuntu:latest")
+            .name("my-container")
+            .hostname("myhost")
+            .env("MY_VAR", "value")
+            .volume("/host/path", "/container/path");
+
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_container_config_validate_invalid_image() {
+        let config = ContainerConfig::new("invalid$(whoami)");
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_container_config_validate_invalid_name() {
+        let config = ContainerConfig::new("ubuntu").name("invalid;name");
+        assert!(config.validate().is_err());
+    }
 }
