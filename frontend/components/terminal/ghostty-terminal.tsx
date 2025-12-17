@@ -298,6 +298,7 @@ export const GhosttyTerminal = forwardRef<GhosttyTerminalHandle, GhosttyTerminal
 
     // Cleanup resources on unmount (or when switching sessionId).
     useEffect(() => {
+      const currentSessionId = sessionId
       const session = getSession()
       return () => {
         mountedRef.current = false
@@ -328,20 +329,53 @@ export const GhosttyTerminal = forwardRef<GhosttyTerminalHandle, GhosttyTerminal
         session.fitAddon = null
         session.isConnecting = false
         session.reconnectAttempts = 0
+        
+        // Remove from the map to prevent memory leak
+        sessionConnections.delete(currentSessionId)
       }
     }, [getSession, sessionId])
 
-    // Handle resize observer separately
+    // Handle resize observer separately with throttling
     useEffect(() => {
       if (!containerRef.current) return
       const session = getSession()
       
-      const observer = new ResizeObserver(() => {
-        session.fitAddon?.fit()
-      })
+      let resizeTimeout: ReturnType<typeof setTimeout> | null = null
+      let lastResizeTime = 0
+      const THROTTLE_MS = 100 // Throttle to max 10 fit() calls per second
+      
+      const handleResize = () => {
+        const now = Date.now()
+        const timeSinceLastResize = now - lastResizeTime
+        
+        if (resizeTimeout) {
+          clearTimeout(resizeTimeout)
+          resizeTimeout = null
+        }
+        
+        if (timeSinceLastResize >= THROTTLE_MS) {
+          // Enough time has passed, fit immediately
+          lastResizeTime = now
+          session.fitAddon?.fit()
+        } else {
+          // Schedule a fit for later
+          resizeTimeout = setTimeout(() => {
+            lastResizeTime = Date.now()
+            session.fitAddon?.fit()
+            resizeTimeout = null
+          }, THROTTLE_MS - timeSinceLastResize)
+        }
+      }
+      
+      const observer = new ResizeObserver(handleResize)
       observer.observe(containerRef.current)
       
-      return () => observer.disconnect()
+      return () => {
+        observer.disconnect()
+        if (resizeTimeout) {
+          clearTimeout(resizeTimeout)
+        }
+      }
     }, [getSession])
 
     return (

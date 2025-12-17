@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useState, useRef } from "react"
+import { useCallback, useEffect, useMemo, useState, useRef, memo } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
@@ -16,6 +16,7 @@ import {
   fetchMessages,
   sendMessageAsync,
   subscribeToEvents,
+  invalidateMessageCache,
   type OpenCodeMessageWithParts,
   type OpenCodePart,
 } from "@/lib/opencode-client"
@@ -267,6 +268,10 @@ export function SessionsApp() {
 
       if (eventType === "session.idle") {
         setChatState("idle")
+        // Invalidate cache and force refresh on idle
+        if (opencodeBaseUrl && selectedChatSessionId) {
+          invalidateMessageCache(opencodeBaseUrl, selectedChatSessionId)
+        }
         loadMessages()
         refreshOpencodeSessions()
       } else if (eventType === "session.busy") {
@@ -274,6 +279,10 @@ export function SessionsApp() {
       }
       // Refresh messages on any message event
       if (eventType?.startsWith("message")) {
+        // Invalidate cache when messages change
+        if (opencodeBaseUrl && selectedChatSessionId) {
+          invalidateMessageCache(opencodeBaseUrl, selectedChatSessionId)
+        }
         // Coalesce refreshes to avoid hammering the server during streaming updates.
         requestMessageRefresh(1000)
       }
@@ -289,17 +298,17 @@ export function SessionsApp() {
 
     let active = true
     let delayMs = 2000
-    let timer: ReturnType<typeof setTimeout> | null = null
+    let timer: number | null = null
 
     const tick = async () => {
       if (!active) return
       await loadMessages()
       if (!active) return
       delayMs = Math.min(10_000, Math.round(delayMs * 1.3))
-      timer = window.setTimeout(() => void tick(), delayMs)
+      timer = window.setTimeout(() => void tick(), delayMs) as unknown as number
     }
 
-    timer = window.setTimeout(() => void tick(), delayMs)
+    timer = window.setTimeout(() => void tick(), delayMs) as unknown as number
 
     return () => {
       active = false
@@ -511,7 +520,7 @@ export function SessionsApp() {
   )
 }
 
-function MessageGroupCard({ group }: { group: MessageGroup }) {
+const MessageGroupCard = memo(function MessageGroupCard({ group }: { group: MessageGroup }) {
   const isUser = group.role === "user"
   
   // Get created time from first message
@@ -671,9 +680,9 @@ function MessageGroupCard({ group }: { group: MessageGroup }) {
       </div>
     </div>
   )
-}
+})
 
-function OtherPartCard({ part }: { part: OpenCodePart }) {
+const OtherPartCard = memo(function OtherPartCard({ part }: { part: OpenCodePart }) {
   const [isOpen, setIsOpen] = useState(false)
   
   const getPartLabel = () => {
@@ -719,9 +728,9 @@ function OtherPartCard({ part }: { part: OpenCodePart }) {
       )}
     </div>
   )
-}
+})
 
-function TodoListView({ todos, emptyMessage }: { todos: TodoItem[]; emptyMessage: string }) {
+const TodoListView = memo(function TodoListView({ todos, emptyMessage }: { todos: TodoItem[]; emptyMessage: string }) {
   // Group todos by status for summary
   const summary = useMemo(() => {
     const pending = todos.filter(t => t.status === "pending").length
@@ -824,55 +833,30 @@ function TodoListView({ todos, emptyMessage }: { todos: TodoItem[]; emptyMessage
       </div>
     </div>
   )
-}
+})
 
-// Knight Rider style spinner component - bidirectional scanner animation
+// Knight Rider style spinner component - pure CSS animation for performance
 function KnightRiderSpinner() {
-  const [frame, setFrame] = useState(0)
-  const dots = 8
-  const trailLength = 3
-  // Total frames: go from -trailLength to dots+trailLength, then back
-  const forwardFrames = dots + trailLength * 2
-  const totalFrames = forwardFrames * 2
-  
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setFrame((f) => (f + 1) % totalFrames)
-    }, 60)
-    return () => clearInterval(interval)
-  }, [totalFrames])
-  
-  // Calculate active position - starts off-screen left, goes right, then reverses
-  const isForward = frame < forwardFrames
-  const frameInDirection = isForward ? frame : totalFrames - frame
-  const activePos = frameInDirection - trailLength // Start at -trailLength (off screen)
-  
   return (
-    <div className="flex items-center gap-[3px]">
-      {Array.from({ length: dots }).map((_, i) => {
-        // Distance from active position (negative = ahead, positive = behind/trail)
-        const distance = isForward ? activePos - i : i - activePos
-        
-        // Only show trail behind the movement direction
-        const isActive = distance === 0 && activePos >= 0 && activePos < dots
-        const isTrail1 = distance === 1 && activePos - 1 >= -1 && activePos < dots + 1
-        const isTrail2 = distance === 2 && activePos - 2 >= -2 && activePos < dots + 2
-        const isTrail3 = distance === 3 && activePos - 3 >= -3 && activePos < dots + 3
-        
-        return (
-          <div
-            key={i}
-            className={cn(
-              "w-[6px] h-[6px] rounded-sm transition-all duration-[50ms]",
-              isActive && "bg-primary scale-110 shadow-[0_0_8px_hsl(var(--primary)/0.8)]",
-              isTrail1 && !isActive && "bg-primary/60 scale-100",
-              isTrail2 && !isActive && !isTrail1 && "bg-primary/30 scale-95",
-              isTrail3 && !isActive && !isTrail1 && !isTrail2 && "bg-primary/15 scale-90",
-              !isActive && !isTrail1 && !isTrail2 && !isTrail3 && "bg-primary/5 scale-85"
-            )}
-          />
-        )
-      })}
+    <div className="knight-rider-spinner flex items-center gap-[3px]">
+      {Array.from({ length: 8 }).map((_, i) => (
+        <div
+          key={i}
+          className="knight-rider-dot w-[6px] h-[6px] rounded-sm bg-primary/5"
+          style={{ "--dot-index": i } as React.CSSProperties}
+        />
+      ))}
+      <style jsx>{`
+        @keyframes knight-rider {
+          0%, 100% { opacity: 0.05; transform: scale(0.85); }
+          50% { opacity: 1; transform: scale(1.1); box-shadow: 0 0 8px hsl(var(--primary) / 0.8); }
+        }
+        .knight-rider-dot {
+          animation: knight-rider 1.6s ease-in-out infinite;
+          animation-delay: calc(var(--dot-index) * 0.1s);
+          background-color: hsl(var(--primary));
+        }
+      `}</style>
     </div>
   )
 }

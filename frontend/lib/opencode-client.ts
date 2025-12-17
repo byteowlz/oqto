@@ -1,3 +1,13 @@
+// Message cache for client-side caching
+type MessageCache = {
+  messages: OpenCodeMessageWithParts[]
+  timestamp: number
+  sessionId: string
+}
+
+const messageCache = new Map<string, MessageCache>()
+const MESSAGE_CACHE_TTL = 30_000 // 30 seconds - cache is invalidated by SSE events anyway
+
 // Session type matching actual API response
 export type OpenCodeSession = {
   id: string
@@ -102,10 +112,44 @@ export async function fetchSessions(opencodeBaseUrl: string): Promise<OpenCodeSe
   return handleResponse<OpenCodeSession[]>(res)
 }
 
-export async function fetchMessages(opencodeBaseUrl: string, sessionId: string): Promise<OpenCodeMessageWithParts[]> {
-  // Correct endpoint is /message (singular), not /messages
+export async function fetchMessages(
+  opencodeBaseUrl: string, 
+  sessionId: string,
+  options?: { skipCache?: boolean }
+): Promise<OpenCodeMessageWithParts[]> {
+  const cacheKey = `${opencodeBaseUrl}:${sessionId}`
+  
+  // Check cache unless explicitly skipped
+  if (!options?.skipCache) {
+    const cached = messageCache.get(cacheKey)
+    if (cached && Date.now() - cached.timestamp < MESSAGE_CACHE_TTL) {
+      return cached.messages
+    }
+  }
+  
+  // Fetch from server
   const res = await fetch(`${base(opencodeBaseUrl)}/session/${sessionId}/message`, { cache: "no-store" })
-  return handleResponse<OpenCodeMessageWithParts[]>(res)
+  const messages = await handleResponse<OpenCodeMessageWithParts[]>(res)
+  
+  // Update cache
+  messageCache.set(cacheKey, {
+    messages,
+    timestamp: Date.now(),
+    sessionId,
+  })
+  
+  return messages
+}
+
+// Invalidate cache for a session (call this when SSE events indicate changes)
+export function invalidateMessageCache(opencodeBaseUrl: string, sessionId: string): void {
+  const cacheKey = `${opencodeBaseUrl}:${sessionId}`
+  messageCache.delete(cacheKey)
+}
+
+// Clear all message cache
+export function clearMessageCache(): void {
+  messageCache.clear()
 }
 
 export async function sendMessage(
