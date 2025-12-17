@@ -19,6 +19,7 @@ import {
   Pin,
   Pencil,
   Trash2,
+  Plus,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { AppProvider, useApp } from "@/components/app-context";
@@ -93,6 +94,7 @@ function AppShell() {
     opencodeSessions,
     selectedChatSessionId,
     setSelectedChatSessionId,
+    createNewChat,
   } = useApp();
   const [theme, setTheme] = useState<"light" | "dark">("dark");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -532,6 +534,25 @@ function AppShell() {
             );
           })}
         </nav>
+
+        {/* New Chat button */}
+        <div className={`w-full ${sidebarCollapsed ? "px-2" : "px-4"} mt-2`}>
+          <Button
+            variant="outline"
+            size="default"
+            onClick={() => void createNewChat()}
+            className={cn(
+              "w-full text-sm font-medium flex items-center gap-2 transition-colors",
+              "border-primary/50 hover:border-primary hover:bg-primary/10",
+              sidebarCollapsed ? "justify-center px-2" : "justify-start px-4"
+            )}
+          >
+            <Plus className="w-4 h-4 shrink-0" />
+            {!sidebarCollapsed && (
+              <span>{locale === "de" ? "Neuer Chat" : "New Chat"}</span>
+            )}
+          </Button>
+        </div>
 
         {/* Session history list */}
         {!sidebarCollapsed && opencodeSessions.length > 0 && (

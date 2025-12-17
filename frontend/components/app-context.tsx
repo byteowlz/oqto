@@ -30,6 +30,7 @@ interface AppContextValue {
   selectedChatSession: OpenCodeSession | undefined
   refreshWorkspaceSessions: () => Promise<void>
   refreshOpencodeSessions: () => Promise<void>
+  createNewChat: () => Promise<OpenCodeSession | null>
   authToken: string | null
 }
 
@@ -182,6 +183,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }, [opencodeBaseUrl])
 
+  const createNewChat = useCallback(async (): Promise<OpenCodeSession | null> => {
+    if (!opencodeBaseUrl) return null
+    try {
+      const created = await createSession(opencodeBaseUrl)
+      setOpencodeSessions((prev) => [created, ...prev])
+      setSelectedChatSessionId(created.id)
+      return created
+    } catch (err) {
+      console.error("Failed to create new chat session:", err)
+      return null
+    }
+  }, [opencodeBaseUrl])
+
   useEffect(() => {
     refreshOpencodeSessions()
   }, [refreshOpencodeSessions])
@@ -223,6 +237,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       selectedChatSession,
       refreshWorkspaceSessions,
       refreshOpencodeSessions,
+      createNewChat,
       authToken,
     }),
     [
@@ -240,6 +255,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       selectedChatSession,
       refreshWorkspaceSessions,
       refreshOpencodeSessions,
+      createNewChat,
       authToken,
     ],
   )
