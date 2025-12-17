@@ -1,6 +1,8 @@
 # Example configuration for the template CLI.
 # Copy this file to $XDG_CONFIG_HOME/workspace-backend/config.toml and adjust as needed.
 
+"$schema" = "https://raw.githubusercontent.com/byteowlz/schemas/refs/heads/main/octo/octo.backend.config.schema.json"
+
 profile = "default"
 
 [logging]

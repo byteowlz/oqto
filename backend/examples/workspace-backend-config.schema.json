@@ -1,0 +1,220 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "workspace-backend-config.schema.json",
+  "title": "Workspace Backend Configuration",
+  "description": "Configuration schema for the workspace-backend CLI application",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "Reference to the JSON schema for validation and LSP completions"
+    },
+    "profile": {
+      "type": "string",
+      "description": "Configuration profile name",
+      "default": "default"
+    },
+    "logging": {
+      "type": "object",
+      "description": "Logging configuration",
+      "properties": {
+        "level": {
+          "type": "string",
+          "description": "Log level",
+          "enum": ["error", "warn", "info", "debug", "trace"],
+          "default": "info"
+        },
+        "file": {
+          "type": "string",
+          "description": "Optional path for log file output. Supports ~ and environment variables.",
+          "examples": ["~/Library/Logs/workspace-backend.log", "$XDG_STATE_HOME/workspace-backend/app.log"]
+        }
+      },
+      "additionalProperties": false
+    },
+    "runtime": {
+      "type": "object",
+      "description": "Runtime configuration",
+      "properties": {
+        "parallelism": {
+          "type": "integer",
+          "description": "Override the worker pool size. Defaults to logical CPU count when unset.",
+          "minimum": 1
+        },
+        "timeout": {
+          "type": "integer",
+          "description": "Timeout in seconds for long-running operations",
+          "minimum": 1,
+          "default": 60
+        },
+        "fail_fast": {
+          "type": "boolean",
+          "description": "Stop on first error",
+          "default": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "paths": {
+      "type": "object",
+      "description": "Custom directory paths for persistent data and state",
+      "properties": {
+        "data_dir": {
+          "type": "string",
+          "description": "Directory for persistent data. Defaults to $XDG_DATA_HOME/workspace-backend or ~/.local/share/workspace-backend",
+          "examples": ["$XDG_DATA_HOME/workspace-backend", "~/.local/share/workspace-backend"]
+        },
+        "state_dir": {
+          "type": "string",
+          "description": "Directory for machine-specific state (logs, history, etc.). Defaults to $XDG_STATE_HOME/workspace-backend or ~/.local/state/workspace-backend",
+          "examples": ["$XDG_STATE_HOME/workspace-backend", "~/.local/state/workspace-backend"]
+        }
+      },
+      "additionalProperties": false
+    },
+    "container": {
+      "type": "object",
+      "description": "Container runtime configuration",
+      "properties": {
+        "runtime": {
+          "type": "string",
+          "description": "Container runtime type. Auto-detected if not specified.",
+          "enum": ["docker", "podman"]
+        },
+        "binary": {
+          "type": "string",
+          "description": "Custom path to the container runtime binary",
+          "examples": ["/usr/local/bin/docker", "/usr/bin/podman"]
+        },
+        "default_image": {
+          "type": "string",
+          "description": "Default container image for sessions",
+          "default": "opencode-dev:latest"
+        },
+        "base_port": {
+          "type": "integer",
+          "description": "Base port for allocating session ports. Each session uses 3 consecutive ports.",
+          "minimum": 1024,
+          "maximum": 65535,
+          "default": 41820
+        }
+      },
+      "additionalProperties": false
+    },
+    "eavs": {
+      "type": "object",
+      "description": "EAVS (LLM proxy) configuration. EAVS runs on host, not in containers.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Enable EAVS integration for session virtual keys",
+          "default": true
+        },
+        "base_url": {
+          "type": "string",
+          "description": "URL of the EAVS server (accessible from host)",
+          "format": "uri",
+          "default": "http://localhost:41800"
+        },
+        "container_url": {
+          "type": "string",
+          "description": "URL for containers to reach EAVS (via Docker host networking). For Docker: http://host.docker.internal:41800, for Podman: http://host.containers.internal:41800",
+          "format": "uri",
+          "examples": ["http://host.docker.internal:41800", "http://host.containers.internal:41800"]
+        },
+        "master_key": {
+          "type": "string",
+          "description": "Master key for EAVS admin operations (create/revoke keys). IMPORTANT: Change this in production! Can also be set via EAVS_MASTER_KEY env var."
+        },
+        "default_session_budget_usd": {
+          "type": "number",
+          "description": "Default session budget limit in USD",
+          "minimum": 0,
+          "examples": [10.0, 50.0, 100.0]
+        },
+        "default_session_rpm": {
+          "type": "integer",
+          "description": "Default session rate limit in requests per minute",
+          "minimum": 1,
+          "examples": [60, 120]
+        }
+      },
+      "additionalProperties": false
+    },
+    "auth": {
+      "type": "object",
+      "description": "Authentication configuration",
+      "properties": {
+        "dev_mode": {
+          "type": "boolean",
+          "description": "Enable development mode (uses dev_users for authentication, relaxed security). Set to false for production deployments.",
+          "default": true
+        },
+        "jwt_secret": {
+          "type": "string",
+          "description": "JWT secret for signing tokens. REQUIRED when dev_mode = false. Must be at least 32 characters. Can be a literal value or reference an environment variable with env: prefix (e.g., env:AUTH_JWT_SECRET).",
+          "minLength": 32,
+          "examples": ["your-secure-secret-at-least-32-characters-long", "env:AUTH_JWT_SECRET"]
+        },
+        "oidc_issuer": {
+          "type": "string",
+          "description": "OIDC issuer URL for external auth providers",
+          "format": "uri",
+          "examples": ["https://your-auth-provider.com"]
+        },
+        "oidc_audience": {
+          "type": "string",
+          "description": "OIDC audience (application ID)",
+          "examples": ["your-app-id"]
+        },
+        "allowed_origins": {
+          "type": "array",
+          "description": "CORS allowed origins. Defaults to localhost:3000 and localhost:8080 in dev mode.",
+          "items": {
+            "type": "string",
+            "format": "uri"
+          },
+          "default": ["http://localhost:3000", "http://localhost:8080"],
+          "examples": [["https://your-domain.com", "https://app.your-domain.com"]]
+        },
+        "dev_users": {
+          "type": "array",
+          "description": "Development users (only used when dev_mode = true). These are created with bcrypt-hashed passwords at startup.",
+          "items": {
+            "type": "object",
+            "description": "Development user configuration",
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "User ID"
+              },
+              "name": {
+                "type": "string",
+                "description": "Display name"
+              },
+              "email": {
+                "type": "string",
+                "description": "Email address",
+                "format": "email"
+              },
+              "password_hash": {
+                "type": "string",
+                "description": "Password hash (bcrypt). Use: htpasswd -nbBC 12 username password | cut -d: -f2"
+              },
+              "role": {
+                "type": "string",
+                "description": "User role",
+                "enum": ["user", "admin"],
+                "default": "user"
+              }
+            },
+            "required": ["id", "name", "email", "password_hash", "role"],
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
