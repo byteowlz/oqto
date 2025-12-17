@@ -2,6 +2,11 @@
 
 use std::sync::Arc;
 
+use axum::body::Body;
+use hyper_util::client::legacy::Client;
+use hyper_util::client::legacy::connect::HttpConnector;
+use hyper_util::rt::TokioExecutor;
+
 use crate::auth::AuthState;
 use crate::invite::InviteCodeRepository;
 use crate::session::SessionService;
@@ -18,6 +23,8 @@ pub struct AppState {
     pub invites: Arc<InviteCodeRepository>,
     /// Authentication state.
     pub auth: AuthState,
+    /// HTTP client for proxying requests to per-session services.
+    pub http_client: Client<HttpConnector, Body>,
 }
 
 impl AppState {
@@ -28,11 +35,15 @@ impl AppState {
         invites: InviteCodeRepository,
         auth: AuthState,
     ) -> Self {
+        let http_client: Client<HttpConnector, Body> =
+            Client::builder(TokioExecutor::new()).build_http();
+
         Self {
             sessions: Arc::new(sessions),
             users: Arc::new(users),
             invites: Arc::new(invites),
             auth,
+            http_client,
         }
     }
 }

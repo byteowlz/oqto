@@ -175,6 +175,60 @@ export function SessionsApp() {
     }
   }, [opencodeBaseUrl, selectedChatSessionId])
 
+  const [eventsTransportMode, setEventsTransportMode] = useState<"sse" | "polling">("sse")
+  const messageRefreshStateRef = useRef<{
+    timer: ReturnType<typeof setTimeout> | null
+    inFlight: boolean
+    pending: boolean
+    lastStartAt: number
+  }>({
+    timer: null,
+    inFlight: false,
+    pending: false,
+    lastStartAt: 0,
+  })
+
+  const requestMessageRefresh = useCallback(
+    (maxFrequencyMs: number) => {
+      const state = messageRefreshStateRef.current
+      state.pending = true
+
+      if (state.inFlight) return
+
+      const run = async () => {
+        const current = messageRefreshStateRef.current
+        if (current.timer) {
+          clearTimeout(current.timer)
+          current.timer = null
+        }
+        if (current.inFlight || !current.pending) return
+
+        current.pending = false
+        current.inFlight = true
+        current.lastStartAt = Date.now()
+        try {
+          await loadMessages()
+        } finally {
+          current.inFlight = false
+          if (current.pending) requestMessageRefresh(maxFrequencyMs)
+        }
+      }
+
+      const elapsed = Date.now() - state.lastStartAt
+      const wait = Math.max(0, maxFrequencyMs - elapsed)
+
+      if (wait === 0) {
+        void run()
+        return
+      }
+
+      if (!state.timer) {
+        state.timer = setTimeout(() => void run(), wait)
+      }
+    },
+    [loadMessages],
+  )
+
   const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
     messagesEndRef.current?.scrollIntoView({ behavior })
   }, [])
@@ -205,6 +259,12 @@ export function SessionsApp() {
     const unsubscribe = subscribeToEvents(opencodeBaseUrl, (event) => {
       const eventType = event.type as string
       
+      if (eventType === "transport.mode") {
+        const props = event.properties as { mode?: "sse" | "polling" } | null
+        if (props?.mode) setEventsTransportMode(props.mode)
+        return
+      }
+
       if (eventType === "session.idle") {
         setChatState("idle")
         loadMessages()
@@ -214,22 +274,48 @@ export function SessionsApp() {
       }
       // Refresh messages on any message event
       if (eventType?.startsWith("message")) {
-        loadMessages()
+        // Coalesce refreshes to avoid hammering the server during streaming updates.
+        requestMessageRefresh(1000)
       }
     })
     return unsubscribe
-  }, [opencodeBaseUrl, loadMessages, refreshOpencodeSessions])
+  }, [opencodeBaseUrl, loadMessages, refreshOpencodeSessions, requestMessageRefresh])
 
-  // Poll for message updates while assistant is working
+  // Fallback polling for message updates while assistant is working (when SSE isn't available).
   useEffect(() => {
     if (chatState !== "sending" || !opencodeBaseUrl || !selectedChatSessionId) return
-    
-    const interval = setInterval(() => {
-      loadMessages()
-    }, 500)
-    
-    return () => clearInterval(interval)
-  }, [chatState, opencodeBaseUrl, selectedChatSessionId, loadMessages])
+
+    if (eventsTransportMode === "sse") return
+
+    let active = true
+    let delayMs = 2000
+    let timer: ReturnType<typeof setTimeout> | null = null
+
+    const tick = async () => {
+      if (!active) return
+      await loadMessages()
+      if (!active) return
+      delayMs = Math.min(10_000, Math.round(delayMs * 1.3))
+      timer = window.setTimeout(() => void tick(), delayMs)
+    }
+
+    timer = window.setTimeout(() => void tick(), delayMs)
+
+    return () => {
+      active = false
+      if (timer) window.clearTimeout(timer)
+    }
+  }, [chatState, eventsTransportMode, opencodeBaseUrl, selectedChatSessionId, loadMessages])
+
+  useEffect(() => {
+    return () => {
+      const state = messageRefreshStateRef.current
+      if (state.timer) {
+        clearTimeout(state.timer)
+        state.timer = null
+      }
+    }
+  }, [])
 
   
 

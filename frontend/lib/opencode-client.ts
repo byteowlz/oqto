@@ -192,6 +192,7 @@ export function subscribeToEvents(
 ) {
   let active = true
   const statusBySession: Record<string, string> = {}
+  let transportMode: "sse" | "polling" = "sse"
 
   let pollTimeout: ReturnType<typeof setTimeout> | null = null
   let pollDelayMs = 2000
@@ -201,6 +202,13 @@ export function subscribeToEvents(
   const stopPolling = () => {
     if (pollTimeout) clearTimeout(pollTimeout)
     pollTimeout = null
+  }
+
+  const setTransportMode = (mode: "sse" | "polling", reason: string) => {
+    if (!active) return
+    if (transportMode === mode) return
+    transportMode = mode
+    callback({ type: "transport.mode", properties: { mode, reason } })
   }
 
   const emitStatusTransitions = (status: SessionStatusMap) => {
@@ -271,6 +279,7 @@ export function subscribeToEvents(
       eventSource = new EventSource(sseUrl, { withCredentials: true })
     } catch {
       eventSource = null
+      setTransportMode("polling", "eventsource_constructor_failed")
       poll()
       return
     }
@@ -278,6 +287,7 @@ export function subscribeToEvents(
     eventSource.onopen = () => {
       pollDelayMs = minPollDelayMs
       stopPolling()
+      setTransportMode("sse", "connected")
     }
 
     eventSource.onmessage = (event) => {
@@ -298,6 +308,7 @@ export function subscribeToEvents(
         eventSource.close()
         eventSource = null
       }
+      setTransportMode("polling", "eventsource_error")
       if (!pollTimeout) poll()
     }
   }

@@ -312,7 +312,20 @@ pub async fn get_tree(
         }
         ViewMode::Full => {
             // Full directory tree
-            let tree = build_tree(&state, &path, max_depth, query.show_hidden)?;
+            let state = state.clone();
+            let path = path.clone();
+            let show_hidden = query.show_hidden;
+
+            let tree = tokio::task::spawn_blocking(move || {
+                build_tree(&state, &path, max_depth, show_hidden)
+            })
+            .await
+            .map_err(|err| {
+                FileServerError::Io(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    err.to_string(),
+                ))
+            })??;
             Ok(Json(tree))
         }
     }

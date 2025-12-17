@@ -8,7 +8,6 @@ use axum::{
 };
 use futures::{SinkExt, StreamExt};
 use hyper_util::client::legacy::Client;
-use hyper_util::rt::TokioExecutor;
 use log::{debug, error, warn};
 use tokio_tungstenite::connect_async;
 
@@ -38,7 +37,14 @@ pub async fn proxy_opencode(
     }
 
     let starting = matches!(session.status, SessionStatus::Starting);
-    proxy_request(req, session.opencode_port as u16, &path, starting).await
+    proxy_request(
+        state.http_client.clone(),
+        req,
+        session.opencode_port as u16,
+        &path,
+        starting,
+    )
+    .await
 }
 
 /// Proxy HTTP requests to a session's file server.
@@ -63,11 +69,19 @@ pub async fn proxy_fileserver(
     }
 
     let starting = matches!(session.status, SessionStatus::Starting);
-    proxy_request(req, session.fileserver_port as u16, &path, starting).await
+    proxy_request(
+        state.http_client.clone(),
+        req,
+        session.fileserver_port as u16,
+        &path,
+        starting,
+    )
+    .await
 }
 
 /// Generic HTTP proxy function.
 async fn proxy_request(
+    client: Client<hyper_util::client::legacy::connect::HttpConnector, Body>,
     mut req: Request<Body>,
     target_port: u16,
     target_path: &str,
@@ -98,9 +112,6 @@ async fn proxy_request(
         })?;
         req.headers_mut().insert(axum::http::header::HOST, value);
     }
-
-    // Create HTTP client
-    let client: Client<_, Body> = Client::builder(TokioExecutor::new()).build_http();
 
     // Forward the request
     let response = client.request(req).await.map_err(|e| {
@@ -179,9 +190,9 @@ async fn handle_terminal_proxy(
     ttyd_port: u16,
 ) -> anyhow::Result<()> {
     use axum::extract::ws::Message as AxumMessage;
-    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
-    use tokio_tungstenite::tungstenite::Message as TungsteniteMessage;
     use tokio::time::{Duration, Instant};
+    use tokio_tungstenite::tungstenite::Message as TungsteniteMessage;
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 
     let ttyd_url = format!("ws://localhost:{}/ws", ttyd_port);
     debug!("Connecting to ttyd at {}", ttyd_url);
@@ -228,7 +239,9 @@ async fn handle_terminal_proxy(
     let init_msg = r#"{"AuthToken":"","columns":120,"rows":40}"#;
     debug!("Sending ttyd init message: {}", init_msg);
     ttyd_write
-        .send(TungsteniteMessage::Binary(init_msg.as_bytes().to_vec().into()))
+        .send(TungsteniteMessage::Binary(
+            init_msg.as_bytes().to_vec().into(),
+        ))
         .await?;
 
     // Split client socket
@@ -245,7 +258,10 @@ async fn handle_terminal_proxy(
                         // Send as resize command with '1' prefix
                         let mut prefixed = vec![b'1'];
                         prefixed.extend_from_slice(text_str.as_bytes());
-                        debug!("Sending resize to ttyd: {:?}", String::from_utf8_lossy(&prefixed));
+                        debug!(
+                            "Sending resize to ttyd: {:?}",
+                            String::from_utf8_lossy(&prefixed)
+                        );
                         if ttyd_write
                             .send(TungsteniteMessage::Binary(prefixed.into()))
                             .await
@@ -268,7 +284,12 @@ async fn handle_terminal_proxy(
                 }
                 Ok(AxumMessage::Binary(data)) => {
                     // Binary data - check if already prefixed or needs prefix
-                    let to_send = if !data.is_empty() && (data[0] == b'0' || data[0] == b'1' || data[0] == b'2' || data[0] == b'3') {
+                    let to_send = if !data.is_empty()
+                        && (data[0] == b'0'
+                            || data[0] == b'1'
+                            || data[0] == b'2'
+                            || data[0] == b'3')
+                    {
                         // Already has ttyd prefix, pass through
                         data.to_vec()
                     } else {
