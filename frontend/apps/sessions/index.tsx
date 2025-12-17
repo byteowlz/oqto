@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState, useRef } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
-import { FileText, Terminal, Eye, Send, RefreshCw, ChevronDown, User, Bot, Clock, ArrowDown, ListTodo, Square, CheckSquare, CircleDot, XCircle, MessageSquare } from "lucide-react"
+import { FileText, Terminal, Eye, Send, ChevronDown, User, Bot, Clock, ArrowDown, ListTodo, Square, CheckSquare, CircleDot, XCircle, MessageSquare, Loader2 } from "lucide-react"
 import { useApp } from "@/components/app-context"
 import { FileTreeView } from "@/app/sessions/FileTreeView"
 import { TerminalView } from "@/app/sessions/TerminalView"
@@ -71,6 +71,7 @@ function TabButton({
   icon: Icon,
   label,
   badge,
+  hideLabel,
 }: {
   activeView: ActiveView
   onSelect: (view: ActiveView) => void
@@ -78,6 +79,7 @@ function TabButton({
   icon: React.ComponentType<{ className?: string }>
   label: string
   badge?: number
+  hideLabel?: boolean
 }) {
   return (
     <Button
@@ -85,14 +87,15 @@ function TabButton({
       size="sm"
       onClick={() => onSelect(view)}
       className={cn(
-        "flex-1 justify-center rounded-md px-2 relative",
+        "flex-1 justify-center px-2 relative",
         activeView === view
           ? "bg-primary/15 text-foreground border border-primary"
           : "text-muted-foreground border border-transparent hover:border-border hover:bg-muted/50"
       )}
+      title={label}
     >
       <Icon className="w-4 h-4" />
-      <span className="hidden sm:inline ml-1">{label}</span>
+      {!hideLabel && <span className="hidden sm:inline ml-1">{label}</span>}
       {badge !== undefined && badge > 0 && (
         <span className="absolute -top-1 -right-1 w-4 h-4 bg-pink-500 text-white text-[10px] rounded-full flex items-center justify-center">
           {badge}
@@ -107,10 +110,10 @@ export function SessionsApp() {
     locale,
     workspaceSessions,
     selectedWorkspaceSessionId,
-    setSelectedWorkspaceSessionId,
-    refreshWorkspaceSessions,
     opencodeBaseUrl,
     selectedChatSessionId,
+    selectedChatSession,
+    refreshOpencodeSessions,
   } = useApp()
   const [messages, setMessages] = useState<OpenCodeMessageWithParts[]>([])
   const [messageInput, setMessageInput] = useState("")
@@ -176,6 +179,12 @@ export function SessionsApp() {
     messagesEndRef.current?.scrollIntoView({ behavior })
   }, [])
 
+  
+
+  useEffect(() => {
+    loadMessages()
+  }, [loadMessages])
+
   // Handle scroll events to show/hide scroll to bottom button
   const handleScroll = useCallback(() => {
     const container = messagesContainerRef.current
@@ -186,40 +195,43 @@ export function SessionsApp() {
     setShowScrollToBottom(distanceFromBottom > 100)
   }, [])
 
+  // Check scroll position when messages change
   useEffect(() => {
-    loadMessages()
-  }, [loadMessages])
-
-  // Auto-scroll to bottom when new messages arrive
-  useEffect(() => {
-    const container = messagesContainerRef.current
-    if (!container) return
-
-    const { scrollTop, scrollHeight, clientHeight } = container
-    const distanceFromBottom = scrollHeight - scrollTop - clientHeight
-    
-    // Only auto-scroll if user is near the bottom
-    if (distanceFromBottom < 200) {
-      scrollToBottom("smooth")
-    }
-  }, [messages, scrollToBottom])
+    handleScroll()
+  }, [messages, handleScroll])
 
   useEffect(() => {
     if (!opencodeBaseUrl) return
     const unsubscribe = subscribeToEvents(opencodeBaseUrl, (event) => {
       const eventType = event.type as string
-      if (eventType?.startsWith("session")) {
-        // Reset sending state when session becomes idle
-        if (eventType === "session.idle" || eventType === "session.status") {
-          setChatState("idle")
-        }
+      
+      if (eventType === "session.idle") {
+        setChatState("idle")
+        loadMessages()
+        refreshOpencodeSessions()
+      } else if (eventType === "session.busy") {
+        setChatState("sending")
       }
+      // Refresh messages on any message event
       if (eventType?.startsWith("message")) {
         loadMessages()
       }
     })
     return unsubscribe
-  }, [opencodeBaseUrl, loadMessages])
+  }, [opencodeBaseUrl, loadMessages, refreshOpencodeSessions])
+
+  // Poll for message updates while assistant is working
+  useEffect(() => {
+    if (chatState !== "sending" || !opencodeBaseUrl || !selectedChatSessionId) return
+    
+    const interval = setInterval(() => {
+      loadMessages()
+    }, 500)
+    
+    return () => clearInterval(interval)
+  }, [chatState, opencodeBaseUrl, selectedChatSessionId, loadMessages])
+
+  
 
   const selectedSession = useMemo(() => {
     if (!selectedWorkspaceSessionId) return undefined
@@ -248,17 +260,38 @@ export function SessionsApp() {
 
   const handleSend = async () => {
     if (!opencodeBaseUrl || !selectedChatSessionId || !messageInput.trim()) return
+    
+    const messageText = messageInput.trim()
+    
+    // Optimistic update - show user message immediately
+    const optimisticMessage: OpenCodeMessageWithParts = {
+      info: {
+        id: `temp-${Date.now()}`,
+        sessionID: selectedChatSessionId,
+        role: "user",
+        time: { created: Date.now() },
+      },
+      parts: [{ id: `temp-part-${Date.now()}`, sessionID: selectedChatSessionId, messageID: `temp-${Date.now()}`, type: "text", text: messageText }],
+    }
+    
+    setMessages((prev) => [...prev, optimisticMessage])
+    setMessageInput("")
     setChatState("sending")
     setStatus("")
+    
+    // Scroll to bottom immediately
+    setTimeout(() => scrollToBottom(), 50)
+    
     try {
       // Use async send - the response will come via SSE events
-      await sendMessageAsync(opencodeBaseUrl, selectedChatSessionId, messageInput.trim())
-      setMessageInput("")
-      // Scroll to bottom after sending
-      setTimeout(() => scrollToBottom(), 100)
+      await sendMessageAsync(opencodeBaseUrl, selectedChatSessionId, messageText)
+      // Refresh messages to get the real message IDs
+      loadMessages()
     } catch (err) {
       setStatus((err as Error).message)
       setChatState("idle")
+      // Remove optimistic message on error
+      setMessages((prev) => prev.filter((m) => !m.info.id.startsWith("temp-")))
     }
     // Don't set idle here - wait for SSE session.idle event
   }
@@ -276,31 +309,6 @@ export function SessionsApp() {
   // Chat content component (reused in both layouts)
   const ChatContent = (
     <div className="flex-1 flex flex-col gap-4 min-h-0">
-      <div className="flex flex-wrap items-center gap-3">
-        <label className="text-xs uppercase tracking-wide text-muted-foreground">Session</label>
-        <select
-          className="bg-muted border border-border text-sm text-foreground rounded-md px-3 py-2 outline-none focus:border-primary flex-1 min-w-0 max-w-xs"
-          value={selectedWorkspaceSessionId}
-          onChange={(e) => setSelectedWorkspaceSessionId(e.target.value)}
-        >
-          {workspaceSessions.map((session) => (
-            <option key={session.id} value={session.id}>
-              {session.container_name} [{session.status}]
-            </option>
-          ))}
-          {workspaceSessions.length === 0 && <option value="">{t.noSessions}</option>}
-        </select>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={refreshWorkspaceSessions}
-          className="gap-2 text-muted-foreground hover:text-foreground"
-        >
-          <RefreshCw className="w-4 h-4" />
-          <span className="hidden sm:inline">{t.refresh}</span>
-        </Button>
-      </div>
-
       <div className="relative flex-1 min-h-0">
         <div 
           ref={messagesContainerRef}
@@ -318,10 +326,10 @@ export function SessionsApp() {
         {showScrollToBottom && (
           <button
             onClick={() => scrollToBottom()}
-            className="absolute bottom-4 right-4 flex items-center gap-2 px-3 py-2 rounded-full bg-primary hover:bg-primary/90 text-primary-foreground text-sm font-medium shadow-lg transition-all duration-200"
+            className="absolute bottom-4 right-4 z-50 flex items-center gap-2 px-3 py-2 bg-primary hover:bg-primary/90 text-primary-foreground text-sm font-medium shadow-lg"
           >
             <ArrowDown className="w-4 h-4" />
-            <span className="hidden sm:inline">Jump to bottom</span>
+            Jump to bottom
           </button>
         )}
       </div>
@@ -332,7 +340,8 @@ export function SessionsApp() {
           value={messageInput}
           onChange={(e) => setMessageInput(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault()
               handleSend()
             }
           }}
@@ -358,13 +367,11 @@ export function SessionsApp() {
       <div className="flex items-center justify-between">
         <div className="min-w-0">
           <h1 className="text-lg sm:text-xl font-semibold text-foreground tracking-wider truncate">
-            {selectedSession ? selectedSession.container_name : t.title}
+            {selectedChatSession?.title || t.title}
           </h1>
-          {selectedSession && (
-            <p className="text-xs sm:text-sm text-muted-foreground truncate">
-              {t.statusPrefix} {selectedSession.status} · {new Date(selectedSession.created_at).toLocaleString()}
-            </p>
-          )}
+          <p className="text-xs text-muted-foreground truncate">
+            {selectedChatSession?.id || selectedChatSessionId}
+          </p>
         </div>
         {status && <span className="text-xs text-destructive flex-shrink-0">{status}</span>}
       </div>
@@ -392,17 +399,17 @@ export function SessionsApp() {
       {/* Desktop layout: side by side */}
       <div className="hidden lg:flex flex-1 min-h-0 gap-4">
         {/* Chat panel */}
-        <div className="flex-1 bg-card border border-border p-4 xl:p-6 flex flex-col min-h-0">
+        <div className="flex-[3] min-w-0 bg-card border border-border p-4 xl:p-6 flex flex-col min-h-0">
           {ChatContent}
         </div>
 
         {/* Sidebar panel */}
-        <div className="w-[320px] xl:w-[360px] shrink-0 bg-card border border-border flex flex-col min-h-0">
+        <div className="flex-[2] min-w-[320px] max-w-[420px] bg-card border border-border flex flex-col min-h-0">
           <div className="flex gap-1 p-2 border-b border-border">
-            <TabButton activeView={activeView} onSelect={setActiveView} view="files" icon={FileText} label={t.files} />
-            <TabButton activeView={activeView} onSelect={setActiveView} view="terminal" icon={Terminal} label={t.terminal} />
-            <TabButton activeView={activeView} onSelect={setActiveView} view="preview" icon={Eye} label={t.preview} />
-            <TabButton activeView={activeView} onSelect={setActiveView} view="tasks" icon={ListTodo} label={t.tasks} badge={incompleteTasks} />
+            <TabButton activeView={activeView} onSelect={setActiveView} view="files" icon={FileText} label={t.files} hideLabel />
+            <TabButton activeView={activeView} onSelect={setActiveView} view="terminal" icon={Terminal} label={t.terminal} hideLabel />
+            <TabButton activeView={activeView} onSelect={setActiveView} view="preview" icon={Eye} label={t.preview} hideLabel />
+            <TabButton activeView={activeView} onSelect={setActiveView} view="tasks" icon={ListTodo} label={t.tasks} badge={incompleteTasks} hideLabel />
           </div>
           <div className="flex-1 min-h-0 overflow-hidden">
              {activeView === "files" && <FileTreeView />}
@@ -527,7 +534,13 @@ function MessageGroupCard({ group }: { group: MessageGroup }) {
 
       {/* Content - render segments in order */}
       <div className="px-4 py-3 group space-y-3">
-        {segments.length === 0 && (
+        {segments.length === 0 && !isUser && (
+          <div className="flex items-center gap-3 text-muted-foreground text-sm">
+            <KnightRiderSpinner />
+            <span>Thinking...</span>
+          </div>
+        )}
+        {segments.length === 0 && isUser && (
           <span className="text-muted-foreground italic text-sm">No content</span>
         )}
         
@@ -723,6 +736,57 @@ function TodoListView({ todos, emptyMessage }: { todos: TodoItem[]; emptyMessage
           </div>
         ))}
       </div>
+    </div>
+  )
+}
+
+// Knight Rider style spinner component - bidirectional scanner animation
+function KnightRiderSpinner() {
+  const [frame, setFrame] = useState(0)
+  const dots = 8
+  const trailLength = 3
+  // Total frames: go from -trailLength to dots+trailLength, then back
+  const forwardFrames = dots + trailLength * 2
+  const totalFrames = forwardFrames * 2
+  
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setFrame((f) => (f + 1) % totalFrames)
+    }, 60)
+    return () => clearInterval(interval)
+  }, [totalFrames])
+  
+  // Calculate active position - starts off-screen left, goes right, then reverses
+  const isForward = frame < forwardFrames
+  const frameInDirection = isForward ? frame : totalFrames - frame
+  const activePos = frameInDirection - trailLength // Start at -trailLength (off screen)
+  
+  return (
+    <div className="flex items-center gap-[3px]">
+      {Array.from({ length: dots }).map((_, i) => {
+        // Distance from active position (negative = ahead, positive = behind/trail)
+        const distance = isForward ? activePos - i : i - activePos
+        
+        // Only show trail behind the movement direction
+        const isActive = distance === 0 && activePos >= 0 && activePos < dots
+        const isTrail1 = distance === 1 && activePos - 1 >= -1 && activePos < dots + 1
+        const isTrail2 = distance === 2 && activePos - 2 >= -2 && activePos < dots + 2
+        const isTrail3 = distance === 3 && activePos - 3 >= -3 && activePos < dots + 3
+        
+        return (
+          <div
+            key={i}
+            className={cn(
+              "w-[6px] h-[6px] rounded-sm transition-all duration-[50ms]",
+              isActive && "bg-primary scale-110 shadow-[0_0_8px_hsl(var(--primary)/0.8)]",
+              isTrail1 && !isActive && "bg-primary/60 scale-100",
+              isTrail2 && !isActive && !isTrail1 && "bg-primary/30 scale-95",
+              isTrail3 && !isActive && !isTrail1 && !isTrail2 && "bg-primary/15 scale-90",
+              !isActive && !isTrail1 && !isTrail2 && !isTrail3 && "bg-primary/5 scale-85"
+            )}
+          />
+        )
+      })}
     </div>
   )
 }

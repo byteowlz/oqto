@@ -16,9 +16,19 @@ import {
   X,
   Clock,
   Snowflake,
+  Pin,
+  Pencil,
+  Trash2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { AppProvider, useApp } from "@/components/app-context";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 import { cn } from "@/lib/utils";
 import "@/apps";
 
@@ -80,9 +90,9 @@ function AppShell() {
     locale,
     setLocale,
     resolveText,
-    workspaceSessions,
-    selectedWorkspaceSessionId,
-    setSelectedWorkspaceSessionId,
+    opencodeSessions,
+    selectedChatSessionId,
+    setSelectedChatSessionId,
   } = useApp();
   const [theme, setTheme] = useState<"light" | "dark">("dark");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -101,9 +111,25 @@ function AppShell() {
 
   // Handle session click - select session and switch to chats view
   const handleSessionClick = (sessionId: string) => {
-    setSelectedWorkspaceSessionId(sessionId);
+    setSelectedChatSessionId(sessionId);
     setActiveAppId("sessions");
     setMobileMenuOpen(false);
+  };
+
+  // Context menu handlers (placeholders for now)
+  const handlePinSession = (sessionId: string) => {
+    console.log("Pin session:", sessionId);
+    // TODO: Implement pin functionality
+  };
+
+  const handleRenameSession = (sessionId: string) => {
+    console.log("Rename session:", sessionId);
+    // TODO: Implement rename functionality
+  };
+
+  const handleDeleteSession = (sessionId: string) => {
+    console.log("Delete session:", sessionId);
+    // TODO: Implement delete functionality
   };
 
   useEffect(() => {
@@ -237,7 +263,7 @@ function AppShell() {
   };
 
   return (
-    <div className="flex min-h-screen bg-background text-foreground">
+    <div className="flex h-screen bg-background text-foreground overflow-hidden">
       {/* Mobile header */}
       <header
         className="fixed top-0 left-0 right-0 h-14 flex items-center justify-between px-4 z-50 md:hidden"
@@ -253,12 +279,13 @@ function AppShell() {
           <Menu className="w-5 h-5" />
         </Button>
         <Image
-          src="/Logo_Green-02.png"
-          alt="Fraunhofer IEM"
-          width={160}
+          src="/octo_logo_banner_white.svg"
+          alt="Workspace"
+          width={32}
           height={32}
-          className="h-8 w-auto"
+          className="h-8 w-8"
           priority
+          unoptimized
         />
       </header>
 
@@ -270,12 +297,13 @@ function AppShell() {
         >
           <div className="h-14 flex items-center justify-between px-4">
             <Image
-              src="/Logo_Green-02.png"
-              alt="Fraunhofer IEM"
-              width={160}
+              src="/octo_logo_banner_white.svg"
+              alt="Workspace"
+              width={32}
               height={32}
-              className="h-8 w-auto"
+              className="h-8 w-8"
               priority
+              unoptimized
             />
             <Button
               variant="ghost"
@@ -312,36 +340,65 @@ function AppShell() {
             })}
 
             {/* Session history in mobile menu */}
-            {workspaceSessions.length > 0 && (
+            {opencodeSessions.length > 0 && (
               <div className="pt-4 border-t border-sidebar-border">
                 <div className="flex items-center gap-2 px-4 py-2">
                   <span className="text-xs uppercase tracking-wide text-muted-foreground">
                     {locale === "de" ? "Verlauf" : "History"}
                   </span>
                   <span className="text-xs text-muted-foreground/50">
-                    ({workspaceSessions.length})
+                    ({opencodeSessions.length})
                   </span>
                 </div>
                 <div className="space-y-1">
-                  {workspaceSessions.slice(0, 10).map((session) => {
-                    const isSelected =
-                      selectedWorkspaceSessionId === session.id;
+                  {opencodeSessions.slice(0, 10).map((session) => {
+                    const isSelected = selectedChatSessionId === session.id;
+                    const updatedAt = session.time?.updated
+                      ? new Date(session.time.updated)
+                      : null;
                     return (
-                      <button
-                        key={session.id}
-                        onClick={() => handleSessionClick(session.id)}
-                        className={cn(
-                          "w-full px-4 py-3 text-left transition-colors",
-                          isSelected
-                            ? "bg-primary/15 text-foreground"
-                            : "text-muted-foreground hover:bg-sidebar-accent",
-                        )}
-                      >
-                        <div className="text-sm truncate">
-                          {session.container_name ||
-                            `Session ${session.id.slice(0, 8)}`}
-                        </div>
-                      </button>
+                      <ContextMenu key={session.id}>
+                        <ContextMenuTrigger asChild>
+                          <button
+                            onClick={() => handleSessionClick(session.id)}
+                            className={cn(
+                              "w-full px-4 py-3 text-left transition-colors",
+                              isSelected
+                                ? "bg-primary/15 text-foreground"
+                                : "text-muted-foreground hover:bg-sidebar-accent",
+                            )}
+                          >
+                            <div className="text-sm truncate">
+                              {session.title || "Untitled"}
+                            </div>
+                            <div className="text-xs text-muted-foreground/50 truncate">
+                              {session.id.slice(0, 12)}
+                            </div>
+                          </button>
+                        </ContextMenuTrigger>
+                        <ContextMenuContent>
+                          <ContextMenuItem
+                            onClick={() => handlePinSession(session.id)}
+                          >
+                            <Pin className="w-4 h-4 mr-2" />
+                            {locale === "de" ? "Anpinnen" : "Pin"}
+                          </ContextMenuItem>
+                          <ContextMenuItem
+                            onClick={() => handleRenameSession(session.id)}
+                          >
+                            <Pencil className="w-4 h-4 mr-2" />
+                            {locale === "de" ? "Umbenennen" : "Rename"}
+                          </ContextMenuItem>
+                          <ContextMenuSeparator />
+                          <ContextMenuItem
+                            variant="destructive"
+                            onClick={() => handleDeleteSession(session.id)}
+                          >
+                            <Trash2 className="w-4 h-4 mr-2" />
+                            {locale === "de" ? "Loschen" : "Delete"}
+                          </ContextMenuItem>
+                        </ContextMenuContent>
+                      </ContextMenu>
                     );
                   })}
                 </div>
@@ -411,12 +468,13 @@ function AppShell() {
         <div className="h-16 w-full flex items-center justify-between px-4">
           {!sidebarCollapsed && (
             <Image
-              src="/Logo_Green-02.png"
-              alt="Fraunhofer IEM"
-              width={200}
-              height={40}
-              className="h-10 w-auto"
+              src="/octo_logo_white.svg"
+              alt="Workspace"
+              width={96}
+              height={96}
+              className="flex flex-row flex-centered h-15 w-15"
               priority
+              unoptimized
             />
           )}
           <Button
@@ -476,48 +534,78 @@ function AppShell() {
         </nav>
 
         {/* Session history list */}
-        {!sidebarCollapsed && workspaceSessions.length > 0 && (
+        {!sidebarCollapsed && opencodeSessions.length > 0 && (
           <div className="w-full px-4 mt-4 flex-1 min-h-0 flex flex-col">
             <div className="flex items-center gap-2 py-2 border-t border-sidebar-border">
               <span className="text-xs uppercase tracking-wide text-muted-foreground">
                 {locale === "de" ? "Verlauf" : "History"}
               </span>
               <span className="text-xs text-muted-foreground/50">
-                ({workspaceSessions.length})
+                ({opencodeSessions.length})
               </span>
             </div>
             <div className="flex-1 overflow-y-auto space-y-1 pr-1 -mr-1">
-              {workspaceSessions.slice(0, 20).map((session) => {
-                const isSelected = selectedWorkspaceSessionId === session.id;
-                const createdAt = session.created_at
-                  ? new Date(session.created_at)
+              {opencodeSessions.slice(0, 20).map((session) => {
+                const isSelected = selectedChatSessionId === session.id;
+                const updatedAt = session.time?.updated
+                  ? new Date(session.time.updated)
                   : null;
                 return (
-                  <button
-                    key={session.id}
-                    onClick={() => handleSessionClick(session.id)}
-                    className={cn(
-                      "w-full px-3 py-2 text-left rounded-none transition-colors",
-                      isSelected
-                        ? "bg-primary/15 border border-primary text-foreground"
-                        : "text-muted-foreground hover:bg-sidebar-accent border border-transparent",
-                    )}
-                  >
-                    <div className="text-sm truncate font-medium">
-                      {session.container_name ||
-                        `Session ${session.id.slice(0, 8)}`}
-                    </div>
-                    {createdAt && (
-                      <div className="flex items-center gap-1 text-[10px] text-muted-foreground mt-0.5">
-                        <Clock className="w-3 h-3" />
-                        {createdAt.toLocaleDateString()}{" "}
-                        {createdAt.toLocaleTimeString([], {
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        })}
-                      </div>
-                    )}
-                  </button>
+                  <ContextMenu key={session.id}>
+                    <ContextMenuTrigger asChild>
+                      <button
+                        onClick={() => handleSessionClick(session.id)}
+                        className={cn(
+                          "w-full px-3 py-2 text-left transition-colors",
+                          isSelected
+                            ? "bg-primary/15 border border-primary text-foreground"
+                            : "text-muted-foreground hover:bg-sidebar-accent border border-transparent",
+                        )}
+                      >
+                        <div className="text-sm truncate font-medium">
+                          {session.title || "Untitled"}
+                        </div>
+                        <div className="flex items-center gap-1 text-[10px] text-muted-foreground mt-0.5">
+                          <span className="truncate">
+                            {session.id.slice(0, 12)}
+                          </span>
+                          {updatedAt && (
+                            <>
+                              <span className="mx-1">·</span>
+                              <Clock className="w-3 h-3 flex-shrink-0" />
+                              {updatedAt.toLocaleDateString()}{" "}
+                              {updatedAt.toLocaleTimeString([], {
+                                hour: "2-digit",
+                                minute: "2-digit",
+                              })}
+                            </>
+                          )}
+                        </div>
+                      </button>
+                    </ContextMenuTrigger>
+                    <ContextMenuContent>
+                      <ContextMenuItem
+                        onClick={() => handlePinSession(session.id)}
+                      >
+                        <Pin className="w-4 h-4 mr-2" />
+                        {locale === "de" ? "Anpinnen" : "Pin"}
+                      </ContextMenuItem>
+                      <ContextMenuItem
+                        onClick={() => handleRenameSession(session.id)}
+                      >
+                        <Pencil className="w-4 h-4 mr-2" />
+                        {locale === "de" ? "Umbenennen" : "Rename"}
+                      </ContextMenuItem>
+                      <ContextMenuSeparator />
+                      <ContextMenuItem
+                        variant="destructive"
+                        onClick={() => handleDeleteSession(session.id)}
+                      >
+                        <Trash2 className="w-4 h-4 mr-2" />
+                        {locale === "de" ? "Loschen" : "Delete"}
+                      </ContextMenuItem>
+                    </ContextMenuContent>
+                  </ContextMenu>
                 );
               })}
             </div>
@@ -525,7 +613,7 @@ function AppShell() {
         )}
 
         {/* Collapsed session indicator */}
-        {sidebarCollapsed && workspaceSessions.length > 0 && (
+        {sidebarCollapsed && opencodeSessions.length > 0 && (
           <div className="w-full px-2 mt-4">
             <div className="border-t border-sidebar-border pt-2">
               <button
@@ -567,7 +655,7 @@ function AppShell() {
             <Globe2 className="w-4 h-4 shrink-0" />
             {!sidebarCollapsed && (
               <span className="text-sm font-medium">
-                {locale === "de" ? "ENG" : "DE"}
+                {locale === "de" ? "EN" : "DE"}
               </span>
             )}
           </Button>
@@ -659,11 +747,11 @@ function AppShell() {
         style={{ backgroundColor: shellBg }}
       >
         <div
-          className={`flex-1 min-h-0 overflow-auto pt-14 md:pt-0 transition-all duration-200 ${
+          className={`flex-1 min-h-0 overflow-hidden pt-14 md:pt-0 transition-all duration-200 ${
             sidebarCollapsed ? "md:pl-[4.5rem]" : "md:pl-[16.25rem]"
           }`}
         >
-          <div className="min-h-full w-full">
+          <div className="h-full w-full">
             {ActiveComponent ? <ActiveComponent /> : <EmptyState />}
           </div>
         </div>

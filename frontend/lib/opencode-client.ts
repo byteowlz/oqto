@@ -167,22 +167,149 @@ export async function createSession(opencodeBaseUrl: string, title?: string, par
 
 export type EventCallback = (event: { type: string; properties: unknown }) => void
 
-export function subscribeToEvents(opencodeBaseUrl: string, callback: EventCallback) {
-  const source = new EventSource(`${base(opencodeBaseUrl)}/event`)
-  
-  source.onmessage = (event) => {
-    try {
-      const parsed = JSON.parse(event.data)
-      callback(parsed)
-    } catch {
-      // SSE can send non-JSON data like connection keep-alives, ignore those
-      console.debug("Non-JSON SSE data:", event.data)
+type SessionStatusMap = Record<string, { status: string }>
+
+function tryParseJson(value: string): unknown | null {
+  try {
+    return JSON.parse(value) as unknown
+  } catch {
+    return null
+  }
+}
+
+// Subscribe to events.
+// Prefer SSE (/event) and fall back to polling (/session/status) with a conservative interval.
+function extractWorkspaceSessionIdFromOpencodeBaseUrl(opencodeBaseUrl: string): string | null {
+  const match = opencodeBaseUrl.match(/\/session\/([^/]+)\/code(?:\/)?$/)
+  return match ? match[1] : null
+}
+
+export function subscribeToEvents(
+  opencodeBaseUrl: string,
+  callback: EventCallback,
+  authToken?: string | null,
+  directControlPlaneUrl?: string,
+) {
+  let active = true
+  const statusBySession: Record<string, string> = {}
+
+  let pollTimeout: ReturnType<typeof setTimeout> | null = null
+  let pollDelayMs = 2000
+  const minPollDelayMs = 2000
+  const maxPollDelayMs = 15000
+
+  const stopPolling = () => {
+    if (pollTimeout) clearTimeout(pollTimeout)
+    pollTimeout = null
+  }
+
+  const emitStatusTransitions = (status: SessionStatusMap) => {
+    for (const [sessionId, sessionStatus] of Object.entries(status)) {
+      const prevStatus = statusBySession[sessionId]
+      const currentStatus = sessionStatus.status
+
+      if (prevStatus !== currentStatus) {
+        if (currentStatus === "idle") {
+          callback({ type: "session.idle", properties: { sessionId } })
+        } else if (currentStatus === "busy") {
+          callback({ type: "session.busy", properties: { sessionId } })
+        }
+        callback({ type: "message.updated", properties: { sessionId } })
+      }
+
+      statusBySession[sessionId] = currentStatus
     }
   }
-  
-  source.onerror = (err) => {
-    console.error("Opencode SSE error", err)
+
+  const poll = async () => {
+    if (!active) return
+
+    try {
+      const statusBase = (() => {
+        const direct = trimTrailingSlash(directControlPlaneUrl ?? "")
+        const sessionId = extractWorkspaceSessionIdFromOpencodeBaseUrl(opencodeBaseUrl)
+        if (direct && sessionId) return `${direct}/session/${sessionId}/code`
+        return base(opencodeBaseUrl)
+      })()
+
+      const statusUrl = new URL(
+        `${statusBase}/session/status`,
+        typeof window === "undefined" ? "http://localhost" : window.location.href,
+      )
+      if (authToken) statusUrl.searchParams.set("token", authToken)
+      const res = await fetch(statusUrl.toString(), { cache: "no-store" })
+      if (res.ok) {
+        const status = (await res.json()) as SessionStatusMap
+        emitStatusTransitions(status)
+        pollDelayMs = minPollDelayMs
+      } else {
+        pollDelayMs = Math.min(maxPollDelayMs, Math.round(pollDelayMs * 1.5))
+      }
+    } catch {
+      pollDelayMs = Math.min(maxPollDelayMs, Math.round(pollDelayMs * 1.5))
+    }
+
+    if (!active) return
+    pollTimeout = setTimeout(poll, pollDelayMs)
   }
-  
-  return () => source.close()
+
+  let eventSource: EventSource | null = null
+  const sseUrl = (() => {
+    const direct = trimTrailingSlash(directControlPlaneUrl ?? "")
+    const sessionId = extractWorkspaceSessionIdFromOpencodeBaseUrl(opencodeBaseUrl)
+    const sseBase = direct && sessionId ? `${direct}/session/${sessionId}/code` : base(opencodeBaseUrl)
+    const url = new URL(
+      `${sseBase}/event`,
+      typeof window === "undefined" ? "http://localhost" : window.location.href,
+    )
+    if (authToken) url.searchParams.set("token", authToken)
+    return url.toString()
+  })()
+
+  const startSse = () => {
+    try {
+      eventSource = new EventSource(sseUrl, { withCredentials: true })
+    } catch {
+      eventSource = null
+      poll()
+      return
+    }
+
+    eventSource.onopen = () => {
+      pollDelayMs = minPollDelayMs
+      stopPolling()
+    }
+
+    eventSource.onmessage = (event) => {
+      const parsed = tryParseJson(event.data)
+
+      if (parsed && typeof parsed === "object" && parsed !== null && "type" in parsed) {
+        const typed = parsed as { type: string; properties?: unknown }
+        callback({ type: typed.type, properties: typed.properties ?? typed })
+        return
+      }
+
+      callback({ type: "message.updated", properties: parsed ?? { raw: event.data } })
+    }
+
+    eventSource.onerror = () => {
+      // If SSE isn't available (dev proxy/config), fall back to polling.
+      if (eventSource) {
+        eventSource.close()
+        eventSource = null
+      }
+      if (!pollTimeout) poll()
+    }
+  }
+
+  startSse()
+
+  return () => {
+    active = false
+    stopPolling()
+    if (eventSource) {
+      eventSource.close()
+      eventSource = null
+    }
+  }
 }

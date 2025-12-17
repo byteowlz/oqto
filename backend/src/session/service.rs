@@ -247,13 +247,74 @@ impl SessionService {
         // Clear the virtual key from the session record (security: don't persist it)
         self.repo.clear_eavs_virtual_key(&session.id).await?;
 
-        // Wait a moment for services to start
-        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+        // Wait for core services to become reachable before marking the session running.
+        // This avoids clients receiving 502s due to fixed-delay startup races.
+        if let Err(e) = self
+            .wait_for_session_services(session.opencode_port as u16, session.ttyd_port as u16)
+            .await
+        {
+            // Best-effort cleanup: stop/remove the container, then surface the error.
+            if let Err(stop_err) = self.runtime.stop_container(&container_id, Some(10)).await {
+                warn!("Failed to stop container {} after readiness failure: {:?}", container_id, stop_err);
+            }
+            if let Err(rm_err) = self.runtime.remove_container(&container_id, true).await {
+                warn!("Failed to remove container {} after readiness failure: {:?}", container_id, rm_err);
+            }
+            return Err(e);
+        }
 
         // Mark as running
         self.repo.mark_running(&session.id).await?;
 
         Ok(())
+    }
+
+    async fn wait_for_session_services(&self, opencode_port: u16, ttyd_port: u16) -> Result<()> {
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(2))
+            .build()
+            .context("building readiness HTTP client")?;
+
+        let opencode_url = format!("http://localhost:{}/session", opencode_port);
+        let ttyd_url = format!("http://localhost:{}/", ttyd_port);
+
+        let start = tokio::time::Instant::now();
+        let timeout = tokio::time::Duration::from_secs(30);
+        let mut attempts: u32 = 0;
+
+        loop {
+            attempts += 1;
+
+            let opencode_ok = client
+                .get(&opencode_url)
+                .send()
+                .await
+                .map(|res| res.status().is_success())
+                .unwrap_or(false);
+
+            let ttyd_ok = client
+                .get(&ttyd_url)
+                .send()
+                .await
+                .map(|res| res.status().is_success())
+                .unwrap_or(false);
+
+            if opencode_ok && ttyd_ok {
+                return Ok(());
+            }
+
+            if start.elapsed() >= timeout {
+                anyhow::bail!(
+                    "session services not ready after {} attempts over {:?} (opencode_ok={}, ttyd_ok={})",
+                    attempts,
+                    timeout,
+                    opencode_ok,
+                    ttyd_ok
+                );
+            }
+
+            tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+        }
     }
 
     /// Stop a session and its container.
@@ -305,12 +366,23 @@ impl SessionService {
 
     /// Get a session by ID.
     pub async fn get_session(&self, session_id: &str) -> Result<Option<Session>> {
-        self.repo.get(session_id).await
+        let session = self.repo.get(session_id).await?;
+        match session {
+            Some(session) => Ok(Some(self.reconcile_session_container_state(session).await?)),
+            None => Ok(None),
+        }
     }
 
     /// List all sessions.
     pub async fn list_sessions(&self) -> Result<Vec<Session>> {
-        self.repo.list().await
+        let sessions = self.repo.list().await?;
+        let mut reconciled = Vec::with_capacity(sessions.len());
+
+        for session in sessions {
+            reconciled.push(self.reconcile_session_container_state(session).await?);
+        }
+
+        Ok(reconciled)
     }
 
     /// List active sessions.
@@ -346,11 +418,11 @@ impl SessionService {
         for session in active {
             if let Some(ref container_id) = session.container_id {
                 // Check if container still exists
-                match self.runtime.get_container(container_id).await {
-                    Ok(Some(_)) => continue, // Container exists, skip
-                    Ok(None) => {
+                match self.runtime.container_state_status(container_id).await {
+                    Ok(Some(status)) if status == "running" => continue, // Container exists, skip
+                    Ok(Some(_)) | Ok(None) => {
                         warn!(
-                            "Container {} for session {} no longer exists, marking as stopped",
+                            "Container {} for session {} is no longer running, marking as stopped",
                             container_id, session.id
                         );
                         self.repo.mark_stopped(&session.id).await?;
@@ -367,5 +439,50 @@ impl SessionService {
         }
 
         Ok(cleaned)
+    }
+
+    async fn reconcile_session_container_state(&self, session: Session) -> Result<Session> {
+        if !session.is_active() {
+            return Ok(session);
+        }
+
+        let Some(ref container_id) = session.container_id else {
+            return Ok(session);
+        };
+
+        match self.runtime.container_state_status(container_id).await {
+            Ok(Some(status)) if status == "running" => Ok(session),
+            Ok(Some(status)) if status == "created" || status == "restarting" => {
+                if matches!(session.status, SessionStatus::Running) {
+                    self.repo
+                        .update_status(&session.id, SessionStatus::Starting)
+                        .await?;
+                    return Ok(self
+                        .repo
+                        .get(&session.id)
+                        .await?
+                        .unwrap_or(session));
+                }
+                Ok(session)
+            }
+            Ok(Some(status)) => {
+                let message = format!("container not running (status={})", status);
+                self.repo.mark_failed(&session.id, &message).await?;
+                Ok(self.repo.get(&session.id).await?.unwrap_or(session))
+            }
+            Ok(None) => {
+                self.repo
+                    .mark_failed(&session.id, "container not found")
+                    .await?;
+                Ok(self.repo.get(&session.id).await?.unwrap_or(session))
+            }
+            Err(e) => {
+                warn!(
+                    "Failed to check container {} for session {}: {:?}",
+                    container_id, session.id, e
+                );
+                Ok(session)
+            }
+        }
     }
 }

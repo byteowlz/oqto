@@ -1,0 +1,35 @@
+# Brand configuration for iem
+
+id = "iem"
+default_language = "en"
+languages = ["en"]
+
+[name]
+en = "iem"
+
+[description]
+en = "Brand description"
+
+[colors]
+primary = "#0f172a"
+secondary = "#64748b"
+accent = "#38bdf8"
+background = "#ffffff"
+text = "#0b1120"
+
+[logos]
+primary = "logo.svg"
+# monochrome = "logo-mono.svg"
+
+[typography.body]
+family = "Inter"
+# files = ["fonts/Inter-Regular.ttf"]
+
+[typography.heading]
+family = "Inter"
+# files = ["fonts/Inter-Bold.ttf"]
+
+[contact]
+# company = { en = "iem" }
+# email = "hello@example.com"
+# website = "https://example.com"

@@ -70,10 +70,10 @@ RUN pacman -Syu --noconfirm && \
   ttyd \
   && pacman -Scc --noconfirm
 
-# Copy binaries from builder stage
-COPY --from=rust-builder /build/fileserver/target/release/fileserver /usr/local/bin/fileserver
-COPY --from=rust-builder /build/eavs/target/release/eavs /usr/local/bin/eavs
-RUN chmod +x /usr/local/bin/fileserver /usr/local/bin/eavs
+# Copy fileserver binary from builder stage
+# Note: EAVS runs on the host, not in containers - containers connect via EAVS_URL
+COPY --from=rust-builder /build/target/release/fileserver /usr/local/bin/fileserver
+RUN chmod +x /usr/local/bin/fileserver
 
 # Create non-root user
 RUN groupadd --gid ${USER_GID} ${USERNAME} && \
@@ -117,11 +117,10 @@ RUN chmod +x /home/${USERNAME}/entrypoint.sh
 # Working directory
 WORKDIR /home/${USERNAME}/workspace
 
-# Expose ports for opencode serve, file server, ttyd terminal, and eavs proxy
+# Expose ports for opencode serve, file server, and ttyd terminal
 EXPOSE ${OPENCODE_PORT}
 EXPOSE ${FILESERVER_PORT}
 EXPOSE ${TTYD_PORT}
-EXPOSE ${EAVS_PORT}
 
 # Entrypoint
 ENTRYPOINT ["/home/dev/entrypoint.sh"]

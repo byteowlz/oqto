@@ -1,11 +1,56 @@
 "use client"
 
-import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react"
-import { Terminal, FitAddon, Ghostty } from "ghostty-web"
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState, useCallback, useMemo } from "react"
+import { Terminal, FitAddon, init } from "ghostty-web"
 
-const ghosttyReady: Promise<Ghostty> = (Ghostty as unknown as { loadFromPath: (path: string) => Promise<Ghostty> }).loadFromPath(
-  "/ghostty-vt.wasm",
-)
+type SessionConnection = {
+  socket: WebSocket | null
+  terminal: Terminal | null
+  fitAddon: FitAddon | null
+  isConnecting: boolean
+  reconnectTimeout: ReturnType<typeof setTimeout> | null
+  reconnectAttempts: number
+}
+
+// Global singleton per workspace session (container)
+// Key: sessionId, Value: { socket, terminal, fitAddon, isConnecting }
+// Note: ghostty-web terminals cannot be re-opened once opened; they must be disposed on unmount.
+// We still keep this map to avoid reconnect storms when props churn, but we do clean up on unmount.
+const sessionConnections: Map<string, SessionConnection> = new Map()
+
+function getOrCreateSession(sessionId: string) {
+  if (!sessionConnections.has(sessionId)) {
+    sessionConnections.set(sessionId, {
+      socket: null,
+      terminal: null,
+      fitAddon: null,
+      isConnecting: false,
+      reconnectTimeout: null,
+      reconnectAttempts: 0,
+    })
+  }
+  return sessionConnections.get(sessionId)!
+}
+
+// Extract sessionId from wsUrl like "/session/{sessionId}/term"
+function extractSessionId(wsUrl: string): string {
+  const match = wsUrl.match(/\/session\/([^/]+)\//)
+  return match ? match[1] : "default"
+}
+
+// Track initialization state globally
+let ghosttyInitialized = false
+let ghosttyInitPromise: Promise<void> | null = null
+
+async function ensureGhosttyInit(): Promise<void> {
+  if (ghosttyInitialized) return
+  if (!ghosttyInitPromise) {
+    ghosttyInitPromise = init().then(() => {
+      ghosttyInitialized = true
+    })
+  }
+  return ghosttyInitPromise
+}
 
 export type GhosttyTerminalHandle = {
   focus: () => void
@@ -14,109 +59,297 @@ export type GhosttyTerminalHandle = {
 
 interface GhosttyTerminalProps {
   wsUrl: string
+  authToken?: string
   fontFamily?: string
   fontSize?: number
   className?: string
 }
 
 export const GhosttyTerminal = forwardRef<GhosttyTerminalHandle, GhosttyTerminalProps>(
-  ({ wsUrl, fontFamily = "JetBrains Mono", fontSize = 14, className }, ref) => {
+  ({ wsUrl, authToken, fontFamily = "JetBrainsMono Nerd Font", fontSize = 14, className }, ref) => {
     const containerRef = useRef<HTMLDivElement | null>(null)
-    const terminalRef = useRef<Terminal | null>(null)
-    const fitRef = useRef<FitAddon | null>(null)
-    const socketRef = useRef<WebSocket | null>(null)
-    const resizeObserver = useRef<ResizeObserver | null>(null)
-    const [status, setStatus] = useState<"connecting" | "connected" | "error">("connecting")
-    const decoderRef = useRef<TextDecoder | null>(null)
+    const [status, setStatus] = useState<"waiting" | "connecting" | "connected" | "error">("waiting")
+    const mountedRef = useRef(true)
 
-    useImperativeHandle(ref, () => ({
-      focus: () => terminalRef.current?.focus(),
-      blur: () => terminalRef.current?.blur(),
-    }))
+    const wsUrlRef = useRef(wsUrl)
+    const authTokenRef = useRef(authToken)
+    const fontFamilyRef = useRef(fontFamily)
+    const fontSizeRef = useRef(fontSize)
 
     useEffect(() => {
-      let disposed = false
+      wsUrlRef.current = wsUrl
+      authTokenRef.current = authToken
+      fontFamilyRef.current = fontFamily
+      fontSizeRef.current = fontSize
+    }, [wsUrl, authToken, fontFamily, fontSize])
 
-      async function bootstrap() {
-        const ghostty = await ghosttyReady
-        if (!decoderRef.current) {
-          decoderRef.current = new TextDecoder()
+    // Extract sessionId from wsUrl - memoize to avoid recalculation
+    const sessionId = useMemo(() => extractSessionId(wsUrl), [wsUrl])
+    
+    // Get the session state (creates if doesn't exist)
+    const getSession = useCallback(() => getOrCreateSession(sessionId), [sessionId])
+
+    useImperativeHandle(ref, () => ({
+      focus: () => getSession().terminal?.focus(),
+      blur: () => getSession().terminal?.blur(),
+    }))
+
+    // Stable callback for handling messages
+    const handleMessage = useCallback(async (event: MessageEvent) => {
+      const session = getSession()
+      if (!session.terminal) return
+      if (typeof event.data === "string") {
+        session.terminal.write(event.data)
+      } else if (event.data instanceof ArrayBuffer) {
+        session.terminal.write(new Uint8Array(event.data))
+      } else if (event.data instanceof Blob) {
+        const buffer = await event.data.arrayBuffer()
+        session.terminal.write(new Uint8Array(buffer))
+      }
+    }, [getSession])
+
+    useEffect(() => {
+      mountedRef.current = true
+      const session = getSession()
+
+      const clearReconnect = () => {
+        if (session.reconnectTimeout) {
+          clearTimeout(session.reconnectTimeout)
+          session.reconnectTimeout = null
         }
-        if (disposed || !containerRef.current) return
-
-
-        const terminal = new Terminal({
-          ghostty,
-          fontFamily,
-          fontSize,
-          cursorBlink: true,
-          convertEol: true,
-          theme: {
-            background: "#0b0d12",
-            foreground: "#f5f5f5",
-          },
-        })
-        terminalRef.current = terminal
-        const fitAddon = new FitAddon()
-        fitRef.current = fitAddon
-        terminal.loadAddon(fitAddon)
-        terminal.open(containerRef.current)
-        fitAddon.fit()
-        resizeObserver.current = new ResizeObserver(() => {
-          fitAddon.fit()
-        })
-        resizeObserver.current.observe(containerRef.current)
-
-        terminal.onData((data) => {
-          socketRef.current?.send(data)
-        })
-
-        connectWs()
       }
 
-      function connectWs() {
-        const socket = new WebSocket(wsUrl)
-        socketRef.current = socket
-        setStatus("connecting")
-        socket.onopen = () => {
-          setStatus("connected")
-        }
-        socket.onmessage = async (event) => {
-          if (!terminalRef.current) return
-          if (typeof event.data === "string") {
-            terminalRef.current.write(event.data)
-          } else if (event.data instanceof ArrayBuffer) {
-            terminalRef.current.write(decoderRef.current?.decode(event.data) ?? "")
-          } else if (event.data instanceof Blob) {
-            const buffer = await event.data.arrayBuffer()
-            terminalRef.current.write(decoderRef.current?.decode(buffer) ?? "")
+      const scheduleReconnect = (why: string) => {
+        if (!mountedRef.current) return
+        const currentWsUrl = wsUrlRef.current
+        if (!currentWsUrl) return
+
+        clearReconnect()
+        session.reconnectAttempts += 1
+        const baseDelay = Math.min(10_000, 250 * 2 ** Math.min(session.reconnectAttempts, 6))
+        const jitter = Math.floor(Math.random() * 200)
+        const delay = baseDelay + jitter
+        console.log(`Terminal [${sessionId}]: reconnecting in ${delay}ms (${why})`)
+        session.reconnectTimeout = setTimeout(() => {
+          session.reconnectTimeout = null
+          void setup()
+        }, delay)
+      }
+
+      async function setup() {
+        const currentWsUrl = wsUrlRef.current
+        const currentAuth = authTokenRef.current
+
+        // Check socket state more carefully
+        const socketState = session.socket?.readyState
+        const isSocketUsable = socketState === WebSocket.CONNECTING || socketState === WebSocket.OPEN
+        
+        // Skip if already have a usable socket
+        if (isSocketUsable) {
+          console.log(`Terminal [${sessionId}]: socket already ${socketState === WebSocket.OPEN ? 'open' : 'connecting'}, skipping`)
+          if (socketState === WebSocket.OPEN) {
+            setStatus("connected")
+          } else {
+            setStatus("connecting")
           }
+          return
         }
-        socket.onerror = (error) => {
-          console.error("terminal websocket error", error)
-          setStatus("error")
+        
+        // Reset isConnecting if socket is not usable (closed or null)
+        if (!isSocketUsable) {
+          session.isConnecting = false
         }
-        socket.onclose = () => {
-          setStatus("error")
+
+        if (!currentWsUrl) {
+          if (mountedRef.current) setStatus("waiting")
+          console.log(`Terminal [${sessionId}]: no wsUrl, waiting...`)
+          return
+        }
+
+        // Double-check we're not already setting up
+        if (session.isConnecting) {
+          console.log(`Terminal [${sessionId}]: setup already in progress, skipping`)
+          return
+        }
+
+        session.isConnecting = true
+        console.log(`Terminal [${sessionId}]: starting setup...`)
+
+        try {
+          // Initialize ghostty
+          await ensureGhosttyInit()
+          if (!mountedRef.current) {
+            session.isConnecting = false
+            return
+          }
+
+          // ghostty-web terminals cannot be re-opened after unmount; recreate if we're mounting into a new container.
+          if (session.terminal?.element && containerRef.current && session.terminal.element !== containerRef.current) {
+            try {
+              session.terminal.dispose()
+            } catch {
+              // ignore dispose errors
+            }
+            session.terminal = null
+            session.fitAddon = null
+          }
+
+          // Create terminal if not exists
+          if (!session.terminal && containerRef.current) {
+            console.log(`Terminal [${sessionId}]: creating terminal...`)
+            const terminal = new Terminal({
+              fontFamily: fontFamilyRef.current,
+              fontSize: fontSizeRef.current,
+              cursorBlink: true,
+              convertEol: true,
+              theme: {
+                background: "#0b0d12",
+                foreground: "#f5f5f5",
+              },
+            })
+            session.terminal = terminal
+
+            const fitAddon = new FitAddon()
+            session.fitAddon = fitAddon
+            terminal.loadAddon(fitAddon)
+            terminal.open(containerRef.current)
+            fitAddon.fit()
+
+            terminal.onData((data) => {
+              if (session.socket?.readyState === WebSocket.OPEN) {
+                session.socket.send(data)
+              }
+            })
+
+            terminal.onResize(({ cols, rows }) => {
+              if (session.socket?.readyState === WebSocket.OPEN) {
+                const resizeMsg = JSON.stringify({ columns: cols, rows })
+                session.socket.send(resizeMsg)
+              }
+            })
+          }
+
+          // Connect WebSocket if not connected
+          if (!session.socket || session.socket.readyState === WebSocket.CLOSED) {
+            clearReconnect()
+
+            let wsUrlWithAuth = currentWsUrl
+            if (currentAuth && !currentWsUrl.includes("token=")) {
+              const separator = currentWsUrl.includes("?") ? "&" : "?"
+              wsUrlWithAuth = `${currentWsUrl}${separator}token=${encodeURIComponent(currentAuth)}`
+            }
+            
+            console.log(`Terminal [${sessionId}]: connecting WebSocket to ${wsUrlWithAuth.substring(0, 60)}...`)
+
+            const socket = new WebSocket(wsUrlWithAuth)
+            socket.binaryType = "arraybuffer"
+            session.socket = socket
+            setStatus("connecting")
+
+            socket.onopen = () => {
+              console.log(`Terminal [${sessionId}]: connected!`)
+              session.isConnecting = false
+              session.reconnectAttempts = 0
+              if (mountedRef.current) {
+                setStatus("connected")
+              }
+
+              if (session.terminal) {
+                const { cols, rows } = session.terminal
+                const resizeMsg = JSON.stringify({ columns: cols, rows })
+                socket.send(resizeMsg)
+              }
+            }
+
+            socket.onmessage = handleMessage
+
+            socket.onerror = () => {
+              console.error(`Terminal [${sessionId}]: websocket error`)
+              session.isConnecting = false
+              if (mountedRef.current) {
+                setStatus("error")
+              }
+              scheduleReconnect("error")
+            }
+
+            socket.onclose = (event) => {
+              console.log(`Terminal [${sessionId}]: connection closed (code=${event.code} clean=${event.wasClean})`)
+              session.isConnecting = false
+              session.socket = null
+              if (mountedRef.current) {
+                setStatus("error")
+              }
+              scheduleReconnect("close")
+            }
+          }
+        } catch (err) {
+          console.error(`Terminal [${sessionId}]: setup error`, err)
+          session.isConnecting = false
+          scheduleReconnect("setup error")
         }
       }
 
-      bootstrap()
+      void setup()
 
       return () => {
-        disposed = true
-        socketRef.current?.close()
-        terminalRef.current?.dispose()
-        resizeObserver.current?.disconnect()
-        fitRef.current?.dispose()
+        clearReconnect()
       }
-    }, [wsUrl, fontFamily, fontSize])
+    }, [authToken, wsUrl, handleMessage, sessionId, getSession])
+
+    // Cleanup resources on unmount (or when switching sessionId).
+    useEffect(() => {
+      const session = getSession()
+      return () => {
+        mountedRef.current = false
+        if (session.reconnectTimeout) {
+          clearTimeout(session.reconnectTimeout)
+          session.reconnectTimeout = null
+        }
+        if (session.socket) {
+          try {
+            session.socket.onopen = null
+            session.socket.onmessage = null
+            session.socket.onerror = null
+            session.socket.onclose = null
+            session.socket.close()
+          } catch {
+            // ignore close errors
+          }
+          session.socket = null
+        }
+        if (session.terminal) {
+          try {
+            session.terminal.dispose()
+          } catch {
+            // ignore dispose errors
+          }
+          session.terminal = null
+        }
+        session.fitAddon = null
+        session.isConnecting = false
+        session.reconnectAttempts = 0
+      }
+    }, [getSession, sessionId])
+
+    // Handle resize observer separately
+    useEffect(() => {
+      if (!containerRef.current) return
+      const session = getSession()
+      
+      const observer = new ResizeObserver(() => {
+        session.fitAddon?.fit()
+      })
+      observer.observe(containerRef.current)
+      
+      return () => observer.disconnect()
+    }, [getSession])
 
     return (
       <div className={`relative h-full w-full bg-black rounded ${className ?? ""}`}>
         <div ref={containerRef} className="h-full w-full" />
         <div className="absolute top-2 right-2 text-xs font-mono text-white/60">
-          {status === "connecting" && "Connecting"}
+          {status === "waiting" && "Waiting..."}
+          {status === "connecting" && "Connecting..."}
           {status === "connected" && "Connected"}
           {status === "error" && "Disconnected"}
         </div>

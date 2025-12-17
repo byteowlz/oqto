@@ -4,6 +4,7 @@ import { useMemo } from "react"
 import dynamic from "next/dynamic"
 import { controlPlaneDirectBaseUrl, terminalProxyPath } from "@/lib/control-plane-client"
 import { toAbsoluteWsUrl } from "@/lib/url"
+import { useApp } from "@/components/app-context"
 
 const GhosttyTerminal = dynamic(
   () => import("@/components/terminal/ghostty-terminal").then((mod) => mod.GhosttyTerminal),
@@ -15,6 +16,8 @@ interface TerminalViewProps {
 }
 
 export function TerminalView({ sessionId }: TerminalViewProps) {
+  const { authToken } = useApp()
+  
   const wsUrl = useMemo(() => {
     if (!sessionId) return ""
     const directBase = controlPlaneDirectBaseUrl()
@@ -34,7 +37,7 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
 
   return (
     <div className="h-full">
-      <GhosttyTerminal wsUrl={wsUrl} className="border border-border" />
+      <GhosttyTerminal wsUrl={wsUrl} authToken={authToken ?? undefined} className="border border-border" />
     </div>
   )
 }

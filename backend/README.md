@@ -119,3 +119,8 @@ backend/
 - `GET /sessions/:id/opencode/*` - Proxy to opencode
 - `GET /sessions/:id/files/*` - Proxy to fileserver
 - `GET /sessions/:id/terminal` - WebSocket proxy to ttyd
+- `GET /session/:id/term` - WebSocket proxy to ttyd (alias)
+
+The terminal proxy accepts connections during session startup and retries connecting to ttyd for a short period so clients can open the WebSocket immediately after creating a session.
+
+During session startup, proxy requests that hit a not-yet-listening service return `503 Service Unavailable` (retryable) instead of `502 Bad Gateway`. If a container exits unexpectedly, the session is reconciled to `failed` when fetched via the API.

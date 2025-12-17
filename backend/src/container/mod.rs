@@ -420,6 +420,39 @@ impl ContainerRuntime {
         Ok(containers.into_iter().next())
     }
 
+    /// Get the container state status string (e.g. "running", "exited") via `inspect`.
+    ///
+    /// Returns `Ok(None)` when the container does not exist.
+    pub async fn container_state_status(&self, id_or_name: &str) -> ContainerResult<Option<String>> {
+        validate_container_id_or_name(id_or_name)?;
+
+        let output = Command::new(&self.binary)
+            .args(["inspect", "--format", "{{.State.Status}}", id_or_name])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .await
+            .map_err(|e| ContainerError::CommandFailed {
+                command: "inspect".to_string(),
+                message: e.to_string(),
+            })?;
+
+        if !output.status.success() {
+            // Container not found is not an error; callers treat it as missing.
+            return Ok(None);
+        }
+
+        let status = String::from_utf8_lossy(&output.stdout)
+            .trim()
+            .trim_matches('"')
+            .to_string();
+        if status.is_empty() {
+            return Ok(None);
+        }
+
+        Ok(Some(status))
+    }
+
     /// Get container logs.
     #[allow(dead_code)]
     pub async fn get_logs(&self, container_id: &str, tail: Option<u32>) -> ContainerResult<String> {

@@ -59,5 +59,6 @@ A ready-to-run container definition lives in `Dockerfile` with the companion lau
 - `components/terminal/ghostty-terminal.tsx` – Ghostty + WebSocket terminal wrapper.
 - `lib/opencode-client.ts` – Thin client for opencode REST/SSE workflows.
 - `app/sessions/*` – File tree browser, terminal view, and preview surface wired to live services.
+- `public/octo_logo_banner_white.svg` – App logo used by the shell navigation (SVG icon).
 
 Refer to the documents inside `history/` for deeper architecture notes on opencode and Ghostty integrations.

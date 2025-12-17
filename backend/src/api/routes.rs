@@ -37,8 +37,10 @@ pub fn create_router(state: AppState) -> Router {
         .route("/sessions/{session_id}", get(handlers::get_session))
         .route("/sessions/{session_id}", delete(handlers::delete_session))
         .route("/sessions/{session_id}/stop", post(handlers::stop_session))
-        // Opencode events
+        // Opencode events (legacy global endpoint)
         .route("/opencode/event", get(proxy::opencode_events))
+        // SSE events proxy for specific session
+        .route("/session/{session_id}/code/event", get(proxy::proxy_opencode_events))
         // Proxy routes
         .route(
             "/sessions/{session_id}/opencode/{*path}",
@@ -123,6 +125,7 @@ pub fn create_router(state: AppState) -> Router {
 /// In production mode, requires explicit origin configuration.
 fn build_cors_layer(state: &AppState) -> CorsLayer {
     let allowed_origins = state.auth.allowed_origins();
+    let dev_mode = state.auth.is_dev_mode();
 
     // Define allowed methods
     let methods = [
@@ -144,14 +147,16 @@ fn build_cors_layer(state: &AppState) -> CorsLayer {
     ];
 
     if allowed_origins.is_empty() {
-        if state.auth.is_dev_mode() {
+        if dev_mode {
             // In dev mode with no configured origins, allow common local origins
             tracing::warn!("CORS: No origins configured, using default localhost origins for dev mode");
             CorsLayer::new()
                 .allow_origin([
                     "http://localhost:3000".parse::<HeaderValue>().unwrap(),
+                    "http://localhost:3001".parse::<HeaderValue>().unwrap(),
                     "http://localhost:8080".parse::<HeaderValue>().unwrap(),
                     "http://127.0.0.1:3000".parse::<HeaderValue>().unwrap(),
+                    "http://127.0.0.1:3001".parse::<HeaderValue>().unwrap(),
                     "http://127.0.0.1:8080".parse::<HeaderValue>().unwrap(),
                 ])
                 .allow_methods(methods)
@@ -167,7 +172,7 @@ fn build_cors_layer(state: &AppState) -> CorsLayer {
         }
     } else {
         // Use configured origins
-        let origins: Vec<HeaderValue> = allowed_origins
+        let mut origins: Vec<HeaderValue> = allowed_origins
             .iter()
             .filter_map(|origin| {
                 origin.parse::<HeaderValue>().ok().or_else(|| {
@@ -176,6 +181,22 @@ fn build_cors_layer(state: &AppState) -> CorsLayer {
                 })
             })
             .collect();
+
+        // In dev mode, always allow common localhost origins in addition to configured origins.
+        if dev_mode {
+            for origin in [
+                "http://localhost:3000",
+                "http://localhost:3001",
+                "http://127.0.0.1:3000",
+                "http://127.0.0.1:3001",
+            ] {
+                if let Ok(value) = origin.parse::<HeaderValue>() {
+                    if !origins.contains(&value) {
+                        origins.push(value);
+                    }
+                }
+            }
+        }
 
         if origins.is_empty() {
             tracing::error!("CORS: All configured origins are invalid!");
