@@ -6,6 +6,8 @@ use tracing::{info, instrument, warn};
 use super::models::{CreateUserRequest, UpdateUserRequest, User, UserListQuery, UserRole};
 use super::repository::UserRepository;
 
+const MIN_PASSWORD_LENGTH: usize = 8;
+
 /// Service for user management operations.
 #[derive(Debug, Clone)]
 pub struct UserService {
@@ -23,7 +25,9 @@ impl UserService {
     pub async fn create_user(&self, request: CreateUserRequest) -> Result<User> {
         // Validate username format
         if !is_valid_username(&request.username) {
-            bail!("Invalid username format. Must be 3-50 alphanumeric characters, underscores, or hyphens.");
+            bail!(
+                "Invalid username format. Must be 3-50 alphanumeric characters, underscores, or hyphens."
+            );
         }
 
         // Validate email format
@@ -44,9 +48,7 @@ impl UserService {
         // Hash password if provided
         let mut processed_request = request;
         if let Some(password) = &processed_request.password {
-            if password.len() < 6 {
-                bail!("Password must be at least 6 characters.");
-            }
+            validate_password(password)?;
             processed_request.password = Some(hash_password(password)?);
         }
 
@@ -118,9 +120,7 @@ impl UserService {
         // Hash password if being updated
         let mut processed_request = request;
         if let Some(password) = &processed_request.password {
-            if password.len() < 6 {
-                bail!("Password must be at least 6 characters.");
-            }
+            validate_password(password)?;
             processed_request.password = Some(hash_password(password)?);
         }
 
@@ -293,6 +293,16 @@ fn verify_password(password: &str, hash: &str) -> Result<bool> {
     bcrypt::verify(password, hash).context("Failed to verify password")
 }
 
+fn validate_password(password: &str) -> Result<()> {
+    if password.len() < MIN_PASSWORD_LENGTH {
+        bail!(
+            "Password must be at least {} characters.",
+            MIN_PASSWORD_LENGTH
+        );
+    }
+    Ok(())
+}
+
 /// Generate a username from an email address.
 fn generate_username_from_email(email: &str) -> String {
     let local = email.split('@').next().unwrap_or("user");
@@ -365,5 +375,11 @@ mod tests {
         let hash = hash_password(password).unwrap();
         assert!(verify_password(password, &hash).unwrap());
         assert!(!verify_password("wrong_password", &hash).unwrap());
+    }
+
+    #[test]
+    fn test_password_validation_min_length() {
+        assert!(validate_password("1234567").is_err());
+        assert!(validate_password("12345678").is_ok());
     }
 }

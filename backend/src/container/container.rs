@@ -1,9 +1,64 @@
 //! Container types and configuration.
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::HashMap;
 
 use super::error::{ContainerError, ContainerResult};
+
+/// Deserialize a field that can be either a string or an integer (Unix timestamp).
+/// Converts integers to string representation.
+fn deserialize_string_or_int<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    use serde::de::{self, Visitor};
+    use std::fmt;
+
+    struct StringOrInt;
+
+    impl<'de> Visitor<'de> for StringOrInt {
+        type Value = String;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            formatter.write_str("a string or an integer")
+        }
+
+        fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(value.to_string())
+        }
+
+        fn visit_string<E>(self, value: String) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(value)
+        }
+
+        fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(value.to_string())
+        }
+
+        fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(value.to_string())
+        }
+    }
+
+    deserializer.deserialize_any(StringOrInt)
+}
+
+/// Default empty string for optional fields.
+fn default_empty_string() -> String {
+    String::new()
+}
 
 /// Port mapping configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -55,7 +110,7 @@ pub struct ContainerConfig {
     pub command: Vec<String>,
     /// Environment variables.
     pub env: HashMap<String, String>,
-    /// Port mappings.
+    /// Port mappings (ignored when network_mode is "host").
     pub ports: Vec<PortMapping>,
     /// Volume mounts (host_path -> container_path).
     pub volumes: Vec<(String, String)>,
@@ -64,6 +119,8 @@ pub struct ContainerConfig {
     /// Labels for the container.
     #[allow(dead_code)]
     pub labels: HashMap<String, String>,
+    /// Network mode (e.g., "host", "bridge", "none").
+    pub network_mode: Option<String>,
 }
 
 impl ContainerConfig {
@@ -167,6 +224,13 @@ impl ContainerConfig {
         self
     }
 
+    /// Set the network mode (e.g., "host", "bridge", "none").
+    #[allow(dead_code)]
+    pub fn network_mode(mut self, mode: impl Into<String>) -> Self {
+        self.network_mode = Some(mode.into());
+        self
+    }
+
     /// Add a label.
     #[allow(dead_code)]
     pub fn label(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
@@ -240,8 +304,11 @@ pub struct Container {
     #[serde(default)]
     pub status: String,
 
-    /// Creation timestamp.
-    #[serde(default)]
+    /// Creation timestamp (can be string or Unix timestamp integer from podman).
+    #[serde(
+        default = "default_empty_string",
+        deserialize_with = "deserialize_string_or_int"
+    )]
     pub created: String,
 
     /// Port bindings.
@@ -511,7 +578,10 @@ fn validate_volume_path(path: &str, side: &str) -> ContainerResult<()> {
     }
 
     // Check for dangerous shell metacharacters
-    let dangerous_chars = ['$', '`', '!', '&', '|', ';', '<', '>', '(', ')', '{', '}', '[', ']', '*', '?', '\\', '"', '\'', '\n', '\r'];
+    let dangerous_chars = [
+        '$', '`', '!', '&', '|', ';', '<', '>', '(', ')', '{', '}', '[', ']', '*', '?', '\\', '"',
+        '\'', '\n', '\r',
+    ];
     for c in dangerous_chars.iter() {
         if path.contains(*c) {
             return Err(ContainerError::InvalidInput(format!(

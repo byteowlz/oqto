@@ -35,12 +35,15 @@ impl EavsClient {
     /// Check if EAVS is healthy.
     pub async fn health_check(&self) -> EavsResult<bool> {
         let url = format!("{}/health", self.base_url);
-        let response = self.client.get(&url).send().await.map_err(|e| {
-            EavsError::ConnectionFailed {
-                url: url.clone(),
-                message: e.to_string(),
-            }
-        })?;
+        let response =
+            self.client
+                .get(&url)
+                .send()
+                .await
+                .map_err(|e| EavsError::ConnectionFailed {
+                    url: url.clone(),
+                    message: e.to_string(),
+                })?;
 
         Ok(response.status().is_success())
     }
@@ -133,9 +136,10 @@ impl EavsClient {
         let status = response.status();
 
         if status.is_success() {
-            response.json().await.map_err(|e| {
-                EavsError::ParseError(format!("Failed to parse response: {}", e))
-            })
+            response
+                .json()
+                .await
+                .map_err(|e| EavsError::ParseError(format!("Failed to parse response: {}", e)))
         } else {
             match status {
                 StatusCode::UNAUTHORIZED => Err(EavsError::Unauthorized),

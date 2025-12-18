@@ -236,26 +236,13 @@ impl SessionRepository {
 
     /// Check if a readable_id already exists.
     pub async fn readable_id_exists(&self, readable_id: &str) -> Result<bool> {
-        let count: (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM sessions WHERE readable_id = ?",
-        )
-        .bind(readable_id)
-        .fetch_one(&self.pool)
-        .await
-        .context("checking readable_id existence")?;
+        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM sessions WHERE readable_id = ?")
+            .bind(readable_id)
+            .fetch_one(&self.pool)
+            .await
+            .context("checking readable_id existence")?;
 
         Ok(count.0 > 0)
-    }
-
-    /// Clear the EAVS virtual key from a session (for security after container starts).
-    pub async fn clear_eavs_virtual_key(&self, id: &str) -> Result<()> {
-        sqlx::query("UPDATE sessions SET eavs_virtual_key = NULL WHERE id = ?")
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .context("clearing EAVS virtual key")?;
-
-        Ok(())
     }
 
     /// Update the image digest for a session.
@@ -271,7 +258,12 @@ impl SessionRepository {
     }
 
     /// Update image and digest for a session (used during upgrade).
-    pub async fn update_image_and_digest(&self, id: &str, image: &str, digest: Option<&str>) -> Result<()> {
+    pub async fn update_image_and_digest(
+        &self,
+        id: &str,
+        image: &str,
+        digest: Option<&str>,
+    ) -> Result<()> {
         sqlx::query("UPDATE sessions SET image = ?, image_digest = ? WHERE id = ?")
             .bind(image)
             .bind(digest)

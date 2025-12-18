@@ -32,16 +32,14 @@ pub struct AuthConfig {
 /// Pre-computed bcrypt hashes for default dev users.
 /// These are generated at cost=12 (bcrypt::DEFAULT_COST) and prevent
 /// expensive hashing operations during startup.
-/// 
+///
 /// To regenerate these hashes (if passwords change), run:
 /// `cargo test --lib -- auth::config::tests::test_generate_dev_user_hashes --nocapture --ignored`
 mod default_hashes {
     /// Hash for "devpassword123" at cost=12
-    pub const DEV_USER_HASH: &str =
-        "$2b$12$dC24FO4a.jD2fihWiOGvw.S1gh7N9gjgDOgJV7bpsb4pShSelaOQm";
+    pub const DEV_USER_HASH: &str = "$2b$12$dC24FO4a.jD2fihWiOGvw.S1gh7N9gjgDOgJV7bpsb4pShSelaOQm";
     /// Hash for "userpassword123" at cost=12
-    pub const USER_USER_HASH: &str =
-        "$2b$12$cdHA.mL5NAVw6.nusi3GROIo619dutPvD57OKzXmdxdmV4DDaxk82";
+    pub const USER_USER_HASH: &str = "$2b$12$cdHA.mL5NAVw6.nusi3GROIo619dutPvD57OKzXmdxdmV4DDaxk82";
 }
 
 impl Default for AuthConfig {
@@ -102,7 +100,7 @@ impl AuthConfig {
         if !self.dev_mode {
             // In production mode, JWT secret is required
             let secret = self.resolve_jwt_secret()?;
-            
+
             if secret.is_none() {
                 return Err(ConfigValidationError::MissingJwtSecret);
             }
@@ -162,19 +160,36 @@ impl std::fmt::Display for ConfigValidationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::MissingJwtSecret => {
-                write!(f, "JWT secret is required when dev_mode is false. Set AUTH_JWT_SECRET environment variable or jwt_secret in config.")
+                write!(
+                    f,
+                    "JWT secret is required when dev_mode is false. Set AUTH_JWT_SECRET environment variable or jwt_secret in config."
+                )
             }
             Self::InsecureJwtSecret => {
-                write!(f, "JWT secret cannot be the default insecure value in production. Please configure a secure secret.")
+                write!(
+                    f,
+                    "JWT secret cannot be the default insecure value in production. Please configure a secure secret."
+                )
             }
             Self::JwtSecretTooShort => {
-                write!(f, "JWT secret must be at least 32 characters long for security.")
+                write!(
+                    f,
+                    "JWT secret must be at least 32 characters long for security."
+                )
             }
             Self::EnvVarNotFound(var) => {
-                write!(f, "Environment variable '{}' not found (referenced via env:{} in config).", var, var)
+                write!(
+                    f,
+                    "Environment variable '{}' not found (referenced via env:{} in config).",
+                    var, var
+                )
             }
             Self::EnvVarEmpty(var) => {
-                write!(f, "Environment variable '{}' is empty (referenced via env:{} in config).", var, var)
+                write!(
+                    f,
+                    "Environment variable '{}' is empty (referenced via env:{} in config).",
+                    var, var
+                )
             }
         }
     }
@@ -218,7 +233,7 @@ impl DevUser {
 
     /// Create a new dev user with a plaintext password (will be hashed).
     /// This is a convenience method for creating users programmatically.
-    /// 
+    ///
     /// Note: This is intentionally not used in Default::default() to avoid
     /// expensive bcrypt hashing at startup. Use pre-computed hashes instead.
     #[allow(dead_code)]
@@ -229,9 +244,9 @@ impl DevUser {
         password: &str,
         role: Role,
     ) -> Self {
-        let password_hash = bcrypt::hash(password, bcrypt::DEFAULT_COST)
-            .expect("Failed to hash password");
-        
+        let password_hash =
+            bcrypt::hash(password, bcrypt::DEFAULT_COST).expect("Failed to hash password");
+
         Self {
             id: id.into(),
             name: name.into(),
@@ -291,7 +306,13 @@ mod tests {
 
     #[test]
     fn test_dev_user_new_with_plaintext() {
-        let user = DevUser::new_with_plaintext("test", "Test", "test@example.com", "testpass123", Role::Admin);
+        let user = DevUser::new_with_plaintext(
+            "test",
+            "Test",
+            "test@example.com",
+            "testpass123",
+            Role::Admin,
+        );
         assert_eq!(user.id, "test");
         assert_eq!(user.role, Role::Admin);
         // Password should be hashed, not plaintext
@@ -301,11 +322,17 @@ mod tests {
 
     #[test]
     fn test_dev_user_password_verification() {
-        let user = DevUser::new_with_plaintext("test", "Test", "test@example.com", "correctpassword", Role::User);
-        
+        let user = DevUser::new_with_plaintext(
+            "test",
+            "Test",
+            "test@example.com",
+            "correctpassword",
+            Role::User,
+        );
+
         // Correct password should verify
         assert!(user.verify_password("correctpassword"));
-        
+
         // Wrong password should not verify
         assert!(!user.verify_password("wrongpassword"));
         assert!(!user.verify_password(""));
@@ -337,7 +364,7 @@ mod tests {
         let mut config = AuthConfig::default();
         config.dev_mode = false;
         config.jwt_secret = None;
-        
+
         assert_eq!(
             config.validate().unwrap_err(),
             ConfigValidationError::MissingJwtSecret
@@ -349,7 +376,7 @@ mod tests {
         let mut config = AuthConfig::default();
         config.dev_mode = false;
         config.jwt_secret = Some("dev-secret-change-in-production".to_string());
-        
+
         assert_eq!(
             config.validate().unwrap_err(),
             ConfigValidationError::InsecureJwtSecret
@@ -361,7 +388,7 @@ mod tests {
         let mut config = AuthConfig::default();
         config.dev_mode = false;
         config.jwt_secret = Some("tooshort".to_string());
-        
+
         assert_eq!(
             config.validate().unwrap_err(),
             ConfigValidationError::JwtSecretTooShort
@@ -372,8 +399,9 @@ mod tests {
     fn test_config_validation_production_mode_valid() {
         let mut config = AuthConfig::default();
         config.dev_mode = false;
-        config.jwt_secret = Some("a-very-long-and-secure-jwt-secret-that-is-at-least-32-chars".to_string());
-        
+        config.jwt_secret =
+            Some("a-very-long-and-secure-jwt-secret-that-is-at-least-32-chars".to_string());
+
         assert!(config.validate().is_ok());
     }
 
@@ -391,7 +419,9 @@ mod tests {
     #[test]
     fn test_generate_jwt_secret_uniqueness() {
         // Generate multiple secrets and ensure they're all different
-        let secrets: Vec<String> = (0..100).map(|_| AuthConfig::generate_jwt_secret()).collect();
+        let secrets: Vec<String> = (0..100)
+            .map(|_| AuthConfig::generate_jwt_secret())
+            .collect();
 
         // Check that all secrets are unique
         let mut unique_secrets = secrets.clone();
@@ -429,10 +459,7 @@ mod tests {
             lowercase_count > 0,
             "Secret should contain at least one lowercase letter"
         );
-        assert!(
-            digit_count > 0,
-            "Secret should contain at least one digit"
-        );
+        assert!(digit_count > 0, "Secret should contain at least one digit");
     }
 
     #[test]
@@ -462,7 +489,7 @@ mod tests {
     fn test_resolve_jwt_secret_literal() {
         let mut config = AuthConfig::default();
         config.jwt_secret = Some("my-literal-secret".to_string());
-        
+
         let resolved = config.resolve_jwt_secret().unwrap();
         assert_eq!(resolved, Some("my-literal-secret".to_string()));
     }
@@ -472,15 +499,21 @@ mod tests {
         // Set a test env var
         // SAFETY: This is a test-only environment variable with a unique name
         unsafe {
-            std::env::set_var("TEST_JWT_SECRET_12345", "secret-from-env-var-at-least-32-chars");
+            std::env::set_var(
+                "TEST_JWT_SECRET_12345",
+                "secret-from-env-var-at-least-32-chars",
+            );
         }
-        
+
         let mut config = AuthConfig::default();
         config.jwt_secret = Some("env:TEST_JWT_SECRET_12345".to_string());
-        
+
         let resolved = config.resolve_jwt_secret().unwrap();
-        assert_eq!(resolved, Some("secret-from-env-var-at-least-32-chars".to_string()));
-        
+        assert_eq!(
+            resolved,
+            Some("secret-from-env-var-at-least-32-chars".to_string())
+        );
+
         // Clean up
         // SAFETY: Cleaning up test environment variable
         unsafe {
@@ -492,9 +525,12 @@ mod tests {
     fn test_resolve_jwt_secret_env_var_not_found() {
         let mut config = AuthConfig::default();
         config.jwt_secret = Some("env:NONEXISTENT_VAR_12345".to_string());
-        
+
         let result = config.resolve_jwt_secret();
-        assert_eq!(result.unwrap_err(), ConfigValidationError::EnvVarNotFound("NONEXISTENT_VAR_12345".to_string()));
+        assert_eq!(
+            result.unwrap_err(),
+            ConfigValidationError::EnvVarNotFound("NONEXISTENT_VAR_12345".to_string())
+        );
     }
 
     #[test]
@@ -503,13 +539,16 @@ mod tests {
         unsafe {
             std::env::set_var("TEST_EMPTY_JWT_SECRET", "");
         }
-        
+
         let mut config = AuthConfig::default();
         config.jwt_secret = Some("env:TEST_EMPTY_JWT_SECRET".to_string());
-        
+
         let result = config.resolve_jwt_secret();
-        assert_eq!(result.unwrap_err(), ConfigValidationError::EnvVarEmpty("TEST_EMPTY_JWT_SECRET".to_string()));
-        
+        assert_eq!(
+            result.unwrap_err(),
+            ConfigValidationError::EnvVarEmpty("TEST_EMPTY_JWT_SECRET".to_string())
+        );
+
         // SAFETY: Cleaning up test environment variable
         unsafe {
             std::env::remove_var("TEST_EMPTY_JWT_SECRET");
