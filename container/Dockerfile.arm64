@@ -128,7 +128,7 @@ ENV PATH="/home/${USERNAME}/.opencode/bin:/home/${USERNAME}/.local/bin:${PATH}"
 # The container image only has baseline tools; user-specific configs are mounted at runtime.
 
 # Set zsh as default shell for user
-RUN chsh -s /bin/zsh ${USERNAME}
+RUN sudo usermod -s /bin/zsh ${USERNAME}
 
 # Copy entrypoint script
 COPY --chown=${USERNAME}:${USERNAME} container/entrypoint.sh /home/${USERNAME}/entrypoint.sh

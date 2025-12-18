@@ -431,14 +431,15 @@ impl SessionService {
         debug!("Starting container for session {}", session.id);
 
         // Build container config
-        // Mount user's home directory (workspace_path now points to user's home)
+        // Only mount the workspace directory (dotfiles are baked into the image)
+        let workspace_dir = format!("{}/workspace", session.workspace_path);
         let mut config = ContainerConfig::new(&session.image)
             .name(&session.container_name)
             .hostname(&session.container_name)
             .port(session.opencode_port as u16, 41820)
             .port(session.fileserver_port as u16, 41821)
             .port(session.ttyd_port as u16, 41822)
-            .volume(&session.workspace_path, "/home/dev")
+            .volume(&workspace_dir, "/home/dev/workspace")
             .env("OPENCODE_PORT", "41820")
             .env("FILESERVER_PORT", "41821")
             .env("TTYD_PORT", "41822");

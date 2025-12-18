@@ -19,6 +19,7 @@ cp "$SRC_SCHEMA_FILESERVER" "$DEST_SCHEMA_FILESERVER"
 echo "Copied schema to $DEST_SCHEMA_BACKEND"
 
 cd "$DEST_DIR"
+git pull
 git add .
 git commit -m "feat: updated octo schema"
 git push

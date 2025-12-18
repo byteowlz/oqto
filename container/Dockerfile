@@ -112,17 +112,18 @@ RUN curl -fsSL https://opencode.ai/install | bash
 # Add opencode to PATH
 ENV PATH="/home/${USERNAME}/.opencode/bin:/home/${USERNAME}/.local/bin:${PATH}"
 
-# Note: User config files come from skel/ directory, copied by backend when creating user homes.
-# The container image only has baseline tools; user-specific configs are mounted at runtime.
-
 # Set zsh as default shell for user
-RUN chsh -s /bin/zsh ${USERNAME}
+RUN sudo usermod -s /bin/zsh ${USERNAME}
 
-# fileserver binary is already installed from the builder stage above
+# Copy dotfiles from skel into the image (these won't be overwritten by workspace mount)
+COPY --chown=${USERNAME}:${USERNAME} container/skel/.zshrc /home/${USERNAME}/.zshrc
+COPY --chown=${USERNAME}:${USERNAME} container/skel/.config /home/${USERNAME}/.config
 
-# Copy entrypoint script (from container directory in build context)
-COPY --chown=${USERNAME}:${USERNAME} container/entrypoint.sh /home/${USERNAME}/entrypoint.sh
-RUN chmod +x /home/${USERNAME}/entrypoint.sh
+# Copy entrypoint script to /usr/local/bin
+USER root
+COPY container/entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
+USER ${USERNAME}
 
 # Working directory
 WORKDIR /home/${USERNAME}/workspace
@@ -132,5 +133,5 @@ EXPOSE ${OPENCODE_PORT}
 EXPOSE ${FILESERVER_PORT}
 EXPOSE ${TTYD_PORT}
 
-# Entrypoint
-ENTRYPOINT ["/home/dev/entrypoint.sh"]
+# Entrypoint (in /usr/local/bin so it's not overwritten by home mount)
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

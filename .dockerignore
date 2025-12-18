@@ -7,6 +7,5 @@
 !fileserver/src/
 
 !container/entrypoint.sh
-
-# Note: container/skel/ is NOT included - it's used by the backend at runtime,
-# not during Docker image build. User homes are mounted, not baked into the image.
+!container/skel/.zshrc
+!container/skel/.config/

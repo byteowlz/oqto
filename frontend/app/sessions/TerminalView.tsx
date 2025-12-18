@@ -17,7 +17,7 @@ interface TerminalViewProps {
 }
 
 export function TerminalView({ sessionId }: TerminalViewProps) {
-  const { authToken } = useApp()
+  const { authToken, selectedWorkspaceSession } = useApp()
   const { resolvedTheme } = useTheme()
   
   const wsUrl = useMemo(() => {
@@ -29,10 +29,23 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
     return toAbsoluteWsUrl(`/api${terminalProxyPath(sessionId)}`)
   }, [sessionId])
 
+  // Don't render terminal if no session selected
   if (!sessionId) {
     return (
       <div className="h-full bg-black/70 rounded p-4 text-sm font-mono text-red-300">
         Select a session to attach to the terminal.
+      </div>
+    )
+  }
+
+  // Don't render terminal if session is not running (failed, stopped, pending, etc.)
+  if (!selectedWorkspaceSession || selectedWorkspaceSession.status !== "running") {
+    const statusMsg = selectedWorkspaceSession 
+      ? `Session is ${selectedWorkspaceSession.status}...`
+      : "Loading session..."
+    return (
+      <div className="h-full bg-black/70 rounded p-4 text-sm font-mono text-yellow-300">
+        {statusMsg}
       </div>
     )
   }
