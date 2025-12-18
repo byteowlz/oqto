@@ -100,7 +100,7 @@ impl ApiError {
 
     /// Categorize an anyhow error into the appropriate ApiError variant.
     /// This uses pattern matching on error messages to determine the category.
-    /// 
+    ///
     /// Patterns recognized:
     /// - "not found" -> NotFound
     /// - "already taken" / "already registered" / "already exists" -> Conflict  
@@ -112,21 +112,53 @@ impl ApiError {
     /// - Default -> Internal
     pub fn from_anyhow(err: anyhow::Error) -> Self {
         let msg = err.to_string();
+
+        // Prefer type-based categorization when possible (more robust than message matching).
+        for cause in err.chain() {
+            if let Some(sqlx_err) = cause.downcast_ref::<sqlx::Error>() {
+                match sqlx_err {
+                    sqlx::Error::RowNotFound => return ApiError::NotFound(msg),
+                    sqlx::Error::Database(db_err) if db_err.is_unique_violation() => {
+                        return ApiError::Conflict(msg);
+                    }
+                    _ => {}
+                }
+            }
+
+            if let Some(reqwest_err) = cause.downcast_ref::<reqwest::Error>() {
+                if reqwest_err.is_connect() || reqwest_err.is_timeout() {
+                    return ApiError::ServiceUnavailable(msg);
+                }
+            }
+
+            if let Some(io_err) = cause.downcast_ref::<std::io::Error>() {
+                use std::io::ErrorKind;
+                if matches!(
+                    io_err.kind(),
+                    ErrorKind::ConnectionRefused | ErrorKind::ConnectionReset | ErrorKind::TimedOut
+                ) {
+                    return ApiError::ServiceUnavailable(msg);
+                }
+            }
+        }
+
         let msg_lower = msg.to_lowercase();
 
         // Check for specific patterns in priority order
         if msg_lower.contains("not found") {
             ApiError::NotFound(msg)
-        } else if msg_lower.contains("already taken") 
+        } else if msg_lower.contains("already taken")
             || msg_lower.contains("already registered")
             || msg_lower.contains("already exists")
-            || (msg_lower.contains("active") && (msg_lower.contains("session") || msg_lower.contains("delete")))
+            || (msg_lower.contains("active")
+                && (msg_lower.contains("session") || msg_lower.contains("delete")))
         {
             ApiError::Conflict(msg)
-        } else if msg_lower.contains("invalid") 
+        } else if msg_lower.contains("invalid")
             || msg_lower.contains("must be")
             || msg_lower.contains("cannot")
-            || msg_lower.contains("does not exist") // e.g., "workspace path does not exist"
+            || msg_lower.contains("does not exist")
+        // e.g., "workspace path does not exist"
         {
             ApiError::BadRequest(msg)
         } else if msg_lower.contains("unauthorized") || msg_lower.contains("authentication") {
@@ -197,18 +229,12 @@ impl From<crate::auth::AuthError> for ApiError {
             AuthError::InvalidToken(msg) => {
                 ApiError::Unauthorized(format!("Invalid token: {}", msg))
             }
-            AuthError::TokenExpired => {
-                ApiError::Unauthorized("Token has expired".to_string())
-            }
+            AuthError::TokenExpired => ApiError::Unauthorized("Token has expired".to_string()),
             AuthError::InvalidCredentials => {
                 ApiError::Unauthorized("Invalid credentials".to_string())
             }
-            AuthError::UserNotFound => {
-                ApiError::Unauthorized("User not found".to_string())
-            }
-            AuthError::InsufficientPermissions(msg) => {
-                ApiError::Forbidden(msg)
-            }
+            AuthError::UserNotFound => ApiError::Unauthorized("User not found".to_string()),
+            AuthError::InsufficientPermissions(msg) => ApiError::Forbidden(msg),
             AuthError::Internal(msg) => {
                 ApiError::Internal(format!("Authentication error: {}", msg))
             }
@@ -282,12 +308,27 @@ mod tests {
     #[test]
     fn test_error_response_status_codes() {
         assert_eq!(ApiError::not_found("").status_code(), StatusCode::NOT_FOUND);
-        assert_eq!(ApiError::bad_request("").status_code(), StatusCode::BAD_REQUEST);
-        assert_eq!(ApiError::unauthorized("").status_code(), StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            ApiError::bad_request("").status_code(),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            ApiError::unauthorized("").status_code(),
+            StatusCode::UNAUTHORIZED
+        );
         assert_eq!(ApiError::forbidden("").status_code(), StatusCode::FORBIDDEN);
         assert_eq!(ApiError::conflict("").status_code(), StatusCode::CONFLICT);
-        assert_eq!(ApiError::service_unavailable("").status_code(), StatusCode::SERVICE_UNAVAILABLE);
-        assert_eq!(ApiError::internal("").status_code(), StatusCode::INTERNAL_SERVER_ERROR);
-        assert_eq!(ApiError::bad_gateway("").status_code(), StatusCode::BAD_GATEWAY);
+        assert_eq!(
+            ApiError::service_unavailable("").status_code(),
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        assert_eq!(
+            ApiError::internal("").status_code(),
+            StatusCode::INTERNAL_SERVER_ERROR
+        );
+        assert_eq!(
+            ApiError::bad_gateway("").status_code(),
+            StatusCode::BAD_GATEWAY
+        );
     }
 }

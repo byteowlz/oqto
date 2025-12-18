@@ -1,11 +1,17 @@
 #!/usr/bin/env bash
 set -e
 
+HOME_DIR="${HOME:-/home/dev}"
+
 # Default ports
 OPENCODE_PORT="${OPENCODE_PORT:-41820}"
 FILESERVER_PORT="${FILESERVER_PORT:-41821}"
 TTYD_PORT="${TTYD_PORT:-41822}"
-WORKSPACE_DIR="${WORKSPACE_DIR:-/home/dev/workspace}"
+WORKSPACE_DIR="${WORKSPACE_DIR:-${HOME_DIR}/workspace}"
+SKEL_DIR="${SKEL_DIR:-/usr/local/share/skel}"
+OPENCODE_SEED_DIR="${OPENCODE_SEED_DIR:-/opt/opencode}"
+OPENCODE_BIN="${OPENCODE_BIN:-opencode}"
+XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-${HOME_DIR}/.config}"
 
 # EAVS configuration (host-based proxy)
 # EAVS_URL - URL to the host EAVS proxy (e.g., http://host.docker.internal:41800)
@@ -20,6 +26,24 @@ if [ -n "${EAVS_URL}" ]; then
     echo "EAVS proxy URL: ${EAVS_URL}"
 fi
 
+# Initialize home with shipped defaults (only fills in missing files).
+if [ -d "${SKEL_DIR}" ]; then
+    if ! cp -an "${SKEL_DIR}/." "${HOME_DIR}/" 2>/dev/null; then
+        echo "Warning: failed to copy defaults from ${SKEL_DIR} into ${HOME_DIR} (check volume permissions)"
+    fi
+fi
+
+# Ensure XDG directories exist (may be missing on first run when /home is mounted).
+mkdir -p "${XDG_CONFIG_HOME}" "${HOME_DIR}/.local/share" "${HOME_DIR}/.local/state" "${HOME_DIR}/.cache"
+
+# Ensure opencode is available even when /home is mounted over the image layer.
+if [ -d "${OPENCODE_SEED_DIR}" ]; then
+    mkdir -p "${HOME_DIR}/.opencode"
+    if ! cp -an "${OPENCODE_SEED_DIR}/." "${HOME_DIR}/.opencode/" 2>/dev/null; then
+        echo "Warning: failed to seed ${HOME_DIR}/.opencode from ${OPENCODE_SEED_DIR} (check volume permissions)"
+    fi
+fi
+
 # Ensure workspace directory exists
 mkdir -p "${WORKSPACE_DIR}"
 cd "${WORKSPACE_DIR}"
@@ -27,8 +51,8 @@ cd "${WORKSPACE_DIR}"
 # Configure opencode to use EAVS proxy if available
 if [ -n "${EAVS_URL}" ] && [ -n "${EAVS_VIRTUAL_KEY}" ]; then
     echo "Configuring OpenCode to use EAVS proxy..."
-    mkdir -p /home/dev/.config/opencode
-    cat > /home/dev/.config/opencode/opencode.json <<EOF
+    mkdir -p "${XDG_CONFIG_HOME}/opencode"
+    cat > "${XDG_CONFIG_HOME}/opencode/opencode.json" <<EOF
 {
   "provider": {
     "anthropic": {
@@ -61,7 +85,11 @@ if command -v fileserver &> /dev/null; then
 else
     # Fallback to Python http.server (limited functionality)
     echo "Warning: fileserver binary not found, using Python fallback (no /tree or upload support)"
-    python -m http.server "${FILESERVER_PORT}" --bind 0.0.0.0 --directory "${WORKSPACE_DIR}" &
+    if command -v python &> /dev/null; then
+        python -m http.server "${FILESERVER_PORT}" --bind 0.0.0.0 --directory "${WORKSPACE_DIR}" &
+    else
+        python3 -m http.server "${FILESERVER_PORT}" --bind 0.0.0.0 --directory "${WORKSPACE_DIR}" &
+    fi
 fi
 FILE_SERVER_PID=$!
 
@@ -80,4 +108,11 @@ sleep 1
 
 # Start opencode serve in the foreground
 echo "Starting opencode serve on port ${OPENCODE_PORT}..."
-exec /home/dev/.opencode/bin/opencode serve --port "${OPENCODE_PORT}" --hostname 0.0.0.0
+if ! command -v "${OPENCODE_BIN}" >/dev/null 2>&1; then
+    if [ -x "${HOME_DIR}/.opencode/bin/opencode" ]; then
+        OPENCODE_BIN="${HOME_DIR}/.opencode/bin/opencode"
+    elif [ -x "${OPENCODE_SEED_DIR}/bin/opencode" ]; then
+        OPENCODE_BIN="${OPENCODE_SEED_DIR}/bin/opencode"
+    fi
+fi
+exec "${OPENCODE_BIN}" serve --port "${OPENCODE_PORT}" --hostname 0.0.0.0

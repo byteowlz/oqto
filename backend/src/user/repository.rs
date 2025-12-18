@@ -477,11 +477,7 @@ mod tests {
                 email: format!("user{}@example.com", i),
                 password: None,
                 display_name: None,
-                role: if i == 0 {
-                    Some(UserRole::Admin)
-                } else {
-                    None
-                },
+                role: if i == 0 { Some(UserRole::Admin) } else { None },
                 external_id: None,
             };
             repo.create(request).await.unwrap();

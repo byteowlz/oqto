@@ -10,7 +10,7 @@ use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
 use clap_complete::Shell;
 use config::{Config, Environment, File, FileFormat};
 
-use log::{LevelFilter, debug, info};
+use log::{LevelFilter, debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
 
@@ -22,6 +22,7 @@ mod eavs;
 mod invite;
 mod session;
 mod user;
+mod wordlist;
 
 const APP_NAME: &str = env!("CARGO_PKG_NAME");
 
@@ -168,9 +169,12 @@ struct ServeCommand {
     /// Base port for session allocation
     #[arg(long, default_value = "41820")]
     base_port: u16,
-    /// Default workspace directory to mount for new sessions
-    #[arg(long, default_value = ".", value_name = "PATH")]
-    workspace_root: PathBuf,
+    /// Base directory for user data (home directories)
+    #[arg(long, default_value = "./data", value_name = "PATH")]
+    user_data_path: PathBuf,
+    /// Path to skeleton directory for new user homes
+    #[arg(long, value_name = "PATH")]
+    skel_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Args)]
@@ -270,7 +274,7 @@ impl RuntimeContext {
     }
 
     fn init_logging(&self) -> Result<()> {
-        use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+        use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
         if self.common.quiet {
             log::set_max_level(LevelFilter::Off);
@@ -287,8 +291,9 @@ impl RuntimeContext {
             LevelFilter::Trace => "trace",
         };
 
-        let env_filter = EnvFilter::try_from_default_env()
-            .unwrap_or_else(|_| EnvFilter::new(format!("workspace_backend={level},tower_http={level}")));
+        let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+            EnvFilter::new(format!("workspace_backend={level},tower_http={level}"))
+        });
 
         // Use JSON output if --json flag is set, otherwise pretty format
         if self.common.json {
@@ -524,6 +529,8 @@ struct ContainerRuntimeConfig {
     default_image: String,
     /// Base port for allocating session ports
     base_port: u16,
+    /// Path to skeleton directory for new user homes
+    skel_path: Option<String>,
 }
 
 impl Default for ContainerRuntimeConfig {
@@ -533,6 +540,7 @@ impl Default for ContainerRuntimeConfig {
             binary: None,
             default_image: "opencode-dev:latest".to_string(),
             base_port: 41820,
+            skel_path: None,
         }
     }
 }
@@ -629,7 +637,11 @@ async fn handle_invite_codes(ctx: &RuntimeContext, cmd: InviteCodesCommand) -> R
     match cmd {
         InviteCodesCommand::Generate(gen_cmd) => {
             // Parse expiration duration
-            let expires_in_secs = gen_cmd.expires_in.as_ref().map(|s| parse_duration(s)).transpose()?;
+            let expires_in_secs = gen_cmd
+                .expires_in
+                .as_ref()
+                .map(|s| parse_duration(s))
+                .transpose()?;
 
             let codes = invite_repo
                 .create_batch(
@@ -645,12 +657,14 @@ async fn handle_invite_codes(ctx: &RuntimeContext, cmd: InviteCodesCommand) -> R
             if ctx.common.json {
                 let output: Vec<_> = codes
                     .iter()
-                    .map(|c| serde_json::json!({
-                        "id": c.id,
-                        "code": c.code,
-                        "uses_remaining": c.uses_remaining,
-                        "expires_at": c.expires_at,
-                    }))
+                    .map(|c| {
+                        serde_json::json!({
+                            "id": c.id,
+                            "code": c.code,
+                            "uses_remaining": c.uses_remaining,
+                            "expires_at": c.expires_at,
+                        })
+                    })
                     .collect();
                 println!("{}", serde_json::to_string_pretty(&output)?);
             } else {
@@ -683,19 +697,24 @@ async fn handle_invite_codes(ctx: &RuntimeContext, cmd: InviteCodesCommand) -> R
             if ctx.common.json {
                 let output: Vec<_> = codes
                     .iter()
-                    .map(|c| serde_json::json!({
-                        "id": c.id,
-                        "code": c.code,
-                        "uses_remaining": c.uses_remaining,
-                        "max_uses": c.max_uses,
-                        "expires_at": c.expires_at,
-                        "created_at": c.created_at,
-                        "is_valid": c.is_valid(),
-                    }))
+                    .map(|c| {
+                        serde_json::json!({
+                            "id": c.id,
+                            "code": c.code,
+                            "uses_remaining": c.uses_remaining,
+                            "max_uses": c.max_uses,
+                            "expires_at": c.expires_at,
+                            "created_at": c.created_at,
+                            "is_valid": c.is_valid(),
+                        })
+                    })
                     .collect();
                 println!("{}", serde_json::to_string_pretty(&output)?);
             } else {
-                println!("{:<16} {:<12} {:>5}/{:<5} {:>8} {}", "ID", "CODE", "USED", "MAX", "VALID", "EXPIRES");
+                println!(
+                    "{:<16} {:<12} {:>5}/{:<5} {:>8} {}",
+                    "ID", "CODE", "USED", "MAX", "VALID", "EXPIRES"
+                );
                 println!("{}", "-".repeat(70));
                 for code in &codes {
                     let used = code.max_uses - code.uses_remaining;
@@ -756,7 +775,9 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
 
     // Initialize authentication from config
     let auth_config = ctx.config.auth.clone();
-    auth_config.validate().context("Invalid auth configuration")?;
+    auth_config
+        .validate()
+        .context("Invalid auth configuration")?;
     info!(
         "Auth mode: {}",
         if auth_config.dev_mode {
@@ -786,6 +807,8 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
         ),
     }
 
+    let container_runtime = std::sync::Arc::new(container_runtime);
+
     // Session config: CLI args override config file values
     let default_image = if cmd.image != "opencode-dev:latest" {
         cmd.image.clone()
@@ -798,32 +821,65 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
         ctx.config.container.base_port as i64
     };
 
+    // CLI --skel-path overrides config file
+    let skel_path = cmd
+        .skel_path
+        .as_ref()
+        .map(|p| p.to_string_lossy().to_string())
+        .or_else(|| ctx.config.container.skel_path.clone())
+        .map(|p| {
+            std::path::Path::new(&p)
+                .canonicalize()
+                .unwrap_or_else(|_| std::path::PathBuf::from(&p))
+                .to_string_lossy()
+                .to_string()
+        });
+
     let session_config = session::SessionServiceConfig {
         default_image,
         base_port,
-        default_workspace_path: cmd
-            .workspace_root
+        user_data_path: cmd
+            .user_data_path
             .canonicalize()
-            .unwrap_or(cmd.workspace_root)
+            .unwrap_or(cmd.user_data_path.clone())
             .to_string_lossy()
             .to_string(),
+        skel_path,
         default_user_id: "default".to_string(),
-        default_session_budget_usd: ctx.config.eavs.as_ref().and_then(|e| e.default_session_budget_usd),
+        default_session_budget_usd: ctx
+            .config
+            .eavs
+            .as_ref()
+            .and_then(|e| e.default_session_budget_usd),
         default_session_rpm: ctx.config.eavs.as_ref().and_then(|e| e.default_session_rpm),
-        eavs_container_url: ctx.config.eavs.as_ref().and_then(|e| e.container_url.clone()),
+        eavs_container_url: ctx
+            .config
+            .eavs
+            .as_ref()
+            .and_then(|e| e.container_url.clone()),
     };
 
     let session_repo = session::SessionRepository::new(database.pool().clone());
 
     // Initialize EAVS client if configured
-    let eavs_client = if let Some(ref eavs_config) = ctx.config.eavs {
+    let eavs_client: Option<std::sync::Arc<dyn eavs::EavsApi>> = if let Some(ref eavs_config) =
+        ctx.config.eavs
+    {
         if eavs_config.enabled {
             if let Some(ref master_key) = eavs_config.master_key {
-                Some(eavs::EavsClient::new(&eavs_config.base_url, master_key))
+                Some(std::sync::Arc::new(eavs::EavsClient::new(
+                    &eavs_config.base_url,
+                    master_key,
+                )))
             } else if let Ok(master_key) = std::env::var("EAVS_MASTER_KEY") {
-                Some(eavs::EavsClient::new(&eavs_config.base_url, master_key))
+                Some(std::sync::Arc::new(eavs::EavsClient::new(
+                    &eavs_config.base_url,
+                    master_key,
+                )))
             } else {
-                log::warn!("EAVS enabled but no master_key configured (set eavs.master_key or EAVS_MASTER_KEY env var)");
+                log::warn!(
+                    "EAVS enabled but no master_key configured (set eavs.master_key or EAVS_MASTER_KEY env var)"
+                );
                 None
             }
         } else {
@@ -833,11 +889,47 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
         None
     };
 
+    // Check if the default container image exists before creating the session service
+    match container_runtime
+        .image_exists(&session_config.default_image)
+        .await
+    {
+        Ok(true) => {
+            info!("Container image '{}' found", session_config.default_image);
+        }
+        Ok(false) => {
+            error!(
+                "Container image '{}' not found. Please build it first:\n\
+                 \n\
+                 cd container && docker build -t {} -f Dockerfile ..\n\
+                 \n\
+                 Or specify a different image with --image or in config.toml",
+                session_config.default_image, session_config.default_image
+            );
+            anyhow::bail!(
+                "Required container image '{}' not found. Build it with: cd container && docker build -t {} -f Dockerfile ..",
+                session_config.default_image,
+                session_config.default_image
+            );
+        }
+        Err(e) => {
+            warn!(
+                "Could not check if image '{}' exists: {:?}. Container operations may fail.",
+                session_config.default_image, e
+            );
+        }
+    }
+
     let session_service = if let Some(eavs) = eavs_client {
         session::SessionService::with_eavs(session_repo, container_runtime, eavs, session_config)
     } else {
         session::SessionService::new(session_repo, container_runtime, session_config)
     };
+
+    // Run startup cleanup to handle orphan containers and stale sessions
+    if let Err(e) = session_service.startup_cleanup().await {
+        warn!("Startup cleanup failed (continuing anyway): {:?}", e);
+    }
 
     // Initialize user service
     let user_repo = user::UserRepository::new(database.pool().clone());

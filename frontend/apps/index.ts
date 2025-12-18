@@ -1,8 +1,8 @@
-import { appRegistry } from "@/lib/app-registry"
-import { ProjectsApp } from "@/apps/projects"
-import { WorkspacesApp } from "@/apps/workspaces"
-import { SessionsApp } from "@/apps/sessions"
-import { AdminApp } from "@/apps/admin"
+import { appRegistry } from "@/lib/app-registry";
+import { ProjectsApp } from "@/apps/projects";
+import { WorkspacesApp } from "@/apps/workspaces";
+import { SessionsApp } from "@/apps/sessions";
+import { AdminApp } from "@/apps/admin";
 
 appRegistry
   .register({
@@ -15,20 +15,20 @@ appRegistry
     priority: 1,
   })
   .register({
-    id: "projects",
-    label: { de: "Projekte", en: "Projects" },
-    description: "Projektübersicht und Startpunkte",
-    component: ProjectsApp,
-    routes: ["/projects"],
+    id: "workspaces",
+    label: { de: "Agents", en: "Agents" },
+    description: "Create Agents for specific tasks",
+    component: WorkspacesApp,
+    routes: ["/workspaces"],
     permissions: ["user"],
     priority: 5,
   })
   .register({
-    id: "workspaces",
-    label: { de: "Agents", en: "Agents" },
-    description: "Manage and launch project workspaces",
-    component: WorkspacesApp,
-    routes: ["/workspaces"],
+    id: "projects",
+    label: { de: "Projekte", en: "Projects" },
+    description: "Collaborate with others in a joined space",
+    component: ProjectsApp,
+    routes: ["/projects"],
     permissions: ["user"],
     priority: 20,
   })
@@ -40,6 +40,6 @@ appRegistry
     routes: ["/admin"],
     permissions: ["admin"],
     priority: 30,
-  })
+  });
 
-export const registeredApps = appRegistry.getAllApps()
+export const registeredApps = appRegistry.getAllApps();

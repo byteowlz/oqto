@@ -1,0 +1,11 @@
+# Ignore everything
+*
+
+# Allow only what's needed for the container build
+!fileserver/Cargo.toml
+!fileserver/Cargo.lock
+!fileserver/src/
+
+!container/entrypoint.sh
+!container/skel/.zshrc
+!container/skel/.config/

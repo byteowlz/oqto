@@ -43,7 +43,9 @@ impl InviteCode {
                 }
             }
             // Also try SQLite datetime format
-            if let Ok(expiry) = chrono::NaiveDateTime::parse_from_str(expires_at, "%Y-%m-%d %H:%M:%S") {
+            if let Ok(expiry) =
+                chrono::NaiveDateTime::parse_from_str(expires_at, "%Y-%m-%d %H:%M:%S")
+            {
                 let expiry_utc = expiry.and_utc();
                 if expiry_utc < chrono::Utc::now() {
                     return false;
@@ -65,7 +67,9 @@ impl InviteCode {
             if let Ok(expiry) = chrono::DateTime::parse_from_rfc3339(expires_at) {
                 return expiry < chrono::Utc::now();
             }
-            if let Ok(expiry) = chrono::NaiveDateTime::parse_from_str(expires_at, "%Y-%m-%d %H:%M:%S") {
+            if let Ok(expiry) =
+                chrono::NaiveDateTime::parse_from_str(expires_at, "%Y-%m-%d %H:%M:%S")
+            {
                 let expiry_utc = expiry.and_utc();
                 return expiry_utc < chrono::Utc::now();
             }

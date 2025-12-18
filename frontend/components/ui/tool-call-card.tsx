@@ -75,10 +75,10 @@ function isListDir(input: Record<string, unknown>): input is { path?: string; ig
 
 function getPriorityColor(priority: string) {
   switch (priority) {
-    case "high": return "text-red-400"
-    case "medium": return "text-yellow-400"
-    case "low": return "text-[#6b7974]"
-    default: return "text-[#9aa8a3]"
+    case "high": return "text-red-500 dark:text-red-400"
+    case "medium": return "text-yellow-600 dark:text-yellow-400"
+    case "low": return "text-muted-foreground"
+    default: return "text-muted-foreground"
   }
 }
 
@@ -88,56 +88,56 @@ function getToolIcon(toolName: string, input?: Record<string, unknown>) {
   
   // Check by tool name first
   if (name.includes("read") || name === "read") {
-    return <FileText className="w-3.5 h-3.5 text-blue-400" />
+    return <FileText className="w-3.5 h-3.5 text-blue-500 dark:text-blue-400" />
   }
   if (name.includes("write") || name === "write") {
-    return <FilePlus className="w-3.5 h-3.5 text-green-400" />
+    return <FilePlus className="w-3.5 h-3.5 text-green-600 dark:text-green-400" />
   }
   if (name.includes("edit") || name === "edit") {
-    return <FileEdit className="w-3.5 h-3.5 text-yellow-400" />
+    return <FileEdit className="w-3.5 h-3.5 text-yellow-600 dark:text-yellow-400" />
   }
   if (name.includes("glob") || name === "glob") {
-    return <FolderOpen className="w-3.5 h-3.5 text-purple-400" />
+    return <FolderOpen className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400" />
   }
   if (name.includes("grep") || name === "grep") {
-    return <Search className="w-3.5 h-3.5 text-orange-400" />
+    return <Search className="w-3.5 h-3.5 text-orange-600 dark:text-orange-400" />
   }
   if (name.includes("bash") || name === "bash") {
-    return <Terminal className="w-3.5 h-3.5 text-emerald-400" />
+    return <Terminal className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
   }
   if (name.includes("todo") || name === "todowrite" || name === "todoread") {
-    return <ListTodo className="w-3.5 h-3.5 text-pink-400" />
+    return <ListTodo className="w-3.5 h-3.5 text-pink-600 dark:text-pink-400" />
   }
   if (name.includes("task") || name === "task") {
-    return <Bot className="w-3.5 h-3.5 text-cyan-400" />
+    return <Bot className="w-3.5 h-3.5 text-cyan-600 dark:text-cyan-400" />
   }
   if (name.includes("webfetch") || name.includes("fetch") || name === "webfetch") {
-    return <Globe className="w-3.5 h-3.5 text-sky-400" />
+    return <Globe className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400" />
   }
   if (name.includes("list") || name === "list") {
-    return <FolderOpen className="w-3.5 h-3.5 text-violet-400" />
+    return <FolderOpen className="w-3.5 h-3.5 text-violet-600 dark:text-violet-400" />
   }
   if (name.includes("git")) {
-    return <GitBranch className="w-3.5 h-3.5 text-orange-400" />
+    return <GitBranch className="w-3.5 h-3.5 text-orange-600 dark:text-orange-400" />
   }
   if (name.includes("exa") || name.includes("search")) {
-    return <Search className="w-3.5 h-3.5 text-indigo-400" />
+    return <Search className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
   }
   
   // Fallback: try to detect from input shape
   if (input) {
-    if (isBashCommand(input)) return <Terminal className="w-3.5 h-3.5 text-emerald-400" />
-    if (isTaskCall(input)) return <Bot className="w-3.5 h-3.5 text-cyan-400" />
-    if (isWebFetch(input)) return <Globe className="w-3.5 h-3.5 text-sky-400" />
-    if (isTodoList(input)) return <ListTodo className="w-3.5 h-3.5 text-pink-400" />
-    if (isFileEdit(input)) return <FileEdit className="w-3.5 h-3.5 text-yellow-400" />
-    if (isFileWrite(input)) return <FilePlus className="w-3.5 h-3.5 text-green-400" />
-    if (isFileRead(input)) return <FileText className="w-3.5 h-3.5 text-blue-400" />
-    if (isGrepSearch(input)) return <Search className="w-3.5 h-3.5 text-orange-400" />
-    if (isGlobSearch(input)) return <FolderOpen className="w-3.5 h-3.5 text-purple-400" />
+    if (isBashCommand(input)) return <Terminal className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+    if (isTaskCall(input)) return <Bot className="w-3.5 h-3.5 text-cyan-600 dark:text-cyan-400" />
+    if (isWebFetch(input)) return <Globe className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400" />
+    if (isTodoList(input)) return <ListTodo className="w-3.5 h-3.5 text-pink-600 dark:text-pink-400" />
+    if (isFileEdit(input)) return <FileEdit className="w-3.5 h-3.5 text-yellow-600 dark:text-yellow-400" />
+    if (isFileWrite(input)) return <FilePlus className="w-3.5 h-3.5 text-green-600 dark:text-green-400" />
+    if (isFileRead(input)) return <FileText className="w-3.5 h-3.5 text-blue-500 dark:text-blue-400" />
+    if (isGrepSearch(input)) return <Search className="w-3.5 h-3.5 text-orange-600 dark:text-orange-400" />
+    if (isGlobSearch(input)) return <FolderOpen className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400" />
   }
   
-  return <Wrench className="w-3.5 h-3.5 text-[#6b7974]" />
+  return <Wrench className="w-3.5 h-3.5 text-muted-foreground" />
 }
 
 // Get file extension for syntax highlighting
@@ -170,19 +170,19 @@ function TodoListRenderer({ todos }: { todos: TodoItem[] }) {
         >
           {/* Status checkbox */}
           {todo.status === "completed" ? (
-            <CheckSquare className="w-4 h-4 text-[#3ba77c] flex-shrink-0 mt-0.5" />
+            <CheckSquare className="w-4 h-4 text-primary flex-shrink-0 mt-0.5" />
           ) : todo.status === "in_progress" ? (
-            <CircleDot className="w-4 h-4 text-[#3ba77c] animate-pulse flex-shrink-0 mt-0.5" />
+            <CircleDot className="w-4 h-4 text-primary animate-pulse flex-shrink-0 mt-0.5" />
           ) : todo.status === "cancelled" ? (
-            <XCircle className="w-4 h-4 text-[#6b7974] flex-shrink-0 mt-0.5" />
+            <XCircle className="w-4 h-4 text-muted-foreground flex-shrink-0 mt-0.5" />
           ) : (
-            <Square className="w-4 h-4 text-[#6b7974] flex-shrink-0 mt-0.5" />
+            <Square className="w-4 h-4 text-muted-foreground flex-shrink-0 mt-0.5" />
           )}
           
           {/* Content */}
           <span className={cn(
             "text-sm flex-1",
-            todo.status === "completed" ? "text-[#6b7974]" : "text-[#d5f0e4]"
+            todo.status === "completed" ? "text-muted-foreground" : "text-foreground"
           )}>
             {todo.content}
           </span>
@@ -206,16 +206,16 @@ function FileReadRenderer({ input }: { input: { filePath: string; offset?: numbe
   return (
     <div className="space-y-2">
       <div className="flex items-center gap-2 text-sm">
-        <FileText className="w-4 h-4 text-[#3ba77c]" />
-        <span className="text-[#d5f0e4] font-mono text-xs break-all">{input.filePath}</span>
+        <FileText className="w-4 h-4 text-primary" />
+        <span className="text-foreground font-mono text-xs break-all">{input.filePath}</span>
       </div>
       {(input.offset !== undefined || input.limit !== undefined) && (
-        <div className="flex items-center gap-3 text-xs text-[#6b7974]">
+        <div className="flex items-center gap-3 text-xs text-foreground/60 dark:text-muted-foreground">
           {input.offset !== undefined && (
-            <span>From line: <span className="text-[#9aa8a3]">{input.offset}</span></span>
+            <span>From line: <span className="text-foreground/80">{input.offset}</span></span>
           )}
           {input.limit !== undefined && (
-            <span>Lines: <span className="text-[#9aa8a3]">{input.limit}</span></span>
+            <span>Lines: <span className="text-foreground/80">{input.limit}</span></span>
           )}
         </div>
       )}
@@ -230,11 +230,11 @@ function FileWriteRenderer({ input }: { input: { filePath: string; content: stri
   return (
     <div className="space-y-2">
       <div className="flex items-center gap-2 text-sm">
-        <FilePlus className="w-4 h-4 text-[#3ba77c]" />
-        <span className="text-[#d5f0e4] font-mono text-xs break-all">{input.filePath}</span>
-        <span className="text-xs text-[#6b7974]">({lineCount} lines)</span>
+        <FilePlus className="w-4 h-4 text-primary" />
+        <span className="text-foreground font-mono text-xs break-all">{input.filePath}</span>
+        <span className="text-xs text-foreground/60 dark:text-muted-foreground">({lineCount} lines)</span>
       </div>
-      <div className="bg-[#0f1412] rounded-md overflow-hidden">
+      <div className="rounded-md overflow-hidden" style={{ backgroundColor: "var(--code-bg)" }}>
         <MarkdownRenderer 
           content={`\`\`\`${ext}\n${input.content.length > 1500 ? input.content.slice(0, 1500) + "\n// ... content truncated" : input.content}\n\`\`\``}
           className="text-xs [&_pre]:max-h-48 [&_pre]:overflow-y-auto"
@@ -250,20 +250,20 @@ function FileEditRenderer({ input }: { input: { filePath: string; oldString: str
   return (
     <div className="space-y-2">
       <div className="flex items-center gap-2 text-sm">
-        <FileEdit className="w-4 h-4 text-[#3ba77c]" />
-        <span className="text-[#d5f0e4] font-mono text-xs break-all">{input.filePath}</span>
+        <FileEdit className="w-4 h-4 text-primary" />
+        <span className="text-foreground font-mono text-xs break-all">{input.filePath}</span>
         {input.replaceAll && (
-          <span className="text-[10px] uppercase tracking-wide text-yellow-400 bg-yellow-400/10 px-1.5 py-0.5 rounded">Replace All</span>
+          <span className="text-[10px] uppercase tracking-wide text-yellow-600 dark:text-yellow-400 bg-yellow-500/10 px-1.5 py-0.5 rounded">Replace All</span>
         )}
       </div>
       
       <div className="grid grid-cols-1 gap-2">
         <div>
-          <div className="text-[10px] uppercase tracking-wide text-red-400 mb-1 flex items-center gap-1">
-            <span className="w-3 h-3 rounded bg-red-400/20 flex items-center justify-center text-red-400">-</span>
+          <div className="text-[10px] uppercase tracking-wide text-red-600 dark:text-red-400 mb-1 flex items-center gap-1">
+            <span className="w-3 h-3 rounded bg-red-500/20 flex items-center justify-center text-red-600 dark:text-red-400">-</span>
             Old
           </div>
-          <div className="bg-red-950/20 border border-red-900/30 rounded-md overflow-hidden">
+          <div className="bg-red-500/5 dark:bg-red-950/20 border border-red-500/20 dark:border-red-900/30 rounded-md overflow-hidden">
             <MarkdownRenderer 
               content={`\`\`\`${ext}\n${input.oldString.length > 500 ? input.oldString.slice(0, 500) + "\n// ... truncated" : input.oldString}\n\`\`\``}
               className="text-xs [&_pre]:max-h-32 [&_pre]:overflow-y-auto [&_.markdown-content]:bg-transparent"
@@ -272,11 +272,11 @@ function FileEditRenderer({ input }: { input: { filePath: string; oldString: str
         </div>
         
         <div>
-          <div className="text-[10px] uppercase tracking-wide text-[#3ba77c] mb-1 flex items-center gap-1">
-            <span className="w-3 h-3 rounded bg-[#3ba77c]/20 flex items-center justify-center text-[#3ba77c]">+</span>
+          <div className="text-[10px] uppercase tracking-wide text-primary mb-1 flex items-center gap-1">
+            <span className="w-3 h-3 rounded bg-primary/20 flex items-center justify-center text-primary">+</span>
             New
           </div>
-          <div className="bg-[#182922] border border-[#2d5c47]/30 rounded-md overflow-hidden">
+          <div className="bg-primary/5 border border-primary/20 rounded-md overflow-hidden">
             <MarkdownRenderer 
               content={`\`\`\`${ext}\n${input.newString.length > 500 ? input.newString.slice(0, 500) + "\n// ... truncated" : input.newString}\n\`\`\``}
               className="text-xs [&_pre]:max-h-32 [&_pre]:overflow-y-auto [&_.markdown-content]:bg-transparent"
@@ -291,13 +291,13 @@ function FileEditRenderer({ input }: { input: { filePath: string; oldString: str
 function GlobSearchRenderer({ input }: { input: { pattern: string; path?: string } }) {
   return (
     <div className="flex items-center gap-2 text-sm flex-wrap">
-      <FolderOpen className="w-4 h-4 text-[#3ba77c]" />
-      <span className="text-[#6b7974]">Pattern:</span>
-      <code className="text-[#6ee7b7] bg-[#182922] px-1.5 py-0.5 rounded text-xs font-mono">{input.pattern}</code>
+      <FolderOpen className="w-4 h-4 text-primary" />
+      <span className="text-foreground/60 dark:text-muted-foreground">Pattern:</span>
+      <code className="text-primary bg-primary/10 px-1.5 py-0.5 rounded text-xs font-mono">{input.pattern}</code>
       {input.path && (
         <>
-          <span className="text-[#6b7974]">in</span>
-          <code className="text-[#9aa8a3] font-mono text-xs">{input.path}</code>
+          <span className="text-foreground/60 dark:text-muted-foreground">in</span>
+          <code className="text-foreground/80 font-mono text-xs">{input.path}</code>
         </>
       )}
     </div>
@@ -307,19 +307,19 @@ function GlobSearchRenderer({ input }: { input: { pattern: string; path?: string
 function GrepSearchRenderer({ input }: { input: { pattern: string; path?: string; include?: string } }) {
   return (
     <div className="flex items-center gap-2 text-sm flex-wrap">
-      <Search className="w-4 h-4 text-[#3ba77c]" />
-      <span className="text-[#6b7974]">Search:</span>
-      <code className="text-[#6ee7b7] bg-[#182922] px-1.5 py-0.5 rounded text-xs font-mono">{input.pattern}</code>
+      <Search className="w-4 h-4 text-primary" />
+      <span className="text-foreground/60 dark:text-muted-foreground">Search:</span>
+      <code className="text-primary bg-primary/10 px-1.5 py-0.5 rounded text-xs font-mono">{input.pattern}</code>
       {input.include && (
         <>
-          <span className="text-[#6b7974]">in</span>
-          <code className="text-[#9aa8a3] bg-[#1a221f] px-1.5 py-0.5 rounded text-xs font-mono">{input.include}</code>
+          <span className="text-foreground/60 dark:text-muted-foreground">in</span>
+          <code className="text-foreground/80 bg-muted px-1.5 py-0.5 rounded text-xs font-mono">{input.include}</code>
         </>
       )}
       {input.path && (
         <>
-          <span className="text-[#6b7974]">at</span>
-          <code className="text-[#9aa8a3] font-mono text-xs">{input.path}</code>
+          <span className="text-foreground/60 dark:text-muted-foreground">at</span>
+          <code className="text-foreground/80 font-mono text-xs">{input.path}</code>
         </>
       )}
     </div>
@@ -330,36 +330,36 @@ function BashCommandRenderer({ input }: { input: { command: string; description?
   return (
     <div className="space-y-2">
       {input.description && (
-        <div className="flex items-center gap-2 text-sm text-[#d5f0e4]">
-          <Terminal className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+        <div className="flex items-center gap-2 text-sm text-foreground">
+          <Terminal className="w-4 h-4 text-emerald-600 dark:text-emerald-400 flex-shrink-0" />
           <span>{input.description}</span>
         </div>
       )}
-      <div className="bg-[#0f1412] rounded-md p-3 font-mono text-xs border border-[#1f2a27]">
+      <div className="rounded-md p-3 font-mono text-xs border border-border" style={{ backgroundColor: "var(--code-bg)" }}>
         {input.workdir && (
-          <div className="text-[#6b7974] mb-1 flex items-center gap-2">
-            <span className="text-emerald-400">$</span>
+          <div className="text-foreground/60 dark:text-muted-foreground mb-1 flex items-center gap-2">
+            <span className="text-emerald-600 dark:text-emerald-400">$</span>
             <span>cd {input.workdir}</span>
           </div>
         )}
-        <div className="text-[#d5f0e4] flex items-start gap-2">
-          <span className="text-emerald-400">$</span>
+        <div className="text-foreground flex items-start gap-2">
+          <span className="text-emerald-600 dark:text-emerald-400">$</span>
           <span className="break-all">{input.command}</span>
         </div>
       </div>
       {input.timeout && input.timeout !== 120000 && (
-        <div className="text-[10px] text-[#6b7974]">Timeout: {(input.timeout / 1000).toFixed(0)}s</div>
+        <div className="text-[10px] text-foreground/60 dark:text-muted-foreground">Timeout: {(input.timeout / 1000).toFixed(0)}s</div>
       )}
     </div>
   )
 }
 
 function TaskCallRenderer({ input }: { input: { prompt: string; description?: string; subagent_type?: string; session_id?: string } }) {
-  const agentTypeLabels: Record<string, { label: string; color: string }> = {
-    "general": { label: "General Agent", color: "text-cyan-400" },
-    "explore": { label: "Code Explorer", color: "text-purple-400" },
-    "git-committer": { label: "Git Committer", color: "text-orange-400" },
-    "docs": { label: "Documentation", color: "text-blue-400" },
+  const agentTypeLabels: Record<string, { label: string; className: string }> = {
+    "general": { label: "General Agent", className: "text-cyan-600 dark:text-cyan-400" },
+    "explore": { label: "Code Explorer", className: "text-purple-600 dark:text-purple-400" },
+    "git-committer": { label: "Git Committer", className: "text-orange-600 dark:text-orange-400" },
+    "docs": { label: "Documentation", className: "text-blue-600 dark:text-blue-400" },
   }
   
   const agentInfo = input.subagent_type ? agentTypeLabels[input.subagent_type] : null
@@ -367,27 +367,27 @@ function TaskCallRenderer({ input }: { input: { prompt: string; description?: st
   return (
     <div className="space-y-2">
       <div className="flex items-center gap-2 flex-wrap">
-        <Bot className="w-4 h-4 text-cyan-400 flex-shrink-0" />
+        <Bot className="w-4 h-4 text-cyan-600 dark:text-cyan-400 flex-shrink-0" />
         {agentInfo ? (
-          <span className={cn("text-sm font-medium", agentInfo.color)}>{agentInfo.label}</span>
+          <span className={cn("text-sm font-medium", agentInfo.className)}>{agentInfo.label}</span>
         ) : input.subagent_type ? (
-          <span className="text-sm font-medium text-cyan-400">{input.subagent_type}</span>
+          <span className="text-sm font-medium text-cyan-600 dark:text-cyan-400">{input.subagent_type}</span>
         ) : null}
         {input.description && (
-          <span className="text-xs text-[#6b7974]">- {input.description}</span>
+          <span className="text-xs text-foreground/60 dark:text-muted-foreground">- {input.description}</span>
         )}
       </div>
       
-      <div className="bg-[#0f1412] rounded-md p-3 border border-[#1f2a27]">
-        <div className="text-[10px] uppercase tracking-wide text-[#6b7974] mb-1">Task</div>
-        <div className="text-sm text-[#d5f0e4] whitespace-pre-wrap">
+      <div className="rounded-md p-3 border border-border" style={{ backgroundColor: "var(--code-bg)" }}>
+        <div className="text-[10px] uppercase tracking-wide text-foreground/60 dark:text-muted-foreground mb-1">Task</div>
+        <div className="text-sm text-foreground whitespace-pre-wrap">
           {input.prompt.length > 500 ? input.prompt.slice(0, 500) + "..." : input.prompt}
         </div>
       </div>
       
       {input.session_id && (
-        <div className="text-[10px] text-[#6b7974]">
-          Continuing session: <code className="text-[#9aa8a3]">{input.session_id}</code>
+        <div className="text-[10px] text-foreground/60 dark:text-muted-foreground">
+          Continuing session: <code className="text-foreground/80">{input.session_id}</code>
         </div>
       )}
     </div>
@@ -398,23 +398,23 @@ function WebFetchRenderer({ input }: { input: { url: string; format?: string; ti
   return (
     <div className="space-y-2">
       <div className="flex items-center gap-2">
-        <Globe className="w-4 h-4 text-sky-400 flex-shrink-0" />
-        <span className="text-sm text-[#d5f0e4]">Fetching URL</span>
+        <Globe className="w-4 h-4 text-sky-600 dark:text-sky-400 flex-shrink-0" />
+        <span className="text-sm text-foreground">Fetching URL</span>
       </div>
-      <div className="bg-[#0f1412] rounded-md p-2 border border-[#1f2a27]">
+      <div className="rounded-md p-2 border border-border" style={{ backgroundColor: "var(--code-bg)" }}>
         <a 
           href={input.url} 
           target="_blank" 
           rel="noopener noreferrer"
-          className="text-xs font-mono text-sky-400 hover:text-sky-300 break-all"
+          className="text-xs font-mono text-sky-600 dark:text-sky-400 hover:text-sky-500 dark:hover:text-sky-300 break-all"
         >
           {input.url}
         </a>
       </div>
       {(input.format || input.timeout) && (
-        <div className="flex items-center gap-3 text-[10px] text-[#6b7974]">
-          {input.format && <span>Format: <span className="text-[#9aa8a3]">{input.format}</span></span>}
-          {input.timeout && <span>Timeout: <span className="text-[#9aa8a3]">{input.timeout}s</span></span>}
+        <div className="flex items-center gap-3 text-[10px] text-foreground/60 dark:text-muted-foreground">
+          {input.format && <span>Format: <span className="text-foreground/80">{input.format}</span></span>}
+          {input.timeout && <span>Timeout: <span className="text-foreground/80">{input.timeout}s</span></span>}
         </div>
       )}
     </div>
@@ -425,17 +425,17 @@ function ListDirRenderer({ input }: { input: { path?: string; ignore?: string[] 
   return (
     <div className="space-y-2">
       <div className="flex items-center gap-2 text-sm">
-        <FolderOpen className="w-4 h-4 text-violet-400 flex-shrink-0" />
-        <span className="text-[#d5f0e4]">List directory</span>
+        <FolderOpen className="w-4 h-4 text-violet-600 dark:text-violet-400 flex-shrink-0" />
+        <span className="text-foreground">List directory</span>
       </div>
-      <div className="bg-[#0f1412] rounded-md p-2 border border-[#1f2a27]">
-        <code className="text-xs font-mono text-violet-400 break-all">
+      <div className="rounded-md p-2 border border-border" style={{ backgroundColor: "var(--code-bg)" }}>
+        <code className="text-xs font-mono text-violet-600 dark:text-violet-400 break-all">
           {input.path || "(current directory)"}
         </code>
       </div>
       {input.ignore && input.ignore.length > 0 && (
-        <div className="text-[10px] text-[#6b7974]">
-          Ignoring: <span className="text-[#9aa8a3]">{input.ignore.join(", ")}</span>
+        <div className="text-[10px] text-foreground/60 dark:text-muted-foreground">
+          Ignoring: <span className="text-foreground/80">{input.ignore.join(", ")}</span>
         </div>
       )}
     </div>
@@ -449,8 +449,8 @@ function FileOutputRenderer({ output, filePath }: { output: string; filePath?: s
   
   if (hasLineNumbers) {
     return (
-      <div className="bg-[#0f1412] rounded-md overflow-hidden">
-        <pre className="text-xs text-[#9aa8a3] p-2 overflow-x-auto max-h-64 overflow-y-auto whitespace-pre font-mono">
+      <div className="rounded-md overflow-hidden" style={{ backgroundColor: "var(--code-bg)" }}>
+        <pre className="text-xs text-foreground/70 dark:text-muted-foreground p-2 overflow-x-auto max-h-64 overflow-y-auto whitespace-pre font-mono">
           {output.length > 3000 ? output.slice(0, 3000) + "\n... (truncated)" : output}
         </pre>
       </div>
@@ -459,7 +459,7 @@ function FileOutputRenderer({ output, filePath }: { output: string; filePath?: s
   
   // For other file outputs, try syntax highlighting
   return (
-    <div className="bg-[#0f1412] rounded-md overflow-hidden">
+    <div className="rounded-md overflow-hidden" style={{ backgroundColor: "var(--code-bg)" }}>
       <MarkdownRenderer 
         content={`\`\`\`${ext}\n${output.length > 2000 ? output.slice(0, 2000) + "\n// ... truncated" : output}\n\`\`\``}
         className="text-xs [&_pre]:max-h-64 [&_pre]:overflow-y-auto"
@@ -471,13 +471,13 @@ function FileOutputRenderer({ output, filePath }: { output: string; filePath?: s
 function getStatusIcon(status: string | undefined, toolName?: string, input?: Record<string, unknown>) {
   // For running/pending, show spinner or clock
   if (status === "pending") {
-    return <Clock className="w-3.5 h-3.5 text-[#6b7974]" />
+    return <Clock className="w-3.5 h-3.5 text-muted-foreground" />
   }
   if (status === "running") {
-    return <Loader2 className="w-3.5 h-3.5 text-[#3ba77c] animate-spin" />
+    return <Loader2 className="w-3.5 h-3.5 text-primary animate-spin" />
   }
   if (status === "error") {
-    return <XCircle className="w-3.5 h-3.5 text-red-400" />
+    return <XCircle className="w-3.5 h-3.5 text-red-500 dark:text-red-400" />
   }
   
   // For completed or unknown status, show tool-specific icon
@@ -486,24 +486,24 @@ function getStatusIcon(status: string | undefined, toolName?: string, input?: Re
   }
   
   if (status === "completed") {
-    return <CheckCircle2 className="w-3.5 h-3.5 text-[#3ba77c]" />
+    return <CheckCircle2 className="w-3.5 h-3.5 text-primary" />
   }
   
-  return <Wrench className="w-3.5 h-3.5 text-[#6b7974]" />
+  return <Wrench className="w-3.5 h-3.5 text-muted-foreground" />
 }
 
-function getStatusColor(status: string | undefined) {
+function getStatusClasses(status: string | undefined) {
   switch (status) {
     case "pending":
-      return "border-[#3a4540] bg-[#141a18]"
+      return "border-border bg-card"
     case "running":
-      return "border-[#2d5c47] bg-[#182922]"
+      return "border-primary/30 bg-primary/5"
     case "completed":
-      return "border-[#2a3632] bg-[#141a18]"
+      return "border-border bg-card"
     case "error":
-      return "border-red-900/50 bg-red-950/20"
+      return "border-red-500/30 dark:border-red-900/50 bg-red-500/5 dark:bg-red-950/20"
     default:
-      return "border-[#2a3632] bg-[#141a18]"
+      return "border-border bg-card"
   }
 }
 
@@ -538,7 +538,7 @@ export function ToolCallCard({ part, defaultCollapsed = true, hideTodoTools = fa
     <div
       className={cn(
         "rounded-lg border transition-all duration-200",
-        getStatusColor(status)
+        getStatusClasses(status)
       )}
     >
       <button
@@ -546,14 +546,14 @@ export function ToolCallCard({ part, defaultCollapsed = true, hideTodoTools = fa
         disabled={!hasContent}
         className={cn(
           "w-full flex items-center gap-2 px-3 py-2 text-left",
-          hasContent && "cursor-pointer hover:bg-[#1a221f]",
+          hasContent && "cursor-pointer hover:bg-muted/50",
           !hasContent && "cursor-default"
         )}
       >
         {hasContent && (
           <ChevronRight
             className={cn(
-              "w-4 h-4 text-[#6b7974] transition-transform duration-200 flex-shrink-0",
+              "w-4 h-4 text-muted-foreground transition-transform duration-200 flex-shrink-0",
               isOpen && "rotate-90"
             )}
           />
@@ -562,29 +562,29 @@ export function ToolCallCard({ part, defaultCollapsed = true, hideTodoTools = fa
         
         {getStatusIcon(status, toolName, input)}
         
-        <span className="flex-1 text-sm font-medium text-[#d5f0e4] truncate">
+        <span className="flex-1 text-sm font-medium text-foreground truncate">
           {title}
         </span>
         
         {duration && (
-          <span className="text-xs text-[#6b7974] flex-shrink-0">
+          <span className="text-xs text-foreground/60 dark:text-muted-foreground flex-shrink-0">
             {duration}
           </span>
         )}
       </button>
 
       {isOpen && hasContent && (
-        <div className="px-3 pb-3 space-y-2 border-t border-[#2a3632] pt-2">
+        <div className="px-3 pb-3 space-y-2 border-t border-border pt-2">
           {input && Object.keys(input).length > 0 && (
             <div>
               {/* Render input based on tool type */}
               {isTodoList(input) ? (
                 <>
                   <div className="flex items-center justify-between mb-1">
-                    <span className="text-xs uppercase tracking-wide text-[#6b7974]">Todo List</span>
+                    <span className="text-xs uppercase tracking-wide text-foreground/60 dark:text-muted-foreground">Todo List</span>
                     <CopyButton text={JSON.stringify(input, null, 2)} />
                   </div>
-                  <div className="bg-[#0f1412] rounded-md p-2 max-h-64 overflow-y-auto">
+                  <div className="rounded-md p-2 max-h-64 overflow-y-auto" style={{ backgroundColor: "var(--code-bg)" }}>
                     <TodoListRenderer todos={input.todos} />
                   </div>
                 </>
@@ -609,10 +609,10 @@ export function ToolCallCard({ part, defaultCollapsed = true, hideTodoTools = fa
               ) : (
                 <>
                   <div className="flex items-center justify-between mb-1">
-                    <span className="text-xs uppercase tracking-wide text-[#6b7974]">Input</span>
+                    <span className="text-xs uppercase tracking-wide text-foreground/60 dark:text-muted-foreground">Input</span>
                     <CopyButton text={JSON.stringify(input, null, 2)} />
                   </div>
-                  <pre className="text-xs text-[#9aa8a3] bg-[#0f1412] rounded-md p-2 overflow-x-auto max-h-48 overflow-y-auto">
+                  <pre className="text-xs text-foreground/70 dark:text-muted-foreground rounded-md p-2 overflow-x-auto max-h-48 overflow-y-auto" style={{ backgroundColor: "var(--code-bg)" }}>
                     {JSON.stringify(input, null, 2)}
                   </pre>
                 </>
@@ -624,13 +624,13 @@ export function ToolCallCard({ part, defaultCollapsed = true, hideTodoTools = fa
           {output && !(input && isTodoList(input)) && (
             <div>
               <div className="flex items-center justify-between mb-1">
-                <span className="text-xs uppercase tracking-wide text-[#6b7974]">Output</span>
+                <span className="text-xs uppercase tracking-wide text-foreground/60 dark:text-muted-foreground">Output</span>
                 <CopyButton text={output} />
               </div>
               {input && isFileRead(input) ? (
                 <FileOutputRenderer output={output} filePath={input.filePath} />
               ) : (
-                <pre className="text-xs text-[#9aa8a3] bg-[#0f1412] rounded-md p-2 overflow-x-auto max-h-48 overflow-y-auto whitespace-pre-wrap">
+                <pre className="text-xs text-foreground/70 dark:text-muted-foreground rounded-md p-2 overflow-x-auto max-h-48 overflow-y-auto whitespace-pre-wrap" style={{ backgroundColor: "var(--code-bg)" }}>
                   {output.length > 2000 ? output.slice(0, 2000) + "\n... (truncated)" : output}
                 </pre>
               )}

@@ -31,7 +31,7 @@ ARG TTYD_PORT=41822
 ENV LANG=en_US.UTF-8
 ENV LC_ALL=en_US.UTF-8
 ENV TERM=xterm-256color
-ENV SHELL=/bin/bash
+ENV SHELL=/bin/zsh
 ENV XDG_CONFIG_HOME=/home/${USERNAME}/.config
 ENV XDG_DATA_HOME=/home/${USERNAME}/.local/share
 ENV XDG_STATE_HOME=/home/${USERNAME}/.local/state
@@ -54,8 +54,10 @@ RUN pacman -Syu --noconfirm && \
   sudo \
   ripgrep \
   fd \
+  fzf \
   neovim \
   zoxide \
+  zsh \
   starship \
   yazi \
   ffmpegthumbnailer \
@@ -64,11 +66,19 @@ RUN pacman -Syu --noconfirm && \
   imagemagick \
   python \
   python-pip \
+  python-uv \
   nodejs \
   npm \
   go \
+  rust \
   ttyd \
   && pacman -Scc --noconfirm
+
+# Install bun
+RUN curl -fsSL https://bun.sh/install | bash && \
+  mv /root/.bun /usr/local/bun
+ENV BUN_INSTALL=/usr/local/bun
+ENV PATH="/usr/local/bun/bin:${PATH}"
 
 # Copy fileserver binary from builder stage
 # Note: EAVS runs on the host, not in containers - containers connect via EAVS_URL
@@ -93,26 +103,42 @@ RUN mkdir -p /home/${USERNAME}/.config \
 USER ${USERNAME}
 WORKDIR /home/${USERNAME}
 
+# Create .zshrc before opencode installer (installer needs it to add PATH)
+RUN touch /home/${USERNAME}/.zshrc
+
 # Install opencode via the official installer
 RUN curl -fsSL https://opencode.ai/install | bash
 
-# Add opencode to PATH
-ENV PATH="/home/${USERNAME}/.opencode/bin:/home/${USERNAME}/.local/bin:${PATH}"
+# Set zsh as default shell for user
+RUN sudo usermod -s /bin/zsh ${USERNAME}
 
-# Copy configuration files (from container directory in build context)
-COPY --chown=${USERNAME}:${USERNAME} container/.config/ /home/${USERNAME}/.config/
+# Switch to root to stage opencode + defaults outside the home directory.
+USER root
 
-# Configure shell with starship and zoxide
-RUN echo 'eval "$(starship init bash)"' >> /home/${USERNAME}/.bashrc && \
-  echo 'eval "$(zoxide init bash)"' >> /home/${USERNAME}/.bashrc && \
-  echo 'alias vim="nvim"' >> /home/${USERNAME}/.bashrc && \
-  echo 'alias vi="nvim"' >> /home/${USERNAME}/.bashrc
+# Keep a stable opencode binary outside /home so it survives mounting /home/dev.
+RUN mkdir -p /opt/opencode && \
+  cp -a /home/${USERNAME}/.opencode/. /opt/opencode/ && \
+  ln -sf /opt/opencode/bin/opencode /usr/local/bin/opencode && \
+  chmod +x /usr/local/bin/opencode
 
-# fileserver binary is already installed from the builder stage above
+# Ship default dotfiles inside the image so the entrypoint can populate an empty mounted home.
+COPY container/skel/ /usr/local/share/skel/
+RUN chmod -R a+rX /usr/local/share/skel
 
-# Copy entrypoint script (from container directory in build context)
-COPY --chown=${USERNAME}:${USERNAME} container/entrypoint.sh /home/${USERNAME}/entrypoint.sh
-RUN chmod +x /home/${USERNAME}/entrypoint.sh
+USER ${USERNAME}
+
+# Add opencode to PATH (both the per-user install and the stable /usr/local/bin symlink)
+ENV PATH="/usr/local/bin:/home/${USERNAME}/.opencode/bin:/home/${USERNAME}/.local/bin:${PATH}"
+
+# Copy dotfiles from skel into the image for non-mounted dev use.
+COPY --chown=${USERNAME}:${USERNAME} container/skel/.zshrc /home/${USERNAME}/.zshrc
+COPY --chown=${USERNAME}:${USERNAME} container/skel/.config /home/${USERNAME}/.config
+
+# Copy entrypoint script to /usr/local/bin
+USER root
+COPY container/entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
+USER ${USERNAME}
 
 # Working directory
 WORKDIR /home/${USERNAME}/workspace
@@ -122,5 +148,5 @@ EXPOSE ${OPENCODE_PORT}
 EXPOSE ${FILESERVER_PORT}
 EXPOSE ${TTYD_PORT}
 
-# Entrypoint
-ENTRYPOINT ["/home/dev/entrypoint.sh"]
+# Entrypoint (in /usr/local/bin so it's not overwritten by home mount)
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

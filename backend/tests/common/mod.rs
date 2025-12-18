@@ -1,6 +1,7 @@
 //! Test utilities and common setup.
 
 use axum::Router;
+use std::sync::Arc;
 use workspace_backend::api;
 use workspace_backend::auth::{AuthConfig, AuthState};
 use workspace_backend::container::ContainerRuntime;
@@ -27,7 +28,7 @@ pub async fn test_app() -> Router {
     let auth_state = AuthState::new(auth_config);
 
     // Create container runtime (won't actually be used in unit tests)
-    let runtime = ContainerRuntime::new();
+    let runtime = Arc::new(ContainerRuntime::new());
 
     // Create session service
     let session_config = SessionServiceConfig::default();
@@ -58,7 +59,7 @@ pub async fn test_app_with_token() -> (Router, String) {
         .generate_dev_token(&auth_state.dev_users()[0])
         .unwrap();
 
-    let runtime = ContainerRuntime::new();
+    let runtime = Arc::new(ContainerRuntime::new());
     let session_config = SessionServiceConfig::default();
     let session_repo = SessionRepository::new(db.pool().clone());
     let session_service = SessionService::new(session_repo, runtime, session_config);
@@ -86,7 +87,7 @@ pub async fn test_app_with_user_token() -> (Router, String) {
         .generate_dev_token(&auth_state.dev_users()[1])
         .unwrap();
 
-    let runtime = ContainerRuntime::new();
+    let runtime = Arc::new(ContainerRuntime::new());
     let session_config = SessionServiceConfig::default();
     let session_repo = SessionRepository::new(db.pool().clone());
     let session_service = SessionService::new(session_repo, runtime, session_config);

@@ -108,7 +108,10 @@ pub async fn stop_session(
     let session = state.sessions.get_session(&session_id).await?;
 
     if session.is_none() {
-        return Err(ApiError::not_found(format!("Session {} not found", session_id)));
+        return Err(ApiError::not_found(format!(
+            "Session {} not found",
+            session_id
+        )));
     }
 
     state.sessions.stop_session(&session_id).await?;
@@ -128,6 +131,62 @@ pub async fn delete_session(
 
     info!(session_id = %session_id, "Deleted session");
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// Check if a session has an available image update.
+#[instrument(skip(state))]
+pub async fn check_session_update(
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+) -> ApiResult<Json<SessionUpdateStatus>> {
+    let update_available = state.sessions.check_for_image_update(&session_id).await?;
+
+    Ok(Json(SessionUpdateStatus {
+        session_id,
+        update_available: update_available.is_some(),
+        new_digest: update_available,
+    }))
+}
+
+/// Upgrade a session to the latest image version.
+#[instrument(skip(state))]
+pub async fn upgrade_session(
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+) -> ApiResult<Json<SessionWithUrls>> {
+    let session = state.sessions.upgrade_session(&session_id).await?;
+    info!(session_id = %session_id, "Upgraded session");
+
+    let response = SessionWithUrls::from_session(session, "localhost");
+    Ok(Json(response))
+}
+
+/// Response for session update check.
+#[derive(Debug, Serialize)]
+pub struct SessionUpdateStatus {
+    pub session_id: String,
+    pub update_available: bool,
+    pub new_digest: Option<String>,
+}
+
+/// Check all sessions for available updates.
+#[instrument(skip(state))]
+pub async fn check_all_updates(
+    State(state): State<AppState>,
+) -> ApiResult<Json<Vec<SessionUpdateStatus>>> {
+    let updates = state.sessions.check_all_for_updates().await?;
+
+    let statuses: Vec<SessionUpdateStatus> = updates
+        .into_iter()
+        .map(|(session_id, new_digest)| SessionUpdateStatus {
+            session_id,
+            update_available: true,
+            new_digest: Some(new_digest),
+        })
+        .collect();
+
+    info!(count = statuses.len(), "Checked all sessions for updates");
+    Ok(Json(statuses))
 }
 
 // ============================================================================
@@ -179,7 +238,11 @@ pub async fn dev_login(
     // Build cookie with security flags
     // In dev mode, omit Secure flag to allow http://localhost
     // In production, always include Secure flag
-    let secure_flag = if state.auth.is_dev_mode() { "" } else { " Secure;" };
+    let secure_flag = if state.auth.is_dev_mode() {
+        ""
+    } else {
+        " Secure;"
+    };
     let cookie = format!(
         "auth_token={}; Path=/; HttpOnly; SameSite=Lax;{} Max-Age={}",
         token,
@@ -278,22 +341,29 @@ pub async fn register(
 
     // Update the invite code to record the actual user ID
     // This is informational and not critical for correctness
-    if let Err(e) = sqlx::query(
-        "UPDATE invite_codes SET used_by = ? WHERE code = ?",
-    )
-    .bind(&user.id)
-    .bind(&request.invite_code)
-    .execute(state.invites.pool())
-    .await
+    if let Err(e) = sqlx::query("UPDATE invite_codes SET used_by = ? WHERE code = ?")
+        .bind(&user.id)
+        .bind(&request.invite_code)
+        .execute(state.invites.pool())
+        .await
     {
         warn!("Failed to update invite code used_by: {:?}", e);
     }
 
     // Generate JWT token for the new user
-    let token = state.auth.generate_token(&user.id, &user.email, &user.display_name, &user.role.to_string())?;
+    let token = state.auth.generate_token(
+        &user.id,
+        &user.email,
+        &user.display_name,
+        &user.role.to_string(),
+    )?;
 
     // Build cookie
-    let secure_flag = if state.auth.is_dev_mode() { "" } else { " Secure;" };
+    let secure_flag = if state.auth.is_dev_mode() {
+        ""
+    } else {
+        " Secure;"
+    };
     let cookie = format!(
         "auth_token={}; Path=/; HttpOnly; SameSite=Lax;{} Max-Age={}",
         token,
@@ -370,7 +440,11 @@ pub async fn login(
     };
 
     // Build cookie
-    let secure_flag = if state.auth.is_dev_mode() { "" } else { " Secure;" };
+    let secure_flag = if state.auth.is_dev_mode() {
+        ""
+    } else {
+        " Secure;"
+    };
     let cookie = format!(
         "auth_token={}; Path=/; HttpOnly; SameSite=Lax;{} Max-Age={}",
         token,
@@ -393,7 +467,7 @@ pub async fn login(
 pub async fn logout() -> impl IntoResponse {
     // Clear the auth cookie by setting it to empty with immediate expiry
     let cookie = "auth_token=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0";
-    
+
     (
         AppendHeaders([(SET_COOKIE, cookie.to_string())]),
         StatusCode::NO_CONTENT,
@@ -561,7 +635,11 @@ pub async fn get_me(
     // Fallback to creating UserInfo from JWT claims
     Ok(Json(DbUserInfo {
         id: user.id().to_string(),
-        username: user.claims.preferred_username.clone().unwrap_or_else(|| user.id().to_string()),
+        username: user
+            .claims
+            .preferred_username
+            .clone()
+            .unwrap_or_else(|| user.id().to_string()),
         email: user.claims.email.clone().unwrap_or_default(),
         display_name: user.display_name().to_string(),
         avatar_url: None,
