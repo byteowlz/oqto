@@ -8,6 +8,7 @@ use uuid::Uuid;
 
 use crate::container::{ContainerConfig, ContainerRuntime};
 use crate::eavs::{CreateKeyRequest, EavsClient, KeyPermissions};
+use crate::wordlist;
 
 use super::models::{CreateSessionRequest, Session, SessionStatus};
 use super::repository::SessionRepository;
@@ -25,8 +26,8 @@ pub struct SessionServiceConfig {
     pub default_image: String,
     /// Base port for allocating session ports.
     pub base_port: i64,
-    /// Default workspace directory to mount when none is provided.
-    pub default_workspace_path: String,
+    /// Base directory for user home directories. Each user gets {base}/home/{user_id}/.
+    pub user_data_path: String,
     /// Default user ID for sessions.
     pub default_user_id: String,
     /// Default budget limit per session in USD.
@@ -42,7 +43,7 @@ impl Default for SessionServiceConfig {
         Self {
             default_image: DEFAULT_IMAGE.to_string(),
             base_port: DEFAULT_BASE_PORT,
-            default_workspace_path: ".".to_string(),
+            user_data_path: "./data".to_string(),
             default_user_id: "default".to_string(),
             default_session_budget_usd: Some(10.0),
             default_session_rpm: Some(60),
@@ -91,13 +92,44 @@ impl SessionService {
         let session_id = Uuid::new_v4().to_string();
         let container_name = format!("opencode-{}", &session_id[..8]);
 
-        let workspace_path = request
-            .workspace_path
-            .unwrap_or_else(|| self.config.default_workspace_path.clone());
+        // Generate a unique human-readable ID
+        let readable_id = self.generate_unique_readable_id().await?;
 
-        if !std::path::Path::new(&workspace_path).exists() {
-            anyhow::bail!("workspace path does not exist: {}", workspace_path);
-        }
+        // Determine user home path - either provided or create per-user home directory
+        let user_home_path = if let Some(path) = request.workspace_path {
+            // Use provided path (must exist) - legacy support
+            if !std::path::Path::new(&path).exists() {
+                anyhow::bail!("workspace path does not exist: {}", path);
+            }
+            path
+        } else {
+            // Create per-user home directory structure
+            let user_id = &self.config.default_user_id;
+            let user_home = std::path::Path::new(&self.config.user_data_path)
+                .join("home")
+                .join(user_id);
+            
+            // Create home directory and subdirectories if they don't exist
+            if !user_home.exists() {
+                // Create standard XDG directories
+                let dirs = [
+                    "",              // home itself
+                    "workspace",     // working directory
+                    ".config",       // XDG_CONFIG_HOME
+                    ".local/share",  // XDG_DATA_HOME
+                    ".local/state",  // XDG_STATE_HOME
+                    ".cache",        // XDG_CACHE_HOME
+                ];
+                for dir in dirs {
+                    let dir_path = user_home.join(dir);
+                    std::fs::create_dir_all(&dir_path)
+                        .with_context(|| format!("creating directory: {:?}", dir_path))?;
+                }
+                info!("Created home directory for user {}: {:?}", user_id, user_home);
+            }
+            
+            user_home.to_string_lossy().to_string()
+        };
 
         // Find available ports (3 ports: opencode, fileserver, ttyd)
         // Note: EAVS runs on host, not per-container
@@ -112,6 +144,15 @@ impl SessionService {
         let image = request
             .image
             .unwrap_or_else(|| self.config.default_image.clone());
+
+        // Get current image digest for tracking upgrades
+        let image_digest = match self.runtime.get_image_digest(&image).await {
+            Ok(digest) => digest,
+            Err(e) => {
+                warn!("Failed to get image digest for {}: {:?}", image, e);
+                None
+            }
+        };
 
         // Create EAVS virtual key if EAVS is configured
         let (eavs_key_id, eavs_key_hash, eavs_virtual_key) = if self.eavs.is_some() {
@@ -132,11 +173,13 @@ impl SessionService {
         // Create session record
         let session = Session {
             id: session_id.clone(),
+            readable_id: Some(readable_id),
             container_id: None,
             container_name: container_name.clone(),
             user_id: self.config.default_user_id.clone(),
-            workspace_path,
+            workspace_path: user_home_path,
             image: image.clone(),
+            image_digest,
             opencode_port,
             fileserver_port,
             ttyd_port,
@@ -178,6 +221,26 @@ impl SessionService {
         Ok(session)
     }
 
+    /// Generate a unique human-readable ID for a session.
+    async fn generate_unique_readable_id(&self) -> Result<String> {
+        let mut attempts = 0;
+        loop {
+            let readable_id = wordlist::generate_readable_id();
+            
+            // Check if this ID already exists
+            if !self.repo.readable_id_exists(&readable_id).await? {
+                return Ok(readable_id);
+            }
+            
+            attempts += 1;
+            if attempts > 100 {
+                // After many attempts, add a random suffix
+                let suffix: u16 = rand::random::<u16>() % 1000;
+                return Ok(format!("{}-{}", wordlist::generate_readable_id(), suffix));
+            }
+        }
+    }
+
     /// Create an EAVS virtual key for a session.
     async fn create_eavs_key(&self, session_id: &str) -> Result<(String, String, String)> {
         let eavs = self.eavs.as_ref().context("EAVS client not configured")?;
@@ -208,13 +271,14 @@ impl SessionService {
         debug!("Starting container for session {}", session.id);
 
         // Build container config
+        // Mount user's home directory (workspace_path now points to user's home)
         let mut config = ContainerConfig::new(&session.image)
             .name(&session.container_name)
             .hostname(&session.container_name)
             .port(session.opencode_port as u16, 41820)
             .port(session.fileserver_port as u16, 41821)
             .port(session.ttyd_port as u16, 41822)
-            .volume(&session.workspace_path, "/home/dev/workspace")
+            .volume(&session.workspace_path, "/home/dev")
             .env("OPENCODE_PORT", "41820")
             .env("FILESERVER_PORT", "41821")
             .env("TTYD_PORT", "41822");
@@ -439,6 +503,142 @@ impl SessionService {
         }
 
         Ok(cleaned)
+    }
+
+    /// Check if a newer image is available for a session.
+    ///
+    /// Returns `Ok(Some(new_digest))` if a newer image is available,
+    /// `Ok(None)` if the session is up to date or we can't determine.
+    pub async fn check_for_image_update(&self, session_id: &str) -> Result<Option<String>> {
+        let session = self
+            .repo
+            .get(session_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("session not found: {}", session_id))?;
+
+        // Get current image digest
+        let current_digest = match self.runtime.get_image_digest(&session.image).await {
+            Ok(Some(digest)) => digest,
+            Ok(None) => {
+                debug!("No digest available for image {}", session.image);
+                return Ok(None);
+            }
+            Err(e) => {
+                warn!("Failed to get image digest for {}: {:?}", session.image, e);
+                return Ok(None);
+            }
+        };
+
+        // Compare with session's stored digest
+        match &session.image_digest {
+            Some(stored_digest) if stored_digest == &current_digest => {
+                debug!("Session {} is up to date (digest: {})", session_id, current_digest);
+                Ok(None)
+            }
+            Some(stored_digest) => {
+                info!(
+                    "Session {} has outdated image: stored={}, current={}",
+                    session_id, stored_digest, current_digest
+                );
+                Ok(Some(current_digest))
+            }
+            None => {
+                // No stored digest - could be a legacy session, update it
+                debug!("Session {} has no stored digest, updating to {}", session_id, current_digest);
+                self.repo.update_image_digest(session_id, &current_digest).await?;
+                Ok(None)
+            }
+        }
+    }
+
+    /// Upgrade a session's container to the latest image version.
+    ///
+    /// This will:
+    /// 1. Stop and remove the existing container (if running)
+    /// 2. Update the session's image digest
+    /// 3. Create and start a new container with the same ports and volumes
+    ///
+    /// The session's workspace_path (user data) is preserved.
+    pub async fn upgrade_session(&self, session_id: &str) -> Result<Session> {
+        let session = self
+            .repo
+            .get(session_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("session not found: {}", session_id))?;
+
+        info!("Upgrading session {} from image {}", session_id, session.image);
+
+        // Get the new image digest before we start
+        let new_digest = self.runtime.get_image_digest(&session.image).await?;
+
+        // Stop and remove the existing container if it exists
+        if let Some(ref container_id) = session.container_id {
+            info!("Stopping existing container {} for upgrade", container_id);
+            
+            // Try to stop gracefully first
+            if let Err(e) = self.runtime.stop_container(container_id, Some(10)).await {
+                warn!("Failed to stop container {} (may already be stopped): {:?}", container_id, e);
+            }
+
+            // Remove the container
+            if let Err(e) = self.runtime.remove_container(container_id, true).await {
+                warn!("Failed to remove container {}: {:?}", container_id, e);
+            }
+        }
+
+        // Update the session record
+        self.repo.clear_container_id(session_id).await?;
+        self.repo.update_image_and_digest(session_id, &session.image, new_digest.as_deref()).await?;
+        self.repo.update_status(session_id, SessionStatus::Pending).await?;
+
+        // Refresh session from DB
+        let mut session = self
+            .repo
+            .get(session_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("session not found after update: {}", session_id))?;
+
+        // Start a new container
+        info!("Starting new container for session {} with image {}", session_id, session.image);
+        
+        // Start the container (this will update session status)
+        if let Err(e) = self.start_container(&session).await {
+            error!("Failed to start upgraded container for session {}: {:?}", session_id, e);
+            self.repo.mark_failed(session_id, &e.to_string()).await?;
+            session = self.repo.get(session_id).await?.unwrap_or(session);
+            return Ok(session);
+        }
+
+        // Refresh and return the updated session
+        let updated_session = self
+            .repo
+            .get(session_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("session not found after upgrade: {}", session_id))?;
+
+        info!(
+            "Session {} upgraded successfully, new digest: {:?}",
+            session_id,
+            updated_session.image_digest
+        );
+
+        Ok(updated_session)
+    }
+
+    /// Check all active sessions for available image updates.
+    ///
+    /// Returns a list of (session_id, new_digest) pairs for sessions that have updates available.
+    pub async fn check_all_for_updates(&self) -> Result<Vec<(String, String)>> {
+        let sessions = self.repo.list_active().await?;
+        let mut updates = Vec::new();
+
+        for session in sessions {
+            if let Ok(Some(new_digest)) = self.check_for_image_update(&session.id).await {
+                updates.push((session.id, new_digest));
+            }
+        }
+
+        Ok(updates)
     }
 
     async fn reconcile_session_container_state(&self, session: Session) -> Result<Session> {

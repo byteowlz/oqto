@@ -56,6 +56,8 @@ impl std::str::FromStr for SessionStatus {
 pub struct Session {
     /// Unique session ID.
     pub id: String,
+    /// Human-readable session ID (e.g., "cold-lamp").
+    pub readable_id: Option<String>,
     /// Container ID (once started).
     pub container_id: Option<String>,
     /// Container name.
@@ -66,6 +68,8 @@ pub struct Session {
     pub workspace_path: String,
     /// Container image to use.
     pub image: String,
+    /// Image digest (sha256) when the container was created.
+    pub image_digest: Option<String>,
     /// Port for opencode serve.
     pub opencode_port: i64,
     /// Port for file server.

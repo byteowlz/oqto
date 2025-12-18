@@ -24,6 +24,7 @@ import {
   CommandShortcut,
 } from "@/components/ui/command"
 import { useApp } from "@/components/app-context"
+import { generateReadableId } from "@/lib/session-utils"
 
 interface CommandPaletteProps {
   open: boolean
@@ -173,8 +174,8 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
                 >
                   <MessageSquare className="mr-2 h-4 w-4" />
                   <span className="truncate">{session.title || "Untitled"}</span>
-                  <span className="ml-2 text-xs text-muted-foreground">
-                    {session.id.slice(0, 8)}
+                  <span className="ml-2 text-xs text-muted-foreground font-mono">
+                    {generateReadableId(session.id)}
                   </span>
                 </CommandItem>
               ))}

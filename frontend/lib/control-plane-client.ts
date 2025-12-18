@@ -40,6 +40,7 @@ export type WorkspaceSessionStatus = "pending" | "starting" | "running" | "stopp
 
 export type WorkspaceSession = {
   id: string
+  readable_id: string | null
   container_id: string | null
   container_name: string
   user_id: string

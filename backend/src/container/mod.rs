@@ -590,6 +590,76 @@ impl ContainerRuntime {
 
         Ok(())
     }
+
+    /// Get the digest (sha256) for a local image.
+    ///
+    /// Returns `Ok(None)` if the image does not exist locally.
+    pub async fn get_image_digest(&self, image: &str) -> ContainerResult<Option<String>> {
+        validate_image_name(image)?;
+
+        // Use inspect to get the image digest
+        // Format: {{.Digest}} returns the digest or empty string
+        let output = Command::new(&self.binary)
+            .args(["image", "inspect", "--format", "{{.Digest}}", image])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .await
+            .map_err(|e| ContainerError::CommandFailed {
+                command: "image inspect".to_string(),
+                message: e.to_string(),
+            })?;
+
+        if !output.status.success() {
+            // Image not found is not an error, just return None
+            return Ok(None);
+        }
+
+        let digest = String::from_utf8_lossy(&output.stdout)
+            .trim()
+            .to_string();
+
+        // Empty string or "<none>" means no digest (local build without push)
+        if digest.is_empty() || digest == "<none>" {
+            // Fall back to getting the image ID as a pseudo-digest for local images
+            return self.get_image_id(image).await;
+        }
+
+        Ok(Some(digest))
+    }
+
+    /// Get the image ID (sha256 hash) for a local image.
+    ///
+    /// This is useful for locally built images that don't have a registry digest.
+    /// Returns `Ok(None)` if the image does not exist locally.
+    pub async fn get_image_id(&self, image: &str) -> ContainerResult<Option<String>> {
+        validate_image_name(image)?;
+
+        let output = Command::new(&self.binary)
+            .args(["image", "inspect", "--format", "{{.Id}}", image])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .await
+            .map_err(|e| ContainerError::CommandFailed {
+                command: "image inspect".to_string(),
+                message: e.to_string(),
+            })?;
+
+        if !output.status.success() {
+            return Ok(None);
+        }
+
+        let id = String::from_utf8_lossy(&output.stdout)
+            .trim()
+            .to_string();
+
+        if id.is_empty() {
+            return Ok(None);
+        }
+
+        Ok(Some(id))
+    }
 }
 
 #[cfg(test)]

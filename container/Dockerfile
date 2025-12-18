@@ -31,7 +31,7 @@ ARG TTYD_PORT=41822
 ENV LANG=en_US.UTF-8
 ENV LC_ALL=en_US.UTF-8
 ENV TERM=xterm-256color
-ENV SHELL=/bin/bash
+ENV SHELL=/bin/zsh
 ENV XDG_CONFIG_HOME=/home/${USERNAME}/.config
 ENV XDG_DATA_HOME=/home/${USERNAME}/.local/share
 ENV XDG_STATE_HOME=/home/${USERNAME}/.local/state
@@ -56,6 +56,7 @@ RUN pacman -Syu --noconfirm && \
   fd \
   neovim \
   zoxide \
+  zsh \
   starship \
   yazi \
   ffmpegthumbnailer \
@@ -102,7 +103,16 @@ ENV PATH="/home/${USERNAME}/.opencode/bin:/home/${USERNAME}/.local/bin:${PATH}"
 # Copy configuration files (from container directory in build context)
 COPY --chown=${USERNAME}:${USERNAME} container/.config/ /home/${USERNAME}/.config/
 
-# Configure shell with starship and zoxide
+# Set zsh as default shell for user
+RUN chsh -s /bin/zsh ${USERNAME}
+
+# Configure zsh with starship and zoxide
+RUN echo 'eval "$(starship init zsh)"' >> /home/${USERNAME}/.zshrc && \
+  echo 'eval "$(zoxide init zsh)"' >> /home/${USERNAME}/.zshrc && \
+  echo 'alias vim="nvim"' >> /home/${USERNAME}/.zshrc && \
+  echo 'alias vi="nvim"' >> /home/${USERNAME}/.zshrc
+
+# Also configure bash as fallback
 RUN echo 'eval "$(starship init bash)"' >> /home/${USERNAME}/.bashrc && \
   echo 'eval "$(zoxide init bash)"' >> /home/${USERNAME}/.bashrc && \
   echo 'alias vim="nvim"' >> /home/${USERNAME}/.bashrc && \

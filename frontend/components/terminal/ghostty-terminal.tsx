@@ -63,10 +63,11 @@ interface GhosttyTerminalProps {
   fontFamily?: string
   fontSize?: number
   className?: string
+  theme?: string
 }
 
 export const GhosttyTerminal = forwardRef<GhosttyTerminalHandle, GhosttyTerminalProps>(
-  ({ wsUrl, authToken, fontFamily = "JetBrainsMono Nerd Font", fontSize = 14, className }, ref) => {
+  ({ wsUrl, authToken, fontFamily = "JetBrainsMono Nerd Font", fontSize = 14, className, theme: themeProp }, ref) => {
     const containerRef = useRef<HTMLDivElement | null>(null)
     // Start with "connecting" if we have a wsUrl, "waiting" otherwise
     const [status, setStatus] = useState<"waiting" | "connecting" | "connected" | "error">(() => 
@@ -86,8 +87,9 @@ export const GhosttyTerminal = forwardRef<GhosttyTerminalHandle, GhosttyTerminal
       fontSizeRef.current = fontSize
     }, [wsUrl, authToken, fontFamily, fontSize])
 
-    // Extract sessionId from wsUrl - memoize to avoid recalculation
-    const sessionId = useMemo(() => extractSessionId(wsUrl), [wsUrl])
+    // Extract sessionId from wsUrl and include theme - memoize to avoid recalculation
+    // Including theme ensures terminal is recreated with correct colors on theme change
+    const sessionId = useMemo(() => `${extractSessionId(wsUrl)}-${themeProp || 'default'}`, [wsUrl, themeProp])
     
     // Get the session state (creates if doesn't exist)
     const getSession = useCallback(() => getOrCreateSession(sessionId), [sessionId])
@@ -205,14 +207,19 @@ export const GhosttyTerminal = forwardRef<GhosttyTerminalHandle, GhosttyTerminal
           // Create terminal if not exists
           if (!session.terminal && containerRef.current) {
             console.log(`Terminal [${sessionId}]: creating terminal...`)
+            // Get theme colors from CSS variables
+            const computedStyle = getComputedStyle(document.documentElement)
+            const terminalBg = computedStyle.getPropertyValue("--terminal-bg").trim() || "#0b0d12"
+            const terminalFg = computedStyle.getPropertyValue("--terminal-fg").trim() || "#f5f5f5"
+            
             const terminal = new Terminal({
               fontFamily: fontFamilyRef.current,
               fontSize: fontSizeRef.current,
               cursorBlink: true,
               convertEol: true,
               theme: {
-                background: "#0b0d12",
-                foreground: "#f5f5f5",
+                background: terminalBg,
+                foreground: terminalFg,
               },
             })
             session.terminal = terminal
@@ -401,14 +408,21 @@ export const GhosttyTerminal = forwardRef<GhosttyTerminalHandle, GhosttyTerminal
     }, [getSession])
 
     return (
-      <div className={`relative h-full w-full bg-black rounded ${className ?? ""}`}>
-        <div ref={containerRef} className="h-full w-full" />
+      <div className={`relative h-full w-full rounded ${className ?? ""}`} style={{ backgroundColor: "var(--terminal-bg)", padding: "8px 12px" }}>
+        <div 
+          ref={containerRef} 
+          className="h-full w-full"
+          style={{ 
+            // Hide terminal canvas until connected to avoid ghost cursor at 0,0
+            visibility: status === "connected" ? "visible" : "hidden" 
+          }} 
+        />
         {/* Only show status indicator when not connected */}
         {status !== "connected" && (
-          <div className="absolute top-2 right-2 text-xs font-mono text-white/60">
-            {status === "waiting" && "Waiting..."}
+          <div className="absolute inset-0 flex items-center justify-center text-xs font-mono text-muted-foreground">
+            {status === "waiting" && "Waiting for session..."}
             {status === "connecting" && "Connecting..."}
-            {status === "error" && "Disconnected"}
+            {status === "error" && "Disconnected - retrying..."}
           </div>
         )}
       </div>

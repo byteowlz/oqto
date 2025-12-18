@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState, useRef, memo } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
-import { FileText, Terminal, Eye, Send, ChevronDown, User, Bot, Clock, ArrowDown, ListTodo, Square, CheckSquare, CircleDot, XCircle, MessageSquare, Loader2 } from "lucide-react"
+import { FileText, Terminal, Eye, Send, ChevronDown, User, Bot, Clock, ArrowDown, ListTodo, Square, CheckSquare, CircleDot, XCircle, MessageSquare, Loader2, Paperclip, X } from "lucide-react"
 import { useApp } from "@/components/app-context"
 import { FileTreeView, type FileTreeState, initialFileTreeState } from "@/app/sessions/FileTreeView"
 import { TerminalView } from "@/app/sessions/TerminalView"
@@ -21,7 +21,8 @@ import {
   type OpenCodeMessageWithParts,
   type OpenCodePart,
 } from "@/lib/opencode-client"
-import { controlPlaneDirectBaseUrl } from "@/lib/control-plane-client"
+import { controlPlaneDirectBaseUrl, fileserverProxyBaseUrl } from "@/lib/control-plane-client"
+import { generateReadableId, formatSessionDate } from "@/lib/session-utils"
 
 // Todo item structure
 interface TodoItem {
@@ -129,6 +130,11 @@ export function SessionsApp() {
   const [fileTreeState, setFileTreeState] = useState<FileTreeState>(initialFileTreeState)
   const messagesContainerRef = useRef<HTMLDivElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  
+  // File upload state
+  const [pendingUploads, setPendingUploads] = useState<{ name: string; path: string }[]>([])
+  const [isUploading, setIsUploading] = useState(false)
   
   // Track if we're on mobile layout (below lg breakpoint = 1024px)
   const isMobileLayout = useIsMobile()
@@ -142,6 +148,55 @@ export function SessionsApp() {
   // Handler for file tree state changes (for persistence)
   const handleFileTreeStateChange = useCallback((newState: FileTreeState) => {
     setFileTreeState(newState)
+  }, [])
+
+  // File upload handler
+  const handleFileUpload = useCallback(async (files: FileList | null) => {
+    if (!files || files.length === 0 || !selectedWorkspaceSessionId) return
+    
+    setIsUploading(true)
+    const uploadedFiles: { name: string; path: string }[] = []
+    
+    try {
+      const baseUrl = fileserverProxyBaseUrl(selectedWorkspaceSessionId)
+      
+      for (const file of Array.from(files)) {
+        const destPath = `uploads/${file.name}`
+        const url = new URL(`${baseUrl}/file`, window.location.origin)
+        url.searchParams.set("path", destPath)
+        url.searchParams.set("mkdir", "true")
+        
+        const formData = new FormData()
+        formData.append("file", file)
+        
+        const res = await fetch(url.toString(), {
+          method: "POST",
+          credentials: "include",
+          body: formData,
+        })
+        
+        if (!res.ok) {
+          const text = await res.text().catch(() => res.statusText)
+          throw new Error(text || `Upload failed (${res.status})`)
+        }
+        
+        uploadedFiles.push({ name: file.name, path: destPath })
+      }
+      
+      setPendingUploads(prev => [...prev, ...uploadedFiles])
+    } catch (err) {
+      setStatus(err instanceof Error ? err.message : "Upload failed")
+    } finally {
+      setIsUploading(false)
+      // Reset file input
+      if (fileInputRef.current) {
+        fileInputRef.current.value = ""
+      }
+    }
+  }, [selectedWorkspaceSessionId])
+
+  const removePendingUpload = useCallback((path: string) => {
+    setPendingUploads(prev => prev.filter(u => u.path !== path))
   }, [])
 
   const copy = useMemo(
@@ -400,9 +455,17 @@ export function SessionsApp() {
   }, [messages])
 
   const handleSend = async () => {
-    if (!opencodeBaseUrl || !selectedChatSessionId || !messageInput.trim()) return
+    if (!opencodeBaseUrl || !selectedChatSessionId) return
+    if (!messageInput.trim() && pendingUploads.length === 0) return
     
-    const messageText = messageInput.trim()
+    // Build message text with uploaded file paths
+    let messageText = messageInput.trim()
+    if (pendingUploads.length > 0) {
+      const uploadPrefix = pendingUploads.length === 1
+        ? `[Uploaded file: ${pendingUploads[0].path}]`
+        : `[Uploaded files: ${pendingUploads.map(u => u.path).join(", ")}]`
+      messageText = messageText ? `${uploadPrefix}\n\n${messageText}` : uploadPrefix
+    }
     
     // Optimistic update - show user message immediately
     const optimisticMessage: OpenCodeMessageWithParts = {
@@ -417,6 +480,7 @@ export function SessionsApp() {
     
     setMessages((prev) => [...prev, optimisticMessage])
     setMessageInput("")
+    setPendingUploads([])
     setChatState("sending")
     setStatus("")
     
@@ -476,8 +540,51 @@ export function SessionsApp() {
         )}
       </div>
 
-      <div className="flex items-center gap-2">
-        <Input
+      {/* Pending uploads indicator */}
+      {pendingUploads.length > 0 && (
+        <div className="flex flex-wrap gap-2 mb-2">
+          {pendingUploads.map((upload) => (
+            <div
+              key={upload.path}
+              className="flex items-center gap-1.5 px-2 py-1 bg-primary/10 border border-primary/30 text-xs text-foreground"
+            >
+              <Paperclip className="w-3 h-3 text-primary" />
+              <span className="truncate max-w-[150px]">{upload.name}</span>
+              <button
+                onClick={() => removePendingUpload(upload.path)}
+                className="text-muted-foreground hover:text-foreground ml-1"
+              >
+                <X className="w-3 h-3" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Hidden file input */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        className="hidden"
+        onChange={(e) => handleFileUpload(e.target.files)}
+      />
+
+      <div className="flex items-center gap-2 bg-muted/30 border border-border px-2 py-1">
+        <button
+          onClick={() => fileInputRef.current?.click()}
+          disabled={isUploading || !selectedWorkspaceSessionId}
+          className="flex-shrink-0 p-1.5 text-muted-foreground hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          title={locale === "de" ? "Datei hochladen" : "Upload file"}
+        >
+          {isUploading ? (
+            <Loader2 className="w-4 h-4 animate-spin" />
+          ) : (
+            <Paperclip className="w-4 h-4" />
+          )}
+        </button>
+        <input
+          type="text"
           placeholder={t.inputPlaceholder}
           value={messageInput}
           onChange={(e) => setMessageInput(e.target.value)}
@@ -487,11 +594,11 @@ export function SessionsApp() {
               handleSend()
             }
           }}
-          className="flex-1 bg-background border-border text-foreground placeholder:text-muted-foreground"
+          className="flex-1 bg-transparent border-none outline-none text-foreground placeholder:text-muted-foreground text-sm"
         />
         <Button
           onClick={handleSend}
-          disabled={chatState === "sending"}
+          disabled={chatState === "sending" || (!messageInput.trim() && pendingUploads.length === 0)}
           className="bg-primary hover:bg-primary/90 text-primary-foreground"
         >
           <Send className="w-4 h-4 sm:mr-2" />
@@ -503,21 +610,38 @@ export function SessionsApp() {
 
   const incompleteTasks = latestTodos.filter(t => t.status !== "completed" && t.status !== "cancelled").length
 
+  // Format session metadata for display
+  const sessionCreatedAt = selectedChatSession?.time?.created
+  const formattedDate = sessionCreatedAt ? formatSessionDate(sessionCreatedAt) : null
+  const readableId = selectedChatSession?.id ? generateReadableId(selectedChatSession.id) : null
+  
+  // Clean up session title - remove ISO timestamp suffix if present (e.g., "New session - 2025-12-18T07:46:58.478Z")
+  const cleanSessionTitle = (() => {
+    const title = selectedChatSession?.title
+    if (!title) return null
+    // Remove " - YYYY-MM-DDTHH:MM:SS.sssZ" pattern from the end
+    return title.replace(/\s*-\s*\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z?$/, "").trim() || null
+  })()
+
+  // Session header component for reuse
+  const SessionHeader = (
+    <div className="flex items-center justify-between pb-3 mb-3 border-b border-border">
+      <div className="min-w-0 flex-1">
+        <h1 className="text-base sm:text-lg font-semibold text-foreground tracking-wider truncate">
+          {cleanSessionTitle || t.title}
+        </h1>
+        <div className="flex items-center gap-2 text-xs text-foreground/60 dark:text-muted-foreground">
+          {readableId && <span className="font-mono">{readableId}</span>}
+          {readableId && formattedDate && <span className="opacity-50">|</span>}
+          {formattedDate && <span>{formattedDate}</span>}
+        </div>
+      </div>
+      {status && <span className="text-xs text-destructive flex-shrink-0 ml-2">{status}</span>}
+    </div>
+  )
+
   return (
     <div className="flex flex-col h-full min-h-0 p-2 sm:p-4 md:p-6 gap-2 sm:gap-4">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="min-w-0">
-          <h1 className="text-lg sm:text-xl font-semibold text-foreground tracking-wider truncate">
-            {selectedChatSession?.title || t.title}
-          </h1>
-          <p className="text-xs text-muted-foreground truncate">
-            {selectedChatSession?.id || selectedChatSessionId}
-          </p>
-        </div>
-        {status && <span className="text-xs text-destructive flex-shrink-0">{status}</span>}
-      </div>
-
       {/* Mobile layout: single panel with tabs */}
       <div className="flex-1 min-h-0 flex flex-col lg:hidden">
         {/* Mobile tabs */}
@@ -530,8 +654,13 @@ export function SessionsApp() {
         </div>
         
         {/* Mobile content */}
-        <div className="flex-1 min-h-0 bg-card border border-t-0 border-border rounded-b-xl p-3 sm:p-4 overflow-hidden">
-          {activeView === "chat" && ChatContent}
+        <div className="flex-1 min-h-0 bg-card border border-t-0 border-border rounded-b-xl p-3 sm:p-4 overflow-hidden flex flex-col">
+          {activeView === "chat" && (
+            <>
+              {SessionHeader}
+              {ChatContent}
+            </>
+          )}
           {activeView === "files" && <FileTreeView onPreviewFile={handlePreviewFile} state={fileTreeState} onStateChange={handleFileTreeStateChange} />}
           {activeView === "preview" && <PreviewView filePath={previewFilePath} />}
           {activeView === "tasks" && <TodoListView todos={latestTodos} emptyMessage={t.noTasks} />}
@@ -545,14 +674,15 @@ export function SessionsApp() {
       </div>
 
       {/* Desktop layout: side by side */}
-      <div className="hidden lg:flex flex-1 min-h-0 gap-4">
+      <div className="hidden lg:flex flex-1 min-h-0 gap-4 items-start">
         {/* Chat panel */}
-        <div className="flex-[3] min-w-0 bg-card border border-border p-4 xl:p-6 flex flex-col min-h-0">
+        <div className="flex-[3] min-w-0 bg-card border border-border p-4 xl:p-6 flex flex-col min-h-0 h-full">
+          {SessionHeader}
           {ChatContent}
         </div>
 
         {/* Sidebar panel */}
-        <div className="flex-[2] min-w-[320px] max-w-[420px] bg-card border border-border flex flex-col min-h-0">
+        <div className="flex-[2] min-w-[320px] max-w-[420px] bg-card border border-border flex flex-col min-h-0 h-full">
           <div className="flex gap-1 p-2 border-b border-border">
             <TabButton activeView={activeView} onSelect={setActiveView} view="tasks" icon={ListTodo} label={t.tasks} badge={incompleteTasks} hideLabel />
             <TabButton activeView={activeView} onSelect={setActiveView} view="files" icon={FileText} label={t.files} hideLabel />
@@ -630,14 +760,14 @@ const MessageGroupCard = memo(function MessageGroupCard({ group }: { group: Mess
       className={cn(
         "transition-all duration-200",
         isUser 
-          ? "ml-8 bg-primary/10 border border-primary/30" 
+          ? "ml-8 bg-primary/20 dark:bg-primary/10 border border-primary/40 dark:border-primary/30" 
           : "mr-8 bg-muted/50 border border-border"
       )}
     >
       {/* Header */}
       <div className={cn(
         "flex items-center gap-3 px-4 py-3 border-b",
-        isUser ? "border-primary/20" : "border-border"
+        isUser ? "border-primary/30 dark:border-primary/20" : "border-border"
       )}>
         <div
           className={cn(
@@ -671,7 +801,7 @@ const MessageGroupCard = memo(function MessageGroupCard({ group }: { group: Mess
             )}
           </div>
           {createdAt && !isNaN(createdAt.getTime()) && (
-            <div className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5">
+            <div className="text-xs text-foreground/60 dark:text-muted-foreground flex items-center gap-1 mt-0.5">
               <Clock className="w-3 h-3" />
               {createdAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
             </div>

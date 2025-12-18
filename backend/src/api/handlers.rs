@@ -130,6 +130,65 @@ pub async fn delete_session(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// Check if a session has an available image update.
+#[instrument(skip(state))]
+pub async fn check_session_update(
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+) -> ApiResult<Json<SessionUpdateStatus>> {
+    let update_available = state
+        .sessions
+        .check_for_image_update(&session_id)
+        .await?;
+
+    Ok(Json(SessionUpdateStatus {
+        session_id,
+        update_available: update_available.is_some(),
+        new_digest: update_available,
+    }))
+}
+
+/// Upgrade a session to the latest image version.
+#[instrument(skip(state))]
+pub async fn upgrade_session(
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+) -> ApiResult<Json<SessionWithUrls>> {
+    let session = state.sessions.upgrade_session(&session_id).await?;
+    info!(session_id = %session_id, "Upgraded session");
+
+    let response = SessionWithUrls::from_session(session, "localhost");
+    Ok(Json(response))
+}
+
+/// Response for session update check.
+#[derive(Debug, Serialize)]
+pub struct SessionUpdateStatus {
+    pub session_id: String,
+    pub update_available: bool,
+    pub new_digest: Option<String>,
+}
+
+/// Check all sessions for available updates.
+#[instrument(skip(state))]
+pub async fn check_all_updates(
+    State(state): State<AppState>,
+) -> ApiResult<Json<Vec<SessionUpdateStatus>>> {
+    let updates = state.sessions.check_all_for_updates().await?;
+    
+    let statuses: Vec<SessionUpdateStatus> = updates
+        .into_iter()
+        .map(|(session_id, new_digest)| SessionUpdateStatus {
+            session_id,
+            update_available: true,
+            new_digest: Some(new_digest),
+        })
+        .collect();
+
+    info!(count = statuses.len(), "Checked all sessions for updates");
+    Ok(Json(statuses))
+}
+
 // ============================================================================
 // Authentication Handlers
 // ============================================================================

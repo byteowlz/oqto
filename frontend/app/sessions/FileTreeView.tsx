@@ -233,12 +233,11 @@ export function FileTreeView({ onPreviewFile, state, onStateChange }: FileTreeVi
     updateState({ expanded: { ...expanded, [path]: !expanded[path] } })
   }
 
-  const handleSelectFile = (path: string, name: string, event?: React.MouseEvent) => {
-    const isMultiSelect = event?.ctrlKey || event?.metaKey
-    const isRangeSelect = event?.shiftKey
+  const handleSelectFile = (path: string, name: string, isDirectory: boolean, event?: React.MouseEvent) => {
+    const isShiftClick = event?.shiftKey
     
-    if (isMultiSelect) {
-      // Toggle selection
+    if (isShiftClick) {
+      // Shift+click: toggle selection (multi-select)
       const newSelection = new Set(selectedFiles)
       if (newSelection.has(path)) {
         newSelection.delete(path)
@@ -246,15 +245,10 @@ export function FileTreeView({ onPreviewFile, state, onStateChange }: FileTreeVi
         newSelection.add(path)
       }
       updateState({ selectedFiles: newSelection, selectedFile: path })
-    } else if (isRangeSelect && selectedFile) {
-      // Range select - for simplicity, just add to selection
-      const newSelection = new Set(selectedFiles)
-      newSelection.add(path)
-      updateState({ selectedFiles: newSelection, selectedFile: path })
     } else {
-      // Single select
-      updateState({ selectedFile: path, selectedFiles: new Set([path]) })
-      if (onPreviewFile && isPreviewable(name)) {
+      // Normal click: clear selection, preview file if previewable
+      updateState({ selectedFile: path, selectedFiles: new Set() })
+      if (!isDirectory && onPreviewFile && isPreviewable(name)) {
         onPreviewFile(path)
       }
     }
@@ -684,7 +678,7 @@ function TreeView({
   expanded: Record<string, boolean>
   onToggle: (path: string) => void
   selectedFiles: Set<string>
-  onSelectFile: (path: string, name: string, event?: React.MouseEvent) => void
+  onSelectFile: (path: string, name: string, isDirectory: boolean, event?: React.MouseEvent) => void
   onNavigateToFolder: (path: string) => void
   onDownload: (path: string, isDirectory: boolean) => void
   onDelete: (path: string) => void
@@ -733,7 +727,7 @@ function TreeRow({
   level: number
   expanded: Record<string, boolean>
   onToggle: (path: string) => void
-  onSelectFile: (path: string, name: string, event?: React.MouseEvent) => void
+  onSelectFile: (path: string, name: string, isDirectory: boolean, event?: React.MouseEvent) => void
   selectedFiles: Set<string>
   onNavigateToFolder: (path: string) => void
   onDownload: (path: string, isDirectory: boolean) => void
@@ -752,10 +746,16 @@ function TreeRow({
 
   const handleClick = (e: React.MouseEvent) => {
     e.stopPropagation()
-    if (isDir && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
+    if (e.shiftKey) {
+      // Shift+click: select/multi-select
+      onSelectFile(node.path, node.name, isDir, e)
+    } else if (isDir) {
+      // Click on folder: expand/collapse
       onToggle(node.path)
+    } else {
+      // Click on file: preview
+      onSelectFile(node.path, node.name, isDir, e)
     }
-    onSelectFile(node.path, node.name, e)
   }
 
   const handleDoubleClick = () => {
@@ -828,7 +828,7 @@ function ListView({
 }: { 
   files: FileNode[]
   selectedFiles: Set<string>
-  onSelectFile: (path: string, name: string, event?: React.MouseEvent) => void
+  onSelectFile: (path: string, name: string, isDirectory: boolean, event?: React.MouseEvent) => void
   onNavigateToFolder: (path: string) => void
   onDownload: (path: string, isDirectory: boolean) => void
   onDelete: (path: string) => void
@@ -858,16 +858,20 @@ function ListView({
             <FileContextMenu key={file.path} node={file} onDownload={onDownload} onDelete={onDelete}>
               <div
                 onClick={(e) => {
-                  if (file.type === "file" || e.ctrlKey || e.metaKey || e.shiftKey) {
-                    onSelectFile(file.path, file.name, e)
+                  const isDir = file.type === "directory"
+                  if (e.shiftKey) {
+                    // Shift+click: select/multi-select
+                    onSelectFile(file.path, file.name, isDir, e)
+                  } else if (isDir) {
+                    // Click on folder: navigate into it
+                    onNavigateToFolder(file.path)
                   } else {
-                    onSelectFile(file.path, file.name, e)
+                    // Click on file: preview
+                    onSelectFile(file.path, file.name, isDir, e)
                   }
                 }}
                 onDoubleClick={() => {
-                  if (file.type === "directory") {
-                    onNavigateToFolder(file.path)
-                  }
+                  // Double-click does nothing special now (single click navigates folders)
                 }}
                 className={cn(
                   "flex items-center gap-2 px-3 py-2 transition-colors cursor-pointer",
@@ -910,7 +914,7 @@ function GridView({
 }: { 
   files: FileNode[]
   selectedFiles: Set<string>
-  onSelectFile: (path: string, name: string, event?: React.MouseEvent) => void
+  onSelectFile: (path: string, name: string, isDirectory: boolean, event?: React.MouseEvent) => void
   onNavigateToFolder: (path: string) => void
   onDownload: (path: string, isDirectory: boolean) => void
   onDelete: (path: string) => void
@@ -930,11 +934,21 @@ function GridView({
         return (
           <FileContextMenu key={file.path} node={file} onDownload={onDownload} onDelete={onDelete}>
             <div
-              onClick={(e) => onSelectFile(file.path, file.name, e)}
-              onDoubleClick={() => {
-                if (file.type === "directory") {
+              onClick={(e) => {
+                const isDir = file.type === "directory"
+                if (e.shiftKey) {
+                  // Shift+click: select/multi-select
+                  onSelectFile(file.path, file.name, isDir, e)
+                } else if (isDir) {
+                  // Click on folder: navigate into it
                   onNavigateToFolder(file.path)
+                } else {
+                  // Click on file: preview
+                  onSelectFile(file.path, file.name, isDir, e)
                 }
+              }}
+              onDoubleClick={() => {
+                // Double-click does nothing special now
               }}
               className={cn(
                 "flex flex-col items-center gap-2 p-3 rounded-lg cursor-pointer transition-colors hover:bg-muted/50",

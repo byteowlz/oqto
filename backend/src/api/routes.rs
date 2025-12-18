@@ -37,6 +37,9 @@ pub fn create_router(state: AppState) -> Router {
         .route("/sessions/{session_id}", get(handlers::get_session))
         .route("/sessions/{session_id}", delete(handlers::delete_session))
         .route("/sessions/{session_id}/stop", post(handlers::stop_session))
+        .route("/sessions/{session_id}/update", get(handlers::check_session_update))
+        .route("/sessions/{session_id}/upgrade", post(handlers::upgrade_session))
+        .route("/sessions/updates", get(handlers::check_all_updates))
         // Opencode events (legacy global endpoint)
         .route("/opencode/event", get(proxy::opencode_events))
         // SSE events proxy for specific session

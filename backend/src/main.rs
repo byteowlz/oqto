@@ -22,6 +22,7 @@ mod eavs;
 mod invite;
 mod session;
 mod user;
+mod wordlist;
 
 const APP_NAME: &str = env!("CARGO_PKG_NAME");
 
@@ -168,9 +169,9 @@ struct ServeCommand {
     /// Base port for session allocation
     #[arg(long, default_value = "41820")]
     base_port: u16,
-    /// Default workspace directory to mount for new sessions
-    #[arg(long, default_value = ".", value_name = "PATH")]
-    workspace_root: PathBuf,
+    /// Base directory for user data (home directories)
+    #[arg(long, default_value = "./data", value_name = "PATH")]
+    user_data_path: PathBuf,
 }
 
 #[derive(Debug, Clone, Args)]
@@ -801,10 +802,10 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     let session_config = session::SessionServiceConfig {
         default_image,
         base_port,
-        default_workspace_path: cmd
-            .workspace_root
+        user_data_path: cmd
+            .user_data_path
             .canonicalize()
-            .unwrap_or(cmd.workspace_root)
+            .unwrap_or(cmd.user_data_path.clone())
             .to_string_lossy()
             .to_string(),
         default_user_id: "default".to_string(),

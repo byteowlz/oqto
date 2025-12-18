@@ -2,6 +2,7 @@
 
 import { useMemo } from "react"
 import dynamic from "next/dynamic"
+import { useTheme } from "next-themes"
 import { controlPlaneDirectBaseUrl, terminalProxyPath } from "@/lib/control-plane-client"
 import { toAbsoluteWsUrl } from "@/lib/url"
 import { useApp } from "@/components/app-context"
@@ -17,6 +18,7 @@ interface TerminalViewProps {
 
 export function TerminalView({ sessionId }: TerminalViewProps) {
   const { authToken } = useApp()
+  const { resolvedTheme } = useTheme()
   
   const wsUrl = useMemo(() => {
     if (!sessionId) return ""
@@ -35,9 +37,16 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
     )
   }
 
+  // Pass theme to terminal so it can include it in its session key
   return (
     <div className="h-full">
-      <GhosttyTerminal wsUrl={wsUrl} authToken={authToken ?? undefined} className="border border-border" />
+      <GhosttyTerminal 
+        key={`${sessionId}-${resolvedTheme}`}
+        wsUrl={wsUrl} 
+        authToken={authToken ?? undefined} 
+        className="border border-border"
+        theme={resolvedTheme}
+      />
     </div>
   )
 }
