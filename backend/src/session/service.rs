@@ -431,15 +431,14 @@ impl SessionService {
         debug!("Starting container for session {}", session.id);
 
         // Build container config
-        // Only mount the workspace directory (dotfiles are baked into the image)
-        let workspace_dir = format!("{}/workspace", session.workspace_path);
+        // Mount the full user home directory so dotfiles and tool state persist across restarts.
         let mut config = ContainerConfig::new(&session.image)
             .name(&session.container_name)
             .hostname(&session.container_name)
             .port(session.opencode_port as u16, 41820)
             .port(session.fileserver_port as u16, 41821)
             .port(session.ttyd_port as u16, 41822)
-            .volume(&workspace_dir, "/home/dev/workspace")
+            .volume(&session.workspace_path, "/home/dev")
             .env("OPENCODE_PORT", "41820")
             .env("FILESERVER_PORT", "41821")
             .env("TTYD_PORT", "41822");
@@ -1207,6 +1206,7 @@ mod tests {
             default_image: "test-image:latest".to_string(),
             base_port: 41820,
             user_data_path: "./data".to_string(),
+            skel_path: None,
             default_user_id: "default".to_string(),
             default_session_budget_usd: Some(10.0),
             default_session_rpm: Some(60),

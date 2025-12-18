@@ -109,13 +109,28 @@ RUN touch /home/${USERNAME}/.zshrc
 # Install opencode via the official installer
 RUN curl -fsSL https://opencode.ai/install | bash
 
-# Add opencode to PATH
-ENV PATH="/home/${USERNAME}/.opencode/bin:/home/${USERNAME}/.local/bin:${PATH}"
-
 # Set zsh as default shell for user
 RUN sudo usermod -s /bin/zsh ${USERNAME}
 
-# Copy dotfiles from skel into the image (these won't be overwritten by workspace mount)
+# Switch to root to stage opencode + defaults outside the home directory.
+USER root
+
+# Keep a stable opencode binary outside /home so it survives mounting /home/dev.
+RUN mkdir -p /opt/opencode && \
+  cp -a /home/${USERNAME}/.opencode/. /opt/opencode/ && \
+  ln -sf /opt/opencode/bin/opencode /usr/local/bin/opencode && \
+  chmod +x /usr/local/bin/opencode
+
+# Ship default dotfiles inside the image so the entrypoint can populate an empty mounted home.
+COPY container/skel/ /usr/local/share/skel/
+RUN chmod -R a+rX /usr/local/share/skel
+
+USER ${USERNAME}
+
+# Add opencode to PATH (both the per-user install and the stable /usr/local/bin symlink)
+ENV PATH="/usr/local/bin:/home/${USERNAME}/.opencode/bin:/home/${USERNAME}/.local/bin:${PATH}"
+
+# Copy dotfiles from skel into the image for non-mounted dev use.
 COPY --chown=${USERNAME}:${USERNAME} container/skel/.zshrc /home/${USERNAME}/.zshrc
 COPY --chown=${USERNAME}:${USERNAME} container/skel/.config /home/${USERNAME}/.config
 

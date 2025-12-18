@@ -34,6 +34,8 @@ ENV XDG_CACHE_HOME=/home/${USERNAME}/.cache
 ENV OPENCODE_PORT=${OPENCODE_PORT}
 ENV FILESERVER_PORT=${FILESERVER_PORT}
 ENV TTYD_PORT=${TTYD_PORT}
+# EAVS_URL is set by orchestrator - points to host EAVS instance
+ENV EAVS_URL=""
 
 # Update system and install base packages
 RUN dnf update -y && \
@@ -121,18 +123,38 @@ RUN touch /home/${USERNAME}/.zshrc
 # Install opencode via the official installer
 RUN curl -fsSL https://opencode.ai/install | bash
 
-# Add opencode to PATH
-ENV PATH="/home/${USERNAME}/.opencode/bin:/home/${USERNAME}/.local/bin:${PATH}"
+# Switch to root to stage opencode + defaults outside the home directory.
+USER root
 
-# Note: User config files come from skel/ directory, copied by backend when creating user homes.
-# The container image only has baseline tools; user-specific configs are mounted at runtime.
+# Keep a stable opencode binary outside /home so it survives mounting /home/dev.
+RUN mkdir -p /opt/opencode && \
+    cp -a /home/${USERNAME}/.opencode/. /opt/opencode/ && \
+    ln -sf /opt/opencode/bin/opencode /usr/local/bin/opencode && \
+    chmod +x /usr/local/bin/opencode
+
+# Ship default dotfiles inside the image so the entrypoint can populate an empty mounted home.
+COPY container/skel/ /usr/local/share/skel/
+RUN chmod -R a+rX /usr/local/share/skel
+
+USER ${USERNAME}
+
+# Add opencode to PATH (both the per-user install and the stable /usr/local/bin symlink)
+ENV PATH="/usr/local/bin:/home/${USERNAME}/.opencode/bin:/home/${USERNAME}/.local/bin:${PATH}"
+
+# Copy dotfiles from skel into the image for non-mounted dev use.
+COPY --chown=${USERNAME}:${USERNAME} container/skel/.zshrc /home/${USERNAME}/.zshrc
+COPY --chown=${USERNAME}:${USERNAME} container/skel/.config /home/${USERNAME}/.config
 
 # Set zsh as default shell for user
-RUN sudo usermod -s /bin/zsh ${USERNAME}
+USER root
+RUN usermod -s /bin/zsh ${USERNAME}
+USER ${USERNAME}
 
-# Copy entrypoint script
-COPY --chown=${USERNAME}:${USERNAME} container/entrypoint.sh /home/${USERNAME}/entrypoint.sh
-RUN chmod +x /home/${USERNAME}/entrypoint.sh
+# Copy entrypoint script to /usr/local/bin so it survives mounting /home/dev.
+USER root
+COPY container/entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
+USER ${USERNAME}
 
 # Working directory
 WORKDIR /home/${USERNAME}/workspace
@@ -143,4 +165,4 @@ EXPOSE ${FILESERVER_PORT}
 EXPOSE ${TTYD_PORT}
 
 # Entrypoint
-ENTRYPOINT ["/home/dev/entrypoint.sh"]
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
