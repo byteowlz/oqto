@@ -172,6 +172,9 @@ struct ServeCommand {
     /// Base directory for user data (home directories)
     #[arg(long, default_value = "./data", value_name = "PATH")]
     user_data_path: PathBuf,
+    /// Path to skeleton directory for new user homes
+    #[arg(long, value_name = "PATH")]
+    skel_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Args)]
@@ -526,6 +529,8 @@ struct ContainerRuntimeConfig {
     default_image: String,
     /// Base port for allocating session ports
     base_port: u16,
+    /// Path to skeleton directory for new user homes
+    skel_path: Option<String>,
 }
 
 impl Default for ContainerRuntimeConfig {
@@ -535,6 +540,7 @@ impl Default for ContainerRuntimeConfig {
             binary: None,
             default_image: "opencode-dev:latest".to_string(),
             base_port: 41820,
+            skel_path: None,
         }
     }
 }
@@ -815,6 +821,20 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
         ctx.config.container.base_port as i64
     };
 
+    // CLI --skel-path overrides config file
+    let skel_path = cmd
+        .skel_path
+        .as_ref()
+        .map(|p| p.to_string_lossy().to_string())
+        .or_else(|| ctx.config.container.skel_path.clone())
+        .map(|p| {
+            std::path::Path::new(&p)
+                .canonicalize()
+                .unwrap_or_else(|_| std::path::PathBuf::from(&p))
+                .to_string_lossy()
+                .to_string()
+        });
+
     let session_config = session::SessionServiceConfig {
         default_image,
         base_port,
@@ -824,6 +844,7 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
             .unwrap_or(cmd.user_data_path.clone())
             .to_string_lossy()
             .to_string(),
+        skel_path,
         default_user_id: "default".to_string(),
         default_session_budget_usd: ctx
             .config

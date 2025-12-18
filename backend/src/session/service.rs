@@ -94,6 +94,8 @@ pub struct SessionServiceConfig {
     pub base_port: i64,
     /// Base directory for user home directories. Each user gets {base}/home/{user_id}/.
     pub user_data_path: String,
+    /// Path to skeleton directory to copy into new user homes. If None, empty dirs are created.
+    pub skel_path: Option<String>,
     /// Default user ID for sessions.
     pub default_user_id: String,
     /// Default budget limit per session in USD.
@@ -110,6 +112,7 @@ impl Default for SessionServiceConfig {
             default_image: DEFAULT_IMAGE.to_string(),
             base_port: DEFAULT_BASE_PORT,
             user_data_path: "./data".to_string(),
+            skel_path: None,
             default_user_id: "default".to_string(),
             default_session_budget_usd: Some(10.0),
             default_session_rpm: Some(60),
@@ -199,23 +202,27 @@ impl SessionService {
                 .join(user_id);
 
             if !user_home.exists() {
-                let dirs = [
-                    "",             // home itself
-                    "workspace",    // working directory
-                    ".config",      // XDG_CONFIG_HOME
-                    ".local/share", // XDG_DATA_HOME
-                    ".local/state", // XDG_STATE_HOME
-                    ".cache",       // XDG_CACHE_HOME
-                ];
-                for dir in dirs {
-                    let dir_path = user_home.join(dir);
-                    std::fs::create_dir_all(&dir_path)
-                        .with_context(|| format!("creating directory: {:?}", dir_path))?;
+                // If skel_path is configured, copy it; otherwise create empty dirs
+                if let Some(ref skel_path) = self.config.skel_path {
+                    let skel = std::path::Path::new(skel_path);
+                    if skel.exists() {
+                        copy_dir_recursive(skel, &user_home)
+                            .with_context(|| format!("copying skel from {:?} to {:?}", skel, user_home))?;
+                        info!(
+                            "Created home directory for user {} from skel: {:?}",
+                            user_id, user_home
+                        );
+                    } else {
+                        warn!("Skel path {:?} does not exist, creating empty dirs", skel);
+                        create_empty_home_dirs(&user_home)?;
+                    }
+                } else {
+                    create_empty_home_dirs(&user_home)?;
+                    info!(
+                        "Created home directory for user {}: {:?}",
+                        user_id, user_home
+                    );
                 }
-                info!(
-                    "Created home directory for user {}: {:?}",
-                    user_id, user_home
-                );
             }
 
             user_home.to_string_lossy().to_string()
@@ -1043,6 +1050,41 @@ impl SessionService {
 
         Ok(true)
     }
+}
+
+/// Create empty home directory structure.
+fn create_empty_home_dirs(user_home: &std::path::Path) -> Result<()> {
+    let dirs = [
+        "",             // home itself
+        "workspace",    // working directory
+        ".config",      // XDG_CONFIG_HOME
+        ".local/share", // XDG_DATA_HOME
+        ".local/state", // XDG_STATE_HOME
+        ".cache",       // XDG_CACHE_HOME
+    ];
+    for dir in dirs {
+        let dir_path = user_home.join(dir);
+        std::fs::create_dir_all(&dir_path)
+            .with_context(|| format!("creating directory: {:?}", dir_path))?;
+    }
+    Ok(())
+}
+
+/// Recursively copy a directory.
+fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+
+        if src_path.is_dir() {
+            copy_dir_recursive(&src_path, &dst_path)?;
+        } else {
+            std::fs::copy(&src_path, &dst_path)?;
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

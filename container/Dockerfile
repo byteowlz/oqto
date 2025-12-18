@@ -54,6 +54,7 @@ RUN pacman -Syu --noconfirm && \
   sudo \
   ripgrep \
   fd \
+  fzf \
   neovim \
   zoxide \
   zsh \
@@ -65,11 +66,19 @@ RUN pacman -Syu --noconfirm && \
   imagemagick \
   python \
   python-pip \
+  python-uv \
   nodejs \
   npm \
   go \
+  rust \
   ttyd \
   && pacman -Scc --noconfirm
+
+# Install bun
+RUN curl -fsSL https://bun.sh/install | bash && \
+  mv /root/.bun /usr/local/bun
+ENV BUN_INSTALL=/usr/local/bun
+ENV PATH="/usr/local/bun/bin:${PATH}"
 
 # Copy fileserver binary from builder stage
 # Note: EAVS runs on the host, not in containers - containers connect via EAVS_URL
@@ -94,29 +103,20 @@ RUN mkdir -p /home/${USERNAME}/.config \
 USER ${USERNAME}
 WORKDIR /home/${USERNAME}
 
+# Create .zshrc before opencode installer (installer needs it to add PATH)
+RUN touch /home/${USERNAME}/.zshrc
+
 # Install opencode via the official installer
 RUN curl -fsSL https://opencode.ai/install | bash
 
 # Add opencode to PATH
 ENV PATH="/home/${USERNAME}/.opencode/bin:/home/${USERNAME}/.local/bin:${PATH}"
 
-# Copy configuration files (from container directory in build context)
-COPY --chown=${USERNAME}:${USERNAME} container/.config/ /home/${USERNAME}/.config/
+# Note: User config files come from skel/ directory, copied by backend when creating user homes.
+# The container image only has baseline tools; user-specific configs are mounted at runtime.
 
 # Set zsh as default shell for user
 RUN chsh -s /bin/zsh ${USERNAME}
-
-# Configure zsh with starship and zoxide
-RUN echo 'eval "$(starship init zsh)"' >> /home/${USERNAME}/.zshrc && \
-  echo 'eval "$(zoxide init zsh)"' >> /home/${USERNAME}/.zshrc && \
-  echo 'alias vim="nvim"' >> /home/${USERNAME}/.zshrc && \
-  echo 'alias vi="nvim"' >> /home/${USERNAME}/.zshrc
-
-# Also configure bash as fallback
-RUN echo 'eval "$(starship init bash)"' >> /home/${USERNAME}/.bashrc && \
-  echo 'eval "$(zoxide init bash)"' >> /home/${USERNAME}/.bashrc && \
-  echo 'alias vim="nvim"' >> /home/${USERNAME}/.bashrc && \
-  echo 'alias vi="nvim"' >> /home/${USERNAME}/.bashrc
 
 # fileserver binary is already installed from the builder stage above
 
