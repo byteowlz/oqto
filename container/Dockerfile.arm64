@@ -69,9 +69,10 @@ RUN dnf update -y && \
     && dnf clean all
 
 # Install uv (Python package manager)
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
-    mv /root/.local/bin/uv /usr/local/bin/ && \
-    mv /root/.local/bin/uvx /usr/local/bin/
+# Note: the installer respects XDG_*; we override to /root here so we can move binaries into /usr/local/bin.
+RUN curl -LsSf https://astral.sh/uv/install.sh | XDG_DATA_HOME=/root/.local/share HOME=/root sh && \
+    mv /root/.local/bin/uv /usr/local/bin/uv && \
+    mv /root/.local/bin/uvx /usr/local/bin/uvx
 
 # Install bun
 RUN curl -fsSL https://bun.sh/install | bash && \

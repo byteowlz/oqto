@@ -85,7 +85,11 @@ if command -v fileserver &> /dev/null; then
 else
     # Fallback to Python http.server (limited functionality)
     echo "Warning: fileserver binary not found, using Python fallback (no /tree or upload support)"
-    python -m http.server "${FILESERVER_PORT}" --bind 0.0.0.0 --directory "${WORKSPACE_DIR}" &
+    if command -v python &> /dev/null; then
+        python -m http.server "${FILESERVER_PORT}" --bind 0.0.0.0 --directory "${WORKSPACE_DIR}" &
+    else
+        python3 -m http.server "${FILESERVER_PORT}" --bind 0.0.0.0 --directory "${WORKSPACE_DIR}" &
+    fi
 fi
 FILE_SERVER_PID=$!
 
