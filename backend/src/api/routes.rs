@@ -1,5 +1,6 @@
 //! API route definitions.
 
+use axum::http::{HeaderValue, Method, header};
 use axum::{
     Router, middleware,
     routing::{delete, get, post, put},
@@ -7,7 +8,6 @@ use axum::{
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::trace::{DefaultMakeSpan, DefaultOnRequest, DefaultOnResponse, TraceLayer};
 use tracing::Level;
-use axum::http::{header, Method, HeaderValue};
 
 use crate::auth::auth_middleware;
 
@@ -37,10 +37,22 @@ pub fn create_router(state: AppState) -> Router {
         .route("/sessions/{session_id}", get(handlers::get_session))
         .route("/sessions/{session_id}", delete(handlers::delete_session))
         .route("/sessions/{session_id}/stop", post(handlers::stop_session))
+        .route(
+            "/sessions/{session_id}/update",
+            get(handlers::check_session_update),
+        )
+        .route(
+            "/sessions/{session_id}/upgrade",
+            post(handlers::upgrade_session),
+        )
+        .route("/sessions/updates", get(handlers::check_all_updates))
         // Opencode events (legacy global endpoint)
         .route("/opencode/event", get(proxy::opencode_events))
         // SSE events proxy for specific session
-        .route("/session/{session_id}/code/event", get(proxy::proxy_opencode_events))
+        .route(
+            "/session/{session_id}/code/event",
+            get(proxy::proxy_opencode_events),
+        )
         // Proxy routes
         .route(
             "/sessions/{session_id}/opencode/{*path}",
@@ -86,16 +98,37 @@ pub fn create_router(state: AppState) -> Router {
         .route("/admin/users/{user_id}", get(handlers::get_user))
         .route("/admin/users/{user_id}", put(handlers::update_user))
         .route("/admin/users/{user_id}", delete(handlers::delete_user))
-        .route("/admin/users/{user_id}/deactivate", post(handlers::deactivate_user))
-        .route("/admin/users/{user_id}/activate", post(handlers::activate_user))
+        .route(
+            "/admin/users/{user_id}/deactivate",
+            post(handlers::deactivate_user),
+        )
+        .route(
+            "/admin/users/{user_id}/activate",
+            post(handlers::activate_user),
+        )
         // Admin routes - invite code management
         .route("/admin/invite-codes", get(handlers::list_invite_codes))
         .route("/admin/invite-codes", post(handlers::create_invite_code))
-        .route("/admin/invite-codes/batch", post(handlers::create_invite_codes_batch))
-        .route("/admin/invite-codes/stats", get(handlers::get_invite_code_stats))
-        .route("/admin/invite-codes/{code_id}", get(handlers::get_invite_code))
-        .route("/admin/invite-codes/{code_id}", delete(handlers::delete_invite_code))
-        .route("/admin/invite-codes/{code_id}/revoke", post(handlers::revoke_invite_code))
+        .route(
+            "/admin/invite-codes/batch",
+            post(handlers::create_invite_codes_batch),
+        )
+        .route(
+            "/admin/invite-codes/stats",
+            get(handlers::get_invite_code_stats),
+        )
+        .route(
+            "/admin/invite-codes/{code_id}",
+            get(handlers::get_invite_code),
+        )
+        .route(
+            "/admin/invite-codes/{code_id}",
+            delete(handlers::delete_invite_code),
+        )
+        .route(
+            "/admin/invite-codes/{code_id}/revoke",
+            post(handlers::revoke_invite_code),
+        )
         .layer(middleware::from_fn_with_state(
             auth_state.clone(),
             auth_middleware,
@@ -120,7 +153,7 @@ pub fn create_router(state: AppState) -> Router {
 }
 
 /// Build the CORS layer based on configuration.
-/// 
+///
 /// In dev mode with no configured origins, allows localhost origins.
 /// In production mode, requires explicit origin configuration.
 fn build_cors_layer(state: &AppState) -> CorsLayer {
@@ -149,7 +182,9 @@ fn build_cors_layer(state: &AppState) -> CorsLayer {
     if allowed_origins.is_empty() {
         if dev_mode {
             // In dev mode with no configured origins, allow common local origins
-            tracing::warn!("CORS: No origins configured, using default localhost origins for dev mode");
+            tracing::warn!(
+                "CORS: No origins configured, using default localhost origins for dev mode"
+            );
             CorsLayer::new()
                 .allow_origin([
                     "http://localhost:3000".parse::<HeaderValue>().unwrap(),
@@ -164,11 +199,12 @@ fn build_cors_layer(state: &AppState) -> CorsLayer {
                 .allow_credentials(true)
         } else {
             // In production with no configured origins, deny all cross-origin requests
-            tracing::warn!("CORS: No origins configured in production mode, denying all cross-origin requests");
-            CorsLayer::new()
-                .allow_origin(AllowOrigin::exact(
-                    HeaderValue::from_static("null"), // This effectively denies all CORS
-                ))
+            tracing::warn!(
+                "CORS: No origins configured in production mode, denying all cross-origin requests"
+            );
+            CorsLayer::new().allow_origin(AllowOrigin::exact(
+                HeaderValue::from_static("null"), // This effectively denies all CORS
+            ))
         }
     } else {
         // Use configured origins
@@ -200,8 +236,7 @@ fn build_cors_layer(state: &AppState) -> CorsLayer {
 
         if origins.is_empty() {
             tracing::error!("CORS: All configured origins are invalid!");
-            CorsLayer::new()
-                .allow_origin(AllowOrigin::exact(HeaderValue::from_static("null")))
+            CorsLayer::new().allow_origin(AllowOrigin::exact(HeaderValue::from_static("null")))
         } else {
             tracing::info!("CORS: Allowing {} origin(s)", origins.len());
             CorsLayer::new()

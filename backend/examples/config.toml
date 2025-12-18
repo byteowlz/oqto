@@ -32,6 +32,9 @@ fail_fast = true
 default_image = "opencode-dev:latest"
 # Base port for allocating session ports (each session uses 3 consecutive ports)
 base_port = 41820
+# Path to skeleton directory for new user homes (dotfiles, configs, etc.)
+# When a new user session is created, this directory is copied as the user's home.
+# skel_path = "./container/skel"
 
 [eavs]
 # EAVS (LLM proxy) configuration - runs on host, not in containers

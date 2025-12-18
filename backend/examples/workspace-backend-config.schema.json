@@ -97,6 +97,11 @@
           "minimum": 1024,
           "maximum": 65535,
           "default": 41820
+        },
+        "skel_path": {
+          "type": "string",
+          "description": "Path to skeleton directory for new user homes. When a new user session is created, this directory is copied as the base for the user's home directory.",
+          "examples": ["./container/skel", "/etc/skel"]
         }
       },
       "additionalProperties": false

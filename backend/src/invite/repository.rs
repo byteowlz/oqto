@@ -724,7 +724,11 @@ mod tests {
         repo.create(request, "usr_admin").await.unwrap();
 
         // Consume the code
-        assert!(repo.try_consume_atomic("RESTORE1", "usr_test").await.is_ok());
+        assert!(
+            repo.try_consume_atomic("RESTORE1", "usr_test")
+                .await
+                .is_ok()
+        );
 
         // Verify it's exhausted
         let invite = repo.get_by_code("RESTORE1").await.unwrap().unwrap();
@@ -738,7 +742,11 @@ mod tests {
         assert_eq!(invite.uses_remaining, 1);
 
         // Can consume again
-        assert!(repo.try_consume_atomic("RESTORE1", "usr_test").await.is_ok());
+        assert!(
+            repo.try_consume_atomic("RESTORE1", "usr_test")
+                .await
+                .is_ok()
+        );
     }
 
     #[tokio::test]
@@ -805,7 +813,10 @@ mod tests {
         }
 
         // Exactly one should succeed (the first one to get the lock)
-        assert_eq!(success_count, 1, "Exactly one concurrent consumer should succeed");
+        assert_eq!(
+            success_count, 1,
+            "Exactly one concurrent consumer should succeed"
+        );
         assert_eq!(failure_count, 9, "Nine concurrent consumers should fail");
 
         // Verify the code is exhausted

@@ -11,3 +11,4 @@ pub mod invite;
 pub mod session;
 pub mod storage;
 pub mod user;
+pub mod wordlist;

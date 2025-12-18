@@ -2,13 +2,40 @@
 
 Backend server for the AI Agent Workspace Platform. Orchestrates containerized development environments with opencode, fileserver, and web terminal access.
 
+## Prerequisites
+
+### Container Image (Required)
+
+The backend requires the `opencode-dev:latest` container image to create sessions. **The server will fail to start if this image is not found.**
+
+Build the image from the repository root:
+
+```bash
+# From the repository root
+docker build -t opencode-dev:latest -f container/Dockerfile .
+
+# Or using podman
+podman build -t opencode-dev:latest -f container/Dockerfile .
+```
+
+You can use a different image by setting `default_image` in your config or passing `--image` to the serve command.
+
+### Container Runtime
+
+Either Docker or Podman must be installed and running:
+- **Docker**: Install [Docker Desktop](https://www.docker.com/products/docker-desktop/) or Docker Engine
+- **Podman**: Install via your package manager (`apt install podman`, `brew install podman`, etc.)
+
 ## Quick Start
 
 ```bash
-# Install Rust
+# 1. Build the container image first (see Prerequisites)
+docker build -t opencode-dev:latest -f container/Dockerfile .
+
+# 2. Install Rust
 rustup default stable
 
-# Build and run
+# 3. Build and run
 cargo run -- serve
 
 # Or with custom options

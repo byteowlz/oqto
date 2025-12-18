@@ -6,6 +6,7 @@
 mod models;
 mod repository;
 
+#[allow(unused_imports)]
 pub use models::{
     BatchCreateInviteCodesRequest, CreateInviteCodeRequest, InviteCode, InviteCodeListQuery,
     InviteCodeSummary,

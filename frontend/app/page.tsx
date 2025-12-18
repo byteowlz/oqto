@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback, useMemo, useDeferredValue } from "react";
+import { useTheme } from "next-themes";
 import Image from "next/image";
 import {
   SunMedium,
@@ -20,6 +21,10 @@ import {
   Pencil,
   Trash2,
   Plus,
+  ChevronRight,
+  ChevronDown,
+  Copy,
+  Search,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { AppProvider, useApp } from "@/components/app-context";
@@ -51,6 +56,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { CommandPalette, useCommandPalette } from "@/components/command-palette";
+import { generateReadableId, formatSessionDate } from "@/lib/session-utils";
 import "@/apps";
 
 function SnowOverlay({ intensity = 0.5 }: { intensity?: number }) {
@@ -118,7 +124,7 @@ function AppShell() {
     deleteChatSession,
     renameChatSession,
   } = useApp();
-  const [theme, setTheme] = useState<"light" | "dark">("dark");
+  const { theme, setTheme, resolvedTheme } = useTheme();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const ActiveComponent = activeApp?.component ?? null;
@@ -141,6 +147,72 @@ function AppShell() {
 
   // Command palette
   const { open: commandPaletteOpen, setOpen: setCommandPaletteOpen } = useCommandPalette();
+
+  // Expanded state for parent sessions in sidebar
+  const [expandedSessions, setExpandedSessions] = useState<Set<string>>(new Set());
+
+  // Session search
+  const [sessionSearch, setSessionSearch] = useState("");
+  const deferredSearch = useDeferredValue(sessionSearch);
+
+  // Build hierarchical session structure
+  const sessionHierarchy = useMemo(() => {
+    // Separate parent and child sessions
+    const parentSessions = opencodeSessions.filter((s) => !s.parentID);
+    const childSessionsByParent = new Map<string, typeof opencodeSessions>();
+    
+    for (const session of opencodeSessions) {
+      if (session.parentID) {
+        const children = childSessionsByParent.get(session.parentID) || [];
+        children.push(session);
+        childSessionsByParent.set(session.parentID, children);
+      }
+    }
+    
+    // Sort children by updated time (newest first)
+    for (const [parentId, children] of childSessionsByParent) {
+      childSessionsByParent.set(
+        parentId,
+        children.sort((a, b) => b.time.updated - a.time.updated)
+      );
+    }
+    
+    return { parentSessions, childSessionsByParent };
+  }, [opencodeSessions]);
+
+  // Filter sessions based on search term
+  const filteredSessions = useMemo(() => {
+    const searchLower = deferredSearch.toLowerCase().trim();
+    if (!searchLower) {
+      return sessionHierarchy.parentSessions;
+    }
+    
+    return sessionHierarchy.parentSessions.filter((session) => {
+      // Search in title
+      if (session.title?.toLowerCase().includes(searchLower)) return true;
+      // Search in readable ID (adjective-noun)
+      const readableId = generateReadableId(session.id);
+      if (readableId.toLowerCase().includes(searchLower)) return true;
+      // Search in date
+      if (session.time?.updated) {
+        const dateStr = formatSessionDate(session.time.updated);
+        if (dateStr.toLowerCase().includes(searchLower)) return true;
+      }
+      return false;
+    });
+  }, [sessionHierarchy.parentSessions, deferredSearch]);
+
+  const toggleSessionExpanded = useCallback((sessionId: string) => {
+    setExpandedSessions((prev) => {
+      const next = new Set(prev);
+      if (next.has(sessionId)) {
+        next.delete(sessionId);
+      } else {
+        next.add(sessionId);
+      }
+      return next;
+    });
+  }, []);
 
   // Handle session click - select session and switch to chats view
   const handleSessionClick = (sessionId: string) => {
@@ -187,20 +259,6 @@ function AppShell() {
   useEffect(() => {
     if (typeof window === "undefined") return;
 
-    // Theme initialization - respect saved preference or system preference
-    const stored = localStorage.getItem("theme");
-    const prefersDark = window.matchMedia?.(
-      "(prefers-color-scheme: dark)",
-    ).matches;
-    const initial =
-      stored === "light" || stored === "dark"
-        ? stored
-        : prefersDark
-          ? "dark"
-          : "light";
-    document.documentElement.classList.toggle("dark", initial === "dark");
-    setTheme(initial);
-
     // Load saved JAK volume
     const storedVol = localStorage.getItem("jakVolume");
     const volNum = storedVol ? Number(storedVol) : NaN;
@@ -230,19 +288,15 @@ function AppShell() {
   }, []);
 
   const toggleTheme = () => {
-    setTheme((prev) => {
-      const next = prev === "dark" ? "light" : "dark";
-      // Disable transitions during theme switch
-      document.documentElement.classList.add("no-transitions");
-      document.documentElement.classList.toggle("dark", next === "dark");
-      localStorage.setItem("theme", next);
-      // Re-enable transitions after a brief delay
+    const next = resolvedTheme === "dark" ? "light" : "dark";
+    // Disable transitions during theme switch
+    document.documentElement.classList.add("no-transitions");
+    setTheme(next);
+    // Re-enable transitions after a brief delay
+    requestAnimationFrame(() => {
       requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          document.documentElement.classList.remove("no-transitions");
-        });
+        document.documentElement.classList.remove("no-transitions");
       });
-      return next;
     });
   };
 
@@ -333,7 +387,7 @@ function AppShell() {
           <Menu className="w-5 h-5" />
         </Button>
         <Image
-          src={theme === "dark" ? "/octo_logo_new_white.png" : "/octo_logo_new_black.png"}
+          src={resolvedTheme === "dark" ? "/octo_logo_new_white.png" : "/octo_logo_new_black.png"}
           alt="OCTO"
           width={80}
           height={32}
@@ -351,7 +405,7 @@ function AppShell() {
         >
           <div className="h-14 flex items-center justify-between px-4">
             <Image
-              src={theme === "dark" ? "/octo_logo_new_white.png" : "/octo_logo_new_black.png"}
+              src={resolvedTheme === "dark" ? "/octo_logo_new_white.png" : "/octo_logo_new_black.png"}
               alt="OCTO"
               width={80}
               height={32}
@@ -484,10 +538,10 @@ function AppShell() {
                 toggleTheme();
                 setMobileMenuOpen(false);
               }}
-              aria-pressed={theme === "dark"}
+              aria-pressed={resolvedTheme === "dark"}
               className="w-full justify-start text-muted-foreground hover:text-primary py-4"
             >
-              {theme === "dark" ? (
+              {resolvedTheme === "dark" ? (
                 <SunMedium className="w-5 h-5" />
               ) : (
                 <MoonStar className="w-5 h-5" />
@@ -522,7 +576,7 @@ function AppShell() {
         <div className="h-24 w-full flex items-center justify-center px-4 relative">
           {!sidebarCollapsed && (
             <Image
-              src={theme === "dark" ? "/octo_logo_new_white.png" : "/octo_logo_new_black.png"}
+              src={resolvedTheme === "dark" ? "/octo_logo_new_white.png" : "/octo_logo_new_black.png"}
               alt="OCTO"
               width={240}
               height={80}
@@ -614,71 +668,203 @@ function AppShell() {
                 {locale === "de" ? "Verlauf" : "History"}
               </span>
               <span className="text-xs text-muted-foreground/50">
-                ({opencodeSessions.length})
+                ({filteredSessions.length}{deferredSearch ? `/${opencodeSessions.length}` : ""})
               </span>
             </div>
+            {/* Search input */}
+            <div className="relative mb-2">
+              <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
+              <input
+                type="text"
+                placeholder={locale === "de" ? "Suchen..." : "Search..."}
+                value={sessionSearch}
+                onChange={(e) => setSessionSearch(e.target.value)}
+                className="w-full pl-7 pr-2 py-1.5 text-xs bg-sidebar-accent/50 border border-sidebar-border rounded placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary/50"
+              />
+              {sessionSearch && (
+                <button
+                  onClick={() => setSessionSearch("")}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              )}
+            </div>
             <div className="flex-1 overflow-y-auto space-y-1 pr-1 -mr-1">
-              {opencodeSessions.slice(0, 20).map((session) => {
+              {filteredSessions.length === 0 && deferredSearch && (
+                <div className="text-xs text-muted-foreground/50 text-center py-4">
+                  {locale === "de" ? "Keine Ergebnisse" : "No results"}
+                </div>
+              )}
+              {filteredSessions.slice(0, 20).map((session) => {
                 const isSelected = selectedChatSessionId === session.id;
-                const updatedAt = session.time?.updated
-                  ? new Date(session.time.updated)
+                const children = sessionHierarchy.childSessionsByParent.get(session.id) || [];
+                const hasChildren = children.length > 0;
+                const isExpanded = expandedSessions.has(session.id);
+                const readableId = generateReadableId(session.id);
+                const formattedDate = session.time?.updated 
+                  ? formatSessionDate(session.time.updated)
                   : null;
                 return (
-                  <ContextMenu key={session.id}>
-                    <ContextMenuTrigger asChild>
-                      <button
-                        onClick={() => handleSessionClick(session.id)}
-                        className={cn(
-                          "w-full px-3 py-2 text-left transition-colors",
-                          isSelected
-                            ? "bg-primary/15 border border-primary text-foreground"
-                            : "text-muted-foreground hover:bg-sidebar-accent border border-transparent",
-                        )}
-                      >
-                        <div className="text-sm truncate font-medium">
-                          {session.title || "Untitled"}
-                        </div>
-                        <div className="flex items-center gap-1 text-[10px] text-muted-foreground mt-0.5">
-                          <span className="truncate">
-                            {session.id.slice(0, 12)}
-                          </span>
-                          {updatedAt && (
-                            <>
-                              <span className="mx-1">·</span>
-                              <Clock className="w-3 h-3 flex-shrink-0" />
-                              {updatedAt.toLocaleDateString()}{" "}
-                              {updatedAt.toLocaleTimeString([], {
-                                hour: "2-digit",
-                                minute: "2-digit",
-                              })}
-                            </>
+                  <div key={session.id}>
+                    <ContextMenu>
+                      <ContextMenuTrigger asChild>
+                        <button
+                          onClick={() => handleSessionClick(session.id)}
+                          className={cn(
+                            "w-full px-3 py-2 text-left transition-colors flex items-start gap-2",
+                            isSelected
+                              ? "bg-primary/15 border border-primary text-foreground"
+                              : "text-muted-foreground hover:bg-sidebar-accent border border-transparent",
                           )}
-                        </div>
-                      </button>
-                    </ContextMenuTrigger>
-                    <ContextMenuContent>
-                      <ContextMenuItem
-                        onClick={() => handlePinSession(session.id)}
-                      >
-                        <Pin className="w-4 h-4 mr-2" />
-                        {locale === "de" ? "Anpinnen" : "Pin"}
-                      </ContextMenuItem>
-                      <ContextMenuItem
-                        onClick={() => handleRenameSession(session.id)}
-                      >
-                        <Pencil className="w-4 h-4 mr-2" />
-                        {locale === "de" ? "Umbenennen" : "Rename"}
-                      </ContextMenuItem>
-                      <ContextMenuSeparator />
-                      <ContextMenuItem
-                        variant="destructive"
-                        onClick={() => handleDeleteSession(session.id)}
-                      >
-                        <Trash2 className="w-4 h-4 mr-2" />
-                        {locale === "de" ? "Loschen" : "Delete"}
-                      </ContextMenuItem>
-                    </ContextMenuContent>
-                  </ContextMenu>
+                        >
+                          {hasChildren && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                toggleSessionExpanded(session.id);
+                              }}
+                              className="mt-0.5 p-0.5 hover:bg-muted rounded flex-shrink-0"
+                            >
+                              {isExpanded ? (
+                                <ChevronDown className="w-3 h-3" />
+                              ) : (
+                                <ChevronRight className="w-3 h-3" />
+                              )}
+                            </button>
+                          )}
+                          <div className={cn("flex-1 min-w-0", !hasChildren && "ml-5")}>
+                            <div className="flex items-center gap-1">
+                              <span className="text-sm truncate font-medium">
+                                {session.title || "Untitled"}
+                              </span>
+                              {hasChildren && (
+                                <span className="text-[10px] text-primary/70">
+                                  ({children.length})
+                                </span>
+                              )}
+                            </div>
+                            {formattedDate && (
+                              <div className="text-[10px] text-foreground/50 dark:text-muted-foreground mt-0.5">
+                                {formattedDate}
+                              </div>
+                            )}
+                          </div>
+                        </button>
+                      </ContextMenuTrigger>
+                      <ContextMenuContent>
+                        <ContextMenuItem
+                          onClick={() => {
+                            navigator.clipboard.writeText(readableId);
+                          }}
+                        >
+                          <Copy className="w-4 h-4 mr-2" />
+                          {readableId}
+                        </ContextMenuItem>
+                        <ContextMenuItem
+                          onClick={() => {
+                            navigator.clipboard.writeText(session.id);
+                          }}
+                        >
+                          <Copy className="w-4 h-4 mr-2" />
+                          {session.id.slice(0, 16)}...
+                        </ContextMenuItem>
+                        <ContextMenuSeparator />
+                        <ContextMenuItem
+                          onClick={() => handlePinSession(session.id)}
+                        >
+                          <Pin className="w-4 h-4 mr-2" />
+                          {locale === "de" ? "Anpinnen" : "Pin"}
+                        </ContextMenuItem>
+                        <ContextMenuItem
+                          onClick={() => handleRenameSession(session.id)}
+                        >
+                          <Pencil className="w-4 h-4 mr-2" />
+                          {locale === "de" ? "Umbenennen" : "Rename"}
+                        </ContextMenuItem>
+                        <ContextMenuSeparator />
+                        <ContextMenuItem
+                          variant="destructive"
+                          onClick={() => handleDeleteSession(session.id)}
+                        >
+                          <Trash2 className="w-4 h-4 mr-2" />
+                          {locale === "de" ? "Loschen" : "Delete"}
+                        </ContextMenuItem>
+                      </ContextMenuContent>
+                    </ContextMenu>
+                    {/* Child sessions (subagents) */}
+                    {hasChildren && isExpanded && (
+                      <div className="ml-4 border-l border-muted pl-2 space-y-1 mt-1">
+                        {children.map((child) => {
+                          const isChildSelected = selectedChatSessionId === child.id;
+                          const childReadableId = generateReadableId(child.id);
+                          const childFormattedDate = child.time?.updated
+                            ? formatSessionDate(child.time.updated)
+                            : null;
+                          return (
+                            <ContextMenu key={child.id}>
+                              <ContextMenuTrigger asChild>
+                                <button
+                                  onClick={() => handleSessionClick(child.id)}
+                                  className={cn(
+                                    "w-full px-2 py-1.5 text-left transition-colors text-xs",
+                                    isChildSelected
+                                      ? "bg-primary/15 border border-primary text-foreground"
+                                      : "text-muted-foreground hover:bg-sidebar-accent border border-transparent",
+                                  )}
+                                >
+                                  <div className="flex items-center gap-1">
+                                    <Bot className="w-3 h-3 flex-shrink-0 text-primary/70" />
+                                    <span className="truncate font-medium">
+                                      {child.title || "Subagent"}
+                                    </span>
+                                  </div>
+                                  {childFormattedDate && (
+                                    <div className="text-[9px] text-foreground/50 dark:text-muted-foreground mt-0.5 ml-4">
+                                      {childFormattedDate}
+                                    </div>
+                                  )}
+                                </button>
+                              </ContextMenuTrigger>
+                              <ContextMenuContent>
+                                <ContextMenuItem
+                                  onClick={() => {
+                                    navigator.clipboard.writeText(childReadableId);
+                                  }}
+                                >
+                                  <Copy className="w-4 h-4 mr-2" />
+                                  {childReadableId}
+                                </ContextMenuItem>
+                                <ContextMenuItem
+                                  onClick={() => {
+                                    navigator.clipboard.writeText(child.id);
+                                  }}
+                                >
+                                  <Copy className="w-4 h-4 mr-2" />
+                                  {child.id.slice(0, 16)}...
+                                </ContextMenuItem>
+                                <ContextMenuSeparator />
+                                <ContextMenuItem
+                                  onClick={() => handleRenameSession(child.id)}
+                                >
+                                  <Pencil className="w-4 h-4 mr-2" />
+                                  {locale === "de" ? "Umbenennen" : "Rename"}
+                                </ContextMenuItem>
+                                <ContextMenuSeparator />
+                                <ContextMenuItem
+                                  variant="destructive"
+                                  onClick={() => handleDeleteSession(child.id)}
+                                >
+                                  <Trash2 className="w-4 h-4 mr-2" />
+                                  {locale === "de" ? "Loschen" : "Delete"}
+                                </ContextMenuItem>
+                              </ContextMenuContent>
+                            </ContextMenu>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
                 );
               })}
             </div>
@@ -701,116 +887,187 @@ function AppShell() {
         )}
 
         <div
-          className={`w-full ${sidebarCollapsed ? "px-2 pb-4" : "px-4 pb-6"} space-y-3 mt-auto pt-4`}
+          className={`w-full ${sidebarCollapsed ? "px-2 pb-4" : "px-4 pb-6"} mt-auto pt-4`}
         >
-          <div className="h-px w-full bg-primary/50 mt-2" />
-          <Button
-            variant="ghost"
-            size="default"
-            onClick={toggleLocale}
-            aria-label="Sprache wechseln"
-            className="w-full px-4 py-3 text-sm font-medium flex items-center gap-2 transition-colors"
-            style={{
-              justifyContent: sidebarCollapsed ? "center" : "flex-start",
-              backgroundColor: navIdle,
-              border: "1px solid transparent",
-              color: navText,
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.backgroundColor = sidebarHover;
-              e.currentTarget.style.border = `1px solid ${sidebarHoverBorder}`;
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.backgroundColor = navIdle;
-              e.currentTarget.style.border = "1px solid transparent";
-            }}
-          >
-            <Globe2 className="w-4 h-4 shrink-0" />
-            {!sidebarCollapsed && (
-              <span className="text-sm font-medium">
-                {locale === "de" ? "EN" : "DE"}
-              </span>
-            )}
-          </Button>
-          <Button
-            variant="ghost"
-            size="default"
-            onClick={toggleTheme}
-            aria-pressed={theme === "dark"}
-            className="w-full px-4 py-3 text-sm font-medium flex items-center gap-2 transition-colors"
-            style={{
-              justifyContent: sidebarCollapsed ? "center" : "flex-start",
-              backgroundColor: navIdle,
-              border: "1px solid transparent",
-              color: navText,
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.backgroundColor = sidebarHover;
-              e.currentTarget.style.border = `1px solid ${sidebarHoverBorder}`;
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.backgroundColor = navIdle;
-              e.currentTarget.style.border = "1px solid transparent";
-            }}
-          >
-            {theme === "dark" ? (
-              <SunMedium className="w-4 h-4 shrink-0" />
-            ) : (
-              <MoonStar className="w-4 h-4 shrink-0" />
-            )}
-            {!sidebarCollapsed && (
-              <span className="text-sm font-medium">Theme</span>
-            )}
-          </Button>
-          <div className="flex items-center gap-2">
-            <Button
-              variant="ghost"
-              size="default"
-              onClick={toggleJakSnow}
-              className="px-4 py-3 text-sm font-medium flex items-center gap-2 transition-colors flex-1"
-              style={{
-                justifyContent: sidebarCollapsed ? "center" : "flex-start",
-                backgroundColor: navIdle,
-                border: "1px solid transparent",
-                color: navText,
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.backgroundColor = sidebarHover;
-                e.currentTarget.style.border = `1px solid ${sidebarHoverBorder}`;
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.backgroundColor = navIdle;
-                e.currentTarget.style.border = "1px solid transparent";
-              }}
-            >
-              <Snowflake className="w-4 h-4 shrink-0" />
-              {!sidebarCollapsed && (
-                <span className="text-sm font-medium">JAK</span>
-              )}
-              {sidebarCollapsed && <span className="sr-only">JAK</span>}
-            </Button>
-            {!sidebarCollapsed && showJakSnow && (
-              <input
-                type="range"
-                min={0}
-                max={1}
-                step={0.05}
-                value={jakVolume}
-                onChange={(e) => {
-                  const vol = Number(e.target.value);
-                  if (Number.isNaN(vol)) return;
-                  setJakVolume(vol);
-                  localStorage.setItem("jakVolume", String(vol));
-                  if (jakAudioRef.current) {
-                    jakAudioRef.current.volume = vol;
-                  }
+          <div className="h-px w-full bg-primary/50 mb-3" />
+          {sidebarCollapsed ? (
+            // Collapsed: stack vertically
+            <div className="space-y-3">
+              <Button
+                variant="ghost"
+                size="default"
+                onClick={toggleLocale}
+                aria-label="Sprache wechseln"
+                className="w-full px-4 py-3 text-sm font-medium flex items-center justify-center transition-colors"
+                style={{
+                  backgroundColor: navIdle,
+                  border: "1px solid transparent",
+                  color: navText,
                 }}
-                className="w-[100px]"
-                style={{ accentColor: "var(--foreground)" }}
-                aria-label="JAK Lautstarke"
-              />
-            )}
-          </div>
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = sidebarHover;
+                  e.currentTarget.style.border = `1px solid ${sidebarHoverBorder}`;
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = navIdle;
+                  e.currentTarget.style.border = "1px solid transparent";
+                }}
+              >
+                <Globe2 className="w-4 h-4 shrink-0" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="default"
+                onClick={toggleTheme}
+                aria-pressed={resolvedTheme === "dark"}
+                className="w-full px-4 py-3 text-sm font-medium flex items-center justify-center transition-colors"
+                style={{
+                  backgroundColor: navIdle,
+                  border: "1px solid transparent",
+                  color: navText,
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = sidebarHover;
+                  e.currentTarget.style.border = `1px solid ${sidebarHoverBorder}`;
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = navIdle;
+                  e.currentTarget.style.border = "1px solid transparent";
+                }}
+              >
+                {resolvedTheme === "dark" ? (
+                  <SunMedium className="w-4 h-4 shrink-0" />
+                ) : (
+                  <MoonStar className="w-4 h-4 shrink-0" />
+                )}
+              </Button>
+              <Button
+                variant="ghost"
+                size="default"
+                onClick={toggleJakSnow}
+                className="w-full px-4 py-3 text-sm font-medium flex items-center justify-center transition-colors"
+                style={{
+                  backgroundColor: navIdle,
+                  border: "1px solid transparent",
+                  color: navText,
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = sidebarHover;
+                  e.currentTarget.style.border = `1px solid ${sidebarHoverBorder}`;
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = navIdle;
+                  e.currentTarget.style.border = "1px solid transparent";
+                }}
+              >
+                <Snowflake className="w-4 h-4 shrink-0" />
+                <span className="sr-only">JAK</span>
+              </Button>
+            </div>
+          ) : (
+            // Expanded: show in a row with just icons
+            <div className="space-y-2">
+              <div className="flex items-center justify-center gap-2">
+                <Button
+                  variant="ghost"
+                  size="default"
+                  onClick={toggleLocale}
+                  aria-label="Sprache wechseln"
+                  className="px-3 py-2 text-sm font-medium flex items-center justify-center transition-colors"
+                  style={{
+                    backgroundColor: navIdle,
+                    border: "1px solid transparent",
+                    color: navText,
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.backgroundColor = sidebarHover;
+                    e.currentTarget.style.border = `1px solid ${sidebarHoverBorder}`;
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.backgroundColor = navIdle;
+                    e.currentTarget.style.border = "1px solid transparent";
+                  }}
+                >
+                  <Globe2 className="w-4 h-4" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="default"
+                  onClick={toggleTheme}
+                  aria-pressed={resolvedTheme === "dark"}
+                  className="px-3 py-2 text-sm font-medium flex items-center justify-center transition-colors"
+                  style={{
+                    backgroundColor: navIdle,
+                    border: "1px solid transparent",
+                    color: navText,
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.backgroundColor = sidebarHover;
+                    e.currentTarget.style.border = `1px solid ${sidebarHoverBorder}`;
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.backgroundColor = navIdle;
+                    e.currentTarget.style.border = "1px solid transparent";
+                  }}
+                >
+                  {resolvedTheme === "dark" ? (
+                    <SunMedium className="w-4 h-4" />
+                  ) : (
+                    <MoonStar className="w-4 h-4" />
+                  )}
+                </Button>
+                <ContextMenu>
+                  <ContextMenuTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="default"
+                      onClick={toggleJakSnow}
+                      className="px-3 py-2 text-sm font-medium flex items-center justify-center transition-colors"
+                      style={{
+                        backgroundColor: navIdle,
+                        border: "1px solid transparent",
+                        color: navText,
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.backgroundColor = sidebarHover;
+                        e.currentTarget.style.border = `1px solid ${sidebarHoverBorder}`;
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.backgroundColor = navIdle;
+                        e.currentTarget.style.border = "1px solid transparent";
+                      }}
+                    >
+                      <Snowflake className="w-4 h-4" />
+                    </Button>
+                  </ContextMenuTrigger>
+                  <ContextMenuContent>
+                    <div className="px-2 py-1.5">
+                      <div className="text-xs text-muted-foreground mb-2">Volume</div>
+                      <input
+                        type="range"
+                        min={0}
+                        max={1}
+                        step={0.05}
+                        value={jakVolume}
+                        onChange={(e) => {
+                          const vol = Number(e.target.value);
+                          if (Number.isNaN(vol)) return;
+                          setJakVolume(vol);
+                          localStorage.setItem("jakVolume", String(vol));
+                          if (jakAudioRef.current) {
+                            jakAudioRef.current.volume = vol;
+                          }
+                        }}
+                        className="w-[120px]"
+                        style={{ accentColor: "var(--primary)" }}
+                        aria-label="JAK Volume"
+                      />
+                    </div>
+                  </ContextMenuContent>
+                </ContextMenu>
+              </div>
+            </div>
+          )}
         </div>
       </aside>
 

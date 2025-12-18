@@ -22,19 +22,21 @@ impl SessionRepository {
         sqlx::query(
             r#"
             INSERT INTO sessions (
-                id, container_id, container_name, user_id, workspace_path, image,
+                id, readable_id, container_id, container_name, user_id, workspace_path, image, image_digest,
                 opencode_port, fileserver_port, ttyd_port, eavs_port,
                 eavs_key_id, eavs_key_hash, eavs_virtual_key,
                 status, created_at, started_at, stopped_at, error_message
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&session.id)
+        .bind(&session.readable_id)
         .bind(&session.container_id)
         .bind(&session.container_name)
         .bind(&session.user_id)
         .bind(&session.workspace_path)
         .bind(&session.image)
+        .bind(&session.image_digest)
         .bind(session.opencode_port)
         .bind(session.fileserver_port)
         .bind(session.ttyd_port)
@@ -58,7 +60,7 @@ impl SessionRepository {
     pub async fn get(&self, id: &str) -> Result<Option<Session>> {
         let session = sqlx::query_as::<_, Session>(
             r#"
-            SELECT id, container_id, container_name, user_id, workspace_path, image,
+            SELECT id, readable_id, container_id, container_name, user_id, workspace_path, image, image_digest,
                    opencode_port, fileserver_port, ttyd_port, eavs_port,
                    eavs_key_id, eavs_key_hash, eavs_virtual_key,
                    status, created_at, started_at, stopped_at, error_message
@@ -79,7 +81,7 @@ impl SessionRepository {
     pub async fn get_by_container_id(&self, container_id: &str) -> Result<Option<Session>> {
         let session = sqlx::query_as::<_, Session>(
             r#"
-            SELECT id, container_id, container_name, user_id, workspace_path, image,
+            SELECT id, readable_id, container_id, container_name, user_id, workspace_path, image, image_digest,
                    opencode_port, fileserver_port, ttyd_port, eavs_port,
                    eavs_key_id, eavs_key_hash, eavs_virtual_key,
                    status, created_at, started_at, stopped_at, error_message
@@ -99,7 +101,7 @@ impl SessionRepository {
     pub async fn list(&self) -> Result<Vec<Session>> {
         let sessions = sqlx::query_as::<_, Session>(
             r#"
-            SELECT id, container_id, container_name, user_id, workspace_path, image,
+            SELECT id, readable_id, container_id, container_name, user_id, workspace_path, image, image_digest,
                    opencode_port, fileserver_port, ttyd_port, eavs_port,
                    eavs_key_id, eavs_key_hash, eavs_virtual_key,
                    status, created_at, started_at, stopped_at, error_message
@@ -119,7 +121,7 @@ impl SessionRepository {
     pub async fn list_active(&self) -> Result<Vec<Session>> {
         let sessions = sqlx::query_as::<_, Session>(
             r#"
-            SELECT id, container_id, container_name, user_id, workspace_path, image,
+            SELECT id, readable_id, container_id, container_name, user_id, workspace_path, image, image_digest,
                    opencode_port, fileserver_port, ttyd_port, eavs_port,
                    eavs_key_id, eavs_key_hash, eavs_virtual_key,
                    status, created_at, started_at, stopped_at, error_message
@@ -140,7 +142,7 @@ impl SessionRepository {
     pub async fn list_by_user(&self, user_id: &str) -> Result<Vec<Session>> {
         let sessions = sqlx::query_as::<_, Session>(
             r#"
-            SELECT id, container_id, container_name, user_id, workspace_path, image,
+            SELECT id, readable_id, container_id, container_name, user_id, workspace_path, image, image_digest,
                    opencode_port, fileserver_port, ttyd_port, eavs_port,
                    eavs_key_id, eavs_key_hash, eavs_virtual_key,
                    status, created_at, started_at, stopped_at, error_message
@@ -232,13 +234,54 @@ impl SessionRepository {
         Ok(())
     }
 
-    /// Clear the EAVS virtual key from a session (for security after container starts).
-    pub async fn clear_eavs_virtual_key(&self, id: &str) -> Result<()> {
-        sqlx::query("UPDATE sessions SET eavs_virtual_key = NULL WHERE id = ?")
+    /// Check if a readable_id already exists.
+    pub async fn readable_id_exists(&self, readable_id: &str) -> Result<bool> {
+        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM sessions WHERE readable_id = ?")
+            .bind(readable_id)
+            .fetch_one(&self.pool)
+            .await
+            .context("checking readable_id existence")?;
+
+        Ok(count.0 > 0)
+    }
+
+    /// Update the image digest for a session.
+    pub async fn update_image_digest(&self, id: &str, digest: &str) -> Result<()> {
+        sqlx::query("UPDATE sessions SET image_digest = ? WHERE id = ?")
+            .bind(digest)
             .bind(id)
             .execute(&self.pool)
             .await
-            .context("clearing EAVS virtual key")?;
+            .context("updating image digest")?;
+
+        Ok(())
+    }
+
+    /// Update image and digest for a session (used during upgrade).
+    pub async fn update_image_and_digest(
+        &self,
+        id: &str,
+        image: &str,
+        digest: Option<&str>,
+    ) -> Result<()> {
+        sqlx::query("UPDATE sessions SET image = ?, image_digest = ? WHERE id = ?")
+            .bind(image)
+            .bind(digest)
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .context("updating image and digest")?;
+
+        Ok(())
+    }
+
+    /// Clear container ID (used when recreating container during upgrade).
+    pub async fn clear_container_id(&self, id: &str) -> Result<()> {
+        sqlx::query("UPDATE sessions SET container_id = NULL WHERE id = ?")
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .context("clearing container ID")?;
 
         Ok(())
     }

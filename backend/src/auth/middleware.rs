@@ -39,7 +39,7 @@ impl AuthState {
         if let Ok(Some(resolved)) = config.resolve_jwt_secret() {
             config.jwt_secret = Some(resolved);
         }
-        
+
         let decoding_key = config
             .jwt_secret
             .as_ref()
@@ -254,20 +254,16 @@ pub async fn auth_middleware(
         .and_then(|cookie_header| token_from_cookie_header(cookie_header, "auth_token"));
 
     // Allow query parameter token for WebSocket connections (browsers can't set headers on WS)
-    let query_token = req
-        .uri()
-        .query()
-        .and_then(|q| {
-            q.split('&')
-                .find_map(|pair| {
-                    let (key, value) = pair.split_once('=')?;
-                    if key == "token" {
-                        Some(urlencoding::decode(value).ok()?.into_owned())
-                    } else {
-                        None
-                    }
-                })
-        });
+    let query_token = req.uri().query().and_then(|q| {
+        q.split('&').find_map(|pair| {
+            let (key, value) = pair.split_once('=')?;
+            if key == "token" {
+                Some(urlencoding::decode(value).ok()?.into_owned())
+            } else {
+                None
+            }
+        })
+    });
 
     let claims = if let Some(header) = auth_header {
         // Parse Bearer token

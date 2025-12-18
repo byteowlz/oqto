@@ -23,6 +23,7 @@ interface AppContextValue {
   workspaceSessions: WorkspaceSession[]
   selectedWorkspaceSessionId: string
   setSelectedWorkspaceSessionId: (id: string) => void
+  selectedWorkspaceSession: WorkspaceSession | undefined
   opencodeBaseUrl: string
   opencodeSessions: OpenCodeSession[]
   selectedChatSessionId: string
@@ -113,11 +114,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
             const running = data.find((s) => s.status === "running")
             return running?.id || data[0].id
           }
-          // If current session is failed/stopped, switch to a running one if available
+          // Check if current session exists and is usable
           const currentSession = data.find((s) => s.id === current)
-          if (currentSession?.status === "failed" || currentSession?.status === "stopped") {
+          // If session doesn't exist, is failed, or is stopped, switch to a running one
+          if (!currentSession || currentSession.status === "failed" || currentSession.status === "stopped") {
             const running = data.find((s) => s.status === "running")
             if (running) return running.id
+            // No running session, pick first available
+            return data[0].id
           }
           return current
         })
@@ -262,6 +266,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       workspaceSessions,
       selectedWorkspaceSessionId,
       setSelectedWorkspaceSessionId,
+      selectedWorkspaceSession,
       opencodeBaseUrl,
       opencodeSessions,
       selectedChatSessionId,
@@ -283,6 +288,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       resolveText,
       workspaceSessions,
       selectedWorkspaceSessionId,
+      selectedWorkspaceSession,
       opencodeBaseUrl,
       opencodeSessions,
       selectedChatSessionId,

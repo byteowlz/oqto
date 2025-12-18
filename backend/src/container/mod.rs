@@ -14,6 +14,7 @@ pub use error::{ContainerError, ContainerResult};
 // Re-export validation function for use in this module
 use container::validate_image_name;
 
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::process::Stdio;
 use tokio::process::Command;
@@ -86,7 +87,7 @@ fn validate_container_id_or_name(id: &str) -> ContainerResult<()> {
 }
 
 /// Container runtime client for managing containers.
-/// 
+///
 /// Supports both Docker and Podman with automatic detection.
 #[derive(Debug, Clone)]
 pub struct ContainerRuntime {
@@ -94,6 +95,57 @@ pub struct ContainerRuntime {
     runtime_type: RuntimeType,
     /// Path to the container binary
     binary: String,
+}
+
+/// Container runtime abstraction for testability.
+#[async_trait]
+pub trait ContainerRuntimeApi: Send + Sync {
+    async fn create_container(&self, config: &ContainerConfig) -> ContainerResult<String>;
+    async fn stop_container(
+        &self,
+        container_id: &str,
+        timeout_seconds: Option<u32>,
+    ) -> ContainerResult<()>;
+    async fn start_container(&self, container_id: &str) -> ContainerResult<()>;
+    async fn remove_container(&self, container_id: &str, force: bool) -> ContainerResult<()>;
+    async fn list_containers(&self, all: bool) -> ContainerResult<Vec<Container>>;
+    async fn container_state_status(&self, id_or_name: &str) -> ContainerResult<Option<String>>;
+    async fn get_image_digest(&self, image: &str) -> ContainerResult<Option<String>>;
+}
+
+#[async_trait]
+impl ContainerRuntimeApi for ContainerRuntime {
+    async fn create_container(&self, config: &ContainerConfig) -> ContainerResult<String> {
+        self.create_container(config).await
+    }
+
+    async fn stop_container(
+        &self,
+        container_id: &str,
+        timeout_seconds: Option<u32>,
+    ) -> ContainerResult<()> {
+        self.stop_container(container_id, timeout_seconds).await
+    }
+
+    async fn start_container(&self, container_id: &str) -> ContainerResult<()> {
+        self.start_container(container_id).await
+    }
+
+    async fn remove_container(&self, container_id: &str, force: bool) -> ContainerResult<()> {
+        self.remove_container(container_id, force).await
+    }
+
+    async fn list_containers(&self, all: bool) -> ContainerResult<Vec<Container>> {
+        self.list_containers(all).await
+    }
+
+    async fn container_state_status(&self, id_or_name: &str) -> ContainerResult<Option<String>> {
+        self.container_state_status(id_or_name).await
+    }
+
+    async fn get_image_digest(&self, image: &str) -> ContainerResult<Option<String>> {
+        self.get_image_digest(image).await
+    }
 }
 
 impl Default for ContainerRuntime {
@@ -104,7 +156,7 @@ impl Default for ContainerRuntime {
 
 impl ContainerRuntime {
     /// Create a new container runtime with auto-detection.
-    /// 
+    ///
     /// Tries Docker first (for macOS dev), then falls back to Podman.
     pub fn new() -> Self {
         // Try to detect which runtime is available
@@ -215,16 +267,33 @@ impl ContainerRuntime {
             owned_args.push(name.clone());
         }
 
-        // Hostname
+        // Hostname (skip if using host network mode)
         if let Some(ref hostname) = config.hostname {
-            owned_args.push("--hostname".to_string());
-            owned_args.push(hostname.clone());
+            if config.network_mode.as_deref() != Some("host") {
+                owned_args.push("--hostname".to_string());
+                owned_args.push(hostname.clone());
+            }
         }
 
-        // Port mappings
-        for port in &config.ports {
-            owned_args.push("-p".to_string());
-            owned_args.push(format!("{}:{}", port.host_port, port.container_port));
+        // Network mode
+        if let Some(ref network_mode) = config.network_mode {
+            owned_args.push("--network".to_string());
+            owned_args.push(network_mode.clone());
+        } else if self.runtime_type == RuntimeType::Podman {
+            // For Podman with default pasta networking, set a reasonable MTU.
+            // The default pasta MTU of 65520 can cause TLS handshake failures
+            // with some CDNs (like Cloudflare/npm) that don't handle large MTUs
+            // or Path MTU Discovery properly.
+            owned_args.push("--network".to_string());
+            owned_args.push("pasta:-m,1500".to_string());
+        }
+
+        // Port mappings (skip if using host network mode - ports are directly accessible)
+        if config.network_mode.as_deref() != Some("host") {
+            for port in &config.ports {
+                owned_args.push("-p".to_string());
+                owned_args.push(format!("{}:{}", port.host_port, port.container_port));
+            }
         }
 
         // Volume mounts - handle SELinux labels for Podman
@@ -449,7 +518,10 @@ impl ContainerRuntime {
     /// Get the container state status string (e.g. "running", "exited") via `inspect`.
     ///
     /// Returns `Ok(None)` when the container does not exist.
-    pub async fn container_state_status(&self, id_or_name: &str) -> ContainerResult<Option<String>> {
+    pub async fn container_state_status(
+        &self,
+        id_or_name: &str,
+    ) -> ContainerResult<Option<String>> {
         validate_container_id_or_name(id_or_name)?;
 
         let output = Command::new(&self.binary)
@@ -546,18 +618,20 @@ impl ContainerRuntime {
     }
 
     /// Check if an image exists locally.
-    #[allow(dead_code)]
+    /// Check if an image exists locally.
+    /// Uses `docker image inspect` (works for both Docker and Podman) instead of
+    /// `podman image exists` which is Podman-specific.
     pub async fn image_exists(&self, image: &str) -> ContainerResult<bool> {
         validate_image_name(image)?;
 
         let output = Command::new(&self.binary)
-            .args(["image", "exists", image])
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
+            .args(["image", "inspect", image])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
             .output()
             .await
             .map_err(|e| ContainerError::CommandFailed {
-                command: "image exists".to_string(),
+                command: "image inspect".to_string(),
                 message: e.to_string(),
             })?;
 
@@ -589,6 +663,72 @@ impl ContainerRuntime {
         }
 
         Ok(())
+    }
+
+    /// Get the digest (sha256) for a local image.
+    ///
+    /// Returns `Ok(None)` if the image does not exist locally.
+    pub async fn get_image_digest(&self, image: &str) -> ContainerResult<Option<String>> {
+        validate_image_name(image)?;
+
+        // Use inspect to get the image digest
+        // Format: {{.Digest}} returns the digest or empty string
+        let output = Command::new(&self.binary)
+            .args(["image", "inspect", "--format", "{{.Digest}}", image])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .await
+            .map_err(|e| ContainerError::CommandFailed {
+                command: "image inspect".to_string(),
+                message: e.to_string(),
+            })?;
+
+        if !output.status.success() {
+            // Image not found is not an error, just return None
+            return Ok(None);
+        }
+
+        let digest = String::from_utf8_lossy(&output.stdout).trim().to_string();
+
+        // Empty string or "<none>" means no digest (local build without push)
+        if digest.is_empty() || digest == "<none>" {
+            // Fall back to getting the image ID as a pseudo-digest for local images
+            return self.get_image_id(image).await;
+        }
+
+        Ok(Some(digest))
+    }
+
+    /// Get the image ID (sha256 hash) for a local image.
+    ///
+    /// This is useful for locally built images that don't have a registry digest.
+    /// Returns `Ok(None)` if the image does not exist locally.
+    pub async fn get_image_id(&self, image: &str) -> ContainerResult<Option<String>> {
+        validate_image_name(image)?;
+
+        let output = Command::new(&self.binary)
+            .args(["image", "inspect", "--format", "{{.Id}}", image])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .await
+            .map_err(|e| ContainerError::CommandFailed {
+                command: "image inspect".to_string(),
+                message: e.to_string(),
+            })?;
+
+        if !output.status.success() {
+            return Ok(None);
+        }
+
+        let id = String::from_utf8_lossy(&output.stdout).trim().to_string();
+
+        if id.is_empty() {
+            return Ok(None);
+        }
+
+        Ok(Some(id))
     }
 }
 

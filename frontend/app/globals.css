@@ -131,8 +131,8 @@
   --sidebar-foreground: oklch(0.5180 0.0127 226.1559);
   --sidebar-primary: oklch(0.7960 0.0347 255.2349);
   --sidebar-primary-foreground: oklch(0.3391 0.0139 235.2901);
-  --sidebar-accent: oklch(0.4874 0.0337 5.0088);
-  --sidebar-accent-foreground: oklch(0.9249 0 0);
+  --sidebar-accent: oklch(0.92 0 0);
+  --sidebar-accent-foreground: oklch(0.3 0 0);
   --sidebar-border: oklch(0.8576 0 0);
   --sidebar-ring: oklch(0.7960 0.0347 255.2349);
   --destructive-foreground: oklch(0.3391 0.0139 235.2901);
@@ -159,6 +159,16 @@
   /* Panel variables for light mode */
   --panel: #ffffff;
   --panel-strong: #eef0ef;
+  /* Terminal theme variables for light mode */
+  --terminal-bg: #f5f5f5;
+  --terminal-fg: #1e1e1e;
+  /* Code block colors for light mode */
+  --code-bg: #f0f0f0;
+  --code-fg: #1e1e1e;
+  --code-border: #d0d0d0;
+  --code-muted: #666666;
+  --code-accent: #0969da;
+  --code-success: #1a7f37;
 }
 
 .dark {
@@ -217,6 +227,16 @@
   /* Panel variables for dark mode */
   --panel: #161c1a;
   --panel-strong: #222624;
+  /* Terminal theme variables for dark mode */
+  --terminal-bg: #0b0d12;
+  --terminal-fg: #f5f5f5;
+  /* Code block colors for dark mode */
+  --code-bg: #0f1412;
+  --code-fg: #d5f0e4;
+  --code-border: #2a3632;
+  --code-muted: #6b7974;
+  --code-accent: #3ba77c;
+  --code-success: #6ee7b7;
 }
 
 @layer base {
