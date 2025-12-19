@@ -111,6 +111,12 @@ pub trait ContainerRuntimeApi: Send + Sync {
     async fn list_containers(&self, all: bool) -> ContainerResult<Vec<Container>>;
     async fn container_state_status(&self, id_or_name: &str) -> ContainerResult<Option<String>>;
     async fn get_image_digest(&self, image: &str) -> ContainerResult<Option<String>>;
+    
+    /// Execute a command in a container (detached, fire-and-forget).
+    async fn exec_detached(&self, container_id: &str, command: &[&str]) -> ContainerResult<()>;
+    
+    /// Execute a command in a container and return the output.
+    async fn exec_output(&self, container_id: &str, command: &[&str]) -> ContainerResult<String>;
 }
 
 #[async_trait]
@@ -145,6 +151,14 @@ impl ContainerRuntimeApi for ContainerRuntime {
 
     async fn get_image_digest(&self, image: &str) -> ContainerResult<Option<String>> {
         self.get_image_digest(image).await
+    }
+
+    async fn exec_detached(&self, container_id: &str, command: &[&str]) -> ContainerResult<()> {
+        self.exec_detached(container_id, command).await
+    }
+
+    async fn exec_output(&self, container_id: &str, command: &[&str]) -> ContainerResult<String> {
+        self.exec_output(container_id, command).await
     }
 }
 
@@ -729,6 +743,70 @@ impl ContainerRuntime {
         }
 
         Ok(Some(id))
+    }
+
+    /// Execute a command in a container (detached, fire-and-forget).
+    ///
+    /// This runs `docker exec -d` to execute the command in the background.
+    /// Useful for starting long-running processes like opencode serve.
+    pub async fn exec_detached(&self, container_id: &str, command: &[&str]) -> ContainerResult<()> {
+        validate_container_id_or_name(container_id)?;
+
+        let mut args = vec!["exec", "-d", container_id];
+        args.extend(command);
+
+        let output = Command::new(&self.binary)
+            .args(&args)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .await
+            .map_err(|e| ContainerError::CommandFailed {
+                command: "exec".to_string(),
+                message: e.to_string(),
+            })?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(ContainerError::CommandFailed {
+                command: "exec".to_string(),
+                message: stderr.to_string(),
+            });
+        }
+
+        Ok(())
+    }
+
+    /// Execute a command in a container and return the output.
+    ///
+    /// This runs `docker exec` and waits for the command to complete,
+    /// returning stdout as a string.
+    pub async fn exec_output(&self, container_id: &str, command: &[&str]) -> ContainerResult<String> {
+        validate_container_id_or_name(container_id)?;
+
+        let mut args = vec!["exec", container_id];
+        args.extend(command);
+
+        let output = Command::new(&self.binary)
+            .args(&args)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .await
+            .map_err(|e| ContainerError::CommandFailed {
+                command: "exec".to_string(),
+                message: e.to_string(),
+            })?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(ContainerError::CommandFailed {
+                command: "exec".to_string(),
+                message: stderr.to_string(),
+            });
+        }
+
+        Ok(String::from_utf8_lossy(&output.stdout).to_string())
     }
 }
 

@@ -1,0 +1,26 @@
+{
+  "id": "prt_b33fbf04e001K0BbfJPQcKxHqX",
+  "sessionID": "ses_4cc0a562afferLVqU83ypeYU2Y",
+  "messageID": "msg_b33fbdefa001ETPpLZ2e1nwhC4",
+  "type": "tool",
+  "callID": "call_b191adae1a2a4bfabcef50fc",
+  "tool": "bash",
+  "state": {
+    "status": "completed",
+    "input": {
+      "command": "fc-list | grep -i \"Open Sans\"",
+      "description": "Check if Open Sans font is properly installed"
+    },
+    "output": "/usr/share/fonts/open-sans/OpenSans-Semibold.ttf: Open Sans,Open Sans Semibold:style=Semibold,Regular\n/usr/share/fonts/open-sans/OpenSans-LightItalic.ttf: Open Sans,Open Sans Light:style=Light Italic,Italic\n/usr/share/fonts/open-sans/OpenSans-ExtraBoldItalic.ttf: Open Sans,Open Sans Extrabold:style=Extrabold Italic,Italic\n/usr/share/fonts/open-sans/OpenSans-Bold.ttf: Open Sans:style=Bold\n/usr/share/fonts/open-sans/OpenSans-BoldItalic.ttf: Open Sans:style=Bold Italic\n/usr/share/fonts/open-sans/OpenSans-SemiboldItalic.ttf: Open Sans,Open Sans Semibold:style=Semibold Italic,Italic\n/usr/share/fonts/open-sans/OpenSans-Light.ttf: Open Sans,Open Sans Light:style=Light,Regular\n/usr/share/fonts/open-sans/OpenSans-Italic.ttf: Open Sans:style=Italic\n/usr/share/fonts/open-sans/OpenSans-Regular.ttf: Open Sans:style=Regular\n/usr/share/fonts/open-sans/OpenSans-ExtraBold.ttf: Open Sans,Open Sans Extrabold:style=Extrabold,Regular\n",
+    "title": "Check if Open Sans font is properly installed",
+    "metadata": {
+      "output": "/usr/share/fonts/open-sans/OpenSans-Semibold.ttf: Open Sans,Open Sans Semibold:style=Semibold,Regular\n/usr/share/fonts/open-sans/OpenSans-LightItalic.ttf: Open Sans,Open Sans Light:style=Light Italic,Italic\n/usr/share/fonts/open-sans/OpenSans-ExtraBoldItalic.ttf: Open Sans,Open Sans Extrabold:style=Extrabold Italic,Italic\n/usr/share/fonts/open-sans/OpenSans-Bold.ttf: Open Sans:style=Bold\n/usr/share/fonts/open-sans/OpenSans-BoldItalic.ttf: Open Sans:style=Bold Italic\n/usr/share/fonts/open-sans/OpenSans-SemiboldItalic.ttf: Open Sans,Open Sans Semibold:style=Semibold Italic,Italic\n/usr/share/fonts/open-sans/OpenSans-Light.ttf: Open Sans,Open Sans Light:style=Light,Regular\n/usr/share/fonts/open-sans/OpenSans-Italic.ttf: Open Sans:style=Italic\n/usr/share/fonts/open-sans/OpenSans-Regular.ttf: Open Sans:style=Regular\n/usr/share/fonts/open-sans/OpenSans-ExtraBold.ttf: Open Sans,Open Sans Extrabold:style=Extrabold,Regular\n",
+      "exit": 0,
+      "description": "Check if Open Sans font is properly installed"
+    },
+    "time": {
+      "start": 1766103707738,
+      "end": 1766103707747
+    }
+  }
+}

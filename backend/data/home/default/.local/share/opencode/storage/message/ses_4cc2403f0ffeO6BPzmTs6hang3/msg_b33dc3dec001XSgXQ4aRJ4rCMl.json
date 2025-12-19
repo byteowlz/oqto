@@ -1,0 +1,17 @@
+{
+  "id": "msg_b33dc3dec001XSgXQ4aRJ4rCMl",
+  "sessionID": "ses_4cc2403f0ffeO6BPzmTs6hang3",
+  "role": "user",
+  "time": {
+    "created": 1766101630445
+  },
+  "summary": {
+    "title": "Introductory greeting Discussion",
+    "diffs": []
+  },
+  "agent": "build",
+  "model": {
+    "providerID": "opencode",
+    "modelID": "big-pickle"
+  }
+}

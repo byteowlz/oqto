@@ -137,6 +137,27 @@ impl SessionRepository {
         Ok(sessions)
     }
 
+    /// List running sessions for a user.
+    pub async fn list_running_for_user(&self, user_id: &str) -> Result<Vec<Session>> {
+        let sessions = sqlx::query_as::<_, Session>(
+            r#"
+            SELECT id, readable_id, container_id, container_name, user_id, workspace_path, image, image_digest,
+                   opencode_port, fileserver_port, ttyd_port, eavs_port,
+                   eavs_key_id, eavs_key_hash, eavs_virtual_key,
+                   status, created_at, started_at, stopped_at, error_message
+            FROM sessions
+            WHERE user_id = ? AND status = 'running'
+            ORDER BY created_at DESC
+            "#,
+        )
+        .bind(user_id)
+        .fetch_all(&self.pool)
+        .await
+        .context("listing running sessions for user")?;
+
+        Ok(sessions)
+    }
+
     /// List sessions by user.
     #[allow(dead_code)]
     pub async fn list_by_user(&self, user_id: &str) -> Result<Vec<Session>> {
@@ -243,6 +264,55 @@ impl SessionRepository {
             .context("checking readable_id existence")?;
 
         Ok(count.0 > 0)
+    }
+
+    /// Find a stopped session for a user that can be resumed.
+    ///
+    /// Returns the most recently stopped session for the user that still has a container.
+    pub async fn find_resumable_session(&self, user_id: &str) -> Result<Option<Session>> {
+        let session = sqlx::query_as::<_, Session>(
+            r#"
+            SELECT id, readable_id, container_id, container_name, user_id, workspace_path, image, image_digest,
+                   opencode_port, fileserver_port, ttyd_port, eavs_port,
+                   eavs_key_id, eavs_key_hash, eavs_virtual_key,
+                   status, created_at, started_at, stopped_at, error_message
+            FROM sessions
+            WHERE user_id = ? AND status = 'stopped' AND container_id IS NOT NULL
+            ORDER BY stopped_at DESC
+            LIMIT 1
+            "#,
+        )
+        .bind(user_id)
+        .fetch_optional(&self.pool)
+        .await
+        .context("finding resumable session")?;
+
+        Ok(session)
+    }
+
+    /// List stopped sessions that have been stopped for longer than the given duration.
+    ///
+    /// Used for cleanup of old stopped containers.
+    pub async fn list_stale_stopped_sessions(&self, older_than_hours: i64) -> Result<Vec<Session>> {
+        let sessions = sqlx::query_as::<_, Session>(
+            r#"
+            SELECT id, readable_id, container_id, container_name, user_id, workspace_path, image, image_digest,
+                   opencode_port, fileserver_port, ttyd_port, eavs_port,
+                   eavs_key_id, eavs_key_hash, eavs_virtual_key,
+                   status, created_at, started_at, stopped_at, error_message
+            FROM sessions
+            WHERE status = 'stopped' 
+              AND container_id IS NOT NULL
+              AND stopped_at < datetime('now', ? || ' hours')
+            ORDER BY stopped_at ASC
+            "#,
+        )
+        .bind(-older_than_hours) // negative for "X hours ago"
+        .fetch_all(&self.pool)
+        .await
+        .context("listing stale stopped sessions")?;
+
+        Ok(sessions)
     }
 
     /// Update the image digest for a session.

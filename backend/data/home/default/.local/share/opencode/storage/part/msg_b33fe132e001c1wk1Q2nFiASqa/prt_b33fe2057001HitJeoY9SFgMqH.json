@@ -1,0 +1,11 @@
+{
+  "id": "prt_b33fe2057001HitJeoY9SFgMqH",
+  "sessionID": "ses_4cc0a562afferLVqU83ypeYU2Y",
+  "messageID": "msg_b33fe132e001c1wk1Q2nFiASqa",
+  "type": "text",
+  "text": "\nBasierend auf der Suche habe ich das Problem gefunden! **Typst verwendet Fallback-Schriftarten**, wenn die angegebene Schriftart nicht gefunden wird. Die wahrscheinlich Ursache:\n\n1. **Font Name nicht exakt** - Typst braucht exakte Font-Namen\n2. **Font-Pfad Problem** - Typst findet die Schriftart nicht",
+  "time": {
+    "start": 1766103854725,
+    "end": 1766103854725
+  }
+}

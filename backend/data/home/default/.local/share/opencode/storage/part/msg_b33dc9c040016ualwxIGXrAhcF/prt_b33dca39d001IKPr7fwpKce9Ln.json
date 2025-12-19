@@ -1,0 +1,11 @@
+{
+  "id": "prt_b33dca39d001IKPr7fwpKce9Ln",
+  "sessionID": "ses_4cc2403f0ffeO6BPzmTs6hang3",
+  "messageID": "msg_b33dc9c040016ualwxIGXrAhcF",
+  "type": "text",
+  "text": "\ntmpltr is working! It's a document generation tool that uses Typst templates. What would you like to do with it?",
+  "time": {
+    "start": 1766101656944,
+    "end": 1766101656944
+  }
+}

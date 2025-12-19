@@ -166,6 +166,70 @@ impl SessionService {
     /// Maximum number of retries for port allocation conflicts.
     const MAX_PORT_ALLOCATION_RETRIES: u32 = 5;
 
+    /// Get or create a session for a user.
+    ///
+    /// This method:
+    /// 1. Checks if there's a running session that needs upgrading (image changed)
+    /// 2. Checks if there's a stopped session that can be resumed
+    /// 3. Creates a new session if neither exists
+    ///
+    /// This provides the best user experience: auto-upgrades when image changes,
+    /// fast restarts when possible, new sessions when needed.
+    pub async fn get_or_create_session(&self, request: CreateSessionRequest) -> Result<Session> {
+        let user_id = &self.config.default_user_id;
+
+        // Check for running sessions that need upgrading
+        let running_sessions = self.repo.list_running_for_user(user_id).await?;
+        for session in running_sessions {
+            if let Ok(Some(_new_digest)) = self.check_for_image_update(&session.id).await {
+                info!(
+                    "Running session {} has outdated image, auto-upgrading...",
+                    session.id
+                );
+                return self.upgrade_session(&session.id).await;
+            }
+            // Session is running and up-to-date, return it
+            return Ok(session);
+        }
+
+        // Check for a resumable stopped session
+        if let Some(stopped_session) = self.repo.find_resumable_session(user_id).await? {
+            // Verify the container still exists
+            if let Some(ref container_id) = stopped_session.container_id {
+                match self.runtime.container_state_status(container_id).await {
+                    Ok(Some(status)) if status == "exited" || status == "stopped" => {
+                        info!(
+                            "Found resumable session {} for user {}, resuming...",
+                            stopped_session.id, user_id
+                        );
+                        return self.resume_session(&stopped_session.id).await;
+                    }
+                    Ok(Some(status)) => {
+                        debug!(
+                            "Stopped session {} has container in unexpected state: {}",
+                            stopped_session.id, status
+                        );
+                    }
+                    Ok(None) => {
+                        debug!(
+                            "Container {} for stopped session {} no longer exists",
+                            container_id, stopped_session.id
+                        );
+                    }
+                    Err(e) => {
+                        warn!(
+                            "Failed to check container state for session {}: {:?}",
+                            stopped_session.id, e
+                        );
+                    }
+                }
+            }
+        }
+
+        // No resumable session found, create a new one
+        self.create_session(request).await
+    }
+
     /// Create and start a new session.
     ///
     /// This method handles port allocation with retry logic to handle race conditions
@@ -498,6 +562,10 @@ impl SessionService {
     }
 
     /// Stop a session and its container.
+    ///
+    /// This only stops the container, it does NOT remove it. The container can be
+    /// restarted later with `resume_session()`. To fully remove the container,
+    /// use `delete_session()`.
     pub async fn stop_session(&self, session_id: &str) -> Result<()> {
         let session = self
             .repo
@@ -518,33 +586,98 @@ impl SessionService {
             .update_status(session_id, SessionStatus::Stopping)
             .await?;
 
-        // Revoke EAVS key if it exists
-        if let (Some(eavs), Some(key_id)) = (&self.eavs, &session.eavs_key_id) {
-            match eavs.revoke_key(key_id).await {
-                Ok(()) => info!("Revoked EAVS key {} for session {}", key_id, session_id),
-                Err(e) => warn!(
-                    "Failed to revoke EAVS key {} for session {}: {:?}",
-                    key_id, session_id, e
-                ),
-            }
-        }
+        // Note: We do NOT revoke EAVS key on stop anymore - only on delete.
+        // This allows the session to be resumed without needing a new key.
 
-        // Stop the container if it exists
+        // Stop the container if it exists (but do NOT remove it)
         if let Some(ref container_id) = session.container_id {
             if let Err(e) = self.runtime.stop_container(container_id, Some(10)).await {
                 warn!("Failed to stop container {}: {:?}", container_id, e);
             }
-
-            // Remove the container
-            if let Err(e) = self.runtime.remove_container(container_id, true).await {
-                warn!("Failed to remove container {}: {:?}", container_id, e);
-            }
+            // Container is NOT removed - it can be restarted with resume_session()
         }
 
         self.repo.mark_stopped(session_id).await?;
-        info!("Session {} stopped", session_id);
+        info!("Session {} stopped (container preserved for resume)", session_id);
 
         Ok(())
+    }
+
+    /// Resume a stopped session by restarting its container.
+    ///
+    /// This is faster than creating a new session because the container already exists
+    /// with all its state (opencode sessions, MCP servers, etc.).
+    pub async fn resume_session(&self, session_id: &str) -> Result<Session> {
+        let session = self
+            .repo
+            .get(session_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("session not found: {}", session_id))?;
+
+        // Can only resume stopped sessions
+        if session.status != SessionStatus::Stopped {
+            anyhow::bail!(
+                "cannot resume session in state {:?}, must be stopped",
+                session.status
+            );
+        }
+
+        // Check if image has been updated - if so, upgrade instead of resume
+        if let Ok(Some(new_digest)) = self.check_for_image_update(session_id).await {
+            info!(
+                "Image update detected for session {} (new digest: {}), upgrading instead of resuming",
+                session_id, new_digest
+            );
+            return self.upgrade_session(session_id).await;
+        }
+
+        let container_id = session
+            .container_id
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("session has no container to resume"))?;
+
+        info!("Resuming session {} (container {})", session_id, container_id);
+
+        // Mark as starting
+        self.repo
+            .update_status(session_id, SessionStatus::Starting)
+            .await?;
+
+        // Start the existing container
+        if let Err(e) = self.runtime.start_container(container_id).await {
+            error!(
+                "Failed to start container {} for session {}: {:?}",
+                container_id, session_id, e
+            );
+            self.repo
+                .mark_failed(session_id, &format!("resume failed: {}", e))
+                .await?;
+            return Ok(self.repo.get(session_id).await?.unwrap_or(session));
+        }
+
+        // Wait for services to become ready
+        if let Err(e) = self
+            .readiness
+            .wait_for_session_services(session.opencode_port as u16, session.ttyd_port as u16)
+            .await
+        {
+            error!(
+                "Services not ready after resume for session {}: {:?}",
+                session_id, e
+            );
+            // Stop the container again since services didn't come up
+            let _ = self.runtime.stop_container(container_id, Some(5)).await;
+            self.repo
+                .mark_failed(session_id, &format!("services not ready after resume: {}", e))
+                .await?;
+            return Ok(self.repo.get(session_id).await?.unwrap_or(session));
+        }
+
+        // Mark as running
+        self.repo.mark_running(session_id).await?;
+        info!("Session {} resumed successfully", session_id);
+
+        Ok(self.repo.get(session_id).await?.unwrap_or(session))
     }
 
     /// Get a session by ID.
@@ -574,7 +707,10 @@ impl SessionService {
         self.repo.list_active().await
     }
 
-    /// Delete a session (must be stopped first).
+    /// Delete a session and remove its container.
+    ///
+    /// This fully removes the container and revokes any EAVS keys. The session
+    /// must be stopped first (use `stop_session()`).
     pub async fn delete_session(&self, session_id: &str) -> Result<()> {
         let session = self
             .repo
@@ -586,8 +722,34 @@ impl SessionService {
             anyhow::bail!("cannot delete active session, stop it first");
         }
 
+        // Revoke EAVS key if it exists (moved from stop_session)
+        if let (Some(eavs), Some(key_id)) = (&self.eavs, &session.eavs_key_id) {
+            match eavs.revoke_key(key_id).await {
+                Ok(()) => info!("Revoked EAVS key {} for session {}", key_id, session_id),
+                Err(e) => warn!(
+                    "Failed to revoke EAVS key {} for session {}: {:?}",
+                    key_id, session_id, e
+                ),
+            }
+        }
+
+        // Remove the container if it exists
+        if let Some(ref container_id) = session.container_id {
+            // Try to stop first (in case it's somehow still running)
+            let _ = self.runtime.stop_container(container_id, Some(5)).await;
+            
+            // Remove the container
+            if let Err(e) = self.runtime.remove_container(container_id, true).await {
+                warn!(
+                    "Failed to remove container {} for session {}: {:?}",
+                    container_id, session_id, e
+                );
+                // Continue with deletion even if container removal fails
+            }
+        }
+
         self.repo.delete(session_id).await?;
-        info!("Deleted session {}", session_id);
+        info!("Deleted session {} and removed container", session_id);
 
         Ok(())
     }
@@ -896,6 +1058,9 @@ impl SessionService {
     // Cleanup and Orphan Container Management
     // ========================================================================
 
+    /// Default hours after which stopped containers are eligible for cleanup.
+    const DEFAULT_STALE_CONTAINER_HOURS: i64 = 72; // 3 days
+
     /// Run cleanup at server startup.
     ///
     /// This should be called once when the server starts to clean up any
@@ -915,8 +1080,51 @@ impl SessionService {
             info!("Marked {} stale session(s) as failed", stale_cleaned);
         }
 
+        // 3. Clean up old stopped containers (stopped > N hours)
+        let old_stopped_cleaned = self
+            .cleanup_old_stopped_containers(Self::DEFAULT_STALE_CONTAINER_HOURS)
+            .await?;
+        if old_stopped_cleaned > 0 {
+            info!(
+                "Cleaned up {} old stopped container(s) (stopped > {} hours)",
+                old_stopped_cleaned,
+                Self::DEFAULT_STALE_CONTAINER_HOURS
+            );
+        }
+
         info!("Startup cleanup complete");
         Ok(())
+    }
+
+    /// Clean up stopped containers that have been stopped for too long.
+    ///
+    /// This removes containers (and their sessions) that have been stopped for
+    /// longer than the specified number of hours. This prevents accumulation of
+    /// old stopped containers while still allowing users to resume recently
+    /// stopped sessions.
+    pub async fn cleanup_old_stopped_containers(&self, older_than_hours: i64) -> Result<usize> {
+        let stale_sessions = self
+            .repo
+            .list_stale_stopped_sessions(older_than_hours)
+            .await?;
+
+        let mut cleaned = 0;
+        for session in stale_sessions {
+            info!(
+                "Cleaning up old stopped session {} (stopped at {:?})",
+                session.id, session.stopped_at
+            );
+            if let Err(e) = self.delete_session(&session.id).await {
+                warn!(
+                    "Failed to clean up old stopped session {}: {:?}",
+                    session.id, e
+                );
+            } else {
+                cleaned += 1;
+            }
+        }
+
+        Ok(cleaned)
     }
 
     /// Find orphan containers (containers with our prefix but no matching session).
@@ -1155,6 +1363,22 @@ mod tests {
             _image: &str,
         ) -> crate::container::ContainerResult<Option<String>> {
             Ok(None)
+        }
+
+        async fn exec_detached(
+            &self,
+            _container_id: &str,
+            _command: &[&str],
+        ) -> crate::container::ContainerResult<()> {
+            Ok(())
+        }
+
+        async fn exec_output(
+            &self,
+            _container_id: &str,
+            _command: &[&str],
+        ) -> crate::container::ContainerResult<String> {
+            Ok(String::new())
         }
     }
 

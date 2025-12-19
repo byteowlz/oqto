@@ -1,18 +1,24 @@
-# Stage 1: Build fileserver
+# Stage 1: Build fileserver and tmpltr
 # Run from repository root: docker build -f container/Dockerfile .
-FROM rust:1.83-slim AS rust-builder
+FROM rust:latest AS rust-builder
 
 WORKDIR /build
 
 # Install build dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     pkg-config \
+    git \
     && rm -rf /var/lib/apt/lists/*
 
 # Build fileserver
 COPY fileserver/Cargo.toml fileserver/Cargo.lock ./
 COPY fileserver/src ./src
 RUN cargo build --release
+
+# Build tmpltr
+RUN git clone --depth 1 https://github.com/byteowlz/tmpltr.git /build/tmpltr && \
+    cd /build/tmpltr && \
+    cargo build --release
 
 # Stage 2: Main container
 # Minimal Arch Linux container with opencode and development tools
@@ -84,6 +90,13 @@ ENV PATH="/usr/local/bun/bin:${PATH}"
 # Note: EAVS runs on the host, not in containers - containers connect via EAVS_URL
 COPY --from=rust-builder /build/target/release/fileserver /usr/local/bin/fileserver
 RUN chmod +x /usr/local/bin/fileserver
+
+# Copy tmpltr binary from builder stage
+COPY --from=rust-builder /build/tmpltr/target/release/tmpltr /usr/local/bin/tmpltr
+RUN chmod +x /usr/local/bin/tmpltr
+
+# Install typst (required for tmpltr)
+RUN pacman -S --noconfirm typst && pacman -Scc --noconfirm
 
 # Create non-root user
 RUN groupadd --gid ${USER_GID} ${USERNAME} && \

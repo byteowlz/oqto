@@ -111,6 +111,8 @@ const PREVIEWABLE_EXTENSIONS = new Set([
   ".env", ".gitignore", ".dockerignore", ".config", ".conf", ".ini", ".cfg", ".log",
   // Images
   ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp", ".ico",
+  // Documents
+  ".pdf", ".typ",
 ])
 
 function isPreviewable(filename: string): boolean {

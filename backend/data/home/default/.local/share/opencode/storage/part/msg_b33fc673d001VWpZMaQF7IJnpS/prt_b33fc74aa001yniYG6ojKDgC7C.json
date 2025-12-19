@@ -1,0 +1,26 @@
+{
+  "id": "prt_b33fc74aa001yniYG6ojKDgC7C",
+  "sessionID": "ses_4cc0a562afferLVqU83ypeYU2Y",
+  "messageID": "msg_b33fc673d001VWpZMaQF7IJnpS",
+  "type": "tool",
+  "callID": "call_f5ff886653b3479a933c565f",
+  "tool": "bash",
+  "state": {
+    "status": "completed",
+    "input": {
+      "command": "tmpltr compile angebot.toml -o angebot.pdf",
+      "description": "Try Liberation Sans"
+    },
+    "output": "Compiled to angebot.pdf\n",
+    "title": "Try Liberation Sans",
+    "metadata": {
+      "output": "Compiled to angebot.pdf\n",
+      "exit": 0,
+      "description": "Try Liberation Sans"
+    },
+    "time": {
+      "start": 1766103741612,
+      "end": 1766103741658
+    }
+  }
+}

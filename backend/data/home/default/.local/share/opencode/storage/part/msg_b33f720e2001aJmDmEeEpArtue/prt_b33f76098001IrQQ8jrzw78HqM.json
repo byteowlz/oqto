@@ -1,0 +1,133 @@
+{
+  "id": "prt_b33f76098001IrQQ8jrzw78HqM",
+  "sessionID": "ses_4cc0a562afferLVqU83ypeYU2Y",
+  "messageID": "msg_b33f720e2001aJmDmEeEpArtue",
+  "type": "tool",
+  "callID": "call_7eefe975e1b84e8ca97b2d75",
+  "tool": "todowrite",
+  "state": {
+    "status": "completed",
+    "input": {
+      "todos": [
+        {
+          "content": "Analyse des aktuellen Angebotssystems (TOML + Typst + tmpltr)",
+          "id": "1",
+          "priority": "high",
+          "status": "completed"
+        },
+        {
+          "content": "Angebotsstruktur und Inhalte bewerten",
+          "id": "2",
+          "priority": "high",
+          "status": "completed"
+        },
+        {
+          "content": "Verbesserungspotenziale identifizieren",
+          "id": "3",
+          "priority": "medium",
+          "status": "completed"
+        },
+        {
+          "content": "Prioritäten und nächste Schritte festlegen",
+          "id": "4",
+          "priority": "medium",
+          "status": "completed"
+        },
+        {
+          "content": "Neues Angebot Template erstellen (General Purpose)",
+          "id": "5",
+          "priority": "high",
+          "status": "pending"
+        },
+        {
+          "content": "Preisberechnungsformeln hinzufügen",
+          "id": "6",
+          "priority": "medium",
+          "status": "pending"
+        },
+        {
+          "content": "Risikoanalyse und Haftungsklauseln erweitern",
+          "id": "7",
+          "priority": "medium",
+          "status": "pending"
+        },
+        {
+          "content": "Automatisierte Angebotsvalidierung",
+          "id": "8",
+          "priority": "low",
+          "status": "pending"
+        },
+        {
+          "content": "Mehrere Angebotsvarianten erstellen (Budget/Premium)",
+          "id": "9",
+          "priority": "low",
+          "status": "pending"
+        }
+      ]
+    },
+    "output": "[\n  {\n    \"content\": \"Analyse des aktuellen Angebotssystems (TOML + Typst + tmpltr)\",\n    \"id\": \"1\",\n    \"priority\": \"high\",\n    \"status\": \"completed\"\n  },\n  {\n    \"content\": \"Angebotsstruktur und Inhalte bewerten\",\n    \"id\": \"2\",\n    \"priority\": \"high\",\n    \"status\": \"completed\"\n  },\n  {\n    \"content\": \"Verbesserungspotenziale identifizieren\",\n    \"id\": \"3\",\n    \"priority\": \"medium\",\n    \"status\": \"completed\"\n  },\n  {\n    \"content\": \"Prioritäten und nächste Schritte festlegen\",\n    \"id\": \"4\",\n    \"priority\": \"medium\",\n    \"status\": \"completed\"\n  },\n  {\n    \"content\": \"Neues Angebot Template erstellen (General Purpose)\",\n    \"id\": \"5\",\n    \"priority\": \"high\",\n    \"status\": \"pending\"\n  },\n  {\n    \"content\": \"Preisberechnungsformeln hinzufügen\",\n    \"id\": \"6\",\n    \"priority\": \"medium\",\n    \"status\": \"pending\"\n  },\n  {\n    \"content\": \"Risikoanalyse und Haftungsklauseln erweitern\",\n    \"id\": \"7\",\n    \"priority\": \"medium\",\n    \"status\": \"pending\"\n  },\n  {\n    \"content\": \"Automatisierte Angebotsvalidierung\",\n    \"id\": \"8\",\n    \"priority\": \"low\",\n    \"status\": \"pending\"\n  },\n  {\n    \"content\": \"Mehrere Angebotsvarianten erstellen (Budget/Premium)\",\n    \"id\": \"9\",\n    \"priority\": \"low\",\n    \"status\": \"pending\"\n  }\n]",
+    "title": "5 todos",
+    "metadata": {
+      "todos": [
+        {
+          "content": "Analyse des aktuellen Angebotssystems (TOML + Typst + tmpltr)",
+          "id": "1",
+          "priority": "high",
+          "status": "completed"
+        },
+        {
+          "content": "Angebotsstruktur und Inhalte bewerten",
+          "id": "2",
+          "priority": "high",
+          "status": "completed"
+        },
+        {
+          "content": "Verbesserungspotenziale identifizieren",
+          "id": "3",
+          "priority": "medium",
+          "status": "completed"
+        },
+        {
+          "content": "Prioritäten und nächste Schritte festlegen",
+          "id": "4",
+          "priority": "medium",
+          "status": "completed"
+        },
+        {
+          "content": "Neues Angebot Template erstellen (General Purpose)",
+          "id": "5",
+          "priority": "high",
+          "status": "pending"
+        },
+        {
+          "content": "Preisberechnungsformeln hinzufügen",
+          "id": "6",
+          "priority": "medium",
+          "status": "pending"
+        },
+        {
+          "content": "Risikoanalyse und Haftungsklauseln erweitern",
+          "id": "7",
+          "priority": "medium",
+          "status": "pending"
+        },
+        {
+          "content": "Automatisierte Angebotsvalidierung",
+          "id": "8",
+          "priority": "low",
+          "status": "pending"
+        },
+        {
+          "content": "Mehrere Angebotsvarianten erstellen (Budget/Premium)",
+          "id": "9",
+          "priority": "low",
+          "status": "pending"
+        }
+      ]
+    },
+    "time": {
+      "start": 1766103408799,
+      "end": 1766103408805
+    }
+  }
+}

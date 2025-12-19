@@ -1,0 +1,20 @@
+{
+  "id": "prt_b33fdd0ad0012wsQaH4MxtFLpc",
+  "sessionID": "ses_4cc0a562afferLVqU83ypeYU2Y",
+  "messageID": "msg_b33fdbb0a001wW0uAUCdNO7QVi",
+  "type": "tool",
+  "callID": "call_2f943e27cf2b429384ec92ec",
+  "tool": "webfetch",
+  "state": {
+    "status": "error",
+    "input": {
+      "url": "https://stackoverflow.com/questions/76173686/how-do-you-use-sans-serif-fonts-with-typst",
+      "format": "markdown"
+    },
+    "error": "Error: Request failed with status code: 403",
+    "time": {
+      "start": 1766103830708,
+      "end": 1766103830774
+    }
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "id": "prt_b33feb8ca001eZvB3TOxg6QKOV",
+  "sessionID": "ses_4cc0a562afferLVqU83ypeYU2Y",
+  "messageID": "msg_b33feaf740017fsqme0zXGZtsW",
+  "type": "text",
+  "text": "\n✅ **Problem behoben!** Das Template lädt jetzt die Schriftart korrekt aus der TOML-Datei. \n\nIhr PDF sollte jetzt **Cantarell** anzeigen (eine moderne Sans-Serif-Schrift). Wenn Sie eine andere möchten, ändern Sie einfach in `angebot.toml`:\n\n```toml\n[brand.fonts]\nbody = \"Open Sans\"    # oder \"Noto Sans\"\n```\n\nDas Problem war, dass die `brand-font` Funktion aus der tmpltr-lib nicht richtig funktioniert hat, aber der direkte Zugriff auf die TOML-Daten funktioniert einwandfrei.",
+  "time": {
+    "start": 1766103892339,
+    "end": 1766103892339
+  }
+}

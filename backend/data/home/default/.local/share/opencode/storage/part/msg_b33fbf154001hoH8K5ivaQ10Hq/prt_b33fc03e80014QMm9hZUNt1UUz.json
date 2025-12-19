@@ -1,0 +1,26 @@
+{
+  "id": "prt_b33fc03e80014QMm9hZUNt1UUz",
+  "sessionID": "ses_4cc0a562afferLVqU83ypeYU2Y",
+  "messageID": "msg_b33fbf154001hoH8K5ivaQ10Hq",
+  "type": "tool",
+  "callID": "call_331ab2ec64114f8cb6bdbaf8",
+  "tool": "bash",
+  "state": {
+    "status": "completed",
+    "input": {
+      "command": "tmpltr compile angebot.toml -o angebot.pdf --verbose",
+      "description": "Compile with verbose output to see font loading"
+    },
+    "output": "Compiled to angebot.pdf\n",
+    "title": "Compile with verbose output to see font loading",
+    "metadata": {
+      "output": "Compiled to angebot.pdf\n",
+      "exit": 0,
+      "description": "Compile with verbose output to see font loading"
+    },
+    "time": {
+      "start": 1766103712752,
+      "end": 1766103712805
+    }
+  }
+}

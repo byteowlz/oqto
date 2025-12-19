@@ -1,0 +1,26 @@
+# tmpltr configuration
+# Generated automatically on first run
+# $schema = "https://tmpltr.dev/schemas/config.schema.json"
+
+[paths]
+templates_dir = "$XDG_DATA_HOME/tmpltr/templates"
+schemas_dir = "$XDG_DATA_HOME/tmpltr/schemas"
+brands_dir = "$XDG_DATA_HOME/tmpltr/brands"
+cache_dir = "$XDG_CACHE_HOME/tmpltr"
+
+[brand]
+
+[typst]
+binary = ""
+font_paths = [
+    "~/.local/share/fonts",
+    "~/.fonts",
+    "/usr/share/fonts",
+]
+
+[output]
+format = "pdf"
+watch_debounce_ms = 300
+
+[experimental]
+html = false

@@ -1,0 +1,26 @@
+{
+  "id": "prt_b33fa7b7c0011yrMvQ8z8lORDv",
+  "sessionID": "ses_4cc0a562afferLVqU83ypeYU2Y",
+  "messageID": "msg_b33fa6727001kaSkvXGwszRxXq",
+  "type": "tool",
+  "callID": "call_3711b7463e8642998bc491eb",
+  "tool": "bash",
+  "state": {
+    "status": "completed",
+    "input": {
+      "command": "which tmpltr",
+      "description": "Check if tmpltr CLI is available"
+    },
+    "output": "/usr/local/bin/tmpltr\n",
+    "title": "Check if tmpltr CLI is available",
+    "metadata": {
+      "output": "/usr/local/bin/tmpltr\n",
+      "exit": 0,
+      "description": "Check if tmpltr CLI is available"
+    },
+    "time": {
+      "start": 1766103612290,
+      "end": 1766103612295
+    }
+  }
+}

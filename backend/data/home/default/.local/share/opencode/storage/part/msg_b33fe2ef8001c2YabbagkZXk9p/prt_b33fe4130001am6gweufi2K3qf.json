@@ -1,0 +1,25 @@
+{
+  "id": "prt_b33fe4130001am6gweufi2K3qf",
+  "sessionID": "ses_4cc0a562afferLVqU83ypeYU2Y",
+  "messageID": "msg_b33fe2ef8001c2YabbagkZXk9p",
+  "type": "tool",
+  "callID": "call_ea96560f42de4d438b29d16d",
+  "tool": "read",
+  "state": {
+    "status": "completed",
+    "input": {
+      "filePath": "/home/dev/workspace/angebot.typ",
+      "limit": 5,
+      "offset": 87
+    },
+    "output": "<file>\n00088| #set text(\n00089|   font: primary-font,\n00090|   size: 11pt,\n00091|   lang: \"de\"\n00092| )\n\n(File has more lines. Use 'offset' parameter to read beyond line 92)\n</file>",
+    "title": "home/dev/workspace/angebot.typ",
+    "metadata": {
+      "preview": "#set text(\n  font: primary-font,\n  size: 11pt,\n  lang: \"de\"\n)"
+    },
+    "time": {
+      "start": 1766103859508,
+      "end": 1766103859514
+    }
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "id": "prt_b33edc718001fVIq9NdAL1oNdc",
+  "sessionID": "ses_4cc157eb5ffen5JpnMnGhaILeH",
+  "messageID": "msg_b33eda2b6001gO1pheEnArP7cv",
+  "type": "tool",
+  "callID": "call_681394407fc5442cb2a71395",
+  "tool": "bash",
+  "state": {
+    "status": "completed",
+    "input": {
+      "command": "ls -la *.pdf",
+      "description": "Check if PDF was created"
+    },
+    "output": "-rw-r--r-- 1 dev dev 86823 Dec 19 00:06 angebot.pdf\n",
+    "title": "Check if PDF was created",
+    "metadata": {
+      "output": "-rw-r--r-- 1 dev dev 86823 Dec 19 00:06 angebot.pdf\n",
+      "exit": 0,
+      "description": "Check if PDF was created"
+    },
+    "time": {
+      "start": 1766102779678,
+      "end": 1766102779683
+    }
+  }
+}

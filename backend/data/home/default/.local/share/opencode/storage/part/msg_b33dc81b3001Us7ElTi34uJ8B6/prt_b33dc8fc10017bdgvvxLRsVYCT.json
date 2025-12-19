@@ -1,0 +1,26 @@
+{
+  "id": "prt_b33dc8fc10017bdgvvxLRsVYCT",
+  "sessionID": "ses_4cc2403f0ffeO6BPzmTs6hang3",
+  "messageID": "msg_b33dc81b3001Us7ElTi34uJ8B6",
+  "type": "tool",
+  "callID": "call_f13acdf7025f49feb77e265b",
+  "tool": "bash",
+  "state": {
+    "status": "completed",
+    "input": {
+      "command": "which tmpltr",
+      "description": "Check if tmpltr is installed"
+    },
+    "output": "/usr/local/bin/tmpltr\n",
+    "title": "Check if tmpltr is installed",
+    "metadata": {
+      "output": "/usr/local/bin/tmpltr\n",
+      "exit": 0,
+      "description": "Check if tmpltr is installed"
+    },
+    "time": {
+      "start": 1766101651402,
+      "end": 1766101651418
+    }
+  }
+}

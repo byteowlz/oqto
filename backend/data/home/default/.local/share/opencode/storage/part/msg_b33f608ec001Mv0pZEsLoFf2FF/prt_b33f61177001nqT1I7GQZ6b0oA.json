@@ -1,0 +1,11 @@
+{
+  "id": "prt_b33f61177001nqT1I7GQZ6b0oA",
+  "sessionID": "ses_4cc0a562afferLVqU83ypeYU2Y",
+  "messageID": "msg_b33f608ec001Mv0pZEsLoFf2FF",
+  "type": "text",
+  "text": "\nPerfekt! Jetzt verstehe ich das vollständige System. Sie haben mit `tmpltr` ein professionelles Angebotserstellungssystem aufgebaut. \n\nWas möchten Sie beim Angebot planen? Hier sind die Möglichkeiten:\n\n**Aktuell bestehendes Angebot:**\n- Death Star Reparatur (850 Mrd Credits, 18 Monate)\n- Vollständig strukturiert mit TOML + Typst Template\n\n**Planungsoptionen:**\n1. **Neues Angebot erstellen** - z.B. für ein anderes Projekt\n2. **Bestehendes Angebot anpassen** - Preise, Termine, Inhalte ändern\n3. **PDF neu generieren** - mit `tmpltr compile angebot.toml -o angebot.pdf`\n4. **Template optimieren** - Layout, Styling verbessern\n\nWelche Richtung möchten Sie einschlagen?",
+  "time": {
+    "start": 1766103325281,
+    "end": 1766103325281
+  }
+}

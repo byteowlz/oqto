@@ -14,6 +14,7 @@ use log::{LevelFilter, debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
 
+mod agent;
 mod api;
 mod auth;
 mod container;
@@ -529,6 +530,8 @@ struct ContainerRuntimeConfig {
     default_image: String,
     /// Base port for allocating session ports
     base_port: u16,
+    /// Base directory for user home directories
+    user_data_path: Option<String>,
     /// Path to skeleton directory for new user homes
     skel_path: Option<String>,
 }
@@ -540,6 +543,7 @@ impl Default for ContainerRuntimeConfig {
             binary: None,
             default_image: "opencode-dev:latest".to_string(),
             base_port: 41820,
+            user_data_path: None,
             skel_path: None,
         }
     }
@@ -835,15 +839,27 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
                 .to_string()
         });
 
+    // User data path: CLI overrides config, config overrides default
+    let user_data_path = if cmd.user_data_path != std::path::PathBuf::from("./data") {
+        // CLI explicitly set
+        cmd.user_data_path.clone()
+    } else if let Some(ref config_path) = ctx.config.container.user_data_path {
+        // Use config file value
+        std::path::PathBuf::from(shellexpand::tilde(config_path).to_string())
+    } else {
+        // Use CLI default
+        cmd.user_data_path.clone()
+    };
+    let user_data_path = user_data_path
+        .canonicalize()
+        .unwrap_or(user_data_path)
+        .to_string_lossy()
+        .to_string();
+
     let session_config = session::SessionServiceConfig {
         default_image,
         base_port,
-        user_data_path: cmd
-            .user_data_path
-            .canonicalize()
-            .unwrap_or(cmd.user_data_path.clone())
-            .to_string_lossy()
-            .to_string(),
+        user_data_path,
         skel_path,
         default_user_id: "default".to_string(),
         default_session_budget_usd: ctx
@@ -921,15 +937,18 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     }
 
     let session_service = if let Some(eavs) = eavs_client {
-        session::SessionService::with_eavs(session_repo, container_runtime, eavs, session_config)
+        session::SessionService::with_eavs(session_repo, container_runtime.clone(), eavs, session_config)
     } else {
-        session::SessionService::new(session_repo, container_runtime, session_config)
+        session::SessionService::new(session_repo, container_runtime.clone(), session_config)
     };
 
     // Run startup cleanup to handle orphan containers and stale sessions
     if let Err(e) = session_service.startup_cleanup().await {
         warn!("Startup cleanup failed (continuing anyway): {:?}", e);
     }
+
+    // Initialize agent service for managing opencode instances within containers
+    let agent_service = agent::AgentService::new(container_runtime, session_service.clone());
 
     // Initialize user service
     let user_repo = user::UserRepository::new(database.pool().clone());
@@ -939,7 +958,7 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     let invite_repo = invite::InviteCodeRepository::new(database.pool().clone());
 
     // Create app state
-    let state = api::AppState::new(session_service, user_service, invite_repo, auth_state);
+    let state = api::AppState::new(session_service, agent_service, user_service, invite_repo, auth_state);
 
     // Create router
     let app = api::create_router(state);

@@ -135,7 +135,7 @@ export async function devLogin(): Promise<boolean> {
 }
 
 export async function listWorkspaceSessions(): Promise<WorkspaceSession[]> {
-  const res = await fetch(`/api/sessions`, { cache: "no-store" })
+  const res = await fetch(`/api/sessions`, { cache: "no-store", credentials: "include" })
   if (!res.ok) throw new Error(await readApiError(res))
   return res.json()
 }
@@ -145,6 +145,7 @@ export async function createWorkspaceSession(request: CreateWorkspaceSessionRequ
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(request),
+    credentials: "include",
   })
   if (!res.ok) throw new Error(await readApiError(res))
   const data = (await res.json()) as { session?: WorkspaceSession } | WorkspaceSession
@@ -153,9 +154,44 @@ export async function createWorkspaceSession(request: CreateWorkspaceSessionRequ
   throw new Error("Unexpected create session response")
 }
 
-export async function stopWorkspaceSession(sessionId: string): Promise<void> {
-  const res = await fetch(`/api/sessions/${sessionId}/stop`, { method: "POST" })
+/** Get or create a session - handles auto-resume and auto-upgrade */
+export async function getOrCreateWorkspaceSession(request: CreateWorkspaceSessionRequest = {}): Promise<WorkspaceSession> {
+  const res = await fetch(`/api/sessions/get-or-create`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(request),
+    credentials: "include",
+  })
   if (!res.ok) throw new Error(await readApiError(res))
+  return res.json()
+}
+
+export async function stopWorkspaceSession(sessionId: string): Promise<void> {
+  const res = await fetch(`/api/sessions/${sessionId}/stop`, { method: "POST", credentials: "include" })
+  if (!res.ok) throw new Error(await readApiError(res))
+}
+
+export async function deleteWorkspaceSession(sessionId: string): Promise<void> {
+  const res = await fetch(`/api/sessions/${sessionId}`, { method: "DELETE", credentials: "include" })
+  if (!res.ok) throw new Error(await readApiError(res))
+}
+
+export type SessionUpdateInfo = {
+  update_available: boolean
+  current_digest: string | null
+  latest_digest: string | null
+}
+
+export async function checkSessionUpdate(sessionId: string): Promise<SessionUpdateInfo> {
+  const res = await fetch(`/api/sessions/${sessionId}/update`, { credentials: "include" })
+  if (!res.ok) throw new Error(await readApiError(res))
+  return res.json()
+}
+
+export async function upgradeWorkspaceSession(sessionId: string): Promise<WorkspaceSession> {
+  const res = await fetch(`/api/sessions/${sessionId}/upgrade`, { method: "POST", credentials: "include" })
+  if (!res.ok) throw new Error(await readApiError(res))
+  return res.json()
 }
 
 export function opencodeProxyBaseUrl(sessionId: string) {

@@ -1,0 +1,25 @@
+{
+  "id": "prt_b33fe58b1001M1wJyVSutits2q",
+  "sessionID": "ses_4cc0a562afferLVqU83ypeYU2Y",
+  "messageID": "msg_b33fe4267001TS6dBTgVuwilvf",
+  "type": "tool",
+  "callID": "call_e88fb48fce4141f0a30dba05",
+  "tool": "read",
+  "state": {
+    "status": "completed",
+    "input": {
+      "filePath": "/home/dev/workspace/angebot.typ",
+      "limit": 10,
+      "offset": 15
+    },
+    "output": "<file>\n00016| #let title-logo-width-str = get(data, \"brand.title-logo-width\", default: \"8cm\")\n00017| #let title-logo-width = if type(title-logo-width-str) == str { eval(title-logo-width-str) } else { 8cm }\n00018| #let primary-font = brand-font(data, usage: \"body\", default: \"Helvetica Neue\")\n00019| \n00020| // Company information from brand.contact\n00021| #let contact = data.at(\"brand\", default: (:)).at(\"contact\", default: (:))\n00022| #let company-name = contact.at(\"company\", default: \"Company Name\")\n00023| #let company-legal-form = contact.at(\"legal-form\", default: \"\")\n00024| #let company-full-name = if company-legal-form != \"\" { company-name + \" \" + company-legal-form } else { company-name }\n00025| #let company-street = contact.at(\"street\", default: \"\")\n\n(File has more lines. Use 'offset' parameter to read beyond line 25)\n</file>",
+    "title": "home/dev/workspace/angebot.typ",
+    "metadata": {
+      "preview": "#let title-logo-width-str = get(data, \"brand.title-logo-width\", default: \"8cm\")\n#let title-logo-width = if type(title-logo-width-str) == str { eval(title-logo-width-str) } else { 8cm }\n#let primary-font = brand-font(data, usage: \"body\", default: \"Helvetica Neue\")\n\n// Company information from brand.contact\n#let contact = data.at(\"brand\", default: (:)).at(\"contact\", default: (:))\n#let company-name = contact.at(\"company\", default: \"Company Name\")\n#let company-legal-form = contact.at(\"legal-form\", default: \"\")\n#let company-full-name = if company-legal-form != \"\" { company-name + \" \" + company-legal-form } else { company-name }\n#let company-street = contact.at(\"street\", default: \"\")"
+    },
+    "time": {
+      "start": 1766103865526,
+      "end": 1766103865530
+    }
+  }
+}

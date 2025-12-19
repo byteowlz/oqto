@@ -1,0 +1,3 @@
+cd
+clear
+zsh

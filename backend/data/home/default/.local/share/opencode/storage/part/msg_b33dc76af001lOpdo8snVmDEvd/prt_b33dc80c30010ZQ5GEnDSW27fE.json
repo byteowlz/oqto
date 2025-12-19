@@ -1,0 +1,24 @@
+{
+  "id": "prt_b33dc80c30010ZQ5GEnDSW27fE",
+  "sessionID": "ses_4cc2403f0ffeO6BPzmTs6hang3",
+  "messageID": "msg_b33dc76af001lOpdo8snVmDEvd",
+  "type": "tool",
+  "callID": "call_92de1f0af4c945eeac670036",
+  "tool": "list",
+  "state": {
+    "status": "completed",
+    "input": {
+      "path": "/home/dev/workspace"
+    },
+    "output": "/home/dev/workspace/\n",
+    "title": "home/dev/workspace",
+    "metadata": {
+      "count": 0,
+      "truncated": false
+    },
+    "time": {
+      "start": 1766101647559,
+      "end": 1766101647569
+    }
+  }
+}

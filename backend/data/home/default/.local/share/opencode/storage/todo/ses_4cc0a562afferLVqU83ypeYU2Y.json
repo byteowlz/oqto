@@ -1,0 +1,62 @@
+[
+  {
+    "content": "Analyse des aktuellen Angebotssystems (TOML + Typst + tmpltr)",
+    "id": "1",
+    "priority": "high",
+    "status": "completed"
+  },
+  {
+    "content": "Angebotsstruktur und Inhalte bewerten",
+    "id": "2",
+    "priority": "high",
+    "status": "completed"
+  },
+  {
+    "content": "Verbesserungspotenziale identifizieren",
+    "id": "3",
+    "priority": "medium",
+    "status": "completed"
+  },
+  {
+    "content": "Prioritäten und nächste Schritte festlegen",
+    "id": "4",
+    "priority": "medium",
+    "status": "completed"
+  },
+  {
+    "content": "Schriftart zu Inter geändert",
+    "id": "10",
+    "priority": "high",
+    "status": "completed"
+  },
+  {
+    "content": "Neues Angebot Template erstellen (General Purpose)",
+    "id": "5",
+    "priority": "high",
+    "status": "pending"
+  },
+  {
+    "content": "Preisberechnungsformeln hinzufügen",
+    "id": "6",
+    "priority": "medium",
+    "status": "pending"
+  },
+  {
+    "content": "Risikoanalyse und Haftungsklauseln erweitern",
+    "id": "7",
+    "priority": "medium",
+    "status": "pending"
+  },
+  {
+    "content": "Automatisierte Angebotsvalidierung",
+    "id": "8",
+    "priority": "low",
+    "status": "pending"
+  },
+  {
+    "content": "Mehrere Angebotsvarianten erstellen (Budget/Premium)",
+    "id": "9",
+    "priority": "low",
+    "status": "pending"
+  }
+]

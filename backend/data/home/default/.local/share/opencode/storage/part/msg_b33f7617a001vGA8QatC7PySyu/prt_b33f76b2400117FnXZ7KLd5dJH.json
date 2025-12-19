@@ -1,0 +1,11 @@
+{
+  "id": "prt_b33f76b2400117FnXZ7KLd5dJH",
+  "sessionID": "ses_4cc0a562afferLVqU83ypeYU2Y",
+  "messageID": "msg_b33f7617a001vGA8QatC7PySyu",
+  "type": "text",
+  "text": "\n# 📋 Angebotsplan 2025\n\n## ✅ Analyse-Ergebnisse\n\n**Aktuelles System:**\n- Professionelles tmpltr + Typst System\n- Death Star Angebot (850 Mrd Credits, 18 Monate)\n- Vollständige Struktur mit TOML Daten + Typst Template\n- PDF aktuell vom 19.12.2025\n\n**Stärken:**\n- Modularer Aufbau\n- Wiederverwendbare Templates\n- Klare Trennung Daten/Layout\n- Professionelle Typografie\n\n**Verbesserungspotenziale:**\n- General Purpose Template fehlt\n- Preisberechnung manuell\n- Keine Angebotsvarianten\n- Fehlende Automatisierung\n\n## 🎯 Priorisierter Aktionsplan\n\n### **Phase 1: Fundament (Hoch)**\n1. **Neues General Purpose Template** - Für beliebige Projekte\n2. **Preisberechnungsformeln** - Automatische Kalkulation\n\n### **Phase 2: Erweiterung (Mittel)**  \n3. **Risikoanalyse Klauseln** - Rechtliche Absicherung\n4. **Automatisierte Validierung** - Fehlervermeidung\n\n### **Phase 3: Skalierung (Niedrig)**\n5. **Angebotsvarianten** - Budget/Premium/Enterprise\n6. **Workflow Automatisierung** - Batch-Verarbeitung\n\n**Nächster Schritt:** General Purpose Template erstellen - bereit für Start?",
+  "time": {
+    "start": 1766103415939,
+    "end": 1766103415939
+  }
+}

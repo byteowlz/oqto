@@ -1,0 +1,11 @@
+{
+  "id": "prt_b33fcbffd001rtleH01LG3XSh5",
+  "sessionID": "ses_4cc0a562afferLVqU83ypeYU2Y",
+  "messageID": "msg_b33fcb8140012O6iSdPGvhseRp",
+  "type": "text",
+  "text": "\nKönnen Sie prüfen, ob das PDF jetzt Cantarell anzeigt? Wenn nicht, könnte das Problem im Template selbst liegen - vielleicht überschreibt eine andere Einstellung die Schriftartwahl.\n\nWelche Schriftart wird jetzt im PDF angezeigt?",
+  "time": {
+    "start": 1766103762971,
+    "end": 1766103762971
+  }
+}

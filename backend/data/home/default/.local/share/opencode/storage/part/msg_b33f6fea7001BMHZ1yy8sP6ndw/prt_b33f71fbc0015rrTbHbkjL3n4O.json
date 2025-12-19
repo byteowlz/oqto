@@ -1,0 +1,73 @@
+{
+  "id": "prt_b33f71fbc0015rrTbHbkjL3n4O",
+  "sessionID": "ses_4cc0a562afferLVqU83ypeYU2Y",
+  "messageID": "msg_b33f6fea7001BMHZ1yy8sP6ndw",
+  "type": "tool",
+  "callID": "call_87120a8c9acd4a5999e744f0",
+  "tool": "todowrite",
+  "state": {
+    "status": "completed",
+    "input": {
+      "todos": [
+        {
+          "content": "Analyse des aktuellen Angebotssystems (TOML + Typst + tmpltr)",
+          "id": "1",
+          "priority": "high",
+          "status": "completed"
+        },
+        {
+          "content": "Angebotsstruktur und Inhalte bewerten",
+          "id": "2",
+          "priority": "high",
+          "status": "completed"
+        },
+        {
+          "content": "Verbesserungspotenziale identifizieren",
+          "id": "3",
+          "priority": "medium",
+          "status": "in_progress"
+        },
+        {
+          "content": "Prioritäten und nächste Schritte festlegen",
+          "id": "4",
+          "priority": "medium",
+          "status": "pending"
+        }
+      ]
+    },
+    "output": "[\n  {\n    \"content\": \"Analyse des aktuellen Angebotssystems (TOML + Typst + tmpltr)\",\n    \"id\": \"1\",\n    \"priority\": \"high\",\n    \"status\": \"completed\"\n  },\n  {\n    \"content\": \"Angebotsstruktur und Inhalte bewerten\",\n    \"id\": \"2\",\n    \"priority\": \"high\",\n    \"status\": \"completed\"\n  },\n  {\n    \"content\": \"Verbesserungspotenziale identifizieren\",\n    \"id\": \"3\",\n    \"priority\": \"medium\",\n    \"status\": \"in_progress\"\n  },\n  {\n    \"content\": \"Prioritäten und nächste Schritte festlegen\",\n    \"id\": \"4\",\n    \"priority\": \"medium\",\n    \"status\": \"pending\"\n  }\n]",
+    "title": "2 todos",
+    "metadata": {
+      "todos": [
+        {
+          "content": "Analyse des aktuellen Angebotssystems (TOML + Typst + tmpltr)",
+          "id": "1",
+          "priority": "high",
+          "status": "completed"
+        },
+        {
+          "content": "Angebotsstruktur und Inhalte bewerten",
+          "id": "2",
+          "priority": "high",
+          "status": "completed"
+        },
+        {
+          "content": "Verbesserungspotenziale identifizieren",
+          "id": "3",
+          "priority": "medium",
+          "status": "in_progress"
+        },
+        {
+          "content": "Prioritäten und nächste Schritte festlegen",
+          "id": "4",
+          "priority": "medium",
+          "status": "pending"
+        }
+      ]
+    },
+    "time": {
+      "start": 1766103392194,
+      "end": 1766103392197
+    }
+  }
+}

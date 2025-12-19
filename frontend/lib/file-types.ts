@@ -1,6 +1,6 @@
 // File type detection and categorization utilities
 
-export type FileCategory = "code" | "markdown" | "image" | "pdf" | "csv" | "json" | "yaml" | "xml" | "text" | "binary" | "unknown"
+export type FileCategory = "code" | "markdown" | "image" | "pdf" | "csv" | "json" | "yaml" | "xml" | "typst" | "text" | "binary" | "unknown"
 
 export interface FileTypeInfo {
   extension: string
@@ -87,6 +87,7 @@ const extensionToLanguage: Record<string, string> = {
   rst: "restructuredtext",
   tex: "latex",
   latex: "latex",
+  typ: "typst",
 
   // Database
   sql: "sql",
@@ -129,7 +130,6 @@ const imageExtensions = new Set([
 
 // Binary file extensions (not displayable as text)
 const binaryExtensions = new Set([
-  "pdf",
   "doc",
   "docx",
   "xls",
@@ -263,6 +263,15 @@ export function getFileTypeInfo(filename: string): FileTypeInfo {
       extension: ext,
       category: "xml",
       language: "xml",
+    }
+  }
+
+  // Check for Typst
+  if (lowerExt === "typ") {
+    return {
+      extension: ext,
+      category: "typst",
+      language: "typst",
     }
   }
 
