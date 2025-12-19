@@ -1,21 +1,29 @@
-# Workspace Backend
+# Octo Backend
 
 Backend server for the AI Agent Workspace Platform. Orchestrates containerized development environments with opencode, fileserver, and web terminal access.
+
+## Binaries
+
+- **octo** - Main server binary
+- **octoctl** - Control CLI for managing containers, sessions, and images
 
 ## Prerequisites
 
 ### Container Image (Required)
 
-The backend requires the `opencode-dev:latest` container image to create sessions. **The server will fail to start if this image is not found.**
+The backend requires the `octo-dev:latest` container image to create sessions. **The server will fail to start if this image is not found.**
 
 Build the image from the repository root:
 
 ```bash
 # From the repository root
-docker build -t opencode-dev:latest -f container/Dockerfile .
+docker build -t octo-dev:latest -f container/Dockerfile .
 
 # Or using podman
-podman build -t opencode-dev:latest -f container/Dockerfile .
+podman build -t octo-dev:latest -f container/Dockerfile .
+
+# Or use octoctl
+octoctl image build
 ```
 
 You can use a different image by setting `default_image` in your config or passing `--image` to the serve command.
@@ -30,16 +38,16 @@ Either Docker or Podman must be installed and running:
 
 ```bash
 # 1. Build the container image first (see Prerequisites)
-docker build -t opencode-dev:latest -f container/Dockerfile .
+docker build -t octo-dev:latest -f container/Dockerfile .
 
 # 2. Install Rust
 rustup default stable
 
 # 3. Build and run
-cargo run -- serve
+cargo run --bin octo -- serve
 
 # Or with custom options
-cargo run -- serve --port 8080 --workspace-root ~/projects
+cargo run --bin octo -- serve --port 8080 --workspace-root ~/projects
 ```
 
 ## Features
@@ -50,11 +58,14 @@ cargo run -- serve --port 8080 --workspace-root ~/projects
 - Automatic container runtime detection (Docker preferred on macOS)
 - RESTful API for session management
 - Proxy endpoints for opencode, files, and terminal access
+- **Graceful shutdown**: Automatically stops all containers when server exits
 
 ## CLI Overview
 
+### octo (Server)
+
 ```bash
-cargo run -- --help
+cargo run --bin octo -- --help
 ```
 
 Key subcommands:
@@ -64,6 +75,41 @@ Key subcommands:
 - `config show|path|reset` - Inspect the effective configuration
 - `invite-codes generate|list|revoke` - Manage user invite codes
 - `completions <shell>` - Emit shell completions
+
+### octoctl (Control CLI)
+
+```bash
+cargo run --bin octoctl -- --help
+```
+
+Key subcommands:
+
+- `status` - Check server status
+- `session list|get|stop|resume|delete|upgrade` - Manage sessions
+- `container refresh|cleanup|list|stop-all` - Manage containers
+- `image check|pull|build` - Manage container images
+
+Example usage:
+
+```bash
+# Check server status
+octoctl status
+
+# List all sessions
+octoctl session list
+
+# Force refresh all containers (rebuild from latest image)
+octoctl container refresh
+
+# Only refresh containers with outdated images
+octoctl container refresh --outdated-only
+
+# Stop all running containers
+octoctl container stop-all
+
+# Build new container image
+octoctl image build --no-cache
+```
 
 ## Container Runtime
 
@@ -78,21 +124,32 @@ You can override this in config.toml:
 [container]
 runtime = "docker"  # or "podman"
 # binary = "/usr/local/bin/docker"  # optional custom path
-default_image = "opencode-dev:latest"
+default_image = "octo-dev:latest"
 base_port = 41820
 ```
 
 Or via environment variables:
 ```bash
-WORKSPACE_BACKEND__CONTAINER__RUNTIME=docker
+OCTO__CONTAINER__RUNTIME=docker
 ```
 
 ## Configuration
 
-- Default config path: `$XDG_CONFIG_HOME/workspace-backend/config.toml` (or `%APPDATA%\workspace-backend\config.toml` on Windows). Override with `--config <path>`.
+- Default config path: `$XDG_CONFIG_HOME/octo/config.toml` (or `%APPDATA%\octo\config.toml` on Windows). Override with `--config <path>`.
 - Sample configuration with inline comments is available at `examples/config.toml`.
-- Data and state directories default to `$XDG_DATA_HOME/workspace-backend` and `$XDG_STATE_HOME/workspace-backend` (falling back to `~/.local/share` and `~/.local/state` when unset). Override inside the config file.
+- Data and state directories default to `$XDG_DATA_HOME/octo` and `$XDG_STATE_HOME/octo` (falling back to `~/.local/share` and `~/.local/state` when unset). Override inside the config file.
 - Values support `~` expansion and environment variables (e.g. `$HOME/logs/app.log`).
+
+## Graceful Shutdown
+
+When the octo server receives SIGTERM or SIGINT (Ctrl+C), it:
+
+1. Stops accepting new requests
+2. Stops all running session containers gracefully
+3. Waits for in-flight requests to complete
+4. Exits cleanly
+
+This ensures no orphan containers are left running when the server exits.
 
 ## Development Workflow
 
@@ -117,7 +174,7 @@ WORKSPACE_BACKEND__CONTAINER__RUNTIME=docker
 - Generate completions for your shell:
 
   ```bash
-  cargo run -- completions bash > target/workspace-backend.bash
+  cargo run --bin octo -- completions bash > target/octo.bash
   ```
 
 ## Project Structure
@@ -128,6 +185,7 @@ backend/
     api/          # HTTP routes and handlers
     auth/         # JWT authentication
     container/    # Docker/Podman runtime abstraction
+    ctl/          # octoctl CLI
     db/           # SQLite database
     invite/       # Invite code management
     session/      # Session orchestration
@@ -143,6 +201,9 @@ backend/
 - `GET /api/sessions` - List all sessions
 - `GET /api/sessions/:id` - Get session details
 - `DELETE /api/sessions/:id` - Stop and remove a session
+- `POST /api/sessions/:id/stop` - Stop a session (preserves container)
+- `POST /api/sessions/:id/resume` - Resume a stopped session
+- `POST /api/sessions/:id/upgrade` - Upgrade session to latest image
 - `GET /sessions/:id/opencode/*` - Proxy to opencode
 - `GET /sessions/:id/files/*` - Proxy to fileserver
 - `GET /sessions/:id/terminal` - WebSocket proxy to ttyd

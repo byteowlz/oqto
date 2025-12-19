@@ -1,14 +1,18 @@
 [package]
-name = "workspace-backend"
+name = "octo"
 version = "0.1.0"
 edition = "2024"
 
 [[bin]]
-name = "workspace-backend"
+name = "octo"
 path = "src/main.rs"
 
+[[bin]]
+name = "octoctl"
+path = "src/ctl/main.rs"
+
 [lib]
-name = "workspace_backend"
+name = "octo"
 path = "src/lib.rs"
 
 [dependencies]
@@ -71,6 +75,7 @@ nanoid = "0.4"
 rand = { version = "0.9", features = ["std", "std_rng"] }
 once_cell = "1.21.3"
 urlencoding = "2"
+libc = "0.2.178"
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }

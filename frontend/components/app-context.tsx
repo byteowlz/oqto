@@ -4,11 +4,14 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, t
 import { appRegistry, type AppDefinition, type Locale, type LocalizedText } from "@/lib/app-registry"
 import { createSession, deleteSession, updateSession, fetchSessions, subscribeToEvents, type OpenCodeSession } from "@/lib/opencode-client"
 import {
-  createWorkspaceSession,
   controlPlaneDirectBaseUrl,
+  deleteWorkspaceSession,
+  getOrCreateWorkspaceSession,
   login,
   listWorkspaceSessions,
   opencodeProxyBaseUrl,
+  stopWorkspaceSession,
+  upgradeWorkspaceSession,
   type WorkspaceSession,
 } from "@/lib/control-plane-client"
 
@@ -34,6 +37,9 @@ interface AppContextValue {
   createNewChat: () => Promise<OpenCodeSession | null>
   deleteChatSession: (sessionId: string) => Promise<boolean>
   renameChatSession: (sessionId: string, title: string) => Promise<boolean>
+  stopWorkspaceSession: (sessionId: string) => Promise<boolean>
+  deleteWorkspaceSession: (sessionId: string) => Promise<boolean>
+  upgradeWorkspaceSession: (sessionId: string) => Promise<boolean>
   authToken: string | null
 }
 
@@ -99,12 +105,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
           // Login might fail if already logged in via cookie
         }
       }
-      let data = await listWorkspaceSessions()
-
-      if (data.length === 0) {
-        await createWorkspaceSession().catch(() => undefined)
-        data = await listWorkspaceSessions()
-      }
+      // Get or create ensures we have a running session (auto-resumes stopped, auto-upgrades outdated)
+      await getOrCreateWorkspaceSession().catch((err) => {
+        console.error("Failed to get or create session:", err)
+      })
+      
+      // Then list all sessions
+      const data = await listWorkspaceSessions()
       setWorkspaceSessions(data)
 
       if (data.length > 0) {

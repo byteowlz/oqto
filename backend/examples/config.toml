@@ -1,5 +1,5 @@
-# Example configuration for the template CLI.
-# Copy this file to $XDG_CONFIG_HOME/workspace-backend/config.toml and adjust as needed.
+# Example configuration for Octo server.
+# Copy this file to $XDG_CONFIG_HOME/octo/config.toml and adjust as needed.
 
 "$schema" = "https://raw.githubusercontent.com/byteowlz/schemas/refs/heads/main/octo/octo.backend.config.schema.json"
 
@@ -9,7 +9,7 @@ profile = "default"
 # Valid levels: error, warn, info, debug, trace
 level = "info"
 # Optional path for log file output; supports ~ and environment variables.
-# file = "~/Library/Logs/workspace-backend.log"
+# file = "~/Library/Logs/octo.log"
 
 [runtime]
 # Override the worker pool size; defaults to logical CPU count when unset.
@@ -20,8 +20,8 @@ fail_fast = true
 
 [paths]
 # Uncomment to move persistent data/state to custom directories.
-# data_dir = "$XDG_DATA_HOME/workspace-backend"
-# state_dir = "$XDG_STATE_HOME/workspace-backend"
+# data_dir = "$XDG_DATA_HOME/octo"
+# state_dir = "$XDG_STATE_HOME/octo"
 
 [container]
 # Container runtime: "docker" or "podman" (auto-detected if not specified)
@@ -29,12 +29,65 @@ fail_fast = true
 # Custom path to the container runtime binary (optional)
 # binary = "/usr/local/bin/docker"
 # Default container image for sessions
-default_image = "opencode-dev:latest"
+default_image = "octo-dev:latest"
 # Base port for allocating session ports (each session uses 3 consecutive ports)
 base_port = 41820
 # Path to skeleton directory for new user homes (dotfiles, configs, etc.)
 # When a new user session is created, this directory is copied as the user's home.
 # skel_path = "./container/skel"
+
+[local]
+# Local mode configuration - run without containers
+# Useful for Proxmox LXC, bare-metal, or development without Docker
+# Enable with --local-mode CLI flag or set enabled = true here
+enabled = false
+
+# Path to the opencode binary (must be installed on the host)
+opencode_binary = "opencode"
+# Path to the fileserver binary (from this repo's fileserver/ directory)
+fileserver_binary = "fileserver"
+# Path to the ttyd binary (install via package manager or from https://tsl0922.github.io/ttyd/)
+ttyd_binary = "ttyd"
+
+# Base directory for user workspaces in local mode.
+# Supports ~ and environment variables.
+# The {user_id} placeholder is replaced with the user ID in multi-user mode.
+# In single_user mode, {user_id} is ignored and the base path is used directly.
+# Examples:
+#   Multi-user: "$HOME/octo/{user_id}" -> /home/alice/octo/alice, /home/alice/octo/bob
+#   Single-user: "$HOME/octo/{user_id}" -> /home/alice/octo (ignores {user_id})
+#   Single-user: "$HOME/workspace" -> /home/alice/workspace
+workspace_dir = "$HOME/octo/{user_id}"
+
+# Enable single-user mode for personal/single-user deployments.
+# When true:
+#   - The {user_id} placeholder in workspace_dir is ignored
+#   - All sessions use the same workspace directory
+#   - Password protection is still available
+# When false (default):
+#   - Each user gets their own workspace directory
+#   - Multi-tenancy is supported
+single_user = false
+
+# Linux user isolation for multi-user deployments
+# Creates a dedicated Linux user per platform user for process isolation.
+# Requires root/sudo privileges for user creation.
+# Ignored when single_user = true.
+[local.linux_users]
+# Enable Linux user isolation (requires root/sudo)
+enabled = false
+# Prefix for created Linux usernames (e.g., "octo_" -> "octo_alice")
+prefix = "octo_"
+# Starting UID for created users (subsequent users get uid_start + 1, + 2, etc.)
+uid_start = 2000
+# Shared group for all octo users (created if it doesn't exist)
+group = "octo"
+# Shell for created users
+shell = "/bin/bash"
+# Use sudo for privilege escalation (set to false if running as root)
+use_sudo = true
+# Create home directories for users (recommended)
+create_home = true
 
 [eavs]
 # EAVS (LLM proxy) configuration - runs on host, not in containers

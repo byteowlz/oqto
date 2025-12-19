@@ -51,6 +51,47 @@ impl std::str::FromStr for SessionStatus {
     }
 }
 
+/// Runtime mode for the session.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, sqlx::Type)]
+#[serde(rename_all = "lowercase")]
+#[sqlx(rename_all = "lowercase")]
+pub enum RuntimeMode {
+    /// Container-based runtime (Docker/Podman).
+    #[default]
+    Container,
+    /// Local runtime (native processes).
+    Local,
+}
+
+impl std::fmt::Display for RuntimeMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RuntimeMode::Container => write!(f, "container"),
+            RuntimeMode::Local => write!(f, "local"),
+        }
+    }
+}
+
+impl std::str::FromStr for RuntimeMode {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "container" => Ok(RuntimeMode::Container),
+            "local" => Ok(RuntimeMode::Local),
+            _ => Err(format!("unknown runtime mode: {}", s)),
+        }
+    }
+}
+
+impl TryFrom<String> for RuntimeMode {
+    type Error = String;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        value.parse()
+    }
+}
+
 /// A container session.
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct Session {
@@ -58,15 +99,15 @@ pub struct Session {
     pub id: String,
     /// Human-readable session ID (e.g., "cold-lamp").
     pub readable_id: Option<String>,
-    /// Container ID (once started).
+    /// Container ID (once started) or comma-separated PIDs for local mode.
     pub container_id: Option<String>,
-    /// Container name.
+    /// Container name (or session identifier for local mode).
     pub container_name: String,
     /// User ID who owns this session.
     pub user_id: String,
     /// Path to the workspace directory.
     pub workspace_path: String,
-    /// Container image to use.
+    /// Container image to use (ignored in local mode).
     pub image: String,
     /// Image digest (sha256) when the container was created.
     pub image_digest: Option<String>,
@@ -78,6 +119,11 @@ pub struct Session {
     pub ttyd_port: i64,
     /// Port for EAVS LLM proxy.
     pub eavs_port: Option<i64>,
+    /// Base external port for sub-agents. Sub-agents use ports agent_base_port to agent_base_port + max_agents - 1.
+    pub agent_base_port: Option<i64>,
+    /// Maximum number of sub-agents allowed for this session.
+    #[serde(default = "default_max_agents")]
+    pub max_agents: Option<i64>,
     /// EAVS virtual key ID (human-readable, e.g., "cold-lamp").
     pub eavs_key_id: Option<String>,
     /// EAVS virtual key hash (for API lookups).
@@ -88,6 +134,10 @@ pub struct Session {
     /// Current session status.
     #[sqlx(try_from = "String")]
     pub status: SessionStatus,
+    /// Runtime mode (container or local).
+    #[sqlx(try_from = "String", default)]
+    #[serde(default)]
+    pub runtime_mode: RuntimeMode,
     /// When the session was created.
     pub created_at: String,
     /// When the container started.
@@ -96,6 +146,10 @@ pub struct Session {
     pub stopped_at: Option<String>,
     /// Error message if failed.
     pub error_message: Option<String>,
+}
+
+fn default_max_agents() -> Option<i64> {
+    Some(10)
 }
 
 /// Configuration for creating a new session.
@@ -117,7 +171,7 @@ impl Default for SessionConfig {
     fn default() -> Self {
         Self {
             workspace_path: "/tmp/workspace".to_string(),
-            image: "opencode-dev:latest".to_string(),
+            image: "octo-dev:latest".to_string(),
             base_port: 41820,
             env: Default::default(),
         }
@@ -130,7 +184,7 @@ pub struct CreateSessionRequest {
     /// Path to the workspace directory.
     #[serde(default)]
     pub workspace_path: Option<String>,
-    /// Container image to use (optional, defaults to opencode-dev).
+    /// Container image to use (optional, defaults to octo-dev).
     #[serde(default)]
     pub image: Option<String>,
     /// Environment variables to inject.

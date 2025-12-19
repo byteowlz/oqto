@@ -14,17 +14,19 @@ use log::{LevelFilter, debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
 
+mod agent;
 mod api;
 mod auth;
 mod container;
 mod db;
 mod eavs;
 mod invite;
+mod local;
 mod session;
 mod user;
 mod wordlist;
 
-const APP_NAME: &str = env!("CARGO_PKG_NAME");
+const APP_NAME: &str = "octo";
 
 fn main() {
     if let Err(err) = try_main() {
@@ -64,7 +66,7 @@ fn try_main() -> Result<()> {
 #[command(
     author,
     version,
-    about = "Backend server for the AI Agent Workspace Platform.",
+    about = "Octo - AI Agent Workspace Platform server.",
     propagate_version = true
 )]
 struct Cli {
@@ -164,7 +166,7 @@ struct ServeCommand {
     #[arg(short, long, default_value = "8080")]
     port: u16,
     /// Default container image
-    #[arg(long, default_value = "opencode-dev:latest")]
+    #[arg(long, default_value = "octo-dev:latest")]
     image: String,
     /// Base port for session allocation
     #[arg(long, default_value = "41820")]
@@ -175,6 +177,9 @@ struct ServeCommand {
     /// Path to skeleton directory for new user homes
     #[arg(long, value_name = "PATH")]
     skel_path: Option<PathBuf>,
+    /// Run in local mode (no containers, spawn processes directly)
+    #[arg(long = "local-mode")]
+    local_mode: bool,
 }
 
 #[derive(Debug, Clone, Args)]
@@ -292,7 +297,7 @@ impl RuntimeContext {
         };
 
         let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-            EnvFilter::new(format!("workspace_backend={level},tower_http={level}"))
+            EnvFilter::new(format!("octo={level},tower_http={level}"))
         });
 
         // Use JSON output if --json flag is set, otherwise pretty format
@@ -423,6 +428,7 @@ struct AppConfig {
     runtime: RuntimeConfig,
     paths: PathsConfig,
     container: ContainerRuntimeConfig,
+    local: LocalModeConfig,
     eavs: Option<EavsConfig>,
     auth: auth::AuthConfig,
 }
@@ -444,6 +450,7 @@ impl Default for AppConfig {
             runtime: RuntimeConfig::default(),
             paths: PathsConfig::default(),
             container: ContainerRuntimeConfig::default(),
+            local: LocalModeConfig::default(),
             eavs: None,
             auth: auth::AuthConfig::default(),
         }
@@ -529,6 +536,8 @@ struct ContainerRuntimeConfig {
     default_image: String,
     /// Base port for allocating session ports
     base_port: u16,
+    /// Base directory for user home directories
+    user_data_path: Option<String>,
     /// Path to skeleton directory for new user homes
     skel_path: Option<String>,
 }
@@ -538,9 +547,83 @@ impl Default for ContainerRuntimeConfig {
         Self {
             runtime: None,
             binary: None,
-            default_image: "opencode-dev:latest".to_string(),
+            default_image: "octo-dev:latest".to_string(),
             base_port: 41820,
+            user_data_path: None,
             skel_path: None,
+        }
+    }
+}
+
+/// Local runtime configuration (for running without containers).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+struct LocalModeConfig {
+    /// Enable local mode (run services as native processes instead of containers)
+    enabled: bool,
+    /// Path to the opencode binary
+    opencode_binary: String,
+    /// Path to the fileserver binary
+    fileserver_binary: String,
+    /// Path to the ttyd binary
+    ttyd_binary: String,
+    /// Base directory for user workspaces in local mode.
+    /// Supports ~ and environment variables. The {user_id} placeholder is replaced with the user ID.
+    /// Default: $HOME/octo/{user_id}
+    workspace_dir: String,
+    /// Enable single-user mode. When true, the platform operates with a single user
+    /// (no multi-tenancy), but password protection is still available.
+    /// This simplifies setup for personal/single-user deployments.
+    single_user: bool,
+    /// Linux user isolation configuration
+    #[serde(default)]
+    linux_users: LinuxUsersConfig,
+}
+
+/// Configuration for Linux user isolation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+struct LinuxUsersConfig {
+    /// Enable Linux user isolation (requires root or sudo privileges)
+    enabled: bool,
+    /// Prefix for auto-created Linux usernames (e.g., "octo_" -> "octo_alice")
+    prefix: String,
+    /// Starting UID for new users
+    uid_start: u32,
+    /// Shared group for all octo users
+    group: String,
+    /// Shell for new users
+    shell: String,
+    /// Use sudo to switch users
+    use_sudo: bool,
+    /// Create home directories for new users
+    create_home: bool,
+}
+
+impl Default for LinuxUsersConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            prefix: "octo_".to_string(),
+            uid_start: 2000,
+            group: "octo".to_string(),
+            shell: "/bin/bash".to_string(),
+            use_sudo: true,
+            create_home: true,
+        }
+    }
+}
+
+impl Default for LocalModeConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            opencode_binary: "opencode".to_string(),
+            fileserver_binary: "fileserver".to_string(),
+            ttyd_binary: "ttyd".to_string(),
+            workspace_dir: "$HOME/octo/{user_id}".to_string(),
+            single_user: false,
+            linux_users: LinuxUsersConfig::default(),
         }
     }
 }
@@ -788,29 +871,101 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     );
     let auth_state = auth::AuthState::new(auth_config);
 
-    // Initialize container runtime from config or auto-detect
-    let container_runtime = match (&ctx.config.container.runtime, &ctx.config.container.binary) {
-        (Some(rt), Some(binary)) => container::ContainerRuntime::with_binary(*rt, binary.clone()),
-        (Some(rt), None) => container::ContainerRuntime::with_type(*rt),
-        (None, _) => container::ContainerRuntime::new(),
+    // Determine runtime mode: CLI --local-mode overrides config
+    let local_mode = cmd.local_mode || ctx.config.local.enabled;
+    let runtime_mode = if local_mode {
+        session::RuntimeMode::Local
+    } else {
+        session::RuntimeMode::Container
+    };
+    info!("Runtime mode: {:?}", runtime_mode);
+
+    // Initialize runtimes based on mode
+    let container_runtime: Option<std::sync::Arc<container::ContainerRuntime>> = if !local_mode {
+        let runtime = match (&ctx.config.container.runtime, &ctx.config.container.binary) {
+            (Some(rt), Some(binary)) => container::ContainerRuntime::with_binary(*rt, binary.clone()),
+            (Some(rt), None) => container::ContainerRuntime::with_type(*rt),
+            (None, _) => container::ContainerRuntime::new(),
+        };
+
+        // Check container runtime is available
+        match runtime.health_check().await {
+            Ok(_) => info!(
+                "Container runtime ({}) is available",
+                runtime.runtime_type()
+            ),
+            Err(e) => log::warn!(
+                "Container runtime health check failed: {:?}. Container operations may fail.",
+                e
+            ),
+        }
+
+        Some(std::sync::Arc::new(runtime))
+    } else {
+        None
     };
 
-    // Check container runtime is available
-    match container_runtime.health_check().await {
-        Ok(_) => info!(
-            "Container runtime ({}) is available",
-            container_runtime.runtime_type()
-        ),
-        Err(e) => log::warn!(
-            "Container runtime health check failed: {:?}. Container operations may fail.",
-            e
-        ),
-    }
+    let local_runtime: Option<local::LocalRuntime> = if local_mode {
+        // Build Linux users config
+        let linux_users_config = local::LinuxUsersConfig {
+            enabled: ctx.config.local.linux_users.enabled,
+            prefix: ctx.config.local.linux_users.prefix.clone(),
+            uid_start: ctx.config.local.linux_users.uid_start,
+            group: ctx.config.local.linux_users.group.clone(),
+            shell: ctx.config.local.linux_users.shell.clone(),
+            use_sudo: ctx.config.local.linux_users.use_sudo,
+            create_home: ctx.config.local.linux_users.create_home,
+        };
 
-    let container_runtime = std::sync::Arc::new(container_runtime);
+        let mut local_config = local::LocalRuntimeConfig {
+            opencode_binary: ctx.config.local.opencode_binary.clone(),
+            fileserver_binary: ctx.config.local.fileserver_binary.clone(),
+            ttyd_binary: ctx.config.local.ttyd_binary.clone(),
+            workspace_dir: ctx.config.local.workspace_dir.clone(),
+            single_user: ctx.config.local.single_user,
+            linux_users: linux_users_config,
+        };
+        local_config.expand_paths();
+
+        // Validate that all binaries are available
+        if let Err(e) = local_config.validate() {
+            error!("Local mode validation failed: {:?}", e);
+            anyhow::bail!("Local mode requires opencode, fileserver, and ttyd binaries. Error: {}", e);
+        }
+
+        // Check Linux user isolation privileges if enabled
+        if local_config.linux_users.enabled {
+            if let Err(e) = local_config.linux_users.check_privileges() {
+                error!("Linux user isolation check failed: {:?}", e);
+                anyhow::bail!("Linux user isolation requires root or sudo privileges. Error: {}", e);
+            }
+            info!(
+                "Linux user isolation enabled: prefix={}, group={}, uid_start={}",
+                local_config.linux_users.prefix,
+                local_config.linux_users.group,
+                local_config.linux_users.uid_start
+            );
+        }
+
+        info!(
+            "Local runtime ready: opencode={}, fileserver={}, ttyd={}, workspace={}",
+            local_config.opencode_binary,
+            local_config.fileserver_binary,
+            local_config.ttyd_binary,
+            local_config.workspace_dir
+        );
+
+        if local_config.single_user {
+            info!("Single-user mode enabled");
+        }
+
+        Some(local::LocalRuntime::new(local_config))
+    } else {
+        None
+    };
 
     // Session config: CLI args override config file values
-    let default_image = if cmd.image != "opencode-dev:latest" {
+    let default_image = if cmd.image != "octo-dev:latest" {
         cmd.image.clone()
     } else {
         ctx.config.container.default_image.clone()
@@ -835,15 +990,37 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
                 .to_string()
         });
 
+    // User data path: CLI overrides config, config overrides default
+    let user_data_path = if cmd.user_data_path != std::path::PathBuf::from("./data") {
+        // CLI explicitly set
+        cmd.user_data_path.clone()
+    } else if let Some(ref config_path) = ctx.config.container.user_data_path {
+        // Use config file value
+        std::path::PathBuf::from(shellexpand::tilde(config_path).to_string())
+    } else {
+        // Use CLI default
+        cmd.user_data_path.clone()
+    };
+    let user_data_path = user_data_path
+        .canonicalize()
+        .unwrap_or(user_data_path)
+        .to_string_lossy()
+        .to_string();
+
+    // Build local runtime config if in local mode
+    let local_runtime_config = if local_mode {
+        local_runtime.as_ref().map(|r| r.config().clone())
+    } else {
+        None
+    };
+
+    // Determine single_user mode from local config
+    let single_user = ctx.config.local.single_user;
+
     let session_config = session::SessionServiceConfig {
         default_image,
         base_port,
-        user_data_path: cmd
-            .user_data_path
-            .canonicalize()
-            .unwrap_or(cmd.user_data_path.clone())
-            .to_string_lossy()
-            .to_string(),
+        user_data_path,
         skel_path,
         default_user_id: "default".to_string(),
         default_session_budget_usd: ctx
@@ -857,6 +1034,9 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
             .eavs
             .as_ref()
             .and_then(|e| e.container_url.clone()),
+        runtime_mode,
+        local_config: local_runtime_config,
+        single_user,
     };
 
     let session_repo = session::SessionRepository::new(database.pool().clone());
@@ -889,47 +1069,71 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
         None
     };
 
-    // Check if the default container image exists before creating the session service
-    match container_runtime
-        .image_exists(&session_config.default_image)
-        .await
-    {
-        Ok(true) => {
-            info!("Container image '{}' found", session_config.default_image);
-        }
-        Ok(false) => {
-            error!(
-                "Container image '{}' not found. Please build it first:\n\
-                 \n\
-                 cd container && docker build -t {} -f Dockerfile ..\n\
-                 \n\
-                 Or specify a different image with --image or in config.toml",
-                session_config.default_image, session_config.default_image
-            );
-            anyhow::bail!(
-                "Required container image '{}' not found. Build it with: cd container && docker build -t {} -f Dockerfile ..",
-                session_config.default_image,
-                session_config.default_image
-            );
-        }
-        Err(e) => {
-            warn!(
-                "Could not check if image '{}' exists: {:?}. Container operations may fail.",
-                session_config.default_image, e
-            );
+    // Check container image (only in container mode)
+    if !local_mode {
+        if let Some(ref runtime) = container_runtime {
+            match runtime.image_exists(&session_config.default_image).await {
+                Ok(true) => {
+                    info!("Container image '{}' found", session_config.default_image);
+                }
+                Ok(false) => {
+                    error!(
+                        "Container image '{}' not found. Please build it first:\n\
+                         \n\
+                         cd container && docker build -t {} -f Dockerfile ..\n\
+                         \n\
+                         Or specify a different image with --image or in config.toml",
+                        session_config.default_image, session_config.default_image
+                    );
+                    anyhow::bail!(
+                        "Required container image '{}' not found. Build it with: cd container && docker build -t {} -f Dockerfile ..",
+                        session_config.default_image,
+                        session_config.default_image
+                    );
+                }
+                Err(e) => {
+                    warn!(
+                        "Could not check if image '{}' exists: {:?}. Container operations may fail.",
+                        session_config.default_image, e
+                    );
+                }
+            }
         }
     }
 
-    let session_service = if let Some(eavs) = eavs_client {
-        session::SessionService::with_eavs(session_repo, container_runtime, eavs, session_config)
+    // Create session service based on runtime mode
+    let session_service = if local_mode {
+        let local_rt = local_runtime.expect("local runtime should be set in local mode");
+        if let Some(eavs) = eavs_client.clone() {
+            session::SessionService::with_local_runtime_and_eavs(session_repo, local_rt, eavs, session_config)
+        } else {
+            session::SessionService::with_local_runtime(session_repo, local_rt, session_config)
+        }
     } else {
-        session::SessionService::new(session_repo, container_runtime, session_config)
+        let container_rt = container_runtime.clone().expect("container runtime should be set in container mode");
+        if let Some(eavs) = eavs_client.clone() {
+            session::SessionService::with_eavs(session_repo, container_rt, eavs, session_config)
+        } else {
+            session::SessionService::new(session_repo, container_rt, session_config)
+        }
     };
 
     // Run startup cleanup to handle orphan containers and stale sessions
     if let Err(e) = session_service.startup_cleanup().await {
         warn!("Startup cleanup failed (continuing anyway): {:?}", e);
     }
+
+    // Initialize agent service for managing opencode instances
+    // In local mode, we use a dummy container runtime (agent features limited)
+    let agent_runtime: std::sync::Arc<dyn container::ContainerRuntimeApi> = if let Some(ref rt) = container_runtime {
+        rt.clone()
+    } else {
+        // Create a container runtime for agent service even in local mode
+        // This allows basic agent operations to work (though docker exec will fail)
+        std::sync::Arc::new(container::ContainerRuntime::new())
+    };
+    let agent_repo = agent::AgentRepository::new(database.pool().clone());
+    let agent_service = agent::AgentService::new(agent_runtime, session_service.clone(), agent_repo);
 
     // Initialize user service
     let user_repo = user::UserRepository::new(database.pool().clone());
@@ -938,8 +1142,11 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     // Initialize invite code repository
     let invite_repo = invite::InviteCodeRepository::new(database.pool().clone());
 
+    // Clone session_service before creating state for shutdown handler
+    let session_service_for_shutdown = session_service.clone();
+    
     // Create app state
-    let state = api::AppState::new(session_service, user_service, invite_repo, auth_state);
+    let state = api::AppState::new(session_service, agent_service, user_service, invite_repo, auth_state);
 
     // Create router
     let app = api::create_router(state);
@@ -954,8 +1161,70 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     let listener = TcpListener::bind(addr)
         .await
         .context("binding to address")?;
-    axum::serve(listener, app).await.context("running server")?;
 
+    // Set up graceful shutdown
+    let shutdown_signal = async move {
+        let ctrl_c = async {
+            tokio::signal::ctrl_c()
+                .await
+                .expect("failed to install Ctrl+C handler");
+        };
+
+        #[cfg(unix)]
+        let terminate = async {
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                .expect("failed to install signal handler")
+                .recv()
+                .await;
+        };
+
+        #[cfg(not(unix))]
+        let terminate = std::future::pending::<()>();
+
+        tokio::select! {
+            _ = ctrl_c => {},
+            _ = terminate => {},
+        }
+
+        info!("Shutdown signal received, stopping containers...");
+        
+        // Stop all running containers gracefully
+        if let Err(e) = shutdown_all_sessions(&session_service_for_shutdown).await {
+            warn!("Error during shutdown: {:?}", e);
+        }
+        
+        info!("Shutdown complete");
+    };
+
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal)
+        .await
+        .context("running server")?;
+
+    Ok(())
+}
+
+/// Stop all running sessions during shutdown.
+async fn shutdown_all_sessions(session_service: &session::SessionService) -> Result<()> {
+    let sessions = session_service.list_sessions().await?;
+    let running_count = sessions.iter().filter(|s| s.is_active()).count();
+    
+    if running_count == 0 {
+        info!("No active sessions to stop");
+        return Ok(());
+    }
+    
+    info!("Stopping {} active session(s)...", running_count);
+    
+    for session in sessions {
+        if session.is_active() {
+            match session_service.stop_session(&session.id).await {
+                Ok(()) => info!("Stopped session {}", session.id),
+                Err(e) => warn!("Failed to stop session {}: {:?}", session.id, e),
+            }
+        }
+    }
+    
     Ok(())
 }
 

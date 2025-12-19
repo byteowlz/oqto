@@ -1,0 +1,48 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "theme": "tinty",
+  "autoshare": false,
+  "autoupdate": true,
+  "mode": {
+    "build": {},
+    "plan": {},
+    "document": {},
+    "journal": {}
+  },
+  "mcp": {
+    "exa": {
+      "type": "remote",
+      "url": "https://mcp.exa.ai/mcp"
+    }
+  },
+  "plugin": ["opencode-openai-codex-auth@4.0.2"],
+  "provider": {
+    "llamacpp": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Llama.cpp",
+      "options": {
+        "baseURL": "http://100.64.0.12:8080/v1",
+        "apiKey": "sk-local-anything"
+      },
+      "models": {
+        "gpt-oss-120B": {
+          "name": "gpt-oss-120B"
+        }
+      }
+    },
+    "lmstudio": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "lmstudio",
+      "options": {
+        "baseURL": "http://host.docker.internal:1234/v1",
+        "apiKey": "sk-local-anything"
+      },
+      "models": {
+        "qwen/qwen3-coder-30b": {
+          "name": "qwen/qwen3-coder-30b"
+        }
+      }
+    }
+  },
+  "model": "anthropic/claude-opus-4-5"
+}

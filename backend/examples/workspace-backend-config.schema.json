@@ -89,7 +89,7 @@
         "default_image": {
           "type": "string",
           "description": "Default container image for sessions",
-          "default": "opencode-dev:latest"
+          "default": "octo-dev:latest"
         },
         "base_port": {
           "type": "integer",
@@ -102,6 +102,94 @@
           "type": "string",
           "description": "Path to skeleton directory for new user homes. When a new user session is created, this directory is copied as the base for the user's home directory.",
           "examples": ["./container/skel", "/etc/skel"]
+        }
+      },
+      "additionalProperties": false
+    },
+    "local": {
+      "type": "object",
+      "description": "Local mode configuration - run without containers. Useful for Proxmox LXC, bare-metal, or development without Docker.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Enable local mode (run services as native processes instead of containers). Can also be enabled with --local-mode CLI flag.",
+          "default": false
+        },
+        "opencode_binary": {
+          "type": "string",
+          "description": "Path to the opencode binary. Must be installed on the host.",
+          "default": "opencode",
+          "examples": ["opencode", "/usr/local/bin/opencode", "~/bin/opencode"]
+        },
+        "fileserver_binary": {
+          "type": "string",
+          "description": "Path to the fileserver binary (from this repo's fileserver/ directory).",
+          "default": "fileserver",
+          "examples": ["fileserver", "/usr/local/bin/fileserver"]
+        },
+        "ttyd_binary": {
+          "type": "string",
+          "description": "Path to the ttyd binary. Install via package manager or from https://tsl0922.github.io/ttyd/",
+          "default": "ttyd",
+          "examples": ["ttyd", "/usr/local/bin/ttyd"]
+        },
+        "workspace_dir": {
+          "type": "string",
+          "description": "Base directory for user workspaces in local mode. Supports ~ and environment variables. The {user_id} placeholder is replaced with the user ID (ignored in single_user mode).",
+          "default": "$HOME/octo/{user_id}",
+          "examples": ["$HOME/octo/{user_id}", "~/workspace/{user_id}", "/data/workspaces/{user_id}", "$HOME/octo"]
+        },
+        "single_user": {
+          "type": "boolean",
+          "description": "Enable single-user mode. When true, the platform operates with a single user (no multi-tenancy), and the {user_id} placeholder in workspace_dir is ignored. Password protection is still available.",
+          "default": false
+        },
+        "linux_users": {
+          "type": "object",
+          "description": "Linux user isolation for multi-user deployments. Creates a dedicated Linux user per platform user for process isolation. Requires root/sudo privileges for user creation. Ignored when single_user = true.",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Enable Linux user isolation. Requires root/sudo privileges.",
+              "default": false
+            },
+            "prefix": {
+              "type": "string",
+              "description": "Prefix for created Linux usernames (e.g., 'octo_' creates users like 'octo_alice').",
+              "default": "octo_",
+              "examples": ["octo_", "ws_", "dev_"]
+            },
+            "uid_start": {
+              "type": "integer",
+              "description": "Starting UID for created users. Subsequent users get uid_start + 1, + 2, etc.",
+              "minimum": 1000,
+              "maximum": 65534,
+              "default": 2000
+            },
+            "group": {
+              "type": "string",
+              "description": "Shared group for all octo users. Created if it doesn't exist.",
+              "default": "octo",
+              "examples": ["octo", "workspace-users", "developers"]
+            },
+            "shell": {
+              "type": "string",
+              "description": "Shell for created users.",
+              "default": "/bin/bash",
+              "examples": ["/bin/bash", "/bin/zsh", "/bin/sh"]
+            },
+            "use_sudo": {
+              "type": "boolean",
+              "description": "Use sudo for privilege escalation. Set to false if running as root.",
+              "default": true
+            },
+            "create_home": {
+              "type": "boolean",
+              "description": "Create home directories for users. Recommended for most setups.",
+              "default": true
+            }
+          },
+          "additionalProperties": false
         }
       },
       "additionalProperties": false

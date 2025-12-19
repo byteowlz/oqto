@@ -1022,29 +1022,107 @@ const TodoListView = memo(function TodoListView({ todos, emptyMessage }: { todos
   )
 })
 
-// Knight Rider style spinner component - pure CSS animation for performance
+// Knight Rider style spinner component - classic KITT scanner effect with trailing swoosh
 function KnightRiderSpinner() {
   return (
-    <div className="knight-rider-spinner flex items-center gap-[3px]">
-      {Array.from({ length: 8 }).map((_, i) => (
-        <div
-          key={i}
-          className="knight-rider-dot w-[6px] h-[6px] rounded-sm bg-primary/5"
-          style={{ "--dot-index": i } as React.CSSProperties}
-        />
-      ))}
-      <style jsx>{`
-        @keyframes knight-rider {
-          0%, 100% { opacity: 0.05; transform: scale(0.85); }
-          50% { opacity: 1; transform: scale(1.1); box-shadow: 0 0 8px hsl(var(--primary) / 0.8); }
+    <>
+      <style>{`
+        @keyframes kitt-swoosh {
+          0% { left: -35%; opacity: 0; }
+          10% { left: 0%; opacity: 1; }
+          40% { left: 80%; opacity: 1; }
+          50% { left: 115%; opacity: 0; }
+          60% { left: 80%; opacity: 1; }
+          90% { left: 0%; opacity: 1; }
+          100% { left: -35%; opacity: 0; }
         }
-        .knight-rider-dot {
-          animation: knight-rider 1.6s ease-in-out infinite;
-          animation-delay: calc(var(--dot-index) * 0.1s);
-          background-color: hsl(var(--primary));
+        @keyframes kitt-ghost-1 {
+          0% { left: -33.5%; opacity: 0; }
+          10% { left: 1.5%; opacity: 0.6; }
+          40% { left: 78.5%; opacity: 0.6; }
+          50% { left: 113.5%; opacity: 0; }
+          60% { left: 78.5%; opacity: 0.6; }
+          90% { left: 1.5%; opacity: 0.6; }
+          100% { left: -33.5%; opacity: 0; }
+        }
+        @keyframes kitt-ghost-2 {
+          0% { left: -32%; opacity: 0; }
+          10% { left: 3%; opacity: 0.4; }
+          40% { left: 77%; opacity: 0.4; }
+          50% { left: 112%; opacity: 0; }
+          60% { left: 77%; opacity: 0.4; }
+          90% { left: 3%; opacity: 0.4; }
+          100% { left: -32%; opacity: 0; }
+        }
+        @keyframes kitt-ghost-3 {
+          0% { left: -30.5%; opacity: 0; }
+          10% { left: 4.5%; opacity: 0.25; }
+          40% { left: 75.5%; opacity: 0.25; }
+          50% { left: 110.5%; opacity: 0; }
+          60% { left: 75.5%; opacity: 0.25; }
+          90% { left: 4.5%; opacity: 0.25; }
+          100% { left: -30.5%; opacity: 0; }
+        }
+        @keyframes kitt-ghost-4 {
+          0% { left: -29%; opacity: 0; }
+          10% { left: 6%; opacity: 0.15; }
+          40% { left: 74%; opacity: 0.15; }
+          50% { left: 109%; opacity: 0; }
+          60% { left: 74%; opacity: 0.15; }
+          90% { left: 6%; opacity: 0.15; }
+          100% { left: -29%; opacity: 0; }
         }
       `}</style>
-    </div>
+      <div className="relative h-[6px] w-[60px] rounded-full overflow-hidden bg-primary/15">
+        {/* Ghost trails - furthest back */}
+        <div
+          className="absolute top-0 h-full rounded-full"
+          style={{
+            width: "20%",
+            background: "linear-gradient(to right, transparent, var(--primary), transparent)",
+            animation: "kitt-ghost-4 1.2s cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite",
+            filter: "blur(2px)",
+          }}
+        />
+        <div
+          className="absolute top-0 h-full rounded-full"
+          style={{
+            width: "20%",
+            background: "linear-gradient(to right, transparent, var(--primary), transparent)",
+            animation: "kitt-ghost-3 1.2s cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite",
+            filter: "blur(1.5px)",
+          }}
+        />
+        <div
+          className="absolute top-0 h-full rounded-full"
+          style={{
+            width: "20%",
+            background: "linear-gradient(to right, transparent, var(--primary), transparent)",
+            animation: "kitt-ghost-2 1.2s cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite",
+            filter: "blur(1px)",
+          }}
+        />
+        <div
+          className="absolute top-0 h-full rounded-full"
+          style={{
+            width: "20%",
+            background: "linear-gradient(to right, transparent, var(--primary), transparent)",
+            animation: "kitt-ghost-1 1.2s cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite",
+            filter: "blur(0.5px)",
+          }}
+        />
+        {/* Main bright light */}
+        <div
+          className="absolute top-0 h-full rounded-full"
+          style={{
+            width: "20%",
+            background: "linear-gradient(to right, transparent, var(--primary), transparent)",
+            boxShadow: "0 0 8px var(--primary), 0 0 12px var(--primary)",
+            animation: "kitt-swoosh 1.2s cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite",
+          }}
+        />
+      </div>
+    </>
   )
 }
 

@@ -1,0 +1,45 @@
+# Brand configuration for byteowlz
+
+id = "byteowlz"
+default_language = "de"
+languages = ["de", "en"]
+
+[name]
+de = "byteowlz"
+en = "byteowlz"
+
+[description]
+de = "Digitale Transformation und Softwareentwicklung"
+en = "Digital transformation and software development"
+
+[colors]
+primary = "#0f172a"
+secondary = "#64748b"
+accent = "#38bdf8"
+background = "#ffffff"
+text = "#0b1120"
+
+[logos]
+primary = "logos/logo_primary.svg"
+
+[typography.body]
+family = "Helvetica Neue"
+
+[typography.heading]
+family = "Helvetica Neue"
+
+[contact]
+company = "byteowlz"
+legal-form = "UG"
+street = "Zukunftsmeile 2"
+postal-code = "33102"
+city = "Paderborn"
+phone = "+49 5251 5465-445"
+fax = "-102"
+email = "redacted@example.com"
+website = "www.byteowlz.com"
+people = [
+  "REDACTED (Redacted Role)",
+  "Dr. REDACTED (Gesellschafter)",
+  "Prof. Dr.-Ing. Roman Dumitrescu (Gesellschafter)",
+]

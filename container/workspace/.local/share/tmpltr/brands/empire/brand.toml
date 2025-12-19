@@ -1,0 +1,45 @@
+# Brand configuration for the Galactic Empire
+
+id = "empire"
+default_language = "en"
+languages = ["en", "de"]
+
+[name]
+en = "Galactic Empire"
+de = "Galaktisches Imperium"
+
+[description]
+en = "Peace, order and security throughout the galaxy"
+de = "Frieden, Ordnung und Sicherheit in der gesamten Galaxis"
+
+[colors]
+primary = "#000000"
+secondary = "#1a1a1a"
+accent = "#cc0000"
+background = "#ffffff"
+text = "#000000"
+
+[logos]
+primary = "logos/logo_primary.svg"
+
+[typography.body]
+family = "Helvetica Neue"
+
+[typography.heading]
+family = "Helvetica Neue"
+
+[contact]
+company = "Galactic Empire"
+legal-form = ""
+street = "Imperial Center 1"
+postal-code = "00001"
+city = "Coruscant"
+phone = "+0 000 000-001"
+fax = "+0 000 000-002"
+email = "contact@empire.gov"
+website = "www.empire.gov"
+people = [
+  "Emperor Palpatine (Supreme Leader)",
+  "Darth Vader (Supreme Commander)",
+  "Grand Moff Tarkin (Regional Governor)",
+]
