@@ -34,9 +34,11 @@ pub fn create_router(state: AppState) -> Router {
         // Session management
         .route("/sessions", get(handlers::list_sessions))
         .route("/sessions", post(handlers::create_session))
+        .route("/sessions/get-or-create", post(handlers::get_or_create_session))
         .route("/sessions/{session_id}", get(handlers::get_session))
         .route("/sessions/{session_id}", delete(handlers::delete_session))
         .route("/sessions/{session_id}/stop", post(handlers::stop_session))
+        .route("/sessions/{session_id}/resume", post(handlers::resume_session))
         .route(
             "/sessions/{session_id}/update",
             get(handlers::check_session_update),
@@ -71,17 +73,35 @@ pub fn create_router(state: AppState) -> Router {
         )
         .route(
             "/sessions/{session_id}/files/{*path}",
-            get(proxy::proxy_fileserver),
+            get(proxy::proxy_fileserver)
+                .post(proxy::proxy_fileserver)
+                .put(proxy::proxy_fileserver)
+                .delete(proxy::proxy_fileserver),
         )
         .route(
             "/session/{session_id}/files/{*path}",
-            get(proxy::proxy_fileserver),
+            get(proxy::proxy_fileserver)
+                .post(proxy::proxy_fileserver)
+                .put(proxy::proxy_fileserver)
+                .delete(proxy::proxy_fileserver),
         )
         .route(
             "/sessions/{session_id}/terminal",
             get(proxy::proxy_terminal_ws),
         )
         .route("/session/{session_id}/term", get(proxy::proxy_terminal_ws))
+        // Sub-agent proxy routes
+        .route(
+            "/session/{session_id}/agent/{agent_id}/code/event",
+            get(proxy::proxy_opencode_agent_events),
+        )
+        .route(
+            "/session/{session_id}/agent/{agent_id}/code/{*path}",
+            get(proxy::proxy_opencode_agent)
+                .post(proxy::proxy_opencode_agent)
+                .put(proxy::proxy_opencode_agent)
+                .delete(proxy::proxy_opencode_agent),
+        )
         // User profile routes (authenticated users)
         .route("/me", get(handlers::get_me))
         .route("/me", put(handlers::update_me))
@@ -128,6 +148,23 @@ pub fn create_router(state: AppState) -> Router {
         .route(
             "/admin/invite-codes/{code_id}/revoke",
             post(handlers::revoke_invite_code),
+        )
+        // Agent management routes
+        .route(
+            "/session/{session_id}/agents",
+            get(handlers::list_agents).post(handlers::start_agent),
+        )
+        .route(
+            "/session/{session_id}/agents/create",
+            post(handlers::create_agent),
+        )
+        .route(
+            "/session/{session_id}/agents/{agent_id}",
+            get(handlers::get_agent).delete(handlers::stop_agent),
+        )
+        .route(
+            "/session/{session_id}/agents/rediscover",
+            post(handlers::rediscover_agents),
         )
         .layer(middleware::from_fn_with_state(
             auth_state.clone(),

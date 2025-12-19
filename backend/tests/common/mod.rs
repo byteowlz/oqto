@@ -2,13 +2,14 @@
 
 use axum::Router;
 use std::sync::Arc;
-use workspace_backend::api;
-use workspace_backend::auth::{AuthConfig, AuthState};
-use workspace_backend::container::ContainerRuntime;
-use workspace_backend::db::Database;
-use workspace_backend::invite::InviteCodeRepository;
-use workspace_backend::session::{SessionRepository, SessionService, SessionServiceConfig};
-use workspace_backend::user::{UserRepository, UserService};
+use octo::agent::{AgentRepository, AgentService};
+use octo::api;
+use octo::auth::{AuthConfig, AuthState};
+use octo::container::ContainerRuntime;
+use octo::db::Database;
+use octo::invite::InviteCodeRepository;
+use octo::session::{SessionRepository, SessionService, SessionServiceConfig};
+use octo::user::{UserRepository, UserService};
 
 /// Create a test AuthConfig with a JWT secret for testing.
 fn test_auth_config() -> AuthConfig {
@@ -33,7 +34,11 @@ pub async fn test_app() -> Router {
     // Create session service
     let session_config = SessionServiceConfig::default();
     let session_repo = SessionRepository::new(db.pool().clone());
-    let session_service = SessionService::new(session_repo, runtime, session_config);
+    let session_service = SessionService::new(session_repo, runtime.clone(), session_config);
+
+    // Create agent service
+    let agent_repo = AgentRepository::new(db.pool().clone());
+    let agent_service = AgentService::new(runtime, session_service.clone(), agent_repo);
 
     // Create user service
     let user_repo = UserRepository::new(db.pool().clone());
@@ -43,7 +48,7 @@ pub async fn test_app() -> Router {
     let invite_repo = InviteCodeRepository::new(db.pool().clone());
 
     // Create app state and router
-    let state = api::AppState::new(session_service, user_service, invite_repo, auth_state);
+    let state = api::AppState::new(session_service, agent_service, user_service, invite_repo, auth_state);
     api::create_router(state)
 }
 
@@ -62,7 +67,11 @@ pub async fn test_app_with_token() -> (Router, String) {
     let runtime = Arc::new(ContainerRuntime::new());
     let session_config = SessionServiceConfig::default();
     let session_repo = SessionRepository::new(db.pool().clone());
-    let session_service = SessionService::new(session_repo, runtime, session_config);
+    let session_service = SessionService::new(session_repo, runtime.clone(), session_config);
+
+    // Create agent service
+    let agent_repo = AgentRepository::new(db.pool().clone());
+    let agent_service = AgentService::new(runtime, session_service.clone(), agent_repo);
 
     // Create user service
     let user_repo = UserRepository::new(db.pool().clone());
@@ -71,7 +80,7 @@ pub async fn test_app_with_token() -> (Router, String) {
     // Create invite code repository
     let invite_repo = InviteCodeRepository::new(db.pool().clone());
 
-    let state = api::AppState::new(session_service, user_service, invite_repo, auth_state);
+    let state = api::AppState::new(session_service, agent_service, user_service, invite_repo, auth_state);
     (api::create_router(state), token)
 }
 
@@ -90,7 +99,11 @@ pub async fn test_app_with_user_token() -> (Router, String) {
     let runtime = Arc::new(ContainerRuntime::new());
     let session_config = SessionServiceConfig::default();
     let session_repo = SessionRepository::new(db.pool().clone());
-    let session_service = SessionService::new(session_repo, runtime, session_config);
+    let session_service = SessionService::new(session_repo, runtime.clone(), session_config);
+
+    // Create agent service
+    let agent_repo = AgentRepository::new(db.pool().clone());
+    let agent_service = AgentService::new(runtime, session_service.clone(), agent_repo);
 
     // Create user service
     let user_repo = UserRepository::new(db.pool().clone());
@@ -99,6 +112,6 @@ pub async fn test_app_with_user_token() -> (Router, String) {
     // Create invite code repository
     let invite_repo = InviteCodeRepository::new(db.pool().clone());
 
-    let state = api::AppState::new(session_service, user_service, invite_repo, auth_state);
+    let state = api::AppState::new(session_service, agent_service, user_service, invite_repo, auth_state);
     (api::create_router(state), token)
 }

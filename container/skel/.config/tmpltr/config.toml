@@ -1,0 +1,37 @@
+# tmpltr Configuration File
+"$schema" = "https://raw.githubusercontent.com/byteowlz/schemas/refs/heads/main/tmpltr/tmpltr.config.schema.json"
+
+[paths]
+# Template directory (supports ~ and environment variables)
+templates_dir = "$XDG_DATA_HOME/tmpltr/templates"
+
+# Schema directory for content validation
+schemas_dir = "$XDG_DATA_HOME/tmpltr/schemas"
+
+# Brand directory for brand configurations (logos, fonts, colors)
+brands_dir = "$XDG_DATA_HOME/tmpltr/brands"
+
+# Cache directory for document index
+cache_dir = "$XDG_CACHE_HOME/tmpltr"
+
+[brand]
+# Default brand ID to use when --brand is not specified
+default = "iem"
+
+[typst]
+# Path to typst binary (leave empty for PATH lookup)
+binary = ""
+
+# Additional font paths (in addition to system fonts)
+font_paths = []
+
+[output]
+# Default output format: pdf, svg, html
+format = "pdf"
+
+# Watch mode debounce in milliseconds
+watch_debounce_ms = 300
+
+[experimental]
+# Enable experimental HTML output
+html = false

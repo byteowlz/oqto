@@ -1,0 +1,45 @@
+# Brand configuration for the Rebel Alliance
+
+id = "rebels"
+default_language = "en"
+languages = ["en", "de"]
+
+[name]
+en = "Rebel Alliance"
+de = "Rebellenallianz"
+
+[description]
+en = "Restoring freedom to the galaxy"
+de = "Freiheit fuer die Galaxis"
+
+[colors]
+primary = "#8B0000"
+secondary = "#4a4a4a"
+accent = "#ff6b35"
+background = "#ffffff"
+text = "#1a1a1a"
+
+[logos]
+primary = "logos/primary_logo.svg"
+
+[typography.body]
+family = "Helvetica Neue"
+
+[typography.heading]
+family = "Helvetica Neue"
+
+[contact]
+company = "Rebel Alliance"
+legal-form = ""
+street = "Echo Base"
+postal-code = ""
+city = "Hoth"
+phone = "Encrypted Channel Alpha"
+fax = ""
+email = "hope@rebellion.org"
+website = "www.rebellion.org"
+people = [
+  "Mon Mothma (Chancellor)",
+  "Princess Leia Organa (General)",
+  "Admiral Ackbar (Fleet Commander)",
+]

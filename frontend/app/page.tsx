@@ -125,8 +125,19 @@ function AppShell() {
     renameChatSession,
   } = useApp();
   const { theme, setTheme, resolvedTheme } = useTheme();
+  const [mounted, setMounted] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  
+  // Avoid hydration mismatch - only render theme-dependent content after mount
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+  
+  // Use a stable theme value that defaults to "light" during SSR to prevent hydration mismatch
+  const currentTheme = mounted ? resolvedTheme : "light";
+  const isDark = currentTheme === "dark";
+  
   const ActiveComponent = activeApp?.component ?? null;
 
   // JAK Christmas feature
@@ -288,7 +299,7 @@ function AppShell() {
   }, []);
 
   const toggleTheme = () => {
-    const next = resolvedTheme === "dark" ? "light" : "dark";
+    const next = isDark ? "light" : "dark";
     // Disable transitions during theme switch
     document.documentElement.classList.add("no-transitions");
     setTheme(next);
@@ -387,7 +398,7 @@ function AppShell() {
           <Menu className="w-5 h-5" />
         </Button>
         <Image
-          src={resolvedTheme === "dark" ? "/octo_logo_new_white.png" : "/octo_logo_new_black.png"}
+          src={isDark ? "/octo_logo_new_white.png" : "/octo_logo_new_black.png"}
           alt="OCTO"
           width={80}
           height={32}
@@ -405,7 +416,7 @@ function AppShell() {
         >
           <div className="h-14 flex items-center justify-between px-4">
             <Image
-              src={resolvedTheme === "dark" ? "/octo_logo_new_white.png" : "/octo_logo_new_black.png"}
+              src={isDark ? "/octo_logo_new_white.png" : "/octo_logo_new_black.png"}
               alt="OCTO"
               width={80}
               height={32}
@@ -538,10 +549,10 @@ function AppShell() {
                 toggleTheme();
                 setMobileMenuOpen(false);
               }}
-              aria-pressed={resolvedTheme === "dark"}
+              aria-pressed={isDark}
               className="w-full justify-start text-muted-foreground hover:text-primary py-4"
             >
-              {resolvedTheme === "dark" ? (
+              {isDark ? (
                 <SunMedium className="w-5 h-5" />
               ) : (
                 <MoonStar className="w-5 h-5" />
@@ -576,7 +587,7 @@ function AppShell() {
         <div className="h-24 w-full flex items-center justify-center px-4 relative">
           {!sidebarCollapsed && (
             <Image
-              src={resolvedTheme === "dark" ? "/octo_logo_new_white.png" : "/octo_logo_new_black.png"}
+              src={isDark ? "/octo_logo_new_white.png" : "/octo_logo_new_black.png"}
               alt="OCTO"
               width={240}
               height={80}
@@ -919,7 +930,7 @@ function AppShell() {
                 variant="ghost"
                 size="default"
                 onClick={toggleTheme}
-                aria-pressed={resolvedTheme === "dark"}
+                aria-pressed={isDark}
                 className="w-full px-4 py-3 text-sm font-medium flex items-center justify-center transition-colors"
                 style={{
                   backgroundColor: navIdle,
@@ -935,7 +946,7 @@ function AppShell() {
                   e.currentTarget.style.border = "1px solid transparent";
                 }}
               >
-                {resolvedTheme === "dark" ? (
+                {isDark ? (
                   <SunMedium className="w-4 h-4 shrink-0" />
                 ) : (
                   <MoonStar className="w-4 h-4 shrink-0" />
@@ -994,7 +1005,7 @@ function AppShell() {
                   variant="ghost"
                   size="default"
                   onClick={toggleTheme}
-                  aria-pressed={resolvedTheme === "dark"}
+                  aria-pressed={isDark}
                   className="px-3 py-2 text-sm font-medium flex items-center justify-center transition-colors"
                   style={{
                     backgroundColor: navIdle,
@@ -1010,7 +1021,7 @@ function AppShell() {
                     e.currentTarget.style.border = "1px solid transparent";
                   }}
                 >
-                  {resolvedTheme === "dark" ? (
+                  {isDark ? (
                     <SunMedium className="w-4 h-4" />
                   ) : (
                     <MoonStar className="w-4 h-4" />

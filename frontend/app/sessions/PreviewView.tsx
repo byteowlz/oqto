@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState, useCallback } from "react"
-import { Eye, Loader2, Pencil, Save, X } from "lucide-react"
+import { Eye, Loader2, Pencil, Save, X, FileText, Download, ExternalLink, ZoomIn, ZoomOut } from "lucide-react"
 import { useApp } from "@/components/app-context"
 import { fileserverProxyBaseUrl } from "@/lib/control-plane-client"
 import { cn } from "@/lib/utils"
@@ -33,6 +33,12 @@ const EDITABLE_EXTENSIONS = new Set([
 const IMAGE_EXTENSIONS = new Set([
   ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp", ".ico",
 ])
+
+// PDF extension
+const PDF_EXTENSIONS = new Set([".pdf"])
+
+// Typst extension
+const TYPST_EXTENSIONS = new Set([".typ"])
 
 // Map file extensions to syntax highlighter language
 function getLanguage(filename: string): string {
@@ -88,6 +94,7 @@ function getLanguage(filename: string): string {
     ".env": "bash",
     ".gitignore": "text",
     ".dockerignore": "text",
+    ".typ": "latex", // Typst uses latex highlighting as closest match
   }
   
   return languageMap[ext] || "text"
@@ -103,11 +110,24 @@ function isImage(filename: string): boolean {
   return IMAGE_EXTENSIONS.has(ext)
 }
 
-function getImageUrl(baseUrl: string, path: string): string {
+function isPdf(filename: string): boolean {
+  const ext = filename.substring(filename.lastIndexOf(".")).toLowerCase()
+  return PDF_EXTENSIONS.has(ext)
+}
+
+function isTypst(filename: string): boolean {
+  const ext = filename.substring(filename.lastIndexOf(".")).toLowerCase()
+  return TYPST_EXTENSIONS.has(ext)
+}
+
+function getFileUrl(baseUrl: string, path: string): string {
   const url = new URL(`${baseUrl}/file`, window.location.origin)
   url.searchParams.set("path", path)
   return url.toString()
 }
+
+// Alias for backward compatibility
+const getImageUrl = getFileUrl
 
 async function fetchFileContent(baseUrl: string, path: string): Promise<string> {
   const url = new URL(`${baseUrl}/file`, window.location.origin)
@@ -174,6 +194,16 @@ export function PreviewView({ filePath, className }: PreviewViewProps) {
       setContent("")
       setEditedContent("")
       setIsEditing(false)
+      return
+    }
+
+    // Don't fetch content for PDF files - they render via URL
+    const filename = filePath.split("/").pop() || filePath
+    if (isPdf(filename)) {
+      setContent("")
+      setEditedContent("")
+      setIsEditing(false)
+      setLoading(false)
       return
     }
 
@@ -249,7 +279,61 @@ export function PreviewView({ filePath, className }: PreviewViewProps) {
   const language = getLanguage(filename)
   const canEdit = isEditable(filename)
   const isImageFile = isImage(filename)
+  const isPdfFile = isPdf(filename)
+  const isTypstFile = isTypst(filename)
+  const fileUrl = fileserverBaseUrl ? getFileUrl(fileserverBaseUrl, filePath) : null
   const imageUrl = isImageFile && fileserverBaseUrl ? getImageUrl(fileserverBaseUrl, filePath) : null
+
+  // For PDF files, render with iframe
+  if (isPdfFile && fileUrl) {
+    return (
+      <div className={cn("h-full flex flex-col overflow-hidden", className)}>
+        {/* Header */}
+        <div className="flex-shrink-0 flex items-center justify-between px-3 py-2 border-b border-border bg-muted/30">
+          <div className="flex items-center gap-2 flex-1 min-w-0">
+            <FileText className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+            <p className="text-xs font-mono text-muted-foreground truncate" title={filePath}>
+              {filename}
+            </p>
+          </div>
+          <div className="flex items-center gap-1 ml-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => window.open(fileUrl, "_blank")}
+              className="h-7 px-2 text-xs"
+              title="Open in new tab"
+            >
+              <ExternalLink className="w-3.5 h-3.5" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                const link = document.createElement("a")
+                link.href = fileUrl
+                link.download = filename
+                link.click()
+              }}
+              className="h-7 px-2 text-xs"
+              title="Download"
+            >
+              <Download className="w-3.5 h-3.5" />
+            </Button>
+          </div>
+        </div>
+
+        {/* PDF content */}
+        <div className="flex-1 overflow-hidden bg-muted/30">
+          <iframe
+            src={fileUrl}
+            className="w-full h-full border-0"
+            title={filename}
+          />
+        </div>
+      </div>
+    )
+  }
 
   // For images, render a different view
   if (isImageFile) {

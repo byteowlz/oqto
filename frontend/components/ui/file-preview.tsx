@@ -14,8 +14,10 @@ import { cn } from "@/lib/utils"
 import { getFileTypeInfo, type FileCategory } from "@/lib/file-types"
 import { CodeViewer } from "@/components/ui/code-viewer"
 import { ImageViewer } from "@/components/ui/image-viewer"
+import { PDFViewer } from "@/components/ui/pdf-viewer"
 import { CSVViewer } from "@/components/ui/csv-viewer"
 import { MarkdownRenderer } from "@/components/ui/markdown-renderer"
+import { TypstViewer } from "@/components/ui/typst-viewer"
 import { ScrollArea } from "@/components/ui/scroll-area"
 
 interface FilePreviewProps {
@@ -36,6 +38,7 @@ const categoryIcons: Record<FileCategory, React.ComponentType<{ className?: stri
   json: FileCode,
   yaml: FileCode,
   xml: FileCode,
+  typst: FileText,
   text: FileText,
   binary: FileQuestion,
   unknown: FileQuestion,
@@ -124,6 +127,12 @@ export function FilePreview({
       return
     }
 
+    // Don't fetch PDFs as text - they use the URL directly
+    if (fileInfo.category === "pdf") {
+      setIsLoading(false)
+      return
+    }
+
     setIsLoading(true)
     setError(null)
 
@@ -183,6 +192,22 @@ export function FilePreview({
     )
   }
 
+  // PDF files
+  if (fileInfo.category === "pdf") {
+    if (!contentUrl) {
+      return (
+        <div className={cn("h-full", className)}>
+          <ErrorState message="PDF preview requires a URL" />
+        </div>
+      )
+    }
+    return (
+      <div className={cn("h-full", className)}>
+        <PDFViewer src={contentUrl} filename={filename} />
+      </div>
+    )
+  }
+
   // No content available
   if (!loadedContent) {
     return (
@@ -214,6 +239,15 @@ export function FilePreview({
     return (
       <div className={cn("h-full", className)}>
         <CSVViewer content={loadedContent} filename={filename} />
+      </div>
+    )
+  }
+
+  // Typst files
+  if (fileInfo.category === "typst") {
+    return (
+      <div className={cn("h-full", className)}>
+        <TypstViewer content={loadedContent} filename={filename} />
       </div>
     )
   }

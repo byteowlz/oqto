@@ -513,3 +513,157 @@ pub async fn opencode_events(
 
     Ok(Sse::new(stream))
 }
+
+// ============================================================================
+// Sub-Agent Proxy Handlers
+// ============================================================================
+
+/// Proxy HTTP requests to a specific agent's opencode server.
+///
+/// Routes: /session/{session_id}/agent/{agent_id}/code/{*path}
+pub async fn proxy_opencode_agent(
+    State(state): State<AppState>,
+    Path((session_id, agent_id, path)): Path<(String, String, String)>,
+    req: Request<Body>,
+) -> Result<Response, StatusCode> {
+    let session = state
+        .sessions
+        .get_session(&session_id)
+        .await
+        .map_err(|e| {
+            error!("Failed to get session {}: {:?}", session_id, e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    if !session.is_active() {
+        warn!("Attempted to proxy to inactive session {}", session_id);
+        return Err(StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    // Resolve the agent's port
+    let port = state
+        .agents
+        .get_agent_port(&session_id, &agent_id)
+        .await
+        .map_err(|e| {
+            error!("Failed to get agent port for {}/{}: {:?}", session_id, agent_id, e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?
+        .ok_or_else(|| {
+            warn!("Agent {} not found or not running in session {}", agent_id, session_id);
+            StatusCode::NOT_FOUND
+        })?;
+
+    let starting = matches!(session.status, SessionStatus::Starting);
+    proxy_request(
+        state.http_client.clone(),
+        req,
+        port,
+        &path,
+        starting,
+    )
+    .await
+}
+
+/// SSE events proxy for a specific agent's opencode server.
+///
+/// Routes: /session/{session_id}/agent/{agent_id}/code/event
+pub async fn proxy_opencode_agent_events(
+    State(state): State<AppState>,
+    Path((session_id, agent_id)): Path<(String, String)>,
+) -> Result<Response, StatusCode> {
+    let session = state
+        .sessions
+        .get_session(&session_id)
+        .await
+        .map_err(|e| {
+            error!("Failed to get session {}: {:?}", session_id, e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    if !session.is_active() {
+        warn!("Attempted to proxy SSE to inactive session {}", session_id);
+        return Err(StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    // Resolve the agent's port
+    let port = state
+        .agents
+        .get_agent_port(&session_id, &agent_id)
+        .await
+        .map_err(|e| {
+            error!("Failed to get agent port for {}/{}: {:?}", session_id, agent_id, e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?
+        .ok_or_else(|| {
+            warn!("Agent {} not found or not running in session {}", agent_id, session_id);
+            StatusCode::NOT_FOUND
+        })?;
+
+    let target_url = format!("http://localhost:{}/event", port);
+    debug!("Proxying agent SSE events from {} (agent: {})", target_url, agent_id);
+
+    // Create HTTP client for SSE
+    let client = reqwest::Client::new();
+
+    // During startup, opencode may not be ready yet. Retry the initial connect for a short period.
+    let start = tokio::time::Instant::now();
+    let timeout = tokio::time::Duration::from_secs(20);
+    let mut attempts: u32 = 0;
+
+    let response = loop {
+        attempts += 1;
+        match client
+            .get(&target_url)
+            .header("Accept", "text/event-stream")
+            .send()
+            .await
+        {
+            Ok(res) => break res,
+            Err(err) => {
+                // Only retry connection-level failures.
+                if !err.is_connect() || start.elapsed() >= timeout {
+                    error!(
+                        "Failed to connect to agent {} SSE after {} attempts over {:?}: {:?}",
+                        agent_id, attempts, timeout, err
+                    );
+                    return Err(StatusCode::BAD_GATEWAY);
+                }
+
+                let backoff_ms = (attempts.min(20) as u64) * 100;
+                let backoff = tokio::time::Duration::from_millis(backoff_ms);
+                debug!(
+                    "Agent {} SSE not ready yet (attempt {}): {}; retrying in {:?}",
+                    agent_id, attempts, err, backoff
+                );
+                tokio::time::sleep(backoff).await;
+            }
+        }
+    };
+
+    if !response.status().is_success() {
+        error!("Agent {} SSE returned status: {}", agent_id, response.status());
+        return Err(StatusCode::BAD_GATEWAY);
+    }
+
+    // Convert reqwest byte stream to axum body stream
+    let stream = response.bytes_stream();
+    let body = Body::from_stream(stream);
+
+    // Build SSE response with proper headers
+    let response = Response::builder()
+        .status(StatusCode::OK)
+        .header("Content-Type", "text/event-stream")
+        .header("Cache-Control", "no-cache")
+        .header("Connection", "keep-alive")
+        .header("X-Accel-Buffering", "no") // Disable nginx buffering if present
+        .body(body)
+        .map_err(|e| {
+            error!("Failed to build SSE response: {:?}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+
+    Ok(response)
+}

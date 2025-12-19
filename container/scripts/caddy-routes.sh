@@ -108,7 +108,7 @@ list_routes() {
 # Show usage
 usage() {
     cat <<EOF
-Caddy Route Manager for OpenCode Containers
+Caddy Route Manager for Octo Containers
 
 Usage:
     $0 add <container_id> <container_hostname>    Add routes for a container
@@ -116,7 +116,7 @@ Usage:
     $0 list                                       List current configuration
 
 Examples:
-    $0 add user123-session1 opencode-user123-session1
+    $0 add user123-session1 octo-user123-session1
     $0 remove user123-session1
     $0 list
 

@@ -9,3 +9,5 @@
 !container/entrypoint.sh
 !container/skel/.zshrc
 !container/skel/.config/
+!container/skel/.local/
+!container/skel/workspace/

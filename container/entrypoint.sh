@@ -26,8 +26,17 @@ if [ -n "${EAVS_URL}" ]; then
     echo "EAVS proxy URL: ${EAVS_URL}"
 fi
 
-# Initialize home with shipped defaults (only fills in missing files).
+# Initialize home with shipped defaults.
 if [ -d "${SKEL_DIR}" ]; then
+    # Force-update system directories (templates, brands) to get latest versions
+    for sys_dir in ".local/share/tmpltr"; do
+        if [ -d "${SKEL_DIR}/${sys_dir}" ]; then
+            mkdir -p "${HOME_DIR}/${sys_dir}"
+            cp -a "${SKEL_DIR}/${sys_dir}/." "${HOME_DIR}/${sys_dir}/" 2>/dev/null || \
+                echo "Warning: failed to update ${sys_dir}"
+        fi
+    done
+    # No-clobber copy other files to preserve user customizations (.zshrc, etc)
     if ! cp -an "${SKEL_DIR}/." "${HOME_DIR}/" 2>/dev/null; then
         echo "Warning: failed to copy defaults from ${SKEL_DIR} into ${HOME_DIR} (check volume permissions)"
     fi
@@ -37,8 +46,15 @@ fi
 mkdir -p "${XDG_CONFIG_HOME}" "${HOME_DIR}/.local/share" "${HOME_DIR}/.local/state" "${HOME_DIR}/.cache"
 
 # Ensure opencode is available even when /home is mounted over the image layer.
+# Always update the opencode binaries from the seed directory to get the latest version.
 if [ -d "${OPENCODE_SEED_DIR}" ]; then
     mkdir -p "${HOME_DIR}/.opencode"
+    # Force-copy bin directory to ensure we have the latest opencode binary
+    if [ -d "${OPENCODE_SEED_DIR}/bin" ]; then
+        cp -a "${OPENCODE_SEED_DIR}/bin" "${HOME_DIR}/.opencode/" 2>/dev/null || \
+            echo "Warning: failed to update opencode binaries"
+    fi
+    # No-clobber copy other files (config, etc) to preserve user customizations
     if ! cp -an "${OPENCODE_SEED_DIR}/." "${HOME_DIR}/.opencode/" 2>/dev/null; then
         echo "Warning: failed to seed ${HOME_DIR}/.opencode from ${OPENCODE_SEED_DIR} (check volume permissions)"
     fi

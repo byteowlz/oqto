@@ -133,6 +133,39 @@ pub async fn delete_session(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// Resume a stopped session.
+///
+/// This restarts a stopped container, which is faster than creating a new session
+/// because the container already exists with all its state preserved.
+#[instrument(skip(state))]
+pub async fn resume_session(
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+) -> ApiResult<Json<SessionWithUrls>> {
+    let session = state.sessions.resume_session(&session_id).await?;
+    info!(session_id = %session_id, "Resumed session");
+
+    let response = SessionWithUrls::from_session(session, "localhost");
+    Ok(Json(response))
+}
+
+/// Get or create a session.
+///
+/// This is the preferred way to get a session. It will:
+/// 1. Resume an existing stopped session if one exists (fast)
+/// 2. Create a new session if no resumable session exists
+#[instrument(skip(state, request), fields(workspace_path = ?request.workspace_path))]
+pub async fn get_or_create_session(
+    State(state): State<AppState>,
+    Json(request): Json<CreateSessionRequest>,
+) -> ApiResult<Json<SessionWithUrls>> {
+    let session = state.sessions.get_or_create_session(request).await?;
+    info!(session_id = %session.id, status = ?session.status, "Got or created session");
+
+    let response = SessionWithUrls::from_session(session, "localhost");
+    Ok(Json(response))
+}
+
 /// Check if a session has an available image update.
 #[instrument(skip(state))]
 pub async fn check_session_update(
@@ -805,4 +838,100 @@ pub async fn get_invite_code_stats(
     let total = state.invites.count().await?;
     let valid = state.invites.count_valid().await?;
     Ok(Json(InviteCodeStats { total, valid }))
+}
+
+// ============================================================================
+// Agent Management Handlers
+// ============================================================================
+
+use super::super::agent::{
+    AgentInfo, CreateAgentRequest, CreateAgentResponse, StartAgentRequest, StartAgentResponse,
+    StopAgentResponse,
+};
+
+/// List all agents for a session (running + available directories).
+#[instrument(skip(state))]
+pub async fn list_agents(
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+) -> ApiResult<Json<Vec<AgentInfo>>> {
+    let agents = state.agents.list_agents(&session_id).await?;
+    info!(session_id = %session_id, count = agents.len(), "Listed agents");
+    Ok(Json(agents))
+}
+
+/// Get a specific agent.
+#[instrument(skip(state))]
+pub async fn get_agent(
+    State(state): State<AppState>,
+    Path((session_id, agent_id)): Path<(String, String)>,
+) -> ApiResult<Json<AgentInfo>> {
+    state
+        .agents
+        .get_agent(&session_id, &agent_id)
+        .await?
+        .map(Json)
+        .ok_or_else(|| ApiError::not_found(format!("Agent {} not found", agent_id)))
+}
+
+/// Start an agent in a subdirectory.
+#[instrument(skip(state, request), fields(directory = ?request.directory))]
+pub async fn start_agent(
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+    Json(request): Json<StartAgentRequest>,
+) -> ApiResult<(StatusCode, Json<StartAgentResponse>)> {
+    let response = state
+        .agents
+        .start_agent(&session_id, &request.directory)
+        .await?;
+    info!(
+        session_id = %session_id,
+        agent_id = %response.id,
+        port = response.port,
+        "Started agent"
+    );
+    Ok((StatusCode::CREATED, Json(response)))
+}
+
+/// Stop an agent.
+#[instrument(skip(state))]
+pub async fn stop_agent(
+    State(state): State<AppState>,
+    Path((session_id, agent_id)): Path<(String, String)>,
+) -> ApiResult<Json<StopAgentResponse>> {
+    let response = state.agents.stop_agent(&session_id, &agent_id).await?;
+    info!(session_id = %session_id, agent_id = %agent_id, stopped = response.stopped, "Stopped agent");
+    Ok(Json(response))
+}
+
+/// Rediscover agents after control plane restart.
+#[instrument(skip(state))]
+pub async fn rediscover_agents(
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+) -> ApiResult<StatusCode> {
+    state.agents.rediscover_agents(&session_id).await?;
+    info!(session_id = %session_id, "Rediscovered agents");
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Create a new agent directory with AGENTS.md file.
+#[instrument(skip(state, request), fields(name = ?request.name))]
+pub async fn create_agent(
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+    Json(request): Json<CreateAgentRequest>,
+) -> ApiResult<(StatusCode, Json<CreateAgentResponse>)> {
+    let response = state
+        .agents
+        .create_agent(&session_id, &request.name, &request.description)
+        .await?;
+    info!(
+        session_id = %session_id,
+        agent_id = %response.id,
+        directory = %response.directory,
+        "Created agent"
+    );
+    Ok((StatusCode::CREATED, Json(response)))
 }

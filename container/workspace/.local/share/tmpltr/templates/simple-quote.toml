@@ -1,0 +1,120 @@
+# Simple Quote Content File
+# This file contains the editable content for a professional services quote.
+# Edit the values below - the structure is defined by the template.
+#
+# Usage: tmpltr compile simple-quote.toml [--brand <brand-id>]
+#
+# When --brand is specified, company information (name, address, email, phone, logo)
+# is pulled from the brand configuration. The [quote.company] section below serves
+# as a fallback when no brand is provided.
+#
+# $schema = "./simple-quote-content.schema.json"
+
+[meta]
+template = "simple-quote.typ"
+version = "1.1"
+
+[quote]
+number = "Q-2025-0042"
+title = "Website Redesign and Development Project"
+date = "2025-12-09"
+valid_until = "2026-01-09"
+prepared_by = "Jane Smith"
+total = "$12,500.00"
+payment_terms = "50% due upon acceptance, 50% upon project completion. Net 30 terms apply."
+
+# Company information (optional if using --brand flag)
+# These values are used as fallbacks when no brand is specified.
+[quote.company]
+name = "Acme Web Solutions"
+address = "123 Innovation Drive"
+city = "Tech Valley, CA 94000"
+email = "hello@acmewebsolutions.com"
+phone = "+1 (555) 123-4567"
+
+[quote.client]
+name = "Mountain Coffee Roasters"
+address = "456 Brew Street"
+city = "Portland, OR 97201"
+contact = "Mr. Johnson"
+email = "johnson@mountaincoffee.com"
+
+[[quote.line_items]]
+description = "Discovery & Strategy Phase"
+amount = "$2,000.00"
+
+[[quote.line_items]]
+description = "UI/UX Design (5 pages)"
+amount = "$3,500.00"
+
+[[quote.line_items]]
+description = "Frontend Development"
+amount = "$4,000.00"
+
+[[quote.line_items]]
+description = "CMS Integration & Training"
+amount = "$2,000.00"
+
+[[quote.line_items]]
+description = "Quality Assurance & Testing"
+amount = "$1,000.00"
+
+# =============================================================================
+# CONTENT BLOCKS
+# Each block below is independently editable.
+# Blocks support Typst markup for formatting.
+# =============================================================================
+
+[blocks.description]
+title = "Project Description"
+content = """
+Mountain Coffee Roasters is seeking a complete redesign of their existing website to better showcase their artisanal coffee products and improve the online customer experience. The new website will feature a modern, mobile-first design with e-commerce capabilities and a content management system for easy updates.
+"""
+
+[blocks.scope]
+title = "Scope of Work"
+content = """
+The project includes the following services:
+
+- *Discovery Phase:* Stakeholder interviews, competitor analysis, and requirements gathering
+- *Design:* Custom UI/UX design for 5 core pages (Home, About, Products, Blog, Contact)
+- *Development:* Responsive frontend development using modern web technologies
+- *E-commerce:* Integration with Shopify for product sales and inventory management
+- *CMS:* Content management system setup with training for staff
+- *QA:* Cross-browser and device testing
+"""
+
+[blocks.deliverables]
+title = "Deliverables"
+content = """
+Upon project completion, you will receive:
+
++ Fully responsive website with 5 custom-designed pages
++ E-commerce storefront with product catalog
++ Content management system with admin access
++ SEO optimization for all pages
++ Training documentation and video tutorials
++ 30 days of post-launch support
+"""
+
+[blocks.timeline]
+title = "Timeline"
+type = "table"
+columns = ["Phase", "Duration", "Milestone"]
+rows = [
+    ["Discovery & Strategy", "Week 1-2", "Project kickoff, requirements finalized"],
+    ["Design", "Week 3-4", "Design mockups approved"],
+    ["Development", "Week 5-8", "Development complete"],
+    ["Testing & Launch", "Week 9-10", "Website goes live"],
+]
+
+[blocks.terms]
+title = "Terms & Conditions"
+content = """
+- All prices are in USD and exclude applicable taxes
+- Changes to project scope may result in additional charges
+- Client is responsible for providing all necessary content and assets
+- A signed acceptance of this quote constitutes agreement to proceed
+- Cancellation after project start may incur fees for work completed
+- Source code and design files will be transferred upon final payment
+"""

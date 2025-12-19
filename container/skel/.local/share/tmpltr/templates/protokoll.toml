@@ -1,0 +1,159 @@
+# Meeting Protocol Content File
+#
+# This file demonstrates the content structure for the protokoll template.
+# The template is generic and works with any meeting protocol.
+
+[meta]
+template = "protokoll.typ"
+template_id = "protokoll"
+template_version = "1.0.0"
+
+# =============================================================================
+# Brand Configuration (optional - can also use --brand flag)
+# =============================================================================
+[brand]
+# logo = "path/to/logo.svg"  # Uncomment and set path to your logo
+logo-width = "4cm"
+
+[brand.fonts]
+body = "Arial"
+
+[brand.colors]
+primary = "#000000"
+accent = "#2563eb"
+text = "#000000"
+
+# =============================================================================
+# Labels (for localization)
+# Change these to customize headings for different languages
+# =============================================================================
+[labels]
+default-title = "Besprechungstitel"
+default-subtitle = "Protokoll"
+date = "Datum"
+time = "Zeit"
+location = "Ort"
+author = "Protokoll"
+attendees = "Teilnehmer"
+absent = "abwesend"
+agenda = "Tagesordnung"
+decisions = "Beschlüsse"
+actions = "Massnahmen"
+due = "bis"
+action-summary = "Offene Punkte"
+topic = "Thema"
+task = "Aufgabe"
+responsible = "Verantwortlich"
+due-date = "Fällig"
+
+# Document language (affects hyphenation, date formats)
+lang = "de"
+
+# =============================================================================
+# Meeting Metadata
+# =============================================================================
+[meeting]
+title = "Projektmeeting: Death Star Phase I"
+subtitle = "Protokoll"
+date = "15. Januar 2026"
+time = "10:00 - 12:00"
+location = "Konferenzraum Executor, Imperial Center"
+author = "Lt. Commander Piett"
+
+# =============================================================================
+# Attendees
+#
+# Structure:
+#   name   - Full name
+#   role   - Role/position (optional)
+#   absent - Set to true if person was absent (optional, default: false)
+# =============================================================================
+[[attendees]]
+name = "Darth Vader"
+role = "Projektleiter"
+
+[[attendees]]
+name = "Grand Moff Tarkin"
+role = "Auftraggeber"
+
+[[attendees]]
+name = "Admiral Motti"
+role = "Flottenkoordination"
+
+[[attendees]]
+name = "General Tagge"
+role = "Bodentruppen"
+
+[[attendees]]
+name = "Dr. Bevel Lemelisk"
+role = "Chefingenieur"
+
+[[attendees]]
+name = "Imperator Palpatine"
+role = "Oberste Führung"
+absent = true
+
+# =============================================================================
+# Agenda Items
+#
+# Structure:
+#   title      - Topic title
+#   discussion - Discussion notes/summary (optional)
+#   decisions  - Array of decisions made (optional)
+#   actions    - Array of action items (optional)
+#     - task        : Description of the task
+#     - responsible : Person responsible
+#     - due         : Due date
+# =============================================================================
+[[items]]
+title = "Status Superlaser-Entwicklung"
+discussion = """
+Dr. Lemelisk berichtete über den aktuellen Stand der Superlaser-Entwicklung. Die Kyber-Kristall-Beschaffung liegt im Zeitplan. Die Fokussierungsoptik zeigt jedoch Probleme bei der Energiebündelung.
+"""
+decisions = [
+  "Zusätzliche Ressourcen für Optik-Team bewilligt",
+  "Testfeürung auf Jedha genehmigt",
+]
+
+[[items.actions]]
+task = "Optimierung der Fokussierungsoptik"
+responsible = "Dr. Lemelisk"
+due = "01.03.2026"
+
+[[items.actions]]
+task = "Kyber-Kristall-Lieferung koordinieren"
+responsible = "Admiral Motti"
+due = "15.02.2026"
+
+[[items]]
+title = "Konstruktionsfortschritt Hauptstruktur"
+discussion = """
+Die Hauptstruktur ist zu 45% fertiggestellt. Der Äquatorgraben bereitet Schwierigkeiten aufgrund der komplexen Geometrie. Lord Vader äusserte Bedenken bezüglich der Thermischen Abzugsschächte.
+"""
+decisions = [
+  "Thermische Abzugsschächte werden wie geplant gebaut",
+  "Zusätzliche Verteidigungstürme im Grabenbereich",
+]
+
+[[items.actions]]
+task = "Sicherheitsanalyse Abzugsschächte"
+responsible = "General Tagge"
+due = "28.02.2026"
+
+[[items]]
+title = "Personalplanung und Rekrutierung"
+discussion = """
+Die Rekrutierung von 1.5 Millionen Besatzungsmitgliedern laüft planmässig. TIE-Piloten werden priorisiert ausgebildet.
+"""
+decisions = ["Rekrutierungsziel auf 1.7 Millionen erhöhen (Reserve)"]
+
+[[items.actions]]
+task = "Ausbildungsplan für TIE-Piloten erstellen"
+responsible = "Admiral Motti"
+due = "01.02.2026"
+
+[[items]]
+title = "Nächste Schritte"
+discussion = """
+Das nächste Meeting findet in zwei Wochen statt. Bis dahin sollen alle offenen Punkte bearbeitet werden.
+"""
