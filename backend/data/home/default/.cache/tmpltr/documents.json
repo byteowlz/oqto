@@ -9,110 +9,6 @@
     },
     "blocks": [
       {
-        "id": "quote.angebot_nr",
-        "path": "quote.angebot_nr",
-        "title": null,
-        "kind": "field",
-        "format": null,
-        "block_type": null
-      },
-      {
-        "id": "quote.projekt.bindefrist",
-        "path": "quote.projekt.bindefrist",
-        "title": null,
-        "kind": "field",
-        "format": null,
-        "block_type": null
-      },
-      {
-        "id": "brand.contact.phone",
-        "path": "brand.contact.phone",
-        "title": null,
-        "kind": "field",
-        "format": null,
-        "block_type": null
-      },
-      {
-        "id": "blocks.vorgehensweise",
-        "path": "blocks.vorgehensweise",
-        "title": "Vorgehensweise zur Reparatur",
-        "kind": "block",
-        "format": null,
-        "block_type": null
-      },
-      {
-        "id": "brand.title-logo-width",
-        "path": "brand.title-logo-width",
-        "title": null,
-        "kind": "field",
-        "format": null,
-        "block_type": null
-      },
-      {
-        "id": "brand.contact.street",
-        "path": "brand.contact.street",
-        "title": null,
-        "kind": "field",
-        "format": null,
-        "block_type": null
-      },
-      {
-        "id": "brand.contact.fax",
-        "path": "brand.contact.fax",
-        "title": null,
-        "kind": "field",
-        "format": null,
-        "block_type": null
-      },
-      {
-        "id": "blocks.zusammenarbeit",
-        "path": "blocks.zusammenarbeit",
-        "title": "Art der Zusammenarbeit",
-        "kind": "block",
-        "format": null,
-        "block_type": null
-      },
-      {
-        "id": "blocks.zielsetzung",
-        "path": "blocks.zielsetzung",
-        "title": "Zielsetzung",
-        "kind": "block",
-        "format": null,
-        "block_type": null
-      },
-      {
-        "id": "quote.kunde.name",
-        "path": "quote.kunde.name",
-        "title": null,
-        "kind": "field",
-        "format": null,
-        "block_type": null
-      },
-      {
-        "id": "quote.projekt.verguetung",
-        "path": "quote.projekt.verguetung",
-        "title": null,
-        "kind": "field",
-        "format": null,
-        "block_type": null
-      },
-      {
-        "id": "blocks.ausgangssituation",
-        "path": "blocks.ausgangssituation",
-        "title": "Ausgangssituation",
-        "kind": "block",
-        "format": null,
-        "block_type": null
-      },
-      {
-        "id": "quote.kunde.strasse",
-        "path": "quote.kunde.strasse",
-        "title": null,
-        "kind": "field",
-        "format": null,
-        "block_type": null
-      },
-      {
         "id": "$schema",
         "path": "$schema",
         "title": null,
@@ -129,48 +25,64 @@
         "block_type": null
       },
       {
-        "id": "quote.angebot_titel",
-        "path": "quote.angebot_titel",
+        "id": "blocks.zeitplan",
+        "path": "blocks.zeitplan",
+        "title": "Zeitplan",
+        "kind": "block",
+        "format": null,
+        "block_type": "table"
+      },
+      {
+        "id": "quote.projekt.datum",
+        "path": "quote.projekt.datum",
         "title": null,
         "kind": "field",
         "format": null,
         "block_type": null
       },
       {
-        "id": "quote.projekt.anrede",
-        "path": "quote.projekt.anrede",
+        "id": "brand.contact.people",
+        "path": "brand.contact.people",
         "title": null,
         "kind": "field",
         "format": null,
         "block_type": null
       },
       {
-        "id": "quote.projekt.laufzeit",
-        "path": "quote.projekt.laufzeit",
+        "id": "brand.contact.company",
+        "path": "brand.contact.company",
         "title": null,
         "kind": "field",
         "format": null,
         "block_type": null
       },
       {
-        "id": "brand.contact.city",
-        "path": "brand.contact.city",
+        "id": "brand.contact.website",
+        "path": "brand.contact.website",
         "title": null,
         "kind": "field",
         "format": null,
         "block_type": null
       },
       {
-        "id": "quote.projekt.projekt_start",
-        "path": "quote.projekt.projekt_start",
+        "id": "brand.contact.phone",
+        "path": "brand.contact.phone",
         "title": null,
         "kind": "field",
         "format": null,
         "block_type": null
       },
       {
-        "id": "quote.projekt.ansprechpartner",
-        "path": "quote.projekt.ansprechpartner",
+        "id": "brand.contact.fax",
+        "path": "brand.contact.fax",
+        "title": null,
+        "kind": "field",
+        "format": null,
+        "block_type": null
+      },
+      {
+        "id": "quote.kunde.strasse",
+        "path": "quote.kunde.strasse",
         "title": null,
         "kind": "field",
         "format": null,
@@ -179,22 +91,6 @@
       {
         "id": "quote.zahlungsplan",
         "path": "quote.zahlungsplan",
-        "title": null,
-        "kind": "field",
-        "format": null,
-        "block_type": null
-      },
-      {
-        "id": "brand.contact.legal-form",
-        "path": "brand.contact.legal-form",
-        "title": null,
-        "kind": "field",
-        "format": null,
-        "block_type": null
-      },
-      {
-        "id": "quote.projekt.datum",
-        "path": "quote.projekt.datum",
         "title": null,
         "kind": "field",
         "format": null,
@@ -217,50 +113,26 @@
         "block_type": null
       },
       {
-        "id": "brand.contact.postal-code",
-        "path": "brand.contact.postal-code",
+        "id": "quote.angebot_titel",
+        "path": "quote.angebot_titel",
         "title": null,
         "kind": "field",
         "format": null,
         "block_type": null
       },
       {
-        "id": "brand.contact.website",
-        "path": "brand.contact.website",
+        "id": "quote.angebot_nr",
+        "path": "quote.angebot_nr",
         "title": null,
         "kind": "field",
         "format": null,
         "block_type": null
       },
       {
-        "id": "brand.contact.company",
-        "path": "brand.contact.company",
-        "title": null,
-        "kind": "field",
-        "format": null,
-        "block_type": null
-      },
-      {
-        "id": "blocks.zeitplan",
-        "path": "blocks.zeitplan",
-        "title": "Zeitplan",
+        "id": "blocks.zielsetzung",
+        "path": "blocks.zielsetzung",
+        "title": "Zielsetzung",
         "kind": "block",
-        "format": null,
-        "block_type": "table"
-      },
-      {
-        "id": "brand.fonts.body",
-        "path": "brand.fonts.body",
-        "title": null,
-        "kind": "field",
-        "format": null,
-        "block_type": null
-      },
-      {
-        "id": "brand.logo-width",
-        "path": "brand.logo-width",
-        "title": null,
-        "kind": "field",
         "format": null,
         "block_type": null
       },
@@ -273,14 +145,330 @@
         "block_type": null
       },
       {
-        "id": "brand.contact.people",
-        "path": "brand.contact.people",
+        "id": "quote.projekt.bindefrist",
+        "path": "quote.projekt.bindefrist",
+        "title": null,
+        "kind": "field",
+        "format": null,
+        "block_type": null
+      },
+      {
+        "id": "blocks.zusammenarbeit",
+        "path": "blocks.zusammenarbeit",
+        "title": "Art der Zusammenarbeit",
+        "kind": "block",
+        "format": null,
+        "block_type": null
+      },
+      {
+        "id": "quote.projekt.verguetung",
+        "path": "quote.projekt.verguetung",
+        "title": null,
+        "kind": "field",
+        "format": null,
+        "block_type": null
+      },
+      {
+        "id": "brand.contact.postal-code",
+        "path": "brand.contact.postal-code",
+        "title": null,
+        "kind": "field",
+        "format": null,
+        "block_type": null
+      },
+      {
+        "id": "quote.projekt.projekt_start",
+        "path": "quote.projekt.projekt_start",
+        "title": null,
+        "kind": "field",
+        "format": null,
+        "block_type": null
+      },
+      {
+        "id": "blocks.ausgangssituation",
+        "path": "blocks.ausgangssituation",
+        "title": "Ausgangssituation",
+        "kind": "block",
+        "format": null,
+        "block_type": null
+      },
+      {
+        "id": "brand.logo-width",
+        "path": "brand.logo-width",
+        "title": null,
+        "kind": "field",
+        "format": null,
+        "block_type": null
+      },
+      {
+        "id": "quote.kunde.name",
+        "path": "quote.kunde.name",
+        "title": null,
+        "kind": "field",
+        "format": null,
+        "block_type": null
+      },
+      {
+        "id": "brand.contact.street",
+        "path": "brand.contact.street",
+        "title": null,
+        "kind": "field",
+        "format": null,
+        "block_type": null
+      },
+      {
+        "id": "brand.contact.legal-form",
+        "path": "brand.contact.legal-form",
+        "title": null,
+        "kind": "field",
+        "format": null,
+        "block_type": null
+      },
+      {
+        "id": "brand.title-logo-width",
+        "path": "brand.title-logo-width",
+        "title": null,
+        "kind": "field",
+        "format": null,
+        "block_type": null
+      },
+      {
+        "id": "quote.projekt.ansprechpartner",
+        "path": "quote.projekt.ansprechpartner",
+        "title": null,
+        "kind": "field",
+        "format": null,
+        "block_type": null
+      },
+      {
+        "id": "brand.contact.city",
+        "path": "brand.contact.city",
+        "title": null,
+        "kind": "field",
+        "format": null,
+        "block_type": null
+      },
+      {
+        "id": "blocks.vorgehensweise",
+        "path": "blocks.vorgehensweise",
+        "title": "Vorgehensweise zur Reparatur",
+        "kind": "block",
+        "format": null,
+        "block_type": null
+      },
+      {
+        "id": "quote.projekt.anrede",
+        "path": "quote.projekt.anrede",
+        "title": null,
+        "kind": "field",
+        "format": null,
+        "block_type": null
+      },
+      {
+        "id": "quote.projekt.laufzeit",
+        "path": "quote.projekt.laufzeit",
+        "title": null,
+        "kind": "field",
+        "format": null,
+        "block_type": null
+      },
+      {
+        "id": "brand.fonts.body",
+        "path": "brand.fonts.body",
         "title": null,
         "kind": "field",
         "format": null,
         "block_type": null
       }
     ],
-    "last_used_at": "2025-12-19T00:24:47.449372337Z"
+    "last_used_at": "2025-12-19T05:53:25.946450550Z"
+  },
+  {
+    "file": "/home/dev/workspace/lord-donshot-meeting.toml",
+    "meta": {
+      "template_id": "meeting-agenda",
+      "template_version": "1.0.0",
+      "title": null,
+      "quote_number": null
+    },
+    "blocks": [
+      {
+        "id": "blocks.notes",
+        "path": "blocks.notes",
+        "title": "Notes",
+        "kind": "block",
+        "format": "markdown",
+        "block_type": null
+      },
+      {
+        "id": "blocks.main_topics",
+        "path": "blocks.main_topics",
+        "title": "Main Discussion Topics",
+        "kind": "block",
+        "format": "markdown",
+        "block_type": null
+      },
+      {
+        "id": "brand.logo",
+        "path": "brand.logo",
+        "title": null,
+        "kind": "field",
+        "format": null,
+        "block_type": null
+      },
+      {
+        "id": "meeting.title",
+        "path": "meeting.title",
+        "title": null,
+        "kind": "field",
+        "format": null,
+        "block_type": null
+      },
+      {
+        "id": "blocks.materials",
+        "path": "blocks.materials",
+        "title": "Required Materials",
+        "kind": "block",
+        "format": "markdown",
+        "block_type": null
+      },
+      {
+        "id": "blocks.wrap_up",
+        "path": "blocks.wrap_up",
+        "title": "Wrap-up & Next Meeting",
+        "kind": "block",
+        "format": "markdown",
+        "block_type": null
+      },
+      {
+        "id": "meeting.date",
+        "path": "meeting.date",
+        "title": null,
+        "kind": "field",
+        "format": null,
+        "block_type": null
+      },
+      {
+        "id": "brand.colors.primary",
+        "path": "brand.colors.primary",
+        "title": null,
+        "kind": "field",
+        "format": null,
+        "block_type": null
+      },
+      {
+        "id": "blocks.previous_actions",
+        "path": "blocks.previous_actions",
+        "title": "Previous Action Items Review",
+        "kind": "block",
+        "format": "markdown",
+        "block_type": null
+      },
+      {
+        "id": "meeting.location",
+        "path": "meeting.location",
+        "title": null,
+        "kind": "field",
+        "format": null,
+        "block_type": null
+      },
+      {
+        "id": "meeting.duration",
+        "path": "meeting.duration",
+        "title": null,
+        "kind": "field",
+        "format": null,
+        "block_type": null
+      },
+      {
+        "id": "blocks.decisions",
+        "path": "blocks.decisions",
+        "title": "Decision Points",
+        "kind": "block",
+        "format": "markdown",
+        "block_type": null
+      },
+      {
+        "id": "brand.colors.muted",
+        "path": "brand.colors.muted",
+        "title": null,
+        "kind": "field",
+        "format": null,
+        "block_type": null
+      },
+      {
+        "id": "blocks.preparation",
+        "path": "blocks.preparation",
+        "title": "Pre-meeting Preparation",
+        "kind": "block",
+        "format": "markdown",
+        "block_type": null
+      },
+      {
+        "id": "blocks.opening",
+        "path": "blocks.opening",
+        "title": "Opening & Welcome",
+        "kind": "block",
+        "format": "markdown",
+        "block_type": null
+      },
+      {
+        "id": "meeting.attendees",
+        "path": "meeting.attendees",
+        "title": null,
+        "kind": "field",
+        "format": null,
+        "block_type": null
+      },
+      {
+        "id": "meeting.organizer.name",
+        "path": "meeting.organizer.name",
+        "title": null,
+        "kind": "field",
+        "format": null,
+        "block_type": null
+      },
+      {
+        "id": "brand.colors.text",
+        "path": "brand.colors.text",
+        "title": null,
+        "kind": "field",
+        "format": null,
+        "block_type": null
+      },
+      {
+        "id": "blocks.next_steps",
+        "path": "blocks.next_steps",
+        "title": "Next Steps & Action Items",
+        "kind": "block",
+        "format": "markdown",
+        "block_type": null
+      },
+      {
+        "id": "meeting.time",
+        "path": "meeting.time",
+        "title": null,
+        "kind": "field",
+        "format": null,
+        "block_type": null
+      },
+      {
+        "id": "meeting.objectives",
+        "path": "meeting.objectives",
+        "title": null,
+        "kind": "field",
+        "format": null,
+        "block_type": null
+      },
+      {
+        "id": "brand.colors.accent",
+        "path": "brand.colors.accent",
+        "title": null,
+        "kind": "field",
+        "format": null,
+        "block_type": null
+      }
+    ],
+    "last_used_at": "2025-12-19T07:08:08.238489430Z"
   }
 ]

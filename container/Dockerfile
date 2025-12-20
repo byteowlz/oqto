@@ -98,6 +98,19 @@ RUN chmod +x /usr/local/bin/tmpltr
 # Install typst (required for tmpltr)
 RUN pacman -S --noconfirm typst && pacman -Scc --noconfirm
 
+# Install fonts for Typst PDF rendering
+# Templates use Helvetica Neue (proprietary) - Liberation Sans is a metric-compatible replacement
+# Inter is used by some templates and is available in Arch repos
+RUN pacman -S --noconfirm \
+    noto-fonts \
+    noto-fonts-emoji \
+    ttf-dejavu \
+    ttf-liberation \
+    ttf-roboto \
+    gnu-free-fonts \
+    inter-font \
+    && pacman -Scc --noconfirm
+
 # Create non-root user
 RUN groupadd --gid ${USER_GID} ${USERNAME} && \
   useradd --uid ${USER_UID} --gid ${USER_GID} -m ${USERNAME} && \
@@ -146,6 +159,7 @@ ENV PATH="/usr/local/bin:/home/${USERNAME}/.opencode/bin:/home/${USERNAME}/.loca
 # Copy dotfiles from skel into the image for non-mounted dev use.
 COPY --chown=${USERNAME}:${USERNAME} container/skel/.zshrc /home/${USERNAME}/.zshrc
 COPY --chown=${USERNAME}:${USERNAME} container/skel/.config /home/${USERNAME}/.config
+COPY --chown=${USERNAME}:${USERNAME} container/skel/.local /home/${USERNAME}/.local
 
 # Copy entrypoint script to /usr/local/bin
 USER root

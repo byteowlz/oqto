@@ -1,0 +1,26 @@
+{
+  "id": "prt_b356f7c7a001u4h6nQV8MiU9cm",
+  "sessionID": "ses_4ca934448ffeo2qTgOHd47qewZ",
+  "messageID": "msg_b356f5984001UrmABYzAr4y1Eo",
+  "type": "tool",
+  "callID": "call_6f9fab5b47bc4e898b8235ec",
+  "tool": "bash",
+  "state": {
+    "status": "completed",
+    "input": {
+      "command": "tmpltr brands list",
+      "description": "List available brands"
+    },
+    "output": "No brands found\n",
+    "title": "List available brands",
+    "metadata": {
+      "output": "No brands found\n",
+      "exit": 0,
+      "description": "List available brands"
+    },
+    "time": {
+      "start": 1766128057473,
+      "end": 1766128057478
+    }
+  }
+}

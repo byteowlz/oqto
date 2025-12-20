@@ -117,7 +117,7 @@ impl Default for SessionConfig {
     fn default() -> Self {
         Self {
             workspace_path: "/tmp/workspace".to_string(),
-            image: "opencode-dev:latest".to_string(),
+            image: "octo-dev:latest".to_string(),
             base_port: 41820,
             env: Default::default(),
         }
@@ -130,7 +130,7 @@ pub struct CreateSessionRequest {
     /// Path to the workspace directory.
     #[serde(default)]
     pub workspace_path: Option<String>,
-    /// Container image to use (optional, defaults to opencode-dev).
+    /// Container image to use (optional, defaults to octo-dev).
     #[serde(default)]
     pub image: Option<String>,
     /// Environment variables to inject.

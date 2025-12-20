@@ -1,0 +1,17 @@
+{
+  "id": "msg_b356e5e480012fnWo1DJNC1o80",
+  "sessionID": "ses_4ca934448ffeo2qTgOHd47qewZ",
+  "role": "user",
+  "time": {
+    "created": 1766127984200
+  },
+  "summary": {
+    "title": "Editing only toml files",
+    "diffs": []
+  },
+  "agent": "build",
+  "model": {
+    "providerID": "opencode",
+    "modelID": "big-pickle"
+  }
+}

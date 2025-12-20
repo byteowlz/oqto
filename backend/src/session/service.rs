@@ -16,10 +16,10 @@ use super::models::{CreateSessionRequest, Session, SessionStatus};
 use super::repository::SessionRepository;
 
 /// Prefix used for container names managed by this orchestrator.
-const CONTAINER_NAME_PREFIX: &str = "opencode-";
+const CONTAINER_NAME_PREFIX: &str = "octo-";
 
 /// Default container image.
-const DEFAULT_IMAGE: &str = "opencode-dev:latest";
+const DEFAULT_IMAGE: &str = "octo-dev:latest";
 
 /// Default base port.
 const DEFAULT_BASE_PORT: i64 = 41820;
@@ -478,7 +478,7 @@ impl SessionService {
             .permissions(permissions)
             .metadata(serde_json::json!({
                 "session_id": session_id,
-                "created_by": "workspace-backend"
+                "created_by": "octo"
             }));
 
         let response = eavs.create_key(request).await?;

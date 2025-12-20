@@ -105,6 +105,30 @@ RUN cd /tmp && \
     mv typst-*/typst /usr/local/bin/ && \
     rm -rf typst-*
 
+# Install fonts for Typst PDF rendering
+# Templates use Helvetica Neue (proprietary) - Liberation Sans is a metric-compatible replacement
+# Inter is installed manually as it's not in Fedora repos
+RUN dnf install -y \
+    google-noto-sans-fonts \
+    google-noto-serif-fonts \
+    google-noto-mono-fonts \
+    google-noto-emoji-fonts \
+    dejavu-sans-fonts \
+    dejavu-serif-fonts \
+    dejavu-sans-mono-fonts \
+    liberation-fonts \
+    google-roboto-fonts \
+    && dnf clean all
+
+# Install Inter font (not in Fedora repos)
+RUN cd /tmp && \
+    curl -sLO https://github.com/rsms/inter/releases/download/v4.0/Inter-4.0.zip && \
+    unzip -q Inter-4.0.zip -d inter && \
+    mkdir -p /usr/share/fonts/inter && \
+    cp inter/Inter*.ttf /usr/share/fonts/inter/ 2>/dev/null || cp inter/extras/ttf/*.ttf /usr/share/fonts/inter/ && \
+    fc-cache -f && \
+    rm -rf inter Inter-4.0.zip
+
 # Install starship prompt
 RUN curl -sS https://starship.rs/install.sh | sh -s -- -y
 
@@ -166,6 +190,7 @@ ENV PATH="/usr/local/bin:/home/${USERNAME}/.opencode/bin:/home/${USERNAME}/.loca
 # Copy dotfiles from skel into the image for non-mounted dev use.
 COPY --chown=${USERNAME}:${USERNAME} container/skel/.zshrc /home/${USERNAME}/.zshrc
 COPY --chown=${USERNAME}:${USERNAME} container/skel/.config /home/${USERNAME}/.config
+COPY --chown=${USERNAME}:${USERNAME} container/skel/.local /home/${USERNAME}/.local
 
 # Set zsh as default shell for user
 USER root

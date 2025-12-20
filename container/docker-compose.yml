@@ -11,10 +11,10 @@
 
 networks:
   # Public network - Caddy connects here and exposes ports
-  opencode-public:
+  octo-public:
     driver: bridge
   # Internal network - containers communicate without host exposure
-  opencode-internal:
+  octo-internal:
     driver: bridge
     internal: true
 
@@ -24,7 +24,7 @@ services:
   # Backend creates/revokes keys via admin API
   eavs:
     image: ghcr.io/eavs/eavs:latest  # TODO: Replace with actual image
-    container_name: opencode-eavs
+    container_name: octo-eavs
     restart: unless-stopped
     ports:
       - "41800:3000"  # EAVS API (accessible from host and containers via host.docker.internal)
@@ -40,8 +40,8 @@ services:
     volumes:
       - eavs_data:/data
     networks:
-      - opencode-public
-      - opencode-internal
+      - octo-public
+      - octo-internal
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:3000/health"]
       interval: 10s
@@ -51,7 +51,7 @@ services:
   # Caddy reverse proxy - single entry point for all containers
   caddy:
     image: caddy:2-alpine
-    container_name: opencode-caddy
+    container_name: octo-caddy
     restart: unless-stopped
     ports:
       - "41800:80"    # HTTP
@@ -63,8 +63,8 @@ services:
       - caddy_config:/config
     command: ["caddy", "run", "--config", "/etc/caddy/caddy.json"]
     networks:
-      - opencode-public
-      - opencode-internal
+      - octo-public
+      - octo-internal
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost/health"]
       interval: 10s
@@ -73,7 +73,7 @@ services:
 
   # Template container - use this as a reference for spawning new containers
   # In production, the Rust backend will spawn these dynamically
-  opencode-template:
+  octo-template:
     build:
       context: .
       dockerfile: Dockerfile
@@ -81,12 +81,12 @@ services:
         USERNAME: dev
         USER_UID: 1000
         USER_GID: 1000
-    image: opencode-dev:x86_64
+    image: octo-dev:x86_64
     # Container is not started by default - it's a template
     profiles:
       - template
     networks:
-      - opencode-internal
+      - octo-internal
     volumes:
       - ./workspace:/home/dev/workspace
     stdin_open: true

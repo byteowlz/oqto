@@ -1,0 +1,26 @@
+{
+  "id": "prt_b352af535001sYrhrSgmh66LbN",
+  "sessionID": "ses_4cc0a562afferLVqU83ypeYU2Y",
+  "messageID": "msg_b352ad1a4001R2yOkTtVJU45Kr",
+  "type": "tool",
+  "callID": "call_b571376490b84be6b64a1701",
+  "tool": "bash",
+  "state": {
+    "status": "completed",
+    "input": {
+      "command": "tmpltr compile angebot.toml --brand iem -o angebot.pdf",
+      "description": "Try to compile with IEM brand"
+    },
+    "output": "error: brand error: brand 'iem' not found\n",
+    "title": "Try to compile with IEM brand",
+    "metadata": {
+      "output": "error: brand error: brand 'iem' not found\n",
+      "exit": 1,
+      "description": "Try to compile with IEM brand"
+    },
+    "time": {
+      "start": 1766123566394,
+      "end": 1766123566403
+    }
+  }
+}

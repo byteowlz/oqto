@@ -1,0 +1,26 @@
+{
+  "id": "prt_b356daf8c001wOeXe21bRB7m5h",
+  "sessionID": "ses_4ca934448ffeo2qTgOHd47qewZ",
+  "messageID": "msg_b356d8570001masKYaunNqaqLK",
+  "type": "tool",
+  "callID": "call_d847bbea2a3841c2bc4bc9cf",
+  "tool": "write",
+  "state": {
+    "status": "completed",
+    "input": {
+      "content": "[meta]\ntemplate = \"meeting-agenda.typ\"\ntemplate_id = \"meeting-agenda\"\ntemplate_version = \"1.0.0\"\n\n[meeting]\ntitle = \"Meeting with Lord Donshot\"\ndate = \"[Date]\"\ntime = \"[Time]\"\nlocation = \"[Location/Virtual]\"\nduration = \"[Duration]\"\n\n[meeting.organizer]\nname = \"[Your Name]\"\n\n# Attendees\n[[meeting.attendees]]\nname = \"[Your Name]\"\nrole = \"Organizer\"\n\n[[meeting.attendees]]\nname = \"Lord Donshot\"\nrole = \"Key Stakeholder\"\n\n# Objectives\n[[meeting.objectives]]\ndescription = \"[Primary objective 1]\"\n\n[[meeting.objectives]]\ndescription = \"[Primary objective 2]\"\n\n# Agenda Items\n[blocks.opening]\ntitle = \"Opening & Welcome\"\nduration = \"5 min\"\nformat = \"markdown\"\ncontent = \"\"\"\n- Introductions\n- Meeting purpose confirmation\n\"\"\"\n\n[blocks.previous_actions]\ntitle = \"Previous Action Items Review\"\nduration = \"10 min\"\nformat = \"markdown\"\ncontent = \"\"\"\n- Follow-up on outstanding items\n- Status updates\n\"\"\"\n\n[blocks.main_topics]\ntitle = \"Main Discussion Topics\"\nduration = \"[Time allocation]\"\nformat = \"markdown\"\ncontent = \"\"\"\n### Topic 1\n**Background:** [Background information]\n**Key points to address:** [Key points]\n**Desired outcomes:** [Desired outcomes]\n\n### Topic 2\n**Background:** [Background information]\n**Key points to address:** [Key points]\n**Desired outcomes:** [Desired outcomes]\n\n### Additional Topics\n[Add more topics as needed]\n\"\"\"\n\n[blocks.decisions]\ntitle = \"Decision Points\"\nduration = \"15 min\"\nformat = \"markdown\"\ncontent = \"\"\"\n- [Decision 1]\n- [Decision 2]\n- [Other decisions required]\n\"\"\"\n\n[blocks.next_steps]\ntitle = \"Next Steps & Action Items\"\nduration = \"10 min\"\nformat = \"markdown\"\ncontent = \"\"\"\n- Review action items\n- Assign responsibilities\n- Set deadlines\n\"\"\"\n\n[blocks.wrap_up]\ntitle = \"Wrap-up & Next Meeting\"\nduration = \"5 min\"\nformat = \"markdown\"\ncontent = \"\"\"\n- Summary of decisions\n- Confirm next meeting date\n- Open questions\n\"\"\"\n\n[blocks.preparation]\ntitle = \"Pre-meeting Preparation\"\nformat = \"markdown\"\ncontent = \"\"\"\n- [Preparation item 1]\n- [Preparation item 2]\n\"\"\"\n\n[blocks.materials]\ntitle = \"Required Materials\"\nformat = \"markdown\"\ncontent = \"\"\"\n- [Document/material 1]\n- [Document/material 2]\n\"\"\"\n\n[blocks.notes]\ntitle = \"Notes\"\nformat = \"markdown\"\ncontent = \"\"\"\n- [Special considerations]\n- [Parking lot items for future discussion]\n\"\"\"",
+      "filePath": "/home/dev/workspace/lord-donshot-meeting.toml"
+    },
+    "output": "",
+    "title": "home/dev/workspace/lord-donshot-meeting.toml",
+    "metadata": {
+      "diagnostics": {},
+      "filepath": "/home/dev/workspace/lord-donshot-meeting.toml",
+      "exists": false
+    },
+    "time": {
+      "start": 1766127939475,
+      "end": 1766127939483
+    }
+  }
+}

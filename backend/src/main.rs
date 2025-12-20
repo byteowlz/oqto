@@ -25,7 +25,7 @@ mod session;
 mod user;
 mod wordlist;
 
-const APP_NAME: &str = env!("CARGO_PKG_NAME");
+const APP_NAME: &str = "octo";
 
 fn main() {
     if let Err(err) = try_main() {
@@ -65,7 +65,7 @@ fn try_main() -> Result<()> {
 #[command(
     author,
     version,
-    about = "Backend server for the AI Agent Workspace Platform.",
+    about = "Octo - AI Agent Workspace Platform server.",
     propagate_version = true
 )]
 struct Cli {
@@ -165,7 +165,7 @@ struct ServeCommand {
     #[arg(short, long, default_value = "8080")]
     port: u16,
     /// Default container image
-    #[arg(long, default_value = "opencode-dev:latest")]
+    #[arg(long, default_value = "octo-dev:latest")]
     image: String,
     /// Base port for session allocation
     #[arg(long, default_value = "41820")]
@@ -293,7 +293,7 @@ impl RuntimeContext {
         };
 
         let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-            EnvFilter::new(format!("workspace_backend={level},tower_http={level}"))
+            EnvFilter::new(format!("octo={level},tower_http={level}"))
         });
 
         // Use JSON output if --json flag is set, otherwise pretty format
@@ -541,7 +541,7 @@ impl Default for ContainerRuntimeConfig {
         Self {
             runtime: None,
             binary: None,
-            default_image: "opencode-dev:latest".to_string(),
+            default_image: "octo-dev:latest".to_string(),
             base_port: 41820,
             user_data_path: None,
             skel_path: None,
@@ -814,7 +814,7 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     let container_runtime = std::sync::Arc::new(container_runtime);
 
     // Session config: CLI args override config file values
-    let default_image = if cmd.image != "opencode-dev:latest" {
+    let default_image = if cmd.image != "octo-dev:latest" {
         cmd.image.clone()
     } else {
         ctx.config.container.default_image.clone()
@@ -957,6 +957,9 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     // Initialize invite code repository
     let invite_repo = invite::InviteCodeRepository::new(database.pool().clone());
 
+    // Clone session_service before creating state for shutdown handler
+    let session_service_for_shutdown = session_service.clone();
+    
     // Create app state
     let state = api::AppState::new(session_service, agent_service, user_service, invite_repo, auth_state);
 
@@ -973,8 +976,70 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     let listener = TcpListener::bind(addr)
         .await
         .context("binding to address")?;
-    axum::serve(listener, app).await.context("running server")?;
 
+    // Set up graceful shutdown
+    let shutdown_signal = async move {
+        let ctrl_c = async {
+            tokio::signal::ctrl_c()
+                .await
+                .expect("failed to install Ctrl+C handler");
+        };
+
+        #[cfg(unix)]
+        let terminate = async {
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                .expect("failed to install signal handler")
+                .recv()
+                .await;
+        };
+
+        #[cfg(not(unix))]
+        let terminate = std::future::pending::<()>();
+
+        tokio::select! {
+            _ = ctrl_c => {},
+            _ = terminate => {},
+        }
+
+        info!("Shutdown signal received, stopping containers...");
+        
+        // Stop all running containers gracefully
+        if let Err(e) = shutdown_all_sessions(&session_service_for_shutdown).await {
+            warn!("Error during shutdown: {:?}", e);
+        }
+        
+        info!("Shutdown complete");
+    };
+
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal)
+        .await
+        .context("running server")?;
+
+    Ok(())
+}
+
+/// Stop all running sessions during shutdown.
+async fn shutdown_all_sessions(session_service: &session::SessionService) -> Result<()> {
+    let sessions = session_service.list_sessions().await?;
+    let running_count = sessions.iter().filter(|s| s.is_active()).count();
+    
+    if running_count == 0 {
+        info!("No active sessions to stop");
+        return Ok(());
+    }
+    
+    info!("Stopping {} active session(s)...", running_count);
+    
+    for session in sessions {
+        if session.is_active() {
+            match session_service.stop_session(&session.id).await {
+                Ok(()) => info!("Stopped session {}", session.id),
+                Err(e) => warn!("Failed to stop session {}: {:?}", session.id, e),
+            }
+        }
+    }
+    
     Ok(())
 }
 
