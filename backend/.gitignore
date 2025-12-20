@@ -3,6 +3,9 @@
 .DS_Store
 .vscode/
 
+# Runtime data (user home directories, sessions database)
+/data/
+
 # ---- ignr (detected: macos,rust) @ 2025-12-08 ----
 
 # === macos ===
