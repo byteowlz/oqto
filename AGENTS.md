@@ -1,6 +1,22 @@
-## tooling
+## Build/Lint/Test Commands
 
-if you need to interact with a website in the browser. You can find the scripts in broser-tools/
+| Component | Build | Lint | Test | Single Test |
+|-----------|-------|------|------|-------------|
+| **backend/** | `cargo build` | `cargo clippy && cargo fmt --check` | `cargo test` | `cargo test test_name` |
+| **fileserver/** | `cargo build` | `cargo clippy && cargo fmt --check` | `cargo test` | `cargo test test_name` |
+| **frontend/** | `bun run build` | `bun run lint` | `bun run test` | `bun run test tests/file.test.ts` or `bun run test -t "pattern"` |
+
+## Code Style
+
+**Rust**: Use `anyhow::Result` with `.context()` for errors. Group imports: std, external crates, internal modules. Run `cargo fmt` and `cargo check` after changes.
+
+**TypeScript**: Use `@/` import alias for internal modules. Functional components with named exports. Vitest for tests with `describe`/`it` blocks.
+
+**General**: No emojis in code/docs/commits. Use `bun` for JS/TS, `uv` for Python. Config files at `$XDG_CONFIG_HOME/<app>/config.toml` with JSON schema.
+
+## Tooling
+
+Browser automation scripts available in `browser-tools/`. Store AI planning docs in `history/` directory.
 
 ## Issue Tracking with bd (beads)
 
