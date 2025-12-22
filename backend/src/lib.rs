@@ -9,6 +9,7 @@ pub mod container;
 pub mod db;
 pub mod eavs;
 pub mod invite;
+pub mod local;
 pub mod session;
 pub mod storage;
 pub mod user;

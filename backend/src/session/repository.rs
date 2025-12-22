@@ -25,8 +25,8 @@ impl SessionRepository {
                 id, readable_id, container_id, container_name, user_id, workspace_path, image, image_digest,
                 opencode_port, fileserver_port, ttyd_port, eavs_port,
                 eavs_key_id, eavs_key_hash, eavs_virtual_key,
-                status, created_at, started_at, stopped_at, error_message
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                status, runtime_mode, created_at, started_at, stopped_at, error_message
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&session.id)
@@ -45,6 +45,7 @@ impl SessionRepository {
         .bind(&session.eavs_key_hash)
         .bind(&session.eavs_virtual_key)
         .bind(session.status.to_string())
+        .bind(session.runtime_mode.to_string())
         .bind(&session.created_at)
         .bind(&session.started_at)
         .bind(&session.stopped_at)
@@ -63,7 +64,7 @@ impl SessionRepository {
             SELECT id, readable_id, container_id, container_name, user_id, workspace_path, image, image_digest,
                    opencode_port, fileserver_port, ttyd_port, eavs_port,
                    eavs_key_id, eavs_key_hash, eavs_virtual_key,
-                   status, created_at, started_at, stopped_at, error_message
+                   status, runtime_mode, created_at, started_at, stopped_at, error_message
             FROM sessions
             WHERE id = ?
             "#,
@@ -84,7 +85,7 @@ impl SessionRepository {
             SELECT id, readable_id, container_id, container_name, user_id, workspace_path, image, image_digest,
                    opencode_port, fileserver_port, ttyd_port, eavs_port,
                    eavs_key_id, eavs_key_hash, eavs_virtual_key,
-                   status, created_at, started_at, stopped_at, error_message
+                   status, runtime_mode, created_at, started_at, stopped_at, error_message
             FROM sessions
             WHERE container_id = ?
             "#,
@@ -104,7 +105,7 @@ impl SessionRepository {
             SELECT id, readable_id, container_id, container_name, user_id, workspace_path, image, image_digest,
                    opencode_port, fileserver_port, ttyd_port, eavs_port,
                    eavs_key_id, eavs_key_hash, eavs_virtual_key,
-                   status, created_at, started_at, stopped_at, error_message
+                   status, runtime_mode, created_at, started_at, stopped_at, error_message
             FROM sessions
             ORDER BY created_at DESC
             "#,
@@ -124,7 +125,7 @@ impl SessionRepository {
             SELECT id, readable_id, container_id, container_name, user_id, workspace_path, image, image_digest,
                    opencode_port, fileserver_port, ttyd_port, eavs_port,
                    eavs_key_id, eavs_key_hash, eavs_virtual_key,
-                   status, created_at, started_at, stopped_at, error_message
+                   status, runtime_mode, created_at, started_at, stopped_at, error_message
             FROM sessions
             WHERE status IN ('pending', 'starting', 'running')
             ORDER BY created_at DESC
@@ -144,7 +145,7 @@ impl SessionRepository {
             SELECT id, readable_id, container_id, container_name, user_id, workspace_path, image, image_digest,
                    opencode_port, fileserver_port, ttyd_port, eavs_port,
                    eavs_key_id, eavs_key_hash, eavs_virtual_key,
-                   status, created_at, started_at, stopped_at, error_message
+                   status, runtime_mode, created_at, started_at, stopped_at, error_message
             FROM sessions
             WHERE user_id = ? AND status = 'running'
             ORDER BY created_at DESC
@@ -166,7 +167,7 @@ impl SessionRepository {
             SELECT id, readable_id, container_id, container_name, user_id, workspace_path, image, image_digest,
                    opencode_port, fileserver_port, ttyd_port, eavs_port,
                    eavs_key_id, eavs_key_hash, eavs_virtual_key,
-                   status, created_at, started_at, stopped_at, error_message
+                   status, runtime_mode, created_at, started_at, stopped_at, error_message
             FROM sessions
             WHERE user_id = ?
             ORDER BY created_at DESC
@@ -268,14 +269,14 @@ impl SessionRepository {
 
     /// Find a stopped session for a user that can be resumed.
     ///
-    /// Returns the most recently stopped session for the user that still has a container.
+    /// Returns the most recently stopped session for the user that still has a container/PIDs.
     pub async fn find_resumable_session(&self, user_id: &str) -> Result<Option<Session>> {
         let session = sqlx::query_as::<_, Session>(
             r#"
             SELECT id, readable_id, container_id, container_name, user_id, workspace_path, image, image_digest,
                    opencode_port, fileserver_port, ttyd_port, eavs_port,
                    eavs_key_id, eavs_key_hash, eavs_virtual_key,
-                   status, created_at, started_at, stopped_at, error_message
+                   status, runtime_mode, created_at, started_at, stopped_at, error_message
             FROM sessions
             WHERE user_id = ? AND status = 'stopped' AND container_id IS NOT NULL
             ORDER BY stopped_at DESC
@@ -299,7 +300,7 @@ impl SessionRepository {
             SELECT id, readable_id, container_id, container_name, user_id, workspace_path, image, image_digest,
                    opencode_port, fileserver_port, ttyd_port, eavs_port,
                    eavs_key_id, eavs_key_hash, eavs_virtual_key,
-                   status, created_at, started_at, stopped_at, error_message
+                   status, runtime_mode, created_at, started_at, stopped_at, error_message
             FROM sessions
             WHERE status = 'stopped' 
               AND container_id IS NOT NULL

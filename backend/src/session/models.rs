@@ -51,6 +51,47 @@ impl std::str::FromStr for SessionStatus {
     }
 }
 
+/// Runtime mode for the session.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, sqlx::Type)]
+#[serde(rename_all = "lowercase")]
+#[sqlx(rename_all = "lowercase")]
+pub enum RuntimeMode {
+    /// Container-based runtime (Docker/Podman).
+    #[default]
+    Container,
+    /// Local runtime (native processes).
+    Local,
+}
+
+impl std::fmt::Display for RuntimeMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RuntimeMode::Container => write!(f, "container"),
+            RuntimeMode::Local => write!(f, "local"),
+        }
+    }
+}
+
+impl std::str::FromStr for RuntimeMode {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "container" => Ok(RuntimeMode::Container),
+            "local" => Ok(RuntimeMode::Local),
+            _ => Err(format!("unknown runtime mode: {}", s)),
+        }
+    }
+}
+
+impl TryFrom<String> for RuntimeMode {
+    type Error = String;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        value.parse()
+    }
+}
+
 /// A container session.
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct Session {
@@ -58,15 +99,15 @@ pub struct Session {
     pub id: String,
     /// Human-readable session ID (e.g., "cold-lamp").
     pub readable_id: Option<String>,
-    /// Container ID (once started).
+    /// Container ID (once started) or comma-separated PIDs for local mode.
     pub container_id: Option<String>,
-    /// Container name.
+    /// Container name (or session identifier for local mode).
     pub container_name: String,
     /// User ID who owns this session.
     pub user_id: String,
     /// Path to the workspace directory.
     pub workspace_path: String,
-    /// Container image to use.
+    /// Container image to use (ignored in local mode).
     pub image: String,
     /// Image digest (sha256) when the container was created.
     pub image_digest: Option<String>,
@@ -88,6 +129,10 @@ pub struct Session {
     /// Current session status.
     #[sqlx(try_from = "String")]
     pub status: SessionStatus,
+    /// Runtime mode (container or local).
+    #[sqlx(try_from = "String", default)]
+    #[serde(default)]
+    pub runtime_mode: RuntimeMode,
     /// When the session was created.
     pub created_at: String,
     /// When the container started.

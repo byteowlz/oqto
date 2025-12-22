@@ -5,14 +5,16 @@ use async_trait::async_trait;
 use chrono::Utc;
 use log::{debug, error, info, warn};
 use std::collections::HashSet;
+use std::path::PathBuf;
 use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::container::{ContainerConfig, ContainerRuntimeApi};
 use crate::eavs::{CreateKeyRequest, EavsApi, KeyPermissions};
+use crate::local::{LocalRuntime, LocalRuntimeConfig};
 use crate::wordlist;
 
-use super::models::{CreateSessionRequest, Session, SessionStatus};
+use super::models::{CreateSessionRequest, RuntimeMode, Session, SessionStatus};
 use super::repository::SessionRepository;
 
 /// Prefix used for container names managed by this orchestrator.
@@ -88,11 +90,12 @@ impl SessionReadiness for HttpSessionReadiness {
 /// Session service configuration.
 #[derive(Debug, Clone)]
 pub struct SessionServiceConfig {
-    /// Default container image to use.
+    /// Default container image to use (container mode only).
     pub default_image: String,
     /// Base port for allocating session ports.
     pub base_port: i64,
-    /// Base directory for user home directories. Each user gets {base}/home/{user_id}/.
+    /// Base directory for user home directories (container mode).
+    /// Each user gets {base}/home/{user_id}/.
     pub user_data_path: String,
     /// Path to skeleton directory to copy into new user homes. If None, empty dirs are created.
     pub skel_path: Option<String>,
@@ -104,6 +107,13 @@ pub struct SessionServiceConfig {
     pub default_session_rpm: Option<u32>,
     /// URL for containers to reach EAVS (e.g., http://host.docker.internal:41800).
     pub eavs_container_url: Option<String>,
+    /// Runtime mode (container or local).
+    pub runtime_mode: RuntimeMode,
+    /// Local runtime configuration (used when runtime_mode is Local).
+    pub local_config: Option<LocalRuntimeConfig>,
+    /// Enable single-user mode. When true, the platform operates with a single user
+    /// and uses simplified paths without user_id subdirectories.
+    pub single_user: bool,
 }
 
 impl Default for SessionServiceConfig {
@@ -117,6 +127,9 @@ impl Default for SessionServiceConfig {
             default_session_budget_usd: Some(10.0),
             default_session_rpm: Some(60),
             eavs_container_url: None,
+            runtime_mode: RuntimeMode::Container,
+            local_config: None,
+            single_user: false,
         }
     }
 }
@@ -125,14 +138,17 @@ impl Default for SessionServiceConfig {
 #[derive(Clone)]
 pub struct SessionService {
     repo: SessionRepository,
-    runtime: Arc<dyn ContainerRuntimeApi>,
+    /// Container runtime (used when runtime_mode is Container).
+    container_runtime: Option<Arc<dyn ContainerRuntimeApi>>,
+    /// Local runtime (used when runtime_mode is Local).
+    local_runtime: Option<Arc<LocalRuntime>>,
     eavs: Option<Arc<dyn EavsApi>>,
     readiness: Arc<dyn SessionReadiness>,
     config: SessionServiceConfig,
 }
 
 impl SessionService {
-    /// Create a new session service.
+    /// Create a new session service with container runtime.
     pub fn new(
         repo: SessionRepository,
         runtime: Arc<dyn ContainerRuntimeApi>,
@@ -140,7 +156,8 @@ impl SessionService {
     ) -> Self {
         Self {
             repo,
-            runtime,
+            container_runtime: Some(runtime),
+            local_runtime: None,
             eavs: None,
             readiness: Arc::new(HttpSessionReadiness::default()),
             config,
@@ -156,11 +173,61 @@ impl SessionService {
     ) -> Self {
         Self {
             repo,
-            runtime,
+            container_runtime: Some(runtime),
+            local_runtime: None,
             eavs: Some(eavs),
             readiness: Arc::new(HttpSessionReadiness::default()),
             config,
         }
+    }
+
+    /// Create a new session service with local runtime (no containers).
+    pub fn with_local_runtime(
+        repo: SessionRepository,
+        local_runtime: LocalRuntime,
+        config: SessionServiceConfig,
+    ) -> Self {
+        Self {
+            repo,
+            container_runtime: None,
+            local_runtime: Some(Arc::new(local_runtime)),
+            eavs: None,
+            readiness: Arc::new(HttpSessionReadiness::default()),
+            config,
+        }
+    }
+
+    /// Create a new session service with local runtime and EAVS integration.
+    pub fn with_local_runtime_and_eavs(
+        repo: SessionRepository,
+        local_runtime: LocalRuntime,
+        eavs: Arc<dyn EavsApi>,
+        config: SessionServiceConfig,
+    ) -> Self {
+        Self {
+            repo,
+            container_runtime: None,
+            local_runtime: Some(Arc::new(local_runtime)),
+            eavs: Some(eavs),
+            readiness: Arc::new(HttpSessionReadiness::default()),
+            config,
+        }
+    }
+
+    /// Get the runtime mode.
+    #[allow(dead_code)]
+    pub fn runtime_mode(&self) -> RuntimeMode {
+        self.config.runtime_mode
+    }
+
+    /// Get the container runtime (if available).
+    fn container_runtime(&self) -> Option<&Arc<dyn ContainerRuntimeApi>> {
+        self.container_runtime.as_ref()
+    }
+
+    /// Get the local runtime (if available).
+    fn local_runtime(&self) -> Option<&Arc<LocalRuntime>> {
+        self.local_runtime.as_ref()
     }
 
     /// Maximum number of retries for port allocation conflicts.
@@ -194,35 +261,54 @@ impl SessionService {
 
         // Check for a resumable stopped session
         if let Some(stopped_session) = self.repo.find_resumable_session(user_id).await? {
-            // Verify the container still exists
-            if let Some(ref container_id) = stopped_session.container_id {
-                match self.runtime.container_state_status(container_id).await {
-                    Ok(Some(status)) if status == "exited" || status == "stopped" => {
-                        info!(
-                            "Found resumable session {} for user {}, resuming...",
-                            stopped_session.id, user_id
-                        );
-                        return self.resume_session(&stopped_session.id).await;
-                    }
-                    Ok(Some(status)) => {
-                        debug!(
-                            "Stopped session {} has container in unexpected state: {}",
-                            stopped_session.id, status
-                        );
-                    }
-                    Ok(None) => {
-                        debug!(
-                            "Container {} for stopped session {} no longer exists",
-                            container_id, stopped_session.id
-                        );
-                    }
-                    Err(e) => {
-                        warn!(
-                            "Failed to check container state for session {}: {:?}",
-                            stopped_session.id, e
-                        );
+            // Verify the session can still be resumed
+            let can_resume = match stopped_session.runtime_mode {
+                RuntimeMode::Container => {
+                    if let Some(ref container_id) = stopped_session.container_id {
+                        if let Some(runtime) = self.container_runtime() {
+                            match runtime.container_state_status(container_id).await {
+                                Ok(Some(status)) if status == "exited" || status == "stopped" => true,
+                                Ok(Some(status)) => {
+                                    debug!(
+                                        "Stopped session {} has container in unexpected state: {}",
+                                        stopped_session.id, status
+                                    );
+                                    false
+                                }
+                                Ok(None) => {
+                                    debug!(
+                                        "Container {} for stopped session {} no longer exists",
+                                        container_id, stopped_session.id
+                                    );
+                                    false
+                                }
+                                Err(e) => {
+                                    warn!(
+                                        "Failed to check container state for session {}: {:?}",
+                                        stopped_session.id, e
+                                    );
+                                    false
+                                }
+                            }
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
                     }
                 }
+                RuntimeMode::Local => {
+                    // Local mode sessions can always be resumed (processes are respawned)
+                    true
+                }
+            };
+
+            if can_resume {
+                info!(
+                    "Found resumable session {} for user {}, resuming...",
+                    stopped_session.id, user_id
+                );
+                return self.resume_session(&stopped_session.id).await;
             }
         }
 
@@ -244,13 +330,21 @@ impl SessionService {
             .image
             .unwrap_or_else(|| self.config.default_image.clone());
 
-        // Get current image digest for tracking upgrades (best-effort).
-        let image_digest = match self.runtime.get_image_digest(&image).await {
-            Ok(digest) => digest,
-            Err(e) => {
-                warn!("Failed to get image digest for {}: {:?}", image, e);
+        // Get current image digest for tracking upgrades (best-effort, container mode only).
+        let image_digest = if self.config.runtime_mode == RuntimeMode::Container {
+            if let Some(runtime) = self.container_runtime() {
+                match runtime.get_image_digest(&image).await {
+                    Ok(digest) => digest,
+                    Err(e) => {
+                        warn!("Failed to get image digest for {}: {:?}", image, e);
+                        None
+                    }
+                }
+            } else {
                 None
             }
+        } else {
+            None // Local mode doesn't track image digests
         };
 
         // Determine user home path - either provided or create per-user home directory.
@@ -261,9 +355,32 @@ impl SessionService {
             path
         } else {
             let user_id = &self.config.default_user_id;
-            let user_home = std::path::Path::new(&self.config.user_data_path)
-                .join("home")
-                .join(user_id);
+
+            // Determine workspace path based on runtime mode and single_user setting
+            let user_home = if self.config.runtime_mode == RuntimeMode::Local {
+                if let Some(ref local_config) = self.config.local_config {
+                    if local_config.single_user {
+                        // Single-user mode: use workspace_dir directly (no {user_id} substitution)
+                        local_config.workspace_base()
+                    } else {
+                        // Multi-user mode: expand {user_id} placeholder
+                        local_config.workspace_for_user(user_id)
+                    }
+                } else {
+                    // Fallback to default local workspace pattern
+                    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+                    if self.config.single_user {
+                        std::path::PathBuf::from(format!("{}/octo", home))
+                    } else {
+                        std::path::PathBuf::from(format!("{}/octo/{}", home, user_id))
+                    }
+                }
+            } else {
+                // Container mode: use user_data_path/home/{user_id}
+                std::path::Path::new(&self.config.user_data_path)
+                    .join("home")
+                    .join(user_id)
+            };
 
             if !user_home.exists() {
                 // If skel_path is configured, copy it; otherwise create empty dirs
@@ -399,6 +516,7 @@ impl SessionService {
             eavs_key_hash,
             eavs_virtual_key: None,
             status: SessionStatus::Pending,
+            runtime_mode: self.config.runtime_mode,
             created_at: Utc::now().to_rfc3339(),
             started_at: None,
             stopped_at: None,
@@ -486,13 +604,39 @@ impl SessionService {
         Ok((response.key_id, response.key_hash, response.key))
     }
 
-    /// Start a container for the given session.
+    /// Start services for the given session.
+    ///
+    /// For container mode: creates and starts a Docker/Podman container.
+    /// For local mode: spawns native processes for opencode, fileserver, and ttyd.
     async fn start_container(
         &self,
         session: &Session,
         eavs_virtual_key: Option<&str>,
     ) -> Result<()> {
-        debug!("Starting container for session {}", session.id);
+        debug!(
+            "Starting session {} in {:?} mode",
+            session.id, session.runtime_mode
+        );
+
+        match session.runtime_mode {
+            RuntimeMode::Container => {
+                self.start_container_mode(session, eavs_virtual_key).await
+            }
+            RuntimeMode::Local => {
+                self.start_local_mode(session, eavs_virtual_key).await
+            }
+        }
+    }
+
+    /// Start a container for the given session (container mode).
+    async fn start_container_mode(
+        &self,
+        session: &Session,
+        eavs_virtual_key: Option<&str>,
+    ) -> Result<()> {
+        let runtime = self
+            .container_runtime()
+            .context("container runtime not available")?;
 
         // Build container config
         // Mount the full user home directory so dotfiles and tool state persist across restarts.
@@ -516,8 +660,7 @@ impl SessionService {
         }
 
         // Create and start the container
-        let container_id = self
-            .runtime
+        let container_id = runtime
             .create_container(&config)
             .await
             .context("creating container")?;
@@ -540,13 +683,13 @@ impl SessionService {
             .await
         {
             // Best-effort cleanup: stop/remove the container, then surface the error.
-            if let Err(stop_err) = self.runtime.stop_container(&container_id, Some(10)).await {
+            if let Err(stop_err) = runtime.stop_container(&container_id, Some(10)).await {
                 warn!(
                     "Failed to stop container {} after readiness failure: {:?}",
                     container_id, stop_err
                 );
             }
-            if let Err(rm_err) = self.runtime.remove_container(&container_id, true).await {
+            if let Err(rm_err) = runtime.remove_container(&container_id, true).await {
                 warn!(
                     "Failed to remove container {} after readiness failure: {:?}",
                     container_id, rm_err
@@ -561,11 +704,80 @@ impl SessionService {
         Ok(())
     }
 
-    /// Stop a session and its container.
+    /// Start local processes for the given session (local mode).
+    async fn start_local_mode(
+        &self,
+        session: &Session,
+        eavs_virtual_key: Option<&str>,
+    ) -> Result<()> {
+        let local_runtime = self
+            .local_runtime()
+            .context("local runtime not available")?;
+
+        // Build environment variables for the processes
+        let mut env = std::collections::HashMap::new();
+        if let Some(ref eavs_url) = self.config.eavs_container_url {
+            env.insert("EAVS_URL".to_string(), eavs_url.clone());
+        }
+        if let Some(virtual_key) = eavs_virtual_key {
+            env.insert("EAVS_VIRTUAL_KEY".to_string(), virtual_key.to_string());
+            // Also set API keys for opencode
+            env.insert("ANTHROPIC_API_KEY".to_string(), virtual_key.to_string());
+            env.insert("OPENAI_API_KEY".to_string(), virtual_key.to_string());
+        }
+
+        let workspace_path = PathBuf::from(&session.workspace_path);
+
+        // Start all services
+        let pids = local_runtime
+            .start_session(
+                &session.id,
+                &session.user_id,
+                &workspace_path,
+                session.opencode_port as u16,
+                session.fileserver_port as u16,
+                session.ttyd_port as u16,
+                env,
+            )
+            .await
+            .context("starting local services")?;
+
+        info!(
+            "Started local services for session {} with PIDs: {}",
+            session.id, pids
+        );
+
+        // Update session with PIDs (stored as container_id for compatibility)
+        self.repo.set_container_id(&session.id, &pids).await?;
+
+        // Wait for core services to become reachable
+        if let Err(e) = self
+            .readiness
+            .wait_for_session_services(session.opencode_port as u16, session.ttyd_port as u16)
+            .await
+        {
+            // Best-effort cleanup: stop the processes
+            if let Err(stop_err) = local_runtime.stop_session(&session.id).await {
+                warn!(
+                    "Failed to stop local services after readiness failure: {:?}",
+                    stop_err
+                );
+            }
+            return Err(e);
+        }
+
+        // Mark as running
+        self.repo.mark_running(&session.id).await?;
+
+        Ok(())
+    }
+
+    /// Stop a session and its services.
     ///
-    /// This only stops the container, it does NOT remove it. The container can be
-    /// restarted later with `resume_session()`. To fully remove the container,
-    /// use `delete_session()`.
+    /// For container mode: stops the container but does NOT remove it.
+    /// For local mode: kills the processes.
+    /// The session can be restarted later with `resume_session()`.
+    /// To fully remove the session, use `delete_session()`.
     pub async fn stop_session(&self, session_id: &str) -> Result<()> {
         let session = self
             .repo
@@ -581,7 +793,7 @@ impl SessionService {
             return Ok(());
         }
 
-        info!("Stopping session {}", session_id);
+        info!("Stopping session {} ({:?} mode)", session_id, session.runtime_mode);
         self.repo
             .update_status(session_id, SessionStatus::Stopping)
             .await?;
@@ -589,24 +801,38 @@ impl SessionService {
         // Note: We do NOT revoke EAVS key on stop anymore - only on delete.
         // This allows the session to be resumed without needing a new key.
 
-        // Stop the container if it exists (but do NOT remove it)
-        if let Some(ref container_id) = session.container_id {
-            if let Err(e) = self.runtime.stop_container(container_id, Some(10)).await {
-                warn!("Failed to stop container {}: {:?}", container_id, e);
+        match session.runtime_mode {
+            RuntimeMode::Container => {
+                // Stop the container if it exists (but do NOT remove it)
+                if let Some(ref container_id) = session.container_id {
+                    if let Some(runtime) = self.container_runtime() {
+                        if let Err(e) = runtime.stop_container(container_id, Some(10)).await {
+                            warn!("Failed to stop container {}: {:?}", container_id, e);
+                        }
+                    }
+                    // Container is NOT removed - it can be restarted with resume_session()
+                }
             }
-            // Container is NOT removed - it can be restarted with resume_session()
+            RuntimeMode::Local => {
+                // Stop the local processes
+                if let Some(local_runtime) = self.local_runtime() {
+                    if let Err(e) = local_runtime.stop_session(session_id).await {
+                        warn!("Failed to stop local processes for {}: {:?}", session_id, e);
+                    }
+                }
+            }
         }
 
         self.repo.mark_stopped(session_id).await?;
-        info!("Session {} stopped (container preserved for resume)", session_id);
+        info!("Session {} stopped (preserved for resume)", session_id);
 
         Ok(())
     }
 
-    /// Resume a stopped session by restarting its container.
+    /// Resume a stopped session by restarting its services.
     ///
-    /// This is faster than creating a new session because the container already exists
-    /// with all its state (opencode sessions, MCP servers, etc.).
+    /// For container mode: restarts the stopped container.
+    /// For local mode: respawns the processes (workspace data is preserved).
     pub async fn resume_session(&self, session_id: &str) -> Result<Session> {
         let session = self
             .repo
@@ -622,55 +848,126 @@ impl SessionService {
             );
         }
 
-        // Check if image has been updated - if so, upgrade instead of resume
-        if let Ok(Some(new_digest)) = self.check_for_image_update(session_id).await {
-            info!(
-                "Image update detected for session {} (new digest: {}), upgrading instead of resuming",
-                session_id, new_digest
-            );
-            return self.upgrade_session(session_id).await;
+        // Check if image has been updated - if so, upgrade instead of resume (container mode only)
+        if session.runtime_mode == RuntimeMode::Container {
+            if let Ok(Some(new_digest)) = self.check_for_image_update(session_id).await {
+                info!(
+                    "Image update detected for session {} (new digest: {}), upgrading instead of resuming",
+                    session_id, new_digest
+                );
+                return self.upgrade_session(session_id).await;
+            }
         }
 
-        let container_id = session
-            .container_id
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("session has no container to resume"))?;
-
-        info!("Resuming session {} (container {})", session_id, container_id);
+        info!("Resuming session {} ({:?} mode)", session_id, session.runtime_mode);
 
         // Mark as starting
         self.repo
             .update_status(session_id, SessionStatus::Starting)
             .await?;
 
-        // Start the existing container
-        if let Err(e) = self.runtime.start_container(container_id).await {
-            error!(
-                "Failed to start container {} for session {}: {:?}",
-                container_id, session_id, e
-            );
-            self.repo
-                .mark_failed(session_id, &format!("resume failed: {}", e))
-                .await?;
-            return Ok(self.repo.get(session_id).await?.unwrap_or(session));
-        }
+        match session.runtime_mode {
+            RuntimeMode::Container => {
+                let container_id = session
+                    .container_id
+                    .as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("session has no container to resume"))?;
 
-        // Wait for services to become ready
-        if let Err(e) = self
-            .readiness
-            .wait_for_session_services(session.opencode_port as u16, session.ttyd_port as u16)
-            .await
-        {
-            error!(
-                "Services not ready after resume for session {}: {:?}",
-                session_id, e
-            );
-            // Stop the container again since services didn't come up
-            let _ = self.runtime.stop_container(container_id, Some(5)).await;
-            self.repo
-                .mark_failed(session_id, &format!("services not ready after resume: {}", e))
-                .await?;
-            return Ok(self.repo.get(session_id).await?.unwrap_or(session));
+                let runtime = self
+                    .container_runtime()
+                    .context("container runtime not available")?;
+
+                // Start the existing container
+                if let Err(e) = runtime.start_container(container_id).await {
+                    error!(
+                        "Failed to start container {} for session {}: {:?}",
+                        container_id, session_id, e
+                    );
+                    self.repo
+                        .mark_failed(session_id, &format!("resume failed: {}", e))
+                        .await?;
+                    return Ok(self.repo.get(session_id).await?.unwrap_or(session));
+                }
+
+                // Wait for services to become ready
+                if let Err(e) = self
+                    .readiness
+                    .wait_for_session_services(session.opencode_port as u16, session.ttyd_port as u16)
+                    .await
+                {
+                    error!(
+                        "Services not ready after resume for session {}: {:?}",
+                        session_id, e
+                    );
+                    // Stop the container again since services didn't come up
+                    let _ = runtime.stop_container(container_id, Some(5)).await;
+                    self.repo
+                        .mark_failed(session_id, &format!("services not ready after resume: {}", e))
+                        .await?;
+                    return Ok(self.repo.get(session_id).await?.unwrap_or(session));
+                }
+            }
+            RuntimeMode::Local => {
+                let local_runtime = self
+                    .local_runtime()
+                    .context("local runtime not available")?;
+
+                // Build environment variables
+                let mut env = std::collections::HashMap::new();
+                if let Some(ref eavs_url) = self.config.eavs_container_url {
+                    env.insert("EAVS_URL".to_string(), eavs_url.clone());
+                }
+                // Note: EAVS virtual key is not stored, so we can't restore it for local mode resume
+                // The user may need to provide it again through environment
+
+                let workspace_path = PathBuf::from(&session.workspace_path);
+
+                // Respawn the processes (local mode doesn't preserve process state)
+                match local_runtime
+                    .resume_session(
+                        session_id,
+                        &session.user_id,
+                        &workspace_path,
+                        session.opencode_port as u16,
+                        session.fileserver_port as u16,
+                        session.ttyd_port as u16,
+                        env,
+                    )
+                    .await
+                {
+                    Ok(pids) => {
+                        // Update with new PIDs
+                        self.repo.set_container_id(session_id, &pids).await?;
+                    }
+                    Err(e) => {
+                        error!(
+                            "Failed to resume local services for session {}: {:?}",
+                            session_id, e
+                        );
+                        self.repo
+                            .mark_failed(session_id, &format!("resume failed: {}", e))
+                            .await?;
+                        return Ok(self.repo.get(session_id).await?.unwrap_or(session));
+                    }
+                }
+
+                // Wait for services to become ready
+                if let Err(e) = self
+                    .readiness
+                    .wait_for_session_services(session.opencode_port as u16, session.ttyd_port as u16)
+                    .await
+                {
+                    error!(
+                        "Services not ready after resume for session {}: {:?}",
+                        session_id, e
+                    );
+                    let _ = local_runtime.stop_session(session_id).await;
+                    self.repo
+                        .mark_failed(session_id, &format!("services not ready after resume: {}", e))
+                        .await?;
+                    return Ok(self.repo.get(session_id).await?.unwrap_or(session));
+                }
+            }
         }
 
         // Mark as running
@@ -707,10 +1004,10 @@ impl SessionService {
         self.repo.list_active().await
     }
 
-    /// Delete a session and remove its container.
+    /// Delete a session and remove its services.
     ///
-    /// This fully removes the container and revokes any EAVS keys. The session
-    /// must be stopped first (use `stop_session()`).
+    /// This fully removes the container/processes and revokes any EAVS keys.
+    /// The session must be stopped first (use `stop_session()`).
     pub async fn delete_session(&self, session_id: &str) -> Result<()> {
         let session = self
             .repo
@@ -733,53 +1030,77 @@ impl SessionService {
             }
         }
 
-        // Remove the container if it exists
-        if let Some(ref container_id) = session.container_id {
-            // Try to stop first (in case it's somehow still running)
-            let _ = self.runtime.stop_container(container_id, Some(5)).await;
-            
-            // Remove the container
-            if let Err(e) = self.runtime.remove_container(container_id, true).await {
-                warn!(
-                    "Failed to remove container {} for session {}: {:?}",
-                    container_id, session_id, e
-                );
-                // Continue with deletion even if container removal fails
+        match session.runtime_mode {
+            RuntimeMode::Container => {
+                // Remove the container if it exists
+                if let Some(ref container_id) = session.container_id {
+                    if let Some(runtime) = self.container_runtime() {
+                        // Try to stop first (in case it's somehow still running)
+                        let _ = runtime.stop_container(container_id, Some(5)).await;
+
+                        // Remove the container
+                        if let Err(e) = runtime.remove_container(container_id, true).await {
+                            warn!(
+                                "Failed to remove container {} for session {}: {:?}",
+                                container_id, session_id, e
+                            );
+                            // Continue with deletion even if container removal fails
+                        }
+                    }
+                }
+            }
+            RuntimeMode::Local => {
+                // Stop any remaining processes (should already be stopped)
+                if let Some(local_runtime) = self.local_runtime() {
+                    let _ = local_runtime.stop_session(session_id).await;
+                }
             }
         }
 
         self.repo.delete(session_id).await?;
-        info!("Deleted session {} and removed container", session_id);
+        info!("Deleted session {}", session_id);
 
         Ok(())
     }
 
-    /// Cleanup stale sessions (containers that no longer exist).
+    /// Cleanup stale sessions (containers/processes that no longer exist).
     #[allow(dead_code)]
     pub async fn cleanup_stale_sessions(&self) -> Result<usize> {
         let active = self.repo.list_active().await?;
         let mut cleaned = 0;
 
         for session in active {
-            if let Some(ref container_id) = session.container_id {
-                // Check if container still exists
-                match self.runtime.container_state_status(container_id).await {
-                    Ok(Some(status)) if status == "running" => continue, // Container exists, skip
-                    Ok(Some(_)) | Ok(None) => {
-                        warn!(
-                            "Container {} for session {} is no longer running, marking as stopped",
-                            container_id, session.id
-                        );
-                        self.repo.mark_stopped(&session.id).await?;
-                        cleaned += 1;
-                    }
-                    Err(e) => {
-                        warn!(
-                            "Failed to check container {} for session {}: {:?}",
-                            container_id, session.id, e
-                        );
+            let is_running = match session.runtime_mode {
+                RuntimeMode::Container => {
+                    if let Some(ref container_id) = session.container_id {
+                        if let Some(runtime) = self.container_runtime() {
+                            match runtime.container_state_status(container_id).await {
+                                Ok(Some(status)) if status == "running" => true,
+                                _ => false,
+                            }
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
                     }
                 }
+                RuntimeMode::Local => {
+                    if let Some(local_runtime) = self.local_runtime() {
+                        local_runtime.is_session_running(&session.id).await
+                    } else {
+                        false
+                    }
+                }
+            };
+
+            if !is_running {
+                warn!(
+                    "Session {} is no longer running, marking as stopped",
+                    session.id
+                );
+                self.repo.mark_stopped(&session.id).await?;
+                cleaned += 1;
             }
         }
 
@@ -790,6 +1111,7 @@ impl SessionService {
     ///
     /// Returns `Ok(Some(new_digest))` if a newer image is available,
     /// `Ok(None)` if the session is up to date or we can't determine.
+    /// Always returns `Ok(None)` for local mode sessions (no image updates).
     pub async fn check_for_image_update(&self, session_id: &str) -> Result<Option<String>> {
         let session = self
             .repo
@@ -797,8 +1119,18 @@ impl SessionService {
             .await?
             .ok_or_else(|| anyhow::anyhow!("session not found: {}", session_id))?;
 
+        // Image updates only apply to container mode
+        if session.runtime_mode == RuntimeMode::Local {
+            return Ok(None);
+        }
+
+        let runtime = match self.container_runtime() {
+            Some(r) => r,
+            None => return Ok(None),
+        };
+
         // Get current image digest
-        let current_digest = match self.runtime.get_image_digest(&session.image).await {
+        let current_digest = match runtime.get_image_digest(&session.image).await {
             Ok(Some(digest)) => digest,
             Ok(None) => {
                 debug!("No digest available for image {}", session.image);
@@ -848,6 +1180,7 @@ impl SessionService {
     /// 3. Create and start a new container with the same ports and volumes
     ///
     /// The session's workspace_path (user data) is preserved.
+    /// Note: This is only applicable to container mode sessions.
     pub async fn upgrade_session(&self, session_id: &str) -> Result<Session> {
         let session = self
             .repo
@@ -855,20 +1188,29 @@ impl SessionService {
             .await?
             .ok_or_else(|| anyhow::anyhow!("session not found: {}", session_id))?;
 
+        // Upgrade only applies to container mode
+        if session.runtime_mode == RuntimeMode::Local {
+            anyhow::bail!("upgrade is not supported for local mode sessions");
+        }
+
+        let runtime = self
+            .container_runtime()
+            .context("container runtime not available")?;
+
         info!(
             "Upgrading session {} from image {}",
             session_id, session.image
         );
 
         // Get the new image digest before we start
-        let new_digest = self.runtime.get_image_digest(&session.image).await?;
+        let new_digest = runtime.get_image_digest(&session.image).await?;
 
         // Stop and remove the existing container if it exists
         if let Some(ref container_id) = session.container_id {
             info!("Stopping existing container {} for upgrade", container_id);
 
             // Try to stop gracefully first
-            if let Err(e) = self.runtime.stop_container(container_id, Some(10)).await {
+            if let Err(e) = runtime.stop_container(container_id, Some(10)).await {
                 warn!(
                     "Failed to stop container {} (may already be stopped): {:?}",
                     container_id, e
@@ -876,7 +1218,7 @@ impl SessionService {
             }
 
             // Remove the container
-            if let Err(e) = self.runtime.remove_container(container_id, true).await {
+            if let Err(e) = runtime.remove_container(container_id, true).await {
                 warn!("Failed to remove container {}: {:?}", container_id, e);
             }
         }
@@ -949,11 +1291,32 @@ impl SessionService {
             return Ok(session);
         }
 
-        let Some(ref container_id) = session.container_id else {
+        let Some(container_id) = session.container_id.clone() else {
             return Ok(session);
         };
 
-        match self.runtime.container_state_status(container_id).await {
+        match session.runtime_mode {
+            RuntimeMode::Container => {
+                self.reconcile_container_mode_state(session, &container_id).await
+            }
+            RuntimeMode::Local => {
+                self.reconcile_local_mode_state(session).await
+            }
+        }
+    }
+
+    /// Reconcile container mode session state.
+    async fn reconcile_container_mode_state(
+        &self,
+        session: Session,
+        container_id: &str,
+    ) -> Result<Session> {
+        let runtime = match self.container_runtime() {
+            Some(r) => r,
+            None => return Ok(session),
+        };
+
+        match runtime.container_state_status(container_id).await {
             Ok(Some(status)) if status == "running" => Ok(session),
             Ok(Some(status)) if status == "created" || status == "restarting" => {
                 if matches!(session.status, SessionStatus::Running) {
@@ -979,13 +1342,24 @@ impl SessionService {
                 // Spawn the restart in the background to avoid blocking the request
                 let service = self.clone();
                 let session_id = session.id.clone();
-                let container_id_owned = container_id.clone();
+                let container_id_owned = container_id.to_string();
                 let opencode_port = session.opencode_port as u16;
                 let ttyd_port = session.ttyd_port as u16;
 
                 tokio::spawn(async move {
+                    let runtime = match service.container_runtime() {
+                        Some(r) => r,
+                        None => {
+                            let _ = service
+                                .repo
+                                .mark_failed(&session_id, "container runtime not available")
+                                .await;
+                            return;
+                        }
+                    };
+
                     // Start the container
-                    if let Err(e) = service.runtime.start_container(&container_id_owned).await {
+                    if let Err(e) = runtime.start_container(&container_id_owned).await {
                         error!(
                             "Failed to restart container {} for session {}: {:?}",
                             container_id_owned, session_id, e
@@ -1051,6 +1425,26 @@ impl SessionService {
                 );
                 Ok(session)
             }
+        }
+    }
+
+    /// Reconcile local mode session state.
+    async fn reconcile_local_mode_state(&self, session: Session) -> Result<Session> {
+        let local_runtime = match self.local_runtime() {
+            Some(r) => r,
+            None => return Ok(session),
+        };
+
+        if local_runtime.is_session_running(&session.id).await {
+            Ok(session)
+        } else {
+            // Processes are not running - mark as stopped
+            warn!(
+                "Local processes for session {} are not running, marking as stopped",
+                session.id
+            );
+            self.repo.mark_stopped(&session.id).await?;
+            Ok(self.repo.get(&session.id).await?.unwrap_or(session))
         }
     }
 
@@ -1130,7 +1524,7 @@ impl SessionService {
     /// Find orphan containers (containers with our prefix but no matching session).
     ///
     /// An orphan container is one that:
-    /// 1. Has a name starting with our prefix (e.g., "opencode-")
+    /// 1. Has a name starting with our prefix (e.g., "octo-")
     /// 2. Has no corresponding session in the database (by container_id)
     ///
     /// This is safe to run even with multiple users because it only identifies
@@ -1138,9 +1532,15 @@ impl SessionService {
     /// sessions might be in a transient state.
     ///
     /// Returns a list of (container_id, container_name) pairs.
+    /// Note: This only applies to container mode; local mode doesn't have orphan containers.
     async fn find_orphan_containers(&self) -> Result<Vec<(String, String)>> {
+        let runtime = match self.container_runtime() {
+            Some(r) => r,
+            None => return Ok(Vec::new()), // No container runtime, no orphans
+        };
+
         // List all containers (including stopped ones)
-        let containers = self.runtime.list_containers(true).await?;
+        let containers = runtime.list_containers(true).await?;
 
         // Get ALL known container IDs from the database (all sessions, not just active)
         // This ensures we don't accidentally clean up a container that belongs to
@@ -1205,8 +1605,12 @@ impl SessionService {
 
     /// Stop and remove a container.
     async fn cleanup_container(&self, container_id: &str) -> Result<()> {
+        let runtime = self
+            .container_runtime()
+            .context("container runtime not available")?;
+
         // Try to stop first (ignore errors if already stopped)
-        if let Err(e) = self.runtime.stop_container(container_id, Some(5)).await {
+        if let Err(e) = runtime.stop_container(container_id, Some(5)).await {
             debug!(
                 "Stop container {} (may already be stopped): {:?}",
                 container_id, e
@@ -1214,7 +1618,7 @@ impl SessionService {
         }
 
         // Force remove
-        self.runtime
+        runtime
             .remove_container(container_id, true)
             .await
             .context("removing container")?;
@@ -1230,17 +1634,19 @@ impl SessionService {
     pub async fn check_ports_available(&self, base_port: u16) -> Result<bool> {
         let ports_to_check = [base_port, base_port + 1, base_port + 2];
 
-        // Check running containers for port conflicts
-        let containers = self.runtime.list_containers(false).await?;
-        for container in containers {
-            for port_info in &container.ports {
-                if ports_to_check.contains(&port_info.host_port) {
-                    debug!(
-                        "Port {} is in use by container {}",
-                        port_info.host_port,
-                        container.names.first().unwrap_or(&container.id)
-                    );
-                    return Ok(false);
+        // Check running containers for port conflicts (container mode only)
+        if let Some(runtime) = self.container_runtime() {
+            let containers = runtime.list_containers(false).await?;
+            for container in containers {
+                for port_info in &container.ports {
+                    if ports_to_check.contains(&port_info.host_port) {
+                        debug!(
+                            "Port {} is in use by container {}",
+                            port_info.host_port,
+                            container.names.first().unwrap_or(&container.id)
+                        );
+                        return Ok(false);
+                    }
                 }
             }
         }
@@ -1435,6 +1841,9 @@ mod tests {
             default_session_budget_usd: Some(10.0),
             default_session_rpm: Some(60),
             eavs_container_url: Some("http://eavs".to_string()),
+            runtime_mode: RuntimeMode::Container,
+            local_config: None,
+            single_user: false,
         };
 
         let mut service = SessionService::with_eavs(repo.clone(), runtime.clone(), eavs, config);
@@ -1464,5 +1873,142 @@ mod tests {
             last_env.get("EAVS_VIRTUAL_KEY"),
             Some(&"vk_test_123".to_string())
         );
+    }
+
+    #[test]
+    fn test_session_service_config_default() {
+        let config = SessionServiceConfig::default();
+        assert_eq!(config.runtime_mode, RuntimeMode::Container);
+        assert!(config.local_config.is_none());
+        assert_eq!(config.default_image, DEFAULT_IMAGE);
+        assert_eq!(config.base_port, DEFAULT_BASE_PORT);
+    }
+
+    #[test]
+    fn test_session_service_config_with_local_mode() {
+        let local_config = LocalRuntimeConfig::default();
+        let config = SessionServiceConfig {
+            runtime_mode: RuntimeMode::Local,
+            local_config: Some(local_config.clone()),
+            ..Default::default()
+        };
+
+        assert_eq!(config.runtime_mode, RuntimeMode::Local);
+        assert!(config.local_config.is_some());
+        assert_eq!(
+            config.local_config.unwrap().opencode_binary,
+            local_config.opencode_binary
+        );
+    }
+
+    #[tokio::test]
+    async fn test_session_service_with_local_runtime_constructor() {
+        let db = Database::in_memory().await.unwrap();
+        let repo = SessionRepository::new(db.pool().clone());
+
+        let local_config = LocalRuntimeConfig::default();
+        let local_runtime = LocalRuntime::new(local_config);
+
+        let config = SessionServiceConfig {
+            runtime_mode: RuntimeMode::Local,
+            local_config: None,
+            ..Default::default()
+        };
+
+        let service = SessionService::with_local_runtime(repo, local_runtime, config);
+
+        // Verify local runtime is set
+        assert!(service.local_runtime().is_some());
+        assert!(service.container_runtime().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_session_service_with_local_runtime_and_eavs_constructor() {
+        let db = Database::in_memory().await.unwrap();
+        let repo = SessionRepository::new(db.pool().clone());
+
+        let local_config = LocalRuntimeConfig::default();
+        let local_runtime = LocalRuntime::new(local_config);
+        let eavs: Arc<dyn EavsApi> = Arc::new(FakeEavs::default());
+
+        let config = SessionServiceConfig {
+            runtime_mode: RuntimeMode::Local,
+            local_config: None,
+            ..Default::default()
+        };
+
+        let service =
+            SessionService::with_local_runtime_and_eavs(repo, local_runtime, eavs, config);
+
+        // Verify both local runtime and EAVS are set
+        assert!(service.local_runtime().is_some());
+        assert!(service.container_runtime().is_none());
+        assert!(service.eavs.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_session_service_runtime_mode() {
+        let db = Database::in_memory().await.unwrap();
+        let repo = SessionRepository::new(db.pool().clone());
+
+        // Container mode
+        let config = SessionServiceConfig {
+            runtime_mode: RuntimeMode::Container,
+            ..Default::default()
+        };
+        let fake_runtime = Arc::new(FakeRuntime::default());
+        let service = SessionService::new(repo.clone(), fake_runtime, config);
+        assert_eq!(service.runtime_mode(), RuntimeMode::Container);
+
+        // Local mode
+        let local_config = LocalRuntimeConfig::default();
+        let local_runtime = LocalRuntime::new(local_config);
+        let config = SessionServiceConfig {
+            runtime_mode: RuntimeMode::Local,
+            ..Default::default()
+        };
+        let service = SessionService::with_local_runtime(repo, local_runtime, config);
+        assert_eq!(service.runtime_mode(), RuntimeMode::Local);
+    }
+
+    #[test]
+    fn test_runtime_mode_default() {
+        assert_eq!(RuntimeMode::default(), RuntimeMode::Container);
+    }
+
+    #[test]
+    fn test_runtime_mode_display() {
+        assert_eq!(format!("{}", RuntimeMode::Container), "container");
+        assert_eq!(format!("{}", RuntimeMode::Local), "local");
+    }
+
+    #[test]
+    fn test_runtime_mode_from_str() {
+        assert_eq!(
+            "container".parse::<RuntimeMode>().unwrap(),
+            RuntimeMode::Container
+        );
+        assert_eq!("local".parse::<RuntimeMode>().unwrap(), RuntimeMode::Local);
+        assert!("invalid".parse::<RuntimeMode>().is_err());
+    }
+
+    #[test]
+    fn test_runtime_mode_serialization() {
+        // Test that RuntimeMode serializes to lowercase string
+        let container = RuntimeMode::Container;
+        let local = RuntimeMode::Local;
+
+        let container_json = serde_json::to_string(&container).unwrap();
+        let local_json = serde_json::to_string(&local).unwrap();
+
+        assert_eq!(container_json, "\"container\"");
+        assert_eq!(local_json, "\"local\"");
+
+        // Test deserialization
+        let parsed_container: RuntimeMode = serde_json::from_str(&container_json).unwrap();
+        let parsed_local: RuntimeMode = serde_json::from_str(&local_json).unwrap();
+
+        assert_eq!(parsed_container, RuntimeMode::Container);
+        assert_eq!(parsed_local, RuntimeMode::Local);
     }
 }

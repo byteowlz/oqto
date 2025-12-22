@@ -2,14 +2,14 @@
 
 use axum::Router;
 use std::sync::Arc;
-use workspace_backend::agent::AgentService;
-use workspace_backend::api;
-use workspace_backend::auth::{AuthConfig, AuthState};
-use workspace_backend::container::ContainerRuntime;
-use workspace_backend::db::Database;
-use workspace_backend::invite::InviteCodeRepository;
-use workspace_backend::session::{SessionRepository, SessionService, SessionServiceConfig};
-use workspace_backend::user::{UserRepository, UserService};
+use octo::agent::AgentService;
+use octo::api;
+use octo::auth::{AuthConfig, AuthState};
+use octo::container::ContainerRuntime;
+use octo::db::Database;
+use octo::invite::InviteCodeRepository;
+use octo::session::{SessionRepository, SessionService, SessionServiceConfig};
+use octo::user::{UserRepository, UserService};
 
 /// Create a test AuthConfig with a JWT secret for testing.
 fn test_auth_config() -> AuthConfig {
