@@ -119,6 +119,11 @@ pub struct Session {
     pub ttyd_port: i64,
     /// Port for EAVS LLM proxy.
     pub eavs_port: Option<i64>,
+    /// Base external port for sub-agents. Sub-agents use ports agent_base_port to agent_base_port + max_agents - 1.
+    pub agent_base_port: Option<i64>,
+    /// Maximum number of sub-agents allowed for this session.
+    #[serde(default = "default_max_agents")]
+    pub max_agents: Option<i64>,
     /// EAVS virtual key ID (human-readable, e.g., "cold-lamp").
     pub eavs_key_id: Option<String>,
     /// EAVS virtual key hash (for API lookups).
@@ -141,6 +146,10 @@ pub struct Session {
     pub stopped_at: Option<String>,
     /// Error message if failed.
     pub error_message: Option<String>,
+}
+
+fn default_max_agents() -> Option<i64> {
+    Some(10)
 }
 
 /// Configuration for creating a new session.

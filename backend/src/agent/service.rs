@@ -3,42 +3,40 @@
 //! Manages opencode agent instances within containers via docker exec.
 
 use anyhow::{Context, Result};
-use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
 use crate::container::ContainerRuntimeApi;
 use crate::session::{Session, SessionService};
 
-use super::models::{AgentInfo, AgentStatus, StartAgentResponse, StopAgentResponse};
+use super::models::{AgentInfo, AgentStatus, CreateAgentResponse, StartAgentResponse, StopAgentResponse, agent_color};
+use super::repository::{AgentRecord, AgentRepository};
 
 /// Main agent port (started by entrypoint).
 pub const MAIN_AGENT_PORT: u16 = 41820;
 
-/// Base port for sub-agents.
-const SUB_AGENT_BASE_PORT: u16 = 4001;
-
-/// Maximum number of sub-agents per container.
-const MAX_SUB_AGENTS: u16 = 99;
+/// Base port for sub-agents inside the container.
+const INTERNAL_AGENT_BASE_PORT: u16 = 4001;
 
 /// Agent management service.
 #[derive(Clone)]
 pub struct AgentService {
     runtime: Arc<dyn ContainerRuntimeApi>,
     sessions: SessionService,
-    /// In-memory tracking of agent ports per session.
-    /// Map of session_id -> (agent_id -> port).
-    agent_ports: Arc<RwLock<HashMap<String, HashMap<String, u16>>>>,
+    repo: AgentRepository,
 }
 
 impl AgentService {
     /// Create a new agent service.
-    pub fn new(runtime: Arc<dyn ContainerRuntimeApi>, sessions: SessionService) -> Self {
+    pub fn new(
+        runtime: Arc<dyn ContainerRuntimeApi>,
+        sessions: SessionService,
+        repo: AgentRepository,
+    ) -> Self {
         Self {
             runtime,
             sessions,
-            agent_ports: Arc::new(RwLock::new(HashMap::new())),
+            repo,
         }
     }
 
@@ -54,26 +52,50 @@ impl AgentService {
 
         // 1. Add main agent (always exists)
         let main_status = self
-            .check_agent_status(&session, MAIN_AGENT_PORT)
+            .check_agent_health(&session, MAIN_AGENT_PORT)
             .await;
         let (main_has_agents_md, main_has_git) = self
             .check_directory_files(container_id, "/home/dev/workspace")
             .await;
         agents.push(AgentInfo::main(
             MAIN_AGENT_PORT,
+            session.opencode_port as u16,
             main_status,
             main_has_agents_md,
             main_has_git,
         ));
 
-        // 2. Scan for subdirectories that could be agents
+        // 2. Get persisted agents from database
+        let db_agents = self.repo.list_by_session(session_id).await?;
+        let db_agent_ids: std::collections::HashSet<_> = db_agents.iter().map(|a| a.agent_id.clone()).collect();
+
+        // Add persisted agents
+        for record in db_agents {
+            let status = self.check_agent_health(&session, record.internal_port as u16).await;
+            
+            // Update status in DB if it changed
+            if status != record.status {
+                let _ = self.repo.update_status(&record.id, status).await;
+            }
+
+            agents.push(AgentInfo::sub_agent(
+                record.agent_id,
+                Some(record.internal_port as u16),
+                Some(record.external_port as u16),
+                status,
+                record.has_agents_md,
+                record.has_git,
+            ));
+        }
+
+        // 3. Scan for new subdirectories that could be agents (not yet in DB)
         let subdirs = self.list_workspace_subdirs(container_id).await?;
 
-        // 3. Check each subdir
-        let ports = self.agent_ports.read().await;
-        let session_ports = ports.get(session_id);
-
         for subdir in subdirs {
+            if db_agent_ids.contains(&subdir) {
+                continue; // Already in the list
+            }
+
             let (has_agents_md, has_git) = self
                 .check_directory_files(container_id, &format!("/home/dev/workspace/{}", subdir))
                 .await;
@@ -83,19 +105,12 @@ impl AgentService {
                 continue;
             }
 
-            // Check if we have a known port for this agent
-            let port = session_ports.and_then(|p| p.get(&subdir).copied());
-
-            let status = if let Some(p) = port {
-                self.check_agent_status(&session, p).await
-            } else {
-                AgentStatus::Stopped
-            };
-
+            // This is a new directory that could be an agent but isn't started yet
             agents.push(AgentInfo::sub_agent(
                 subdir,
-                port,
-                status,
+                None,
+                None,
+                AgentStatus::Stopped,
                 has_agents_md,
                 has_git,
             ));
@@ -119,60 +134,76 @@ impl AgentService {
         // Validate directory name
         let agent_id = self.validate_agent_directory(directory)?;
 
-        // Check if already running
-        {
-            let ports = self.agent_ports.read().await;
-            if let Some(session_ports) = ports.get(session_id) {
-                if let Some(&existing_port) = session_ports.get(&agent_id) {
-                    let status = self.check_agent_status(&session, existing_port).await;
-                    if status == AgentStatus::Running {
-                        info!(
-                            "Agent {} already running on port {} for session {}",
-                            agent_id, existing_port, session_id
-                        );
-                        return Ok(StartAgentResponse {
-                            id: agent_id,
-                            port: existing_port,
-                            status: AgentStatus::Running,
-                        });
-                    }
-                }
+        // Check if already running in DB
+        if let Some(existing) = self.repo.get_by_session_and_agent(session_id, &agent_id).await? {
+            if existing.status == AgentStatus::Running || existing.status == AgentStatus::Starting {
+                info!(
+                    "Agent {} already running on port {} for session {}",
+                    agent_id, existing.internal_port, session_id
+                );
+                return Ok(StartAgentResponse {
+                    id: agent_id,
+                    port: existing.internal_port as u16,
+                    external_port: existing.external_port as u16,
+                    status: existing.status,
+                });
             }
+            
+            // Agent exists but is stopped - restart it
+            let internal_port = existing.internal_port as u16;
+            let external_port = existing.external_port as u16;
+            
+            self.start_opencode_in_container(container_id, &agent_id, internal_port).await?;
+            
+            self.repo.update_status(&existing.id, AgentStatus::Starting).await?;
+            
+            return Ok(StartAgentResponse {
+                id: agent_id,
+                port: internal_port,
+                external_port,
+                status: AgentStatus::Starting,
+            });
         }
 
-        // Allocate a port
-        let port = self.allocate_port(session_id).await?;
+        // Allocate ports
+        let (internal_port, external_port) = self.allocate_agent_ports(&session).await?;
 
-        // Build the command to start opencode serve
-        let workspace_path = format!("/home/dev/workspace/{}", agent_id);
-        let cmd = format!(
-            "cd {} && opencode serve --port {} --hostname 0.0.0.0 > /tmp/agent-{}.log 2>&1 &",
-            workspace_path, port, agent_id
-        );
+        // Start opencode serve in the container
+        self.start_opencode_in_container(container_id, &agent_id, internal_port).await?;
+
+        // Create the agent record
+        let record_id = format!("{}:{}", session_id, agent_id);
+        let (has_agents_md, has_git) = self
+            .check_directory_files(container_id, &format!("/home/dev/workspace/{}", agent_id))
+            .await;
+
+        let record = AgentRecord {
+            id: record_id,
+            session_id: session_id.to_string(),
+            agent_id: agent_id.clone(),
+            name: format_agent_name(&agent_id),
+            directory: format!("/home/dev/workspace/{}", agent_id),
+            internal_port: internal_port as i64,
+            external_port: external_port as i64,
+            status: AgentStatus::Starting,
+            has_agents_md,
+            has_git,
+            created_at: chrono::Utc::now().to_rfc3339(),
+            started_at: Some(chrono::Utc::now().to_rfc3339()),
+            stopped_at: None,
+        };
+
+        self.repo.create(&record).await?;
 
         info!(
-            "Starting agent {} on port {} in container {}",
-            agent_id, port, container_id
+            "Started agent {} on internal port {} (external {}) in session {}",
+            agent_id, internal_port, external_port, session_id
         );
-
-        // Execute in container
-        self.runtime
-            .exec_detached(container_id, &["bash", "-c", &cmd])
-            .await
-            .context("failed to start agent")?;
-
-        // Track the port
-        {
-            let mut ports = self.agent_ports.write().await;
-            ports
-                .entry(session_id.to_string())
-                .or_default()
-                .insert(agent_id.clone(), port);
-        }
 
         Ok(StartAgentResponse {
             id: agent_id,
-            port,
+            port: internal_port,
+            external_port,
             status: AgentStatus::Starting,
         })
     }
@@ -190,24 +221,19 @@ impl AgentService {
             anyhow::bail!("cannot stop main agent");
         }
 
-        // Get the port
-        let port = {
-            let ports = self.agent_ports.read().await;
-            ports
-                .get(session_id)
-                .and_then(|p| p.get(agent_id).copied())
-        };
-
-        let Some(port) = port else {
+        // Get the agent from DB
+        let record = self.repo.get_by_session_and_agent(session_id, agent_id).await?;
+        
+        let Some(record) = record else {
             warn!("Agent {} not found in session {}", agent_id, session_id);
             return Ok(StopAgentResponse { stopped: false });
         };
 
         // Kill the process
-        let cmd = format!("pkill -f 'opencode serve.*port {}'", port);
+        let cmd = format!("pkill -f 'opencode serve.*port {}'", record.internal_port);
         info!(
             "Stopping agent {} (port {}) in container {}",
-            agent_id, port, container_id
+            agent_id, record.internal_port, container_id
         );
 
         let _ = self
@@ -215,13 +241,8 @@ impl AgentService {
             .exec_detached(container_id, &["bash", "-c", &cmd])
             .await;
 
-        // Remove from tracking
-        {
-            let mut ports = self.agent_ports.write().await;
-            if let Some(session_ports) = ports.get_mut(session_id) {
-                session_ports.remove(agent_id);
-            }
-        }
+        // Update status in DB
+        self.repo.update_status(&record.id, AgentStatus::Stopped).await?;
 
         Ok(StopAgentResponse { stopped: true })
     }
@@ -241,9 +262,7 @@ impl AgentService {
         session_id: &str,
         name: &str,
         description: &str,
-    ) -> Result<super::models::CreateAgentResponse> {
-        use super::models::{agent_color, CreateAgentResponse};
-
+    ) -> Result<CreateAgentResponse> {
         let session = self.get_session(session_id).await?;
         let container_id = session
             .container_id
@@ -302,7 +321,7 @@ impl AgentService {
         })
     }
 
-    /// Get the port for a specific agent.
+    /// Get the external port for a specific agent.
     ///
     /// Returns `None` if the agent is not running or not found.
     /// For the "main" agent, returns the session's opencode_port.
@@ -313,48 +332,86 @@ impl AgentService {
             return Ok(Some(session.opencode_port as u16));
         }
 
-        // Sub-agents use tracked ports
-        let ports = self.agent_ports.read().await;
-        Ok(ports
-            .get(session_id)
-            .and_then(|session_ports| session_ports.get(agent_id).copied()))
+        // Sub-agents use tracked ports from DB
+        let record = self.repo.get_by_session_and_agent(session_id, agent_id).await?;
+        Ok(record.map(|r| r.external_port as u16))
     }
 
     /// Rediscover agents after control plane restart.
     ///
-    /// Scans ports to find running opencode instances.
+    /// Scans ports to find running opencode instances and syncs with DB.
     pub async fn rediscover_agents(&self, session_id: &str) -> Result<()> {
         let session = self.get_session(session_id).await?;
+        
+        let Some(agent_base_port) = session.agent_base_port else {
+            debug!("Session {} has no agent port range configured", session_id);
+            return Ok(());
+        };
+        
+        let max_agents = session.max_agents.unwrap_or(10);
 
-        // Scan sub-agent ports
-        for offset in 0..MAX_SUB_AGENTS {
-            let port = SUB_AGENT_BASE_PORT + offset;
-            let status = self.check_agent_status(&session, port).await;
+        // Scan internal ports to find running agents
+        for i in 0..max_agents {
+            let internal_port = INTERNAL_AGENT_BASE_PORT + i as u16;
+            let external_port = (agent_base_port + i) as u16;
+            
+            let status = self.check_agent_health(&session, internal_port).await;
 
             if status == AgentStatus::Running {
                 // Try to figure out which agent this is by querying opencode
-                if let Ok(Some(directory)) = self.get_agent_directory(&session, port).await {
+                if let Ok(Some(directory)) = self.get_agent_directory(&session, external_port).await {
                     let agent_id = directory
                         .strip_prefix("/home/dev/workspace/")
                         .unwrap_or(&directory)
                         .to_string();
 
                     if !agent_id.is_empty() && agent_id != "workspace" {
-                        info!(
-                            "Rediscovered agent {} on port {} for session {}",
-                            agent_id, port, session_id
-                        );
-                        let mut ports = self.agent_ports.write().await;
-                        ports
-                            .entry(session_id.to_string())
-                            .or_default()
-                            .insert(agent_id, port);
+                        // Check if already in DB
+                        let existing = self.repo.get_by_session_and_agent(session_id, &agent_id).await?;
+                        
+                        if existing.is_none() {
+                            info!(
+                                "Rediscovered agent {} on port {} for session {}",
+                                agent_id, internal_port, session_id
+                            );
+                            
+                            let record_id = format!("{}:{}", session_id, agent_id);
+                            let record = AgentRecord {
+                                id: record_id,
+                                session_id: session_id.to_string(),
+                                agent_id: agent_id.clone(),
+                                name: format_agent_name(&agent_id),
+                                directory: format!("/home/dev/workspace/{}", agent_id),
+                                internal_port: internal_port as i64,
+                                external_port: external_port as i64,
+                                status: AgentStatus::Running,
+                                has_agents_md: false, // Will be updated on next list
+                                has_git: false,
+                                created_at: chrono::Utc::now().to_rfc3339(),
+                                started_at: Some(chrono::Utc::now().to_rfc3339()),
+                                stopped_at: None,
+                            };
+                            
+                            self.repo.create(&record).await?;
+                        } else if let Some(record) = existing {
+                            // Update status if changed
+                            if record.status != AgentStatus::Running {
+                                self.repo.update_status(&record.id, AgentStatus::Running).await?;
+                            }
+                        }
                     }
                 }
             }
         }
 
         Ok(())
+    }
+
+    /// Mark all agents for a session as stopped.
+    ///
+    /// Called when stopping a session.
+    pub async fn mark_all_stopped(&self, session_id: &str) -> Result<()> {
+        self.repo.mark_all_stopped(session_id).await
     }
 
     // ========================================================================
@@ -390,53 +447,73 @@ impl AgentService {
         Ok(sanitized)
     }
 
-    async fn allocate_port(&self, session_id: &str) -> Result<u16> {
-        let ports = self.agent_ports.read().await;
-        let used_ports: Vec<u16> = ports
-            .get(session_id)
-            .map(|p| p.values().copied().collect())
-            .unwrap_or_default();
+    async fn allocate_agent_ports(&self, session: &Session) -> Result<(u16, u16)> {
+        let agent_base_port = session.agent_base_port
+            .context("session has no agent port range configured")?;
+        let max_agents = session.max_agents.unwrap_or(10);
 
-        for offset in 0..MAX_SUB_AGENTS {
-            let port = SUB_AGENT_BASE_PORT + offset;
-            if !used_ports.contains(&port) {
-                return Ok(port);
+        // Find the next available port offset
+        let used_offsets = self.repo.list_running_by_session(&session.id).await?;
+        let used_internal_ports: std::collections::HashSet<_> = used_offsets
+            .iter()
+            .map(|r| r.internal_port as u16)
+            .collect();
+
+        for i in 0..max_agents {
+            let internal_port = INTERNAL_AGENT_BASE_PORT + i as u16;
+            if !used_internal_ports.contains(&internal_port) {
+                let external_port = (agent_base_port + i) as u16;
+                return Ok((internal_port, external_port));
             }
         }
 
-        anyhow::bail!("no available ports for sub-agents")
+        anyhow::bail!("no available ports for sub-agents (max {} reached)", max_agents)
     }
 
-    async fn check_agent_status(&self, session: &Session, port: u16) -> AgentStatus {
-        // Try to reach the opencode API on this port
-        let url = format!("http://localhost:{}/session", session.opencode_port);
-        let _ = url; // We need to query internal container port
+    async fn start_opencode_in_container(
+        &self,
+        container_id: &str,
+        agent_id: &str,
+        internal_port: u16,
+    ) -> Result<()> {
+        let workspace_path = format!("/home/dev/workspace/{}", agent_id);
+        let cmd = format!(
+            "cd {} && opencode serve --port {} --hostname 0.0.0.0 > /tmp/agent-{}.log 2>&1 &",
+            workspace_path, internal_port, agent_id
+        );
 
-        // For now, use a simple HTTP check through the host
-        // In production, we'd need to route through the container network
-        let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(2))
-            .build()
-            .ok();
+        self.runtime
+            .exec_detached(container_id, &["bash", "-c", &cmd])
+            .await
+            .context("failed to start agent")?;
 
-        let Some(client) = client else {
+        Ok(())
+    }
+
+    async fn check_agent_health(&self, session: &Session, internal_port: u16) -> AgentStatus {
+        // For main agent, use session's external opencode port
+        // For sub-agents, calculate external port from session's agent_base_port
+        let external_port = if internal_port == MAIN_AGENT_PORT {
+            session.opencode_port as u16
+        } else if let Some(agent_base) = session.agent_base_port {
+            let offset = internal_port - INTERNAL_AGENT_BASE_PORT;
+            (agent_base as u16) + offset
+        } else {
             return AgentStatus::Stopped;
         };
 
-        // Query through the container's exposed port
-        // For main agent, use session.opencode_port
-        // For sub-agents, we need internal routing (not exposed)
-        if port == MAIN_AGENT_PORT {
-            let url = format!("http://localhost:{}/session", session.opencode_port);
-            match client.get(&url).send().await {
-                Ok(res) if res.status().is_success() => AgentStatus::Running,
-                _ => AgentStatus::Stopped,
-            }
-        } else {
-            // Sub-agents aren't exposed externally, so we can't check directly
-            // For now, assume running if we have it tracked
-            // TODO: Use docker exec to check
-            AgentStatus::Running
+        let client = match reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(2))
+            .build()
+        {
+            Ok(c) => c,
+            Err(_) => return AgentStatus::Stopped,
+        };
+
+        let url = format!("http://localhost:{}/session", external_port);
+        match client.get(&url).send().await {
+            Ok(res) if res.status().is_success() => AgentStatus::Running,
+            _ => AgentStatus::Stopped,
         }
     }
 
@@ -444,7 +521,7 @@ impl AgentService {
         // Check for AGENTS.md
         let has_agents_md = self
             .runtime
-            .exec_detached(
+            .exec_output(
                 container_id,
                 &["test", "-f", &format!("{}/AGENTS.md", path)],
             )
@@ -454,7 +531,7 @@ impl AgentService {
         // Check for .git
         let has_git = self
             .runtime
-            .exec_detached(container_id, &["test", "-d", &format!("{}/.git", path)])
+            .exec_output(container_id, &["test", "-d", &format!("{}/.git", path)])
             .await
             .is_ok();
 
@@ -492,11 +569,35 @@ impl AgentService {
         Ok(subdirs)
     }
 
-    async fn get_agent_directory(&self, session: &Session, port: u16) -> Result<Option<String>> {
-        let _ = (session, port);
-        // Query opencode's /path endpoint to get the working directory
-        // This would require internal container networking
-        // For now, return None
-        Ok(None)
+    async fn get_agent_directory(&self, _session: &Session, external_port: u16) -> Result<Option<String>> {
+        // Query opencode's API to get the working directory
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(2))
+            .build()?;
+
+        let url = format!("http://localhost:{}/project/path", external_port);
+        match client.get(&url).send().await {
+            Ok(res) if res.status().is_success() => {
+                let body = res.text().await?;
+                // OpenCode returns the path as a JSON string
+                let path: String = serde_json::from_str(&body).unwrap_or(body);
+                Ok(Some(path))
+            }
+            _ => Ok(None),
+        }
     }
+}
+
+/// Format agent name from ID (e.g., "doc-writer" -> "Doc Writer").
+fn format_agent_name(id: &str) -> String {
+    id.split('-')
+        .map(|s| {
+            let mut c = s.chars();
+            match c.next() {
+                None => String::new(),
+                Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }

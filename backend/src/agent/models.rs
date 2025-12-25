@@ -27,6 +27,28 @@ impl std::fmt::Display for AgentStatus {
     }
 }
 
+impl std::str::FromStr for AgentStatus {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "running" => Ok(AgentStatus::Running),
+            "starting" => Ok(AgentStatus::Starting),
+            "stopped" => Ok(AgentStatus::Stopped),
+            "failed" => Ok(AgentStatus::Failed),
+            _ => Err(format!("unknown agent status: {}", s)),
+        }
+    }
+}
+
+impl TryFrom<String> for AgentStatus {
+    type Error = String;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        value.parse()
+    }
+}
+
 /// Information about an agent.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentInfo {
@@ -36,8 +58,10 @@ pub struct AgentInfo {
     pub name: String,
     /// Directory path inside the container.
     pub directory: String,
-    /// Port the agent is running on (None if stopped).
+    /// Internal port (inside container, None if stopped).
     pub port: Option<u16>,
+    /// External port (mapped to host, for clients to connect to).
+    pub external_port: Option<u16>,
     /// Current status.
     pub status: AgentStatus,
     /// Whether the directory has an AGENTS.md file.
@@ -50,12 +74,21 @@ pub struct AgentInfo {
 
 impl AgentInfo {
     /// Create a new agent info for the main workspace.
-    pub fn main(port: u16, status: AgentStatus, has_agents_md: bool, has_git: bool) -> Self {
+    ///
+    /// The main agent uses the session's opencode port, which is already mapped externally.
+    pub fn main(
+        internal_port: u16,
+        external_port: u16,
+        status: AgentStatus,
+        has_agents_md: bool,
+        has_git: bool,
+    ) -> Self {
         Self {
             id: "main".to_string(),
             name: "Main Workspace".to_string(),
             directory: "/home/dev/workspace".to_string(),
-            port: Some(port),
+            port: Some(internal_port),
+            external_port: Some(external_port),
             status,
             has_agents_md,
             has_git,
@@ -66,7 +99,8 @@ impl AgentInfo {
     /// Create a new agent info for a sub-agent.
     pub fn sub_agent(
         id: String,
-        port: Option<u16>,
+        internal_port: Option<u16>,
+        external_port: Option<u16>,
         status: AgentStatus,
         has_agents_md: bool,
         has_git: bool,
@@ -88,7 +122,8 @@ impl AgentInfo {
             directory: format!("/home/dev/workspace/{}", id),
             id,
             name,
-            port,
+            port: internal_port,
+            external_port,
             status,
             has_agents_md,
             has_git,
@@ -134,7 +169,10 @@ pub struct CreateAgentRequest {
 #[derive(Debug, Serialize)]
 pub struct StartAgentResponse {
     pub id: String,
+    /// Internal port (inside container).
     pub port: u16,
+    /// External port (mapped to host, for clients to connect to).
+    pub external_port: u16,
     pub status: AgentStatus,
 }
 
@@ -180,11 +218,32 @@ mod tests {
         let agent = AgentInfo::sub_agent(
             "doc-writer".to_string(),
             Some(4001),
+            Some(41824),
             AgentStatus::Running,
             true,
             false,
         );
         assert_eq!(agent.name, "Doc Writer");
         assert_eq!(agent.directory, "/home/dev/workspace/doc-writer");
+        assert_eq!(agent.port, Some(4001));
+        assert_eq!(agent.external_port, Some(41824));
+    }
+
+    #[test]
+    fn test_agent_status_from_str() {
+        assert_eq!("running".parse::<AgentStatus>().unwrap(), AgentStatus::Running);
+        assert_eq!("starting".parse::<AgentStatus>().unwrap(), AgentStatus::Starting);
+        assert_eq!("stopped".parse::<AgentStatus>().unwrap(), AgentStatus::Stopped);
+        assert_eq!("failed".parse::<AgentStatus>().unwrap(), AgentStatus::Failed);
+        assert!("invalid".parse::<AgentStatus>().is_err());
+    }
+
+    #[test]
+    fn test_main_agent() {
+        let agent = AgentInfo::main(41820, 41820, AgentStatus::Running, true, true);
+        assert_eq!(agent.id, "main");
+        assert_eq!(agent.name, "Main Workspace");
+        assert_eq!(agent.port, Some(41820));
+        assert_eq!(agent.external_port, Some(41820));
     }
 }

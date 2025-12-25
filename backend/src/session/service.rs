@@ -461,6 +461,9 @@ impl SessionService {
             || error_str.contains("duplicate")
     }
 
+    /// Maximum number of sub-agents per session.
+    const DEFAULT_MAX_AGENTS: i64 = 10;
+
     /// Internal method to attempt session creation with a specific port range.
     async fn try_create_session(
         &self,
@@ -474,12 +477,15 @@ impl SessionService {
 
         let readable_id = self.generate_unique_readable_id().await?;
 
-        // Find available ports (opencode, fileserver, ttyd). On retry, offset the search window.
-        let search_start = self.config.base_port + (attempt as i64 * 4);
-        let base_port = self.repo.find_free_port_range(search_start).await?;
+        // Find available ports (opencode, fileserver, ttyd, + agent ports). On retry, offset the search window.
+        let max_agents = Self::DEFAULT_MAX_AGENTS;
+        let ports_per_session = 3 + max_agents; // opencode, fileserver, ttyd + agent ports
+        let search_start = self.config.base_port + (attempt as i64 * ports_per_session);
+        let base_port = self.repo.find_free_port_range_with_agents(search_start, max_agents).await?;
         let opencode_port = base_port;
         let fileserver_port = base_port + 1;
         let ttyd_port = base_port + 2;
+        let agent_base_port = base_port + 3; // Sub-agents start at base+3
 
         let (eavs_key_id, eavs_key_hash, eavs_virtual_key) = if self.eavs.is_some() {
             match self.create_eavs_key(&session_id).await {
@@ -512,6 +518,8 @@ impl SessionService {
             fileserver_port,
             ttyd_port,
             eavs_port: None,
+            agent_base_port: Some(agent_base_port),
+            max_agents: Some(max_agents),
             eavs_key_id,
             eavs_key_hash,
             eavs_virtual_key: None,
@@ -628,6 +636,9 @@ impl SessionService {
         }
     }
 
+    /// Internal port base for sub-agents inside the container.
+    const INTERNAL_AGENT_BASE_PORT: u16 = 4001;
+
     /// Start a container for the given session (container mode).
     async fn start_container_mode(
         &self,
@@ -650,6 +661,29 @@ impl SessionService {
             .env("OPENCODE_PORT", "41820")
             .env("FILESERVER_PORT", "41821")
             .env("TTYD_PORT", "41822");
+
+        // Map sub-agent ports if configured
+        // Each sub-agent gets a port: external (agent_base_port + i) -> internal (4001 + i)
+        if let (Some(agent_base), Some(max_agents)) = (session.agent_base_port, session.max_agents) {
+            for i in 0..max_agents {
+                let external_port = (agent_base + i) as u16;
+                let internal_port = Self::INTERNAL_AGENT_BASE_PORT + i as u16;
+                config = config.port(external_port, internal_port);
+            }
+            // Pass agent port config to container via env vars
+            config = config
+                .env("AGENT_BASE_PORT", Self::INTERNAL_AGENT_BASE_PORT.to_string())
+                .env("MAX_AGENTS", max_agents.to_string());
+
+            info!(
+                "Mapped {} agent ports: external {}..{} -> internal {}..{}",
+                max_agents,
+                agent_base,
+                agent_base + max_agents - 1,
+                Self::INTERNAL_AGENT_BASE_PORT,
+                Self::INTERNAL_AGENT_BASE_PORT + max_agents as u16 - 1
+            );
+        }
 
         // Pass EAVS URL and virtual key to container if available
         if let Some(ref eavs_url) = self.config.eavs_container_url {

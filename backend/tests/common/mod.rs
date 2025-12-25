@@ -2,7 +2,7 @@
 
 use axum::Router;
 use std::sync::Arc;
-use octo::agent::AgentService;
+use octo::agent::{AgentRepository, AgentService};
 use octo::api;
 use octo::auth::{AuthConfig, AuthState};
 use octo::container::ContainerRuntime;
@@ -37,7 +37,8 @@ pub async fn test_app() -> Router {
     let session_service = SessionService::new(session_repo, runtime.clone(), session_config);
 
     // Create agent service
-    let agent_service = AgentService::new(runtime, session_service.clone());
+    let agent_repo = AgentRepository::new(db.pool().clone());
+    let agent_service = AgentService::new(runtime, session_service.clone(), agent_repo);
 
     // Create user service
     let user_repo = UserRepository::new(db.pool().clone());
@@ -69,7 +70,8 @@ pub async fn test_app_with_token() -> (Router, String) {
     let session_service = SessionService::new(session_repo, runtime.clone(), session_config);
 
     // Create agent service
-    let agent_service = AgentService::new(runtime, session_service.clone());
+    let agent_repo = AgentRepository::new(db.pool().clone());
+    let agent_service = AgentService::new(runtime, session_service.clone(), agent_repo);
 
     // Create user service
     let user_repo = UserRepository::new(db.pool().clone());
@@ -100,7 +102,8 @@ pub async fn test_app_with_user_token() -> (Router, String) {
     let session_service = SessionService::new(session_repo, runtime.clone(), session_config);
 
     // Create agent service
-    let agent_service = AgentService::new(runtime, session_service.clone());
+    let agent_repo = AgentRepository::new(db.pool().clone());
+    let agent_service = AgentService::new(runtime, session_service.clone(), agent_repo);
 
     // Create user service
     let user_repo = UserRepository::new(db.pool().clone());

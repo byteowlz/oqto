@@ -1132,7 +1132,8 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
         // This allows basic agent operations to work (though docker exec will fail)
         std::sync::Arc::new(container::ContainerRuntime::new())
     };
-    let agent_service = agent::AgentService::new(agent_runtime, session_service.clone());
+    let agent_repo = agent::AgentRepository::new(database.pool().clone());
+    let agent_service = agent::AgentService::new(agent_runtime, session_service.clone(), agent_repo);
 
     // Initialize user service
     let user_repo = user::UserRepository::new(database.pool().clone());
