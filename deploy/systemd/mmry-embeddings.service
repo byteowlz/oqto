@@ -1,0 +1,57 @@
+# mmry Embeddings Service
+# Central mmry service that handles embeddings/reranking for all octo sessions.
+# Per-user mmry instances delegate heavy operations to this service.
+#
+# Installation:
+#   sudo cp mmry-embeddings.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now mmry-embeddings
+#
+# The service runs on port 8081 by default (configurable via environment).
+# Per-user mmry instances connect to this for embeddings and reranking.
+
+[Unit]
+Description=mmry Embeddings Service (Central Hub)
+Documentation=https://github.com/byteowlz/mmry
+After=network.target
+
+[Service]
+Type=simple
+User=mmry
+Group=mmry
+
+# Configuration via environment
+Environment=MMRY_HOST=0.0.0.0
+Environment=MMRY_PORT=8081
+Environment=MMRY_MODEL=nomic-ai/nomic-embed-text-v1.5
+Environment=MMRY_RERANK_MODEL=BAAI/bge-reranker-base
+
+# Working directory for mmry data
+WorkingDirectory=/var/lib/mmry
+
+# Config file location
+Environment=XDG_CONFIG_HOME=/etc/mmry
+Environment=XDG_DATA_HOME=/var/lib/mmry
+Environment=XDG_STATE_HOME=/var/lib/mmry/state
+
+# Run mmry service
+ExecStart=/usr/bin/mmry service run
+
+# Graceful shutdown
+TimeoutStopSec=30
+KillMode=mixed
+KillSignal=SIGTERM
+
+# Restart policy
+Restart=on-failure
+RestartSec=5
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/mmry
+
+[Install]
+WantedBy=multi-user.target

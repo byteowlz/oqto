@@ -193,11 +193,97 @@ export async function sendMessageAsync(
   return true
 }
 
+export type OpenCodePartInput =
+  | { type: "text"; text: string }
+  | { type: "agent"; name: string; id?: string }
+  | { type: "file"; mime: string; url: string; filename?: string }
+
+export async function sendPartsAsync(
+  opencodeBaseUrl: string,
+  sessionId: string,
+  parts: OpenCodePartInput[],
+  model?: { providerID: string; modelID: string },
+) {
+  const body: Record<string, unknown> = { parts }
+  if (model) body.model = model
+
+  const res = await fetch(`${base(opencodeBaseUrl)}/session/${sessionId}/prompt_async`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => res.statusText)
+    throw new Error(text || `Request failed with ${res.status}`)
+  }
+  return true
+}
+
 export async function abortSession(opencodeBaseUrl: string, sessionId: string): Promise<boolean> {
   const res = await fetch(`${base(opencodeBaseUrl)}/session/${sessionId}/abort`, {
     method: "POST",
   })
   return handleResponse<boolean>(res)
+}
+
+export type OpenCodeAgent = {
+  id: string
+  name?: string
+  description?: string
+  mode?: "primary" | "subagent" | string
+  model?: { providerID: string; modelID: string }
+}
+
+export async function fetchAgents(opencodeBaseUrl: string): Promise<OpenCodeAgent[]> {
+  const res = await fetch(`${base(opencodeBaseUrl)}/agent`, { cache: "no-store" })
+  return handleResponse<OpenCodeAgent[]>(res)
+}
+
+export async function runShellCommand(
+  opencodeBaseUrl: string,
+  sessionId: string,
+  command: string,
+  agent: string,
+  model?: { providerID: string; modelID: string },
+): Promise<OpenCodeMessageWithParts> {
+  const body: Record<string, unknown> = { command, agent }
+  if (model) body.model = model
+  
+  const res = await fetch(`${base(opencodeBaseUrl)}/session/${sessionId}/shell`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  })
+  return handleResponse<OpenCodeMessageWithParts>(res)
+}
+
+export async function runShellCommandAsync(
+  opencodeBaseUrl: string,
+  sessionId: string,
+  command: string,
+  agent: string,
+  model?: { providerID: string; modelID: string },
+): Promise<boolean> {
+  const body: Record<string, unknown> = { command, agent }
+  if (model) body.model = model
+  
+  const res = await fetch(`${base(opencodeBaseUrl)}/session/${sessionId}/shell`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) {
+    let errorMsg = `Request failed with ${res.status}`
+    try {
+      const data = await res.json()
+      errorMsg = data.message || data.error || data.name || JSON.stringify(data)
+    } catch {
+      const text = await res.text().catch(() => res.statusText)
+      errorMsg = text || errorMsg
+    }
+    throw new Error(errorMsg)
+  }
+  return true
 }
 
 export async function createSession(opencodeBaseUrl: string, title?: string, parentID?: string): Promise<OpenCodeSession> {
@@ -233,6 +319,59 @@ export async function updateSession(
 }
 
 export type EventCallback = (event: { type: string; properties: unknown }) => void
+
+// Permission types for tool execution approval
+export type Permission = {
+  id: string
+  sessionID: string
+  title: string
+  description?: string
+  tool: string
+  input?: Record<string, unknown>
+  risk?: "low" | "medium" | "high"
+  time: {
+    created: number
+  }
+}
+
+export type PermissionResponse = "yes" | "no" | "always" | "never"
+
+// Respond to a permission request
+export async function respondToPermission(
+  opencodeBaseUrl: string,
+  sessionId: string,
+  permissionId: string,
+  response: PermissionResponse,
+): Promise<void> {
+  const res = await fetch(
+    `${base(opencodeBaseUrl)}/session/${sessionId}/permission/${permissionId}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ response }),
+    }
+  )
+  if (!res.ok) {
+    const text = await res.text().catch(() => res.statusText)
+    throw new Error(text || `Request failed with ${res.status}`)
+  }
+}
+
+// Fetch pending permissions for a session
+export async function fetchPermissions(
+  opencodeBaseUrl: string,
+  sessionId: string,
+): Promise<Permission[]> {
+  const res = await fetch(
+    `${base(opencodeBaseUrl)}/session/${sessionId}/permission`,
+    { cache: "no-store" }
+  )
+  // If endpoint doesn't exist or returns error, return empty array
+  if (!res.ok) {
+    return []
+  }
+  return handleResponse<Permission[]>(res)
+}
 
 type SessionStatusMap = Record<string, { status: string }>
 

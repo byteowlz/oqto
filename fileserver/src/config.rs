@@ -112,7 +112,9 @@ impl Config {
 
     /// Check if an extension should be hidden
     pub fn is_hidden_extension(&self, ext: &str) -> bool {
-        self.hidden_extensions.iter().any(|e| e.eq_ignore_ascii_case(ext))
+        self.hidden_extensions
+            .iter()
+            .any(|e| e.eq_ignore_ascii_case(ext))
     }
 
     /// Check if a directory should be hidden
@@ -122,6 +124,8 @@ impl Config {
 
     /// Check if a file is an "office" type file (for simple view)
     pub fn is_office_file(&self, ext: &str) -> bool {
-        self.office_extensions.iter().any(|e| e.eq_ignore_ascii_case(ext))
+        self.office_extensions
+            .iter()
+            .any(|e| e.eq_ignore_ascii_case(ext))
     }
 }

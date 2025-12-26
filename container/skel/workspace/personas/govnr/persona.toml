@@ -1,0 +1,21 @@
+# Governor Persona Configuration
+# This is the default general-purpose persona
+
+[metadata]
+name = "Governor"
+description = "General-purpose AI coding assistant with balanced permissions"
+icon = "crown"
+color = "#6366f1"  # Indigo accent
+
+[permissions]
+# Tool permissions (allow | ask | deny)
+edit = "allow"
+bash = "ask"
+skill = "allow"
+webfetch = "allow"
+doom_loop = "ask"
+external_directory = "ask"
+
+[settings]
+# This is the default persona - used when no specific persona is selected
+is_default = true

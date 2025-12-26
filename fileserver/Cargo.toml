@@ -8,7 +8,7 @@ authors = ["Workspace Team"]
 
 [dependencies]
 # Web framework
-axum = { version = "0.7", features = ["multipart"] }
+axum = { version = "0.7", features = ["multipart", "ws"] }
 tokio = { version = "1", features = ["full"] }
 tower = "0.4"
 tower-http = { version = "0.5", features = ["cors", "trace"] }
@@ -33,8 +33,14 @@ futures = "0.3"
 bytes = "1"
 tokio-util = { version = "0.7", features = ["io"] }
 
+# File system notifications
+notify = "6"
+
 # Zip support
 zip = { version = "2.2", default-features = false, features = ["deflate"] }
+
+# Syntax highlighting
+syntect = { version = "5", default-features = false, features = ["default-syntaxes", "default-themes", "html", "regex-fancy"] }
 
 [dev-dependencies]
 tempfile = "3"

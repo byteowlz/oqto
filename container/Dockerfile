@@ -32,6 +32,7 @@ ARG USER_GID=1000
 ARG OPENCODE_PORT=41820
 ARG FILESERVER_PORT=41821
 ARG TTYD_PORT=41822
+ARG MMRY_PORT=41823
 
 # Environment variables
 ENV LANG=en_US.UTF-8
@@ -45,8 +46,11 @@ ENV XDG_CACHE_HOME=/home/${USERNAME}/.cache
 ENV OPENCODE_PORT=${OPENCODE_PORT}
 ENV FILESERVER_PORT=${FILESERVER_PORT}
 ENV TTYD_PORT=${TTYD_PORT}
+ENV MMRY_PORT=${MMRY_PORT}
 # EAVS_URL is set by orchestrator - points to host EAVS instance
 ENV EAVS_URL=""
+# MMRY_HOST_URL is set by orchestrator - points to host mmry service for embeddings
+ENV MMRY_HOST_URL=""
 
 # Update system and install base packages
 RUN pacman -Syu --noconfirm && \
@@ -111,7 +115,7 @@ RUN pacman -S --noconfirm \
     inter-font \
     && pacman -Scc --noconfirm
 
-# Create non-root user
+# Create non-root user (needed for yay/AUR)
 RUN groupadd --gid ${USER_GID} ${USERNAME} && \
   useradd --uid ${USER_UID} --gid ${USER_GID} -m ${USERNAME} && \
   echo "${USERNAME} ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers.d/${USERNAME} && \
@@ -124,6 +128,18 @@ RUN mkdir -p /home/${USERNAME}/.config \
   /home/${USERNAME}/.cache \
   /home/${USERNAME}/workspace && \
   chown -R ${USERNAME}:${USERNAME} /home/${USERNAME}
+
+# Install yay (AUR helper) and mmry from AUR
+USER ${USERNAME}
+WORKDIR /tmp
+RUN git clone https://aur.archlinux.org/yay-bin.git && \
+    cd yay-bin && \
+    makepkg -si --noconfirm && \
+    cd .. && rm -rf yay-bin
+
+# Install mmry from AUR (lean binary, embeddings delegated to host)
+RUN yay -S --noconfirm mmry-bin && \
+    yay -Scc --noconfirm
 
 # Switch to non-root user for opencode installation
 USER ${USERNAME}
@@ -170,10 +186,11 @@ USER ${USERNAME}
 # Working directory
 WORKDIR /home/${USERNAME}/workspace
 
-# Expose ports for opencode serve, file server, and ttyd terminal
+# Expose ports for opencode serve, file server, ttyd terminal, and mmry
 EXPOSE ${OPENCODE_PORT}
 EXPOSE ${FILESERVER_PORT}
 EXPOSE ${TTYD_PORT}
+EXPOSE ${MMRY_PORT}
 
 # Entrypoint (in /usr/local/bin so it's not overwritten by home mount)
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

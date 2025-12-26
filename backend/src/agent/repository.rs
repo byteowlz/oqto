@@ -21,7 +21,9 @@ pub struct AgentRecord {
     pub has_agents_md: bool,
     pub has_git: bool,
     pub created_at: String,
+    #[allow(dead_code)]
     pub started_at: Option<String>,
+    #[allow(dead_code)]
     pub stopped_at: Option<String>,
 }
 
@@ -71,13 +73,11 @@ impl AgentRepository {
 
     /// Get an agent by its composite ID (session_id:agent_id).
     pub async fn get(&self, id: &str) -> Result<Option<AgentRecord>> {
-        let record = sqlx::query_as::<_, AgentRecord>(
-            "SELECT * FROM agents WHERE id = ?",
-        )
-        .bind(id)
-        .fetch_optional(&self.pool)
-        .await
-        .context("fetching agent by id")?;
+        let record = sqlx::query_as::<_, AgentRecord>("SELECT * FROM agents WHERE id = ?")
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await
+            .context("fetching agent by id")?;
 
         Ok(record)
     }
@@ -132,7 +132,9 @@ impl AgentRepository {
 
         let (started_at, stopped_at) = match status {
             AgentStatus::Running | AgentStatus::Starting => (Some(now), None),
-            AgentStatus::Stopped | AgentStatus::Failed => (None, Some(chrono::Utc::now().to_rfc3339())),
+            AgentStatus::Stopped | AgentStatus::Failed => {
+                (None, Some(chrono::Utc::now().to_rfc3339()))
+            }
         };
 
         if let Some(started) = started_at {
@@ -146,15 +148,13 @@ impl AgentRepository {
             .await
             .context("updating agent status to running")?;
         } else if let Some(stopped) = stopped_at {
-            sqlx::query(
-                "UPDATE agents SET status = ?, stopped_at = ? WHERE id = ?",
-            )
-            .bind(status.to_string())
-            .bind(stopped)
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .context("updating agent status to stopped")?;
+            sqlx::query("UPDATE agents SET status = ?, stopped_at = ? WHERE id = ?")
+                .bind(status.to_string())
+                .bind(stopped)
+                .bind(id)
+                .execute(&self.pool)
+                .await
+                .context("updating agent status to stopped")?;
         }
 
         Ok(())
@@ -167,15 +167,13 @@ impl AgentRepository {
         has_agents_md: bool,
         has_git: bool,
     ) -> Result<()> {
-        sqlx::query(
-            "UPDATE agents SET has_agents_md = ?, has_git = ? WHERE id = ?",
-        )
-        .bind(has_agents_md)
-        .bind(has_git)
-        .bind(id)
-        .execute(&self.pool)
-        .await
-        .context("updating agent metadata")?;
+        sqlx::query("UPDATE agents SET has_agents_md = ?, has_git = ? WHERE id = ?")
+            .bind(has_agents_md)
+            .bind(has_git)
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .context("updating agent metadata")?;
 
         Ok(())
     }
@@ -225,7 +223,11 @@ impl AgentRepository {
             }
         }
 
-        anyhow::bail!("no available external ports for agents (checked {} ports from {})", max_agents, base_port)
+        anyhow::bail!(
+            "no available external ports for agents (checked {} ports from {})",
+            max_agents,
+            base_port
+        )
     }
 
     /// Mark all agents for a session as stopped.

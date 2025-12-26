@@ -31,14 +31,30 @@ pub fn create_router(state: AppState) -> Router {
 
     // Protected routes (require authentication)
     let protected_routes = Router::new()
+        // Project management
+        .route("/projects", get(handlers::list_workspace_dirs))
         // Session management
         .route("/sessions", get(handlers::list_sessions))
         .route("/sessions", post(handlers::create_session))
-        .route("/sessions/get-or-create", post(handlers::get_or_create_session))
+        .route(
+            "/sessions/get-or-create",
+            post(handlers::get_or_create_session),
+        )
+        .route(
+            "/sessions/get-or-create-for-workspace",
+            post(handlers::get_or_create_session_for_workspace),
+        )
         .route("/sessions/{session_id}", get(handlers::get_session))
+        .route(
+            "/sessions/{session_id}/activity",
+            post(handlers::touch_session_activity),
+        )
         .route("/sessions/{session_id}", delete(handlers::delete_session))
         .route("/sessions/{session_id}/stop", post(handlers::stop_session))
-        .route("/sessions/{session_id}/resume", post(handlers::resume_session))
+        .route(
+            "/sessions/{session_id}/resume",
+            post(handlers::resume_session),
+        )
         .route(
             "/sessions/{session_id}/update",
             get(handlers::check_session_update),
@@ -115,6 +131,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/admin/users", get(handlers::list_users))
         .route("/admin/users", post(handlers::create_user))
         .route("/admin/users/stats", get(handlers::get_user_stats))
+        .route("/admin/metrics", get(handlers::admin_metrics_stream))
         .route("/admin/users/{user_id}", get(handlers::get_user))
         .route("/admin/users/{user_id}", put(handlers::update_user))
         .route("/admin/users/{user_id}", delete(handlers::delete_user))
@@ -159,6 +176,10 @@ pub fn create_router(state: AppState) -> Router {
             post(handlers::create_agent),
         )
         .route(
+            "/session/{session_id}/agents/exec",
+            post(handlers::exec_agent_command),
+        )
+        .route(
             "/session/{session_id}/agents/{agent_id}",
             get(handlers::get_agent).delete(handlers::stop_agent),
         )
@@ -166,6 +187,40 @@ pub fn create_router(state: AppState) -> Router {
             "/session/{session_id}/agents/rediscover",
             post(handlers::rediscover_agents),
         )
+        // Chat history routes (reads from disk, no running opencode needed)
+        .route("/chat-history", get(handlers::list_chat_history))
+        .route("/chat-history/grouped", get(handlers::list_chat_history_grouped))
+        .route("/chat-history/{session_id}", get(handlers::get_chat_session))
+        .route("/chat-history/{session_id}/messages", get(handlers::get_chat_messages))
+        // Mmry (memory service) proxy routes
+        .route(
+            "/session/{session_id}/memories",
+            get(proxy::proxy_mmry_list).post(proxy::proxy_mmry_add),
+        )
+        .route(
+            "/session/{session_id}/memories/search",
+            post(proxy::proxy_mmry_search),
+        )
+        .route(
+            "/session/{session_id}/memories/stores",
+            get(proxy::proxy_mmry_stores),
+        )
+        .route(
+            "/session/{session_id}/memories/{memory_id}",
+            get(proxy::proxy_mmry_memory)
+                .put(proxy::proxy_mmry_memory)
+                .delete(proxy::proxy_mmry_memory),
+        )
+        // AgentRPC routes (unified backend API)
+        .route("/agent/health", get(handlers::agent_health))
+        .route("/agent/conversations", get(handlers::agent_list_conversations))
+        .route("/agent/conversations/{conversation_id}", get(handlers::agent_get_conversation))
+        .route("/agent/conversations/{conversation_id}/messages", get(handlers::agent_get_messages))
+        .route("/agent/sessions", post(handlers::agent_start_session))
+        .route("/agent/sessions/{session_id}/messages", post(handlers::agent_send_message))
+        .route("/agent/sessions/{session_id}", delete(handlers::agent_stop_session))
+        .route("/agent/sessions/{session_id}/url", get(handlers::agent_get_session_url))
+        .route("/agent/sessions/{session_id}/events", get(handlers::agent_attach))
         .layer(middleware::from_fn_with_state(
             auth_state.clone(),
             auth_middleware,
@@ -175,6 +230,7 @@ pub fn create_router(state: AppState) -> Router {
     // Public routes (no authentication)
     let public_routes = Router::new()
         .route("/health", get(handlers::health))
+        .route("/features", get(handlers::features))
         .route("/auth/login", post(handlers::login))
         .route("/auth/register", post(handlers::register))
         .route("/auth/logout", post(handlers::logout))

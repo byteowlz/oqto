@@ -72,7 +72,7 @@ ttyd \
     --interface 0.0.0.0 \
     --writable \
     --cwd "${WORKSPACE_DIR}" \
-    bash -l &
+    zsh -l &
 TTYD_PID=$!
 
 # Give services a moment to start

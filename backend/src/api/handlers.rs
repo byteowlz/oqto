@@ -1,17 +1,25 @@
 //! API request handlers.
 
+use std::convert::Infallible;
+use std::sync::Arc;
+use std::time::Duration;
+
+use anyhow::Context;
 use axum::{
     Json,
     extract::{Path, Query, State},
     http::{StatusCode, header::SET_COOKIE},
-    response::AppendHeaders,
-    response::IntoResponse,
+    response::sse::{Event, KeepAlive, Sse},
+    response::{AppendHeaders, IntoResponse},
 };
 use serde::{Deserialize, Serialize};
+use tokio::sync::Mutex;
+use tokio_stream::{StreamExt, wrappers::IntervalStream};
 use tracing::{info, instrument, warn};
 
 use crate::auth::{AuthError, CurrentUser, RequireAdmin};
-use crate::session::{CreateSessionRequest, Session};
+use crate::observability::{CpuTimes, HostMetrics, read_host_metrics};
+use crate::session::{CreateSessionRequest, Session, SessionContainerStats};
 use crate::user::{
     CreateUserRequest, UpdateUserRequest, UserInfo as DbUserInfo, UserListQuery, UserStats,
 };
@@ -26,11 +34,33 @@ pub struct HealthResponse {
     pub version: String,
 }
 
+#[derive(Debug, Serialize)]
+struct AdminMetricsSnapshot {
+    pub timestamp: String,
+    pub host: Option<HostMetrics>,
+    pub containers: Vec<SessionContainerStats>,
+    pub error: Option<String>,
+}
+
 /// Health check endpoint.
 pub async fn health() -> Json<HealthResponse> {
     Json(HealthResponse {
         status: "ok".to_string(),
         version: env!("CARGO_PKG_VERSION").to_string(),
+    })
+}
+
+/// Feature flags exposed to the frontend.
+#[derive(Debug, Serialize)]
+pub struct FeaturesResponse {
+    /// Whether mmry (memories) integration is enabled.
+    pub mmry_enabled: bool,
+}
+
+/// Get enabled features/capabilities.
+pub async fn features(State(state): State<AppState>) -> Json<FeaturesResponse> {
+    Json(FeaturesResponse {
+        mmry_enabled: state.mmry.enabled,
     })
 }
 
@@ -166,6 +196,53 @@ pub async fn get_or_create_session(
     Ok(Json(response))
 }
 
+/// Request for getting or creating a session for a specific workspace.
+#[derive(Debug, Deserialize)]
+pub struct GetOrCreateForWorkspaceRequest {
+    /// Path to the workspace directory.
+    pub workspace_path: String,
+}
+
+/// Get or create a session for a specific workspace path.
+///
+/// This is the preferred way to resume a session from chat history.
+/// It will:
+/// 1. Find an existing running session for the workspace (if any)
+/// 2. Enforce LRU cap by stopping oldest idle session if needed
+/// 3. Create a new session for that workspace (if none running)
+#[instrument(skip(state, request), fields(workspace_path = %request.workspace_path))]
+pub async fn get_or_create_session_for_workspace(
+    State(state): State<AppState>,
+    Json(request): Json<GetOrCreateForWorkspaceRequest>,
+) -> ApiResult<Json<SessionWithUrls>> {
+    let session = state
+        .sessions
+        .get_or_create_session_for_workspace(&request.workspace_path)
+        .await?;
+    info!(
+        session_id = %session.id,
+        workspace_path = %request.workspace_path,
+        status = ?session.status,
+        "Got or created session for workspace"
+    );
+
+    let response = SessionWithUrls::from_session(session, "localhost");
+    Ok(Json(response))
+}
+
+/// Touch session activity (update last_activity_at).
+///
+/// This should be called when the user interacts with the session
+/// (e.g., sends a message, runs a command).
+#[instrument(skip(state))]
+pub async fn touch_session_activity(
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+) -> ApiResult<StatusCode> {
+    state.sessions.touch_session_activity(&session_id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 /// Check if a session has an available image update.
 #[instrument(skip(state))]
 pub async fn check_session_update(
@@ -220,6 +297,71 @@ pub async fn check_all_updates(
 
     info!(count = statuses.len(), "Checked all sessions for updates");
     Ok(Json(statuses))
+}
+
+// ============================================================================
+// Project/Workspace Handlers
+// ============================================================================
+
+/// Query for listing workspace directories.
+#[derive(Debug, Deserialize)]
+pub struct WorkspaceDirQuery {
+    pub path: Option<String>,
+}
+
+/// Workspace directory entry.
+#[derive(Debug, Serialize)]
+pub struct WorkspaceDirEntry {
+    pub name: String,
+    pub path: String,
+    #[serde(rename = "type")]
+    pub entry_type: String,
+}
+
+/// List directories under the workspace root (projects view).
+#[instrument(skip(state))]
+pub async fn list_workspace_dirs(
+    State(state): State<AppState>,
+    Query(query): Query<WorkspaceDirQuery>,
+) -> ApiResult<Json<Vec<WorkspaceDirEntry>>> {
+    let root = state.sessions.workspace_root();
+    let relative = query.path.unwrap_or_else(|| ".".to_string());
+    let rel_path = std::path::PathBuf::from(&relative);
+
+    if rel_path.is_absolute() || rel_path.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+        return Err(ApiError::bad_request("invalid path"));
+    }
+
+    let target = root.join(&rel_path);
+    let entries = std::fs::read_dir(&target)
+        .with_context(|| format!("reading workspace directory {:?}", target))
+        .map_err(|e| ApiError::internal(format!("Failed to list workspace directories: {}", e)))?;
+
+    let mut dirs = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(|e| ApiError::internal(format!("Failed to read directory entry: {}", e)))?;
+        let path = entry.path();
+        if path.is_dir() {
+            let name = entry
+                .file_name()
+                .to_str()
+                .unwrap_or_default()
+                .to_string();
+            let rel = path
+                .strip_prefix(&root)
+                .unwrap_or(&path)
+                .to_string_lossy()
+                .to_string();
+            dirs.push(WorkspaceDirEntry {
+                name,
+                path: if rel.is_empty() { ".".to_string() } else { rel },
+                entry_type: "directory".to_string(),
+            });
+        }
+    }
+
+    dirs.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(Json(dirs))
 }
 
 // ============================================================================
@@ -536,6 +678,87 @@ pub async fn admin_force_stop_session(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// SSE metrics stream (admin only).
+#[instrument(skip(state, _user))]
+pub async fn admin_metrics_stream(
+    State(state): State<AppState>,
+    RequireAdmin(_user): RequireAdmin,
+) -> ApiResult<Sse<impl tokio_stream::Stream<Item = Result<Event, Infallible>>>> {
+    let state = state.clone();
+    let cpu_state: Arc<Mutex<Option<CpuTimes>>> = Arc::new(Mutex::new(None));
+    let interval = tokio::time::interval(Duration::from_secs(2));
+
+    let stream = IntervalStream::new(interval).then(move |_| {
+        let state = state.clone();
+        let cpu_state = cpu_state.clone();
+        async move {
+            let mut guard = cpu_state.lock().await;
+            let snapshot = build_admin_metrics_snapshot(&state, &mut guard).await;
+            let data = match serde_json::to_string(&snapshot) {
+                Ok(data) => data,
+                Err(err) => {
+                    warn!("Failed to serialize metrics snapshot: {:?}", err);
+                    "{\"error\":\"metrics_serialization_failed\"}".to_string()
+                }
+            };
+            Ok(Event::default().data(data))
+        }
+    });
+
+    Ok(Sse::new(stream).keep_alive(
+        KeepAlive::new()
+            .interval(Duration::from_secs(15))
+            .text("keepalive"),
+    ))
+}
+
+async fn build_admin_metrics_snapshot(
+    state: &AppState,
+    prev_cpu: &mut Option<CpuTimes>,
+) -> AdminMetricsSnapshot {
+    let timestamp = chrono::Utc::now().to_rfc3339();
+    let mut errors = Vec::new();
+
+    let previous_cpu = prev_cpu.clone();
+    let host = match read_host_metrics(previous_cpu.clone()).await {
+        Ok((metrics, cpu)) => {
+            *prev_cpu = Some(cpu);
+            Some(metrics)
+        }
+        Err(err) => {
+            *prev_cpu = previous_cpu;
+            errors.push(format!("host_metrics: {}", err));
+            None
+        }
+    };
+
+    let containers = match state.sessions.collect_container_stats().await {
+        Ok(report) => {
+            if !report.errors.is_empty() {
+                errors.extend(report.errors);
+            }
+            report.stats
+        }
+        Err(err) => {
+            errors.push(format!("container_stats: {}", err));
+            Vec::new()
+        }
+    };
+
+    let error = if errors.is_empty() {
+        None
+    } else {
+        Some(errors.join("; "))
+    };
+
+    AdminMetricsSnapshot {
+        timestamp,
+        host,
+        containers,
+        error,
+    }
+}
+
 // ============================================================================
 // User Management Handlers
 // ============================================================================
@@ -845,17 +1068,27 @@ pub async fn get_invite_code_stats(
 // ============================================================================
 
 use super::super::agent::{
-    AgentInfo, CreateAgentRequest, CreateAgentResponse, StartAgentRequest, StartAgentResponse,
-    StopAgentResponse,
+    AgentExecRequest, AgentExecResponse, AgentInfo, CreateAgentRequest, CreateAgentResponse,
+    StartAgentRequest, StartAgentResponse, StopAgentResponse,
 };
+
+#[derive(Debug, Deserialize)]
+pub struct AgentListQuery {
+    #[serde(default)]
+    pub include_context: bool,
+}
 
 /// List all agents for a session (running + available directories).
 #[instrument(skip(state))]
 pub async fn list_agents(
     State(state): State<AppState>,
     Path(session_id): Path<String>,
+    Query(query): Query<AgentListQuery>,
 ) -> ApiResult<Json<Vec<AgentInfo>>> {
-    let agents = state.agents.list_agents(&session_id).await?;
+    let agents = state
+        .agents
+        .list_agents(&session_id, query.include_context)
+        .await?;
     info!(session_id = %session_id, count = agents.len(), "Listed agents");
     Ok(Json(agents))
 }
@@ -865,10 +1098,11 @@ pub async fn list_agents(
 pub async fn get_agent(
     State(state): State<AppState>,
     Path((session_id, agent_id)): Path<(String, String)>,
+    Query(query): Query<AgentListQuery>,
 ) -> ApiResult<Json<AgentInfo>> {
     state
         .agents
-        .get_agent(&session_id, &agent_id)
+        .get_agent(&session_id, &agent_id, query.include_context)
         .await?
         .map(Json)
         .ok_or_else(|| ApiError::not_found(format!("Agent {} not found", agent_id)))
@@ -925,7 +1159,12 @@ pub async fn create_agent(
 ) -> ApiResult<(StatusCode, Json<CreateAgentResponse>)> {
     let response = state
         .agents
-        .create_agent(&session_id, &request.name, &request.description)
+        .create_agent(
+            &session_id,
+            &request.name,
+            &request.description,
+            request.scaffold.as_ref(),
+        )
         .await?;
     info!(
         session_id = %session_id,
@@ -934,4 +1173,400 @@ pub async fn create_agent(
         "Created agent"
     );
     Ok((StatusCode::CREATED, Json(response)))
+}
+
+/// Execute a command in a session workspace.
+#[instrument(skip(state, request), fields(command = %request.command))]
+pub async fn exec_agent_command(
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+    Json(request): Json<AgentExecRequest>,
+) -> ApiResult<Json<AgentExecResponse>> {
+    let response = state.agents.exec_command(&session_id, request).await?;
+    Ok(Json(response))
+}
+
+// ============================================================================
+// Chat History Handlers
+// ============================================================================
+
+use crate::history::ChatSession;
+
+/// Query parameters for listing chat history.
+#[derive(Debug, Deserialize)]
+pub struct ChatHistoryQuery {
+    /// Filter by workspace path.
+    pub workspace: Option<String>,
+    /// Include child sessions (default: false).
+    #[serde(default)]
+    pub include_children: bool,
+    /// Maximum number of sessions to return.
+    pub limit: Option<usize>,
+}
+
+/// List all chat sessions from OpenCode history.
+///
+/// This reads sessions directly from disk without requiring a running OpenCode instance.
+#[instrument(skip(_state))]
+pub async fn list_chat_history(
+    State(_state): State<AppState>,
+    Query(query): Query<ChatHistoryQuery>,
+) -> ApiResult<Json<Vec<ChatSession>>> {
+    let sessions = crate::history::list_sessions()
+        .map_err(|e| ApiError::internal(format!("Failed to list chat history: {}", e)))?;
+
+    let mut filtered: Vec<ChatSession> = sessions
+        .into_iter()
+        .filter(|s| {
+            // Filter by workspace if specified
+            if let Some(ref ws) = query.workspace {
+                if s.workspace_path != *ws {
+                    return false;
+                }
+            }
+            // Filter out child sessions unless explicitly included
+            if !query.include_children && s.is_child {
+                return false;
+            }
+            true
+        })
+        .collect();
+
+    // Apply limit if specified
+    if let Some(limit) = query.limit {
+        filtered.truncate(limit);
+    }
+
+    info!(count = filtered.len(), "Listed chat history");
+    Ok(Json(filtered))
+}
+
+/// Get a specific chat session by ID.
+#[instrument]
+pub async fn get_chat_session(
+    Path(session_id): Path<String>,
+) -> ApiResult<Json<ChatSession>> {
+    crate::history::get_session(&session_id)
+        .map_err(|e| ApiError::internal(format!("Failed to get chat session: {}", e)))?
+        .map(Json)
+        .ok_or_else(|| ApiError::not_found(format!("Chat session {} not found", session_id)))
+}
+
+/// Response for grouped chat history.
+#[derive(Debug, Serialize)]
+pub struct GroupedChatHistory {
+    pub workspace_path: String,
+    pub project_name: String,
+    pub sessions: Vec<ChatSession>,
+}
+
+/// List chat sessions grouped by workspace/project.
+#[instrument(skip(_state))]
+pub async fn list_chat_history_grouped(
+    State(_state): State<AppState>,
+    Query(query): Query<ChatHistoryQuery>,
+) -> ApiResult<Json<Vec<GroupedChatHistory>>> {
+    let grouped = crate::history::list_sessions_grouped()
+        .map_err(|e| ApiError::internal(format!("Failed to list chat history: {}", e)))?;
+
+    let mut result: Vec<GroupedChatHistory> = grouped
+        .into_iter()
+        .map(|(workspace_path, mut sessions)| {
+            // Filter out child sessions unless explicitly included
+            if !query.include_children {
+                sessions.retain(|s| !s.is_child);
+            }
+            
+            // Apply limit per workspace
+            if let Some(limit) = query.limit {
+                sessions.truncate(limit);
+            }
+
+            let project_name = sessions
+                .first()
+                .map(|s| s.project_name.clone())
+                .unwrap_or_else(|| crate::history::project_name_from_path(&workspace_path));
+
+            GroupedChatHistory {
+                workspace_path,
+                project_name,
+                sessions,
+            }
+        })
+        .filter(|g| !g.sessions.is_empty())
+        .collect();
+
+    // Sort by most recently updated session in each group
+    result.sort_by(|a, b| {
+        let a_updated = a.sessions.first().map(|s| s.updated_at).unwrap_or(0);
+        let b_updated = b.sessions.first().map(|s| s.updated_at).unwrap_or(0);
+        b_updated.cmp(&a_updated)
+    });
+
+    info!(count = result.len(), "Listed grouped chat history");
+    Ok(Json(result))
+}
+
+use crate::history::ChatMessage;
+
+/// Query parameters for chat messages endpoint.
+#[derive(Debug, Deserialize)]
+pub struct ChatMessagesQuery {
+    /// If true, include pre-rendered HTML for text parts (slower but saves client CPU)
+    #[serde(default)]
+    pub render: bool,
+}
+
+/// Get all messages for a chat session.
+///
+/// This reads messages and their parts directly from OpenCode's storage on disk.
+/// Uses async I/O with caching for better performance on large sessions.
+///
+/// Query params:
+/// - `render=true`: Include pre-rendered markdown HTML in `text_html` field
+#[instrument]
+pub async fn get_chat_messages(
+    Path(session_id): Path<String>,
+    Query(query): Query<ChatMessagesQuery>,
+) -> ApiResult<Json<Vec<ChatMessage>>> {
+    let messages = if query.render {
+        crate::history::get_session_messages_rendered(&session_id).await
+    } else {
+        crate::history::get_session_messages_async(&session_id).await
+    }
+    .map_err(|e| ApiError::internal(format!("Failed to get chat messages: {}", e)))?;
+
+    info!(session_id = %session_id, count = messages.len(), render = query.render, "Listed chat messages");
+    Ok(Json(messages))
+}
+
+// ============================================================================
+// AgentRPC Handlers (new unified backend API)
+// ============================================================================
+
+use crate::agent_rpc::{self, Conversation as RpcConversation, Message as RpcMessage, HealthStatus as RpcHealthStatus, SessionHandle, SendMessagePart};
+
+/// Request to start a new agent session.
+#[derive(Debug, Deserialize)]
+pub struct StartAgentSessionRequest {
+    /// Working directory for the session
+    pub workdir: String,
+    /// Model to use (optional)
+    pub model: Option<String>,
+    /// Agent/mode to use (optional, passed to opencode via --agent flag)
+    pub agent: Option<String>,
+    /// Session ID to resume (optional)
+    pub resume_session_id: Option<String>,
+    /// Project ID for shared project sessions (optional)
+    pub project_id: Option<String>,
+}
+
+/// Request to send a message to an agent session.
+#[derive(Debug, Deserialize)]
+pub struct SendAgentMessageRequest {
+    /// Message text
+    pub text: String,
+    /// Model override (optional)
+    pub model: Option<agent_rpc::MessageModel>,
+}
+
+/// List conversations via AgentBackend.
+#[instrument(skip(state, user))]
+pub async fn agent_list_conversations(
+    State(state): State<AppState>,
+    user: CurrentUser,
+) -> ApiResult<Json<Vec<RpcConversation>>> {
+    let backend = state.agent_backend.as_ref().ok_or_else(|| {
+        ApiError::internal("AgentRPC backend not enabled")
+    })?;
+
+    let conversations = backend.list_conversations(user.id()).await
+        .map_err(|e| ApiError::internal(format!("Failed to list conversations: {}", e)))?;
+
+    info!(user_id = %user.id(), count = conversations.len(), "Listed agent conversations");
+    Ok(Json(conversations))
+}
+
+/// Get a specific conversation via AgentBackend.
+#[instrument(skip(state, user))]
+pub async fn agent_get_conversation(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(conversation_id): Path<String>,
+) -> ApiResult<Json<RpcConversation>> {
+    let backend = state.agent_backend.as_ref().ok_or_else(|| {
+        ApiError::internal("AgentRPC backend not enabled")
+    })?;
+
+    let conversation = backend.get_conversation(user.id(), &conversation_id).await
+        .map_err(|e| ApiError::internal(format!("Failed to get conversation: {}", e)))?
+        .ok_or_else(|| ApiError::not_found(format!("Conversation {} not found", conversation_id)))?;
+
+    Ok(Json(conversation))
+}
+
+/// Get messages for a conversation via AgentBackend.
+#[instrument(skip(state, user))]
+pub async fn agent_get_messages(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(conversation_id): Path<String>,
+) -> ApiResult<Json<Vec<RpcMessage>>> {
+    let backend = state.agent_backend.as_ref().ok_or_else(|| {
+        ApiError::internal("AgentRPC backend not enabled")
+    })?;
+
+    let messages = backend.get_messages(user.id(), &conversation_id).await
+        .map_err(|e| ApiError::internal(format!("Failed to get messages: {}", e)))?;
+
+    info!(user_id = %user.id(), conversation_id = %conversation_id, count = messages.len(), "Listed agent messages");
+    Ok(Json(messages))
+}
+
+/// Start a new agent session via AgentBackend.
+#[instrument(skip(state, user, request))]
+pub async fn agent_start_session(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Json(request): Json<StartAgentSessionRequest>,
+) -> ApiResult<(StatusCode, Json<SessionHandle>)> {
+    let backend = state.agent_backend.as_ref().ok_or_else(|| {
+        ApiError::internal("AgentRPC backend not enabled")
+    })?;
+
+    let opts = agent_rpc::StartSessionOpts {
+        model: request.model,
+        agent: request.agent,
+        resume_session_id: request.resume_session_id,
+        project_id: request.project_id,
+        env: std::collections::HashMap::new(),
+    };
+
+    let workdir = std::path::Path::new(&request.workdir);
+    let handle = backend.start_session(user.id(), workdir, opts).await
+        .map_err(|e| ApiError::internal(format!("Failed to start session: {}", e)))?;
+
+    info!(user_id = %user.id(), session_id = %handle.session_id, "Started agent session");
+    Ok((StatusCode::CREATED, Json(handle)))
+}
+
+/// Send a message to an agent session via AgentBackend.
+#[instrument(skip(state, user, request))]
+pub async fn agent_send_message(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(session_id): Path<String>,
+    Json(request): Json<SendAgentMessageRequest>,
+) -> ApiResult<StatusCode> {
+    let backend = state.agent_backend.as_ref().ok_or_else(|| {
+        ApiError::internal("AgentRPC backend not enabled")
+    })?;
+
+    let send_request = agent_rpc::SendMessageRequest {
+        parts: vec![SendMessagePart::Text { text: request.text }],
+        model: request.model,
+    };
+
+    backend.send_message(user.id(), &session_id, send_request).await
+        .map_err(|e| ApiError::internal(format!("Failed to send message: {}", e)))?;
+
+    info!(user_id = %user.id(), session_id = %session_id, "Sent message to agent session");
+    Ok(StatusCode::ACCEPTED)
+}
+
+/// Stop an agent session via AgentBackend.
+#[instrument(skip(state, user))]
+pub async fn agent_stop_session(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(session_id): Path<String>,
+) -> ApiResult<StatusCode> {
+    let backend = state.agent_backend.as_ref().ok_or_else(|| {
+        ApiError::internal("AgentRPC backend not enabled")
+    })?;
+
+    backend.stop_session(user.id(), &session_id).await
+        .map_err(|e| ApiError::internal(format!("Failed to stop session: {}", e)))?;
+
+    info!(user_id = %user.id(), session_id = %session_id, "Stopped agent session");
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Get the session URL for an agent session.
+#[instrument(skip(state, user))]
+pub async fn agent_get_session_url(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(session_id): Path<String>,
+) -> ApiResult<Json<SessionUrlResponse>> {
+    let backend = state.agent_backend.as_ref().ok_or_else(|| {
+        ApiError::internal("AgentRPC backend not enabled")
+    })?;
+
+    let url = backend.get_session_url(user.id(), &session_id).await
+        .map_err(|e| ApiError::internal(format!("Failed to get session URL: {}", e)))?;
+
+    Ok(Json(SessionUrlResponse { session_id, url }))
+}
+
+/// Response for session URL query.
+#[derive(Debug, Serialize)]
+pub struct SessionUrlResponse {
+    pub session_id: String,
+    pub url: Option<String>,
+}
+
+/// Health check for the AgentRPC backend.
+#[instrument(skip(state))]
+pub async fn agent_health(
+    State(state): State<AppState>,
+) -> ApiResult<Json<RpcHealthStatus>> {
+    let backend = state.agent_backend.as_ref().ok_or_else(|| {
+        ApiError::internal("AgentRPC backend not enabled")
+    })?;
+
+    let health = backend.health().await
+        .map_err(|e| ApiError::internal(format!("Health check failed: {}", e)))?;
+
+    Ok(Json(health))
+}
+
+/// Attach to a session's event stream via AgentBackend.
+///
+/// Returns an SSE stream of agent events (messages, tool calls, etc.).
+#[instrument(skip(state, user))]
+pub async fn agent_attach(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(session_id): Path<String>,
+) -> Result<Sse<impl tokio_stream::Stream<Item = Result<Event, Infallible>>>, ApiError> {
+    let backend = state.agent_backend.as_ref().ok_or_else(|| {
+        ApiError::internal("AgentRPC backend not enabled")
+    })?;
+
+    let event_stream = backend.attach(user.id(), &session_id).await
+        .map_err(|e| ApiError::internal(format!("Failed to attach to session: {}", e)))?;
+
+    // Convert AgentEvent stream to SSE Event stream
+    let sse_stream = tokio_stream::StreamExt::map(event_stream, |result| {
+        match result {
+            Ok(event) => {
+                // Serialize the event to JSON
+                match serde_json::to_string(&event) {
+                    Ok(json) => Ok(Event::default().data(json)),
+                    Err(e) => {
+                        warn!("Failed to serialize agent event: {}", e);
+                        Ok(Event::default().data(format!(r#"{{"error":"{}"}}"#, e)))
+                    }
+                }
+            }
+            Err(e) => {
+                warn!("Error in agent event stream: {}", e);
+                Ok(Event::default().data(format!(r#"{{"error":"{}"}}"#, e)))
+            }
+        }
+    });
+
+    info!(user_id = %user.id(), session_id = %session_id, "Attached to agent session event stream");
+    Ok(Sse::new(sse_stream).keep_alive(KeepAlive::default()))
 }

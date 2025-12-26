@@ -44,10 +44,138 @@ impl Default for LinuxUsersConfig {
     }
 }
 
+/// Prefix for project-based Linux users.
+const PROJECT_PREFIX: &str = "proj_";
+
 impl LinuxUsersConfig {
     /// Get the Linux username for a platform user ID.
     pub fn linux_username(&self, user_id: &str) -> String {
         format!("{}{}", self.prefix, sanitize_username(user_id))
+    }
+
+    /// Get the Linux username for a shared project.
+    /// 
+    /// Projects use a different prefix to distinguish them from user accounts:
+    /// - User: octo_alice
+    /// - Project: octo_proj_myproject
+    pub fn project_username(&self, project_id: &str) -> String {
+        format!("{}{}{}", self.prefix, PROJECT_PREFIX, sanitize_username(project_id))
+    }
+
+    /// Ensure a Linux user exists for a shared project.
+    /// 
+    /// Creates the project user if it doesn't exist and sets up the project directory.
+    /// Returns the UID of the project user.
+    pub fn ensure_project_user(&self, project_id: &str, project_path: &std::path::Path) -> Result<u32> {
+        if !self.enabled {
+            // Return current user's UID when not enabled
+            return Ok(unsafe { libc::getuid() });
+        }
+
+        // Ensure group exists first
+        self.ensure_group()?;
+
+        let username = self.project_username(project_id);
+
+        // Check if user already exists
+        if let Some(uid) = get_user_uid(&username)? {
+            debug!("Project user '{}' already exists with UID {}", username, uid);
+            // Ensure directory ownership is correct
+            self.chown_directory_to_user(project_path, &username)?;
+            return Ok(uid);
+        }
+
+        // Find next available UID
+        let uid = self.find_next_uid()?;
+
+        info!(
+            "Creating Linux user '{}' with UID {} for project '{}'",
+            username, uid, project_id
+        );
+
+        // Build useradd command
+        let mut args = vec![
+            "-u".to_string(),
+            uid.to_string(),
+            "-g".to_string(),
+            self.group.clone(),
+            "-s".to_string(),
+            self.shell.clone(),
+        ];
+
+        if self.create_home {
+            args.push("-m".to_string());
+        } else {
+            args.push("-M".to_string());
+        }
+
+        // Add comment with project ID for reference
+        args.push("-c".to_string());
+        args.push(format!("Octo shared project: {}", project_id));
+
+        args.push(username.clone());
+
+        let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        run_privileged_command(self.use_sudo, "useradd", &args_refs)
+            .with_context(|| format!("creating project user '{}'", username))?;
+
+        info!("Created Linux user '{}' with UID {}", username, uid);
+
+        // Set up project directory with correct ownership
+        std::fs::create_dir_all(project_path)
+            .with_context(|| format!("creating project directory: {:?}", project_path))?;
+        self.chown_directory_to_user(project_path, &username)?;
+
+        Ok(uid)
+    }
+
+    /// Set ownership of a directory to a specific Linux username.
+    pub fn chown_directory_to_user(&self, path: &std::path::Path, username: &str) -> Result<()> {
+        if !self.enabled {
+            return Ok(());
+        }
+
+        let path_str = path.to_string_lossy();
+
+        info!("Setting ownership of '{}' to '{}'", path_str, username);
+
+        run_privileged_command(
+            self.use_sudo,
+            "chown",
+            &["-R", &format!("{}:{}", username, self.group), &path_str],
+        )
+        .with_context(|| format!("chown {} to {}", path_str, username))?;
+
+        Ok(())
+    }
+
+    /// Get the effective Linux username for a session.
+    /// 
+    /// This determines which Linux user should run the agent processes:
+    /// - If project_id is provided, uses the project user
+    /// - Otherwise, uses the platform user's Linux user
+    pub fn effective_username(&self, user_id: &str, project_id: Option<&str>) -> String {
+        match project_id {
+            Some(pid) => self.project_username(pid),
+            None => self.linux_username(user_id),
+        }
+    }
+
+    /// Ensure the effective user exists for a session.
+    /// 
+    /// This is the main entry point for automatic user creation:
+    /// - If project_id is provided, ensures project user exists
+    /// - Otherwise, ensures platform user's Linux user exists
+    pub fn ensure_effective_user(
+        &self,
+        user_id: &str,
+        project_id: Option<&str>,
+        project_path: Option<&std::path::Path>,
+    ) -> Result<u32> {
+        match (project_id, project_path) {
+            (Some(pid), Some(path)) => self.ensure_project_user(pid, path),
+            _ => self.ensure_user(user_id),
+        }
     }
 
     /// Check if running with sufficient privileges for user management.
@@ -108,18 +236,21 @@ impl LinuxUsersConfig {
     }
 
     /// Check if a Linux user exists for the given platform user.
+    #[allow(dead_code)]
     pub fn user_exists(&self, user_id: &str) -> Result<bool> {
         let username = self.linux_username(user_id);
         linux_user_exists(&username)
     }
 
     /// Get the UID of a Linux user.
+    #[allow(dead_code)]
     pub fn get_uid(&self, user_id: &str) -> Result<Option<u32>> {
         let username = self.linux_username(user_id);
         get_user_uid(&username)
     }
 
     /// Get the home directory of a Linux user.
+    #[allow(dead_code)]
     pub fn get_home_dir(&self, user_id: &str) -> Result<Option<PathBuf>> {
         let username = self.linux_username(user_id);
         get_user_home(&username)
@@ -290,6 +421,7 @@ fn group_exists(group: &str) -> Result<bool> {
 }
 
 /// Check if a Linux user exists.
+#[allow(dead_code)]
 fn linux_user_exists(username: &str) -> Result<bool> {
     let output = Command::new("id")
         .arg(username)
@@ -311,15 +443,13 @@ fn get_user_uid(username: &str) -> Result<Option<u32>> {
     }
 
     let uid_str = String::from_utf8_lossy(&output.stdout);
-    let uid = uid_str
-        .trim()
-        .parse::<u32>()
-        .context("parsing UID")?;
+    let uid = uid_str.trim().parse::<u32>().context("parsing UID")?;
 
     Ok(Some(uid))
 }
 
 /// Get the home directory of a Linux user.
+#[allow(dead_code)]
 fn get_user_home(username: &str) -> Result<Option<PathBuf>> {
     let output = Command::new("getent")
         .args(["passwd", username])
@@ -421,7 +551,10 @@ mod tests {
         let config = LinuxUsersConfig::default();
         assert_eq!(config.linux_username("alice"), "octo_alice");
         assert_eq!(config.linux_username("Bob"), "octo_bob");
-        assert_eq!(config.linux_username("user@example.com"), "octo_user_example_com");
+        assert_eq!(
+            config.linux_username("user@example.com"),
+            "octo_user_example_com"
+        );
     }
 
     #[test]

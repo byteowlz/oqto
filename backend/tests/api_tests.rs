@@ -848,3 +848,290 @@ async fn test_get_me() {
 
     assert_eq!(json["id"], "dev");
 }
+
+// ============================================================================
+// AgentRPC Tests
+// ============================================================================
+
+/// Test that agent health endpoint works when backend is enabled.
+#[tokio::test]
+async fn test_agent_health_with_backend() {
+    let app = common::test_app_with_agent_backend().await;
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/agent/health")
+                .method(Method::GET)
+                .header("X-Dev-User", "dev")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let json: Value = serde_json::from_slice(&body).unwrap();
+
+    assert_eq!(json["healthy"], true);
+    assert_eq!(json["mode"], "mock");
+}
+
+/// Test that agent health returns 500 when backend is not enabled.
+#[tokio::test]
+async fn test_agent_health_without_backend() {
+    let app = test_app().await;
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/agent/health")
+                .method(Method::GET)
+                .header("X-Dev-User", "dev")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+}
+
+/// Test listing conversations via AgentRPC.
+#[tokio::test]
+async fn test_agent_list_conversations() {
+    let app = common::test_app_with_agent_backend().await;
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/agent/conversations")
+                .method(Method::GET)
+                .header("X-Dev-User", "dev")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let json: Value = serde_json::from_slice(&body).unwrap();
+
+    assert!(json.is_array());
+    let conversations = json.as_array().unwrap();
+    assert_eq!(conversations.len(), 2);
+    assert_eq!(conversations[0]["id"], "conv_test1");
+    assert_eq!(conversations[1]["id"], "conv_test2");
+}
+
+/// Test getting a specific conversation.
+#[tokio::test]
+async fn test_agent_get_conversation() {
+    let app = common::test_app_with_agent_backend().await;
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/agent/conversations/conv_test1")
+                .method(Method::GET)
+                .header("X-Dev-User", "dev")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let json: Value = serde_json::from_slice(&body).unwrap();
+
+    assert_eq!(json["id"], "conv_test1");
+    assert_eq!(json["title"], "Test Conversation 1");
+    assert_eq!(json["project_name"], "project1");
+}
+
+/// Test getting a non-existent conversation returns 404.
+#[tokio::test]
+async fn test_agent_get_nonexistent_conversation() {
+    let app = common::test_app_with_agent_backend().await;
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/agent/conversations/nonexistent")
+                .method(Method::GET)
+                .header("X-Dev-User", "dev")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+/// Test getting messages for a conversation.
+#[tokio::test]
+async fn test_agent_get_messages() {
+    let app = common::test_app_with_agent_backend().await;
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/agent/conversations/conv_test1/messages")
+                .method(Method::GET)
+                .header("X-Dev-User", "dev")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let json: Value = serde_json::from_slice(&body).unwrap();
+
+    assert!(json.is_array());
+}
+
+/// Test starting a new agent session.
+#[tokio::test]
+async fn test_agent_start_session() {
+    let app = common::test_app_with_agent_backend().await;
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/agent/sessions")
+                .method(Method::POST)
+                .header("X-Dev-User", "dev")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    serde_json::to_string(&json!({
+                        "workdir": "/home/test/project"
+                    }))
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::CREATED);
+
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let json: Value = serde_json::from_slice(&body).unwrap();
+
+    assert_eq!(json["session_id"], "ses_mock123");
+    assert!(json["opencode_port"].is_number());
+    assert_eq!(json["is_new"], true);
+}
+
+/// Test sending a message to a session.
+#[tokio::test]
+async fn test_agent_send_message() {
+    let app = common::test_app_with_agent_backend().await;
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/agent/sessions/ses_mock123/messages")
+                .method(Method::POST)
+                .header("X-Dev-User", "dev")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    serde_json::to_string(&json!({
+                        "text": "Hello, agent!"
+                    }))
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+}
+
+/// Test stopping a session.
+#[tokio::test]
+async fn test_agent_stop_session() {
+    let app = common::test_app_with_agent_backend().await;
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/agent/sessions/ses_mock123")
+                .method(Method::DELETE)
+                .header("X-Dev-User", "dev")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+}
+
+/// Test getting session URL.
+#[tokio::test]
+async fn test_agent_get_session_url() {
+    let app = common::test_app_with_agent_backend().await;
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/agent/sessions/ses_mock123/url")
+                .method(Method::GET)
+                .header("X-Dev-User", "dev")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let json: Value = serde_json::from_slice(&body).unwrap();
+
+    assert_eq!(json["session_id"], "ses_mock123");
+    assert!(json["url"].is_string());
+}
+
+/// Test that agent endpoints require authentication.
+#[tokio::test]
+async fn test_agent_endpoints_require_auth() {
+    let app = common::test_app_with_agent_backend().await;
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/agent/conversations")
+                .method(Method::GET)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
