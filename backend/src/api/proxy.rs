@@ -547,23 +547,22 @@ pub async fn proxy_opencode_agent(
         .get_agent_port(&session_id, &agent_id)
         .await
         .map_err(|e| {
-            error!("Failed to get agent port for {}/{}: {:?}", session_id, agent_id, e);
+            error!(
+                "Failed to get agent port for {}/{}: {:?}",
+                session_id, agent_id, e
+            );
             StatusCode::INTERNAL_SERVER_ERROR
         })?
         .ok_or_else(|| {
-            warn!("Agent {} not found or not running in session {}", agent_id, session_id);
+            warn!(
+                "Agent {} not found or not running in session {}",
+                agent_id, session_id
+            );
             StatusCode::NOT_FOUND
         })?;
 
     let starting = matches!(session.status, SessionStatus::Starting);
-    proxy_request(
-        state.http_client.clone(),
-        req,
-        port,
-        &path,
-        starting,
-    )
-    .await
+    proxy_request(state.http_client.clone(), req, port, &path, starting).await
 }
 
 /// SSE events proxy for a specific agent's opencode server.
@@ -594,16 +593,25 @@ pub async fn proxy_opencode_agent_events(
         .get_agent_port(&session_id, &agent_id)
         .await
         .map_err(|e| {
-            error!("Failed to get agent port for {}/{}: {:?}", session_id, agent_id, e);
+            error!(
+                "Failed to get agent port for {}/{}: {:?}",
+                session_id, agent_id, e
+            );
             StatusCode::INTERNAL_SERVER_ERROR
         })?
         .ok_or_else(|| {
-            warn!("Agent {} not found or not running in session {}", agent_id, session_id);
+            warn!(
+                "Agent {} not found or not running in session {}",
+                agent_id, session_id
+            );
             StatusCode::NOT_FOUND
         })?;
 
     let target_url = format!("http://localhost:{}/event", port);
-    debug!("Proxying agent SSE events from {} (agent: {})", target_url, agent_id);
+    debug!(
+        "Proxying agent SSE events from {} (agent: {})",
+        target_url, agent_id
+    );
 
     // Create HTTP client for SSE
     let client = reqwest::Client::new();
@@ -644,7 +652,11 @@ pub async fn proxy_opencode_agent_events(
     };
 
     if !response.status().is_success() {
-        error!("Agent {} SSE returned status: {}", agent_id, response.status());
+        error!(
+            "Agent {} SSE returned status: {}",
+            agent_id,
+            response.status()
+        );
         return Err(StatusCode::BAD_GATEWAY);
     }
 

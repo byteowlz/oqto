@@ -34,11 +34,17 @@ pub fn create_router(state: AppState) -> Router {
         // Session management
         .route("/sessions", get(handlers::list_sessions))
         .route("/sessions", post(handlers::create_session))
-        .route("/sessions/get-or-create", post(handlers::get_or_create_session))
+        .route(
+            "/sessions/get-or-create",
+            post(handlers::get_or_create_session),
+        )
         .route("/sessions/{session_id}", get(handlers::get_session))
         .route("/sessions/{session_id}", delete(handlers::delete_session))
         .route("/sessions/{session_id}/stop", post(handlers::stop_session))
-        .route("/sessions/{session_id}/resume", post(handlers::resume_session))
+        .route(
+            "/sessions/{session_id}/resume",
+            post(handlers::resume_session),
+        )
         .route(
             "/sessions/{session_id}/update",
             get(handlers::check_session_update),
@@ -115,6 +121,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/admin/users", get(handlers::list_users))
         .route("/admin/users", post(handlers::create_user))
         .route("/admin/users/stats", get(handlers::get_user_stats))
+        .route("/admin/metrics", get(handlers::admin_metrics_stream))
         .route("/admin/users/{user_id}", get(handlers::get_user))
         .route("/admin/users/{user_id}", put(handlers::update_user))
         .route("/admin/users/{user_id}", delete(handlers::delete_user))
@@ -157,6 +164,10 @@ pub fn create_router(state: AppState) -> Router {
         .route(
             "/session/{session_id}/agents/create",
             post(handlers::create_agent),
+        )
+        .route(
+            "/session/{session_id}/agents/exec",
+            post(handlers::exec_agent_command),
         )
         .route(
             "/session/{session_id}/agents/{agent_id}",

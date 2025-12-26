@@ -82,7 +82,10 @@ impl SessionRepository {
     /// Get a session by container ID.
     #[allow(dead_code)]
     pub async fn get_by_container_id(&self, container_id: &str) -> Result<Option<Session>> {
-        let query = format!("SELECT {} FROM sessions WHERE container_id = ?", SESSION_COLUMNS);
+        let query = format!(
+            "SELECT {} FROM sessions WHERE container_id = ?",
+            SESSION_COLUMNS
+        );
         let session = sqlx::query_as::<_, Session>(&query)
             .bind(container_id)
             .fetch_optional(&self.pool)
@@ -94,7 +97,10 @@ impl SessionRepository {
 
     /// List all sessions.
     pub async fn list(&self) -> Result<Vec<Session>> {
-        let query = format!("SELECT {} FROM sessions ORDER BY created_at DESC", SESSION_COLUMNS);
+        let query = format!(
+            "SELECT {} FROM sessions ORDER BY created_at DESC",
+            SESSION_COLUMNS
+        );
         let sessions = sqlx::query_as::<_, Session>(&query)
             .fetch_all(&self.pool)
             .await
@@ -313,6 +319,7 @@ impl SessionRepository {
     /// Find a free port range starting from the given base port.
     /// Returns the first available base port (opencode_port).
     /// Allocates ports: opencode, fileserver, ttyd, + agent_count ports for sub-agents.
+    #[allow(dead_code)]
     pub async fn find_free_port_range(&self, start_port: i64) -> Result<i64> {
         self.find_free_port_range_with_agents(start_port, 10).await
     }
@@ -320,7 +327,11 @@ impl SessionRepository {
     /// Find a free port range with a specific number of agent ports.
     /// Returns the first available base port (opencode_port).
     /// Allocates: opencode (base), fileserver (base+1), ttyd (base+2), agents (base+3 to base+3+agent_count-1).
-    pub async fn find_free_port_range_with_agents(&self, start_port: i64, agent_count: i64) -> Result<i64> {
+    pub async fn find_free_port_range_with_agents(
+        &self,
+        start_port: i64,
+        agent_count: i64,
+    ) -> Result<i64> {
         // Get all port ranges currently in use by active sessions
         let used_ranges: Vec<(i64, i64, i64, Option<i64>, Option<i64>)> = sqlx::query_as(
             r#"

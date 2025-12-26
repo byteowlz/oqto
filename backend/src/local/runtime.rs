@@ -105,9 +105,8 @@ impl LocalRuntimeConfig {
     /// Expands environment variables and replaces {user_id} placeholder.
     pub fn workspace_for_user(&self, user_id: &str) -> std::path::PathBuf {
         // First expand environment variables
-        let expanded = shellexpand::env(&self.workspace_dir).unwrap_or_else(|_| {
-            std::borrow::Cow::Borrowed(&self.workspace_dir)
-        });
+        let expanded = shellexpand::env(&self.workspace_dir)
+            .unwrap_or_else(|_| std::borrow::Cow::Borrowed(&self.workspace_dir));
         // Then replace {user_id} placeholder
         let path_str = expanded.replace("{user_id}", user_id);
         std::path::PathBuf::from(path_str)
@@ -117,9 +116,8 @@ impl LocalRuntimeConfig {
     /// Expands environment variables but removes {user_id} placeholder.
     pub fn workspace_base(&self) -> std::path::PathBuf {
         // First expand environment variables
-        let expanded = shellexpand::env(&self.workspace_dir).unwrap_or_else(|_| {
-            std::borrow::Cow::Borrowed(&self.workspace_dir)
-        });
+        let expanded = shellexpand::env(&self.workspace_dir)
+            .unwrap_or_else(|_| std::borrow::Cow::Borrowed(&self.workspace_dir));
         // Remove {user_id} placeholder and any trailing slash
         let path_str = expanded
             .replace("/{user_id}", "")
@@ -183,23 +181,21 @@ impl LocalRuntime {
             // Ensure Linux user exists
             let uid = self.config.linux_users.ensure_user(user_id)?;
             let username = self.config.linux_users.linux_username(user_id);
-            info!(
-                "Running session as Linux user '{}' (UID {})",
-                username, uid
-            );
+            info!("Running session as Linux user '{}' (UID {})", username, uid);
             RunAsUser::new(username, self.config.linux_users.use_sudo)
         } else {
             RunAsUser::current()
         };
 
         // Ensure workspace directory exists
-        std::fs::create_dir_all(workspace_path).with_context(|| {
-            format!("creating workspace directory: {:?}", workspace_path)
-        })?;
+        std::fs::create_dir_all(workspace_path)
+            .with_context(|| format!("creating workspace directory: {:?}", workspace_path))?;
 
         // Set ownership if Linux user isolation is enabled
         if self.config.linux_users.enabled && !self.config.single_user {
-            self.config.linux_users.chown_directory(workspace_path, user_id)?;
+            self.config
+                .linux_users
+                .chown_directory(workspace_path, user_id)?;
         }
 
         // Start fileserver
@@ -244,10 +240,7 @@ impl LocalRuntime {
 
         // Return PIDs as a pseudo "container ID"
         let pids = format!("{},{},{}", opencode_pid, fileserver_pid, ttyd_pid);
-        info!(
-            "Local session {} started with PIDs: {}",
-            session_id, pids
-        );
+        info!("Local session {} started with PIDs: {}", session_id, pids);
 
         Ok(pids)
     }
@@ -321,9 +314,7 @@ impl LocalRuntime {
         self.config.validate()?;
         Ok(format!(
             "Local runtime ready: opencode={}, fileserver={}, ttyd={}",
-            self.config.opencode_binary,
-            self.config.fileserver_binary,
-            self.config.ttyd_binary
+            self.config.opencode_binary, self.config.fileserver_binary, self.config.ttyd_binary
         ))
     }
 }
@@ -404,7 +395,9 @@ mod tests {
         assert!(LocalRuntimeConfig::binary_exists("ls"));
 
         // This should not exist
-        assert!(!LocalRuntimeConfig::binary_exists("nonexistent-binary-12345"));
+        assert!(!LocalRuntimeConfig::binary_exists(
+            "nonexistent-binary-12345"
+        ));
     }
 
     #[test]
@@ -413,7 +406,9 @@ mod tests {
         assert!(LocalRuntimeConfig::binary_exists("/bin/sh"));
 
         // Non-existent absolute path
-        assert!(!LocalRuntimeConfig::binary_exists("/nonexistent/path/to/binary"));
+        assert!(!LocalRuntimeConfig::binary_exists(
+            "/nonexistent/path/to/binary"
+        ));
     }
 
     #[test]
@@ -678,7 +673,10 @@ mod tests {
         };
 
         let path = config.workspace_for_user("testuser");
-        assert_eq!(path, std::path::PathBuf::from(format!("{}/octo/testuser", home)));
+        assert_eq!(
+            path,
+            std::path::PathBuf::from(format!("{}/octo/testuser", home))
+        );
     }
 
     #[test]
@@ -698,21 +696,30 @@ mod tests {
             workspace_dir: "/home/test/octo/{user_id}".to_string(),
             ..Default::default()
         };
-        assert_eq!(config.workspace_base(), std::path::PathBuf::from("/home/test/octo"));
+        assert_eq!(
+            config.workspace_base(),
+            std::path::PathBuf::from("/home/test/octo")
+        );
 
         // Test with {user_id} in the middle (edge case)
         let config = LocalRuntimeConfig {
             workspace_dir: "/data/{user_id}/workspace".to_string(),
             ..Default::default()
         };
-        assert_eq!(config.workspace_base(), std::path::PathBuf::from("/data/workspace"));
+        assert_eq!(
+            config.workspace_base(),
+            std::path::PathBuf::from("/data/workspace")
+        );
 
         // Test without {user_id} placeholder
         let config = LocalRuntimeConfig {
             workspace_dir: "/home/user/workspace".to_string(),
             ..Default::default()
         };
-        assert_eq!(config.workspace_base(), std::path::PathBuf::from("/home/user/workspace"));
+        assert_eq!(
+            config.workspace_base(),
+            std::path::PathBuf::from("/home/user/workspace")
+        );
     }
 
     #[test]

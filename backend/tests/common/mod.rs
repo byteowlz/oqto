@@ -1,7 +1,6 @@
 //! Test utilities and common setup.
 
 use axum::Router;
-use std::sync::Arc;
 use octo::agent::{AgentRepository, AgentService};
 use octo::api;
 use octo::auth::{AuthConfig, AuthState};
@@ -10,6 +9,7 @@ use octo::db::Database;
 use octo::invite::InviteCodeRepository;
 use octo::session::{SessionRepository, SessionService, SessionServiceConfig};
 use octo::user::{UserRepository, UserService};
+use std::sync::Arc;
 
 /// Create a test AuthConfig with a JWT secret for testing.
 fn test_auth_config() -> AuthConfig {
@@ -48,7 +48,13 @@ pub async fn test_app() -> Router {
     let invite_repo = InviteCodeRepository::new(db.pool().clone());
 
     // Create app state and router
-    let state = api::AppState::new(session_service, agent_service, user_service, invite_repo, auth_state);
+    let state = api::AppState::new(
+        session_service,
+        agent_service,
+        user_service,
+        invite_repo,
+        auth_state,
+    );
     api::create_router(state)
 }
 
@@ -80,7 +86,13 @@ pub async fn test_app_with_token() -> (Router, String) {
     // Create invite code repository
     let invite_repo = InviteCodeRepository::new(db.pool().clone());
 
-    let state = api::AppState::new(session_service, agent_service, user_service, invite_repo, auth_state);
+    let state = api::AppState::new(
+        session_service,
+        agent_service,
+        user_service,
+        invite_repo,
+        auth_state,
+    );
     (api::create_router(state), token)
 }
 
@@ -112,6 +124,12 @@ pub async fn test_app_with_user_token() -> (Router, String) {
     // Create invite code repository
     let invite_repo = InviteCodeRepository::new(db.pool().clone());
 
-    let state = api::AppState::new(session_service, agent_service, user_service, invite_repo, auth_state);
+    let state = api::AppState::new(
+        session_service,
+        agent_service,
+        user_service,
+        invite_repo,
+        auth_state,
+    );
     (api::create_router(state), token)
 }

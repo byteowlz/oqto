@@ -108,18 +108,21 @@ impl LinuxUsersConfig {
     }
 
     /// Check if a Linux user exists for the given platform user.
+    #[allow(dead_code)]
     pub fn user_exists(&self, user_id: &str) -> Result<bool> {
         let username = self.linux_username(user_id);
         linux_user_exists(&username)
     }
 
     /// Get the UID of a Linux user.
+    #[allow(dead_code)]
     pub fn get_uid(&self, user_id: &str) -> Result<Option<u32>> {
         let username = self.linux_username(user_id);
         get_user_uid(&username)
     }
 
     /// Get the home directory of a Linux user.
+    #[allow(dead_code)]
     pub fn get_home_dir(&self, user_id: &str) -> Result<Option<PathBuf>> {
         let username = self.linux_username(user_id);
         get_user_home(&username)
@@ -290,6 +293,7 @@ fn group_exists(group: &str) -> Result<bool> {
 }
 
 /// Check if a Linux user exists.
+#[allow(dead_code)]
 fn linux_user_exists(username: &str) -> Result<bool> {
     let output = Command::new("id")
         .arg(username)
@@ -311,15 +315,13 @@ fn get_user_uid(username: &str) -> Result<Option<u32>> {
     }
 
     let uid_str = String::from_utf8_lossy(&output.stdout);
-    let uid = uid_str
-        .trim()
-        .parse::<u32>()
-        .context("parsing UID")?;
+    let uid = uid_str.trim().parse::<u32>().context("parsing UID")?;
 
     Ok(Some(uid))
 }
 
 /// Get the home directory of a Linux user.
+#[allow(dead_code)]
 fn get_user_home(username: &str) -> Result<Option<PathBuf>> {
     let output = Command::new("getent")
         .args(["passwd", username])
@@ -421,7 +423,10 @@ mod tests {
         let config = LinuxUsersConfig::default();
         assert_eq!(config.linux_username("alice"), "octo_alice");
         assert_eq!(config.linux_username("Bob"), "octo_bob");
-        assert_eq!(config.linux_username("user@example.com"), "octo_user_example_com");
+        assert_eq!(
+            config.linux_username("user@example.com"),
+            "octo_user_example_com"
+        );
     }
 
     #[test]

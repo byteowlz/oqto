@@ -1,15 +1,17 @@
 //! Session service - orchestrates container lifecycle.
 
+use std::collections::HashSet;
+use std::path::PathBuf;
+use std::sync::Arc;
+
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use chrono::Utc;
 use log::{debug, error, info, warn};
-use std::collections::HashSet;
-use std::path::PathBuf;
-use std::sync::Arc;
+use serde::Serialize;
 use uuid::Uuid;
 
-use crate::container::{ContainerConfig, ContainerRuntimeApi};
+use crate::container::{ContainerConfig, ContainerRuntimeApi, ContainerStats};
 use crate::eavs::{CreateKeyRequest, EavsApi, KeyPermissions};
 use crate::local::{LocalRuntime, LocalRuntimeConfig};
 use crate::wordlist;
@@ -132,6 +134,20 @@ impl Default for SessionServiceConfig {
             single_user: false,
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SessionContainerStats {
+    pub session_id: String,
+    pub container_id: String,
+    pub container_name: String,
+    pub stats: ContainerStats,
+}
+
+#[derive(Debug, Clone)]
+pub struct ContainerStatsReport {
+    pub stats: Vec<SessionContainerStats>,
+    pub errors: Vec<String>,
 }
 
 /// Service for managing container sessions.
@@ -267,7 +283,9 @@ impl SessionService {
                     if let Some(ref container_id) = stopped_session.container_id {
                         if let Some(runtime) = self.container_runtime() {
                             match runtime.container_state_status(container_id).await {
-                                Ok(Some(status)) if status == "exited" || status == "stopped" => true,
+                                Ok(Some(status)) if status == "exited" || status == "stopped" => {
+                                    true
+                                }
                                 Ok(Some(status)) => {
                                     debug!(
                                         "Stopped session {} has container in unexpected state: {}",
@@ -387,8 +405,9 @@ impl SessionService {
                 if let Some(ref skel_path) = self.config.skel_path {
                     let skel = std::path::Path::new(skel_path);
                     if skel.exists() {
-                        copy_dir_recursive(skel, &user_home)
-                            .with_context(|| format!("copying skel from {:?} to {:?}", skel, user_home))?;
+                        copy_dir_recursive(skel, &user_home).with_context(|| {
+                            format!("copying skel from {:?} to {:?}", skel, user_home)
+                        })?;
                         info!(
                             "Created home directory for user {} from skel: {:?}",
                             user_id, user_home
@@ -481,7 +500,10 @@ impl SessionService {
         let max_agents = Self::DEFAULT_MAX_AGENTS;
         let ports_per_session = 3 + max_agents; // opencode, fileserver, ttyd + agent ports
         let search_start = self.config.base_port + (attempt as i64 * ports_per_session);
-        let base_port = self.repo.find_free_port_range_with_agents(search_start, max_agents).await?;
+        let base_port = self
+            .repo
+            .find_free_port_range_with_agents(search_start, max_agents)
+            .await?;
         let opencode_port = base_port;
         let fileserver_port = base_port + 1;
         let ttyd_port = base_port + 2;
@@ -627,12 +649,8 @@ impl SessionService {
         );
 
         match session.runtime_mode {
-            RuntimeMode::Container => {
-                self.start_container_mode(session, eavs_virtual_key).await
-            }
-            RuntimeMode::Local => {
-                self.start_local_mode(session, eavs_virtual_key).await
-            }
+            RuntimeMode::Container => self.start_container_mode(session, eavs_virtual_key).await,
+            RuntimeMode::Local => self.start_local_mode(session, eavs_virtual_key).await,
         }
     }
 
@@ -664,7 +682,8 @@ impl SessionService {
 
         // Map sub-agent ports if configured
         // Each sub-agent gets a port: external (agent_base_port + i) -> internal (4001 + i)
-        if let (Some(agent_base), Some(max_agents)) = (session.agent_base_port, session.max_agents) {
+        if let (Some(agent_base), Some(max_agents)) = (session.agent_base_port, session.max_agents)
+        {
             for i in 0..max_agents {
                 let external_port = (agent_base + i) as u16;
                 let internal_port = Self::INTERNAL_AGENT_BASE_PORT + i as u16;
@@ -672,7 +691,10 @@ impl SessionService {
             }
             // Pass agent port config to container via env vars
             config = config
-                .env("AGENT_BASE_PORT", Self::INTERNAL_AGENT_BASE_PORT.to_string())
+                .env(
+                    "AGENT_BASE_PORT",
+                    Self::INTERNAL_AGENT_BASE_PORT.to_string(),
+                )
                 .env("MAX_AGENTS", max_agents.to_string());
 
             info!(
@@ -827,7 +849,10 @@ impl SessionService {
             return Ok(());
         }
 
-        info!("Stopping session {} ({:?} mode)", session_id, session.runtime_mode);
+        info!(
+            "Stopping session {} ({:?} mode)",
+            session_id, session.runtime_mode
+        );
         self.repo
             .update_status(session_id, SessionStatus::Stopping)
             .await?;
@@ -893,7 +918,10 @@ impl SessionService {
             }
         }
 
-        info!("Resuming session {} ({:?} mode)", session_id, session.runtime_mode);
+        info!(
+            "Resuming session {} ({:?} mode)",
+            session_id, session.runtime_mode
+        );
 
         // Mark as starting
         self.repo
@@ -926,7 +954,10 @@ impl SessionService {
                 // Wait for services to become ready
                 if let Err(e) = self
                     .readiness
-                    .wait_for_session_services(session.opencode_port as u16, session.ttyd_port as u16)
+                    .wait_for_session_services(
+                        session.opencode_port as u16,
+                        session.ttyd_port as u16,
+                    )
                     .await
                 {
                     error!(
@@ -936,7 +967,10 @@ impl SessionService {
                     // Stop the container again since services didn't come up
                     let _ = runtime.stop_container(container_id, Some(5)).await;
                     self.repo
-                        .mark_failed(session_id, &format!("services not ready after resume: {}", e))
+                        .mark_failed(
+                            session_id,
+                            &format!("services not ready after resume: {}", e),
+                        )
                         .await?;
                     return Ok(self.repo.get(session_id).await?.unwrap_or(session));
                 }
@@ -988,7 +1022,10 @@ impl SessionService {
                 // Wait for services to become ready
                 if let Err(e) = self
                     .readiness
-                    .wait_for_session_services(session.opencode_port as u16, session.ttyd_port as u16)
+                    .wait_for_session_services(
+                        session.opencode_port as u16,
+                        session.ttyd_port as u16,
+                    )
                     .await
                 {
                     error!(
@@ -997,7 +1034,10 @@ impl SessionService {
                     );
                     let _ = local_runtime.stop_session(session_id).await;
                     self.repo
-                        .mark_failed(session_id, &format!("services not ready after resume: {}", e))
+                        .mark_failed(
+                            session_id,
+                            &format!("services not ready after resume: {}", e),
+                        )
                         .await?;
                     return Ok(self.repo.get(session_id).await?.unwrap_or(session));
                 }
@@ -1030,6 +1070,41 @@ impl SessionService {
         }
 
         Ok(reconciled)
+    }
+
+    /// Collect container stats for all container-mode sessions.
+    pub async fn collect_container_stats(&self) -> Result<ContainerStatsReport> {
+        let runtime = self
+            .container_runtime()
+            .context("container runtime not available for stats collection")?;
+        let sessions = self.repo.list().await?;
+        let mut stats = Vec::new();
+        let mut errors = Vec::new();
+
+        for session in sessions {
+            if session.runtime_mode != RuntimeMode::Container {
+                continue;
+            }
+
+            let Some(container_id) = session.container_id.clone() else {
+                continue;
+            };
+
+            match runtime.get_stats(&container_id).await {
+                Ok(container_stats) => stats.push(SessionContainerStats {
+                    session_id: session.id,
+                    container_id,
+                    container_name: session.container_name,
+                    stats: container_stats,
+                }),
+                Err(err) => errors.push(format!(
+                    "stats for session {} (container {}): {}",
+                    session.id, container_id, err
+                )),
+            }
+        }
+
+        Ok(ContainerStatsReport { stats, errors })
     }
 
     /// List active sessions.
@@ -1331,11 +1406,10 @@ impl SessionService {
 
         match session.runtime_mode {
             RuntimeMode::Container => {
-                self.reconcile_container_mode_state(session, &container_id).await
+                self.reconcile_container_mode_state(session, &container_id)
+                    .await
             }
-            RuntimeMode::Local => {
-                self.reconcile_local_mode_state(session).await
-            }
+            RuntimeMode::Local => self.reconcile_local_mode_state(session).await,
         }
     }
 
@@ -1738,7 +1812,7 @@ fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> Result<()
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::container::{Container, ContainerRuntimeApi};
+    use crate::container::{Container, ContainerRuntimeApi, ContainerStats};
     use crate::db::Database;
     use crate::eavs::{CreateKeyResponse, EavsApi, EavsResult};
     use chrono::Utc;
@@ -1803,6 +1877,22 @@ mod tests {
             _image: &str,
         ) -> crate::container::ContainerResult<Option<String>> {
             Ok(None)
+        }
+
+        async fn get_stats(
+            &self,
+            container_id: &str,
+        ) -> crate::container::ContainerResult<ContainerStats> {
+            Ok(ContainerStats {
+                container_id: container_id.to_string(),
+                name: String::new(),
+                cpu_percent: String::new(),
+                mem_usage: String::new(),
+                mem_percent: String::new(),
+                net_io: String::new(),
+                block_io: String::new(),
+                pids: String::new(),
+            })
         }
 
         async fn exec_detached(
@@ -1907,6 +1997,48 @@ mod tests {
             last_env.get("EAVS_VIRTUAL_KEY"),
             Some(&"vk_test_123".to_string())
         );
+    }
+
+    #[tokio::test]
+    async fn collect_container_stats_returns_sessions() {
+        let db = Database::in_memory().await.unwrap();
+        let repo = SessionRepository::new(db.pool().clone());
+        let runtime: Arc<dyn ContainerRuntimeApi> = Arc::new(FakeRuntime::default());
+        let service = SessionService::new(repo.clone(), runtime, SessionServiceConfig::default());
+
+        let session = Session {
+            id: "session-1".to_string(),
+            readable_id: None,
+            container_id: Some("container-1".to_string()),
+            container_name: "octo-session-1".to_string(),
+            user_id: "user-1".to_string(),
+            workspace_path: "/tmp/workspace".to_string(),
+            image: "octo-dev:latest".to_string(),
+            image_digest: None,
+            opencode_port: 41821,
+            fileserver_port: 41822,
+            ttyd_port: 41823,
+            eavs_port: None,
+            agent_base_port: None,
+            max_agents: Some(10),
+            eavs_key_id: None,
+            eavs_key_hash: None,
+            eavs_virtual_key: None,
+            status: SessionStatus::Running,
+            runtime_mode: RuntimeMode::Container,
+            created_at: Utc::now().to_rfc3339(),
+            started_at: None,
+            stopped_at: None,
+            error_message: None,
+        };
+
+        repo.create(&session).await.unwrap();
+
+        let report = service.collect_container_stats().await.unwrap();
+        assert!(report.errors.is_empty());
+        assert_eq!(report.stats.len(), 1);
+        assert_eq!(report.stats[0].session_id, "session-1");
+        assert_eq!(report.stats[0].container_id, "container-1");
     }
 
     #[test]

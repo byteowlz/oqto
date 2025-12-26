@@ -65,9 +65,9 @@ impl ProcessHandle {
     /// Check if the process is still running.
     pub fn is_running(&mut self) -> bool {
         match self.child.try_wait() {
-            Ok(None) => true,  // Still running
-            Ok(Some(_)) => false,  // Exited
-            Err(_) => false,  // Error checking status
+            Ok(None) => true,     // Still running
+            Ok(Some(_)) => false, // Exited
+            Err(_) => false,      // Error checking status
         }
     }
 
@@ -120,7 +120,13 @@ impl ProcessManager {
             .spawn_as_user(
                 run_as,
                 opencode_binary,
-                &["serve", "--port", &port.to_string(), "--hostname", "0.0.0.0"],
+                &[
+                    "serve",
+                    "--port",
+                    &port.to_string(),
+                    "--hostname",
+                    "0.0.0.0",
+                ],
                 Some(workspace_dir),
                 env,
             )
@@ -196,10 +202,7 @@ impl ProcessManager {
         ttyd_binary: &str,
         run_as: &RunAsUser,
     ) -> Result<u32> {
-        info!(
-            "Spawning ttyd on port {} for session {}",
-            port, session_id
-        );
+        info!("Spawning ttyd on port {} for session {}", port, session_id);
 
         // For ttyd, we need to spawn a shell as the target user
         let (shell_cmd, shell_args) = if let Some(ref username) = run_as.username {
@@ -299,7 +302,12 @@ impl ProcessManager {
                     .join(" ");
 
                 let full_cmd = if let Some(dir) = cwd {
-                    format!("cd {} && {} {}", shell_escape(dir.to_str().unwrap_or(".")), binary, args_str)
+                    format!(
+                        "cd {} && {} {}",
+                        shell_escape(dir.to_str().unwrap_or(".")),
+                        binary,
+                        args_str
+                    )
                 } else {
                     format!("{} {}", binary, args_str)
                 };
@@ -458,7 +466,9 @@ impl Clone for ProcessManager {
 
 /// Escape a string for safe use in a shell command.
 fn shell_escape(s: &str) -> String {
-    if s.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-' || c == '.' || c == '/') {
+    if s.chars()
+        .all(|c| c.is_alphanumeric() || c == '_' || c == '-' || c == '.' || c == '/')
+    {
         s.to_string()
     } else {
         format!("'{}'", s.replace('\'', "'\\''"))

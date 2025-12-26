@@ -1,17 +1,24 @@
 //! API request handlers.
 
+use std::convert::Infallible;
+use std::sync::Arc;
+use std::time::Duration;
+
 use axum::{
     Json,
     extract::{Path, Query, State},
     http::{StatusCode, header::SET_COOKIE},
-    response::AppendHeaders,
-    response::IntoResponse,
+    response::sse::{Event, KeepAlive, Sse},
+    response::{AppendHeaders, IntoResponse},
 };
 use serde::{Deserialize, Serialize};
+use tokio::sync::Mutex;
+use tokio_stream::{StreamExt, wrappers::IntervalStream};
 use tracing::{info, instrument, warn};
 
 use crate::auth::{AuthError, CurrentUser, RequireAdmin};
-use crate::session::{CreateSessionRequest, Session};
+use crate::observability::{CpuTimes, HostMetrics, read_host_metrics};
+use crate::session::{CreateSessionRequest, Session, SessionContainerStats};
 use crate::user::{
     CreateUserRequest, UpdateUserRequest, UserInfo as DbUserInfo, UserListQuery, UserStats,
 };
@@ -24,6 +31,14 @@ use super::state::AppState;
 pub struct HealthResponse {
     pub status: String,
     pub version: String,
+}
+
+#[derive(Debug, Serialize)]
+struct AdminMetricsSnapshot {
+    pub timestamp: String,
+    pub host: Option<HostMetrics>,
+    pub containers: Vec<SessionContainerStats>,
+    pub error: Option<String>,
 }
 
 /// Health check endpoint.
@@ -536,6 +551,87 @@ pub async fn admin_force_stop_session(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// SSE metrics stream (admin only).
+#[instrument(skip(state, _user))]
+pub async fn admin_metrics_stream(
+    State(state): State<AppState>,
+    RequireAdmin(_user): RequireAdmin,
+) -> ApiResult<Sse<impl tokio_stream::Stream<Item = Result<Event, Infallible>>>> {
+    let state = state.clone();
+    let cpu_state: Arc<Mutex<Option<CpuTimes>>> = Arc::new(Mutex::new(None));
+    let interval = tokio::time::interval(Duration::from_secs(2));
+
+    let stream = IntervalStream::new(interval).then(move |_| {
+        let state = state.clone();
+        let cpu_state = cpu_state.clone();
+        async move {
+            let mut guard = cpu_state.lock().await;
+            let snapshot = build_admin_metrics_snapshot(&state, &mut guard).await;
+            let data = match serde_json::to_string(&snapshot) {
+                Ok(data) => data,
+                Err(err) => {
+                    warn!("Failed to serialize metrics snapshot: {:?}", err);
+                    "{\"error\":\"metrics_serialization_failed\"}".to_string()
+                }
+            };
+            Ok(Event::default().data(data))
+        }
+    });
+
+    Ok(Sse::new(stream).keep_alive(
+        KeepAlive::new()
+            .interval(Duration::from_secs(15))
+            .text("keepalive"),
+    ))
+}
+
+async fn build_admin_metrics_snapshot(
+    state: &AppState,
+    prev_cpu: &mut Option<CpuTimes>,
+) -> AdminMetricsSnapshot {
+    let timestamp = chrono::Utc::now().to_rfc3339();
+    let mut errors = Vec::new();
+
+    let previous_cpu = prev_cpu.clone();
+    let host = match read_host_metrics(previous_cpu.clone()).await {
+        Ok((metrics, cpu)) => {
+            *prev_cpu = Some(cpu);
+            Some(metrics)
+        }
+        Err(err) => {
+            *prev_cpu = previous_cpu;
+            errors.push(format!("host_metrics: {}", err));
+            None
+        }
+    };
+
+    let containers = match state.sessions.collect_container_stats().await {
+        Ok(report) => {
+            if !report.errors.is_empty() {
+                errors.extend(report.errors);
+            }
+            report.stats
+        }
+        Err(err) => {
+            errors.push(format!("container_stats: {}", err));
+            Vec::new()
+        }
+    };
+
+    let error = if errors.is_empty() {
+        None
+    } else {
+        Some(errors.join("; "))
+    };
+
+    AdminMetricsSnapshot {
+        timestamp,
+        host,
+        containers,
+        error,
+    }
+}
+
 // ============================================================================
 // User Management Handlers
 // ============================================================================
@@ -845,17 +941,27 @@ pub async fn get_invite_code_stats(
 // ============================================================================
 
 use super::super::agent::{
-    AgentInfo, CreateAgentRequest, CreateAgentResponse, StartAgentRequest, StartAgentResponse,
-    StopAgentResponse,
+    AgentExecRequest, AgentExecResponse, AgentInfo, CreateAgentRequest, CreateAgentResponse,
+    StartAgentRequest, StartAgentResponse, StopAgentResponse,
 };
+
+#[derive(Debug, Deserialize)]
+pub struct AgentListQuery {
+    #[serde(default)]
+    pub include_context: bool,
+}
 
 /// List all agents for a session (running + available directories).
 #[instrument(skip(state))]
 pub async fn list_agents(
     State(state): State<AppState>,
     Path(session_id): Path<String>,
+    Query(query): Query<AgentListQuery>,
 ) -> ApiResult<Json<Vec<AgentInfo>>> {
-    let agents = state.agents.list_agents(&session_id).await?;
+    let agents = state
+        .agents
+        .list_agents(&session_id, query.include_context)
+        .await?;
     info!(session_id = %session_id, count = agents.len(), "Listed agents");
     Ok(Json(agents))
 }
@@ -865,10 +971,11 @@ pub async fn list_agents(
 pub async fn get_agent(
     State(state): State<AppState>,
     Path((session_id, agent_id)): Path<(String, String)>,
+    Query(query): Query<AgentListQuery>,
 ) -> ApiResult<Json<AgentInfo>> {
     state
         .agents
-        .get_agent(&session_id, &agent_id)
+        .get_agent(&session_id, &agent_id, query.include_context)
         .await?
         .map(Json)
         .ok_or_else(|| ApiError::not_found(format!("Agent {} not found", agent_id)))
@@ -925,7 +1032,12 @@ pub async fn create_agent(
 ) -> ApiResult<(StatusCode, Json<CreateAgentResponse>)> {
     let response = state
         .agents
-        .create_agent(&session_id, &request.name, &request.description)
+        .create_agent(
+            &session_id,
+            &request.name,
+            &request.description,
+            request.scaffold.as_ref(),
+        )
         .await?;
     info!(
         session_id = %session_id,
@@ -934,4 +1046,15 @@ pub async fn create_agent(
         "Created agent"
     );
     Ok((StatusCode::CREATED, Json(response)))
+}
+
+/// Execute a command in a session workspace.
+#[instrument(skip(state, request), fields(command = %request.command))]
+pub async fn exec_agent_command(
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+    Json(request): Json<AgentExecRequest>,
+) -> ApiResult<Json<AgentExecResponse>> {
+    let response = state.agents.exec_command(&session_id, request).await?;
+    Ok(Json(response))
 }
