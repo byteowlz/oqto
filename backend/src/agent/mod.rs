@@ -8,5 +8,6 @@ mod repository;
 mod service;
 
 pub use models::*;
+#[allow(unused_imports)]
 pub use repository::{AgentRecord, AgentRepository};
 pub use service::*;

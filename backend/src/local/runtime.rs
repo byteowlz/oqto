@@ -3,7 +3,7 @@
 //! Provides a runtime that spawns services as native processes instead of containers.
 
 use anyhow::{Context, Result};
-use log::info;
+use log::{info, warn};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
@@ -25,6 +25,9 @@ pub struct LocalRuntimeConfig {
     /// Supports ~ and environment variables. The {user_id} placeholder is replaced with the user ID.
     /// Default: $HOME/octo/{user_id}
     pub workspace_dir: String,
+    /// Default agent name to pass to opencode via --agent flag.
+    /// Agents are defined in opencode's global config or workspace's opencode.json.
+    pub default_agent: Option<String>,
     /// Enable single-user mode.
     pub single_user: bool,
     /// Linux user isolation configuration.
@@ -39,6 +42,7 @@ impl Default for LocalRuntimeConfig {
             fileserver_binary: "fileserver".to_string(),
             ttyd_binary: "ttyd".to_string(),
             workspace_dir: "$HOME/octo/{user_id}".to_string(),
+            default_agent: None,
             single_user: false,
             linux_users: LinuxUsersConfig::default(),
         }
@@ -105,9 +109,8 @@ impl LocalRuntimeConfig {
     /// Expands environment variables and replaces {user_id} placeholder.
     pub fn workspace_for_user(&self, user_id: &str) -> std::path::PathBuf {
         // First expand environment variables
-        let expanded = shellexpand::env(&self.workspace_dir).unwrap_or_else(|_| {
-            std::borrow::Cow::Borrowed(&self.workspace_dir)
-        });
+        let expanded = shellexpand::env(&self.workspace_dir)
+            .unwrap_or_else(|_| std::borrow::Cow::Borrowed(&self.workspace_dir));
         // Then replace {user_id} placeholder
         let path_str = expanded.replace("{user_id}", user_id);
         std::path::PathBuf::from(path_str)
@@ -117,9 +120,8 @@ impl LocalRuntimeConfig {
     /// Expands environment variables but removes {user_id} placeholder.
     pub fn workspace_base(&self) -> std::path::PathBuf {
         // First expand environment variables
-        let expanded = shellexpand::env(&self.workspace_dir).unwrap_or_else(|_| {
-            std::borrow::Cow::Borrowed(&self.workspace_dir)
-        });
+        let expanded = shellexpand::env(&self.workspace_dir)
+            .unwrap_or_else(|_| std::borrow::Cow::Borrowed(&self.workspace_dir));
         // Remove {user_id} placeholder and any trailing slash
         let path_str = expanded
             .replace("/{user_id}", "")
@@ -161,48 +163,60 @@ impl LocalRuntime {
     /// Start all services for a session.
     ///
     /// This spawns opencode, fileserver, and ttyd as native processes.
-    /// If Linux user isolation is enabled, processes run under the user's Linux account.
+    /// If Linux user isolation is enabled, processes run under the user's Linux account
+    /// (or the project's Linux account for shared projects).
     /// Returns the PIDs of the spawned processes as a comma-separated string.
+    ///
+    /// If `agent` is provided, it is passed to opencode via the --agent flag.
+    /// Agents are defined in opencode's global config or the workspace's opencode.json.
+    ///
+    /// If `project_id` is provided, the session runs as the project's Linux user,
+    /// enabling multiple platform users to access the same workspace.
     pub async fn start_session(
         &self,
         session_id: &str,
         user_id: &str,
         workspace_path: &Path,
+        agent: Option<&str>,
+        project_id: Option<&str>,
         opencode_port: u16,
         fileserver_port: u16,
         ttyd_port: u16,
         env: HashMap<String, String>,
     ) -> Result<String> {
         info!(
-            "Starting local session {} for user {} with ports {}/{}/{}",
-            session_id, user_id, opencode_port, fileserver_port, ttyd_port
+            "Starting local session {} for user {} with ports {}/{}/{}, agent: {:?}, project_id: {:?}",
+            session_id, user_id, opencode_port, fileserver_port, ttyd_port, agent, project_id
         );
 
-        // Determine how to run processes (as current user or specific Linux user)
+        // Determine how to run processes (as current user, platform user, or project user)
         let run_as = if self.config.linux_users.enabled && !self.config.single_user {
-            // Ensure Linux user exists
-            let uid = self.config.linux_users.ensure_user(user_id)?;
-            let username = self.config.linux_users.linux_username(user_id);
-            info!(
-                "Running session as Linux user '{}' (UID {})",
-                username, uid
-            );
+            // Ensure effective Linux user exists (project user or platform user)
+            let uid = self.config.linux_users.ensure_effective_user(
+                user_id,
+                project_id,
+                Some(workspace_path),
+            )?;
+            let username = self.config.linux_users.effective_username(user_id, project_id);
+            info!("Running session as Linux user '{}' (UID {})", username, uid);
             RunAsUser::new(username, self.config.linux_users.use_sudo)
         } else {
             RunAsUser::current()
         };
 
         // Ensure workspace directory exists
-        std::fs::create_dir_all(workspace_path).with_context(|| {
-            format!("creating workspace directory: {:?}", workspace_path)
-        })?;
+        std::fs::create_dir_all(workspace_path)
+            .with_context(|| format!("creating workspace directory: {:?}", workspace_path))?;
 
         // Set ownership if Linux user isolation is enabled
         if self.config.linux_users.enabled && !self.config.single_user {
-            self.config.linux_users.chown_directory(workspace_path, user_id)?;
+            let username = self.config.linux_users.effective_username(user_id, project_id);
+            self.config
+                .linux_users
+                .chown_directory_to_user(workspace_path, &username)?;
         }
 
-        // Start fileserver
+        // Start fileserver - serves files from workspace_path
         let fileserver_pid = self
             .process_manager
             .spawn_fileserver(
@@ -228,7 +242,9 @@ impl LocalRuntime {
             .await
             .context("starting ttyd")?;
 
-        // Start opencode (with environment variables for EAVS if configured)
+        // Start opencode in workspace_path, optionally with --agent flag
+        // Use provided agent, fall back to default_agent from config
+        let effective_agent = agent.or(self.config.default_agent.as_deref());
         let opencode_pid = self
             .process_manager
             .spawn_opencode(
@@ -236,6 +252,7 @@ impl LocalRuntime {
                 opencode_port,
                 workspace_path,
                 &self.config.opencode_binary,
+                effective_agent,
                 env,
                 &run_as,
             )
@@ -244,10 +261,7 @@ impl LocalRuntime {
 
         // Return PIDs as a pseudo "container ID"
         let pids = format!("{},{},{}", opencode_pid, fileserver_pid, ttyd_pid);
-        info!(
-            "Local session {} started with PIDs: {}",
-            session_id, pids
-        );
+        info!("Local session {} started with PIDs: {}", session_id, pids);
 
         Ok(pids)
     }
@@ -267,6 +281,8 @@ impl LocalRuntime {
         session_id: &str,
         user_id: &str,
         workspace_path: &Path,
+        agent: Option<&str>,
+        project_id: Option<&str>,
         opencode_port: u16,
         fileserver_port: u16,
         ttyd_port: u16,
@@ -280,6 +296,8 @@ impl LocalRuntime {
             session_id,
             user_id,
             workspace_path,
+            agent,
+            project_id,
             opencode_port,
             fileserver_port,
             ttyd_port,
@@ -321,10 +339,77 @@ impl LocalRuntime {
         self.config.validate()?;
         Ok(format!(
             "Local runtime ready: opencode={}, fileserver={}, ttyd={}",
-            self.config.opencode_binary,
-            self.config.fileserver_binary,
-            self.config.ttyd_binary
+            self.config.opencode_binary, self.config.fileserver_binary, self.config.ttyd_binary
         ))
+    }
+
+    /// Check if a set of ports are available for use.
+    ///
+    /// Returns true if all ports are free, false if any are in use.
+    pub fn check_ports_available(&self, opencode_port: u16, fileserver_port: u16, ttyd_port: u16) -> bool {
+        super::process::are_ports_available(&[opencode_port, fileserver_port, ttyd_port])
+    }
+
+    /// Clear orphan processes on the specified ports.
+    ///
+    /// This is useful during startup to clean up processes from a previous
+    /// server instance that crashed or was killed without proper cleanup.
+    ///
+    /// Returns the number of processes killed.
+    pub fn clear_ports(&self, ports: &[u16]) -> usize {
+        let mut killed = 0;
+        
+        for &port in ports {
+            if let Some((pid, name)) = super::process::find_process_on_port(port) {
+                info!(
+                    "Found orphan process '{}' (PID {}) on port {}, killing...",
+                    name, pid, port
+                );
+                
+                // Try graceful kill first
+                if super::process::kill_process(pid) {
+                    // Wait a bit for graceful shutdown
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                    
+                    // Check if still running, force kill if needed
+                    if !super::process::is_port_available(port) {
+                        info!("Process {} still running, force killing...", pid);
+                        super::process::force_kill_process(pid);
+                        std::thread::sleep(std::time::Duration::from_millis(200));
+                    }
+                    
+                    if super::process::is_port_available(port) {
+                        killed += 1;
+                        info!("Cleared orphan process on port {}", port);
+                    } else {
+                        warn!("Failed to clear port {} - process may still be running", port);
+                    }
+                } else {
+                    warn!("Failed to kill process {} on port {}", pid, port);
+                }
+            }
+        }
+        
+        killed
+    }
+
+    /// Startup cleanup for local runtime.
+    ///
+    /// This should be called when the server starts to clean up any orphan
+    /// processes from previous runs. It checks the base port range for any
+    /// lingering processes and kills them.
+    pub fn startup_cleanup(&self, base_port: u16) {
+        info!("Running local runtime startup cleanup...");
+        
+        // Check the default port range (base, base+1, base+2)
+        let ports = [base_port, base_port + 1, base_port + 2];
+        let cleared = self.clear_ports(&ports);
+        
+        if cleared > 0 {
+            info!("Cleared {} orphan process(es) during startup", cleared);
+        } else {
+            info!("No orphan processes found during startup");
+        }
     }
 }
 
@@ -404,7 +489,9 @@ mod tests {
         assert!(LocalRuntimeConfig::binary_exists("ls"));
 
         // This should not exist
-        assert!(!LocalRuntimeConfig::binary_exists("nonexistent-binary-12345"));
+        assert!(!LocalRuntimeConfig::binary_exists(
+            "nonexistent-binary-12345"
+        ));
     }
 
     #[test]
@@ -413,7 +500,9 @@ mod tests {
         assert!(LocalRuntimeConfig::binary_exists("/bin/sh"));
 
         // Non-existent absolute path
-        assert!(!LocalRuntimeConfig::binary_exists("/nonexistent/path/to/binary"));
+        assert!(!LocalRuntimeConfig::binary_exists(
+            "/nonexistent/path/to/binary"
+        ));
     }
 
     #[test]
@@ -617,6 +706,7 @@ mod tests {
             fileserver_binary: "fileserver".to_string(),
             ttyd_binary: "ttyd".to_string(),
             workspace_dir: "~/workspace".to_string(),
+            default_agent: None,
             single_user: true,
             linux_users: LinuxUsersConfig::default(),
         };
@@ -678,7 +768,10 @@ mod tests {
         };
 
         let path = config.workspace_for_user("testuser");
-        assert_eq!(path, std::path::PathBuf::from(format!("{}/octo/testuser", home)));
+        assert_eq!(
+            path,
+            std::path::PathBuf::from(format!("{}/octo/testuser", home))
+        );
     }
 
     #[test]
@@ -698,21 +791,30 @@ mod tests {
             workspace_dir: "/home/test/octo/{user_id}".to_string(),
             ..Default::default()
         };
-        assert_eq!(config.workspace_base(), std::path::PathBuf::from("/home/test/octo"));
+        assert_eq!(
+            config.workspace_base(),
+            std::path::PathBuf::from("/home/test/octo")
+        );
 
         // Test with {user_id} in the middle (edge case)
         let config = LocalRuntimeConfig {
             workspace_dir: "/data/{user_id}/workspace".to_string(),
             ..Default::default()
         };
-        assert_eq!(config.workspace_base(), std::path::PathBuf::from("/data/workspace"));
+        assert_eq!(
+            config.workspace_base(),
+            std::path::PathBuf::from("/data/workspace")
+        );
 
         // Test without {user_id} placeholder
         let config = LocalRuntimeConfig {
             workspace_dir: "/home/user/workspace".to_string(),
             ..Default::default()
         };
-        assert_eq!(config.workspace_base(), std::path::PathBuf::from("/home/user/workspace"));
+        assert_eq!(
+            config.workspace_base(),
+            std::path::PathBuf::from("/home/user/workspace")
+        );
     }
 
     #[test]
@@ -774,6 +876,7 @@ mod tests {
             fileserver_binary: "fileserver".to_string(),
             ttyd_binary: "ttyd".to_string(),
             workspace_dir: "/data/{user_id}".to_string(),
+            default_agent: Some("build".to_string()),
             single_user: false,
             linux_users: LinuxUsersConfig {
                 enabled: true,

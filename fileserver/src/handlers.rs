@@ -1,6 +1,10 @@
+use std::collections::{HashMap, HashSet};
 use std::io::{Cursor, Write};
-use std::path::{Path, PathBuf, Component};
+use std::path::{Component, Path, PathBuf};
+use std::sync::LazyLock;
+use std::time::Duration;
 
+use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::{
     body::Body,
     extract::{Multipart, Query, State},
@@ -8,9 +12,19 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
+use notify::{
+    event::{CreateKind, RemoveKind},
+    EventKind, RecursiveMode, Watcher,
+};
 use serde::{Deserialize, Serialize};
+use syntect::highlighting::ThemeSet;
+use syntect::html::{styled_line_to_highlighted_html, IncludeBackground};
+use syntect::parsing::SyntaxSet;
+use syntect::util::LinesWithEndings;
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
+use tokio::sync::mpsc;
+use tokio::time::{sleep_until, Instant};
 use tokio_util::io::ReaderStream;
 use tracing::{debug, error, info, warn};
 use walkdir::WalkDir;
@@ -19,6 +33,10 @@ use zip::ZipWriter;
 
 use crate::error::FileServerError;
 use crate::AppState;
+
+// Lazy-loaded syntax highlighting assets
+static SYNTAX_SET: LazyLock<SyntaxSet> = LazyLock::new(SyntaxSet::load_defaults_newlines);
+static THEME_SET: LazyLock<ThemeSet> = LazyLock::new(ThemeSet::load_defaults);
 
 /// File node in the tree response
 #[derive(Debug, Serialize)]
@@ -77,6 +95,11 @@ fn default_path() -> String {
 pub struct FileQuery {
     /// Path relative to root
     pub path: String,
+    /// Return syntax-highlighted HTML instead of raw content
+    #[serde(default)]
+    pub highlight: bool,
+    /// Theme for syntax highlighting (defaults to "base16-ocean.dark")
+    pub theme: Option<String>,
 }
 
 /// Upload query parameters
@@ -122,6 +145,15 @@ pub struct DownloadZipQuery {
     pub name: Option<String>,
 }
 
+/// Query parameters for file watch endpoint
+#[derive(Debug, Deserialize)]
+pub struct WatchQuery {
+    /// Path relative to root (directory to watch)
+    pub path: String,
+    /// Optional file extension filter (e.g., ".md" or "md", comma-separated)
+    pub ext: Option<String>,
+}
+
 // ============================================================================
 // Helper functions
 // ============================================================================
@@ -159,10 +191,14 @@ fn sanitize_filename(filename: &str) -> Option<String> {
 
     // Reject reserved Windows names (for cross-platform safety)
     let upper = sanitized.to_uppercase();
-    let reserved = ["CON", "PRN", "AUX", "NUL", 
-                   "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
-                   "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9"];
-    if reserved.iter().any(|r| upper == *r || upper.starts_with(&format!("{}.", r))) {
+    let reserved = [
+        "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
+        "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+    ];
+    if reserved
+        .iter()
+        .any(|r| upper == *r || upper.starts_with(&format!("{}.", r)))
+    {
         return None;
     }
 
@@ -175,18 +211,18 @@ fn sanitize_filename(filename: &str) -> Option<String> {
 }
 
 /// Resolve and validate a path, ensuring it's within the root directory.
-/// 
+///
 /// This function is designed to prevent path traversal attacks by:
 /// 1. Building the path component-by-component, rejecting any parent directory (..) references
 /// 2. Validating the final path is within the root directory
 /// 3. Using a deterministic path building approach that doesn't rely on filesystem state
-/// 
+///
 /// Note: For existing paths, the caller should canonicalize and re-verify after this check
 /// to handle symbolic link attacks (TOCTOU mitigation).
 fn resolve_path(root: &Path, relative: &str) -> Result<PathBuf, FileServerError> {
     // Normalize and split the relative path
     let relative = relative.trim_start_matches('/');
-    
+
     // Handle empty path or "."
     if relative.is_empty() || relative == "." {
         return Ok(root.to_path_buf());
@@ -194,7 +230,7 @@ fn resolve_path(root: &Path, relative: &str) -> Result<PathBuf, FileServerError>
 
     // Build the path component-by-component, rejecting traversal attempts
     let mut result = root.to_path_buf();
-    
+
     for component in Path::new(relative).components() {
         match component {
             Component::Normal(name) => {
@@ -227,7 +263,10 @@ fn resolve_path(root: &Path, relative: &str) -> Result<PathBuf, FileServerError>
     // Final validation: ensure the built path starts with root
     // This is a belt-and-suspenders check
     if !result.starts_with(root) {
-        error!("Path resolution resulted in path outside root: {:?}", result);
+        error!(
+            "Path resolution resulted in path outside root: {:?}",
+            result
+        );
         return Err(FileServerError::PathTraversal);
     }
 
@@ -236,18 +275,18 @@ fn resolve_path(root: &Path, relative: &str) -> Result<PathBuf, FileServerError>
 
 /// Safely resolve a path and validate it exists within root.
 /// This function handles both path building and symlink resolution safely.
-/// 
+///
 /// For operations that need to access the filesystem, use this function
 /// to get a canonical path that is guaranteed to be within root.
 fn resolve_and_verify_path(root: &Path, relative: &str) -> Result<PathBuf, FileServerError> {
     // First, build the path without following symlinks
     let built_path = resolve_path(root, relative)?;
-    
+
     // If the path exists, canonicalize it and verify it's still within root
     if built_path.exists() {
         let canonical_root = root.canonicalize().map_err(FileServerError::Io)?;
         let canonical_path = built_path.canonicalize().map_err(FileServerError::Io)?;
-        
+
         // Verify the canonical path is within the canonical root
         if !canonical_path.starts_with(&canonical_root) {
             warn!(
@@ -256,7 +295,7 @@ fn resolve_and_verify_path(root: &Path, relative: &str) -> Result<PathBuf, FileS
             );
             return Err(FileServerError::PathTraversal);
         }
-        
+
         Ok(canonical_path)
     } else {
         // Path doesn't exist yet - verify the parent directory
@@ -264,7 +303,7 @@ fn resolve_and_verify_path(root: &Path, relative: &str) -> Result<PathBuf, FileS
             if parent.exists() {
                 let canonical_root = root.canonicalize().map_err(FileServerError::Io)?;
                 let canonical_parent = parent.canonicalize().map_err(FileServerError::Io)?;
-                
+
                 if !canonical_parent.starts_with(&canonical_root) {
                     warn!(
                         "Parent directory escape: {:?} parent resolved outside root",
@@ -274,7 +313,7 @@ fn resolve_and_verify_path(root: &Path, relative: &str) -> Result<PathBuf, FileS
                 }
             }
         }
-        
+
         Ok(built_path)
     }
 }
@@ -287,6 +326,64 @@ fn get_relative_path(root: &Path, full_path: &Path) -> String {
         .unwrap_or_default()
 }
 
+fn normalize_extension(ext: &str) -> Option<String> {
+    let trimmed = ext.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let trimmed = trimmed.trim_start_matches('.');
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    Some(trimmed.to_ascii_lowercase())
+}
+
+fn parse_extension_filter(ext: &Option<String>) -> Option<HashSet<String>> {
+    let ext = ext.as_ref()?;
+    let mut set = HashSet::new();
+
+    for item in ext.split(',') {
+        if let Some(normalized) = normalize_extension(item) {
+            set.insert(normalized);
+        }
+    }
+
+    if set.is_empty() {
+        None
+    } else {
+        Some(set)
+    }
+}
+
+fn event_label(kind: &EventKind, is_dir: bool) -> Option<&'static str> {
+    match kind {
+        EventKind::Create(_) => {
+            if is_dir {
+                Some("dir_created")
+            } else {
+                Some("file_created")
+            }
+        }
+        EventKind::Modify(_) => {
+            if is_dir {
+                None
+            } else {
+                Some("file_modified")
+            }
+        }
+        EventKind::Remove(_) => {
+            if is_dir {
+                Some("dir_deleted")
+            } else {
+                Some("file_deleted")
+            }
+        }
+        _ => None,
+    }
+}
+
 // ============================================================================
 // Handlers
 // ============================================================================
@@ -297,6 +394,152 @@ pub async fn health(State(state): State<AppState>) -> Json<HealthResponse> {
         status: "ok",
         root: state.root_dir.display().to_string(),
     })
+}
+
+const WATCH_DEBOUNCE: Duration = Duration::from_millis(250);
+
+#[derive(Debug, Serialize)]
+struct WatchEvent {
+    #[serde(rename = "type")]
+    event_type: &'static str,
+    path: String,
+    entry_type: &'static str,
+}
+
+/// GET /ws/watch - WebSocket file watch endpoint
+pub async fn watch_ws(
+    State(state): State<AppState>,
+    Query(query): Query<WatchQuery>,
+    ws: WebSocketUpgrade,
+) -> Result<Response, FileServerError> {
+    let path = resolve_and_verify_path(&state.root_dir, &query.path)?;
+
+    if !path.exists() {
+        return Err(FileServerError::NotFound(query.path));
+    }
+
+    if !path.is_dir() {
+        return Err(FileServerError::NotADirectory);
+    }
+
+    let ext_filter = parse_extension_filter(&query.ext);
+    let state = state.clone();
+
+    Ok(ws.on_upgrade(move |socket| watch_socket(socket, state, path, ext_filter)))
+}
+
+async fn watch_socket(
+    mut socket: WebSocket,
+    state: AppState,
+    watch_path: PathBuf,
+    ext_filter: Option<HashSet<String>>,
+) {
+    let (tx, mut rx) = mpsc::channel(128);
+    let mut watcher = match notify::recommended_watcher(move |res| {
+        if tx.blocking_send(res).is_err() {
+            debug!("File watch channel closed");
+        }
+    }) {
+        Ok(watcher) => watcher,
+        Err(err) => {
+            error!("Failed to initialize watcher: {:?}", err);
+            return;
+        }
+    };
+
+    if let Err(err) = watcher.watch(&watch_path, RecursiveMode::Recursive) {
+        error!("Failed to watch path {}: {:?}", watch_path.display(), err);
+        return;
+    }
+
+    let mut pending: HashMap<PathBuf, EventKind> = HashMap::new();
+    let mut deadline: Option<Instant> = None;
+
+    loop {
+        tokio::select! {
+            incoming = rx.recv() => {
+                match incoming {
+                    Some(Ok(event)) => {
+                        for path in event.paths {
+                            pending.insert(path, event.kind.clone());
+                        }
+                        deadline = Some(Instant::now() + WATCH_DEBOUNCE);
+                    }
+                    Some(Err(err)) => {
+                        warn!("Watcher error: {:?}", err);
+                    }
+                    None => break,
+                }
+            }
+            _ = sleep_until(deadline.unwrap()) , if deadline.is_some() => {
+                let mut batched = HashMap::new();
+                std::mem::swap(&mut batched, &mut pending);
+                deadline = None;
+
+                for (path, kind) in batched {
+                    if !path.starts_with(&state.root_dir) {
+                        continue;
+                    }
+
+                    let is_dir = match fs::metadata(&path).await {
+                        Ok(metadata) => metadata.is_dir(),
+                        Err(_) => matches!(
+                            kind,
+                            EventKind::Create(CreateKind::Folder) | EventKind::Remove(RemoveKind::Folder)
+                        ),
+                    };
+
+                    if !is_dir {
+                        if let Some(filter) = &ext_filter {
+                            let ext = path
+                                .extension()
+                                .and_then(|value| value.to_str())
+                                .and_then(normalize_extension);
+                            if ext.as_ref().map_or(true, |value| !filter.contains(value)) {
+                                continue;
+                            }
+                        }
+                    }
+
+                    let Some(event_type) = event_label(&kind, is_dir) else {
+                        continue;
+                    };
+
+                    let relative_path = get_relative_path(&state.root_dir, &path);
+                    if relative_path.is_empty() {
+                        continue;
+                    }
+
+                    let payload = WatchEvent {
+                        event_type,
+                        path: relative_path,
+                        entry_type: if is_dir { "directory" } else { "file" },
+                    };
+
+                    let Ok(data) = serde_json::to_string(&payload) else {
+                        continue;
+                    };
+
+                    if socket.send(Message::Text(data)).await.is_err() {
+                        return;
+                    }
+                }
+            }
+            message = socket.recv() => {
+                match message {
+                    Some(Ok(Message::Close(_))) | None => break,
+                    Some(Ok(Message::Ping(payload))) => {
+                        let _ = socket.send(Message::Pong(payload)).await;
+                    }
+                    Some(Ok(_)) => {}
+                    Some(Err(err)) => {
+                        debug!("WebSocket receive error: {:?}", err);
+                        break;
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// GET /tree - Get directory tree
@@ -401,7 +644,9 @@ fn build_tree(
                 node_type: FileType::Directory,
                 size: None,
                 modified: metadata.modified().ok().and_then(|t| {
-                    t.duration_since(std::time::UNIX_EPOCH).ok().map(|d| d.as_secs())
+                    t.duration_since(std::time::UNIX_EPOCH)
+                        .ok()
+                        .map(|d| d.as_secs())
                 }),
                 children,
             }
@@ -412,7 +657,9 @@ fn build_tree(
                 node_type: FileType::File,
                 size: Some(metadata.len()),
                 modified: metadata.modified().ok().and_then(|t| {
-                    t.duration_since(std::time::UNIX_EPOCH).ok().map(|d| d.as_secs())
+                    t.duration_since(std::time::UNIX_EPOCH)
+                        .ok()
+                        .map(|d| d.as_secs())
                 }),
                 children: None,
             }
@@ -422,12 +669,10 @@ fn build_tree(
     }
 
     // Sort: directories first, then alphabetically
-    nodes.sort_by(|a, b| {
-        match (&a.node_type, &b.node_type) {
-            (FileType::Directory, FileType::File) => std::cmp::Ordering::Less,
-            (FileType::File, FileType::Directory) => std::cmp::Ordering::Greater,
-            _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
-        }
+    nodes.sort_by(|a, b| match (&a.node_type, &b.node_type) {
+        (FileType::Directory, FileType::File) => std::cmp::Ordering::Less,
+        (FileType::File, FileType::Directory) => std::cmp::Ordering::Greater,
+        _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
     });
 
     Ok(nodes)
@@ -492,7 +737,9 @@ fn get_simple_file_list(
             node_type: FileType::File,
             size: Some(metadata.len()),
             modified: metadata.modified().ok().and_then(|t| {
-                t.duration_since(std::time::UNIX_EPOCH).ok().map(|d| d.as_secs())
+                t.duration_since(std::time::UNIX_EPOCH)
+                    .ok()
+                    .map(|d| d.as_secs())
             }),
             children: None,
         });
@@ -505,8 +752,9 @@ fn get_simple_file_list(
 }
 
 /// GET /file - Get file content
-/// 
+///
 /// Uses streaming to handle large files efficiently without loading them entirely into memory.
+/// If `highlight=true` is passed, returns syntax-highlighted HTML instead of raw content.
 pub async fn get_file(
     State(state): State<AppState>,
     Query(query): Query<FileQuery>,
@@ -515,11 +763,52 @@ pub async fn get_file(
     let path = resolve_and_verify_path(&state.root_dir, &query.path)?;
 
     if !path.exists() {
-        return Err(FileServerError::NotFound(query.path));
+        return Err(FileServerError::NotFound(query.path.clone()));
     }
 
     if path.is_dir() {
         return Err(FileServerError::NotAFile);
+    }
+
+    let file_name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default();
+
+    // If syntax highlighting is requested, return highlighted HTML
+    if query.highlight {
+        debug!("Syntax highlighting file: {}", path.display());
+        
+        // Read file content (limit to 1MB for highlighting to prevent memory issues)
+        let metadata = fs::metadata(&path).await.map_err(FileServerError::Io)?;
+        if metadata.len() > 1024 * 1024 {
+            return Err(FileServerError::FileTooLarge {
+                size: metadata.len(),
+                limit: 1024 * 1024,
+            });
+        }
+        
+        let content = fs::read_to_string(&path).await.map_err(FileServerError::Io)?;
+        let path_clone = path.clone();
+        let theme_name = query.theme.unwrap_or_else(|| "base16-ocean.dark".to_string());
+        
+        // Do highlighting in blocking task since syntect is not async
+        let highlighted = tokio::task::spawn_blocking(move || {
+            highlight_code(&content, &path_clone, &theme_name)
+        })
+        .await
+        .map_err(|e| FileServerError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))??;
+        
+        return Ok((
+            StatusCode::OK,
+            [
+                (header::CONTENT_TYPE, "text/html; charset=utf-8".to_string()),
+                (header::CONTENT_LENGTH, highlighted.len().to_string()),
+                (header::CACHE_CONTROL, "public, max-age=60".to_string()),
+            ],
+            highlighted,
+        )
+            .into_response());
     }
 
     debug!("Streaming file: {}", path.display());
@@ -530,7 +819,7 @@ pub async fn get_file(
 
     // Open file for streaming
     let file = fs::File::open(&path).await.map_err(FileServerError::Io)?;
-    
+
     // Create a stream from the file
     let stream = ReaderStream::new(file);
     let body = Body::from_stream(stream);
@@ -538,11 +827,6 @@ pub async fn get_file(
     let mime = mime_guess::from_path(&path)
         .first_or_octet_stream()
         .to_string();
-
-    let file_name = path
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_default();
 
     // Sanitize filename for Content-Disposition header
     let safe_filename = file_name.replace('"', "'");
@@ -560,6 +844,62 @@ pub async fn get_file(
         body,
     )
         .into_response())
+}
+
+/// Highlight code using syntect
+fn highlight_code(content: &str, path: &Path, theme_name: &str) -> Result<String, FileServerError> {
+    let syntax = path
+        .extension()
+        .and_then(|ext| SYNTAX_SET.find_syntax_by_extension(ext.to_str().unwrap_or("")))
+        .or_else(|| SYNTAX_SET.find_syntax_by_first_line(content))
+        .unwrap_or_else(|| SYNTAX_SET.find_syntax_plain_text());
+
+    let theme = THEME_SET
+        .themes
+        .get(theme_name)
+        .or_else(|| THEME_SET.themes.get("base16-ocean.dark"))
+        .ok_or_else(|| {
+            FileServerError::Io(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "Theme not found",
+            ))
+        })?;
+
+    let mut highlighter = syntect::easy::HighlightLines::new(syntax, theme);
+    let mut html_output = String::with_capacity(content.len() * 2);
+    
+    // Build HTML with line numbers using table layout for guaranteed alignment
+    html_output.push_str("<table class=\"highlighted-code\" style=\"font-family: ui-monospace, SFMono-Regular, 'SF Mono', Consolas, 'Liberation Mono', Menlo, monospace; font-size: 12px; line-height: 1.5; border-collapse: collapse; width: 100%;\">");
+    html_output.push_str("<tbody>");
+    
+    for (i, line) in LinesWithEndings::from(content).enumerate() {
+        let regions = highlighter
+            .highlight_line(line, &SYNTAX_SET)
+            .map_err(|e| FileServerError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+        let html_line = styled_line_to_highlighted_html(&regions[..], IncludeBackground::No)
+            .map_err(|e| FileServerError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+        
+        html_output.push_str("<tr>");
+        // Line number cell
+        html_output.push_str(&format!(
+            "<td style=\"text-align: right; padding-right: 0.5em; min-width: 2.5em; color: #6b7280; user-select: none; vertical-align: top; white-space: nowrap;\">{}</td>",
+            i + 1
+        ));
+        // Code cell
+        html_output.push_str("<td style=\"white-space: pre; vertical-align: top;\">");
+        if html_line.trim().is_empty() {
+            html_output.push_str(" ");
+        } else {
+            // Trim the trailing newline from the highlighted line
+            html_output.push_str(html_line.trim_end_matches('\n'));
+        }
+        html_output.push_str("</td>");
+        html_output.push_str("</tr>");
+    }
+    
+    html_output.push_str("</tbody></table>");
+    
+    Ok(html_output)
 }
 
 /// POST /file - Upload file
@@ -592,12 +932,11 @@ pub async fn upload_file(
             .file_name()
             .map(|s| s.to_string())
             .unwrap_or_else(|| "upload".to_string());
-        
-        let file_name = sanitize_filename(&raw_filename)
-            .ok_or_else(|| {
-                warn!("Rejected invalid filename: {:?}", raw_filename);
-                FileServerError::InvalidPath(format!("Invalid filename: {}", raw_filename))
-            })?;
+
+        let file_name = sanitize_filename(&raw_filename).ok_or_else(|| {
+            warn!("Rejected invalid filename: {:?}", raw_filename);
+            FileServerError::InvalidPath(format!("Invalid filename: {}", raw_filename))
+        })?;
 
         // Determine final path
         let final_path = if dest_path.is_dir() || query.path.ends_with('/') {
@@ -643,10 +982,16 @@ pub async fn upload_file(
             });
         }
 
-        info!("Uploading file: {} ({} bytes)", final_path.display(), data.len());
+        info!(
+            "Uploading file: {} ({} bytes)",
+            final_path.display(),
+            data.len()
+        );
 
         // Write file
-        let mut file = fs::File::create(&final_path).await.map_err(FileServerError::Io)?;
+        let mut file = fs::File::create(&final_path)
+            .await
+            .map_err(FileServerError::Io)?;
         file.write_all(&data).await.map_err(FileServerError::Io)?;
 
         let relative_path = get_relative_path(&state.root_dir, &final_path);
@@ -679,24 +1024,29 @@ pub async fn delete_file(
     // SECURITY: Prevent deletion of root directory
     let canonical_root = state.root_dir.canonicalize().map_err(FileServerError::Io)?;
     let canonical_path = path.canonicalize().map_err(FileServerError::Io)?;
-    
+
     if canonical_path == canonical_root {
         warn!("Attempted to delete root directory: {:?}", query.path);
         return Err(FileServerError::InvalidPath(
-            "Cannot delete root directory".to_string()
+            "Cannot delete root directory".to_string(),
         ));
     }
 
     // Double-check path is still within root after canonicalization
     if !canonical_path.starts_with(&canonical_root) {
-        warn!("Delete path escaped root after canonicalization: {:?}", path);
+        warn!(
+            "Delete path escaped root after canonicalization: {:?}",
+            path
+        );
         return Err(FileServerError::PathTraversal);
     }
 
     info!("Deleting: {}", path.display());
 
     if path.is_dir() {
-        fs::remove_dir_all(&path).await.map_err(FileServerError::Io)?;
+        fs::remove_dir_all(&path)
+            .await
+            .map_err(FileServerError::Io)?;
     } else {
         fs::remove_file(&path).await.map_err(FileServerError::Io)?;
     }
@@ -738,7 +1088,7 @@ pub async fn create_dir(
 }
 
 /// GET /download - Download a single file or directory as zip
-/// 
+///
 /// For files: returns the file with Content-Disposition: attachment
 /// For directories: returns a zip archive of the directory
 pub async fn download(
@@ -818,9 +1168,11 @@ pub async fn download_zip(
 ) -> Result<Response, FileServerError> {
     // Parse comma-separated paths
     let paths: Vec<&str> = query.paths.split(',').map(|s| s.trim()).collect();
-    
+
     if paths.is_empty() {
-        return Err(FileServerError::InvalidPath("No paths provided".to_string()));
+        return Err(FileServerError::InvalidPath(
+            "No paths provided".to_string(),
+        ));
     }
 
     // Resolve and verify all paths
@@ -875,10 +1227,13 @@ fn create_zip_from_paths(root: &Path, paths: &[PathBuf]) -> Result<Vec<u8>, File
             } else {
                 relative
             };
-            
+
             let data = std::fs::read(path).map_err(FileServerError::Io)?;
             zip.start_file(&file_name, options).map_err(|e| {
-                FileServerError::Io(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
+                FileServerError::Io(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    e.to_string(),
+                ))
             })?;
             zip.write_all(&data).map_err(FileServerError::Io)?;
         } else if path.is_dir() {
@@ -888,7 +1243,10 @@ fn create_zip_from_paths(root: &Path, paths: &[PathBuf]) -> Result<Vec<u8>, File
     }
 
     let result = zip.finish().map_err(|e| {
-        FileServerError::Io(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
+        FileServerError::Io(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            e.to_string(),
+        ))
     })?;
 
     Ok(result.into_inner())
@@ -908,14 +1266,20 @@ fn add_directory_to_zip(
         if entry_path.is_file() {
             let data = std::fs::read(entry_path).map_err(FileServerError::Io)?;
             zip.start_file(&relative, options).map_err(|e| {
-                FileServerError::Io(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
+                FileServerError::Io(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    e.to_string(),
+                ))
             })?;
             zip.write_all(&data).map_err(FileServerError::Io)?;
         } else if entry_path.is_dir() && entry_path != dir {
             // Add directory entry (trailing slash)
             let dir_name = format!("{}/", relative);
             zip.add_directory(&dir_name, options).map_err(|e| {
-                FileServerError::Io(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
+                FileServerError::Io(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    e.to_string(),
+                ))
             })?;
         }
     }
@@ -926,6 +1290,7 @@ fn add_directory_to_zip(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use notify::event::ModifyKind;
     use std::path::PathBuf;
     use tempfile::TempDir;
 
@@ -936,8 +1301,14 @@ mod tests {
     #[test]
     fn test_sanitize_filename_normal() {
         assert_eq!(sanitize_filename("test.txt"), Some("test.txt".to_string()));
-        assert_eq!(sanitize_filename("my-file.pdf"), Some("my-file.pdf".to_string()));
-        assert_eq!(sanitize_filename("document_v2.docx"), Some("document_v2.docx".to_string()));
+        assert_eq!(
+            sanitize_filename("my-file.pdf"),
+            Some("my-file.pdf".to_string())
+        );
+        assert_eq!(
+            sanitize_filename("document_v2.docx"),
+            Some("document_v2.docx".to_string())
+        );
     }
 
     #[test]
@@ -950,36 +1321,66 @@ mod tests {
         let r = result.unwrap();
         assert!(!r.contains('/'));
         assert!(!r.contains('\\'));
-        
+
         let result = sanitize_filename("..\\..\\windows\\system32");
         assert!(result.is_some());
         let r = result.unwrap();
         assert!(!r.contains('/'));
         assert!(!r.contains('\\'));
-        
+
         // Normal nested paths
-        assert_eq!(sanitize_filename("foo/bar/baz.txt"), Some("foo_bar_baz.txt".to_string()));
+        assert_eq!(
+            sanitize_filename("foo/bar/baz.txt"),
+            Some("foo_bar_baz.txt".to_string())
+        );
     }
 
     #[test]
     fn test_sanitize_filename_removes_null_bytes() {
-        assert_eq!(sanitize_filename("test\0.txt"), Some("test.txt".to_string()));
-        assert_eq!(sanitize_filename("foo\0bar\0baz"), Some("foobarbaz".to_string()));
+        assert_eq!(
+            sanitize_filename("test\0.txt"),
+            Some("test.txt".to_string())
+        );
+        assert_eq!(
+            sanitize_filename("foo\0bar\0baz"),
+            Some("foobarbaz".to_string())
+        );
     }
 
     #[test]
     fn test_sanitize_filename_removes_control_chars() {
-        assert_eq!(sanitize_filename("test\x01\x02.txt"), Some("test.txt".to_string()));
+        assert_eq!(
+            sanitize_filename("test\x01\x02.txt"),
+            Some("test.txt".to_string())
+        );
     }
 
     #[test]
     fn test_sanitize_filename_removes_dangerous_chars() {
-        assert_eq!(sanitize_filename("file:name.txt"), Some("file_name.txt".to_string()));
-        assert_eq!(sanitize_filename("file*name.txt"), Some("file_name.txt".to_string()));
-        assert_eq!(sanitize_filename("file?name.txt"), Some("file_name.txt".to_string()));
-        assert_eq!(sanitize_filename("file\"name.txt"), Some("file_name.txt".to_string()));
-        assert_eq!(sanitize_filename("file<name>.txt"), Some("file_name_.txt".to_string()));
-        assert_eq!(sanitize_filename("file|name.txt"), Some("file_name.txt".to_string()));
+        assert_eq!(
+            sanitize_filename("file:name.txt"),
+            Some("file_name.txt".to_string())
+        );
+        assert_eq!(
+            sanitize_filename("file*name.txt"),
+            Some("file_name.txt".to_string())
+        );
+        assert_eq!(
+            sanitize_filename("file?name.txt"),
+            Some("file_name.txt".to_string())
+        );
+        assert_eq!(
+            sanitize_filename("file\"name.txt"),
+            Some("file_name.txt".to_string())
+        );
+        assert_eq!(
+            sanitize_filename("file<name>.txt"),
+            Some("file_name_.txt".to_string())
+        );
+        assert_eq!(
+            sanitize_filename("file|name.txt"),
+            Some("file_name.txt".to_string())
+        );
     }
 
     #[test]
@@ -1019,7 +1420,7 @@ mod tests {
     #[test]
     fn test_resolve_path_normal() {
         let root = PathBuf::from("/tmp/testroot");
-        
+
         let result = resolve_path(&root, "subdir/file.txt");
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), root.join("subdir/file.txt"));
@@ -1028,7 +1429,7 @@ mod tests {
     #[test]
     fn test_resolve_path_empty() {
         let root = PathBuf::from("/tmp/testroot");
-        
+
         let result = resolve_path(&root, "");
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), root);
@@ -1037,7 +1438,7 @@ mod tests {
     #[test]
     fn test_resolve_path_dot() {
         let root = PathBuf::from("/tmp/testroot");
-        
+
         let result = resolve_path(&root, ".");
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), root);
@@ -1046,24 +1447,33 @@ mod tests {
     #[test]
     fn test_resolve_path_rejects_parent_dir() {
         let root = PathBuf::from("/tmp/testroot");
-        
+
         // Direct parent reference
         let result = resolve_path(&root, "..");
-        assert!(matches!(result, Err(crate::error::FileServerError::PathTraversal)));
-        
+        assert!(matches!(
+            result,
+            Err(crate::error::FileServerError::PathTraversal)
+        ));
+
         // Nested parent reference
         let result = resolve_path(&root, "subdir/../..");
-        assert!(matches!(result, Err(crate::error::FileServerError::PathTraversal)));
-        
+        assert!(matches!(
+            result,
+            Err(crate::error::FileServerError::PathTraversal)
+        ));
+
         // Parent reference that would escape root
         let result = resolve_path(&root, "../etc/passwd");
-        assert!(matches!(result, Err(crate::error::FileServerError::PathTraversal)));
+        assert!(matches!(
+            result,
+            Err(crate::error::FileServerError::PathTraversal)
+        ));
     }
 
     #[test]
     fn test_resolve_path_rejects_absolute_paths() {
         let root = PathBuf::from("/tmp/testroot");
-        
+
         // Note: Our implementation strips leading slashes for convenience,
         // so "/etc/passwd" becomes "etc/passwd" which is valid
         // This is intentional - it allows paths like "/subdir/file" to work
@@ -1076,15 +1486,18 @@ mod tests {
     #[test]
     fn test_resolve_path_rejects_null_bytes() {
         let root = PathBuf::from("/tmp/testroot");
-        
+
         let result = resolve_path(&root, "file\0.txt");
-        assert!(matches!(result, Err(crate::error::FileServerError::PathTraversal)));
+        assert!(matches!(
+            result,
+            Err(crate::error::FileServerError::PathTraversal)
+        ));
     }
 
     #[test]
     fn test_resolve_path_handles_leading_slash() {
         let root = PathBuf::from("/tmp/testroot");
-        
+
         // Leading slash should be stripped, not treated as absolute
         let result = resolve_path(&root, "/subdir/file.txt");
         assert!(result.is_ok());
@@ -1099,44 +1512,50 @@ mod tests {
     fn test_resolve_and_verify_path_with_real_fs() {
         let temp_dir = TempDir::new().unwrap();
         let root = temp_dir.path().to_path_buf();
-        
+
         // Create a subdirectory
         std::fs::create_dir_all(root.join("subdir")).unwrap();
         std::fs::write(root.join("subdir/test.txt"), "test").unwrap();
-        
+
         // Normal path should work
         let result = resolve_and_verify_path(&root, "subdir/test.txt");
         assert!(result.is_ok());
-        
+
         // Non-existent path should still resolve (for uploads)
         let result = resolve_and_verify_path(&root, "subdir/newfile.txt");
         assert!(result.is_ok());
-        
+
         // Parent traversal should fail
         let result = resolve_and_verify_path(&root, "../etc/passwd");
-        assert!(matches!(result, Err(crate::error::FileServerError::PathTraversal)));
+        assert!(matches!(
+            result,
+            Err(crate::error::FileServerError::PathTraversal)
+        ));
     }
 
     #[test]
     fn test_resolve_and_verify_path_detects_symlink_escape() {
         let temp_dir = TempDir::new().unwrap();
         let root = temp_dir.path().to_path_buf();
-        
+
         // Create a directory outside root
         let outside_dir = TempDir::new().unwrap();
         std::fs::write(outside_dir.path().join("secret.txt"), "secret data").unwrap();
-        
+
         // Create a symlink inside root that points outside
         std::fs::create_dir_all(root.join("subdir")).unwrap();
-        
+
         #[cfg(unix)]
         {
             use std::os::unix::fs::symlink;
             let _ = symlink(outside_dir.path(), root.join("subdir/escape"));
-            
+
             // Trying to access via symlink should fail
             let result = resolve_and_verify_path(&root, "subdir/escape/secret.txt");
-            assert!(matches!(result, Err(crate::error::FileServerError::PathTraversal)));
+            assert!(matches!(
+                result,
+                Err(crate::error::FileServerError::PathTraversal)
+            ));
         }
     }
 
@@ -1148,7 +1567,7 @@ mod tests {
     fn test_cannot_delete_root_via_empty_path() {
         // This is tested via the delete handler, but we can verify the path resolution
         let root = PathBuf::from("/tmp/testroot");
-        
+
         let result = resolve_path(&root, "");
         assert!(result.is_ok());
         // The resolved path equals root, which should be caught by delete handler
@@ -1158,10 +1577,51 @@ mod tests {
     #[test]
     fn test_cannot_delete_root_via_dot_path() {
         let root = PathBuf::from("/tmp/testroot");
-        
+
         let result = resolve_path(&root, ".");
         assert!(result.is_ok());
         // The resolved path equals root, which should be caught by delete handler
         assert_eq!(result.unwrap(), root);
+    }
+
+    // ========================================================================
+    // Watch Filter Tests
+    // ========================================================================
+
+    #[test]
+    fn test_normalize_extension() {
+        assert_eq!(normalize_extension(".md"), Some("md".to_string()));
+        assert_eq!(normalize_extension("TXT"), Some("txt".to_string()));
+        assert_eq!(normalize_extension("  .Rs "), Some("rs".to_string()));
+        assert_eq!(normalize_extension("."), None);
+        assert_eq!(normalize_extension(""), None);
+    }
+
+    #[test]
+    fn test_parse_extension_filter() {
+        let filter = parse_extension_filter(&Some(".md, txt , .RS".to_string())).unwrap();
+        assert!(filter.contains("md"));
+        assert!(filter.contains("txt"));
+        assert!(filter.contains("rs"));
+        assert_eq!(filter.len(), 3);
+
+        let empty = parse_extension_filter(&Some(" , ".to_string()));
+        assert!(empty.is_none());
+    }
+
+    #[test]
+    fn test_event_label_mapping() {
+        let file_create = EventKind::Create(CreateKind::File);
+        let dir_create = EventKind::Create(CreateKind::Folder);
+        let file_modify = EventKind::Modify(ModifyKind::Any);
+        let file_remove = EventKind::Remove(RemoveKind::File);
+        let dir_remove = EventKind::Remove(RemoveKind::Folder);
+
+        assert_eq!(event_label(&file_create, false), Some("file_created"));
+        assert_eq!(event_label(&dir_create, true), Some("dir_created"));
+        assert_eq!(event_label(&file_modify, false), Some("file_modified"));
+        assert_eq!(event_label(&file_remove, false), Some("file_deleted"));
+        assert_eq!(event_label(&dir_remove, true), Some("dir_deleted"));
+        assert_eq!(event_label(&file_modify, true), None);
     }
 }

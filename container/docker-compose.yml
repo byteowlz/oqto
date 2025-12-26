@@ -71,12 +71,34 @@ services:
       timeout: 5s
       retries: 3
 
+  # mmry Embeddings Service - Central hub for embeddings/reranking
+  # Per-container mmry instances delegate heavy operations here
+  mmry-embeddings:
+    image: ghcr.io/byteowlz/mmry:latest  # TODO: Build and publish mmry image
+    container_name: octo-mmry-embeddings
+    restart: unless-stopped
+    ports:
+      - "8081:8081"  # mmry external API
+    environment:
+      - MMRY_API_KEY=${MMRY_API_KEY:-dev-mmry-key-change-in-production}
+    volumes:
+      - mmry_data:/var/lib/mmry
+      - ./mmry-embeddings.config.toml:/etc/mmry/config.toml:ro
+    networks:
+      - octo-public
+      - octo-internal
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8081/v1/models"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
   # Template container - use this as a reference for spawning new containers
   # In production, the Rust backend will spawn these dynamically
   octo-template:
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: container/Dockerfile
       args:
         USERNAME: dev
         USER_UID: 1000
@@ -89,6 +111,10 @@ services:
       - octo-internal
     volumes:
       - ./workspace:/home/dev/workspace
+    environment:
+      # Connect to host mmry service for embeddings
+      - MMRY_HOST_URL=http://mmry-embeddings:8081
+      - MMRY_HOST_KEY=${MMRY_API_KEY:-dev-mmry-key-change-in-production}
     stdin_open: true
     tty: true
 
@@ -96,3 +122,4 @@ volumes:
   caddy_data:
   caddy_config:
   eavs_data:
+  mmry_data:

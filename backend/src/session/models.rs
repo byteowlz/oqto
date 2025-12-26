@@ -107,6 +107,9 @@ pub struct Session {
     pub user_id: String,
     /// Path to the workspace directory.
     pub workspace_path: String,
+    /// Agent name to use with opencode (passed via --agent flag).
+    /// If not set, opencode uses its default agent.
+    pub agent: Option<String>,
     /// Container image to use (ignored in local mode).
     pub image: String,
     /// Image digest (sha256) when the container was created.
@@ -131,6 +134,8 @@ pub struct Session {
     /// EAVS virtual key value (only set during container creation).
     #[serde(skip_serializing)]
     pub eavs_virtual_key: Option<String>,
+    /// Port for mmry memory service.
+    pub mmry_port: Option<i64>,
     /// Current session status.
     #[sqlx(try_from = "String")]
     pub status: SessionStatus,
@@ -144,6 +149,8 @@ pub struct Session {
     pub started_at: Option<String>,
     /// When the container stopped.
     pub stopped_at: Option<String>,
+    /// Last activity timestamp (for idle timeout).
+    pub last_activity_at: Option<String>,
     /// Error message if failed.
     pub error_message: Option<String>,
 }
@@ -187,6 +194,11 @@ pub struct CreateSessionRequest {
     /// Container image to use (optional, defaults to octo-dev).
     #[serde(default)]
     pub image: Option<String>,
+    /// Agent name to use with opencode (passed via --agent flag).
+    /// Agents are defined in opencode's global config or the workspace's
+    /// opencode.json / .opencode/agents/ directory.
+    #[serde(default)]
+    pub agent: Option<String>,
     /// Environment variables to inject.
     #[serde(default)]
     pub env: std::collections::HashMap<String, String>,

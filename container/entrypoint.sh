@@ -7,6 +7,7 @@ HOME_DIR="${HOME:-/home/dev}"
 OPENCODE_PORT="${OPENCODE_PORT:-41820}"
 FILESERVER_PORT="${FILESERVER_PORT:-41821}"
 TTYD_PORT="${TTYD_PORT:-41822}"
+MMRY_PORT="${MMRY_PORT:-41823}"
 WORKSPACE_DIR="${WORKSPACE_DIR:-${HOME_DIR}/workspace}"
 SKEL_DIR="${SKEL_DIR:-/usr/local/share/skel}"
 OPENCODE_SEED_DIR="${OPENCODE_SEED_DIR:-/opt/opencode}"
@@ -17,13 +18,21 @@ XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-${HOME_DIR}/.config}"
 # EAVS_URL - URL to the host EAVS proxy (e.g., http://host.docker.internal:41800)
 # EAVS_VIRTUAL_KEY - Virtual key for this session (created by backend)
 
+# MMRY configuration (host-based embeddings)
+# MMRY_HOST_URL - URL to host mmry service for embeddings (e.g., http://host.docker.internal:8081)
+# MMRY_HOST_KEY - API key for authenticating with host mmry service
+
 echo "Starting OpenCode development container..."
 echo "OpenCode server port: ${OPENCODE_PORT}"
 echo "File server port: ${FILESERVER_PORT}"
 echo "TTY terminal port: ${TTYD_PORT}"
+echo "mmry service port: ${MMRY_PORT}"
 echo "Workspace directory: ${WORKSPACE_DIR}"
 if [ -n "${EAVS_URL}" ]; then
     echo "EAVS proxy URL: ${EAVS_URL}"
+fi
+if [ -n "${MMRY_HOST_URL}" ]; then
+    echo "mmry host URL: ${MMRY_HOST_URL}"
 fi
 
 # Initialize home with shipped defaults.
@@ -116,8 +125,69 @@ ttyd \
     --interface 0.0.0.0 \
     --writable \
     --cwd "${WORKSPACE_DIR}" \
-    bash -l &
+    zsh -l &
 TTYD_PID=$!
+
+# Configure and start mmry service (lean mode, embeddings delegated to host)
+if command -v mmry &> /dev/null; then
+    echo "Starting mmry service on port ${MMRY_PORT}..."
+    
+    # Create mmry config directory
+    MMRY_CONFIG_DIR="${XDG_CONFIG_HOME}/mmry"
+    mkdir -p "${MMRY_CONFIG_DIR}"
+    
+    # Generate mmry config that delegates embeddings to host
+    cat > "${MMRY_CONFIG_DIR}/config.toml" <<EOF
+# mmry configuration for container mode
+# Embeddings are delegated to host mmry service
+
+[service]
+enabled = true
+auto_start = false
+
+[external_api]
+enable = true
+host = "0.0.0.0"
+port = ${MMRY_PORT}
+require_api_key = false
+
+[embeddings]
+enabled = true
+model = "nomic-ai/nomic-embed-text-v1.5"
+dimension = 768
+
+# Delegate embeddings to host service
+[embeddings.remote]
+base_url = "${MMRY_HOST_URL:-http://host.containers.internal:8081}"
+api_key = "${MMRY_HOST_KEY:-}"
+request_timeout_seconds = 30
+max_batch_size = 64
+required = false
+
+[search]
+rerank_enabled = true
+
+[search.remote_rerank]
+base_url = "${MMRY_HOST_URL:-http://host.containers.internal:8081}"
+api_key = "${MMRY_HOST_KEY:-}"
+request_timeout_seconds = 30
+max_batch_size = 64
+required = false
+
+[hmlr]
+enabled = false
+
+[sparse_embeddings]
+enabled = false
+EOF
+    
+    # Initialize mmry database if needed
+    mmry init 2>/dev/null || true
+    
+    # Start mmry service in background
+    mmry service run &
+    MMRY_PID=$!
+fi
 
 # Give services a moment to start
 sleep 1

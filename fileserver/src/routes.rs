@@ -11,6 +11,8 @@ pub fn file_routes() -> Router<AppState> {
     Router::new()
         // Health check
         .route("/health", get(handlers::health))
+        // WebSocket file watch
+        .route("/ws/watch", get(handlers::watch_ws))
         // Directory tree
         .route("/tree", get(handlers::get_tree))
         // File operations

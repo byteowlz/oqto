@@ -46,10 +46,14 @@ impl IntoResponse for FileServerError {
             FileServerError::PathTraversal => (StatusCode::FORBIDDEN, "PATH_TRAVERSAL"),
             FileServerError::InvalidPath(_) => (StatusCode::BAD_REQUEST, "INVALID_PATH"),
             FileServerError::Io(_) => (StatusCode::INTERNAL_SERVER_ERROR, "IO_ERROR"),
-            FileServerError::FileTooLarge { .. } => (StatusCode::PAYLOAD_TOO_LARGE, "FILE_TOO_LARGE"),
+            FileServerError::FileTooLarge { .. } => {
+                (StatusCode::PAYLOAD_TOO_LARGE, "FILE_TOO_LARGE")
+            }
             FileServerError::NotADirectory => (StatusCode::BAD_REQUEST, "NOT_A_DIRECTORY"),
             FileServerError::NotAFile => (StatusCode::BAD_REQUEST, "NOT_A_FILE"),
-            FileServerError::CreateDirFailed(_) => (StatusCode::INTERNAL_SERVER_ERROR, "CREATE_DIR_FAILED"),
+            FileServerError::CreateDirFailed(_) => {
+                (StatusCode::INTERNAL_SERVER_ERROR, "CREATE_DIR_FAILED")
+            }
         };
 
         let body = ErrorResponse {

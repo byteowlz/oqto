@@ -11,4 +11,7 @@ mod service;
 pub use models::SessionStatus;
 pub use models::{CreateSessionRequest, RuntimeMode, Session};
 pub use repository::SessionRepository;
-pub use service::{SessionService, SessionServiceConfig};
+#[allow(unused_imports)]
+pub use service::{
+    ContainerStatsReport, SessionContainerStats, SessionService, SessionServiceConfig,
+};

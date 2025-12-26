@@ -1,18 +1,42 @@
 "use client"
 
-import { useEffect, useState, useCallback } from "react"
+import { useEffect, useState, useCallback, useRef } from "react"
 import { Eye, Loader2, Pencil, Save, X, FileText, Download, ExternalLink, ZoomIn, ZoomOut } from "lucide-react"
 import { useApp } from "@/components/app-context"
 import { fileserverProxyBaseUrl } from "@/lib/control-plane-client"
 import { cn } from "@/lib/utils"
-import { Prism as SyntaxHighlighter } from "react-syntax-highlighter"
-import { oneDark, oneLight } from "react-syntax-highlighter/dist/esm/styles/prism"
 import { Button } from "@/components/ui/button"
 import CodeEditor from "@uiw/react-textarea-code-editor"
+import { Prism as SyntaxHighlighter } from "react-syntax-highlighter"
+import { oneDark, oneLight } from "react-syntax-highlighter/dist/cjs/styles/prism"
 
 interface PreviewViewProps {
   filePath?: string | null
   className?: string
+}
+
+// Simple LRU cache for file contents
+const fileCache = new Map<string, { content: string; timestamp: number }>()
+const CACHE_MAX_SIZE = 50
+const CACHE_TTL_MS = 30000 // 30 seconds
+
+function getCachedContent(key: string): string | null {
+  const entry = fileCache.get(key)
+  if (!entry) return null
+  if (Date.now() - entry.timestamp > CACHE_TTL_MS) {
+    fileCache.delete(key)
+    return null
+  }
+  return entry.content
+}
+
+function setCachedContent(key: string, content: string) {
+  // Evict oldest entries if cache is full
+  if (fileCache.size >= CACHE_MAX_SIZE) {
+    const oldestKey = fileCache.keys().next().value
+    if (oldestKey) fileCache.delete(oldestKey)
+  }
+  fileCache.set(key, { content, timestamp: Date.now() })
 }
 
 // File extensions that can be edited
@@ -140,6 +164,23 @@ async function fetchFileContent(baseUrl: string, path: string): Promise<string> 
   return res.text()
 }
 
+async function fetchHighlightedContent(baseUrl: string, path: string): Promise<string> {
+  const url = new URL(`${baseUrl}/file`, window.location.origin)
+  url.searchParams.set("path", path)
+  url.searchParams.set("highlight", "true")
+  const res = await fetch(url.toString(), { credentials: "include" })
+  if (!res.ok) {
+    const text = await res.text().catch(() => res.statusText)
+    throw new Error(text || `Unable to fetch highlighted ${path}`)
+  }
+  const html = await res.text()
+  // Validate that we got actual HTML, not just raw text
+  if (!html.includes("<div") && !html.includes("<span")) {
+    throw new Error("Server returned plain text instead of highlighted HTML")
+  }
+  return html
+}
+
 async function saveFileContent(baseUrl: string, path: string, content: string): Promise<void> {
   const url = new URL(`${baseUrl}/file`, window.location.origin)
   url.searchParams.set("path", path)
@@ -165,12 +206,20 @@ async function saveFileContent(baseUrl: string, path: string, content: string): 
 export function PreviewView({ filePath, className }: PreviewViewProps) {
   const { selectedWorkspaceSessionId } = useApp()
   const [content, setContent] = useState<string>("")
+  const [highlightedContent, setHighlightedContent] = useState<string>("")
   const [editedContent, setEditedContent] = useState<string>("")
-  const [loading, setLoading] = useState(false)
+  const [showLoading, setShowLoading] = useState(false) // Delayed loading indicator
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string>("")
   const [isEditing, setIsEditing] = useState(false)
   const [isDarkMode, setIsDarkMode] = useState(false)
+  const loadingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  
+  // Check mobile at render time (safe because we only use it client-side in effects)
+  const isMobileRef = useRef(false)
+  if (typeof window !== "undefined") {
+    isMobileRef.current = window.innerWidth < 640
+  }
 
   const fileserverBaseUrl = selectedWorkspaceSessionId 
     ? fileserverProxyBaseUrl(selectedWorkspaceSessionId) 
@@ -190,53 +239,125 @@ export function PreviewView({ filePath, className }: PreviewViewProps) {
   }, [])
 
   useEffect(() => {
+    // Clear any pending loading timer
+    if (loadingTimerRef.current) {
+      clearTimeout(loadingTimerRef.current)
+      loadingTimerRef.current = null
+    }
+
     if (!filePath || !fileserverBaseUrl) {
       setContent("")
       setEditedContent("")
       setIsEditing(false)
+      setShowLoading(false)
       return
     }
 
-    // Don't fetch content for PDF files - they render via URL
+    // Don't fetch content for PDF or image files - they render via URL
     const filename = filePath.split("/").pop() || filePath
-    if (isPdf(filename)) {
+    if (isPdf(filename) || isImage(filename)) {
       setContent("")
       setEditedContent("")
       setIsEditing(false)
-      setLoading(false)
+      setShowLoading(false)
       return
     }
 
-    setLoading(true)
+    // Reset highlighted content on file change
+    setHighlightedContent("")
+
+    // Check cache first for instant preview
+    const cacheKey = `${selectedWorkspaceSessionId}:${filePath}`
+    const highlightCacheKey = `${cacheKey}:highlighted`
+    const cached = getCachedContent(cacheKey)
+    const cachedHighlighted = getCachedContent(highlightCacheKey)
+    
+    if (cached !== null) {
+      setContent(cached)
+      setEditedContent(cached)
+      setError("")
+      setIsEditing(false)
+      setShowLoading(false)
+      if (cachedHighlighted !== null) {
+        setHighlightedContent(cachedHighlighted)
+      } else {
+        // Fetch highlighted version in background
+        fetchHighlightedContent(fileserverBaseUrl, filePath)
+          .then((html) => {
+            setCachedContent(highlightCacheKey, html)
+            setHighlightedContent(html)
+          })
+          .catch((err) => {
+            console.warn("[PreviewView] Failed to fetch highlighted content:", err)
+          }) // Fallback to raw content on error
+      }
+      return
+    }
+
+    // No cache hit - fetch from server
+    // Only show loading spinner after 150ms to avoid flicker for fast responses
     setError("")
     setIsEditing(false)
+    loadingTimerRef.current = setTimeout(() => {
+      setShowLoading(true)
+    }, 150)
+
+    // Fetch raw content first (for editing), then highlighted version
     fetchFileContent(fileserverBaseUrl, filePath)
       .then((data) => {
+        // Cache and set raw content immediately
+        setCachedContent(cacheKey, data)
         setContent(data)
         setEditedContent(data)
-        setLoading(false)
+        
+        // Then fetch highlighted version in background
+        fetchHighlightedContent(fileserverBaseUrl, filePath)
+          .then((html) => {
+            console.log("[PreviewView] Got highlighted content, length:", html.length)
+            setCachedContent(highlightCacheKey, html)
+            setHighlightedContent(html)
+          })
+          .catch((err) => {
+            console.warn("[PreviewView] Failed to fetch highlighted content:", err)
+          }) // Fallback to raw content on error
       })
       .catch((err) => {
         setError(err.message ?? "Failed to load file")
-        setLoading(false)
       })
-  }, [filePath, fileserverBaseUrl])
+      .finally(() => {
+        if (loadingTimerRef.current) {
+          clearTimeout(loadingTimerRef.current)
+          loadingTimerRef.current = null
+        }
+        setShowLoading(false)
+      })
+
+    return () => {
+      if (loadingTimerRef.current) {
+        clearTimeout(loadingTimerRef.current)
+        loadingTimerRef.current = null
+      }
+    }
+  }, [filePath, fileserverBaseUrl, selectedWorkspaceSessionId])
 
   const handleSave = useCallback(async () => {
-    if (!fileserverBaseUrl || !filePath) return
+    if (!fileserverBaseUrl || !filePath || !selectedWorkspaceSessionId) return
     
     setSaving(true)
     setError("")
     try {
       await saveFileContent(fileserverBaseUrl, filePath, editedContent)
       setContent(editedContent)
+      // Update the cache with the new content
+      const cacheKey = `${selectedWorkspaceSessionId}:${filePath}`
+      setCachedContent(cacheKey, editedContent)
       setIsEditing(false)
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save file")
     } finally {
       setSaving(false)
     }
-  }, [fileserverBaseUrl, filePath, editedContent])
+  }, [fileserverBaseUrl, filePath, editedContent, selectedWorkspaceSessionId])
 
   const handleCancel = useCallback(() => {
     setEditedContent(content)
@@ -262,8 +383,8 @@ export function PreviewView({ filePath, className }: PreviewViewProps) {
     )
   }
 
-  // Loading state
-  if (loading) {
+  // Loading state (only shown after delay to avoid flicker)
+  if (showLoading) {
     return (
       <div className={cn("h-full bg-muted/30 rounded flex items-center justify-center", className)}>
         <div className="text-center text-muted-foreground">
@@ -289,22 +410,22 @@ export function PreviewView({ filePath, className }: PreviewViewProps) {
     return (
       <div className={cn("h-full flex flex-col overflow-hidden", className)}>
         {/* Header */}
-        <div className="flex-shrink-0 flex items-center justify-between px-3 py-2 border-b border-border bg-muted/30">
-          <div className="flex items-center gap-2 flex-1 min-w-0">
-            <FileText className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+        <div className="flex-shrink-0 flex items-center justify-between px-2 py-1 border-b border-border bg-muted/30">
+          <div className="flex items-center gap-1.5 flex-1 min-w-0">
+            <FileText className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
             <p className="text-xs font-mono text-muted-foreground truncate" title={filePath}>
               {filename}
             </p>
           </div>
-          <div className="flex items-center gap-1 ml-2">
+          <div className="flex items-center gap-0.5 ml-2">
             <Button
               variant="ghost"
               size="sm"
               onClick={() => window.open(fileUrl, "_blank")}
-              className="h-7 px-2 text-xs"
+              className="h-6 px-1.5 text-xs"
               title="Open in new tab"
             >
-              <ExternalLink className="w-3.5 h-3.5" />
+              <ExternalLink className="w-3 h-3" />
             </Button>
             <Button
               variant="ghost"
@@ -315,10 +436,10 @@ export function PreviewView({ filePath, className }: PreviewViewProps) {
                 link.download = filename
                 link.click()
               }}
-              className="h-7 px-2 text-xs"
+              className="h-6 px-1.5 text-xs"
               title="Download"
             >
-              <Download className="w-3.5 h-3.5" />
+              <Download className="w-3 h-3" />
             </Button>
           </div>
         </div>
@@ -340,7 +461,7 @@ export function PreviewView({ filePath, className }: PreviewViewProps) {
     return (
       <div className={cn("h-full flex flex-col overflow-hidden", className)}>
         {/* Header */}
-        <div className="flex-shrink-0 flex items-center justify-between px-3 py-2 border-b border-border bg-muted/30">
+        <div className="flex-shrink-0 flex items-center justify-between px-2 py-1 border-b border-border bg-muted/30">
           <p className="text-xs font-mono text-muted-foreground truncate flex-1" title={filePath}>
             {filename}
           </p>
@@ -364,12 +485,12 @@ export function PreviewView({ filePath, className }: PreviewViewProps) {
   return (
     <div className={cn("h-full flex flex-col overflow-hidden", className)}>
       {/* Header */}
-      <div className="flex-shrink-0 flex items-center justify-between px-3 py-2 border-b border-border bg-muted/30">
+      <div className="flex-shrink-0 flex items-center justify-between px-2 py-1 border-b border-border bg-muted/30">
         <p className="text-xs font-mono text-muted-foreground truncate flex-1" title={filePath}>
           {filename}
           {isEditing && <span className="ml-2 text-primary">(editing)</span>}
         </p>
-        <div className="flex items-center gap-1 ml-2">
+        <div className="flex items-center gap-0.5 ml-2">
           {isEditing ? (
             <>
               <Button
@@ -377,9 +498,9 @@ export function PreviewView({ filePath, className }: PreviewViewProps) {
                 size="sm"
                 onClick={handleCancel}
                 disabled={saving}
-                className="h-7 px-2 text-xs"
+                className="h-6 px-1.5 text-xs"
               >
-                <X className="w-3.5 h-3.5 mr-1" />
+                <X className="w-3 h-3 mr-1" />
                 Cancel
               </Button>
               <Button
@@ -387,12 +508,12 @@ export function PreviewView({ filePath, className }: PreviewViewProps) {
                 size="sm"
                 onClick={handleSave}
                 disabled={saving}
-                className="h-7 px-2 text-xs"
+                className="h-6 px-1.5 text-xs"
               >
                 {saving ? (
-                  <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" />
+                  <Loader2 className="w-3 h-3 mr-1 animate-spin" />
                 ) : (
-                  <Save className="w-3.5 h-3.5 mr-1" />
+                  <Save className="w-3 h-3 mr-1" />
                 )}
                 Save
               </Button>
@@ -403,9 +524,9 @@ export function PreviewView({ filePath, className }: PreviewViewProps) {
                 variant="ghost"
                 size="sm"
                 onClick={handleStartEdit}
-                className="h-7 px-2 text-xs"
+                className="h-6 px-1.5 text-xs"
               >
-                <Pencil className="w-3.5 h-3.5 mr-1" />
+                <Pencil className="w-3 h-3 mr-1" />
                 Edit
               </Button>
             )
@@ -436,30 +557,56 @@ export function PreviewView({ filePath, className }: PreviewViewProps) {
               backgroundColor: isDarkMode ? "#1e1e1e" : "#ffffff",
             }}
           />
-        ) : (
-          <SyntaxHighlighter
-            language={language}
-            style={isDarkMode ? oneDark : oneLight}
-            customStyle={{
-              margin: 0,
-              padding: "12px",
+        ) : highlightedContent ? (
+          // Server-rendered syntax highlighting with line numbers (table-based)
+          <div 
+            className="overflow-auto py-1"
+            style={{ minHeight: "100%" }}
+            dangerouslySetInnerHTML={{ __html: highlightedContent }}
+          />
+        ) : content ? (
+          // Fallback: plain text with line numbers using table layout
+          <div 
+            className="overflow-auto"
+            style={{ 
+              minHeight: "100%",
               fontSize: "12px",
               lineHeight: "1.5",
-              background: "transparent",
-              minHeight: "100%",
+              fontFamily: "ui-monospace, SFMono-Regular, SF Mono, Consolas, Liberation Mono, Menlo, monospace",
             }}
-            showLineNumbers
-            lineNumberStyle={{
-              minWidth: "3em",
-              paddingRight: "1em",
-              textAlign: "right",
-              opacity: 0.5,
-            }}
-            wrapLongLines
           >
-            {content}
-          </SyntaxHighlighter>
-        )}
+            <table className="w-full border-collapse" style={{ minWidth: "100%" }}>
+              <tbody>
+                {content.split("\n").map((line, i) => (
+                  <tr key={i}>
+                    <td 
+                      className="select-none text-right text-muted-foreground align-top px-1"
+                      style={{ 
+                        minWidth: "2.5em", 
+                        width: "1%",
+                        whiteSpace: "nowrap",
+                        opacity: 0.5,
+                      }}
+                    >
+                      {i + 1}
+                    </td>
+                    <td className="align-top">
+                      <pre 
+                        className="m-0"
+                        style={{ 
+                          fontFamily: "inherit", 
+                          whiteSpace: "pre",
+                        }}
+                      >
+                        {line || " "}
+                      </pre>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : null}
       </div>
     </div>
   )

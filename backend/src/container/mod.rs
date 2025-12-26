@@ -111,10 +111,11 @@ pub trait ContainerRuntimeApi: Send + Sync {
     async fn list_containers(&self, all: bool) -> ContainerResult<Vec<Container>>;
     async fn container_state_status(&self, id_or_name: &str) -> ContainerResult<Option<String>>;
     async fn get_image_digest(&self, image: &str) -> ContainerResult<Option<String>>;
-    
+    async fn get_stats(&self, container_id: &str) -> ContainerResult<ContainerStats>;
+
     /// Execute a command in a container (detached, fire-and-forget).
     async fn exec_detached(&self, container_id: &str, command: &[&str]) -> ContainerResult<()>;
-    
+
     /// Execute a command in a container and return the output.
     async fn exec_output(&self, container_id: &str, command: &[&str]) -> ContainerResult<String>;
 }
@@ -151,6 +152,10 @@ impl ContainerRuntimeApi for ContainerRuntime {
 
     async fn get_image_digest(&self, image: &str) -> ContainerResult<Option<String>> {
         self.get_image_digest(image).await
+    }
+
+    async fn get_stats(&self, container_id: &str) -> ContainerResult<ContainerStats> {
+        self.get_stats(container_id).await
     }
 
     async fn exec_detached(&self, container_id: &str, command: &[&str]) -> ContainerResult<()> {
@@ -781,7 +786,11 @@ impl ContainerRuntime {
     ///
     /// This runs `docker exec` and waits for the command to complete,
     /// returning stdout as a string.
-    pub async fn exec_output(&self, container_id: &str, command: &[&str]) -> ContainerResult<String> {
+    pub async fn exec_output(
+        &self,
+        container_id: &str,
+        command: &[&str],
+    ) -> ContainerResult<String> {
         validate_container_id_or_name(container_id)?;
 
         let mut args = vec!["exec", container_id];

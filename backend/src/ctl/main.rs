@@ -191,7 +191,7 @@ impl OctoClient {
 
 async fn handle_status(client: &OctoClient, json: bool) -> Result<()> {
     let response = client.get("/health").await?;
-    
+
     if response.status().is_success() {
         if json {
             println!(r#"{{"status": "ok", "server": "{}"}}"#, client.base_url);
@@ -200,7 +200,10 @@ async fn handle_status(client: &OctoClient, json: bool) -> Result<()> {
         }
     } else {
         if json {
-            println!(r#"{{"status": "error", "code": {}}}"#, response.status().as_u16());
+            println!(
+                r#"{{"status": "error", "code": {}}}"#,
+                response.status().as_u16()
+            );
         } else {
             println!("Server returned error: {}", response.status());
         }
@@ -217,12 +220,20 @@ async fn handle_session(client: &OctoClient, command: SessionCommand, json: bool
                 println!("{}", body);
             } else {
                 let sessions: Vec<serde_json::Value> = serde_json::from_str(&body)?;
-                println!("{:<12} {:<20} {:<10} {:<20}", "ID", "READABLE_ID", "STATUS", "IMAGE");
+                println!(
+                    "{:<12} {:<20} {:<10} {:<20}",
+                    "ID", "READABLE_ID", "STATUS", "IMAGE"
+                );
                 println!("{}", "-".repeat(70));
                 for session in sessions {
                     println!(
                         "{:<12} {:<20} {:<10} {:<20}",
-                        session["id"].as_str().unwrap_or("").chars().take(8).collect::<String>(),
+                        session["id"]
+                            .as_str()
+                            .unwrap_or("")
+                            .chars()
+                            .take(8)
+                            .collect::<String>(),
                         session["readable_id"].as_str().unwrap_or("-"),
                         session["status"].as_str().unwrap_or("-"),
                         session["image"].as_str().unwrap_or("-"),
@@ -242,8 +253,10 @@ async fn handle_session(client: &OctoClient, command: SessionCommand, json: bool
                 println!("  Status: {}", session["status"]);
                 println!("  Image: {}", session["image"]);
                 println!("  Container: {}", session["container_id"]);
-                println!("  Ports: opencode={}, fileserver={}, ttyd={}",
-                    session["opencode_port"], session["fileserver_port"], session["ttyd_port"]);
+                println!(
+                    "  Ports: opencode={}, fileserver={}, ttyd={}",
+                    session["opencode_port"], session["fileserver_port"], session["ttyd_port"]
+                );
             }
         }
         SessionCommand::Stop { id } => {
@@ -306,18 +319,22 @@ async fn handle_session(client: &OctoClient, command: SessionCommand, json: bool
     Ok(())
 }
 
-async fn handle_container(client: &OctoClient, command: ContainerCommand, json: bool) -> Result<()> {
+async fn handle_container(
+    client: &OctoClient,
+    command: ContainerCommand,
+    json: bool,
+) -> Result<()> {
     match command {
         ContainerCommand::Refresh { outdated_only } => {
             // Get all sessions
             let response = client.get("/sessions").await?;
             let sessions: Vec<serde_json::Value> = response.json().await?;
-            
+
             let mut refreshed = 0;
             for session in sessions {
                 let id = session["id"].as_str().unwrap_or("");
                 let status = session["status"].as_str().unwrap_or("");
-                
+
                 if status != "running" && status != "stopped" {
                     continue;
                 }
@@ -367,20 +384,26 @@ async fn handle_container(client: &OctoClient, command: ContainerCommand, json: 
         ContainerCommand::List => {
             let response = client.get("/sessions").await?;
             let sessions: Vec<serde_json::Value> = response.json().await?;
-            
+
             if json {
-                let containers: Vec<_> = sessions.iter()
+                let containers: Vec<_> = sessions
+                    .iter()
                     .filter(|s| s["container_id"].as_str().is_some())
-                    .map(|s| serde_json::json!({
-                        "container_id": s["container_id"],
-                        "container_name": s["container_name"],
-                        "session_id": s["id"],
-                        "status": s["status"],
-                    }))
+                    .map(|s| {
+                        serde_json::json!({
+                            "container_id": s["container_id"],
+                            "container_name": s["container_name"],
+                            "session_id": s["id"],
+                            "status": s["status"],
+                        })
+                    })
                     .collect();
                 println!("{}", serde_json::to_string_pretty(&containers)?);
             } else {
-                println!("{:<16} {:<20} {:<12} {:<10}", "CONTAINER", "NAME", "SESSION", "STATUS");
+                println!(
+                    "{:<16} {:<20} {:<12} {:<10}",
+                    "CONTAINER", "NAME", "SESSION", "STATUS"
+                );
                 println!("{}", "-".repeat(60));
                 for session in sessions {
                     if let Some(container_id) = session["container_id"].as_str() {
@@ -398,12 +421,12 @@ async fn handle_container(client: &OctoClient, command: ContainerCommand, json: 
         ContainerCommand::StopAll => {
             let response = client.get("/sessions").await?;
             let sessions: Vec<serde_json::Value> = response.json().await?;
-            
+
             let mut stopped = 0;
             for session in sessions {
                 let id = session["id"].as_str().unwrap_or("");
                 let status = session["status"].as_str().unwrap_or("");
-                
+
                 if status == "running" {
                     let response = client.post(&format!("/sessions/{}/stop", id)).await?;
                     if response.status().is_success() {
@@ -431,13 +454,18 @@ async fn handle_image(client: &OctoClient, command: ImageCommand, json: bool) ->
             // Check sessions for outdated images
             let response = client.get("/sessions").await?;
             let sessions: Vec<serde_json::Value> = response.json().await?;
-            
+
             if json {
                 // In a real implementation, we'd check image digests
-                println!(r#"{{"sessions_checked": {}, "outdated": 0}}"#, sessions.len());
+                println!(
+                    r#"{{"sessions_checked": {}, "outdated": 0}}"#,
+                    sessions.len()
+                );
             } else {
                 println!("Checked {} session(s) for image updates", sessions.len());
-                println!("Use 'octoctl container refresh --outdated-only' to update outdated containers");
+                println!(
+                    "Use 'octoctl container refresh --outdated-only' to update outdated containers"
+                );
             }
         }
         ImageCommand::Pull { image } => {
@@ -446,7 +474,7 @@ async fn handle_image(client: &OctoClient, command: ImageCommand, json: bool) ->
                 .args(["pull", &image])
                 .output()
                 .context("running docker pull")?;
-            
+
             if output.status.success() {
                 if json {
                     println!(r#"{{"status": "pulled", "image": "{}"}}"#, image);
@@ -460,24 +488,30 @@ async fn handle_image(client: &OctoClient, command: ImageCommand, json: bool) ->
         }
         ImageCommand::Build { path, no_cache } => {
             println!("Building image from {}...", path);
-            
+
             let dockerfile = if cfg!(target_arch = "aarch64") {
                 "Dockerfile.arm64"
             } else {
                 "Dockerfile"
             };
-            
+
             let mut cmd = std::process::Command::new("docker");
-            cmd.args(["build", "-f", &format!("{}/{}", path, dockerfile), "-t", "octo-dev:latest"]);
-            
+            cmd.args([
+                "build",
+                "-f",
+                &format!("{}/{}", path, dockerfile),
+                "-t",
+                "octo-dev:latest",
+            ]);
+
             if no_cache {
                 cmd.arg("--no-cache");
             }
-            
+
             cmd.arg(".");
-            
+
             let output = cmd.output().context("running docker build")?;
-            
+
             if output.status.success() {
                 if json {
                     println!(r#"{{"status": "built", "image": "octo-dev:latest"}}"#);

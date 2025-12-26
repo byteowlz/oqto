@@ -70,6 +70,9 @@ pub struct AgentInfo {
     pub has_git: bool,
     /// Color for UI (derived from name hash).
     pub color: String,
+    /// Optional runtime details from the agent engine (opencode).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub runtime: Option<AgentRuntimeInfo>,
 }
 
 impl AgentInfo {
@@ -82,6 +85,7 @@ impl AgentInfo {
         status: AgentStatus,
         has_agents_md: bool,
         has_git: bool,
+        runtime: Option<AgentRuntimeInfo>,
     ) -> Self {
         Self {
             id: "main".to_string(),
@@ -93,6 +97,7 @@ impl AgentInfo {
             has_agents_md,
             has_git,
             color: agent_color("main"),
+            runtime,
         }
     }
 
@@ -104,6 +109,7 @@ impl AgentInfo {
         status: AgentStatus,
         has_agents_md: bool,
         has_git: bool,
+        runtime: Option<AgentRuntimeInfo>,
     ) -> Self {
         let color = agent_color(&id);
         let name = id
@@ -128,8 +134,76 @@ impl AgentInfo {
             has_agents_md,
             has_git,
             color,
+            runtime,
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentRuntimeInfo {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub directory: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sessions: Option<Vec<OpenCodeSessionInfo>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status_list: Option<Vec<OpenCodeSessionStatus>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context: Option<OpenCodeContextInfo>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OpenCodeSessionInfo {
+    pub id: String,
+    pub title: String,
+    pub time: OpenCodeSessionTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OpenCodeSessionTime {
+    pub created: i64,
+    pub updated: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OpenCodeSessionStatus {
+    #[serde(rename = "type")]
+    pub status_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attempt: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OpenCodeContextInfo {
+    pub session_id: String,
+    pub session_title: String,
+    pub model_id: String,
+    pub provider_id: String,
+    pub current_tokens: u64,
+    pub total_tokens: OpenCodeTokenTotals,
+    pub limit: OpenCodeTokenLimit,
+    pub usage: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OpenCodeTokenTotals {
+    pub input: u64,
+    pub output: u64,
+    pub reasoning: u64,
+    pub cache: OpenCodeTokenCache,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OpenCodeTokenCache {
+    pub read: u64,
+    pub write: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OpenCodeTokenLimit {
+    pub context: u64,
+    pub output: u64,
 }
 
 /// Derive a color from an agent name (deterministic).
@@ -163,6 +237,43 @@ pub struct CreateAgentRequest {
     pub name: String,
     /// Agent description (becomes AGENTS.md content).
     pub description: String,
+    /// Optional scaffolding source for the agent directory.
+    #[serde(default)]
+    pub scaffold: Option<AgentScaffoldRequest>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum AgentScaffoldRequest {
+    /// Use byt templates (byt new) to scaffold the directory.
+    BytTemplate {
+        template: String,
+        #[serde(default)]
+        github: bool,
+        #[serde(default)]
+        private: bool,
+        #[serde(default)]
+        description: Option<String>,
+    },
+}
+
+/// Execute a command in a session workspace.
+#[derive(Debug, Deserialize)]
+pub struct AgentExecRequest {
+    /// Command to execute (binary or shell command when shell=true).
+    pub command: String,
+    /// Optional arguments for the command when shell=false.
+    #[serde(default)]
+    pub args: Vec<String>,
+    /// Optional working directory (absolute or relative to workspace root).
+    #[serde(default)]
+    pub cwd: Option<String>,
+    /// Run command via `bash -lc`.
+    #[serde(default)]
+    pub shell: bool,
+    /// Run command without waiting for output.
+    #[serde(default)]
+    pub detach: bool,
 }
 
 /// Response when starting an agent.
@@ -191,6 +302,12 @@ pub struct CreateAgentResponse {
     pub directory: String,
     /// Color for UI (derived from name hash).
     pub color: String,
+}
+
+/// Response for a command execution.
+#[derive(Debug, Serialize)]
+pub struct AgentExecResponse {
+    pub output: Option<String>,
 }
 
 #[cfg(test)]
@@ -222,6 +339,7 @@ mod tests {
             AgentStatus::Running,
             true,
             false,
+            None,
         );
         assert_eq!(agent.name, "Doc Writer");
         assert_eq!(agent.directory, "/home/dev/workspace/doc-writer");
@@ -231,19 +349,73 @@ mod tests {
 
     #[test]
     fn test_agent_status_from_str() {
-        assert_eq!("running".parse::<AgentStatus>().unwrap(), AgentStatus::Running);
-        assert_eq!("starting".parse::<AgentStatus>().unwrap(), AgentStatus::Starting);
-        assert_eq!("stopped".parse::<AgentStatus>().unwrap(), AgentStatus::Stopped);
-        assert_eq!("failed".parse::<AgentStatus>().unwrap(), AgentStatus::Failed);
+        assert_eq!(
+            "running".parse::<AgentStatus>().unwrap(),
+            AgentStatus::Running
+        );
+        assert_eq!(
+            "starting".parse::<AgentStatus>().unwrap(),
+            AgentStatus::Starting
+        );
+        assert_eq!(
+            "stopped".parse::<AgentStatus>().unwrap(),
+            AgentStatus::Stopped
+        );
+        assert_eq!(
+            "failed".parse::<AgentStatus>().unwrap(),
+            AgentStatus::Failed
+        );
         assert!("invalid".parse::<AgentStatus>().is_err());
     }
 
     #[test]
     fn test_main_agent() {
-        let agent = AgentInfo::main(41820, 41820, AgentStatus::Running, true, true);
+        let agent = AgentInfo::main(41820, 41820, AgentStatus::Running, true, true, None);
         assert_eq!(agent.id, "main");
         assert_eq!(agent.name, "Main Workspace");
         assert_eq!(agent.port, Some(41820));
         assert_eq!(agent.external_port, Some(41820));
+    }
+
+    #[test]
+    fn test_scaffold_request_deserialize() {
+        let json = r#"{
+            "name": "example",
+            "description": "test",
+            "scaffold": {
+                "type": "byt_template",
+                "template": "rust-cli",
+                "github": true,
+                "private": true,
+                "description": "demo"
+            }
+        }"#;
+
+        let request: CreateAgentRequest = serde_json::from_str(json).unwrap();
+        let scaffold = request.scaffold.unwrap();
+        match scaffold {
+            AgentScaffoldRequest::BytTemplate {
+                template,
+                github,
+                private,
+                description,
+            } => {
+                assert_eq!(template, "rust-cli");
+                assert!(github);
+                assert!(private);
+                assert_eq!(description, Some("demo".to_string()));
+            }
+        }
+    }
+
+    #[test]
+    fn test_exec_request_defaults() {
+        let json = r#"{"command":"ls"}"#;
+        let request: AgentExecRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(request.command, "ls");
+        assert!(request.args.is_empty());
+        assert!(request.cwd.is_none());
+        assert!(!request.shell);
+        assert!(!request.detach);
     }
 }
