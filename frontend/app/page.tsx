@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback, useMemo, useDeferredValue } from "react";
+import { useEffect, useState, useCallback, useMemo, useDeferredValue } from "react";
 import { useTheme } from "next-themes";
 import Image from "next/image";
 import {
@@ -16,7 +16,6 @@ import {
   Menu,
   X,
   Clock,
-  Snowflake,
   Pin,
   Pencil,
   Trash2,
@@ -59,55 +58,6 @@ import { CommandPalette, useCommandPalette } from "@/components/command-palette"
 import { generateReadableId, formatSessionDate } from "@/lib/session-utils";
 import "@/apps";
 
-function SnowOverlay({ intensity = 0.5 }: { intensity?: number }) {
-  const clamped = Math.max(0, Math.min(1, intensity));
-  const count = Math.round(90 + 150 * clamped);
-  const speedFactor = 1.05 - clamped * 0.35;
-  const flakes = Array.from({ length: count });
-  return (
-    <>
-      <div className="pointer-events-none fixed inset-0 z-50 overflow-hidden">
-        {flakes.map((_, i) => {
-          const size = Math.random() * 3 + 2 + clamped;
-          const left = Math.random() * 100;
-          const duration = (Math.random() * 6 + 5) * speedFactor;
-          const delay = Math.random() * 6;
-          return (
-            <span
-              key={i}
-              className="absolute rounded-full bg-white opacity-70 animate-snowfall"
-              style={{
-                width: size,
-                height: size,
-                left: `${left}%`,
-                animationDuration: `${duration}s`,
-                animationDelay: `${delay}s`,
-              }}
-            />
-          );
-        })}
-      </div>
-      <style jsx global>{`
-        @keyframes snowfall {
-          0% {
-            transform: translateY(-10%);
-            opacity: 0.9;
-          }
-          100% {
-            transform: translateY(110vh);
-            opacity: 0.1;
-          }
-        }
-        .animate-snowfall {
-          animation-name: snowfall;
-          animation-timing-function: linear;
-          animation-iteration-count: infinite;
-        }
-      `}</style>
-    </>
-  );
-}
-
 function AppShell() {
   const {
     apps,
@@ -120,6 +70,7 @@ function AppShell() {
     opencodeSessions,
     selectedChatSessionId,
     setSelectedChatSessionId,
+    selectedChatSession,
     createNewChat,
     deleteChatSession,
     renameChatSession,
@@ -139,11 +90,6 @@ function AppShell() {
   const isDark = currentTheme === "dark";
   
   const ActiveComponent = activeApp?.component ?? null;
-
-  // JAK Christmas feature
-  const [showJakSnow, setShowJakSnow] = useState(false);
-  const jakAudioRef = useRef<HTMLAudioElement | null>(null);
-  const [jakVolume, setJakVolume] = useState(0.5);
 
   // Loading bar
   const [barVisible, setBarVisible] = useState(true);
@@ -270,16 +216,6 @@ function AppShell() {
   useEffect(() => {
     if (typeof window === "undefined") return;
 
-    // Load saved JAK volume
-    const storedVol = localStorage.getItem("jakVolume");
-    const volNum = storedVol ? Number(storedVol) : NaN;
-    if (!Number.isNaN(volNum) && volNum >= 0 && volNum <= 1) {
-      setJakVolume(volNum);
-      if (jakAudioRef.current) {
-        jakAudioRef.current.volume = volNum;
-      }
-    }
-
     // Top loading bar animation
     setBarVisible(true);
     setBarWidth(25);
@@ -316,41 +252,6 @@ function AppShell() {
     setLocale(next);
   };
 
-  const toggleJakSnow = () => {
-    setShowJakSnow((prev) => {
-      const next = !prev;
-      let audio = jakAudioRef.current;
-      if (!audio) {
-        audio = new Audio("/audio/jingle-bells.mp3");
-        audio.loop = true;
-        audio.preload = "none";
-        audio.volume = jakVolume;
-        // Silently handle errors (file may not exist)
-        audio.onerror = () => {};
-        jakAudioRef.current = audio;
-      }
-      if (audio) {
-        if (next) {
-          audio.currentTime = 0;
-          audio.muted = false;
-          audio.volume = jakVolume;
-          audio
-            .play()
-            .then(() => {
-              // playback started
-            })
-            .catch(() => {
-              // Audio playback blocked or file not found - fail silently
-            });
-        } else {
-          audio.pause();
-          audio.currentTime = 0;
-        }
-      }
-      return next;
-    });
-  };
-
   const shellBg = "var(--background)";
   const sidebarBg = "var(--sidebar, #181b1a)";
   const navIdle = "var(--sidebar, #181b1a)";
@@ -385,7 +286,7 @@ function AppShell() {
     <div className="flex h-screen bg-background text-foreground overflow-hidden">
       {/* Mobile header */}
       <header
-        className="fixed top-0 left-0 right-0 h-14 flex items-center justify-between px-4 z-50 md:hidden"
+        className="fixed top-0 left-0 right-0 h-14 flex items-center px-3 z-50 md:hidden"
         style={{ backgroundColor: sidebarBg }}
       >
         <Button
@@ -393,19 +294,38 @@ function AppShell() {
           size="icon"
           aria-label="Menu"
           onClick={() => setMobileMenuOpen(true)}
-          className="text-muted-foreground hover:text-primary"
+          className="text-muted-foreground hover:text-primary flex-shrink-0"
         >
           <Menu className="w-5 h-5" />
         </Button>
-        <Image
-          src={isDark ? "/octo_logo_new_white.png" : "/octo_logo_new_black.png"}
-          alt="OCTO"
-          width={80}
-          height={32}
-          className="h-8 w-auto object-contain"
-          priority
-          unoptimized
-        />
+        {/* Session info in center */}
+        {selectedChatSession ? (
+          <div className="flex-1 min-w-0 px-3 text-center">
+            <div className="text-sm font-medium text-foreground truncate">
+              {selectedChatSession.title?.replace(/\s*-\s*\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z?$/, "").trim() || "Chat"}
+            </div>
+            <div className="text-[10px] text-muted-foreground truncate">
+              {generateReadableId(selectedChatSession.id)}
+              {selectedChatSession.time?.updated && (
+                <span className="opacity-60"> | {formatSessionDate(selectedChatSession.time.updated)}</span>
+              )}
+            </div>
+          </div>
+        ) : (
+          <div className="flex-1 flex justify-center">
+            <Image
+              src={isDark ? "/octo_logo_new_white.png" : "/octo_logo_new_black.png"}
+              alt="OCTO"
+              width={80}
+              height={32}
+              className="h-8 w-auto object-contain"
+              priority
+              unoptimized
+            />
+          </div>
+        )}
+        {/* Empty space to balance the hamburger menu */}
+        <div className="w-10 flex-shrink-0" />
       </header>
 
       {/* Mobile fullscreen menu */}
@@ -435,89 +355,192 @@ function AppShell() {
             </Button>
           </div>
 
-          <nav className="flex-1 w-full space-y-3 px-4 pt-6 overflow-y-auto">
-            {apps.map((app) => {
-              const isActive = activeAppId === app.id;
-              const Icon = navIconFor(app.id);
-              return (
-                <button
-                  key={app.id}
-                  onClick={() => handleMobileNavClick(app.id)}
-                  className="w-full rounded-none px-4 py-4 text-base font-semibold tracking-wide transition flex items-center gap-3"
-                  style={{
-                    backgroundColor: isActive ? navActiveBg : navIdle,
-                    color: isActive ? navActiveText : navText,
-                    border: isActive
-                      ? `1px solid ${navActiveBorder}`
-                      : "1px solid transparent",
-                  }}
-                >
-                  <Icon className="w-5 h-5 shrink-0" />
-                  <span>{resolveText(app.label)}</span>
-                </button>
-              );
-            })}
+          <nav className="flex-1 w-full px-3 pt-4 overflow-y-auto">
+            {/* Top nav as icon row */}
+            <div className="flex items-center justify-center gap-2 pb-3 border-b border-sidebar-border mb-3">
+              {apps.filter((app) => app.id !== "admin").map((app) => {
+                const isActive = activeAppId === app.id;
+                const Icon = navIconFor(app.id);
+                return (
+                  <button
+                    key={app.id}
+                    onClick={() => handleMobileNavClick(app.id)}
+                    className="flex-1 max-w-[72px] rounded-none px-3 py-2.5 transition flex flex-col items-center gap-1"
+                    style={{
+                      backgroundColor: isActive ? navActiveBg : navIdle,
+                      color: isActive ? navActiveText : navText,
+                      border: isActive
+                        ? `1px solid ${navActiveBorder}`
+                        : "1px solid transparent",
+                    }}
+                  >
+                    <Icon className="w-5 h-5 shrink-0" />
+                    <span className="text-[10px] font-medium truncate w-full text-center">{resolveText(app.label)}</span>
+                  </button>
+                );
+              })}
+            </div>
 
             {/* Session history in mobile menu */}
             {opencodeSessions.length > 0 && (
-              <div className="pt-4 border-t border-sidebar-border">
-                <div className="flex items-center gap-2 px-4 py-2">
+              <div className="pt-3 border-t border-sidebar-border flex-1 min-h-0 flex flex-col">
+                <div className="flex items-center gap-2 px-3 py-1.5">
                   <span className="text-xs uppercase tracking-wide text-muted-foreground">
                     {locale === "de" ? "Verlauf" : "History"}
                   </span>
                   <span className="text-xs text-muted-foreground/50">
-                    ({opencodeSessions.length})
+                    ({filteredSessions.length}{deferredSearch ? `/${opencodeSessions.length}` : ""})
                   </span>
                 </div>
-                <div className="space-y-1">
-                  {opencodeSessions.slice(0, 10).map((session) => {
+                {/* Mobile search input */}
+                <div className="relative px-4 mb-2">
+                  <Search className="absolute left-7 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
+                  <input
+                    type="text"
+                    placeholder={locale === "de" ? "Suchen..." : "Search..."}
+                    value={sessionSearch}
+                    onChange={(e) => setSessionSearch(e.target.value)}
+                    className="w-full pl-10 pr-10 py-2 text-sm bg-sidebar-accent/50 border border-sidebar-border rounded placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary/50"
+                  />
+                  {sessionSearch && (
+                    <button
+                      onClick={() => setSessionSearch("")}
+                      className="absolute right-7 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
+                <div className="flex-1 overflow-y-auto space-y-1 px-4">
+                  {filteredSessions.length === 0 && deferredSearch && (
+                    <div className="text-sm text-muted-foreground/50 text-center py-4">
+                      {locale === "de" ? "Keine Ergebnisse" : "No results"}
+                    </div>
+                  )}
+                  {filteredSessions.slice(0, 20).map((session) => {
                     const isSelected = selectedChatSessionId === session.id;
-                    const updatedAt = session.time?.updated
-                      ? new Date(session.time.updated)
+                    const children = sessionHierarchy.childSessionsByParent.get(session.id) || [];
+                    const hasChildren = children.length > 0;
+                    const isExpanded = expandedSessions.has(session.id);
+                    const readableId = generateReadableId(session.id);
+                    const formattedDate = session.time?.updated
+                      ? formatSessionDate(session.time.updated)
                       : null;
                     return (
-                      <ContextMenu key={session.id}>
-                        <ContextMenuTrigger asChild>
-                          <button
-                            onClick={() => handleSessionClick(session.id)}
-                            className={cn(
-                              "w-full px-4 py-3 text-left transition-colors",
-                              isSelected
-                                ? "bg-primary/15 text-foreground"
-                                : "text-muted-foreground hover:bg-sidebar-accent",
-                            )}
-                          >
-                            <div className="text-sm truncate">
-                              {session.title || "Untitled"}
-                            </div>
-                            <div className="text-xs text-muted-foreground/50 truncate">
-                              {session.id.slice(0, 12)}
-                            </div>
-                          </button>
-                        </ContextMenuTrigger>
-                        <ContextMenuContent>
-                          <ContextMenuItem
-                            onClick={() => handlePinSession(session.id)}
-                          >
-                            <Pin className="w-4 h-4 mr-2" />
-                            {locale === "de" ? "Anpinnen" : "Pin"}
-                          </ContextMenuItem>
-                          <ContextMenuItem
-                            onClick={() => handleRenameSession(session.id)}
-                          >
-                            <Pencil className="w-4 h-4 mr-2" />
-                            {locale === "de" ? "Umbenennen" : "Rename"}
-                          </ContextMenuItem>
-                          <ContextMenuSeparator />
-                          <ContextMenuItem
-                            variant="destructive"
-                            onClick={() => handleDeleteSession(session.id)}
-                          >
-                            <Trash2 className="w-4 h-4 mr-2" />
-                            {locale === "de" ? "Loschen" : "Delete"}
-                          </ContextMenuItem>
-                        </ContextMenuContent>
-                      </ContextMenu>
+                      <div key={session.id}>
+                        <ContextMenu>
+                          <ContextMenuTrigger asChild>
+                            <button
+                              onClick={() => handleSessionClick(session.id)}
+                              className={cn(
+                                "w-full px-3 py-3 text-left transition-colors flex items-start gap-2",
+                                isSelected
+                                  ? "bg-primary/15 border border-primary text-foreground"
+                                  : "text-muted-foreground hover:bg-sidebar-accent border border-transparent",
+                              )}
+                            >
+                              {hasChildren && (
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    toggleSessionExpanded(session.id);
+                                  }}
+                                  className="mt-0.5 p-1 hover:bg-muted rounded flex-shrink-0"
+                                >
+                                  {isExpanded ? (
+                                    <ChevronDown className="w-4 h-4" />
+                                  ) : (
+                                    <ChevronRight className="w-4 h-4" />
+                                  )}
+                                </button>
+                              )}
+                              <div className={cn("flex-1 min-w-0", !hasChildren && "ml-6")}>
+                                <div className="flex items-center gap-1">
+                                  <span className="text-sm truncate font-medium">
+                                    {session.title || "Untitled"}
+                                  </span>
+                                  {hasChildren && (
+                                    <span className="text-xs text-primary/70">
+                                      ({children.length})
+                                    </span>
+                                  )}
+                                </div>
+                                {formattedDate && (
+                                  <div className="text-xs text-muted-foreground/50 mt-0.5">
+                                    {formattedDate}
+                                  </div>
+                                )}
+                              </div>
+                            </button>
+                          </ContextMenuTrigger>
+                          <ContextMenuContent>
+                            <ContextMenuItem
+                              onClick={() => {
+                                navigator.clipboard.writeText(readableId);
+                              }}
+                            >
+                              <Copy className="w-4 h-4 mr-2" />
+                              {readableId}
+                            </ContextMenuItem>
+                            <ContextMenuSeparator />
+                            <ContextMenuItem
+                              onClick={() => handlePinSession(session.id)}
+                            >
+                              <Pin className="w-4 h-4 mr-2" />
+                              {locale === "de" ? "Anpinnen" : "Pin"}
+                            </ContextMenuItem>
+                            <ContextMenuItem
+                              onClick={() => handleRenameSession(session.id)}
+                            >
+                              <Pencil className="w-4 h-4 mr-2" />
+                              {locale === "de" ? "Umbenennen" : "Rename"}
+                            </ContextMenuItem>
+                            <ContextMenuSeparator />
+                            <ContextMenuItem
+                              variant="destructive"
+                              onClick={() => handleDeleteSession(session.id)}
+                            >
+                              <Trash2 className="w-4 h-4 mr-2" />
+                              {locale === "de" ? "Loschen" : "Delete"}
+                            </ContextMenuItem>
+                          </ContextMenuContent>
+                        </ContextMenu>
+                        {/* Child sessions (subagents) in mobile */}
+                        {hasChildren && isExpanded && (
+                          <div className="ml-6 border-l border-muted pl-2 space-y-1 mt-1">
+                            {children.map((child) => {
+                              const isChildSelected = selectedChatSessionId === child.id;
+                              const childFormattedDate = child.time?.updated
+                                ? formatSessionDate(child.time.updated)
+                                : null;
+                              return (
+                                <button
+                                  key={child.id}
+                                  onClick={() => handleSessionClick(child.id)}
+                                  className={cn(
+                                    "w-full px-2 py-2 text-left transition-colors text-sm",
+                                    isChildSelected
+                                      ? "bg-primary/15 border border-primary text-foreground"
+                                      : "text-muted-foreground hover:bg-sidebar-accent border border-transparent",
+                                  )}
+                                >
+                                  <div className="flex items-center gap-1">
+                                    <Bot className="w-3.5 h-3.5 flex-shrink-0 text-primary/70" />
+                                    <span className="truncate font-medium">
+                                      {child.title || "Subagent"}
+                                    </span>
+                                  </div>
+                                  {childFormattedDate && (
+                                    <div className="text-xs text-muted-foreground/50 mt-0.5 ml-5">
+                                      {childFormattedDate}
+                                    </div>
+                                  )}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
                     );
                   })}
                 </div>
@@ -525,52 +548,50 @@ function AppShell() {
             )}
           </nav>
 
-          <div className="w-full px-4 pb-8 space-y-3">
-            <div className="h-px w-full bg-primary/50 mt-2" />
-            <Button
-              variant="ghost"
-              size="lg"
-              onClick={() => {
-                toggleLocale();
-                setMobileMenuOpen(false);
-              }}
-              aria-label="Sprache wechseln"
-              className="w-full justify-start text-muted-foreground hover:text-primary py-4"
-            >
-              <Globe2 className="w-5 h-5" />
-              <span className="text-base font-semibold">
-                {locale === "de" ? "EN" : "DE"}
-              </span>
-            </Button>
-            <Button
-              variant="ghost"
-              size="lg"
-              onClick={() => {
-                toggleTheme();
-                setMobileMenuOpen(false);
-              }}
-              aria-pressed={isDark}
-              className="w-full justify-start text-muted-foreground hover:text-primary py-4"
-            >
-              {isDark ? (
-                <SunMedium className="w-5 h-5" />
-              ) : (
-                <MoonStar className="w-5 h-5" />
-              )}
-              <span className="text-base font-semibold">Theme</span>
-            </Button>
-            <Button
-              variant="ghost"
-              size="lg"
-              onClick={() => {
-                toggleJakSnow();
-                setMobileMenuOpen(false);
-              }}
-              className="w-full justify-start text-muted-foreground hover:text-primary py-4"
-            >
-              <Snowflake className="w-5 h-5" />
-              <span className="text-base font-semibold">JAK</span>
-            </Button>
+          <div className="w-full px-4 pb-4">
+            <div className="h-px w-full bg-primary/50 mb-3" />
+            <div className="flex items-center justify-center gap-3">
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => handleMobileNavClick("admin")}
+                aria-label="Admin"
+                className={cn(
+                  "hover:bg-sidebar-accent",
+                  activeAppId === "admin" ? "text-primary" : "text-muted-foreground hover:text-primary"
+                )}
+              >
+                <Shield className="w-5 h-5" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => {
+                  toggleLocale();
+                  setMobileMenuOpen(false);
+                }}
+                aria-label="Sprache wechseln"
+                className="text-muted-foreground hover:text-primary hover:bg-sidebar-accent"
+              >
+                <Globe2 className="w-5 h-5" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => {
+                  toggleTheme();
+                  setMobileMenuOpen(false);
+                }}
+                aria-pressed={isDark}
+                className="text-muted-foreground hover:text-primary hover:bg-sidebar-accent"
+              >
+                {isDark ? (
+                  <SunMedium className="w-5 h-5" />
+                ) : (
+                  <MoonStar className="w-5 h-5" />
+                )}
+              </Button>
+            </div>
           </div>
         </div>
       )}
@@ -584,14 +605,14 @@ function AppShell() {
         }`}
         style={{ backgroundColor: sidebarBg }}
       >
-        <div className="h-24 w-full flex items-center justify-center px-4 relative">
+        <div className="h-20 w-full flex items-center justify-center px-4 relative">
           {!sidebarCollapsed && (
             <Image
               src={isDark ? "/octo_logo_new_white.png" : "/octo_logo_new_black.png"}
               alt="OCTO"
-              width={240}
-              height={80}
-              className="h-20 w-auto object-contain"
+              width={200}
+              height={60}
+              className="h-14 w-auto object-contain"
               priority
               unoptimized
             />
@@ -601,7 +622,7 @@ function AppShell() {
             size="icon"
             aria-label="Sidebar umschalten"
             onClick={() => setSidebarCollapsed((prev) => !prev)}
-            className="text-muted-foreground hover:text-primary absolute right-4"
+            className="text-muted-foreground hover:text-primary absolute right-3"
           >
             {sidebarCollapsed ? (
               <PanelRightClose className="w-4 h-4" />
@@ -611,16 +632,16 @@ function AppShell() {
           </Button>
         </div>
         <nav
-          className={`w-full space-y-3 ${sidebarCollapsed ? "px-2" : "px-4"} pt-6 pb-4`}
+          className={`w-full space-y-2 ${sidebarCollapsed ? "px-2" : "px-3"} pt-4 pb-3`}
         >
-          {apps.map((app) => {
+          {apps.filter((app) => app.id !== "admin").map((app) => {
             const isActive = activeAppId === app.id;
             const Icon = navIconFor(app.id);
             return (
               <button
                 key={app.id}
                 onClick={() => setActiveAppId(app.id)}
-                className={`w-full px-4 py-3 text-sm font-medium tracking-wide transition-colors flex items-center gap-2 ${
+                className={`w-full px-3 py-2.5 text-xs font-medium tracking-wide transition-colors flex items-center gap-2.5 ${
                   sidebarCollapsed ? "justify-center" : ""
                 }`}
                 style={{
@@ -653,18 +674,18 @@ function AppShell() {
         </nav>
 
         {/* New Chat button */}
-        <div className={`w-full ${sidebarCollapsed ? "px-2" : "px-4"} mt-2`}>
+        <div className={`w-full ${sidebarCollapsed ? "px-2" : "px-3"} mt-1`}>
           <Button
             variant="outline"
-            size="default"
+            size="sm"
             onClick={() => void createNewChat()}
             className={cn(
-              "w-full text-sm font-medium flex items-center gap-2 transition-colors",
+              "w-full text-xs font-medium flex items-center gap-2 transition-colors",
               "border-primary/50 hover:border-primary hover:bg-primary/10",
-              sidebarCollapsed ? "justify-center px-2" : "justify-start px-4"
+              sidebarCollapsed ? "justify-center px-2" : "justify-start px-3"
             )}
           >
-            <Plus className="w-4 h-4 shrink-0" />
+            <Plus className="w-3.5 h-3.5 shrink-0" />
             {!sidebarCollapsed && (
               <span>{locale === "de" ? "Neuer Chat" : "New Chat"}</span>
             )}
@@ -673,8 +694,8 @@ function AppShell() {
 
         {/* Session history list */}
         {!sidebarCollapsed && opencodeSessions.length > 0 && (
-          <div className="w-full px-4 mt-4 flex-1 min-h-0 flex flex-col">
-            <div className="flex items-center gap-2 py-2 border-t border-sidebar-border">
+          <div className="w-full px-3 mt-3 flex-1 min-h-0 flex flex-col">
+            <div className="flex items-center gap-2 py-1.5 border-t border-sidebar-border">
               <span className="text-xs uppercase tracking-wide text-muted-foreground">
                 {locale === "de" ? "Verlauf" : "History"}
               </span>
@@ -684,18 +705,18 @@ function AppShell() {
             </div>
             {/* Search input */}
             <div className="relative mb-2">
-              <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
               <input
                 type="text"
                 placeholder={locale === "de" ? "Suchen..." : "Search..."}
                 value={sessionSearch}
                 onChange={(e) => setSessionSearch(e.target.value)}
-                className="w-full pl-7 pr-2 py-1.5 text-xs bg-sidebar-accent/50 border border-sidebar-border rounded placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary/50"
+                className="w-full pl-8 pr-8 py-1.5 text-xs bg-sidebar-accent/50 border border-sidebar-border rounded placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary/50"
               />
               {sessionSearch && (
                 <button
                   onClick={() => setSessionSearch("")}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                 >
                   <X className="w-3 h-3" />
                 </button>
@@ -898,187 +919,85 @@ function AppShell() {
         )}
 
         <div
-          className={`w-full ${sidebarCollapsed ? "px-2 pb-4" : "px-4 pb-6"} mt-auto pt-4`}
+          className={`w-full ${sidebarCollapsed ? "px-2 pb-3" : "px-4 pb-4"} mt-auto pt-3`}
         >
           <div className="h-px w-full bg-primary/50 mb-3" />
-          {sidebarCollapsed ? (
-            // Collapsed: stack vertically
-            <div className="space-y-3">
-              <Button
-                variant="ghost"
-                size="default"
-                onClick={toggleLocale}
-                aria-label="Sprache wechseln"
-                className="w-full px-4 py-3 text-sm font-medium flex items-center justify-center transition-colors"
-                style={{
-                  backgroundColor: navIdle,
-                  border: "1px solid transparent",
-                  color: navText,
-                }}
-                onMouseEnter={(e) => {
+          <div className={`flex items-center ${sidebarCollapsed ? "flex-col gap-2" : "justify-center gap-2"}`}>
+            <Button
+              variant="ghost"
+              size="default"
+              onClick={() => setActiveAppId("admin")}
+              aria-label="Admin"
+              className={`${sidebarCollapsed ? "w-full" : ""} px-3 py-2 text-sm font-medium flex items-center justify-center transition-colors`}
+              style={{
+                backgroundColor: activeAppId === "admin" ? navActiveBg : navIdle,
+                border: activeAppId === "admin" ? `1px solid ${navActiveBorder}` : "1px solid transparent",
+                color: activeAppId === "admin" ? navActiveText : navText,
+              }}
+              onMouseEnter={(e) => {
+                if (activeAppId !== "admin") {
                   e.currentTarget.style.backgroundColor = sidebarHover;
                   e.currentTarget.style.border = `1px solid ${sidebarHoverBorder}`;
-                }}
-                onMouseLeave={(e) => {
+                }
+              }}
+              onMouseLeave={(e) => {
+                if (activeAppId !== "admin") {
                   e.currentTarget.style.backgroundColor = navIdle;
                   e.currentTarget.style.border = "1px solid transparent";
-                }}
-              >
-                <Globe2 className="w-4 h-4 shrink-0" />
-              </Button>
-              <Button
-                variant="ghost"
-                size="default"
-                onClick={toggleTheme}
-                aria-pressed={isDark}
-                className="w-full px-4 py-3 text-sm font-medium flex items-center justify-center transition-colors"
-                style={{
-                  backgroundColor: navIdle,
-                  border: "1px solid transparent",
-                  color: navText,
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.backgroundColor = sidebarHover;
-                  e.currentTarget.style.border = `1px solid ${sidebarHoverBorder}`;
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.backgroundColor = navIdle;
-                  e.currentTarget.style.border = "1px solid transparent";
-                }}
-              >
-                {isDark ? (
-                  <SunMedium className="w-4 h-4 shrink-0" />
-                ) : (
-                  <MoonStar className="w-4 h-4 shrink-0" />
-                )}
-              </Button>
-              <Button
-                variant="ghost"
-                size="default"
-                onClick={toggleJakSnow}
-                className="w-full px-4 py-3 text-sm font-medium flex items-center justify-center transition-colors"
-                style={{
-                  backgroundColor: navIdle,
-                  border: "1px solid transparent",
-                  color: navText,
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.backgroundColor = sidebarHover;
-                  e.currentTarget.style.border = `1px solid ${sidebarHoverBorder}`;
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.backgroundColor = navIdle;
-                  e.currentTarget.style.border = "1px solid transparent";
-                }}
-              >
-                <Snowflake className="w-4 h-4 shrink-0" />
-                <span className="sr-only">JAK</span>
-              </Button>
-            </div>
-          ) : (
-            // Expanded: show in a row with just icons
-            <div className="space-y-2">
-              <div className="flex items-center justify-center gap-2">
-                <Button
-                  variant="ghost"
-                  size="default"
-                  onClick={toggleLocale}
-                  aria-label="Sprache wechseln"
-                  className="px-3 py-2 text-sm font-medium flex items-center justify-center transition-colors"
-                  style={{
-                    backgroundColor: navIdle,
-                    border: "1px solid transparent",
-                    color: navText,
-                  }}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.backgroundColor = sidebarHover;
-                    e.currentTarget.style.border = `1px solid ${sidebarHoverBorder}`;
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.backgroundColor = navIdle;
-                    e.currentTarget.style.border = "1px solid transparent";
-                  }}
-                >
-                  <Globe2 className="w-4 h-4" />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="default"
-                  onClick={toggleTheme}
-                  aria-pressed={isDark}
-                  className="px-3 py-2 text-sm font-medium flex items-center justify-center transition-colors"
-                  style={{
-                    backgroundColor: navIdle,
-                    border: "1px solid transparent",
-                    color: navText,
-                  }}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.backgroundColor = sidebarHover;
-                    e.currentTarget.style.border = `1px solid ${sidebarHoverBorder}`;
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.backgroundColor = navIdle;
-                    e.currentTarget.style.border = "1px solid transparent";
-                  }}
-                >
-                  {isDark ? (
-                    <SunMedium className="w-4 h-4" />
-                  ) : (
-                    <MoonStar className="w-4 h-4" />
-                  )}
-                </Button>
-                <ContextMenu>
-                  <ContextMenuTrigger asChild>
-                    <Button
-                      variant="ghost"
-                      size="default"
-                      onClick={toggleJakSnow}
-                      className="px-3 py-2 text-sm font-medium flex items-center justify-center transition-colors"
-                      style={{
-                        backgroundColor: navIdle,
-                        border: "1px solid transparent",
-                        color: navText,
-                      }}
-                      onMouseEnter={(e) => {
-                        e.currentTarget.style.backgroundColor = sidebarHover;
-                        e.currentTarget.style.border = `1px solid ${sidebarHoverBorder}`;
-                      }}
-                      onMouseLeave={(e) => {
-                        e.currentTarget.style.backgroundColor = navIdle;
-                        e.currentTarget.style.border = "1px solid transparent";
-                      }}
-                    >
-                      <Snowflake className="w-4 h-4" />
-                    </Button>
-                  </ContextMenuTrigger>
-                  <ContextMenuContent>
-                    <div className="px-2 py-1.5">
-                      <div className="text-xs text-muted-foreground mb-2">Volume</div>
-                      <input
-                        type="range"
-                        min={0}
-                        max={1}
-                        step={0.05}
-                        value={jakVolume}
-                        onChange={(e) => {
-                          const vol = Number(e.target.value);
-                          if (Number.isNaN(vol)) return;
-                          setJakVolume(vol);
-                          localStorage.setItem("jakVolume", String(vol));
-                          if (jakAudioRef.current) {
-                            jakAudioRef.current.volume = vol;
-                          }
-                        }}
-                        className="w-[120px]"
-                        style={{ accentColor: "var(--primary)" }}
-                        aria-label="JAK Volume"
-                      />
-                    </div>
-                  </ContextMenuContent>
-                </ContextMenu>
-              </div>
-            </div>
-          )}
+                }
+              }}
+            >
+              <Shield className="w-4 h-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="default"
+              onClick={toggleLocale}
+              aria-label="Sprache wechseln"
+              className={`${sidebarCollapsed ? "w-full" : ""} px-3 py-2 text-sm font-medium flex items-center justify-center transition-colors`}
+              style={{
+                backgroundColor: navIdle,
+                border: "1px solid transparent",
+                color: navText,
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.backgroundColor = sidebarHover;
+                e.currentTarget.style.border = `1px solid ${sidebarHoverBorder}`;
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.backgroundColor = navIdle;
+                e.currentTarget.style.border = "1px solid transparent";
+              }}
+            >
+              <Globe2 className="w-4 h-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="default"
+              onClick={toggleTheme}
+              aria-pressed={isDark}
+              className={`${sidebarCollapsed ? "w-full" : ""} px-3 py-2 text-sm font-medium flex items-center justify-center transition-colors`}
+              style={{
+                backgroundColor: navIdle,
+                border: "1px solid transparent",
+                color: navText,
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.backgroundColor = sidebarHover;
+                e.currentTarget.style.border = `1px solid ${sidebarHoverBorder}`;
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.backgroundColor = navIdle;
+                e.currentTarget.style.border = "1px solid transparent";
+              }}
+            >
+              {isDark ? (
+                <SunMedium className="w-4 h-4" />
+              ) : (
+                <MoonStar className="w-4 h-4" />
+              )}
+            </Button>
+          </div>
         </div>
       </aside>
 
@@ -1097,18 +1016,6 @@ function AppShell() {
           </div>
         </div>
       </div>
-
-      {/* Snow overlay */}
-      {showJakSnow && <SnowOverlay intensity={jakVolume} />}
-
-      {/* Hidden audio element for JAK snow feature - optional, fails silently if file not present */}
-      <audio
-        ref={jakAudioRef}
-        src="/audio/jingle-bells.mp3"
-        loop
-        preload="none"
-        className="hidden"
-      />
 
       {/* Loading bar */}
       {barVisible && (

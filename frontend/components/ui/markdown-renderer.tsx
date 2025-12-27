@@ -69,7 +69,7 @@ const CodeBlockWithTheme = memo(function CodeBlockWithTheme({
   }
 
   return (
-    <div className="relative group my-3 rounded-lg overflow-hidden" style={{ borderColor: "var(--code-border)", borderWidth: "1px" }}>
+    <div className="relative group my-3 overflow-hidden" style={{ borderColor: "var(--code-border)", borderWidth: "1px" }}>
       <div className="flex items-center justify-between px-3 py-2" style={{ backgroundColor: "var(--code-bg)", borderBottomColor: "var(--code-border)", borderBottomWidth: "1px" }}>
         <span className="text-xs font-mono" style={{ color: "var(--code-muted)" }}>
           {match ? match[1] : "plaintext"}
@@ -80,11 +80,14 @@ const CodeBlockWithTheme = memo(function CodeBlockWithTheme({
         style={(isDarkMode ? oneDark : oneLight) as Record<string, React.CSSProperties>}
         language={match ? match[1] : "text"}
         PreTag="div"
+        wrapLongLines={true}
         customStyle={{
           margin: 0,
           padding: "1rem",
           backgroundColor: "var(--code-bg)",
-          fontSize: "0.875rem",
+          fontSize: "0.75rem",
+          overflowX: "hidden",
+          wordBreak: "break-word",
         }}
       >
         {codeString}

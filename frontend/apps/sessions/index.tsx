@@ -655,12 +655,7 @@ export function SessionsApp() {
         
         {/* Mobile content */}
         <div className="flex-1 min-h-0 bg-card border border-t-0 border-border rounded-b-xl p-3 sm:p-4 overflow-hidden flex flex-col">
-          {activeView === "chat" && (
-            <>
-              {SessionHeader}
-              {ChatContent}
-            </>
-          )}
+          {activeView === "chat" && ChatContent}
           {activeView === "files" && <FileTreeView onPreviewFile={handlePreviewFile} state={fileTreeState} onStateChange={handleFileTreeStateChange} />}
           {activeView === "preview" && <PreviewView filePath={previewFilePath} />}
           {activeView === "tasks" && <TodoListView todos={latestTodos} emptyMessage={t.noTasks} />}
@@ -758,10 +753,10 @@ const MessageGroupCard = memo(function MessageGroupCard({ group }: { group: Mess
   return (
     <div
       className={cn(
-        "transition-all duration-200",
+        "transition-all duration-200 overflow-hidden",
         isUser 
-          ? "ml-8 bg-primary/20 dark:bg-primary/10 border border-primary/40 dark:border-primary/30" 
-          : "mr-8 bg-muted/50 border border-border"
+          ? "ml-4 sm:ml-8 bg-primary/20 dark:bg-primary/10 border border-primary/40 dark:border-primary/30" 
+          : "mr-4 sm:mr-8 bg-muted/50 border border-border"
       )}
     >
       {/* Header */}
@@ -815,7 +810,7 @@ const MessageGroupCard = memo(function MessageGroupCard({ group }: { group: Mess
       </div>
 
       {/* Content - render segments in order */}
-      <div className="px-4 py-3 group space-y-3">
+      <div className="px-3 sm:px-4 py-3 group space-y-3 overflow-hidden">
         {segments.length === 0 && !isUser && (
           <div className="flex items-center gap-3 text-muted-foreground text-sm">
             <KnightRiderSpinner />
@@ -829,10 +824,10 @@ const MessageGroupCard = memo(function MessageGroupCard({ group }: { group: Mess
         {segments.map((segment, idx) => {
           if (segment.type === "text") {
             return (
-              <div key={`text-${idx}`} className="relative group/text">
+              <div key={`text-${idx}`} className="relative group/text overflow-hidden">
                 <MarkdownRenderer 
                   content={segment.content} 
-                  className="text-sm text-foreground leading-relaxed pr-8"
+                  className="text-sm text-foreground leading-relaxed pr-6 overflow-hidden"
                 />
                 {/* Floating copy button - positioned to not overlap text */}
                 <div className="absolute top-0 right-0 opacity-0 group-hover/text:opacity-100 transition-opacity">
