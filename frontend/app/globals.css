@@ -304,3 +304,25 @@ html, body {
 * {
   -webkit-overflow-scrolling: touch;
 }
+
+/* Mobile keyboard handling - use dynamic viewport height */
+@supports (height: 100dvh) {
+  .h-screen {
+    height: 100dvh !important;
+  }
+}
+
+/* Ensure input stays above keyboard on iOS */
+@media (max-width: 768px) {
+  input:focus, textarea:focus {
+    position: relative;
+    z-index: 100;
+  }
+  
+  /* Scroll input into view when focused */
+  .chat-input-container {
+    position: sticky;
+    bottom: 0;
+    background: inherit;
+  }
+}

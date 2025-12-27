@@ -86,12 +86,10 @@ function TabButton({
   hideLabel?: boolean
 }) {
   return (
-    <Button
-      variant="ghost"
-      size="sm"
+    <button
       onClick={() => onSelect(view)}
       className={cn(
-        "flex-1 justify-center px-2 relative",
+        "flex-1 flex items-center justify-center px-1.5 py-1 relative transition-colors",
         activeView === view
           ? "bg-primary/15 text-foreground border border-primary"
           : "text-muted-foreground border border-transparent hover:border-border hover:bg-muted/50"
@@ -99,13 +97,13 @@ function TabButton({
       title={label}
     >
       <Icon className="w-4 h-4" />
-      {!hideLabel && <span className="hidden sm:inline ml-1">{label}</span>}
+      {!hideLabel && <span className="hidden sm:inline ml-1 text-xs">{label}</span>}
       {badge !== undefined && badge > 0 && (
-        <span className="absolute -top-1 -right-1 w-4 h-4 bg-pink-500 text-white text-[10px] rounded-full flex items-center justify-center">
+        <span className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-pink-500 text-white text-[9px] rounded-full flex items-center justify-center">
           {badge}
         </span>
       )}
-    </Button>
+    </button>
   )
 }
 
@@ -131,6 +129,8 @@ export function SessionsApp() {
   const messagesContainerRef = useRef<HTMLDivElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const chatInputRef = useRef<HTMLInputElement>(null)
+  const chatContainerRef = useRef<HTMLDivElement>(null)
   
   // File upload state
   const [pendingUploads, setPendingUploads] = useState<{ name: string; path: string }[]>([])
@@ -138,6 +138,29 @@ export function SessionsApp() {
   
   // Track if we're on mobile layout (below lg breakpoint = 1024px)
   const isMobileLayout = useIsMobile()
+  
+  // Handle mobile keyboard - adjust layout when virtual keyboard appears
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.visualViewport) return
+    
+    const viewport = window.visualViewport
+    const container = chatContainerRef.current
+    
+    const handleResize = () => {
+      if (!container) return
+      // When keyboard opens, viewport height decreases
+      const keyboardHeight = window.innerHeight - viewport.height
+      if (keyboardHeight > 100) {
+        // Keyboard is likely open
+        container.style.paddingBottom = `${keyboardHeight}px`
+      } else {
+        container.style.paddingBottom = "0px"
+      }
+    }
+    
+    viewport.addEventListener("resize", handleResize)
+    return () => viewport.removeEventListener("resize", handleResize)
+  }, [])
   
   // Handler for previewing a file from FileTreeView
   const handlePreviewFile = useCallback((filePath: string) => {
@@ -514,12 +537,19 @@ export function SessionsApp() {
 
   // Chat content component (reused in both layouts)
   const ChatContent = (
-    <div className="flex-1 flex flex-col gap-4 min-h-0">
+    <div ref={chatContainerRef} className="flex-1 flex flex-col gap-2 sm:gap-4 min-h-0">
+      {/* Working indicator */}
+      {chatState === "sending" && (
+        <div className="flex items-center gap-2 px-3 py-1.5 bg-primary/10 border border-primary/30 text-sm text-primary">
+          <KnightRiderSpinner />
+          <span className="font-medium">{locale === "de" ? "Agent arbeitet..." : "Agent working..."}</span>
+        </div>
+      )}
       <div className="relative flex-1 min-h-0">
         <div 
           ref={messagesContainerRef}
           onScroll={handleScroll}
-          className="h-full bg-muted/30 border border-border p-4 overflow-y-auto space-y-6 scrollbar-hide"
+          className="h-full bg-muted/30 border border-border p-2 sm:p-4 overflow-y-auto space-y-4 sm:space-y-6 scrollbar-hide"
         >
           {messages.length === 0 && <div className="text-sm text-muted-foreground">{t.noMessages}</div>}
           {messageGroups.map((group) => (
@@ -532,10 +562,10 @@ export function SessionsApp() {
         {showScrollToBottom && (
           <button
             onClick={() => scrollToBottom()}
-            className="absolute bottom-4 right-4 z-50 flex items-center gap-2 px-3 py-2 bg-primary hover:bg-primary/90 text-primary-foreground text-sm font-medium shadow-lg"
+            className="absolute bottom-2 left-2 right-2 sm:left-auto sm:right-4 sm:w-auto z-50 flex items-center justify-center gap-2 px-3 py-2 bg-primary hover:bg-primary/90 text-primary-foreground text-sm font-medium shadow-lg"
           >
             <ArrowDown className="w-4 h-4" />
-            Jump to bottom
+            <span className="sm:inline">Jump to bottom</span>
           </button>
         )}
       </div>
@@ -570,7 +600,7 @@ export function SessionsApp() {
         onChange={(e) => handleFileUpload(e.target.files)}
       />
 
-      <div className="flex items-center gap-2 bg-muted/30 border border-border px-2 py-1">
+      <div className="chat-input-container flex items-center gap-2 bg-muted/30 border border-border px-2 py-1">
         <button
           onClick={() => fileInputRef.current?.click()}
           disabled={isUploading || !selectedWorkspaceSessionId}
@@ -584,6 +614,7 @@ export function SessionsApp() {
           )}
         </button>
         <input
+          ref={chatInputRef}
           type="text"
           placeholder={t.inputPlaceholder}
           value={messageInput}
@@ -593,6 +624,12 @@ export function SessionsApp() {
               e.preventDefault()
               handleSend()
             }
+          }}
+          onFocus={(e) => {
+            // Scroll input into view on mobile when keyboard opens
+            setTimeout(() => {
+              e.target.scrollIntoView({ behavior: "smooth", block: "nearest" })
+            }, 300)
           }}
           className="flex-1 bg-transparent border-none outline-none text-foreground placeholder:text-muted-foreground text-sm"
         />
@@ -641,11 +678,11 @@ export function SessionsApp() {
   )
 
   return (
-    <div className="flex flex-col h-full min-h-0 p-2 sm:p-4 md:p-6 gap-2 sm:gap-4">
+    <div className="flex flex-col h-full min-h-0 p-1 sm:p-4 md:p-6 gap-1 sm:gap-4">
       {/* Mobile layout: single panel with tabs */}
       <div className="flex-1 min-h-0 flex flex-col lg:hidden">
-        {/* Mobile tabs */}
-        <div className="flex gap-1 p-2 bg-card border border-border rounded-t-xl">
+        {/* Mobile tabs - sticky at top */}
+        <div className="sticky top-0 z-10 flex gap-0.5 p-1 sm:p-2 bg-card border border-border rounded-t-xl">
           <TabButton activeView={activeView} onSelect={setActiveView} view="chat" icon={MessageSquare} label={t.chat} />
           <TabButton activeView={activeView} onSelect={setActiveView} view="tasks" icon={ListTodo} label={t.tasks} badge={incompleteTasks} />
           <TabButton activeView={activeView} onSelect={setActiveView} view="files" icon={FileText} label={t.files} />
@@ -654,7 +691,7 @@ export function SessionsApp() {
         </div>
         
         {/* Mobile content */}
-        <div className="flex-1 min-h-0 bg-card border border-t-0 border-border rounded-b-xl p-3 sm:p-4 overflow-hidden flex flex-col">
+        <div className="flex-1 min-h-0 bg-card border border-t-0 border-border rounded-b-xl p-1.5 sm:p-4 overflow-hidden flex flex-col">
           {activeView === "chat" && ChatContent}
           {activeView === "files" && <FileTreeView onPreviewFile={handlePreviewFile} state={fileTreeState} onStateChange={handleFileTreeStateChange} />}
           {activeView === "preview" && <PreviewView filePath={previewFilePath} />}
@@ -755,66 +792,61 @@ const MessageGroupCard = memo(function MessageGroupCard({ group }: { group: Mess
       className={cn(
         "transition-all duration-200 overflow-hidden",
         isUser 
-          ? "ml-4 sm:ml-8 bg-primary/20 dark:bg-primary/10 border border-primary/40 dark:border-primary/30" 
-          : "mr-4 sm:mr-8 bg-muted/50 border border-border"
+          ? "sm:ml-8 bg-primary/20 dark:bg-primary/10 border border-primary/40 dark:border-primary/30" 
+          : "sm:mr-8 bg-muted/50 border border-border"
       )}
     >
       {/* Header */}
       <div className={cn(
-        "flex items-center gap-3 px-4 py-3 border-b",
+        "flex items-center gap-2 px-2 sm:px-4 py-1.5 sm:py-2 border-b",
         isUser ? "border-primary/30 dark:border-primary/20" : "border-border"
       )}>
         <div
           className={cn(
-            "p-2",
+            "p-1.5",
             isUser ? "bg-primary/20" : "bg-muted"
           )}
         >
           {isUser ? (
-            <User className="w-4 h-4 text-primary" />
+            <User className="w-3.5 h-3.5 text-primary" />
           ) : (
-            <Bot className="w-4 h-4 text-primary" />
+            <Bot className="w-3.5 h-3.5 text-primary" />
           )}
         </div>
-        <div className="flex-1">
-          <div className="flex items-center gap-2">
-            <span className="text-sm font-medium text-foreground">
-              {isUser ? "You" : "Assistant"}
-            </span>
-            {group.messages.length > 1 && (
-              <Badge
-                variant="outline"
-                className={cn(
-                  "text-[10px] px-1.5 py-0",
-                  isUser
-                    ? "border-primary/30 text-primary"
-                    : "border-border text-muted-foreground"
-                )}
-              >
-                {group.messages.length} messages
-              </Badge>
+        <span className="text-sm font-medium text-foreground">
+          {isUser ? "You" : "Assistant"}
+        </span>
+        {group.messages.length > 1 && (
+          <Badge
+            variant="outline"
+            className={cn(
+              "text-[10px] px-1.5 py-0",
+              isUser
+                ? "border-primary/30 text-primary"
+                : "border-border text-muted-foreground"
             )}
-          </div>
-          {createdAt && !isNaN(createdAt.getTime()) && (
-            <div className="text-xs text-foreground/60 dark:text-muted-foreground flex items-center gap-1 mt-0.5">
-              <Clock className="w-3 h-3" />
-              {createdAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-            </div>
-          )}
-        </div>
-        
+          >
+            {group.messages.length}
+          </Badge>
+        )}
+        <div className="flex-1" />
+        {createdAt && !isNaN(createdAt.getTime()) && (
+          <span className="text-[10px] text-foreground/50 dark:text-muted-foreground">
+            {createdAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+          </span>
+        )}
         {/* Copy button for entire message content */}
         {allTextContent && (
-          <CopyButton text={allTextContent} className="opacity-0 group-hover:opacity-100" />
+          <CopyButton text={allTextContent} className="opacity-100 sm:opacity-0 sm:group-hover:opacity-100" />
         )}
       </div>
 
       {/* Content - render segments in order */}
-      <div className="px-3 sm:px-4 py-3 group space-y-3 overflow-hidden">
+      <div className="px-2 sm:px-4 py-2 sm:py-3 group space-y-3 overflow-hidden">
         {segments.length === 0 && !isUser && (
           <div className="flex items-center gap-3 text-muted-foreground text-sm">
             <KnightRiderSpinner />
-            <span>Thinking...</span>
+            <span>Working...</span>
           </div>
         )}
         {segments.length === 0 && isUser && (
@@ -824,15 +856,11 @@ const MessageGroupCard = memo(function MessageGroupCard({ group }: { group: Mess
         {segments.map((segment, idx) => {
           if (segment.type === "text") {
             return (
-              <div key={`text-${idx}`} className="relative group/text overflow-hidden">
+              <div key={`text-${idx}`} className="overflow-hidden">
                 <MarkdownRenderer 
                   content={segment.content} 
-                  className="text-sm text-foreground leading-relaxed pr-6 overflow-hidden"
+                  className="text-sm text-foreground leading-relaxed overflow-hidden"
                 />
-                {/* Floating copy button - positioned to not overlap text */}
-                <div className="absolute top-0 right-0 opacity-0 group-hover/text:opacity-100 transition-opacity">
-                  <CopyButton text={segment.content} />
-                </div>
               </div>
             )
           }
