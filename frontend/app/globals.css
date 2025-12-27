@@ -293,6 +293,11 @@
   button, a, input, select, textarea {
     min-height: 44px;
   }
+  /* Exclude compact UI elements */
+  .compact-header button,
+  .compact-header a {
+    min-height: unset;
+  }
 }
 
 /* Prevent pull-to-refresh on mobile */

@@ -447,19 +447,27 @@ function AppShell() {
                               )}
                             >
                               {hasChildren ? (
-                                <button
+                                <span
+                                  role="button"
+                                  tabIndex={0}
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     toggleSessionExpanded(session.id);
                                   }}
-                                  className="mt-0.5 p-1 hover:bg-muted rounded flex-shrink-0"
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter" || e.key === " ") {
+                                      e.stopPropagation();
+                                      toggleSessionExpanded(session.id);
+                                    }
+                                  }}
+                                  className="mt-0.5 p-1 hover:bg-muted rounded flex-shrink-0 cursor-pointer"
                                 >
                                   {isExpanded ? (
                                     <ChevronDown className="w-4 h-4" />
                                   ) : (
                                     <ChevronRight className="w-4 h-4" />
                                   )}
-                                </button>
+                                </span>
                               ) : (
                                 <MessageSquare className="w-4 h-4 mt-0.5 flex-shrink-0 text-primary/70" />
                               )}
@@ -760,19 +768,27 @@ function AppShell() {
                           )}
                         >
                           {hasChildren ? (
-                            <button
+                            <span
+                              role="button"
+                              tabIndex={0}
                               onClick={(e) => {
                                 e.stopPropagation();
                                 toggleSessionExpanded(session.id);
                               }}
-                              className="mt-0.5 p-0.5 hover:bg-muted rounded flex-shrink-0"
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter" || e.key === " ") {
+                                  e.stopPropagation();
+                                  toggleSessionExpanded(session.id);
+                                }
+                              }}
+                              className="mt-0.5 p-0.5 hover:bg-muted rounded flex-shrink-0 cursor-pointer"
                             >
                               {isExpanded ? (
                                 <ChevronDown className="w-3 h-3" />
                               ) : (
                                 <ChevronRight className="w-3 h-3" />
                               )}
-                            </button>
+                            </span>
                           ) : (
                             <MessageSquare className="w-3.5 h-3.5 mt-0.5 flex-shrink-0 text-primary/70" />
                           )}

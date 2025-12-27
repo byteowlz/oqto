@@ -239,6 +239,39 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }, [opencodeBaseUrl])
 
+  const handleStopWorkspaceSession = useCallback(async (sessionId: string): Promise<boolean> => {
+    try {
+      await stopWorkspaceSession(sessionId)
+      await refreshWorkspaceSessions()
+      return true
+    } catch (err) {
+      console.error("Failed to stop workspace session:", err)
+      return false
+    }
+  }, [refreshWorkspaceSessions])
+
+  const handleDeleteWorkspaceSession = useCallback(async (sessionId: string): Promise<boolean> => {
+    try {
+      await deleteWorkspaceSession(sessionId)
+      await refreshWorkspaceSessions()
+      return true
+    } catch (err) {
+      console.error("Failed to delete workspace session:", err)
+      return false
+    }
+  }, [refreshWorkspaceSessions])
+
+  const handleUpgradeWorkspaceSession = useCallback(async (sessionId: string): Promise<boolean> => {
+    try {
+      await upgradeWorkspaceSession(sessionId)
+      await refreshWorkspaceSessions()
+      return true
+    } catch (err) {
+      console.error("Failed to upgrade workspace session:", err)
+      return false
+    }
+  }, [refreshWorkspaceSessions])
+
   useEffect(() => {
     refreshOpencodeSessions()
   }, [refreshOpencodeSessions])
@@ -284,6 +317,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
       createNewChat,
       deleteChatSession,
       renameChatSession,
+      stopWorkspaceSession: handleStopWorkspaceSession,
+      deleteWorkspaceSession: handleDeleteWorkspaceSession,
+      upgradeWorkspaceSession: handleUpgradeWorkspaceSession,
       authToken,
     }),
     [
@@ -305,6 +341,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
       createNewChat,
       deleteChatSession,
       renameChatSession,
+      handleStopWorkspaceSession,
+      handleDeleteWorkspaceSession,
+      handleUpgradeWorkspaceSession,
       authToken,
     ],
   )

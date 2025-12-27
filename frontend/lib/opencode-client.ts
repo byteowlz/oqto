@@ -200,6 +200,64 @@ export async function abortSession(opencodeBaseUrl: string, sessionId: string): 
   return handleResponse<boolean>(res)
 }
 
+export type OpenCodeAgent = {
+  id: string
+  name?: string
+  model?: { providerID: string; modelID: string }
+}
+
+export async function fetchAgents(opencodeBaseUrl: string): Promise<OpenCodeAgent[]> {
+  const res = await fetch(`${base(opencodeBaseUrl)}/agent`, { cache: "no-store" })
+  return handleResponse<OpenCodeAgent[]>(res)
+}
+
+export async function runShellCommand(
+  opencodeBaseUrl: string,
+  sessionId: string,
+  command: string,
+  agent: string,
+  model?: { providerID: string; modelID: string },
+): Promise<OpenCodeMessageWithParts> {
+  const body: Record<string, unknown> = { command, agent }
+  if (model) body.model = model
+  
+  const res = await fetch(`${base(opencodeBaseUrl)}/session/${sessionId}/shell`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  })
+  return handleResponse<OpenCodeMessageWithParts>(res)
+}
+
+export async function runShellCommandAsync(
+  opencodeBaseUrl: string,
+  sessionId: string,
+  command: string,
+  agent: string,
+  model?: { providerID: string; modelID: string },
+): Promise<boolean> {
+  const body: Record<string, unknown> = { command, agent }
+  if (model) body.model = model
+  
+  const res = await fetch(`${base(opencodeBaseUrl)}/session/${sessionId}/shell`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) {
+    let errorMsg = `Request failed with ${res.status}`
+    try {
+      const data = await res.json()
+      errorMsg = data.message || data.error || data.name || JSON.stringify(data)
+    } catch {
+      const text = await res.text().catch(() => res.statusText)
+      errorMsg = text || errorMsg
+    }
+    throw new Error(errorMsg)
+  }
+  return true
+}
+
 export async function createSession(opencodeBaseUrl: string, title?: string, parentID?: string): Promise<OpenCodeSession> {
   const res = await fetch(`${base(opencodeBaseUrl)}/session`, {
     method: "POST",

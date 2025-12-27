@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState, useRef, memo } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
-import { FileText, Terminal, Eye, Send, ChevronDown, User, Bot, Clock, ArrowDown, ListTodo, Square, CheckSquare, CircleDot, XCircle, MessageSquare, Loader2, Paperclip, X } from "lucide-react"
+import { FileText, Terminal, Eye, Send, ChevronDown, User, Bot, Clock, ArrowDown, ListTodo, Square, CheckSquare, CircleDot, XCircle, MessageSquare, Loader2, Paperclip, X, Copy, Check } from "lucide-react"
 import { useApp } from "@/components/app-context"
 import { FileTreeView, type FileTreeState, initialFileTreeState } from "@/app/sessions/FileTreeView"
 import { TerminalView } from "@/app/sessions/TerminalView"
@@ -16,6 +16,8 @@ import { cn } from "@/lib/utils"
 import {
   fetchMessages,
   sendMessageAsync,
+  runShellCommandAsync,
+  fetchAgents,
   subscribeToEvents,
   invalidateMessageCache,
   type OpenCodeMessageWithParts,
@@ -107,6 +109,43 @@ function TabButton({
   )
 }
 
+// Compact copy button for message headers
+function CompactCopyButton({ text, className }: { text: string; className?: string }) {
+  const [copied, setCopied] = useState(false)
+  
+  const handleCopy = useCallback(() => {
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text)
+      } else {
+        const textArea = document.createElement("textarea")
+        textArea.value = text
+        textArea.style.position = "fixed"
+        textArea.style.left = "-9999px"
+        document.body.appendChild(textArea)
+        textArea.select()
+        document.execCommand("copy")
+        document.body.removeChild(textArea)
+      }
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch {}
+  }, [text])
+  
+  return (
+    <button
+      onClick={handleCopy}
+      className={cn("text-muted-foreground hover:text-foreground", className)}
+    >
+      {copied ? (
+        <Check className="w-3 h-3 text-primary" />
+      ) : (
+        <Copy className="w-3 h-3" />
+      )}
+    </button>
+  )
+}
+
 export function SessionsApp() {
   const {
     locale,
@@ -121,6 +160,8 @@ export function SessionsApp() {
   const [messages, setMessages] = useState<OpenCodeMessageWithParts[]>([])
   const [messageInput, setMessageInput] = useState("")
   const [chatState, setChatState] = useState<"idle" | "sending">("idle")
+  const [isLoading, setIsLoading] = useState(true)
+  const [showTimeoutError, setShowTimeoutError] = useState(false)
   const [activeView, setActiveView] = useState<ActiveView>("chat")
   const [status, setStatus] = useState<string>("")
   const [showScrollToBottom, setShowScrollToBottom] = useState(false)
@@ -134,6 +175,9 @@ export function SessionsApp() {
   
   // File upload state
   const [pendingUploads, setPendingUploads] = useState<{ name: string; path: string }[]>([])
+  
+  // Default agent for shell commands - use "build" as the default primary agent
+  const [defaultAgent, setDefaultAgent] = useState<string>("build")
   const [isUploading, setIsUploading] = useState(false)
   
   // Track if we're on mobile layout (below lg breakpoint = 1024px)
@@ -172,6 +216,44 @@ export function SessionsApp() {
   const handleFileTreeStateChange = useCallback((newState: FileTreeState) => {
     setFileTreeState(newState)
   }, [])
+  
+  // Fetch available agents
+  useEffect(() => {
+    if (!opencodeBaseUrl) return
+    fetchAgents(opencodeBaseUrl)
+      .then((agents) => {
+        console.log("Available agents:", agents)
+        // Prefer "build" agent (main agent with all tools), fallback to first primary agent
+        const buildAgent = agents.find(a => a.id === "build")
+        const firstPrimaryAgent = agents.find(a => a.id === "build" || a.id === "plan") || agents[0]
+        if (buildAgent) {
+          setDefaultAgent(buildAgent.id)
+        } else if (firstPrimaryAgent) {
+          setDefaultAgent(firstPrimaryAgent.id)
+        }
+        // Keep "build" as fallback if no agents found
+      })
+      .catch((err) => {
+        console.error("Failed to fetch agents:", err)
+        // Keep "build" as fallback on error
+      })
+  }, [opencodeBaseUrl])
+
+  // Loading state management with timeout
+  useEffect(() => {
+    // Reset loading state when workspace sessions change
+    if (workspaceSessions.length > 0) {
+      setIsLoading(false)
+      setShowTimeoutError(false)
+    } else {
+      setIsLoading(true)
+      // Show error message after 10 seconds of no response
+      const timeout = setTimeout(() => {
+        setShowTimeoutError(true)
+      }, 10000)
+      return () => clearTimeout(timeout)
+    }
+  }, [workspaceSessions])
 
   // File upload handler
   const handleFileUpload = useCallback(async (files: FileList | null) => {
@@ -490,6 +572,10 @@ export function SessionsApp() {
       messageText = messageText ? `${uploadPrefix}\n\n${messageText}` : uploadPrefix
     }
     
+    // Check if this is a shell command (starts with "!")
+    const isShellCommand = messageText.startsWith("!")
+    const shellCommand = isShellCommand ? messageText.slice(1).trim() : ""
+    
     // Optimistic update - show user message immediately
     const optimisticMessage: OpenCodeMessageWithParts = {
       info: {
@@ -511,8 +597,15 @@ export function SessionsApp() {
     setTimeout(() => scrollToBottom(), 50)
     
     try {
-      // Use async send - the response will come via SSE events
-      await sendMessageAsync(opencodeBaseUrl, selectedChatSessionId, messageText)
+      if (isShellCommand && shellCommand) {
+        // Run shell command via opencode shell endpoint using "build" agent
+        const agentId = defaultAgent || "build"
+        console.log("Running shell command with agent:", agentId, "command:", shellCommand)
+        await runShellCommandAsync(opencodeBaseUrl, selectedChatSessionId, shellCommand, agentId)
+      } else {
+        // Use async send - the response will come via SSE events
+        await sendMessageAsync(opencodeBaseUrl, selectedChatSessionId, messageText)
+      }
       // Invalidate cache and refresh messages to get the real message IDs
       invalidateMessageCache(opencodeBaseUrl, selectedChatSessionId)
       loadMessages()
@@ -525,12 +618,80 @@ export function SessionsApp() {
     // Don't set idle here - wait for SSE session.idle event
   }
 
-  if (workspaceSessions.length === 0) {
-    return (
-      <div className="p-4 md:p-6">
-        <div className="p-6 text-sm text-muted-foreground bg-card border border-border">
-          {t.configNotice}
+  // Loading skeleton for chat view
+  const ChatSkeleton = (
+    <div className="flex-1 flex flex-col gap-4 min-h-0 animate-pulse">
+      <div className="flex-1 bg-muted/20 p-4 space-y-6">
+        {/* Skeleton message bubbles */}
+        <div className="mr-8 space-y-2">
+          <div className="h-4 bg-muted/40 w-24" />
+          <div className="h-16 bg-muted/30" />
         </div>
+        <div className="ml-8 space-y-2">
+          <div className="h-4 bg-muted/40 w-16 ml-auto" />
+          <div className="h-10 bg-muted/30" />
+        </div>
+        <div className="mr-8 space-y-2">
+          <div className="h-4 bg-muted/40 w-24" />
+          <div className="h-24 bg-muted/30" />
+        </div>
+      </div>
+      <div className="h-10 bg-muted/20" />
+    </div>
+  )
+
+  // Loading skeleton for sidebar
+  const SidebarSkeleton = (
+    <div className="flex-1 flex flex-col animate-pulse">
+      <div className="flex gap-1 p-2">
+        {[1, 2, 3, 4].map((i) => (
+          <div key={i} className="flex-1 h-8 bg-muted/30" />
+        ))}
+      </div>
+      <div className="flex-1 p-4 space-y-3">
+        <div className="h-4 bg-muted/40 w-3/4" />
+        <div className="h-4 bg-muted/40 w-1/2" />
+        <div className="h-4 bg-muted/40 w-2/3" />
+        <div className="h-32 bg-muted/30 mt-4" />
+      </div>
+    </div>
+  )
+
+  if (workspaceSessions.length === 0) {
+    // Show skeleton while loading, error message after timeout
+    return (
+      <div className="flex flex-col h-full min-h-0 p-1 sm:p-4 md:p-6 gap-1 sm:gap-4">
+        {showTimeoutError ? (
+          <div className="p-4 md:p-6">
+            <div className="p-6 text-sm text-muted-foreground bg-card border border-border">
+              {t.configNotice}
+            </div>
+          </div>
+        ) : (
+          <>
+            {/* Mobile skeleton */}
+            <div className="flex-1 min-h-0 flex flex-col lg:hidden">
+              <div className="sticky top-0 z-10 flex gap-0.5 p-1 sm:p-2 bg-muted/10">
+                {[1, 2, 3, 4, 5].map((i) => (
+                  <div key={i} className="flex-1 h-7 bg-muted/30 animate-pulse" />
+                ))}
+              </div>
+              <div className="flex-1 min-h-0 bg-muted/10 p-1.5 sm:p-4 overflow-hidden">
+                {ChatSkeleton}
+              </div>
+            </div>
+
+            {/* Desktop skeleton */}
+            <div className="hidden lg:flex flex-1 min-h-0 gap-4 items-start">
+              <div className="flex-[3] min-w-0 bg-muted/10 p-4 xl:p-6 flex flex-col min-h-0 h-full">
+                {ChatSkeleton}
+              </div>
+              <div className="flex-[2] min-w-[320px] max-w-[420px] bg-muted/10 flex flex-col min-h-0 h-full">
+                {SidebarSkeleton}
+              </div>
+            </div>
+          </>
+        )}
       </div>
     )
   }
@@ -562,7 +723,7 @@ export function SessionsApp() {
         {showScrollToBottom && (
           <button
             onClick={() => scrollToBottom()}
-            className="absolute bottom-2 left-2 right-2 sm:left-auto sm:right-4 sm:w-auto z-50 flex items-center justify-center gap-2 px-3 py-2 bg-primary hover:bg-primary/90 text-primary-foreground text-sm font-medium shadow-lg"
+            className="absolute bottom-2 left-2 right-2 sm:left-1/2 sm:-translate-x-1/2 sm:right-auto sm:w-auto z-50 flex items-center justify-center gap-2 px-3 py-2 bg-primary hover:bg-primary/90 text-primary-foreground text-sm font-medium shadow-lg"
           >
             <ArrowDown className="w-4 h-4" />
             <span className="sm:inline">Jump to bottom</span>
@@ -798,46 +959,39 @@ const MessageGroupCard = memo(function MessageGroupCard({ group }: { group: Mess
     >
       {/* Header */}
       <div className={cn(
-        "flex items-center gap-2 px-2 sm:px-4 py-1.5 sm:py-2 border-b",
+        "compact-header flex items-center gap-1 sm:gap-2 px-2 sm:px-3 sm:py-2 border-b",
         isUser ? "border-primary/30 dark:border-primary/20" : "border-border"
       )}>
-        <div
-          className={cn(
-            "p-1.5",
-            isUser ? "bg-primary/20" : "bg-muted"
-          )}
-        >
-          {isUser ? (
-            <User className="w-3.5 h-3.5 text-primary" />
-          ) : (
-            <Bot className="w-3.5 h-3.5 text-primary" />
-          )}
-        </div>
-        <span className="text-sm font-medium text-foreground">
+        {isUser ? (
+          <User className="w-3 h-3 sm:w-4 sm:h-4 text-primary flex-shrink-0" />
+        ) : (
+          <Bot className="w-3 h-3 sm:w-4 sm:h-4 text-primary flex-shrink-0" />
+        )}
+        <span className="text-xs sm:text-sm font-medium text-foreground leading-none sm:leading-normal">
           {isUser ? "You" : "Assistant"}
         </span>
         {group.messages.length > 1 && (
-          <Badge
-            variant="outline"
-            className={cn(
-              "text-[10px] px-1.5 py-0",
-              isUser
-                ? "border-primary/30 text-primary"
-                : "border-border text-muted-foreground"
-            )}
-          >
+          <span className={cn(
+            "text-[9px] sm:text-[10px] px-1 border leading-none",
+            isUser
+              ? "border-primary/30 text-primary"
+              : "border-border text-muted-foreground"
+          )}>
             {group.messages.length}
-          </Badge>
+          </span>
         )}
         <div className="flex-1" />
         {createdAt && !isNaN(createdAt.getTime()) && (
-          <span className="text-[10px] text-foreground/50 dark:text-muted-foreground">
+          <span className="text-[9px] sm:text-[10px] text-foreground/50 dark:text-muted-foreground leading-none sm:leading-normal">
             {createdAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
           </span>
         )}
-        {/* Copy button for entire message content */}
+        {/* Copy button - full size on desktop, compact on mobile */}
         {allTextContent && (
-          <CopyButton text={allTextContent} className="opacity-100 sm:opacity-0 sm:group-hover:opacity-100" />
+          <CopyButton text={allTextContent} className="hidden sm:block opacity-0 group-hover:opacity-100" />
+        )}
+        {allTextContent && (
+          <CompactCopyButton text={allTextContent} className="sm:hidden" />
         )}
       </div>
 
