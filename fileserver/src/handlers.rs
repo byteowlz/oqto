@@ -869,17 +869,18 @@ fn highlight_code(content: &str, path: &Path, theme_name: &str) -> Result<String
     let mut html_output = String::with_capacity(content.len() * 2);
     
     // Build HTML with line numbers
-    html_output.push_str("<div class=\"highlighted-code\" style=\"font-family: ui-monospace, SFMono-Regular, 'SF Mono', Consolas, 'Liberation Mono', Menlo, monospace; font-size: 12px; line-height: 1.5; display: flex;\">");
+    // Use a container with flex layout
+    html_output.push_str("<div class=\"highlighted-code\" style=\"font-family: ui-monospace, SFMono-Regular, 'SF Mono', Consolas, 'Liberation Mono', Menlo, monospace; font-size: 12px; line-height: 1.5; display: flex; padding: 12px;\">");
     
-    // Line numbers column
-    html_output.push_str("<div class=\"line-numbers\" style=\"text-align: right; padding-right: 1em; min-width: 3em; opacity: 0.5; user-select: none;\">");
+    // Line numbers column - use explicit color that works in both light and dark modes
+    html_output.push_str("<div class=\"line-numbers\" style=\"text-align: right; padding-right: 1em; min-width: 3em; color: #6b7280; user-select: none; flex-shrink: 0;\">");
     for (i, _) in LinesWithEndings::from(content).enumerate() {
         html_output.push_str(&format!("<div>{}</div>", i + 1));
     }
     html_output.push_str("</div>");
     
     // Code column
-    html_output.push_str("<div class=\"code\" style=\"flex: 1; overflow-x: auto;\">");
+    html_output.push_str("<div class=\"code\" style=\"flex: 1; overflow-x: auto; white-space: pre-wrap; word-break: break-word;\">");
     for line in LinesWithEndings::from(content) {
         let regions = highlighter
             .highlight_line(line, &SYNTAX_SET)

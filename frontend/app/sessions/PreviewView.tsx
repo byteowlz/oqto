@@ -281,7 +281,9 @@ export function PreviewView({ filePath, className }: PreviewViewProps) {
             setCachedContent(highlightCacheKey, html)
             setHighlightedContent(html)
           })
-          .catch(() => {}) // Ignore errors, we have raw content as fallback
+          .catch((err) => {
+            console.warn("[PreviewView] Failed to fetch highlighted content:", err)
+          }) // Fallback to raw content on error
       }
       return
     }
@@ -305,10 +307,13 @@ export function PreviewView({ filePath, className }: PreviewViewProps) {
         // Then fetch highlighted version in background
         fetchHighlightedContent(fileserverBaseUrl, filePath)
           .then((html) => {
+            console.log("[PreviewView] Got highlighted content, length:", html.length)
             setCachedContent(highlightCacheKey, html)
             setHighlightedContent(html)
           })
-          .catch(() => {}) // Ignore errors, we have raw content as fallback
+          .catch((err) => {
+            console.warn("[PreviewView] Failed to fetch highlighted content:", err)
+          }) // Fallback to raw content on error
       })
       .catch((err) => {
         setError(err.message ?? "Failed to load file")
@@ -556,7 +561,7 @@ export function PreviewView({ filePath, className }: PreviewViewProps) {
         ) : content ? (
           // Fallback: plain text with line numbers while server highlighting loads
           <div 
-            className="flex text-muted-foreground" 
+            className="flex text-foreground" 
             style={{ 
               minHeight: "100%",
               padding: "12px",
@@ -566,11 +571,10 @@ export function PreviewView({ filePath, className }: PreviewViewProps) {
             }}
           >
             <div 
-              className="select-none text-right"
+              className="select-none text-right text-muted-foreground"
               style={{ 
                 minWidth: "3em",
                 paddingRight: "1em",
-                opacity: 0.5,
               }}
             >
               {content.split("\n").map((_, i) => (
