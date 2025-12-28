@@ -1,6 +1,6 @@
 import { appRegistry } from "@/lib/app-registry";
 import { ProjectsApp } from "@/apps/projects";
-import { WorkspacesApp } from "@/apps/workspaces";
+import { PersonasApp } from "@/apps/personas";
 import { SessionsApp } from "@/apps/sessions";
 import { AdminApp } from "@/apps/admin";
 
@@ -15,11 +15,11 @@ appRegistry
     priority: 1,
   })
   .register({
-    id: "workspaces",
-    label: { de: "Agents", en: "Agents" },
-    description: "Create Agents for specific tasks",
-    component: WorkspacesApp,
-    routes: ["/workspaces"],
+    id: "personas",
+    label: { de: "Personas", en: "Personas" },
+    description: "AI personas for different tasks",
+    component: PersonasApp,
+    routes: ["/personas"],
     permissions: ["user"],
     priority: 5,
   })

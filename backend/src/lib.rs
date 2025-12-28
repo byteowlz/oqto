@@ -11,6 +11,7 @@ pub mod eavs;
 pub mod invite;
 pub mod local;
 pub mod observability;
+pub mod persona;
 pub mod session;
 pub mod storage;
 pub mod user;

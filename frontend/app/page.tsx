@@ -71,6 +71,7 @@ function AppShell() {
     selectedChatSessionId,
     setSelectedChatSessionId,
     selectedChatSession,
+    selectedWorkspaceSession,
     createNewChat,
     deleteChatSession,
     renameChatSession,

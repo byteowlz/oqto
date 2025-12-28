@@ -18,6 +18,7 @@ use tracing::{info, instrument, warn};
 
 use crate::auth::{AuthError, CurrentUser, RequireAdmin};
 use crate::observability::{CpuTimes, HostMetrics, read_host_metrics};
+use crate::persona::Persona;
 use crate::session::{CreateSessionRequest, Session, SessionContainerStats};
 use crate::user::{
     CreateUserRequest, UpdateUserRequest, UserInfo as DbUserInfo, UserListQuery, UserStats,
@@ -49,12 +50,15 @@ pub async fn health() -> Json<HealthResponse> {
     })
 }
 
-/// Session response with URLs.
+/// Session response with URLs and persona info.
 #[derive(Debug, Serialize)]
 pub struct SessionWithUrls {
     #[serde(flatten)]
     pub session: Session,
     pub urls: SessionUrls,
+    /// Persona metadata (if session has a persona_path with persona.toml).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub persona: Option<Persona>,
 }
 
 /// URLs for accessing session services.
@@ -73,16 +77,53 @@ impl SessionWithUrls {
             fileserver: format!("/session/{}/files", session.id),
             terminal: format!("/session/{}/term", session.id),
         };
-        Self { session, urls }
+
+        // Try to load persona from persona_path
+        let persona = session.persona_path.as_ref().and_then(|path| {
+            let persona_dir = std::path::Path::new(path);
+            match Persona::load(persona_dir) {
+                Ok(p) => Some(p),
+                Err(e) => {
+                    tracing::warn!("Failed to load persona from {:?}: {}", path, e);
+                    None
+                }
+            }
+        });
+
+        Self { session, urls, persona }
+    }
+}
+
+/// Session with persona info for list responses.
+#[derive(Debug, Serialize)]
+pub struct SessionWithPersona {
+    #[serde(flatten)]
+    pub session: Session,
+    /// Persona metadata (if session has a persona_path with persona.toml).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub persona: Option<Persona>,
+}
+
+impl SessionWithPersona {
+    pub fn from_session(session: Session) -> Self {
+        let persona = session.persona_path.as_ref().and_then(|path| {
+            let persona_dir = std::path::Path::new(path);
+            Persona::load(persona_dir).ok()
+        });
+        Self { session, persona }
     }
 }
 
 /// List all sessions.
 #[instrument(skip(state))]
-pub async fn list_sessions(State(state): State<AppState>) -> ApiResult<Json<Vec<Session>>> {
+pub async fn list_sessions(State(state): State<AppState>) -> ApiResult<Json<Vec<SessionWithPersona>>> {
     let sessions = state.sessions.list_sessions().await?;
     info!(count = sessions.len(), "Listed sessions");
-    Ok(Json(sessions))
+    let sessions_with_persona: Vec<SessionWithPersona> = sessions
+        .into_iter()
+        .map(SessionWithPersona::from_session)
+        .collect();
+    Ok(Json(sessions_with_persona))
 }
 
 /// Get a specific session.
@@ -90,12 +131,12 @@ pub async fn list_sessions(State(state): State<AppState>) -> ApiResult<Json<Vec<
 pub async fn get_session(
     State(state): State<AppState>,
     Path(session_id): Path<String>,
-) -> ApiResult<Json<Session>> {
+) -> ApiResult<Json<SessionWithPersona>> {
     state
         .sessions
         .get_session(&session_id)
         .await?
-        .map(Json)
+        .map(|s| Json(SessionWithPersona::from_session(s)))
         .ok_or_else(|| ApiError::not_found(format!("Session {} not found", session_id)))
 }
 

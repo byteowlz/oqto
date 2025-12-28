@@ -23,6 +23,7 @@ mod eavs;
 mod invite;
 mod local;
 mod observability;
+mod persona;
 mod session;
 mod user;
 mod wordlist;

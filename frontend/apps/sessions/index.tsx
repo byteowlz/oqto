@@ -27,7 +27,7 @@ import {
   type PermissionResponse,
 } from "@/lib/opencode-client"
 import { PermissionDialog, PermissionBanner } from "@/components/ui/permission-dialog"
-import { controlPlaneDirectBaseUrl, fileserverProxyBaseUrl } from "@/lib/control-plane-client"
+import { controlPlaneDirectBaseUrl, fileserverProxyBaseUrl, type Persona } from "@/lib/control-plane-client"
 import { generateReadableId, formatSessionDate } from "@/lib/session-utils"
 
 // Todo item structure
@@ -773,7 +773,7 @@ export function SessionsApp() {
         >
           {messages.length === 0 && <div className="text-sm text-muted-foreground">{t.noMessages}</div>}
           {messageGroups.map((group) => (
-            <MessageGroupCard key={`${group.role}-${group.startIndex}`} group={group} />
+            <MessageGroupCard key={`${group.role}-${group.startIndex}`} group={group} persona={selectedSession?.persona} />
           ))}
           <div ref={messagesEndRef} />
         </div>
@@ -881,16 +881,38 @@ export function SessionsApp() {
   })()
 
   // Session header component for reuse
+  const persona = selectedSession?.persona
   const SessionHeader = (
     <div className="flex items-center justify-between pb-3 mb-3 border-b border-border">
-      <div className="min-w-0 flex-1">
-        <h1 className="text-base sm:text-lg font-semibold text-foreground tracking-wider truncate">
-          {cleanSessionTitle || t.title}
-        </h1>
-        <div className="flex items-center gap-2 text-xs text-foreground/60 dark:text-muted-foreground">
-          {readableId && <span className="font-mono">{readableId}</span>}
-          {readableId && formattedDate && <span className="opacity-50">|</span>}
-          {formattedDate && <span>{formattedDate}</span>}
+      <div className="flex items-center gap-3 min-w-0 flex-1">
+        {/* Persona avatar/indicator */}
+        {persona && (
+          <div 
+            className="w-8 h-8 sm:w-10 sm:h-10 rounded-full flex items-center justify-center flex-shrink-0"
+            style={{ backgroundColor: persona.color || "#6366f1" }}
+          >
+            <User className="w-4 h-4 sm:w-5 sm:h-5 text-white" />
+          </div>
+        )}
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <h1 className="text-base sm:text-lg font-semibold text-foreground tracking-wider truncate">
+              {cleanSessionTitle || t.title}
+            </h1>
+            {persona && (
+              <span 
+                className="text-xs px-1.5 py-0.5 rounded-full text-white flex-shrink-0"
+                style={{ backgroundColor: persona.color || "#6366f1" }}
+              >
+                {persona.name}
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-2 text-xs text-foreground/60 dark:text-muted-foreground">
+            {readableId && <span className="font-mono">{readableId}</span>}
+            {readableId && formattedDate && <span className="opacity-50">|</span>}
+            {formattedDate && <span>{formattedDate}</span>}
+          </div>
         </div>
       </div>
       {status && <span className="text-xs text-destructive flex-shrink-0 ml-2">{status}</span>}
@@ -966,7 +988,7 @@ export function SessionsApp() {
   )
 }
 
-const MessageGroupCard = memo(function MessageGroupCard({ group }: { group: MessageGroup }) {
+const MessageGroupCard = memo(function MessageGroupCard({ group, persona }: { group: MessageGroup; persona?: Persona | null }) {
   const isUser = group.role === "user"
   
   // Get created time from first message
@@ -1014,6 +1036,10 @@ const MessageGroupCard = memo(function MessageGroupCard({ group }: { group: Mess
     .map(p => p.text)
     .join("\n\n")
 
+  // Get assistant display name from persona or default to "Assistant"
+  const assistantName = persona?.name || "Assistant"
+  const personaColor = persona?.color
+
   return (
     <div
       className={cn(
@@ -1022,6 +1048,7 @@ const MessageGroupCard = memo(function MessageGroupCard({ group }: { group: Mess
           ? "sm:ml-8 bg-primary/20 dark:bg-primary/10 border border-primary/40 dark:border-primary/30" 
           : "sm:mr-8 bg-muted/50 border border-border"
       )}
+      style={!isUser && personaColor ? { borderLeftColor: personaColor, borderLeftWidth: "3px" } : undefined}
     >
       {/* Header */}
       <div className={cn(
@@ -1030,11 +1057,16 @@ const MessageGroupCard = memo(function MessageGroupCard({ group }: { group: Mess
       )}>
         {isUser ? (
           <User className="w-3 h-3 sm:w-4 sm:h-4 text-primary flex-shrink-0" />
+        ) : personaColor ? (
+          <div 
+            className="w-3 h-3 sm:w-4 sm:h-4 rounded-full flex-shrink-0"
+            style={{ backgroundColor: personaColor }}
+          />
         ) : (
           <Bot className="w-3 h-3 sm:w-4 sm:h-4 text-primary flex-shrink-0" />
         )}
         <span className="text-xs sm:text-sm font-medium text-foreground leading-none sm:leading-normal">
-          {isUser ? "You" : "Assistant"}
+          {isUser ? "You" : assistantName}
         </span>
         {group.messages.length > 1 && (
           <span className={cn(

@@ -38,6 +38,20 @@ export type RegisterResponse = {
 
 export type WorkspaceSessionStatus = "pending" | "starting" | "running" | "stopping" | "stopped" | "failed"
 
+/** Persona metadata from persona.toml */
+export type Persona = {
+  /** Display name of the persona */
+  name: string
+  /** Short description of what this persona does */
+  description: string
+  /** Accent color for UI (hex color, e.g., "#6366f1") */
+  color?: string | null
+  /** Path to avatar image (relative to persona directory) */
+  avatar?: string | null
+  /** Whether this is the default persona */
+  is_default: boolean
+}
+
 export type WorkspaceSession = {
   id: string
   readable_id: string | null
@@ -55,6 +69,8 @@ export type WorkspaceSession = {
   started_at: string | null
   stopped_at: string | null
   error_message: string | null
+  /** Persona metadata (if session has a persona_path with persona.toml) */
+  persona?: Persona | null
 }
 
 export type CreateWorkspaceSessionRequest = {
