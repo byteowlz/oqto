@@ -25,6 +25,14 @@ pub struct LocalRuntimeConfig {
     /// Supports ~ and environment variables. The {user_id} placeholder is replaced with the user ID.
     /// Default: $HOME/octo/{user_id}
     pub workspace_dir: String,
+    /// Base path where personas are stored.
+    /// Supports ~ and environment variables.
+    /// Default: ~/byteowlz
+    pub personas_path: Option<String>,
+    /// Default persona name. Opencode starts in {personas_path}/{default_persona}.
+    /// If not set, opencode starts in workspace_dir.
+    /// Example: "govnr" -> opencode runs in ~/byteowlz/govnr
+    pub default_persona: Option<String>,
     /// Enable single-user mode.
     pub single_user: bool,
     /// Linux user isolation configuration.
@@ -39,6 +47,8 @@ impl Default for LocalRuntimeConfig {
             fileserver_binary: "fileserver".to_string(),
             ttyd_binary: "ttyd".to_string(),
             workspace_dir: "$HOME/octo/{user_id}".to_string(),
+            personas_path: None,
+            default_persona: None,
             single_user: false,
             linux_users: LinuxUsersConfig::default(),
         }
@@ -99,6 +109,28 @@ impl LocalRuntimeConfig {
         // Don't fully expand workspace_dir here - it contains {user_id} placeholder
         // Only expand ~ for now, env vars and {user_id} are expanded per-user
         self.workspace_dir = shellexpand::tilde(&self.workspace_dir).to_string();
+        // Expand personas_path if set
+        if let Some(ref path) = self.personas_path {
+            self.personas_path = Some(
+                shellexpand::full(path)
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|_| shellexpand::tilde(path).to_string()),
+            );
+        }
+    }
+
+    /// Get the opencode working directory.
+    /// If default_persona is set, returns {personas_path}/{default_persona}.
+    /// Otherwise falls back to workspace_dir for the user.
+    pub fn opencode_workdir(&self, user_id: &str) -> std::path::PathBuf {
+        if let (Some(personas_path), Some(persona)) =
+            (&self.personas_path, &self.default_persona)
+        {
+            std::path::PathBuf::from(personas_path).join(persona)
+        } else {
+            // Fall back to workspace_dir
+            self.workspace_for_user(user_id)
+        }
     }
 
     /// Get the workspace directory for a specific user.
@@ -198,13 +230,14 @@ impl LocalRuntime {
                 .chown_directory(workspace_path, user_id)?;
         }
 
-        // Start fileserver
+        // Start fileserver - use persona directory if configured, otherwise workspace_path
+        let fileserver_root = self.config.opencode_workdir(user_id);
         let fileserver_pid = self
             .process_manager
             .spawn_fileserver(
                 session_id,
                 fileserver_port,
-                workspace_path,
+                &fileserver_root,
                 &self.config.fileserver_binary,
                 &run_as,
             )
@@ -225,12 +258,14 @@ impl LocalRuntime {
             .context("starting ttyd")?;
 
         // Start opencode (with environment variables for EAVS if configured)
+        // Use persona directory if configured, otherwise use workspace_path
+        let opencode_workdir = self.config.opencode_workdir(user_id);
         let opencode_pid = self
             .process_manager
             .spawn_opencode(
                 session_id,
                 opencode_port,
-                workspace_path,
+                &opencode_workdir,
                 &self.config.opencode_binary,
                 env,
                 &run_as,
@@ -612,6 +647,8 @@ mod tests {
             fileserver_binary: "fileserver".to_string(),
             ttyd_binary: "ttyd".to_string(),
             workspace_dir: "~/workspace".to_string(),
+            personas_path: None,
+            default_persona: None,
             single_user: true,
             linux_users: LinuxUsersConfig::default(),
         };
@@ -781,6 +818,8 @@ mod tests {
             fileserver_binary: "fileserver".to_string(),
             ttyd_binary: "ttyd".to_string(),
             workspace_dir: "/data/{user_id}".to_string(),
+            personas_path: Some("~/byteowlz".to_string()),
+            default_persona: Some("govnr".to_string()),
             single_user: false,
             linux_users: LinuxUsersConfig {
                 enabled: true,

@@ -59,6 +59,25 @@ ttyd_binary = "ttyd"
 #   Single-user: "$HOME/workspace" -> /home/alice/workspace
 workspace_dir = "$HOME/octo/{user_id}"
 
+# Persona configuration - point opencode at a custom persona directory.
+# A "persona" is a directory with AGENTS.md, opencode.json, and other config files
+# that define how opencode behaves for a specific project or use case.
+#
+# personas_path: Base directory where persona directories live.
+# default_persona: Name of the persona subdirectory to use.
+#
+# When both are set, opencode runs with its working directory set to:
+#   {personas_path}/{default_persona}
+#
+# This allows you to have multiple personas in one location:
+#   ~/byteowlz/govnr/    <- govnr persona with its own AGENTS.md
+#   ~/byteowlz/octo/     <- octo persona
+#   ~/byteowlz/myapp/    <- another project's persona
+#
+# Supports ~ and environment variables.
+# personas_path = "~/byteowlz"
+# default_persona = "govnr"
+
 # Enable single-user mode for personal/single-user deployments.
 # When true:
 #   - The {user_id} placeholder in workspace_dir is ignored

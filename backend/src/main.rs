@@ -571,6 +571,12 @@ struct LocalModeConfig {
     /// Supports ~ and environment variables. The {user_id} placeholder is replaced with the user ID.
     /// Default: $HOME/octo/{user_id}
     workspace_dir: String,
+    /// Base path where personas are stored. Supports ~ and env vars.
+    /// Example: "~/byteowlz"
+    personas_path: Option<String>,
+    /// Default persona name. Opencode starts in {personas_path}/{default_persona}.
+    /// Example: "govnr" -> opencode runs in ~/byteowlz/govnr
+    default_persona: Option<String>,
     /// Enable single-user mode. When true, the platform operates with a single user
     /// (no multi-tenancy), but password protection is still available.
     /// This simplifies setup for personal/single-user deployments.
@@ -622,6 +628,8 @@ impl Default for LocalModeConfig {
             fileserver_binary: "fileserver".to_string(),
             ttyd_binary: "ttyd".to_string(),
             workspace_dir: "$HOME/octo/{user_id}".to_string(),
+            personas_path: None,
+            default_persona: None,
             single_user: false,
             linux_users: LinuxUsersConfig::default(),
         }
@@ -924,6 +932,8 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
             fileserver_binary: ctx.config.local.fileserver_binary.clone(),
             ttyd_binary: ctx.config.local.ttyd_binary.clone(),
             workspace_dir: ctx.config.local.workspace_dir.clone(),
+            personas_path: ctx.config.local.personas_path.clone(),
+            default_persona: ctx.config.local.default_persona.clone(),
             single_user: ctx.config.local.single_user,
             linux_users: linux_users_config,
         };

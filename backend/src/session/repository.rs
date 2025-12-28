@@ -7,7 +7,7 @@ use super::models::{Session, SessionStatus};
 
 /// All session columns for SELECT queries.
 const SESSION_COLUMNS: &str = r#"
-    id, readable_id, container_id, container_name, user_id, workspace_path, image, image_digest,
+    id, readable_id, container_id, container_name, user_id, workspace_path, persona_path, image, image_digest,
     opencode_port, fileserver_port, ttyd_port, eavs_port, agent_base_port, max_agents,
     eavs_key_id, eavs_key_hash, eavs_virtual_key,
     status, runtime_mode, created_at, started_at, stopped_at, error_message
@@ -30,11 +30,11 @@ impl SessionRepository {
         sqlx::query(
             r#"
             INSERT INTO sessions (
-                id, readable_id, container_id, container_name, user_id, workspace_path, image, image_digest,
+                id, readable_id, container_id, container_name, user_id, workspace_path, persona_path, image, image_digest,
                 opencode_port, fileserver_port, ttyd_port, eavs_port, agent_base_port, max_agents,
                 eavs_key_id, eavs_key_hash, eavs_virtual_key,
                 status, runtime_mode, created_at, started_at, stopped_at, error_message
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&session.id)
@@ -43,6 +43,7 @@ impl SessionRepository {
         .bind(&session.container_name)
         .bind(&session.user_id)
         .bind(&session.workspace_path)
+        .bind(&session.persona_path)
         .bind(&session.image)
         .bind(&session.image_digest)
         .bind(session.opencode_port)

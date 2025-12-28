@@ -107,6 +107,9 @@ pub struct Session {
     pub user_id: String,
     /// Path to the workspace directory.
     pub workspace_path: String,
+    /// Path to the persona directory (for file viewer).
+    /// When set, fileserver serves files from this directory instead of workspace_path.
+    pub persona_path: Option<String>,
     /// Container image to use (ignored in local mode).
     pub image: String,
     /// Image digest (sha256) when the container was created.

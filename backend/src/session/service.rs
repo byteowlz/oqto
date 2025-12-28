@@ -527,6 +527,23 @@ impl SessionService {
             (None, None, None)
         };
 
+        // Compute persona_path if local mode with personas configured
+        let persona_path = self
+            .config
+            .local_config
+            .as_ref()
+            .and_then(|lc| {
+                if lc.personas_path.is_some() && lc.default_persona.is_some() {
+                    Some(
+                        lc.opencode_workdir(&self.config.default_user_id)
+                            .to_string_lossy()
+                            .to_string(),
+                    )
+                } else {
+                    None
+                }
+            });
+
         let session = Session {
             id: session_id.clone(),
             readable_id: Some(readable_id),
@@ -534,6 +551,7 @@ impl SessionService {
             container_name: container_name.clone(),
             user_id: self.config.default_user_id.clone(),
             workspace_path: user_home_path.to_string(),
+            persona_path,
             image: image.to_string(),
             image_digest: image_digest.map(ToString::to_string),
             opencode_port,
@@ -2013,6 +2031,7 @@ mod tests {
             container_name: "octo-session-1".to_string(),
             user_id: "user-1".to_string(),
             workspace_path: "/tmp/workspace".to_string(),
+            persona_path: None,
             image: "octo-dev:latest".to_string(),
             image_digest: None,
             opencode_port: 41821,

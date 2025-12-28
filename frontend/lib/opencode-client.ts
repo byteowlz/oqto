@@ -292,6 +292,59 @@ export async function updateSession(
 
 export type EventCallback = (event: { type: string; properties: unknown }) => void
 
+// Permission types for tool execution approval
+export type Permission = {
+  id: string
+  sessionID: string
+  title: string
+  description?: string
+  tool: string
+  input?: Record<string, unknown>
+  risk?: "low" | "medium" | "high"
+  time: {
+    created: number
+  }
+}
+
+export type PermissionResponse = "yes" | "no" | "always" | "never"
+
+// Respond to a permission request
+export async function respondToPermission(
+  opencodeBaseUrl: string,
+  sessionId: string,
+  permissionId: string,
+  response: PermissionResponse,
+): Promise<void> {
+  const res = await fetch(
+    `${base(opencodeBaseUrl)}/session/${sessionId}/permission/${permissionId}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ response }),
+    }
+  )
+  if (!res.ok) {
+    const text = await res.text().catch(() => res.statusText)
+    throw new Error(text || `Request failed with ${res.status}`)
+  }
+}
+
+// Fetch pending permissions for a session
+export async function fetchPermissions(
+  opencodeBaseUrl: string,
+  sessionId: string,
+): Promise<Permission[]> {
+  const res = await fetch(
+    `${base(opencodeBaseUrl)}/session/${sessionId}/permission`,
+    { cache: "no-store" }
+  )
+  // If endpoint doesn't exist or returns error, return empty array
+  if (!res.ok) {
+    return []
+  }
+  return handleResponse<Permission[]>(res)
+}
+
 type SessionStatusMap = Record<string, { status: string }>
 
 function tryParseJson(value: string): unknown | null {

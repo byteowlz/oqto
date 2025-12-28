@@ -20,9 +20,13 @@ import {
   fetchAgents,
   subscribeToEvents,
   invalidateMessageCache,
+  respondToPermission,
   type OpenCodeMessageWithParts,
   type OpenCodePart,
+  type Permission,
+  type PermissionResponse,
 } from "@/lib/opencode-client"
+import { PermissionDialog, PermissionBanner } from "@/components/ui/permission-dialog"
 import { controlPlaneDirectBaseUrl, fileserverProxyBaseUrl } from "@/lib/control-plane-client"
 import { generateReadableId, formatSessionDate } from "@/lib/session-utils"
 
@@ -180,6 +184,10 @@ export function SessionsApp() {
   const [defaultAgent, setDefaultAgent] = useState<string>("build")
   const [isUploading, setIsUploading] = useState(false)
   
+  // Permission state
+  const [pendingPermissions, setPendingPermissions] = useState<Permission[]>([])
+  const [activePermission, setActivePermission] = useState<Permission | null>(null)
+  
   // Track if we're on mobile layout (below lg breakpoint = 1024px)
   const isMobileLayout = useIsMobile()
   
@@ -303,6 +311,32 @@ export function SessionsApp() {
   const removePendingUpload = useCallback((path: string) => {
     setPendingUploads(prev => prev.filter(u => u.path !== path))
   }, [])
+
+  // Permission response handler
+  const handlePermissionResponse = useCallback(async (permissionId: string, response: PermissionResponse) => {
+    if (!opencodeBaseUrl || !selectedChatSessionId) {
+      throw new Error("No active session")
+    }
+    await respondToPermission(opencodeBaseUrl, selectedChatSessionId, permissionId, response)
+    // Remove from pending list
+    setPendingPermissions(prev => prev.filter(p => p.id !== permissionId))
+  }, [opencodeBaseUrl, selectedChatSessionId])
+
+  // Show next permission when current one is dismissed
+  const handlePermissionDismiss = useCallback(() => {
+    setActivePermission(current => {
+      // Find next pending permission that isn't the current one
+      const next = pendingPermissions.find(p => p.id !== current?.id)
+      return next || null
+    })
+  }, [pendingPermissions])
+
+  // Open permission dialog when clicking the banner
+  const handlePermissionBannerClick = useCallback(() => {
+    if (pendingPermissions.length > 0) {
+      setActivePermission(pendingPermissions[0])
+    }
+  }, [pendingPermissions])
 
   const copy = useMemo(
     () => ({
@@ -458,6 +492,25 @@ export function SessionsApp() {
         } else if (eventType === "session.busy") {
           setChatState("sending")
         }
+        
+        // Handle permission events
+        if (eventType === "permission.updated") {
+          const permission = event.properties as Permission
+          console.log("[Permission] Received permission request:", permission)
+          setPendingPermissions(prev => {
+            // Avoid duplicates
+            if (prev.some(p => p.id === permission.id)) return prev
+            return [...prev, permission]
+          })
+          // Auto-show the first permission dialog if none is active
+          setActivePermission(current => current || permission)
+        } else if (eventType === "permission.replied") {
+          const { permissionID } = event.properties as { sessionID: string; permissionID: string; response: string }
+          console.log("[Permission] Permission replied:", permissionID)
+          setPendingPermissions(prev => prev.filter(p => p.id !== permissionID))
+          setActivePermission(current => current?.id === permissionID ? null : current)
+        }
+        
         // Refresh messages on any message event
         if (eventType?.startsWith("message")) {
           // Invalidate cache when messages change
@@ -699,6 +752,12 @@ export function SessionsApp() {
   // Chat content component (reused in both layouts)
   const ChatContent = (
     <div ref={chatContainerRef} className="flex-1 flex flex-col gap-2 sm:gap-4 min-h-0">
+      {/* Permission banner */}
+      <PermissionBanner 
+        count={pendingPermissions.length} 
+        onClick={handlePermissionBannerClick} 
+      />
+      
       {/* Working indicator */}
       {chatState === "sending" && (
         <div className="flex items-center gap-2 px-3 py-1.5 bg-primary/10 border border-primary/30 text-sm text-primary">
@@ -896,6 +955,13 @@ export function SessionsApp() {
           </div>
         </div>
       </div>
+      
+      {/* Permission dialog */}
+      <PermissionDialog
+        permission={activePermission}
+        onRespond={handlePermissionResponse}
+        onDismiss={handlePermissionDismiss}
+      />
     </div>
   )
 }

@@ -45,6 +45,7 @@ export type WorkspaceSession = {
   container_name: string
   user_id: string
   workspace_path: string
+  persona_path: string | null
   image: string
   opencode_port: number
   fileserver_port: number
