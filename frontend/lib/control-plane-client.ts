@@ -38,8 +38,13 @@ export type RegisterResponse = {
 
 export type WorkspaceSessionStatus = "pending" | "starting" | "running" | "stopping" | "stopped" | "failed"
 
+/** Workspace preference for a persona */
+export type WorkspacePreference = "general" | "project" | "ask"
+
 /** Persona metadata from persona.toml */
 export type Persona = {
+  /** Unique identifier (directory name) */
+  id: string
   /** Display name of the persona */
   name: string
   /** Short description of what this persona does */
@@ -50,6 +55,10 @@ export type Persona = {
   avatar?: string | null
   /** Whether this is the default persona */
   is_default: boolean
+  /** opencode agent ID to use */
+  agent_id: string
+  /** Workspace preference (general, project, or ask) */
+  workspace: WorkspacePreference
 }
 
 export type WorkspaceSession = {
@@ -76,6 +85,8 @@ export type WorkspaceSession = {
 export type CreateWorkspaceSessionRequest = {
   workspace_path?: string
   image?: string
+  /** Persona ID to use for this session */
+  persona_id?: string
   env?: Record<string, string>
 }
 
@@ -210,6 +221,28 @@ export async function upgradeWorkspaceSession(sessionId: string): Promise<Worksp
   if (!res.ok) throw new Error(await readApiError(res))
   return res.json()
 }
+
+// ============================================================================
+// Persona API
+// ============================================================================
+
+/** List all available personas */
+export async function listPersonas(): Promise<Persona[]> {
+  const res = await fetch(`/api/personas`, { cache: "no-store", credentials: "include" })
+  if (!res.ok) throw new Error(await readApiError(res))
+  return res.json()
+}
+
+/** Get a specific persona by ID */
+export async function getPersona(personaId: string): Promise<Persona> {
+  const res = await fetch(`/api/personas/${personaId}`, { credentials: "include" })
+  if (!res.ok) throw new Error(await readApiError(res))
+  return res.json()
+}
+
+// ============================================================================
+// Proxy URLs
+// ============================================================================
 
 export function opencodeProxyBaseUrl(sessionId: string) {
   return `/api/session/${sessionId}/code`

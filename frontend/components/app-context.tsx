@@ -5,6 +5,7 @@ import { appRegistry, type AppDefinition, type Locale, type LocalizedText } from
 import { createSession, deleteSession, updateSession, fetchSessions, subscribeToEvents, type OpenCodeSession } from "@/lib/opencode-client"
 import {
   controlPlaneDirectBaseUrl,
+  createWorkspaceSession,
   deleteWorkspaceSession,
   getOrCreateWorkspaceSession,
   login,
@@ -12,6 +13,7 @@ import {
   opencodeProxyBaseUrl,
   stopWorkspaceSession,
   upgradeWorkspaceSession,
+  type Persona,
   type WorkspaceSession,
 } from "@/lib/control-plane-client"
 
@@ -35,6 +37,7 @@ interface AppContextValue {
   refreshWorkspaceSessions: () => Promise<void>
   refreshOpencodeSessions: () => Promise<void>
   createNewChat: () => Promise<OpenCodeSession | null>
+  createNewChatWithPersona: (persona: Persona) => Promise<OpenCodeSession | null>
   deleteChatSession: (sessionId: string) => Promise<boolean>
   renameChatSession: (sessionId: string, title: string) => Promise<boolean>
   stopWorkspaceSession: (sessionId: string) => Promise<boolean>
@@ -209,6 +212,44 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }, [opencodeBaseUrl])
 
+  const createNewChatWithPersona = useCallback(async (persona: Persona): Promise<OpenCodeSession | null> => {
+    try {
+      // Create a new workspace session with the selected persona
+      const workspaceSession = await createWorkspaceSession({ persona_id: persona.id })
+      
+      // Refresh workspace sessions to include the new one
+      await refreshWorkspaceSessions()
+      
+      // Select the new workspace session
+      setSelectedWorkspaceSessionId(workspaceSession.id)
+      
+      // Wait a moment for the workspace to be ready, then create a chat
+      // The opencodeBaseUrl will update when selectedWorkspaceSession changes
+      const baseUrl = opencodeProxyBaseUrl(workspaceSession.id)
+      
+      // Poll until the session is running
+      let attempts = 0
+      const maxAttempts = 30
+      while (attempts < maxAttempts) {
+        try {
+          const created = await createSession(baseUrl)
+          setOpencodeSessions((prev) => [created, ...prev])
+          setSelectedChatSessionId(created.id)
+          return created
+        } catch {
+          attempts++
+          await new Promise((resolve) => setTimeout(resolve, 1000))
+        }
+      }
+      
+      console.error("Timeout waiting for workspace session to be ready")
+      return null
+    } catch (err) {
+      console.error("Failed to create new chat with persona:", err)
+      return null
+    }
+  }, [refreshWorkspaceSessions])
+
   const deleteChatSession = useCallback(async (sessionId: string): Promise<boolean> => {
     if (!opencodeBaseUrl) return false
     try {
@@ -315,6 +356,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       refreshWorkspaceSessions,
       refreshOpencodeSessions,
       createNewChat,
+      createNewChatWithPersona,
       deleteChatSession,
       renameChatSession,
       stopWorkspaceSession: handleStopWorkspaceSession,
@@ -339,6 +381,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       refreshWorkspaceSessions,
       refreshOpencodeSessions,
       createNewChat,
+      createNewChatWithPersona,
       deleteChatSession,
       renameChatSession,
       handleStopWorkspaceSession,

@@ -55,7 +55,9 @@ import {
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { CommandPalette, useCommandPalette } from "@/components/command-palette";
+import { AgentPicker } from "@/components/agent-picker";
 import { generateReadableId, formatSessionDate } from "@/lib/session-utils";
+import { type Persona } from "@/lib/control-plane-client";
 import "@/apps";
 
 function AppShell() {
@@ -73,6 +75,7 @@ function AppShell() {
     selectedChatSession,
     selectedWorkspaceSession,
     createNewChat,
+    createNewChatWithPersona,
     deleteChatSession,
     renameChatSession,
   } = useApp();
@@ -100,6 +103,7 @@ function AppShell() {
   // Dialog states
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [renameDialogOpen, setRenameDialogOpen] = useState(false);
+  const [agentPickerOpen, setAgentPickerOpen] = useState(false);
   const [targetSessionId, setTargetSessionId] = useState<string>("");
   const [renameValue, setRenameValue] = useState("");
 
@@ -214,6 +218,15 @@ function AppShell() {
     setTargetSessionId("");
   }, [targetSessionId, deleteChatSession]);
 
+  const handleNewChat = useCallback(() => {
+    setAgentPickerOpen(true);
+  }, []);
+
+  const handleAgentSelect = useCallback(async (persona: Persona) => {
+    setActiveAppId("sessions");
+    await createNewChatWithPersona(persona);
+  }, [createNewChatWithPersona, setActiveAppId]);
+
   useEffect(() => {
     if (typeof window === "undefined") return;
 
@@ -269,7 +282,7 @@ function AppShell() {
         return FolderKanban;
       case "sessions":
         return MessageSquare;
-      case "workspaces":
+      case "agents":
         return Bot;
       case "admin":
         return Shield;
@@ -330,7 +343,7 @@ function AppShell() {
           variant="ghost"
           size="icon"
           aria-label={locale === "de" ? "Neuer Chat" : "New Chat"}
-          onClick={() => void createNewChat()}
+          onClick={handleNewChat}
           className="text-muted-foreground hover:text-primary flex-shrink-0"
         >
           <Plus className="w-5 h-5" />
@@ -696,7 +709,7 @@ function AppShell() {
           <Button
             variant="outline"
             size="sm"
-            onClick={() => void createNewChat()}
+            onClick={handleNewChat}
             className={cn(
               "w-full text-xs font-medium flex items-center gap-2 transition-colors",
               "border-primary/50 hover:border-primary hover:bg-primary/10",
@@ -1122,6 +1135,14 @@ function AppShell() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Agent picker dialog */}
+      <AgentPicker
+        open={agentPickerOpen}
+        onOpenChange={setAgentPickerOpen}
+        onSelect={handleAgentSelect}
+        locale={locale}
+      />
     </div>
   );
 }

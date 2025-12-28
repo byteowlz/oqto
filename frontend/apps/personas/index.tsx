@@ -6,7 +6,8 @@ import { Input } from "@/components/ui/input"
 import { Search, Plus, ChevronLeft, User, MessageSquare } from "lucide-react"
 import { useApp } from "@/components/app-context"
 import { cn } from "@/lib/utils"
-import { listSessions, type WorkspaceSession, type Persona } from "@/lib/control-plane-client"
+import { listPersonas, listWorkspaceSessions, type WorkspaceSession, type Persona } from "@/lib/control-plane-client"
+import { resolveAvatarUrl, getDefaultAvatarUrl } from "@/lib/avatar-utils"
 
 /** Persona with session count for the list view */
 type PersonaWithSessions = {
@@ -18,7 +19,7 @@ type PersonaWithSessions = {
 export function PersonasApp() {
   const { locale } = useApp()
   const [searchTerm, setSearchTerm] = useState("")
-  const [selectedPersonaName, setSelectedPersonaName] = useState<string | null>(null)
+  const [selectedPersonaId, setSelectedPersonaId] = useState<string | null>(null)
   const [mobileView, setMobileView] = useState<"list" | "details">("list")
   const [personas, setPersonas] = useState<PersonaWithSessions[]>([])
   const [loading, setLoading] = useState(true)
@@ -56,57 +57,64 @@ export function PersonasApp() {
   )
   const t = copy[locale]
 
-  // Fetch sessions and group by persona
+  // Fetch personas and sessions
   useEffect(() => {
-    const fetchPersonas = async () => {
+    const fetchData = async () => {
       try {
-        const sessions = await listSessions()
+        // Fetch personas and sessions in parallel
+        const [personaList, sessions] = await Promise.all([
+          listPersonas(),
+          listWorkspaceSessions(),
+        ])
         
-        // Group sessions by persona name
-        const personaMap = new Map<string, PersonaWithSessions>()
-        
+        // Create a map of persona ID to sessions
+        const sessionsByPersonaId = new Map<string, WorkspaceSession[]>()
         for (const session of sessions) {
-          const persona = session.persona ?? {
-            name: "Default",
-            description: "Default persona",
-            is_default: true,
-          }
-          
-          const key = persona.name
-          if (!personaMap.has(key)) {
-            personaMap.set(key, {
-              persona,
-              sessions: [],
-              lastActive: null,
-            })
-          }
-          
-          const entry = personaMap.get(key)!
-          entry.sessions.push(session)
-          
-          // Track most recent activity
-          const sessionTime = session.started_at || session.created_at
-          if (!entry.lastActive || sessionTime > entry.lastActive) {
-            entry.lastActive = sessionTime
+          if (session.persona?.id) {
+            const existing = sessionsByPersonaId.get(session.persona.id) ?? []
+            existing.push(session)
+            sessionsByPersonaId.set(session.persona.id, existing)
           }
         }
         
-        // Sort by last active (most recent first)
-        const sortedPersonas = Array.from(personaMap.values()).sort((a, b) => {
+        // Build PersonaWithSessions for each persona
+        const personasWithSessions: PersonaWithSessions[] = personaList.map((persona) => {
+          const personaSessions = sessionsByPersonaId.get(persona.id) ?? []
+          
+          // Find most recent activity
+          let lastActive: string | null = null
+          for (const session of personaSessions) {
+            const sessionTime = session.started_at || session.created_at
+            if (!lastActive || sessionTime > lastActive) {
+              lastActive = sessionTime
+            }
+          }
+          
+          return {
+            persona,
+            sessions: personaSessions,
+            lastActive,
+          }
+        })
+        
+        // Sort: default persona first, then by last active (most recent first)
+        personasWithSessions.sort((a, b) => {
+          if (a.persona.is_default && !b.persona.is_default) return -1
+          if (!a.persona.is_default && b.persona.is_default) return 1
           if (!a.lastActive) return 1
           if (!b.lastActive) return -1
           return b.lastActive.localeCompare(a.lastActive)
         })
         
-        setPersonas(sortedPersonas)
+        setPersonas(personasWithSessions)
       } catch (err) {
-        console.error("Failed to fetch sessions:", err)
+        console.error("Failed to fetch personas:", err)
       } finally {
         setLoading(false)
       }
     }
     
-    fetchPersonas()
+    fetchData()
   }, [])
 
   const filteredPersonas = personas.filter((p) => 
@@ -114,10 +122,10 @@ export function PersonasApp() {
     p.persona.description.toLowerCase().includes(searchTerm.toLowerCase())
   )
   
-  const selectedPersona = personas.find((p) => p.persona.name === selectedPersonaName)
+  const selectedPersona = personas.find((p) => p.persona.id === selectedPersonaId)
 
-  const handlePersonaSelect = (name: string) => {
-    setSelectedPersonaName(name)
+  const handlePersonaSelect = (id: string) => {
+    setSelectedPersonaId(id)
     setMobileView("details")
   }
 
@@ -140,9 +148,12 @@ export function PersonasApp() {
 
   // Get avatar URL for a persona
   const getAvatarUrl = (persona: Persona, session?: WorkspaceSession): string | null => {
-    if (!persona.avatar || !session) return null
-    // Avatar is served via fileserver
-    return `/session/${session.id}/files/file?path=${encodeURIComponent(persona.avatar)}`
+    // Try to resolve the avatar from persona config
+    const resolved = resolveAvatarUrl(persona.avatar, session?.id)
+    if (resolved) return resolved
+    
+    // Fall back to default avatar based on persona ID
+    return getDefaultAvatarUrl(persona.id)
   }
 
   // Persona List Component
@@ -179,13 +190,13 @@ export function PersonasApp() {
           <div className="text-center text-muted-foreground py-8">{t.noPersonas}</div>
         ) : (
           filteredPersonas.map((item) => {
-            const isSelected = selectedPersonaName === item.persona.name
+            const isSelected = selectedPersonaId === item.persona.id
             const avatarUrl = getAvatarUrl(item.persona, item.sessions[0])
             
             return (
               <button
-                key={item.persona.name}
-                onClick={() => handlePersonaSelect(item.persona.name)}
+                key={item.persona.id}
+                onClick={() => handlePersonaSelect(item.persona.id)}
                 className={cn(
                   "w-full text-left p-3 transition-colors flex items-start gap-3",
                   isSelected 

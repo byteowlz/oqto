@@ -31,6 +31,9 @@ pub fn create_router(state: AppState) -> Router {
 
     // Protected routes (require authentication)
     let protected_routes = Router::new()
+        // Persona management
+        .route("/personas", get(handlers::list_personas))
+        .route("/personas/{persona_id}", get(handlers::get_persona))
         // Session management
         .route("/sessions", get(handlers::list_sessions))
         .route("/sessions", post(handlers::create_session))

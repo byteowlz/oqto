@@ -26,6 +26,35 @@ export type FileNode = {
   children?: FileNode[]
 }
 
+// Cache for file tree data
+const treeCache = new Map<string, { data: FileNode[]; timestamp: number }>()
+const TREE_CACHE_TTL_MS = 10000 // 10 seconds - shorter TTL since tree can change
+
+function getTreeCacheKey(sessionId: string, path: string): string {
+  return `${sessionId}:${path}`
+}
+
+function getCachedTree(sessionId: string, path: string): FileNode[] | null {
+  const key = getTreeCacheKey(sessionId, path)
+  const entry = treeCache.get(key)
+  if (!entry) return null
+  if (Date.now() - entry.timestamp > TREE_CACHE_TTL_MS) {
+    treeCache.delete(key)
+    return null
+  }
+  return entry.data
+}
+
+function setCachedTree(sessionId: string, path: string, data: FileNode[]): void {
+  const key = getTreeCacheKey(sessionId, path)
+  // Limit cache size
+  if (treeCache.size >= 20) {
+    const firstKey = treeCache.keys().next().value
+    if (firstKey) treeCache.delete(firstKey)
+  }
+  treeCache.set(key, { data, timestamp: Date.now() })
+}
+
 async function fetchFileTree(baseUrl: string, path = "."): Promise<FileNode[]> {
   const url = new URL(`${baseUrl}/tree`, window.location.origin)
   url.searchParams.set("path", path)
@@ -198,12 +227,28 @@ export function FileTreeView({ onPreviewFile, state, onStateChange }: FileTreeVi
     ? fileserverProxyBaseUrl(selectedWorkspaceSessionId) 
     : null
 
-  const loadTree = useCallback(async (path: string, preserveState = false) => {
-    if (!fileserverBaseUrl) return
+  const loadTree = useCallback(async (path: string, preserveState = false, skipCache = false) => {
+    if (!fileserverBaseUrl || !selectedWorkspaceSessionId) return
+    
+    // Check cache first (unless explicitly skipping)
+    if (!skipCache) {
+      const cached = getCachedTree(selectedWorkspaceSessionId, path)
+      if (cached) {
+        setTree(cached)
+        if (!preserveState) {
+          updateState({ currentPath: path })
+        }
+        setLoading(false)
+        return
+      }
+    }
+    
     setLoading(true)
     setError("")
     try {
       const data = await fetchFileTree(fileserverBaseUrl, path)
+      // Cache the result
+      setCachedTree(selectedWorkspaceSessionId, path, data)
       setTree(data)
       if (!preserveState) {
         updateState({ currentPath: path })
@@ -213,16 +258,18 @@ export function FileTreeView({ onPreviewFile, state, onStateChange }: FileTreeVi
     } finally {
       setLoading(false)
     }
-  }, [fileserverBaseUrl, updateState])
+  }, [fileserverBaseUrl, selectedWorkspaceSessionId, updateState])
 
   const refreshTree = useCallback(() => {
-    loadTree(currentPath, true)
+    // Force refresh bypasses cache
+    loadTree(currentPath, true, true)
   }, [loadTree, currentPath])
 
   useEffect(() => {
-    // Load tree for current path (which may be restored from state)
+    // Load tree for current path (uses cache if available)
     loadTree(currentPath, true)
-  }, [loadTree, currentPath])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedWorkspaceSessionId, currentPath]) // loadTree excluded to prevent infinite loops
 
   // Focus new folder input when it appears
   useEffect(() => {

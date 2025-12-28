@@ -1052,7 +1052,7 @@ const MessageGroupCard = memo(function MessageGroupCard({ group, persona }: { gr
     >
       {/* Header */}
       <div className={cn(
-        "compact-header flex items-center gap-1 sm:gap-2 px-2 sm:px-3 sm:py-2 border-b",
+        "compact-header flex items-center gap-1 sm:gap-2 px-2 sm:px-3 py-1.5 sm:py-2 border-b",
         isUser ? "border-primary/30 dark:border-primary/20" : "border-border"
       )}>
         {isUser ? (
@@ -1065,7 +1065,7 @@ const MessageGroupCard = memo(function MessageGroupCard({ group, persona }: { gr
         ) : (
           <Bot className="w-3 h-3 sm:w-4 sm:h-4 text-primary flex-shrink-0" />
         )}
-        <span className="text-xs sm:text-sm font-medium text-foreground leading-none sm:leading-normal">
+        <span className="text-sm font-medium text-foreground">
           {isUser ? "You" : assistantName}
         </span>
         {group.messages.length > 1 && (
@@ -1086,10 +1086,10 @@ const MessageGroupCard = memo(function MessageGroupCard({ group, persona }: { gr
         )}
         {/* Copy button - full size on desktop, compact on mobile */}
         {allTextContent && (
-          <CopyButton text={allTextContent} className="hidden sm:block opacity-0 group-hover:opacity-100" />
+          <CopyButton text={allTextContent} className="hidden sm:block opacity-0 group-hover:opacity-100 ml-2" />
         )}
         {allTextContent && (
-          <CompactCopyButton text={allTextContent} className="sm:hidden" />
+          <CompactCopyButton text={allTextContent} className="sm:hidden ml-2" />
         )}
       </div>
 

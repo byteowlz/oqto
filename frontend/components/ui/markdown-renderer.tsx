@@ -115,90 +115,90 @@ const CodeBlockWithTheme = memo(function CodeBlockWithTheme({
 // remarkPlugins array - defined once
 const remarkPlugins = [remarkGfm]
 
-export const MarkdownRenderer = memo(function MarkdownRenderer({ content, className }: MarkdownRendererProps) {
-  // Define components inside the component to use theme-aware styling
-  const markdownComponents: Components = {
-    code({ className, children }) {
-      return <CodeBlockWithTheme className={className}>{children}</CodeBlockWithTheme>
-    },
-    p({ children }) {
-      return <p className="mb-3 last:mb-0 leading-relaxed">{children}</p>
-    },
-    h1({ children }) {
-      return <h1 className="text-xl font-bold mb-3 mt-4 first:mt-0 text-foreground">{children}</h1>
-    },
-    h2({ children }) {
-      return <h2 className="text-lg font-bold mb-2 mt-3 first:mt-0 text-foreground">{children}</h2>
-    },
-    h3({ children }) {
-      return <h3 className="text-base font-semibold mb-2 mt-3 first:mt-0 text-foreground">{children}</h3>
-    },
-    h4({ children }) {
-      return <h4 className="text-sm font-semibold mb-2 mt-2 first:mt-0 text-foreground">{children}</h4>
-    },
-    ul({ children }) {
-      return <ul className="list-disc list-inside mb-3 space-y-1 pl-2">{children}</ul>
-    },
-    ol({ children }) {
-      return <ol className="list-decimal list-inside mb-3 space-y-1 pl-2">{children}</ol>
-    },
-    li({ children }) {
-      return <li className="text-foreground">{children}</li>
-    },
-    blockquote({ children }) {
-      return (
-        <blockquote className="border-l-2 border-primary pl-4 py-1 my-3 text-muted-foreground italic">
+// Define components outside component to avoid recreation on every render
+const markdownComponents: Components = {
+  code({ className, children }) {
+    return <CodeBlockWithTheme className={className}>{children}</CodeBlockWithTheme>
+  },
+  p({ children }) {
+    return <p className="mb-3 last:mb-0 leading-relaxed">{children}</p>
+  },
+  h1({ children }) {
+    return <h1 className="text-xl font-bold mb-3 mt-4 first:mt-0 text-foreground">{children}</h1>
+  },
+  h2({ children }) {
+    return <h2 className="text-lg font-bold mb-2 mt-3 first:mt-0 text-foreground">{children}</h2>
+  },
+  h3({ children }) {
+    return <h3 className="text-base font-semibold mb-2 mt-3 first:mt-0 text-foreground">{children}</h3>
+  },
+  h4({ children }) {
+    return <h4 className="text-sm font-semibold mb-2 mt-2 first:mt-0 text-foreground">{children}</h4>
+  },
+  ul({ children }) {
+    return <ul className="list-disc list-inside mb-3 space-y-1 pl-2">{children}</ul>
+  },
+  ol({ children }) {
+    return <ol className="list-decimal list-inside mb-3 space-y-1 pl-2">{children}</ol>
+  },
+  li({ children }) {
+    return <li className="text-foreground">{children}</li>
+  },
+  blockquote({ children }) {
+    return (
+      <blockquote className="border-l-2 border-primary pl-4 py-1 my-3 text-muted-foreground italic">
+        {children}
+      </blockquote>
+    )
+  },
+  a({ href, children }) {
+    return (
+      <a
+        href={href}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="text-primary hover:text-primary/80 underline underline-offset-2"
+      >
+        {children}
+      </a>
+    )
+  },
+  table({ children }) {
+    return (
+      <div className="overflow-x-auto my-3">
+        <table className="min-w-full border border-border rounded-lg overflow-hidden">
           {children}
-        </blockquote>
-      )
-    },
-    a({ href, children }) {
-      return (
-        <a
-          href={href}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-primary hover:text-primary/80 underline underline-offset-2"
-        >
-          {children}
-        </a>
-      )
-    },
-    table({ children }) {
-      return (
-        <div className="overflow-x-auto my-3">
-          <table className="min-w-full border border-border rounded-lg overflow-hidden">
-            {children}
-          </table>
-        </div>
-      )
-    },
-    thead({ children }) {
-      return <thead className="bg-muted">{children}</thead>
-    },
-    tbody({ children }) {
-      return <tbody className="divide-y divide-border">{children}</tbody>
-    },
-    tr({ children }) {
-      return <tr className="divide-x divide-border">{children}</tr>
-    },
-    th({ children }) {
-      return <th className="px-3 py-2 text-left text-sm font-semibold text-foreground">{children}</th>
-    },
-    td({ children }) {
-      return <td className="px-3 py-2 text-sm text-muted-foreground">{children}</td>
-    },
-    hr() {
-      return <hr className="my-4 border-border" />
-    },
-    strong({ children }) {
-      return <strong className="font-semibold text-foreground">{children}</strong>
-    },
-    em({ children }) {
-      return <em className="italic text-muted-foreground">{children}</em>
-    },
-  }
+        </table>
+      </div>
+    )
+  },
+  thead({ children }) {
+    return <thead className="bg-muted">{children}</thead>
+  },
+  tbody({ children }) {
+    return <tbody className="divide-y divide-border">{children}</tbody>
+  },
+  tr({ children }) {
+    return <tr className="divide-x divide-border">{children}</tr>
+  },
+  th({ children }) {
+    return <th className="px-3 py-2 text-left text-sm font-semibold text-foreground">{children}</th>
+  },
+  td({ children }) {
+    return <td className="px-3 py-2 text-sm text-muted-foreground">{children}</td>
+  },
+  hr() {
+    return <hr className="my-4 border-border" />
+  },
+  strong({ children }) {
+    return <strong className="font-semibold text-foreground">{children}</strong>
+  },
+  em({ children }) {
+    return <em className="italic text-muted-foreground">{children}</em>
+  },
+}
 
+export const MarkdownRenderer = memo(function MarkdownRenderer({ content, className }: MarkdownRendererProps) {
   return (
     <div className={cn("markdown-content", className)}>
       <ReactMarkdown

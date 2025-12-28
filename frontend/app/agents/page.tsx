@@ -1,13 +1,13 @@
 "use client"
 
-import { WorkspacesApp } from "@/apps/workspaces"
+import { PersonasApp } from "@/apps/personas"
 import { AppProvider } from "@/components/app-context"
 
-export default function WorkspacesPage() {
+export default function AgentsPage() {
   return (
     <AppProvider>
       <div className="p-6">
-        <WorkspacesApp />
+        <PersonasApp />
       </div>
     </AppProvider>
   )

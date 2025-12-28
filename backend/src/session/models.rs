@@ -190,6 +190,10 @@ pub struct CreateSessionRequest {
     /// Container image to use (optional, defaults to octo-dev).
     #[serde(default)]
     pub image: Option<String>,
+    /// Persona ID to use for this session.
+    /// If set, determines the working directory and agent configuration.
+    #[serde(default)]
+    pub persona_id: Option<String>,
     /// Environment variables to inject.
     #[serde(default)]
     pub env: std::collections::HashMap<String, String>,

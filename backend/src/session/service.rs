@@ -246,6 +246,15 @@ impl SessionService {
         self.local_runtime.as_ref()
     }
 
+    /// Get the personas directory path.
+    /// Returns the personas_path from local config if available.
+    pub fn personas_path(&self) -> Option<std::path::PathBuf> {
+        self.local_runtime
+            .as_ref()
+            .and_then(|rt| rt.config().personas_path.as_ref())
+            .map(std::path::PathBuf::from)
+    }
+
     /// Maximum number of retries for port allocation conflicts.
     const MAX_PORT_ALLOCATION_RETRIES: u32 = 5;
 
@@ -428,10 +437,19 @@ impl SessionService {
             user_home.to_string_lossy().to_string()
         };
 
+        // Compute persona_path from persona_id or default_persona
+        let persona_path = self.resolve_persona_path(request.persona_id.as_deref());
+
         let mut last_error = None;
         for attempt in 0..Self::MAX_PORT_ALLOCATION_RETRIES {
             match self
-                .try_create_session(&user_home_path, &image, image_digest.as_deref(), attempt)
+                .try_create_session(
+                    &user_home_path,
+                    &image,
+                    image_digest.as_deref(),
+                    persona_path.as_deref(),
+                    attempt,
+                )
                 .await
             {
                 Ok(session) => return Ok(session),
@@ -462,6 +480,18 @@ impl SessionService {
         }))
     }
 
+    /// Resolve persona path from persona_id or default_persona config.
+    fn resolve_persona_path(&self, persona_id: Option<&str>) -> Option<String> {
+        let local_config = self.config.local_config.as_ref()?;
+        let personas_path = local_config.personas_path.as_ref()?;
+        
+        // Use provided persona_id, fall back to default_persona
+        let persona = persona_id.or(local_config.default_persona.as_deref())?;
+        
+        let path = std::path::PathBuf::from(personas_path).join(persona);
+        Some(path.to_string_lossy().to_string())
+    }
+
     /// Check if an error is a retryable unique constraint violation.
     fn is_retryable_unique_violation(error: &anyhow::Error) -> bool {
         for cause in error.chain() {
@@ -489,6 +519,7 @@ impl SessionService {
         user_home_path: &str,
         image: &str,
         image_digest: Option<&str>,
+        persona_path: Option<&str>,
         attempt: u32,
     ) -> Result<Session> {
         let session_id = Uuid::new_v4().to_string();
@@ -527,23 +558,6 @@ impl SessionService {
             (None, None, None)
         };
 
-        // Compute persona_path if local mode with personas configured
-        let persona_path = self
-            .config
-            .local_config
-            .as_ref()
-            .and_then(|lc| {
-                if lc.personas_path.is_some() && lc.default_persona.is_some() {
-                    Some(
-                        lc.opencode_workdir(&self.config.default_user_id)
-                            .to_string_lossy()
-                            .to_string(),
-                    )
-                } else {
-                    None
-                }
-            });
-
         let session = Session {
             id: session_id.clone(),
             readable_id: Some(readable_id),
@@ -551,7 +565,7 @@ impl SessionService {
             container_name: container_name.clone(),
             user_id: self.config.default_user_id.clone(),
             workspace_path: user_home_path.to_string(),
-            persona_path,
+            persona_path: persona_path.map(ToString::to_string),
             image: image.to_string(),
             image_digest: image_digest.map(ToString::to_string),
             opencode_port,
@@ -1996,6 +2010,7 @@ mod tests {
             .create_session(CreateSessionRequest {
                 workspace_path: Some(workspace_dir.path().to_string_lossy().to_string()),
                 image: None,
+                persona_id: None,
                 env: Default::default(),
             })
             .await

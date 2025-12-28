@@ -18,7 +18,7 @@ use tracing::{info, instrument, warn};
 
 use crate::auth::{AuthError, CurrentUser, RequireAdmin};
 use crate::observability::{CpuTimes, HostMetrics, read_host_metrics};
-use crate::persona::Persona;
+use crate::persona::{Persona, WorkspacePreference};
 use crate::session::{CreateSessionRequest, Session, SessionContainerStats};
 use crate::user::{
     CreateUserRequest, UpdateUserRequest, UserInfo as DbUserInfo, UserListQuery, UserStats,
@@ -276,6 +276,102 @@ pub async fn check_all_updates(
 
     info!(count = statuses.len(), "Checked all sessions for updates");
     Ok(Json(statuses))
+}
+
+// ============================================================================
+// Persona Handlers
+// ============================================================================
+
+/// Persona response for API.
+#[derive(Debug, Serialize)]
+pub struct PersonaResponse {
+    /// Unique identifier (directory name).
+    pub id: String,
+    /// Display name of the persona.
+    pub name: String,
+    /// Short description of what this persona does.
+    pub description: String,
+    /// Accent color for UI (hex color, e.g., "#6366f1").
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
+    /// Path to avatar image (relative to persona directory).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub avatar: Option<String>,
+    /// Whether this is the default persona.
+    pub is_default: bool,
+    /// opencode agent ID to use.
+    pub agent_id: String,
+    /// Workspace preference (general, project, or ask).
+    pub workspace: String,
+}
+
+impl From<Persona> for PersonaResponse {
+    fn from(p: Persona) -> Self {
+        // Get agent_id before moving other fields
+        let agent_id = p.effective_agent_id().to_string();
+        let workspace = match p.workspace {
+            WorkspacePreference::General => "general".to_string(),
+            WorkspacePreference::Project => "project".to_string(),
+            WorkspacePreference::Ask => "ask".to_string(),
+        };
+        
+        Self {
+            id: p.id,
+            name: p.name,
+            description: p.description,
+            color: p.color,
+            avatar: p.avatar,
+            is_default: p.is_default,
+            agent_id,
+            workspace,
+        }
+    }
+}
+
+/// List all available personas.
+#[instrument(skip(state))]
+pub async fn list_personas(State(state): State<AppState>) -> ApiResult<Json<Vec<PersonaResponse>>> {
+    let personas_path = state.sessions.personas_path();
+    
+    let personas = match personas_path {
+        Some(path) => {
+            Persona::list(&path).map_err(|e| {
+                warn!("Failed to list personas from {:?}: {}", path, e);
+                ApiError::internal(format!("Failed to list personas: {}", e))
+            })?
+        }
+        None => {
+            // No personas path configured - return empty list
+            Vec::new()
+        }
+    };
+
+    let response: Vec<PersonaResponse> = personas.into_iter().map(PersonaResponse::from).collect();
+    info!(count = response.len(), "Listed personas");
+    Ok(Json(response))
+}
+
+/// Get a specific persona by ID.
+#[instrument(skip(state))]
+pub async fn get_persona(
+    State(state): State<AppState>,
+    Path(persona_id): Path<String>,
+) -> ApiResult<Json<PersonaResponse>> {
+    let personas_path = state.sessions.personas_path()
+        .ok_or_else(|| ApiError::internal("Personas path not configured"))?;
+    
+    let persona_dir = personas_path.join(&persona_id);
+    
+    if !persona_dir.exists() || !Persona::is_persona_dir(&persona_dir) {
+        return Err(ApiError::not_found(format!("Persona '{}' not found", persona_id)));
+    }
+    
+    let persona = Persona::load(&persona_dir).map_err(|e| {
+        warn!("Failed to load persona '{}': {}", persona_id, e);
+        ApiError::internal(format!("Failed to load persona: {}", e))
+    })?;
+    
+    Ok(Json(PersonaResponse::from(persona)))
 }
 
 // ============================================================================

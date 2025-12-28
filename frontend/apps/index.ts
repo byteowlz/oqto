@@ -15,11 +15,11 @@ appRegistry
     priority: 1,
   })
   .register({
-    id: "personas",
-    label: { de: "Personas", en: "Personas" },
-    description: "AI personas for different tasks",
+    id: "agents",
+    label: { de: "Agenten", en: "Agents" },
+    description: "AI agents for different tasks",
     component: PersonasApp,
-    routes: ["/personas"],
+    routes: ["/agents"],
     permissions: ["user"],
     priority: 5,
   })

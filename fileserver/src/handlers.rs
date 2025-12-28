@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::io::{Cursor, Write};
 use std::path::{Component, Path, PathBuf};
+use std::sync::LazyLock;
 use std::time::Duration;
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
@@ -16,6 +17,10 @@ use notify::{
     EventKind, RecursiveMode, Watcher,
 };
 use serde::{Deserialize, Serialize};
+use syntect::highlighting::ThemeSet;
+use syntect::html::{styled_line_to_highlighted_html, IncludeBackground};
+use syntect::parsing::SyntaxSet;
+use syntect::util::LinesWithEndings;
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
@@ -28,6 +33,10 @@ use zip::ZipWriter;
 
 use crate::error::FileServerError;
 use crate::AppState;
+
+// Lazy-loaded syntax highlighting assets
+static SYNTAX_SET: LazyLock<SyntaxSet> = LazyLock::new(SyntaxSet::load_defaults_newlines);
+static THEME_SET: LazyLock<ThemeSet> = LazyLock::new(ThemeSet::load_defaults);
 
 /// File node in the tree response
 #[derive(Debug, Serialize)]
@@ -86,6 +95,11 @@ fn default_path() -> String {
 pub struct FileQuery {
     /// Path relative to root
     pub path: String,
+    /// Return syntax-highlighted HTML instead of raw content
+    #[serde(default)]
+    pub highlight: bool,
+    /// Theme for syntax highlighting (defaults to "base16-ocean.dark")
+    pub theme: Option<String>,
 }
 
 /// Upload query parameters
@@ -740,6 +754,7 @@ fn get_simple_file_list(
 /// GET /file - Get file content
 ///
 /// Uses streaming to handle large files efficiently without loading them entirely into memory.
+/// If `highlight=true` is passed, returns syntax-highlighted HTML instead of raw content.
 pub async fn get_file(
     State(state): State<AppState>,
     Query(query): Query<FileQuery>,
@@ -748,11 +763,52 @@ pub async fn get_file(
     let path = resolve_and_verify_path(&state.root_dir, &query.path)?;
 
     if !path.exists() {
-        return Err(FileServerError::NotFound(query.path));
+        return Err(FileServerError::NotFound(query.path.clone()));
     }
 
     if path.is_dir() {
         return Err(FileServerError::NotAFile);
+    }
+
+    let file_name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default();
+
+    // If syntax highlighting is requested, return highlighted HTML
+    if query.highlight {
+        debug!("Syntax highlighting file: {}", path.display());
+        
+        // Read file content (limit to 1MB for highlighting to prevent memory issues)
+        let metadata = fs::metadata(&path).await.map_err(FileServerError::Io)?;
+        if metadata.len() > 1024 * 1024 {
+            return Err(FileServerError::FileTooLarge {
+                size: metadata.len(),
+                limit: 1024 * 1024,
+            });
+        }
+        
+        let content = fs::read_to_string(&path).await.map_err(FileServerError::Io)?;
+        let path_clone = path.clone();
+        let theme_name = query.theme.unwrap_or_else(|| "base16-ocean.dark".to_string());
+        
+        // Do highlighting in blocking task since syntect is not async
+        let highlighted = tokio::task::spawn_blocking(move || {
+            highlight_code(&content, &path_clone, &theme_name)
+        })
+        .await
+        .map_err(|e| FileServerError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))??;
+        
+        return Ok((
+            StatusCode::OK,
+            [
+                (header::CONTENT_TYPE, "text/html; charset=utf-8".to_string()),
+                (header::CONTENT_LENGTH, highlighted.len().to_string()),
+                (header::CACHE_CONTROL, "public, max-age=60".to_string()),
+            ],
+            highlighted,
+        )
+            .into_response());
     }
 
     debug!("Streaming file: {}", path.display());
@@ -772,11 +828,6 @@ pub async fn get_file(
         .first_or_octet_stream()
         .to_string();
 
-    let file_name = path
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_default();
-
     // Sanitize filename for Content-Disposition header
     let safe_filename = file_name.replace('"', "'");
 
@@ -793,6 +844,60 @@ pub async fn get_file(
         body,
     )
         .into_response())
+}
+
+/// Highlight code using syntect
+fn highlight_code(content: &str, path: &Path, theme_name: &str) -> Result<String, FileServerError> {
+    let syntax = path
+        .extension()
+        .and_then(|ext| SYNTAX_SET.find_syntax_by_extension(ext.to_str().unwrap_or("")))
+        .or_else(|| SYNTAX_SET.find_syntax_by_first_line(content))
+        .unwrap_or_else(|| SYNTAX_SET.find_syntax_plain_text());
+
+    let theme = THEME_SET
+        .themes
+        .get(theme_name)
+        .or_else(|| THEME_SET.themes.get("base16-ocean.dark"))
+        .ok_or_else(|| {
+            FileServerError::Io(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "Theme not found",
+            ))
+        })?;
+
+    let mut highlighter = syntect::easy::HighlightLines::new(syntax, theme);
+    let mut html_output = String::with_capacity(content.len() * 2);
+    
+    // Build HTML with line numbers
+    html_output.push_str("<div class=\"highlighted-code\" style=\"font-family: ui-monospace, SFMono-Regular, 'SF Mono', Consolas, 'Liberation Mono', Menlo, monospace; font-size: 12px; line-height: 1.5; display: flex;\">");
+    
+    // Line numbers column
+    html_output.push_str("<div class=\"line-numbers\" style=\"text-align: right; padding-right: 1em; min-width: 3em; opacity: 0.5; user-select: none;\">");
+    for (i, _) in LinesWithEndings::from(content).enumerate() {
+        html_output.push_str(&format!("<div>{}</div>", i + 1));
+    }
+    html_output.push_str("</div>");
+    
+    // Code column
+    html_output.push_str("<div class=\"code\" style=\"flex: 1; overflow-x: auto;\">");
+    for line in LinesWithEndings::from(content) {
+        let regions = highlighter
+            .highlight_line(line, &SYNTAX_SET)
+            .map_err(|e| FileServerError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+        let html_line = styled_line_to_highlighted_html(&regions[..], IncludeBackground::No)
+            .map_err(|e| FileServerError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+        html_output.push_str("<div>");
+        // Handle empty lines
+        if html_line.trim().is_empty() {
+            html_output.push_str("&nbsp;");
+        } else {
+            html_output.push_str(&html_line);
+        }
+        html_output.push_str("</div>");
+    }
+    html_output.push_str("</div></div>");
+    
+    Ok(html_output)
 }
 
 /// POST /file - Upload file
