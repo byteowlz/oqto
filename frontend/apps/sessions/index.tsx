@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState, useRef, memo } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
-import { FileText, Terminal, Eye, Send, ChevronDown, User, Bot, Clock, ArrowDown, ListTodo, Square, CheckSquare, CircleDot, XCircle, MessageSquare, Loader2, Paperclip, X, Copy, Check } from "lucide-react"
+import { FileText, Terminal, Eye, Send, ChevronDown, User, Bot, Clock, ArrowDown, ListTodo, Square, CheckSquare, CircleDot, XCircle, MessageSquare, Loader2, Paperclip, X, Copy, Check, StopCircle } from "lucide-react"
 import { useApp } from "@/components/app-context"
 import { FileTreeView, type FileTreeState, initialFileTreeState } from "@/app/sessions/FileTreeView"
 import { TerminalView } from "@/app/sessions/TerminalView"
@@ -21,6 +21,7 @@ import {
   subscribeToEvents,
   invalidateMessageCache,
   respondToPermission,
+  abortSession,
   type OpenCodeMessageWithParts,
   type OpenCodePart,
   type Permission,
@@ -191,23 +192,32 @@ export function SessionsApp() {
   // Track if we're on mobile layout (below lg breakpoint = 1024px)
   const isMobileLayout = useIsMobile()
   
-  // Handle mobile keyboard - adjust layout when virtual keyboard appears
+  // Handle mobile keyboard - scroll input into view when keyboard appears
+  // iOS Safari requires special handling as it resizes the visual viewport
   useEffect(() => {
-    if (typeof window === "undefined" || !window.visualViewport) return
+    if (typeof window === "undefined") return
     
     const viewport = window.visualViewport
-    const container = chatContainerRef.current
+    if (!viewport) return
+    
+    let lastHeight = viewport.height
     
     const handleResize = () => {
-      if (!container) return
-      // When keyboard opens, viewport height decreases
-      const keyboardHeight = window.innerHeight - viewport.height
-      if (keyboardHeight > 100) {
-        // Keyboard is likely open
-        container.style.paddingBottom = `${keyboardHeight}px`
-      } else {
-        container.style.paddingBottom = "0px"
+      const currentHeight = viewport.height
+      const heightDiff = lastHeight - currentHeight
+      
+      // Keyboard likely opened (significant height reduction)
+      if (heightDiff > 100) {
+        // Scroll the focused input into view
+        const activeElement = document.activeElement as HTMLElement
+        if (activeElement?.tagName === "INPUT" || activeElement?.tagName === "TEXTAREA") {
+          setTimeout(() => {
+            activeElement.scrollIntoView({ behavior: "smooth", block: "center" })
+          }, 100)
+        }
       }
+      
+      lastHeight = currentHeight
     }
     
     viewport.addEventListener("resize", handleResize)
@@ -585,7 +595,36 @@ export function SessionsApp() {
     }
   }, [])
 
-  
+  // Double-Escape keyboard shortcut to stop agent (like opencode TUI)
+  useEffect(() => {
+    let lastEscapeTime = 0
+    const DOUBLE_PRESS_THRESHOLD = 500 // ms
+    
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && chatState === "sending") {
+        const now = Date.now()
+        if (now - lastEscapeTime < DOUBLE_PRESS_THRESHOLD) {
+          // Double-escape detected - stop the agent
+          e.preventDefault()
+          if (opencodeBaseUrl && selectedChatSessionId) {
+            abortSession(opencodeBaseUrl, selectedChatSessionId)
+              .then(() => {
+                setChatState("idle")
+                setStatus(locale === "de" ? "Abgebrochen" : "Stopped")
+                setTimeout(() => setStatus(""), 2000)
+              })
+              .catch((err) => setStatus((err as Error).message))
+          }
+          lastEscapeTime = 0 // Reset
+        } else {
+          lastEscapeTime = now
+        }
+      }
+    }
+    
+    window.addEventListener("keydown", handleKeyDown)
+    return () => window.removeEventListener("keydown", handleKeyDown)
+  }, [chatState, opencodeBaseUrl, selectedChatSessionId, locale])
 
   const selectedSession = useMemo(() => {
     if (!selectedWorkspaceSessionId) return undefined
@@ -669,6 +708,23 @@ export function SessionsApp() {
       setMessages((prev) => prev.filter((m) => !m.info.id.startsWith("temp-")))
     }
     // Don't set idle here - wait for SSE session.idle event
+  }
+
+  const handleStop = async () => {
+    if (!opencodeBaseUrl || !selectedChatSessionId) return
+    if (chatState !== "sending") return
+    
+    try {
+      await abortSession(opencodeBaseUrl, selectedChatSessionId)
+      // The SSE event will set the state to idle
+      // But set it immediately for responsiveness
+      setChatState("idle")
+      setStatus(locale === "de" ? "Abgebrochen" : "Stopped")
+      // Clear status after a moment
+      setTimeout(() => setStatus(""), 2000)
+    } catch (err) {
+      setStatus((err as Error).message)
+    }
   }
 
   // Loading skeleton for chat view
@@ -758,11 +814,19 @@ export function SessionsApp() {
         onClick={handlePermissionBannerClick} 
       />
       
-      {/* Working indicator */}
+      {/* Working indicator with stop button */}
       {chatState === "sending" && (
         <div className="flex items-center gap-2 px-3 py-1.5 bg-primary/10 border border-primary/30 text-sm text-primary">
           <KnightRiderSpinner />
-          <span className="font-medium">{locale === "de" ? "Agent arbeitet..." : "Agent working..."}</span>
+          <span className="font-medium flex-1">{locale === "de" ? "Agent arbeitet..." : "Agent working..."}</span>
+          <button
+            onClick={handleStop}
+            className="flex items-center gap-1 px-2 py-1 bg-destructive/20 hover:bg-destructive/30 border border-destructive/50 text-destructive text-xs font-medium transition-colors"
+            title={locale === "de" ? "Agent stoppen" : "Stop agent"}
+          >
+            <StopCircle className="w-3 h-3" />
+            <span className="hidden sm:inline">{locale === "de" ? "Stopp" : "Stop"}</span>
+          </button>
         </div>
       )}
       <div className="relative flex-1 min-h-0">
@@ -853,14 +917,25 @@ export function SessionsApp() {
           }}
           className="flex-1 bg-transparent border-none outline-none text-foreground placeholder:text-muted-foreground text-sm"
         />
-        <Button
-          onClick={handleSend}
-          disabled={chatState === "sending" || (!messageInput.trim() && pendingUploads.length === 0)}
-          className="bg-primary hover:bg-primary/90 text-primary-foreground"
-        >
-          <Send className="w-4 h-4 sm:mr-2" />
-          <span className="hidden sm:inline">{t.send}</span>
-        </Button>
+        {chatState === "sending" ? (
+          <Button
+            onClick={handleStop}
+            className="bg-destructive hover:bg-destructive/90 text-destructive-foreground"
+            title={locale === "de" ? "Agent stoppen (2x Esc)" : "Stop agent (2x Esc)"}
+          >
+            <StopCircle className="w-4 h-4 sm:mr-2" />
+            <span className="hidden sm:inline">{locale === "de" ? "Stopp" : "Stop"}</span>
+          </Button>
+        ) : (
+          <Button
+            onClick={handleSend}
+            disabled={!messageInput.trim() && pendingUploads.length === 0}
+            className="bg-primary hover:bg-primary/90 text-primary-foreground"
+          >
+            <Send className="w-4 h-4 sm:mr-2" />
+            <span className="hidden sm:inline">{t.send}</span>
+          </Button>
+        )}
       </div>
     </div>
   )
