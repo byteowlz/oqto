@@ -565,31 +565,67 @@ export function PreviewView({ filePath, className }: PreviewViewProps) {
             dangerouslySetInnerHTML={{ __html: highlightedContent }}
           />
         ) : content ? (
-          // Client-side syntax highlighting with react-syntax-highlighter
-          <SyntaxHighlighter
-            language={language}
-            style={isDarkMode ? oneDark : oneLight}
-            showLineNumbers
-            wrapLines
-            wrapLongLines
-            customStyle={{
-              margin: 0,
-              padding: "12px",
-              fontSize: "12px",
-              lineHeight: "1.5",
-              minHeight: "100%",
-              background: "transparent",
-            }}
-            lineNumberStyle={{
-              minWidth: "3em",
-              paddingRight: "1em",
-              textAlign: "right",
-              userSelect: "none",
-              opacity: 0.5,
-            }}
-          >
-            {content}
-          </SyntaxHighlighter>
+          // For large files (>50KB) or mobile, skip expensive client-side highlighting
+          // and show plain text with line numbers instead
+          content.length > 50000 || isMobileRef.current ? (
+            <div 
+              className="flex text-foreground" 
+              style={{ 
+                minHeight: "100%",
+                padding: "12px",
+                fontSize: "12px",
+                lineHeight: "1.5",
+                fontFamily: "ui-monospace, SFMono-Regular, SF Mono, Consolas, Liberation Mono, Menlo, monospace",
+              }}
+            >
+              <div 
+                className="select-none text-right text-muted-foreground"
+                style={{ minWidth: "3em", paddingRight: "1em" }}
+              >
+                {content.split("\n").map((_, i) => (
+                  <div key={i}>{i + 1}</div>
+                ))}
+              </div>
+              <pre
+                className="flex-1 m-0"
+                style={{
+                  fontFamily: "inherit",
+                  fontSize: "inherit",
+                  lineHeight: "inherit",
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-word",
+                }}
+              >
+                {content}
+              </pre>
+            </div>
+          ) : (
+            // Client-side syntax highlighting for desktop with small files
+            <SyntaxHighlighter
+              language={language}
+              style={isDarkMode ? oneDark : oneLight}
+              showLineNumbers
+              wrapLines
+              wrapLongLines
+              customStyle={{
+                margin: 0,
+                padding: "12px",
+                fontSize: "12px",
+                lineHeight: "1.5",
+                minHeight: "100%",
+                background: "transparent",
+              }}
+              lineNumberStyle={{
+                minWidth: "3em",
+                paddingRight: "1em",
+                textAlign: "right",
+                userSelect: "none",
+                opacity: 0.5,
+              }}
+            >
+              {content}
+            </SyntaxHighlighter>
+          )
         ) : null}
       </div>
     </div>
