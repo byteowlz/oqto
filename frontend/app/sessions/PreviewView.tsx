@@ -5,9 +5,10 @@ import { Eye, Loader2, Pencil, Save, X, FileText, Download, ExternalLink, ZoomIn
 import { useApp } from "@/components/app-context"
 import { fileserverProxyBaseUrl } from "@/lib/control-plane-client"
 import { cn } from "@/lib/utils"
-// Note: SyntaxHighlighter removed - using server-side highlighting via fileserver instead
 import { Button } from "@/components/ui/button"
 import CodeEditor from "@uiw/react-textarea-code-editor"
+import { Prism as SyntaxHighlighter } from "react-syntax-highlighter"
+import { oneDark, oneLight } from "react-syntax-highlighter/dist/cjs/styles/prism"
 
 interface PreviewViewProps {
   filePath?: string | null
@@ -172,7 +173,12 @@ async function fetchHighlightedContent(baseUrl: string, path: string): Promise<s
     const text = await res.text().catch(() => res.statusText)
     throw new Error(text || `Unable to fetch highlighted ${path}`)
   }
-  return res.text()
+  const html = await res.text()
+  // Validate that we got actual HTML, not just raw text
+  if (!html.includes("<div") && !html.includes("<span")) {
+    throw new Error("Server returned plain text instead of highlighted HTML")
+  }
+  return html
 }
 
 async function saveFileContent(baseUrl: string, path: string, content: string): Promise<void> {
@@ -551,49 +557,39 @@ export function PreviewView({ filePath, className }: PreviewViewProps) {
               backgroundColor: isDarkMode ? "#1e1e1e" : "#ffffff",
             }}
           />
-        ) : highlightedContent ? (
-          // Server-rendered syntax highlighting - instant on all devices
+        ) : highlightedContent && highlightedContent.includes("<div") ? (
+          // Server-rendered syntax highlighting - only if it's actual HTML
           <div 
             className="p-3"
             style={{ minHeight: "100%" }}
             dangerouslySetInnerHTML={{ __html: highlightedContent }}
           />
         ) : content ? (
-          // Fallback: plain text with line numbers while server highlighting loads
-          <div 
-            className="flex text-foreground" 
-            style={{ 
-              minHeight: "100%",
+          // Client-side syntax highlighting with react-syntax-highlighter
+          <SyntaxHighlighter
+            language={language}
+            style={isDarkMode ? oneDark : oneLight}
+            showLineNumbers
+            wrapLines
+            wrapLongLines
+            customStyle={{
+              margin: 0,
               padding: "12px",
               fontSize: "12px",
               lineHeight: "1.5",
-              fontFamily: "ui-monospace, SFMono-Regular, SF Mono, Consolas, Liberation Mono, Menlo, monospace",
+              minHeight: "100%",
+              background: "transparent",
+            }}
+            lineNumberStyle={{
+              minWidth: "3em",
+              paddingRight: "1em",
+              textAlign: "right",
+              userSelect: "none",
+              opacity: 0.5,
             }}
           >
-            <div 
-              className="select-none text-right text-muted-foreground"
-              style={{ 
-                minWidth: "3em",
-                paddingRight: "1em",
-              }}
-            >
-              {content.split("\n").map((_, i) => (
-                <div key={i}>{i + 1}</div>
-              ))}
-            </div>
-            <pre
-              className="flex-1 m-0"
-              style={{
-                fontFamily: "inherit",
-                fontSize: "inherit",
-                lineHeight: "inherit",
-                whiteSpace: "pre-wrap",
-                wordBreak: "break-word",
-              }}
-            >
-              {content}
-            </pre>
-          </div>
+            {content}
+          </SyntaxHighlighter>
         ) : null}
       </div>
     </div>
