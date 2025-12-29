@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Search, Plus, ChevronLeft, User, MessageSquare } from "lucide-react"
 import { useApp } from "@/components/app-context"
+import { useRouter } from "next/navigation"
 import { cn } from "@/lib/utils"
 import { listPersonas, listWorkspaceSessions, type WorkspaceSession, type Persona } from "@/lib/control-plane-client"
 import { resolveAvatarUrl, getDefaultAvatarUrl } from "@/lib/avatar-utils"
@@ -17,7 +18,8 @@ type PersonaWithSessions = {
 }
 
 export function PersonasApp() {
-  const { locale } = useApp()
+  const { locale, createNewChatWithPersona } = useApp()
+  const router = useRouter()
   const [searchTerm, setSearchTerm] = useState("")
   const [selectedPersonaId, setSelectedPersonaId] = useState<string | null>(null)
   const [mobileView, setMobileView] = useState<"list" | "details">("list")
@@ -127,6 +129,20 @@ export function PersonasApp() {
   const handlePersonaSelect = (id: string) => {
     setSelectedPersonaId(id)
     setMobileView("details")
+  }
+
+  const handleStartChat = async () => {
+    if (!selectedPersona) return
+    
+    try {
+      const session = await createNewChatWithPersona(selectedPersona.persona)
+      if (session) {
+        // Navigate to sessions page
+        router.push("/sessions")
+      }
+    } catch (err) {
+      console.error("Failed to start chat with persona:", err)
+    }
   }
 
   const formatRelativeTime = (dateStr: string | null): string => {
@@ -295,6 +311,7 @@ export function PersonasApp() {
               <Button 
                 className="w-full md:w-auto"
                 style={{ backgroundColor: selectedPersona.persona.color || undefined }}
+                onClick={handleStartChat}
               >
                 <MessageSquare className="w-4 h-4 mr-2" />
                 {t.startChat}
