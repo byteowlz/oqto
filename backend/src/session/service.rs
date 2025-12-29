@@ -815,6 +815,7 @@ impl SessionService {
         }
 
         let workspace_path = PathBuf::from(&session.workspace_path);
+        let persona_path = session.persona_path.as_ref().map(PathBuf::from);
 
         // Start all services
         let pids = local_runtime
@@ -822,6 +823,7 @@ impl SessionService {
                 &session.id,
                 &session.user_id,
                 &workspace_path,
+                persona_path.as_deref(),
                 session.opencode_port as u16,
                 session.fileserver_port as u16,
                 session.ttyd_port as u16,
@@ -1021,6 +1023,7 @@ impl SessionService {
                 // The user may need to provide it again through environment
 
                 let workspace_path = PathBuf::from(&session.workspace_path);
+                let persona_path = session.persona_path.as_ref().map(PathBuf::from);
 
                 // Respawn the processes (local mode doesn't preserve process state)
                 match local_runtime
@@ -1028,6 +1031,7 @@ impl SessionService {
                         session_id,
                         &session.user_id,
                         &workspace_path,
+                        persona_path.as_deref(),
                         session.opencode_port as u16,
                         session.fileserver_port as u16,
                         session.ttyd_port as u16,

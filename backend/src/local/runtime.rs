@@ -193,19 +193,23 @@ impl LocalRuntime {
     /// This spawns opencode, fileserver, and ttyd as native processes.
     /// If Linux user isolation is enabled, processes run under the user's Linux account.
     /// Returns the PIDs of the spawned processes as a comma-separated string.
+    ///
+    /// If `persona_path` is provided, opencode and fileserver will use that directory
+    /// as their working directory instead of the default workspace.
     pub async fn start_session(
         &self,
         session_id: &str,
         user_id: &str,
         workspace_path: &Path,
+        persona_path: Option<&Path>,
         opencode_port: u16,
         fileserver_port: u16,
         ttyd_port: u16,
         env: HashMap<String, String>,
     ) -> Result<String> {
         info!(
-            "Starting local session {} for user {} with ports {}/{}/{}",
-            session_id, user_id, opencode_port, fileserver_port, ttyd_port
+            "Starting local session {} for user {} with ports {}/{}/{}, persona_path: {:?}",
+            session_id, user_id, opencode_port, fileserver_port, ttyd_port, persona_path
         );
 
         // Determine how to run processes (as current user or specific Linux user)
@@ -230,8 +234,10 @@ impl LocalRuntime {
                 .chown_directory(workspace_path, user_id)?;
         }
 
-        // Start fileserver - use persona directory if configured, otherwise workspace_path
-        let fileserver_root = self.config.opencode_workdir(user_id);
+        // Start fileserver - use persona directory if provided, otherwise fall back to config default
+        let fileserver_root = persona_path
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| self.config.opencode_workdir(user_id));
         let fileserver_pid = self
             .process_manager
             .spawn_fileserver(
@@ -258,8 +264,10 @@ impl LocalRuntime {
             .context("starting ttyd")?;
 
         // Start opencode (with environment variables for EAVS if configured)
-        // Use persona directory if configured, otherwise use workspace_path
-        let opencode_workdir = self.config.opencode_workdir(user_id);
+        // Use persona directory if provided, otherwise fall back to config default
+        let opencode_workdir = persona_path
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| self.config.opencode_workdir(user_id));
         let opencode_pid = self
             .process_manager
             .spawn_opencode(
@@ -295,6 +303,7 @@ impl LocalRuntime {
         session_id: &str,
         user_id: &str,
         workspace_path: &Path,
+        persona_path: Option<&Path>,
         opencode_port: u16,
         fileserver_port: u16,
         ttyd_port: u16,
@@ -308,6 +317,7 @@ impl LocalRuntime {
             session_id,
             user_id,
             workspace_path,
+            persona_path,
             opencode_port,
             fileserver_port,
             ttyd_port,
