@@ -164,7 +164,41 @@ export function SessionsApp() {
   } = useApp()
   const [messages, setMessages] = useState<OpenCodeMessageWithParts[]>([])
   const [messageInput, setMessageInput] = useState("")
-  const [chatState, setChatState] = useState<"idle" | "sending">("idle")
+  
+  // Per-chat state (working indicator is per-session, not global)
+  const [chatStates, setChatStates] = useState<Map<string, "idle" | "sending">>(new Map())
+  const chatState = selectedChatSessionId ? (chatStates.get(selectedChatSessionId) || "idle") : "idle"
+  const setChatState = useCallback((state: "idle" | "sending") => {
+    if (!selectedChatSessionId) return
+    setChatStates(prev => {
+      const next = new Map(prev)
+      next.set(selectedChatSessionId, state)
+      return next
+    })
+  }, [selectedChatSessionId])
+  
+  // Per-chat draft text cache (persists across session switches)
+  const draftCacheRef = useRef<Map<string, string>>(new Map())
+  const previousSessionIdRef = useRef<string | null>(null)
+  
+  // Save draft when switching away, restore when switching to new session
+  useEffect(() => {
+    const prevId = previousSessionIdRef.current
+    const currId = selectedChatSessionId
+    
+    // Save current draft to previous session (if any)
+    if (prevId && prevId !== currId && messageInput.trim()) {
+      draftCacheRef.current.set(prevId, messageInput)
+    }
+    
+    // Restore draft for current session (or clear if none)
+    if (currId && currId !== prevId) {
+      const savedDraft = draftCacheRef.current.get(currId) || ""
+      setMessageInput(savedDraft)
+    }
+    
+    previousSessionIdRef.current = currId
+  }, [selectedChatSessionId]) // intentionally not including messageInput to avoid loops
   const [isLoading, setIsLoading] = useState(true)
   const [showTimeoutError, setShowTimeoutError] = useState(false)
   const [activeView, setActiveView] = useState<ActiveView>("chat")
@@ -681,6 +715,10 @@ export function SessionsApp() {
     
     setMessages((prev) => [...prev, optimisticMessage])
     setMessageInput("")
+    // Clear draft cache for this session since message was sent
+    if (selectedChatSessionId) {
+      draftCacheRef.current.delete(selectedChatSessionId)
+    }
     setPendingUploads([])
     setChatState("sending")
     setStatus("")

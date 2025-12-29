@@ -113,6 +113,23 @@ function AppShell() {
   // Expanded state for parent sessions in sidebar
   const [expandedSessions, setExpandedSessions] = useState<Set<string>>(new Set());
 
+  // Pinned sessions (persisted to localStorage)
+  const [pinnedSessions, setPinnedSessions] = useState<Set<string>>(() => {
+    if (typeof window === "undefined") return new Set();
+    try {
+      const stored = localStorage.getItem("octo:pinnedSessions");
+      return stored ? new Set(JSON.parse(stored)) : new Set();
+    } catch {
+      return new Set();
+    }
+  });
+
+  // Persist pinned sessions to localStorage
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    localStorage.setItem("octo:pinnedSessions", JSON.stringify([...pinnedSessions]));
+  }, [pinnedSessions]);
+
   // Session search
   const [sessionSearch, setSessionSearch] = useState("");
   const deferredSearch = useDeferredValue(sessionSearch);
@@ -142,27 +159,36 @@ function AppShell() {
     return { parentSessions, childSessionsByParent };
   }, [opencodeSessions]);
 
-  // Filter sessions based on search term
+  // Filter and sort sessions (pinned first, then by recency)
   const filteredSessions = useMemo(() => {
     const searchLower = deferredSearch.toLowerCase().trim();
-    if (!searchLower) {
-      return sessionHierarchy.parentSessions;
+    let sessions = sessionHierarchy.parentSessions;
+    
+    if (searchLower) {
+      sessions = sessions.filter((session) => {
+        // Search in title
+        if (session.title?.toLowerCase().includes(searchLower)) return true;
+        // Search in readable ID (adjective-noun)
+        const readableId = generateReadableId(session.id);
+        if (readableId.toLowerCase().includes(searchLower)) return true;
+        // Search in date
+        if (session.time?.updated) {
+          const dateStr = formatSessionDate(session.time.updated);
+          if (dateStr.toLowerCase().includes(searchLower)) return true;
+        }
+        return false;
+      });
     }
     
-    return sessionHierarchy.parentSessions.filter((session) => {
-      // Search in title
-      if (session.title?.toLowerCase().includes(searchLower)) return true;
-      // Search in readable ID (adjective-noun)
-      const readableId = generateReadableId(session.id);
-      if (readableId.toLowerCase().includes(searchLower)) return true;
-      // Search in date
-      if (session.time?.updated) {
-        const dateStr = formatSessionDate(session.time.updated);
-        if (dateStr.toLowerCase().includes(searchLower)) return true;
-      }
-      return false;
+    // Sort: pinned first, then by updated time
+    return [...sessions].sort((a, b) => {
+      const aPinned = pinnedSessions.has(a.id);
+      const bPinned = pinnedSessions.has(b.id);
+      if (aPinned && !bPinned) return -1;
+      if (!aPinned && bPinned) return 1;
+      return b.time.updated - a.time.updated;
     });
-  }, [sessionHierarchy.parentSessions, deferredSearch]);
+  }, [sessionHierarchy.parentSessions, deferredSearch, pinnedSessions]);
 
   const toggleSessionExpanded = useCallback((sessionId: string) => {
     setExpandedSessions((prev) => {
@@ -184,10 +210,17 @@ function AppShell() {
   };
 
   // Context menu handlers
-  const handlePinSession = (sessionId: string) => {
-    console.log("Pin session:", sessionId);
-    // TODO: Implement pin functionality - requires backend support
-  };
+  const handlePinSession = useCallback((sessionId: string) => {
+    setPinnedSessions((prev) => {
+      const next = new Set(prev);
+      if (next.has(sessionId)) {
+        next.delete(sessionId);
+      } else {
+        next.add(sessionId);
+      }
+      return next;
+    });
+  }, []);
 
   const handleRenameSession = useCallback((sessionId: string) => {
     const session = opencodeSessions.find((s) => s.id === sessionId);
@@ -487,6 +520,9 @@ function AppShell() {
                               )}
                               <div className="flex-1 min-w-0">
                                 <div className="flex items-center gap-1">
+                                  {pinnedSessions.has(session.id) && (
+                                    <Pin className="w-3 h-3 flex-shrink-0 text-primary/70" />
+                                  )}
                                   <span className="text-sm truncate font-medium">
                                     {session.title || "Untitled"}
                                   </span>
@@ -518,7 +554,9 @@ function AppShell() {
                               onClick={() => handlePinSession(session.id)}
                             >
                               <Pin className="w-4 h-4 mr-2" />
-                              {locale === "de" ? "Anpinnen" : "Pin"}
+                              {pinnedSessions.has(session.id) 
+                                ? (locale === "de" ? "Lospinnen" : "Unpin")
+                                : (locale === "de" ? "Anpinnen" : "Pin")}
                             </ContextMenuItem>
                             <ContextMenuItem
                               onClick={() => handleRenameSession(session.id)}
@@ -808,6 +846,9 @@ function AppShell() {
                           )}
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-1">
+                              {pinnedSessions.has(session.id) && (
+                                <Pin className="w-3 h-3 flex-shrink-0 text-primary/70" />
+                              )}
                               <span className="text-sm truncate font-medium">
                                 {session.title || "Untitled"}
                               </span>
@@ -847,7 +888,9 @@ function AppShell() {
                           onClick={() => handlePinSession(session.id)}
                         >
                           <Pin className="w-4 h-4 mr-2" />
-                          {locale === "de" ? "Anpinnen" : "Pin"}
+                          {pinnedSessions.has(session.id) 
+                            ? (locale === "de" ? "Lospinnen" : "Unpin")
+                            : (locale === "de" ? "Anpinnen" : "Pin")}
                         </ContextMenuItem>
                         <ContextMenuItem
                           onClick={() => handleRenameSession(session.id)}
