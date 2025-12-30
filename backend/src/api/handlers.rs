@@ -4,6 +4,7 @@ use std::convert::Infallible;
 use std::sync::Arc;
 use std::time::Duration;
 
+use anyhow::Context;
 use axum::{
     Json,
     extract::{Path, Query, State},
@@ -18,7 +19,7 @@ use tracing::{info, instrument, warn};
 
 use crate::auth::{AuthError, CurrentUser, RequireAdmin};
 use crate::observability::{CpuTimes, HostMetrics, read_host_metrics};
-use crate::persona::{Persona, WorkspacePreference};
+use crate::persona::{Persona, WorkspaceMode};
 use crate::session::{CreateSessionRequest, Session, SessionContainerStats};
 use crate::user::{
     CreateUserRequest, UpdateUserRequest, UserInfo as DbUserInfo, UserListQuery, UserStats,
@@ -222,6 +223,53 @@ pub async fn get_or_create_session(
     Ok(Json(response))
 }
 
+/// Request for getting or creating a session for a specific workspace.
+#[derive(Debug, Deserialize)]
+pub struct GetOrCreateForWorkspaceRequest {
+    /// Path to the workspace directory.
+    pub workspace_path: String,
+}
+
+/// Get or create a session for a specific workspace path.
+///
+/// This is the preferred way to resume a session from chat history.
+/// It will:
+/// 1. Find an existing running session for the workspace (if any)
+/// 2. Enforce LRU cap by stopping oldest idle session if needed
+/// 3. Create a new session for that workspace (if none running)
+#[instrument(skip(state, request), fields(workspace_path = %request.workspace_path))]
+pub async fn get_or_create_session_for_workspace(
+    State(state): State<AppState>,
+    Json(request): Json<GetOrCreateForWorkspaceRequest>,
+) -> ApiResult<Json<SessionWithUrls>> {
+    let session = state
+        .sessions
+        .get_or_create_session_for_workspace(&request.workspace_path)
+        .await?;
+    info!(
+        session_id = %session.id,
+        workspace_path = %request.workspace_path,
+        status = ?session.status,
+        "Got or created session for workspace"
+    );
+
+    let response = SessionWithUrls::from_session(session, "localhost");
+    Ok(Json(response))
+}
+
+/// Touch session activity (update last_activity_at).
+///
+/// This should be called when the user interacts with the session
+/// (e.g., sends a message, runs a command).
+#[instrument(skip(state))]
+pub async fn touch_session_activity(
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+) -> ApiResult<StatusCode> {
+    state.sessions.touch_session_activity(&session_id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 /// Check if a session has an available image update.
 #[instrument(skip(state))]
 pub async fn check_session_update(
@@ -301,18 +349,40 @@ pub struct PersonaResponse {
     pub is_default: bool,
     /// opencode agent ID to use.
     pub agent_id: String,
-    /// Workspace preference (general, project, or ask).
-    pub workspace: String,
+    /// Default working directory (optional).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_workdir: Option<String>,
+    /// Workspace mode (default_only, ask, or any).
+    pub workspace_mode: String,
+    /// If true, this persona has its own directory with opencode.json.
+    pub standalone: bool,
+    /// If true, this persona can work on external projects.
+    pub project_access: bool,
+}
+
+/// Query for listing workspace directories.
+#[derive(Debug, Deserialize)]
+pub struct WorkspaceDirQuery {
+    pub path: Option<String>,
+}
+
+/// Workspace directory entry.
+#[derive(Debug, Serialize)]
+pub struct WorkspaceDirEntry {
+    pub name: String,
+    pub path: String,
+    #[serde(rename = "type")]
+    pub entry_type: String,
 }
 
 impl From<Persona> for PersonaResponse {
     fn from(p: Persona) -> Self {
         // Get agent_id before moving other fields
         let agent_id = p.effective_agent_id().to_string();
-        let workspace = match p.workspace {
-            WorkspacePreference::General => "general".to_string(),
-            WorkspacePreference::Project => "project".to_string(),
-            WorkspacePreference::Ask => "ask".to_string(),
+        let workspace_mode = match p.workspace_mode {
+            WorkspaceMode::DefaultOnly => "default_only".to_string(),
+            WorkspaceMode::Ask => "ask".to_string(),
+            WorkspaceMode::Any => "any".to_string(),
         };
         
         Self {
@@ -323,7 +393,10 @@ impl From<Persona> for PersonaResponse {
             avatar: p.avatar,
             is_default: p.is_default,
             agent_id,
-            workspace,
+            default_workdir: p.default_workdir,
+            workspace_mode,
+            standalone: p.standalone,
+            project_access: p.project_access,
         }
     }
 }
@@ -372,6 +445,52 @@ pub async fn get_persona(
     })?;
     
     Ok(Json(PersonaResponse::from(persona)))
+}
+
+/// List directories under the workspace root (projects view).
+#[instrument(skip(state))]
+pub async fn list_workspace_dirs(
+    State(state): State<AppState>,
+    Query(query): Query<WorkspaceDirQuery>,
+) -> ApiResult<Json<Vec<WorkspaceDirEntry>>> {
+    let root = state.sessions.workspace_root();
+    let relative = query.path.unwrap_or_else(|| ".".to_string());
+    let rel_path = std::path::PathBuf::from(&relative);
+
+    if rel_path.is_absolute() || rel_path.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+        return Err(ApiError::bad_request("invalid path"));
+    }
+
+    let target = root.join(&rel_path);
+    let entries = std::fs::read_dir(&target)
+        .with_context(|| format!("reading workspace directory {:?}", target))
+        .map_err(|e| ApiError::internal(format!("Failed to list workspace directories: {}", e)))?;
+
+    let mut dirs = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(|e| ApiError::internal(format!("Failed to read directory entry: {}", e)))?;
+        let path = entry.path();
+        if path.is_dir() {
+            let name = entry
+                .file_name()
+                .to_str()
+                .unwrap_or_default()
+                .to_string();
+            let rel = path
+                .strip_prefix(&root)
+                .unwrap_or(&path)
+                .to_string_lossy()
+                .to_string();
+            dirs.push(WorkspaceDirEntry {
+                name,
+                path: if rel.is_empty() { ".".to_string() } else { rel },
+                entry_type: "directory".to_string(),
+            });
+        }
+    }
+
+    dirs.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(Json(dirs))
 }
 
 // ============================================================================
@@ -1194,4 +1313,141 @@ pub async fn exec_agent_command(
 ) -> ApiResult<Json<AgentExecResponse>> {
     let response = state.agents.exec_command(&session_id, request).await?;
     Ok(Json(response))
+}
+
+// ============================================================================
+// Chat History Handlers
+// ============================================================================
+
+use crate::history::ChatSession;
+
+/// Query parameters for listing chat history.
+#[derive(Debug, Deserialize)]
+pub struct ChatHistoryQuery {
+    /// Filter by workspace path.
+    pub workspace: Option<String>,
+    /// Include child sessions (default: false).
+    #[serde(default)]
+    pub include_children: bool,
+    /// Maximum number of sessions to return.
+    pub limit: Option<usize>,
+}
+
+/// List all chat sessions from OpenCode history.
+///
+/// This reads sessions directly from disk without requiring a running OpenCode instance.
+#[instrument(skip(_state))]
+pub async fn list_chat_history(
+    State(_state): State<AppState>,
+    Query(query): Query<ChatHistoryQuery>,
+) -> ApiResult<Json<Vec<ChatSession>>> {
+    let sessions = crate::history::list_sessions()
+        .map_err(|e| ApiError::internal(format!("Failed to list chat history: {}", e)))?;
+
+    let mut filtered: Vec<ChatSession> = sessions
+        .into_iter()
+        .filter(|s| {
+            // Filter by workspace if specified
+            if let Some(ref ws) = query.workspace {
+                if s.workspace_path != *ws {
+                    return false;
+                }
+            }
+            // Filter out child sessions unless explicitly included
+            if !query.include_children && s.is_child {
+                return false;
+            }
+            true
+        })
+        .collect();
+
+    // Apply limit if specified
+    if let Some(limit) = query.limit {
+        filtered.truncate(limit);
+    }
+
+    info!(count = filtered.len(), "Listed chat history");
+    Ok(Json(filtered))
+}
+
+/// Get a specific chat session by ID.
+#[instrument]
+pub async fn get_chat_session(
+    Path(session_id): Path<String>,
+) -> ApiResult<Json<ChatSession>> {
+    crate::history::get_session(&session_id)
+        .map_err(|e| ApiError::internal(format!("Failed to get chat session: {}", e)))?
+        .map(Json)
+        .ok_or_else(|| ApiError::not_found(format!("Chat session {} not found", session_id)))
+}
+
+/// Response for grouped chat history.
+#[derive(Debug, Serialize)]
+pub struct GroupedChatHistory {
+    pub workspace_path: String,
+    pub project_name: String,
+    pub sessions: Vec<ChatSession>,
+}
+
+/// List chat sessions grouped by workspace/project.
+#[instrument(skip(_state))]
+pub async fn list_chat_history_grouped(
+    State(_state): State<AppState>,
+    Query(query): Query<ChatHistoryQuery>,
+) -> ApiResult<Json<Vec<GroupedChatHistory>>> {
+    let grouped = crate::history::list_sessions_grouped()
+        .map_err(|e| ApiError::internal(format!("Failed to list chat history: {}", e)))?;
+
+    let mut result: Vec<GroupedChatHistory> = grouped
+        .into_iter()
+        .map(|(workspace_path, mut sessions)| {
+            // Filter out child sessions unless explicitly included
+            if !query.include_children {
+                sessions.retain(|s| !s.is_child);
+            }
+            
+            // Apply limit per workspace
+            if let Some(limit) = query.limit {
+                sessions.truncate(limit);
+            }
+
+            let project_name = sessions
+                .first()
+                .map(|s| s.project_name.clone())
+                .unwrap_or_else(|| crate::history::project_name_from_path(&workspace_path));
+
+            GroupedChatHistory {
+                workspace_path,
+                project_name,
+                sessions,
+            }
+        })
+        .filter(|g| !g.sessions.is_empty())
+        .collect();
+
+    // Sort by most recently updated session in each group
+    result.sort_by(|a, b| {
+        let a_updated = a.sessions.first().map(|s| s.updated_at).unwrap_or(0);
+        let b_updated = b.sessions.first().map(|s| s.updated_at).unwrap_or(0);
+        b_updated.cmp(&a_updated)
+    });
+
+    info!(count = result.len(), "Listed grouped chat history");
+    Ok(Json(result))
+}
+
+use crate::history::ChatMessage;
+
+/// Get all messages for a chat session.
+///
+/// This reads messages and their parts directly from OpenCode's storage on disk.
+#[instrument]
+pub async fn get_chat_messages(
+    Path(session_id): Path<String>,
+) -> ApiResult<Json<Vec<ChatMessage>>> {
+    let messages = crate::history::get_session_messages(&session_id)
+        .map_err(|e| ApiError::internal(format!("Failed to get chat messages: {}", e)))?;
+
+    info!(session_id = %session_id, count = messages.len(), "Listed chat messages");
+    Ok(Json(messages))
 }

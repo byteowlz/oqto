@@ -10,7 +10,7 @@ const SESSION_COLUMNS: &str = r#"
     id, readable_id, container_id, container_name, user_id, workspace_path, persona_path, image, image_digest,
     opencode_port, fileserver_port, ttyd_port, eavs_port, agent_base_port, max_agents,
     eavs_key_id, eavs_key_hash, eavs_virtual_key,
-    status, runtime_mode, created_at, started_at, stopped_at, error_message
+    status, runtime_mode, created_at, started_at, stopped_at, last_activity_at, error_message
 "#;
 
 /// Repository for session persistence.
@@ -33,8 +33,8 @@ impl SessionRepository {
                 id, readable_id, container_id, container_name, user_id, workspace_path, persona_path, image, image_digest,
                 opencode_port, fileserver_port, ttyd_port, eavs_port, agent_base_port, max_agents,
                 eavs_key_id, eavs_key_hash, eavs_virtual_key,
-                status, runtime_mode, created_at, started_at, stopped_at, error_message
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                status, runtime_mode, created_at, started_at, stopped_at, last_activity_at, error_message
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&session.id)
@@ -60,6 +60,7 @@ impl SessionRepository {
         .bind(&session.created_at)
         .bind(&session.started_at)
         .bind(&session.stopped_at)
+        .bind(&session.last_activity_at)
         .bind(&session.error_message)
         .execute(&self.pool)
         .await
@@ -323,6 +324,74 @@ impl SessionRepository {
     #[allow(dead_code)]
     pub async fn find_free_port_range(&self, start_port: i64) -> Result<i64> {
         self.find_free_port_range_with_agents(start_port, 10).await
+    }
+
+    /// Update last activity timestamp for a session.
+    pub async fn touch_activity(&self, id: &str) -> Result<()> {
+        sqlx::query("UPDATE sessions SET last_activity_at = datetime('now') WHERE id = ?")
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .context("updating last activity")?;
+
+        Ok(())
+    }
+
+    /// List running sessions that have been idle for longer than the given duration.
+    pub async fn list_idle_sessions(&self, idle_minutes: i64) -> Result<Vec<Session>> {
+        let query = format!(
+            "SELECT {} FROM sessions WHERE status = 'running' AND (last_activity_at IS NULL OR last_activity_at < datetime('now', ? || ' minutes')) ORDER BY last_activity_at ASC",
+            SESSION_COLUMNS
+        );
+        let sessions = sqlx::query_as::<_, Session>(&query)
+            .bind(-idle_minutes) // negative for "X minutes ago"
+            .fetch_all(&self.pool)
+            .await
+            .context("listing idle sessions")?;
+
+        Ok(sessions)
+    }
+
+    /// List running sessions for a user, ordered by last activity (most recent first).
+    pub async fn list_running_for_user_by_activity(&self, user_id: &str) -> Result<Vec<Session>> {
+        let query = format!(
+            "SELECT {} FROM sessions WHERE user_id = ? AND status = 'running' ORDER BY COALESCE(last_activity_at, started_at) DESC",
+            SESSION_COLUMNS
+        );
+        let sessions = sqlx::query_as::<_, Session>(&query)
+            .bind(user_id)
+            .fetch_all(&self.pool)
+            .await
+            .context("listing running sessions by activity")?;
+
+        Ok(sessions)
+    }
+
+    /// Find a running session for a specific workspace path.
+    pub async fn find_running_for_workspace(&self, user_id: &str, workspace_path: &str) -> Result<Option<Session>> {
+        let query = format!(
+            "SELECT {} FROM sessions WHERE user_id = ? AND workspace_path = ? AND status = 'running' LIMIT 1",
+            SESSION_COLUMNS
+        );
+        let session = sqlx::query_as::<_, Session>(&query)
+            .bind(user_id)
+            .bind(workspace_path)
+            .fetch_optional(&self.pool)
+            .await
+            .context("finding running session for workspace")?;
+
+        Ok(session)
+    }
+
+    /// Count running sessions for a user.
+    pub async fn count_running_for_user(&self, user_id: &str) -> Result<i64> {
+        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM sessions WHERE user_id = ? AND status = 'running'")
+            .bind(user_id)
+            .fetch_one(&self.pool)
+            .await
+            .context("counting running sessions")?;
+
+        Ok(count.0)
     }
 
     /// Find a free port range with a specific number of agent ports.

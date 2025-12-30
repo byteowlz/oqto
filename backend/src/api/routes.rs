@@ -34,6 +34,7 @@ pub fn create_router(state: AppState) -> Router {
         // Persona management
         .route("/personas", get(handlers::list_personas))
         .route("/personas/{persona_id}", get(handlers::get_persona))
+        .route("/projects", get(handlers::list_workspace_dirs))
         // Session management
         .route("/sessions", get(handlers::list_sessions))
         .route("/sessions", post(handlers::create_session))
@@ -41,7 +42,15 @@ pub fn create_router(state: AppState) -> Router {
             "/sessions/get-or-create",
             post(handlers::get_or_create_session),
         )
+        .route(
+            "/sessions/get-or-create-for-workspace",
+            post(handlers::get_or_create_session_for_workspace),
+        )
         .route("/sessions/{session_id}", get(handlers::get_session))
+        .route(
+            "/sessions/{session_id}/activity",
+            post(handlers::touch_session_activity),
+        )
         .route("/sessions/{session_id}", delete(handlers::delete_session))
         .route("/sessions/{session_id}/stop", post(handlers::stop_session))
         .route(
@@ -180,6 +189,11 @@ pub fn create_router(state: AppState) -> Router {
             "/session/{session_id}/agents/rediscover",
             post(handlers::rediscover_agents),
         )
+        // Chat history routes (reads from disk, no running opencode needed)
+        .route("/chat-history", get(handlers::list_chat_history))
+        .route("/chat-history/grouped", get(handlers::list_chat_history_grouped))
+        .route("/chat-history/{session_id}", get(handlers::get_chat_session))
+        .route("/chat-history/{session_id}/messages", get(handlers::get_chat_messages))
         .layer(middleware::from_fn_with_state(
             auth_state.clone(),
             auth_middleware,

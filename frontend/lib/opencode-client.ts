@@ -193,6 +193,32 @@ export async function sendMessageAsync(
   return true
 }
 
+export type OpenCodePartInput =
+  | { type: "text"; text: string }
+  | { type: "agent"; name: string; id?: string }
+  | { type: "file"; mime: string; url: string; filename?: string }
+
+export async function sendPartsAsync(
+  opencodeBaseUrl: string,
+  sessionId: string,
+  parts: OpenCodePartInput[],
+  model?: { providerID: string; modelID: string },
+) {
+  const body: Record<string, unknown> = { parts }
+  if (model) body.model = model
+
+  const res = await fetch(`${base(opencodeBaseUrl)}/session/${sessionId}/prompt_async`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => res.statusText)
+    throw new Error(text || `Request failed with ${res.status}`)
+  }
+  return true
+}
+
 export async function abortSession(opencodeBaseUrl: string, sessionId: string): Promise<boolean> {
   const res = await fetch(`${base(opencodeBaseUrl)}/session/${sessionId}/abort`, {
     method: "POST",
@@ -203,6 +229,8 @@ export async function abortSession(opencodeBaseUrl: string, sessionId: string): 
 export type OpenCodeAgent = {
   id: string
   name?: string
+  description?: string
+  mode?: "primary" | "subagent" | string
   model?: { providerID: string; modelID: string }
 }
 

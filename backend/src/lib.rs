@@ -8,6 +8,7 @@ pub mod auth;
 pub mod container;
 pub mod db;
 pub mod eavs;
+pub mod history;
 pub mod invite;
 pub mod local;
 pub mod observability;

@@ -38,8 +38,8 @@ export type RegisterResponse = {
 
 export type WorkspaceSessionStatus = "pending" | "starting" | "running" | "stopping" | "stopped" | "failed"
 
-/** Workspace preference for a persona */
-export type WorkspacePreference = "general" | "project" | "ask"
+/** Workspace mode for a persona */
+export type WorkspaceMode = "default_only" | "ask" | "any"
 
 /** Persona metadata from persona.toml */
 export type Persona = {
@@ -57,8 +57,14 @@ export type Persona = {
   is_default: boolean
   /** opencode agent ID to use */
   agent_id: string
-  /** Workspace preference (general, project, or ask) */
-  workspace: WorkspacePreference
+  /** Default working directory (optional) */
+  default_workdir?: string | null
+  /** Workspace mode (default_only, ask, or any) */
+  workspace_mode: WorkspaceMode
+  /** If true, has own directory with opencode.json. If false, wrapper for existing agent */
+  standalone: boolean
+  /** If true, can work on external projects. If false, only works in own persona directory */
+  project_access: boolean
 }
 
 export type WorkspaceSession = {
@@ -80,6 +86,12 @@ export type WorkspaceSession = {
   error_message: string | null
   /** Persona metadata (if session has a persona_path with persona.toml) */
   persona?: Persona | null
+}
+
+export type WorkspaceDirEntry = {
+  name: string
+  path: string
+  type: "directory"
 }
 
 export type CreateWorkspaceSessionRequest = {
@@ -194,6 +206,31 @@ export async function getOrCreateWorkspaceSession(request: CreateWorkspaceSessio
   return res.json()
 }
 
+/** Get or create a session for a specific workspace path.
+ * This is the preferred way to resume a session from chat history.
+ * It will find an existing running session for the workspace or create a new one,
+ * enforcing LRU cap by stopping oldest idle session if needed.
+ */
+export async function getOrCreateSessionForWorkspace(workspacePath: string): Promise<WorkspaceSession> {
+  const res = await fetch(`/api/sessions/get-or-create-for-workspace`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ workspace_path: workspacePath }),
+    credentials: "include",
+  })
+  if (!res.ok) throw new Error(await readApiError(res))
+  return res.json()
+}
+
+/** Touch session activity to prevent idle timeout */
+export async function touchSessionActivity(sessionId: string): Promise<void> {
+  const res = await fetch(`/api/sessions/${sessionId}/activity`, {
+    method: "POST",
+    credentials: "include",
+  })
+  if (!res.ok) throw new Error(await readApiError(res))
+}
+
 export async function stopWorkspaceSession(sessionId: string): Promise<void> {
   const res = await fetch(`/api/sessions/${sessionId}/stop`, { method: "POST", credentials: "include" })
   if (!res.ok) throw new Error(await readApiError(res))
@@ -238,6 +275,208 @@ export async function getPersona(personaId: string): Promise<Persona> {
   const res = await fetch(`/api/personas/${personaId}`, { credentials: "include" })
   if (!res.ok) throw new Error(await readApiError(res))
   return res.json()
+}
+
+// ============================================================================
+// Workspace Projects API
+// ============================================================================
+
+export async function listWorkspaceDirectories(path = "."): Promise<WorkspaceDirEntry[]> {
+  const url = new URL(`/api/projects`, window.location.origin)
+  url.searchParams.set("path", path)
+  const res = await fetch(url.toString(), { cache: "no-store", credentials: "include" })
+  if (!res.ok) throw new Error(await readApiError(res))
+  return res.json()
+}
+
+// ============================================================================
+// Chat History Types (from disk, no running opencode needed)
+// ============================================================================
+
+/** A chat session read directly from OpenCode's storage on disk */
+export type ChatSession = {
+  /** Session ID (e.g., "ses_xxx") */
+  id: string
+  /** Session title */
+  title: string | null
+  /** Parent session ID (for child sessions) */
+  parent_id: string | null
+  /** Workspace/project path */
+  workspace_path: string
+  /** Project name (derived from path) */
+  project_name: string
+  /** Created timestamp (ms since epoch) */
+  created_at: number
+  /** Updated timestamp (ms since epoch) */
+  updated_at: number
+  /** OpenCode version that created this session */
+  version: string | null
+  /** Whether this session is a child session */
+  is_child: boolean
+  /** Path to the session JSON file (for loading messages) */
+  source_path: string | null
+}
+
+/** Chat sessions grouped by workspace/project */
+export type GroupedChatHistory = {
+  workspace_path: string
+  project_name: string
+  sessions: ChatSession[]
+}
+
+/** Query parameters for listing chat history */
+export type ChatHistoryQuery = {
+  /** Filter by workspace path */
+  workspace?: string
+  /** Include child sessions (default: false) */
+  include_children?: boolean
+  /** Maximum number of sessions to return */
+  limit?: number
+}
+
+// ============================================================================
+// Chat History API (reads from disk, no running opencode needed)
+// ============================================================================
+
+/** List all chat sessions from OpenCode history */
+export async function listChatHistory(query: ChatHistoryQuery = {}): Promise<ChatSession[]> {
+  const url = new URL(`/api/chat-history`, window.location.origin)
+  if (query.workspace) url.searchParams.set("workspace", query.workspace)
+  if (query.include_children) url.searchParams.set("include_children", "true")
+  if (query.limit) url.searchParams.set("limit", query.limit.toString())
+  
+  const res = await fetch(url.toString(), { cache: "no-store", credentials: "include" })
+  if (!res.ok) throw new Error(await readApiError(res))
+  return res.json()
+}
+
+/** List chat sessions grouped by workspace/project */
+export async function listChatHistoryGrouped(query: ChatHistoryQuery = {}): Promise<GroupedChatHistory[]> {
+  const url = new URL(`/api/chat-history/grouped`, window.location.origin)
+  if (query.workspace) url.searchParams.set("workspace", query.workspace)
+  if (query.include_children) url.searchParams.set("include_children", "true")
+  if (query.limit) url.searchParams.set("limit", query.limit.toString())
+  
+  const res = await fetch(url.toString(), { cache: "no-store", credentials: "include" })
+  if (!res.ok) throw new Error(await readApiError(res))
+  return res.json()
+}
+
+/** Get a specific chat session by ID */
+export async function getChatSession(sessionId: string): Promise<ChatSession> {
+  const res = await fetch(`/api/chat-history/${sessionId}`, { credentials: "include" })
+  if (!res.ok) throw new Error(await readApiError(res))
+  return res.json()
+}
+
+// ============================================================================
+// Chat Message Types (from disk, no running opencode needed)
+// ============================================================================
+
+/** A single part of a chat message */
+export type ChatMessagePart = {
+  id: string
+  part_type: string
+  /** Text content (for text parts) */
+  text: string | null
+  /** Tool name (for tool parts) */
+  tool_name: string | null
+  /** Tool input (for tool parts) */
+  tool_input: unknown | null
+  /** Tool output (for tool parts) */
+  tool_output: string | null
+  /** Tool status (for tool parts) */
+  tool_status: string | null
+  /** Tool title/summary (for tool parts) */
+  tool_title: string | null
+}
+
+/** A chat message with its content parts */
+export type ChatMessage = {
+  id: string
+  session_id: string
+  role: string
+  created_at: number
+  completed_at: number | null
+  parent_id: string | null
+  model_id: string | null
+  provider_id: string | null
+  agent: string | null
+  summary_title: string | null
+  tokens_input: number | null
+  tokens_output: number | null
+  cost: number | null
+  /** Message content parts */
+  parts: ChatMessagePart[]
+}
+
+/** Get all messages for a chat session */
+export async function getChatMessages(sessionId: string): Promise<ChatMessage[]> {
+  const res = await fetch(`/api/chat-history/${sessionId}/messages`, { credentials: "include" })
+  if (!res.ok) throw new Error(await readApiError(res))
+  return res.json()
+}
+
+// ============================================================================
+// Message Format Conversion (disk format -> opencode format)
+// ============================================================================
+
+import type { OpenCodeMessageWithParts, OpenCodePart, OpenCodeMessage } from "./opencode-client"
+
+/** Convert a ChatMessage (from disk) to OpenCodeMessageWithParts (for rendering) */
+export function convertChatMessageToOpenCode(msg: ChatMessage): OpenCodeMessageWithParts {
+  // Convert parts
+  const parts: OpenCodePart[] = msg.parts.map((part) => ({
+    id: part.id,
+    sessionID: msg.session_id,
+    messageID: msg.id,
+    type: part.part_type as OpenCodePart["type"],
+    text: part.text ?? undefined,
+    tool: part.tool_name ?? undefined,
+    state: part.tool_name ? {
+      status: (part.tool_status as "pending" | "running" | "completed" | "error") ?? "completed",
+      input: part.tool_input as Record<string, unknown> | undefined,
+      output: part.tool_output ?? undefined,
+      title: part.tool_title ?? undefined,
+    } : undefined,
+  }))
+
+  // Build message info based on role
+  const info: OpenCodeMessage = msg.role === "user"
+    ? {
+        id: msg.id,
+        sessionID: msg.session_id,
+        role: "user" as const,
+        time: { created: msg.created_at },
+        agent: msg.agent ?? undefined,
+        model: msg.provider_id && msg.model_id ? {
+          providerID: msg.provider_id,
+          modelID: msg.model_id,
+        } : undefined,
+      }
+    : {
+        id: msg.id,
+        sessionID: msg.session_id,
+        role: "assistant" as const,
+        time: { created: msg.created_at, completed: msg.completed_at ?? undefined },
+        parentID: msg.parent_id ?? "",
+        modelID: msg.model_id ?? "",
+        providerID: msg.provider_id ?? "",
+        cost: msg.cost ?? undefined,
+        tokens: msg.tokens_input != null || msg.tokens_output != null ? {
+          input: msg.tokens_input ?? 0,
+          output: msg.tokens_output ?? 0,
+          reasoning: 0,
+          cache: { read: 0, write: 0 },
+        } : undefined,
+      }
+
+  return { info, parts }
+}
+
+/** Convert an array of ChatMessages to OpenCodeMessageWithParts */
+export function convertChatMessagesToOpenCode(messages: ChatMessage[]): OpenCodeMessageWithParts[] {
+  return messages.map(convertChatMessageToOpenCode)
 }
 
 // ============================================================================

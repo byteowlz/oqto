@@ -1,6 +1,6 @@
 import { appRegistry } from "@/lib/app-registry";
 import { ProjectsApp } from "@/apps/projects";
-import { PersonasApp } from "@/apps/personas";
+import { AgentsApp } from "@/apps/agents";
 import { SessionsApp } from "@/apps/sessions";
 import { AdminApp } from "@/apps/admin";
 
@@ -18,7 +18,7 @@ appRegistry
     id: "agents",
     label: { de: "Agenten", en: "Agents" },
     description: "AI agents for different tasks",
-    component: PersonasApp,
+    component: AgentsApp,
     routes: ["/agents"],
     permissions: ["user"],
     priority: 5,

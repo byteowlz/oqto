@@ -28,7 +28,7 @@ import {
   type PermissionResponse,
 } from "@/lib/opencode-client"
 import { PermissionDialog, PermissionBanner } from "@/components/ui/permission-dialog"
-import { controlPlaneDirectBaseUrl, fileserverProxyBaseUrl, type Persona } from "@/lib/control-plane-client"
+import { controlPlaneDirectBaseUrl, fileserverProxyBaseUrl, getChatMessages, convertChatMessagesToOpenCode, type Persona } from "@/lib/control-plane-client"
 import { generateReadableId, formatSessionDate } from "@/lib/session-utils"
 
 // Todo item structure
@@ -159,7 +159,9 @@ export function SessionsApp() {
     opencodeBaseUrl,
     selectedChatSessionId,
     selectedChatSession,
+    selectedChatFromHistory,
     refreshOpencodeSessions,
+    ensureOpencodeRunning,
     authToken,
   } = useApp()
   const [messages, setMessages] = useState<OpenCodeMessageWithParts[]>([])
@@ -177,9 +179,34 @@ export function SessionsApp() {
     })
   }, [selectedChatSessionId])
   
-  // Per-chat draft text cache (persists across session switches)
-  const draftCacheRef = useRef<Map<string, string>>(new Map())
+  // Per-chat draft text cache (persists across session switches AND component remounts via localStorage)
   const previousSessionIdRef = useRef<string | null>(null)
+  
+  // Helper to get/set drafts from localStorage
+  const getDraft = useCallback((sessionId: string): string => {
+    if (typeof window === "undefined") return ""
+    try {
+      const drafts = JSON.parse(localStorage.getItem("octo:chatDrafts") || "{}")
+      return drafts[sessionId] || ""
+    } catch {
+      return ""
+    }
+  }, [])
+  
+  const setDraft = useCallback((sessionId: string, text: string) => {
+    if (typeof window === "undefined") return
+    try {
+      const drafts = JSON.parse(localStorage.getItem("octo:chatDrafts") || "{}")
+      if (text.trim()) {
+        drafts[sessionId] = text
+      } else {
+        delete drafts[sessionId]
+      }
+      localStorage.setItem("octo:chatDrafts", JSON.stringify(drafts))
+    } catch {
+      // Ignore localStorage errors
+    }
+  }, [])
   
   // Save draft when switching away, restore when switching to new session
   useEffect(() => {
@@ -187,18 +214,29 @@ export function SessionsApp() {
     const currId = selectedChatSessionId
     
     // Save current draft to previous session (if any)
-    if (prevId && prevId !== currId && messageInput.trim()) {
-      draftCacheRef.current.set(prevId, messageInput)
+    if (prevId && prevId !== currId) {
+      setDraft(prevId, messageInput)
     }
     
     // Restore draft for current session (or clear if none)
     if (currId && currId !== prevId) {
-      const savedDraft = draftCacheRef.current.get(currId) || ""
+      const savedDraft = getDraft(currId)
       setMessageInput(savedDraft)
     }
     
     previousSessionIdRef.current = currId
-  }, [selectedChatSessionId]) // intentionally not including messageInput to avoid loops
+  }, [selectedChatSessionId, getDraft, setDraft]) // intentionally not including messageInput to avoid loops
+  
+  // Also save draft on unmount or when messageInput changes (debounced via effect cleanup)
+  useEffect(() => {
+    if (!selectedChatSessionId) return
+    // Save on unmount
+    return () => {
+      if (selectedChatSessionId && messageInput.trim()) {
+        setDraft(selectedChatSessionId, messageInput)
+      }
+    }
+  }, [selectedChatSessionId, messageInput, setDraft])
   const [isLoading, setIsLoading] = useState(true)
   const [showTimeoutError, setShowTimeoutError] = useState(false)
   const [activeView, setActiveView] = useState<ActiveView>("chat")
@@ -209,7 +247,7 @@ export function SessionsApp() {
   const messagesContainerRef = useRef<HTMLDivElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const chatInputRef = useRef<HTMLInputElement>(null)
+  const chatInputRef = useRef<HTMLTextAreaElement>(null)
   const chatContainerRef = useRef<HTMLDivElement>(null)
   
   // File upload state
@@ -423,15 +461,49 @@ export function SessionsApp() {
   )
   const t = copy[locale]
 
+  // Determine if we're viewing a history-only session (no running opencode)
+  const isHistoryOnlySession = useMemo(() => {
+    // If we have a live opencode session with this ID, it's not history-only
+    if (selectedChatSession && selectedChatSession.id === selectedChatSessionId) {
+      return false
+    }
+    // If we have this session in disk history but no live session, it's history-only
+    if (selectedChatFromHistory && selectedChatFromHistory.id === selectedChatSessionId) {
+      return true
+    }
+    return false
+  }, [selectedChatSession, selectedChatFromHistory, selectedChatSessionId])
+
   const loadMessages = useCallback(async () => {
-    if (!opencodeBaseUrl || !selectedChatSessionId) return
+    if (!selectedChatSessionId) return
+    
     try {
+      // If this is a history-only session (no running opencode), load from disk
+      if (isHistoryOnlySession || !opencodeBaseUrl) {
+        const historyMessages = await getChatMessages(selectedChatSessionId)
+        const converted = convertChatMessagesToOpenCode(historyMessages)
+        setMessages(converted)
+        return
+      }
+      
+      // Otherwise, load from live opencode instance
       const data = await fetchMessages(opencodeBaseUrl, selectedChatSessionId)
       setMessages(data)
     } catch (err) {
+      // If live fetch fails, try loading from history as fallback
+      if (opencodeBaseUrl) {
+        try {
+          const historyMessages = await getChatMessages(selectedChatSessionId)
+          const converted = convertChatMessagesToOpenCode(historyMessages)
+          setMessages(converted)
+          return
+        } catch {
+          // Fallback also failed, show original error
+        }
+      }
       setStatus((err as Error).message)
     }
-  }, [opencodeBaseUrl, selectedChatSessionId])
+  }, [opencodeBaseUrl, selectedChatSessionId, isHistoryOnlySession])
 
   const [eventsTransportMode, setEventsTransportMode] = useState<"sse" | "polling">("sse")
   const messageRefreshStateRef = useRef<{
@@ -686,7 +758,7 @@ export function SessionsApp() {
   }, [messages])
 
   const handleSend = async () => {
-    if (!opencodeBaseUrl || !selectedChatSessionId) return
+    if (!selectedChatSessionId) return
     if (!messageInput.trim() && pendingUploads.length === 0) return
     
     // Build message text with uploaded file paths
@@ -715,9 +787,13 @@ export function SessionsApp() {
     
     setMessages((prev) => [...prev, optimisticMessage])
     setMessageInput("")
+    // Reset textarea height
+    if (chatInputRef.current) {
+      chatInputRef.current.style.height = "auto"
+    }
     // Clear draft cache for this session since message was sent
     if (selectedChatSessionId) {
-      draftCacheRef.current.delete(selectedChatSessionId)
+      setDraft(selectedChatSessionId, "")
     }
     setPendingUploads([])
     setChatState("sending")
@@ -727,17 +803,35 @@ export function SessionsApp() {
     setTimeout(() => scrollToBottom(), 50)
     
     try {
+      // If we don't have an opencode URL (history-only session), start opencode first
+      let effectiveBaseUrl = opencodeBaseUrl
+      if (!effectiveBaseUrl || isHistoryOnlySession) {
+        // Get workspace path from history session
+        const workspacePath = selectedChatFromHistory?.workspace_path
+        if (!workspacePath) {
+          throw new Error("Cannot resume session: no workspace path found")
+        }
+        
+        // Start opencode for this workspace
+        setStatus(locale === "de" ? "Starte OpenCode..." : "Starting OpenCode...")
+        const url = await ensureOpencodeRunning(workspacePath)
+        if (!url) {
+          throw new Error("Failed to start OpenCode for this workspace")
+        }
+        effectiveBaseUrl = url
+      }
+      
       if (isShellCommand && shellCommand) {
         // Run shell command via opencode shell endpoint using "build" agent
         const agentId = defaultAgent || "build"
         console.log("Running shell command with agent:", agentId, "command:", shellCommand)
-        await runShellCommandAsync(opencodeBaseUrl, selectedChatSessionId, shellCommand, agentId)
+        await runShellCommandAsync(effectiveBaseUrl, selectedChatSessionId, shellCommand, agentId)
       } else {
         // Use async send - the response will come via SSE events
-        await sendMessageAsync(opencodeBaseUrl, selectedChatSessionId, messageText)
+        await sendMessageAsync(effectiveBaseUrl, selectedChatSessionId, messageText)
       }
       // Invalidate cache and refresh messages to get the real message IDs
-      invalidateMessageCache(opencodeBaseUrl, selectedChatSessionId)
+      invalidateMessageCache(effectiveBaseUrl, selectedChatSessionId)
       loadMessages()
     } catch (err) {
       setStatus((err as Error).message)
@@ -922,58 +1016,109 @@ export function SessionsApp() {
         onChange={(e) => handleFileUpload(e.target.files)}
       />
 
-      <div className="chat-input-container flex items-center gap-2 bg-muted/30 border border-border px-2 py-1">
-        <button
-          onClick={() => fileInputRef.current?.click()}
-          disabled={isUploading || !selectedWorkspaceSessionId}
-          className="flex-shrink-0 p-1.5 text-muted-foreground hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-          title={locale === "de" ? "Datei hochladen" : "Upload file"}
-        >
-          {isUploading ? (
-            <Loader2 className="w-4 h-4 animate-spin" />
-          ) : (
-            <Paperclip className="w-4 h-4" />
-          )}
-        </button>
-        <input
-          ref={chatInputRef}
-          type="text"
-          placeholder={t.inputPlaceholder}
-          value={messageInput}
-          onChange={(e) => setMessageInput(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault()
-              handleSend()
-            }
-          }}
-          onFocus={(e) => {
-            // Scroll input into view on mobile when keyboard opens
-            setTimeout(() => {
-              e.target.scrollIntoView({ behavior: "smooth", block: "nearest" })
-            }, 300)
-          }}
-          className="flex-1 bg-transparent border-none outline-none text-foreground placeholder:text-muted-foreground text-sm"
-        />
-        {chatState === "sending" ? (
-          <Button
-            onClick={handleStop}
-            className="bg-destructive hover:bg-destructive/90 text-destructive-foreground"
-            title={locale === "de" ? "Agent stoppen (2x Esc)" : "Stop agent (2x Esc)"}
-          >
-            <StopCircle className="w-4 h-4 sm:mr-2" />
-            <span className="hidden sm:inline">{locale === "de" ? "Stopp" : "Stop"}</span>
-          </Button>
-        ) : (
-          <Button
-            onClick={handleSend}
-            disabled={!messageInput.trim() && pendingUploads.length === 0}
-            className="bg-primary hover:bg-primary/90 text-primary-foreground"
-          >
-            <Send className="w-4 h-4 sm:mr-2" />
-            <span className="hidden sm:inline">{t.send}</span>
-          </Button>
+      {/* Chat input - works for both live and history sessions */}
+      <div className="chat-input-container flex flex-col gap-1 bg-muted/30 border border-border px-2 py-1">
+        {/* Show hint for history sessions that will be resumed */}
+        {isHistoryOnlySession && (
+          <div className="flex items-center gap-1.5 px-1 pt-1 text-xs text-muted-foreground">
+            <Clock className="w-3 h-3" />
+            <span>
+              {locale === "de" 
+                ? "Sende eine Nachricht um diese Sitzung fortzusetzen" 
+                : "Send a message to resume this session"}
+            </span>
+          </div>
         )}
+        <div className="flex items-end gap-2">
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={isUploading}
+            className="flex-shrink-0 p-1.5 mb-1 text-muted-foreground hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            title={locale === "de" ? "Datei hochladen" : "Upload file"}
+          >
+            {isUploading ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <Paperclip className="w-4 h-4" />
+            )}
+          </button>
+          <textarea
+            ref={chatInputRef}
+            placeholder={isHistoryOnlySession 
+              ? (locale === "de" ? "Nachricht zum Fortsetzen..." : "Message to resume...") 
+              : t.inputPlaceholder}
+            value={messageInput}
+            onChange={(e) => {
+              setMessageInput(e.target.value)
+              // Auto-resize textarea
+              const textarea = e.target
+              textarea.style.height = "auto"
+              textarea.style.height = `${Math.min(textarea.scrollHeight, 200)}px`
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault()
+                handleSend()
+                // Reset textarea height after sending
+                if (chatInputRef.current) {
+                  chatInputRef.current.style.height = "auto"
+                }
+              }
+            }}
+            onPaste={(e) => {
+              // Handle pasted files (images, etc.)
+              const items = e.clipboardData?.items
+              if (!items) return
+              
+              const files: File[] = []
+              for (const item of Array.from(items)) {
+                if (item.kind === "file") {
+                  const file = item.getAsFile()
+                  if (file) {
+                    files.push(file)
+                  }
+                }
+              }
+              
+              if (files.length > 0) {
+                // Prevent default paste behavior for files
+                e.preventDefault()
+                // Create a FileList-like object and upload
+                const dataTransfer = new DataTransfer()
+                files.forEach(f => dataTransfer.items.add(f))
+                handleFileUpload(dataTransfer.files)
+              }
+              // If no files, let the default paste behavior handle text
+            }}
+            onFocus={(e) => {
+              // Scroll input into view on mobile when keyboard opens
+              setTimeout(() => {
+                e.target.scrollIntoView({ behavior: "smooth", block: "nearest" })
+              }, 300)
+            }}
+            rows={1}
+            className="flex-1 bg-transparent border-none outline-none text-foreground placeholder:text-muted-foreground text-sm resize-none min-h-[36px] max-h-[200px] py-2 leading-tight overflow-y-auto"
+          />
+          {chatState === "sending" ? (
+            <Button
+              onClick={handleStop}
+              className="bg-destructive hover:bg-destructive/90 text-destructive-foreground mb-1"
+              title={locale === "de" ? "Agent stoppen (2x Esc)" : "Stop agent (2x Esc)"}
+            >
+              <StopCircle className="w-4 h-4 sm:mr-2" />
+              <span className="hidden sm:inline">{locale === "de" ? "Stopp" : "Stop"}</span>
+            </Button>
+          ) : (
+            <Button
+              onClick={handleSend}
+              disabled={!messageInput.trim() && pendingUploads.length === 0}
+              className="bg-primary hover:bg-primary/90 text-primary-foreground mb-1"
+            >
+              <Send className="w-4 h-4 sm:mr-2" />
+              <span className="hidden sm:inline">{t.send}</span>
+            </Button>
+          )}
+        </div>
       </div>
     </div>
   )

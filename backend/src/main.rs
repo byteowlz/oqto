@@ -20,6 +20,7 @@ mod auth;
 mod container;
 mod db;
 mod eavs;
+mod history;
 mod invite;
 mod local;
 mod observability;
@@ -1148,6 +1149,14 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     if let Err(e) = session_service.startup_cleanup().await {
         warn!("Startup cleanup failed (continuing anyway): {:?}", e);
     }
+
+    // Start idle session cleanup background task
+    // Check every 5 minutes, stop sessions idle for 30 minutes
+    let session_service_arc = std::sync::Arc::new(session_service.clone());
+    let _idle_cleanup_handle = session_service_arc.start_idle_session_cleanup_task(
+        5 * 60,  // Check every 5 minutes
+        session::SessionService::DEFAULT_IDLE_TIMEOUT_MINUTES,
+    );
 
     // Initialize agent service for managing opencode instances
     // In local mode, we use a dummy container runtime (agent features limited)

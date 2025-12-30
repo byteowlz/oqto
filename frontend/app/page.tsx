@@ -56,8 +56,9 @@ import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { CommandPalette, useCommandPalette } from "@/components/command-palette";
 import { AgentPicker } from "@/components/agent-picker";
+import { fetchAgents, type OpenCodeAgent } from "@/lib/opencode-client";
 import { generateReadableId, formatSessionDate } from "@/lib/session-utils";
-import { type Persona } from "@/lib/control-plane-client";
+import { listWorkspaceDirectories, type Persona, type ChatSession } from "@/lib/control-plane-client";
 import "@/apps";
 
 function AppShell() {
@@ -69,11 +70,14 @@ function AppShell() {
     locale,
     setLocale,
     resolveText,
+    chatHistory,
     opencodeSessions,
     selectedChatSessionId,
     setSelectedChatSessionId,
     selectedChatSession,
+    selectedChatFromHistory,
     selectedWorkspaceSession,
+    opencodeBaseUrl,
     createNewChat,
     createNewChatWithPersona,
     deleteChatSession,
@@ -130,21 +134,111 @@ function AppShell() {
     localStorage.setItem("octo:pinnedSessions", JSON.stringify([...pinnedSessions]));
   }, [pinnedSessions]);
 
+  const [selectedProjectKey, setSelectedProjectKey] = useState<string | null>(null);
+  const [availableAgents, setAvailableAgents] = useState<OpenCodeAgent[]>([]);
+  const [projectDefaultAgents, setProjectDefaultAgents] = useState<Record<string, string>>(() => {
+    if (typeof window === "undefined") return {};
+    try {
+      const stored = localStorage.getItem("octo:projectDefaultAgents");
+      return stored ? JSON.parse(stored) : {};
+    } catch {
+      return {};
+    }
+  });
+  const [workspaceDirectories, setWorkspaceDirectories] = useState<{ name: string; path: string }[]>([]);
+  const [directoryPickerOpen, setDirectoryPickerOpen] = useState(false);
+  const [directoryPickerPath, setDirectoryPickerPath] = useState(".");
+  const [directoryPickerEntries, setDirectoryPickerEntries] = useState<{ name: string; path: string }[]>([]);
+  const [directoryPickerLoading, setDirectoryPickerLoading] = useState(false);
+  const [pendingPersona, setPendingPersona] = useState<Persona | null>(null);
+
+  const handleProjectDefaultAgentChange = useCallback((projectKey: string, agentId: string) => {
+    setProjectDefaultAgents((prev) => {
+      if (!agentId) {
+        const next = { ...prev };
+        delete next[projectKey];
+        return next;
+      }
+      return { ...prev, [projectKey]: agentId };
+    });
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    localStorage.setItem("octo:projectDefaultAgents", JSON.stringify(projectDefaultAgents));
+  }, [projectDefaultAgents]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const handleFilter = (event: Event) => {
+      const customEvent = event as CustomEvent<string>;
+      if (typeof customEvent.detail === "string") {
+        setSelectedProjectKey(customEvent.detail);
+        setActiveAppId("sessions");
+      }
+    };
+    const handleClear = () => {
+      setSelectedProjectKey(null);
+    };
+    const handleDefaultAgent = (event: Event) => {
+      const customEvent = event as CustomEvent<{ projectKey: string; agentId: string }>;
+      if (!customEvent.detail) return;
+      handleProjectDefaultAgentChange(customEvent.detail.projectKey, customEvent.detail.agentId);
+    };
+
+    window.addEventListener("octo:project-filter", handleFilter as EventListener);
+    window.addEventListener("octo:project-filter-clear", handleClear as EventListener);
+    window.addEventListener("octo:project-default-agent", handleDefaultAgent as EventListener);
+    return () => {
+      window.removeEventListener("octo:project-filter", handleFilter as EventListener);
+      window.removeEventListener("octo:project-filter-clear", handleClear as EventListener);
+      window.removeEventListener("octo:project-default-agent", handleDefaultAgent as EventListener);
+    };
+  }, [handleProjectDefaultAgentChange, setActiveAppId]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    listWorkspaceDirectories(".")
+      .then((entries) => {
+        const dirs = entries.map((entry) => ({ name: entry.name, path: entry.path }));
+        setWorkspaceDirectories(dirs);
+      })
+      .catch((err) => {
+        console.error("Failed to load workspace directories:", err);
+        setWorkspaceDirectories([]);
+      });
+  }, []);
+
+  useEffect(() => {
+    if (!directoryPickerOpen || typeof window === "undefined") return;
+    setDirectoryPickerLoading(true);
+    listWorkspaceDirectories(directoryPickerPath)
+      .then((entries) => {
+        const dirs = entries.map((entry) => ({ name: entry.name, path: entry.path }));
+        setDirectoryPickerEntries(dirs);
+      })
+      .catch((err) => {
+        console.error("Failed to load directory picker entries:", err);
+        setDirectoryPickerEntries([]);
+      })
+      .finally(() => setDirectoryPickerLoading(false));
+  }, [directoryPickerOpen, directoryPickerPath]);
+
   // Session search
   const [sessionSearch, setSessionSearch] = useState("");
   const deferredSearch = useDeferredValue(sessionSearch);
 
-  // Build hierarchical session structure
+  // Build hierarchical session structure from chatHistory (disk-based, no opencode needed)
   const sessionHierarchy = useMemo(() => {
     // Separate parent and child sessions
-    const parentSessions = opencodeSessions.filter((s) => !s.parentID);
-    const childSessionsByParent = new Map<string, typeof opencodeSessions>();
+    const parentSessions = chatHistory.filter((s) => !s.parent_id);
+    const childSessionsByParent = new Map<string, ChatSession[]>();
     
-    for (const session of opencodeSessions) {
-      if (session.parentID) {
-        const children = childSessionsByParent.get(session.parentID) || [];
+    for (const session of chatHistory) {
+      if (session.parent_id) {
+        const children = childSessionsByParent.get(session.parent_id) || [];
         children.push(session);
-        childSessionsByParent.set(session.parentID, children);
+        childSessionsByParent.set(session.parent_id, children);
       }
     }
     
@@ -152,17 +246,76 @@ function AppShell() {
     for (const [parentId, children] of childSessionsByParent) {
       childSessionsByParent.set(
         parentId,
-        children.sort((a, b) => b.time.updated - a.time.updated)
+        children.sort((a, b) => b.updated_at - a.updated_at)
       );
     }
     
     return { parentSessions, childSessionsByParent };
-  }, [opencodeSessions]);
+  }, [chatHistory]);
+
+  // Helper to get project key from ChatSession (disk-based) or OpenCodeSession (live)
+  const projectKeyForSession = useCallback(
+    (session: ChatSession | { directory?: string | null; projectID?: string | null }) => {
+      // ChatSession type uses workspace_path/project_name
+      if ('workspace_path' in session && session.workspace_path) {
+        const normalized = session.workspace_path.replace(/\\/g, "/").replace(/\/+$/, "");
+        const parts = normalized.split("/").filter(Boolean);
+        return parts[parts.length - 1] ?? session.workspace_path;
+      }
+      // OpenCodeSession type uses directory/projectID
+      const directory = ('directory' in session ? session.directory : null)?.trim();
+      if (directory) {
+        const normalized = directory.replace(/\\/g, "/").replace(/\/+$/, "");
+        const parts = normalized.split("/").filter(Boolean);
+        return parts[parts.length - 1] ?? directory;
+      }
+      const projectId = ('projectID' in session ? session.projectID : null)?.trim();
+      if (projectId) return projectId;
+      return "workspace";
+    },
+    [],
+  );
+
+  const projectLabelForSession = useCallback(
+    (session: ChatSession | { directory?: string | null; projectID?: string | null }) => {
+      // ChatSession type uses project_name directly
+      if ('project_name' in session && session.project_name) {
+        return session.project_name;
+      }
+      // OpenCodeSession type uses directory/projectID
+      const directory = ('directory' in session ? session.directory : null)?.trim();
+      if (directory) {
+        const normalized = directory.replace(/\\/g, "/");
+        const parts = normalized.split("/").filter(Boolean);
+        return parts[parts.length - 1] ?? directory;
+      }
+      const projectId = ('projectID' in session ? session.projectID : null)?.trim();
+      if (projectId) return projectId;
+      return locale === "de" ? "Arbeitsbereich" : "Workspace";
+    },
+    [locale],
+  );
+
+  useEffect(() => {
+    if (!opencodeBaseUrl) return;
+    fetchAgents(opencodeBaseUrl)
+      .then((agents) => {
+        setAvailableAgents(agents);
+      })
+      .catch((err) => {
+        console.error("Failed to fetch agents:", err);
+        setAvailableAgents([]);
+      });
+  }, [opencodeBaseUrl]);
 
   // Filter and sort sessions (pinned first, then by recency)
   const filteredSessions = useMemo(() => {
     const searchLower = deferredSearch.toLowerCase().trim();
     let sessions = sessionHierarchy.parentSessions;
+
+    if (selectedProjectKey) {
+      sessions = sessions.filter((session) => projectKeyForSession(session) === selectedProjectKey);
+    }
     
     if (searchLower) {
       sessions = sessions.filter((session) => {
@@ -171,24 +324,88 @@ function AppShell() {
         // Search in readable ID (adjective-noun)
         const readableId = generateReadableId(session.id);
         if (readableId.toLowerCase().includes(searchLower)) return true;
-        // Search in date
-        if (session.time?.updated) {
-          const dateStr = formatSessionDate(session.time.updated);
+        // Search in date (ChatSession uses updated_at)
+        if (session.updated_at) {
+          const dateStr = formatSessionDate(session.updated_at);
           if (dateStr.toLowerCase().includes(searchLower)) return true;
         }
         return false;
       });
     }
     
-    // Sort: pinned first, then by updated time
+    // Sort: pinned first, then by updated time (ChatSession uses updated_at)
     return [...sessions].sort((a, b) => {
       const aPinned = pinnedSessions.has(a.id);
       const bPinned = pinnedSessions.has(b.id);
       if (aPinned && !bPinned) return -1;
       if (!aPinned && bPinned) return 1;
-      return b.time.updated - a.time.updated;
+      return b.updated_at - a.updated_at;
     });
-  }, [sessionHierarchy.parentSessions, deferredSearch, pinnedSessions]);
+  }, [sessionHierarchy.parentSessions, deferredSearch, pinnedSessions, projectKeyForSession, selectedProjectKey]);
+
+  const projectSummaries = useMemo(() => {
+    const entries = new Map<
+      string,
+      { key: string; name: string; directory?: string; sessionCount: number; lastActive: number }
+    >();
+
+    for (const directory of workspaceDirectories) {
+      entries.set(directory.path, {
+        key: directory.path,
+        name: directory.name,
+        directory: directory.path,
+        sessionCount: 0,
+        lastActive: 0,
+      });
+    }
+
+    for (const session of sessionHierarchy.parentSessions) {
+      const key = projectKeyForSession(session);
+      const name = projectLabelForSession(session);
+      // ChatSession uses updated_at instead of time.updated
+      const lastActive = session.updated_at ?? 0;
+      const existing = entries.get(key);
+      if (existing) {
+        existing.sessionCount += 1;
+        if (lastActive > existing.lastActive) existing.lastActive = lastActive;
+      } else {
+        entries.set(key, {
+          key,
+          name,
+          // ChatSession uses workspace_path instead of directory
+          directory: session.workspace_path ?? undefined,
+          sessionCount: 1,
+          lastActive,
+        });
+      }
+    }
+
+    if (!entries.has("workspace")) {
+      entries.set("workspace", {
+        key: "workspace",
+        name: locale === "de" ? "Arbeitsbereich" : "Workspace",
+        sessionCount: 0,
+        lastActive: 0,
+      });
+    }
+
+    return [...entries.values()].sort((a, b) => b.lastActive - a.lastActive);
+  }, [projectKeyForSession, projectLabelForSession, sessionHierarchy.parentSessions, workspaceDirectories, locale]);
+
+  const selectedProjectLabel = useMemo(() => {
+    if (!selectedProjectKey) return null;
+    return projectSummaries.find((project) => project.key === selectedProjectKey)?.name ?? selectedProjectKey;
+  }, [projectSummaries, selectedProjectKey]);
+
+  const directoryPickerParent = useMemo(() => {
+    const normalized = directoryPickerPath.replace(/\\/g, "/");
+    if (normalized === "." || normalized === "") return null;
+    const parts = normalized.split("/").filter(Boolean);
+    if (parts.length <= 1) return ".";
+    return parts.slice(0, -1).join("/");
+  }, [directoryPickerPath]);
+
+  const recentProjects = useMemo(() => projectSummaries.slice(0, 6), [projectSummaries]);
 
   const toggleSessionExpanded = useCallback((sessionId: string) => {
     setExpandedSessions((prev) => {
@@ -200,6 +417,53 @@ function AppShell() {
       }
       return next;
     });
+  }, []);
+
+  const handleProjectSelect = useCallback(
+    (projectKey: string) => {
+      setSelectedProjectKey(projectKey);
+      setActiveAppId("sessions");
+      setMobileMenuOpen(false);
+    },
+    [setActiveAppId],
+  );
+
+  const handleProjectClear = useCallback(() => {
+    setSelectedProjectKey(null);
+  }, []);
+
+  const resolveWorkspacePath = useCallback(
+    (path: string) => {
+      const basePath = selectedWorkspaceSession?.workspace_path;
+      if (!basePath) return path;
+      if (path.startsWith("/")) return path;
+      if (path === "." || path.trim() === "") return basePath;
+      const joined = `${basePath}/${path}`;
+      const normalized = joined.split("/").filter(Boolean).join("/");
+      return basePath.startsWith("/") ? `/${normalized}` : normalized;
+    },
+    [selectedWorkspaceSession?.workspace_path],
+  );
+
+  const handleDirectoryConfirm = useCallback(
+    async (path: string) => {
+      if (!pendingPersona) return;
+      // The path from directory picker is already relative to workspace root
+      // Don't resolve it relative to current session - pass it directly
+      // The backend will expand it relative to the workspace root
+      setDirectoryPickerOpen(false);
+      setPendingPersona(null);
+      setActiveAppId("sessions");
+      await createNewChatWithPersona(pendingPersona, path);
+    },
+    [createNewChatWithPersona, pendingPersona, setActiveAppId],
+  );
+
+  const handleDirectoryPickerOpenChange = useCallback((open: boolean) => {
+    setDirectoryPickerOpen(open);
+    if (!open) {
+      setPendingPersona(null);
+    }
   }, []);
 
   // Handle session click - select session and switch to chats view
@@ -223,11 +487,12 @@ function AppShell() {
   }, []);
 
   const handleRenameSession = useCallback((sessionId: string) => {
-    const session = opencodeSessions.find((s) => s.id === sessionId);
+    // Use chatHistory (disk-based) to find session title
+    const session = chatHistory.find((s) => s.id === sessionId);
     setTargetSessionId(sessionId);
     setRenameValue(session?.title || "");
     setRenameDialogOpen(true);
-  }, [opencodeSessions]);
+  }, [chatHistory]);
 
   const handleConfirmRename = useCallback(async () => {
     if (targetSessionId && renameValue.trim()) {
@@ -256,6 +521,12 @@ function AppShell() {
   }, []);
 
   const handleAgentSelect = useCallback(async (persona: Persona) => {
+    if (persona.workspace_mode === "ask") {
+      setPendingPersona(persona);
+      setDirectoryPickerPath(".");
+      setDirectoryPickerOpen(true);
+      return;
+    }
     setActiveAppId("sessions");
     await createNewChatWithPersona(persona);
   }, [createNewChatWithPersona, setActiveAppId]);
@@ -324,6 +595,18 @@ function AppShell() {
     }
   };
 
+  const sidebarTabs = useMemo(() => {
+    const ordered = ["sessions", "projects", "agents"];
+    return ordered.map((id) => {
+      const app = apps.find((entry) => entry.id === id);
+      return {
+        id,
+        label: app ? resolveText(app.label) : id,
+        icon: navIconFor(id),
+      };
+    });
+  }, [apps, resolveText]);
+
   const handleMobileNavClick = (appId: string) => {
     setActiveAppId(appId);
     setMobileMenuOpen(false);
@@ -345,16 +628,16 @@ function AppShell() {
         >
           <Menu className="w-5 h-5" />
         </Button>
-        {/* Session info in center */}
-        {selectedChatSession ? (
+        {/* Session info in center - uses chatHistory (disk-based, no opencode needed) */}
+        {selectedChatFromHistory ? (
           <div className="flex-1 min-w-0 px-3 text-center">
             <div className="text-sm font-medium text-foreground truncate">
-              {selectedChatSession.title?.replace(/\s*-\s*\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z?$/, "").trim() || "Chat"}
+              {selectedChatFromHistory.title?.replace(/\s*-\s*\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z?$/, "").trim() || "Chat"}
             </div>
             <div className="text-[10px] text-muted-foreground truncate">
-              {generateReadableId(selectedChatSession.id)}
-              {selectedChatSession.time?.updated && (
-                <span className="opacity-60"> | {formatSessionDate(selectedChatSession.time.updated)}</span>
+              {generateReadableId(selectedChatFromHistory.id)}
+              {selectedChatFromHistory.updated_at && (
+                <span className="opacity-60"> | {formatSessionDate(selectedChatFromHistory.updated_at)}</span>
               )}
             </div>
           </div>
@@ -399,15 +682,15 @@ function AppShell() {
               priority
               unoptimized
             />
-            {/* Nav icons in center */}
+            {/* Nav tabs in center */}
             <div className="flex-1 flex items-center justify-center gap-1 px-2">
-              {apps.filter((app) => app.id !== "admin").map((app) => {
-                const isActive = activeAppId === app.id;
-                const Icon = navIconFor(app.id);
+              {sidebarTabs.map((tab) => {
+                const isActive = activeAppId === tab.id;
+                const Icon = tab.icon;
                 return (
                   <button
-                    key={app.id}
-                    onClick={() => handleMobileNavClick(app.id)}
+                    key={tab.id}
+                    onClick={() => handleMobileNavClick(tab.id)}
                     className="px-3 py-1.5 transition flex items-center gap-1.5"
                     style={{
                       backgroundColor: isActive ? navActiveBg : "transparent",
@@ -418,7 +701,7 @@ function AppShell() {
                     }}
                   >
                     <Icon className="w-4 h-4 shrink-0" />
-                    <span className="text-[10px] font-medium">{resolveText(app.label)}</span>
+                    <span className="text-[10px] font-medium">{tab.label}</span>
                   </button>
                 );
               })}
@@ -435,16 +718,26 @@ function AppShell() {
           </div>
 
           <nav className="flex-1 w-full px-3 pt-3 overflow-y-auto">
-            {/* Session history in mobile menu */}
-            {opencodeSessions.length > 0 && (
+            {activeAppId === "sessions" && chatHistory.length > 0 && (
               <div className="flex-1 min-h-0 flex flex-col">
-                <div className="flex items-center gap-2 px-2 py-1.5">
-                  <span className="text-xs uppercase tracking-wide text-muted-foreground">
-                    {locale === "de" ? "Verlauf" : "History"}
-                  </span>
-                  <span className="text-xs text-muted-foreground/50">
-                    ({filteredSessions.length}{deferredSearch ? `/${opencodeSessions.length}` : ""})
-                  </span>
+                <div className="flex items-center justify-between gap-2 px-2 py-1.5">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs uppercase tracking-wide text-muted-foreground">
+                      {locale === "de" ? "Verlauf" : "History"}
+                    </span>
+                    <span className="text-xs text-muted-foreground/50">
+                      ({filteredSessions.length}{deferredSearch ? `/${chatHistory.length}` : ""})
+                    </span>
+                  </div>
+                  {selectedProjectLabel && (
+                    <button
+                      onClick={handleProjectClear}
+                      className="flex items-center gap-1 text-[10px] text-muted-foreground/70 hover:text-foreground"
+                    >
+                      <X className="w-3 h-3" />
+                      {selectedProjectLabel}
+                    </button>
+                  )}
                 </div>
                 {/* Mobile search input */}
                 <div className="relative px-2 mb-2">
@@ -477,9 +770,11 @@ function AppShell() {
                     const hasChildren = children.length > 0;
                     const isExpanded = expandedSessions.has(session.id);
                     const readableId = generateReadableId(session.id);
-                    const formattedDate = session.time?.updated
-                      ? formatSessionDate(session.time.updated)
+                    // ChatSession uses updated_at instead of time.updated
+                    const formattedDate = session.updated_at
+                      ? formatSessionDate(session.updated_at)
                       : null;
+                    const projectLabel = projectLabelForSession(session);
                     return (
                       <div key={session.id}>
                         <ContextMenu>
@@ -532,9 +827,10 @@ function AppShell() {
                                     </span>
                                   )}
                                 </div>
-                                {formattedDate && (
+                                {(formattedDate || projectLabel) && (
                                   <div className="text-xs text-muted-foreground/50 mt-0.5">
-                                    {formattedDate}
+                                    {projectLabel}
+                                    {formattedDate && <span className="opacity-60"> • {formattedDate}</span>}
                                   </div>
                                 )}
                               </div>
@@ -579,8 +875,9 @@ function AppShell() {
                           <div className="ml-6 border-l border-muted pl-2 space-y-1 mt-1">
                             {children.map((child) => {
                               const isChildSelected = selectedChatSessionId === child.id;
-                              const childFormattedDate = child.time?.updated
-                                ? formatSessionDate(child.time.updated)
+                              // ChatSession uses updated_at instead of time.updated
+                              const childFormattedDate = child.updated_at
+                                ? formatSessionDate(child.updated_at)
                                 : null;
                               return (
                                 <button
@@ -612,6 +909,113 @@ function AppShell() {
                       </div>
                     );
                   })}
+                </div>
+              </div>
+            )}
+
+            {activeAppId === "projects" && (
+              <div className="flex-1 min-h-0 flex flex-col">
+                <div className="flex items-center justify-between gap-2 px-2 py-1.5">
+                  <span className="text-xs uppercase tracking-wide text-muted-foreground">
+                    {locale === "de" ? "Projekte" : "Projects"}
+                  </span>
+                  <span className="text-xs text-muted-foreground/50">({projectSummaries.length})</span>
+                </div>
+                <div className="flex-1 overflow-y-auto space-y-2 px-1">
+                  {projectSummaries.length === 0 ? (
+                    <div className="text-sm text-muted-foreground/60 text-center py-6">
+                      {locale === "de" ? "Noch keine Projekte" : "No projects yet"}
+                    </div>
+                  ) : (
+                    projectSummaries.map((project) => {
+                      const lastActiveLabel = project.lastActive
+                        ? formatSessionDate(project.lastActive)
+                        : locale === "de"
+                          ? "Nie"
+                          : "Never";
+                      const defaultAgent = projectDefaultAgents[project.key];
+                      return (
+                        <div
+                          key={project.key}
+                          className={cn(
+                            "border rounded-md overflow-hidden",
+                            selectedProjectKey === project.key ? "border-primary" : "border-sidebar-border",
+                          )}
+                        >
+                          <button
+                            onClick={() => handleProjectSelect(project.key)}
+                            className="w-full px-3 py-2 text-left hover:bg-sidebar-accent transition-colors"
+                          >
+                            <div className="flex items-center gap-2">
+                              <FolderKanban className="w-4 h-4 text-primary/80" />
+                              <span className="text-sm font-medium truncate">{project.name}</span>
+                            </div>
+                            <div className="text-xs text-muted-foreground/60 mt-1">
+                              {project.sessionCount} {locale === "de" ? "Chats" : "chats"} · {lastActiveLabel}
+                            </div>
+                            <div className="text-xs text-muted-foreground/60 mt-0.5">
+                              {locale === "de" ? "Standard-Agent" : "Default agent"}: {defaultAgent || "-"}
+                            </div>
+                          </button>
+                          <div className="px-3 pb-2">
+                            <select
+                              value={defaultAgent || ""}
+                              onChange={(e) => handleProjectDefaultAgentChange(project.key, e.target.value)}
+                              className="w-full text-xs bg-sidebar-accent/50 border border-sidebar-border rounded px-2 py-1"
+                            >
+                              <option value="">
+                                {locale === "de" ? "Standard-Agent setzen" : "Set default agent"}
+                              </option>
+                              {availableAgents.map((agent) => (
+                                <option key={agent.id} value={agent.id}>
+                                  {agent.name || agent.id}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            )}
+
+            {activeAppId === "agents" && (
+              <div className="flex-1 min-h-0 flex flex-col">
+                <div className="flex items-center justify-between gap-2 px-2 py-1.5">
+                  <span className="text-xs uppercase tracking-wide text-muted-foreground">
+                    {locale === "de" ? "Agenten" : "Agents"}
+                  </span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setMobileMenuOpen(false)}
+                    className="text-xs"
+                  >
+                    {locale === "de" ? "Erstellen" : "Create"}
+                  </Button>
+                </div>
+                <div className="flex-1 overflow-y-auto space-y-2 px-1">
+                  {availableAgents.length === 0 ? (
+                    <div className="text-sm text-muted-foreground/60 text-center py-6">
+                      {locale === "de" ? "Keine Agenten gefunden" : "No agents found"}
+                    </div>
+                  ) : (
+                    availableAgents.map((agent) => (
+                      <div
+                        key={agent.id}
+                        className="border border-sidebar-border rounded-md px-3 py-2 text-left"
+                      >
+                        <div className="text-sm font-medium">{agent.name || agent.id}</div>
+                        <div className="text-xs text-muted-foreground/60">
+                          {agent.model?.providerID
+                            ? `${agent.model.providerID}/${agent.model.modelID ?? ""}`
+                            : agent.id}
+                        </div>
+                      </div>
+                    ))
+                  )}
                 </div>
               </div>
             )}
@@ -700,77 +1104,81 @@ function AppShell() {
             )}
           </Button>
         </div>
-        <nav
-          className={`w-full space-y-2 ${sidebarCollapsed ? "px-2" : "px-3"} pt-4 pb-3`}
-        >
-          {apps.filter((app) => app.id !== "admin").map((app) => {
-            const isActive = activeAppId === app.id;
-            const Icon = navIconFor(app.id);
-            return (
-              <button
-                key={app.id}
-                onClick={() => setActiveAppId(app.id)}
-                className={`w-full px-3 py-2.5 text-xs font-medium tracking-wide transition-colors flex items-center gap-2.5 ${
-                  sidebarCollapsed ? "justify-center" : ""
-                }`}
-                style={{
-                  backgroundColor: isActive ? navActiveBg : navIdle,
-                  color: isActive ? navActiveText : navText,
-                  border: isActive
-                    ? `1px solid ${navActiveBorder}`
-                    : "1px solid transparent",
-                }}
-                onMouseEnter={(e) => {
-                  if (!isActive) {
-                    e.currentTarget.style.backgroundColor = sidebarHover;
-                    e.currentTarget.style.border = `1px solid ${sidebarHoverBorder}`;
-                  }
-                }}
-                onMouseLeave={(e) => {
-                  if (!isActive) {
-                    e.currentTarget.style.backgroundColor = navIdle;
-                    e.currentTarget.style.border = "1px solid transparent";
-                  }
-                }}
-              >
-                <Icon className="w-4 h-4 shrink-0" />
-                {!sidebarCollapsed && (
-                  <span className="truncate">{resolveText(app.label)}</span>
-                )}
-              </button>
-            );
-          })}
-        </nav>
-
-        {/* New Chat button */}
-        <div className={`w-full ${sidebarCollapsed ? "px-2" : "px-3"} mt-1`}>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleNewChat}
-            className={cn(
-              "w-full text-xs font-medium flex items-center gap-2 transition-colors",
-              "border-primary/50 hover:border-primary hover:bg-primary/10",
-              sidebarCollapsed ? "justify-center px-2" : "justify-start px-3"
-            )}
-          >
-            <Plus className="w-3.5 h-3.5 shrink-0" />
-            {!sidebarCollapsed && (
-              <span>{locale === "de" ? "Neuer Chat" : "New Chat"}</span>
-            )}
-          </Button>
+        <div className={`w-full ${sidebarCollapsed ? "px-2" : "px-3"} pt-4 pb-3`}>
+          <div className={cn("grid gap-1", sidebarCollapsed ? "grid-rows-3" : "grid-cols-3")}>
+            {sidebarTabs.map((tab) => {
+              const isActive = activeAppId === tab.id;
+              const Icon = tab.icon;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveAppId(tab.id)}
+                  className={cn(
+                    "px-2 py-2 text-xs font-medium tracking-wide transition-colors flex items-center gap-2 justify-center",
+                    !sidebarCollapsed && "justify-center"
+                  )}
+                  style={{
+                    backgroundColor: isActive ? navActiveBg : navIdle,
+                    color: isActive ? navActiveText : navText,
+                    border: isActive
+                      ? `1px solid ${navActiveBorder}`
+                      : "1px solid transparent",
+                  }}
+                >
+                  <Icon className="w-4 h-4 shrink-0" />
+                  {!sidebarCollapsed && (
+                    <span className="text-[10px] font-semibold uppercase tracking-wide">
+                      {tab.label}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
         </div>
 
-        {/* Session history list */}
-        {!sidebarCollapsed && opencodeSessions.length > 0 && (
+        {/* New Chat button */}
+        {activeAppId === "sessions" && (
+          <div className={`w-full ${sidebarCollapsed ? "px-2" : "px-3"} mt-1`}>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleNewChat}
+              className={cn(
+                "w-full text-xs font-medium flex items-center gap-2 transition-colors",
+                "border-primary/50 hover:border-primary hover:bg-primary/10",
+                sidebarCollapsed ? "justify-center px-2" : "justify-start px-3"
+              )}
+            >
+              <Plus className="w-3.5 h-3.5 shrink-0" />
+              {!sidebarCollapsed && (
+                <span>{locale === "de" ? "Neuer Chat" : "New Chat"}</span>
+              )}
+            </Button>
+          </div>
+        )}
+
+        {/* Session history list - uses chatHistory (disk-based, no opencode needed) */}
+        {activeAppId === "sessions" && !sidebarCollapsed && chatHistory.length > 0 && (
           <div className="w-full px-1.5 mt-3 flex-1 min-h-0 flex flex-col">
-            <div className="flex items-center gap-2 py-1.5 px-1 border-t border-sidebar-border">
-              <span className="text-xs uppercase tracking-wide text-muted-foreground">
-                {locale === "de" ? "Verlauf" : "History"}
-              </span>
-              <span className="text-xs text-muted-foreground/50">
-                ({filteredSessions.length}{deferredSearch ? `/${opencodeSessions.length}` : ""})
-              </span>
+            <div className="flex items-center justify-between gap-2 py-1.5 px-1 border-t border-sidebar-border">
+              <div className="flex items-center gap-2">
+                <span className="text-xs uppercase tracking-wide text-muted-foreground">
+                  {locale === "de" ? "Verlauf" : "History"}
+                </span>
+                <span className="text-xs text-muted-foreground/50">
+                  ({filteredSessions.length}{deferredSearch ? `/${chatHistory.length}` : ""})
+                </span>
+              </div>
+              {selectedProjectLabel && (
+                <button
+                  onClick={handleProjectClear}
+                  className="flex items-center gap-1 text-[10px] text-muted-foreground/70 hover:text-foreground"
+                >
+                  <X className="w-3 h-3" />
+                  {selectedProjectLabel}
+                </button>
+              )}
             </div>
             {/* Search input */}
             <div className="relative mb-2 px-0.5">
@@ -803,9 +1211,11 @@ function AppShell() {
                 const hasChildren = children.length > 0;
                 const isExpanded = expandedSessions.has(session.id);
                 const readableId = generateReadableId(session.id);
-                const formattedDate = session.time?.updated 
-                  ? formatSessionDate(session.time.updated)
+                // ChatSession uses updated_at instead of time.updated
+                const formattedDate = session.updated_at 
+                  ? formatSessionDate(session.updated_at)
                   : null;
+                const projectLabel = projectLabelForSession(session);
                 return (
                   <div key={session.id}>
                     <ContextMenu>
@@ -858,9 +1268,10 @@ function AppShell() {
                                 </span>
                               )}
                             </div>
-                            {formattedDate && (
+                            {(formattedDate || projectLabel) && (
                               <div className="text-[10px] text-foreground/50 dark:text-muted-foreground mt-0.5">
-                                {formattedDate}
+                                {projectLabel}
+                                {formattedDate && <span className="opacity-60"> • {formattedDate}</span>}
                               </div>
                             )}
                           </div>
@@ -914,8 +1325,9 @@ function AppShell() {
                         {children.map((child) => {
                           const isChildSelected = selectedChatSessionId === child.id;
                           const childReadableId = generateReadableId(child.id);
-                          const childFormattedDate = child.time?.updated
-                            ? formatSessionDate(child.time.updated)
+                          // ChatSession uses updated_at instead of time.updated
+                          const childFormattedDate = child.updated_at
+                            ? formatSessionDate(child.updated_at)
                             : null;
                           return (
                             <ContextMenu key={child.id}>
@@ -987,8 +1399,110 @@ function AppShell() {
           </div>
         )}
 
+        {activeAppId === "projects" && !sidebarCollapsed && (
+          <div className="w-full px-2 mt-3 flex-1 min-h-0 flex flex-col">
+            <div className="flex items-center justify-between gap-2 py-1.5 px-1 border-t border-sidebar-border">
+              <span className="text-xs uppercase tracking-wide text-muted-foreground">
+                {locale === "de" ? "Projekte" : "Projects"}
+              </span>
+              <span className="text-xs text-muted-foreground/50">({projectSummaries.length})</span>
+            </div>
+            <div className="flex-1 overflow-y-auto space-y-2 px-1">
+              {projectSummaries.length === 0 ? (
+                <div className="text-xs text-muted-foreground/60 text-center py-4">
+                  {locale === "de" ? "Noch keine Projekte" : "No projects yet"}
+                </div>
+              ) : (
+                projectSummaries.map((project) => {
+                  const lastActiveLabel = project.lastActive
+                    ? formatSessionDate(project.lastActive)
+                    : locale === "de"
+                      ? "Nie"
+                      : "Never";
+                  const defaultAgent = projectDefaultAgents[project.key];
+                  return (
+                    <div
+                      key={project.key}
+                      className={cn(
+                        "border rounded-md overflow-hidden",
+                        selectedProjectKey === project.key ? "border-primary" : "border-sidebar-border",
+                      )}
+                    >
+                      <button
+                        onClick={() => handleProjectSelect(project.key)}
+                        className="w-full px-3 py-2 text-left hover:bg-sidebar-accent transition-colors"
+                      >
+                        <div className="flex items-center gap-2">
+                          <FolderKanban className="w-4 h-4 text-primary/80" />
+                          <span className="text-sm font-medium truncate">{project.name}</span>
+                        </div>
+                        <div className="text-xs text-muted-foreground/60 mt-1">
+                          {project.sessionCount} {locale === "de" ? "Chats" : "chats"} · {lastActiveLabel}
+                        </div>
+                        <div className="text-xs text-muted-foreground/60 mt-0.5">
+                          {locale === "de" ? "Standard-Agent" : "Default agent"}: {defaultAgent || "-"}
+                        </div>
+                      </button>
+                      <div className="px-3 pb-2">
+                        <select
+                          value={defaultAgent || ""}
+                          onChange={(e) => handleProjectDefaultAgentChange(project.key, e.target.value)}
+                          className="w-full text-xs bg-sidebar-accent/50 border border-sidebar-border rounded px-2 py-1"
+                        >
+                          <option value="">
+                            {locale === "de" ? "Standard-Agent setzen" : "Set default agent"}
+                          </option>
+                          {availableAgents.map((agent) => (
+                            <option key={agent.id} value={agent.id}>
+                              {agent.name || agent.id}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        )}
+
+        {activeAppId === "agents" && !sidebarCollapsed && (
+          <div className="w-full px-2 mt-3 flex-1 min-h-0 flex flex-col">
+            <div className="flex items-center justify-between gap-2 py-1.5 px-1 border-t border-sidebar-border">
+              <span className="text-xs uppercase tracking-wide text-muted-foreground">
+                {locale === "de" ? "Agenten" : "Agents"}
+              </span>
+              <Button variant="ghost" size="sm" className="text-xs" onClick={() => setActiveAppId("agents")}>
+                {locale === "de" ? "Erstellen" : "Create"}
+              </Button>
+            </div>
+            <div className="flex-1 overflow-y-auto space-y-2 px-1">
+              {availableAgents.length === 0 ? (
+                <div className="text-xs text-muted-foreground/60 text-center py-4">
+                  {locale === "de" ? "Keine Agenten gefunden" : "No agents found"}
+                </div>
+              ) : (
+                availableAgents.map((agent) => (
+                  <div
+                    key={agent.id}
+                    className="border border-sidebar-border rounded-md px-3 py-2 text-left"
+                  >
+                    <div className="text-sm font-medium">{agent.name || agent.id}</div>
+                    <div className="text-xs text-muted-foreground/60">
+                      {agent.model?.providerID
+                        ? `${agent.model.providerID}/${agent.model.modelID ?? ""}`
+                        : agent.id}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Collapsed session indicator */}
-        {sidebarCollapsed && opencodeSessions.length > 0 && (
+        {activeAppId === "sessions" && sidebarCollapsed && opencodeSessions.length > 0 && (
           <div className="w-full px-2 mt-4">
             <div className="border-t border-sidebar-border pt-2">
               <button
@@ -1174,6 +1688,104 @@ function AppShell() {
             </Button>
             <Button onClick={handleConfirmRename}>
               {locale === "de" ? "Speichern" : "Save"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Directory picker dialog */}
+      <Dialog open={directoryPickerOpen} onOpenChange={handleDirectoryPickerOpenChange}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>{locale === "de" ? "Arbeitsordner wahlen" : "Choose workspace folder"}</DialogTitle>
+            <DialogDescription>
+              {locale === "de"
+                ? "Wahle ein Projektverzeichnis fur diesen Chat."
+                : "Pick a project directory for this chat."}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="flex items-center justify-between text-xs text-muted-foreground">
+              <span>{directoryPickerPath}</span>
+              {directoryPickerParent && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setDirectoryPickerPath(directoryPickerParent)}
+                >
+                  {locale === "de" ? "Hoch" : "Up"}
+                </Button>
+              )}
+            </div>
+
+            {recentProjects.length > 0 && (
+              <div className="space-y-2">
+                <div className="text-xs uppercase text-muted-foreground">
+                  {locale === "de" ? "Zuletzt verwendet" : "Recent projects"}
+                </div>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {recentProjects.map((project) => (
+                    <button
+                      key={project.key}
+                      onClick={() => handleDirectoryConfirm(project.key === "workspace" ? "." : project.key)}
+                      className="text-left border border-border rounded px-3 py-2 hover:bg-muted transition-colors"
+                    >
+                      <div className="text-sm font-medium truncate">{project.name}</div>
+                      <div className="text-xs text-muted-foreground truncate">{project.key}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="space-y-2">
+              <div className="text-xs uppercase text-muted-foreground">
+                {locale === "de" ? "Ordner" : "Folders"}
+              </div>
+              <div className="max-h-56 overflow-y-auto border border-border rounded">
+                {directoryPickerLoading ? (
+                  <div className="p-4 text-sm text-muted-foreground">
+                    {locale === "de" ? "Lade..." : "Loading..."}
+                  </div>
+                ) : directoryPickerEntries.length === 0 ? (
+                  <div className="p-4 text-sm text-muted-foreground">
+                    {locale === "de" ? "Keine Ordner gefunden" : "No folders found"}
+                  </div>
+                ) : (
+                  <div className="divide-y divide-border">
+                    {directoryPickerEntries.map((entry) => (
+                      <div key={entry.path} className="flex items-center justify-between px-3 py-2">
+                        <button
+                          onClick={() => setDirectoryPickerPath(entry.path)}
+                          className="text-sm text-left flex-1 truncate hover:text-foreground"
+                        >
+                          {entry.name}
+                        </button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleDirectoryConfirm(entry.path)}
+                        >
+                          {locale === "de" ? "Wahlen" : "Select"}
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setDirectoryPickerOpen(false)}
+            >
+              {locale === "de" ? "Abbrechen" : "Cancel"}
+            </Button>
+            <Button onClick={() => handleDirectoryConfirm(directoryPickerPath)}>
+              {locale === "de" ? "Diesen Ordner nutzen" : "Use this folder"}
             </Button>
           </DialogFooter>
         </DialogContent>

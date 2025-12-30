@@ -8,11 +8,15 @@ import {
   createWorkspaceSession,
   deleteWorkspaceSession,
   getOrCreateWorkspaceSession,
+  getOrCreateSessionForWorkspace,
+  listChatHistory,
   login,
   listWorkspaceSessions,
   opencodeProxyBaseUrl,
   stopWorkspaceSession,
+  touchSessionActivity,
   upgradeWorkspaceSession,
+  type ChatSession,
   type Persona,
   type WorkspaceSession,
 } from "@/lib/control-plane-client"
@@ -30,14 +34,24 @@ interface AppContextValue {
   setSelectedWorkspaceSessionId: (id: string) => void
   selectedWorkspaceSession: WorkspaceSession | undefined
   opencodeBaseUrl: string
+  /** Chat sessions from disk (no running opencode needed) */
+  chatHistory: ChatSession[]
+  /** Live opencode sessions (requires running opencode) */
   opencodeSessions: OpenCodeSession[]
   selectedChatSessionId: string
   setSelectedChatSessionId: (id: string) => void
   selectedChatSession: OpenCodeSession | undefined
+  /** Get the selected chat from history (may not have live opencode session) */
+  selectedChatFromHistory: ChatSession | undefined
   refreshWorkspaceSessions: () => Promise<void>
+  refreshChatHistory: () => Promise<void>
   refreshOpencodeSessions: () => Promise<void>
+  /** Ensure opencode is running and return the base URL. Starts if needed.
+   * If workspacePath is provided, ensures a session for that specific workspace.
+   */
+  ensureOpencodeRunning: (workspacePath?: string) => Promise<string | null>
   createNewChat: () => Promise<OpenCodeSession | null>
-  createNewChatWithPersona: (persona: Persona) => Promise<OpenCodeSession | null>
+  createNewChatWithPersona: (persona: Persona, workspacePath?: string) => Promise<OpenCodeSession | null>
   deleteChatSession: (sessionId: string) => Promise<boolean>
   renameChatSession: (sessionId: string, title: string) => Promise<boolean>
   stopWorkspaceSession: (sessionId: string) => Promise<boolean>
@@ -56,6 +70,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
   
   const [workspaceSessions, setWorkspaceSessions] = useState<WorkspaceSession[]>([])
   const [selectedWorkspaceSessionId, setSelectedWorkspaceSessionId] = useState<string>("")
+  // Chat history from disk (no running opencode needed)
+  const [chatHistory, setChatHistory] = useState<ChatSession[]>([])
+  // Live opencode sessions (requires running opencode instance)
   const [opencodeSessions, setOpencodeSessions] = useState<OpenCodeSession[]>([])
   const [selectedChatSessionId, setSelectedChatSessionId] = useState<string>("")
   const [authToken, setAuthToken] = useState<string | null>(null)
@@ -63,6 +80,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const selectedChatSession = useMemo(() => {
     return opencodeSessions.find((s) => s.id === selectedChatSessionId)
   }, [opencodeSessions, selectedChatSessionId])
+
+  // Get the selected chat from disk history (even if opencode isn't running)
+  const selectedChatFromHistory = useMemo(() => {
+    return chatHistory.find((s) => s.id === selectedChatSessionId)
+  }, [chatHistory, selectedChatSessionId])
 
   const selectedWorkspaceSession = useMemo(() => {
     if (!selectedWorkspaceSessionId) return undefined
@@ -92,6 +114,25 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }, [])
 
+  // Refresh chat history from disk (no opencode needed)
+  const refreshChatHistory = useCallback(async () => {
+    try {
+      // No limit - load all sessions from disk
+      const history = await listChatHistory({})
+      setChatHistory(history)
+      
+      // If no chat is selected but we have history, select the most recent one
+      if (history.length > 0) {
+        setSelectedChatSessionId((current) => {
+          if (current && history.some((s) => s.id === current)) return current
+          return history[0].id
+        })
+      }
+    } catch (err) {
+      console.error("Failed to load chat history:", err)
+    }
+  }, [])
+
   const refreshWorkspaceSessions = useCallback(async () => {
     try {
       // Dev login - store token for WebSocket auth
@@ -108,12 +149,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
           // Login might fail if already logged in via cookie
         }
       }
-      // Get or create ensures we have a running session (auto-resumes stopped, auto-upgrades outdated)
-      await getOrCreateWorkspaceSession().catch((err) => {
-        console.error("Failed to get or create session:", err)
-      })
       
-      // Then list all sessions
+      // Just list sessions - don't auto-start opencode anymore
+      // Opencode will be started on-demand when user sends a message
       const data = await listWorkspaceSessions()
       setWorkspaceSessions(data)
 
@@ -124,13 +162,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
             const running = data.find((s) => s.status === "running")
             return running?.id || data[0].id
           }
-          // Check if current session exists and is usable
+          // Check if current session exists
           const currentSession = data.find((s) => s.id === current)
-          // If session doesn't exist, is failed, or is stopped, switch to a running one
-          if (!currentSession || currentSession.status === "failed" || currentSession.status === "stopped") {
-            const running = data.find((s) => s.status === "running")
-            if (running) return running.id
-            // No running session, pick first available
+          if (!currentSession) {
             return data[0].id
           }
           return current
@@ -141,9 +175,68 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }, [authToken])
 
+  // Ensure opencode is running and return the base URL
+  // This is called when the user wants to send a message
+  // If workspacePath is provided, ensures a session for that specific workspace
+  const ensureOpencodeRunning = useCallback(async (workspacePath?: string): Promise<string | null> => {
+    try {
+      let session: WorkspaceSession
+
+      if (workspacePath) {
+        // Get or create a session for the specific workspace path
+        // This handles multi-workspace resumption with LRU cap
+        session = await getOrCreateSessionForWorkspace(workspacePath)
+      } else {
+        // If no workspace path provided, check if we have a running session
+        if (selectedWorkspaceSession?.status === "running") {
+          // Touch activity to prevent idle timeout
+          touchSessionActivity(selectedWorkspaceSession.id).catch(() => {})
+          return opencodeProxyBaseUrl(selectedWorkspaceSession.id)
+        }
+        // Start or resume a workspace session (default behavior)
+        session = await getOrCreateWorkspaceSession()
+      }
+      
+      // Refresh workspace sessions to get the updated state
+      await refreshWorkspaceSessions()
+      
+      // Select this session
+      setSelectedWorkspaceSessionId(session.id)
+      
+      // If session is already running, return immediately
+      if (session.status === "running") {
+        return opencodeProxyBaseUrl(session.id)
+      }
+      
+      // Wait for it to be ready
+      let attempts = 0
+      const maxAttempts = 30
+      while (attempts < maxAttempts) {
+        const sessions = await listWorkspaceSessions()
+        const current = sessions.find((s) => s.id === session.id)
+        if (current?.status === "running") {
+          return opencodeProxyBaseUrl(current.id)
+        }
+        if (current?.status === "failed") {
+          console.error("Workspace session failed to start:", current.error_message)
+          return null
+        }
+        attempts++
+        await new Promise((resolve) => setTimeout(resolve, 1000))
+      }
+      
+      console.error("Timeout waiting for workspace session to start")
+      return null
+    } catch (err) {
+      console.error("Failed to ensure opencode is running:", err)
+      return null
+    }
+  }, [selectedWorkspaceSession, refreshWorkspaceSessions])
+
   useEffect(() => {
     refreshWorkspaceSessions()
-  }, [refreshWorkspaceSessions])
+    refreshChatHistory()
+  }, [refreshWorkspaceSessions, refreshChatHistory])
 
   useEffect(() => {
     if (!opencodeBaseUrl) return
@@ -212,10 +305,26 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }, [opencodeBaseUrl])
 
-  const createNewChatWithPersona = useCallback(async (persona: Persona): Promise<OpenCodeSession | null> => {
+  const createNewChatWithPersona = useCallback(async (persona: Persona, workspacePath?: string): Promise<OpenCodeSession | null> => {
     try {
+      // Resolve workspace path
+      const basePath = selectedWorkspaceSession?.workspace_path
+      const resolvePath = (path?: string) => {
+        if (!path) return undefined
+        if (path.startsWith("/")) return path
+        if (!basePath) return path
+        if (path === "." || path.trim() === "") return basePath
+        const joined = `${basePath}/${path}`
+        const normalized = joined.split("/").filter(Boolean).join("/")
+        return basePath.startsWith("/") ? `/${normalized}` : normalized
+      }
+      const resolvedPath = workspacePath ?? resolvePath(persona.default_workdir || undefined)
+
       // Create a new workspace session with the selected persona
-      const workspaceSession = await createWorkspaceSession({ persona_id: persona.id })
+      const workspaceSession = await createWorkspaceSession({ 
+        persona_id: persona.id,
+        workspace_path: resolvedPath,
+      })
       
       // Refresh workspace sessions to include the new one
       await refreshWorkspaceSessions()
@@ -248,7 +357,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       console.error("Failed to create new chat with persona:", err)
       return null
     }
-  }, [refreshWorkspaceSessions])
+  }, [refreshWorkspaceSessions, selectedWorkspaceSession?.workspace_path])
 
   const deleteChatSession = useCallback(async (sessionId: string): Promise<boolean> => {
     if (!opencodeBaseUrl) return false
@@ -349,12 +458,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setSelectedWorkspaceSessionId,
       selectedWorkspaceSession,
       opencodeBaseUrl,
+      chatHistory,
       opencodeSessions,
       selectedChatSessionId,
       setSelectedChatSessionId,
       selectedChatSession,
+      selectedChatFromHistory,
       refreshWorkspaceSessions,
+      refreshChatHistory,
       refreshOpencodeSessions,
+      ensureOpencodeRunning,
       createNewChat,
       createNewChatWithPersona,
       deleteChatSession,
@@ -375,11 +488,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
       selectedWorkspaceSessionId,
       selectedWorkspaceSession,
       opencodeBaseUrl,
+      chatHistory,
       opencodeSessions,
       selectedChatSessionId,
       selectedChatSession,
+      selectedChatFromHistory,
       refreshWorkspaceSessions,
+      refreshChatHistory,
       refreshOpencodeSessions,
+      ensureOpencodeRunning,
       createNewChat,
       createNewChatWithPersona,
       deleteChatSession,

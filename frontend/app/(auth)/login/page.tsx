@@ -53,7 +53,15 @@ export default function LoginPage() {
     setIsLoading(true)
 
     try {
-      await login(data)
+      const response = await login(data)
+      // Store auth token for WebSocket auth
+      if (response.token) {
+        try {
+          window.localStorage.setItem("authToken", response.token)
+        } catch {
+          // Ignore storage failures
+        }
+      }
       router.push("/")
       router.refresh()
     } catch (err) {

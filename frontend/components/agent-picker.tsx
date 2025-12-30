@@ -61,9 +61,13 @@ export function AgentPicker({ open, onOpenChange, onSelect, locale }: AgentPicke
   }, [open])
 
   const filteredPersonas = useMemo(() => {
-    if (!searchTerm) return personas
+    // Only show standalone personas in the "New Chat" picker
+    // Non-standalone personas (Builder, Planner) are shown in Projects view
+    const standaloneOnly = personas.filter((p) => p.standalone)
+    
+    if (!searchTerm) return standaloneOnly
     const lower = searchTerm.toLowerCase()
-    return personas.filter(
+    return standaloneOnly.filter(
       (p) =>
         p.name.toLowerCase().includes(lower) ||
         p.description.toLowerCase().includes(lower)
@@ -78,7 +82,7 @@ export function AgentPicker({ open, onOpenChange, onSelect, locale }: AgentPicke
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-md max-h-[85vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{t.title}</DialogTitle>
         </DialogHeader>
@@ -103,7 +107,7 @@ export function AgentPicker({ open, onOpenChange, onSelect, locale }: AgentPicke
         </div>
 
         {/* Agent list */}
-        <div className="max-h-[300px] overflow-y-auto -mx-6 px-6">
+        <div className="max-h-[50vh] overflow-y-auto -mx-6 px-6 overscroll-contain touch-pan-y">
           {loading ? (
             <div className="text-center text-muted-foreground py-8">
               {t.loading}

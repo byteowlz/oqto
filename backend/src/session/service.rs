@@ -255,6 +255,27 @@ impl SessionService {
             .map(std::path::PathBuf::from)
     }
 
+    /// Get the base workspace directory for listing projects.
+    pub fn workspace_root(&self) -> std::path::PathBuf {
+        if self.config.runtime_mode == RuntimeMode::Local {
+            if let Some(ref local_config) = self.config.local_config {
+                if local_config.single_user {
+                    return local_config.workspace_base();
+                }
+                return local_config.workspace_for_user(&self.config.default_user_id);
+            }
+            let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+            if self.config.single_user {
+                return std::path::PathBuf::from(home).join("octo");
+            }
+            return std::path::PathBuf::from(home)
+                .join("octo")
+                .join(&self.config.default_user_id);
+        }
+        // Container mode - use /workspace
+        std::path::PathBuf::from("/workspace")
+    }
+
     /// Maximum number of retries for port allocation conflicts.
     const MAX_PORT_ALLOCATION_RETRIES: u32 = 5;
 
@@ -376,10 +397,16 @@ impl SessionService {
 
         // Determine user home path - either provided or create per-user home directory.
         let user_home_path = if let Some(path) = request.workspace_path {
-            if !std::path::Path::new(&path).exists() {
-                anyhow::bail!("workspace path does not exist: {}", path);
+            // Resolve relative paths against the workspace root
+            let resolved_path = if std::path::Path::new(&path).is_absolute() {
+                std::path::PathBuf::from(&path)
+            } else {
+                self.workspace_root().join(&path)
+            };
+            if !resolved_path.exists() {
+                anyhow::bail!("workspace path does not exist: {}", resolved_path.display());
             }
-            path
+            resolved_path.to_string_lossy().to_string()
         } else {
             let user_id = &self.config.default_user_id;
 
@@ -558,6 +585,7 @@ impl SessionService {
             (None, None, None)
         };
 
+        let now = Utc::now().to_rfc3339();
         let session = Session {
             id: session_id.clone(),
             readable_id: Some(readable_id),
@@ -579,9 +607,10 @@ impl SessionService {
             eavs_virtual_key: None,
             status: SessionStatus::Pending,
             runtime_mode: self.config.runtime_mode,
-            created_at: Utc::now().to_rfc3339(),
+            created_at: now.clone(),
             started_at: None,
             stopped_at: None,
+            last_activity_at: Some(now), // Initialize with creation time
             error_message: None,
         };
 
@@ -1807,6 +1836,146 @@ impl SessionService {
         }
 
         Ok(true)
+    }
+
+    // ========================================================================
+    // Activity Tracking and Idle Session Management
+    // ========================================================================
+
+    /// Default idle timeout in minutes.
+    pub const DEFAULT_IDLE_TIMEOUT_MINUTES: i64 = 30;
+
+    /// Default maximum concurrent sessions per user.
+    pub const DEFAULT_MAX_CONCURRENT_SESSIONS: i64 = 3;
+
+    /// Update the last activity timestamp for a session.
+    ///
+    /// This should be called when the user interacts with the session
+    /// (e.g., sends a message, runs a command).
+    pub async fn touch_session_activity(&self, session_id: &str) -> Result<()> {
+        self.repo.touch_activity(session_id).await
+    }
+
+    /// Get or create a session for a specific workspace path.
+    ///
+    /// This is the preferred entry point for resuming sessions from history.
+    /// It will:
+    /// 1. Find an existing running session for the workspace (if any)
+    /// 2. Start a new session for that workspace (if none running)
+    /// 3. Enforce LRU cap by stopping oldest idle session if needed
+    pub async fn get_or_create_session_for_workspace(
+        &self,
+        workspace_path: &str,
+    ) -> Result<Session> {
+        let user_id = &self.config.default_user_id;
+
+        // Check if we already have a running session for this workspace
+        if let Some(session) = self.repo.find_running_for_workspace(user_id, workspace_path).await? {
+            info!(
+                "Found existing running session {} for workspace {}",
+                session.id, workspace_path
+            );
+            // Touch activity since user is interacting
+            self.repo.touch_activity(&session.id).await?;
+            return Ok(session);
+        }
+
+        // Enforce LRU cap before creating a new session
+        self.enforce_session_cap(user_id).await?;
+
+        // Create a new session for this workspace
+        let request = CreateSessionRequest {
+            workspace_path: Some(workspace_path.to_string()),
+            image: None,
+            persona_id: None,
+            env: Default::default(),
+        };
+
+        self.create_session(request).await
+    }
+
+    /// Enforce the maximum concurrent sessions cap using LRU policy.
+    ///
+    /// If the user has reached the limit, stop the oldest idle session.
+    async fn enforce_session_cap(&self, user_id: &str) -> Result<()> {
+        let running_count = self.repo.count_running_for_user(user_id).await?;
+
+        if running_count < Self::DEFAULT_MAX_CONCURRENT_SESSIONS {
+            return Ok(());
+        }
+
+        info!(
+            "User {} has {} running sessions (limit: {}), stopping oldest",
+            user_id, running_count, Self::DEFAULT_MAX_CONCURRENT_SESSIONS
+        );
+
+        // Get sessions ordered by activity (oldest last)
+        let sessions = self.repo.list_running_for_user_by_activity(user_id).await?;
+
+        // Stop the oldest session (last in the list)
+        if let Some(oldest) = sessions.last() {
+            info!(
+                "Stopping oldest session {} (last activity: {:?}) to make room",
+                oldest.id, oldest.last_activity_at
+            );
+            self.stop_session(&oldest.id).await?;
+        }
+
+        Ok(())
+    }
+
+    /// Stop sessions that have been idle for too long.
+    ///
+    /// This should be called periodically (e.g., by a background task).
+    /// Returns the number of sessions stopped.
+    pub async fn stop_idle_sessions(&self, idle_minutes: i64) -> Result<usize> {
+        let idle_sessions = self.repo.list_idle_sessions(idle_minutes).await?;
+        let mut stopped = 0;
+
+        for session in idle_sessions {
+            info!(
+                "Stopping idle session {} (last activity: {:?}, idle > {} min)",
+                session.id, session.last_activity_at, idle_minutes
+            );
+            if let Err(e) = self.stop_session(&session.id).await {
+                warn!("Failed to stop idle session {}: {:?}", session.id, e);
+            } else {
+                stopped += 1;
+            }
+        }
+
+        if stopped > 0 {
+            info!("Stopped {} idle session(s)", stopped);
+        }
+
+        Ok(stopped)
+    }
+
+    /// Start a background task to periodically clean up idle sessions.
+    ///
+    /// Returns a handle that can be used to stop the task.
+    pub fn start_idle_session_cleanup_task(
+        self: Arc<Self>,
+        check_interval_seconds: u64,
+        idle_timeout_minutes: i64,
+    ) -> tokio::task::JoinHandle<()> {
+        info!(
+            "Starting idle session cleanup task (check every {}s, timeout {}min)",
+            check_interval_seconds, idle_timeout_minutes
+        );
+
+        tokio::spawn(async move {
+            let mut interval =
+                tokio::time::interval(tokio::time::Duration::from_secs(check_interval_seconds));
+
+            loop {
+                interval.tick().await;
+
+                if let Err(e) = self.stop_idle_sessions(idle_timeout_minutes).await {
+                    warn!("Idle session cleanup failed: {:?}", e);
+                }
+            }
+        })
     }
 }
 

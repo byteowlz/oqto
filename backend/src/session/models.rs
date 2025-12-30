@@ -147,6 +147,8 @@ pub struct Session {
     pub started_at: Option<String>,
     /// When the container stopped.
     pub stopped_at: Option<String>,
+    /// Last activity timestamp (for idle timeout).
+    pub last_activity_at: Option<String>,
     /// Error message if failed.
     pub error_message: Option<String>,
 }
