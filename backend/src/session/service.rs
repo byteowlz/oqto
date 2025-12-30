@@ -1,4 +1,11 @@
 //! Session service - orchestrates container lifecycle.
+//!
+//! This service manages the lifecycle of user sessions, supporting both:
+//! - Container mode (Docker/Podman)
+//! - Local mode (native processes)
+//!
+//! The service can optionally use the `AgentBackend` abstraction for a unified
+//! interface across both modes.
 
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -11,6 +18,7 @@ use log::{debug, error, info, warn};
 use serde::Serialize;
 use uuid::Uuid;
 
+use crate::agent_rpc::AgentBackend;
 use crate::container::{ContainerConfig, ContainerRuntimeApi, ContainerStats};
 use crate::eavs::{CreateKeyRequest, EavsApi, KeyPermissions};
 use crate::local::{LocalRuntime, LocalRuntimeConfig};
@@ -158,6 +166,8 @@ pub struct SessionService {
     container_runtime: Option<Arc<dyn ContainerRuntimeApi>>,
     /// Local runtime (used when runtime_mode is Local).
     local_runtime: Option<Arc<LocalRuntime>>,
+    /// Unified agent backend (optional, for new AgentRPC-based architecture).
+    agent_backend: Option<Arc<dyn AgentBackend>>,
     eavs: Option<Arc<dyn EavsApi>>,
     readiness: Arc<dyn SessionReadiness>,
     config: SessionServiceConfig,
@@ -174,6 +184,7 @@ impl SessionService {
             repo,
             container_runtime: Some(runtime),
             local_runtime: None,
+            agent_backend: None,
             eavs: None,
             readiness: Arc::new(HttpSessionReadiness::default()),
             config,
@@ -191,6 +202,7 @@ impl SessionService {
             repo,
             container_runtime: Some(runtime),
             local_runtime: None,
+            agent_backend: None,
             eavs: Some(eavs),
             readiness: Arc::new(HttpSessionReadiness::default()),
             config,
@@ -207,6 +219,7 @@ impl SessionService {
             repo,
             container_runtime: None,
             local_runtime: Some(Arc::new(local_runtime)),
+            agent_backend: None,
             eavs: None,
             readiness: Arc::new(HttpSessionReadiness::default()),
             config,
@@ -224,10 +237,54 @@ impl SessionService {
             repo,
             container_runtime: None,
             local_runtime: Some(Arc::new(local_runtime)),
+            agent_backend: None,
             eavs: Some(eavs),
             readiness: Arc::new(HttpSessionReadiness::default()),
             config,
         }
+    }
+
+    /// Create a new session service with the unified AgentBackend.
+    ///
+    /// This constructor uses the new AgentRPC abstraction which provides
+    /// a unified interface for both local and container modes.
+    pub fn with_agent_backend(
+        repo: SessionRepository,
+        backend: Arc<dyn AgentBackend>,
+        config: SessionServiceConfig,
+    ) -> Self {
+        Self {
+            repo,
+            container_runtime: None,
+            local_runtime: None,
+            agent_backend: Some(backend),
+            eavs: None,
+            readiness: Arc::new(HttpSessionReadiness::default()),
+            config,
+        }
+    }
+
+    /// Create a new session service with AgentBackend and EAVS.
+    pub fn with_agent_backend_and_eavs(
+        repo: SessionRepository,
+        backend: Arc<dyn AgentBackend>,
+        eavs: Arc<dyn EavsApi>,
+        config: SessionServiceConfig,
+    ) -> Self {
+        Self {
+            repo,
+            container_runtime: None,
+            local_runtime: None,
+            agent_backend: Some(backend),
+            eavs: Some(eavs),
+            readiness: Arc::new(HttpSessionReadiness::default()),
+            config,
+        }
+    }
+
+    /// Get the agent backend (if available).
+    pub fn agent_backend(&self) -> Option<&Arc<dyn AgentBackend>> {
+        self.agent_backend.as_ref()
     }
 
     /// Get the runtime mode.
@@ -847,12 +904,14 @@ impl SessionService {
         let persona_path = session.persona_path.as_ref().map(PathBuf::from);
 
         // Start all services
+        // TODO: Add project_id support when shared projects are implemented
         let pids = local_runtime
             .start_session(
                 &session.id,
                 &session.user_id,
                 &workspace_path,
                 persona_path.as_deref(),
+                None, // project_id - will be added with shared projects feature
                 session.opencode_port as u16,
                 session.fileserver_port as u16,
                 session.ttyd_port as u16,
@@ -1055,12 +1114,14 @@ impl SessionService {
                 let persona_path = session.persona_path.as_ref().map(PathBuf::from);
 
                 // Respawn the processes (local mode doesn't preserve process state)
+                // TODO: Add project_id support when shared projects are implemented
                 match local_runtime
                     .resume_session(
                         session_id,
                         &session.user_id,
                         &workspace_path,
                         persona_path.as_deref(),
+                        None, // project_id - will be added with shared projects feature
                         session.opencode_port as u16,
                         session.fileserver_port as u16,
                         session.ttyd_port as u16,

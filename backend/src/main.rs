@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
 
 mod agent;
+mod agent_rpc;
 mod api;
 mod auth;
 mod container;
@@ -429,10 +430,44 @@ struct AppConfig {
     logging: LoggingConfig,
     runtime: RuntimeConfig,
     paths: PathsConfig,
+    /// Backend configuration (mode selection).
+    backend: BackendConfig,
     container: ContainerRuntimeConfig,
     local: LocalModeConfig,
     eavs: Option<EavsConfig>,
     auth: auth::AuthConfig,
+}
+
+/// Backend mode selection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum BackendMode {
+    /// Local mode - opencode runs as native process
+    Local,
+    /// Container mode - opencode runs in Docker/Podman container
+    #[default]
+    Container,
+    /// Auto mode - prefers local if configured, falls back to container
+    Auto,
+}
+
+/// Backend configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+struct BackendConfig {
+    /// Backend mode: "local", "container", or "auto"
+    mode: BackendMode,
+    /// Use the new AgentRPC abstraction (experimental)
+    use_agent_rpc: bool,
+}
+
+impl Default for BackendConfig {
+    fn default() -> Self {
+        Self {
+            mode: BackendMode::Container,
+            use_agent_rpc: false,
+        }
+    }
 }
 
 impl AppConfig {
@@ -451,6 +486,7 @@ impl Default for AppConfig {
             logging: LoggingConfig::default(),
             runtime: RuntimeConfig::default(),
             paths: PathsConfig::default(),
+            backend: BackendConfig::default(),
             container: ContainerRuntimeConfig::default(),
             local: LocalModeConfig::default(),
             eavs: None,
@@ -882,13 +918,26 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     let auth_state = auth::AuthState::new(auth_config);
 
     // Determine runtime mode: CLI --local-mode overrides config
-    let local_mode = cmd.local_mode || ctx.config.local.enabled;
-    let runtime_mode = if local_mode {
+    let runtime_mode = match ctx.config.backend.mode {
+        BackendMode::Local => session::RuntimeMode::Local,
+        BackendMode::Container => session::RuntimeMode::Container,
+        BackendMode::Auto => {
+            // Auto: prefer local if explicitly enabled, otherwise container
+            if ctx.config.local.enabled || cmd.local_mode {
+                session::RuntimeMode::Local
+            } else {
+                session::RuntimeMode::Container
+            }
+        }
+    };
+    // CLI override
+    let runtime_mode = if cmd.local_mode {
         session::RuntimeMode::Local
     } else {
-        session::RuntimeMode::Container
+        runtime_mode
     };
-    info!("Runtime mode: {:?}", runtime_mode);
+    let local_mode = runtime_mode == session::RuntimeMode::Local;
+    info!("Runtime mode: {:?} (backend.mode={:?})", runtime_mode, ctx.config.backend.mode);
 
     // Initialize runtimes based on mode
     let container_runtime: Option<std::sync::Arc<container::ContainerRuntime>> = if !local_mode {
@@ -1182,14 +1231,82 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     // Clone session_service before creating state for shutdown handler
     let session_service_for_shutdown = session_service.clone();
 
+    // Create AgentBackend if enabled
+    let agent_backend: Option<std::sync::Arc<dyn agent_rpc::AgentBackend>> =
+        if ctx.config.backend.use_agent_rpc {
+            info!("AgentRPC backend enabled");
+            if local_mode {
+                // Use LocalBackend - convert LocalModeConfig to LocalRuntimeConfig
+                let runtime_config = local::LocalRuntimeConfig {
+                    opencode_binary: ctx.config.local.opencode_binary.clone(),
+                    fileserver_binary: ctx.config.local.fileserver_binary.clone(),
+                    ttyd_binary: ctx.config.local.ttyd_binary.clone(),
+                    workspace_dir: ctx.config.local.workspace_dir.clone(),
+                    personas_path: ctx.config.local.personas_path.clone(),
+                    default_persona: ctx.config.local.default_persona.clone(),
+                    single_user: ctx.config.local.single_user,
+                    linux_users: local::LinuxUsersConfig {
+                        enabled: ctx.config.local.linux_users.enabled,
+                        prefix: ctx.config.local.linux_users.prefix.clone(),
+                        uid_start: ctx.config.local.linux_users.uid_start,
+                        group: ctx.config.local.linux_users.group.clone(),
+                        shell: ctx.config.local.linux_users.shell.clone(),
+                        use_sudo: ctx.config.local.linux_users.use_sudo,
+                        create_home: ctx.config.local.linux_users.create_home,
+                    },
+                };
+                let local_config = agent_rpc::LocalBackendConfig {
+                    runtime: runtime_config,
+                    data_dir: std::path::PathBuf::from(&ctx.config.container.user_data_path.clone().unwrap_or_else(|| "./data".to_string())),
+                    base_port: ctx.config.container.base_port,
+                    single_user: ctx.config.local.single_user,
+                };
+                match agent_rpc::LocalBackend::new(local_config) {
+                    Ok(backend) => {
+                        info!("LocalBackend initialized");
+                        Some(std::sync::Arc::new(backend))
+                    }
+                    Err(e) => {
+                        warn!("Failed to create LocalBackend: {:?}", e);
+                        None
+                    }
+                }
+            } else {
+                // Use ContainerBackend
+                let container_config = agent_rpc::ContainerBackendConfig {
+                    image: ctx.config.container.default_image.clone(),
+                    base_port: ctx.config.container.base_port,
+                    data_dir: std::path::PathBuf::from(&ctx.config.container.user_data_path.clone().unwrap_or_else(|| "./data".to_string())),
+                    host_network: false,
+                    env: std::collections::HashMap::new(),
+                };
+                let backend = agent_rpc::ContainerBackend::with_auto_runtime(container_config);
+                info!("ContainerBackend initialized");
+                Some(std::sync::Arc::new(backend))
+            }
+        } else {
+            None
+        };
+
     // Create app state
-    let state = api::AppState::new(
-        session_service,
-        agent_service,
-        user_service,
-        invite_repo,
-        auth_state,
-    );
+    let state = if let Some(backend) = agent_backend {
+        api::AppState::with_agent_backend(
+            session_service,
+            agent_service,
+            user_service,
+            invite_repo,
+            auth_state,
+            backend,
+        )
+    } else {
+        api::AppState::new(
+            session_service,
+            agent_service,
+            user_service,
+            invite_repo,
+            auth_state,
+        )
+    };
 
     // Create router
     let app = api::create_router(state);

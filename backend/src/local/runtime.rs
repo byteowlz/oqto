@@ -191,32 +191,41 @@ impl LocalRuntime {
     /// Start all services for a session.
     ///
     /// This spawns opencode, fileserver, and ttyd as native processes.
-    /// If Linux user isolation is enabled, processes run under the user's Linux account.
+    /// If Linux user isolation is enabled, processes run under the user's Linux account
+    /// (or the project's Linux account for shared projects).
     /// Returns the PIDs of the spawned processes as a comma-separated string.
     ///
     /// If `persona_path` is provided, opencode and fileserver will use that directory
     /// as their working directory instead of the default workspace.
+    ///
+    /// If `project_id` is provided, the session runs as the project's Linux user,
+    /// enabling multiple platform users to access the same workspace.
     pub async fn start_session(
         &self,
         session_id: &str,
         user_id: &str,
         workspace_path: &Path,
         persona_path: Option<&Path>,
+        project_id: Option<&str>,
         opencode_port: u16,
         fileserver_port: u16,
         ttyd_port: u16,
         env: HashMap<String, String>,
     ) -> Result<String> {
         info!(
-            "Starting local session {} for user {} with ports {}/{}/{}, persona_path: {:?}",
-            session_id, user_id, opencode_port, fileserver_port, ttyd_port, persona_path
+            "Starting local session {} for user {} with ports {}/{}/{}, persona_path: {:?}, project_id: {:?}",
+            session_id, user_id, opencode_port, fileserver_port, ttyd_port, persona_path, project_id
         );
 
-        // Determine how to run processes (as current user or specific Linux user)
+        // Determine how to run processes (as current user, platform user, or project user)
         let run_as = if self.config.linux_users.enabled && !self.config.single_user {
-            // Ensure Linux user exists
-            let uid = self.config.linux_users.ensure_user(user_id)?;
-            let username = self.config.linux_users.linux_username(user_id);
+            // Ensure effective Linux user exists (project user or platform user)
+            let uid = self.config.linux_users.ensure_effective_user(
+                user_id,
+                project_id,
+                Some(workspace_path),
+            )?;
+            let username = self.config.linux_users.effective_username(user_id, project_id);
             info!("Running session as Linux user '{}' (UID {})", username, uid);
             RunAsUser::new(username, self.config.linux_users.use_sudo)
         } else {
@@ -229,9 +238,10 @@ impl LocalRuntime {
 
         // Set ownership if Linux user isolation is enabled
         if self.config.linux_users.enabled && !self.config.single_user {
+            let username = self.config.linux_users.effective_username(user_id, project_id);
             self.config
                 .linux_users
-                .chown_directory(workspace_path, user_id)?;
+                .chown_directory_to_user(workspace_path, &username)?;
         }
 
         // Start fileserver - use persona directory if provided, otherwise fall back to config default
@@ -304,6 +314,7 @@ impl LocalRuntime {
         user_id: &str,
         workspace_path: &Path,
         persona_path: Option<&Path>,
+        project_id: Option<&str>,
         opencode_port: u16,
         fileserver_port: u16,
         ttyd_port: u16,
@@ -318,6 +329,7 @@ impl LocalRuntime {
             user_id,
             workspace_path,
             persona_path,
+            project_id,
             opencode_port,
             fileserver_port,
             ttyd_port,

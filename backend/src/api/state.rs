@@ -8,6 +8,7 @@ use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::rt::TokioExecutor;
 
 use super::super::agent::AgentService;
+use crate::agent_rpc::AgentBackend;
 use crate::auth::AuthState;
 use crate::invite::InviteCodeRepository;
 use crate::session::SessionService;
@@ -28,6 +29,8 @@ pub struct AppState {
     pub auth: AuthState,
     /// HTTP client for proxying requests to per-session services.
     pub http_client: Client<HttpConnector, Body>,
+    /// Unified agent backend (optional, for new AgentRPC-based architecture).
+    pub agent_backend: Option<Arc<dyn AgentBackend>>,
 }
 
 impl AppState {
@@ -49,6 +52,30 @@ impl AppState {
             invites: Arc::new(invites),
             auth,
             http_client,
+            agent_backend: None,
+        }
+    }
+
+    /// Create new application state with AgentBackend.
+    pub fn with_agent_backend(
+        sessions: SessionService,
+        agents: AgentService,
+        users: UserService,
+        invites: InviteCodeRepository,
+        auth: AuthState,
+        backend: Arc<dyn AgentBackend>,
+    ) -> Self {
+        let http_client: Client<HttpConnector, Body> =
+            Client::builder(TokioExecutor::new()).build_http();
+
+        Self {
+            sessions: Arc::new(sessions),
+            agents: Arc::new(agents),
+            users: Arc::new(users),
+            invites: Arc::new(invites),
+            auth,
+            http_client,
+            agent_backend: Some(backend),
         }
     }
 }

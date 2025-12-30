@@ -1451,3 +1451,237 @@ pub async fn get_chat_messages(
     info!(session_id = %session_id, count = messages.len(), "Listed chat messages");
     Ok(Json(messages))
 }
+
+// ============================================================================
+// AgentRPC Handlers (new unified backend API)
+// ============================================================================
+
+use crate::agent_rpc::{self, Conversation as RpcConversation, Message as RpcMessage, HealthStatus as RpcHealthStatus, SessionHandle, SendMessagePart};
+
+/// Request to start a new agent session.
+#[derive(Debug, Deserialize)]
+pub struct StartAgentSessionRequest {
+    /// Working directory for the session
+    pub workdir: String,
+    /// Model to use (optional)
+    pub model: Option<String>,
+    /// Agent/mode to use (optional)
+    pub agent: Option<String>,
+    /// Session ID to resume (optional)
+    pub resume_session_id: Option<String>,
+    /// Persona ID (optional)
+    pub persona_id: Option<String>,
+    /// Project ID for shared project sessions (optional)
+    pub project_id: Option<String>,
+}
+
+/// Request to send a message to an agent session.
+#[derive(Debug, Deserialize)]
+pub struct SendAgentMessageRequest {
+    /// Message text
+    pub text: String,
+    /// Model override (optional)
+    pub model: Option<agent_rpc::MessageModel>,
+}
+
+/// List conversations via AgentBackend.
+#[instrument(skip(state, user))]
+pub async fn agent_list_conversations(
+    State(state): State<AppState>,
+    user: CurrentUser,
+) -> ApiResult<Json<Vec<RpcConversation>>> {
+    let backend = state.agent_backend.as_ref().ok_or_else(|| {
+        ApiError::internal("AgentRPC backend not enabled")
+    })?;
+
+    let conversations = backend.list_conversations(user.id()).await
+        .map_err(|e| ApiError::internal(format!("Failed to list conversations: {}", e)))?;
+
+    info!(user_id = %user.id(), count = conversations.len(), "Listed agent conversations");
+    Ok(Json(conversations))
+}
+
+/// Get a specific conversation via AgentBackend.
+#[instrument(skip(state, user))]
+pub async fn agent_get_conversation(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(conversation_id): Path<String>,
+) -> ApiResult<Json<RpcConversation>> {
+    let backend = state.agent_backend.as_ref().ok_or_else(|| {
+        ApiError::internal("AgentRPC backend not enabled")
+    })?;
+
+    let conversation = backend.get_conversation(user.id(), &conversation_id).await
+        .map_err(|e| ApiError::internal(format!("Failed to get conversation: {}", e)))?
+        .ok_or_else(|| ApiError::not_found(format!("Conversation {} not found", conversation_id)))?;
+
+    Ok(Json(conversation))
+}
+
+/// Get messages for a conversation via AgentBackend.
+#[instrument(skip(state, user))]
+pub async fn agent_get_messages(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(conversation_id): Path<String>,
+) -> ApiResult<Json<Vec<RpcMessage>>> {
+    let backend = state.agent_backend.as_ref().ok_or_else(|| {
+        ApiError::internal("AgentRPC backend not enabled")
+    })?;
+
+    let messages = backend.get_messages(user.id(), &conversation_id).await
+        .map_err(|e| ApiError::internal(format!("Failed to get messages: {}", e)))?;
+
+    info!(user_id = %user.id(), conversation_id = %conversation_id, count = messages.len(), "Listed agent messages");
+    Ok(Json(messages))
+}
+
+/// Start a new agent session via AgentBackend.
+#[instrument(skip(state, user, request))]
+pub async fn agent_start_session(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Json(request): Json<StartAgentSessionRequest>,
+) -> ApiResult<(StatusCode, Json<SessionHandle>)> {
+    let backend = state.agent_backend.as_ref().ok_or_else(|| {
+        ApiError::internal("AgentRPC backend not enabled")
+    })?;
+
+    let opts = agent_rpc::StartSessionOpts {
+        model: request.model,
+        agent: request.agent,
+        resume_session_id: request.resume_session_id,
+        persona_id: request.persona_id,
+        project_id: request.project_id,
+        env: std::collections::HashMap::new(),
+    };
+
+    let workdir = std::path::Path::new(&request.workdir);
+    let handle = backend.start_session(user.id(), workdir, opts).await
+        .map_err(|e| ApiError::internal(format!("Failed to start session: {}", e)))?;
+
+    info!(user_id = %user.id(), session_id = %handle.session_id, "Started agent session");
+    Ok((StatusCode::CREATED, Json(handle)))
+}
+
+/// Send a message to an agent session via AgentBackend.
+#[instrument(skip(state, user, request))]
+pub async fn agent_send_message(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(session_id): Path<String>,
+    Json(request): Json<SendAgentMessageRequest>,
+) -> ApiResult<StatusCode> {
+    let backend = state.agent_backend.as_ref().ok_or_else(|| {
+        ApiError::internal("AgentRPC backend not enabled")
+    })?;
+
+    let send_request = agent_rpc::SendMessageRequest {
+        parts: vec![SendMessagePart::Text { text: request.text }],
+        model: request.model,
+    };
+
+    backend.send_message(user.id(), &session_id, send_request).await
+        .map_err(|e| ApiError::internal(format!("Failed to send message: {}", e)))?;
+
+    info!(user_id = %user.id(), session_id = %session_id, "Sent message to agent session");
+    Ok(StatusCode::ACCEPTED)
+}
+
+/// Stop an agent session via AgentBackend.
+#[instrument(skip(state, user))]
+pub async fn agent_stop_session(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(session_id): Path<String>,
+) -> ApiResult<StatusCode> {
+    let backend = state.agent_backend.as_ref().ok_or_else(|| {
+        ApiError::internal("AgentRPC backend not enabled")
+    })?;
+
+    backend.stop_session(user.id(), &session_id).await
+        .map_err(|e| ApiError::internal(format!("Failed to stop session: {}", e)))?;
+
+    info!(user_id = %user.id(), session_id = %session_id, "Stopped agent session");
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Get the session URL for an agent session.
+#[instrument(skip(state, user))]
+pub async fn agent_get_session_url(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(session_id): Path<String>,
+) -> ApiResult<Json<SessionUrlResponse>> {
+    let backend = state.agent_backend.as_ref().ok_or_else(|| {
+        ApiError::internal("AgentRPC backend not enabled")
+    })?;
+
+    let url = backend.get_session_url(user.id(), &session_id).await
+        .map_err(|e| ApiError::internal(format!("Failed to get session URL: {}", e)))?;
+
+    Ok(Json(SessionUrlResponse { session_id, url }))
+}
+
+/// Response for session URL query.
+#[derive(Debug, Serialize)]
+pub struct SessionUrlResponse {
+    pub session_id: String,
+    pub url: Option<String>,
+}
+
+/// Health check for the AgentRPC backend.
+#[instrument(skip(state))]
+pub async fn agent_health(
+    State(state): State<AppState>,
+) -> ApiResult<Json<RpcHealthStatus>> {
+    let backend = state.agent_backend.as_ref().ok_or_else(|| {
+        ApiError::internal("AgentRPC backend not enabled")
+    })?;
+
+    let health = backend.health().await
+        .map_err(|e| ApiError::internal(format!("Health check failed: {}", e)))?;
+
+    Ok(Json(health))
+}
+
+/// Attach to a session's event stream via AgentBackend.
+///
+/// Returns an SSE stream of agent events (messages, tool calls, etc.).
+#[instrument(skip(state, user))]
+pub async fn agent_attach(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(session_id): Path<String>,
+) -> Result<Sse<impl tokio_stream::Stream<Item = Result<Event, Infallible>>>, ApiError> {
+    let backend = state.agent_backend.as_ref().ok_or_else(|| {
+        ApiError::internal("AgentRPC backend not enabled")
+    })?;
+
+    let event_stream = backend.attach(user.id(), &session_id).await
+        .map_err(|e| ApiError::internal(format!("Failed to attach to session: {}", e)))?;
+
+    // Convert AgentEvent stream to SSE Event stream
+    let sse_stream = tokio_stream::StreamExt::map(event_stream, |result| {
+        match result {
+            Ok(event) => {
+                // Serialize the event to JSON
+                match serde_json::to_string(&event) {
+                    Ok(json) => Ok(Event::default().data(json)),
+                    Err(e) => {
+                        warn!("Failed to serialize agent event: {}", e);
+                        Ok(Event::default().data(format!(r#"{{"error":"{}"}}"#, e)))
+                    }
+                }
+            }
+            Err(e) => {
+                warn!("Error in agent event stream: {}", e);
+                Ok(Event::default().data(format!(r#"{{"error":"{}"}}"#, e)))
+            }
+        }
+    });
+
+    info!(user_id = %user.id(), session_id = %session_id, "Attached to agent session event stream");
+    Ok(Sse::new(sse_stream).keep_alive(KeepAlive::default()))
+}

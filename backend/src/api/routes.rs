@@ -194,6 +194,16 @@ pub fn create_router(state: AppState) -> Router {
         .route("/chat-history/grouped", get(handlers::list_chat_history_grouped))
         .route("/chat-history/{session_id}", get(handlers::get_chat_session))
         .route("/chat-history/{session_id}/messages", get(handlers::get_chat_messages))
+        // AgentRPC routes (unified backend API)
+        .route("/agent/health", get(handlers::agent_health))
+        .route("/agent/conversations", get(handlers::agent_list_conversations))
+        .route("/agent/conversations/{conversation_id}", get(handlers::agent_get_conversation))
+        .route("/agent/conversations/{conversation_id}/messages", get(handlers::agent_get_messages))
+        .route("/agent/sessions", post(handlers::agent_start_session))
+        .route("/agent/sessions/{session_id}/messages", post(handlers::agent_send_message))
+        .route("/agent/sessions/{session_id}", delete(handlers::agent_stop_session))
+        .route("/agent/sessions/{session_id}/url", get(handlers::agent_get_session_url))
+        .route("/agent/sessions/{session_id}/events", get(handlers::agent_attach))
         .layer(middleware::from_fn_with_state(
             auth_state.clone(),
             auth_middleware,
