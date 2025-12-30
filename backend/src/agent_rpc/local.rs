@@ -286,7 +286,7 @@ impl AgentBackend for LocalBackend {
                 &session_id,
                 user_id,
                 workdir,
-                None, // persona_path - could be derived from opts
+                opts.agent.as_deref(),
                 opts.project_id.as_deref(),
                 opencode_port,
                 fileserver_port,

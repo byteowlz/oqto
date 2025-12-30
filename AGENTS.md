@@ -1,3 +1,28 @@
+# Octo - AI Agent Workspace Platform
+
+Octo is a self-hosted platform for managing AI coding agents (opencode instances). Supports local mode (native processes) and container mode (Docker/Podman).
+
+## Memory System
+
+This project uses **mmry** for persistent memory. Check memories before starting work:
+
+```bash
+byt memory search "relevant topic"    # Search via byt wrapper
+mmry search "query" --limit 5         # Direct mmry search
+mmry ls --limit 10                    # List recent memories
+```
+
+Add important learnings after significant work:
+
+```bash
+byt memory add "concise fact" -c category -i 7
+mmry add "content" -c architecture -i 8
+```
+
+Categories: `architecture`, `reference`, `debugging`, `patterns`
+
+---
+
 ## Build/Lint/Test Commands
 
 | Component | Build | Lint | Test | Single Test |
@@ -169,6 +194,20 @@ For example: `bd create --help` shows `--parent`, `--deps`, `--assignee`, etc.
 - ❌ Do NOT clutter repo root with planning documents
 
 For more details, see README.md and QUICKSTART.md.
+
+---
+
+## Key Architecture Facts
+
+These are stored in mmry - run `mmry ls` for full list. Core facts:
+
+- **x-opencode-directory header**: Every opencode API request can include this header to switch working directory
+- **Session storage**: ~/.local/share/opencode/storage/session/{projectID}/ where projectID is hash of workspace path
+- **Local mode**: Spawns opencode, fileserver, ttyd as native processes; ports 41820+ allocated per session
+- **Port cleanup**: startup_cleanup() kills orphans; check_ports_available() before starting; ProcessHandle.kill() waits to prevent zombies
+- **AgentRPC**: AgentBackend trait with LocalBackend/ContainerBackend; unified interface for both modes
+- **Session limits**: LRU cap of 3 concurrent, 30min idle timeout
+- **Config**: ~/.config/octo/config.toml with [local], [container], [auth] sections
 
 <!-- bv-agent-instructions-v1 -->
 

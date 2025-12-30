@@ -112,12 +112,10 @@ pub struct TokenCache {
 pub struct StartSessionOpts {
     /// Model to use (provider/model format)
     pub model: Option<String>,
-    /// Agent/mode to use
+    /// Agent to use (passed to opencode via --agent flag)
     pub agent: Option<String>,
     /// Session ID to resume (if any)
     pub resume_session_id: Option<String>,
-    /// Persona ID
-    pub persona_id: Option<String>,
     /// Project ID for shared project sessions.
     /// When set, the session runs as the project's Linux user instead of
     /// the requesting user's Linux user, enabling multi-user access.

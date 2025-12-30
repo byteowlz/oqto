@@ -19,7 +19,6 @@ use tracing::{info, instrument, warn};
 
 use crate::auth::{AuthError, CurrentUser, RequireAdmin};
 use crate::observability::{CpuTimes, HostMetrics, read_host_metrics};
-use crate::persona::{Persona, WorkspaceMode};
 use crate::session::{CreateSessionRequest, Session, SessionContainerStats};
 use crate::user::{
     CreateUserRequest, UpdateUserRequest, UserInfo as DbUserInfo, UserListQuery, UserStats,
@@ -51,15 +50,12 @@ pub async fn health() -> Json<HealthResponse> {
     })
 }
 
-/// Session response with URLs and persona info.
+/// Session response with URLs.
 #[derive(Debug, Serialize)]
 pub struct SessionWithUrls {
     #[serde(flatten)]
     pub session: Session,
     pub urls: SessionUrls,
-    /// Persona metadata (if session has a persona_path with persona.toml).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub persona: Option<Persona>,
 }
 
 /// URLs for accessing session services.
@@ -78,53 +74,16 @@ impl SessionWithUrls {
             fileserver: format!("/session/{}/files", session.id),
             terminal: format!("/session/{}/term", session.id),
         };
-
-        // Try to load persona from persona_path
-        let persona = session.persona_path.as_ref().and_then(|path| {
-            let persona_dir = std::path::Path::new(path);
-            match Persona::load(persona_dir) {
-                Ok(p) => Some(p),
-                Err(e) => {
-                    tracing::warn!("Failed to load persona from {:?}: {}", path, e);
-                    None
-                }
-            }
-        });
-
-        Self { session, urls, persona }
-    }
-}
-
-/// Session with persona info for list responses.
-#[derive(Debug, Serialize)]
-pub struct SessionWithPersona {
-    #[serde(flatten)]
-    pub session: Session,
-    /// Persona metadata (if session has a persona_path with persona.toml).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub persona: Option<Persona>,
-}
-
-impl SessionWithPersona {
-    pub fn from_session(session: Session) -> Self {
-        let persona = session.persona_path.as_ref().and_then(|path| {
-            let persona_dir = std::path::Path::new(path);
-            Persona::load(persona_dir).ok()
-        });
-        Self { session, persona }
+        Self { session, urls }
     }
 }
 
 /// List all sessions.
 #[instrument(skip(state))]
-pub async fn list_sessions(State(state): State<AppState>) -> ApiResult<Json<Vec<SessionWithPersona>>> {
+pub async fn list_sessions(State(state): State<AppState>) -> ApiResult<Json<Vec<Session>>> {
     let sessions = state.sessions.list_sessions().await?;
     info!(count = sessions.len(), "Listed sessions");
-    let sessions_with_persona: Vec<SessionWithPersona> = sessions
-        .into_iter()
-        .map(SessionWithPersona::from_session)
-        .collect();
-    Ok(Json(sessions_with_persona))
+    Ok(Json(sessions))
 }
 
 /// Get a specific session.
@@ -132,12 +91,12 @@ pub async fn list_sessions(State(state): State<AppState>) -> ApiResult<Json<Vec<
 pub async fn get_session(
     State(state): State<AppState>,
     Path(session_id): Path<String>,
-) -> ApiResult<Json<SessionWithPersona>> {
+) -> ApiResult<Json<Session>> {
     state
         .sessions
         .get_session(&session_id)
         .await?
-        .map(|s| Json(SessionWithPersona::from_session(s)))
+        .map(Json)
         .ok_or_else(|| ApiError::not_found(format!("Session {} not found", session_id)))
 }
 
@@ -327,38 +286,8 @@ pub async fn check_all_updates(
 }
 
 // ============================================================================
-// Persona Handlers
+// Project/Workspace Handlers
 // ============================================================================
-
-/// Persona response for API.
-#[derive(Debug, Serialize)]
-pub struct PersonaResponse {
-    /// Unique identifier (directory name).
-    pub id: String,
-    /// Display name of the persona.
-    pub name: String,
-    /// Short description of what this persona does.
-    pub description: String,
-    /// Accent color for UI (hex color, e.g., "#6366f1").
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub color: Option<String>,
-    /// Path to avatar image (relative to persona directory).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub avatar: Option<String>,
-    /// Whether this is the default persona.
-    pub is_default: bool,
-    /// opencode agent ID to use.
-    pub agent_id: String,
-    /// Default working directory (optional).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub default_workdir: Option<String>,
-    /// Workspace mode (default_only, ask, or any).
-    pub workspace_mode: String,
-    /// If true, this persona has its own directory with opencode.json.
-    pub standalone: bool,
-    /// If true, this persona can work on external projects.
-    pub project_access: bool,
-}
 
 /// Query for listing workspace directories.
 #[derive(Debug, Deserialize)]
@@ -373,78 +302,6 @@ pub struct WorkspaceDirEntry {
     pub path: String,
     #[serde(rename = "type")]
     pub entry_type: String,
-}
-
-impl From<Persona> for PersonaResponse {
-    fn from(p: Persona) -> Self {
-        // Get agent_id before moving other fields
-        let agent_id = p.effective_agent_id().to_string();
-        let workspace_mode = match p.workspace_mode {
-            WorkspaceMode::DefaultOnly => "default_only".to_string(),
-            WorkspaceMode::Ask => "ask".to_string(),
-            WorkspaceMode::Any => "any".to_string(),
-        };
-        
-        Self {
-            id: p.id,
-            name: p.name,
-            description: p.description,
-            color: p.color,
-            avatar: p.avatar,
-            is_default: p.is_default,
-            agent_id,
-            default_workdir: p.default_workdir,
-            workspace_mode,
-            standalone: p.standalone,
-            project_access: p.project_access,
-        }
-    }
-}
-
-/// List all available personas.
-#[instrument(skip(state))]
-pub async fn list_personas(State(state): State<AppState>) -> ApiResult<Json<Vec<PersonaResponse>>> {
-    let personas_path = state.sessions.personas_path();
-    
-    let personas = match personas_path {
-        Some(path) => {
-            Persona::list(&path).map_err(|e| {
-                warn!("Failed to list personas from {:?}: {}", path, e);
-                ApiError::internal(format!("Failed to list personas: {}", e))
-            })?
-        }
-        None => {
-            // No personas path configured - return empty list
-            Vec::new()
-        }
-    };
-
-    let response: Vec<PersonaResponse> = personas.into_iter().map(PersonaResponse::from).collect();
-    info!(count = response.len(), "Listed personas");
-    Ok(Json(response))
-}
-
-/// Get a specific persona by ID.
-#[instrument(skip(state))]
-pub async fn get_persona(
-    State(state): State<AppState>,
-    Path(persona_id): Path<String>,
-) -> ApiResult<Json<PersonaResponse>> {
-    let personas_path = state.sessions.personas_path()
-        .ok_or_else(|| ApiError::internal("Personas path not configured"))?;
-    
-    let persona_dir = personas_path.join(&persona_id);
-    
-    if !persona_dir.exists() || !Persona::is_persona_dir(&persona_dir) {
-        return Err(ApiError::not_found(format!("Persona '{}' not found", persona_id)));
-    }
-    
-    let persona = Persona::load(&persona_dir).map_err(|e| {
-        warn!("Failed to load persona '{}': {}", persona_id, e);
-        ApiError::internal(format!("Failed to load persona: {}", e))
-    })?;
-    
-    Ok(Json(PersonaResponse::from(persona)))
 }
 
 /// List directories under the workspace root (projects view).
@@ -1438,17 +1295,34 @@ pub async fn list_chat_history_grouped(
 
 use crate::history::ChatMessage;
 
+/// Query parameters for chat messages endpoint.
+#[derive(Debug, Deserialize)]
+pub struct ChatMessagesQuery {
+    /// If true, include pre-rendered HTML for text parts (slower but saves client CPU)
+    #[serde(default)]
+    pub render: bool,
+}
+
 /// Get all messages for a chat session.
 ///
 /// This reads messages and their parts directly from OpenCode's storage on disk.
+/// Uses async I/O with caching for better performance on large sessions.
+///
+/// Query params:
+/// - `render=true`: Include pre-rendered markdown HTML in `text_html` field
 #[instrument]
 pub async fn get_chat_messages(
     Path(session_id): Path<String>,
+    Query(query): Query<ChatMessagesQuery>,
 ) -> ApiResult<Json<Vec<ChatMessage>>> {
-    let messages = crate::history::get_session_messages(&session_id)
-        .map_err(|e| ApiError::internal(format!("Failed to get chat messages: {}", e)))?;
+    let messages = if query.render {
+        crate::history::get_session_messages_rendered(&session_id).await
+    } else {
+        crate::history::get_session_messages_async(&session_id).await
+    }
+    .map_err(|e| ApiError::internal(format!("Failed to get chat messages: {}", e)))?;
 
-    info!(session_id = %session_id, count = messages.len(), "Listed chat messages");
+    info!(session_id = %session_id, count = messages.len(), render = query.render, "Listed chat messages");
     Ok(Json(messages))
 }
 
@@ -1465,12 +1339,10 @@ pub struct StartAgentSessionRequest {
     pub workdir: String,
     /// Model to use (optional)
     pub model: Option<String>,
-    /// Agent/mode to use (optional)
+    /// Agent/mode to use (optional, passed to opencode via --agent flag)
     pub agent: Option<String>,
     /// Session ID to resume (optional)
     pub resume_session_id: Option<String>,
-    /// Persona ID (optional)
-    pub persona_id: Option<String>,
     /// Project ID for shared project sessions (optional)
     pub project_id: Option<String>,
 }
@@ -1552,7 +1424,6 @@ pub async fn agent_start_session(
         model: request.model,
         agent: request.agent,
         resume_session_id: request.resume_session_id,
-        persona_id: request.persona_id,
         project_id: request.project_id,
         env: std::collections::HashMap::new(),
     };

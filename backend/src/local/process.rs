@@ -71,10 +71,37 @@ impl ProcessHandle {
         }
     }
 
-    /// Kill the process.
+    /// Kill the process and wait for it to be reaped.
+    ///
+    /// This both sends SIGKILL and waits for the process to exit,
+    /// preventing zombie processes.
     pub async fn kill(&mut self) -> Result<()> {
-        self.child.kill().await.context("killing process")?;
-        Ok(())
+        // First try to kill
+        if let Err(e) = self.child.kill().await {
+            // Process might already be dead, check
+            if self.is_running() {
+                return Err(anyhow::anyhow!("failed to kill process: {}", e));
+            }
+        }
+        
+        // Wait for the process to be reaped (prevents zombies)
+        // Use a timeout to avoid hanging forever
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            self.child.wait()
+        ).await {
+            Ok(Ok(_)) => Ok(()), // Process exited cleanly
+            Ok(Err(e)) => {
+                // Error waiting, but process might be gone
+                warn!("Error waiting for process {}: {:?}", self.pid, e);
+                Ok(())
+            }
+            Err(_) => {
+                // Timeout - process didn't exit in time
+                warn!("Timeout waiting for process {} to exit", self.pid);
+                Ok(())
+            }
+        }
     }
 
     /// Wait for the process to exit.
@@ -102,31 +129,42 @@ impl ProcessManager {
     }
 
     /// Spawn opencode serve.
+    ///
+    /// If `agent` is provided, it is passed via the --agent flag.
     pub async fn spawn_opencode(
         &self,
         session_id: &str,
         port: u16,
         workspace_dir: &Path,
         opencode_binary: &str,
+        agent: Option<&str>,
         env: HashMap<String, String>,
         run_as: &RunAsUser,
     ) -> Result<u32> {
         info!(
-            "Spawning opencode serve on port {} for session {}",
-            port, session_id
+            "Spawning opencode serve on port {} for session {}, agent: {:?}",
+            port, session_id, agent
         );
 
+        let mut args = vec![
+            "serve".to_string(),
+            "--port".to_string(),
+            port.to_string(),
+            "--hostname".to_string(),
+            "0.0.0.0".to_string(),
+        ];
+        
+        if let Some(agent_name) = agent {
+            args.push("--agent".to_string());
+            args.push(agent_name.to_string());
+        }
+
+        let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
         let child = self
             .spawn_as_user(
                 run_as,
                 opencode_binary,
-                &[
-                    "serve",
-                    "--port",
-                    &port.to_string(),
-                    "--hostname",
-                    "0.0.0.0",
-                ],
+                &args_refs,
                 Some(workspace_dir),
                 env,
             )
@@ -473,6 +511,80 @@ fn shell_escape(s: &str) -> String {
     } else {
         format!("'{}'", s.replace('\'', "'\\''"))
     }
+}
+
+/// Check if a port is available for binding.
+pub fn is_port_available(port: u16) -> bool {
+    std::net::TcpListener::bind(("0.0.0.0", port)).is_ok()
+}
+
+/// Check if all ports in a range are available.
+pub fn are_ports_available(ports: &[u16]) -> bool {
+    ports.iter().all(|&p| is_port_available(p))
+}
+
+/// Find the process using a specific port (Linux only).
+/// Returns (pid, process_name) if found.
+#[cfg(target_os = "linux")]
+pub fn find_process_on_port(port: u16) -> Option<(u32, String)> {
+    use std::process::Command as StdCommand;
+    
+    // Use ss or netstat to find the process
+    let output = StdCommand::new("ss")
+        .args(["-tlnp", &format!("sport = :{}", port)])
+        .output()
+        .ok()?;
+    
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    
+    // Parse the output to find PID
+    // Format: LISTEN 0 4096 0.0.0.0:41820 0.0.0.0:* users:(("opencode",pid=12345,fd=15))
+    for line in stdout.lines().skip(1) {
+        if let Some(users_part) = line.split("users:((").nth(1) {
+            if let Some(pid_part) = users_part.split("pid=").nth(1) {
+                if let Some(pid_str) = pid_part.split(',').next() {
+                    if let Ok(pid) = pid_str.parse::<u32>() {
+                        // Extract process name
+                        let name = users_part
+                            .split('"')
+                            .nth(1)
+                            .unwrap_or("unknown")
+                            .to_string();
+                        return Some((pid, name));
+                    }
+                }
+            }
+        }
+    }
+    
+    None
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn find_process_on_port(_port: u16) -> Option<(u32, String)> {
+    None
+}
+
+/// Kill a process by PID.
+pub fn kill_process(pid: u32) -> bool {
+    use std::process::Command as StdCommand;
+    
+    StdCommand::new("kill")
+        .arg(pid.to_string())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+/// Force kill a process by PID (SIGKILL).
+pub fn force_kill_process(pid: u32) -> bool {
+    use std::process::Command as StdCommand;
+    
+    StdCommand::new("kill")
+        .args(["-9", &pid.to_string()])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
 }
 
 #[cfg(test)]

@@ -180,6 +180,20 @@ export async function listWorkspaceSessions(): Promise<WorkspaceSession[]> {
   return res.json()
 }
 
+/** Project/workspace directory entry */
+export type ProjectEntry = {
+  name: string
+  path: string
+  type: "directory"
+}
+
+/** List available projects (directories in workspace_dir) */
+export async function listProjects(): Promise<ProjectEntry[]> {
+  const res = await fetch(`/api/projects`, { cache: "no-store", credentials: "include" })
+  if (!res.ok) throw new Error(await readApiError(res))
+  return res.json()
+}
+
 export async function createWorkspaceSession(request: CreateWorkspaceSessionRequest = {}): Promise<WorkspaceSession> {
   const res = await fetch(`/api/sessions`, {
     method: "POST",
@@ -493,4 +507,34 @@ export function terminalProxyPath(sessionId: string) {
 
 export function fileserverProxyBaseUrl(sessionId: string) {
   return `/api/session/${sessionId}/files`
+}
+
+// ============================================================================
+// Workspace Config (opencode.json)
+// ============================================================================
+
+export interface WorkspaceConfig {
+  /** Default agent to use for new chats in this workspace */
+  agent?: string
+  /** Other opencode config fields we might care about */
+  instructions?: string[]
+}
+
+/**
+ * Read opencode.json from the workspace root.
+ * Returns null if the file doesn't exist or can't be parsed.
+ */
+export async function getWorkspaceConfig(sessionId: string): Promise<WorkspaceConfig | null> {
+  try {
+    const res = await fetch(
+      `${fileserverProxyBaseUrl(sessionId)}/file?path=opencode.json`,
+      { credentials: "include" }
+    )
+    if (!res.ok) return null
+    
+    const config = await res.json()
+    return config as WorkspaceConfig
+  } catch {
+    return null
+  }
 }

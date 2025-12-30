@@ -8,9 +8,20 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use anyhow::{Context, Result};
+use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
+use tokio::sync::RwLock;
+
+use crate::markdown;
+
+// Simple in-memory cache for session messages
+static MESSAGE_CACHE: Lazy<Arc<RwLock<HashMap<String, (Vec<ChatMessage>, std::time::Instant)>>>> = 
+    Lazy::new(|| Arc::new(RwLock::new(HashMap::new())));
+
+const CACHE_TTL_SECS: u64 = 30; // Cache messages for 30 seconds
 
 /// OpenCode session as stored on disk.
 /// This matches the actual structure in ~/.local/share/opencode/storage/session/
@@ -313,6 +324,9 @@ pub struct ChatMessagePart {
     pub part_type: String,
     /// Text content (for text parts)
     pub text: Option<String>,
+    /// Pre-rendered HTML (for text parts, when render=true)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text_html: Option<String>,
     /// Tool name (for tool parts)
     pub tool_name: Option<String>,
     /// Tool input (for tool parts)
@@ -325,9 +339,140 @@ pub struct ChatMessagePart {
     pub tool_title: Option<String>,
 }
 
-/// Get all messages for a session.
+/// Get all messages for a session (async version with caching).
+pub async fn get_session_messages_async(session_id: &str) -> Result<Vec<ChatMessage>> {
+    // Check cache first
+    {
+        let cache = MESSAGE_CACHE.read().await;
+        if let Some((messages, timestamp)) = cache.get(session_id) {
+            if timestamp.elapsed().as_secs() < CACHE_TTL_SECS {
+                tracing::debug!("Cache hit for session {}", session_id);
+                return Ok(messages.clone());
+            }
+        }
+    }
+
+    // Cache miss - load from disk
+    let opencode_dir = default_opencode_data_dir();
+    let messages = get_session_messages_parallel(session_id, &opencode_dir).await?;
+
+    // Update cache
+    {
+        let mut cache = MESSAGE_CACHE.write().await;
+        cache.insert(session_id.to_string(), (messages.clone(), std::time::Instant::now()));
+        
+        // Prune old entries (keep max 50)
+        if cache.len() > 50 {
+            let mut entries: Vec<_> = cache.iter()
+                .map(|(k, (_, t))| (k.clone(), *t))
+                .collect();
+            entries.sort_by(|a, b| b.1.cmp(&a.1)); // Sort by time descending
+            for (key, _) in entries.into_iter().skip(50) {
+                cache.remove(&key);
+            }
+        }
+    }
+
+    Ok(messages)
+}
+
+/// Invalidate the cache for a session.
+pub async fn invalidate_message_cache(session_id: &str) {
+    let mut cache = MESSAGE_CACHE.write().await;
+    cache.remove(session_id);
+}
+
+/// Get all messages for a session (sync version, for backwards compatibility).
 pub fn get_session_messages(session_id: &str) -> Result<Vec<ChatMessage>> {
     get_session_messages_from_dir(session_id, &default_opencode_data_dir())
+}
+
+/// Get all messages for a session using parallel I/O.
+async fn get_session_messages_parallel(session_id: &str, opencode_dir: &Path) -> Result<Vec<ChatMessage>> {
+    let message_dir = opencode_dir.join("storage/message").join(session_id);
+    let part_dir = opencode_dir.join("storage/part");
+
+    if !message_dir.exists() {
+        tracing::debug!("Message directory does not exist: {:?}", message_dir);
+        return Ok(Vec::new());
+    }
+
+    // Read message directory entries
+    let message_entries: Vec<_> = std::fs::read_dir(&message_dir)
+        .with_context(|| format!("reading message dir: {:?}", message_dir))?
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            e.path()
+                .file_name()
+                .and_then(|s| s.to_str())
+                .map(|name| name.starts_with("msg_") && name.ends_with(".json"))
+                .unwrap_or(false)
+        })
+        .collect();
+
+    // Spawn tasks to read messages in parallel
+    let mut tasks = Vec::with_capacity(message_entries.len());
+    
+    for entry in message_entries {
+        let msg_path = entry.path();
+        let part_dir = part_dir.clone();
+        
+        tasks.push(tokio::task::spawn_blocking(move || {
+            load_single_message(&msg_path, &part_dir)
+        }));
+    }
+
+    // Wait for all tasks and collect results
+    let mut messages = Vec::new();
+    for task in tasks {
+        if let Ok(Ok(Some(msg))) = task.await {
+            messages.push(msg);
+        }
+    }
+
+    // Sort by created_at ascending (chronological order)
+    messages.sort_by(|a, b| a.created_at.cmp(&b.created_at));
+
+    tracing::debug!(
+        "Loaded {} messages for session {} using parallel I/O",
+        messages.len(),
+        session_id
+    );
+
+    Ok(messages)
+}
+
+/// Load a single message and its parts.
+fn load_single_message(msg_path: &Path, part_dir: &Path) -> Result<Option<ChatMessage>> {
+    if !msg_path.is_file() {
+        return Ok(None);
+    }
+
+    let content = std::fs::read_to_string(msg_path)
+        .with_context(|| format!("reading message: {:?}", msg_path))?;
+
+    let info: MessageInfo = serde_json::from_str(&content)
+        .with_context(|| format!("parsing message: {:?}", msg_path))?;
+
+    // Load parts for this message
+    let parts = load_message_parts(&info.id, part_dir);
+
+    Ok(Some(ChatMessage {
+        id: info.id.clone(),
+        session_id: info.session_id,
+        role: info.role,
+        created_at: info.time.created,
+        completed_at: info.time.completed,
+        parent_id: info.parent_id,
+        model_id: info.model_id,
+        provider_id: info.provider_id,
+        agent: info.agent,
+        summary_title: info.summary.and_then(|s| s.title),
+        tokens_input: info.tokens.as_ref().and_then(|t| t.input),
+        tokens_output: info.tokens.as_ref().and_then(|t| t.output),
+        cost: info.cost,
+        parts,
+    }))
 }
 
 /// Get all messages for a session from a specific OpenCode data directory.
@@ -466,6 +611,7 @@ fn load_message_parts(message_id: &str, part_dir: &Path) -> Vec<ChatMessagePart>
                 id: info.id,
                 part_type: info.part_type,
                 text: info.text,
+                text_html: None, // Rendered on-demand via separate endpoint
                 tool_name: None,
                 tool_input: None,
                 tool_output: None,
@@ -476,6 +622,7 @@ fn load_message_parts(message_id: &str, part_dir: &Path) -> Vec<ChatMessagePart>
                 id: info.id,
                 part_type: info.part_type,
                 text: None,
+                text_html: None,
                 tool_name: info.tool,
                 tool_input: info.state.as_ref().and_then(|s| s.input.clone()),
                 tool_output: info.state.as_ref().and_then(|s| s.output.clone()),
@@ -487,6 +634,7 @@ fn load_message_parts(message_id: &str, part_dir: &Path) -> Vec<ChatMessagePart>
                 id: info.id,
                 part_type: info.part_type,
                 text: info.text,
+                text_html: None,
                 tool_name: None,
                 tool_input: None,
                 tool_output: None,
@@ -502,6 +650,43 @@ fn load_message_parts(message_id: &str, part_dir: &Path) -> Vec<ChatMessagePart>
     parts.sort_by(|a, b| a.id.cmp(&b.id));
 
     parts
+}
+
+/// Get all messages for a session with pre-rendered markdown HTML.
+/// 
+/// This is useful for initial load of completed conversations.
+/// During streaming, clients should use raw markdown and render client-side.
+pub async fn get_session_messages_rendered(session_id: &str) -> Result<Vec<ChatMessage>> {
+    let mut messages = get_session_messages_async(session_id).await?;
+    
+    // Collect all text content that needs rendering
+    let texts_to_render: Vec<(usize, usize, String)> = messages.iter().enumerate()
+        .flat_map(|(msg_idx, msg)| {
+            msg.parts.iter().enumerate()
+                .filter(|(_, part)| part.part_type == "text" && part.text.is_some())
+                .map(move |(part_idx, part)| {
+                    (msg_idx, part_idx, part.text.clone().unwrap())
+                })
+        })
+        .collect();
+    
+    if texts_to_render.is_empty() {
+        return Ok(messages);
+    }
+    
+    // Render all markdown in parallel
+    let contents: Vec<String> = texts_to_render.iter()
+        .map(|(_, _, text)| text.clone())
+        .collect();
+    
+    let rendered = markdown::render_markdown_batch(contents).await;
+    
+    // Apply rendered HTML back to messages
+    for ((msg_idx, part_idx, _), html) in texts_to_render.into_iter().zip(rendered) {
+        messages[msg_idx].parts[part_idx].text_html = Some(html);
+    }
+    
+    Ok(messages)
 }
 
 #[cfg(test)]

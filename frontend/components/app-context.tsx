@@ -10,6 +10,7 @@ import {
   getOrCreateWorkspaceSession,
   getOrCreateSessionForWorkspace,
   listChatHistory,
+  listProjects,
   login,
   listWorkspaceSessions,
   opencodeProxyBaseUrl,
@@ -18,6 +19,7 @@ import {
   upgradeWorkspaceSession,
   type ChatSession,
   type Persona,
+  type ProjectEntry,
   type WorkspaceSession,
 } from "@/lib/control-plane-client"
 
@@ -43,6 +45,10 @@ interface AppContextValue {
   selectedChatSession: OpenCodeSession | undefined
   /** Get the selected chat from history (may not have live opencode session) */
   selectedChatFromHistory: ChatSession | undefined
+  /** Set of chat session IDs that are currently busy (agent working) */
+  busySessions: Set<string>
+  /** Mark a session as busy or idle */
+  setSessionBusy: (sessionId: string, busy: boolean) => void
   refreshWorkspaceSessions: () => Promise<void>
   refreshChatHistory: () => Promise<void>
   refreshOpencodeSessions: () => Promise<void>
@@ -50,7 +56,7 @@ interface AppContextValue {
    * If workspacePath is provided, ensures a session for that specific workspace.
    */
   ensureOpencodeRunning: (workspacePath?: string) => Promise<string | null>
-  createNewChat: () => Promise<OpenCodeSession | null>
+  createNewChat: (baseUrlOverride?: string) => Promise<OpenCodeSession | null>
   createNewChatWithPersona: (persona: Persona, workspacePath?: string) => Promise<OpenCodeSession | null>
   deleteChatSession: (sessionId: string) => Promise<boolean>
   renameChatSession: (sessionId: string, title: string) => Promise<boolean>
@@ -58,6 +64,10 @@ interface AppContextValue {
   deleteWorkspaceSession: (sessionId: string) => Promise<boolean>
   upgradeWorkspaceSession: (sessionId: string) => Promise<boolean>
   authToken: string | null
+  /** Available projects (directories in workspace_dir) */
+  projects: ProjectEntry[]
+  /** Start a new session for a project */
+  startProjectSession: (projectPath: string) => Promise<WorkspaceSession | null>
 }
 
 const AppContext = createContext<AppContextValue | null>(null)
@@ -76,6 +86,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [opencodeSessions, setOpencodeSessions] = useState<OpenCodeSession[]>([])
   const [selectedChatSessionId, setSelectedChatSessionId] = useState<string>("")
   const [authToken, setAuthToken] = useState<string | null>(null)
+  // Available projects
+  const [projects, setProjects] = useState<ProjectEntry[]>([])
+  // Track which chat sessions are currently busy (agent working)
+  const [busySessions, setBusySessions] = useState<Set<string>>(new Set())
+  
+  const setSessionBusy = useCallback((sessionId: string, busy: boolean) => {
+    setBusySessions(prev => {
+      const next = new Set(prev)
+      if (busy) {
+        next.add(sessionId)
+      } else {
+        next.delete(sessionId)
+      }
+      return next
+    })
+  }, [])
 
   const selectedChatSession = useMemo(() => {
     return opencodeSessions.find((s) => s.id === selectedChatSessionId)
@@ -138,7 +164,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       // Dev login - store token for WebSocket auth
       if (!authToken) {
         try {
-          const loginResponse = await login({ username: "dev", password: "devpassword123" })
+          const loginResponse = await login({ username: "dev", password: "dev" })
           setAuthToken(loginResponse.token)
           try {
             window.localStorage.setItem("authToken", loginResponse.token)
@@ -150,22 +176,26 @@ export function AppProvider({ children }: { children: ReactNode }) {
         }
       }
       
-      // Just list sessions - don't auto-start opencode anymore
-      // Opencode will be started on-demand when user sends a message
-      const data = await listWorkspaceSessions()
-      setWorkspaceSessions(data)
+      // Load sessions and projects in parallel
+      const [sessionsData, projectsData] = await Promise.all([
+        listWorkspaceSessions().catch(() => [] as WorkspaceSession[]),
+        listProjects().catch(() => [] as ProjectEntry[]),
+      ])
+      
+      setWorkspaceSessions(sessionsData)
+      setProjects(projectsData)
 
-      if (data.length > 0) {
+      if (sessionsData.length > 0) {
         setSelectedWorkspaceSessionId((current) => {
           // If no current selection, pick the first running session or first session
           if (!current) {
-            const running = data.find((s) => s.status === "running")
-            return running?.id || data[0].id
+            const running = sessionsData.find((s) => s.status === "running")
+            return running?.id || sessionsData[0].id
           }
           // Check if current session exists
-          const currentSession = data.find((s) => s.id === current)
+          const currentSession = sessionsData.find((s) => s.id === current)
           if (!currentSession) {
-            return data[0].id
+            return sessionsData[0].id
           }
           return current
         })
@@ -174,6 +204,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
       console.error("Failed to load sessions:", err)
     }
   }, [authToken])
+
+  // Start a new session for a specific project
+  const startProjectSession = useCallback(async (projectPath: string): Promise<WorkspaceSession | null> => {
+    try {
+      const session = await getOrCreateSessionForWorkspace(projectPath)
+      await refreshWorkspaceSessions()
+      setSelectedWorkspaceSessionId(session.id)
+      return session
+    } catch (err) {
+      console.error("Failed to start project session:", err)
+      return null
+    }
+  }, [refreshWorkspaceSessions])
 
   // Ensure opencode is running and return the base URL
   // This is called when the user wants to send a message
@@ -244,6 +287,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
       opencodeBaseUrl,
       (event) => {
         const eventType = event.type as string
+        const props = event.properties as { sessionId?: string } | null
+        
+        // Track busy/idle state for sessions
+        if (eventType === "session.busy" && props?.sessionId) {
+          setSessionBusy(props.sessionId, true)
+        } else if (eventType === "session.idle" && props?.sessionId) {
+          setSessionBusy(props.sessionId, false)
+        }
+        
         if (eventType?.startsWith("session")) {
           refreshWorkspaceSessions()
         }
@@ -252,7 +304,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       controlPlaneDirectBaseUrl(),
     )
     return unsubscribe
-  }, [authToken, opencodeBaseUrl, refreshWorkspaceSessions])
+  }, [authToken, opencodeBaseUrl, refreshWorkspaceSessions, setSessionBusy])
 
   useEffect(() => {
     if (!selectedWorkspaceSession) return
@@ -292,18 +344,24 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }, [opencodeBaseUrl])
 
-  const createNewChat = useCallback(async (): Promise<OpenCodeSession | null> => {
-    if (!opencodeBaseUrl) return null
+  const createNewChat = useCallback(async (baseUrlOverride?: string): Promise<OpenCodeSession | null> => {
+    const baseUrl = baseUrlOverride || opencodeBaseUrl
+    if (!baseUrl) return null
     try {
-      const created = await createSession(opencodeBaseUrl)
+      const created = await createSession(baseUrl)
       setOpencodeSessions((prev) => [created, ...prev])
       setSelectedChatSessionId(created.id)
+      // Refresh chat history to include the new session in the sidebar
+      // Small delay to allow opencode to write the session to disk
+      setTimeout(() => {
+        refreshChatHistory()
+      }, 500)
       return created
     } catch (err) {
       console.error("Failed to create new chat session:", err)
       return null
     }
-  }, [opencodeBaseUrl])
+  }, [opencodeBaseUrl, refreshChatHistory])
 
   const createNewChatWithPersona = useCallback(async (persona: Persona, workspacePath?: string): Promise<OpenCodeSession | null> => {
     try {
@@ -344,6 +402,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
           const created = await createSession(baseUrl)
           setOpencodeSessions((prev) => [created, ...prev])
           setSelectedChatSessionId(created.id)
+          // Refresh chat history to include the new session in the sidebar
+          setTimeout(() => {
+            refreshChatHistory()
+          }, 500)
           return created
         } catch {
           attempts++
@@ -357,7 +419,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       console.error("Failed to create new chat with persona:", err)
       return null
     }
-  }, [refreshWorkspaceSessions, selectedWorkspaceSession?.workspace_path])
+  }, [refreshWorkspaceSessions, refreshChatHistory, selectedWorkspaceSession?.workspace_path])
 
   const deleteChatSession = useCallback(async (sessionId: string): Promise<boolean> => {
     if (!opencodeBaseUrl) return false
@@ -370,12 +432,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const remaining = opencodeSessions.filter((s) => s.id !== sessionId)
         return remaining.length > 0 ? remaining[0].id : ""
       })
+      // Refresh chat history to remove the deleted session from the sidebar
+      setTimeout(() => {
+        refreshChatHistory()
+      }, 500)
       return true
     } catch (err) {
       console.error("Failed to delete chat session:", err)
       return false
     }
-  }, [opencodeBaseUrl, opencodeSessions])
+  }, [opencodeBaseUrl, opencodeSessions, refreshChatHistory])
 
   const renameChatSession = useCallback(async (sessionId: string, title: string): Promise<boolean> => {
     if (!opencodeBaseUrl) return false
@@ -464,6 +530,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setSelectedChatSessionId,
       selectedChatSession,
       selectedChatFromHistory,
+      busySessions,
+      setSessionBusy,
       refreshWorkspaceSessions,
       refreshChatHistory,
       refreshOpencodeSessions,
@@ -476,6 +544,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       deleteWorkspaceSession: handleDeleteWorkspaceSession,
       upgradeWorkspaceSession: handleUpgradeWorkspaceSession,
       authToken,
+      projects,
+      startProjectSession,
     }),
     [
       apps,
@@ -493,6 +563,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       selectedChatSessionId,
       selectedChatSession,
       selectedChatFromHistory,
+      busySessions,
+      setSessionBusy,
       refreshWorkspaceSessions,
       refreshChatHistory,
       refreshOpencodeSessions,
@@ -505,6 +577,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       handleDeleteWorkspaceSession,
       handleUpgradeWorkspaceSession,
       authToken,
+      projects,
+      startProjectSession,
     ],
   )
 

@@ -107,9 +107,9 @@ pub struct Session {
     pub user_id: String,
     /// Path to the workspace directory.
     pub workspace_path: String,
-    /// Path to the persona directory (for file viewer).
-    /// When set, fileserver serves files from this directory instead of workspace_path.
-    pub persona_path: Option<String>,
+    /// Agent name to use with opencode (passed via --agent flag).
+    /// If not set, opencode uses its default agent.
+    pub agent: Option<String>,
     /// Container image to use (ignored in local mode).
     pub image: String,
     /// Image digest (sha256) when the container was created.
@@ -192,10 +192,11 @@ pub struct CreateSessionRequest {
     /// Container image to use (optional, defaults to octo-dev).
     #[serde(default)]
     pub image: Option<String>,
-    /// Persona ID to use for this session.
-    /// If set, determines the working directory and agent configuration.
+    /// Agent name to use with opencode (passed via --agent flag).
+    /// Agents are defined in opencode's global config or the workspace's
+    /// opencode.json / .opencode/agents/ directory.
     #[serde(default)]
-    pub persona_id: Option<String>,
+    pub agent: Option<String>,
     /// Environment variables to inject.
     #[serde(default)]
     pub env: std::collections::HashMap<String, String>,

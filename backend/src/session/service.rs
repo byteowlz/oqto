@@ -303,14 +303,7 @@ impl SessionService {
         self.local_runtime.as_ref()
     }
 
-    /// Get the personas directory path.
-    /// Returns the personas_path from local config if available.
-    pub fn personas_path(&self) -> Option<std::path::PathBuf> {
-        self.local_runtime
-            .as_ref()
-            .and_then(|rt| rt.config().personas_path.as_ref())
-            .map(std::path::PathBuf::from)
-    }
+
 
     /// Get the base workspace directory for listing projects.
     pub fn workspace_root(&self) -> std::path::PathBuf {
@@ -521,8 +514,8 @@ impl SessionService {
             user_home.to_string_lossy().to_string()
         };
 
-        // Compute persona_path from persona_id or default_persona
-        let persona_path = self.resolve_persona_path(request.persona_id.as_deref());
+        // Use agent from request (LocalRuntime will apply default_agent if None)
+        let agent = request.agent.clone();
 
         let mut last_error = None;
         for attempt in 0..Self::MAX_PORT_ALLOCATION_RETRIES {
@@ -531,7 +524,7 @@ impl SessionService {
                     &user_home_path,
                     &image,
                     image_digest.as_deref(),
-                    persona_path.as_deref(),
+                    agent.as_deref(),
                     attempt,
                 )
                 .await
@@ -564,18 +557,6 @@ impl SessionService {
         }))
     }
 
-    /// Resolve persona path from persona_id or default_persona config.
-    fn resolve_persona_path(&self, persona_id: Option<&str>) -> Option<String> {
-        let local_config = self.config.local_config.as_ref()?;
-        let personas_path = local_config.personas_path.as_ref()?;
-        
-        // Use provided persona_id, fall back to default_persona
-        let persona = persona_id.or(local_config.default_persona.as_deref())?;
-        
-        let path = std::path::PathBuf::from(personas_path).join(persona);
-        Some(path.to_string_lossy().to_string())
-    }
-
     /// Check if an error is a retryable unique constraint violation.
     fn is_retryable_unique_violation(error: &anyhow::Error) -> bool {
         for cause in error.chain() {
@@ -603,7 +584,7 @@ impl SessionService {
         user_home_path: &str,
         image: &str,
         image_digest: Option<&str>,
-        persona_path: Option<&str>,
+        agent: Option<&str>,
         attempt: u32,
     ) -> Result<Session> {
         let session_id = Uuid::new_v4().to_string();
@@ -650,7 +631,7 @@ impl SessionService {
             container_name: container_name.clone(),
             user_id: self.config.default_user_id.clone(),
             workspace_path: user_home_path.to_string(),
-            persona_path: persona_path.map(ToString::to_string),
+            agent: agent.map(ToString::to_string),
             image: image.to_string(),
             image_digest: image_digest.map(ToString::to_string),
             opencode_port,
@@ -888,6 +869,30 @@ impl SessionService {
             .local_runtime()
             .context("local runtime not available")?;
 
+        let opencode_port = session.opencode_port as u16;
+        let fileserver_port = session.fileserver_port as u16;
+        let ttyd_port = session.ttyd_port as u16;
+
+        // Check if ports are available before attempting to start
+        if !local_runtime.check_ports_available(opencode_port, fileserver_port, ttyd_port) {
+            // Ports are in use - try to clear them first
+            warn!(
+                "Ports {}/{}/{} are in use, attempting to clear orphan processes...",
+                opencode_port, fileserver_port, ttyd_port
+            );
+            let cleared = local_runtime.clear_ports(&[opencode_port, fileserver_port, ttyd_port]);
+            
+            // Check again after clearing
+            if !local_runtime.check_ports_available(opencode_port, fileserver_port, ttyd_port) {
+                anyhow::bail!(
+                    "Ports {}/{}/{} are still in use after cleanup (cleared {} processes). \
+                     Another process may be using these ports.",
+                    opencode_port, fileserver_port, ttyd_port, cleared
+                );
+            }
+            info!("Cleared {} orphan process(es), ports now available", cleared);
+        }
+
         // Build environment variables for the processes
         let mut env = std::collections::HashMap::new();
         if let Some(ref eavs_url) = self.config.eavs_container_url {
@@ -901,7 +906,6 @@ impl SessionService {
         }
 
         let workspace_path = PathBuf::from(&session.workspace_path);
-        let persona_path = session.persona_path.as_ref().map(PathBuf::from);
 
         // Start all services
         // TODO: Add project_id support when shared projects are implemented
@@ -910,11 +914,11 @@ impl SessionService {
                 &session.id,
                 &session.user_id,
                 &workspace_path,
-                persona_path.as_deref(),
+                session.agent.as_deref(),
                 None, // project_id - will be added with shared projects feature
-                session.opencode_port as u16,
-                session.fileserver_port as u16,
-                session.ttyd_port as u16,
+                opencode_port,
+                fileserver_port,
+                ttyd_port,
                 env,
             )
             .await
@@ -1111,7 +1115,6 @@ impl SessionService {
                 // The user may need to provide it again through environment
 
                 let workspace_path = PathBuf::from(&session.workspace_path);
-                let persona_path = session.persona_path.as_ref().map(PathBuf::from);
 
                 // Respawn the processes (local mode doesn't preserve process state)
                 // TODO: Add project_id support when shared projects are implemented
@@ -1120,7 +1123,7 @@ impl SessionService {
                         session_id,
                         &session.user_id,
                         &workspace_path,
-                        persona_path.as_deref(),
+                        session.agent.as_deref(),
                         None, // project_id - will be added with shared projects feature
                         session.opencode_port as u16,
                         session.fileserver_port as u16,
@@ -1692,9 +1695,17 @@ impl SessionService {
     /// Run cleanup at server startup.
     ///
     /// This should be called once when the server starts to clean up any
-    /// orphaned containers from previous runs and sync database state.
+    /// orphaned containers/processes from previous runs and sync database state.
     pub async fn startup_cleanup(&self) -> Result<()> {
         info!("Running startup cleanup...");
+
+        // 0. For local mode: clean up orphan processes on base ports
+        if self.config.runtime_mode == RuntimeMode::Local {
+            if let Some(local_runtime) = self.local_runtime() {
+                let base_port = self.config.base_port as u16;
+                local_runtime.startup_cleanup(base_port);
+            }
+        }
 
         // 1. Clean up orphan containers (containers without matching sessions)
         let orphans_cleaned = self.cleanup_orphan_containers().await?;
@@ -1702,7 +1713,7 @@ impl SessionService {
             info!("Cleaned up {} orphan container(s)", orphans_cleaned);
         }
 
-        // 2. Mark stale sessions as failed (sessions with missing containers)
+        // 2. Mark stale sessions as failed (sessions with missing containers/processes)
         let stale_cleaned = self.cleanup_stale_sessions().await?;
         if stale_cleaned > 0 {
             info!("Marked {} stale session(s) as failed", stale_cleaned);
@@ -1948,7 +1959,7 @@ impl SessionService {
         let request = CreateSessionRequest {
             workspace_path: Some(workspace_path.to_string()),
             image: None,
-            persona_id: None,
+            agent: None,
             env: Default::default(),
         };
 
@@ -2244,7 +2255,7 @@ mod tests {
             .create_session(CreateSessionRequest {
                 workspace_path: Some(workspace_dir.path().to_string_lossy().to_string()),
                 image: None,
-                persona_id: None,
+                agent: None,
                 env: Default::default(),
             })
             .await
@@ -2297,6 +2308,7 @@ mod tests {
             created_at: Utc::now().to_rfc3339(),
             started_at: None,
             stopped_at: None,
+            last_activity_at: Some(Utc::now().to_rfc3339()),
             error_message: None,
         };
 

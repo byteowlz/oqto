@@ -24,6 +24,7 @@ import {
   ChevronDown,
   Copy,
   Search,
+  Loader2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { AppProvider, useApp } from "@/components/app-context";
@@ -52,6 +53,13 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { CommandPalette, useCommandPalette } from "@/components/command-palette";
@@ -78,10 +86,12 @@ function AppShell() {
     selectedChatFromHistory,
     selectedWorkspaceSession,
     opencodeBaseUrl,
+    ensureOpencodeRunning,
     createNewChat,
     createNewChatWithPersona,
     deleteChatSession,
     renameChatSession,
+    busySessions,
   } = useApp();
   const { theme, setTheme, resolvedTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
@@ -368,6 +378,10 @@ function AppShell() {
       if (existing) {
         existing.sessionCount += 1;
         if (lastActive > existing.lastActive) existing.lastActive = lastActive;
+        // Update directory to absolute path from session if available
+        if (session.workspace_path && !existing.directory?.startsWith("/")) {
+          existing.directory = session.workspace_path;
+        }
       } else {
         entries.set(key, {
           key,
@@ -516,9 +530,56 @@ function AppShell() {
     setTargetSessionId("");
   }, [targetSessionId, deleteChatSession]);
 
-  const handleNewChat = useCallback(() => {
+  const handleNewChat = useCallback(async () => {
+    console.log("[handleNewChat] called", { 
+      selectedWorkspaceSession: !!selectedWorkspaceSession, 
+      opencodeBaseUrl,
+      selectedProjectKey,
+      projectSummaries: projectSummaries.map(p => ({ key: p.key, directory: p.directory }))
+    });
+    
+    // If we have a running workspace session, create a new chat in it
+    if (selectedWorkspaceSession && opencodeBaseUrl) {
+      console.log("[handleNewChat] Using existing workspace session");
+      setActiveAppId("sessions");
+      await createNewChat();
+      return;
+    }
+    
+    // Check if we have a project filter selected - use that workspace
+    if (selectedProjectKey) {
+      const project = projectSummaries.find((p) => p.key === selectedProjectKey);
+      console.log("[handleNewChat] Project filter selected:", { selectedProjectKey, project });
+      if (project?.directory) {
+        console.log("[handleNewChat] Starting session for project:", project.directory);
+        setActiveAppId("sessions");
+        const baseUrl = await ensureOpencodeRunning(project.directory);
+        console.log("[handleNewChat] Got baseUrl:", baseUrl);
+        if (baseUrl) {
+          await createNewChat(baseUrl);
+          return;
+        }
+      }
+    }
+    
+    // Check if we have a workspace path from the current chat history
+    // This happens when viewing a historical chat without a running session
+    const currentWorkspacePath = selectedChatFromHistory?.workspace_path;
+    if (currentWorkspacePath && currentWorkspacePath !== "global") {
+      // Start a session for this workspace and create a new chat
+      console.log("[handleNewChat] Using workspace from history:", currentWorkspacePath);
+      setActiveAppId("sessions");
+      const baseUrl = await ensureOpencodeRunning(currentWorkspacePath);
+      if (baseUrl) {
+        await createNewChat(baseUrl);
+        return;
+      }
+    }
+    
+    // No workspace context - open persona picker to select one
+    console.log("[handleNewChat] Opening agent picker");
     setAgentPickerOpen(true);
-  }, []);
+  }, [selectedWorkspaceSession, opencodeBaseUrl, selectedChatFromHistory, selectedProjectKey, projectSummaries, ensureOpencodeRunning, createNewChat, setActiveAppId]);
 
   const handleAgentSelect = useCallback(async (persona: Persona) => {
     if (persona.workspace_mode === "ask") {
@@ -739,7 +800,7 @@ function AppShell() {
                     </button>
                   )}
                 </div>
-                {/* Mobile search input */}
+                {/* Mobile search input with project filter */}
                 <div className="relative px-2 mb-2">
                   <Search className="absolute left-5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
                   <input
@@ -747,16 +808,55 @@ function AppShell() {
                     placeholder={locale === "de" ? "Suchen..." : "Search..."}
                     value={sessionSearch}
                     onChange={(e) => setSessionSearch(e.target.value)}
-                    className="w-full pl-9 pr-9 py-2 text-sm bg-sidebar-accent/50 border border-sidebar-border rounded placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary/50"
+                    className="w-full pl-9 pr-16 py-2 text-sm bg-sidebar-accent/50 border border-sidebar-border rounded placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary/50"
                   />
-                  {sessionSearch && (
-                    <button
-                      onClick={() => setSessionSearch("")}
-                      className="absolute right-5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                    >
-                      <X className="w-4 h-4" />
-                    </button>
-                  )}
+                  <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1">
+                    {sessionSearch && (
+                      <button
+                        onClick={() => setSessionSearch("")}
+                        className="p-1 text-muted-foreground hover:text-foreground"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    )}
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <button
+                          className={cn(
+                            "p-1 transition-colors rounded",
+                            selectedProjectKey
+                              ? "text-primary hover:text-primary/80"
+                              : "text-muted-foreground hover:text-foreground"
+                          )}
+                          title={locale === "de" ? "Nach Projekt filtern" : "Filter by project"}
+                        >
+                          <ChevronDown className="w-4 h-4" />
+                        </button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" className="w-48 max-h-64 overflow-y-auto">
+                        <DropdownMenuItem
+                          onClick={handleProjectClear}
+                          className={cn(!selectedProjectKey && "bg-accent")}
+                        >
+                          <span className="truncate">{locale === "de" ? "Alle Projekte" : "All projects"}</span>
+                        </DropdownMenuItem>
+                        <DropdownMenuSeparator />
+                        {projectSummaries.map((project) => (
+                          <DropdownMenuItem
+                            key={project.key}
+                            onClick={() => setSelectedProjectKey(project.key)}
+                            className={cn(selectedProjectKey === project.key && "bg-accent")}
+                          >
+                            <FolderKanban className="w-4 h-4 mr-2 flex-shrink-0 text-primary/70" />
+                            <span className="truncate">{project.name}</span>
+                            <span className="ml-auto text-xs text-muted-foreground">
+                              {project.sessionCount}
+                            </span>
+                          </DropdownMenuItem>
+                        ))}
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </div>
                 </div>
                 <div className="flex-1 overflow-y-auto space-y-0.5 px-1">
                   {filteredSessions.length === 0 && deferredSearch && (
@@ -825,6 +925,9 @@ function AppShell() {
                                     <span className="text-xs text-primary/70">
                                       ({children.length})
                                     </span>
+                                  )}
+                                  {busySessions.has(session.id) && (
+                                    <Loader2 className="w-3 h-3 flex-shrink-0 text-primary animate-spin" />
                                   )}
                                 </div>
                                 {(formattedDate || projectLabel) && (
@@ -1180,7 +1283,7 @@ function AppShell() {
                 </button>
               )}
             </div>
-            {/* Search input */}
+            {/* Search input with project filter */}
             <div className="relative mb-2 px-0.5">
               <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
               <input
@@ -1188,16 +1291,55 @@ function AppShell() {
                 placeholder={locale === "de" ? "Suchen..." : "Search..."}
                 value={sessionSearch}
                 onChange={(e) => setSessionSearch(e.target.value)}
-                className="w-full pl-7 pr-7 py-1.5 text-xs bg-sidebar-accent/50 border border-sidebar-border rounded placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary/50"
+                className="w-full pl-7 pr-14 py-1.5 text-xs bg-sidebar-accent/50 border border-sidebar-border rounded placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary/50"
               />
-              {sessionSearch && (
-                <button
-                  onClick={() => setSessionSearch("")}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                >
-                  <X className="w-3 h-3" />
-                </button>
-              )}
+              <div className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-0.5">
+                {sessionSearch && (
+                  <button
+                    onClick={() => setSessionSearch("")}
+                    className="p-1 text-muted-foreground hover:text-foreground"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                )}
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <button
+                      className={cn(
+                        "p-1 transition-colors rounded",
+                        selectedProjectKey
+                          ? "text-primary hover:text-primary/80"
+                          : "text-muted-foreground hover:text-foreground"
+                      )}
+                      title={locale === "de" ? "Nach Projekt filtern" : "Filter by project"}
+                    >
+                      <ChevronDown className="w-3.5 h-3.5" />
+                    </button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-48 max-h-64 overflow-y-auto">
+                    <DropdownMenuItem
+                      onClick={handleProjectClear}
+                      className={cn(!selectedProjectKey && "bg-accent")}
+                    >
+                      <span className="truncate">{locale === "de" ? "Alle Projekte" : "All projects"}</span>
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    {projectSummaries.map((project) => (
+                      <DropdownMenuItem
+                        key={project.key}
+                        onClick={() => setSelectedProjectKey(project.key)}
+                        className={cn(selectedProjectKey === project.key && "bg-accent")}
+                      >
+                        <FolderKanban className="w-3.5 h-3.5 mr-2 flex-shrink-0 text-primary/70" />
+                        <span className="truncate">{project.name}</span>
+                        <span className="ml-auto text-[10px] text-muted-foreground">
+                          {project.sessionCount}
+                        </span>
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
             </div>
             <div className="flex-1 overflow-y-auto space-y-0.5">
               {filteredSessions.length === 0 && deferredSearch && (
@@ -1266,6 +1408,9 @@ function AppShell() {
                                 <span className="text-[10px] text-primary/70">
                                   ({children.length})
                                 </span>
+                              )}
+                              {busySessions.has(session.id) && (
+                                <Loader2 className="w-3 h-3 flex-shrink-0 text-primary animate-spin" />
                               )}
                             </div>
                             {(formattedDate || projectLabel) && (

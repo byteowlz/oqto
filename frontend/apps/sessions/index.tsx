@@ -1,10 +1,10 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useState, useRef, memo } from "react"
+import { useCallback, useEffect, useMemo, useState, useRef, memo, useTransition, startTransition } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
-import { FileText, Terminal, Eye, Send, ChevronDown, User, Bot, Clock, ArrowDown, ListTodo, Square, CheckSquare, CircleDot, XCircle, MessageSquare, Loader2, Paperclip, X, Copy, Check, StopCircle } from "lucide-react"
+import { FileText, Terminal, Eye, Send, ChevronDown, User, Bot, Clock, ArrowDown, ListTodo, Square, CheckSquare, CircleDot, XCircle, MessageSquare, Loader2, Paperclip, X, Copy, Check, StopCircle, Gauge } from "lucide-react"
 import { useApp } from "@/components/app-context"
 import { FileTreeView, type FileTreeState, initialFileTreeState } from "@/app/sessions/FileTreeView"
 import { TerminalView } from "@/app/sessions/TerminalView"
@@ -24,11 +24,12 @@ import {
   abortSession,
   type OpenCodeMessageWithParts,
   type OpenCodePart,
+  type OpenCodeAssistantMessage,
   type Permission,
   type PermissionResponse,
 } from "@/lib/opencode-client"
 import { PermissionDialog, PermissionBanner } from "@/components/ui/permission-dialog"
-import { controlPlaneDirectBaseUrl, fileserverProxyBaseUrl, getChatMessages, convertChatMessagesToOpenCode, type Persona } from "@/lib/control-plane-client"
+import { controlPlaneDirectBaseUrl, fileserverProxyBaseUrl, getChatMessages, convertChatMessagesToOpenCode, getWorkspaceConfig, type Persona } from "@/lib/control-plane-client"
 import { generateReadableId, formatSessionDate } from "@/lib/session-utils"
 
 // Todo item structure
@@ -163,6 +164,10 @@ export function SessionsApp() {
     refreshOpencodeSessions,
     ensureOpencodeRunning,
     authToken,
+    chatHistory,
+    projects,
+    startProjectSession,
+    setSessionBusy,
   } = useApp()
   const [messages, setMessages] = useState<OpenCodeMessageWithParts[]>([])
   const [messageInput, setMessageInput] = useState("")
@@ -177,7 +182,9 @@ export function SessionsApp() {
       next.set(selectedChatSessionId, state)
       return next
     })
-  }, [selectedChatSessionId])
+    // Also update global busy state for sidebar indicator
+    setSessionBusy(selectedChatSessionId, state === "sending")
+  }, [selectedChatSessionId, setSessionBusy])
   
   // Per-chat draft text cache (persists across session switches AND component remounts via localStorage)
   const previousSessionIdRef = useRef<string | null>(null)
@@ -208,35 +215,19 @@ export function SessionsApp() {
     }
   }, [])
   
-  // Save draft when switching away, restore when switching to new session
+  // Restore draft only when switching to a new session
   useEffect(() => {
     const prevId = previousSessionIdRef.current
     const currId = selectedChatSessionId
     
-    // Save current draft to previous session (if any)
-    if (prevId && prevId !== currId) {
-      setDraft(prevId, messageInput)
-    }
-    
-    // Restore draft for current session (or clear if none)
+    // Restore draft for current session when switching (or clear if none)
     if (currId && currId !== prevId) {
       const savedDraft = getDraft(currId)
       setMessageInput(savedDraft)
     }
     
     previousSessionIdRef.current = currId
-  }, [selectedChatSessionId, getDraft, setDraft]) // intentionally not including messageInput to avoid loops
-  
-  // Also save draft on unmount or when messageInput changes (debounced via effect cleanup)
-  useEffect(() => {
-    if (!selectedChatSessionId) return
-    // Save on unmount
-    return () => {
-      if (selectedChatSessionId && messageInput.trim()) {
-        setDraft(selectedChatSessionId, messageInput)
-      }
-    }
-  }, [selectedChatSessionId, messageInput, setDraft])
+  }, [selectedChatSessionId, getDraft])
   const [isLoading, setIsLoading] = useState(true)
   const [showTimeoutError, setShowTimeoutError] = useState(false)
   const [activeView, setActiveView] = useState<ActiveView>("chat")
@@ -246,6 +237,10 @@ export function SessionsApp() {
   const [fileTreeState, setFileTreeState] = useState<FileTreeState>(initialFileTreeState)
   const messagesContainerRef = useRef<HTMLDivElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  
+  // Track if user has manually scrolled away from bottom
+  const isNearBottomRef = useRef(true)
+  const lastSessionIdRef = useRef<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const chatInputRef = useRef<HTMLTextAreaElement>(null)
   const chatContainerRef = useRef<HTMLDivElement>(null)
@@ -307,27 +302,44 @@ export function SessionsApp() {
     setFileTreeState(newState)
   }, [])
   
-  // Fetch available agents
+  // Fetch available agents and check workspace config for default agent
   useEffect(() => {
-    if (!opencodeBaseUrl) return
-    fetchAgents(opencodeBaseUrl)
-      .then((agents) => {
+    if (!opencodeBaseUrl || !selectedWorkspaceSessionId) return
+    
+    const loadAgentConfig = async () => {
+      try {
+        // First, check if workspace has a custom agent in opencode.json
+        const workspaceConfig = await getWorkspaceConfig(selectedWorkspaceSessionId)
+        
+        if (workspaceConfig?.agent) {
+          // Workspace specifies a custom agent - use it
+          console.log("Using workspace-specified agent:", workspaceConfig.agent)
+          setDefaultAgent(workspaceConfig.agent)
+          return
+        }
+        
+        // No workspace config - fetch available agents and default to "build"
+        const agents = await fetchAgents(opencodeBaseUrl)
         console.log("Available agents:", agents)
+        
         // Prefer "build" agent (main agent with all tools), fallback to first primary agent
         const buildAgent = agents.find(a => a.id === "build")
         const firstPrimaryAgent = agents.find(a => a.id === "build" || a.id === "plan") || agents[0]
+        
         if (buildAgent) {
           setDefaultAgent(buildAgent.id)
         } else if (firstPrimaryAgent) {
           setDefaultAgent(firstPrimaryAgent.id)
         }
         // Keep "build" as fallback if no agents found
-      })
-      .catch((err) => {
-        console.error("Failed to fetch agents:", err)
+      } catch (err) {
+        console.error("Failed to load agent config:", err)
         // Keep "build" as fallback on error
-      })
-  }, [opencodeBaseUrl])
+      }
+    }
+    
+    loadAgentConfig()
+  }, [opencodeBaseUrl, selectedWorkspaceSessionId])
 
   // Loading state management with timeout
   useEffect(() => {
@@ -474,36 +486,77 @@ export function SessionsApp() {
     return false
   }, [selectedChatSession, selectedChatFromHistory, selectedChatSessionId])
 
+  // Merge messages to prevent flickering - preserves existing message references when unchanged
+  const mergeMessages = useCallback((prev: OpenCodeMessageWithParts[], next: OpenCodeMessageWithParts[]): OpenCodeMessageWithParts[] => {
+    if (prev.length === 0) return next
+    if (next.length === 0) return next
+    
+    // Build a map of existing messages by ID for quick lookup
+    const prevById = new Map(prev.map(m => [m.info.id, m]))
+    
+    // Merge: keep existing reference if message hasn't changed, otherwise use new one
+    return next.map(newMsg => {
+      const existing = prevById.get(newMsg.info.id)
+      if (!existing) return newMsg
+      
+      // Compare parts length and last part to detect changes
+      // This is a lightweight check to avoid deep comparison
+      const existingParts = existing.parts
+      const newParts = newMsg.parts
+      
+      if (existingParts.length !== newParts.length) return newMsg
+      
+      // Check if the last part has changed (most common case during streaming)
+      if (newParts.length > 0) {
+        const lastNew = newParts[newParts.length - 1]
+        const lastExisting = existingParts[existingParts.length - 1]
+        
+        // Compare text content or tool state
+        if (lastNew.type === "text" && lastExisting.type === "text") {
+          if (lastNew.text !== lastExisting.text) return newMsg
+        } else if (lastNew.type === "tool" && lastExisting.type === "tool") {
+          if (lastNew.state?.status !== lastExisting.state?.status ||
+              lastNew.state?.output !== lastExisting.state?.output) {
+            return newMsg
+          }
+        } else if (lastNew.type !== lastExisting.type) {
+          return newMsg
+        }
+      }
+      
+      // No significant changes detected, keep existing reference
+      return existing
+    })
+  }, [])
+
   const loadMessages = useCallback(async () => {
     if (!selectedChatSessionId) return
     
     try {
-      // If this is a history-only session (no running opencode), load from disk
-      if (isHistoryOnlySession || !opencodeBaseUrl) {
+      let loadedMessages: OpenCodeMessageWithParts[] = []
+      
+      // Always try disk history first - it's faster due to server-side caching
+      // This works for both active and history-only sessions
+      try {
         const historyMessages = await getChatMessages(selectedChatSessionId)
-        const converted = convertChatMessagesToOpenCode(historyMessages)
-        setMessages(converted)
-        return
+        if (historyMessages.length > 0) {
+          loadedMessages = convertChatMessagesToOpenCode(historyMessages)
+        }
+      } catch {
+        // Disk history failed, fall through to live API
       }
       
-      // Otherwise, load from live opencode instance
-      const data = await fetchMessages(opencodeBaseUrl, selectedChatSessionId)
-      setMessages(data)
-    } catch (err) {
-      // If live fetch fails, try loading from history as fallback
-      if (opencodeBaseUrl) {
-        try {
-          const historyMessages = await getChatMessages(selectedChatSessionId)
-          const converted = convertChatMessagesToOpenCode(historyMessages)
-          setMessages(converted)
-          return
-        } catch {
-          // Fallback also failed, show original error
-        }
+      // Fallback to live opencode API if disk history is empty/failed
+      if (loadedMessages.length === 0 && opencodeBaseUrl && !isHistoryOnlySession) {
+        loadedMessages = await fetchMessages(opencodeBaseUrl, selectedChatSessionId)
       }
+      
+      // Use merge to prevent flickering when updating
+      setMessages(prev => mergeMessages(prev, loadedMessages))
+    } catch (err) {
       setStatus((err as Error).message)
     }
-  }, [opencodeBaseUrl, selectedChatSessionId, isHistoryOnlySession])
+  }, [opencodeBaseUrl, selectedChatSessionId, isHistoryOnlySession, mergeMessages])
 
   const [eventsTransportMode, setEventsTransportMode] = useState<"sse" | "polling">("sse")
   const messageRefreshStateRef = useRef<{
@@ -560,7 +613,14 @@ export function SessionsApp() {
   )
 
   const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
-    messagesEndRef.current?.scrollIntoView({ behavior })
+    const container = messagesContainerRef.current
+    if (!container) return
+    
+    container.scrollTo({
+      top: container.scrollHeight,
+      behavior,
+    })
+    isNearBottomRef.current = true
   }, [])
 
   
@@ -576,13 +636,45 @@ export function SessionsApp() {
 
     const { scrollTop, scrollHeight, clientHeight } = container
     const distanceFromBottom = scrollHeight - scrollTop - clientHeight
-    setShowScrollToBottom(distanceFromBottom > 100)
+    
+    // Track if user is near bottom (within 150px)
+    isNearBottomRef.current = distanceFromBottom < 150
+    
+    // Show button when more than 300px from bottom
+    setShowScrollToBottom(distanceFromBottom > 300)
   }, [])
 
   // Check scroll position when messages change
   useEffect(() => {
     handleScroll()
   }, [messages, handleScroll])
+  
+  // Scroll to bottom when switching sessions
+  useEffect(() => {
+    if (!selectedChatSessionId) return
+    
+    // Detect session switch
+    if (lastSessionIdRef.current !== selectedChatSessionId) {
+      lastSessionIdRef.current = selectedChatSessionId
+      isNearBottomRef.current = true // Reset to bottom on session switch
+      
+      // Wait for messages to load and render, then scroll to bottom
+      const timeoutId = setTimeout(() => {
+        scrollToBottom("instant")
+      }, 50)
+      
+      return () => clearTimeout(timeoutId)
+    }
+  }, [selectedChatSessionId, scrollToBottom])
+  
+  // Auto-scroll to bottom when new messages arrive (if user is near bottom)
+  useEffect(() => {
+    if (messages.length === 0) return
+    if (!isNearBottomRef.current) return
+    
+    // Scroll to bottom when messages change and user was near bottom
+    scrollToBottom("instant")
+  }, [messages, scrollToBottom])
 
   useEffect(() => {
     if (!opencodeBaseUrl) return
@@ -660,7 +752,8 @@ export function SessionsApp() {
         const freshMessages = await fetchMessages(opencodeBaseUrl, selectedChatSessionId, { skipCache: true })
         if (!active) return
         
-        setMessages(freshMessages)
+        // Use merge to prevent flickering
+        setMessages(prev => mergeMessages(prev, freshMessages))
         
         // Check if the latest assistant message is completed
         const lastMessage = freshMessages[freshMessages.length - 1]
@@ -689,7 +782,7 @@ export function SessionsApp() {
       active = false
       if (timer) window.clearTimeout(timer)
     }
-  }, [chatState, opencodeBaseUrl, selectedChatSessionId, refreshOpencodeSessions])
+  }, [chatState, opencodeBaseUrl, selectedChatSessionId, refreshOpencodeSessions, mergeMessages])
 
   useEffect(() => {
     return () => {
@@ -738,6 +831,46 @@ export function SessionsApp() {
   }, [workspaceSessions, selectedWorkspaceSessionId])
 
   const messageGroups = useMemo(() => groupMessages(messages), [messages])
+  
+  // Progressive rendering - show last N groups immediately, expand on scroll up
+  const [visibleGroupCount, setVisibleGroupCount] = useState(20)
+  
+  // Reset visible count when session changes
+  useEffect(() => {
+    setVisibleGroupCount(20)
+  }, [selectedChatSessionId])
+  
+  // Calculate which groups to show (from the end, so newest messages are visible)
+  const visibleGroups = useMemo(() => {
+    if (messageGroups.length <= visibleGroupCount) {
+      return messageGroups
+    }
+    return messageGroups.slice(-visibleGroupCount)
+  }, [messageGroups, visibleGroupCount])
+  
+  const hasHiddenMessages = messageGroups.length > visibleGroupCount
+  
+  const loadMoreMessages = useCallback(() => {
+    setVisibleGroupCount(prev => Math.min(prev + 20, messageGroups.length))
+  }, [messageGroups.length])
+
+  // Calculate total tokens for context window gauge
+  const tokenUsage = useMemo(() => {
+    let inputTokens = 0
+    let outputTokens = 0
+    
+    for (const msg of messages) {
+      if (msg.info.role === "assistant") {
+        const assistantInfo = msg.info as OpenCodeAssistantMessage
+        if (assistantInfo.tokens) {
+          inputTokens += assistantInfo.tokens.input || 0
+          outputTokens += assistantInfo.tokens.output || 0
+        }
+      }
+    }
+    
+    return { inputTokens, outputTokens }
+  }, [messages])
 
   // Extract the latest todo list from messages
   const latestTodos = useMemo(() => {
@@ -898,14 +1031,36 @@ export function SessionsApp() {
     </div>
   )
 
-  if (workspaceSessions.length === 0) {
-    // Show skeleton while loading, error message after timeout
+  // Show loading skeleton or error only if we have no sessions AND no chat history
+  if (workspaceSessions.length === 0 && chatHistory.length === 0) {
+    // Show skeleton while loading, project selector after timeout
     return (
       <div className="flex flex-col h-full min-h-0 p-1 sm:p-4 md:p-6 gap-1 sm:gap-4">
         {showTimeoutError ? (
-          <div className="p-4 md:p-6">
-            <div className="p-6 text-sm text-muted-foreground bg-card border border-border">
-              {t.configNotice}
+          <div className="p-4 md:p-6 max-w-2xl mx-auto w-full">
+            <div className="p-6 bg-card border border-border rounded-lg">
+              <h2 className="text-lg font-medium mb-4">{locale === "de" ? "Projekt auswählen" : "Select a Project"}</h2>
+              {projects.length > 0 ? (
+                <div className="grid gap-2 max-h-[60vh] overflow-y-auto">
+                  {projects.map((project) => (
+                    <button
+                      key={project.path}
+                      onClick={() => startProjectSession(project.path)}
+                      className="flex items-center gap-3 p-3 text-left rounded-md border border-border hover:bg-muted/50 transition-colors"
+                    >
+                      <FileText className="h-5 w-5 text-muted-foreground flex-shrink-0" />
+                      <div className="min-w-0">
+                        <div className="font-medium truncate">{project.name}</div>
+                        <div className="text-sm text-muted-foreground truncate">{project.path}</div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-sm text-muted-foreground">
+                  {t.configNotice}
+                </div>
+              )}
             </div>
           </div>
         ) : (
@@ -968,8 +1123,18 @@ export function SessionsApp() {
           className="h-full bg-muted/30 border border-border p-2 sm:p-4 overflow-y-auto space-y-4 sm:space-y-6 scrollbar-hide"
         >
           {messages.length === 0 && <div className="text-sm text-muted-foreground">{t.noMessages}</div>}
-          {messageGroups.map((group) => (
-            <MessageGroupCard key={`${group.role}-${group.startIndex}`} group={group} persona={selectedSession?.persona} />
+          {hasHiddenMessages && (
+            <button
+              onClick={loadMoreMessages}
+              className="w-full py-2 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 border border-dashed border-border transition-colors"
+            >
+              {locale === "de" 
+                ? `${messageGroups.length - visibleGroupCount} altere Nachrichten laden...` 
+                : `Load ${messageGroups.length - visibleGroupCount} older messages...`}
+            </button>
+          )}
+          {visibleGroups.map((group) => (
+            <MessageGroupCard key={group.messages[0]?.info.id || `${group.role}-${group.startIndex}`} group={group} persona={selectedSession?.persona} />
           ))}
           <div ref={messagesEndRef} />
         </div>
@@ -1099,25 +1264,14 @@ export function SessionsApp() {
             rows={1}
             className="flex-1 bg-transparent border-none outline-none text-foreground placeholder:text-muted-foreground text-sm resize-none min-h-[36px] max-h-[200px] py-2 leading-tight overflow-y-auto"
           />
-          {chatState === "sending" ? (
-            <Button
-              onClick={handleStop}
-              className="bg-destructive hover:bg-destructive/90 text-destructive-foreground mb-1"
-              title={locale === "de" ? "Agent stoppen (2x Esc)" : "Stop agent (2x Esc)"}
-            >
-              <StopCircle className="w-4 h-4 sm:mr-2" />
-              <span className="hidden sm:inline">{locale === "de" ? "Stopp" : "Stop"}</span>
-            </Button>
-          ) : (
-            <Button
-              onClick={handleSend}
-              disabled={!messageInput.trim() && pendingUploads.length === 0}
-              className="bg-primary hover:bg-primary/90 text-primary-foreground mb-1"
-            >
-              <Send className="w-4 h-4 sm:mr-2" />
-              <span className="hidden sm:inline">{t.send}</span>
-            </Button>
-          )}
+          <Button
+            onClick={handleSend}
+            disabled={chatState === "sending" || (!messageInput.trim() && pendingUploads.length === 0)}
+            className="bg-primary hover:bg-primary/90 text-primary-foreground mb-1"
+          >
+            <Send className="w-4 h-4 sm:mr-2" />
+            <span className="hidden sm:inline">{t.send}</span>
+          </Button>
         </div>
       </div>
     </div>
@@ -1173,7 +1327,14 @@ export function SessionsApp() {
           </div>
         </div>
       </div>
-      {status && <span className="text-xs text-destructive flex-shrink-0 ml-2">{status}</span>}
+      <div className="flex items-center gap-3 flex-shrink-0 ml-2">
+        {status && <span className="text-xs text-destructive">{status}</span>}
+        <ContextWindowGauge 
+          inputTokens={tokenUsage.inputTokens} 
+          outputTokens={tokenUsage.outputTokens} 
+          locale={locale}
+        />
+      </div>
     </div>
   )
 
@@ -1182,12 +1343,21 @@ export function SessionsApp() {
       {/* Mobile layout: single panel with tabs */}
       <div className="flex-1 min-h-0 flex flex-col lg:hidden">
         {/* Mobile tabs - sticky at top */}
-        <div className="sticky top-0 z-10 flex gap-0.5 p-1 sm:p-2 bg-card border border-border rounded-t-xl">
-          <TabButton activeView={activeView} onSelect={setActiveView} view="chat" icon={MessageSquare} label={t.chat} />
-          <TabButton activeView={activeView} onSelect={setActiveView} view="tasks" icon={ListTodo} label={t.tasks} badge={incompleteTasks} />
-          <TabButton activeView={activeView} onSelect={setActiveView} view="files" icon={FileText} label={t.files} />
-          <TabButton activeView={activeView} onSelect={setActiveView} view="preview" icon={Eye} label={t.preview} />
-          <TabButton activeView={activeView} onSelect={setActiveView} view="terminal" icon={Terminal} label={t.terminal} />
+        <div className="sticky top-0 z-10 bg-card border border-border rounded-t-xl overflow-hidden">
+          <div className="flex gap-0.5 p-1 sm:p-2">
+            <TabButton activeView={activeView} onSelect={setActiveView} view="chat" icon={MessageSquare} label={t.chat} />
+            <TabButton activeView={activeView} onSelect={setActiveView} view="tasks" icon={ListTodo} label={t.tasks} badge={incompleteTasks} />
+            <TabButton activeView={activeView} onSelect={setActiveView} view="files" icon={FileText} label={t.files} />
+            <TabButton activeView={activeView} onSelect={setActiveView} view="preview" icon={Eye} label={t.preview} />
+            <TabButton activeView={activeView} onSelect={setActiveView} view="terminal" icon={Terminal} label={t.terminal} />
+          </div>
+          {/* Mobile context window gauge - full width bar directly below tabs */}
+          <ContextWindowGauge 
+            inputTokens={tokenUsage.inputTokens} 
+            outputTokens={tokenUsage.outputTokens} 
+            locale={locale}
+            compact
+          />
         </div>
         
         {/* Mobile content */}
@@ -1556,6 +1726,69 @@ const TodoListView = memo(function TodoListView({ todos, emptyMessage }: { todos
 })
 
 // Knight Rider style spinner component - classic KITT scanner effect with trailing swoosh
+// Context Window Gauge component
+function ContextWindowGauge({ 
+  inputTokens, 
+  outputTokens, 
+  maxTokens = 200000,
+  locale,
+  compact = false,
+}: { 
+  inputTokens: number
+  outputTokens: number
+  maxTokens?: number
+  locale: "de" | "en"
+  compact?: boolean
+}) {
+  const totalTokens = inputTokens + outputTokens
+  const percentage = Math.min((totalTokens / maxTokens) * 100, 100)
+  
+  // Color based on usage
+  const getColor = () => {
+    if (percentage >= 90) return "bg-destructive"
+    if (percentage >= 70) return "bg-yellow-500"
+    return "bg-primary"
+  }
+  
+  const formatTokens = (n: number) => {
+    if (n >= 1000000) return `${(n / 1000000).toFixed(1)}M`
+    if (n >= 1000) return `${(n / 1000).toFixed(1)}K`
+    return n.toString()
+  }
+  
+  if (totalTokens === 0) return null
+  
+  // Compact mode for mobile - full width bar, no icon
+  if (compact) {
+    return (
+      <div 
+        className="w-full h-1 bg-muted overflow-hidden"
+        title={`${locale === "de" ? "Kontextfenster" : "Context window"}: ${formatTokens(totalTokens)} / ${formatTokens(maxTokens)} tokens (${percentage.toFixed(0)}%)`}
+      >
+        <div 
+          className={cn("h-full transition-all duration-300", getColor())}
+          style={{ width: `${percentage}%` }}
+        />
+      </div>
+    )
+  }
+  
+  return (
+    <div className="flex items-center gap-2 text-xs text-muted-foreground" title={`${locale === "de" ? "Kontextfenster" : "Context window"}: ${formatTokens(totalTokens)} / ${formatTokens(maxTokens)} tokens`}>
+      <Gauge className="w-3.5 h-3.5" />
+      <div className="flex items-center gap-1.5">
+        <div className="w-16 h-1.5 bg-muted rounded-full overflow-hidden">
+          <div 
+            className={cn("h-full transition-all duration-300", getColor())}
+            style={{ width: `${percentage}%` }}
+          />
+        </div>
+        <span className="font-mono text-[10px]">{percentage.toFixed(0)}%</span>
+      </div>
+    </div>
+  )
+}
+
 function KnightRiderSpinner() {
   return (
     <>
