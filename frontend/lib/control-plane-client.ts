@@ -122,6 +122,23 @@ async function readApiError(res: Response): Promise<string> {
 }
 
 // ============================================================================
+// Features API
+// ============================================================================
+
+export type Features = {
+  mmry_enabled: boolean
+}
+
+export async function getFeatures(): Promise<Features> {
+  const res = await fetch(`/api/features`, { credentials: "include" })
+  if (!res.ok) {
+    // Return defaults if endpoint not available
+    return { mmry_enabled: false }
+  }
+  return res.json()
+}
+
+// ============================================================================
 // Auth API
 // ============================================================================
 

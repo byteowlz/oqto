@@ -83,3 +83,11 @@ config:
 # Generate invite codes
 invite-codes:
     cd backend && cargo run --bin octo -- invite-codes generate
+
+# Reload backend: build, install, stop, and restart octo serve --local-mode
+reload:
+    ./scripts/reload-backend.sh
+
+# Reload backend but don't restart server
+reload-stop:
+    ./scripts/reload-backend.sh --no-start

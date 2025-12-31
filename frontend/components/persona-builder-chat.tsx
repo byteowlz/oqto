@@ -188,9 +188,9 @@ export function PersonaBuilderChat({
     setMessageInput("")
     setChatState("sending")
     
-    // Reset textarea height
+    // Reset textarea height to minimum
     if (textareaRef.current) {
-      textareaRef.current.style.height = "auto"
+      textareaRef.current.style.height = "36px"
     }
     
     try {
@@ -217,7 +217,9 @@ export function PersonaBuilderChat({
     setMessageInput(e.target.value)
     const textarea = e.target
     textarea.style.height = "auto"
-    textarea.style.height = `${Math.min(textarea.scrollHeight, 150)}px`
+    // Only expand if there's content, otherwise stay at minimum height
+    const newHeight = textarea.value.trim() ? Math.min(textarea.scrollHeight, 150) : 36
+    textarea.style.height = `${newHeight}px`
   }, [])
 
   if (!opencodeBaseUrl) {

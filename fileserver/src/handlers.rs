@@ -868,35 +868,36 @@ fn highlight_code(content: &str, path: &Path, theme_name: &str) -> Result<String
     let mut highlighter = syntect::easy::HighlightLines::new(syntax, theme);
     let mut html_output = String::with_capacity(content.len() * 2);
     
-    // Build HTML with line numbers
-    // Use a container with flex layout
-    html_output.push_str("<div class=\"highlighted-code\" style=\"font-family: ui-monospace, SFMono-Regular, 'SF Mono', Consolas, 'Liberation Mono', Menlo, monospace; font-size: 12px; line-height: 1.5; display: flex; padding: 12px;\">");
+    // Build HTML with line numbers using table layout for guaranteed alignment
+    html_output.push_str("<table class=\"highlighted-code\" style=\"font-family: ui-monospace, SFMono-Regular, 'SF Mono', Consolas, 'Liberation Mono', Menlo, monospace; font-size: 12px; line-height: 1.5; border-collapse: collapse; width: 100%;\">");
+    html_output.push_str("<tbody>");
     
-    // Line numbers column - use explicit color that works in both light and dark modes
-    html_output.push_str("<div class=\"line-numbers\" style=\"text-align: right; padding-right: 1em; min-width: 3em; color: #6b7280; user-select: none; flex-shrink: 0;\">");
-    for (i, _) in LinesWithEndings::from(content).enumerate() {
-        html_output.push_str(&format!("<div>{}</div>", i + 1));
-    }
-    html_output.push_str("</div>");
-    
-    // Code column
-    html_output.push_str("<div class=\"code\" style=\"flex: 1; overflow-x: auto; white-space: pre-wrap; word-break: break-word;\">");
-    for line in LinesWithEndings::from(content) {
+    for (i, line) in LinesWithEndings::from(content).enumerate() {
         let regions = highlighter
             .highlight_line(line, &SYNTAX_SET)
             .map_err(|e| FileServerError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
         let html_line = styled_line_to_highlighted_html(&regions[..], IncludeBackground::No)
             .map_err(|e| FileServerError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
-        html_output.push_str("<div>");
-        // Handle empty lines
+        
+        html_output.push_str("<tr>");
+        // Line number cell
+        html_output.push_str(&format!(
+            "<td style=\"text-align: right; padding-right: 0.5em; min-width: 2.5em; color: #6b7280; user-select: none; vertical-align: top; white-space: nowrap;\">{}</td>",
+            i + 1
+        ));
+        // Code cell
+        html_output.push_str("<td style=\"white-space: pre; vertical-align: top;\">");
         if html_line.trim().is_empty() {
-            html_output.push_str("&nbsp;");
+            html_output.push_str(" ");
         } else {
-            html_output.push_str(&html_line);
+            // Trim the trailing newline from the highlighted line
+            html_output.push_str(html_line.trim_end_matches('\n'));
         }
-        html_output.push_str("</div>");
+        html_output.push_str("</td>");
+        html_output.push_str("</tr>");
     }
-    html_output.push_str("</div></div>");
+    
+    html_output.push_str("</tbody></table>");
     
     Ok(html_output)
 }

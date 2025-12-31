@@ -9,7 +9,7 @@ use super::models::{Session, SessionStatus};
 const SESSION_COLUMNS: &str = r#"
     id, readable_id, container_id, container_name, user_id, workspace_path, agent, image, image_digest,
     opencode_port, fileserver_port, ttyd_port, eavs_port, agent_base_port, max_agents,
-    eavs_key_id, eavs_key_hash, eavs_virtual_key,
+    eavs_key_id, eavs_key_hash, eavs_virtual_key, mmry_port,
     status, runtime_mode, created_at, started_at, stopped_at, last_activity_at, error_message
 "#;
 
@@ -32,9 +32,9 @@ impl SessionRepository {
             INSERT INTO sessions (
                 id, readable_id, container_id, container_name, user_id, workspace_path, agent, image, image_digest,
                 opencode_port, fileserver_port, ttyd_port, eavs_port, agent_base_port, max_agents,
-                eavs_key_id, eavs_key_hash, eavs_virtual_key,
+                eavs_key_id, eavs_key_hash, eavs_virtual_key, mmry_port,
                 status, runtime_mode, created_at, started_at, stopped_at, last_activity_at, error_message
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&session.id)
@@ -55,6 +55,7 @@ impl SessionRepository {
         .bind(&session.eavs_key_id)
         .bind(&session.eavs_key_hash)
         .bind(&session.eavs_virtual_key)
+        .bind(session.mmry_port)
         .bind(session.status.to_string())
         .bind(session.runtime_mode.to_string())
         .bind(&session.created_at)

@@ -243,11 +243,12 @@ impl ProcessManager {
         info!("Spawning ttyd on port {} for session {}", port, session_id);
 
         // For ttyd, we need to spawn a shell as the target user
+        // Use zsh as the default shell for a better experience
         let (shell_cmd, shell_args) = if let Some(ref username) = run_as.username {
             // Use su - to get a proper login shell as the target user
-            ("su", vec!["-", username, "-c", "exec bash -l"])
+            ("su", vec!["-", username, "-c", "exec zsh -l"])
         } else {
-            ("bash", vec!["-l"])
+            ("zsh", vec!["-l"])
         };
 
         let child = self

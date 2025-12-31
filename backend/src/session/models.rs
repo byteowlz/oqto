@@ -134,6 +134,8 @@ pub struct Session {
     /// EAVS virtual key value (only set during container creation).
     #[serde(skip_serializing)]
     pub eavs_virtual_key: Option<String>,
+    /// Port for mmry memory service.
+    pub mmry_port: Option<i64>,
     /// Current session status.
     #[sqlx(try_from = "String")]
     pub status: SessionStatus,

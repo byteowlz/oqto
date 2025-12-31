@@ -192,6 +192,25 @@ pub fn create_router(state: AppState) -> Router {
         .route("/chat-history/grouped", get(handlers::list_chat_history_grouped))
         .route("/chat-history/{session_id}", get(handlers::get_chat_session))
         .route("/chat-history/{session_id}/messages", get(handlers::get_chat_messages))
+        // Mmry (memory service) proxy routes
+        .route(
+            "/session/{session_id}/memories",
+            get(proxy::proxy_mmry_list).post(proxy::proxy_mmry_add),
+        )
+        .route(
+            "/session/{session_id}/memories/search",
+            post(proxy::proxy_mmry_search),
+        )
+        .route(
+            "/session/{session_id}/memories/stores",
+            get(proxy::proxy_mmry_stores),
+        )
+        .route(
+            "/session/{session_id}/memories/{memory_id}",
+            get(proxy::proxy_mmry_memory)
+                .put(proxy::proxy_mmry_memory)
+                .delete(proxy::proxy_mmry_memory),
+        )
         // AgentRPC routes (unified backend API)
         .route("/agent/health", get(handlers::agent_health))
         .route("/agent/conversations", get(handlers::agent_list_conversations))
@@ -211,6 +230,7 @@ pub fn create_router(state: AppState) -> Router {
     // Public routes (no authentication)
     let public_routes = Router::new()
         .route("/health", get(handlers::health))
+        .route("/features", get(handlers::features))
         .route("/auth/login", post(handlers::login))
         .route("/auth/register", post(handlers::register))
         .route("/auth/logout", post(handlers::logout))

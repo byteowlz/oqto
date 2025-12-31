@@ -206,7 +206,7 @@ async function saveFileContent(baseUrl: string, path: string, content: string): 
 export function PreviewView({ filePath, className }: PreviewViewProps) {
   const { selectedWorkspaceSessionId } = useApp()
   const [content, setContent] = useState<string>("")
-  const [highlightedContent, setHighlightedContent] = useState<string>("") // Server-rendered HTML
+  const [highlightedContent, setHighlightedContent] = useState<string>("")
   const [editedContent, setEditedContent] = useState<string>("")
   const [showLoading, setShowLoading] = useState(false) // Delayed loading indicator
   const [saving, setSaving] = useState(false)
@@ -410,22 +410,22 @@ export function PreviewView({ filePath, className }: PreviewViewProps) {
     return (
       <div className={cn("h-full flex flex-col overflow-hidden", className)}>
         {/* Header */}
-        <div className="flex-shrink-0 flex items-center justify-between px-3 py-2 border-b border-border bg-muted/30">
-          <div className="flex items-center gap-2 flex-1 min-w-0">
-            <FileText className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+        <div className="flex-shrink-0 flex items-center justify-between px-2 py-1 border-b border-border bg-muted/30">
+          <div className="flex items-center gap-1.5 flex-1 min-w-0">
+            <FileText className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
             <p className="text-xs font-mono text-muted-foreground truncate" title={filePath}>
               {filename}
             </p>
           </div>
-          <div className="flex items-center gap-1 ml-2">
+          <div className="flex items-center gap-0.5 ml-2">
             <Button
               variant="ghost"
               size="sm"
               onClick={() => window.open(fileUrl, "_blank")}
-              className="h-7 px-2 text-xs"
+              className="h-6 px-1.5 text-xs"
               title="Open in new tab"
             >
-              <ExternalLink className="w-3.5 h-3.5" />
+              <ExternalLink className="w-3 h-3" />
             </Button>
             <Button
               variant="ghost"
@@ -436,10 +436,10 @@ export function PreviewView({ filePath, className }: PreviewViewProps) {
                 link.download = filename
                 link.click()
               }}
-              className="h-7 px-2 text-xs"
+              className="h-6 px-1.5 text-xs"
               title="Download"
             >
-              <Download className="w-3.5 h-3.5" />
+              <Download className="w-3 h-3" />
             </Button>
           </div>
         </div>
@@ -461,7 +461,7 @@ export function PreviewView({ filePath, className }: PreviewViewProps) {
     return (
       <div className={cn("h-full flex flex-col overflow-hidden", className)}>
         {/* Header */}
-        <div className="flex-shrink-0 flex items-center justify-between px-3 py-2 border-b border-border bg-muted/30">
+        <div className="flex-shrink-0 flex items-center justify-between px-2 py-1 border-b border-border bg-muted/30">
           <p className="text-xs font-mono text-muted-foreground truncate flex-1" title={filePath}>
             {filename}
           </p>
@@ -485,12 +485,12 @@ export function PreviewView({ filePath, className }: PreviewViewProps) {
   return (
     <div className={cn("h-full flex flex-col overflow-hidden", className)}>
       {/* Header */}
-      <div className="flex-shrink-0 flex items-center justify-between px-3 py-2 border-b border-border bg-muted/30">
+      <div className="flex-shrink-0 flex items-center justify-between px-2 py-1 border-b border-border bg-muted/30">
         <p className="text-xs font-mono text-muted-foreground truncate flex-1" title={filePath}>
           {filename}
           {isEditing && <span className="ml-2 text-primary">(editing)</span>}
         </p>
-        <div className="flex items-center gap-1 ml-2">
+        <div className="flex items-center gap-0.5 ml-2">
           {isEditing ? (
             <>
               <Button
@@ -498,9 +498,9 @@ export function PreviewView({ filePath, className }: PreviewViewProps) {
                 size="sm"
                 onClick={handleCancel}
                 disabled={saving}
-                className="h-7 px-2 text-xs"
+                className="h-6 px-1.5 text-xs"
               >
-                <X className="w-3.5 h-3.5 mr-1" />
+                <X className="w-3 h-3 mr-1" />
                 Cancel
               </Button>
               <Button
@@ -508,12 +508,12 @@ export function PreviewView({ filePath, className }: PreviewViewProps) {
                 size="sm"
                 onClick={handleSave}
                 disabled={saving}
-                className="h-7 px-2 text-xs"
+                className="h-6 px-1.5 text-xs"
               >
                 {saving ? (
-                  <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" />
+                  <Loader2 className="w-3 h-3 mr-1 animate-spin" />
                 ) : (
-                  <Save className="w-3.5 h-3.5 mr-1" />
+                  <Save className="w-3 h-3 mr-1" />
                 )}
                 Save
               </Button>
@@ -524,9 +524,9 @@ export function PreviewView({ filePath, className }: PreviewViewProps) {
                 variant="ghost"
                 size="sm"
                 onClick={handleStartEdit}
-                className="h-7 px-2 text-xs"
+                className="h-6 px-1.5 text-xs"
               >
-                <Pencil className="w-3.5 h-3.5 mr-1" />
+                <Pencil className="w-3 h-3 mr-1" />
                 Edit
               </Button>
             )
@@ -557,75 +557,55 @@ export function PreviewView({ filePath, className }: PreviewViewProps) {
               backgroundColor: isDarkMode ? "#1e1e1e" : "#ffffff",
             }}
           />
-        ) : highlightedContent && highlightedContent.includes("<div") ? (
-          // Server-rendered syntax highlighting - only if it's actual HTML
+        ) : highlightedContent ? (
+          // Server-rendered syntax highlighting with line numbers (table-based)
           <div 
-            className="p-3"
+            className="overflow-auto py-1"
             style={{ minHeight: "100%" }}
             dangerouslySetInnerHTML={{ __html: highlightedContent }}
           />
         ) : content ? (
-          // For large files (>50KB) or mobile, skip expensive client-side highlighting
-          // and show plain text with line numbers instead
-          content.length > 50000 || isMobileRef.current ? (
-            <div 
-              className="flex text-foreground" 
-              style={{ 
-                minHeight: "100%",
-                padding: "12px",
-                fontSize: "12px",
-                lineHeight: "1.5",
-                fontFamily: "ui-monospace, SFMono-Regular, SF Mono, Consolas, Liberation Mono, Menlo, monospace",
-              }}
-            >
-              <div 
-                className="select-none text-right text-muted-foreground"
-                style={{ minWidth: "3em", paddingRight: "1em" }}
-              >
-                {content.split("\n").map((_, i) => (
-                  <div key={i}>{i + 1}</div>
+          // Fallback: plain text with line numbers using table layout
+          <div 
+            className="overflow-auto"
+            style={{ 
+              minHeight: "100%",
+              fontSize: "12px",
+              lineHeight: "1.5",
+              fontFamily: "ui-monospace, SFMono-Regular, SF Mono, Consolas, Liberation Mono, Menlo, monospace",
+            }}
+          >
+            <table className="w-full border-collapse" style={{ minWidth: "100%" }}>
+              <tbody>
+                {content.split("\n").map((line, i) => (
+                  <tr key={i}>
+                    <td 
+                      className="select-none text-right text-muted-foreground align-top px-1"
+                      style={{ 
+                        minWidth: "2.5em", 
+                        width: "1%",
+                        whiteSpace: "nowrap",
+                        opacity: 0.5,
+                      }}
+                    >
+                      {i + 1}
+                    </td>
+                    <td className="align-top">
+                      <pre 
+                        className="m-0"
+                        style={{ 
+                          fontFamily: "inherit", 
+                          whiteSpace: "pre",
+                        }}
+                      >
+                        {line || " "}
+                      </pre>
+                    </td>
+                  </tr>
                 ))}
-              </div>
-              <pre
-                className="flex-1 m-0"
-                style={{
-                  fontFamily: "inherit",
-                  fontSize: "inherit",
-                  lineHeight: "inherit",
-                  whiteSpace: "pre-wrap",
-                  wordBreak: "break-word",
-                }}
-              >
-                {content}
-              </pre>
-            </div>
-          ) : (
-            // Client-side syntax highlighting for desktop with small files
-            <SyntaxHighlighter
-              language={language}
-              style={isDarkMode ? oneDark : oneLight}
-              showLineNumbers
-              wrapLines
-              wrapLongLines
-              customStyle={{
-                margin: 0,
-                padding: "12px",
-                fontSize: "12px",
-                lineHeight: "1.5",
-                minHeight: "100%",
-                background: "transparent",
-              }}
-              lineNumberStyle={{
-                minWidth: "3em",
-                paddingRight: "1em",
-                textAlign: "right",
-                userSelect: "none",
-                opacity: 0.5,
-              }}
-            >
-              {content}
-            </SyntaxHighlighter>
-          )
+              </tbody>
+            </table>
+          </div>
         ) : null}
       </div>
     </div>

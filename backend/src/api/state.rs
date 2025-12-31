@@ -14,6 +14,27 @@ use crate::invite::InviteCodeRepository;
 use crate::session::SessionService;
 use crate::user::UserService;
 
+/// Mmry configuration for the API layer.
+#[derive(Clone, Debug)]
+pub struct MmryState {
+    /// Whether mmry integration is enabled.
+    pub enabled: bool,
+    /// Whether we're in single-user mode (proxy to local service).
+    pub single_user: bool,
+    /// URL of the local mmry service (for single-user mode).
+    pub local_service_url: String,
+}
+
+impl Default for MmryState {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            single_user: true,
+            local_service_url: "http://localhost:8081".to_string(),
+        }
+    }
+}
+
 /// Application state shared across all handlers.
 #[derive(Clone)]
 pub struct AppState {
@@ -31,6 +52,8 @@ pub struct AppState {
     pub http_client: Client<HttpConnector, Body>,
     /// Unified agent backend (optional, for new AgentRPC-based architecture).
     pub agent_backend: Option<Arc<dyn AgentBackend>>,
+    /// Mmry (memory service) configuration.
+    pub mmry: MmryState,
 }
 
 impl AppState {
@@ -41,6 +64,7 @@ impl AppState {
         users: UserService,
         invites: InviteCodeRepository,
         auth: AuthState,
+        mmry: MmryState,
     ) -> Self {
         let http_client: Client<HttpConnector, Body> =
             Client::builder(TokioExecutor::new()).build_http();
@@ -53,6 +77,7 @@ impl AppState {
             auth,
             http_client,
             agent_backend: None,
+            mmry,
         }
     }
 
@@ -64,6 +89,7 @@ impl AppState {
         invites: InviteCodeRepository,
         auth: AuthState,
         backend: Arc<dyn AgentBackend>,
+        mmry: MmryState,
     ) -> Self {
         let http_client: Client<HttpConnector, Body> =
             Client::builder(TokioExecutor::new()).build_http();
@@ -76,6 +102,7 @@ impl AppState {
             auth,
             http_client,
             agent_backend: Some(backend),
+            mmry,
         }
     }
 }

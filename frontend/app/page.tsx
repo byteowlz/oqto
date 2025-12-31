@@ -998,6 +998,9 @@ function AppShell() {
                                     <span className="truncate font-medium">
                                       {child.title || "Subagent"}
                                     </span>
+                                    {busySessions.has(child.id) && (
+                                      <Loader2 className="w-3 h-3 flex-shrink-0 text-primary animate-spin" />
+                                    )}
                                   </div>
                                   {childFormattedDate && (
                                     <div className="text-xs text-muted-foreground/50 mt-0.5 ml-5">
@@ -1491,6 +1494,9 @@ function AppShell() {
                                     <span className="truncate font-medium">
                                       {child.title || "Subagent"}
                                     </span>
+                                    {busySessions.has(child.id) && (
+                                      <Loader2 className="w-3 h-3 flex-shrink-0 text-primary animate-spin" />
+                                    )}
                                   </div>
                                   {childFormattedDate && (
                                     <div className="text-[9px] text-foreground/50 dark:text-muted-foreground mt-0.5 ml-4">

@@ -4,12 +4,14 @@ import { useCallback, useEffect, useMemo, useState, useRef, memo, useTransition,
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
-import { FileText, Terminal, Eye, Send, ChevronDown, User, Bot, Clock, ArrowDown, ListTodo, Square, CheckSquare, CircleDot, XCircle, MessageSquare, Loader2, Paperclip, X, Copy, Check, StopCircle, Gauge } from "lucide-react"
+import { FileText, Terminal, Eye, Send, ChevronDown, User, Bot, Clock, ArrowDown, ListTodo, Square, CheckSquare, CircleDot, XCircle, MessageSquare, Loader2, Paperclip, X, Copy, Check, StopCircle, Gauge, Brain } from "lucide-react"
 import { useApp } from "@/components/app-context"
 import { FileTreeView, type FileTreeState, initialFileTreeState } from "@/app/sessions/FileTreeView"
 import { TerminalView } from "@/app/sessions/TerminalView"
 import { PreviewView } from "@/app/sessions/PreviewView"
+import { MemoriesView } from "@/app/sessions/MemoriesView"
 import { useIsMobile } from "@/hooks/use-mobile"
+import { useModelContextLimit } from "@/hooks/use-models-dev"
 import { MarkdownRenderer, CopyButton } from "@/components/ui/markdown-renderer"
 import { ToolCallCard } from "@/components/ui/tool-call-card"
 import { cn } from "@/lib/utils"
@@ -29,7 +31,7 @@ import {
   type PermissionResponse,
 } from "@/lib/opencode-client"
 import { PermissionDialog, PermissionBanner } from "@/components/ui/permission-dialog"
-import { controlPlaneDirectBaseUrl, fileserverProxyBaseUrl, getChatMessages, convertChatMessagesToOpenCode, getWorkspaceConfig, type Persona } from "@/lib/control-plane-client"
+import { controlPlaneDirectBaseUrl, fileserverProxyBaseUrl, getChatMessages, convertChatMessagesToOpenCode, getWorkspaceConfig, getFeatures, type Persona, type Features } from "@/lib/control-plane-client"
 import { generateReadableId, formatSessionDate } from "@/lib/session-utils"
 
 // Todo item structure
@@ -47,7 +49,7 @@ type MessageGroup = {
   startIndex: number
 }
 
-type ActiveView = "chat" | "files" | "terminal" | "preview" | "tasks"
+type ActiveView = "chat" | "files" | "terminal" | "preview" | "tasks" | "memories"
 
 function groupMessages(messages: OpenCodeMessageWithParts[]): MessageGroup[] {
   const groups: MessageGroup[] = []
@@ -228,6 +230,23 @@ export function SessionsApp() {
     
     previousSessionIdRef.current = currId
   }, [selectedChatSessionId, getDraft])
+
+  // Auto-resize textarea when messageInput changes programmatically (e.g., draft restoration)
+  useEffect(() => {
+    if (chatInputRef.current) {
+      const textarea = chatInputRef.current
+      if (!messageInput) {
+        // No content - reset to minimum height
+        textarea.style.height = "36px"
+      } else {
+        // Has content - calculate needed height
+        textarea.style.height = "36px" // Reset first to get accurate scrollHeight
+        const scrollHeight = textarea.scrollHeight
+        textarea.style.height = `${Math.min(scrollHeight, 200)}px`
+      }
+    }
+  }, [messageInput])
+
   const [isLoading, setIsLoading] = useState(true)
   const [showTimeoutError, setShowTimeoutError] = useState(false)
   const [activeView, setActiveView] = useState<ActiveView>("chat")
@@ -258,6 +277,16 @@ export function SessionsApp() {
   
   // Track if we're on mobile layout (below lg breakpoint = 1024px)
   const isMobileLayout = useIsMobile()
+  
+  // Feature flags from backend
+  const [features, setFeatures] = useState<Features>({ mmry_enabled: false })
+  
+  // Fetch features on mount
+  useEffect(() => {
+    getFeatures().then(setFeatures).catch(() => {
+      // Silently ignore - features will remain disabled
+    })
+  }, [])
   
   // Handle mobile keyboard - scroll input into view when keyboard appears
   // iOS Safari requires special handling as it resizes the visual viewport
@@ -446,6 +475,7 @@ export function SessionsApp() {
         terminal: "Terminal",
         preview: "Vorschau",
         tasks: "Aufgaben",
+        memories: "Erinnerungen",
         noSessions: "Keine Sessions verfugbar",
         statusPrefix: "Aktualisiert",
         configNotice: "Control Plane Backend starten, um Sessions zu laden.",
@@ -463,6 +493,7 @@ export function SessionsApp() {
         terminal: "Terminal",
         preview: "Preview",
         tasks: "Tasks",
+        memories: "Memories",
         noSessions: "No sessions available",
         statusPrefix: "Updated",
         configNotice: "Start the control plane backend to load sessions.",
@@ -535,20 +566,31 @@ export function SessionsApp() {
     try {
       let loadedMessages: OpenCodeMessageWithParts[] = []
       
-      // Always try disk history first - it's faster due to server-side caching
-      // This works for both active and history-only sessions
-      try {
-        const historyMessages = await getChatMessages(selectedChatSessionId)
-        if (historyMessages.length > 0) {
-          loadedMessages = convertChatMessagesToOpenCode(historyMessages)
-        }
-      } catch {
-        // Disk history failed, fall through to live API
-      }
-      
-      // Fallback to live opencode API if disk history is empty/failed
-      if (loadedMessages.length === 0 && opencodeBaseUrl && !isHistoryOnlySession) {
+      if (opencodeBaseUrl && !isHistoryOnlySession) {
+        // Live opencode is authoritative for streaming updates.
         loadedMessages = await fetchMessages(opencodeBaseUrl, selectedChatSessionId)
+      } else {
+        // History-only view (or no live session): use disk history cache.
+        try {
+          const historyMessages = await getChatMessages(selectedChatSessionId)
+          if (historyMessages.length > 0) {
+            loadedMessages = convertChatMessagesToOpenCode(historyMessages)
+          }
+        } catch {
+          // Ignore history failures; we don't have a live fallback here.
+        }
+      }
+
+      if (loadedMessages.length === 0 && opencodeBaseUrl && !isHistoryOnlySession) {
+        // If live returned nothing, fall back to disk history for older sessions.
+        try {
+          const historyMessages = await getChatMessages(selectedChatSessionId)
+          if (historyMessages.length > 0) {
+            loadedMessages = convertChatMessagesToOpenCode(historyMessages)
+          }
+        } catch {
+          // Ignore history failures on fallback.
+        }
       }
       
       // Use merge to prevent flickering when updating
@@ -854,10 +896,12 @@ export function SessionsApp() {
     setVisibleGroupCount(prev => Math.min(prev + 20, messageGroups.length))
   }, [messageGroups.length])
 
-  // Calculate total tokens for context window gauge
+  // Calculate total tokens and extract current model for context window gauge
   const tokenUsage = useMemo(() => {
     let inputTokens = 0
     let outputTokens = 0
+    let providerID: string | undefined
+    let modelID: string | undefined
     
     for (const msg of messages) {
       if (msg.info.role === "assistant") {
@@ -866,11 +910,23 @@ export function SessionsApp() {
           inputTokens += assistantInfo.tokens.input || 0
           outputTokens += assistantInfo.tokens.output || 0
         }
+        // Track the most recent model used
+        if (assistantInfo.providerID && assistantInfo.modelID) {
+          providerID = assistantInfo.providerID
+          modelID = assistantInfo.modelID
+        }
       }
     }
     
-    return { inputTokens, outputTokens }
+    return { inputTokens, outputTokens, providerID, modelID }
   }, [messages])
+  
+  // Get context limit from models.dev based on current model
+  const contextLimit = useModelContextLimit(
+    tokenUsage.providerID,
+    tokenUsage.modelID,
+    200000 // Default fallback
+  )
 
   // Extract the latest todo list from messages
   const latestTodos = useMemo(() => {
@@ -920,9 +976,9 @@ export function SessionsApp() {
     
     setMessages((prev) => [...prev, optimisticMessage])
     setMessageInput("")
-    // Reset textarea height
+    // Reset textarea height to minimum
     if (chatInputRef.current) {
-      chatInputRef.current.style.height = "auto"
+      chatInputRef.current.style.height = "36px"
     }
     // Clear draft cache for this session since message was sent
     if (selectedChatSessionId) {
@@ -952,6 +1008,7 @@ export function SessionsApp() {
           throw new Error("Failed to start OpenCode for this workspace")
         }
         effectiveBaseUrl = url
+        setStatus("")
       }
       
       if (isShellCommand && shellCommand) {
@@ -1103,16 +1160,15 @@ export function SessionsApp() {
       
       {/* Working indicator with stop button */}
       {chatState === "sending" && (
-        <div className="flex items-center gap-2 px-3 py-1.5 bg-primary/10 border border-primary/30 text-sm text-primary">
+        <div className="flex items-center gap-1.5 px-2 py-0.5 bg-primary/10 text-xs text-primary">
           <KnightRiderSpinner />
           <span className="font-medium flex-1">{locale === "de" ? "Agent arbeitet..." : "Agent working..."}</span>
           <button
             onClick={handleStop}
-            className="flex items-center gap-1 px-2 py-1 bg-destructive/20 hover:bg-destructive/30 border border-destructive/50 text-destructive text-xs font-medium transition-colors"
-            title={locale === "de" ? "Agent stoppen" : "Stop agent"}
+            className="mr-1 text-destructive hover:text-destructive/80 transition-colors"
+            title={locale === "de" ? "Agent stoppen (2x Esc)" : "Stop agent (2x Esc)"}
           >
-            <StopCircle className="w-3 h-3" />
-            <span className="hidden sm:inline">{locale === "de" ? "Stopp" : "Stop"}</span>
+            <StopCircle className="w-5 h-5" />
           </button>
         </div>
       )}
@@ -1215,10 +1271,7 @@ export function SessionsApp() {
             value={messageInput}
             onChange={(e) => {
               setMessageInput(e.target.value)
-              // Auto-resize textarea
-              const textarea = e.target
-              textarea.style.height = "auto"
-              textarea.style.height = `${Math.min(textarea.scrollHeight, 200)}px`
+              // Auto-resize is handled by useEffect on messageInput change
             }}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {
@@ -1226,7 +1279,7 @@ export function SessionsApp() {
                 handleSend()
                 // Reset textarea height after sending
                 if (chatInputRef.current) {
-                  chatInputRef.current.style.height = "auto"
+                  chatInputRef.current.style.height = "36px"
                 }
               }
             }}
@@ -1332,6 +1385,7 @@ export function SessionsApp() {
         <ContextWindowGauge 
           inputTokens={tokenUsage.inputTokens} 
           outputTokens={tokenUsage.outputTokens} 
+          maxTokens={contextLimit}
           locale={locale}
         />
       </div>
@@ -1349,12 +1403,14 @@ export function SessionsApp() {
             <TabButton activeView={activeView} onSelect={setActiveView} view="tasks" icon={ListTodo} label={t.tasks} badge={incompleteTasks} />
             <TabButton activeView={activeView} onSelect={setActiveView} view="files" icon={FileText} label={t.files} />
             <TabButton activeView={activeView} onSelect={setActiveView} view="preview" icon={Eye} label={t.preview} />
+            {features.mmry_enabled && <TabButton activeView={activeView} onSelect={setActiveView} view="memories" icon={Brain} label={t.memories} />}
             <TabButton activeView={activeView} onSelect={setActiveView} view="terminal" icon={Terminal} label={t.terminal} />
           </div>
           {/* Mobile context window gauge - full width bar directly below tabs */}
           <ContextWindowGauge 
             inputTokens={tokenUsage.inputTokens} 
             outputTokens={tokenUsage.outputTokens} 
+            maxTokens={contextLimit}
             locale={locale}
             compact
           />
@@ -1366,6 +1422,7 @@ export function SessionsApp() {
           {activeView === "files" && <FileTreeView onPreviewFile={handlePreviewFile} state={fileTreeState} onStateChange={handleFileTreeStateChange} />}
           {activeView === "preview" && <PreviewView filePath={previewFilePath} />}
           {activeView === "tasks" && <TodoListView todos={latestTodos} emptyMessage={t.noTasks} />}
+          {features.mmry_enabled && activeView === "memories" && <MemoriesView />}
           {/* Terminal only rendered in mobile layout when isMobileLayout is true */}
           {isMobileLayout && (
             <div className={activeView === "terminal" ? "h-full" : "hidden"}>
@@ -1389,6 +1446,7 @@ export function SessionsApp() {
             <TabButton activeView={activeView} onSelect={setActiveView} view="tasks" icon={ListTodo} label={t.tasks} badge={incompleteTasks} hideLabel />
             <TabButton activeView={activeView} onSelect={setActiveView} view="files" icon={FileText} label={t.files} hideLabel />
             <TabButton activeView={activeView} onSelect={setActiveView} view="preview" icon={Eye} label={t.preview} hideLabel />
+            {features.mmry_enabled && <TabButton activeView={activeView} onSelect={setActiveView} view="memories" icon={Brain} label={t.memories} hideLabel />}
             <TabButton activeView={activeView} onSelect={setActiveView} view="terminal" icon={Terminal} label={t.terminal} hideLabel />
           </div>
           <div className="flex-1 min-h-0 overflow-hidden">
@@ -1396,6 +1454,7 @@ export function SessionsApp() {
             {activeView === "preview" && <PreviewView filePath={previewFilePath} />}
             {activeView === "tasks" && <TodoListView todos={latestTodos} emptyMessage={t.noTasks} />}
             {activeView === "chat" && <TodoListView todos={latestTodos} emptyMessage={t.noTasks} />}
+            {features.mmry_enabled && activeView === "memories" && <MemoriesView />}
             {/* Terminal only rendered in desktop layout when isMobileLayout is false */}
             {!isMobileLayout && (
               <div className={activeView === "terminal" ? "h-full" : "hidden"}>

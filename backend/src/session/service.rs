@@ -124,6 +124,11 @@ pub struct SessionServiceConfig {
     /// Enable single-user mode. When true, the platform operates with a single user
     /// and uses simplified paths without user_id subdirectories.
     pub single_user: bool,
+    /// Whether mmry integration is enabled.
+    pub mmry_enabled: bool,
+    /// URL for containers to reach the host mmry service.
+    /// e.g., "http://host.docker.internal:8081" or "http://host.containers.internal:8081"
+    pub mmry_container_url: Option<String>,
 }
 
 impl Default for SessionServiceConfig {
@@ -140,6 +145,8 @@ impl Default for SessionServiceConfig {
             runtime_mode: RuntimeMode::Container,
             local_config: None,
             single_user: false,
+            mmry_enabled: false,
+            mmry_container_url: None,
         }
     }
 }
@@ -592,9 +599,15 @@ impl SessionService {
 
         let readable_id = self.generate_unique_readable_id().await?;
 
-        // Find available ports (opencode, fileserver, ttyd, + agent ports). On retry, offset the search window.
+        // Find available ports (opencode, fileserver, ttyd, mmry, + agent ports). On retry, offset the search window.
+        // Port layout:
+        //   base+0: opencode
+        //   base+1: fileserver
+        //   base+2: ttyd
+        //   base+3: mmry (if enabled and multi-user)
+        //   base+4+: sub-agents
         let max_agents = Self::DEFAULT_MAX_AGENTS;
-        let ports_per_session = 3 + max_agents; // opencode, fileserver, ttyd + agent ports
+        let ports_per_session = 4 + max_agents; // opencode, fileserver, ttyd, mmry + agent ports
         let search_start = self.config.base_port + (attempt as i64 * ports_per_session);
         let base_port = self
             .repo
@@ -603,7 +616,13 @@ impl SessionService {
         let opencode_port = base_port;
         let fileserver_port = base_port + 1;
         let ttyd_port = base_port + 2;
-        let agent_base_port = base_port + 3; // Sub-agents start at base+3
+        // mmry port is only allocated for multi-user mode
+        let mmry_port = if self.config.mmry_enabled && !self.config.single_user {
+            Some(base_port + 3)
+        } else {
+            None
+        };
+        let agent_base_port = base_port + 4; // Sub-agents start at base+4
 
         let (eavs_key_id, eavs_key_hash, eavs_virtual_key) = if self.eavs.is_some() {
             match self.create_eavs_key(&session_id).await {
@@ -643,6 +662,7 @@ impl SessionService {
             eavs_key_id,
             eavs_key_hash,
             eavs_virtual_key: None,
+            mmry_port,
             status: SessionStatus::Pending,
             runtime_mode: self.config.runtime_mode,
             created_at: now.clone(),
@@ -812,6 +832,20 @@ impl SessionService {
         }
         if let Some(virtual_key) = eavs_virtual_key {
             config = config.env("EAVS_VIRTUAL_KEY", virtual_key);
+        }
+
+        // Pass mmry config to container if enabled
+        if self.config.mmry_enabled {
+            // Internal port is fixed at 41823 (set in Dockerfile)
+            config = config.env("MMRY_PORT", "41823");
+            if let Some(ref mmry_url) = self.config.mmry_container_url {
+                config = config.env("MMRY_HOST_URL", mmry_url);
+            }
+            // Map mmry port if allocated (multi-user mode)
+            if let Some(mmry_port) = session.mmry_port {
+                config = config.port(mmry_port as u16, 41823);
+                info!("Mapped mmry port: external {} -> internal 41823", mmry_port);
+            }
         }
 
         // Create and start the container

@@ -50,6 +50,20 @@ pub async fn health() -> Json<HealthResponse> {
     })
 }
 
+/// Feature flags exposed to the frontend.
+#[derive(Debug, Serialize)]
+pub struct FeaturesResponse {
+    /// Whether mmry (memories) integration is enabled.
+    pub mmry_enabled: bool,
+}
+
+/// Get enabled features/capabilities.
+pub async fn features(State(state): State<AppState>) -> Json<FeaturesResponse> {
+    Json(FeaturesResponse {
+        mmry_enabled: state.mmry.enabled,
+    })
+}
+
 /// Session response with URLs.
 #[derive(Debug, Serialize)]
 pub struct SessionWithUrls {

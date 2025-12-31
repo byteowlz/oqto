@@ -435,6 +435,7 @@ struct AppConfig {
     container: ContainerRuntimeConfig,
     local: LocalModeConfig,
     eavs: Option<EavsConfig>,
+    mmry: MmryConfig,
     auth: auth::AuthConfig,
 }
 
@@ -490,6 +491,7 @@ impl Default for AppConfig {
             container: ContainerRuntimeConfig::default(),
             local: LocalModeConfig::default(),
             eavs: None,
+            mmry: MmryConfig::default(),
             auth: auth::AuthConfig::default(),
         }
     }
@@ -512,6 +514,55 @@ struct EavsConfig {
     default_session_budget_usd: Option<f64>,
     /// Default session rate limit in requests per minute.
     default_session_rpm: Option<u32>,
+}
+
+/// mmry (memory system) configuration.
+/// 
+/// Supports two modes:
+/// 1. Single-user local: Proxy to user's existing mmry service (no process management)
+/// 2. Multi-user: Per-user mmry instances with isolated databases and ports
+///
+/// In multi-user mode, a hub-spoke architecture is used where a central host service
+/// handles embeddings/reranking while per-user lean instances maintain isolated databases.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MmryConfig {
+    /// Whether mmry integration is enabled.
+    pub enabled: bool,
+    /// URL of the user's local mmry service for single-user mode.
+    /// In single-user local mode, we proxy directly to this URL.
+    /// Default: "http://localhost:8081"
+    pub local_service_url: String,
+    /// URL of the central mmry service for embeddings in multi-user mode.
+    /// This service handles heavy embedding/reranking operations for all users.
+    /// Per-user instances delegate embeddings to this service.
+    pub host_service_url: String,
+    /// API key for authenticating with the host mmry service.
+    pub host_api_key: Option<String>,
+    /// Default embedding model name.
+    pub default_model: String,
+    /// Embedding dimension (must match the model).
+    pub dimension: u16,
+    /// Path to mmry binary (for spawning per-user instances in multi-user mode).
+    pub binary: String,
+    /// URL for containers to reach the host mmry service.
+    /// e.g., "http://host.docker.internal:8081" or "http://host.containers.internal:8081"
+    pub container_url: Option<String>,
+}
+
+impl Default for MmryConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            local_service_url: "http://localhost:8081".to_string(),
+            host_service_url: "http://localhost:8081".to_string(),
+            host_api_key: None,
+            default_model: "nomic-ai/nomic-embed-text-v1.5".to_string(),
+            dimension: 768,
+            binary: "mmry".to_string(),
+            container_url: None,
+        }
+    }
 }
 
 fn default_true() -> bool {
@@ -1101,6 +1152,8 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
         runtime_mode,
         local_config: local_runtime_config,
         single_user,
+        mmry_enabled: ctx.config.mmry.enabled,
+        mmry_container_url: ctx.config.mmry.container_url.clone(),
     };
 
     let session_repo = session::SessionRepository::new(database.pool().clone());
@@ -1282,6 +1335,13 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
             None
         };
 
+    // Build mmry state based on configuration
+    let mmry_state = api::MmryState {
+        enabled: ctx.config.mmry.enabled,
+        single_user,
+        local_service_url: ctx.config.mmry.local_service_url.clone(),
+    };
+
     // Create app state
     let state = if let Some(backend) = agent_backend {
         api::AppState::with_agent_backend(
@@ -1291,6 +1351,7 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
             invite_repo,
             auth_state,
             backend,
+            mmry_state,
         )
     } else {
         api::AppState::new(
@@ -1299,6 +1360,7 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
             user_service,
             invite_repo,
             auth_state,
+            mmry_state,
         )
     };
 
