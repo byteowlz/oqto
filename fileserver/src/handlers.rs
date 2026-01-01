@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::io::{Cursor, Write};
 use std::path::{Component, Path, PathBuf};
 use std::sync::LazyLock;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::{
@@ -908,7 +908,7 @@ pub async fn upload_file(
     Query(query): Query<UploadQuery>,
     mut multipart: Multipart,
 ) -> Result<Json<SuccessResponse>, FileServerError> {
-    // Use resolve_and_verify_path for proper symlink handling
+    // Use resolve_path for initial path building; deeper checks happen below.
     let dest_path = resolve_path(&state.root_dir, &query.path)?;
 
     // Create parent directories if requested
@@ -923,7 +923,7 @@ pub async fn upload_file(
         }
     }
 
-    while let Some(field) = multipart.next_field().await.map_err(|e| {
+    while let Some(mut field) = multipart.next_field().await.map_err(|e| {
         error!("Multipart error: {}", e);
         FileServerError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e))
     })? {
@@ -958,7 +958,23 @@ pub async fn upload_file(
 
         // Re-validate the final path is within root (belt-and-suspenders)
         let canonical_root = state.root_dir.canonicalize().map_err(FileServerError::Io)?;
-        if let Some(parent) = final_path.parent() {
+        if final_path.exists() {
+            let metadata = fs::symlink_metadata(&final_path)
+                .await
+                .map_err(FileServerError::Io)?;
+            if metadata.file_type().is_symlink() {
+                warn!("Refusing to overwrite symlink: {:?}", final_path);
+                return Err(FileServerError::PathTraversal);
+            }
+            if metadata.is_dir() {
+                return Err(FileServerError::NotAFile);
+            }
+            let canonical_path = final_path.canonicalize().map_err(FileServerError::Io)?;
+            if !canonical_path.starts_with(&canonical_root) {
+                warn!("Final path resolved outside root: {:?}", final_path);
+                return Err(FileServerError::PathTraversal);
+            }
+        } else if let Some(parent) = final_path.parent() {
             if parent.exists() {
                 let canonical_parent = parent.canonicalize().map_err(FileServerError::Io)?;
                 if !canonical_parent.starts_with(&canonical_root) {
@@ -968,31 +984,48 @@ pub async fn upload_file(
             }
         }
 
-        // Read the data first to check size before writing
-        let data = field.bytes().await.map_err(|e| {
+        let parent_dir = final_path
+            .parent()
+            .ok_or_else(|| FileServerError::InvalidPath("Missing parent directory".to_string()))?;
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let temp_name = format!(".upload-{}-{}", file_name, nonce);
+        let temp_path = parent_dir.join(temp_name);
+        let mut temp_file = fs::File::create(&temp_path)
+            .await
+            .map_err(FileServerError::Io)?;
+
+        let mut total_size = 0u64;
+        while let Some(chunk) = field.chunk().await.map_err(|e| {
             error!("Failed to read upload data: {}", e);
             FileServerError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e))
-        })?;
-
-        // Check file size BEFORE writing to disk
-        if data.len() as u64 > state.config.max_upload_size {
-            return Err(FileServerError::FileTooLarge {
-                size: data.len() as u64,
-                limit: state.config.max_upload_size,
-            });
+        })? {
+            total_size = total_size.saturating_add(chunk.len() as u64);
+            if total_size > state.config.max_upload_size {
+                let _ = fs::remove_file(&temp_path).await;
+                return Err(FileServerError::FileTooLarge {
+                    size: total_size,
+                    limit: state.config.max_upload_size,
+                });
+            }
+            temp_file.write_all(&chunk).await.map_err(FileServerError::Io)?;
         }
+        temp_file.flush().await.map_err(FileServerError::Io)?;
 
         info!(
             "Uploading file: {} ({} bytes)",
             final_path.display(),
-            data.len()
+            total_size
         );
 
-        // Write file
-        let mut file = fs::File::create(&final_path)
+        if final_path.exists() {
+            fs::remove_file(&final_path).await.map_err(FileServerError::Io)?;
+        }
+        fs::rename(&temp_path, &final_path)
             .await
             .map_err(FileServerError::Io)?;
-        file.write_all(&data).await.map_err(FileServerError::Io)?;
 
         let relative_path = get_relative_path(&state.root_dir, &final_path);
 
