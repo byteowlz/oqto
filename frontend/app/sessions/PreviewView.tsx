@@ -222,6 +222,17 @@ export function PreviewView({ filePath, className }: PreviewViewProps) {
   // Ref for scroll container to preserve scroll position when entering edit mode
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const savedScrollTopRef = useRef<number>(0)
+  const scrollLockRef = useRef<{
+    active: boolean
+    top: number
+    left: number
+    timer: ReturnType<typeof setTimeout> | null
+  }>({
+    active: false,
+    top: 0,
+    left: 0,
+    timer: null,
+  })
 
   const fileserverBaseUrl = selectedWorkspaceSessionId 
     ? fileserverProxyBaseUrl(selectedWorkspaceSessionId) 
@@ -388,38 +399,63 @@ export function PreviewView({ filePath, className }: PreviewViewProps) {
     setIsEditing(true)
   }, [content])
   
-  // Restore scroll position after entering edit mode and prevent unwanted scroll on click
-  const editorWrapperRef = useRef<HTMLDivElement>(null)
-  
+  // Restore scroll position after entering edit mode
   useEffect(() => {
     if (!isEditing || !scrollContainerRef.current) return
     
-    const container = scrollContainerRef.current
-    
     // Restore scroll position after editor mounts
     requestAnimationFrame(() => {
-      container.scrollTop = savedScrollTopRef.current
+      if (scrollContainerRef.current) {
+        scrollContainerRef.current.scrollTop = savedScrollTopRef.current
+      }
     })
-    
-    // Prevent scroll jumps when clicking in the editor
-    // The browser tries to scroll the caret into view, but we want to prevent that
-    const wrapper = editorWrapperRef.current
-    if (!wrapper) return
-    
-    const handleMouseDown = () => {
-      // Save position before click processing
-      savedScrollTopRef.current = container.scrollTop
-      // Restore after the click event has been processed
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          container.scrollTop = savedScrollTopRef.current
-        })
-      })
-    }
-    
-    wrapper.addEventListener('mousedown', handleMouseDown)
-    return () => wrapper.removeEventListener('mousedown', handleMouseDown)
   }, [isEditing])
+
+  const lockScrollPosition = useCallback((durationMs = 250) => {
+    const container = scrollContainerRef.current
+    if (!container) return
+    const lock = scrollLockRef.current
+    lock.active = true
+    lock.top = container.scrollTop
+    lock.left = container.scrollLeft
+    if (lock.timer) {
+      clearTimeout(lock.timer)
+    }
+    lock.timer = setTimeout(() => {
+      lock.active = false
+      lock.timer = null
+    }, durationMs)
+  }, [])
+
+  const releaseScrollLock = useCallback(() => {
+    const lock = scrollLockRef.current
+    lock.active = false
+    if (lock.timer) {
+      clearTimeout(lock.timer)
+      lock.timer = null
+    }
+  }, [])
+
+  useEffect(() => {
+    const container = scrollContainerRef.current
+    if (!container) return
+
+    const handleScroll = () => {
+      const lock = scrollLockRef.current
+      if (!lock.active) return
+      if (container.scrollTop !== lock.top) {
+        container.scrollTop = lock.top
+      }
+      if (container.scrollLeft !== lock.left) {
+        container.scrollLeft = lock.left
+      }
+    }
+
+    container.addEventListener("scroll", handleScroll, { passive: true })
+    return () => {
+      container.removeEventListener("scroll", handleScroll)
+    }
+  }, [])
 
   // No file selected
   if (!filePath) {
@@ -593,23 +629,36 @@ export function PreviewView({ filePath, className }: PreviewViewProps) {
       )}
 
       {/* Content */}
-      <div ref={scrollContainerRef} className="flex-1 overflow-auto">
+      <div 
+        ref={scrollContainerRef} 
+        className="flex-1 overflow-auto"
+      >
         {isEditing ? (
-          <div ref={editorWrapperRef}>
-            <CodeEditor
-              value={editedContent}
-              language={language}
-              onChange={(e) => setEditedContent(e.target.value)}
-              padding={12}
-              data-color-mode={isDarkMode ? "dark" : "light"}
-              style={{
-                fontSize: 12,
-                fontFamily: "ui-monospace, SFMono-Regular, SF Mono, Consolas, Liberation Mono, Menlo, monospace",
-                minHeight: "100%",
-                backgroundColor: isDarkMode ? "#1e1e1e" : "#ffffff",
-              }}
-            />
-          </div>
+          <CodeEditor
+            value={editedContent}
+            language={language}
+            onChange={(e) => setEditedContent(e.target.value)}
+            onPointerDown={() => {
+              lockScrollPosition()
+            }}
+            onPointerUp={() => {
+              releaseScrollLock()
+            }}
+            onPointerCancel={() => {
+              releaseScrollLock()
+            }}
+            onBlur={() => {
+              releaseScrollLock()
+            }}
+            padding={12}
+            data-color-mode={isDarkMode ? "dark" : "light"}
+            style={{
+              fontSize: 12,
+              fontFamily: "ui-monospace, SFMono-Regular, SF Mono, Consolas, Liberation Mono, Menlo, monospace",
+              minHeight: "100%",
+              backgroundColor: isDarkMode ? "#1e1e1e" : "#ffffff",
+            }}
+          />
         ) : highlightedContent ? (
           // Server-rendered syntax highlighting with line numbers (table-based)
           <div 
