@@ -15,7 +15,7 @@ The platform supports different agent templates (Coding Copilot, Research Assist
 ## Architecture
 
 ```
-Browser  <-->  Caddy  <-->  Next.js Frontend (Auth/UI)
+Browser  <-->  Caddy  <-->  Vite + React Frontend (Auth/UI)
                           <-->  Rust Backend (API/Orchestration)
                                     |
                                     +--> Container Runtime (Docker/Podman)
@@ -31,7 +31,7 @@ Browser  <-->  Caddy  <-->  Next.js Frontend (Auth/UI)
 | Directory        | Description                                                         |
 | ---------------- | ------------------------------------------------------------------- |
 | `backend/`       | Rust API server - session orchestration, container management, auth |
-| `frontend/`      | Next.js UI - workspace picker, chat interface, file tree, terminal  |
+| `frontend/`      | Vite + React UI - workspace picker, chat interface, file tree, terminal |
 | `fileserver/`    | Lightweight Rust file server for workspace access                   |
 | `container/`     | Dockerfile and entrypoint for agent runtime containers              |
 | `browser-tools/` | Browser automation scripts                                          |
@@ -90,10 +90,14 @@ See `backend/examples/config.toml` for all options.
 Create `.env.local`:
 
 ```bash
-NEXT_PUBLIC_OPENCODE_BASE_URL=http://localhost:4096
-NEXT_PUBLIC_TERMINAL_WS_URL=ws://localhost:9090/ws
-NEXT_PUBLIC_FILE_SERVER_URL=http://localhost:9000
+VITE_CONTROL_PLANE_URL=http://localhost:8080
+VITE_OPENCODE_BASE_URL=http://localhost:41820
+VITE_FILE_SERVER_URL=http://localhost:41821
+VITE_CADDY_BASE_URL=http://localhost
 ```
+
+Note: the Vite dev server is configured for port 3000 and allows the `archlinux`
+hostname by default.
 
 ## Development
 
@@ -101,7 +105,7 @@ NEXT_PUBLIC_FILE_SERVER_URL=http://localhost:9000
 | ---------- | --------------- | ----------------------------------- | -------------- |
 | backend    | `cargo build`   | `cargo clippy && cargo fmt --check` | `cargo test`   |
 | fileserver | `cargo build`   | `cargo clippy && cargo fmt --check` | `cargo test`   |
-| frontend   | `bun run build` | `bun run lint`                      | `bun run test` |
+| frontend   | `bun run build` | `bun run lint` (Biome + oxlint)     | `bun run test` |
 
 ## CLI Tools
 

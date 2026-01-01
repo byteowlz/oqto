@@ -245,8 +245,10 @@ pub struct CreateAgentRequest {
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AgentScaffoldRequest {
-    /// Use byt templates (byt new) to scaffold the directory.
-    BytTemplate {
+    /// Use configured scaffold tool to create project from template.
+    /// The scaffold binary and arguments are configured in config.toml [scaffold] section.
+    #[serde(alias = "byt_template")]
+    Template {
         template: String,
         #[serde(default)]
         github: bool,
@@ -379,11 +381,12 @@ mod tests {
 
     #[test]
     fn test_scaffold_request_deserialize() {
+        // Test with new "template" type
         let json = r#"{
             "name": "example",
             "description": "test",
             "scaffold": {
-                "type": "byt_template",
+                "type": "template",
                 "template": "rust-cli",
                 "github": true,
                 "private": true,
@@ -394,7 +397,7 @@ mod tests {
         let request: CreateAgentRequest = serde_json::from_str(json).unwrap();
         let scaffold = request.scaffold.unwrap();
         match scaffold {
-            AgentScaffoldRequest::BytTemplate {
+            AgentScaffoldRequest::Template {
                 template,
                 github,
                 private,
@@ -404,6 +407,29 @@ mod tests {
                 assert!(github);
                 assert!(private);
                 assert_eq!(description, Some("demo".to_string()));
+            }
+        }
+    }
+
+    #[test]
+    fn test_scaffold_request_deserialize_legacy_byt_template() {
+        // Test backward compatibility with "byt_template" type
+        let json = r#"{
+            "name": "example",
+            "description": "test",
+            "scaffold": {
+                "type": "byt_template",
+                "template": "rust-cli",
+                "github": false,
+                "private": false
+            }
+        }"#;
+
+        let request: CreateAgentRequest = serde_json::from_str(json).unwrap();
+        let scaffold = request.scaffold.unwrap();
+        match scaffold {
+            AgentScaffoldRequest::Template { template, .. } => {
+                assert_eq!(template, "rust-cli");
             }
         }
     }

@@ -7,7 +7,7 @@ use octo::agent_rpc::{
     SessionHandle, StartSessionOpts,
 };
 use octo::api;
-use octo::auth::{AuthConfig, AuthState};
+use octo::auth::{AuthConfig, AuthState, DevUser, Role};
 use octo::container::ContainerRuntime;
 use octo::db::Database;
 use octo::invite::InviteCodeRepository;
@@ -21,6 +21,23 @@ use std::sync::Arc;
 /// Create a test AuthConfig with a JWT secret for testing.
 fn test_auth_config() -> AuthConfig {
     let mut config = AuthConfig::default();
+    config.dev_mode = true;
+    config.dev_users = vec![
+        DevUser::new_with_plaintext(
+            "dev",
+            "Developer",
+            "dev@localhost",
+            "devpassword123",
+            Role::Admin,
+        ),
+        DevUser::new_with_plaintext(
+            "user",
+            "Test User",
+            "user@localhost",
+            "userpassword123",
+            Role::User,
+        ),
+    ];
     // Set a JWT secret for tests (required for token generation)
     config.jwt_secret = Some("test-secret-for-integration-tests-minimum-32-chars".to_string());
     config
@@ -61,6 +78,7 @@ pub async fn test_app() -> Router {
         user_service,
         invite_repo,
         auth_state,
+        api::MmryState::default(),
     );
     api::create_router(state)
 }
@@ -232,6 +250,7 @@ pub async fn test_app_with_agent_backend() -> Router {
         invite_repo,
         auth_state,
         mock_backend,
+        api::MmryState::default(),
     );
     api::create_router(state)
 }
@@ -269,6 +288,7 @@ pub async fn test_app_with_agent_backend_and_token() -> (Router, String) {
         invite_repo,
         auth_state,
         mock_backend,
+        api::MmryState::default(),
     );
     (api::create_router(state), token)
 }
@@ -307,6 +327,7 @@ pub async fn test_app_with_token() -> (Router, String) {
         user_service,
         invite_repo,
         auth_state,
+        api::MmryState::default(),
     );
     (api::create_router(state), token)
 }
@@ -345,6 +366,7 @@ pub async fn test_app_with_user_token() -> (Router, String) {
         user_service,
         invite_repo,
         auth_state,
+        api::MmryState::default(),
     );
     (api::create_router(state), token)
 }

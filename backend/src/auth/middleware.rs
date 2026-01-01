@@ -233,8 +233,7 @@ where
 /// Supports multiple auth methods in priority order:
 /// 1. Authorization: Bearer <token> header
 /// 2. auth_token cookie
-/// 3. ?token=<token> query parameter (for WebSocket connections)
-/// 4. X-Dev-User header (dev mode only)
+/// 3. X-Dev-User header (dev mode only)
 pub async fn auth_middleware(
     State(auth): State<AuthState>,
     mut req: axum::http::Request<axum::body::Body>,
@@ -253,18 +252,6 @@ pub async fn auth_middleware(
         .and_then(|h| h.to_str().ok())
         .and_then(|cookie_header| token_from_cookie_header(cookie_header, "auth_token"));
 
-    // Allow query parameter token for WebSocket connections (browsers can't set headers on WS)
-    let query_token = req.uri().query().and_then(|q| {
-        q.split('&').find_map(|pair| {
-            let (key, value) = pair.split_once('=')?;
-            if key == "token" {
-                Some(urlencoding::decode(value).ok()?.into_owned())
-            } else {
-                None
-            }
-        })
-    });
-
     let claims = if let Some(header) = auth_header {
         // Parse Bearer token
         let token = header
@@ -274,9 +261,6 @@ pub async fn auth_middleware(
         // Validate token
         auth.validate_token(token)?
     } else if let Some(token) = cookie_token {
-        auth.validate_token(token)?
-    } else if let Some(ref token) = query_token {
-        debug!("Using query parameter token for auth");
         auth.validate_token(token)?
     } else if auth.is_dev_mode() {
         // In dev mode, allow X-Dev-User header
@@ -336,14 +320,32 @@ mod tests {
 
     #[test]
     fn test_auth_state_dev_mode() {
-        let config = AuthConfig::default();
+        let mut config = AuthConfig::default();
+        config.dev_mode = true;
         let state = AuthState::new(config);
         assert!(state.is_dev_mode());
     }
 
     #[test]
     fn test_validate_dev_credentials() {
-        let config = AuthConfig::default();
+        let mut config = AuthConfig::default();
+        config.dev_mode = true;
+        config.dev_users = vec![
+            DevUser::new_with_plaintext(
+                "dev",
+                "Developer",
+                "dev@localhost",
+                "devpassword123",
+                Role::Admin,
+            ),
+            DevUser::new_with_plaintext(
+                "user",
+                "Test User",
+                "user@localhost",
+                "userpassword123",
+                Role::User,
+            ),
+        ];
         let state = AuthState::new(config);
 
         // Valid credentials (using the default dev passwords)
@@ -364,6 +366,14 @@ mod tests {
     fn test_generate_and_validate_token() {
         // Create config with a JWT secret for testing
         let mut config = AuthConfig::default();
+        config.dev_mode = true;
+        config.dev_users = vec![DevUser::new_with_plaintext(
+            "dev",
+            "Developer",
+            "dev@localhost",
+            "devpassword123",
+            Role::Admin,
+        )];
         config.jwt_secret = Some("test-secret-for-unit-tests-minimum-32-chars-long".to_string());
         let state = AuthState::new(config);
 
@@ -377,7 +387,15 @@ mod tests {
 
     #[test]
     fn test_dev_token_validation() {
-        let config = AuthConfig::default();
+        let mut config = AuthConfig::default();
+        config.dev_mode = true;
+        config.dev_users = vec![DevUser::new_with_plaintext(
+            "dev",
+            "Developer",
+            "dev@localhost",
+            "devpassword123",
+            Role::Admin,
+        )];
         let state = AuthState::new(config);
 
         // Valid dev token

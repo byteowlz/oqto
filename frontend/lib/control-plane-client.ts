@@ -3,139 +3,184 @@
 // ============================================================================
 
 export type UserInfo = {
-  id: string
-  name: string
-  email: string
-  role: string
-}
+	id: string;
+	name: string;
+	email: string;
+	role: string;
+};
 
 export type LoginRequest = {
-  username: string
-  password: string
-}
+	username: string;
+	password: string;
+};
 
 export type LoginResponse = {
-  token: string
-  user: UserInfo
-}
+	token: string;
+	user: UserInfo;
+};
 
 export type RegisterRequest = {
-  username: string
-  email: string
-  password: string
-  invite_code: string
-  display_name?: string
-}
+	username: string;
+	email: string;
+	password: string;
+	invite_code: string;
+	display_name?: string;
+};
 
 export type RegisterResponse = {
-  token: string
-  user: UserInfo
-}
+	token: string;
+	user: UserInfo;
+};
 
 // ============================================================================
 // Session Types
 // ============================================================================
 
-export type WorkspaceSessionStatus = "pending" | "starting" | "running" | "stopping" | "stopped" | "failed"
+export type WorkspaceSessionStatus =
+	| "pending"
+	| "starting"
+	| "running"
+	| "stopping"
+	| "stopped"
+	| "failed";
 
 /** Workspace mode for a persona */
-export type WorkspaceMode = "default_only" | "ask" | "any"
+export type WorkspaceMode = "default_only" | "ask" | "any";
 
 /** Persona metadata from persona.toml */
 export type Persona = {
-  /** Unique identifier (directory name) */
-  id: string
-  /** Display name of the persona */
-  name: string
-  /** Short description of what this persona does */
-  description: string
-  /** Accent color for UI (hex color, e.g., "#6366f1") */
-  color?: string | null
-  /** Path to avatar image (relative to persona directory) */
-  avatar?: string | null
-  /** Whether this is the default persona */
-  is_default: boolean
-  /** opencode agent ID to use */
-  agent_id: string
-  /** Default working directory (optional) */
-  default_workdir?: string | null
-  /** Workspace mode (default_only, ask, or any) */
-  workspace_mode: WorkspaceMode
-  /** If true, has own directory with opencode.json. If false, wrapper for existing agent */
-  standalone: boolean
-  /** If true, can work on external projects. If false, only works in own persona directory */
-  project_access: boolean
-}
+	/** Unique identifier (directory name) */
+	id: string;
+	/** Display name of the persona */
+	name: string;
+	/** Short description of what this persona does */
+	description: string;
+	/** Accent color for UI (hex color, e.g., "#6366f1") */
+	color?: string | null;
+	/** Path to avatar image (relative to persona directory) */
+	avatar?: string | null;
+	/** Whether this is the default persona */
+	is_default: boolean;
+	/** opencode agent ID to use */
+	agent_id: string;
+	/** Default working directory (optional) */
+	default_workdir?: string | null;
+	/** Workspace mode (default_only, ask, or any) */
+	workspace_mode: WorkspaceMode;
+	/** If true, has own directory with opencode.json. If false, wrapper for existing agent */
+	standalone: boolean;
+	/** If true, can work on external projects. If false, only works in own persona directory */
+	project_access: boolean;
+};
 
 export type WorkspaceSession = {
-  id: string
-  readable_id: string | null
-  container_id: string | null
-  container_name: string
-  user_id: string
-  workspace_path: string
-  persona_path: string | null
-  image: string
-  opencode_port: number
-  fileserver_port: number
-  ttyd_port: number
-  status: WorkspaceSessionStatus
-  created_at: string
-  started_at: string | null
-  stopped_at: string | null
-  error_message: string | null
-  /** Persona metadata (if session has a persona_path with persona.toml) */
-  persona?: Persona | null
-}
+	id: string;
+	readable_id: string | null;
+	container_id: string | null;
+	container_name: string;
+	user_id: string;
+	workspace_path: string;
+	persona_path: string | null;
+	image: string;
+	opencode_port: number;
+	fileserver_port: number;
+	ttyd_port: number;
+	status: WorkspaceSessionStatus;
+	created_at: string;
+	started_at: string | null;
+	stopped_at: string | null;
+	error_message: string | null;
+	/** Persona metadata (if session has a persona_path with persona.toml) */
+	persona?: Persona | null;
+};
+
+export type ProjectLogo = {
+	/** Path relative to project root (e.g., "logo/project_logo_white.svg") */
+	path: string;
+	/** Logo variant (e.g., "white", "black", "white_on_black") */
+	variant: string;
+};
 
 export type WorkspaceDirEntry = {
-  name: string
-  path: string
-  type: "directory"
-}
+	name: string;
+	path: string;
+	type: "directory";
+	/** Project logo if found in logo/ directory */
+	logo?: ProjectLogo;
+};
 
 export type CreateWorkspaceSessionRequest = {
-  workspace_path?: string
-  image?: string
-  /** Persona ID to use for this session */
-  persona_id?: string
-  env?: Record<string, string>
-}
+	workspace_path?: string;
+	image?: string;
+	/** Persona ID to use for this session */
+	persona_id?: string;
+	env?: Record<string, string>;
+};
 
 type ApiErrorResponse = {
-  error?: string
-}
+	error?: string;
+};
 
-const trimTrailingSlash = (value: string) => value.replace(/\/$/, "")
+const trimTrailingSlash = (value: string) => value.replace(/\/$/, "");
+
+const env =
+	(import.meta as ImportMeta & { env?: Record<string, string | undefined> })
+		.env ?? (typeof process !== "undefined" ? process.env : {});
 
 export function controlPlaneDirectBaseUrl(): string {
-  return trimTrailingSlash(process.env.NEXT_PUBLIC_CONTROL_PLANE_URL ?? "")
+	return trimTrailingSlash(env.VITE_CONTROL_PLANE_URL ?? "");
 }
 
 async function readApiError(res: Response): Promise<string> {
-  const contentType = res.headers.get("content-type") ?? ""
-  if (contentType.includes("application/json")) {
-    const parsed = (await res.json().catch(() => null)) as ApiErrorResponse | null
-    if (parsed?.error) return parsed.error
-  }
-  return (await res.text().catch(() => res.statusText)) || res.statusText
+	const contentType = res.headers.get("content-type") ?? "";
+	if (contentType.includes("application/json")) {
+		const parsed = (await res
+			.json()
+			.catch(() => null)) as ApiErrorResponse | null;
+		if (parsed?.error) return parsed.error;
+	}
+	return (await res.text().catch(() => res.statusText)) || res.statusText;
 }
 
 // ============================================================================
 // Features API
 // ============================================================================
 
+/** Per-visualizer voice settings from backend */
+export type VisualizerVoiceConfig = {
+	voice: string;
+	speed: number;
+};
+
+/** Voice configuration from backend */
+export type VoiceFeatureConfig = {
+	stt_url: string;
+	tts_url: string;
+	vad_timeout_ms: number;
+	default_voice: string;
+	default_speed: number;
+	auto_language_detect: boolean;
+	tts_muted: boolean;
+	continuous_mode: boolean;
+	default_visualizer: string;
+	interrupt_word_count: number;
+	interrupt_backoff_ms: number;
+	visualizer_voices: Record<string, VisualizerVoiceConfig>;
+};
+
 export type Features = {
-  mmry_enabled: boolean
-}
+	mmry_enabled: boolean;
+	/** Voice configuration (present if voice mode is enabled) */
+	voice?: VoiceFeatureConfig | null;
+};
 
 export async function getFeatures(): Promise<Features> {
-  const res = await fetch(`/api/features`, { credentials: "include" })
-  if (!res.ok) {
-    // Return defaults if endpoint not available
-    return { mmry_enabled: false }
-  }
-  return res.json()
+	const res = await fetch("/api/features", { credentials: "include" });
+	if (!res.ok) {
+		// Return defaults if endpoint not available
+		return { mmry_enabled: false, voice: null };
+	}
+	return res.json();
 }
 
 // ============================================================================
@@ -143,98 +188,114 @@ export async function getFeatures(): Promise<Features> {
 // ============================================================================
 
 export async function login(request: LoginRequest): Promise<LoginResponse> {
-  const res = await fetch(`/api/auth/login`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(request),
-    credentials: "include",
-  })
-  if (!res.ok) throw new Error(await readApiError(res))
-  return res.json()
+	const res = await fetch("/api/auth/login", {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(request),
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+	return res.json();
 }
 
-export async function register(request: RegisterRequest): Promise<RegisterResponse> {
-  const res = await fetch(`/api/auth/register`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(request),
-    credentials: "include",
-  })
-  if (!res.ok) throw new Error(await readApiError(res))
-  return res.json()
+export async function register(
+	request: RegisterRequest,
+): Promise<RegisterResponse> {
+	const res = await fetch("/api/auth/register", {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(request),
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+	return res.json();
 }
 
 export async function logout(): Promise<void> {
-  const res = await fetch(`/api/auth/logout`, {
-    method: "POST",
-    credentials: "include",
-  })
-  if (!res.ok) throw new Error(await readApiError(res))
+	const res = await fetch("/api/auth/logout", {
+		method: "POST",
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
 }
 
 export async function getCurrentUser(): Promise<UserInfo | null> {
-  const res = await fetch(`/api/me`, {
-    credentials: "include",
-  })
-  if (res.status === 401) return null
-  if (!res.ok) throw new Error(await readApiError(res))
-  return res.json()
+	const res = await fetch("/api/me", {
+		credentials: "include",
+	});
+	if (res.status === 401) return null;
+	if (!res.ok) throw new Error(await readApiError(res));
+	return res.json();
 }
 
 /** @deprecated Use login() instead */
 export async function devLogin(): Promise<boolean> {
-  try {
-    await login({ username: "dev", password: "devpassword123" })
-    return true
-  } catch {
-    return false
-  }
+	try {
+		await login({ username: "dev", password: "devpassword123" });
+		return true;
+	} catch {
+		return false;
+	}
 }
 
 export async function listWorkspaceSessions(): Promise<WorkspaceSession[]> {
-  const res = await fetch(`/api/sessions`, { cache: "no-store", credentials: "include" })
-  if (!res.ok) throw new Error(await readApiError(res))
-  return res.json()
+	const res = await fetch("/api/sessions", {
+		cache: "no-store",
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+	return res.json();
 }
 
 /** Project/workspace directory entry */
 export type ProjectEntry = {
-  name: string
-  path: string
-  type: "directory"
-}
+	name: string;
+	path: string;
+	type: "directory";
+	/** Project logo if found in logo/ directory */
+	logo?: ProjectLogo;
+};
 
 /** List available projects (directories in workspace_dir) */
 export async function listProjects(): Promise<ProjectEntry[]> {
-  const res = await fetch(`/api/projects`, { cache: "no-store", credentials: "include" })
-  if (!res.ok) throw new Error(await readApiError(res))
-  return res.json()
+	const res = await fetch("/api/projects", {
+		cache: "no-store",
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+	return res.json();
 }
 
-export async function createWorkspaceSession(request: CreateWorkspaceSessionRequest = {}): Promise<WorkspaceSession> {
-  const res = await fetch(`/api/sessions`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(request),
-    credentials: "include",
-  })
-  if (!res.ok) throw new Error(await readApiError(res))
-  const data = (await res.json()) as { session?: WorkspaceSession } | WorkspaceSession
-  if ("id" in data) return data
-  if (data.session && "id" in data.session) return data.session
-  throw new Error("Unexpected create session response")
+export async function createWorkspaceSession(
+	request: CreateWorkspaceSessionRequest = {},
+): Promise<WorkspaceSession> {
+	const res = await fetch("/api/sessions", {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(request),
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+	const data = (await res.json()) as
+		| { session?: WorkspaceSession }
+		| WorkspaceSession;
+	if ("id" in data) return data;
+	if (data.session && "id" in data.session) return data.session;
+	throw new Error("Unexpected create session response");
 }
 
 /** Get or create a session - handles auto-resume and auto-upgrade */
-export async function getOrCreateWorkspaceSession(request: CreateWorkspaceSessionRequest = {}): Promise<WorkspaceSession> {
-  const res = await fetch(`/api/sessions/get-or-create`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(request),
-    credentials: "include",
-  })
-  if (!res.ok) throw new Error(await readApiError(res))
-  return res.json()
+export async function getOrCreateWorkspaceSession(
+	request: CreateWorkspaceSessionRequest = {},
+): Promise<WorkspaceSession> {
+	const res = await fetch("/api/sessions/get-or-create", {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(request),
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+	return res.json();
 }
 
 /** Get or create a session for a specific workspace path.
@@ -242,52 +303,69 @@ export async function getOrCreateWorkspaceSession(request: CreateWorkspaceSessio
  * It will find an existing running session for the workspace or create a new one,
  * enforcing LRU cap by stopping oldest idle session if needed.
  */
-export async function getOrCreateSessionForWorkspace(workspacePath: string): Promise<WorkspaceSession> {
-  const res = await fetch(`/api/sessions/get-or-create-for-workspace`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ workspace_path: workspacePath }),
-    credentials: "include",
-  })
-  if (!res.ok) throw new Error(await readApiError(res))
-  return res.json()
+export async function getOrCreateSessionForWorkspace(
+	workspacePath: string,
+): Promise<WorkspaceSession> {
+	const res = await fetch("/api/sessions/get-or-create-for-workspace", {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ workspace_path: workspacePath }),
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+	return res.json();
 }
 
 /** Touch session activity to prevent idle timeout */
 export async function touchSessionActivity(sessionId: string): Promise<void> {
-  const res = await fetch(`/api/sessions/${sessionId}/activity`, {
-    method: "POST",
-    credentials: "include",
-  })
-  if (!res.ok) throw new Error(await readApiError(res))
+	const res = await fetch(`/api/sessions/${sessionId}/activity`, {
+		method: "POST",
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
 }
 
 export async function stopWorkspaceSession(sessionId: string): Promise<void> {
-  const res = await fetch(`/api/sessions/${sessionId}/stop`, { method: "POST", credentials: "include" })
-  if (!res.ok) throw new Error(await readApiError(res))
+	const res = await fetch(`/api/sessions/${sessionId}/stop`, {
+		method: "POST",
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
 }
 
 export async function deleteWorkspaceSession(sessionId: string): Promise<void> {
-  const res = await fetch(`/api/sessions/${sessionId}`, { method: "DELETE", credentials: "include" })
-  if (!res.ok) throw new Error(await readApiError(res))
+	const res = await fetch(`/api/sessions/${sessionId}`, {
+		method: "DELETE",
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
 }
 
 export type SessionUpdateInfo = {
-  update_available: boolean
-  current_digest: string | null
-  latest_digest: string | null
+	update_available: boolean;
+	current_digest: string | null;
+	latest_digest: string | null;
+};
+
+export async function checkSessionUpdate(
+	sessionId: string,
+): Promise<SessionUpdateInfo> {
+	const res = await fetch(`/api/sessions/${sessionId}/update`, {
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+	return res.json();
 }
 
-export async function checkSessionUpdate(sessionId: string): Promise<SessionUpdateInfo> {
-  const res = await fetch(`/api/sessions/${sessionId}/update`, { credentials: "include" })
-  if (!res.ok) throw new Error(await readApiError(res))
-  return res.json()
-}
-
-export async function upgradeWorkspaceSession(sessionId: string): Promise<WorkspaceSession> {
-  const res = await fetch(`/api/sessions/${sessionId}/upgrade`, { method: "POST", credentials: "include" })
-  if (!res.ok) throw new Error(await readApiError(res))
-  return res.json()
+export async function upgradeWorkspaceSession(
+	sessionId: string,
+): Promise<WorkspaceSession> {
+	const res = await fetch(`/api/sessions/${sessionId}/upgrade`, {
+		method: "POST",
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+	return res.json();
 }
 
 // ============================================================================
@@ -296,28 +374,53 @@ export async function upgradeWorkspaceSession(sessionId: string): Promise<Worksp
 
 /** List all available personas */
 export async function listPersonas(): Promise<Persona[]> {
-  const res = await fetch(`/api/personas`, { cache: "no-store", credentials: "include" })
-  if (!res.ok) throw new Error(await readApiError(res))
-  return res.json()
+	const res = await fetch("/api/personas", {
+		cache: "no-store",
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+	return res.json();
 }
 
 /** Get a specific persona by ID */
 export async function getPersona(personaId: string): Promise<Persona> {
-  const res = await fetch(`/api/personas/${personaId}`, { credentials: "include" })
-  if (!res.ok) throw new Error(await readApiError(res))
-  return res.json()
+	const res = await fetch(`/api/personas/${personaId}`, {
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+	return res.json();
 }
 
 // ============================================================================
 // Workspace Projects API
 // ============================================================================
 
-export async function listWorkspaceDirectories(path = "."): Promise<WorkspaceDirEntry[]> {
-  const url = new URL(`/api/projects`, window.location.origin)
-  url.searchParams.set("path", path)
-  const res = await fetch(url.toString(), { cache: "no-store", credentials: "include" })
-  if (!res.ok) throw new Error(await readApiError(res))
-  return res.json()
+export async function listWorkspaceDirectories(
+	path = ".",
+): Promise<WorkspaceDirEntry[]> {
+	const url = new URL("/api/projects", window.location.origin);
+	url.searchParams.set("path", path);
+	const res = await fetch(url.toString(), {
+		cache: "no-store",
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+	return res.json();
+}
+
+/**
+ * Get the URL for a project logo.
+ * @param projectPath - The project path (relative to workspace root, e.g., "octo" or "subfolder/project")
+ * @param logoPath - The logo path relative to project root (e.g., "logo/project_logo_white.svg")
+ */
+export function getProjectLogoUrl(
+	projectPath: string,
+	logoPath: string,
+): string {
+	// Combine project path and logo path
+	// The path should be relative to workspace root, not absolute
+	const fullPath = `${projectPath}/${logoPath}`;
+	return `/api/projects/logo/${fullPath}`;
 }
 
 // ============================================================================
@@ -326,78 +429,110 @@ export async function listWorkspaceDirectories(path = "."): Promise<WorkspaceDir
 
 /** A chat session read directly from OpenCode's storage on disk */
 export type ChatSession = {
-  /** Session ID (e.g., "ses_xxx") */
-  id: string
-  /** Session title */
-  title: string | null
-  /** Parent session ID (for child sessions) */
-  parent_id: string | null
-  /** Workspace/project path */
-  workspace_path: string
-  /** Project name (derived from path) */
-  project_name: string
-  /** Created timestamp (ms since epoch) */
-  created_at: number
-  /** Updated timestamp (ms since epoch) */
-  updated_at: number
-  /** OpenCode version that created this session */
-  version: string | null
-  /** Whether this session is a child session */
-  is_child: boolean
-  /** Path to the session JSON file (for loading messages) */
-  source_path: string | null
-}
+	/** Session ID (e.g., "ses_xxx") */
+	id: string;
+	/** Session title */
+	title: string | null;
+	/** Parent session ID (for child sessions) */
+	parent_id: string | null;
+	/** Workspace/project path */
+	workspace_path: string;
+	/** Project name (derived from path) */
+	project_name: string;
+	/** Created timestamp (ms since epoch) */
+	created_at: number;
+	/** Updated timestamp (ms since epoch) */
+	updated_at: number;
+	/** OpenCode version that created this session */
+	version: string | null;
+	/** Whether this session is a child session */
+	is_child: boolean;
+	/** Path to the session JSON file (for loading messages) */
+	source_path: string | null;
+};
 
 /** Chat sessions grouped by workspace/project */
 export type GroupedChatHistory = {
-  workspace_path: string
-  project_name: string
-  sessions: ChatSession[]
-}
+	workspace_path: string;
+	project_name: string;
+	sessions: ChatSession[];
+};
 
 /** Query parameters for listing chat history */
 export type ChatHistoryQuery = {
-  /** Filter by workspace path */
-  workspace?: string
-  /** Include child sessions (default: false) */
-  include_children?: boolean
-  /** Maximum number of sessions to return */
-  limit?: number
-}
+	/** Filter by workspace path */
+	workspace?: string;
+	/** Include child sessions (default: false) */
+	include_children?: boolean;
+	/** Maximum number of sessions to return */
+	limit?: number;
+};
 
 // ============================================================================
 // Chat History API (reads from disk, no running opencode needed)
 // ============================================================================
 
 /** List all chat sessions from OpenCode history */
-export async function listChatHistory(query: ChatHistoryQuery = {}): Promise<ChatSession[]> {
-  const url = new URL(`/api/chat-history`, window.location.origin)
-  if (query.workspace) url.searchParams.set("workspace", query.workspace)
-  if (query.include_children) url.searchParams.set("include_children", "true")
-  if (query.limit) url.searchParams.set("limit", query.limit.toString())
-  
-  const res = await fetch(url.toString(), { cache: "no-store", credentials: "include" })
-  if (!res.ok) throw new Error(await readApiError(res))
-  return res.json()
+export async function listChatHistory(
+	query: ChatHistoryQuery = {},
+): Promise<ChatSession[]> {
+	const url = new URL("/api/chat-history", window.location.origin);
+	if (query.workspace) url.searchParams.set("workspace", query.workspace);
+	if (query.include_children) url.searchParams.set("include_children", "true");
+	if (query.limit) url.searchParams.set("limit", query.limit.toString());
+
+	const res = await fetch(url.toString(), {
+		cache: "no-store",
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+	return res.json();
 }
 
 /** List chat sessions grouped by workspace/project */
-export async function listChatHistoryGrouped(query: ChatHistoryQuery = {}): Promise<GroupedChatHistory[]> {
-  const url = new URL(`/api/chat-history/grouped`, window.location.origin)
-  if (query.workspace) url.searchParams.set("workspace", query.workspace)
-  if (query.include_children) url.searchParams.set("include_children", "true")
-  if (query.limit) url.searchParams.set("limit", query.limit.toString())
-  
-  const res = await fetch(url.toString(), { cache: "no-store", credentials: "include" })
-  if (!res.ok) throw new Error(await readApiError(res))
-  return res.json()
+export async function listChatHistoryGrouped(
+	query: ChatHistoryQuery = {},
+): Promise<GroupedChatHistory[]> {
+	const url = new URL("/api/chat-history/grouped", window.location.origin);
+	if (query.workspace) url.searchParams.set("workspace", query.workspace);
+	if (query.include_children) url.searchParams.set("include_children", "true");
+	if (query.limit) url.searchParams.set("limit", query.limit.toString());
+
+	const res = await fetch(url.toString(), {
+		cache: "no-store",
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+	return res.json();
 }
 
 /** Get a specific chat session by ID */
 export async function getChatSession(sessionId: string): Promise<ChatSession> {
-  const res = await fetch(`/api/chat-history/${sessionId}`, { credentials: "include" })
-  if (!res.ok) throw new Error(await readApiError(res))
-  return res.json()
+	const res = await fetch(`/api/chat-history/${sessionId}`, {
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+	return res.json();
+}
+
+/** Request to update a chat session */
+export type UpdateChatSessionRequest = {
+	title?: string;
+};
+
+/** Update a chat session (e.g., rename) */
+export async function updateChatSession(
+	sessionId: string,
+	updates: UpdateChatSessionRequest,
+): Promise<ChatSession> {
+	const res = await fetch(`/api/chat-history/${sessionId}`, {
+		method: "PATCH",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(updates),
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+	return res.json();
 }
 
 // ============================================================================
@@ -406,108 +541,137 @@ export async function getChatSession(sessionId: string): Promise<ChatSession> {
 
 /** A single part of a chat message */
 export type ChatMessagePart = {
-  id: string
-  part_type: string
-  /** Text content (for text parts) */
-  text: string | null
-  /** Tool name (for tool parts) */
-  tool_name: string | null
-  /** Tool input (for tool parts) */
-  tool_input: unknown | null
-  /** Tool output (for tool parts) */
-  tool_output: string | null
-  /** Tool status (for tool parts) */
-  tool_status: string | null
-  /** Tool title/summary (for tool parts) */
-  tool_title: string | null
-}
+	id: string;
+	part_type: string;
+	/** Text content (for text parts) */
+	text: string | null;
+	/** Tool name (for tool parts) */
+	tool_name: string | null;
+	/** Tool input (for tool parts) */
+	tool_input: unknown | null;
+	/** Tool output (for tool parts) */
+	tool_output: string | null;
+	/** Tool status (for tool parts) */
+	tool_status: string | null;
+	/** Tool title/summary (for tool parts) */
+	tool_title: string | null;
+};
 
 /** A chat message with its content parts */
 export type ChatMessage = {
-  id: string
-  session_id: string
-  role: string
-  created_at: number
-  completed_at: number | null
-  parent_id: string | null
-  model_id: string | null
-  provider_id: string | null
-  agent: string | null
-  summary_title: string | null
-  tokens_input: number | null
-  tokens_output: number | null
-  cost: number | null
-  /** Message content parts */
-  parts: ChatMessagePart[]
-}
+	id: string;
+	session_id: string;
+	role: string;
+	created_at: number;
+	completed_at: number | null;
+	parent_id: string | null;
+	model_id: string | null;
+	provider_id: string | null;
+	agent: string | null;
+	summary_title: string | null;
+	tokens_input: number | null;
+	tokens_output: number | null;
+	cost: number | null;
+	/** Message content parts */
+	parts: ChatMessagePart[];
+};
 
 /** Get all messages for a chat session */
-export async function getChatMessages(sessionId: string): Promise<ChatMessage[]> {
-  const res = await fetch(`/api/chat-history/${sessionId}/messages`, { credentials: "include" })
-  if (!res.ok) throw new Error(await readApiError(res))
-  return res.json()
+export async function getChatMessages(
+	sessionId: string,
+): Promise<ChatMessage[]> {
+	const res = await fetch(`/api/chat-history/${sessionId}/messages`, {
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+	return res.json();
 }
 
 // ============================================================================
 // Message Format Conversion (disk format -> opencode format)
 // ============================================================================
 
-import type { OpenCodeMessageWithParts, OpenCodePart, OpenCodeMessage } from "./opencode-client"
+import type {
+	OpenCodeMessage,
+	OpenCodeMessageWithParts,
+	OpenCodePart,
+} from "./opencode-client";
 
 /** Convert a ChatMessage (from disk) to OpenCodeMessageWithParts (for rendering) */
-export function convertChatMessageToOpenCode(msg: ChatMessage): OpenCodeMessageWithParts {
-  // Convert parts
-  const parts: OpenCodePart[] = msg.parts.map((part) => ({
-    id: part.id,
-    sessionID: msg.session_id,
-    messageID: msg.id,
-    type: part.part_type as OpenCodePart["type"],
-    text: part.text ?? undefined,
-    tool: part.tool_name ?? undefined,
-    state: part.tool_name ? {
-      status: (part.tool_status as "pending" | "running" | "completed" | "error") ?? "completed",
-      input: part.tool_input as Record<string, unknown> | undefined,
-      output: part.tool_output ?? undefined,
-      title: part.tool_title ?? undefined,
-    } : undefined,
-  }))
+export function convertChatMessageToOpenCode(
+	msg: ChatMessage,
+): OpenCodeMessageWithParts {
+	// Convert parts
+	const parts: OpenCodePart[] = msg.parts.map((part) => ({
+		id: part.id,
+		sessionID: msg.session_id,
+		messageID: msg.id,
+		type: part.part_type as OpenCodePart["type"],
+		text: part.text ?? undefined,
+		tool: part.tool_name ?? undefined,
+		state: part.tool_name
+			? {
+					status:
+						(part.tool_status as
+							| "pending"
+							| "running"
+							| "completed"
+							| "error") ?? "completed",
+					input: part.tool_input as Record<string, unknown> | undefined,
+					output: part.tool_output ?? undefined,
+					title: part.tool_title ?? undefined,
+				}
+			: undefined,
+	}));
 
-  // Build message info based on role
-  const info: OpenCodeMessage = msg.role === "user"
-    ? {
-        id: msg.id,
-        sessionID: msg.session_id,
-        role: "user" as const,
-        time: { created: msg.created_at },
-        agent: msg.agent ?? undefined,
-        model: msg.provider_id && msg.model_id ? {
-          providerID: msg.provider_id,
-          modelID: msg.model_id,
-        } : undefined,
-      }
-    : {
-        id: msg.id,
-        sessionID: msg.session_id,
-        role: "assistant" as const,
-        time: { created: msg.created_at, completed: msg.completed_at ?? undefined },
-        parentID: msg.parent_id ?? "",
-        modelID: msg.model_id ?? "",
-        providerID: msg.provider_id ?? "",
-        cost: msg.cost ?? undefined,
-        tokens: msg.tokens_input != null || msg.tokens_output != null ? {
-          input: msg.tokens_input ?? 0,
-          output: msg.tokens_output ?? 0,
-          reasoning: 0,
-          cache: { read: 0, write: 0 },
-        } : undefined,
-      }
+	// Build message info based on role
+	const info: OpenCodeMessage =
+		msg.role === "user"
+			? {
+					id: msg.id,
+					sessionID: msg.session_id,
+					role: "user" as const,
+					time: { created: msg.created_at },
+					agent: msg.agent ?? undefined,
+					model:
+						msg.provider_id && msg.model_id
+							? {
+									providerID: msg.provider_id,
+									modelID: msg.model_id,
+								}
+							: undefined,
+				}
+			: {
+					id: msg.id,
+					sessionID: msg.session_id,
+					role: "assistant" as const,
+					time: {
+						created: msg.created_at,
+						completed: msg.completed_at ?? undefined,
+					},
+					parentID: msg.parent_id ?? "",
+					modelID: msg.model_id ?? "",
+					providerID: msg.provider_id ?? "",
+					cost: msg.cost ?? undefined,
+					tokens:
+						msg.tokens_input != null || msg.tokens_output != null
+							? {
+									input: msg.tokens_input ?? 0,
+									output: msg.tokens_output ?? 0,
+									reasoning: 0,
+									cache: { read: 0, write: 0 },
+								}
+							: undefined,
+				};
 
-  return { info, parts }
+	return { info, parts };
 }
 
 /** Convert an array of ChatMessages to OpenCodeMessageWithParts */
-export function convertChatMessagesToOpenCode(messages: ChatMessage[]): OpenCodeMessageWithParts[] {
-  return messages.map(convertChatMessageToOpenCode)
+export function convertChatMessagesToOpenCode(
+	messages: ChatMessage[],
+): OpenCodeMessageWithParts[] {
+	return messages.map(convertChatMessageToOpenCode);
 }
 
 // ============================================================================
@@ -515,15 +679,15 @@ export function convertChatMessagesToOpenCode(messages: ChatMessage[]): OpenCode
 // ============================================================================
 
 export function opencodeProxyBaseUrl(sessionId: string) {
-  return `/api/session/${sessionId}/code`
+	return `/api/session/${sessionId}/code`;
 }
 
 export function terminalProxyPath(sessionId: string) {
-  return `/session/${sessionId}/term`
+	return `/session/${sessionId}/term`;
 }
 
 export function fileserverProxyBaseUrl(sessionId: string) {
-  return `/api/session/${sessionId}/files`
+	return `/api/session/${sessionId}/files`;
 }
 
 // ============================================================================
@@ -531,27 +695,99 @@ export function fileserverProxyBaseUrl(sessionId: string) {
 // ============================================================================
 
 export interface WorkspaceConfig {
-  /** Default agent to use for new chats in this workspace */
-  agent?: string
-  /** Other opencode config fields we might care about */
-  instructions?: string[]
+	/** Default agent to use for new chats in this workspace */
+	agent?: string;
+	/** Other opencode config fields we might care about */
+	instructions?: string[];
 }
 
 /**
  * Read opencode.json from the workspace root.
  * Returns null if the file doesn't exist or can't be parsed.
  */
-export async function getWorkspaceConfig(sessionId: string): Promise<WorkspaceConfig | null> {
-  try {
-    const res = await fetch(
-      `${fileserverProxyBaseUrl(sessionId)}/file?path=opencode.json`,
-      { credentials: "include" }
-    )
-    if (!res.ok) return null
-    
-    const config = await res.json()
-    return config as WorkspaceConfig
-  } catch {
-    return null
-  }
+export async function getWorkspaceConfig(
+	sessionId: string,
+): Promise<WorkspaceConfig | null> {
+	try {
+		const res = await fetch(
+			`${fileserverProxyBaseUrl(sessionId)}/file?path=opencode.json`,
+			{ credentials: "include" },
+		);
+		if (!res.ok) return null;
+
+		const config = await res.json();
+		return config as WorkspaceConfig;
+	} catch {
+		return null;
+	}
+}
+
+// ============================================================================
+// Settings Types and API
+// ============================================================================
+
+/** A settings value with metadata */
+export type SettingsValue = {
+	/** The current value */
+	value: unknown;
+	/** Whether this value is explicitly set in config (vs default) */
+	is_configured: boolean;
+	/** The default value from schema (if any) */
+	default?: unknown;
+};
+
+/** Map of dotted paths to settings values */
+export type SettingsValues = Record<string, SettingsValue>;
+
+/** Request to update settings */
+export type SettingsUpdateRequest = {
+	values: Record<string, unknown>;
+};
+
+/** Get the JSON schema for an app's settings (filtered by user permissions) */
+export async function getSettingsSchema(app: string): Promise<unknown> {
+	const res = await fetch(
+		`/api/settings/schema?app=${encodeURIComponent(app)}`,
+		{
+			credentials: "include",
+		},
+	);
+	if (!res.ok) throw new Error(await readApiError(res));
+	return res.json();
+}
+
+/** Get current settings values for an app */
+export async function getSettingsValues(app: string): Promise<SettingsValues> {
+	const res = await fetch(`/api/settings?app=${encodeURIComponent(app)}`, {
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+	return res.json();
+}
+
+/** Update settings values for an app */
+export async function updateSettingsValues(
+	app: string,
+	updates: SettingsUpdateRequest,
+): Promise<SettingsValues> {
+	const res = await fetch(`/api/settings?app=${encodeURIComponent(app)}`, {
+		method: "PATCH",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(updates),
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+	return res.json();
+}
+
+/** Reload settings from disk (admin only) */
+export async function reloadSettings(app: string): Promise<void> {
+	const res = await fetch(
+		`/api/settings/reload?app=${encodeURIComponent(app)}`,
+		{
+			method: "POST",
+			credentials: "include",
+		},
+	);
+	if (!res.ok) throw new Error(await readApiError(res));
 }

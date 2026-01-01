@@ -48,6 +48,9 @@ pub async fn proxy_opencode(
 }
 
 /// Proxy HTTP requests to a session's file server.
+///
+/// In single-user mode, the fileserver runs independently and remains accessible
+/// even when the opencode session is inactive.
 pub async fn proxy_fileserver(
     State(state): State<AppState>,
     Path((session_id, path)): Path<(String, String)>,
@@ -63,7 +66,9 @@ pub async fn proxy_fileserver(
         })?
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    if !session.is_active() {
+    // In single-user mode, allow access even when session is inactive
+    // since the fileserver runs independently of the opencode process
+    if !state.mmry.single_user && !session.is_active() {
         warn!("Attempted to proxy to inactive session {}", session_id);
         return Err(StatusCode::SERVICE_UNAVAILABLE);
     }
@@ -611,7 +616,9 @@ pub async fn proxy_mmry(
         })?
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    if !session.is_active() {
+    // In single-user mode, allow access even when session is inactive
+    // since we're proxying to a shared local mmry service
+    if !state.mmry.single_user && !session.is_active() {
         warn!("Attempted to proxy mmry to inactive session {}", session_id);
         return Err(StatusCode::SERVICE_UNAVAILABLE);
     }
@@ -639,13 +646,15 @@ pub async fn proxy_mmry_search(
         })?
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    if !session.is_active() {
+    // In single-user mode, allow access even when session is inactive
+    // since we're proxying to a shared local mmry service
+    if !state.mmry.single_user && !session.is_active() {
         warn!("Attempted to proxy mmry to inactive session {}", session_id);
         return Err(StatusCode::SERVICE_UNAVAILABLE);
     }
 
     let target_url = get_mmry_target(&state, &session)?;
-    proxy_request_to_url(state.http_client.clone(), req, &target_url, "v1/search").await
+    proxy_request_to_url(state.http_client.clone(), req, &target_url, "v1/federation/search").await
 }
 
 /// Proxy requests to list memories for a session.
@@ -666,7 +675,9 @@ pub async fn proxy_mmry_list(
         })?
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    if !session.is_active() {
+    // In single-user mode, allow access even when session is inactive
+    // since we're proxying to a shared local mmry service
+    if !state.mmry.single_user && !session.is_active() {
         warn!("Attempted to proxy mmry to inactive session {}", session_id);
         return Err(StatusCode::SERVICE_UNAVAILABLE);
     }
@@ -693,13 +704,15 @@ pub async fn proxy_mmry_add(
         })?
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    if !session.is_active() {
+    // In single-user mode, allow access even when session is inactive
+    // since we're proxying to a shared local mmry service
+    if !state.mmry.single_user && !session.is_active() {
         warn!("Attempted to proxy mmry to inactive session {}", session_id);
         return Err(StatusCode::SERVICE_UNAVAILABLE);
     }
 
     let target_url = get_mmry_target(&state, &session)?;
-    proxy_request_to_url(state.http_client.clone(), req, &target_url, "v1/memories").await
+    proxy_request_to_url(state.http_client.clone(), req, &target_url, "v1/agents/memories").await
 }
 
 /// Proxy requests to get/update/delete a specific memory.
@@ -720,7 +733,9 @@ pub async fn proxy_mmry_memory(
         })?
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    if !session.is_active() {
+    // In single-user mode, allow access even when session is inactive
+    // since we're proxying to a shared local mmry service
+    if !state.mmry.single_user && !session.is_active() {
         warn!("Attempted to proxy mmry to inactive session {}", session_id);
         return Err(StatusCode::SERVICE_UNAVAILABLE);
     }
@@ -748,7 +763,9 @@ pub async fn proxy_mmry_stores(
         })?
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    if !session.is_active() {
+    // In single-user mode, allow access even when session is inactive
+    // since we're proxying to a shared local mmry service
+    if !state.mmry.single_user && !session.is_active() {
         warn!("Attempted to proxy mmry to inactive session {}", session_id);
         return Err(StatusCode::SERVICE_UNAVAILABLE);
     }

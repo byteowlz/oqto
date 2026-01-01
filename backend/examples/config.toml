@@ -152,3 +152,32 @@ dev_mode = true
 # email = "dev@localhost"
 # password_hash = "$2b$12$..." # Use htpasswd -nbBC 12 username password | cut -d: -f2
 # role = "admin"
+
+[scaffold]
+# Agent scaffolding configuration - defines the tool used to create new agent directories
+# from templates. By default uses "byt new" but can be configured for any scaffolding tool.
+
+# Binary to use for scaffolding
+binary = "byt"
+# Subcommand to invoke (e.g., "new" for "byt new <name>")
+subcommand = "new"
+# Argument for template name
+template_arg = "--template"
+# Argument for output directory
+output_arg = "--output"
+# Argument to create GitHub repo (optional, set to empty string to disable)
+github_arg = "--github"
+# Argument to make repo private (optional)
+private_arg = "--private"
+# Argument for description (optional)
+description_arg = "--description"
+
+# Example for cookiecutter:
+# [scaffold]
+# binary = "cookiecutter"
+# subcommand = ""
+# template_arg = ""
+# output_arg = "-o"
+# github_arg = ""
+# private_arg = ""
+# description_arg = ""

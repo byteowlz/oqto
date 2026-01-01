@@ -27,6 +27,7 @@ mod local;
 mod markdown;
 mod observability;
 mod session;
+mod settings;
 mod user;
 mod wordlist;
 
@@ -436,7 +437,10 @@ struct AppConfig {
     local: LocalModeConfig,
     eavs: Option<EavsConfig>,
     mmry: MmryConfig,
+    voice: VoiceConfig,
     auth: auth::AuthConfig,
+    /// Agent scaffolding configuration.
+    scaffold: ScaffoldConfig,
 }
 
 /// Backend mode selection.
@@ -492,7 +496,9 @@ impl Default for AppConfig {
             local: LocalModeConfig::default(),
             eavs: None,
             mmry: MmryConfig::default(),
+            voice: VoiceConfig::default(),
             auth: auth::AuthConfig::default(),
+            scaffold: ScaffoldConfig::default(),
         }
     }
 }
@@ -514,6 +520,98 @@ struct EavsConfig {
     default_session_budget_usd: Option<f64>,
     /// Default session rate limit in requests per minute.
     default_session_rpm: Option<u32>,
+}
+
+/// Voice mode configuration.
+///
+/// Enables real-time speech-to-text (STT) and text-to-speech (TTS) integration.
+/// Uses external WebSocket services:
+/// - eaRS for STT (speech-to-text with VAD)
+/// - kokorox for TTS (text-to-speech with streaming)
+///
+/// Both services can run on any machine - clients connect directly via WebSocket.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VoiceConfig {
+    /// Whether voice mode is enabled.
+    pub enabled: bool,
+    /// WebSocket URL for the eaRS STT service.
+    /// Default: "ws://localhost:8765"
+    pub stt_url: String,
+    /// WebSocket URL for the kokorox TTS service.
+    /// Default: "ws://localhost:8766"
+    pub tts_url: String,
+    /// Voice Activity Detection timeout in milliseconds.
+    /// After this duration of silence, the transcript is auto-sent.
+    /// Default: 1500ms
+    pub vad_timeout_ms: u32,
+    /// Default kokorox voice ID.
+    /// Default: "af_heart"
+    pub default_voice: String,
+    /// Default TTS speech speed (0.1 - 3.0).
+    /// Default: 1.0
+    pub default_speed: f32,
+    /// Enable automatic language detection for TTS.
+    /// Default: true
+    pub auto_language_detect: bool,
+    /// Whether TTS output is muted by default (user can still read responses).
+    /// Default: false
+    pub tts_muted: bool,
+    /// Continuous conversation mode - auto-listen after TTS finishes.
+    /// Default: true
+    pub continuous_mode: bool,
+    /// Default visualizer style: "orb" or "kitt"
+    /// Default: "orb"
+    pub default_visualizer: String,
+    /// Minimum words spoken by user to interrupt TTS playback.
+    /// Set to 0 to disable interrupt-by-speaking.
+    /// Default: 2
+    pub interrupt_word_count: u32,
+    /// Reset interrupt word count after this silence duration in ms.
+    /// Set to 0 to disable backoff (words accumulate forever until threshold).
+    /// Default: 5000
+    pub interrupt_backoff_ms: u32,
+    /// Per-visualizer voice/speed settings.
+    /// Keys are visualizer IDs (e.g., "orb", "kitt"), values are VisualizerVoice.
+    #[serde(default)]
+    pub visualizer_voices: std::collections::HashMap<String, VisualizerVoice>,
+}
+
+/// Per-visualizer voice settings.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VisualizerVoice {
+    /// Voice ID for this visualizer.
+    pub voice: String,
+    /// Speech speed for this visualizer (0.1 - 3.0).
+    #[serde(default = "default_speed")]
+    pub speed: f32,
+}
+
+fn default_speed() -> f32 {
+    1.0
+}
+
+impl Default for VoiceConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            stt_url: "ws://localhost:8765".to_string(),
+            tts_url: "ws://localhost:8766".to_string(),
+            vad_timeout_ms: 1500,
+            default_voice: "af_heart".to_string(),
+            default_speed: 1.0,
+            auto_language_detect: true,
+            tts_muted: false,
+            continuous_mode: true,
+            default_visualizer: "orb".to_string(),
+            interrupt_word_count: 2,
+            interrupt_backoff_ms: 5000,
+            visualizer_voices: [
+                ("orb".to_string(), VisualizerVoice { voice: "af_heart".to_string(), speed: 1.0 }),
+                ("kitt".to_string(), VisualizerVoice { voice: "am_michael".to_string(), speed: 1.1 }),
+            ].into_iter().collect(),
+        }
+    }
 }
 
 /// mmry (memory system) configuration.
@@ -702,6 +800,41 @@ impl Default for LinuxUsersConfig {
             shell: "/bin/bash".to_string(),
             use_sudo: true,
             create_home: true,
+        }
+    }
+}
+
+/// Agent scaffolding configuration.
+/// Defines the external command used to scaffold new agent directories.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ScaffoldConfig {
+    /// Binary to use for scaffolding (e.g., "byt", "cookiecutter", custom script)
+    pub binary: String,
+    /// Subcommand to invoke (e.g., "new" for "byt new")
+    pub subcommand: String,
+    /// Argument format for template name (e.g., "--template" for "--template rust-cli")
+    pub template_arg: String,
+    /// Argument format for output directory
+    pub output_arg: String,
+    /// Argument to create GitHub repo
+    pub github_arg: Option<String>,
+    /// Argument to make repo private
+    pub private_arg: Option<String>,
+    /// Argument format for description
+    pub description_arg: Option<String>,
+}
+
+impl Default for ScaffoldConfig {
+    fn default() -> Self {
+        Self {
+            binary: "byt".to_string(),
+            subcommand: "new".to_string(),
+            template_arg: "--template".to_string(),
+            output_arg: "--output".to_string(),
+            github_arg: Some("--github".to_string()),
+            private_arg: Some("--private".to_string()),
+            description_arg: Some("--description".to_string()),
         }
     }
 }
@@ -1164,15 +1297,21 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     {
         if eavs_config.enabled {
             if let Some(ref master_key) = eavs_config.master_key {
-                Some(std::sync::Arc::new(eavs::EavsClient::new(
-                    &eavs_config.base_url,
-                    master_key,
-                )))
+                match eavs::EavsClient::new(&eavs_config.base_url, master_key) {
+                    Ok(client) => Some(std::sync::Arc::new(client)),
+                    Err(err) => {
+                        log::error!("Failed to initialize EAVS client: {}", err);
+                        None
+                    }
+                }
             } else if let Ok(master_key) = std::env::var("EAVS_MASTER_KEY") {
-                Some(std::sync::Arc::new(eavs::EavsClient::new(
-                    &eavs_config.base_url,
-                    master_key,
-                )))
+                match eavs::EavsClient::new(&eavs_config.base_url, master_key) {
+                    Ok(client) => Some(std::sync::Arc::new(client)),
+                    Err(err) => {
+                        log::error!("Failed to initialize EAVS client: {}", err);
+                        None
+                    }
+                }
             } else {
                 log::warn!(
                     "EAVS enabled but no master_key configured (set eavs.master_key or EAVS_MASTER_KEY env var)"
@@ -1266,8 +1405,21 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
             std::sync::Arc::new(container::ContainerRuntime::new())
         };
     let agent_repo = agent::AgentRepository::new(database.pool().clone());
-    let agent_service =
-        agent::AgentService::new(agent_runtime, session_service.clone(), agent_repo);
+    let scaffold_config = agent::ScaffoldConfig {
+        binary: ctx.config.scaffold.binary.clone(),
+        subcommand: ctx.config.scaffold.subcommand.clone(),
+        template_arg: ctx.config.scaffold.template_arg.clone(),
+        output_arg: ctx.config.scaffold.output_arg.clone(),
+        github_arg: ctx.config.scaffold.github_arg.clone(),
+        private_arg: ctx.config.scaffold.private_arg.clone(),
+        description_arg: ctx.config.scaffold.description_arg.clone(),
+    };
+    let agent_service = agent::AgentService::with_scaffold_config(
+        agent_runtime,
+        session_service.clone(),
+        agent_repo,
+        scaffold_config,
+    );
 
     // Initialize user service
     let user_repo = user::UserRepository::new(database.pool().clone());
@@ -1342,8 +1494,66 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
         local_service_url: ctx.config.mmry.local_service_url.clone(),
     };
 
+    // Build voice state based on configuration
+    let voice_state = api::VoiceState {
+        enabled: ctx.config.voice.enabled,
+        stt_url: ctx.config.voice.stt_url.clone(),
+        tts_url: ctx.config.voice.tts_url.clone(),
+        vad_timeout_ms: ctx.config.voice.vad_timeout_ms,
+        default_voice: ctx.config.voice.default_voice.clone(),
+        default_speed: ctx.config.voice.default_speed,
+        auto_language_detect: ctx.config.voice.auto_language_detect,
+        tts_muted: ctx.config.voice.tts_muted,
+        continuous_mode: ctx.config.voice.continuous_mode,
+        default_visualizer: ctx.config.voice.default_visualizer.clone(),
+        interrupt_word_count: ctx.config.voice.interrupt_word_count,
+        interrupt_backoff_ms: ctx.config.voice.interrupt_backoff_ms,
+        visualizer_voices: ctx.config.voice.visualizer_voices.iter().map(|(k, v)| {
+            (k.clone(), api::VisualizerVoiceState { voice: v.voice.clone(), speed: v.speed })
+        }).collect(),
+    };
+
+    // Create settings services
+    let octo_schema: serde_json::Value = serde_json::from_str(
+        include_str!("../examples/backend.config.schema.json")
+    ).expect("Failed to parse embedded octo schema");
+    
+    let octo_config_dir = default_config_dir()?;
+    let settings_octo = settings::SettingsService::new(
+        octo_schema,
+        octo_config_dir,
+        "config.toml",
+    ).context("Failed to create octo settings service")?;
+
+    // Create mmry settings service if mmry is enabled
+    let settings_mmry = if ctx.config.mmry.enabled {
+        // mmry config is at ~/.config/mmry/config.toml
+        let mmry_config_dir = default_config_dir()?.parent()
+            .map(|p| p.join("mmry"))
+            .unwrap_or_else(|| PathBuf::from("~/.config/mmry"));
+        
+        // Try to load mmry schema if it exists, otherwise create minimal schema
+        let mmry_schema = std::fs::read_to_string(mmry_config_dir.join("config.schema.json"))
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_else(|| serde_json::json!({
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "title": "mmry Configuration",
+                "type": "object",
+                "properties": {}
+            }));
+        
+        settings::SettingsService::new(
+            mmry_schema,
+            mmry_config_dir,
+            "config.toml",
+        ).ok()
+    } else {
+        None
+    };
+
     // Create app state
-    let state = if let Some(backend) = agent_backend {
+    let mut state = if let Some(backend) = agent_backend {
         api::AppState::with_agent_backend(
             session_service,
             agent_service,
@@ -1352,6 +1562,7 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
             auth_state,
             backend,
             mmry_state,
+            voice_state,
         )
     } else {
         api::AppState::new(
@@ -1361,8 +1572,15 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
             invite_repo,
             auth_state,
             mmry_state,
+            voice_state,
         )
     };
+
+    // Add settings services to state
+    state = state.with_settings_octo(settings_octo);
+    if let Some(mmry_settings) = settings_mmry {
+        state = state.with_settings_mmry(mmry_settings);
+    }
 
     // Create router
     let app = api::create_router(state);
