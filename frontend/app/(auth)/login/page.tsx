@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { useRouter } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import Link from "next/link"
 import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
@@ -37,6 +37,8 @@ type LoginFormData = z.infer<typeof loginSchema>
 
 export default function LoginPage() {
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const redirectTo = searchParams.get("redirect") || "/"
   const [error, setError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
 
@@ -53,16 +55,8 @@ export default function LoginPage() {
     setIsLoading(true)
 
     try {
-      const response = await login(data)
-      // Store auth token for WebSocket auth
-      if (response.token) {
-        try {
-          window.localStorage.setItem("authToken", response.token)
-        } catch {
-          // Ignore storage failures
-        }
-      }
-      router.push("/")
+      await login(data)
+      router.push(redirectTo)
       router.refresh()
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed")
