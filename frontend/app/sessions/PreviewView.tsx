@@ -6,7 +6,7 @@ import { useApp } from "@/components/app-context"
 import { fileserverProxyBaseUrl } from "@/lib/control-plane-client"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
-import CodeEditor from "@uiw/react-textarea-code-editor"
+
 
 interface PreviewViewProps {
   filePath?: string | null
@@ -222,17 +222,6 @@ export function PreviewView({ filePath, className }: PreviewViewProps) {
   // Ref for scroll container to preserve scroll position when entering edit mode
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const savedScrollTopRef = useRef<number>(0)
-  const scrollLockRef = useRef<{
-    active: boolean
-    top: number
-    left: number
-    timer: ReturnType<typeof setTimeout> | null
-  }>({
-    active: false,
-    top: 0,
-    left: 0,
-    timer: null,
-  })
 
   const fileserverBaseUrl = selectedWorkspaceSessionId 
     ? fileserverProxyBaseUrl(selectedWorkspaceSessionId) 
@@ -411,52 +400,6 @@ export function PreviewView({ filePath, className }: PreviewViewProps) {
     })
   }, [isEditing])
 
-  const lockScrollPosition = useCallback((durationMs = 250) => {
-    const container = scrollContainerRef.current
-    if (!container) return
-    const lock = scrollLockRef.current
-    lock.active = true
-    lock.top = container.scrollTop
-    lock.left = container.scrollLeft
-    if (lock.timer) {
-      clearTimeout(lock.timer)
-    }
-    lock.timer = setTimeout(() => {
-      lock.active = false
-      lock.timer = null
-    }, durationMs)
-  }, [])
-
-  const releaseScrollLock = useCallback(() => {
-    const lock = scrollLockRef.current
-    lock.active = false
-    if (lock.timer) {
-      clearTimeout(lock.timer)
-      lock.timer = null
-    }
-  }, [])
-
-  useEffect(() => {
-    const container = scrollContainerRef.current
-    if (!container) return
-
-    const handleScroll = () => {
-      const lock = scrollLockRef.current
-      if (!lock.active) return
-      if (container.scrollTop !== lock.top) {
-        container.scrollTop = lock.top
-      }
-      if (container.scrollLeft !== lock.left) {
-        container.scrollLeft = lock.left
-      }
-    }
-
-    container.addEventListener("scroll", handleScroll, { passive: true })
-    return () => {
-      container.removeEventListener("scroll", handleScroll)
-    }
-  }, [])
-
   // No file selected
   if (!filePath) {
     return (
@@ -634,29 +577,22 @@ export function PreviewView({ filePath, className }: PreviewViewProps) {
         className="flex-1 overflow-auto"
       >
         {isEditing ? (
-          <CodeEditor
+          <textarea
             value={editedContent}
-            language={language}
             onChange={(e) => setEditedContent(e.target.value)}
-            onPointerDown={() => {
-              lockScrollPosition()
-            }}
-            onPointerUp={() => {
-              releaseScrollLock()
-            }}
-            onPointerCancel={() => {
-              releaseScrollLock()
-            }}
-            onBlur={() => {
-              releaseScrollLock()
-            }}
-            padding={12}
-            data-color-mode={isDarkMode ? "dark" : "light"}
+            spellCheck={false}
+            autoComplete="off"
+            autoCorrect="off"
+            autoCapitalize="off"
+            className="w-full h-full resize-none outline-none"
             style={{
               fontSize: 12,
               fontFamily: "ui-monospace, SFMono-Regular, SF Mono, Consolas, Liberation Mono, Menlo, monospace",
               minHeight: "100%",
+              padding: 12,
               backgroundColor: isDarkMode ? "#1e1e1e" : "#ffffff",
+              color: isDarkMode ? "#d4d4d4" : "#1e1e1e",
+              border: "none",
             }}
           />
         ) : highlightedContent ? (
