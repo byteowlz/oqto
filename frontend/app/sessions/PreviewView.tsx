@@ -7,8 +7,6 @@ import { fileserverProxyBaseUrl } from "@/lib/control-plane-client"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import CodeEditor from "@uiw/react-textarea-code-editor"
-import { Prism as SyntaxHighlighter } from "react-syntax-highlighter"
-import { oneDark, oneLight } from "react-syntax-highlighter/dist/cjs/styles/prism"
 
 interface PreviewViewProps {
   filePath?: string | null
@@ -350,7 +348,19 @@ export function PreviewView({ filePath, className }: PreviewViewProps) {
       setContent(editedContent)
       // Update the cache with the new content
       const cacheKey = `${selectedWorkspaceSessionId}:${filePath}`
+      const highlightCacheKey = `${cacheKey}:highlighted`
       setCachedContent(cacheKey, editedContent)
+      // Invalidate highlighted cache and re-fetch
+      fileCache.delete(highlightCacheKey)
+      setHighlightedContent("")
+      fetchHighlightedContent(fileserverBaseUrl, filePath)
+        .then((html) => {
+          setCachedContent(highlightCacheKey, html)
+          setHighlightedContent(html)
+        })
+        .catch((err) => {
+          console.warn("[PreviewView] Failed to refresh highlighted content after save:", err)
+        })
       setIsEditing(false)
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save file")
