@@ -271,3 +271,44 @@ git push                # Push to remote
 - Always `bd sync` before ending session
 
 <!-- end-bv-agent-instructions -->
+
+---
+
+## Agent Messaging (mailz)
+
+This project uses **mailz** for agent-to-agent communication. Check for messages at session start and before ending.
+
+### Quick Reference
+
+Run these from the repo directory (mailz auto-detects project from cwd):
+
+```bash
+# Check inbox
+mailz-cli inbox
+
+# Send message to another agent
+mailz-cli send opencode-govnr "Need schema update" --body "Details here"
+
+# Read and acknowledge
+mailz-cli read <message-id>
+mailz-cli ack <message-id>
+
+# File reservations (prevent conflicts)
+mailz-cli reserve src/file.rs --ttl 1800 --reason "Refactoring"
+mailz-cli reservations
+mailz-cli release src/file.rs
+```
+
+### When to Use
+
+- **Cross-repo coordination**: Need something from another repo? Send a message.
+- **Handoffs**: Completed work that another agent should pick up? Message them.
+- **File conflicts**: About to edit shared files? Reserve them first.
+- **Blocking issues**: Stuck waiting on another agent? Send a message instead of blocking.
+
+### Session Protocol
+
+1. **Start**: Check inbox with `mailz-cli inbox --project octo`
+2. **Work**: Reserve files if editing shared code
+3. **Coordinate**: Send messages for cross-repo needs
+4. **End**: Release reservations, check inbox for replies
