@@ -218,6 +218,10 @@ export function PreviewView({ filePath, className }: PreviewViewProps) {
   if (typeof window !== "undefined") {
     isMobileRef.current = window.innerWidth < 640
   }
+  
+  // Ref for scroll container to preserve scroll position when entering edit mode
+  const scrollContainerRef = useRef<HTMLDivElement>(null)
+  const savedScrollTopRef = useRef<number>(0)
 
   const fileserverBaseUrl = selectedWorkspaceSessionId 
     ? fileserverProxyBaseUrl(selectedWorkspaceSessionId) 
@@ -376,9 +380,46 @@ export function PreviewView({ filePath, className }: PreviewViewProps) {
   }, [content])
 
   const handleStartEdit = useCallback(() => {
+    // Save scroll position before entering edit mode
+    if (scrollContainerRef.current) {
+      savedScrollTopRef.current = scrollContainerRef.current.scrollTop
+    }
     setEditedContent(content)
     setIsEditing(true)
   }, [content])
+  
+  // Restore scroll position after entering edit mode and prevent unwanted scroll on click
+  const editorWrapperRef = useRef<HTMLDivElement>(null)
+  
+  useEffect(() => {
+    if (!isEditing || !scrollContainerRef.current) return
+    
+    const container = scrollContainerRef.current
+    
+    // Restore scroll position after editor mounts
+    requestAnimationFrame(() => {
+      container.scrollTop = savedScrollTopRef.current
+    })
+    
+    // Prevent scroll jumps when clicking in the editor
+    // The browser tries to scroll the caret into view, but we want to prevent that
+    const wrapper = editorWrapperRef.current
+    if (!wrapper) return
+    
+    const handleMouseDown = () => {
+      // Save position before click processing
+      savedScrollTopRef.current = container.scrollTop
+      // Restore after the click event has been processed
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          container.scrollTop = savedScrollTopRef.current
+        })
+      })
+    }
+    
+    wrapper.addEventListener('mousedown', handleMouseDown)
+    return () => wrapper.removeEventListener('mousedown', handleMouseDown)
+  }, [isEditing])
 
   // No file selected
   if (!filePath) {
@@ -552,21 +593,23 @@ export function PreviewView({ filePath, className }: PreviewViewProps) {
       )}
 
       {/* Content */}
-      <div className="flex-1 overflow-auto">
+      <div ref={scrollContainerRef} className="flex-1 overflow-auto">
         {isEditing ? (
-          <CodeEditor
-            value={editedContent}
-            language={language}
-            onChange={(e) => setEditedContent(e.target.value)}
-            padding={12}
-            data-color-mode={isDarkMode ? "dark" : "light"}
-            style={{
-              fontSize: 12,
-              fontFamily: "ui-monospace, SFMono-Regular, SF Mono, Consolas, Liberation Mono, Menlo, monospace",
-              minHeight: "100%",
-              backgroundColor: isDarkMode ? "#1e1e1e" : "#ffffff",
-            }}
-          />
+          <div ref={editorWrapperRef}>
+            <CodeEditor
+              value={editedContent}
+              language={language}
+              onChange={(e) => setEditedContent(e.target.value)}
+              padding={12}
+              data-color-mode={isDarkMode ? "dark" : "light"}
+              style={{
+                fontSize: 12,
+                fontFamily: "ui-monospace, SFMono-Regular, SF Mono, Consolas, Liberation Mono, Menlo, monospace",
+                minHeight: "100%",
+                backgroundColor: isDarkMode ? "#1e1e1e" : "#ffffff",
+              }}
+            />
+          </div>
         ) : highlightedContent ? (
           // Server-rendered syntax highlighting with line numbers (table-based)
           <div 
