@@ -1164,15 +1164,21 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     {
         if eavs_config.enabled {
             if let Some(ref master_key) = eavs_config.master_key {
-                Some(std::sync::Arc::new(eavs::EavsClient::new(
-                    &eavs_config.base_url,
-                    master_key,
-                )))
+                match eavs::EavsClient::new(&eavs_config.base_url, master_key) {
+                    Ok(client) => Some(std::sync::Arc::new(client)),
+                    Err(err) => {
+                        log::error!("Failed to initialize EAVS client: {}", err);
+                        None
+                    }
+                }
             } else if let Ok(master_key) = std::env::var("EAVS_MASTER_KEY") {
-                Some(std::sync::Arc::new(eavs::EavsClient::new(
-                    &eavs_config.base_url,
-                    master_key,
-                )))
+                match eavs::EavsClient::new(&eavs_config.base_url, master_key) {
+                    Ok(client) => Some(std::sync::Arc::new(client)),
+                    Err(err) => {
+                        log::error!("Failed to initialize EAVS client: {}", err);
+                        None
+                    }
+                }
             } else {
                 log::warn!(
                     "EAVS enabled but no master_key configured (set eavs.master_key or EAVS_MASTER_KEY env var)"
