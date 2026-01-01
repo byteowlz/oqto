@@ -1,8 +1,8 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "workspace-backend-config.schema.json",
-  "title": "Workspace Backend Configuration",
-  "description": "Configuration schema for the workspace-backend CLI application",
+  "$id": "octo.config.schema.json",
+  "title": "Octo Configuration",
+  "description": "Configuration schema for the Octo backend",
   "type": "object",
   "properties": {
     "$schema": {
@@ -12,11 +12,15 @@
     "profile": {
       "type": "string",
       "description": "Configuration profile name",
-      "default": "default"
+      "default": "default",
+      "x-scope": "admin",
+      "x-category": "General"
     },
     "logging": {
       "type": "object",
       "description": "Logging configuration",
+      "x-scope": "admin",
+      "x-category": "Infrastructure",
       "properties": {
         "level": {
           "type": "string",
@@ -27,7 +31,7 @@
         "file": {
           "type": "string",
           "description": "Optional path for log file output. Supports ~ and environment variables.",
-          "examples": ["~/Library/Logs/workspace-backend.log", "$XDG_STATE_HOME/workspace-backend/app.log"]
+          "examples": ["~/Library/Logs/octo.log", "$XDG_STATE_HOME/octo/app.log"]
         }
       },
       "additionalProperties": false
@@ -35,6 +39,8 @@
     "runtime": {
       "type": "object",
       "description": "Runtime configuration",
+      "x-scope": "admin",
+      "x-category": "Infrastructure",
       "properties": {
         "parallelism": {
           "type": "integer",
@@ -58,16 +64,18 @@
     "paths": {
       "type": "object",
       "description": "Custom directory paths for persistent data and state",
+      "x-scope": "admin",
+      "x-category": "Infrastructure",
       "properties": {
         "data_dir": {
           "type": "string",
-          "description": "Directory for persistent data. Defaults to $XDG_DATA_HOME/workspace-backend or ~/.local/share/workspace-backend",
-          "examples": ["$XDG_DATA_HOME/workspace-backend", "~/.local/share/workspace-backend"]
+          "description": "Directory for persistent data. Defaults to $XDG_DATA_HOME/octo or ~/.local/share/octo",
+          "examples": ["$XDG_DATA_HOME/octo", "~/.local/share/octo"]
         },
         "state_dir": {
           "type": "string",
-          "description": "Directory for machine-specific state (logs, history, etc.). Defaults to $XDG_STATE_HOME/workspace-backend or ~/.local/state/workspace-backend",
-          "examples": ["$XDG_STATE_HOME/workspace-backend", "~/.local/state/workspace-backend"]
+          "description": "Directory for machine-specific state (logs, history, etc.). Defaults to $XDG_STATE_HOME/octo or ~/.local/state/octo",
+          "examples": ["$XDG_STATE_HOME/octo", "~/.local/state/octo"]
         }
       },
       "additionalProperties": false
@@ -75,6 +83,8 @@
     "container": {
       "type": "object",
       "description": "Container runtime configuration",
+      "x-scope": "admin",
+      "x-category": "Infrastructure",
       "properties": {
         "runtime": {
           "type": "string",
@@ -109,6 +119,8 @@
     "local": {
       "type": "object",
       "description": "Local mode configuration - run without containers. Useful for Proxmox LXC, bare-metal, or development without Docker.",
+      "x-scope": "admin",
+      "x-category": "Infrastructure",
       "properties": {
         "enabled": {
           "type": "boolean",
@@ -141,8 +153,12 @@
         },
         "single_user": {
           "type": "boolean",
-          "description": "Enable single-user mode. When true, the platform operates with a single user (no multi-tenancy), and the {user_id} placeholder in workspace_dir is ignored. Password protection is still available.",
-          "default": false
+          "description": "Enable single-user mode. When true, the platform operates with a single user (no multi-tenancy), and the {user_id} placeholder in workspace_dir is ignored. Required on macOS/Windows.",
+          "default": false,
+          "x-platform-note": {
+            "macos": "Must be true (multi-user not supported)",
+            "windows": "Must be true (multi-user not supported)"
+          }
         },
         "linux_users": {
           "type": "object",
@@ -197,6 +213,8 @@
     "eavs": {
       "type": "object",
       "description": "EAVS (LLM proxy) configuration. EAVS runs on host, not in containers.",
+      "x-scope": "admin",
+      "x-category": "Infrastructure",
       "properties": {
         "enabled": {
           "type": "boolean",
@@ -217,7 +235,8 @@
         },
         "master_key": {
           "type": "string",
-          "description": "Master key for EAVS admin operations (create/revoke keys). IMPORTANT: Change this in production! Can also be set via EAVS_MASTER_KEY env var."
+          "description": "Master key for EAVS admin operations (create/revoke keys). IMPORTANT: Change this in production! Can also be set via EAVS_MASTER_KEY env var.",
+          "x-sensitive": true
         },
         "default_session_budget_usd": {
           "type": "number",
@@ -237,6 +256,8 @@
     "auth": {
       "type": "object",
       "description": "Authentication configuration",
+      "x-scope": "admin",
+      "x-category": "Security",
       "properties": {
         "dev_mode": {
           "type": "boolean",
@@ -247,7 +268,8 @@
           "type": "string",
           "description": "JWT secret for signing tokens. REQUIRED when dev_mode = false. Must be at least 32 characters. Can be a literal value or reference an environment variable with env: prefix (e.g., env:AUTH_JWT_SECRET).",
           "minLength": 32,
-          "examples": ["your-secure-secret-at-least-32-characters-long", "env:AUTH_JWT_SECRET"]
+          "examples": ["your-secure-secret-at-least-32-characters-long", "env:AUTH_JWT_SECRET"],
+          "x-sensitive": true
         },
         "oidc_issuer": {
           "type": "string",
@@ -292,7 +314,8 @@
               },
               "password_hash": {
                 "type": "string",
-                "description": "Password hash (bcrypt). Use: htpasswd -nbBC 12 username password | cut -d: -f2"
+                "description": "Password hash (bcrypt). Use: htpasswd -nbBC 12 username password | cut -d: -f2",
+                "x-sensitive": true
               },
               "role": {
                 "type": "string",
@@ -304,6 +327,221 @@
             "required": ["id", "name", "email", "password_hash", "role"],
             "additionalProperties": false
           }
+        }
+      },
+      "additionalProperties": false
+    },
+    "voice": {
+      "type": "object",
+      "description": "Voice mode configuration for speech-to-text and text-to-speech",
+      "x-scope": "user",
+      "x-category": "Features",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Enable voice mode features (requires eaRS STT and kokorox TTS services)",
+          "default": false,
+          "x-scope": "admin"
+        },
+        "stt_url": {
+          "type": "string",
+          "description": "WebSocket URL for the eaRS STT (speech-to-text) service",
+          "format": "uri",
+          "default": "ws://localhost:8765",
+          "examples": ["ws://localhost:8765", "wss://stt.example.com"],
+          "x-scope": "admin"
+        },
+        "tts_url": {
+          "type": "string",
+          "description": "WebSocket URL for the kokorox TTS (text-to-speech) service",
+          "format": "uri",
+          "default": "ws://localhost:8766",
+          "examples": ["ws://localhost:8766", "wss://tts.example.com"],
+          "x-scope": "admin"
+        },
+        "vad_timeout_ms": {
+          "type": "integer",
+          "description": "Voice Activity Detection timeout in milliseconds. How long to wait after speech stops before processing.",
+          "minimum": 100,
+          "maximum": 10000,
+          "default": 1500
+        },
+        "default_voice": {
+          "type": "string",
+          "description": "Default kokorox voice ID",
+          "default": "af_heart",
+          "examples": ["af_heart", "af_bella", "am_michael", "bf_emma"]
+        },
+        "default_speed": {
+          "type": "number",
+          "description": "Default TTS playback speed (0.5 - 2.0)",
+          "minimum": 0.5,
+          "maximum": 2.0,
+          "default": 1.0
+        },
+        "auto_language_detect": {
+          "type": "boolean",
+          "description": "Enable automatic language detection for STT",
+          "default": true
+        },
+        "tts_muted": {
+          "type": "boolean",
+          "description": "Start with TTS muted by default",
+          "default": false
+        },
+        "continuous_mode": {
+          "type": "boolean",
+          "description": "Enable continuous conversation mode (auto-listen after TTS finishes)",
+          "default": false
+        },
+        "default_visualizer": {
+          "type": "string",
+          "description": "Default voice visualizer style",
+          "enum": ["orb", "kitt"],
+          "default": "orb"
+        },
+        "interrupt_word_count": {
+          "type": "integer",
+          "description": "Minimum words to interrupt TTS playback (0 = disabled)",
+          "minimum": 0,
+          "maximum": 20,
+          "default": 0
+        },
+        "interrupt_backoff_ms": {
+          "type": "integer",
+          "description": "Reset word count after this silence duration in ms (0 = disabled)",
+          "minimum": 0,
+          "maximum": 10000,
+          "default": 0
+        },
+        "visualizer_voices": {
+          "type": "object",
+          "description": "Per-visualizer voice and speed settings",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "voice": {
+                "type": "string",
+                "description": "Voice ID for this visualizer"
+              },
+              "speed": {
+                "type": "number",
+                "description": "Playback speed for this visualizer",
+                "minimum": 0.5,
+                "maximum": 2.0,
+                "default": 1.0
+              }
+            },
+            "required": ["voice", "speed"]
+          },
+          "default": {
+            "orb": { "voice": "af_heart", "speed": 1.0 },
+            "kitt": { "voice": "am_michael", "speed": 1.1 }
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "shortcuts": {
+      "type": "object",
+      "description": "Keyboard shortcut configuration",
+      "x-scope": "user",
+      "x-category": "Preferences",
+      "properties": {
+        "voice_conversation": {
+          "type": "string",
+          "description": "Shortcut to start voice conversation mode",
+          "default": "Alt+V",
+          "examples": ["Alt+V", "Ctrl+Shift+V", "Meta+V"]
+        },
+        "voice_dictation": {
+          "type": "string",
+          "description": "Shortcut to start voice dictation mode",
+          "default": "Alt+D",
+          "examples": ["Alt+D", "Ctrl+Shift+D", "Meta+D"]
+        },
+        "command_palette": {
+          "type": "string",
+          "description": "Shortcut to open command palette",
+          "default": "Ctrl+K",
+          "examples": ["Ctrl+K", "Meta+K", "Ctrl+P"]
+        },
+        "new_chat": {
+          "type": "string",
+          "description": "Shortcut to create new chat",
+          "default": "Ctrl+N",
+          "examples": ["Ctrl+N", "Meta+N"]
+        }
+      },
+      "additionalProperties": false
+    },
+    "mmry": {
+      "type": "object",
+      "description": "Memory service (mmry) configuration",
+      "x-scope": "admin",
+      "x-category": "Features",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Enable mmry integration for persistent memory across sessions",
+          "default": false
+        },
+        "binary": {
+          "type": "string",
+          "description": "Path to the mmry binary",
+          "default": "mmry",
+          "examples": ["mmry", "/usr/local/bin/mmry", "~/.cargo/bin/mmry"]
+        },
+        "port": {
+          "type": "integer",
+          "description": "Port for mmry HTTP server",
+          "minimum": 1024,
+          "maximum": 65535,
+          "default": 8769
+        }
+      },
+      "additionalProperties": false
+    },
+    "scaffold": {
+      "type": "object",
+      "description": "Agent scaffolding configuration - defines the tool used to create new agent directories from templates",
+      "x-scope": "admin",
+      "x-category": "Infrastructure",
+      "properties": {
+        "binary": {
+          "type": "string",
+          "description": "Binary to use for scaffolding (e.g., 'byt', 'cookiecutter', custom script)",
+          "default": "byt"
+        },
+        "subcommand": {
+          "type": "string",
+          "description": "Subcommand to invoke (e.g., 'new' for 'byt new')",
+          "default": "new"
+        },
+        "template_arg": {
+          "type": "string",
+          "description": "Argument format for template name (e.g., '--template' for '--template rust-cli')",
+          "default": "--template"
+        },
+        "output_arg": {
+          "type": "string",
+          "description": "Argument format for output directory",
+          "default": "--output"
+        },
+        "github_arg": {
+          "type": ["string", "null"],
+          "description": "Argument to create GitHub repo (optional, null to disable)",
+          "default": "--github"
+        },
+        "private_arg": {
+          "type": ["string", "null"],
+          "description": "Argument to make repo private (optional, null to disable)",
+          "default": "--private"
+        },
+        "description_arg": {
+          "type": ["string", "null"],
+          "description": "Argument format for description (optional, null to disable)",
+          "default": "--description"
         }
       },
       "additionalProperties": false

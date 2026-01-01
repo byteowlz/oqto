@@ -1,9 +1,10 @@
 //! API route definitions.
 
-use axum::http::{HeaderValue, Method, header};
+use axum::http::{header, HeaderValue, Method};
 use axum::{
-    Router, middleware,
+    middleware,
     routing::{delete, get, post, put},
+    Router,
 };
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::trace::{DefaultMakeSpan, DefaultOnRequest, DefaultOnResponse, TraceLayer};
@@ -33,6 +34,7 @@ pub fn create_router(state: AppState) -> Router {
     let protected_routes = Router::new()
         // Project management
         .route("/projects", get(handlers::list_workspace_dirs))
+        .route("/projects/logo/{*path}", get(handlers::get_project_logo))
         // Session management
         .route("/sessions", get(handlers::list_sessions))
         .route("/sessions", post(handlers::create_session))
@@ -189,9 +191,18 @@ pub fn create_router(state: AppState) -> Router {
         )
         // Chat history routes (reads from disk, no running opencode needed)
         .route("/chat-history", get(handlers::list_chat_history))
-        .route("/chat-history/grouped", get(handlers::list_chat_history_grouped))
-        .route("/chat-history/{session_id}", get(handlers::get_chat_session))
-        .route("/chat-history/{session_id}/messages", get(handlers::get_chat_messages))
+        .route(
+            "/chat-history/grouped",
+            get(handlers::list_chat_history_grouped),
+        )
+        .route(
+            "/chat-history/{session_id}",
+            get(handlers::get_chat_session).patch(handlers::update_chat_session),
+        )
+        .route(
+            "/chat-history/{session_id}/messages",
+            get(handlers::get_chat_messages),
+        )
         // Mmry (memory service) proxy routes
         .route(
             "/session/{session_id}/memories",
@@ -211,16 +222,44 @@ pub fn create_router(state: AppState) -> Router {
                 .put(proxy::proxy_mmry_memory)
                 .delete(proxy::proxy_mmry_memory),
         )
+        // Settings routes
+        .route("/settings/schema", get(handlers::get_settings_schema))
+        .route(
+            "/settings",
+            get(handlers::get_settings_values).patch(handlers::update_settings_values),
+        )
+        .route("/settings/reload", post(handlers::reload_settings))
         // AgentRPC routes (unified backend API)
         .route("/agent/health", get(handlers::agent_health))
-        .route("/agent/conversations", get(handlers::agent_list_conversations))
-        .route("/agent/conversations/{conversation_id}", get(handlers::agent_get_conversation))
-        .route("/agent/conversations/{conversation_id}/messages", get(handlers::agent_get_messages))
+        .route(
+            "/agent/conversations",
+            get(handlers::agent_list_conversations),
+        )
+        .route(
+            "/agent/conversations/{conversation_id}",
+            get(handlers::agent_get_conversation),
+        )
+        .route(
+            "/agent/conversations/{conversation_id}/messages",
+            get(handlers::agent_get_messages),
+        )
         .route("/agent/sessions", post(handlers::agent_start_session))
-        .route("/agent/sessions/{session_id}/messages", post(handlers::agent_send_message))
-        .route("/agent/sessions/{session_id}", delete(handlers::agent_stop_session))
-        .route("/agent/sessions/{session_id}/url", get(handlers::agent_get_session_url))
-        .route("/agent/sessions/{session_id}/events", get(handlers::agent_attach))
+        .route(
+            "/agent/sessions/{session_id}/messages",
+            post(handlers::agent_send_message),
+        )
+        .route(
+            "/agent/sessions/{session_id}",
+            delete(handlers::agent_stop_session),
+        )
+        .route(
+            "/agent/sessions/{session_id}/url",
+            get(handlers::agent_get_session_url),
+        )
+        .route(
+            "/agent/sessions/{session_id}/events",
+            get(handlers::agent_attach),
+        )
         .layer(middleware::from_fn_with_state(
             auth_state.clone(),
             auth_middleware,

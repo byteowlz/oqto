@@ -1,25 +1,36 @@
-import { getRequestConfig } from "next-intl/server"
-import { cookies } from "next/headers"
+import i18next from "i18next";
+import { initReactI18next } from "react-i18next";
 
-export type Locale = "en" | "de"
+import deMessages from "@/messages/de.json";
+import enMessages from "@/messages/en.json";
 
-export const locales: Locale[] = ["en", "de"]
-export const defaultLocale: Locale = "de"
-export const LOCALE_COOKIE_NAME = "NEXT_LOCALE"
+export type Locale = "en" | "de";
 
-export default getRequestConfig(async () => {
-  // Try to get locale from cookie
-  const cookieStore = await cookies()
-  const cookieLocale = cookieStore.get(LOCALE_COOKIE_NAME)?.value
+export const locales: Locale[] = ["en", "de"];
+export const defaultLocale: Locale = "de";
+export const LOCALE_STORAGE_KEY = "locale";
 
-  // Validate that the incoming `locale` parameter is valid
-  let locale: Locale = defaultLocale
-  if (cookieLocale && locales.includes(cookieLocale as Locale)) {
-    locale = cookieLocale as Locale
-  }
+export const i18n = i18next;
 
-  return {
-    locale,
-    messages: (await import(`../messages/${locale}.json`)).default,
-  }
-})
+export function initI18n() {
+	if (i18n.isInitialized) return i18n;
+
+	i18n.use(initReactI18next).init({
+		resources: {
+			en: { translation: enMessages },
+			de: { translation: deMessages },
+		},
+		lng: defaultLocale,
+		fallbackLng: "en",
+		interpolation: { escapeValue: false },
+	});
+
+	return i18n;
+}
+
+export function resolveStoredLocale(): Locale {
+	if (typeof window === "undefined") return defaultLocale;
+	const stored = window.localStorage.getItem(LOCALE_STORAGE_KEY);
+	if (stored === "en" || stored === "de") return stored;
+	return defaultLocale;
+}

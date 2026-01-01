@@ -2279,6 +2279,8 @@ mod tests {
             runtime_mode: RuntimeMode::Container,
             local_config: None,
             single_user: false,
+            mmry_enabled: false,
+            mmry_container_url: None,
         };
 
         let mut service = SessionService::with_eavs(repo.clone(), runtime.clone(), eavs, config);
@@ -2325,7 +2327,7 @@ mod tests {
             container_name: "octo-session-1".to_string(),
             user_id: "user-1".to_string(),
             workspace_path: "/tmp/workspace".to_string(),
-            persona_path: None,
+            agent: None,
             image: "octo-dev:latest".to_string(),
             image_digest: None,
             opencode_port: 41821,
@@ -2337,6 +2339,7 @@ mod tests {
             eavs_key_id: None,
             eavs_key_hash: None,
             eavs_virtual_key: None,
+            mmry_port: None,
             status: SessionStatus::Running,
             runtime_mode: RuntimeMode::Container,
             created_at: Utc::now().to_rfc3339(),

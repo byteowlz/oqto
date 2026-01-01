@@ -29,43 +29,15 @@ pub struct AuthConfig {
     pub allowed_origins: Vec<String>,
 }
 
-/// Pre-computed bcrypt hashes for default dev users.
-/// These are generated at cost=12 (bcrypt::DEFAULT_COST) and prevent
-/// expensive hashing operations during startup.
-///
-/// To regenerate these hashes (if passwords change), run:
-/// `cargo test --lib -- auth::config::tests::test_generate_dev_user_hashes --nocapture --ignored`
-mod default_hashes {
-    /// Hash for "devpassword123" at cost=12
-    pub const DEV_USER_HASH: &str = "$2b$12$dC24FO4a.jD2fihWiOGvw.S1gh7N9gjgDOgJV7bpsb4pShSelaOQm";
-    /// Hash for "userpassword123" at cost=12
-    pub const USER_USER_HASH: &str = "$2b$12$cdHA.mL5NAVw6.nusi3GROIo619dutPvD57OKzXmdxdmV4DDaxk82";
-}
-
 impl Default for AuthConfig {
     fn default() -> Self {
         Self {
-            dev_mode: true,
+            dev_mode: false,
             // No default JWT secret - must be explicitly configured
             jwt_secret: None,
             oidc_issuer: None,
             oidc_audience: None,
-            dev_users: vec![
-                DevUser::new(
-                    "dev",
-                    "Developer",
-                    "dev@localhost",
-                    default_hashes::DEV_USER_HASH,
-                    Role::Admin,
-                ),
-                DevUser::new(
-                    "user",
-                    "Test User",
-                    "user@localhost",
-                    default_hashes::USER_USER_HASH,
-                    Role::User,
-                ),
-            ],
+            dev_users: Vec::new(),
             allowed_origins: vec![
                 "http://localhost:3000".to_string(),
                 "http://localhost:8080".to_string(),
@@ -269,39 +241,10 @@ mod tests {
     #[test]
     fn test_auth_config_default() {
         let config = AuthConfig::default();
-        assert!(config.dev_mode);
+        assert!(!config.dev_mode);
         // No default JWT secret for security
         assert!(config.jwt_secret.is_none());
-        assert_eq!(config.dev_users.len(), 2);
-    }
-
-    #[test]
-    fn test_default_dev_users_precomputed_hashes() {
-        // Verify that the pre-computed hashes in default_hashes match the expected passwords
-        // This ensures we didn't accidentally break the default credentials
-        let config = AuthConfig::default();
-
-        // Dev user should authenticate with "devpassword123"
-        let dev_user = config.dev_users.iter().find(|u| u.id == "dev").unwrap();
-        assert!(
-            dev_user.verify_password("devpassword123"),
-            "Pre-computed hash for dev user should verify against 'devpassword123'"
-        );
-        assert!(
-            !dev_user.verify_password("wrongpassword"),
-            "Dev user should not verify with wrong password"
-        );
-
-        // Regular user should authenticate with "userpassword123"
-        let user = config.dev_users.iter().find(|u| u.id == "user").unwrap();
-        assert!(
-            user.verify_password("userpassword123"),
-            "Pre-computed hash for user should verify against 'userpassword123'"
-        );
-        assert!(
-            !user.verify_password("wrongpassword"),
-            "User should not verify with wrong password"
-        );
+        assert!(config.dev_users.is_empty());
     }
 
     #[test]
@@ -354,7 +297,8 @@ mod tests {
 
     #[test]
     fn test_config_validation_dev_mode() {
-        let config = AuthConfig::default();
+        let mut config = AuthConfig::default();
+        config.dev_mode = true;
         // Dev mode should be valid without JWT secret
         assert!(config.validate().is_ok());
     }

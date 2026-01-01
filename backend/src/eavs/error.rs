@@ -35,4 +35,8 @@ pub enum EavsError {
     /// Connection failed.
     #[error("Failed to connect to EAVS at {url}: {message}")]
     ConnectionFailed { url: String, message: String },
+
+    /// Failed to build HTTP client.
+    #[error("Failed to build HTTP client: {0}")]
+    ClientBuild(String),
 }

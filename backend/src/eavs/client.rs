@@ -19,17 +19,17 @@ pub struct EavsClient {
 
 impl EavsClient {
     /// Create a new EAVS client.
-    pub fn new(base_url: impl Into<String>, master_key: impl Into<String>) -> Self {
+    pub fn new(base_url: impl Into<String>, master_key: impl Into<String>) -> EavsResult<Self> {
         let client = Client::builder()
             .timeout(Duration::from_secs(30))
             .build()
-            .expect("Failed to create HTTP client");
+            .map_err(|e| EavsError::ClientBuild(e.to_string()))?;
 
-        Self {
+        Ok(Self {
             client,
             base_url: base_url.into(),
             master_key: master_key.into(),
-        }
+        })
     }
 
     /// Check if EAVS is healthy.
@@ -165,7 +165,7 @@ mod tests {
 
     #[test]
     fn test_client_creation() {
-        let client = EavsClient::new("http://localhost:41823", "test-master-key");
+        let client = EavsClient::new("http://localhost:41823", "test-master-key").unwrap();
         assert_eq!(client.base_url, "http://localhost:41823");
     }
 
