@@ -17,7 +17,7 @@ interface TerminalViewProps {
 }
 
 export function TerminalView({ sessionId }: TerminalViewProps) {
-  const { authToken, selectedWorkspaceSession } = useApp()
+  const { selectedWorkspaceSession } = useApp()
   const { resolvedTheme } = useTheme()
   
   const wsUrl = useMemo(() => {
@@ -56,7 +56,6 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
       <GhosttyTerminal 
         key={`${sessionId}-${resolvedTheme}`}
         wsUrl={wsUrl} 
-        authToken={authToken ?? undefined} 
         className="border border-border"
         theme={resolvedTheme}
       />

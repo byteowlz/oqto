@@ -108,7 +108,7 @@ function parseAgentMarkdown(content: string): AgentFormState {
 }
 
 export function AgentsApp() {
-  const { locale, opencodeBaseUrl, selectedWorkspaceSession, createNewChat, refreshOpencodeSessions, setActiveAppId, authToken } = useApp()
+  const { locale, opencodeBaseUrl, selectedWorkspaceSession, createNewChat, refreshOpencodeSessions, setActiveAppId } = useApp()
   const [agents, setAgents] = useState<OpenCodeAgent[]>([])
   const [search, setSearch] = useState("")
   const [loading, setLoading] = useState(false)
@@ -428,7 +428,6 @@ export function AgentsApp() {
         <div className="border border-border rounded-lg bg-muted/40 overflow-hidden h-[500px]">
           <PersonaBuilderChat
             opencodeBaseUrl={opencodeBaseUrl}
-            authToken={authToken}
             onPersonaCreated={(personaId) => {
               // Could refresh agents list or navigate to persona
               console.log("Persona created:", personaId)

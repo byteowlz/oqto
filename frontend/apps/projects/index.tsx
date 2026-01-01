@@ -18,18 +18,9 @@ type ProjectSummary = {
 }
 
 export function ProjectsApp() {
-  const { locale, opencodeSessions, opencodeBaseUrl, setActiveAppId } = useApp()
+  const { locale, opencodeSessions, opencodeBaseUrl, setActiveAppId, projectDefaultAgents, setProjectDefaultAgents } = useApp()
   const [workspaceDirectories, setWorkspaceDirectories] = useState<{ name: string; path: string }[]>([])
   const [availableAgents, setAvailableAgents] = useState<OpenCodeAgent[]>([])
-  const [projectDefaultAgents, setProjectDefaultAgents] = useState<Record<string, string>>(() => {
-    if (typeof window === "undefined") return {}
-    try {
-      const stored = localStorage.getItem("octo:projectDefaultAgents")
-      return stored ? JSON.parse(stored) : {}
-    } catch {
-      return {}
-    }
-  })
   const [selectedProjectKey, setSelectedProjectKey] = useState<string | null>(null)
 
   const projectKeyForSession = useCallback(
@@ -87,11 +78,6 @@ export function ProjectsApp() {
 
   useEffect(() => {
     if (typeof window === "undefined") return
-    localStorage.setItem("octo:projectDefaultAgents", JSON.stringify(projectDefaultAgents))
-  }, [projectDefaultAgents])
-
-  useEffect(() => {
-    if (typeof window === "undefined") return
     const handleFilter = (event: Event) => {
       const customEvent = event as CustomEvent<string>
       if (typeof customEvent.detail === "string") {
@@ -99,19 +85,12 @@ export function ProjectsApp() {
       }
     }
     const handleClear = () => setSelectedProjectKey(null)
-    const handleDefaultAgent = (event: Event) => {
-      const customEvent = event as CustomEvent<{ projectKey: string; agentId: string }>
-      if (!customEvent.detail) return
-      setProjectDefaultAgents((prev) => ({ ...prev, [customEvent.detail.projectKey]: customEvent.detail.agentId }))
-    }
 
     window.addEventListener("octo:project-filter", handleFilter as EventListener)
     window.addEventListener("octo:project-filter-clear", handleClear as EventListener)
-    window.addEventListener("octo:project-default-agent", handleDefaultAgent as EventListener)
     return () => {
       window.removeEventListener("octo:project-filter", handleFilter as EventListener)
       window.removeEventListener("octo:project-filter-clear", handleClear as EventListener)
-      window.removeEventListener("octo:project-default-agent", handleDefaultAgent as EventListener)
     }
   }, [])
 

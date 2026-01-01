@@ -393,7 +393,6 @@ function extractWorkspaceSessionIdFromOpencodeBaseUrl(opencodeBaseUrl: string): 
 export function subscribeToEvents(
   opencodeBaseUrl: string,
   callback: EventCallback,
-  authToken?: string | null,
   directControlPlaneUrl?: string,
 ) {
   let active = true
@@ -450,8 +449,7 @@ export function subscribeToEvents(
         `${statusBase}/session/status`,
         typeof window === "undefined" ? "http://localhost" : window.location.href,
       )
-      if (authToken) statusUrl.searchParams.set("token", authToken)
-      const res = await fetch(statusUrl.toString(), { cache: "no-store" })
+      const res = await fetch(statusUrl.toString(), { cache: "no-store", credentials: "include" })
       if (res.ok) {
         const status = (await res.json()) as SessionStatusMap
         emitStatusTransitions(status)
@@ -478,7 +476,6 @@ export function subscribeToEvents(
       `${sseBase}/event`,
       typeof window === "undefined" ? "http://localhost" : window.location.href,
     )
-    if (authToken) url.searchParams.set("token", authToken)
     return url.toString()
   })()
 

@@ -92,6 +92,8 @@ function AppShell() {
     deleteChatSession,
     renameChatSession,
     busySessions,
+    projectDefaultAgents,
+    setProjectDefaultAgents,
   } = useApp();
   const { theme, setTheme, resolvedTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
@@ -146,15 +148,6 @@ function AppShell() {
 
   const [selectedProjectKey, setSelectedProjectKey] = useState<string | null>(null);
   const [availableAgents, setAvailableAgents] = useState<OpenCodeAgent[]>([]);
-  const [projectDefaultAgents, setProjectDefaultAgents] = useState<Record<string, string>>(() => {
-    if (typeof window === "undefined") return {};
-    try {
-      const stored = localStorage.getItem("octo:projectDefaultAgents");
-      return stored ? JSON.parse(stored) : {};
-    } catch {
-      return {};
-    }
-  });
   const [workspaceDirectories, setWorkspaceDirectories] = useState<{ name: string; path: string }[]>([]);
   const [directoryPickerOpen, setDirectoryPickerOpen] = useState(false);
   const [directoryPickerPath, setDirectoryPickerPath] = useState(".");
@@ -171,12 +164,7 @@ function AppShell() {
       }
       return { ...prev, [projectKey]: agentId };
     });
-  }, []);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    localStorage.setItem("octo:projectDefaultAgents", JSON.stringify(projectDefaultAgents));
-  }, [projectDefaultAgents]);
+  }, [setProjectDefaultAgents]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;

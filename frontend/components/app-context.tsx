@@ -1,6 +1,16 @@
 "use client"
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react"
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  type Dispatch,
+  type ReactNode,
+  type SetStateAction,
+} from "react"
 import { appRegistry, type AppDefinition, type Locale, type LocalizedText } from "@/lib/app-registry"
 import { createSession, deleteSession, updateSession, fetchSessions, subscribeToEvents, type OpenCodeSession } from "@/lib/opencode-client"
 import {
@@ -11,7 +21,6 @@ import {
   getOrCreateSessionForWorkspace,
   listChatHistory,
   listProjects,
-  login,
   listWorkspaceSessions,
   opencodeProxyBaseUrl,
   stopWorkspaceSession,
@@ -63,11 +72,12 @@ interface AppContextValue {
   stopWorkspaceSession: (sessionId: string) => Promise<boolean>
   deleteWorkspaceSession: (sessionId: string) => Promise<boolean>
   upgradeWorkspaceSession: (sessionId: string) => Promise<boolean>
-  authToken: string | null
   /** Available projects (directories in workspace_dir) */
   projects: ProjectEntry[]
   /** Start a new session for a project */
   startProjectSession: (projectPath: string) => Promise<WorkspaceSession | null>
+  projectDefaultAgents: Record<string, string>
+  setProjectDefaultAgents: Dispatch<SetStateAction<Record<string, string>>>
 }
 
 const AppContext = createContext<AppContextValue | null>(null)
@@ -85,9 +95,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // Live opencode sessions (requires running opencode instance)
   const [opencodeSessions, setOpencodeSessions] = useState<OpenCodeSession[]>([])
   const [selectedChatSessionId, setSelectedChatSessionId] = useState<string>("")
-  const [authToken, setAuthToken] = useState<string | null>(null)
   // Available projects
   const [projects, setProjects] = useState<ProjectEntry[]>([])
+  const [projectDefaultAgents, setProjectDefaultAgents] = useState<Record<string, string>>(() => {
+    if (typeof window === "undefined") return {}
+    try {
+      const stored = localStorage.getItem("octo:projectDefaultAgents")
+      return stored ? JSON.parse(stored) : {}
+    } catch {
+      return {}
+    }
+  })
   // Track which chat sessions are currently busy (agent working)
   const [busySessions, setBusySessions] = useState<Set<string>>(new Set())
   
@@ -134,10 +152,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setSelectedWorkspaceSessionId(storedWorkspaceSessionId)
     }
 
-    const storedAuthToken = window.localStorage.getItem("authToken")
-    if (storedAuthToken) {
-      setAuthToken(storedAuthToken)
-    }
   }, [])
 
   // Refresh chat history from disk (no opencode needed)
@@ -161,21 +175,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const refreshWorkspaceSessions = useCallback(async () => {
     try {
-      // Dev login - store token for WebSocket auth
-      if (!authToken) {
-        try {
-          const loginResponse = await login({ username: "dev", password: "dev" })
-          setAuthToken(loginResponse.token)
-          try {
-            window.localStorage.setItem("authToken", loginResponse.token)
-          } catch {
-            // ignore storage failures
-          }
-        } catch {
-          // Login might fail if already logged in via cookie
-        }
-      }
-      
       // Load sessions and projects in parallel
       const [sessionsData, projectsData] = await Promise.all([
         listWorkspaceSessions().catch(() => [] as WorkspaceSession[]),
@@ -203,7 +202,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     } catch (err) {
       console.error("Failed to load sessions:", err)
     }
-  }, [authToken])
+  }, [])
 
   // Start a new session for a specific project
   const startProjectSession = useCallback(async (projectPath: string): Promise<WorkspaceSession | null> => {
@@ -300,11 +299,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
           refreshWorkspaceSessions()
         }
       },
-      authToken,
       controlPlaneDirectBaseUrl(),
     )
     return unsubscribe
-  }, [authToken, opencodeBaseUrl, refreshWorkspaceSessions, setSessionBusy])
+  }, [opencodeBaseUrl, refreshWorkspaceSessions, setSessionBusy])
 
   useEffect(() => {
     if (!selectedWorkspaceSession) return
@@ -320,6 +318,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (!selectedWorkspaceSessionId) return
     window.localStorage.setItem("workspaceSessionId", selectedWorkspaceSessionId)
   }, [selectedWorkspaceSessionId])
+
+  useEffect(() => {
+    if (typeof window === "undefined") return
+    localStorage.setItem("octo:projectDefaultAgents", JSON.stringify(projectDefaultAgents))
+  }, [projectDefaultAgents])
 
   const refreshOpencodeSessions = useCallback(async () => {
     if (!opencodeBaseUrl) return
@@ -543,9 +546,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
       stopWorkspaceSession: handleStopWorkspaceSession,
       deleteWorkspaceSession: handleDeleteWorkspaceSession,
       upgradeWorkspaceSession: handleUpgradeWorkspaceSession,
-      authToken,
       projects,
       startProjectSession,
+      projectDefaultAgents,
+      setProjectDefaultAgents,
     }),
     [
       apps,
@@ -576,9 +580,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
       handleStopWorkspaceSession,
       handleDeleteWorkspaceSession,
       handleUpgradeWorkspaceSession,
-      authToken,
       projects,
       startProjectSession,
+      projectDefaultAgents,
+      setProjectDefaultAgents,
     ],
   )
 

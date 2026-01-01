@@ -165,7 +165,6 @@ export function SessionsApp() {
     selectedChatFromHistory,
     refreshOpencodeSessions,
     ensureOpencodeRunning,
-    authToken,
     chatHistory,
     projects,
     startProjectSession,
@@ -720,9 +719,7 @@ export function SessionsApp() {
 
   useEffect(() => {
     if (!opencodeBaseUrl) return
-    const unsubscribe = subscribeToEvents(
-      opencodeBaseUrl, 
-      (event) => {
+    const unsubscribe = subscribeToEvents(opencodeBaseUrl, (event) => {
         const eventType = event.type as string
         
         if (eventType === "transport.mode") {
@@ -770,12 +767,9 @@ export function SessionsApp() {
           // Coalesce refreshes to avoid hammering the server during streaming updates.
           requestMessageRefresh(1000)
         }
-      },
-      authToken,
-      controlPlaneDirectBaseUrl(),
-    )
+      }, controlPlaneDirectBaseUrl())
     return unsubscribe
-  }, [authToken, opencodeBaseUrl, selectedChatSessionId, loadMessages, refreshOpencodeSessions, requestMessageRefresh])
+  }, [opencodeBaseUrl, selectedChatSessionId, loadMessages, refreshOpencodeSessions, requestMessageRefresh])
 
   // Poll for message updates while assistant is working.
   // This runs regardless of SSE status since SSE is unreliable through the proxy.

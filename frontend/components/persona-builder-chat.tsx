@@ -25,14 +25,12 @@ type ChatState = "idle" | "sending"
 
 interface PersonaBuilderChatProps {
   opencodeBaseUrl: string | null
-  authToken: string | null
   onPersonaCreated?: (personaId: string) => void
   className?: string
 }
 
 export function PersonaBuilderChat({
   opencodeBaseUrl,
-  authToken,
   onPersonaCreated,
   className,
 }: PersonaBuilderChatProps) {
@@ -91,33 +89,28 @@ export function PersonaBuilderChat({
   // Subscribe to SSE events
   useEffect(() => {
     if (!opencodeBaseUrl) return
-    const unsubscribe = subscribeToEvents(
-      opencodeBaseUrl,
-      (event) => {
-        const eventType = event.type as string
-        if (eventType === "session.idle") {
-          setChatState("idle")
-          if (opencodeBaseUrl && selectedSessionId) {
-            invalidateMessageCache(opencodeBaseUrl, selectedSessionId)
-          }
-          loadMessages()
-          // Check for new persona created (look for file writes to ~/octo/personas/)
-          // This is a simple heuristic - could be improved
-        } else if (eventType === "session.busy") {
-          setChatState("sending")
+    const unsubscribe = subscribeToEvents(opencodeBaseUrl, (event) => {
+      const eventType = event.type as string
+      if (eventType === "session.idle") {
+        setChatState("idle")
+        if (opencodeBaseUrl && selectedSessionId) {
+          invalidateMessageCache(opencodeBaseUrl, selectedSessionId)
         }
-        if (eventType?.startsWith("message")) {
-          if (opencodeBaseUrl && selectedSessionId) {
-            invalidateMessageCache(opencodeBaseUrl, selectedSessionId)
-          }
-          loadMessages()
+        loadMessages()
+        // Check for new persona created (look for file writes to ~/octo/personas/)
+        // This is a simple heuristic - could be improved
+      } else if (eventType === "session.busy") {
+        setChatState("sending")
+      }
+      if (eventType?.startsWith("message")) {
+        if (opencodeBaseUrl && selectedSessionId) {
+          invalidateMessageCache(opencodeBaseUrl, selectedSessionId)
         }
-      },
-      authToken,
-      controlPlaneDirectBaseUrl(),
-    )
+        loadMessages()
+      }
+    }, controlPlaneDirectBaseUrl())
     return unsubscribe
-  }, [authToken, opencodeBaseUrl, selectedSessionId, loadMessages])
+  }, [opencodeBaseUrl, selectedSessionId, loadMessages])
 
   // Scroll to bottom when messages change
   useEffect(() => {

@@ -59,7 +59,6 @@ export type GhosttyTerminalHandle = {
 
 interface GhosttyTerminalProps {
   wsUrl: string
-  authToken?: string
   fontFamily?: string
   fontSize?: number
   className?: string
@@ -67,7 +66,7 @@ interface GhosttyTerminalProps {
 }
 
 export const GhosttyTerminal = forwardRef<GhosttyTerminalHandle, GhosttyTerminalProps>(
-  ({ wsUrl, authToken, fontFamily = "JetBrainsMono Nerd Font", fontSize = 14, className, theme: themeProp }, ref) => {
+  ({ wsUrl, fontFamily = "JetBrainsMono Nerd Font", fontSize = 14, className, theme: themeProp }, ref) => {
     const containerRef = useRef<HTMLDivElement | null>(null)
     // Start with "connecting" if we have a wsUrl, "waiting" otherwise
     const [status, setStatus] = useState<"waiting" | "connecting" | "connected" | "error">(() => 
@@ -76,16 +75,14 @@ export const GhosttyTerminal = forwardRef<GhosttyTerminalHandle, GhosttyTerminal
     const mountedRef = useRef(true)
 
     const wsUrlRef = useRef(wsUrl)
-    const authTokenRef = useRef(authToken)
     const fontFamilyRef = useRef(fontFamily)
     const fontSizeRef = useRef(fontSize)
 
     useEffect(() => {
       wsUrlRef.current = wsUrl
-      authTokenRef.current = authToken
       fontFamilyRef.current = fontFamily
       fontSizeRef.current = fontSize
-    }, [wsUrl, authToken, fontFamily, fontSize])
+    }, [wsUrl, fontFamily, fontSize])
 
     // Extract sessionId from wsUrl and include theme - memoize to avoid recalculation
     // Including theme ensures terminal is recreated with correct colors on theme change
@@ -143,8 +140,6 @@ export const GhosttyTerminal = forwardRef<GhosttyTerminalHandle, GhosttyTerminal
 
       async function setup() {
         const currentWsUrl = wsUrlRef.current
-        const currentAuth = authTokenRef.current
-
         // Check socket state more carefully
         const socketState = session.socket?.readyState
         const isSocketUsable = socketState === WebSocket.CONNECTING || socketState === WebSocket.OPEN
@@ -248,15 +243,9 @@ export const GhosttyTerminal = forwardRef<GhosttyTerminalHandle, GhosttyTerminal
           if (!session.socket || session.socket.readyState === WebSocket.CLOSED) {
             clearReconnect()
 
-            let wsUrlWithAuth = currentWsUrl
-            if (currentAuth && !currentWsUrl.includes("token=")) {
-              const separator = currentWsUrl.includes("?") ? "&" : "?"
-              wsUrlWithAuth = `${currentWsUrl}${separator}token=${encodeURIComponent(currentAuth)}`
-            }
-            
-            console.log(`Terminal [${sessionId}]: connecting WebSocket to ${wsUrlWithAuth.substring(0, 60)}...`)
+            console.log(`Terminal [${sessionId}]: connecting WebSocket to ${currentWsUrl.substring(0, 60)}...`)
 
-            const socket = new WebSocket(wsUrlWithAuth)
+            const socket = new WebSocket(currentWsUrl)
             socket.binaryType = "arraybuffer"
             session.socket = socket
             setStatus("connecting")
@@ -311,7 +300,7 @@ export const GhosttyTerminal = forwardRef<GhosttyTerminalHandle, GhosttyTerminal
       return () => {
         clearReconnect()
       }
-    }, [authToken, wsUrl, handleMessage, sessionId, getSession])
+    }, [wsUrl, handleMessage, sessionId, getSession])
 
     // Cleanup resources on unmount (or when switching sessionId).
     // Use delayed cleanup to handle React Strict Mode double-mounting.
