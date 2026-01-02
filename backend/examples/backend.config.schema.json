@@ -307,6 +307,48 @@
         }
       },
       "additionalProperties": false
+    },
+    "scaffold": {
+      "type": "object",
+      "description": "Agent scaffolding configuration - defines the tool used to create new agent directories from templates",
+      "properties": {
+        "binary": {
+          "type": "string",
+          "description": "Binary to use for scaffolding (e.g., 'byt', 'cookiecutter', custom script)",
+          "default": "byt"
+        },
+        "subcommand": {
+          "type": "string",
+          "description": "Subcommand to invoke (e.g., 'new' for 'byt new')",
+          "default": "new"
+        },
+        "template_arg": {
+          "type": "string",
+          "description": "Argument format for template name (e.g., '--template' for '--template rust-cli')",
+          "default": "--template"
+        },
+        "output_arg": {
+          "type": "string",
+          "description": "Argument format for output directory",
+          "default": "--output"
+        },
+        "github_arg": {
+          "type": ["string", "null"],
+          "description": "Argument to create GitHub repo (optional, null to disable)",
+          "default": "--github"
+        },
+        "private_arg": {
+          "type": ["string", "null"],
+          "description": "Argument to make repo private (optional, null to disable)",
+          "default": "--private"
+        },
+        "description_arg": {
+          "type": ["string", "null"],
+          "description": "Argument format for description (optional, null to disable)",
+          "default": "--description"
+        }
+      },
+      "additionalProperties": false
     }
   },
   "additionalProperties": false

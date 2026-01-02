@@ -30,12 +30,33 @@ pub const MAIN_AGENT_PORT: u16 = 41820;
 /// Base port for sub-agents inside the container.
 const INTERNAL_AGENT_BASE_PORT: u16 = 4001;
 
+/// Agent scaffolding configuration.
+/// Defines the external command used to scaffold new agent directories.
+#[derive(Debug, Clone, Default)]
+pub struct ScaffoldConfig {
+    /// Binary to use for scaffolding (e.g., "byt", "cookiecutter", custom script)
+    pub binary: String,
+    /// Subcommand to invoke (e.g., "new" for "byt new")
+    pub subcommand: String,
+    /// Argument format for template name (e.g., "--template" for "--template rust-cli")
+    pub template_arg: String,
+    /// Argument format for output directory
+    pub output_arg: String,
+    /// Argument to create GitHub repo
+    pub github_arg: Option<String>,
+    /// Argument to make repo private
+    pub private_arg: Option<String>,
+    /// Argument format for description
+    pub description_arg: Option<String>,
+}
+
 /// Agent management service.
 #[derive(Clone)]
 pub struct AgentService {
     runtime: Arc<dyn ContainerRuntimeApi>,
     sessions: SessionService,
     repo: AgentRepository,
+    scaffold_config: ScaffoldConfig,
 }
 
 impl AgentService {
@@ -49,6 +70,22 @@ impl AgentService {
             runtime,
             sessions,
             repo,
+            scaffold_config: ScaffoldConfig::default(),
+        }
+    }
+
+    /// Create a new agent service with custom scaffold configuration.
+    pub fn with_scaffold_config(
+        runtime: Arc<dyn ContainerRuntimeApi>,
+        sessions: SessionService,
+        repo: AgentRepository,
+        scaffold_config: ScaffoldConfig,
+    ) -> Self {
+        Self {
+            runtime,
+            sessions,
+            repo,
+            scaffold_config,
         }
     }
 
@@ -873,35 +910,51 @@ impl AgentService {
         scaffold: &AgentScaffoldRequest,
         workspace_root: &Path,
     ) -> Result<()> {
+        let cfg = &self.scaffold_config;
+
         match scaffold {
-            AgentScaffoldRequest::BytTemplate {
+            AgentScaffoldRequest::Template {
                 template,
                 github,
                 private,
                 description,
             } => {
-                let mut command = Command::new("byt");
-                command.arg("new").arg(agent_id);
-                command.arg("--template").arg(template);
-                command.arg("--output").arg(workspace_root);
+                let mut command = Command::new(&cfg.binary);
+                command.arg(&cfg.subcommand).arg(agent_id);
+                command.arg(&cfg.template_arg).arg(template);
+                command.arg(&cfg.output_arg).arg(workspace_root);
+
                 if *github {
-                    command.arg("--github");
+                    if let Some(ref arg) = cfg.github_arg {
+                        command.arg(arg);
+                    }
                 }
                 if *private {
-                    command.arg("--private");
+                    if let Some(ref arg) = cfg.private_arg {
+                        command.arg(arg);
+                    }
                 }
-                if let Some(description) = description {
-                    command.arg("--description").arg(description);
+                if let Some(desc) = description {
+                    if let Some(ref arg) = cfg.description_arg {
+                        command.arg(arg).arg(desc);
+                    }
                 }
+
+                debug!(
+                    binary = %cfg.binary,
+                    subcommand = %cfg.subcommand,
+                    template = %template,
+                    "Running scaffold command"
+                );
 
                 let output = command
                     .output()
                     .await
-                    .context("failed to run byt scaffold")?;
+                    .with_context(|| format!("failed to run {} scaffold", cfg.binary))?;
 
                 if !output.status.success() {
                     let stderr = String::from_utf8_lossy(&output.stderr);
-                    anyhow::bail!("byt scaffold failed: {}", stderr.trim());
+                    anyhow::bail!("{} scaffold failed: {}", cfg.binary, stderr.trim());
                 }
             }
         }

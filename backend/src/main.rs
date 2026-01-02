@@ -437,6 +437,8 @@ struct AppConfig {
     eavs: Option<EavsConfig>,
     mmry: MmryConfig,
     auth: auth::AuthConfig,
+    /// Agent scaffolding configuration.
+    scaffold: ScaffoldConfig,
 }
 
 /// Backend mode selection.
@@ -493,6 +495,7 @@ impl Default for AppConfig {
             eavs: None,
             mmry: MmryConfig::default(),
             auth: auth::AuthConfig::default(),
+            scaffold: ScaffoldConfig::default(),
         }
     }
 }
@@ -702,6 +705,41 @@ impl Default for LinuxUsersConfig {
             shell: "/bin/bash".to_string(),
             use_sudo: true,
             create_home: true,
+        }
+    }
+}
+
+/// Agent scaffolding configuration.
+/// Defines the external command used to scaffold new agent directories.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ScaffoldConfig {
+    /// Binary to use for scaffolding (e.g., "byt", "cookiecutter", custom script)
+    pub binary: String,
+    /// Subcommand to invoke (e.g., "new" for "byt new")
+    pub subcommand: String,
+    /// Argument format for template name (e.g., "--template" for "--template rust-cli")
+    pub template_arg: String,
+    /// Argument format for output directory
+    pub output_arg: String,
+    /// Argument to create GitHub repo
+    pub github_arg: Option<String>,
+    /// Argument to make repo private
+    pub private_arg: Option<String>,
+    /// Argument format for description
+    pub description_arg: Option<String>,
+}
+
+impl Default for ScaffoldConfig {
+    fn default() -> Self {
+        Self {
+            binary: "byt".to_string(),
+            subcommand: "new".to_string(),
+            template_arg: "--template".to_string(),
+            output_arg: "--output".to_string(),
+            github_arg: Some("--github".to_string()),
+            private_arg: Some("--private".to_string()),
+            description_arg: Some("--description".to_string()),
         }
     }
 }
@@ -1272,8 +1310,21 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
             std::sync::Arc::new(container::ContainerRuntime::new())
         };
     let agent_repo = agent::AgentRepository::new(database.pool().clone());
-    let agent_service =
-        agent::AgentService::new(agent_runtime, session_service.clone(), agent_repo);
+    let scaffold_config = agent::ScaffoldConfig {
+        binary: ctx.config.scaffold.binary.clone(),
+        subcommand: ctx.config.scaffold.subcommand.clone(),
+        template_arg: ctx.config.scaffold.template_arg.clone(),
+        output_arg: ctx.config.scaffold.output_arg.clone(),
+        github_arg: ctx.config.scaffold.github_arg.clone(),
+        private_arg: ctx.config.scaffold.private_arg.clone(),
+        description_arg: ctx.config.scaffold.description_arg.clone(),
+    };
+    let agent_service = agent::AgentService::with_scaffold_config(
+        agent_runtime,
+        session_service.clone(),
+        agent_repo,
+        scaffold_config,
+    );
 
     // Initialize user service
     let user_repo = user::UserRepository::new(database.pool().clone());

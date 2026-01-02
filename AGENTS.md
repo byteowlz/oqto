@@ -7,7 +7,7 @@ Octo is a self-hosted platform for managing AI coding agents (opencode instances
 This project uses **mmry** for persistent memory. Check memories before starting work:
 
 ```bash
-byt memory search "relevant topic"    # Search via byt wrapper
+agntz memory search "relevant topic"  # Search via agntz wrapper
 mmry search "query" --limit 5         # Direct mmry search
 mmry ls --limit 10                    # List recent memories
 ```
@@ -15,8 +15,15 @@ mmry ls --limit 10                    # List recent memories
 Add important learnings after significant work:
 
 ```bash
-byt memory add "concise fact" -c category -i 7
+agntz memory add "concise fact" -c category -i 7
 mmry add "content" -c architecture -i 8
+```
+
+Export memories for sharing:
+
+```bash
+agntz memory export                   # Export to .memories/export.json
+agntz memory export --format md       # Export as markdown
 ```
 
 Categories: `architecture`, `reference`, `debugging`, `patterns`
