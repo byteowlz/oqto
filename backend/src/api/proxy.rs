@@ -654,7 +654,7 @@ pub async fn proxy_mmry_search(
     }
 
     let target_url = get_mmry_target(&state, &session)?;
-    proxy_request_to_url(state.http_client.clone(), req, &target_url, "v1/search").await
+    proxy_request_to_url(state.http_client.clone(), req, &target_url, "v1/federation/search").await
 }
 
 /// Proxy requests to list memories for a session.
@@ -712,7 +712,7 @@ pub async fn proxy_mmry_add(
     }
 
     let target_url = get_mmry_target(&state, &session)?;
-    proxy_request_to_url(state.http_client.clone(), req, &target_url, "v1/memories").await
+    proxy_request_to_url(state.http_client.clone(), req, &target_url, "v1/agents/memories").await
 }
 
 /// Proxy requests to get/update/delete a specific memory.
