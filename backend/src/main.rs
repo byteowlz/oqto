@@ -27,6 +27,7 @@ mod local;
 mod markdown;
 mod observability;
 mod session;
+mod settings;
 mod user;
 mod wordlist;
 
@@ -1512,8 +1513,47 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
         }).collect(),
     };
 
+    // Create settings services
+    let octo_schema: serde_json::Value = serde_json::from_str(
+        include_str!("../examples/backend.config.schema.json")
+    ).expect("Failed to parse embedded octo schema");
+    
+    let octo_config_dir = default_config_dir()?;
+    let settings_octo = settings::SettingsService::new(
+        octo_schema,
+        octo_config_dir,
+        "config.toml",
+    ).context("Failed to create octo settings service")?;
+
+    // Create mmry settings service if mmry is enabled
+    let settings_mmry = if ctx.config.mmry.enabled {
+        // mmry config is at ~/.config/mmry/config.toml
+        let mmry_config_dir = default_config_dir()?.parent()
+            .map(|p| p.join("mmry"))
+            .unwrap_or_else(|| PathBuf::from("~/.config/mmry"));
+        
+        // Try to load mmry schema if it exists, otherwise create minimal schema
+        let mmry_schema = std::fs::read_to_string(mmry_config_dir.join("config.schema.json"))
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_else(|| serde_json::json!({
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "title": "mmry Configuration",
+                "type": "object",
+                "properties": {}
+            }));
+        
+        settings::SettingsService::new(
+            mmry_schema,
+            mmry_config_dir,
+            "config.toml",
+        ).ok()
+    } else {
+        None
+    };
+
     // Create app state
-    let state = if let Some(backend) = agent_backend {
+    let mut state = if let Some(backend) = agent_backend {
         api::AppState::with_agent_backend(
             session_service,
             agent_service,
@@ -1535,6 +1575,12 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
             voice_state,
         )
     };
+
+    // Add settings services to state
+    state = state.with_settings_octo(settings_octo);
+    if let Some(mmry_settings) = settings_mmry {
+        state = state.with_settings_mmry(mmry_settings);
+    }
 
     // Create router
     let app = api::create_router(state);

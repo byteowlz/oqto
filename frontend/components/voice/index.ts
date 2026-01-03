@@ -23,6 +23,9 @@ export type { VoiceInputOverlayProps } from './VoiceInputOverlay';
 export { VoicePanel } from './VoicePanel';
 export type { VoicePanelProps } from './VoicePanel';
 
+export { VoiceMenuButton, DEFAULT_VOICE_SHORTCUTS } from './VoiceMenuButton';
+export type { VoiceMode, VoiceShortcuts } from './VoiceMenuButton';
+
 export {
   DynamicVisualizer,
   getVisualizer,

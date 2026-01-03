@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState, useRef, memo, useTransition,
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
-import { FileText, Terminal, Eye, Send, ChevronDown, User, Bot, Clock, ArrowDown, ListTodo, Square, CheckSquare, CircleDot, XCircle, MessageSquare, Loader2, Paperclip, X, Copy, Check, StopCircle, Gauge, Brain, Mic } from "lucide-react"
+import { FileText, Terminal, Eye, Send, ChevronDown, User, Bot, Clock, ArrowDown, ListTodo, Square, CheckSquare, CircleDot, XCircle, MessageSquare, Loader2, Paperclip, X, Copy, Check, StopCircle, Gauge, Brain, Mic, AudioLines } from "lucide-react"
 import { useApp } from "@/components/app-context"
 import { FileTreeView, type FileTreeState, initialFileTreeState } from "@/app/sessions/FileTreeView"
 import { TerminalView } from "@/app/sessions/TerminalView"
@@ -36,7 +36,9 @@ import { PermissionDialog, PermissionBanner } from "@/components/ui/permission-d
 import { controlPlaneDirectBaseUrl, fileserverProxyBaseUrl, getChatMessages, convertChatMessagesToOpenCode, getWorkspaceConfig, getFeatures, getProjectLogoUrl, type Persona, type Features } from "@/lib/control-plane-client"
 import { generateReadableId, formatSessionDate } from "@/lib/session-utils"
 import { useVoiceMode } from "@/hooks/use-voice-mode"
-import { VoiceModeButton, VoiceInputOverlay, VoicePanel } from "@/components/voice"
+import { useDictation } from "@/hooks/use-dictation"
+import { VoiceInputOverlay, VoicePanel, VoiceMenuButton, type VoiceMode } from "@/components/voice"
+import { useVoiceCommandListener, useVoiceShortcuts } from "@/hooks/use-voice-commands"
 import { SlashCommandPopup } from "@/components/ui/slash-command-popup"
 import { builtInCommands, commandInfoToSlashCommands, parseSlashInput, type SlashCommand } from "@/lib/slash-commands"
 
@@ -170,6 +172,7 @@ export function SessionsApp() {
     selectedChatSession,
     selectedChatFromHistory,
     refreshOpencodeSessions,
+    refreshChatHistory,
     ensureOpencodeRunning,
     chatHistory,
     projects,
@@ -331,6 +334,49 @@ export function SessionsApp() {
     config: features.voice ?? null,
     onTranscript: handleVoiceTranscript,
   })
+  
+  // Dictation mode - speech to text for the input field
+  // Use a ref to track the current message input for dictation appending
+  // This ensures dictation always appends to the latest value, even when user is typing
+  const messageInputRef = useRef(messageInput)
+  useEffect(() => {
+    messageInputRef.current = messageInput
+  }, [messageInput])
+  
+  const handleDictationTranscript = useCallback((text: string) => {
+    // Always append to the current value using the ref to avoid stale closures
+    const currentValue = messageInputRef.current
+    setMessageInput(currentValue ? `${currentValue} ${text}` : text)
+  }, [])
+  
+  const dictation = useDictation({
+    config: features.voice ?? null,
+    onTranscript: handleDictationTranscript,
+    vadTimeoutMs: 3000, // Longer timeout for dictation (3s silence before auto-stop appending)
+  })
+
+  // Listen for voice commands from command palette and keyboard shortcuts
+  useVoiceCommandListener(useCallback((command) => {
+    if (!features.voice) return
+    
+    switch (command) {
+      case "conversation":
+        if (dictation.isActive) dictation.stop()
+        if (!voiceMode.isActive) voiceMode.start().catch(console.error)
+        break
+      case "dictation":
+        if (voiceMode.isActive) voiceMode.stop()
+        if (!dictation.isActive) dictation.start().catch(console.error)
+        break
+      case "stop":
+        if (voiceMode.isActive) voiceMode.stop()
+        if (dictation.isActive) dictation.stop()
+        break
+    }
+  }, [features.voice, voiceMode, dictation]))
+
+  // Register global keyboard shortcuts for voice (Alt+V, Alt+D)
+  useVoiceShortcuts(!!features.voice)
   
   // Streaming TTS: Track what text we've already sent to TTS for current message
   const ttsStreamStateRef = useRef<{
@@ -852,6 +898,8 @@ export function SessionsApp() {
           }
           loadMessages()
           refreshOpencodeSessions()
+          // Refresh chat history to pick up auto-generated session titles
+          refreshChatHistory()
         } else if (eventType === "session.busy") {
           setChatState("sending")
         }
@@ -885,7 +933,7 @@ export function SessionsApp() {
         }
       }, controlPlaneDirectBaseUrl())
     return unsubscribe
-  }, [opencodeBaseUrl, selectedChatSessionId, loadMessages, refreshOpencodeSessions, requestMessageRefresh])
+  }, [opencodeBaseUrl, selectedChatSessionId, loadMessages, refreshOpencodeSessions, refreshChatHistory, requestMessageRefresh])
 
   // Poll for message updates while assistant is working.
   // This runs regardless of SSE status since SSE is unreliable through the proxy.
@@ -1008,13 +1056,28 @@ export function SessionsApp() {
   }, [messageGroups.length])
 
   // Calculate total tokens and extract current model for context window gauge
+  // Only count tokens from messages AFTER the last compaction (since compaction resets the context)
   const tokenUsage = useMemo(() => {
     let inputTokens = 0
     let outputTokens = 0
     let providerID: string | undefined
     let modelID: string | undefined
     
-    for (const msg of messages) {
+    // Find the index of the last message containing a compaction part
+    let lastCompactionIndex = -1
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const msg = messages[i]
+      if (msg.parts.some(part => part.type === "compaction")) {
+        lastCompactionIndex = i
+        break
+      }
+    }
+    
+    // Only count tokens from messages after the last compaction
+    const startIndex = lastCompactionIndex >= 0 ? lastCompactionIndex + 1 : 0
+    
+    for (let i = startIndex; i < messages.length; i++) {
+      const msg = messages[i]
       if (msg.info.role === "assistant") {
         const assistantInfo = msg.info as OpenCodeAssistantMessage
         if (assistantInfo.tokens) {
@@ -1081,6 +1144,11 @@ export function SessionsApp() {
   const handleSend = async () => {
     if (!selectedChatSessionId) return
     if (!messageInput.trim() && pendingUploads.length === 0) return
+    
+    // Stop dictation if active
+    if (dictation.isActive) {
+      dictation.stop()
+    }
     
     // Close slash popup if open
     setShowSlashPopup(false)
@@ -1407,24 +1475,30 @@ export function SessionsApp() {
               <Paperclip className="size-4" />
             )}
           </button>
-          {/* Voice mode button - only shown if voice feature is enabled */}
+          {/* Unified voice menu button - conversation or dictation */}
           {features.voice && (
-            <VoiceModeButton
-              isActive={voiceMode.isActive}
+            <VoiceMenuButton
+              activeMode={voiceMode.isActive ? "conversation" : dictation.isActive ? "dictation" : null}
               voiceState={voiceMode.voiceState}
-              onToggle={() => {
-                if (voiceMode.isActive) {
-                  voiceMode.stop()
-                } else {
-                  voiceMode.start().catch(console.error)
-                }
+              onConversation={() => {
+                if (dictation.isActive) dictation.stop()
+                voiceMode.start().catch(console.error)
+              }}
+              onDictation={() => {
+                if (voiceMode.isActive) voiceMode.stop()
+                dictation.start().catch(console.error)
+              }}
+              onStop={() => {
+                if (voiceMode.isActive) voiceMode.stop()
+                if (dictation.isActive) dictation.stop()
               }}
               disabled={chatState === "sending"}
+              locale={locale}
               className="flex-shrink-0"
             />
           )}
           {/* Textarea wrapper with slash command popup */}
-          <div className="flex-1 relative">
+          <div className="flex-1 relative flex items-center min-h-[32px]">
             <SlashCommandPopup
               commands={slashCommands}
               query={slashQuery.command}
@@ -1434,9 +1508,15 @@ export function SessionsApp() {
             />
             <textarea
               ref={chatInputRef}
-              placeholder={isHistoryOnlySession 
-                ? (locale === "de" ? "Nachricht zum Fortsetzen..." : "Message to resume...") 
-                : t.inputPlaceholder}
+              placeholder={
+                dictation.isActive && dictation.liveTranscript
+                  ? dictation.liveTranscript
+                  : isHistoryOnlySession 
+                    ? (locale === "de" ? "Nachricht zum Fortsetzen..." : "Message to resume...") 
+                    : dictation.isActive
+                      ? (locale === "de" ? "Sprechen Sie..." : "Speak now...")
+                      : t.inputPlaceholder
+              }
               value={messageInput}
               onChange={(e) => {
                 const value = e.target.value
@@ -1462,7 +1542,7 @@ export function SessionsApp() {
                   handleSend()
                   // Reset textarea height after sending
                   if (chatInputRef.current) {
-                    chatInputRef.current.style.height = "36px"
+                    chatInputRef.current.style.height = "auto"
                   }
                 }
                 if (e.key === "Escape") {
@@ -1509,7 +1589,7 @@ export function SessionsApp() {
               }, 300)
               }}
               rows={1}
-              className="w-full bg-transparent border-none outline-none text-foreground placeholder:text-muted-foreground text-sm resize-none h-8 max-h-[200px] overflow-y-auto"
+              className="w-full bg-transparent border-none outline-none text-foreground placeholder:text-muted-foreground text-sm resize-none py-1.5 leading-5 max-h-[200px] overflow-y-auto"
             />
           </div>
           <Button

@@ -447,6 +447,23 @@ export async function getChatSession(sessionId: string): Promise<ChatSession> {
   return res.json()
 }
 
+/** Request to update a chat session */
+export type UpdateChatSessionRequest = {
+  title?: string
+}
+
+/** Update a chat session (e.g., rename) */
+export async function updateChatSession(sessionId: string, updates: UpdateChatSessionRequest): Promise<ChatSession> {
+  const res = await fetch(`/api/chat-history/${sessionId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(updates),
+    credentials: "include",
+  })
+  if (!res.ok) throw new Error(await readApiError(res))
+  return res.json()
+}
+
 // ============================================================================
 // Chat Message Types (from disk, no running opencode needed)
 // ============================================================================
@@ -601,4 +618,68 @@ export async function getWorkspaceConfig(sessionId: string): Promise<WorkspaceCo
   } catch {
     return null
   }
+}
+
+// ============================================================================
+// Settings Types and API
+// ============================================================================
+
+/** A settings value with metadata */
+export type SettingsValue = {
+  /** The current value */
+  value: unknown
+  /** Whether this value is explicitly set in config (vs default) */
+  is_configured: boolean
+  /** The default value from schema (if any) */
+  default?: unknown
+}
+
+/** Map of dotted paths to settings values */
+export type SettingsValues = Record<string, SettingsValue>
+
+/** Request to update settings */
+export type SettingsUpdateRequest = {
+  values: Record<string, unknown>
+}
+
+/** Get the JSON schema for an app's settings (filtered by user permissions) */
+export async function getSettingsSchema(app: string): Promise<unknown> {
+  const res = await fetch(`/api/settings/schema?app=${encodeURIComponent(app)}`, {
+    credentials: "include",
+  })
+  if (!res.ok) throw new Error(await readApiError(res))
+  return res.json()
+}
+
+/** Get current settings values for an app */
+export async function getSettingsValues(app: string): Promise<SettingsValues> {
+  const res = await fetch(`/api/settings?app=${encodeURIComponent(app)}`, {
+    credentials: "include",
+  })
+  if (!res.ok) throw new Error(await readApiError(res))
+  return res.json()
+}
+
+/** Update settings values for an app */
+export async function updateSettingsValues(
+  app: string,
+  updates: SettingsUpdateRequest
+): Promise<SettingsValues> {
+  const res = await fetch(`/api/settings?app=${encodeURIComponent(app)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(updates),
+    credentials: "include",
+  })
+  if (!res.ok) throw new Error(await readApiError(res))
+  return res.json()
+}
+
+/** Reload settings from disk (admin only) */
+export async function reloadSettings(app: string): Promise<void> {
+  const res = await fetch(`/api/settings/reload?app=${encodeURIComponent(app)}`, {
+    method: "POST",
+    credentials: "include",
+  })
+  if (!res.ok) throw new Error(await readApiError(res))
 }

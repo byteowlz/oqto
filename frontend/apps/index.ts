@@ -3,6 +3,7 @@ import { ProjectsApp } from "@/apps/projects";
 import { AgentsApp } from "@/apps/agents";
 import { SessionsApp } from "@/apps/sessions";
 import { AdminApp } from "@/apps/admin";
+import { SettingsApp } from "@/apps/settings";
 
 appRegistry
   .register({
@@ -31,6 +32,15 @@ appRegistry
     routes: ["/projects"],
     permissions: ["user"],
     priority: 20,
+  })
+  .register({
+    id: "settings",
+    label: { de: "Einstellungen", en: "Settings" },
+    description: "Configure platform settings",
+    component: SettingsApp,
+    routes: ["/settings"],
+    permissions: ["user"],
+    priority: 25,
   })
   .register({
     id: "admin",

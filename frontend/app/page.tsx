@@ -13,6 +13,7 @@ import {
   MessageSquare,
   Bot,
   Shield,
+  Settings,
   Menu,
   X,
   Clock,
@@ -874,7 +875,7 @@ function AppShell() {
                         <span className="text-[10px]">ALL</span>
                       </button>
                       
-                      {/* Project icons */}
+                      {/* Project icons - long press to pin/unpin */}
                       {sortedProjectsForFilterBar.map((project) => {
                         const isPinned = pinnedProjects.includes(project.key);
                         const isSelected = selectedProjectKey === project.key;
@@ -888,10 +889,39 @@ function AppShell() {
                           .toUpperCase()
                           .slice(0, 2);
                         
+                        let longPressTimer: ReturnType<typeof setTimeout> | null = null;
+                        let didLongPress = false;
+                        
                         return (
                           <button
                             key={project.key}
-                            onClick={() => setSelectedProjectKey(isSelected ? null : project.key)}
+                            onClick={() => {
+                              if (!didLongPress) {
+                                setSelectedProjectKey(isSelected ? null : project.key);
+                              }
+                              didLongPress = false;
+                            }}
+                            onTouchStart={() => {
+                              didLongPress = false;
+                              longPressTimer = setTimeout(() => {
+                                didLongPress = true;
+                                togglePinProject(project.key);
+                                // Haptic feedback if available
+                                if (navigator.vibrate) navigator.vibrate(50);
+                              }, 500);
+                            }}
+                            onTouchEnd={() => {
+                              if (longPressTimer) {
+                                clearTimeout(longPressTimer);
+                                longPressTimer = null;
+                              }
+                            }}
+                            onTouchMove={() => {
+                              if (longPressTimer) {
+                                clearTimeout(longPressTimer);
+                                longPressTimer = null;
+                              }
+                            }}
                             className={cn(
                               "flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center transition-all overflow-hidden",
                               "border-2",
@@ -901,7 +931,7 @@ function AppShell() {
                                   ? "border-primary/50 bg-sidebar-accent/50"
                                   : "border-sidebar-border bg-sidebar-accent/50"
                             )}
-                            title={`${project.name} (${project.sessionCount})`}
+                            title={`${project.name} (${project.sessionCount})${isPinned ? " - Pinned" : ""}`}
                           >
                             {logoUrl ? (
                               <img
@@ -1253,6 +1283,20 @@ function AppShell() {
               <Button
                 variant="ghost"
                 size="icon"
+                rounded="full"
+                onClick={() => handleMobileNavClick("settings")}
+                aria-label="Settings"
+                className={cn(
+                  "hover:bg-sidebar-accent",
+                  activeAppId === "settings" ? "text-primary" : "text-muted-foreground hover:text-primary"
+                )}
+              >
+                <Settings className="w-5 h-5" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                rounded="full"
                 onClick={() => handleMobileNavClick("admin")}
                 aria-label="Admin"
                 className={cn(
@@ -1265,6 +1309,7 @@ function AppShell() {
               <Button
                 variant="ghost"
                 size="icon"
+                rounded="full"
                 onClick={() => {
                   toggleLocale();
                   setMobileMenuOpen(false);
@@ -1277,6 +1322,7 @@ function AppShell() {
               <Button
                 variant="ghost"
                 size="icon"
+                rounded="full"
                 onClick={() => {
                   toggleTheme();
                   setMobileMenuOpen(false);
@@ -1878,10 +1924,38 @@ function AppShell() {
           <div className={`flex items-center ${sidebarCollapsed ? "flex-col gap-2" : "justify-center gap-2"}`}>
             <Button
               variant="ghost"
-              size="default"
+              size="icon"
+              rounded="full"
+              onClick={() => setActiveAppId("settings")}
+              aria-label="Settings"
+              className="w-9 h-9 flex items-center justify-center transition-colors"
+              style={{
+                backgroundColor: activeAppId === "settings" ? navActiveBg : navIdle,
+                border: activeAppId === "settings" ? `1px solid ${navActiveBorder}` : "1px solid transparent",
+                color: activeAppId === "settings" ? navActiveText : navText,
+              }}
+              onMouseEnter={(e) => {
+                if (activeAppId !== "settings") {
+                  e.currentTarget.style.backgroundColor = sidebarHover;
+                  e.currentTarget.style.border = `1px solid ${sidebarHoverBorder}`;
+                }
+              }}
+              onMouseLeave={(e) => {
+                if (activeAppId !== "settings") {
+                  e.currentTarget.style.backgroundColor = navIdle;
+                  e.currentTarget.style.border = "1px solid transparent";
+                }
+              }}
+            >
+              <Settings className="w-4 h-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              rounded="full"
               onClick={() => setActiveAppId("admin")}
               aria-label="Admin"
-              className={`${sidebarCollapsed ? "w-full" : ""} px-3 py-2 text-sm font-medium flex items-center justify-center transition-colors`}
+              className="w-9 h-9 flex items-center justify-center transition-colors"
               style={{
                 backgroundColor: activeAppId === "admin" ? navActiveBg : navIdle,
                 border: activeAppId === "admin" ? `1px solid ${navActiveBorder}` : "1px solid transparent",
@@ -1904,10 +1978,11 @@ function AppShell() {
             </Button>
             <Button
               variant="ghost"
-              size="default"
+              size="icon"
+              rounded="full"
               onClick={toggleLocale}
               aria-label="Sprache wechseln"
-              className={`${sidebarCollapsed ? "w-full" : ""} px-3 py-2 text-sm font-medium flex items-center justify-center transition-colors`}
+              className="w-9 h-9 flex items-center justify-center transition-colors"
               style={{
                 backgroundColor: navIdle,
                 border: "1px solid transparent",
@@ -1926,10 +2001,11 @@ function AppShell() {
             </Button>
             <Button
               variant="ghost"
-              size="default"
+              size="icon"
+              rounded="full"
               onClick={toggleTheme}
               aria-pressed={isDark}
-              className={`${sidebarCollapsed ? "w-full" : ""} px-3 py-2 text-sm font-medium flex items-center justify-center transition-colors`}
+              className="w-9 h-9 flex items-center justify-center transition-colors"
               style={{
                 backgroundColor: navIdle,
                 border: "1px solid transparent",

@@ -1458,6 +1458,41 @@ pub async fn get_chat_session(
         .ok_or_else(|| ApiError::not_found(format!("Chat session {} not found", session_id)))
 }
 
+/// Request to update a chat session.
+#[derive(Debug, Deserialize)]
+pub struct UpdateChatSessionRequest {
+    /// New title for the session
+    pub title: Option<String>,
+}
+
+/// Update a chat session (e.g., rename).
+#[instrument]
+pub async fn update_chat_session(
+    Path(session_id): Path<String>,
+    Json(request): Json<UpdateChatSessionRequest>,
+) -> ApiResult<Json<ChatSession>> {
+    // Currently only title updates are supported
+    if let Some(title) = request.title {
+        let session = crate::history::update_session_title(&session_id, &title)
+            .map_err(|e| {
+                if e.to_string().contains("not found") {
+                    ApiError::not_found(format!("Chat session {} not found", session_id))
+                } else {
+                    ApiError::internal(format!("Failed to update chat session: {}", e))
+                }
+            })?;
+        
+        info!(session_id = %session_id, title = %title, "Updated chat session title");
+        Ok(Json(session))
+    } else {
+        // No updates requested - just return the current session
+        crate::history::get_session(&session_id)
+            .map_err(|e| ApiError::internal(format!("Failed to get chat session: {}", e)))?
+            .map(Json)
+            .ok_or_else(|| ApiError::not_found(format!("Chat session {} not found", session_id)))
+    }
+}
+
 /// Response for grouped chat history.
 #[derive(Debug, Serialize)]
 pub struct GroupedChatHistory {
@@ -1775,4 +1810,106 @@ pub async fn agent_attach(
 
     info!(user_id = %user.id(), session_id = %session_id, "Attached to agent session event stream");
     Ok(Sse::new(sse_stream).keep_alive(KeepAlive::default()))
+}
+
+// ============================================================================
+// Settings Handlers
+// ============================================================================
+
+use crate::settings::{ConfigUpdate, SettingsScope, SettingsService, SettingsValue};
+use std::collections::HashMap;
+
+/// Query parameters for settings endpoints.
+#[derive(Debug, Deserialize)]
+pub struct SettingsQuery {
+    /// App to get settings for (e.g., "octo", "mmry")
+    pub app: String,
+}
+
+/// Get the settings schema for an app, filtered by user permissions.
+#[instrument(skip(state, user))]
+pub async fn get_settings_schema(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Query(query): Query<SettingsQuery>,
+) -> ApiResult<Json<serde_json::Value>> {
+    let service = get_settings_service(&state, &query.app)?;
+    let scope = user_to_scope(&user);
+    
+    let schema = service.get_schema(scope);
+    
+    info!(user_id = %user.id(), app = %query.app, scope = ?scope, "Retrieved settings schema");
+    Ok(Json(schema))
+}
+
+/// Get current settings values for an app.
+#[instrument(skip(state, user))]
+pub async fn get_settings_values(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Query(query): Query<SettingsQuery>,
+) -> ApiResult<Json<HashMap<String, SettingsValue>>> {
+    let service = get_settings_service(&state, &query.app)?;
+    let scope = user_to_scope(&user);
+    
+    let values = service.get_values(scope).await;
+    
+    info!(user_id = %user.id(), app = %query.app, count = values.len(), "Retrieved settings values");
+    Ok(Json(values))
+}
+
+/// Update settings values for an app.
+#[instrument(skip(state, user))]
+pub async fn update_settings_values(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Query(query): Query<SettingsQuery>,
+    Json(updates): Json<ConfigUpdate>,
+) -> ApiResult<Json<HashMap<String, SettingsValue>>> {
+    let service = get_settings_service(&state, &query.app)?;
+    let scope = user_to_scope(&user);
+    
+    service.update_values(updates, scope).await
+        .map_err(|e| ApiError::bad_request(format!("Failed to update settings: {}", e)))?;
+    
+    // Return updated values
+    let values = service.get_values(scope).await;
+    
+    info!(user_id = %user.id(), app = %query.app, "Updated settings");
+    Ok(Json(values))
+}
+
+/// Reload settings from disk (admin only).
+#[instrument(skip(state, _admin))]
+pub async fn reload_settings(
+    State(state): State<AppState>,
+    _admin: RequireAdmin,
+    Query(query): Query<SettingsQuery>,
+) -> ApiResult<Json<serde_json::Value>> {
+    let service = get_settings_service(&state, &query.app)?;
+    
+    service.reload().await
+        .map_err(|e| ApiError::internal(format!("Failed to reload settings: {}", e)))?;
+    
+    info!(app = %query.app, "Settings reloaded");
+    Ok(Json(serde_json::json!({ "status": "reloaded" })))
+}
+
+/// Convert user role to settings scope.
+fn user_to_scope(user: &CurrentUser) -> SettingsScope {
+    if user.is_admin() {
+        SettingsScope::Admin
+    } else {
+        SettingsScope::User
+    }
+}
+
+/// Get the settings service for an app.
+fn get_settings_service<'a>(state: &'a AppState, app: &str) -> ApiResult<&'a Arc<SettingsService>> {
+    match app {
+        "octo" => state.settings_octo.as_ref(),
+        "mmry" => state.settings_mmry.as_ref(),
+        _ => None,
+    }
+    .ok_or_else(|| ApiError::not_found(format!("Settings for app '{}' not found", app)))
 }

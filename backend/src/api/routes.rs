@@ -197,7 +197,7 @@ pub fn create_router(state: AppState) -> Router {
         )
         .route(
             "/chat-history/{session_id}",
-            get(handlers::get_chat_session),
+            get(handlers::get_chat_session).patch(handlers::update_chat_session),
         )
         .route(
             "/chat-history/{session_id}/messages",
@@ -222,6 +222,13 @@ pub fn create_router(state: AppState) -> Router {
                 .put(proxy::proxy_mmry_memory)
                 .delete(proxy::proxy_mmry_memory),
         )
+        // Settings routes
+        .route("/settings/schema", get(handlers::get_settings_schema))
+        .route(
+            "/settings",
+            get(handlers::get_settings_values).patch(handlers::update_settings_values),
+        )
+        .route("/settings/reload", post(handlers::reload_settings))
         // AgentRPC routes (unified backend API)
         .route("/agent/health", get(handlers::agent_health))
         .route(

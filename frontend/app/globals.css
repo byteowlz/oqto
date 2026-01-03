@@ -298,6 +298,10 @@
   .compact-header a {
     min-height: unset;
   }
+  /* Exclude chat input textarea - it has its own sizing */
+  .chat-input-container textarea {
+    min-height: unset;
+  }
 }
 
 /* Prevent pull-to-refresh on mobile */

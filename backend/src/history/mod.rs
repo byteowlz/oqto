@@ -229,6 +229,88 @@ pub fn get_session(session_id: &str) -> Result<Option<ChatSession>> {
     Ok(sessions.into_iter().find(|s| s.id == session_id))
 }
 
+/// Update a session's title on disk.
+/// 
+/// This reads the session JSON file, updates the title field, and writes it back.
+/// Returns the updated session or an error if the session doesn't exist.
+pub fn update_session_title(session_id: &str, new_title: &str) -> Result<ChatSession> {
+    update_session_title_in_dir(session_id, new_title, &default_opencode_data_dir())
+}
+
+/// Update a session's title on disk from a specific OpenCode data directory.
+pub fn update_session_title_in_dir(session_id: &str, new_title: &str, opencode_dir: &Path) -> Result<ChatSession> {
+    let session_dir = opencode_dir.join("storage/session");
+    
+    if !session_dir.exists() {
+        anyhow::bail!("Session directory does not exist");
+    }
+
+    // Find the session file by iterating through project directories
+    let project_entries = std::fs::read_dir(&session_dir)
+        .with_context(|| format!("reading session dir: {:?}", session_dir))?;
+
+    for project_entry in project_entries {
+        let project_entry = match project_entry {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        
+        let project_path = project_entry.path();
+        if !project_path.is_dir() {
+            continue;
+        }
+
+        // Look for the session file in this project directory
+        let session_file = project_path.join(format!("{}.json", session_id));
+        if !session_file.exists() {
+            continue;
+        }
+
+        // Found the session file - read, update, and write back
+        let content = std::fs::read_to_string(&session_file)
+            .with_context(|| format!("reading session file: {:?}", session_file))?;
+
+        let mut info: SessionInfo = serde_json::from_str(&content)
+            .with_context(|| format!("parsing session file: {:?}", session_file))?;
+
+        // Update the title and updated timestamp
+        info.title = Some(new_title.to_string());
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(info.time.updated);
+        info.time.updated = now_ms;
+
+        // Write back
+        let updated_content = serde_json::to_string_pretty(&info)
+            .with_context(|| "serializing updated session")?;
+        std::fs::write(&session_file, updated_content)
+            .with_context(|| format!("writing session file: {:?}", session_file))?;
+
+        // Return the updated session
+        let workspace_path = info.directory.clone().unwrap_or_else(|| "global".to_string());
+        let project_name = project_name_from_path(&workspace_path);
+        let is_child = info.parent_id.is_some();
+
+        tracing::info!("Updated session {} title to: {}", session_id, new_title);
+
+        return Ok(ChatSession {
+            id: info.id,
+            title: info.title,
+            parent_id: info.parent_id,
+            workspace_path,
+            project_name,
+            created_at: info.time.created,
+            updated_at: info.time.updated,
+            version: info.version,
+            is_child,
+            source_path: Some(session_file.to_string_lossy().to_string()),
+        });
+    }
+
+    anyhow::bail!("Session not found: {}", session_id)
+}
+
 // ============================================================================
 // Message loading
 // ============================================================================

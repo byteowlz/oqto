@@ -12,6 +12,9 @@ import {
   Globe2,
   Settings,
   Search,
+  AudioLines,
+  Keyboard,
+  Cog,
 } from "lucide-react"
 import {
   CommandDialog,
@@ -25,6 +28,7 @@ import {
 } from "@/components/ui/command"
 import { useApp } from "@/components/app-context"
 import { generateReadableId } from "@/lib/session-utils"
+import { useVoiceCommandEmitter, formatShortcut, VOICE_SHORTCUTS } from "@/hooks/use-voice-commands"
 
 interface CommandPaletteProps {
   open: boolean
@@ -41,6 +45,8 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
     setSelectedChatSessionId,
     createNewChat,
   } = useApp()
+
+  const { startConversation, startDictation } = useVoiceCommandEmitter()
 
   const [theme, setThemeState] = useState<"light" | "dark">("dark")
 
@@ -98,6 +104,8 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
         return Bot
       case "admin":
         return Shield
+      case "settings":
+        return Cog
       default:
         return FolderKanban
     }
@@ -143,6 +151,29 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
                 ? "Sprache wechseln (EN)"
                 : "Change language (DE)"}
             </span>
+          </CommandItem>
+        </CommandGroup>
+
+        <CommandSeparator />
+
+        <CommandGroup heading={locale === "de" ? "Sprache" : "Voice"}>
+          <CommandItem onSelect={() => {
+            startConversation()
+            setActiveAppId("sessions")
+            onOpenChange(false)
+          }}>
+            <AudioLines className="mr-2 h-4 w-4" />
+            <span>{locale === "de" ? "Konversation starten" : "Start Conversation"}</span>
+            <CommandShortcut>{formatShortcut(VOICE_SHORTCUTS.conversation)}</CommandShortcut>
+          </CommandItem>
+          <CommandItem onSelect={() => {
+            startDictation()
+            setActiveAppId("sessions")
+            onOpenChange(false)
+          }}>
+            <Keyboard className="mr-2 h-4 w-4" />
+            <span>{locale === "de" ? "Diktat starten" : "Start Dictation"}</span>
+            <CommandShortcut>{formatShortcut(VOICE_SHORTCUTS.dictation)}</CommandShortcut>
           </CommandItem>
         </CommandGroup>
 

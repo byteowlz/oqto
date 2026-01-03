@@ -12,6 +12,7 @@ use crate::agent_rpc::AgentBackend;
 use crate::auth::AuthState;
 use crate::invite::InviteCodeRepository;
 use crate::session::SessionService;
+use crate::settings::SettingsService;
 use crate::user::UserService;
 
 /// Mmry configuration for the API layer.
@@ -134,6 +135,10 @@ pub struct AppState {
     pub mmry: MmryState,
     /// Voice mode configuration.
     pub voice: VoiceState,
+    /// Settings service for octo config.
+    pub settings_octo: Option<Arc<SettingsService>>,
+    /// Settings service for mmry config.
+    pub settings_mmry: Option<Arc<SettingsService>>,
 }
 
 impl AppState {
@@ -160,6 +165,8 @@ impl AppState {
             agent_backend: None,
             mmry,
             voice,
+            settings_octo: None,
+            settings_mmry: None,
         }
     }
 
@@ -187,6 +194,20 @@ impl AppState {
             agent_backend: Some(backend),
             mmry,
             voice,
+            settings_octo: None,
+            settings_mmry: None,
         }
+    }
+
+    /// Set the octo settings service.
+    pub fn with_settings_octo(mut self, service: SettingsService) -> Self {
+        self.settings_octo = Some(Arc::new(service));
+        self
+    }
+
+    /// Set the mmry settings service.
+    pub fn with_settings_mmry(mut self, service: SettingsService) -> Self {
+        self.settings_mmry = Some(Arc::new(service));
+        self
     }
 }

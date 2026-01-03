@@ -25,6 +25,7 @@ import {
   opencodeProxyBaseUrl,
   stopWorkspaceSession,
   touchSessionActivity,
+  updateChatSession,
   upgradeWorkspaceSession,
   type ChatSession,
   type Persona,
@@ -448,10 +449,24 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [opencodeBaseUrl, opencodeSessions, refreshChatHistory])
 
   const renameChatSession = useCallback(async (sessionId: string, title: string): Promise<boolean> => {
-    if (!opencodeBaseUrl) return false
     try {
-      const updated = await updateSession(opencodeBaseUrl, sessionId, { title })
-      setOpencodeSessions((prev) => prev.map((s) => s.id === sessionId ? updated : s))
+      // Check if this is a live session (has opencodeBaseUrl)
+      if (opencodeBaseUrl) {
+        // Try to update via opencode API first (for live sessions)
+        try {
+          const updated = await updateSession(opencodeBaseUrl, sessionId, { title })
+          setOpencodeSessions((prev) => prev.map((s) => s.id === sessionId ? updated : s))
+          // Also update the chat history state in case it's there too
+          setChatHistory((prev) => prev.map((s) => s.id === sessionId ? { ...s, title } : s))
+          return true
+        } catch {
+          // Fall through to try the history API
+        }
+      }
+      
+      // Try the chat history API (for history-only sessions or if opencode update failed)
+      const updated = await updateChatSession(sessionId, { title })
+      setChatHistory((prev) => prev.map((s) => s.id === sessionId ? { ...s, title: updated.title } : s))
       return true
     } catch (err) {
       console.error("Failed to rename chat session:", err)
