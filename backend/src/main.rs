@@ -436,6 +436,7 @@ struct AppConfig {
     local: LocalModeConfig,
     eavs: Option<EavsConfig>,
     mmry: MmryConfig,
+    voice: VoiceConfig,
     auth: auth::AuthConfig,
     /// Agent scaffolding configuration.
     scaffold: ScaffoldConfig,
@@ -494,6 +495,7 @@ impl Default for AppConfig {
             local: LocalModeConfig::default(),
             eavs: None,
             mmry: MmryConfig::default(),
+            voice: VoiceConfig::default(),
             auth: auth::AuthConfig::default(),
             scaffold: ScaffoldConfig::default(),
         }
@@ -517,6 +519,98 @@ struct EavsConfig {
     default_session_budget_usd: Option<f64>,
     /// Default session rate limit in requests per minute.
     default_session_rpm: Option<u32>,
+}
+
+/// Voice mode configuration.
+///
+/// Enables real-time speech-to-text (STT) and text-to-speech (TTS) integration.
+/// Uses external WebSocket services:
+/// - eaRS for STT (speech-to-text with VAD)
+/// - kokorox for TTS (text-to-speech with streaming)
+///
+/// Both services can run on any machine - clients connect directly via WebSocket.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VoiceConfig {
+    /// Whether voice mode is enabled.
+    pub enabled: bool,
+    /// WebSocket URL for the eaRS STT service.
+    /// Default: "ws://localhost:8765"
+    pub stt_url: String,
+    /// WebSocket URL for the kokorox TTS service.
+    /// Default: "ws://localhost:8766"
+    pub tts_url: String,
+    /// Voice Activity Detection timeout in milliseconds.
+    /// After this duration of silence, the transcript is auto-sent.
+    /// Default: 1500ms
+    pub vad_timeout_ms: u32,
+    /// Default kokorox voice ID.
+    /// Default: "af_heart"
+    pub default_voice: String,
+    /// Default TTS speech speed (0.1 - 3.0).
+    /// Default: 1.0
+    pub default_speed: f32,
+    /// Enable automatic language detection for TTS.
+    /// Default: true
+    pub auto_language_detect: bool,
+    /// Whether TTS output is muted by default (user can still read responses).
+    /// Default: false
+    pub tts_muted: bool,
+    /// Continuous conversation mode - auto-listen after TTS finishes.
+    /// Default: true
+    pub continuous_mode: bool,
+    /// Default visualizer style: "orb" or "kitt"
+    /// Default: "orb"
+    pub default_visualizer: String,
+    /// Minimum words spoken by user to interrupt TTS playback.
+    /// Set to 0 to disable interrupt-by-speaking.
+    /// Default: 2
+    pub interrupt_word_count: u32,
+    /// Reset interrupt word count after this silence duration in ms.
+    /// Set to 0 to disable backoff (words accumulate forever until threshold).
+    /// Default: 5000
+    pub interrupt_backoff_ms: u32,
+    /// Per-visualizer voice/speed settings.
+    /// Keys are visualizer IDs (e.g., "orb", "kitt"), values are VisualizerVoice.
+    #[serde(default)]
+    pub visualizer_voices: std::collections::HashMap<String, VisualizerVoice>,
+}
+
+/// Per-visualizer voice settings.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VisualizerVoice {
+    /// Voice ID for this visualizer.
+    pub voice: String,
+    /// Speech speed for this visualizer (0.1 - 3.0).
+    #[serde(default = "default_speed")]
+    pub speed: f32,
+}
+
+fn default_speed() -> f32 {
+    1.0
+}
+
+impl Default for VoiceConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            stt_url: "ws://localhost:8765".to_string(),
+            tts_url: "ws://localhost:8766".to_string(),
+            vad_timeout_ms: 1500,
+            default_voice: "af_heart".to_string(),
+            default_speed: 1.0,
+            auto_language_detect: true,
+            tts_muted: false,
+            continuous_mode: true,
+            default_visualizer: "orb".to_string(),
+            interrupt_word_count: 2,
+            interrupt_backoff_ms: 5000,
+            visualizer_voices: [
+                ("orb".to_string(), VisualizerVoice { voice: "af_heart".to_string(), speed: 1.0 }),
+                ("kitt".to_string(), VisualizerVoice { voice: "am_michael".to_string(), speed: 1.1 }),
+            ].into_iter().collect(),
+        }
+    }
 }
 
 /// mmry (memory system) configuration.
@@ -1399,6 +1493,25 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
         local_service_url: ctx.config.mmry.local_service_url.clone(),
     };
 
+    // Build voice state based on configuration
+    let voice_state = api::VoiceState {
+        enabled: ctx.config.voice.enabled,
+        stt_url: ctx.config.voice.stt_url.clone(),
+        tts_url: ctx.config.voice.tts_url.clone(),
+        vad_timeout_ms: ctx.config.voice.vad_timeout_ms,
+        default_voice: ctx.config.voice.default_voice.clone(),
+        default_speed: ctx.config.voice.default_speed,
+        auto_language_detect: ctx.config.voice.auto_language_detect,
+        tts_muted: ctx.config.voice.tts_muted,
+        continuous_mode: ctx.config.voice.continuous_mode,
+        default_visualizer: ctx.config.voice.default_visualizer.clone(),
+        interrupt_word_count: ctx.config.voice.interrupt_word_count,
+        interrupt_backoff_ms: ctx.config.voice.interrupt_backoff_ms,
+        visualizer_voices: ctx.config.voice.visualizer_voices.iter().map(|(k, v)| {
+            (k.clone(), api::VisualizerVoiceState { voice: v.voice.clone(), speed: v.speed })
+        }).collect(),
+    };
+
     // Create app state
     let state = if let Some(backend) = agent_backend {
         api::AppState::with_agent_backend(
@@ -1409,6 +1522,7 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
             auth_state,
             backend,
             mmry_state,
+            voice_state,
         )
     } else {
         api::AppState::new(
@@ -1418,6 +1532,7 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
             invite_repo,
             auth_state,
             mmry_state,
+            voice_state,
         )
     };
 

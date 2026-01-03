@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState, useRef, memo, useTransition,
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
-import { FileText, Terminal, Eye, Send, ChevronDown, User, Bot, Clock, ArrowDown, ListTodo, Square, CheckSquare, CircleDot, XCircle, MessageSquare, Loader2, Paperclip, X, Copy, Check, StopCircle, Gauge, Brain } from "lucide-react"
+import { FileText, Terminal, Eye, Send, ChevronDown, User, Bot, Clock, ArrowDown, ListTodo, Square, CheckSquare, CircleDot, XCircle, MessageSquare, Loader2, Paperclip, X, Copy, Check, StopCircle, Gauge, Brain, Mic } from "lucide-react"
 import { useApp } from "@/components/app-context"
 import { FileTreeView, type FileTreeState, initialFileTreeState } from "@/app/sessions/FileTreeView"
 import { TerminalView } from "@/app/sessions/TerminalView"
@@ -19,7 +19,9 @@ import {
   fetchMessages,
   sendMessageAsync,
   runShellCommandAsync,
+  sendCommandAsync,
   fetchAgents,
+  fetchCommands,
   subscribeToEvents,
   invalidateMessageCache,
   respondToPermission,
@@ -31,8 +33,12 @@ import {
   type PermissionResponse,
 } from "@/lib/opencode-client"
 import { PermissionDialog, PermissionBanner } from "@/components/ui/permission-dialog"
-import { controlPlaneDirectBaseUrl, fileserverProxyBaseUrl, getChatMessages, convertChatMessagesToOpenCode, getWorkspaceConfig, getFeatures, type Persona, type Features } from "@/lib/control-plane-client"
+import { controlPlaneDirectBaseUrl, fileserverProxyBaseUrl, getChatMessages, convertChatMessagesToOpenCode, getWorkspaceConfig, getFeatures, getProjectLogoUrl, type Persona, type Features } from "@/lib/control-plane-client"
 import { generateReadableId, formatSessionDate } from "@/lib/session-utils"
+import { useVoiceMode } from "@/hooks/use-voice-mode"
+import { VoiceModeButton, VoiceInputOverlay, VoicePanel } from "@/components/voice"
+import { SlashCommandPopup } from "@/components/ui/slash-command-popup"
+import { builtInCommands, commandInfoToSlashCommands, parseSlashInput, type SlashCommand } from "@/lib/slash-commands"
 
 // Todo item structure
 interface TodoItem {
@@ -49,7 +55,7 @@ type MessageGroup = {
   startIndex: number
 }
 
-type ActiveView = "chat" | "files" | "terminal" | "preview" | "tasks" | "memories"
+type ActiveView = "chat" | "files" | "terminal" | "preview" | "tasks" | "memories" | "voice"
 
 function groupMessages(messages: OpenCodeMessageWithParts[]): MessageGroup[] {
   const groups: MessageGroup[] = []
@@ -262,9 +268,15 @@ export function SessionsApp() {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const chatInputRef = useRef<HTMLTextAreaElement>(null)
   const chatContainerRef = useRef<HTMLDivElement>(null)
+  const prevVoiceActiveRef = useRef(false)
   
   // File upload state
   const [pendingUploads, setPendingUploads] = useState<{ name: string; path: string }[]>([])
+  
+  // Slash command popup state
+  const [showSlashPopup, setShowSlashPopup] = useState(false)
+  const [slashCommands, setSlashCommands] = useState<SlashCommand[]>(builtInCommands)
+  const slashQuery = parseSlashInput(messageInput)
   
   // Default agent for shell commands - use "build" as the default primary agent
   const [defaultAgent, setDefaultAgent] = useState<string>("build")
@@ -286,6 +298,110 @@ export function SessionsApp() {
       // Silently ignore - features will remain disabled
     })
   }, [])
+  
+  // Fetch slash commands from opencode when URL is available
+  useEffect(() => {
+    if (!opencodeBaseUrl) {
+      setSlashCommands(builtInCommands)
+      return
+    }
+    
+    fetchCommands(opencodeBaseUrl)
+      .then(commands => {
+        setSlashCommands(commandInfoToSlashCommands(commands))
+      })
+      .catch(() => {
+        // Fall back to built-in commands
+        setSlashCommands(builtInCommands)
+      })
+  }, [opencodeBaseUrl])
+  
+  // Voice mode - handles STT/TTS when voice feature is enabled
+  const handleVoiceTranscript = useCallback((text: string) => {
+    // Set the transcript as message input and send it
+    setMessageInput(text)
+    // We'll trigger send after a small delay to allow state to update
+    setTimeout(() => {
+      const sendBtn = document.querySelector('[data-voice-send]') as HTMLButtonElement
+      if (sendBtn) sendBtn.click()
+    }, 100)
+  }, [])
+  
+  const voiceMode = useVoiceMode({
+    config: features.voice ?? null,
+    onTranscript: handleVoiceTranscript,
+  })
+  
+  // Streaming TTS: Track what text we've already sent to TTS for current message
+  const ttsStreamStateRef = useRef<{
+    messageId: string | null
+    sentLength: number  // How many characters we've already sent
+  }>({ messageId: null, sentLength: 0 })
+  
+  // Auto-TTS: Stream assistant responses to TTS as text arrives
+  // Kokorox handles sentence segmentation internally
+  useEffect(() => {
+    // Only trigger TTS when voice mode is active and not muted
+    if (!voiceMode.isActive || voiceMode.settings.muted) return
+    
+    // Find the last assistant message
+    const lastMessage = messages[messages.length - 1]
+    if (!lastMessage || lastMessage.info.role !== "assistant") return
+    
+    const messageId = lastMessage.info.id
+    const streamState = ttsStreamStateRef.current
+    
+    // Reset state if this is a new message
+    if (streamState.messageId !== messageId) {
+      streamState.messageId = messageId
+      streamState.sentLength = 0
+    }
+    
+    // Extract text content from the message parts
+    const textParts = lastMessage.parts
+      .filter((p): p is OpenCodePart & { type: "text"; text: string } => 
+        p.type === "text" && typeof p.text === "string"
+      )
+      .map(p => p.text)
+    
+    if (textParts.length === 0) return
+    
+    // Get full text so far
+    const fullText = textParts.join("\n\n")
+    
+    // Nothing new to send
+    if (fullText.length <= streamState.sentLength) return
+    
+    // Get the new text since last send and stream it to kokorox
+    const newText = fullText.slice(streamState.sentLength)
+    streamState.sentLength = fullText.length
+    
+    console.log("[Voice] Streaming TTS:", newText.slice(0, 50) + (newText.length > 50 ? "..." : ""))
+    voiceMode.speak(newText).catch(err => {
+      console.error("[Voice] Auto-TTS failed:", err)
+    })
+  }, [messages, voiceMode.isActive, voiceMode.settings.muted, voiceMode.speak])
+  
+  // Stop TTS playback when voice mode is deactivated
+  useEffect(() => {
+    if (!voiceMode.isActive) {
+      voiceMode.interrupt()
+      // Reset stream state so next activation starts fresh
+      ttsStreamStateRef.current = { messageId: null, sentLength: 0 }
+    }
+  }, [voiceMode.isActive, voiceMode.interrupt])
+  
+  // Auto-switch to voice tab on desktop when voice mode starts
+  useEffect(() => {
+    if (voiceMode.isActive && !prevVoiceActiveRef.current && !isMobileLayout) {
+      // Voice mode just activated on desktop - switch to voice tab
+      setActiveView("voice")
+    } else if (!voiceMode.isActive && prevVoiceActiveRef.current && activeView === "voice") {
+      // Voice mode just deactivated - switch back to tasks
+      setActiveView("tasks")
+    }
+    prevVoiceActiveRef.current = voiceMode.isActive
+  }, [voiceMode.isActive, isMobileLayout, activeView])
   
   // Handle mobile keyboard - scroll input into view when keyboard appears
   // iOS Safari requires special handling as it resizes the visual viewport
@@ -871,9 +987,10 @@ export function SessionsApp() {
   // Progressive rendering - show last N groups immediately, expand on scroll up
   const [visibleGroupCount, setVisibleGroupCount] = useState(20)
   
-  // Reset visible count when session changes
+  // Reset visible count and clear messages when session changes
   useEffect(() => {
     setVisibleGroupCount(20)
+    setMessages([]) // Clear messages immediately on session switch
   }, [selectedChatSessionId])
   
   // Calculate which groups to show (from the end, so newest messages are visible)
@@ -940,9 +1057,33 @@ export function SessionsApp() {
     return []
   }, [messages])
 
+  // Handle slash command selection from popup
+  const handleSlashCommandSelect = useCallback(async (cmd: SlashCommand) => {
+    setShowSlashPopup(false)
+    
+    // Send opencode command (e.g., /init, /undo, /redo, or custom commands)
+    if (!selectedChatSessionId || !opencodeBaseUrl) return
+    
+    setMessageInput("")
+    if (chatInputRef.current) {
+      chatInputRef.current.style.height = "36px"
+    }
+    
+    try {
+      // Command name without slash, args separately
+      await sendCommandAsync(opencodeBaseUrl, selectedChatSessionId, cmd.name, slashQuery.args)
+    } catch (err) {
+      console.error("Failed to send command:", err)
+      setStatus(`Command failed: ${err instanceof Error ? err.message : "Unknown error"}`)
+    }
+  }, [selectedChatSessionId, opencodeBaseUrl, slashQuery.args, setStatus])
+
   const handleSend = async () => {
     if (!selectedChatSessionId) return
     if (!messageInput.trim() && pendingUploads.length === 0) return
+    
+    // Close slash popup if open
+    setShowSlashPopup(false)
     
     // Build message text with uploaded file paths
     let messageText = messageInput.trim()
@@ -1093,19 +1234,28 @@ export function SessionsApp() {
               <h2 className="text-lg font-medium mb-4">{locale === "de" ? "Projekt auswählen" : "Select a Project"}</h2>
               {projects.length > 0 ? (
                 <div className="grid gap-2 max-h-[60vh] overflow-y-auto">
-                  {projects.map((project) => (
-                    <button
-                      key={project.path}
-                      onClick={() => startProjectSession(project.path)}
-                      className="flex items-center gap-3 p-3 text-left rounded-md border border-border hover:bg-muted/50 transition-colors"
-                    >
-                      <FileText className="h-5 w-5 text-muted-foreground flex-shrink-0" />
-                      <div className="min-w-0">
-                        <div className="font-medium truncate">{project.name}</div>
-                        <div className="text-sm text-muted-foreground truncate">{project.path}</div>
-                      </div>
-                    </button>
-                  ))}
+                  {projects.map((project) => {
+                    const logoUrl = project.logo ? getProjectLogoUrl(project.path, project.logo.path) : null
+                    return (
+                      <button
+                        key={project.path}
+                        onClick={() => startProjectSession(project.path)}
+                        className="flex items-center gap-3 p-3 text-left rounded-md border border-border hover:bg-muted/50 transition-colors"
+                      >
+                        <div className="h-8 w-8 flex-shrink-0 flex items-center justify-center rounded bg-muted/50 overflow-hidden">
+                          {logoUrl ? (
+                            <img src={logoUrl} alt={`${project.name} logo`} className="h-6 w-6 object-contain" />
+                          ) : (
+                            <FileText className="h-5 w-5 text-muted-foreground" />
+                          )}
+                        </div>
+                        <div className="min-w-0">
+                          <div className="font-medium truncate">{project.name}</div>
+                          <div className="text-sm text-muted-foreground truncate">{project.path}</div>
+                        </div>
+                      </button>
+                    )
+                  })}
                 </div>
               ) : (
                 <div className="text-sm text-muted-foreground">
@@ -1244,77 +1394,129 @@ export function SessionsApp() {
             </span>
           </div>
         )}
-        <div className="flex items-end gap-2">
+        <div className="flex items-center gap-2">
           <button
             onClick={() => fileInputRef.current?.click()}
             disabled={isUploading}
-            className="flex-shrink-0 p-1.5 mb-1 text-muted-foreground hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            className="flex-shrink-0 size-8 flex items-center justify-center text-muted-foreground hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             title={locale === "de" ? "Datei hochladen" : "Upload file"}
           >
             {isUploading ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
+              <Loader2 className="size-4 animate-spin" />
             ) : (
-              <Paperclip className="w-4 h-4" />
+              <Paperclip className="size-4" />
             )}
           </button>
-          <textarea
-            ref={chatInputRef}
-            placeholder={isHistoryOnlySession 
-              ? (locale === "de" ? "Nachricht zum Fortsetzen..." : "Message to resume...") 
-              : t.inputPlaceholder}
-            value={messageInput}
-            onChange={(e) => {
-              setMessageInput(e.target.value)
-              // Auto-resize is handled by useEffect on messageInput change
-            }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault()
-                handleSend()
-                // Reset textarea height after sending
-                if (chatInputRef.current) {
-                  chatInputRef.current.style.height = "36px"
+          {/* Voice mode button - only shown if voice feature is enabled */}
+          {features.voice && (
+            <VoiceModeButton
+              isActive={voiceMode.isActive}
+              voiceState={voiceMode.voiceState}
+              onToggle={() => {
+                if (voiceMode.isActive) {
+                  voiceMode.stop()
+                } else {
+                  voiceMode.start().catch(console.error)
                 }
-              }
-            }}
-            onPaste={(e) => {
-              // Handle pasted files (images, etc.)
-              const items = e.clipboardData?.items
-              if (!items) return
-              
-              const files: File[] = []
-              for (const item of Array.from(items)) {
-                if (item.kind === "file") {
-                  const file = item.getAsFile()
-                  if (file) {
-                    files.push(file)
+              }}
+              disabled={chatState === "sending"}
+              className="flex-shrink-0"
+            />
+          )}
+          {/* Textarea wrapper with slash command popup */}
+          <div className="flex-1 relative">
+            <SlashCommandPopup
+              commands={slashCommands}
+              query={slashQuery.command}
+              isOpen={showSlashPopup && slashQuery.isSlash && !slashQuery.args}
+              onSelect={handleSlashCommandSelect}
+              onClose={() => setShowSlashPopup(false)}
+            />
+            <textarea
+              ref={chatInputRef}
+              placeholder={isHistoryOnlySession 
+                ? (locale === "de" ? "Nachricht zum Fortsetzen..." : "Message to resume...") 
+                : t.inputPlaceholder}
+              value={messageInput}
+              onChange={(e) => {
+                const value = e.target.value
+                setMessageInput(value)
+                // Show slash popup when typing /
+                if (value.startsWith("/")) {
+                  setShowSlashPopup(true)
+                } else {
+                  setShowSlashPopup(false)
+                }
+                // Auto-resize is handled by useEffect on messageInput change
+              }}
+              onKeyDown={(e) => {
+                // Let slash popup handle arrow keys, enter, tab when open
+                if (showSlashPopup && slashQuery.isSlash && !slashQuery.args) {
+                  if (["ArrowDown", "ArrowUp", "Enter", "Tab", "Escape"].includes(e.key)) {
+                    // Popup will handle these via its own event listener
+                    return
                   }
                 }
-              }
-              
-              if (files.length > 0) {
-                // Prevent default paste behavior for files
-                e.preventDefault()
-                // Create a FileList-like object and upload
-                const dataTransfer = new DataTransfer()
-                files.forEach(f => dataTransfer.items.add(f))
-                handleFileUpload(dataTransfer.files)
-              }
-              // If no files, let the default paste behavior handle text
-            }}
-            onFocus={(e) => {
-              // Scroll input into view on mobile when keyboard opens
-              setTimeout(() => {
-                e.target.scrollIntoView({ behavior: "smooth", block: "nearest" })
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault()
+                  handleSend()
+                  // Reset textarea height after sending
+                  if (chatInputRef.current) {
+                    chatInputRef.current.style.height = "36px"
+                  }
+                }
+                if (e.key === "Escape") {
+                  setShowSlashPopup(false)
+                }
+              }}
+              onPaste={(e) => {
+                // Handle pasted files (images, etc.)
+                const items = e.clipboardData?.items
+                if (!items) return
+                
+                const files: File[] = []
+                for (const item of Array.from(items)) {
+                  if (item.kind === "file") {
+                    const file = item.getAsFile()
+                    if (file) {
+                      files.push(file)
+                    }
+                  }
+                }
+                
+                if (files.length > 0) {
+                  // Prevent default paste behavior for files
+                  e.preventDefault()
+                  // Create a FileList-like object and upload
+                  const dataTransfer = new DataTransfer()
+                  files.forEach(f => dataTransfer.items.add(f))
+                  handleFileUpload(dataTransfer.files)
+                }
+                // If no files, let the default paste behavior handle text
+              }}
+              onBlur={() => {
+                // Delay closing to allow click on popup items
+                setTimeout(() => setShowSlashPopup(false), 150)
+              }}
+              onFocus={(e) => {
+                // Show popup if input starts with /
+                if (messageInput.startsWith("/")) {
+                  setShowSlashPopup(true)
+                }
+                // Scroll input into view on mobile when keyboard opens
+                setTimeout(() => {
+                  e.target.scrollIntoView({ behavior: "smooth", block: "nearest" })
               }, 300)
-            }}
-            rows={1}
-            className="flex-1 bg-transparent border-none outline-none text-foreground placeholder:text-muted-foreground text-sm resize-none min-h-[36px] max-h-[200px] py-2 leading-tight overflow-y-auto"
-          />
+              }}
+              rows={1}
+              className="w-full bg-transparent border-none outline-none text-foreground placeholder:text-muted-foreground text-sm resize-none h-8 max-h-[200px] overflow-y-auto"
+            />
+          </div>
           <Button
+            data-voice-send
             onClick={handleSend}
             disabled={chatState === "sending" || (!messageInput.trim() && pendingUploads.length === 0)}
-            className="bg-primary hover:bg-primary/90 text-primary-foreground mb-1"
+            className="bg-primary hover:bg-primary/90 text-primary-foreground"
           >
             <Send className="w-4 h-4 sm:mr-2" />
             <span className="hidden sm:inline">{t.send}</span>
@@ -1323,6 +1525,52 @@ export function SessionsApp() {
       </div>
     </div>
   )
+  
+  // Voice input overlay - shown on mobile when voice mode is active
+  const mobileVoiceOverlay = voiceMode.isActive && features.voice && isMobileLayout ? (
+    <VoiceInputOverlay
+      voiceState={voiceMode.voiceState}
+      liveTranscript={voiceMode.liveTranscript}
+      vadProgress={voiceMode.vadProgress}
+      inputVolume={voiceMode.inputVolume}
+      outputVolume={voiceMode.outputVolume}
+      settings={voiceMode.settings}
+      availableVoices={voiceMode.availableVoices}
+      onClose={voiceMode.stop}
+      onInterrupt={voiceMode.interrupt}
+      onSettingsChange={{
+        setVisualizer: voiceMode.setVisualizer,
+        setMuted: voiceMode.setMuted,
+        setContinuous: voiceMode.setContinuous,
+        setVoice: voiceMode.setVoice,
+        setSpeed: voiceMode.setSpeed,
+        setVadTimeout: voiceMode.setVadTimeout,
+        setInterruptWordCount: voiceMode.setInterruptWordCount,
+      }}
+    />
+  ) : null
+  
+  // Voice panel props for desktop sidebar
+  const voicePanelProps = {
+    voiceState: voiceMode.voiceState,
+    liveTranscript: voiceMode.liveTranscript,
+    vadProgress: voiceMode.vadProgress,
+    inputVolume: voiceMode.inputVolume,
+    outputVolume: voiceMode.outputVolume,
+    settings: voiceMode.settings,
+    availableVoices: voiceMode.availableVoices,
+    onClose: voiceMode.stop,
+    onInterrupt: voiceMode.interrupt,
+    onSettingsChange: {
+      setVisualizer: voiceMode.setVisualizer,
+      setMuted: voiceMode.setMuted,
+      setContinuous: voiceMode.setContinuous,
+      setVoice: voiceMode.setVoice,
+      setSpeed: voiceMode.setSpeed,
+      setVadTimeout: voiceMode.setVadTimeout,
+      setInterruptWordCount: voiceMode.setInterruptWordCount,
+    },
+  }
 
   const incompleteTasks = latestTodos.filter(t => t.status !== "completed" && t.status !== "cancelled").length
 
@@ -1442,6 +1690,7 @@ export function SessionsApp() {
             <TabButton activeView={activeView} onSelect={setActiveView} view="preview" icon={Eye} label={t.preview} hideLabel />
             {features.mmry_enabled && <TabButton activeView={activeView} onSelect={setActiveView} view="memories" icon={Brain} label={t.memories} hideLabel />}
             <TabButton activeView={activeView} onSelect={setActiveView} view="terminal" icon={Terminal} label={t.terminal} hideLabel />
+            {voiceMode.isActive && features.voice && <TabButton activeView={activeView} onSelect={setActiveView} view="voice" icon={Mic} label="Voice" hideLabel />}
           </div>
           <div className="flex-1 min-h-0 overflow-hidden">
             {activeView === "files" && <FileTreeView onPreviewFile={handlePreviewFile} state={fileTreeState} onStateChange={handleFileTreeStateChange} />}
@@ -1449,6 +1698,7 @@ export function SessionsApp() {
             {activeView === "tasks" && <TodoListView todos={latestTodos} emptyMessage={t.noTasks} />}
             {activeView === "chat" && <TodoListView todos={latestTodos} emptyMessage={t.noTasks} />}
             {features.mmry_enabled && activeView === "memories" && <MemoriesView />}
+            {activeView === "voice" && voiceMode.isActive && <VoicePanel {...voicePanelProps} />}
             {/* Terminal only rendered in desktop layout when isMobileLayout is false */}
             {!isMobileLayout && (
               <div className={activeView === "terminal" ? "h-full" : "hidden"}>
@@ -1465,6 +1715,9 @@ export function SessionsApp() {
         onRespond={handlePermissionResponse}
         onDismiss={handlePermissionDismiss}
       />
+
+      {/* Voice mode overlay - mobile only */}
+      {mobileVoiceOverlay}
     </div>
   )
 }

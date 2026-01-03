@@ -66,7 +66,7 @@ import { CommandPalette, useCommandPalette } from "@/components/command-palette"
 import { AgentPicker } from "@/components/agent-picker";
 import { fetchAgents, type OpenCodeAgent } from "@/lib/opencode-client";
 import { generateReadableId, formatSessionDate } from "@/lib/session-utils";
-import { listWorkspaceDirectories, type Persona, type ChatSession } from "@/lib/control-plane-client";
+import { listWorkspaceDirectories, getProjectLogoUrl, type Persona, type ChatSession, type ProjectLogo } from "@/lib/control-plane-client";
 import "@/apps";
 
 function AppShell() {
@@ -110,6 +110,7 @@ function AppShell() {
   const isDark = currentTheme === "dark";
   
   const ActiveComponent = activeApp?.component ?? null;
+  const isSessionsView = activeAppId === "sessions" || activeApp?.id === "sessions";
 
   // Loading bar
   const [barVisible, setBarVisible] = useState(true);
@@ -148,7 +149,24 @@ function AppShell() {
 
   const [selectedProjectKey, setSelectedProjectKey] = useState<string | null>(null);
   const [availableAgents, setAvailableAgents] = useState<OpenCodeAgent[]>([]);
-  const [workspaceDirectories, setWorkspaceDirectories] = useState<{ name: string; path: string }[]>([]);
+  const [workspaceDirectories, setWorkspaceDirectories] = useState<{ name: string; path: string; logo?: ProjectLogo }[]>([]);
+  
+  // Pinned projects for filter bar (persisted to localStorage)
+  const [pinnedProjects, setPinnedProjects] = useState<string[]>(() => {
+    if (typeof window === "undefined") return [];
+    try {
+      const stored = localStorage.getItem("octo:pinnedProjects");
+      return stored ? JSON.parse(stored) : [];
+    } catch {
+      return [];
+    }
+  });
+  
+  // Persist pinned projects to localStorage
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    localStorage.setItem("octo:pinnedProjects", JSON.stringify(pinnedProjects));
+  }, [pinnedProjects]);
   const [directoryPickerOpen, setDirectoryPickerOpen] = useState(false);
   const [directoryPickerPath, setDirectoryPickerPath] = useState(".");
   const [directoryPickerEntries, setDirectoryPickerEntries] = useState<{ name: string; path: string }[]>([]);
@@ -198,7 +216,7 @@ function AppShell() {
     if (typeof window === "undefined") return;
     listWorkspaceDirectories(".")
       .then((entries) => {
-        const dirs = entries.map((entry) => ({ name: entry.name, path: entry.path }));
+        const dirs = entries.map((entry) => ({ name: entry.name, path: entry.path, logo: entry.logo }));
         setWorkspaceDirectories(dirs);
       })
       .catch((err) => {
@@ -344,7 +362,7 @@ function AppShell() {
   const projectSummaries = useMemo(() => {
     const entries = new Map<
       string,
-      { key: string; name: string; directory?: string; sessionCount: number; lastActive: number }
+      { key: string; name: string; directory?: string; sessionCount: number; lastActive: number; logo?: ProjectLogo }
     >();
 
     for (const directory of workspaceDirectories) {
@@ -354,6 +372,7 @@ function AppShell() {
         directory: directory.path,
         sessionCount: 0,
         lastActive: 0,
+        logo: directory.logo,
       });
     }
 
@@ -398,6 +417,37 @@ function AppShell() {
     if (!selectedProjectKey) return null;
     return projectSummaries.find((project) => project.key === selectedProjectKey)?.name ?? selectedProjectKey;
   }, [projectSummaries, selectedProjectKey]);
+
+  // Projects sorted for filter bar: pinned first (in order), then by session count
+  const sortedProjectsForFilterBar = useMemo(() => {
+    const bySessionCount = [...projectSummaries].sort((a, b) => b.sessionCount - a.sessionCount);
+    const pinned: typeof projectSummaries = [];
+    const unpinned: typeof projectSummaries = [];
+    
+    // First, add pinned projects in their saved order
+    for (const key of pinnedProjects) {
+      const project = bySessionCount.find(p => p.key === key);
+      if (project) pinned.push(project);
+    }
+    
+    // Then add unpinned projects sorted by session count
+    for (const project of bySessionCount) {
+      if (!pinnedProjects.includes(project.key)) {
+        unpinned.push(project);
+      }
+    }
+    
+    return [...pinned, ...unpinned];
+  }, [projectSummaries, pinnedProjects]);
+
+  const togglePinProject = useCallback((projectKey: string) => {
+    setPinnedProjects(prev => {
+      if (prev.includes(projectKey)) {
+        return prev.filter(k => k !== projectKey);
+      }
+      return [...prev, projectKey];
+    });
+  }, []);
 
   const directoryPickerParent = useMemo(() => {
     const normalized = directoryPickerPath.replace(/\\/g, "/");
@@ -512,11 +562,25 @@ function AppShell() {
 
   const handleConfirmDelete = useCallback(async () => {
     if (targetSessionId) {
-      await deleteChatSession(targetSessionId);
+      // Find the session's workspace path from chat history
+      const session = chatHistory.find((s) => s.id === targetSessionId);
+      const workspacePath = session?.workspace_path;
+      
+      // Determine the baseUrl to use for deletion
+      let baseUrl: string | null = opencodeBaseUrl;
+      
+      // If we have a workspace path and no opencode running, start it first
+      if (workspacePath && workspacePath !== "global" && !baseUrl) {
+        baseUrl = await ensureOpencodeRunning(workspacePath);
+      }
+      
+      if (baseUrl) {
+        await deleteChatSession(targetSessionId, baseUrl);
+      }
     }
     setDeleteDialogOpen(false);
     setTargetSessionId("");
-  }, [targetSessionId, deleteChatSession]);
+  }, [targetSessionId, deleteChatSession, chatHistory, opencodeBaseUrl, ensureOpencodeRunning]);
 
   const handleNewChat = useCallback(async () => {
     console.log("[handleNewChat] called", { 
@@ -526,15 +590,7 @@ function AppShell() {
       projectSummaries: projectSummaries.map(p => ({ key: p.key, directory: p.directory }))
     });
     
-    // If we have a running workspace session, create a new chat in it
-    if (selectedWorkspaceSession && opencodeBaseUrl) {
-      console.log("[handleNewChat] Using existing workspace session");
-      setActiveAppId("sessions");
-      await createNewChat();
-      return;
-    }
-    
-    // Check if we have a project filter selected - use that workspace
+    // Check if we have a project filter selected - prioritize this over active session
     if (selectedProjectKey) {
       const project = projectSummaries.find((p) => p.key === selectedProjectKey);
       console.log("[handleNewChat] Project filter selected:", { selectedProjectKey, project });
@@ -548,6 +604,14 @@ function AppShell() {
           return;
         }
       }
+    }
+    
+    // If we have a running workspace session, create a new chat in it
+    if (selectedWorkspaceSession && opencodeBaseUrl) {
+      console.log("[handleNewChat] Using existing workspace session");
+      setActiveAppId("sessions");
+      await createNewChat();
+      return;
     }
     
     // Check if we have a workspace path from the current chat history
@@ -788,7 +852,75 @@ function AppShell() {
                     </button>
                   )}
                 </div>
-                {/* Mobile search input with project filter */}
+                {/* Mobile project filter bar */}
+                {sortedProjectsForFilterBar.length > 0 && (
+                  <div className="px-2 mb-2">
+                    <div 
+                      className="flex gap-2 overflow-x-auto scrollbar-hide py-1"
+                      style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}
+                    >
+                      {/* All button */}
+                      <button
+                        onClick={handleProjectClear}
+                        className={cn(
+                          "flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center text-xs font-medium transition-all",
+                          "border-2",
+                          !selectedProjectKey
+                            ? "border-primary bg-primary/20 text-primary"
+                            : "border-sidebar-border bg-sidebar-accent/50 text-muted-foreground hover:border-primary/50"
+                        )}
+                        title={locale === "de" ? "Alle Projekte" : "All projects"}
+                      >
+                        <span className="text-[10px]">ALL</span>
+                      </button>
+                      
+                      {/* Project icons */}
+                      {sortedProjectsForFilterBar.map((project) => {
+                        const isPinned = pinnedProjects.includes(project.key);
+                        const isSelected = selectedProjectKey === project.key;
+                        const logoUrl = project.logo && project.key
+                          ? getProjectLogoUrl(project.key, project.logo.path)
+                          : null;
+                        const initials = project.name
+                          .split(/[\s-_]+/)
+                          .map(w => w[0])
+                          .join("")
+                          .toUpperCase()
+                          .slice(0, 2);
+                        
+                        return (
+                          <button
+                            key={project.key}
+                            onClick={() => setSelectedProjectKey(isSelected ? null : project.key)}
+                            className={cn(
+                              "flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center transition-all overflow-hidden",
+                              "border-2",
+                              isSelected
+                                ? "border-primary bg-primary/20"
+                                : isPinned
+                                  ? "border-primary/50 bg-sidebar-accent/50"
+                                  : "border-sidebar-border bg-sidebar-accent/50"
+                            )}
+                            title={`${project.name} (${project.sessionCount})`}
+                          >
+                            {logoUrl ? (
+                              <img
+                                src={logoUrl}
+                                alt={project.name}
+                                className="w-6 h-6 object-contain"
+                              />
+                            ) : (
+                              <span className="text-[10px] font-medium text-muted-foreground">
+                                {initials}
+                              </span>
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+                {/* Mobile search input */}
                 <div className="relative px-2 mb-2">
                   <Search className="absolute left-5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
                   <input
@@ -1232,7 +1364,7 @@ function AppShell() {
         </div>
 
         {/* New Chat button */}
-        {activeAppId === "sessions" && (
+        {isSessionsView && (
           <div className={`w-full ${sidebarCollapsed ? "px-2" : "px-3"} mt-1`}>
             <Button
               variant="outline"
@@ -1252,9 +1384,93 @@ function AppShell() {
           </div>
         )}
 
+        {/* Project filter bar - always show when on sessions tab */}
+        {isSessionsView && !sidebarCollapsed && (
+          <div className="w-full px-1.5 mt-3">
+            <div className="relative px-0.5">
+              <div 
+                className="flex gap-1.5 overflow-x-auto scrollbar-hide py-1"
+                style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}
+              >
+                {/* All button */}
+                <button
+                  onClick={handleProjectClear}
+                  className={cn(
+                    "flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-[10px] font-medium transition-all",
+                    "border-2",
+                    !selectedProjectKey
+                      ? "border-primary bg-primary/20 text-primary"
+                      : "border-sidebar-border bg-sidebar-accent/50 text-muted-foreground hover:border-primary/50"
+                  )}
+                  title={locale === "de" ? "Alle Projekte" : "All projects"}
+                >
+                  <span className="text-[9px]">ALL</span>
+                </button>
+                
+                {/* Project icons */}
+                {sortedProjectsForFilterBar.map((project) => {
+                  const isPinned = pinnedProjects.includes(project.key);
+                  const isSelected = selectedProjectKey === project.key;
+                  const logoUrl = project.logo && project.key
+                    ? getProjectLogoUrl(project.key, project.logo.path)
+                    : null;
+                  const initials = project.name
+                    .split(/[\s-_]+/)
+                    .map(w => w[0])
+                    .join("")
+                    .toUpperCase()
+                    .slice(0, 2);
+                  
+                  return (
+                    <ContextMenu key={project.key}>
+                      <ContextMenuTrigger asChild>
+                        <button
+                          onClick={() => setSelectedProjectKey(isSelected ? null : project.key)}
+                          className={cn(
+                            "flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center transition-all overflow-hidden",
+                            "border-2",
+                            isSelected
+                              ? "border-primary bg-primary/20"
+                              : isPinned
+                                ? "border-primary/50 bg-sidebar-accent/50 hover:border-primary"
+                                : "border-sidebar-border bg-sidebar-accent/50 hover:border-primary/50"
+                          )}
+                          title={`${project.name} (${project.sessionCount} ${locale === "de" ? "Chats" : "chats"})${isPinned ? " - Pinned" : ""}`}
+                        >
+                          {logoUrl ? (
+                            <img
+                              src={logoUrl}
+                              alt={project.name}
+                              className="w-5 h-5 object-contain"
+                            />
+                          ) : (
+                            <span className="text-[9px] font-medium text-muted-foreground">
+                              {initials}
+                            </span>
+                          )}
+                        </button>
+                      </ContextMenuTrigger>
+                      <ContextMenuContent>
+                        <ContextMenuItem onClick={() => setSelectedProjectKey(project.key)}>
+                          {locale === "de" ? "Filtern" : "Filter"}
+                        </ContextMenuItem>
+                        <ContextMenuItem onClick={() => togglePinProject(project.key)}>
+                          {isPinned
+                            ? (locale === "de" ? "Losloesen" : "Unpin")
+                            : (locale === "de" ? "Anheften" : "Pin")}
+                        </ContextMenuItem>
+                      </ContextMenuContent>
+                    </ContextMenu>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Session history list - uses chatHistory (disk-based, no opencode needed) */}
-        {activeAppId === "sessions" && !sidebarCollapsed && chatHistory.length > 0 && (
-          <div className="w-full px-1.5 mt-3 flex-1 min-h-0 flex flex-col">
+        {isSessionsView && !sidebarCollapsed && chatHistory.length > 0 && (
+          <div className="w-full px-1.5 mt-2 flex-1 min-h-0 flex flex-col">
             <div className="flex items-center justify-between gap-2 py-1.5 px-1 border-t border-sidebar-border">
               <div className="flex items-center gap-2">
                 <span className="text-xs uppercase tracking-wide text-muted-foreground">
@@ -1274,7 +1490,7 @@ function AppShell() {
                 </button>
               )}
             </div>
-            {/* Search input with project filter */}
+            {/* Search input */}
             <div className="relative mb-2 px-0.5">
               <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
               <input
@@ -1641,7 +1857,7 @@ function AppShell() {
         )}
 
         {/* Collapsed session indicator */}
-        {activeAppId === "sessions" && sidebarCollapsed && opencodeSessions.length > 0 && (
+        {isSessionsView && sidebarCollapsed && opencodeSessions.length > 0 && (
           <div className="w-full px-2 mt-4">
             <div className="border-t border-sidebar-border pt-2">
               <button

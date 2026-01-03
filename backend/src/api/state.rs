@@ -3,8 +3,8 @@
 use std::sync::Arc;
 
 use axum::body::Body;
-use hyper_util::client::legacy::Client;
 use hyper_util::client::legacy::connect::HttpConnector;
+use hyper_util::client::legacy::Client;
 use hyper_util::rt::TokioExecutor;
 
 use super::super::agent::AgentService;
@@ -35,6 +35,84 @@ impl Default for MmryState {
     }
 }
 
+/// Voice mode configuration for the API layer.
+///
+/// Frontend clients connect directly to STT/TTS WebSocket services.
+/// This state provides the URLs and default settings.
+#[derive(Clone, Debug)]
+pub struct VoiceState {
+    /// Whether voice mode is enabled.
+    pub enabled: bool,
+    /// WebSocket URL for the eaRS STT service.
+    pub stt_url: String,
+    /// WebSocket URL for the kokorox TTS service.
+    pub tts_url: String,
+    /// VAD timeout in milliseconds.
+    pub vad_timeout_ms: u32,
+    /// Default kokorox voice ID.
+    pub default_voice: String,
+    /// Default TTS speed (0.1 - 3.0).
+    pub default_speed: f32,
+    /// Enable auto language detection.
+    pub auto_language_detect: bool,
+    /// Whether TTS is muted by default.
+    pub tts_muted: bool,
+    /// Continuous conversation mode.
+    pub continuous_mode: bool,
+    /// Default visualizer style ("orb" or "kitt").
+    pub default_visualizer: String,
+    /// Minimum words spoken to interrupt TTS (0 = disabled).
+    pub interrupt_word_count: u32,
+    /// Reset interrupt word count after this silence in ms (0 = disabled).
+    pub interrupt_backoff_ms: u32,
+    /// Per-visualizer voice/speed settings.
+    pub visualizer_voices: std::collections::HashMap<String, VisualizerVoiceState>,
+}
+
+/// Per-visualizer voice settings.
+#[derive(Clone, Debug)]
+pub struct VisualizerVoiceState {
+    pub voice: String,
+    pub speed: f32,
+}
+
+impl Default for VoiceState {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            stt_url: "ws://localhost:8765".to_string(),
+            tts_url: "ws://localhost:8766".to_string(),
+            vad_timeout_ms: 1500,
+            default_voice: "af_heart".to_string(),
+            default_speed: 1.0,
+            auto_language_detect: true,
+            tts_muted: false,
+            continuous_mode: true,
+            default_visualizer: "orb".to_string(),
+            interrupt_word_count: 2,
+            interrupt_backoff_ms: 5000,
+            visualizer_voices: [
+                (
+                    "orb".to_string(),
+                    VisualizerVoiceState {
+                        voice: "af_heart".to_string(),
+                        speed: 1.0,
+                    },
+                ),
+                (
+                    "kitt".to_string(),
+                    VisualizerVoiceState {
+                        voice: "am_michael".to_string(),
+                        speed: 1.1,
+                    },
+                ),
+            ]
+            .into_iter()
+            .collect(),
+        }
+    }
+}
+
 /// Application state shared across all handlers.
 #[derive(Clone)]
 pub struct AppState {
@@ -54,6 +132,8 @@ pub struct AppState {
     pub agent_backend: Option<Arc<dyn AgentBackend>>,
     /// Mmry (memory service) configuration.
     pub mmry: MmryState,
+    /// Voice mode configuration.
+    pub voice: VoiceState,
 }
 
 impl AppState {
@@ -65,6 +145,7 @@ impl AppState {
         invites: InviteCodeRepository,
         auth: AuthState,
         mmry: MmryState,
+        voice: VoiceState,
     ) -> Self {
         let http_client: Client<HttpConnector, Body> =
             Client::builder(TokioExecutor::new()).build_http();
@@ -78,6 +159,7 @@ impl AppState {
             http_client,
             agent_backend: None,
             mmry,
+            voice,
         }
     }
 
@@ -90,6 +172,7 @@ impl AppState {
         auth: AuthState,
         backend: Arc<dyn AgentBackend>,
         mmry: MmryState,
+        voice: VoiceState,
     ) -> Self {
         let http_client: Client<HttpConnector, Body> =
             Client::builder(TokioExecutor::new()).build_http();
@@ -103,6 +186,7 @@ impl AppState {
             http_client,
             agent_backend: Some(backend),
             mmry,
+            voice,
         }
     }
 }

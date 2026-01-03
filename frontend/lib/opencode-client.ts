@@ -239,6 +239,43 @@ export async function fetchAgents(opencodeBaseUrl: string): Promise<OpenCodeAgen
   return handleResponse<OpenCodeAgent[]>(res)
 }
 
+// Command definition from opencode config
+export type OpenCodeCommand = {
+  template: string
+  description?: string
+  agent?: string
+  model?: string
+  subtask?: boolean
+}
+
+// Config response from opencode
+export type OpenCodeConfig = {
+  model?: string
+  agent?: string
+  command?: Record<string, OpenCodeCommand>
+  // Other config fields we don't need for now
+}
+
+export async function fetchConfig(opencodeBaseUrl: string): Promise<OpenCodeConfig> {
+  const res = await fetch(`${base(opencodeBaseUrl)}/config`, { cache: "no-store" })
+  return handleResponse<OpenCodeConfig>(res)
+}
+
+// Command from the /command list endpoint (includes built-in + custom commands)
+export type OpenCodeCommandInfo = {
+  name: string
+  description?: string
+  agent?: string
+  model?: string
+  template: string
+  subtask?: boolean
+}
+
+export async function fetchCommands(opencodeBaseUrl: string): Promise<OpenCodeCommandInfo[]> {
+  const res = await fetch(`${base(opencodeBaseUrl)}/command`, { cache: "no-store" })
+  return handleResponse<OpenCodeCommandInfo[]>(res)
+}
+
 export async function runShellCommand(
   opencodeBaseUrl: string,
   sessionId: string,
@@ -271,6 +308,34 @@ export async function runShellCommandAsync(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
+  })
+  if (!res.ok) {
+    let errorMsg = `Request failed with ${res.status}`
+    try {
+      const data = await res.json()
+      errorMsg = data.message || data.error || data.name || JSON.stringify(data)
+    } catch {
+      const text = await res.text().catch(() => res.statusText)
+      errorMsg = text || errorMsg
+    }
+    throw new Error(errorMsg)
+  }
+  return true
+}
+
+// Send a slash command to opencode (e.g., /init, /undo, /redo, /share, /help, or custom commands)
+// Command should be the name without the slash (e.g., "init", "help")
+// Arguments is the string after the command name (e.g., for "/test foo bar", args would be "foo bar")
+export async function sendCommandAsync(
+  opencodeBaseUrl: string,
+  sessionId: string,
+  command: string,
+  args: string = "",
+): Promise<boolean> {
+  const res = await fetch(`${base(opencodeBaseUrl)}/session/${sessionId}/command`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ command, arguments: args }),
   })
   if (!res.ok) {
     let errorMsg = `Request failed with ${res.status}`

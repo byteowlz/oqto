@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react"
 import { FolderKanban, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useApp } from "@/components/app-context"
-import { listWorkspaceDirectories } from "@/lib/control-plane-client"
+import { listWorkspaceDirectories, getProjectLogoUrl, type ProjectLogo } from "@/lib/control-plane-client"
 import { fetchAgents, type OpenCodeAgent } from "@/lib/opencode-client"
 import { formatSessionDate } from "@/lib/session-utils"
 import { cn } from "@/lib/utils"
@@ -15,11 +15,12 @@ type ProjectSummary = {
   directory?: string
   sessionCount: number
   lastActive: number
+  logo?: ProjectLogo
 }
 
 export function ProjectsApp() {
   const { locale, opencodeSessions, opencodeBaseUrl, setActiveAppId, projectDefaultAgents, setProjectDefaultAgents } = useApp()
-  const [workspaceDirectories, setWorkspaceDirectories] = useState<{ name: string; path: string }[]>([])
+  const [workspaceDirectories, setWorkspaceDirectories] = useState<{ name: string; path: string; logo?: ProjectLogo }[]>([])
   const [availableAgents, setAvailableAgents] = useState<OpenCodeAgent[]>([])
   const [selectedProjectKey, setSelectedProjectKey] = useState<string | null>(null)
 
@@ -57,7 +58,7 @@ export function ProjectsApp() {
     if (typeof window === "undefined") return
     listWorkspaceDirectories(".")
       .then((entries) => {
-        const dirs = entries.map((entry) => ({ name: entry.name, path: entry.path }))
+        const dirs = entries.map((entry) => ({ name: entry.name, path: entry.path, logo: entry.logo }))
         setWorkspaceDirectories(dirs)
       })
       .catch((err) => {
@@ -104,6 +105,7 @@ export function ProjectsApp() {
         directory: directory.path,
         sessionCount: 0,
         lastActive: 0,
+        logo: directory.logo,
       })
     }
 
@@ -202,6 +204,9 @@ export function ProjectsApp() {
                 : "Never"
             const defaultAgent = projectDefaultAgents[project.key]
             const isSelected = selectedProjectKey === project.key
+            const logoUrl = project.logo && project.key
+              ? getProjectLogoUrl(project.key, project.logo.path)
+              : null
             return (
               <div
                 key={project.key}
@@ -211,8 +216,16 @@ export function ProjectsApp() {
                 )}
               >
                 <div className="flex items-start gap-3">
-                  <div className="w-10 h-10 rounded-md bg-primary/10 flex items-center justify-center">
-                    <FolderKanban className="w-5 h-5 text-primary" />
+                  <div className="w-10 h-10 rounded-md bg-primary/10 flex items-center justify-center overflow-hidden">
+                    {logoUrl ? (
+                      <img
+                        src={logoUrl}
+                        alt={`${project.name} logo`}
+                        className="w-8 h-8 object-contain"
+                      />
+                    ) : (
+                      <FolderKanban className="w-5 h-5 text-primary" />
+                    )}
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="text-base font-semibold truncate">{project.name}</div>

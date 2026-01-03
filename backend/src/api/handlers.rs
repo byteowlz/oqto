@@ -55,12 +55,73 @@ pub async fn health() -> Json<HealthResponse> {
 pub struct FeaturesResponse {
     /// Whether mmry (memories) integration is enabled.
     pub mmry_enabled: bool,
+    /// Voice mode configuration (null if disabled).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub voice: Option<VoiceConfig>,
+}
+
+/// Voice configuration exposed to frontend.
+#[derive(Debug, Serialize)]
+pub struct VoiceConfig {
+    /// WebSocket URL for the eaRS STT service.
+    pub stt_url: String,
+    /// WebSocket URL for the kokorox TTS service.
+    pub tts_url: String,
+    /// VAD timeout in milliseconds.
+    pub vad_timeout_ms: u32,
+    /// Default kokorox voice ID.
+    pub default_voice: String,
+    /// Default TTS speed (0.1 - 3.0).
+    pub default_speed: f32,
+    /// Enable auto language detection.
+    pub auto_language_detect: bool,
+    /// Whether TTS is muted by default.
+    pub tts_muted: bool,
+    /// Continuous conversation mode.
+    pub continuous_mode: bool,
+    /// Default visualizer style ("orb" or "kitt").
+    pub default_visualizer: String,
+    /// Minimum words to interrupt TTS (0 = disabled).
+    pub interrupt_word_count: u32,
+    /// Reset word count after this silence in ms (0 = disabled).
+    pub interrupt_backoff_ms: u32,
+    /// Per-visualizer voice/speed settings.
+    pub visualizer_voices: std::collections::HashMap<String, VisualizerVoice>,
+}
+
+/// Per-visualizer voice settings.
+#[derive(Debug, Serialize)]
+pub struct VisualizerVoice {
+    pub voice: String,
+    pub speed: f32,
 }
 
 /// Get enabled features/capabilities.
 pub async fn features(State(state): State<AppState>) -> Json<FeaturesResponse> {
+    let voice = if state.voice.enabled {
+        Some(VoiceConfig {
+            stt_url: state.voice.stt_url.clone(),
+            tts_url: state.voice.tts_url.clone(),
+            vad_timeout_ms: state.voice.vad_timeout_ms,
+            default_voice: state.voice.default_voice.clone(),
+            default_speed: state.voice.default_speed,
+            auto_language_detect: state.voice.auto_language_detect,
+            tts_muted: state.voice.tts_muted,
+            continuous_mode: state.voice.continuous_mode,
+            default_visualizer: state.voice.default_visualizer.clone(),
+            interrupt_word_count: state.voice.interrupt_word_count,
+            interrupt_backoff_ms: state.voice.interrupt_backoff_ms,
+            visualizer_voices: state.voice.visualizer_voices.iter().map(|(k, v)| {
+                (k.clone(), VisualizerVoice { voice: v.voice.clone(), speed: v.speed })
+            }).collect(),
+        })
+    } else {
+        None
+    };
+
     Json(FeaturesResponse {
         mmry_enabled: state.mmry.enabled,
+        voice,
     })
 }
 
@@ -316,6 +377,88 @@ pub struct WorkspaceDirEntry {
     pub path: String,
     #[serde(rename = "type")]
     pub entry_type: String,
+    /// Relative path to project logo (if found in logo/ directory)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub logo: Option<ProjectLogo>,
+}
+
+/// Project logo information.
+#[derive(Debug, Serialize)]
+pub struct ProjectLogo {
+    /// Path relative to project root (e.g., "logo/project_logo_white.svg")
+    pub path: String,
+    /// Logo variant (e.g., "white", "black", "white_on_black")
+    pub variant: String,
+}
+
+/// Find the best logo file for a project directory.
+/// Prefers SVG over PNG, and "white" variants for dark UI.
+fn find_project_logo(project_path: &std::path::Path, project_name: &str) -> Option<ProjectLogo> {
+    let logo_dir = project_path.join("logo");
+    if !logo_dir.is_dir() {
+        return None;
+    }
+
+    let entries = std::fs::read_dir(&logo_dir).ok()?;
+    
+    // Collect all logo files
+    let mut logos: Vec<(String, String, bool)> = Vec::new(); // (filename, variant, is_svg)
+    
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+        if ext != "svg" && ext != "png" {
+            continue;
+        }
+        
+        let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        let is_svg = ext == "svg";
+        
+        // Extract variant from filename pattern: {project}_logo_{variant}.{ext}
+        // or just {variant}.{ext} for simpler naming
+        let variant = if let Some(rest) = filename.strip_prefix(&format!("{}_logo_", project_name)) {
+            rest.strip_suffix(&format!(".{}", ext)).unwrap_or(rest).to_string()
+        } else if let Some(rest) = filename.strip_prefix("logo_") {
+            rest.strip_suffix(&format!(".{}", ext)).unwrap_or(rest).to_string()
+        } else {
+            // Fallback: use filename without extension as variant
+            filename.strip_suffix(&format!(".{}", ext)).unwrap_or(filename).to_string()
+        };
+        
+        logos.push((filename.to_string(), variant, is_svg));
+    }
+    
+    if logos.is_empty() {
+        return None;
+    }
+    
+    // Priority order for dark UI: white variants first, then SVG over PNG
+    let variant_priority = |variant: &str| -> i32 {
+        match variant {
+            "white" => 0,
+            "white_on_black" => 1,
+            v if v.contains("white") && !v.contains("black_on_white") => 2,
+            "black_on_white" => 3,
+            "black" => 4,
+            _ => 5,
+        }
+    };
+    
+    logos.sort_by(|a, b| {
+        let prio_a = variant_priority(&a.1);
+        let prio_b = variant_priority(&b.1);
+        if prio_a != prio_b {
+            return prio_a.cmp(&prio_b);
+        }
+        // Prefer SVG over PNG
+        b.2.cmp(&a.2)
+    });
+    
+    let (filename, variant, _) = &logos[0];
+    Some(ProjectLogo {
+        path: format!("logo/{}", filename),
+        variant: variant.clone(),
+    })
 }
 
 /// List directories under the workspace root (projects view).
@@ -352,16 +495,79 @@ pub async fn list_workspace_dirs(
                 .unwrap_or(&path)
                 .to_string_lossy()
                 .to_string();
+            let logo = find_project_logo(&path, &name);
             dirs.push(WorkspaceDirEntry {
                 name,
                 path: if rel.is_empty() { ".".to_string() } else { rel },
                 entry_type: "directory".to_string(),
+                logo,
             });
         }
     }
 
     dirs.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(Json(dirs))
+}
+
+/// Serve a project logo file.
+/// Path format: {project_path}/logo/{filename}
+#[instrument(skip(state))]
+pub async fn get_project_logo(
+    State(state): State<AppState>,
+    axum::extract::Path(path): axum::extract::Path<String>,
+) -> Result<impl IntoResponse, ApiError> {
+    use axum::http::header;
+
+    let root = state.sessions.workspace_root();
+    let file_path = std::path::PathBuf::from(&path);
+
+    // Security: prevent path traversal
+    if file_path.is_absolute() || file_path.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+        return Err(ApiError::bad_request("invalid path"));
+    }
+
+    // Must be in a logo/ subdirectory
+    let components: Vec<_> = file_path.components().collect();
+    if components.len() < 3 {
+        return Err(ApiError::bad_request("invalid logo path"));
+    }
+    
+    // Check that the path contains "logo" as a directory component
+    let has_logo_dir = components.iter().any(|c| {
+        matches!(c, std::path::Component::Normal(s) if s.to_str() == Some("logo"))
+    });
+    if !has_logo_dir {
+        return Err(ApiError::bad_request("path must be in logo/ directory"));
+    }
+
+    let full_path = root.join(&file_path);
+    
+    // Check file exists and is a file
+    if !full_path.is_file() {
+        return Err(ApiError::not_found("logo not found"));
+    }
+
+    // Determine content type from extension
+    let content_type = match full_path.extension().and_then(|e| e.to_str()) {
+        Some("svg") => "image/svg+xml",
+        Some("png") => "image/png",
+        Some("jpg") | Some("jpeg") => "image/jpeg",
+        Some("webp") => "image/webp",
+        _ => "application/octet-stream",
+    };
+
+    // Read file contents
+    let contents = tokio::fs::read(&full_path)
+        .await
+        .map_err(|e| ApiError::internal(format!("Failed to read logo file: {}", e)))?;
+
+    Ok((
+        [
+            (header::CONTENT_TYPE, content_type),
+            (header::CACHE_CONTROL, "public, max-age=86400"), // Cache for 1 day
+        ],
+        contents,
+    ))
 }
 
 // ============================================================================

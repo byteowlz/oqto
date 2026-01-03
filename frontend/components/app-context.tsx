@@ -67,7 +67,7 @@ interface AppContextValue {
   ensureOpencodeRunning: (workspacePath?: string) => Promise<string | null>
   createNewChat: (baseUrlOverride?: string) => Promise<OpenCodeSession | null>
   createNewChatWithPersona: (persona: Persona, workspacePath?: string) => Promise<OpenCodeSession | null>
-  deleteChatSession: (sessionId: string) => Promise<boolean>
+  deleteChatSession: (sessionId: string, baseUrlOverride?: string) => Promise<boolean>
   renameChatSession: (sessionId: string, title: string) => Promise<boolean>
   stopWorkspaceSession: (sessionId: string) => Promise<boolean>
   deleteWorkspaceSession: (sessionId: string) => Promise<boolean>
@@ -424,10 +424,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }, [refreshWorkspaceSessions, refreshChatHistory, selectedWorkspaceSession?.workspace_path])
 
-  const deleteChatSession = useCallback(async (sessionId: string): Promise<boolean> => {
-    if (!opencodeBaseUrl) return false
+  const deleteChatSession = useCallback(async (sessionId: string, baseUrlOverride?: string): Promise<boolean> => {
+    const baseUrl = baseUrlOverride || opencodeBaseUrl
+    if (!baseUrl) return false
     try {
-      await deleteSession(opencodeBaseUrl, sessionId)
+      await deleteSession(baseUrl, sessionId)
       setOpencodeSessions((prev) => prev.filter((s) => s.id !== sessionId))
       // If we deleted the selected session, select another one
       setSelectedChatSessionId((current) => {

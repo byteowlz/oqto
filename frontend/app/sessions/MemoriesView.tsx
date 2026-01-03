@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState, useCallback } from "react"
+import { useEffect, useState, useCallback, useRef } from "react"
 import { Brain, Loader2, Plus, Search, Trash2, Pencil, Save, X, Tag, Calendar, Sparkles, RefreshCw } from "lucide-react"
 import { useApp } from "@/components/app-context"
 import { controlPlaneDirectBaseUrl } from "@/lib/control-plane-client"
@@ -35,15 +35,13 @@ interface MemoryListResponse {
   limit: number
 }
 
-interface SearchResult {
-  memory: Memory
-  score: number
-}
-
 interface SearchResponse {
-  results: SearchResult[]
-  query: string
-  mode: string
+  memories: Memory[]
+  guardrails?: {
+    blocked_memories: number
+    blocked_facts: number
+    triggered_patterns: string[]
+  }
 }
 
 interface MemoriesViewProps {
@@ -86,7 +84,7 @@ async function searchMemories(sessionId: string, query: string, limit = 50): Pro
     throw new Error(`Failed to search memories: ${res.statusText}`)
   }
   const data: SearchResponse = await res.json()
-  return data.results?.map((r) => r.memory) || []
+  return data.memories || []
 }
 
 async function addMemory(
@@ -166,6 +164,16 @@ function MemoryCard({
   const [isEditing, setIsEditing] = useState(false)
   const [editContent, setEditContent] = useState(memory.content)
   const [isSaving, setIsSaving] = useState(false)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  // Auto-resize textarea to fit content
+  useEffect(() => {
+    if (isEditing && textareaRef.current) {
+      const textarea = textareaRef.current
+      textarea.style.height = "auto"
+      textarea.style.height = `${textarea.scrollHeight}px`
+    }
+  }, [isEditing, editContent])
 
   const handleSave = async () => {
     setIsSaving(true)
@@ -194,9 +202,10 @@ function MemoryCard({
       {isEditing ? (
         <div className="space-y-2">
           <textarea
+            ref={textareaRef}
             value={editContent}
             onChange={(e) => setEditContent(e.target.value)}
-            className="w-full min-h-[80px] p-2 text-sm bg-background border border-border rounded resize-none focus:outline-none focus:ring-1 focus:ring-primary"
+            className="w-full min-h-[60px] p-2 text-sm bg-background border border-border rounded resize-none focus:outline-none focus:ring-1 focus:ring-primary overflow-hidden"
             autoFocus
           />
           <div className="flex justify-end gap-1">

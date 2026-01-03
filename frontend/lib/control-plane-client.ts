@@ -88,10 +88,19 @@ export type WorkspaceSession = {
   persona?: Persona | null
 }
 
+export type ProjectLogo = {
+  /** Path relative to project root (e.g., "logo/project_logo_white.svg") */
+  path: string
+  /** Logo variant (e.g., "white", "black", "white_on_black") */
+  variant: string
+}
+
 export type WorkspaceDirEntry = {
   name: string
   path: string
   type: "directory"
+  /** Project logo if found in logo/ directory */
+  logo?: ProjectLogo
 }
 
 export type CreateWorkspaceSessionRequest = {
@@ -125,15 +134,39 @@ async function readApiError(res: Response): Promise<string> {
 // Features API
 // ============================================================================
 
+/** Per-visualizer voice settings from backend */
+export type VisualizerVoiceConfig = {
+  voice: string
+  speed: number
+}
+
+/** Voice configuration from backend */
+export type VoiceFeatureConfig = {
+  stt_url: string
+  tts_url: string
+  vad_timeout_ms: number
+  default_voice: string
+  default_speed: number
+  auto_language_detect: boolean
+  tts_muted: boolean
+  continuous_mode: boolean
+  default_visualizer: string
+  interrupt_word_count: number
+  interrupt_backoff_ms: number
+  visualizer_voices: Record<string, VisualizerVoiceConfig>
+}
+
 export type Features = {
   mmry_enabled: boolean
+  /** Voice configuration (present if voice mode is enabled) */
+  voice?: VoiceFeatureConfig | null
 }
 
 export async function getFeatures(): Promise<Features> {
   const res = await fetch(`/api/features`, { credentials: "include" })
   if (!res.ok) {
     // Return defaults if endpoint not available
-    return { mmry_enabled: false }
+    return { mmry_enabled: false, voice: null }
   }
   return res.json()
 }
@@ -202,6 +235,8 @@ export type ProjectEntry = {
   name: string
   path: string
   type: "directory"
+  /** Project logo if found in logo/ directory */
+  logo?: ProjectLogo
 }
 
 /** List available projects (directories in workspace_dir) */
@@ -318,6 +353,18 @@ export async function listWorkspaceDirectories(path = "."): Promise<WorkspaceDir
   const res = await fetch(url.toString(), { cache: "no-store", credentials: "include" })
   if (!res.ok) throw new Error(await readApiError(res))
   return res.json()
+}
+
+/**
+ * Get the URL for a project logo.
+ * @param projectPath - The project path (relative to workspace root, e.g., "octo" or "subfolder/project")
+ * @param logoPath - The logo path relative to project root (e.g., "logo/project_logo_white.svg")
+ */
+export function getProjectLogoUrl(projectPath: string, logoPath: string): string {
+  // Combine project path and logo path
+  // The path should be relative to workspace root, not absolute
+  const fullPath = `${projectPath}/${logoPath}`
+  return `/api/projects/logo/${fullPath}`
 }
 
 // ============================================================================
