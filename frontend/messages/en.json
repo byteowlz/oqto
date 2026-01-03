@@ -1,132 +1,132 @@
 {
-  "common": {
-    "loading": "Loading...",
-    "error": "Error",
-    "save": "Save",
-    "cancel": "Cancel",
-    "delete": "Delete",
-    "edit": "Edit",
-    "create": "Create",
-    "search": "Search",
-    "filter": "Filter",
-    "refresh": "Refresh",
-    "close": "Close",
-    "open": "Open",
-    "back": "Back",
-    "next": "Next",
-    "previous": "Previous",
-    "yes": "Yes",
-    "no": "No",
-    "confirm": "Confirm",
-    "submit": "Submit",
-    "reset": "Reset",
-    "copy": "Copy",
-    "copied": "Copied!",
-    "download": "Download",
-    "upload": "Upload"
-  },
-  "navigation": {
-    "home": "Home",
-    "sessions": "Sessions",
-    "workspaces": "Workspaces",
-    "projects": "Projects",
-    "admin": "Admin",
-    "settings": "Settings",
-    "logout": "Logout"
-  },
-  "sessions": {
-    "title": "Sessions",
-    "newSession": "New Session",
-    "noSessions": "No sessions yet",
-    "createFirst": "Create your first session to get started",
-    "status": {
-      "pending": "Pending",
-      "starting": "Starting",
-      "running": "Running",
-      "stopping": "Stopping",
-      "stopped": "Stopped",
-      "failed": "Failed"
-    },
-    "actions": {
-      "start": "Start Session",
-      "stop": "Stop Session",
-      "restart": "Restart Session",
-      "delete": "Delete Session"
-    },
-    "chat": {
-      "placeholder": "Type a message...",
-      "send": "Send",
-      "thinking": "Thinking...",
-      "noMessages": "No messages yet. Start the conversation!"
-    }
-  },
-  "workspaces": {
-    "title": "Workspaces",
-    "newWorkspace": "New Workspace",
-    "noWorkspaces": "No workspaces yet",
-    "createFirst": "Create your first workspace to get started",
-    "selectTemplate": "Select a Template",
-    "templates": {
-      "codingCopilot": {
-        "name": "Coding Copilot",
-        "description": "AI-assisted coding with terminal access"
-      },
-      "researchAssistant": {
-        "name": "Research Assistant",
-        "description": "Research and document synthesis"
-      },
-      "meetingSynthesizer": {
-        "name": "Meeting Synthesizer",
-        "description": "Meeting notes and action items"
-      }
-    }
-  },
-  "files": {
-    "title": "Files",
-    "noFiles": "No files in this directory",
-    "preview": "Preview",
-    "download": "Download",
-    "upload": "Upload File",
-    "newFile": "New File",
-    "newFolder": "New Folder",
-    "rename": "Rename",
-    "delete": "Delete",
-    "openInEditor": "Open in Editor"
-  },
-  "terminal": {
-    "title": "Terminal",
-    "connecting": "Connecting to terminal...",
-    "connected": "Connected",
-    "disconnected": "Disconnected",
-    "reconnect": "Reconnect"
-  },
-  "admin": {
-    "title": "Admin Dashboard",
-    "overview": "Overview",
-    "sessions": "All Sessions",
-    "metrics": "Metrics",
-    "users": "Users",
-    "activeSessions": "Active Sessions",
-    "totalUsers": "Total Users",
-    "cpuUsage": "CPU Usage",
-    "memoryUsage": "Memory Usage",
-    "killSession": "Kill Session",
-    "forceStop": "Force Stop"
-  },
-  "errors": {
-    "generic": "Something went wrong. Please try again.",
-    "network": "Network error. Please check your connection.",
-    "unauthorized": "You are not authorized to perform this action.",
-    "notFound": "The requested resource was not found.",
-    "sessionFailed": "Failed to start session. Please try again."
-  },
-  "theme": {
-    "light": "Light",
-    "dark": "Dark",
-    "system": "System"
-  },
-  "language": {
-    "en": "English",
-    "de": "German"
-  }
+	"common": {
+		"loading": "Loading...",
+		"error": "Error",
+		"save": "Save",
+		"cancel": "Cancel",
+		"delete": "Delete",
+		"edit": "Edit",
+		"create": "Create",
+		"search": "Search",
+		"filter": "Filter",
+		"refresh": "Refresh",
+		"close": "Close",
+		"open": "Open",
+		"back": "Back",
+		"next": "Next",
+		"previous": "Previous",
+		"yes": "Yes",
+		"no": "No",
+		"confirm": "Confirm",
+		"submit": "Submit",
+		"reset": "Reset",
+		"copy": "Copy",
+		"copied": "Copied!",
+		"download": "Download",
+		"upload": "Upload"
+	},
+	"navigation": {
+		"home": "Home",
+		"sessions": "Sessions",
+		"workspaces": "Workspaces",
+		"projects": "Projects",
+		"admin": "Admin",
+		"settings": "Settings",
+		"logout": "Logout"
+	},
+	"sessions": {
+		"title": "Sessions",
+		"newSession": "New Session",
+		"noSessions": "No sessions yet",
+		"createFirst": "Create your first session to get started",
+		"status": {
+			"pending": "Pending",
+			"starting": "Starting",
+			"running": "Running",
+			"stopping": "Stopping",
+			"stopped": "Stopped",
+			"failed": "Failed"
+		},
+		"actions": {
+			"start": "Start Session",
+			"stop": "Stop Session",
+			"restart": "Restart Session",
+			"delete": "Delete Session"
+		},
+		"chat": {
+			"placeholder": "Type a message...",
+			"send": "Send",
+			"thinking": "Thinking...",
+			"noMessages": "No messages yet. Start the conversation!"
+		}
+	},
+	"workspaces": {
+		"title": "Workspaces",
+		"newWorkspace": "New Workspace",
+		"noWorkspaces": "No workspaces yet",
+		"createFirst": "Create your first workspace to get started",
+		"selectTemplate": "Select a Template",
+		"templates": {
+			"codingCopilot": {
+				"name": "Coding Copilot",
+				"description": "AI-assisted coding with terminal access"
+			},
+			"researchAssistant": {
+				"name": "Research Assistant",
+				"description": "Research and document synthesis"
+			},
+			"meetingSynthesizer": {
+				"name": "Meeting Synthesizer",
+				"description": "Meeting notes and action items"
+			}
+		}
+	},
+	"files": {
+		"title": "Files",
+		"noFiles": "No files in this directory",
+		"preview": "Preview",
+		"download": "Download",
+		"upload": "Upload File",
+		"newFile": "New File",
+		"newFolder": "New Folder",
+		"rename": "Rename",
+		"delete": "Delete",
+		"openInEditor": "Open in Editor"
+	},
+	"terminal": {
+		"title": "Terminal",
+		"connecting": "Connecting to terminal...",
+		"connected": "Connected",
+		"disconnected": "Disconnected",
+		"reconnect": "Reconnect"
+	},
+	"admin": {
+		"title": "Admin Dashboard",
+		"overview": "Overview",
+		"sessions": "All Sessions",
+		"metrics": "Metrics",
+		"users": "Users",
+		"activeSessions": "Active Sessions",
+		"totalUsers": "Total Users",
+		"cpuUsage": "CPU Usage",
+		"memoryUsage": "Memory Usage",
+		"killSession": "Kill Session",
+		"forceStop": "Force Stop"
+	},
+	"errors": {
+		"generic": "Something went wrong. Please try again.",
+		"network": "Network error. Please check your connection.",
+		"unauthorized": "You are not authorized to perform this action.",
+		"notFound": "The requested resource was not found.",
+		"sessionFailed": "Failed to start session. Please try again."
+	},
+	"theme": {
+		"light": "Light",
+		"dark": "Dark",
+		"system": "System"
+	},
+	"language": {
+		"en": "English",
+		"de": "German"
+	}
 }

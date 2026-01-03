@@ -35,7 +35,7 @@ appRegistry.register({
 })
 ```
 
-The `AppProvider` (used in `app/page.tsx`) reads the registry exactly once at startup, so importing `@/apps` is enough to populate the sidebar.
+The `AppProvider` (used in `src/routes/AppShellRoute.tsx`) reads the registry exactly once at startup, so importing `@/apps` is enough to populate the sidebar.
 
 ## 3. Verify the Layout Metadata
 

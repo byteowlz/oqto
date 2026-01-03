@@ -1,6 +1,6 @@
 # AI Agent Workspace Frontend
 
-A Next.js 15 (App Router) experience for managing AI workspaces, live agent chat, and remote terminals hosted inside Podman containers. The UI now talks directly to an opencode server, streams events over SSE, browses files through the colocated file server, and embeds a Ghostty-powered terminal connected to the container PTY.
+A Vite + React experience for managing AI workspaces, live agent chat, and remote terminals hosted inside Podman containers. The UI now talks directly to an opencode server, streams events over SSE, browses files through the colocated file server, and embeds a Ghostty-powered terminal connected to the container PTY.
 
 ## Prerequisites
 
@@ -15,16 +15,20 @@ A Next.js 15 (App Router) experience for managing AI workspaces, live agent chat
 Create a `.env.local` with the endpoints that match your Podman container:
 
 ```bash
-NEXT_PUBLIC_OPENCODE_BASE_URL=http://localhost:4096
-NEXT_PUBLIC_TERMINAL_WS_URL=ws://localhost:9090/ws
-NEXT_PUBLIC_FILE_SERVER_URL=http://localhost:9000
+VITE_OPENCODE_BASE_URL=http://localhost:4096
+VITE_TERMINAL_WS_URL=ws://localhost:9090/ws
+VITE_FILE_SERVER_URL=http://localhost:9000
+VITE_CONTROL_PLANE_URL=http://localhost:8080
+VITE_CADDY_BASE_URL=http://localhost
 ```
 
 | Variable | Purpose |
 | -------- | ------- |
-| `NEXT_PUBLIC_OPENCODE_BASE_URL` | Base URL for the opencode REST + SSE API (`/session`, `/event`, etc.). |
-| `NEXT_PUBLIC_TERMINAL_WS_URL` | WebSocket address that forwards raw PTY bytes. The Ghostty terminal streams directly to this socket. |
-| `NEXT_PUBLIC_FILE_SERVER_URL` | HTTP server rooted at the same workspace folder the container starts in. Must expose `/tree?path=` and `/file?path=` helpers. |
+| `VITE_OPENCODE_BASE_URL` | Base URL for the opencode REST + SSE API (`/session`, `/event`, etc.). |
+| `VITE_TERMINAL_WS_URL` | WebSocket address that forwards raw PTY bytes. The Ghostty terminal streams directly to this socket. |
+| `VITE_FILE_SERVER_URL` | HTTP server rooted at the same workspace folder the container starts in. Must expose `/tree?path=` and `/file?path=` helpers. |
+| `VITE_CONTROL_PLANE_URL` | Control plane API base URL for sessions, auth, and proxy endpoints. |
+| `VITE_CADDY_BASE_URL` | Optional Caddy proxy URL used for container routing in production. |
 
 ## Local Development
 
@@ -33,7 +37,7 @@ bun install
 bun dev
 ```
 
-The app runs on [http://localhost:3000](http://localhost:3000) and immediately begins calling the configured services. Use `bun lint` to run the ESLint suite.
+The app runs on [http://localhost:5173](http://localhost:5173) and immediately begins calling the configured services. Use `bun lint` to run the Biome + oxlint suite.
 
 ## Testing with Podman
 
@@ -58,7 +62,7 @@ A ready-to-run container definition lives in `Dockerfile` with the companion lau
 - `apps/` – pluggable app modules (Workspaces, Sessions, Admin) registered through `lib/app-registry`.
 - `components/terminal/ghostty-terminal.tsx` – Ghostty + WebSocket terminal wrapper.
 - `lib/opencode-client.ts` – Thin client for opencode REST/SSE workflows.
-- `app/sessions/*` – File tree browser, terminal view, and preview surface wired to live services.
+- `apps/sessions/*` – File tree browser, terminal view, and preview surface wired to live services.
 - `public/octo_logo_banner_white.svg` – App logo used by the shell navigation (SVG icon).
 
 Refer to the documents inside `history/` for deeper architecture notes on opencode and Ghostty integrations.

@@ -1,27 +1,29 @@
-"use client"
-
-import type React from "react"
-import { QueryClientProvider } from "@tanstack/react-query"
-import { NextIntlClientProvider, type AbstractIntlMessages } from "next-intl"
-import { getQueryClient } from "@/lib/query-client"
-import { ThemeProvider } from "@/components/theme-provider"
+import { ThemeProvider } from "@/components/theme-provider";
+import { i18n } from "@/lib/i18n";
+import { getQueryClient } from "@/lib/query-client";
+import { QueryClientProvider } from "@tanstack/react-query";
+import type React from "react";
+import { I18nextProvider } from "react-i18next";
 
 type ProvidersProps = {
-  children: React.ReactNode
-  locale: string
-  messages: AbstractIntlMessages
-}
+	children: React.ReactNode;
+};
 
-export function Providers({ children, locale, messages }: ProvidersProps) {
-  const queryClient = getQueryClient()
+export function Providers({ children }: ProvidersProps) {
+	const queryClient = getQueryClient();
 
-  return (
-    <QueryClientProvider client={queryClient}>
-      <NextIntlClientProvider locale={locale} messages={messages}>
-        <ThemeProvider attribute="class" defaultTheme="dark" enableSystem disableTransitionOnChange>
-          {children}
-        </ThemeProvider>
-      </NextIntlClientProvider>
-    </QueryClientProvider>
-  )
+	return (
+		<QueryClientProvider client={queryClient}>
+			<I18nextProvider i18n={i18n}>
+				<ThemeProvider
+					attribute="class"
+					defaultTheme="dark"
+					enableSystem
+					disableTransitionOnChange
+				>
+					{children}
+				</ThemeProvider>
+			</I18nextProvider>
+		</QueryClientProvider>
+	);
 }

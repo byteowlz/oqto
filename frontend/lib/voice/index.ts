@@ -6,10 +6,10 @@
  * - kokorox for TTS (text-to-speech with streaming)
  */
 
-export { STTService } from './stt-service';
-export type { MicrophoneDevice, STTCallbacks } from './stt-service';
+export { STTService } from "./stt-service";
+export type { MicrophoneDevice, STTCallbacks } from "./stt-service";
 
-export { TTSService } from './tts-service';
-export type { TTSCallbacks } from './tts-service';
+export { TTSService } from "./tts-service";
+export type { TTSCallbacks } from "./tts-service";
 
-export type { VoiceConfig } from './types';
+export type { VoiceConfig } from "./types";

@@ -3,19 +3,21 @@
  * Allows command palette to trigger voice modes in the sessions component.
  */
 
-import { useEffect, useCallback } from "react"
+import { useCallback, useEffect } from "react";
 
-export type VoiceCommandType = "conversation" | "dictation" | "stop"
+export type VoiceCommandType = "conversation" | "dictation" | "stop";
 
-type VoiceCommandListener = (command: VoiceCommandType) => void
+type VoiceCommandListener = (command: VoiceCommandType) => void;
 
-const listeners = new Set<VoiceCommandListener>()
+const listeners = new Set<VoiceCommandListener>();
 
 /**
  * Emit a voice command to all listeners.
  */
 export function emitVoiceCommand(command: VoiceCommandType) {
-  listeners.forEach((listener) => listener(command))
+	for (const listener of listeners) {
+		listener(command);
+	}
 }
 
 /**
@@ -23,12 +25,12 @@ export function emitVoiceCommand(command: VoiceCommandType) {
  * Used by the sessions component to receive commands from the palette.
  */
 export function useVoiceCommandListener(callback: VoiceCommandListener) {
-  useEffect(() => {
-    listeners.add(callback)
-    return () => {
-      listeners.delete(callback)
-    }
-  }, [callback])
+	useEffect(() => {
+		listeners.add(callback);
+		return () => {
+			listeners.delete(callback);
+		};
+	}, [callback]);
 }
 
 /**
@@ -36,19 +38,19 @@ export function useVoiceCommandListener(callback: VoiceCommandListener) {
  * Used by command palette to send commands.
  */
 export function useVoiceCommandEmitter() {
-  const startConversation = useCallback(() => {
-    emitVoiceCommand("conversation")
-  }, [])
+	const startConversation = useCallback(() => {
+		emitVoiceCommand("conversation");
+	}, []);
 
-  const startDictation = useCallback(() => {
-    emitVoiceCommand("dictation")
-  }, [])
+	const startDictation = useCallback(() => {
+		emitVoiceCommand("dictation");
+	}, []);
 
-  const stopVoice = useCallback(() => {
-    emitVoiceCommand("stop")
-  }, [])
+	const stopVoice = useCallback(() => {
+		emitVoiceCommand("stop");
+	}, []);
 
-  return { startConversation, startDictation, stopVoice }
+	return { startConversation, startDictation, stopVoice };
 }
 
 /**
@@ -56,50 +58,59 @@ export function useVoiceCommandEmitter() {
  * Default: Alt+V for conversation, Alt+D for dictation
  */
 export const VOICE_SHORTCUTS = {
-  conversation: { key: "v", altKey: true },
-  dictation: { key: "d", altKey: true },
-} as const
+	conversation: { key: "v", altKey: true },
+	dictation: { key: "d", altKey: true },
+} as const;
 
 /**
  * Format shortcut for display.
  */
-export function formatShortcut(shortcut: { key: string; altKey?: boolean; metaKey?: boolean; ctrlKey?: boolean }) {
-  const parts: string[] = []
-  if (shortcut.ctrlKey) parts.push("Ctrl")
-  if (shortcut.altKey) parts.push("⌥")
-  if (shortcut.metaKey) parts.push("⌘")
-  parts.push(shortcut.key.toUpperCase())
-  return parts.join("")
+export function formatShortcut(shortcut: {
+	key: string;
+	altKey?: boolean;
+	metaKey?: boolean;
+	ctrlKey?: boolean;
+}) {
+	const parts: string[] = [];
+	if (shortcut.ctrlKey) parts.push("Ctrl");
+	if (shortcut.altKey) parts.push("⌥");
+	if (shortcut.metaKey) parts.push("⌘");
+	parts.push(shortcut.key.toUpperCase());
+	return parts.join("");
 }
 
 /**
  * Hook to register global keyboard shortcuts for voice commands.
  */
-export function useVoiceShortcuts(enabled: boolean = true) {
-  useEffect(() => {
-    if (!enabled) return
+export function useVoiceShortcuts(enabled = true) {
+	useEffect(() => {
+		if (!enabled) return;
 
-    const handleKeyDown = (e: KeyboardEvent) => {
-      // Don't trigger if user is typing in an input
-      const target = e.target as HTMLElement
-      if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable) {
-        return
-      }
+		const handleKeyDown = (e: KeyboardEvent) => {
+			// Don't trigger if user is typing in an input
+			const target = e.target as HTMLElement;
+			if (
+				target.tagName === "INPUT" ||
+				target.tagName === "TEXTAREA" ||
+				target.isContentEditable
+			) {
+				return;
+			}
 
-      // Alt+V for conversation
-      if (e.altKey && e.key.toLowerCase() === "v") {
-        e.preventDefault()
-        emitVoiceCommand("conversation")
-      }
+			// Alt+V for conversation
+			if (e.altKey && e.key.toLowerCase() === "v") {
+				e.preventDefault();
+				emitVoiceCommand("conversation");
+			}
 
-      // Alt+D for dictation
-      if (e.altKey && e.key.toLowerCase() === "d") {
-        e.preventDefault()
-        emitVoiceCommand("dictation")
-      }
-    }
+			// Alt+D for dictation
+			if (e.altKey && e.key.toLowerCase() === "d") {
+				e.preventDefault();
+				emitVoiceCommand("dictation");
+			}
+		};
 
-    document.addEventListener("keydown", handleKeyDown)
-    return () => document.removeEventListener("keydown", handleKeyDown)
-  }, [enabled])
+		document.addEventListener("keydown", handleKeyDown);
+		return () => document.removeEventListener("keydown", handleKeyDown);
+	}, [enabled]);
 }

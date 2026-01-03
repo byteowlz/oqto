@@ -1,1 +1,1 @@
-export { SettingsEditor } from "./SettingsEditor"
+export { SettingsEditor } from "./SettingsEditor";
