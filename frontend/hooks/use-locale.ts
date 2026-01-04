@@ -14,7 +14,11 @@ export function useLocale() {
 	const setLocale = useCallback(
 		(newLocale: Locale) => {
 			startTransition(() => {
-				window.localStorage.setItem(LOCALE_STORAGE_KEY, newLocale);
+				try {
+					window.localStorage.setItem(LOCALE_STORAGE_KEY, newLocale);
+				} catch {
+					// Ignore storage failures (private mode, denied access).
+				}
 				void i18n.changeLanguage(newLocale);
 				document.documentElement.lang = newLocale;
 			});

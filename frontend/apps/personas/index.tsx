@@ -1,8 +1,8 @@
 "use client";
 
-import { useApp } from "@/components/app-context";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { useApp } from "@/hooks/use-app";
 import { getDefaultAvatarUrl, resolveAvatarUrl } from "@/lib/avatar-utils";
 import {
 	type Persona,
@@ -385,7 +385,7 @@ export function PersonasApp() {
 								>
 									<div className="flex items-center justify-between">
 										<div className="font-medium text-sm">
-											{session.readable_id || session.id.slice(0, 8)}
+											{session.id.slice(0, 8)}
 										</div>
 										<div
 											className={cn(

@@ -19,3 +19,10 @@ createRoot(container).render(
 		</Providers>
 	</React.StrictMode>,
 );
+
+requestAnimationFrame(() => {
+	requestAnimationFrame(() => {
+		document.getElementById("preload")?.remove();
+		document.documentElement.removeAttribute("data-preload");
+	});
+});

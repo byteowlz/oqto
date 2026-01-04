@@ -1,10 +1,9 @@
 //! API route definitions.
 
-use axum::http::{header, HeaderValue, Method};
+use axum::http::{HeaderValue, Method, header};
 use axum::{
-    middleware,
+    Router, middleware,
     routing::{delete, get, post, put},
-    Router,
 };
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::trace::{DefaultMakeSpan, DefaultOnRequest, DefaultOnResponse, TraceLayer};
@@ -12,7 +11,10 @@ use tracing::Level;
 
 use crate::auth::auth_middleware;
 
+use super::delegate as delegate_handlers;
 use super::handlers;
+use super::main_chat as main_chat_handlers;
+use super::main_chat_pi as main_chat_pi_handlers;
 use super::proxy;
 use super::state::AppState;
 
@@ -66,6 +68,9 @@ pub fn create_router(state: AppState) -> Router {
             post(handlers::upgrade_session),
         )
         .route("/sessions/updates", get(handlers::check_all_updates))
+        // Voice mode WebSocket proxies
+        .route("/voice/stt", get(proxy::proxy_voice_stt_ws))
+        .route("/voice/tts", get(proxy::proxy_voice_tts_ws))
         // Opencode events (legacy global endpoint)
         .route("/opencode/event", get(proxy::opencode_events))
         // SSE events proxy for specific session
@@ -104,10 +109,36 @@ pub fn create_router(state: AppState) -> Router {
                 .delete(proxy::proxy_fileserver),
         )
         .route(
+            "/workspace/files/{*path}",
+            get(proxy::proxy_fileserver_for_workspace)
+                .post(proxy::proxy_fileserver_for_workspace)
+                .put(proxy::proxy_fileserver_for_workspace)
+                .delete(proxy::proxy_fileserver_for_workspace),
+        )
+        .route(
             "/sessions/{session_id}/terminal",
             get(proxy::proxy_terminal_ws),
         )
         .route("/session/{session_id}/term", get(proxy::proxy_terminal_ws))
+        .route(
+            "/workspace/term",
+            get(proxy::proxy_terminal_ws_for_workspace),
+        )
+        // Workspace-based mmry routes (single-user mode)
+        .route(
+            "/workspace/memories",
+            get(proxy::proxy_mmry_list_for_workspace).post(proxy::proxy_mmry_add_for_workspace),
+        )
+        .route(
+            "/workspace/memories/search",
+            post(proxy::proxy_mmry_search_for_workspace),
+        )
+        .route(
+            "/workspace/memories/{memory_id}",
+            get(proxy::proxy_mmry_memory_for_workspace)
+                .put(proxy::proxy_mmry_memory_for_workspace)
+                .delete(proxy::proxy_mmry_memory_for_workspace),
+        )
         // Sub-agent proxy routes
         .route(
             "/session/{session_id}/agent/{agent_id}/code/event",
@@ -229,6 +260,50 @@ pub fn create_router(state: AppState) -> Router {
             get(handlers::get_settings_values).patch(handlers::update_settings_values),
         )
         .route("/settings/reload", post(handlers::reload_settings))
+        // OpenCode global config
+        .route(
+            "/opencode/config",
+            get(handlers::get_global_opencode_config),
+        )
+        // Main Chat routes (single persistent cross-project assistant per user)
+        .route(
+            "/main",
+            get(main_chat_handlers::get_main_chat)
+                .post(main_chat_handlers::initialize_main_chat)
+                .patch(main_chat_handlers::update_main_chat)
+                .delete(main_chat_handlers::delete_main_chat),
+        )
+        .route(
+            "/main/history",
+            get(main_chat_handlers::get_history).post(main_chat_handlers::add_history),
+        )
+        .route("/main/export", get(main_chat_handlers::export_history))
+        .route(
+            "/main/sessions",
+            get(main_chat_handlers::list_sessions).post(main_chat_handlers::register_session),
+        )
+        .route(
+            "/main/sessions/latest",
+            get(main_chat_handlers::get_latest_session),
+        )
+        // Main Chat Pi routes (Pi agent runtime for Main Chat)
+        .route("/main/pi/status", get(main_chat_pi_handlers::get_pi_status))
+        .route("/main/pi/session", post(main_chat_pi_handlers::start_pi_session).delete(main_chat_pi_handlers::close_session))
+        .route("/main/pi/state", get(main_chat_pi_handlers::get_pi_state))
+        .route("/main/pi/prompt", post(main_chat_pi_handlers::send_prompt))
+        .route("/main/pi/abort", post(main_chat_pi_handlers::abort_pi))
+        .route("/main/pi/messages", get(main_chat_pi_handlers::get_messages))
+        .route("/main/pi/compact", post(main_chat_pi_handlers::compact_session))
+        .route("/main/pi/new", post(main_chat_pi_handlers::new_session))
+        .route("/main/pi/stats", get(main_chat_pi_handlers::get_session_stats))
+        .route("/main/pi/ws", get(main_chat_pi_handlers::ws_handler))
+        .route("/main/pi/history", get(main_chat_pi_handlers::get_history).delete(main_chat_pi_handlers::clear_history))
+        .route("/main/pi/history/separator", post(main_chat_pi_handlers::add_separator))
+        // TRX (issue tracking) routes - workspace-based
+        .route("/workspace/trx/issues", get(handlers::list_trx_issues).post(handlers::create_trx_issue))
+        .route("/workspace/trx/issues/{issue_id}", get(handlers::get_trx_issue).put(handlers::update_trx_issue))
+        .route("/workspace/trx/issues/{issue_id}/close", post(handlers::close_trx_issue))
+        .route("/workspace/trx/sync", post(handlers::sync_trx))
         // AgentRPC routes (unified backend API)
         .route("/agent/health", get(handlers::agent_health))
         .route(
@@ -275,11 +350,35 @@ pub fn create_router(state: AppState) -> Router {
         .route("/auth/logout", post(handlers::logout))
         // Keep dev_login for backwards compatibility
         .route("/auth/dev-login", post(handlers::dev_login))
+        .with_state(state.clone());
+
+    // Delegation routes (localhost-only, no auth - used by Pi extension)
+    // These routes check for localhost in the handler and reject non-local requests
+    let delegate_routes = Router::new()
+        .route("/delegate/start", post(delegate_handlers::start_session))
+        .route(
+            "/delegate/prompt/{session_id}",
+            post(delegate_handlers::send_prompt),
+        )
+        .route(
+            "/delegate/status/{session_id}",
+            get(delegate_handlers::get_status),
+        )
+        .route(
+            "/delegate/messages/{session_id}",
+            get(delegate_handlers::get_messages),
+        )
+        .route(
+            "/delegate/stop/{session_id}",
+            post(delegate_handlers::stop_session),
+        )
+        .route("/delegate/sessions", get(delegate_handlers::list_sessions))
         .with_state(state);
 
     Router::new()
         .merge(public_routes)
         .merge(protected_routes)
+        .merge(delegate_routes)
         .layer(cors)
         .layer(trace_layer)
 }
@@ -309,6 +408,7 @@ fn build_cors_layer(state: &AppState) -> CorsLayer {
         header::ACCEPT,
         header::ORIGIN,
         header::COOKIE,
+        header::HeaderName::from_static("x-opencode-directory"),
     ];
 
     if allowed_origins.is_empty() {

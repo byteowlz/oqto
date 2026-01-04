@@ -1,52 +1,36 @@
 "use client";
 
-import { useApp } from "@/components/app-context";
 import { GhosttyTerminal } from "@/components/terminal/ghostty-terminal";
 import {
 	controlPlaneDirectBaseUrl,
-	terminalProxyPath,
+	terminalWorkspaceProxyPath,
 } from "@/lib/control-plane-client";
 import { toAbsoluteWsUrl } from "@/lib/url";
 import { useTheme } from "next-themes";
 import { useMemo } from "react";
 
 interface TerminalViewProps {
-	sessionId?: string;
+	workspacePath?: string | null;
 }
 
-export function TerminalView({ sessionId }: TerminalViewProps) {
-	const { selectedWorkspaceSession } = useApp();
+export function TerminalView({ workspacePath }: TerminalViewProps) {
 	const { resolvedTheme } = useTheme();
 
 	const wsUrl = useMemo(() => {
-		if (!sessionId) return "";
+		if (!workspacePath) return "";
 		const directBase = controlPlaneDirectBaseUrl();
+		const proxyPath = terminalWorkspaceProxyPath(workspacePath);
 		if (directBase) {
-			return toAbsoluteWsUrl(`${directBase}${terminalProxyPath(sessionId)}`);
+			return toAbsoluteWsUrl(`${directBase}${proxyPath}`);
 		}
-		return toAbsoluteWsUrl(`/api${terminalProxyPath(sessionId)}`);
-	}, [sessionId]);
+		return toAbsoluteWsUrl(`/api${proxyPath}`);
+	}, [workspacePath]);
 
 	// Don't render terminal if no session selected
-	if (!sessionId) {
+	if (!workspacePath) {
 		return (
 			<div className="h-full bg-black/70 rounded p-4 text-sm font-mono text-red-300">
-				Select a session to attach to the terminal.
-			</div>
-		);
-	}
-
-	// Don't render terminal if session is not running (failed, stopped, pending, etc.)
-	if (
-		!selectedWorkspaceSession ||
-		selectedWorkspaceSession.status !== "running"
-	) {
-		const statusMsg = selectedWorkspaceSession
-			? `Session is ${selectedWorkspaceSession.status}...`
-			: "Loading session...";
-		return (
-			<div className="h-full bg-black/70 rounded p-4 text-sm font-mono text-yellow-300">
-				{statusMsg}
+				Select a chat to attach to the terminal.
 			</div>
 		);
 	}
@@ -55,7 +39,7 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
 	return (
 		<div className="h-full">
 			<GhosttyTerminal
-				key={`${sessionId}-${resolvedTheme}`}
+				key={`${workspacePath}-${resolvedTheme}`}
 				wsUrl={wsUrl}
 				className="border border-border"
 				theme={resolvedTheme}

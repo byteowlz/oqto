@@ -63,6 +63,8 @@ pub enum FileType {
 /// Query parameters for tree endpoint
 #[derive(Debug, Deserialize)]
 pub struct TreeQuery {
+    /// Optional directory to scope the root (relative to root_dir)
+    pub directory: Option<String>,
     /// Path relative to root (defaults to ".")
     #[serde(default = "default_path")]
     pub path: String,
@@ -93,6 +95,8 @@ fn default_path() -> String {
 /// Query parameters for file endpoint
 #[derive(Debug, Deserialize)]
 pub struct FileQuery {
+    /// Optional directory to scope the root (relative to root_dir)
+    pub directory: Option<String>,
     /// Path relative to root
     pub path: String,
     /// Return syntax-highlighted HTML instead of raw content
@@ -105,6 +109,8 @@ pub struct FileQuery {
 /// Upload query parameters
 #[derive(Debug, Deserialize)]
 pub struct UploadQuery {
+    /// Optional directory to scope the root (relative to root_dir)
+    pub directory: Option<String>,
     /// Destination path relative to root
     pub path: String,
     /// Create parent directories if they don't exist
@@ -131,6 +137,8 @@ pub struct HealthResponse {
 /// Query parameters for download endpoint
 #[derive(Debug, Deserialize)]
 pub struct DownloadQuery {
+    /// Optional directory to scope the root (relative to root_dir)
+    pub directory: Option<String>,
     /// Path relative to root (for single file/directory download)
     pub path: String,
 }
@@ -138,6 +146,8 @@ pub struct DownloadQuery {
 /// Query parameters for multi-file zip download
 #[derive(Debug, Deserialize)]
 pub struct DownloadZipQuery {
+    /// Optional directory to scope the root (relative to root_dir)
+    pub directory: Option<String>,
     /// Comma-separated list of paths to include in the zip
     pub paths: String,
     /// Optional name for the zip file (defaults to "download.zip")
@@ -148,10 +158,23 @@ pub struct DownloadZipQuery {
 /// Query parameters for file watch endpoint
 #[derive(Debug, Deserialize)]
 pub struct WatchQuery {
+    /// Optional directory to scope the root (relative to root_dir)
+    pub directory: Option<String>,
     /// Path relative to root (directory to watch)
     pub path: String,
     /// Optional file extension filter (e.g., ".md" or "md", comma-separated)
     pub ext: Option<String>,
+}
+
+/// Query parameters for rename endpoint
+#[derive(Debug, Deserialize)]
+pub struct RenameQuery {
+    /// Optional directory to scope the root (relative to root_dir)
+    pub directory: Option<String>,
+    /// Current path relative to root
+    pub old_path: String,
+    /// New path relative to root
+    pub new_path: String,
 }
 
 // ============================================================================
@@ -318,6 +341,47 @@ fn resolve_and_verify_path(root: &Path, relative: &str) -> Result<PathBuf, FileS
     }
 }
 
+/// Resolve a scoped root directory based on an optional directory override.
+/// Returns the effective root directory for the request.
+fn resolve_request_root(root: &Path, directory: Option<&str>) -> Result<PathBuf, FileServerError> {
+    let Some(directory) = directory else {
+        return Ok(root.to_path_buf());
+    };
+
+    let directory = directory.trim();
+    if directory.is_empty() || directory == "." {
+        return Ok(root.to_path_buf());
+    }
+
+    let relative = if Path::new(directory).is_absolute() {
+        let canonical_root = root.canonicalize().map_err(FileServerError::Io)?;
+        let candidate = Path::new(directory);
+        if let Ok(stripped) = candidate.strip_prefix(&canonical_root) {
+            stripped.to_string_lossy().to_string()
+        } else if let Ok(stripped) = candidate.strip_prefix(root) {
+            stripped.to_string_lossy().to_string()
+        } else {
+            warn!(
+                "Directory override outside root: {:?} (root: {:?})",
+                candidate, root
+            );
+            return Err(FileServerError::PathTraversal);
+        }
+    } else {
+        directory.to_string()
+    };
+
+    let resolved = resolve_and_verify_path(root, &relative)?;
+    if !resolved.exists() {
+        return Err(FileServerError::NotFound(directory.to_string()));
+    }
+    if !resolved.is_dir() {
+        return Err(FileServerError::NotADirectory);
+    }
+
+    Ok(resolved)
+}
+
 /// Get relative path from root
 fn get_relative_path(root: &Path, full_path: &Path) -> String {
     full_path
@@ -412,7 +476,8 @@ pub async fn watch_ws(
     Query(query): Query<WatchQuery>,
     ws: WebSocketUpgrade,
 ) -> Result<Response, FileServerError> {
-    let path = resolve_and_verify_path(&state.root_dir, &query.path)?;
+    let root_dir = resolve_request_root(&state.root_dir, query.directory.as_deref())?;
+    let path = resolve_and_verify_path(&root_dir, &query.path)?;
 
     if !path.exists() {
         return Err(FileServerError::NotFound(query.path));
@@ -424,13 +489,13 @@ pub async fn watch_ws(
 
     let ext_filter = parse_extension_filter(&query.ext);
     let state = state.clone();
-
-    Ok(ws.on_upgrade(move |socket| watch_socket(socket, state, path, ext_filter)))
+    Ok(ws.on_upgrade(move |socket| watch_socket(socket, state, root_dir, path, ext_filter)))
 }
 
 async fn watch_socket(
     mut socket: WebSocket,
     state: AppState,
+    root_dir: PathBuf,
     watch_path: PathBuf,
     ext_filter: Option<HashSet<String>>,
 ) {
@@ -477,7 +542,7 @@ async fn watch_socket(
                 deadline = None;
 
                 for (path, kind) in batched {
-                    if !path.starts_with(&state.root_dir) {
+                    if !path.starts_with(&root_dir) {
                         continue;
                     }
 
@@ -505,7 +570,7 @@ async fn watch_socket(
                         continue;
                     };
 
-                    let relative_path = get_relative_path(&state.root_dir, &path);
+                    let relative_path = get_relative_path(&root_dir, &path);
                     if relative_path.is_empty() {
                         continue;
                     }
@@ -548,7 +613,8 @@ pub async fn get_tree(
     Query(query): Query<TreeQuery>,
 ) -> Result<Json<Vec<FileNode>>, FileServerError> {
     // Use resolve_and_verify_path for proper symlink handling
-    let path = resolve_and_verify_path(&state.root_dir, &query.path)?;
+    let root_dir = resolve_request_root(&state.root_dir, query.directory.as_deref())?;
+    let path = resolve_and_verify_path(&root_dir, &query.path)?;
 
     if !path.exists() {
         return Err(FileServerError::NotFound(query.path));
@@ -570,17 +636,18 @@ pub async fn get_tree(
     match query.mode {
         ViewMode::Simple => {
             // Flat list of office files only
-            let files = get_simple_file_list(&state, &path, max_depth)?;
+            let files = get_simple_file_list(&state, &root_dir, &path, max_depth)?;
             Ok(Json(files))
         }
         ViewMode::Full => {
             // Full directory tree
             let state = state.clone();
+            let root_dir = root_dir.clone();
             let path = path.clone();
             let show_hidden = query.show_hidden;
 
             let tree = tokio::task::spawn_blocking(move || {
-                build_tree(&state, &path, max_depth, show_hidden)
+                build_tree(&state, &root_dir, &path, max_depth, show_hidden)
             })
             .await
             .map_err(|err| {
@@ -597,6 +664,7 @@ pub async fn get_tree(
 /// Build full directory tree
 fn build_tree(
     state: &AppState,
+    root_dir: &Path,
     path: &Path,
     max_depth: usize,
     show_hidden: bool,
@@ -629,11 +697,17 @@ fn build_tree(
         }
 
         let metadata = entry.metadata().map_err(FileServerError::Io)?;
-        let relative_path = get_relative_path(&state.root_dir, &entry_path);
+        let relative_path = get_relative_path(root_dir, &entry_path);
 
         let node = if entry_path.is_dir() {
             let children = if max_depth > 1 {
-                Some(build_tree(state, &entry_path, max_depth - 1, show_hidden)?)
+                Some(build_tree(
+                    state,
+                    root_dir,
+                    &entry_path,
+                    max_depth - 1,
+                    show_hidden,
+                )?)
             } else {
                 None
             };
@@ -681,6 +755,7 @@ fn build_tree(
 /// Get flat list of office files (simple mode)
 fn get_simple_file_list(
     state: &AppState,
+    root_dir: &Path,
     path: &Path,
     max_depth: usize,
 ) -> Result<Vec<FileNode>, FileServerError> {
@@ -729,7 +804,7 @@ fn get_simple_file_list(
         };
 
         let file_name = entry.file_name().to_string_lossy().to_string();
-        let relative_path = get_relative_path(&state.root_dir, entry_path);
+        let relative_path = get_relative_path(root_dir, entry_path);
 
         files.push(FileNode {
             name: file_name,
@@ -760,7 +835,8 @@ pub async fn get_file(
     Query(query): Query<FileQuery>,
 ) -> Result<Response, FileServerError> {
     // Use resolve_and_verify_path for proper symlink handling
-    let path = resolve_and_verify_path(&state.root_dir, &query.path)?;
+    let root_dir = resolve_request_root(&state.root_dir, query.directory.as_deref())?;
+    let path = resolve_and_verify_path(&root_dir, &query.path)?;
 
     if !path.exists() {
         return Err(FileServerError::NotFound(query.path.clone()));
@@ -778,7 +854,7 @@ pub async fn get_file(
     // If syntax highlighting is requested, return highlighted HTML
     if query.highlight {
         debug!("Syntax highlighting file: {}", path.display());
-        
+
         // Read file content (limit to 1MB for highlighting to prevent memory issues)
         let metadata = fs::metadata(&path).await.map_err(FileServerError::Io)?;
         if metadata.len() > 1024 * 1024 {
@@ -787,18 +863,23 @@ pub async fn get_file(
                 limit: 1024 * 1024,
             });
         }
-        
-        let content = fs::read_to_string(&path).await.map_err(FileServerError::Io)?;
+
+        let content = fs::read_to_string(&path)
+            .await
+            .map_err(FileServerError::Io)?;
         let path_clone = path.clone();
-        let theme_name = query.theme.unwrap_or_else(|| "base16-ocean.dark".to_string());
-        
+        let theme_name = query
+            .theme
+            .unwrap_or_else(|| "base16-ocean.dark".to_string());
+
         // Do highlighting in blocking task since syntect is not async
-        let highlighted = tokio::task::spawn_blocking(move || {
-            highlight_code(&content, &path_clone, &theme_name)
-        })
-        .await
-        .map_err(|e| FileServerError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))??;
-        
+        let highlighted =
+            tokio::task::spawn_blocking(move || highlight_code(&content, &path_clone, &theme_name))
+                .await
+                .map_err(|e| {
+                    FileServerError::Io(std::io::Error::new(std::io::ErrorKind::Other, e))
+                })??;
+
         return Ok((
             StatusCode::OK,
             [
@@ -867,18 +948,18 @@ fn highlight_code(content: &str, path: &Path, theme_name: &str) -> Result<String
 
     let mut highlighter = syntect::easy::HighlightLines::new(syntax, theme);
     let mut html_output = String::with_capacity(content.len() * 2);
-    
+
     // Build HTML with line numbers using table layout for guaranteed alignment
     html_output.push_str("<table class=\"highlighted-code\" style=\"font-family: ui-monospace, SFMono-Regular, 'SF Mono', Consolas, 'Liberation Mono', Menlo, monospace; font-size: 12px; line-height: 1.5; border-collapse: collapse; width: 100%;\">");
     html_output.push_str("<tbody>");
-    
+
     for (i, line) in LinesWithEndings::from(content).enumerate() {
         let regions = highlighter
             .highlight_line(line, &SYNTAX_SET)
             .map_err(|e| FileServerError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
         let html_line = styled_line_to_highlighted_html(&regions[..], IncludeBackground::No)
             .map_err(|e| FileServerError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
-        
+
         html_output.push_str("<tr>");
         // Line number cell
         html_output.push_str(&format!(
@@ -896,9 +977,9 @@ fn highlight_code(content: &str, path: &Path, theme_name: &str) -> Result<String
         html_output.push_str("</td>");
         html_output.push_str("</tr>");
     }
-    
+
     html_output.push_str("</tbody></table>");
-    
+
     Ok(html_output)
 }
 
@@ -908,13 +989,14 @@ pub async fn upload_file(
     Query(query): Query<UploadQuery>,
     mut multipart: Multipart,
 ) -> Result<Json<SuccessResponse>, FileServerError> {
+    let root_dir = resolve_request_root(&state.root_dir, query.directory.as_deref())?;
     // Use resolve_path for initial path building; deeper checks happen below.
-    let dest_path = resolve_path(&state.root_dir, &query.path)?;
+    let dest_path = resolve_path(&root_dir, &query.path)?;
 
     // Create parent directories if requested
     if query.mkdir {
         if let Some(parent) = dest_path.parent() {
-            if parent != state.root_dir {
+            if parent != root_dir {
                 fs::create_dir_all(parent).await.map_err(|e| {
                     error!("Failed to create directory: {}", e);
                     FileServerError::CreateDirFailed(parent.display().to_string())
@@ -957,7 +1039,7 @@ pub async fn upload_file(
         };
 
         // Re-validate the final path is within root (belt-and-suspenders)
-        let canonical_root = state.root_dir.canonicalize().map_err(FileServerError::Io)?;
+        let canonical_root = root_dir.canonicalize().map_err(FileServerError::Io)?;
         if final_path.exists() {
             let metadata = fs::symlink_metadata(&final_path)
                 .await
@@ -1010,7 +1092,10 @@ pub async fn upload_file(
                     limit: state.config.max_upload_size,
                 });
             }
-            temp_file.write_all(&chunk).await.map_err(FileServerError::Io)?;
+            temp_file
+                .write_all(&chunk)
+                .await
+                .map_err(FileServerError::Io)?;
         }
         temp_file.flush().await.map_err(FileServerError::Io)?;
 
@@ -1021,13 +1106,15 @@ pub async fn upload_file(
         );
 
         if final_path.exists() {
-            fs::remove_file(&final_path).await.map_err(FileServerError::Io)?;
+            fs::remove_file(&final_path)
+                .await
+                .map_err(FileServerError::Io)?;
         }
         fs::rename(&temp_path, &final_path)
             .await
             .map_err(FileServerError::Io)?;
 
-        let relative_path = get_relative_path(&state.root_dir, &final_path);
+        let relative_path = get_relative_path(&root_dir, &final_path);
 
         return Ok(Json(SuccessResponse {
             success: true,
@@ -1048,14 +1135,15 @@ pub async fn delete_file(
     Query(query): Query<FileQuery>,
 ) -> Result<Json<SuccessResponse>, FileServerError> {
     // Use resolve_and_verify_path for proper symlink handling
-    let path = resolve_and_verify_path(&state.root_dir, &query.path)?;
+    let root_dir = resolve_request_root(&state.root_dir, query.directory.as_deref())?;
+    let path = resolve_and_verify_path(&root_dir, &query.path)?;
 
     if !path.exists() {
         return Err(FileServerError::NotFound(query.path));
     }
 
     // SECURITY: Prevent deletion of root directory
-    let canonical_root = state.root_dir.canonicalize().map_err(FileServerError::Io)?;
+    let canonical_root = root_dir.canonicalize().map_err(FileServerError::Io)?;
     let canonical_path = path.canonicalize().map_err(FileServerError::Io)?;
 
     if canonical_path == canonical_root {
@@ -1091,12 +1179,75 @@ pub async fn delete_file(
     }))
 }
 
+/// PUT /file - Write file contents directly (for simple text/JSON files)
+pub async fn write_file(
+    State(state): State<AppState>,
+    Query(query): Query<UploadQuery>,
+    body: axum::body::Bytes,
+) -> Result<Json<SuccessResponse>, FileServerError> {
+    let root_dir = resolve_request_root(&state.root_dir, query.directory.as_deref())?;
+    let dest_path = resolve_path(&root_dir, &query.path)?;
+
+    // Create parent directories if requested
+    if query.mkdir {
+        if let Some(parent) = dest_path.parent() {
+            if parent != root_dir && !parent.exists() {
+                fs::create_dir_all(parent).await.map_err(|e| {
+                    error!("Failed to create directory: {}", e);
+                    FileServerError::CreateDirFailed(parent.display().to_string())
+                })?;
+            }
+        }
+    }
+
+    // SECURITY: Verify final path is within root
+    let canonical_root = root_dir.canonicalize().map_err(FileServerError::Io)?;
+    if let Ok(canonical_dest) = dest_path.canonicalize() {
+        if !canonical_dest.starts_with(&canonical_root) {
+            warn!("Write path escaped root: {:?}", dest_path);
+            return Err(FileServerError::PathTraversal);
+        }
+    } else if let Some(parent) = dest_path.parent() {
+        // File doesn't exist yet, check parent
+        if let Ok(canonical_parent) = parent.canonicalize() {
+            if !canonical_parent.starts_with(&canonical_root) {
+                warn!("Write path parent escaped root: {:?}", parent);
+                return Err(FileServerError::PathTraversal);
+            }
+        }
+    }
+
+    info!(
+        "Writing file: {} ({} bytes)",
+        dest_path.display(),
+        body.len()
+    );
+
+    // Write the file
+    let mut file = fs::File::create(&dest_path).await.map_err(|e| {
+        error!("Failed to create file: {}", e);
+        FileServerError::Io(e)
+    })?;
+
+    file.write_all(&body).await.map_err(|e| {
+        error!("Failed to write file: {}", e);
+        FileServerError::Io(e)
+    })?;
+
+    Ok(Json(SuccessResponse {
+        success: true,
+        message: format!("Written: {} ({} bytes)", query.path, body.len()),
+        path: Some(query.path),
+    }))
+}
+
 /// PUT /mkdir - Create directory
 pub async fn create_dir(
     State(state): State<AppState>,
     Query(query): Query<FileQuery>,
 ) -> Result<Json<SuccessResponse>, FileServerError> {
-    let path = resolve_path(&state.root_dir, &query.path)?;
+    let root_dir = resolve_request_root(&state.root_dir, query.directory.as_deref())?;
+    let path = resolve_path(&root_dir, &query.path)?;
 
     if path.exists() {
         return Ok(Json(SuccessResponse {
@@ -1120,6 +1271,76 @@ pub async fn create_dir(
     }))
 }
 
+/// POST /rename - Rename/move a file or directory
+pub async fn rename_file(
+    State(state): State<AppState>,
+    Query(query): Query<RenameQuery>,
+) -> Result<Json<SuccessResponse>, FileServerError> {
+    let root_dir = resolve_request_root(&state.root_dir, query.directory.as_deref())?;
+    let old_path = resolve_and_verify_path(&root_dir, &query.old_path)?;
+    let new_path = resolve_path(&root_dir, &query.new_path)?;
+
+    if !old_path.exists() {
+        return Err(FileServerError::NotFound(query.old_path));
+    }
+
+    // SECURITY: Prevent renaming root directory
+    let canonical_root = root_dir.canonicalize().map_err(FileServerError::Io)?;
+    let canonical_old = old_path.canonicalize().map_err(FileServerError::Io)?;
+
+    if canonical_old == canonical_root {
+        warn!("Attempted to rename root directory: {:?}", query.old_path);
+        return Err(FileServerError::InvalidPath(
+            "Cannot rename root directory".to_string(),
+        ));
+    }
+
+    // Verify old path is within root
+    if !canonical_old.starts_with(&canonical_root) {
+        warn!("Old path escaped root after canonicalization: {:?}", old_path);
+        return Err(FileServerError::PathTraversal);
+    }
+
+    // Verify new path parent exists and is within root
+    if let Some(new_parent) = new_path.parent() {
+        if !new_parent.exists() {
+            return Err(FileServerError::NotFound(format!(
+                "Parent directory does not exist: {}",
+                new_parent.display()
+            )));
+        }
+        let canonical_parent = new_parent.canonicalize().map_err(FileServerError::Io)?;
+        if !canonical_parent.starts_with(&canonical_root) {
+            warn!("New path parent escaped root: {:?}", new_parent);
+            return Err(FileServerError::PathTraversal);
+        }
+    }
+
+    // Check if new path already exists
+    if new_path.exists() {
+        return Err(FileServerError::InvalidPath(format!(
+            "Destination already exists: {}",
+            query.new_path
+        )));
+    }
+
+    info!(
+        "Renaming: {} -> {}",
+        old_path.display(),
+        new_path.display()
+    );
+
+    fs::rename(&old_path, &new_path)
+        .await
+        .map_err(FileServerError::Io)?;
+
+    Ok(Json(SuccessResponse {
+        success: true,
+        message: format!("Renamed: {} -> {}", query.old_path, query.new_path),
+        path: Some(query.new_path),
+    }))
+}
+
 /// GET /download - Download a single file or directory as zip
 ///
 /// For files: returns the file with Content-Disposition: attachment
@@ -1128,7 +1349,8 @@ pub async fn download(
     State(state): State<AppState>,
     Query(query): Query<DownloadQuery>,
 ) -> Result<Response, FileServerError> {
-    let path = resolve_and_verify_path(&state.root_dir, &query.path)?;
+    let root_dir = resolve_request_root(&state.root_dir, query.directory.as_deref())?;
+    let path = resolve_and_verify_path(&root_dir, &query.path)?;
 
     if !path.exists() {
         return Err(FileServerError::NotFound(query.path));
@@ -1176,7 +1398,7 @@ pub async fn download(
         let safe_zip_name = zip_name.replace('"', "'");
 
         // Create zip in memory
-        let zip_data = create_zip_from_paths(&state.root_dir, &[path.clone()])?;
+        let zip_data = create_zip_from_paths(&root_dir, &[path.clone()])?;
 
         Ok((
             StatusCode::OK,
@@ -1199,6 +1421,7 @@ pub async fn download_zip(
     State(state): State<AppState>,
     Query(query): Query<DownloadZipQuery>,
 ) -> Result<Response, FileServerError> {
+    let root_dir = resolve_request_root(&state.root_dir, query.directory.as_deref())?;
     // Parse comma-separated paths
     let paths: Vec<&str> = query.paths.split(',').map(|s| s.trim()).collect();
 
@@ -1211,7 +1434,7 @@ pub async fn download_zip(
     // Resolve and verify all paths
     let mut resolved_paths = Vec::new();
     for path_str in &paths {
-        let resolved = resolve_and_verify_path(&state.root_dir, path_str)?;
+        let resolved = resolve_and_verify_path(&root_dir, path_str)?;
         if !resolved.exists() {
             return Err(FileServerError::NotFound(path_str.to_string()));
         }
@@ -1221,7 +1444,7 @@ pub async fn download_zip(
     debug!("Downloading {} items as zip", resolved_paths.len());
 
     // Create zip
-    let zip_data = create_zip_from_paths(&state.root_dir, &resolved_paths)?;
+    let zip_data = create_zip_from_paths(&root_dir, &resolved_paths)?;
 
     let zip_name = query.name.unwrap_or_else(|| "download.zip".to_string());
     let safe_zip_name = zip_name.replace('"', "'");

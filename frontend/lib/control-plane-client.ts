@@ -1,3 +1,5 @@
+import { toAbsoluteWsUrl } from "@/lib/url";
+
 // ============================================================================
 // Auth Types
 // ============================================================================
@@ -75,7 +77,6 @@ export type Persona = {
 
 export type WorkspaceSession = {
 	id: string;
-	readable_id: string | null;
 	container_id: string | null;
 	container_name: string;
 	user_id: string;
@@ -122,13 +123,59 @@ type ApiErrorResponse = {
 };
 
 const trimTrailingSlash = (value: string) => value.replace(/\/$/, "");
+const controlPlaneStorageKey = "octo:controlPlaneUrl";
 
 const env =
 	(import.meta as ImportMeta & { env?: Record<string, string | undefined> })
 		.env ?? (typeof process !== "undefined" ? process.env : {});
 
+function normalizeControlPlaneUrl(value: string | null | undefined): string {
+	if (!value) return "";
+	return trimTrailingSlash(value.trim());
+}
+
+export function getControlPlaneBaseUrl(): string {
+	if (typeof window !== "undefined") {
+		try {
+			const stored = window.localStorage.getItem(controlPlaneStorageKey);
+			const normalized = normalizeControlPlaneUrl(stored);
+			if (normalized) return normalized;
+		} catch (err) {
+			console.warn("[control-plane] Failed to read stored base URL:", err);
+		}
+	}
+	return normalizeControlPlaneUrl(env.VITE_CONTROL_PLANE_URL ?? "");
+}
+
+export function setControlPlaneBaseUrl(value: string | null): void {
+	if (typeof window === "undefined") return;
+	const normalized = normalizeControlPlaneUrl(value ?? "");
+	try {
+		if (normalized) {
+			window.localStorage.setItem(controlPlaneStorageKey, normalized);
+		} else {
+			window.localStorage.removeItem(controlPlaneStorageKey);
+		}
+	} catch (err) {
+		console.warn("[control-plane] Failed to store base URL:", err);
+	}
+}
+
 export function controlPlaneDirectBaseUrl(): string {
-	return trimTrailingSlash(env.VITE_CONTROL_PLANE_URL ?? "");
+	return getControlPlaneBaseUrl();
+}
+
+export function controlPlaneApiUrl(path: string): string {
+	const base = getControlPlaneBaseUrl();
+	const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+	if (base) {
+		const stripped = normalizedPath.startsWith("/api")
+			? normalizedPath.replace(/^\/api/, "")
+			: normalizedPath;
+		return `${base}${stripped}`;
+	}
+	if (normalizedPath.startsWith("/api")) return normalizedPath;
+	return `/api${normalizedPath}`;
 }
 
 async function readApiError(res: Response): Promise<string> {
@@ -168,17 +215,28 @@ export type VoiceFeatureConfig = {
 	visualizer_voices: Record<string, VisualizerVoiceConfig>;
 };
 
+export type SessionAutoAttachMode = "off" | "attach" | "resume";
+
 export type Features = {
 	mmry_enabled: boolean;
+	session_auto_attach?: SessionAutoAttachMode;
+	session_auto_attach_scan?: boolean;
 	/** Voice configuration (present if voice mode is enabled) */
 	voice?: VoiceFeatureConfig | null;
 };
 
 export async function getFeatures(): Promise<Features> {
-	const res = await fetch("/api/features", { credentials: "include" });
+	const res = await fetch(controlPlaneApiUrl("/api/features"), {
+		credentials: "include",
+	});
 	if (!res.ok) {
 		// Return defaults if endpoint not available
-		return { mmry_enabled: false, voice: null };
+		return {
+			mmry_enabled: false,
+			voice: null,
+			session_auto_attach: "off",
+			session_auto_attach_scan: false,
+		};
 	}
 	return res.json();
 }
@@ -188,7 +246,7 @@ export async function getFeatures(): Promise<Features> {
 // ============================================================================
 
 export async function login(request: LoginRequest): Promise<LoginResponse> {
-	const res = await fetch("/api/auth/login", {
+	const res = await fetch(controlPlaneApiUrl("/api/auth/login"), {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify(request),
@@ -201,7 +259,7 @@ export async function login(request: LoginRequest): Promise<LoginResponse> {
 export async function register(
 	request: RegisterRequest,
 ): Promise<RegisterResponse> {
-	const res = await fetch("/api/auth/register", {
+	const res = await fetch(controlPlaneApiUrl("/api/auth/register"), {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify(request),
@@ -212,7 +270,7 @@ export async function register(
 }
 
 export async function logout(): Promise<void> {
-	const res = await fetch("/api/auth/logout", {
+	const res = await fetch(controlPlaneApiUrl("/api/auth/logout"), {
 		method: "POST",
 		credentials: "include",
 	});
@@ -220,7 +278,7 @@ export async function logout(): Promise<void> {
 }
 
 export async function getCurrentUser(): Promise<UserInfo | null> {
-	const res = await fetch("/api/me", {
+	const res = await fetch(controlPlaneApiUrl("/api/me"), {
 		credentials: "include",
 	});
 	if (res.status === 401) return null;
@@ -239,7 +297,7 @@ export async function devLogin(): Promise<boolean> {
 }
 
 export async function listWorkspaceSessions(): Promise<WorkspaceSession[]> {
-	const res = await fetch("/api/sessions", {
+	const res = await fetch(controlPlaneApiUrl("/api/sessions"), {
 		cache: "no-store",
 		credentials: "include",
 	});
@@ -258,7 +316,7 @@ export type ProjectEntry = {
 
 /** List available projects (directories in workspace_dir) */
 export async function listProjects(): Promise<ProjectEntry[]> {
-	const res = await fetch("/api/projects", {
+	const res = await fetch(controlPlaneApiUrl("/api/projects"), {
 		cache: "no-store",
 		credentials: "include",
 	});
@@ -269,7 +327,7 @@ export async function listProjects(): Promise<ProjectEntry[]> {
 export async function createWorkspaceSession(
 	request: CreateWorkspaceSessionRequest = {},
 ): Promise<WorkspaceSession> {
-	const res = await fetch("/api/sessions", {
+	const res = await fetch(controlPlaneApiUrl("/api/sessions"), {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify(request),
@@ -288,7 +346,7 @@ export async function createWorkspaceSession(
 export async function getOrCreateWorkspaceSession(
 	request: CreateWorkspaceSessionRequest = {},
 ): Promise<WorkspaceSession> {
-	const res = await fetch("/api/sessions/get-or-create", {
+	const res = await fetch(controlPlaneApiUrl("/api/sessions/get-or-create"), {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify(request),
@@ -306,39 +364,117 @@ export async function getOrCreateWorkspaceSession(
 export async function getOrCreateSessionForWorkspace(
 	workspacePath: string,
 ): Promise<WorkspaceSession> {
-	const res = await fetch("/api/sessions/get-or-create-for-workspace", {
-		method: "POST",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({ workspace_path: workspacePath }),
-		credentials: "include",
-	});
+	const res = await fetch(
+		controlPlaneApiUrl("/api/sessions/get-or-create-for-workspace"),
+		{
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ workspace_path: workspacePath }),
+			credentials: "include",
+		},
+	);
+	if (!res.ok) throw new Error(await readApiError(res));
+	return res.json();
+}
+
+/**
+ * Get a workspace session by ID or alias.
+ *
+ * The sessionIdOrAlias can be either:
+ * - A full session UUID (e.g., "6a03da55-2757-4d71-b421-af929bc4aef5")
+ * - A readable alias (e.g., "foxy-geek")
+ */
+export async function getWorkspaceSession(
+	sessionIdOrAlias: string,
+): Promise<WorkspaceSession | null> {
+	const res = await fetch(
+		controlPlaneApiUrl(`/api/sessions/${sessionIdOrAlias}`),
+		{
+			credentials: "include",
+		},
+	);
+	if (res.status === 404) return null;
 	if (!res.ok) throw new Error(await readApiError(res));
 	return res.json();
 }
 
 /** Touch session activity to prevent idle timeout */
 export async function touchSessionActivity(sessionId: string): Promise<void> {
-	const res = await fetch(`/api/sessions/${sessionId}/activity`, {
-		method: "POST",
-		credentials: "include",
-	});
+	const res = await fetch(
+		controlPlaneApiUrl(`/api/sessions/${sessionId}/activity`),
+		{
+			method: "POST",
+			credentials: "include",
+		},
+	);
 	if (!res.ok) throw new Error(await readApiError(res));
 }
 
 export async function stopWorkspaceSession(sessionId: string): Promise<void> {
-	const res = await fetch(`/api/sessions/${sessionId}/stop`, {
-		method: "POST",
+	const res = await fetch(
+		controlPlaneApiUrl(`/api/sessions/${sessionId}/stop`),
+		{
+			method: "POST",
+			credentials: "include",
+		},
+	);
+	if (!res.ok) throw new Error(await readApiError(res));
+}
+
+export async function resumeWorkspaceSession(
+	sessionId: string,
+): Promise<WorkspaceSession> {
+	const res = await fetch(
+		controlPlaneApiUrl(`/api/sessions/${sessionId}/resume`),
+		{
+			method: "POST",
+			credentials: "include",
+		},
+	);
+	if (!res.ok) throw new Error(await readApiError(res));
+	const data = (await res.json()) as
+		| { session?: WorkspaceSession }
+		| WorkspaceSession;
+	if ("id" in data) return data;
+	if (data.session && "id" in data.session) return data.session;
+	throw new Error("Unexpected resume session response");
+}
+
+export async function deleteWorkspaceSession(sessionId: string): Promise<void> {
+	const res = await fetch(controlPlaneApiUrl(`/api/sessions/${sessionId}`), {
+		method: "DELETE",
 		credentials: "include",
 	});
 	if (!res.ok) throw new Error(await readApiError(res));
 }
 
-export async function deleteWorkspaceSession(sessionId: string): Promise<void> {
-	const res = await fetch(`/api/sessions/${sessionId}`, {
-		method: "DELETE",
-		credentials: "include",
-	});
-	if (!res.ok) throw new Error(await readApiError(res));
+/**
+ * Restart a workspace session by stopping and resuming it.
+ * This is useful for applying config changes that require a restart.
+ * Waits for the session to be fully running before returning.
+ */
+export async function restartWorkspaceSession(
+	sessionId: string,
+): Promise<WorkspaceSession> {
+	await stopWorkspaceSession(sessionId);
+	const session = await resumeWorkspaceSession(sessionId);
+
+	// Wait for session to be fully running (poll every 500ms, max 30s)
+	const maxAttempts = 60;
+	for (let i = 0; i < maxAttempts; i++) {
+		const current = await getWorkspaceSession(sessionId);
+		if (current?.status === "running") {
+			return current;
+		}
+		if (current?.status === "failed" || current?.status === "error") {
+			const errorMsg = current.error_message || current.status;
+			throw new Error(`Session failed to restart: ${errorMsg}`);
+		}
+		await new Promise((resolve) => setTimeout(resolve, 500));
+	}
+
+	// Return what we have even if not fully running yet
+	return session;
 }
 
 export type SessionUpdateInfo = {
@@ -350,9 +486,12 @@ export type SessionUpdateInfo = {
 export async function checkSessionUpdate(
 	sessionId: string,
 ): Promise<SessionUpdateInfo> {
-	const res = await fetch(`/api/sessions/${sessionId}/update`, {
-		credentials: "include",
-	});
+	const res = await fetch(
+		controlPlaneApiUrl(`/api/sessions/${sessionId}/update`),
+		{
+			credentials: "include",
+		},
+	);
 	if (!res.ok) throw new Error(await readApiError(res));
 	return res.json();
 }
@@ -360,10 +499,13 @@ export async function checkSessionUpdate(
 export async function upgradeWorkspaceSession(
 	sessionId: string,
 ): Promise<WorkspaceSession> {
-	const res = await fetch(`/api/sessions/${sessionId}/upgrade`, {
-		method: "POST",
-		credentials: "include",
-	});
+	const res = await fetch(
+		controlPlaneApiUrl(`/api/sessions/${sessionId}/upgrade`),
+		{
+			method: "POST",
+			credentials: "include",
+		},
+	);
 	if (!res.ok) throw new Error(await readApiError(res));
 	return res.json();
 }
@@ -374,7 +516,7 @@ export async function upgradeWorkspaceSession(
 
 /** List all available personas */
 export async function listPersonas(): Promise<Persona[]> {
-	const res = await fetch("/api/personas", {
+	const res = await fetch(controlPlaneApiUrl("/api/personas"), {
 		cache: "no-store",
 		credentials: "include",
 	});
@@ -384,7 +526,7 @@ export async function listPersonas(): Promise<Persona[]> {
 
 /** Get a specific persona by ID */
 export async function getPersona(personaId: string): Promise<Persona> {
-	const res = await fetch(`/api/personas/${personaId}`, {
+	const res = await fetch(controlPlaneApiUrl(`/api/personas/${personaId}`), {
 		credentials: "include",
 	});
 	if (!res.ok) throw new Error(await readApiError(res));
@@ -398,7 +540,10 @@ export async function getPersona(personaId: string): Promise<Persona> {
 export async function listWorkspaceDirectories(
 	path = ".",
 ): Promise<WorkspaceDirEntry[]> {
-	const url = new URL("/api/projects", window.location.origin);
+	const url = new URL(
+		controlPlaneApiUrl("/api/projects"),
+		window.location.origin,
+	);
 	url.searchParams.set("path", path);
 	const res = await fetch(url.toString(), {
 		cache: "no-store",
@@ -420,7 +565,7 @@ export function getProjectLogoUrl(
 	// Combine project path and logo path
 	// The path should be relative to workspace root, not absolute
 	const fullPath = `${projectPath}/${logoPath}`;
-	return `/api/projects/logo/${fullPath}`;
+	return controlPlaneApiUrl(`/api/projects/logo/${fullPath}`);
 }
 
 // ============================================================================
@@ -431,6 +576,8 @@ export function getProjectLogoUrl(
 export type ChatSession = {
 	/** Session ID (e.g., "ses_xxx") */
 	id: string;
+	/** Human-readable ID (e.g., "cold-lamp") - deterministically generated from session ID */
+	readable_id: string;
 	/** Session title */
 	title: string | null;
 	/** Parent session ID (for child sessions) */
@@ -476,7 +623,10 @@ export type ChatHistoryQuery = {
 export async function listChatHistory(
 	query: ChatHistoryQuery = {},
 ): Promise<ChatSession[]> {
-	const url = new URL("/api/chat-history", window.location.origin);
+	const url = new URL(
+		controlPlaneApiUrl("/api/chat-history"),
+		window.location.origin,
+	);
 	if (query.workspace) url.searchParams.set("workspace", query.workspace);
 	if (query.include_children) url.searchParams.set("include_children", "true");
 	if (query.limit) url.searchParams.set("limit", query.limit.toString());
@@ -493,7 +643,10 @@ export async function listChatHistory(
 export async function listChatHistoryGrouped(
 	query: ChatHistoryQuery = {},
 ): Promise<GroupedChatHistory[]> {
-	const url = new URL("/api/chat-history/grouped", window.location.origin);
+	const url = new URL(
+		controlPlaneApiUrl("/api/chat-history/grouped"),
+		window.location.origin,
+	);
 	if (query.workspace) url.searchParams.set("workspace", query.workspace);
 	if (query.include_children) url.searchParams.set("include_children", "true");
 	if (query.limit) url.searchParams.set("limit", query.limit.toString());
@@ -508,9 +661,12 @@ export async function listChatHistoryGrouped(
 
 /** Get a specific chat session by ID */
 export async function getChatSession(sessionId: string): Promise<ChatSession> {
-	const res = await fetch(`/api/chat-history/${sessionId}`, {
-		credentials: "include",
-	});
+	const res = await fetch(
+		controlPlaneApiUrl(`/api/chat-history/${sessionId}`),
+		{
+			credentials: "include",
+		},
+	);
 	if (!res.ok) throw new Error(await readApiError(res));
 	return res.json();
 }
@@ -525,12 +681,15 @@ export async function updateChatSession(
 	sessionId: string,
 	updates: UpdateChatSessionRequest,
 ): Promise<ChatSession> {
-	const res = await fetch(`/api/chat-history/${sessionId}`, {
-		method: "PATCH",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify(updates),
-		credentials: "include",
-	});
+	const res = await fetch(
+		controlPlaneApiUrl(`/api/chat-history/${sessionId}`),
+		{
+			method: "PATCH",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(updates),
+			credentials: "include",
+		},
+	);
 	if (!res.ok) throw new Error(await readApiError(res));
 	return res.json();
 }
@@ -580,9 +739,12 @@ export type ChatMessage = {
 export async function getChatMessages(
 	sessionId: string,
 ): Promise<ChatMessage[]> {
-	const res = await fetch(`/api/chat-history/${sessionId}/messages`, {
-		credentials: "include",
-	});
+	const res = await fetch(
+		controlPlaneApiUrl(`/api/chat-history/${sessionId}/messages`),
+		{
+			credentials: "include",
+		},
+	);
 	if (!res.ok) throw new Error(await readApiError(res));
 	return res.json();
 }
@@ -679,7 +841,7 @@ export function convertChatMessagesToOpenCode(
 // ============================================================================
 
 export function opencodeProxyBaseUrl(sessionId: string) {
-	return `/api/session/${sessionId}/code`;
+	return controlPlaneApiUrl(`/api/session/${sessionId}/code`);
 }
 
 export function terminalProxyPath(sessionId: string) {
@@ -687,18 +849,93 @@ export function terminalProxyPath(sessionId: string) {
 }
 
 export function fileserverProxyBaseUrl(sessionId: string) {
-	return `/api/session/${sessionId}/files`;
+	return controlPlaneApiUrl(`/api/session/${sessionId}/files`);
+}
+
+export function fileserverWorkspaceBaseUrl() {
+	return controlPlaneApiUrl("/api/workspace/files");
+}
+
+export function terminalWorkspaceProxyPath(workspacePath: string) {
+	return `/workspace/term?workspace_path=${encodeURIComponent(workspacePath)}`;
+}
+
+export function memoriesWorkspaceBaseUrl(workspacePath: string) {
+	return controlPlaneApiUrl(
+		`/api/workspace/memories?workspace_path=${encodeURIComponent(workspacePath)}`,
+	);
+}
+
+export function voiceProxyWsUrl(kind: "stt" | "tts"): string {
+	return toAbsoluteWsUrl(controlPlaneApiUrl(`/api/voice/${kind}`));
 }
 
 // ============================================================================
 // Workspace Config (opencode.json)
 // ============================================================================
 
+/** Tool permission action */
+export type PermissionAction = "ask" | "allow" | "deny";
+
+/** Permission rule - can be a simple action or an object with pattern-specific rules */
+export type PermissionRule =
+	| PermissionAction
+	| Record<string, PermissionAction>;
+
+/** Permission configuration for tools - can be a global action or per-tool config */
+export type PermissionConfig =
+	| PermissionAction
+	| {
+			[toolName: string]: PermissionRule;
+	  };
+
+/** Compaction settings */
+export interface CompactionConfig {
+	auto?: boolean;
+	prune?: boolean;
+}
+
+/** Share mode for session sharing */
+export type ShareMode = "manual" | "auto" | "disabled";
+
+/** Full OpenCode workspace configuration (opencode.json) */
 export interface WorkspaceConfig {
-	/** Default agent to use for new chats in this workspace */
-	agent?: string;
-	/** Other opencode config fields we might care about */
+	/** Model in format "provider/model" */
+	model?: string;
+	/** Default agent to use */
+	default_agent?: string;
+	/** Share mode */
+	share?: ShareMode;
+	/** Compaction settings */
+	compaction?: CompactionConfig;
+	/** Instruction file paths */
 	instructions?: string[];
+	/** Tool permissions */
+	permission?: PermissionConfig;
+	/** Disabled tools (legacy, prefer permission) */
+	disabled_tools?: string[];
+	/** MCP servers configuration */
+	mcp?: Record<string, unknown>;
+	/** Custom providers configuration */
+	providers?: Record<string, unknown>;
+}
+
+/**
+ * Read the global opencode.json from ~/.config/opencode/opencode.json.
+ * Returns null if the file doesn't exist or can't be parsed.
+ */
+export async function getGlobalOpencodeConfig(): Promise<WorkspaceConfig | null> {
+	try {
+		const res = await fetch(controlPlaneApiUrl("/api/opencode/config"), {
+			credentials: "include",
+		});
+		if (!res.ok) return null;
+
+		const config = await res.json();
+		return config as WorkspaceConfig;
+	} catch {
+		return null;
+	}
 }
 
 /**
@@ -719,6 +956,29 @@ export async function getWorkspaceConfig(
 		return config as WorkspaceConfig;
 	} catch {
 		return null;
+	}
+}
+
+/**
+ * Save opencode.json to the workspace root.
+ * Creates the file if it doesn't exist.
+ */
+export async function saveWorkspaceConfig(
+	sessionId: string,
+	config: WorkspaceConfig,
+): Promise<void> {
+	const res = await fetch(
+		`${fileserverProxyBaseUrl(sessionId)}/file?path=opencode.json`,
+		{
+			method: "PUT",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(config, null, 2),
+			credentials: "include",
+		},
+	);
+	if (!res.ok) {
+		const error = await readApiError(res);
+		throw new Error(`Failed to save config: ${error}`);
 	}
 }
 
@@ -747,7 +1007,7 @@ export type SettingsUpdateRequest = {
 /** Get the JSON schema for an app's settings (filtered by user permissions) */
 export async function getSettingsSchema(app: string): Promise<unknown> {
 	const res = await fetch(
-		`/api/settings/schema?app=${encodeURIComponent(app)}`,
+		controlPlaneApiUrl(`/api/settings/schema?app=${encodeURIComponent(app)}`),
 		{
 			credentials: "include",
 		},
@@ -758,9 +1018,12 @@ export async function getSettingsSchema(app: string): Promise<unknown> {
 
 /** Get current settings values for an app */
 export async function getSettingsValues(app: string): Promise<SettingsValues> {
-	const res = await fetch(`/api/settings?app=${encodeURIComponent(app)}`, {
-		credentials: "include",
-	});
+	const res = await fetch(
+		controlPlaneApiUrl(`/api/settings?app=${encodeURIComponent(app)}`),
+		{
+			credentials: "include",
+		},
+	);
 	if (!res.ok) throw new Error(await readApiError(res));
 	return res.json();
 }
@@ -770,12 +1033,15 @@ export async function updateSettingsValues(
 	app: string,
 	updates: SettingsUpdateRequest,
 ): Promise<SettingsValues> {
-	const res = await fetch(`/api/settings?app=${encodeURIComponent(app)}`, {
-		method: "PATCH",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify(updates),
-		credentials: "include",
-	});
+	const res = await fetch(
+		controlPlaneApiUrl(`/api/settings?app=${encodeURIComponent(app)}`),
+		{
+			method: "PATCH",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(updates),
+			credentials: "include",
+		},
+	);
 	if (!res.ok) throw new Error(await readApiError(res));
 	return res.json();
 }
@@ -783,11 +1049,424 @@ export async function updateSettingsValues(
 /** Reload settings from disk (admin only) */
 export async function reloadSettings(app: string): Promise<void> {
 	const res = await fetch(
-		`/api/settings/reload?app=${encodeURIComponent(app)}`,
+		controlPlaneApiUrl(`/api/settings/reload?app=${encodeURIComponent(app)}`),
 		{
 			method: "POST",
 			credentials: "include",
 		},
 	);
 	if (!res.ok) throw new Error(await readApiError(res));
+}
+
+// ============================================================================
+// Main Chat API
+// ============================================================================
+
+/** History entry type */
+export type MainChatHistoryType =
+	| "summary"
+	| "decision"
+	| "handoff"
+	| "insight";
+
+/** History entry from Main Chat */
+export type MainChatHistoryEntry = {
+	id: number;
+	ts: string;
+	type: MainChatHistoryType;
+	content: string;
+	session_id?: string;
+	meta?: Record<string, unknown>;
+	created_at: string;
+};
+
+/** Main Chat session */
+export type MainChatSession = {
+	id: number;
+	session_id: string;
+	title?: string;
+	started_at: string;
+	ended_at?: string;
+	message_count: number;
+};
+
+/** Main Chat assistant info */
+export type MainChatAssistantInfo = {
+	name: string;
+	user_id: string;
+	path: string;
+	session_count: number;
+	history_count: number;
+	created_at?: string;
+};
+
+/** List all Main Chat assistants for the current user */
+export async function listMainChatAssistants(): Promise<string[]> {
+	const res = await fetch(controlPlaneApiUrl("/api/main"), {
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+	const data = await res.json();
+	if (data.exists && data.info?.name) {
+		return [data.info.name];
+	}
+	return [];
+}
+
+/** Get info about a specific assistant */
+export async function getMainChatAssistant(
+	name: string,
+): Promise<MainChatAssistantInfo> {
+	const res = await fetch(controlPlaneApiUrl("/api/main"), {
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+	const data = await res.json();
+	if (!data.exists || !data.info) {
+		throw new Error("Main Chat not found");
+	}
+	return data.info;
+}
+
+/** Create a new Main Chat assistant */
+export async function createMainChatAssistant(
+	name: string,
+): Promise<MainChatAssistantInfo> {
+	const res = await fetch(controlPlaneApiUrl("/api/main"), {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ name }),
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+	return res.json();
+}
+
+/** Update the Main Chat assistant name */
+export async function updateMainChatAssistant(
+	name: string,
+): Promise<MainChatAssistantInfo> {
+	const res = await fetch(controlPlaneApiUrl("/api/main"), {
+		method: "PATCH",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ name }),
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+	return res.json();
+}
+
+/** Delete a Main Chat assistant */
+export async function deleteMainChatAssistant(name: string): Promise<void> {
+	const res = await fetch(controlPlaneApiUrl("/api/main"), {
+		method: "DELETE",
+		credentials: "include",
+	});
+	if (res.status === 404) return;
+	if (!res.ok) throw new Error(await readApiError(res));
+}
+
+/** Get recent history for an assistant */
+export async function getMainChatHistory(
+	name: string,
+	limit = 20,
+): Promise<MainChatHistoryEntry[]> {
+	const res = await fetch(
+		controlPlaneApiUrl(`/api/main/history?limit=${limit}`),
+		{ credentials: "include" },
+	);
+	if (!res.ok) throw new Error(await readApiError(res));
+	return res.json();
+}
+
+/** Add a history entry */
+export async function addMainChatHistory(
+	name: string,
+	entry: {
+		type: MainChatHistoryType;
+		content: string;
+		session_id?: string;
+		meta?: Record<string, unknown>;
+	},
+): Promise<MainChatHistoryEntry> {
+	const res = await fetch(controlPlaneApiUrl("/api/main/history"), {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(entry),
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+	return res.json();
+}
+
+/** List sessions for an assistant */
+export async function listMainChatSessions(
+	name: string,
+): Promise<MainChatSession[]> {
+	const res = await fetch(controlPlaneApiUrl("/api/main/sessions"), {
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+	return res.json();
+}
+
+/** Register a new session with the assistant */
+export async function registerMainChatSession(
+	name: string,
+	session: { session_id: string; title?: string },
+): Promise<MainChatSession> {
+	const res = await fetch(controlPlaneApiUrl("/api/main/sessions"), {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(session),
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+	return res.json();
+}
+
+/** Get the latest session for an assistant */
+export async function getLatestMainChatSession(
+	name: string,
+): Promise<MainChatSession | null> {
+	const res = await fetch(controlPlaneApiUrl("/api/main/sessions/latest"), {
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+	return res.json();
+}
+
+/** Export history as JSONL */
+export async function exportMainChatHistory(name: string): Promise<string> {
+	const res = await fetch(controlPlaneApiUrl("/api/main/export"), {
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+	const data = await res.json();
+	return data.jsonl ?? "";
+}
+
+// ============================================================================
+// Main Chat Pi API (Pi agent runtime for Main Chat)
+// ============================================================================
+
+/** Pi session status */
+export type MainChatPiStatus = {
+	exists: boolean;
+	session_active: boolean;
+};
+
+/** Pi model info */
+export type PiModelInfo = {
+	id: string;
+	provider: string;
+	name: string;
+};
+
+/** Pi session state */
+export type PiState = {
+	model: PiModelInfo | null;
+	thinking_level: string;
+	is_streaming: boolean;
+	is_compacting: boolean;
+	session_id: string | null;
+	message_count: number;
+	auto_compaction_enabled: boolean;
+};
+
+/** Pi session stats */
+export type PiSessionStats = {
+	session_id: string | null;
+	user_messages: number;
+	assistant_messages: number;
+	tool_calls: number;
+	total_messages: number;
+	cost: number;
+};
+
+/** Pi agent message */
+export type PiAgentMessage = {
+	role: string;
+	content: unknown;
+	timestamp?: number;
+	api?: string;
+	provider?: string;
+	model?: string;
+	usage?: {
+		input: number;
+		output: number;
+		cacheRead: number;
+		cacheWrite: number;
+		cost?: {
+			input: number;
+			output: number;
+			cacheRead: number;
+			cacheWrite: number;
+			total: number;
+		};
+	};
+	stopReason?: string;
+};
+
+/** Pi compaction result */
+export type PiCompactionResult = {
+	summary: string;
+	firstKeptEntryId: string;
+	tokensBefore: number;
+	details?: unknown;
+};
+
+/** Check Pi session status */
+export async function getMainChatPiStatus(): Promise<MainChatPiStatus> {
+	const res = await fetch(controlPlaneApiUrl("/api/main/pi/status"), {
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+	return res.json();
+}
+
+/** Start or get Pi session */
+export async function startMainChatPiSession(): Promise<PiState> {
+	const res = await fetch(controlPlaneApiUrl("/api/main/pi/session"), {
+		method: "POST",
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+	return res.json();
+}
+
+/** Get Pi session state */
+export async function getMainChatPiState(): Promise<PiState> {
+	const res = await fetch(controlPlaneApiUrl("/api/main/pi/state"), {
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+	return res.json();
+}
+
+/** Send a prompt to Pi */
+export async function sendMainChatPiPrompt(message: string): Promise<void> {
+	const res = await fetch(controlPlaneApiUrl("/api/main/pi/prompt"), {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ message }),
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+}
+
+/** Abort current Pi operation */
+export async function abortMainChatPi(): Promise<void> {
+	const res = await fetch(controlPlaneApiUrl("/api/main/pi/abort"), {
+		method: "POST",
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+}
+
+/** Get Pi messages */
+export async function getMainChatPiMessages(): Promise<PiAgentMessage[]> {
+	const res = await fetch(controlPlaneApiUrl("/api/main/pi/messages"), {
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+	return res.json();
+}
+
+/** Compact Pi session */
+export async function compactMainChatPi(
+	customInstructions?: string,
+): Promise<PiCompactionResult> {
+	const res = await fetch(controlPlaneApiUrl("/api/main/pi/compact"), {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ custom_instructions: customInstructions }),
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+	return res.json();
+}
+
+/** Start new Pi session (clear history) */
+export async function newMainChatPiSession(): Promise<PiState> {
+	const res = await fetch(controlPlaneApiUrl("/api/main/pi/new"), {
+		method: "POST",
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+	return res.json();
+}
+
+/** Get Pi session stats */
+export async function getMainChatPiStats(): Promise<PiSessionStats> {
+	const res = await fetch(controlPlaneApiUrl("/api/main/pi/stats"), {
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+	return res.json();
+}
+
+/** Close Pi session */
+export async function closeMainChatPiSession(): Promise<void> {
+	const res = await fetch(controlPlaneApiUrl("/api/main/pi/session"), {
+		method: "DELETE",
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+}
+
+/** Create WebSocket connection to Pi for streaming events */
+export function createMainChatPiWebSocket(): WebSocket {
+	const baseUrl = getControlPlaneBaseUrl();
+	if (baseUrl) {
+		// Direct connection to control plane - no /api prefix needed
+		const wsUrl = `${baseUrl.replace(/^http/, "ws")}/main/pi/ws`;
+		return new WebSocket(wsUrl);
+	}
+	// Proxied via frontend dev server - use /api prefix
+	const wsUrl = `${window.location.origin.replace(/^http/, "ws")}/api/main/pi/ws`;
+	return new WebSocket(wsUrl);
+}
+
+/** Chat message stored in main_chat.db for persistent display history */
+export type MainChatDbMessage = {
+	id: number;
+	role: "user" | "assistant" | "system";
+	/** JSON array of message parts (text, thinking, tool_use, tool_result) */
+	content: string;
+	pi_session_id: string | null;
+	timestamp: number;
+	created_at: string;
+};
+
+/** Get persistent chat history from database (survives Pi session restarts) */
+export async function getMainChatPiHistory(): Promise<MainChatDbMessage[]> {
+	const res = await fetch(controlPlaneApiUrl("/api/main/pi/history"), {
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+	return res.json();
+}
+
+/** Clear persistent chat history */
+export async function clearMainChatPiHistory(): Promise<{ deleted: number }> {
+	const res = await fetch(controlPlaneApiUrl("/api/main/pi/history"), {
+		method: "DELETE",
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+	return res.json();
+}
+
+/** Add a session separator to history (marks new conversation start) */
+export async function addMainChatPiSeparator(): Promise<MainChatDbMessage> {
+	const res = await fetch(
+		controlPlaneApiUrl("/api/main/pi/history/separator"),
+		{
+			method: "POST",
+			credentials: "include",
+		},
+	);
+	if (!res.ok) throw new Error(await readApiError(res));
+	return res.json();
 }

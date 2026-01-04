@@ -153,6 +153,21 @@ dev_mode = true
 # password_hash = "$2b$12$..." # Use htpasswd -nbBC 12 username password | cut -d: -f2
 # role = "admin"
 
+[sessions]
+# Auto-attach behavior when opening chat history:
+# "off": never auto-attach
+# "attach": attach only if a session is already running
+# "resume": start/resume a session if none is running (resource-heavy)
+auto_attach = "on"
+# Scan running sessions for the selected chat session ID before attaching.
+auto_attach_scan = true
+# Maximum concurrent running sessions per user.
+max_concurrent_sessions = 6
+# Idle timeout in minutes before stopping a session.
+idle_timeout_minutes = 30
+# Idle cleanup check interval in seconds.
+idle_check_interval_seconds = 300
+
 [scaffold]
 # Agent scaffolding configuration - defines the tool used to create new agent directories
 # from templates. By default uses "byt new" but can be configured for any scaffolding tool.

@@ -54,19 +54,28 @@ impl LinuxUsersConfig {
     }
 
     /// Get the Linux username for a shared project.
-    /// 
+    ///
     /// Projects use a different prefix to distinguish them from user accounts:
     /// - User: octo_alice
     /// - Project: octo_proj_myproject
     pub fn project_username(&self, project_id: &str) -> String {
-        format!("{}{}{}", self.prefix, PROJECT_PREFIX, sanitize_username(project_id))
+        format!(
+            "{}{}{}",
+            self.prefix,
+            PROJECT_PREFIX,
+            sanitize_username(project_id)
+        )
     }
 
     /// Ensure a Linux user exists for a shared project.
-    /// 
+    ///
     /// Creates the project user if it doesn't exist and sets up the project directory.
     /// Returns the UID of the project user.
-    pub fn ensure_project_user(&self, project_id: &str, project_path: &std::path::Path) -> Result<u32> {
+    pub fn ensure_project_user(
+        &self,
+        project_id: &str,
+        project_path: &std::path::Path,
+    ) -> Result<u32> {
         if !self.enabled {
             // Return current user's UID when not enabled
             return Ok(unsafe { libc::getuid() });
@@ -79,7 +88,10 @@ impl LinuxUsersConfig {
 
         // Check if user already exists
         if let Some(uid) = get_user_uid(&username)? {
-            debug!("Project user '{}' already exists with UID {}", username, uid);
+            debug!(
+                "Project user '{}' already exists with UID {}",
+                username, uid
+            );
             // Ensure directory ownership is correct
             self.chown_directory_to_user(project_path, &username)?;
             return Ok(uid);
@@ -150,7 +162,7 @@ impl LinuxUsersConfig {
     }
 
     /// Get the effective Linux username for a session.
-    /// 
+    ///
     /// This determines which Linux user should run the agent processes:
     /// - If project_id is provided, uses the project user
     /// - Otherwise, uses the platform user's Linux user
@@ -162,7 +174,7 @@ impl LinuxUsersConfig {
     }
 
     /// Ensure the effective user exists for a session.
-    /// 
+    ///
     /// This is the main entry point for automatic user creation:
     /// - If project_id is provided, ensures project user exists
     /// - Otherwise, ensures platform user's Linux user exists
@@ -344,27 +356,6 @@ impl LinuxUsersConfig {
         }
 
         Ok(max_uid + 1)
-    }
-
-    /// Set ownership of a directory to a Linux user.
-    pub fn chown_directory(&self, path: &std::path::Path, user_id: &str) -> Result<()> {
-        if !self.enabled {
-            return Ok(());
-        }
-
-        let username = self.linux_username(user_id);
-        let path_str = path.to_string_lossy();
-
-        info!("Setting ownership of '{}' to '{}'", path_str, username);
-
-        run_privileged_command(
-            self.use_sudo,
-            "chown",
-            &["-R", &format!("{}:{}", username, self.group), &path_str],
-        )
-        .with_context(|| format!("chown {} to {}", path_str, username))?;
-
-        Ok(())
     }
 }
 

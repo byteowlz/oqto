@@ -18,9 +18,12 @@ pub fn file_routes() -> Router<AppState> {
         // File operations
         .route("/file", get(handlers::get_file))
         .route("/file", post(handlers::upload_file))
+        .route("/file", put(handlers::write_file))
         .route("/file", delete(handlers::delete_file))
         // Directory operations
         .route("/mkdir", put(handlers::create_dir))
+        // Rename/move operations
+        .route("/rename", post(handlers::rename_file))
         // Download operations
         .route("/download", get(handlers::download))
         .route("/download-zip", get(handlers::download_zip))

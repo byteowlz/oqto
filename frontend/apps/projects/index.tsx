@@ -1,7 +1,7 @@
 "use client";
 
-import { useApp } from "@/components/app-context";
 import { Button } from "@/components/ui/button";
+import { useApp } from "@/hooks/use-app";
 import {
 	type ProjectLogo,
 	getProjectLogoUrl,
@@ -27,6 +27,7 @@ export function ProjectsApp() {
 		locale,
 		opencodeSessions,
 		opencodeBaseUrl,
+		opencodeDirectory,
 		setActiveAppId,
 		projectDefaultAgents,
 		setProjectDefaultAgents,
@@ -88,13 +89,13 @@ export function ProjectsApp() {
 
 	useEffect(() => {
 		if (!opencodeBaseUrl) return;
-		fetchAgents(opencodeBaseUrl)
+		fetchAgents(opencodeBaseUrl, { directory: opencodeDirectory })
 			.then((agents) => setAvailableAgents(agents))
 			.catch((err) => {
 				console.error("Failed to fetch agents:", err);
 				setAvailableAgents([]);
 			});
-	}, [opencodeBaseUrl]);
+	}, [opencodeBaseUrl, opencodeDirectory]);
 
 	useEffect(() => {
 		if (typeof window === "undefined") return;

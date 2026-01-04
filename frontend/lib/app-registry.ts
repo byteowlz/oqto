@@ -8,6 +8,10 @@ export interface AppDefinition {
 	label: LocalizedText;
 	description?: string;
 	component: ComponentType;
+	/** Optional sidebar component for the right panel */
+	sidebarComponent?: ComponentType;
+	/** Whether sidebar should be shown by default (default: true if sidebarComponent exists) */
+	sidebarDefault?: boolean;
 	routes?: string[];
 	permissions?: string[];
 	defaultState?: Record<string, unknown>;

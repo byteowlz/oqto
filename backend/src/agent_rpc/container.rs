@@ -345,7 +345,10 @@ impl AgentBackend for ContainerBackend {
             let sessions = self.sessions.read().await;
             for (sid, session) in sessions.iter() {
                 if session.user_id == user_id {
-                    info!("Reusing existing container session {} for user {}", sid, user_id);
+                    info!(
+                        "Reusing existing container session {} for user {}",
+                        sid, user_id
+                    );
                     return Ok(SessionHandle {
                         session_id: sid.clone(),
                         opencode_session_id: opts.resume_session_id.clone(),
@@ -378,9 +381,15 @@ impl AgentBackend for ContainerBackend {
         // Build container config
         let mut env = self.config.env.clone();
         env.extend(opts.env);
+        if let Some(model) = opts.model {
+            env.entry("OPENCODE_MODEL".to_string()).or_insert(model);
+        }
 
         // Set XDG paths inside container
-        env.insert("XDG_DATA_HOME".to_string(), "/home/dev/.local/share".to_string());
+        env.insert(
+            "XDG_DATA_HOME".to_string(),
+            "/home/dev/.local/share".to_string(),
+        );
 
         let volumes = vec![
             (
@@ -596,9 +605,883 @@ impl AgentBackend for ContainerBackend {
             .await
             .map(|s| format!("http://localhost:{}", s.opencode_port)))
     }
+}
 
-    fn user_data_dir(&self, user_id: &str) -> PathBuf {
-        self.user_host_dir(user_id)
-            .join(".local/share/opencode")
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::container::{Container, ContainerError, ContainerResult, ContainerStats};
+    use async_trait::async_trait;
+    use std::collections::HashMap;
+    use tempfile::tempdir;
+
+    // =========================================================================
+    // Mock Container Runtime for Testing
+    // =========================================================================
+
+    /// Mock container runtime that doesn't actually create containers.
+    struct MockContainerRuntime {
+        /// Track created containers
+        containers: Arc<RwLock<HashMap<String, MockContainer>>>,
+        /// Whether to simulate failures
+        fail_create: bool,
+        fail_stop: bool,
+        fail_list: bool,
+    }
+
+    #[derive(Clone)]
+    struct MockContainer {
+        id: String,
+        name: String,
+        running: bool,
+    }
+
+    impl MockContainerRuntime {
+        fn new() -> Self {
+            Self {
+                containers: Arc::new(RwLock::new(HashMap::new())),
+                fail_create: false,
+                fail_stop: false,
+                fail_list: false,
+            }
+        }
+
+        fn with_failures(fail_create: bool, fail_stop: bool, fail_list: bool) -> Self {
+            Self {
+                containers: Arc::new(RwLock::new(HashMap::new())),
+                fail_create,
+                fail_stop,
+                fail_list,
+            }
+        }
+    }
+
+    #[async_trait]
+    impl ContainerRuntimeApi for MockContainerRuntime {
+        async fn create_container(&self, config: &ContainerConfig) -> ContainerResult<String> {
+            if self.fail_create {
+                return Err(ContainerError::CommandFailed {
+                    command: "create".to_string(),
+                    message: "Mock: container creation failed".to_string(),
+                });
+            }
+
+            let id = format!("mock-{}", uuid::Uuid::new_v4());
+            let container = MockContainer {
+                id: id.clone(),
+                name: config.name.clone().unwrap_or_default(),
+                running: true,
+            };
+
+            self.containers.write().await.insert(id.clone(), container);
+            Ok(id)
+        }
+
+        async fn start_container(&self, id: &str) -> ContainerResult<()> {
+            let mut containers = self.containers.write().await;
+            if let Some(container) = containers.get_mut(id) {
+                container.running = true;
+                Ok(())
+            } else {
+                Err(ContainerError::ContainerNotFound(id.to_string()))
+            }
+        }
+
+        async fn stop_container(&self, id: &str, _timeout: Option<u32>) -> ContainerResult<()> {
+            if self.fail_stop {
+                return Err(ContainerError::CommandFailed {
+                    command: "stop".to_string(),
+                    message: "Mock: container stop failed".to_string(),
+                });
+            }
+
+            let mut containers = self.containers.write().await;
+            if let Some(container) = containers.get_mut(id) {
+                container.running = false;
+                Ok(())
+            } else {
+                Err(ContainerError::ContainerNotFound(id.to_string()))
+            }
+        }
+
+        async fn remove_container(&self, id: &str, _force: bool) -> ContainerResult<()> {
+            let mut containers = self.containers.write().await;
+            if containers.remove(id).is_some() {
+                Ok(())
+            } else {
+                Err(ContainerError::ContainerNotFound(id.to_string()))
+            }
+        }
+
+        async fn list_containers(&self, _all: bool) -> ContainerResult<Vec<Container>> {
+            if self.fail_list {
+                return Err(ContainerError::CommandFailed {
+                    command: "list".to_string(),
+                    message: "Mock: list containers failed".to_string(),
+                });
+            }
+
+            let containers = self.containers.read().await;
+            Ok(containers
+                .values()
+                .map(|c| {
+                    // Use serde to construct Container with proper enum value
+                    let state_str = if c.running { "running" } else { "exited" };
+                    let json = serde_json::json!({
+                        "Id": c.id,
+                        "Names": [c.name.clone()],
+                        "Image": "mock-image",
+                        "State": state_str,
+                        "Status": if c.running { "Up 1 hour" } else { "Exited (0) 1 hour ago" },
+                        "Created": "2024-01-01T00:00:00Z",
+                        "Ports": []
+                    });
+                    serde_json::from_value(json).unwrap()
+                })
+                .collect())
+        }
+
+        async fn container_state_status(&self, id: &str) -> ContainerResult<Option<String>> {
+            let containers = self.containers.read().await;
+            if let Some(c) = containers.get(id) {
+                Ok(Some(if c.running {
+                    "running".to_string()
+                } else {
+                    "exited".to_string()
+                }))
+            } else {
+                Ok(None)
+            }
+        }
+
+        async fn get_image_digest(&self, _image: &str) -> ContainerResult<Option<String>> {
+            Ok(Some("sha256:mock123".to_string()))
+        }
+
+        async fn get_stats(&self, id: &str) -> ContainerResult<ContainerStats> {
+            Ok(ContainerStats {
+                container_id: id.to_string(),
+                name: "mock-container".to_string(),
+                cpu_percent: "5.0%".to_string(),
+                mem_usage: "100MiB / 1GiB".to_string(),
+                mem_percent: "10.0%".to_string(),
+                net_io: "1kB / 500B".to_string(),
+                block_io: "0B / 0B".to_string(),
+                pids: "10".to_string(),
+            })
+        }
+
+        async fn exec_detached(&self, _id: &str, _cmd: &[&str]) -> ContainerResult<()> {
+            Ok(())
+        }
+
+        async fn exec_output(&self, _id: &str, _cmd: &[&str]) -> ContainerResult<String> {
+            Ok("mock output".to_string())
+        }
+    }
+
+    // =========================================================================
+    // ContainerBackendConfig Tests
+    // =========================================================================
+
+    #[test]
+    fn test_container_backend_config_default() {
+        let config = ContainerBackendConfig::default();
+
+        assert_eq!(config.image, "octo-dev:latest");
+        assert_eq!(config.base_port, 41820);
+        assert_eq!(config.data_dir, PathBuf::from("/var/lib/octo/users"));
+        assert!(!config.host_network);
+        assert!(config.env.is_empty());
+    }
+
+    #[test]
+    fn test_container_backend_config_custom() {
+        let mut env = HashMap::new();
+        env.insert("API_KEY".to_string(), "secret".to_string());
+
+        let config = ContainerBackendConfig {
+            image: "custom-image:v1.0".to_string(),
+            base_port: 50000,
+            data_dir: PathBuf::from("/custom/data"),
+            host_network: true,
+            env,
+        };
+
+        assert_eq!(config.image, "custom-image:v1.0");
+        assert_eq!(config.base_port, 50000);
+        assert!(config.host_network);
+        assert_eq!(config.env.get("API_KEY").unwrap(), "secret");
+    }
+
+    #[test]
+    fn test_container_backend_config_clone() {
+        let config = ContainerBackendConfig {
+            image: "test:latest".to_string(),
+            base_port: 45000,
+            ..Default::default()
+        };
+
+        let cloned = config.clone();
+        assert_eq!(cloned.image, config.image);
+        assert_eq!(cloned.base_port, config.base_port);
+    }
+
+    #[test]
+    fn test_container_backend_config_debug() {
+        let config = ContainerBackendConfig::default();
+        let debug_str = format!("{:?}", config);
+
+        assert!(debug_str.contains("ContainerBackendConfig"));
+        assert!(debug_str.contains("image"));
+        assert!(debug_str.contains("base_port"));
+    }
+
+    // =========================================================================
+    // ContainerBackend Construction Tests
+    // =========================================================================
+
+    #[test]
+    fn test_container_backend_new() {
+        let config = ContainerBackendConfig::default();
+        let runtime = Arc::new(MockContainerRuntime::new());
+        let backend = ContainerBackend::new(config.clone(), runtime);
+
+        assert_eq!(backend.config.image, config.image);
+        assert_eq!(backend.config.base_port, config.base_port);
+    }
+
+    // =========================================================================
+    // Port Allocation Tests
+    // =========================================================================
+
+    #[tokio::test]
+    async fn test_allocate_ports_sequential() {
+        let config = ContainerBackendConfig {
+            base_port: 55000,
+            ..Default::default()
+        };
+        let runtime = Arc::new(MockContainerRuntime::new());
+        let backend = ContainerBackend::new(config, runtime);
+
+        // First allocation
+        let (p1, p2, p3) = backend.allocate_ports().await;
+        assert_eq!(p1, 55000);
+        assert_eq!(p2, 55001);
+        assert_eq!(p3, 55002);
+
+        // Second allocation
+        let (p4, p5, p6) = backend.allocate_ports().await;
+        assert_eq!(p4, 55003);
+        assert_eq!(p5, 55004);
+        assert_eq!(p6, 55005);
+    }
+
+    #[tokio::test]
+    async fn test_allocate_ports_concurrent_unique() {
+        let config = ContainerBackendConfig {
+            base_port: 56000,
+            ..Default::default()
+        };
+        let runtime = Arc::new(MockContainerRuntime::new());
+        let backend = Arc::new(ContainerBackend::new(config, runtime));
+
+        let mut handles = vec![];
+        for _ in 0..5 {
+            let b = Arc::clone(&backend);
+            handles.push(tokio::spawn(async move { b.allocate_ports().await }));
+        }
+
+        let mut all_ports = Vec::new();
+        for handle in handles {
+            let (p1, p2, p3) = handle.await.unwrap();
+            all_ports.extend([p1, p2, p3]);
+        }
+
+        // All 15 ports should be unique
+        let unique: std::collections::HashSet<_> = all_ports.iter().collect();
+        assert_eq!(unique.len(), 15);
+    }
+
+    // =========================================================================
+    // User Directory Tests
+    // =========================================================================
+
+    #[test]
+    fn test_user_host_dir() {
+        let config = ContainerBackendConfig {
+            data_dir: PathBuf::from("/data/users"),
+            ..Default::default()
+        };
+        let runtime = Arc::new(MockContainerRuntime::new());
+        let backend = ContainerBackend::new(config, runtime);
+
+        assert_eq!(
+            backend.user_host_dir("alice"),
+            PathBuf::from("/data/users/alice")
+        );
+        assert_eq!(
+            backend.user_host_dir("bob"),
+            PathBuf::from("/data/users/bob")
+        );
+    }
+
+    #[test]
+    fn test_user_host_dir_special_chars() {
+        let config = ContainerBackendConfig {
+            data_dir: PathBuf::from("/data/users"),
+            ..Default::default()
+        };
+        let runtime = Arc::new(MockContainerRuntime::new());
+        let backend = ContainerBackend::new(config, runtime);
+
+        // User IDs with special chars (though ideally sanitized upstream)
+        assert_eq!(
+            backend.user_host_dir("user_123"),
+            PathBuf::from("/data/users/user_123")
+        );
+    }
+
+    // =========================================================================
+    // Session Management Tests
+    // =========================================================================
+
+    #[tokio::test]
+    async fn test_get_session_nonexistent() {
+        let config = ContainerBackendConfig::default();
+        let runtime = Arc::new(MockContainerRuntime::new());
+        let backend = ContainerBackend::new(config, runtime);
+
+        let session = backend.get_session("nonexistent").await;
+        assert!(session.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_session_tracking() {
+        let config = ContainerBackendConfig::default();
+        let runtime = Arc::new(MockContainerRuntime::new());
+        let backend = ContainerBackend::new(config, runtime);
+
+        // Manually add a session
+        let session = ContainerSession {
+            session_id: "ses_test".to_string(),
+            container_id: "container_abc".to_string(),
+            user_id: "alice".to_string(),
+            workdir: PathBuf::from("/workspace"),
+            opencode_port: 41820,
+            ttyd_port: 41821,
+            fileserver_port: 41822,
+        };
+
+        backend
+            .sessions
+            .write()
+            .await
+            .insert("ses_test".to_string(), session);
+
+        // Should be retrievable
+        let retrieved = backend.get_session("ses_test").await;
+        assert!(retrieved.is_some());
+
+        let retrieved = retrieved.unwrap();
+        assert_eq!(retrieved.user_id, "alice");
+        assert_eq!(retrieved.container_id, "container_abc");
+    }
+
+    // =========================================================================
+    // AgentBackend Trait Implementation Tests
+    // =========================================================================
+
+    #[tokio::test]
+    async fn test_health_healthy_runtime() {
+        let config = ContainerBackendConfig::default();
+        let runtime = Arc::new(MockContainerRuntime::new());
+        let backend = ContainerBackend::new(config, runtime);
+
+        let health = backend.health().await.unwrap();
+
+        assert!(health.healthy);
+        assert_eq!(health.mode, "container");
+        assert!(health.version.is_some());
+        assert!(health.details.unwrap().contains("octo-dev:latest"));
+    }
+
+    #[tokio::test]
+    async fn test_health_unhealthy_runtime() {
+        let config = ContainerBackendConfig::default();
+        let runtime = Arc::new(MockContainerRuntime::with_failures(false, false, true));
+        let backend = ContainerBackend::new(config, runtime);
+
+        let health = backend.health().await.unwrap();
+
+        assert!(!health.healthy);
+        assert_eq!(health.mode, "container");
+        assert!(health.details.unwrap().contains("runtime error"));
+    }
+
+    #[tokio::test]
+    async fn test_list_conversations_no_active_session() {
+        let config = ContainerBackendConfig::default();
+        let runtime = Arc::new(MockContainerRuntime::new());
+        let backend = ContainerBackend::new(config, runtime);
+
+        // User with no active session returns empty
+        let conversations = backend.list_conversations("bob").await.unwrap();
+        assert!(conversations.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_get_conversation_no_active_session() {
+        let config = ContainerBackendConfig::default();
+        let runtime = Arc::new(MockContainerRuntime::new());
+        let backend = ContainerBackend::new(config, runtime);
+
+        let conv = backend
+            .get_conversation("alice", "some_conv")
+            .await
+            .unwrap();
+        assert!(conv.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_get_messages_no_active_session() {
+        let config = ContainerBackendConfig::default();
+        let runtime = Arc::new(MockContainerRuntime::new());
+        let backend = ContainerBackend::new(config, runtime);
+
+        let result = backend.get_messages("alice", "conv_123").await;
+
+        // Should error because no active session
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_start_session_creates_container() {
+        let temp_dir = tempdir().unwrap();
+        let config = ContainerBackendConfig {
+            data_dir: temp_dir.path().to_path_buf(),
+            base_port: 48000,
+            ..Default::default()
+        };
+        let runtime = Arc::new(MockContainerRuntime::new());
+        let backend = ContainerBackend::new(config, runtime.clone());
+
+        let workdir = temp_dir.path().join("workspace");
+        std::fs::create_dir_all(&workdir).unwrap();
+
+        let handle = backend
+            .start_session("alice", &workdir, StartSessionOpts::default())
+            .await
+            .unwrap();
+
+        assert!(handle.session_id.starts_with("octo-alice-"));
+        assert!(handle.is_new);
+        assert_eq!(handle.opencode_port, 48000);
+        assert_eq!(handle.ttyd_port, 48001);
+        assert_eq!(handle.fileserver_port, 48002);
+
+        // Container should exist in mock runtime
+        assert_eq!(runtime.containers.read().await.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_start_session_reuses_existing() {
+        let temp_dir = tempdir().unwrap();
+        let config = ContainerBackendConfig {
+            data_dir: temp_dir.path().to_path_buf(),
+            base_port: 49000,
+            ..Default::default()
+        };
+        let runtime = Arc::new(MockContainerRuntime::new());
+        let backend = ContainerBackend::new(config, runtime);
+
+        let workdir = temp_dir.path().join("workspace");
+        std::fs::create_dir_all(&workdir).unwrap();
+
+        // First session
+        let handle1 = backend
+            .start_session("alice", &workdir, StartSessionOpts::default())
+            .await
+            .unwrap();
+        assert!(handle1.is_new);
+
+        // Second session for same user should reuse
+        let handle2 = backend
+            .start_session("alice", &workdir, StartSessionOpts::default())
+            .await
+            .unwrap();
+        assert!(!handle2.is_new);
+        assert_eq!(handle1.session_id, handle2.session_id);
+    }
+
+    #[tokio::test]
+    async fn test_start_session_different_users_separate() {
+        let temp_dir = tempdir().unwrap();
+        let config = ContainerBackendConfig {
+            data_dir: temp_dir.path().to_path_buf(),
+            base_port: 47000,
+            ..Default::default()
+        };
+        let runtime = Arc::new(MockContainerRuntime::new());
+        let backend = ContainerBackend::new(config, runtime);
+
+        let workdir = temp_dir.path().join("workspace");
+        std::fs::create_dir_all(&workdir).unwrap();
+
+        let handle1 = backend
+            .start_session("alice", &workdir, StartSessionOpts::default())
+            .await
+            .unwrap();
+
+        let handle2 = backend
+            .start_session("bob", &workdir, StartSessionOpts::default())
+            .await
+            .unwrap();
+
+        // Different users get different sessions
+        assert_ne!(handle1.session_id, handle2.session_id);
+        assert!(handle1.is_new);
+        assert!(handle2.is_new);
+    }
+
+    #[tokio::test]
+    async fn test_start_session_with_model() {
+        let temp_dir = tempdir().unwrap();
+        let config = ContainerBackendConfig {
+            data_dir: temp_dir.path().to_path_buf(),
+            ..Default::default()
+        };
+        let runtime = Arc::new(MockContainerRuntime::new());
+        let backend = ContainerBackend::new(config, runtime);
+
+        let workdir = temp_dir.path().join("workspace");
+        std::fs::create_dir_all(&workdir).unwrap();
+
+        let opts = StartSessionOpts {
+            model: Some("anthropic/claude-3-opus".to_string()),
+            ..Default::default()
+        };
+
+        let handle = backend
+            .start_session("alice", &workdir, opts)
+            .await
+            .unwrap();
+        assert!(handle.is_new);
+    }
+
+    #[tokio::test]
+    async fn test_start_session_with_env_vars() {
+        let temp_dir = tempdir().unwrap();
+        let config = ContainerBackendConfig {
+            data_dir: temp_dir.path().to_path_buf(),
+            ..Default::default()
+        };
+        let runtime = Arc::new(MockContainerRuntime::new());
+        let backend = ContainerBackend::new(config, runtime);
+
+        let workdir = temp_dir.path().join("workspace");
+        std::fs::create_dir_all(&workdir).unwrap();
+
+        let mut env = HashMap::new();
+        env.insert("CUSTOM_VAR".to_string(), "custom_value".to_string());
+
+        let opts = StartSessionOpts {
+            env,
+            ..Default::default()
+        };
+
+        let handle = backend
+            .start_session("alice", &workdir, opts)
+            .await
+            .unwrap();
+        assert!(handle.is_new);
+    }
+
+    #[tokio::test]
+    async fn test_start_session_creates_user_dir() {
+        let temp_dir = tempdir().unwrap();
+        let user_dir = temp_dir.path().join("new_user");
+
+        // Ensure it doesn't exist yet
+        assert!(!user_dir.exists());
+
+        let config = ContainerBackendConfig {
+            data_dir: temp_dir.path().to_path_buf(),
+            ..Default::default()
+        };
+        let runtime = Arc::new(MockContainerRuntime::new());
+        let backend = ContainerBackend::new(config, runtime);
+
+        let workdir = temp_dir.path().join("workspace");
+        std::fs::create_dir_all(&workdir).unwrap();
+
+        backend
+            .start_session("new_user", &workdir, StartSessionOpts::default())
+            .await
+            .unwrap();
+
+        // User directory should now exist
+        assert!(user_dir.exists());
+    }
+
+    #[tokio::test]
+    async fn test_stop_session_stops_container() {
+        let temp_dir = tempdir().unwrap();
+        let config = ContainerBackendConfig {
+            data_dir: temp_dir.path().to_path_buf(),
+            ..Default::default()
+        };
+        let runtime = Arc::new(MockContainerRuntime::new());
+        let backend = ContainerBackend::new(config, runtime.clone());
+
+        let workdir = temp_dir.path().join("workspace");
+        std::fs::create_dir_all(&workdir).unwrap();
+
+        let handle = backend
+            .start_session("alice", &workdir, StartSessionOpts::default())
+            .await
+            .unwrap();
+
+        // Container should be running
+        {
+            let containers = runtime.containers.read().await;
+            assert!(containers.values().any(|c| c.running));
+        }
+
+        // Stop the session
+        backend
+            .stop_session("alice", &handle.session_id)
+            .await
+            .unwrap();
+
+        // Container should be stopped (not removed, but stopped)
+        {
+            let containers = runtime.containers.read().await;
+            assert!(containers.values().all(|c| !c.running));
+        }
+
+        // Session should be removed from tracking
+        assert!(backend.get_session(&handle.session_id).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_stop_session_not_found() {
+        let config = ContainerBackendConfig::default();
+        let runtime = Arc::new(MockContainerRuntime::new());
+        let backend = ContainerBackend::new(config, runtime);
+
+        let result = backend.stop_session("alice", "nonexistent").await;
+
+        assert!(result.is_err());
+        match result {
+            Err(e) => assert!(e.to_string().contains("not found")),
+            Ok(_) => panic!("Expected error"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_get_session_url_found() {
+        let config = ContainerBackendConfig::default();
+        let runtime = Arc::new(MockContainerRuntime::new());
+        let backend = ContainerBackend::new(config, runtime);
+
+        // Add a session
+        let session = ContainerSession {
+            session_id: "ses_url_test".to_string(),
+            container_id: "container_xyz".to_string(),
+            user_id: "alice".to_string(),
+            workdir: PathBuf::from("/workspace"),
+            opencode_port: 41820,
+            ttyd_port: 41821,
+            fileserver_port: 41822,
+        };
+        backend
+            .sessions
+            .write()
+            .await
+            .insert("ses_url_test".to_string(), session);
+
+        let url = backend
+            .get_session_url("alice", "ses_url_test")
+            .await
+            .unwrap();
+
+        assert!(url.is_some());
+        assert_eq!(url.unwrap(), "http://localhost:41820");
+    }
+
+    #[tokio::test]
+    async fn test_get_session_url_not_found() {
+        let config = ContainerBackendConfig::default();
+        let runtime = Arc::new(MockContainerRuntime::new());
+        let backend = ContainerBackend::new(config, runtime);
+
+        let url = backend
+            .get_session_url("alice", "nonexistent")
+            .await
+            .unwrap();
+
+        assert!(url.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_attach_session_not_found() {
+        let config = ContainerBackendConfig::default();
+        let runtime = Arc::new(MockContainerRuntime::new());
+        let backend = ContainerBackend::new(config, runtime);
+
+        let result = backend.attach("alice", "nonexistent").await;
+
+        assert!(result.is_err());
+        // Use match instead of unwrap_err since AgentEventStream doesn't implement Debug
+        match result {
+            Err(e) => assert!(e.to_string().contains("not found")),
+            Ok(_) => panic!("Expected error"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_send_message_session_not_found() {
+        let config = ContainerBackendConfig::default();
+        let runtime = Arc::new(MockContainerRuntime::new());
+        let backend = ContainerBackend::new(config, runtime);
+
+        let message = SendMessageRequest {
+            parts: vec![super::super::SendMessagePart::Text {
+                text: "Hello".to_string(),
+            }],
+            model: None,
+        };
+
+        let result = backend.send_message("alice", "nonexistent", message).await;
+
+        assert!(result.is_err());
+        match result {
+            Err(e) => assert!(e.to_string().contains("not found")),
+            Ok(_) => panic!("Expected error"),
+        }
+    }
+
+    // =========================================================================
+    // ContainerSession Tests
+    // =========================================================================
+
+    #[test]
+    fn test_container_session_clone() {
+        let session = ContainerSession {
+            session_id: "ses_123".to_string(),
+            container_id: "cnt_456".to_string(),
+            user_id: "bob".to_string(),
+            workdir: PathBuf::from("/workspace"),
+            opencode_port: 8080,
+            ttyd_port: 8081,
+            fileserver_port: 8082,
+        };
+
+        let cloned = session.clone();
+
+        assert_eq!(cloned.session_id, session.session_id);
+        assert_eq!(cloned.container_id, session.container_id);
+        assert_eq!(cloned.user_id, session.user_id);
+        assert_eq!(cloned.workdir, session.workdir);
+    }
+
+    #[test]
+    fn test_container_session_debug() {
+        let session = ContainerSession {
+            session_id: "ses_debug".to_string(),
+            container_id: "cnt_debug".to_string(),
+            user_id: "alice".to_string(),
+            workdir: PathBuf::from("/home/alice"),
+            opencode_port: 9000,
+            ttyd_port: 9001,
+            fileserver_port: 9002,
+        };
+
+        let debug_str = format!("{:?}", session);
+
+        assert!(debug_str.contains("ses_debug"));
+        assert!(debug_str.contains("cnt_debug"));
+        assert!(debug_str.contains("alice"));
+    }
+
+    // =========================================================================
+    // Host Network Mode Tests
+    // =========================================================================
+
+    #[tokio::test]
+    async fn test_start_session_host_network_no_port_mappings() {
+        let temp_dir = tempdir().unwrap();
+        let config = ContainerBackendConfig {
+            data_dir: temp_dir.path().to_path_buf(),
+            host_network: true,
+            ..Default::default()
+        };
+        let runtime = Arc::new(MockContainerRuntime::new());
+        let backend = ContainerBackend::new(config, runtime);
+
+        let workdir = temp_dir.path().join("workspace");
+        std::fs::create_dir_all(&workdir).unwrap();
+
+        // Should succeed even with host network
+        let handle = backend
+            .start_session("alice", &workdir, StartSessionOpts::default())
+            .await
+            .unwrap();
+
+        assert!(handle.is_new);
+    }
+
+    // =========================================================================
+    // Edge Cases and Error Handling
+    // =========================================================================
+
+    #[tokio::test]
+    async fn test_start_session_container_creation_fails() {
+        let temp_dir = tempdir().unwrap();
+        let config = ContainerBackendConfig {
+            data_dir: temp_dir.path().to_path_buf(),
+            ..Default::default()
+        };
+        // Runtime configured to fail on create
+        let runtime = Arc::new(MockContainerRuntime::with_failures(true, false, false));
+        let backend = ContainerBackend::new(config, runtime);
+
+        let workdir = temp_dir.path().join("workspace");
+        std::fs::create_dir_all(&workdir).unwrap();
+
+        let result = backend
+            .start_session("alice", &workdir, StartSessionOpts::default())
+            .await;
+
+        assert!(result.is_err());
+        match result {
+            Err(e) => assert!(e.to_string().contains("container")),
+            Ok(_) => panic!("Expected error"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_stop_session_container_stop_fails() {
+        let temp_dir = tempdir().unwrap();
+        let config = ContainerBackendConfig {
+            data_dir: temp_dir.path().to_path_buf(),
+            ..Default::default()
+        };
+        // Create normally, but fail on stop
+        let runtime = Arc::new(MockContainerRuntime::with_failures(false, true, false));
+        let backend = ContainerBackend::new(config, runtime);
+
+        let workdir = temp_dir.path().join("workspace");
+        std::fs::create_dir_all(&workdir).unwrap();
+
+        let handle = backend
+            .start_session("alice", &workdir, StartSessionOpts::default())
+            .await
+            .unwrap();
+
+        let result = backend.stop_session("alice", &handle.session_id).await;
+
+        assert!(result.is_err());
     }
 }

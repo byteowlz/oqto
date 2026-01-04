@@ -1,9 +1,7 @@
 import { AgentPicker } from "@/components/agent-picker";
-import { AppProvider, useApp } from "@/components/app-context";
-import {
-	CommandPalette,
-	useCommandPalette,
-} from "@/components/command-palette";
+import { AppProvider } from "@/components/app-context";
+import { CommandPalette } from "@/components/command-palette";
+import { MainChatEntry } from "@/components/main-chat";
 import {
 	AlertDialog,
 	AlertDialogAction,
@@ -38,11 +36,15 @@ import {
 	DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
+import { useApp } from "@/hooks/use-app";
+import { useCommandPalette } from "@/hooks/use-command-palette";
 import {
 	type ChatSession,
 	type Persona,
 	type ProjectLogo,
+	getMainChatAssistant,
 	getProjectLogoUrl,
+	getSettingsValues,
 	listWorkspaceDirectories,
 } from "@/lib/control-plane-client";
 import { type OpenCodeAgent, fetchAgents } from "@/lib/opencode-client";
@@ -100,14 +102,23 @@ function AppShell() {
 		selectedChatFromHistory,
 		selectedWorkspaceSession,
 		opencodeBaseUrl,
+		opencodeDirectory,
 		ensureOpencodeRunning,
 		createNewChat,
 		createNewChatWithPersona,
 		deleteChatSession,
 		renameChatSession,
 		busySessions,
+		workspaceSessions,
 		projectDefaultAgents,
 		setProjectDefaultAgents,
+		mainChatActive,
+		setMainChatActive,
+		mainChatAssistantName,
+		setMainChatAssistantName,
+		mainChatCurrentSessionId,
+		setMainChatCurrentSessionId,
+		setMainChatWorkspacePath,
 	} = useApp();
 	const location = useLocation();
 	const navigate = useNavigate();
@@ -171,6 +182,7 @@ function AppShell() {
 	const [agentPickerOpen, setAgentPickerOpen] = useState(false);
 	const [targetSessionId, setTargetSessionId] = useState<string>("");
 	const [renameValue, setRenameValue] = useState("");
+	const [sessionLimit, setSessionLimit] = useState<number>(3);
 
 	// Command palette
 	const { open: commandPaletteOpen, setOpen: setCommandPaletteOpen } =
@@ -195,10 +207,14 @@ function AppShell() {
 	// Persist pinned sessions to localStorage
 	useEffect(() => {
 		if (typeof window === "undefined") return;
-		localStorage.setItem(
-			"octo:pinnedSessions",
-			JSON.stringify([...pinnedSessions]),
-		);
+		try {
+			localStorage.setItem(
+				"octo:pinnedSessions",
+				JSON.stringify([...pinnedSessions]),
+			);
+		} catch {
+			// Ignore storage failures (private mode, denied access).
+		}
 	}, [pinnedSessions]);
 
 	const [selectedProjectKey, setSelectedProjectKey] = useState<string | null>(
@@ -208,6 +224,46 @@ function AppShell() {
 	const [workspaceDirectories, setWorkspaceDirectories] = useState<
 		{ name: string; path: string; logo?: ProjectLogo }[]
 	>([]);
+
+	const runningSessionCount = useMemo(
+		() =>
+			workspaceSessions.filter((session) => session.status === "running")
+				.length,
+		[workspaceSessions],
+	);
+	const sessionLimitLabel = useMemo(() => {
+		if (sessionLimit <= 0) return "∞";
+		return `${runningSessionCount}/${sessionLimit}`;
+	}, [runningSessionCount, sessionLimit]);
+
+	useEffect(() => {
+		let mounted = true;
+		getSettingsValues("octo")
+			.then((values) => {
+				if (!mounted) return;
+				console.log("[Settings] Loaded values:", values);
+				console.log(
+					"[Settings] sessions.max_concurrent_sessions:",
+					values["sessions.max_concurrent_sessions"],
+				);
+				const raw = values["sessions.max_concurrent_sessions"]?.value;
+				console.log("[Settings] raw value:", raw, "type:", typeof raw);
+				if (typeof raw === "number") {
+					console.log("[Settings] Setting sessionLimit to:", raw);
+					setSessionLimit(raw);
+				} else {
+					console.log(
+						"[Settings] NOT setting sessionLimit, raw is not a number",
+					);
+				}
+			})
+			.catch((err) => {
+				console.error("Failed to load session limits:", err);
+			});
+		return () => {
+			mounted = false;
+		};
+	}, []);
 
 	// Pinned projects for filter bar (persisted to localStorage)
 	const [pinnedProjects, setPinnedProjects] = useState<string[]>(() => {
@@ -223,7 +279,14 @@ function AppShell() {
 	// Persist pinned projects to localStorage
 	useEffect(() => {
 		if (typeof window === "undefined") return;
-		localStorage.setItem("octo:pinnedProjects", JSON.stringify(pinnedProjects));
+		try {
+			localStorage.setItem(
+				"octo:pinnedProjects",
+				JSON.stringify(pinnedProjects),
+			);
+		} catch {
+			// Ignore storage failures (private mode, denied access).
+		}
 	}, [pinnedProjects]);
 	const [directoryPickerOpen, setDirectoryPickerOpen] = useState(false);
 	const [directoryPickerPath, setDirectoryPickerPath] = useState(".");
@@ -338,6 +401,65 @@ function AppShell() {
 	const [sessionSearch, setSessionSearch] = useState("");
 	const deferredSearch = useDeferredValue(sessionSearch);
 
+	// Handle Main Chat selection
+	const handleMainChatSelect = useCallback(
+		async (assistantName: string, sessionId: string | null) => {
+			setMainChatAssistantName(assistantName);
+			setMainChatActive(true);
+			// Set the Main Chat current session ID (used for sending messages)
+			setMainChatCurrentSessionId(sessionId);
+			setSelectedChatSessionId("");
+			// Navigate to sessions view
+			setActiveAppId("sessions");
+			// Close mobile menu
+			setMobileMenuOpen(false);
+			try {
+				const assistantInfo = await getMainChatAssistant(assistantName);
+				setMainChatWorkspacePath(assistantInfo.path);
+			} catch (err) {
+				console.error("Failed to load Main Chat assistant info:", err);
+				setMainChatWorkspacePath(null);
+			}
+		},
+		[
+			setActiveAppId,
+			setMainChatActive,
+			setMainChatAssistantName,
+			setMainChatCurrentSessionId,
+			setMainChatWorkspacePath,
+			setSelectedChatSessionId,
+		],
+	);
+
+	// Handle Main Chat timeline session selection
+	const handleMainChatSessionSelect = useCallback(
+		async (assistantName: string, sessionId: string) => {
+			setMainChatAssistantName(assistantName);
+			setMainChatActive(true);
+			// When clicking a specific session, use it as the current session for sending
+			setMainChatCurrentSessionId(sessionId);
+			setSelectedChatSessionId("");
+			setActiveAppId("sessions");
+			// Close mobile menu
+			setMobileMenuOpen(false);
+			try {
+				const assistantInfo = await getMainChatAssistant(assistantName);
+				setMainChatWorkspacePath(assistantInfo.path);
+			} catch (err) {
+				console.error("Failed to load Main Chat assistant info:", err);
+				setMainChatWorkspacePath(null);
+			}
+		},
+		[
+			setActiveAppId,
+			setMainChatActive,
+			setMainChatAssistantName,
+			setMainChatCurrentSessionId,
+			setMainChatWorkspacePath,
+			setSelectedChatSessionId,
+		],
+	);
+
 	// Build hierarchical session structure from chatHistory (disk-based, no opencode needed)
 	const sessionHierarchy = useMemo(() => {
 		// Separate parent and child sessions
@@ -426,7 +548,7 @@ function AppShell() {
 
 	useEffect(() => {
 		if (!opencodeBaseUrl) return;
-		fetchAgents(opencodeBaseUrl)
+		fetchAgents(opencodeBaseUrl, { directory: opencodeDirectory })
 			.then((agents) => {
 				setAvailableAgents(agents);
 			})
@@ -434,7 +556,7 @@ function AppShell() {
 				console.error("Failed to fetch agents:", err);
 				setAvailableAgents([]);
 			});
-	}, [opencodeBaseUrl]);
+	}, [opencodeBaseUrl, opencodeDirectory]);
 
 	// Filter and sort sessions (pinned first, then by recency)
 	const filteredSessions = useMemo(() => {
@@ -664,6 +786,9 @@ function AppShell() {
 		setSelectedChatSessionId(sessionId);
 		setActiveAppId("sessions");
 		setMobileMenuOpen(false);
+		// Clear main chat selection when clicking a regular session
+		setMainChatActive(false);
+		setMainChatWorkspacePath(null);
 	};
 
 	// Context menu handlers
@@ -1001,7 +1126,7 @@ function AppShell() {
 									<button
 										type="button"
 										key={tab.id}
-									onClick={() => handleMobileNavClick(tab.id)}
+										onClick={() => handleMobileNavClick(tab.id)}
 										className="px-3 py-1.5 transition flex items-center gap-1.5"
 										style={{
 											backgroundColor: isActive ? navActiveBg : "transparent",
@@ -1032,208 +1157,69 @@ function AppShell() {
 					<nav className="flex-1 w-full px-3 pt-3 overflow-y-auto">
 						{activeAppId === "sessions" && chatHistory.length > 0 && (
 							<div className="flex-1 min-h-0 flex flex-col">
-								<div className="flex items-center justify-between gap-2 px-2 py-1.5">
-									<div className="flex items-center gap-2">
-										<span className="text-xs uppercase tracking-wide text-muted-foreground">
-											{locale === "de" ? "Verlauf" : "History"}
-										</span>
-										<span className="text-xs text-muted-foreground/50">
-											({filteredSessions.length}
-											{deferredSearch ? `/${chatHistory.length}` : ""})
-										</span>
-									</div>
-									{selectedProjectLabel && (
-										<button
-											type="button"
-											onClick={handleProjectClear}
-											className="flex items-center gap-1 text-[10px] text-muted-foreground/70 hover:text-foreground"
-										>
-											<X className="w-3 h-3" />
-											{selectedProjectLabel}
-										</button>
-									)}
-								</div>
-								{/* Mobile project filter bar */}
-								{sortedProjectsForFilterBar.length > 0 && (
-									<div className="px-2 mb-2">
-										<div
-											className="flex gap-2 overflow-x-auto scrollbar-hide py-1"
-											style={{
-												scrollbarWidth: "none",
-												msOverflowStyle: "none",
-											}}
-										>
-											{/* All button */}
-											<button
-												type="button"
-												onClick={handleProjectClear}
-												className={cn(
-													"flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center text-xs font-medium transition-all",
-													"border-2",
-													!selectedProjectKey
-														? "border-primary bg-primary/20 text-primary"
-														: "border-sidebar-border bg-sidebar-accent/50 text-muted-foreground hover:border-primary/50",
-												)}
-												title={
-													locale === "de" ? "Alle Projekte" : "All projects"
+								<div className="flex-1 overflow-y-auto space-y-0.5 px-1">
+									{/* Main Chat - Always at top */}
+									{!deferredSearch && !selectedProjectKey && (
+										<div className="mb-2 pb-2 border-b border-border/50">
+											<MainChatEntry
+												isSelected={mainChatActive}
+												activeSessionId={
+													mainChatActive ? mainChatCurrentSessionId : null
 												}
-											>
-												<span className="text-[10px]">ALL</span>
-											</button>
-
-											{/* Project icons - long press to pin/unpin */}
-											{sortedProjectsForFilterBar.map((project) => {
-												const isPinned = pinnedProjects.includes(project.key);
-												const isSelected = selectedProjectKey === project.key;
-												const logoUrl =
-													project.logo && project.key
-														? getProjectLogoUrl(project.key, project.logo.path)
-														: null;
-												const initials = project.name
-													.split(/[\s-_]+/)
-													.map((w) => w[0])
-													.join("")
-													.toUpperCase()
-													.slice(0, 2);
-
-												let longPressTimer: ReturnType<
-													typeof setTimeout
-												> | null = null;
-												let didLongPress = false;
-
-												return (
-													<button
-														type="button"
-														key={project.key}
-														onClick={() => {
-															if (!didLongPress) {
-																setSelectedProjectKey(
-																	isSelected ? null : project.key,
-																);
-															}
-															didLongPress = false;
-														}}
-														onTouchStart={() => {
-															didLongPress = false;
-															longPressTimer = setTimeout(() => {
-																didLongPress = true;
-																togglePinProject(project.key);
-																// Haptic feedback if available
-																if (navigator.vibrate) navigator.vibrate(50);
-															}, 500);
-														}}
-														onTouchEnd={() => {
-															if (longPressTimer) {
-																clearTimeout(longPressTimer);
-																longPressTimer = null;
-															}
-														}}
-														onTouchMove={() => {
-															if (longPressTimer) {
-																clearTimeout(longPressTimer);
-																longPressTimer = null;
-															}
-														}}
-														className={cn(
-															"flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center transition-all overflow-hidden",
-															"border-2",
-															isSelected
-																? "border-primary bg-primary/20"
-																: isPinned
-																	? "border-primary/50 bg-sidebar-accent/50"
-																	: "border-sidebar-border bg-sidebar-accent/50",
-														)}
-														title={`${project.name} (${project.sessionCount})${isPinned ? " - Pinned" : ""}`}
-													>
-														{logoUrl ? (
-															<img
-																src={logoUrl}
-																alt={project.name}
-																className="w-6 h-6 object-contain"
-															/>
-														) : (
-															<span className="text-[10px] font-medium text-muted-foreground">
-																{initials}
-															</span>
-														)}
-													</button>
-												);
-											})}
+												onSelect={handleMainChatSelect}
+												onSessionSelect={handleMainChatSessionSelect}
+												locale={locale}
+											/>
 										</div>
-									</div>
-								)}
-								{/* Mobile search input */}
-								<div className="relative px-2 mb-2">
-									<Search className="absolute left-5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
-									<input
-										type="text"
-										placeholder={locale === "de" ? "Suchen..." : "Search..."}
-										value={sessionSearch}
-										onChange={(e) => setSessionSearch(e.target.value)}
-										className="w-full pl-9 pr-16 py-2 text-sm bg-sidebar-accent/50 border border-sidebar-border rounded placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary/50"
-									/>
-									<div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1">
+									)}
+									{/* Mobile search input - below Main Chat */}
+									<div className="relative px-1 mb-2">
+										<Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
+										<input
+											type="text"
+											placeholder={locale === "de" ? "Suchen..." : "Search..."}
+											value={sessionSearch}
+											onChange={(e) => setSessionSearch(e.target.value)}
+											className="w-full pl-9 pr-10 py-2 text-sm bg-sidebar-accent/50 border border-sidebar-border rounded placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary/50"
+										/>
 										{sessionSearch && (
 											<button
 												type="button"
 												onClick={() => setSessionSearch("")}
-												className="p-1 text-muted-foreground hover:text-foreground"
+												className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-muted-foreground hover:text-foreground"
 											>
 												<X className="w-4 h-4" />
 											</button>
 										)}
-										<DropdownMenu>
-											<DropdownMenuTrigger asChild>
-												<button
-													type="button"
-													className={cn(
-														"p-1 transition-colors rounded",
-														selectedProjectKey
-															? "text-primary hover:text-primary/80"
-															: "text-muted-foreground hover:text-foreground",
-													)}
-													title={
-														locale === "de"
-															? "Nach Projekt filtern"
-															: "Filter by project"
-													}
-												>
-													<ChevronDown className="w-4 h-4" />
-												</button>
-											</DropdownMenuTrigger>
-											<DropdownMenuContent
-												align="end"
-												className="w-48 max-h-64 overflow-y-auto"
-											>
-												<DropdownMenuItem
-													onClick={handleProjectClear}
-													className={cn(!selectedProjectKey && "bg-accent")}
-												>
-													<span className="truncate">
-														{locale === "de" ? "Alle Projekte" : "All projects"}
-													</span>
-												</DropdownMenuItem>
-												<DropdownMenuSeparator />
-												{projectSummaries.map((project) => (
-													<DropdownMenuItem
-														key={project.key}
-														onClick={() => setSelectedProjectKey(project.key)}
-														className={cn(
-															selectedProjectKey === project.key && "bg-accent",
-														)}
-													>
-														<FolderKanban className="w-4 h-4 mr-2 flex-shrink-0 text-primary/70" />
-														<span className="truncate">{project.name}</span>
-														<span className="ml-auto text-xs text-muted-foreground">
-															{project.sessionCount}
-														</span>
-													</DropdownMenuItem>
-												))}
-											</DropdownMenuContent>
-										</DropdownMenu>
 									</div>
-								</div>
-								<div className="flex-1 overflow-y-auto space-y-0.5 px-1">
+									{/* History header - between search and chat list */}
+									<div className="flex items-center justify-between gap-2 px-2 py-1.5">
+										<div className="flex items-center gap-2">
+											<span className="text-xs uppercase tracking-wide text-muted-foreground">
+												{locale === "de" ? "Verlauf" : "History"}
+											</span>
+											<span className="text-xs text-muted-foreground/50">
+												({filteredSessions.length}
+												{deferredSearch ? `/${chatHistory.length}` : ""})
+											</span>
+											{sessionLimitLabel && (
+												<span className="text-[10px] text-muted-foreground/60">
+													{locale === "de" ? "Laufend" : "Running"}{" "}
+													{sessionLimitLabel}
+												</span>
+											)}
+										</div>
+										{selectedProjectLabel && (
+											<button
+												type="button"
+												onClick={handleProjectClear}
+												className="flex items-center gap-1 text-[10px] text-muted-foreground/70 hover:text-foreground"
+											>
+												<X className="w-3 h-3" />
+												{selectedProjectLabel}
+											</button>
+										)}
+									</div>
 									{filteredSessions.length === 0 && deferredSearch && (
 										<div className="text-sm text-muted-foreground/50 text-center py-4">
 											{locale === "de" ? "Keine Ergebnisse" : "No results"}
@@ -1256,11 +1242,9 @@ function AppShell() {
 											<div key={session.id}>
 												<ContextMenu>
 													<ContextMenuTrigger asChild>
-														<button
-															type="button"
-															onClick={() => handleSessionClick(session.id)}
+														<div
 															className={cn(
-																"w-full px-2 py-2 text-left transition-colors flex items-start gap-1.5",
+																"w-full px-2 py-2 text-left transition-colors flex items-start gap-1.5 cursor-pointer",
 																isSelected
 																	? "bg-primary/15 border border-primary text-foreground"
 																	: "text-muted-foreground hover:bg-sidebar-accent border border-transparent",
@@ -1269,10 +1253,9 @@ function AppShell() {
 															{hasChildren ? (
 																<button
 																	type="button"
-																	onClick={(e) => {
-																		e.stopPropagation();
-																		toggleSessionExpanded(session.id);
-																	}}
+																	onClick={() =>
+																		toggleSessionExpanded(session.id)
+																	}
 																	className="mt-0.5 p-1 hover:bg-muted rounded flex-shrink-0 cursor-pointer"
 																>
 																	{isExpanded ? (
@@ -1284,7 +1267,11 @@ function AppShell() {
 															) : (
 																<MessageSquare className="w-4 h-4 mt-0.5 flex-shrink-0 text-primary/70" />
 															)}
-															<div className="flex-1 min-w-0">
+															<button
+																type="button"
+																onClick={() => handleSessionClick(session.id)}
+																className="flex-1 min-w-0 text-left"
+															>
 																<div className="flex items-center gap-1">
 																	{pinnedSessions.has(session.id) && (
 																		<Pin className="w-3 h-3 flex-shrink-0 text-primary/70" />
@@ -1312,8 +1299,8 @@ function AppShell() {
 																		)}
 																	</div>
 																)}
-															</div>
-														</button>
+															</button>
+														</div>
 													</ContextMenuTrigger>
 													<ContextMenuContent>
 														<ContextMenuItem
@@ -1543,7 +1530,7 @@ function AppShell() {
 								variant="ghost"
 								size="icon"
 								rounded="full"
-							onClick={() => handleMobileNavClick("settings")}
+								onClick={() => handleMobileNavClick("settings")}
 								aria-label="Settings"
 								className={cn(
 									"hover:bg-sidebar-accent",
@@ -1559,7 +1546,7 @@ function AppShell() {
 								variant="ghost"
 								size="icon"
 								rounded="full"
-							onClick={() => handleMobileNavClick("admin")}
+								onClick={() => handleMobileNavClick("admin")}
 								aria-label="Admin"
 								className={cn(
 									"hover:bg-sidebar-accent",
@@ -1616,7 +1603,12 @@ function AppShell() {
 				}`}
 				style={{ backgroundColor: sidebarBg }}
 			>
-				<div className="h-20 w-full flex items-center justify-center px-4 relative">
+				<div
+					className={cn(
+						"h-20 w-full flex items-center px-4",
+						sidebarCollapsed ? "justify-center" : "justify-center relative",
+					)}
+				>
 					{!sidebarCollapsed && (
 						<img
 							src={
@@ -1634,7 +1626,10 @@ function AppShell() {
 						size="icon"
 						aria-label="Sidebar umschalten"
 						onClick={() => setSidebarCollapsed((prev) => !prev)}
-						className="text-muted-foreground hover:text-primary absolute right-3"
+						className={cn(
+							"text-muted-foreground hover:text-primary",
+							!sidebarCollapsed && "absolute right-3",
+						)}
 					>
 						{sidebarCollapsed ? (
 							<PanelRightClose className="w-4 h-4" />
@@ -1684,223 +1679,143 @@ function AppShell() {
 					</div>
 				</div>
 
-				{/* New Chat button */}
-				{isSessionsView && (
-					<div className={`w-full ${sidebarCollapsed ? "px-2" : "px-3"} mt-1`}>
-						<Button
-							type="button"
-							variant="outline"
-							size="sm"
-							onClick={handleNewChat}
-							className={cn(
-								"w-full text-xs font-medium flex items-center gap-2 transition-colors",
-								"border-primary/50 hover:border-primary hover:bg-primary/10",
-								sidebarCollapsed ? "justify-center px-2" : "justify-start px-3",
+				{/* New Chat button - always visible */}
+				<div className={`w-full ${sidebarCollapsed ? "px-2" : "px-3"} mt-1`}>
+					<Button
+						type="button"
+						variant="outline"
+						size="sm"
+						onClick={handleNewChat}
+						className={cn(
+							"w-full text-xs font-medium flex items-center gap-2 transition-colors",
+							"border-primary/50 hover:border-primary hover:bg-primary/10",
+							sidebarCollapsed ? "justify-center px-2" : "justify-start px-3",
+						)}
+					>
+						<Plus className="w-3.5 h-3.5 shrink-0" />
+						{!sidebarCollapsed && (
+							<span>{locale === "de" ? "Neuer Chat" : "New Chat"}</span>
+						)}
+					</Button>
+				</div>
+
+				{/* Session history list - always visible when not collapsed */}
+				{!sidebarCollapsed && chatHistory.length > 0 && (
+					<div className="w-full px-1.5 mt-2 flex-1 min-h-0 flex flex-col border-t border-sidebar-border">
+						<div className="flex-1 overflow-y-auto space-y-0.5">
+							{/* Main Chat - Always at top */}
+							{!deferredSearch && !selectedProjectKey && (
+								<div className="mb-2 pb-2 border-b border-border/50 px-2 pt-2">
+									<MainChatEntry
+										isSelected={mainChatActive}
+										activeSessionId={
+											mainChatActive ? mainChatCurrentSessionId : null
+										}
+										onSelect={handleMainChatSelect}
+										onSessionSelect={handleMainChatSessionSelect}
+										locale={locale}
+									/>
+								</div>
 							)}
-						>
-							<Plus className="w-3.5 h-3.5 shrink-0" />
-							{!sidebarCollapsed && (
-								<span>{locale === "de" ? "Neuer Chat" : "New Chat"}</span>
-							)}
-						</Button>
-					</div>
-				)}
-
-				{/* Project filter bar - always show when on sessions tab */}
-				{isSessionsView && !sidebarCollapsed && (
-					<div className="w-full px-1.5 mt-3">
-						<div className="relative px-0.5">
-							<div
-								className="flex gap-1.5 overflow-x-auto scrollbar-hide py-1"
-								style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}
-							>
-								{/* All button */}
-								<button
-									type="button"
-									onClick={handleProjectClear}
-									className={cn(
-										"flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-[10px] font-medium transition-all",
-										"border-2",
-										!selectedProjectKey
-											? "border-primary bg-primary/20 text-primary"
-											: "border-sidebar-border bg-sidebar-accent/50 text-muted-foreground hover:border-primary/50",
-									)}
-									title={locale === "de" ? "Alle Projekte" : "All projects"}
-								>
-									<span className="text-[9px]">ALL</span>
-								</button>
-
-								{/* Project icons */}
-								{sortedProjectsForFilterBar.map((project) => {
-									const isPinned = pinnedProjects.includes(project.key);
-									const isSelected = selectedProjectKey === project.key;
-									const logoUrl =
-										project.logo && project.key
-											? getProjectLogoUrl(project.key, project.logo.path)
-											: null;
-									const initials = project.name
-										.split(/[\s-_]+/)
-										.map((w) => w[0])
-										.join("")
-										.toUpperCase()
-										.slice(0, 2);
-
-									return (
-										<ContextMenu key={project.key}>
-											<ContextMenuTrigger asChild>
-												<button
-													type="button"
-													onClick={() =>
-														setSelectedProjectKey(
-															isSelected ? null : project.key,
-														)
-													}
-													className={cn(
-														"flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center transition-all overflow-hidden",
-														"border-2",
-														isSelected
-															? "border-primary bg-primary/20"
-															: isPinned
-																? "border-primary/50 bg-sidebar-accent/50 hover:border-primary"
-																: "border-sidebar-border bg-sidebar-accent/50 hover:border-primary/50",
-													)}
-													title={`${project.name} (${project.sessionCount} ${locale === "de" ? "Chats" : "chats"})${isPinned ? " - Pinned" : ""}`}
-												>
-													{logoUrl ? (
-														<img
-															src={logoUrl}
-															alt={project.name}
-															className="w-5 h-5 object-contain"
-														/>
-													) : (
-														<span className="text-[9px] font-medium text-muted-foreground">
-															{initials}
-														</span>
-													)}
-												</button>
-											</ContextMenuTrigger>
-											<ContextMenuContent>
-												<ContextMenuItem
-													onClick={() => setSelectedProjectKey(project.key)}
-												>
-													{locale === "de" ? "Filtern" : "Filter"}
-												</ContextMenuItem>
-												<ContextMenuItem
-													onClick={() => togglePinProject(project.key)}
-												>
-													{isPinned
-														? locale === "de"
-															? "Losloesen"
-															: "Unpin"
-														: locale === "de"
-															? "Anheften"
-															: "Pin"}
-												</ContextMenuItem>
-											</ContextMenuContent>
-										</ContextMenu>
-									);
-								})}
-							</div>
-						</div>
-					</div>
-				)}
-
-				{/* Session history list - uses chatHistory (disk-based, no opencode needed) */}
-				{isSessionsView && !sidebarCollapsed && chatHistory.length > 0 && (
-					<div className="w-full px-1.5 mt-2 flex-1 min-h-0 flex flex-col">
-						<div className="flex items-center justify-between gap-2 py-1.5 px-1 border-t border-sidebar-border">
-							<div className="flex items-center gap-2">
-								<span className="text-xs uppercase tracking-wide text-muted-foreground">
-									{locale === "de" ? "Verlauf" : "History"}
-								</span>
-								<span className="text-xs text-muted-foreground/50">
-									({filteredSessions.length}
-									{deferredSearch ? `/${chatHistory.length}` : ""})
-								</span>
-							</div>
-							{selectedProjectLabel && (
-								<button
-									type="button"
-									onClick={handleProjectClear}
-									className="flex items-center gap-1 text-[10px] text-muted-foreground/70 hover:text-foreground"
-								>
-									<X className="w-3 h-3" />
-									{selectedProjectLabel}
-								</button>
-							)}
-						</div>
-						{/* Search input */}
-						<div className="relative mb-2 px-0.5">
-							<Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
-							<input
-								type="text"
-								placeholder={locale === "de" ? "Suchen..." : "Search..."}
-								value={sessionSearch}
-								onChange={(e) => setSessionSearch(e.target.value)}
-								className="w-full pl-7 pr-14 py-1.5 text-xs bg-sidebar-accent/50 border border-sidebar-border rounded placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary/50"
-							/>
-							<div className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-0.5">
-								{sessionSearch && (
-									<button
-										type="button"
-										onClick={() => setSessionSearch("")}
-										className="p-1 text-muted-foreground hover:text-foreground"
-									>
-										<X className="w-3 h-3" />
-									</button>
-								)}
-								<DropdownMenu>
-									<DropdownMenuTrigger asChild>
+							{/* Search input - below Main Chat */}
+							<div className="relative mb-2 px-1">
+								<Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
+								<input
+									type="text"
+									placeholder={locale === "de" ? "Suchen..." : "Search..."}
+									value={sessionSearch}
+									onChange={(e) => setSessionSearch(e.target.value)}
+									className="w-full pl-7 pr-14 py-1.5 text-xs bg-sidebar-accent/50 border border-sidebar-border rounded placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary/50"
+								/>
+								<div className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-0.5">
+									{sessionSearch && (
 										<button
 											type="button"
-											className={cn(
-												"p-1 transition-colors rounded",
-												selectedProjectKey
-													? "text-primary hover:text-primary/80"
-													: "text-muted-foreground hover:text-foreground",
-											)}
-											title={
-												locale === "de"
-													? "Nach Projekt filtern"
-													: "Filter by project"
-											}
+											onClick={() => setSessionSearch("")}
+											className="p-1 text-muted-foreground hover:text-foreground"
 										>
-											<ChevronDown className="w-3.5 h-3.5" />
+											<X className="w-3 h-3" />
 										</button>
-									</DropdownMenuTrigger>
-									<DropdownMenuContent
-										align="end"
-										className="w-48 max-h-64 overflow-y-auto"
-									>
-										<DropdownMenuItem
-											onClick={handleProjectClear}
-											className={cn(!selectedProjectKey && "bg-accent")}
-										>
-											<span className="truncate">
-												{locale === "de" ? "Alle Projekte" : "All projects"}
-											</span>
-										</DropdownMenuItem>
-										<DropdownMenuSeparator />
-										{projectSummaries.map((project) => (
-											<DropdownMenuItem
-												key={project.key}
-												onClick={() => setSelectedProjectKey(project.key)}
+									)}
+									<DropdownMenu>
+										<DropdownMenuTrigger asChild>
+											<button
+												type="button"
 												className={cn(
-													selectedProjectKey === project.key && "bg-accent",
+													"p-1 transition-colors rounded",
+													selectedProjectKey
+														? "text-primary hover:text-primary/80"
+														: "text-muted-foreground hover:text-foreground",
 												)}
+												title={
+													locale === "de"
+														? "Nach Projekt filtern"
+														: "Filter by project"
+												}
 											>
-												<FolderKanban className="w-3.5 h-3.5 mr-2 flex-shrink-0 text-primary/70" />
-												<span className="truncate">{project.name}</span>
-												<span className="ml-auto text-[10px] text-muted-foreground">
-													{project.sessionCount}
+												<ChevronDown className="w-3.5 h-3.5" />
+											</button>
+										</DropdownMenuTrigger>
+										<DropdownMenuContent
+											align="end"
+											className="w-48 max-h-64 overflow-y-auto"
+										>
+											<DropdownMenuItem
+												onClick={handleProjectClear}
+												className={cn(!selectedProjectKey && "bg-accent")}
+											>
+												<span className="truncate">
+													{locale === "de" ? "Alle Projekte" : "All projects"}
 												</span>
 											</DropdownMenuItem>
-										))}
-									</DropdownMenuContent>
-								</DropdownMenu>
+											<DropdownMenuSeparator />
+											{projectSummaries.map((project) => (
+												<DropdownMenuItem
+													key={project.key}
+													onClick={() => setSelectedProjectKey(project.key)}
+													className={cn(
+														selectedProjectKey === project.key && "bg-accent",
+													)}
+												>
+													<FolderKanban className="w-3.5 h-3.5 mr-2 flex-shrink-0 text-primary/70" />
+													<span className="truncate">{project.name}</span>
+													<span className="ml-auto text-[10px] text-muted-foreground">
+														{project.sessionCount}
+													</span>
+												</DropdownMenuItem>
+											))}
+										</DropdownMenuContent>
+									</DropdownMenu>
+								</div>
 							</div>
-						</div>
-						<div className="flex-1 overflow-y-auto space-y-0.5">
+							{/* History header - between search and chat list */}
+							<div className="flex items-center justify-between gap-2 py-1.5 px-1">
+								<div className="flex items-center gap-2">
+									<span className="text-xs uppercase tracking-wide text-muted-foreground">
+										{locale === "de" ? "Verlauf" : "History"}
+									</span>
+									<span className="text-xs text-muted-foreground/50">
+										({filteredSessions.length}
+										{deferredSearch ? `/${chatHistory.length}` : ""})
+									</span>
+									{sessionLimitLabel && (
+										<span className="text-[10px] text-muted-foreground/60">
+											{locale === "de" ? "Laufend" : "Running"}{" "}
+											{sessionLimitLabel}
+										</span>
+									)}
+								</div>
+								{selectedProjectLabel && (
+									<button
+										type="button"
+										onClick={handleProjectClear}
+										className="flex items-center gap-1 text-[10px] text-muted-foreground/70 hover:text-foreground"
+									>
+										<X className="w-3 h-3" />
+										{selectedProjectLabel}
+									</button>
+								)}
+							</div>
 							{filteredSessions.length === 0 && deferredSearch && (
 								<div className="text-xs text-muted-foreground/50 text-center py-4">
 									{locale === "de" ? "Keine Ergebnisse" : "No results"}
@@ -1922,11 +1837,9 @@ function AppShell() {
 									<div key={session.id}>
 										<ContextMenu>
 											<ContextMenuTrigger asChild>
-												<button
-													type="button"
-													onClick={() => handleSessionClick(session.id)}
+												<div
 													className={cn(
-														"w-full px-2 py-1.5 text-left transition-colors flex items-start gap-1.5",
+														"w-full px-2 py-1.5 text-left transition-colors flex items-start gap-1.5 cursor-pointer",
 														isSelected
 															? "bg-primary/15 border border-primary text-foreground"
 															: "text-muted-foreground hover:bg-sidebar-accent border border-transparent",
@@ -1935,10 +1848,7 @@ function AppShell() {
 													{hasChildren ? (
 														<button
 															type="button"
-															onClick={(e) => {
-																e.stopPropagation();
-																toggleSessionExpanded(session.id);
-															}}
+															onClick={() => toggleSessionExpanded(session.id)}
 															className="mt-0.5 p-0.5 hover:bg-muted rounded flex-shrink-0 cursor-pointer"
 														>
 															{isExpanded ? (
@@ -1950,7 +1860,11 @@ function AppShell() {
 													) : (
 														<MessageSquare className="w-3.5 h-3.5 mt-0.5 flex-shrink-0 text-primary/70" />
 													)}
-													<div className="flex-1 min-w-0">
+													<button
+														type="button"
+														onClick={() => handleSessionClick(session.id)}
+														className="flex-1 min-w-0 text-left"
+													>
 														<div className="flex items-center gap-1">
 															{pinnedSessions.has(session.id) && (
 																<Pin className="w-3 h-3 flex-shrink-0 text-primary/70" />
@@ -1978,8 +1892,8 @@ function AppShell() {
 																)}
 															</div>
 														)}
-													</div>
-												</button>
+													</button>
+												</div>
 											</ContextMenuTrigger>
 											<ContextMenuContent>
 												<ContextMenuItem
@@ -2210,7 +2124,7 @@ function AppShell() {
 								variant="ghost"
 								size="sm"
 								className="text-xs"
-							onClick={() => activateApp("agents")}
+								onClick={() => activateApp("agents")}
 							>
 								{locale === "de" ? "Erstellen" : "Create"}
 							</Button>
@@ -2243,21 +2157,22 @@ function AppShell() {
 					</div>
 				)}
 
-				{/* Collapsed session indicator */}
-				{isSessionsView && sidebarCollapsed && opencodeSessions.length > 0 && (
-					<div className="w-full px-2 mt-4">
-						<div className="border-t border-sidebar-border pt-2">
-							<button
-								type="button"
-								onClick={() => setSidebarCollapsed(false)}
-								className="w-full p-2 text-muted-foreground hover:text-foreground transition-colors"
-								title={locale === "de" ? "Verlauf anzeigen" : "Show history"}
-							>
-								<Clock className="w-4 h-4 mx-auto" />
-							</button>
+				{/* Collapsed session indicator - always visible when collapsed */}
+				{sidebarCollapsed &&
+					(chatHistory.length > 0 || opencodeSessions.length > 0) && (
+						<div className="w-full px-2 mt-4">
+							<div className="border-t border-sidebar-border pt-2">
+								<button
+									type="button"
+									onClick={() => setSidebarCollapsed(false)}
+									className="w-full p-2 text-muted-foreground hover:text-foreground transition-colors"
+									title={locale === "de" ? "Verlauf anzeigen" : "Show history"}
+								>
+									<Clock className="w-4 h-4 mx-auto" />
+								</button>
+							</div>
 						</div>
-					</div>
-				)}
+					)}
 
 				<div
 					className={`w-full ${sidebarCollapsed ? "px-2 pb-3" : "px-4 pb-4"} mt-auto pt-3`}

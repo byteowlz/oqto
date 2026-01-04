@@ -1,0 +1,13 @@
+{
+  "name": "octo-pi-extension",
+  "version": "0.1.0",
+  "description": "Pi extension for delegating tasks to Octo-managed OpenCode sessions",
+  "main": "octo-delegate.ts",
+  "type": "module",
+  "dependencies": {
+    "@sinclair/typebox": "^0.32.0"
+  },
+  "peerDependencies": {
+    "@mariozechner/pi-coding-agent": "*"
+  }
+}

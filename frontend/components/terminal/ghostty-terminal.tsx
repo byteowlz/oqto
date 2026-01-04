@@ -42,10 +42,19 @@ function getOrCreateSession(sessionId: string) {
 	return created;
 }
 
-// Extract sessionId from wsUrl like "/session/{sessionId}/term"
+// Extract a stable session key from wsUrl.
 function extractSessionId(wsUrl: string): string {
-	const match = wsUrl.match(/\/session\/([^/]+)\//);
-	return match ? match[1] : "default";
+	try {
+		const url = new URL(wsUrl, window.location.origin);
+		const workspacePath = url.searchParams.get("workspace_path");
+		if (workspacePath) return `workspace:${workspacePath}`;
+		const match = url.pathname.match(/\/session\/([^/]+)\//);
+		if (match) return match[1];
+		return url.pathname || "default";
+	} catch {
+		const match = wsUrl.match(/\/session\/([^/]+)\//);
+		return match ? match[1] : wsUrl || "default";
+	}
 }
 
 // Track initialization state globally

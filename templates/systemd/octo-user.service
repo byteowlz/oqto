@@ -1,0 +1,36 @@
+# Octo User Service - Single-user systemd user service
+#
+# For single-user deployments using systemd user services.
+# Runs as part of the user's session, not as a system service.
+#
+# Installation (as user):
+#   mkdir -p ~/.config/systemd/user
+#   cp octo-user.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable octo-user
+#   systemctl --user start octo-user
+
+[Unit]
+Description=Octo Server (User Mode)
+After=default.target
+
+[Service]
+Type=simple
+
+# Environment
+Environment=OCTO_CONFIG={{CONFIG_PATH}}
+Environment=RUST_LOG={{LOG_LEVEL}}
+
+# Main process
+ExecStart={{OCTO_BINARY}} serve --local-mode
+
+# Graceful shutdown
+ExecStop=/bin/kill -TERM $MAINPID
+TimeoutStopSec=30
+
+# Restart policy
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

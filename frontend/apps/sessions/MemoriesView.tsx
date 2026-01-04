@@ -1,9 +1,9 @@
 "use client";
 
-import { useApp } from "@/components/app-context";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { controlPlaneApiUrl } from "@/lib/control-plane-client";
 import { cn } from "@/lib/utils";
 import {
 	Brain,
@@ -40,6 +40,36 @@ interface Memory {
 	chunk_method?: string;
 }
 
+type RawMemory = Partial<Memory> & {
+	text?: string;
+	memory?: string;
+	data?: { content?: string };
+	metadata?: Record<string, unknown> | null;
+	tags?: string[] | null;
+	category?: string | null;
+	importance?: number | null;
+};
+
+function normalizeMemory(raw: RawMemory): Memory {
+	return {
+		id: raw.id ?? "",
+		memory_type: raw.memory_type ?? "text",
+		content: raw.content ?? raw.text ?? raw.memory ?? raw.data?.content ?? "",
+		metadata: raw.metadata ?? {},
+		importance: raw.importance ?? 0,
+		expires_at: raw.expires_at,
+		expired_at: raw.expired_at,
+		created_at: raw.created_at ?? new Date().toISOString(),
+		updated_at: raw.updated_at ?? new Date().toISOString(),
+		category: raw.category ?? "general",
+		tags: raw.tags ?? [],
+		parent_id: raw.parent_id,
+		chunk_index: raw.chunk_index,
+		total_chunks: raw.total_chunks,
+		chunk_method: raw.chunk_method,
+	};
+}
+
 interface MemoryListResponse {
 	memories: Memory[];
 	total: number;
@@ -58,15 +88,38 @@ interface SearchResponse {
 
 interface MemoriesViewProps {
 	className?: string;
+	/** Workspace path for memory API calls */
+	workspacePath?: string | null;
+	/** Optional store override (e.g., main chat assistant name) */
+	storeName?: string | null;
 }
 
-// API functions
+// Build workspace memories URL with workspace_path query param
+function workspaceMemoriesUrl(
+	workspacePath: string,
+	path = "",
+	storeName?: string | null,
+): string {
+	const base = controlPlaneApiUrl(`/api/workspace/memories${path}`);
+	const url = new URL(base, window.location.origin);
+	url.searchParams.set("workspace_path", workspacePath);
+	if (storeName) {
+		url.searchParams.set("store", storeName);
+	}
+	return url.toString();
+}
+
+// API functions using workspace-based routes
 async function fetchMemories(
-	sessionId: string,
+	workspacePath: string,
 	offset = 0,
 	limit = 50,
+	storeName?: string | null,
 ): Promise<MemoryListResponse> {
-	const url = new URL(`/api/session/${sessionId}/memories`, window.location.origin);
+	const url = new URL(
+		workspaceMemoriesUrl(workspacePath, "", storeName),
+		window.location.origin,
+	);
 	url.searchParams.set("limit", limit.toString());
 	url.searchParams.set("offset", offset.toString());
 
@@ -80,44 +133,62 @@ async function fetchMemories(
 		}
 		throw new Error(`Failed to fetch memories: ${res.statusText}`);
 	}
-	return res.json();
+	const data = (await res.json()) as {
+		memories?: RawMemory[];
+		total?: number;
+		offset?: number;
+		limit?: number;
+	};
+	return {
+		memories: (data.memories ?? []).map(normalizeMemory),
+		total: data.total ?? 0,
+		offset: data.offset ?? 0,
+		limit: data.limit ?? limit,
+	};
 }
 
 async function searchMemories(
-	sessionId: string,
+	workspacePath: string,
 	query: string,
 	limit = 50,
+	storeName?: string | null,
 ): Promise<Memory[]> {
-	const res = await fetch(`/api/session/${sessionId}/memories/search`, {
-		method: "POST",
-		credentials: "include",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({
-			query,
-			limit,
-			rerank: true,
-		}),
-	});
+	const res = await fetch(
+		workspaceMemoriesUrl(workspacePath, "/search", storeName),
+		{
+			method: "POST",
+			credentials: "include",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				query,
+				limit,
+				rerank: true,
+			}),
+		},
+	);
 	if (!res.ok) {
 		throw new Error(`Failed to search memories: ${res.statusText}`);
 	}
-	const data: SearchResponse = await res.json();
-	return data.memories || [];
+	const data = (await res.json()) as SearchResponse;
+	return (data.memories ?? []).map((memory) => normalizeMemory(memory));
 }
 
 async function addMemory(
-	sessionId: string,
+	workspacePath: string,
 	content: string,
 	category?: string,
 	tags?: string[],
 	importance?: number,
+	storeName?: string | null,
 ): Promise<Memory> {
-	const res = await fetch(`/api/session/${sessionId}/memories`, {
+	const res = await fetch(workspaceMemoriesUrl(workspacePath, "", storeName), {
 		method: "POST",
 		credentials: "include",
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify({
 			content,
+			text: content,
+			memory: content,
 			category: category || "general",
 			tags: tags || [],
 			importance: importance || 5,
@@ -127,15 +198,17 @@ async function addMemory(
 		const text = await res.text();
 		throw new Error(`Failed to add memory: ${text || res.statusText}`);
 	}
-	return res.json();
+	const data = (await res.json()) as RawMemory;
+	return normalizeMemory(data);
 }
 
 async function deleteMemory(
-	sessionId: string,
+	workspacePath: string,
 	memoryId: string,
+	storeName?: string | null,
 ): Promise<void> {
 	const res = await fetch(
-		`/api/session/${sessionId}/memories/${memoryId}`,
+		workspaceMemoriesUrl(workspacePath, `/${memoryId}`, storeName),
 		{
 			method: "DELETE",
 			credentials: "include",
@@ -147,21 +220,24 @@ async function deleteMemory(
 }
 
 async function updateMemory(
-	sessionId: string,
+	workspacePath: string,
 	memoryId: string,
 	content: string,
 	category?: string,
 	tags?: string[],
 	importance?: number,
+	storeName?: string | null,
 ): Promise<Memory> {
 	const res = await fetch(
-		`/api/session/${sessionId}/memories/${memoryId}`,
+		workspaceMemoriesUrl(workspacePath, `/${memoryId}`, storeName),
 		{
 			method: "PUT",
 			credentials: "include",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({
 				content,
+				text: content,
+				memory: content,
 				...(category && { category }),
 				...(tags && { tags }),
 				...(importance && { importance }),
@@ -171,7 +247,8 @@ async function updateMemory(
 	if (!res.ok) {
 		throw new Error(`Failed to update memory: ${res.statusText}`);
 	}
-	return res.json();
+	const data = (await res.json()) as RawMemory;
+	return normalizeMemory(data);
 }
 
 function MemoryCard({
@@ -186,7 +263,7 @@ function MemoryCard({
 	isDeleting: boolean;
 }) {
 	const [isEditing, setIsEditing] = useState(false);
-	const [editContent, setEditContent] = useState(memory.content);
+	const [editContent, setEditContent] = useState(memory.content ?? "");
 	const [isSaving, setIsSaving] = useState(false);
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -214,7 +291,7 @@ function MemoryCard({
 	};
 
 	const handleCancel = () => {
-		setEditContent(memory.content);
+		setEditContent(memory.content ?? "");
 		setIsEditing(false);
 	};
 
@@ -332,8 +409,11 @@ function MemoryCard({
 	);
 }
 
-export function MemoriesView({ className }: MemoriesViewProps) {
-	const { selectedWorkspaceSessionId } = useApp();
+export function MemoriesView({
+	className,
+	workspacePath,
+	storeName,
+}: MemoriesViewProps) {
 	const [memories, setMemories] = useState<Memory[]>([]);
 	const [total, setTotal] = useState(0);
 	const [loading, setLoading] = useState(true);
@@ -348,13 +428,13 @@ export function MemoriesView({ className }: MemoriesViewProps) {
 	const addTextareaRef = useRef<HTMLTextAreaElement>(null);
 
 	const loadMemories = useCallback(async () => {
-		if (!selectedWorkspaceSessionId) return;
+		if (!workspacePath) return;
 
 		setLoading(true);
 		setError("");
 		setIsSearchMode(false);
 		try {
-			const data = await fetchMemories(selectedWorkspaceSessionId);
+			const data = await fetchMemories(workspacePath, 0, 50, storeName);
 			setMemories(data.memories);
 			setTotal(data.total);
 		} catch (err) {
@@ -362,7 +442,7 @@ export function MemoriesView({ className }: MemoriesViewProps) {
 		} finally {
 			setLoading(false);
 		}
-	}, [selectedWorkspaceSessionId]);
+	}, [workspacePath, storeName]);
 
 	useEffect(() => {
 		loadMemories();
@@ -375,7 +455,7 @@ export function MemoriesView({ className }: MemoriesViewProps) {
 	}, [showAddForm]);
 
 	const handleSearch = useCallback(async () => {
-		if (!selectedWorkspaceSessionId) return;
+		if (!workspacePath) return;
 
 		if (!searchQuery.trim()) {
 			loadMemories();
@@ -387,8 +467,10 @@ export function MemoriesView({ className }: MemoriesViewProps) {
 		setIsSearchMode(true);
 		try {
 			const results = await searchMemories(
-				selectedWorkspaceSessionId,
+				workspacePath,
 				searchQuery,
+				50,
+				storeName,
 			);
 			setMemories(results);
 			setTotal(results.length);
@@ -397,7 +479,7 @@ export function MemoriesView({ className }: MemoriesViewProps) {
 		} finally {
 			setIsSearching(false);
 		}
-	}, [selectedWorkspaceSessionId, searchQuery, loadMemories]);
+	}, [workspacePath, searchQuery, loadMemories, storeName]);
 
 	const handleClearSearch = useCallback(() => {
 		setSearchQuery("");
@@ -405,16 +487,20 @@ export function MemoriesView({ className }: MemoriesViewProps) {
 	}, [loadMemories]);
 
 	const handleAdd = useCallback(async () => {
-		if (!selectedWorkspaceSessionId || !newMemoryContent.trim()) return;
+		if (!workspacePath || !newMemoryContent.trim()) return;
 
 		setIsAdding(true);
 		setError("");
 		try {
 			const newMemory = await addMemory(
-				selectedWorkspaceSessionId,
+				workspacePath,
 				newMemoryContent,
+				undefined,
+				undefined,
+				undefined,
+				storeName,
 			);
-			setMemories((prev) => [newMemory, ...prev]);
+			setMemories((prev) => [normalizeMemory(newMemory), ...prev]);
 			setTotal((prev) => prev + 1);
 			setNewMemoryContent("");
 			setShowAddForm(false);
@@ -423,15 +509,15 @@ export function MemoriesView({ className }: MemoriesViewProps) {
 		} finally {
 			setIsAdding(false);
 		}
-	}, [selectedWorkspaceSessionId, newMemoryContent]);
+	}, [workspacePath, newMemoryContent, storeName]);
 
 	const handleDelete = useCallback(
 		async (memoryId: string) => {
-			if (!selectedWorkspaceSessionId) return;
+			if (!workspacePath) return;
 
 			setDeletingId(memoryId);
 			try {
-				await deleteMemory(selectedWorkspaceSessionId, memoryId);
+				await deleteMemory(workspacePath, memoryId, storeName);
 				setMemories((prev) => prev.filter((m) => m.id !== memoryId));
 				setTotal((prev) => prev - 1);
 			} catch (err) {
@@ -442,18 +528,22 @@ export function MemoriesView({ className }: MemoriesViewProps) {
 				setDeletingId(null);
 			}
 		},
-		[selectedWorkspaceSessionId],
+		[workspacePath, storeName],
 	);
 
 	const handleEdit = useCallback(
 		async (memoryId: string, content: string) => {
-			if (!selectedWorkspaceSessionId) return;
+			if (!workspacePath) return;
 
 			try {
 				const updated = await updateMemory(
-					selectedWorkspaceSessionId,
+					workspacePath,
 					memoryId,
 					content,
+					undefined,
+					undefined,
+					undefined,
+					storeName,
 				);
 				setMemories((prev) =>
 					prev.map((m) => (m.id === memoryId ? updated : m)),
@@ -465,11 +555,11 @@ export function MemoriesView({ className }: MemoriesViewProps) {
 				throw err; // Re-throw so the card knows to not exit edit mode
 			}
 		},
-		[selectedWorkspaceSessionId],
+		[workspacePath, storeName],
 	);
 
-	// No session selected
-	if (!selectedWorkspaceSessionId) {
+	// No workspace selected
+	if (!workspacePath) {
 		return (
 			<div
 				className={cn(
@@ -479,7 +569,7 @@ export function MemoriesView({ className }: MemoriesViewProps) {
 			>
 				<div className="text-center text-muted-foreground">
 					<Brain className="w-12 h-12 mx-auto mb-2 opacity-50" />
-					<p className="text-sm">No session selected</p>
+					<p className="text-sm">Select a chat to view memories</p>
 				</div>
 			</div>
 		);

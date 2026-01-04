@@ -16,9 +16,10 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
 use crate::markdown;
+use crate::wordlist;
 
 // Simple in-memory cache for session messages
-static MESSAGE_CACHE: Lazy<Arc<RwLock<HashMap<String, (Vec<ChatMessage>, std::time::Instant)>>>> = 
+static MESSAGE_CACHE: Lazy<Arc<RwLock<HashMap<String, (Vec<ChatMessage>, std::time::Instant)>>>> =
     Lazy::new(|| Arc::new(RwLock::new(HashMap::new())));
 
 const CACHE_TTL_SECS: u64 = 30; // Cache messages for 30 seconds
@@ -52,6 +53,8 @@ pub struct SessionTime {
 pub struct ChatSession {
     /// Session ID (e.g., "ses_xxx")
     pub id: String,
+    /// Human-readable ID (e.g., "cold-lamp") - deterministically generated from session ID
+    pub readable_id: String,
     /// Session title
     pub title: Option<String>,
     /// Parent session ID (for child sessions)
@@ -96,11 +99,11 @@ pub fn list_sessions() -> Result<Vec<ChatSession>> {
 }
 
 /// Read all chat sessions from a specific OpenCode data directory.
-/// 
+///
 /// OpenCode stores sessions in: {opencode_dir}/storage/session/{projectID}/ses_*.json
 pub fn list_sessions_from_dir(opencode_dir: &Path) -> Result<Vec<ChatSession>> {
     let session_dir = opencode_dir.join("storage/session");
-    
+
     if !session_dir.exists() {
         tracing::debug!("Session directory does not exist: {:?}", session_dir);
         return Ok(Vec::new());
@@ -117,7 +120,7 @@ pub fn list_sessions_from_dir(opencode_dir: &Path) -> Result<Vec<ChatSession>> {
             Ok(e) => e,
             Err(_) => continue,
         };
-        
+
         let project_path = project_entry.path();
         if !project_path.is_dir() {
             continue;
@@ -136,7 +139,7 @@ pub fn list_sessions_from_dir(opencode_dir: &Path) -> Result<Vec<ChatSession>> {
             };
 
             let session_path = session_entry.path();
-            
+
             // Only process ses_*.json files
             // Only process ses_*.json files
             let is_session_file = session_path
@@ -144,11 +147,11 @@ pub fn list_sessions_from_dir(opencode_dir: &Path) -> Result<Vec<ChatSession>> {
                 .and_then(|s| s.to_str())
                 .map(|name| name.starts_with("ses_") && name.ends_with(".json"))
                 .unwrap_or(false);
-            
+
             if !is_session_file {
                 continue;
             }
-            
+
             // Skip if not a regular file
             if !session_path.is_file() {
                 continue;
@@ -172,12 +175,16 @@ pub fn list_sessions_from_dir(opencode_dir: &Path) -> Result<Vec<ChatSession>> {
             };
 
             // Get workspace path from the session's directory field
-            let workspace_path = info.directory.clone().unwrap_or_else(|| "global".to_string());
+            let workspace_path = info
+                .directory
+                .clone()
+                .unwrap_or_else(|| "global".to_string());
             let project_name = project_name_from_path(&workspace_path);
             let is_child = info.parent_id.is_some();
 
             sessions.push(ChatSession {
                 id: info.id.clone(),
+                readable_id: wordlist::readable_id_from_session_id(&info.id),
                 title: info.title,
                 parent_id: info.parent_id,
                 workspace_path,
@@ -193,7 +200,7 @@ pub fn list_sessions_from_dir(opencode_dir: &Path) -> Result<Vec<ChatSession>> {
 
     // Sort by updated_at descending (most recent first)
     sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
-    
+
     tracing::info!("Found {} sessions in {:?}", sessions.len(), session_dir);
 
     Ok(sessions)
@@ -214,15 +221,6 @@ pub fn list_sessions_grouped() -> Result<HashMap<String, Vec<ChatSession>>> {
     Ok(grouped)
 }
 
-/// List sessions for a specific workspace path.
-pub fn list_sessions_for_workspace(workspace_path: &str) -> Result<Vec<ChatSession>> {
-    let sessions = list_sessions()?;
-    Ok(sessions
-        .into_iter()
-        .filter(|s| s.workspace_path == workspace_path)
-        .collect())
-}
-
 /// Get a single session by ID.
 pub fn get_session(session_id: &str) -> Result<Option<ChatSession>> {
     let sessions = list_sessions()?;
@@ -230,7 +228,7 @@ pub fn get_session(session_id: &str) -> Result<Option<ChatSession>> {
 }
 
 /// Update a session's title on disk.
-/// 
+///
 /// This reads the session JSON file, updates the title field, and writes it back.
 /// Returns the updated session or an error if the session doesn't exist.
 pub fn update_session_title(session_id: &str, new_title: &str) -> Result<ChatSession> {
@@ -238,9 +236,13 @@ pub fn update_session_title(session_id: &str, new_title: &str) -> Result<ChatSes
 }
 
 /// Update a session's title on disk from a specific OpenCode data directory.
-pub fn update_session_title_in_dir(session_id: &str, new_title: &str, opencode_dir: &Path) -> Result<ChatSession> {
+pub fn update_session_title_in_dir(
+    session_id: &str,
+    new_title: &str,
+    opencode_dir: &Path,
+) -> Result<ChatSession> {
     let session_dir = opencode_dir.join("storage/session");
-    
+
     if !session_dir.exists() {
         anyhow::bail!("Session directory does not exist");
     }
@@ -254,7 +256,7 @@ pub fn update_session_title_in_dir(session_id: &str, new_title: &str, opencode_d
             Ok(e) => e,
             Err(_) => continue,
         };
-        
+
         let project_path = project_entry.path();
         if !project_path.is_dir() {
             continue;
@@ -282,20 +284,24 @@ pub fn update_session_title_in_dir(session_id: &str, new_title: &str, opencode_d
         info.time.updated = now_ms;
 
         // Write back
-        let updated_content = serde_json::to_string_pretty(&info)
-            .with_context(|| "serializing updated session")?;
+        let updated_content =
+            serde_json::to_string_pretty(&info).with_context(|| "serializing updated session")?;
         std::fs::write(&session_file, updated_content)
             .with_context(|| format!("writing session file: {:?}", session_file))?;
 
         // Return the updated session
-        let workspace_path = info.directory.clone().unwrap_or_else(|| "global".to_string());
+        let workspace_path = info
+            .directory
+            .clone()
+            .unwrap_or_else(|| "global".to_string());
         let project_name = project_name_from_path(&workspace_path);
         let is_child = info.parent_id.is_some();
 
         tracing::info!("Updated session {} title to: {}", session_id, new_title);
 
         return Ok(ChatSession {
-            id: info.id,
+            id: info.id.clone(),
+            readable_id: wordlist::readable_id_from_session_id(&info.id),
             title: info.title,
             parent_id: info.parent_id,
             workspace_path,
@@ -394,6 +400,7 @@ pub struct ChatMessage {
     pub summary_title: Option<String>,
     pub tokens_input: Option<i64>,
     pub tokens_output: Option<i64>,
+    pub tokens_reasoning: Option<i64>,
     pub cost: Option<f64>,
     /// Message content parts
     pub parts: Vec<ChatMessagePart>,
@@ -441,13 +448,14 @@ pub async fn get_session_messages_async(session_id: &str) -> Result<Vec<ChatMess
     // Update cache
     {
         let mut cache = MESSAGE_CACHE.write().await;
-        cache.insert(session_id.to_string(), (messages.clone(), std::time::Instant::now()));
-        
+        cache.insert(
+            session_id.to_string(),
+            (messages.clone(), std::time::Instant::now()),
+        );
+
         // Prune old entries (keep max 50)
         if cache.len() > 50 {
-            let mut entries: Vec<_> = cache.iter()
-                .map(|(k, (_, t))| (k.clone(), *t))
-                .collect();
+            let mut entries: Vec<_> = cache.iter().map(|(k, (_, t))| (k.clone(), *t)).collect();
             entries.sort_by(|a, b| b.1.cmp(&a.1)); // Sort by time descending
             for (key, _) in entries.into_iter().skip(50) {
                 cache.remove(&key);
@@ -458,19 +466,11 @@ pub async fn get_session_messages_async(session_id: &str) -> Result<Vec<ChatMess
     Ok(messages)
 }
 
-/// Invalidate the cache for a session.
-pub async fn invalidate_message_cache(session_id: &str) {
-    let mut cache = MESSAGE_CACHE.write().await;
-    cache.remove(session_id);
-}
-
-/// Get all messages for a session (sync version, for backwards compatibility).
-pub fn get_session_messages(session_id: &str) -> Result<Vec<ChatMessage>> {
-    get_session_messages_from_dir(session_id, &default_opencode_data_dir())
-}
-
 /// Get all messages for a session using parallel I/O.
-async fn get_session_messages_parallel(session_id: &str, opencode_dir: &Path) -> Result<Vec<ChatMessage>> {
+async fn get_session_messages_parallel(
+    session_id: &str,
+    opencode_dir: &Path,
+) -> Result<Vec<ChatMessage>> {
     let message_dir = opencode_dir.join("storage/message").join(session_id);
     let part_dir = opencode_dir.join("storage/part");
 
@@ -494,11 +494,11 @@ async fn get_session_messages_parallel(session_id: &str, opencode_dir: &Path) ->
 
     // Spawn tasks to read messages in parallel
     let mut tasks = Vec::with_capacity(message_entries.len());
-    
+
     for entry in message_entries {
         let msg_path = entry.path();
         let part_dir = part_dir.clone();
-        
+
         tasks.push(tokio::task::spawn_blocking(move || {
             load_single_message(&msg_path, &part_dir)
         }));
@@ -537,7 +537,7 @@ fn load_single_message(msg_path: &Path, part_dir: &Path) -> Result<Option<ChatMe
         .with_context(|| format!("parsing message: {:?}", msg_path))?;
 
     // Load parts for this message
-    let parts = load_message_parts(&info.id, part_dir);
+    let parts = load_message_parts(&info.id, &info.session_id, part_dir);
 
     Ok(Some(ChatMessage {
         id: info.id.clone(),
@@ -552,13 +552,17 @@ fn load_single_message(msg_path: &Path, part_dir: &Path) -> Result<Option<ChatMe
         summary_title: info.summary.and_then(|s| s.title),
         tokens_input: info.tokens.as_ref().and_then(|t| t.input),
         tokens_output: info.tokens.as_ref().and_then(|t| t.output),
+        tokens_reasoning: info.tokens.as_ref().and_then(|t| t.reasoning),
         cost: info.cost,
         parts,
     }))
 }
 
 /// Get all messages for a session from a specific OpenCode data directory.
-pub fn get_session_messages_from_dir(session_id: &str, opencode_dir: &Path) -> Result<Vec<ChatMessage>> {
+pub fn get_session_messages_from_dir(
+    session_id: &str,
+    opencode_dir: &Path,
+) -> Result<Vec<ChatMessage>> {
     let message_dir = opencode_dir.join("storage/message").join(session_id);
     let part_dir = opencode_dir.join("storage/part");
 
@@ -610,7 +614,7 @@ pub fn get_session_messages_from_dir(session_id: &str, opencode_dir: &Path) -> R
         };
 
         // Load parts for this message
-        let parts = load_message_parts(&info.id, &part_dir);
+        let parts = load_message_parts(&info.id, &info.session_id, &part_dir);
 
         messages.push(ChatMessage {
             id: info.id.clone(),
@@ -625,6 +629,7 @@ pub fn get_session_messages_from_dir(session_id: &str, opencode_dir: &Path) -> R
             summary_title: info.summary.and_then(|s| s.title),
             tokens_input: info.tokens.as_ref().and_then(|t| t.input),
             tokens_output: info.tokens.as_ref().and_then(|t| t.output),
+            tokens_reasoning: info.tokens.as_ref().and_then(|t| t.reasoning),
             cost: info.cost,
             parts,
         });
@@ -644,7 +649,7 @@ pub fn get_session_messages_from_dir(session_id: &str, opencode_dir: &Path) -> R
 }
 
 /// Load all parts for a specific message.
-fn load_message_parts(message_id: &str, part_dir: &Path) -> Vec<ChatMessagePart> {
+fn load_message_parts(message_id: &str, session_id: &str, part_dir: &Path) -> Vec<ChatMessagePart> {
     let msg_part_dir = part_dir.join(message_id);
 
     if !msg_part_dir.exists() {
@@ -686,6 +691,15 @@ fn load_message_parts(message_id: &str, part_dir: &Path) -> Vec<ChatMessagePart>
             Ok(i) => i,
             Err(_) => continue,
         };
+        if info.message_id != message_id || info.session_id != session_id {
+            tracing::debug!(
+                "Skipping part {} for mismatched IDs (message={}, session={})",
+                info.id,
+                info.message_id,
+                info.session_id
+            );
+            continue;
+        }
 
         // Convert to ChatMessagePart based on type
         let part = match info.part_type.as_str() {
@@ -735,39 +749,42 @@ fn load_message_parts(message_id: &str, part_dir: &Path) -> Vec<ChatMessagePart>
 }
 
 /// Get all messages for a session with pre-rendered markdown HTML.
-/// 
+///
 /// This is useful for initial load of completed conversations.
 /// During streaming, clients should use raw markdown and render client-side.
 pub async fn get_session_messages_rendered(session_id: &str) -> Result<Vec<ChatMessage>> {
     let mut messages = get_session_messages_async(session_id).await?;
-    
+
     // Collect all text content that needs rendering
-    let texts_to_render: Vec<(usize, usize, String)> = messages.iter().enumerate()
+    let texts_to_render: Vec<(usize, usize, String)> = messages
+        .iter()
+        .enumerate()
         .flat_map(|(msg_idx, msg)| {
-            msg.parts.iter().enumerate()
+            msg.parts
+                .iter()
+                .enumerate()
                 .filter(|(_, part)| part.part_type == "text" && part.text.is_some())
-                .map(move |(part_idx, part)| {
-                    (msg_idx, part_idx, part.text.clone().unwrap())
-                })
+                .map(move |(part_idx, part)| (msg_idx, part_idx, part.text.clone().unwrap()))
         })
         .collect();
-    
+
     if texts_to_render.is_empty() {
         return Ok(messages);
     }
-    
+
     // Render all markdown in parallel
-    let contents: Vec<String> = texts_to_render.iter()
+    let contents: Vec<String> = texts_to_render
+        .iter()
         .map(|(_, _, text)| text.clone())
         .collect();
-    
+
     let rendered = markdown::render_markdown_batch(contents).await;
-    
+
     // Apply rendered HTML back to messages
     for ((msg_idx, part_idx, _), html) in texts_to_render.into_iter().zip(rendered) {
         messages[msg_idx].parts[part_idx].text_html = Some(html);
     }
-    
+
     Ok(messages)
 }
 
@@ -780,7 +797,13 @@ mod tests {
         assert_eq!(project_name_from_path("global"), "Global");
         assert_eq!(project_name_from_path(""), "Global");
         assert_eq!(project_name_from_path("/home/wismut/Code/lst"), "lst");
-        assert_eq!(project_name_from_path("/home/wismut/byteowlz/kittenx"), "kittenx");
-        assert_eq!(project_name_from_path("/home/wismut/byteowlz/govnr"), "govnr");
+        assert_eq!(
+            project_name_from_path("/home/wismut/byteowlz/kittenx"),
+            "kittenx"
+        );
+        assert_eq!(
+            project_name_from_path("/home/wismut/byteowlz/govnr"),
+            "govnr"
+        );
     }
 }

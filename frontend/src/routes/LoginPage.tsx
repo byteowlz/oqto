@@ -23,11 +23,16 @@ import {
 	FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
-import { login } from "@/lib/control-plane-client";
+import {
+	getControlPlaneBaseUrl,
+	login,
+	setControlPlaneBaseUrl,
+} from "@/lib/control-plane-client";
 
 const loginSchema = z.object({
 	username: z.string().min(1, "Username is required"),
 	password: z.string().min(1, "Password is required"),
+	backendUrl: z.string().trim().url("Enter a valid URL").or(z.literal("")),
 });
 
 type LoginFormData = z.infer<typeof loginSchema>;
@@ -44,6 +49,7 @@ export function LoginPage() {
 		defaultValues: {
 			username: "",
 			password: "",
+			backendUrl: getControlPlaneBaseUrl(),
 		},
 	});
 
@@ -51,8 +57,11 @@ export function LoginPage() {
 		setError(null);
 		setIsLoading(true);
 
+		const backendUrl = data.backendUrl.trim();
+		setControlPlaneBaseUrl(backendUrl ? backendUrl : null);
+
 		try {
-			await login(data);
+			await login({ username: data.username, password: data.password });
 			navigate(redirectTo, { replace: true });
 		} catch (err) {
 			setError(err instanceof Error ? err.message : "Login failed");
@@ -108,6 +117,25 @@ export function LoginPage() {
 											type="password"
 											placeholder="Enter your password"
 											autoComplete="current-password"
+											disabled={isLoading}
+											{...field}
+										/>
+									</FormControl>
+									<FormMessage />
+								</FormItem>
+							)}
+						/>
+
+						<FormField
+							control={form.control}
+							name="backendUrl"
+							render={({ field }) => (
+								<FormItem>
+									<FormLabel>Backend URL</FormLabel>
+									<FormControl>
+										<Input
+											placeholder="http://localhost:8080"
+											autoComplete="url"
 											disabled={isLoading}
 											{...field}
 										/>

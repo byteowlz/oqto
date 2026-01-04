@@ -83,13 +83,10 @@ impl ProcessHandle {
                 return Err(anyhow::anyhow!("failed to kill process: {}", e));
             }
         }
-        
+
         // Wait for the process to be reaped (prevents zombies)
         // Use a timeout to avoid hanging forever
-        match tokio::time::timeout(
-            std::time::Duration::from_secs(5),
-            self.child.wait()
-        ).await {
+        match tokio::time::timeout(std::time::Duration::from_secs(5), self.child.wait()).await {
             Ok(Ok(_)) => Ok(()), // Process exited cleanly
             Ok(Err(e)) => {
                 // Error waiting, but process might be gone
@@ -128,6 +125,170 @@ impl ProcessManager {
         }
     }
 
+    /// Spawn pi in RPC mode.
+    ///
+    /// Returns the child process handle for stdin/stdout communication.
+    /// The caller is responsible for managing the subprocess lifecycle.
+    pub async fn spawn_pi(
+        &self,
+        session_id: &str,
+        workspace_dir: &Path,
+        pi_binary: &str,
+        provider: Option<&str>,
+        model: Option<&str>,
+        system_prompt: Option<&str>,
+        session_dir: Option<&Path>,
+        env: HashMap<String, String>,
+        run_as: &RunAsUser,
+    ) -> Result<Child> {
+        info!(
+            "Spawning pi in RPC mode for session {}, provider: {:?}, model: {:?}",
+            session_id, provider, model
+        );
+
+        let mut args = vec!["--mode".to_string(), "rpc".to_string()];
+
+        // Session persistence
+        if let Some(dir) = session_dir {
+            args.push("--session-dir".to_string());
+            args.push(dir.to_string_lossy().to_string());
+        }
+
+        // Provider and model
+        if let Some(p) = provider {
+            args.push("--provider".to_string());
+            args.push(p.to_string());
+        }
+        if let Some(m) = model {
+            args.push("--model".to_string());
+            args.push(m.to_string());
+        }
+
+        // System prompt
+        if let Some(prompt) = system_prompt {
+            args.push("--append-system-prompt".to_string());
+            args.push(prompt.to_string());
+        }
+
+        let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+
+        // For pi, we need stdin/stdout for RPC, so we spawn differently
+        let child = self
+            .spawn_pi_subprocess(run_as, pi_binary, &args_refs, Some(workspace_dir), env)
+            .await
+            .context("spawning pi")?;
+
+        info!("pi spawned for session {} in RPC mode", session_id);
+        Ok(child)
+    }
+
+    /// Helper to spawn pi subprocess with stdin/stdout pipes.
+    async fn spawn_pi_subprocess(
+        &self,
+        run_as: &RunAsUser,
+        binary: &str,
+        args: &[&str],
+        cwd: Option<&Path>,
+        env: HashMap<String, String>,
+    ) -> Result<Child> {
+        let child = if let Some(ref username) = run_as.username {
+            let is_root = unsafe { libc::geteuid() } == 0;
+
+            if run_as.use_sudo && !is_root {
+                debug!(
+                    "Spawning {} as user '{}' via sudo: {:?}",
+                    binary, username, args
+                );
+
+                let mut cmd = Command::new("sudo");
+                cmd.arg("-u")
+                    .arg(username)
+                    .arg("--preserve-env")
+                    .arg("--")
+                    .arg(binary)
+                    .args(args)
+                    .stdin(Stdio::piped())
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped())
+                    .kill_on_drop(true);
+
+                if let Some(dir) = cwd {
+                    cmd.current_dir(dir);
+                }
+
+                for (key, value) in env {
+                    cmd.env(&key, &value);
+                }
+
+                cmd.spawn()?
+            } else if is_root {
+                debug!(
+                    "Spawning {} as user '{}' via su (running as root): {:?}",
+                    binary, username, args
+                );
+
+                let args_str = args
+                    .iter()
+                    .map(|a| shell_escape(a))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+
+                let full_cmd = if let Some(dir) = cwd {
+                    format!(
+                        "cd {} && {} {}",
+                        shell_escape(dir.to_str().unwrap_or(".")),
+                        binary,
+                        args_str
+                    )
+                } else {
+                    format!("{} {}", binary, args_str)
+                };
+
+                let mut cmd = Command::new("su");
+                cmd.arg("-")
+                    .arg(username)
+                    .arg("-c")
+                    .arg(&full_cmd)
+                    .stdin(Stdio::piped())
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped())
+                    .kill_on_drop(true);
+
+                for (key, value) in env {
+                    cmd.env(&key, &value);
+                }
+
+                cmd.spawn()?
+            } else {
+                anyhow::bail!(
+                    "Cannot run as user '{}': not root and use_sudo is false",
+                    username
+                );
+            }
+        } else {
+            debug!("Spawning {} as current user: {:?}", binary, args);
+
+            let mut cmd = Command::new(binary);
+            cmd.args(args)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .kill_on_drop(true);
+
+            if let Some(dir) = cwd {
+                cmd.current_dir(dir);
+            }
+
+            for (key, value) in env {
+                cmd.env(&key, &value);
+            }
+
+            cmd.spawn()?
+        };
+
+        Ok(child)
+    }
+
     /// Spawn opencode serve.
     ///
     /// If `agent` is provided, it is passed via the --agent flag.
@@ -153,7 +314,7 @@ impl ProcessManager {
             "--hostname".to_string(),
             "0.0.0.0".to_string(),
         ];
-        
+
         if let Some(agent_name) = agent {
             args.push("--agent".to_string());
             args.push(agent_name.to_string());
@@ -529,15 +690,15 @@ pub fn are_ports_available(ports: &[u16]) -> bool {
 #[cfg(target_os = "linux")]
 pub fn find_process_on_port(port: u16) -> Option<(u32, String)> {
     use std::process::Command as StdCommand;
-    
+
     // Use ss or netstat to find the process
     let output = StdCommand::new("ss")
         .args(["-tlnp", &format!("sport = :{}", port)])
         .output()
         .ok()?;
-    
+
     let stdout = String::from_utf8_lossy(&output.stdout);
-    
+
     // Parse the output to find PID
     // Format: LISTEN 0 4096 0.0.0.0:41820 0.0.0.0:* users:(("opencode",pid=12345,fd=15))
     for line in stdout.lines().skip(1) {
@@ -557,7 +718,7 @@ pub fn find_process_on_port(port: u16) -> Option<(u32, String)> {
             }
         }
     }
-    
+
     None
 }
 
@@ -569,7 +730,7 @@ pub fn find_process_on_port(_port: u16) -> Option<(u32, String)> {
 /// Kill a process by PID.
 pub fn kill_process(pid: u32) -> bool {
     use std::process::Command as StdCommand;
-    
+
     StdCommand::new("kill")
         .arg(pid.to_string())
         .status()
@@ -580,7 +741,7 @@ pub fn kill_process(pid: u32) -> bool {
 /// Force kill a process by PID (SIGKILL).
 pub fn force_kill_process(pid: u32) -> bool {
     use std::process::Command as StdCommand;
-    
+
     StdCommand::new("kill")
         .args(["-9", &pid.to_string()])
         .status()

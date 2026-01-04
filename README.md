@@ -1,103 +1,111 @@
-# Octo - AI Agent Workspace Platform
+![banner](banner.png)
 
-A secure, self-hosted platform providing containerized AI agent environments with persistent workspaces, web terminals, and file management.
+# octo
 
-## Overview
+Self-hosted platform for AI coding agents. Run OpenCode instances in isolated containers or native processes with web UI, terminal access, and file management.
 
-Octo provides isolated, container-based workspaces where users collaborate with AI agents. Each session runs in a Podman/Docker container with:
+## What it does
 
-- **opencode** - AI coding assistant with full shell access
-- **fileserver** - File browsing, upload/download, and management
-- **ttyd** - Web-based terminal access
-
-The platform supports different agent templates (Coding Copilot, Research Assistant, etc.) by injecting specific configurations at container startup.
+- Spawns and manages OpenCode AI agent sessions
+- Provides web UI for chat, file browsing, and terminal
+- Supports container mode (Docker/Podman) or local mode (native processes)
+- Multi-user with JWT auth and invite codes
+- Voice mode (STT/TTS) via eaRS and kokorox
 
 ## Architecture
 
 ```
-Browser  <-->  Caddy  <-->  Vite + React Frontend (Auth/UI)
-                          <-->  Rust Backend (API/Orchestration)
-                                    |
-                                    +--> Container Runtime (Docker/Podman)
-                                            |
-                                            +--> Session Container
-                                                   |-- opencode (port 41820)
-                                                   |-- fileserver (port 41821)
-                                                   +-- ttyd (port 41822)
+                    ┌─────────────────────────────────────┐
+                    │            Octo Backend             │
+                    │              (Rust)                 │
+                    ├─────────────────────────────────────┤
+  Browser/App ───►  │  REST API · WebSocket · SSE Proxy  │
+                    └──────────────┬──────────────────────┘
+                                   │
+           ┌───────────────────────┼───────────────────────┐
+           ▼                       ▼                       ▼
+   ┌──────────────┐       ┌──────────────┐       ┌──────────────┐
+   │   Session    │       │   Session    │       │   Session    │
+   │  Container   │       │  Container   │       │   (Local)    │
+   │              │       │              │       │              │
+   │  · opencode  │       │  · opencode  │       │  · opencode  │
+   │  · fileserver│       │  · fileserver│       │  · fileserver│
+   │  · ttyd      │       │  · ttyd      │       │  · ttyd      │
+   └──────────────┘       └──────────────┘       └──────────────┘
 ```
-
-## Components
-
-| Directory        | Description                                                         |
-| ---------------- | ------------------------------------------------------------------- |
-| `backend/`       | Rust API server - session orchestration, container management, auth |
-| `frontend/`      | Vite + React UI - workspace picker, chat interface, file tree, terminal |
-| `fileserver/`    | Lightweight Rust file server for workspace access                   |
-| `container/`     | Dockerfile and entrypoint for agent runtime containers              |
-| `browser-tools/` | Browser automation scripts                                          |
 
 ## Quick Start
 
 ### Prerequisites
 
-- Docker or Podman installed and running
-- Rust toolchain (`rustup`)
-- Bun (`bun.sh`)
+- Rust toolchain
+- Bun
+- Docker or Podman (for container mode)
 
-### 1. Build the Container Image
-
-```bash
-docker build -t octo-dev:latest -f container/Dockerfile .
-```
-
-### 2. Start the Backend
+### Run locally
 
 ```bash
+# Backend
 cd backend
 cargo run --bin octo -- serve
+
+# Frontend (separate terminal)
+cd frontend
+bun install && bun dev
 ```
 
-### 3. Start the Frontend
+Open `http://localhost:3000`. Default dev login: check backend logs for credentials.
+
+### Container mode
 
 ```bash
-cd frontend
-bun install
-bun dev
+# Build the agent container image
+docker build -t octo-dev:latest -f container/Dockerfile .
+
+# Configure backend to use containers
+# Edit ~/.config/octo/config.toml:
+#   [container]
+#   runtime = "docker"
+#   default_image = "octo-dev:latest"
 ```
 
-The frontend runs at `http://localhost:3000`.
+## Project Structure
+
+```
+backend/        Rust API server, session orchestration, auth
+frontend/       React UI (chat, files, terminal, settings)
+fileserver/     Rust file server for workspace access
+container/      Dockerfile for agent runtime containers
+browser-tools/  Browser automation scripts
+```
 
 ## Configuration
 
-### Backend
-
-Config file: `$XDG_CONFIG_HOME/octo/config.toml`
+### Backend (`~/.config/octo/config.toml`)
 
 ```toml
 [server]
 port = 8080
 
 [container]
-runtime = "docker"  # or "podman"
+runtime = "docker"  # or "podman" or "local"
 default_image = "octo-dev:latest"
-base_port = 41820
+
+[auth]
+jwt_secret = "change-me"
+dev_mode = true  # enables dev login
+
+[voice]
+enabled = true
+stt_url = "ws://localhost:8765"  # eaRS
+tts_url = "ws://localhost:8766"  # kokorox
 ```
 
-See `backend/examples/config.toml` for all options.
-
-### Frontend
-
-Create `.env.local`:
+### Frontend (`.env.local`)
 
 ```bash
 VITE_CONTROL_PLANE_URL=http://localhost:8080
-VITE_OPENCODE_BASE_URL=http://localhost:41820
-VITE_FILE_SERVER_URL=http://localhost:41821
-VITE_CADDY_BASE_URL=http://localhost
 ```
-
-Note: the Vite dev server is configured for port 3000 and allows the `archlinux`
-hostname by default.
 
 ## Development
 
@@ -105,56 +113,37 @@ hostname by default.
 | ---------- | --------------- | ----------------------------------- | -------------- |
 | backend    | `cargo build`   | `cargo clippy && cargo fmt --check` | `cargo test`   |
 | fileserver | `cargo build`   | `cargo clippy && cargo fmt --check` | `cargo test`   |
-| frontend   | `bun run build` | `bun run lint` (Biome + oxlint)     | `bun run test` |
+| frontend   | `bun run build` | `bun run lint`                      | `bun run test` |
 
-## CLI Tools
-
-### octo (Server)
+## CLI
 
 ```bash
+# Server
 octo serve                    # Start API server
-octo init                     # Create config directories
-octo config show              # Show effective configuration
+octo config show              # Show configuration
 octo invite-codes generate    # Generate invite codes
+
+# Control
+octoctl status                # Check server health
+octoctl session list          # List sessions
+octoctl image build           # Build container image
 ```
 
-### octoctl (Control CLI)
+## API
 
-```bash
-octoctl status                # Check server status
-octoctl session list          # List all sessions
-octoctl container refresh     # Rebuild containers from latest image
-octoctl image build           # Build new container image
-```
+| Endpoint                   | Description           |
+| -------------------------- | --------------------- |
+| `POST /api/sessions`       | Create session        |
+| `GET /api/sessions`        | List sessions         |
+| `DELETE /api/sessions/:id` | Delete session        |
+| `/session/:id/code/*`      | Proxy to OpenCode     |
+| `/session/:id/files/*`     | Proxy to fileserver   |
+| `/session/:id/term`        | WebSocket to terminal |
+| `/session/:id/code/event`  | SSE event stream      |
 
-## API Endpoints
+## Roadmap
 
-- `POST /api/sessions` - Create a new session
-- `GET /api/sessions` - List all sessions
-- `GET /api/sessions/:id` - Get session details
-- `DELETE /api/sessions/:id` - Stop and remove session
-- `POST /api/sessions/:id/stop` - Stop session (preserve container)
-- `POST /api/sessions/:id/resume` - Resume stopped session
-- `GET /sessions/:id/opencode/*` - Proxy to opencode
-- `GET /sessions/:id/files/*` - Proxy to fileserver
-- `GET /sessions/:id/terminal` - WebSocket proxy to ttyd
-
-## Agent Templates
-
-Templates configure agent behavior by injecting `AGENTS.md` and `opencode.json`:
-
-| Template           | Use Case          | Capabilities                        |
-| ------------------ | ----------------- | ----------------------------------- |
-| Coding Copilot     | Developers        | Full shell, Git, code editing       |
-| Research Assistant | Knowledge workers | File reading, search, summarization |
-| Meeting Synth      | Managers          | Transcript parsing, summarization   |
-
-## Security
-
-- Rootless containers (Podman) for production
-- No direct browser-to-container communication
-- JWT authentication with invite code registration
-- Path traversal protection in fileserver
+See [TAURI.md](./TAURI.md) for desktop/mobile app plans.
 
 ## License
 

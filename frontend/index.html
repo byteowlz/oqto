@@ -1,15 +1,86 @@
 <!doctype html>
-<html lang="de">
+<html lang="de" data-preload="true" style="background:#000">
   <head>
+    <script>
+      (function () {
+        const root = document.documentElement;
+        let storedTheme = null;
+        try {
+          storedTheme = localStorage.getItem("theme");
+        } catch {
+          storedTheme = null;
+        }
+        const prefersDark =
+          window.matchMedia &&
+          window.matchMedia("(prefers-color-scheme: dark)").matches;
+        const theme =
+          storedTheme === "light" ||
+          storedTheme === "dark" ||
+          storedTheme === "system"
+            ? storedTheme
+            : "dark";
+        const isDark = theme === "dark" || (theme === "system" && prefersDark);
+        if (isDark) root.classList.add("dark");
+        root.style.background = "#000";
+        root.style.colorScheme = isDark ? "dark" : "light";
+        document.addEventListener("DOMContentLoaded", () => {
+          document.body.style.background = "#000";
+          const appRoot = document.getElementById("root");
+          if (appRoot) appRoot.style.background = "#000";
+        });
+      })();
+    </script>
     <meta charset="UTF-8" />
     <meta
       name="viewport"
       content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
     />
+    <meta name="theme-color" content="#000000" />
+    <style>
+      html[data-preload],
+      html[data-preload] body,
+      html[data-preload] #root {
+        background: #000 !important;
+      }
+      #preload {
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 12px;
+        color: #e5e5e5;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+          "Liberation Mono", "Courier New", monospace;
+        letter-spacing: 0.08em;
+      }
+      #preload-spinner {
+        width: 28px;
+        height: 28px;
+        border-radius: 999px;
+        border: 2px solid rgba(229, 229, 229, 0.2);
+        border-top-color: #e5e5e5;
+        animation: preload-spin 0.8s linear infinite;
+      }
+      #preload-text {
+        font-size: 12px;
+        text-transform: uppercase;
+      }
+      @keyframes preload-spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+    </style>
     <title>octo - got tentacles?</title>
   </head>
-  <body class="font-mono antialiased bg-background text-foreground">
-    <div id="root"></div>
+  <body class="font-mono antialiased bg-background text-foreground" style="background:#000">
+    <div id="root" style="background:#000">
+      <div id="preload" aria-live="polite">
+        <div id="preload-spinner" aria-hidden="true"></div>
+        <div id="preload-text">Loading Octo</div>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

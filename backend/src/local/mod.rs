@@ -21,7 +21,7 @@ mod runtime;
 pub use linux_users::LinuxUsersConfig;
 #[allow(unused_imports)]
 pub use process::{
-    are_ports_available, find_process_on_port, force_kill_process, is_port_available,
-    kill_process, ProcessHandle, ProcessManager,
+    ProcessHandle, ProcessManager, are_ports_available, find_process_on_port, force_kill_process,
+    is_port_available, kill_process,
 };
 pub use runtime::{LocalRuntime, LocalRuntimeConfig};
