@@ -2,8 +2,11 @@
 //!
 //! Provides REST endpoints and proxy functionality for session management.
 
+mod delegate;
 mod error;
 mod handlers;
+mod main_chat;
+mod main_chat_pi;
 mod proxy;
 mod routes;
 mod state;
@@ -12,4 +15,4 @@ mod state;
 #[allow(unused_imports)]
 pub use error::{ApiError, ApiResult, ErrorResponse};
 pub use routes::create_router;
-pub use state::{AppState, MmryState, VoiceState, VisualizerVoiceState};
+pub use state::{AppState, MmryState, SessionUiState, VisualizerVoiceState, VoiceState};

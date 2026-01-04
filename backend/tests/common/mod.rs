@@ -1,7 +1,9 @@
 //! Test utilities and common setup.
 
+use anyhow::Result;
+use async_trait::async_trait;
 use axum::Router;
-use octo::agent::{AgentRepository, AgentService};
+use octo::agent::{AgentRepository, AgentService, ScaffoldConfig};
 use octo::agent_rpc::{
     AgentBackend, AgentEventStream, Conversation, HealthStatus, Message, SendMessageRequest,
     SessionHandle, StartSessionOpts,
@@ -13,24 +15,35 @@ use octo::db::Database;
 use octo::invite::InviteCodeRepository;
 use octo::session::{SessionRepository, SessionService, SessionServiceConfig};
 use octo::user::{UserRepository, UserService};
-use anyhow::Result;
-use async_trait::async_trait;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
+
+fn make_dev_user(id: &str, name: &str, email: &str, password: &str, role: Role) -> DevUser {
+    let password_hash =
+        bcrypt::hash(password, bcrypt::DEFAULT_COST).expect("Failed to hash password");
+
+    DevUser {
+        id: id.to_string(),
+        name: name.to_string(),
+        email: email.to_string(),
+        password_hash,
+        role,
+    }
+}
 
 /// Create a test AuthConfig with a JWT secret for testing.
 fn test_auth_config() -> AuthConfig {
     let mut config = AuthConfig::default();
     config.dev_mode = true;
     config.dev_users = vec![
-        DevUser::new_with_plaintext(
+        make_dev_user(
             "dev",
             "Developer",
             "dev@localhost",
             "devpassword123",
             Role::Admin,
         ),
-        DevUser::new_with_plaintext(
+        make_dev_user(
             "user",
             "Test User",
             "user@localhost",
@@ -62,7 +75,12 @@ pub async fn test_app() -> Router {
 
     // Create agent service
     let agent_repo = AgentRepository::new(db.pool().clone());
-    let agent_service = AgentService::new(runtime, session_service.clone(), agent_repo);
+    let agent_service = AgentService::with_scaffold_config(
+        runtime,
+        session_service.clone(),
+        agent_repo,
+        ScaffoldConfig::default(),
+    );
 
     // Create user service
     let user_repo = UserRepository::new(db.pool().clone());
@@ -79,6 +97,8 @@ pub async fn test_app() -> Router {
         invite_repo,
         auth_state,
         api::MmryState::default(),
+        api::VoiceState::default(),
+        api::SessionUiState::default(),
     );
     api::create_router(state)
 }
@@ -125,15 +145,6 @@ impl MockAgentBackend {
                     version: Some("1.0.0".to_string()),
                 },
             ],
-            messages: vec![],
-            healthy: true,
-        }
-    }
-
-    /// Create an empty mock backend.
-    pub fn empty() -> Self {
-        Self {
-            conversations: vec![],
             messages: vec![],
             healthy: true,
         }
@@ -208,16 +219,11 @@ impl AgentBackend for MockAgentBackend {
         })
     }
 
-    async fn get_session_url(
-        &self,
-        _user_id: &str,
-        session_id: &str,
-    ) -> Result<Option<String>> {
-        Ok(Some(format!("http://localhost:41820/session/{}", session_id)))
-    }
-
-    fn user_data_dir(&self, user_id: &str) -> PathBuf {
-        PathBuf::from(format!("/tmp/octo-test/{}", user_id))
+    async fn get_session_url(&self, _user_id: &str, session_id: &str) -> Result<Option<String>> {
+        Ok(Some(format!(
+            "http://localhost:41820/session/{}",
+            session_id
+        )))
     }
 }
 
@@ -234,7 +240,12 @@ pub async fn test_app_with_agent_backend() -> Router {
     let session_service = SessionService::new(session_repo, runtime.clone(), session_config);
 
     let agent_repo = AgentRepository::new(db.pool().clone());
-    let agent_service = AgentService::new(runtime, session_service.clone(), agent_repo);
+    let agent_service = AgentService::with_scaffold_config(
+        runtime,
+        session_service.clone(),
+        agent_repo,
+        ScaffoldConfig::default(),
+    );
 
     let user_repo = UserRepository::new(db.pool().clone());
     let user_service = UserService::new(user_repo);
@@ -251,48 +262,13 @@ pub async fn test_app_with_agent_backend() -> Router {
         auth_state,
         mock_backend,
         api::MmryState::default(),
+        api::VoiceState::default(),
+        api::SessionUiState::default(),
     );
     api::create_router(state)
 }
 
 /// Create a test application with AgentBackend and return a valid token.
-pub async fn test_app_with_agent_backend_and_token() -> (Router, String) {
-    let db = Database::in_memory().await.unwrap();
-
-    let auth_config = test_auth_config();
-    let auth_state = AuthState::new(auth_config);
-
-    let token = auth_state
-        .generate_dev_token(&auth_state.dev_users()[0])
-        .unwrap();
-
-    let runtime = Arc::new(ContainerRuntime::new());
-    let session_config = SessionServiceConfig::default();
-    let session_repo = SessionRepository::new(db.pool().clone());
-    let session_service = SessionService::new(session_repo, runtime.clone(), session_config);
-
-    let agent_repo = AgentRepository::new(db.pool().clone());
-    let agent_service = AgentService::new(runtime, session_service.clone(), agent_repo);
-
-    let user_repo = UserRepository::new(db.pool().clone());
-    let user_service = UserService::new(user_repo);
-
-    let invite_repo = InviteCodeRepository::new(db.pool().clone());
-
-    let mock_backend = Arc::new(MockAgentBackend::new());
-
-    let state = api::AppState::with_agent_backend(
-        session_service,
-        agent_service,
-        user_service,
-        invite_repo,
-        auth_state,
-        mock_backend,
-        api::MmryState::default(),
-    );
-    (api::create_router(state), token)
-}
-
 /// Create a test application and return a valid token for the admin dev user.
 pub async fn test_app_with_token() -> (Router, String) {
     let db = Database::in_memory().await.unwrap();
@@ -312,7 +288,12 @@ pub async fn test_app_with_token() -> (Router, String) {
 
     // Create agent service
     let agent_repo = AgentRepository::new(db.pool().clone());
-    let agent_service = AgentService::new(runtime, session_service.clone(), agent_repo);
+    let agent_service = AgentService::with_scaffold_config(
+        runtime,
+        session_service.clone(),
+        agent_repo,
+        ScaffoldConfig::default(),
+    );
 
     // Create user service
     let user_repo = UserRepository::new(db.pool().clone());
@@ -328,6 +309,8 @@ pub async fn test_app_with_token() -> (Router, String) {
         invite_repo,
         auth_state,
         api::MmryState::default(),
+        api::VoiceState::default(),
+        api::SessionUiState::default(),
     );
     (api::create_router(state), token)
 }
@@ -351,7 +334,12 @@ pub async fn test_app_with_user_token() -> (Router, String) {
 
     // Create agent service
     let agent_repo = AgentRepository::new(db.pool().clone());
-    let agent_service = AgentService::new(runtime, session_service.clone(), agent_repo);
+    let agent_service = AgentService::with_scaffold_config(
+        runtime,
+        session_service.clone(),
+        agent_repo,
+        ScaffoldConfig::default(),
+    );
 
     // Create user service
     let user_repo = UserRepository::new(db.pool().clone());
@@ -367,6 +355,8 @@ pub async fn test_app_with_user_token() -> (Router, String) {
         invite_repo,
         auth_state,
         api::MmryState::default(),
+        api::VoiceState::default(),
+        api::SessionUiState::default(),
     );
     (api::create_router(state), token)
 }

@@ -441,13 +441,13 @@ function FileEditRenderer({
 
 			<div className="grid grid-cols-1 gap-2">
 				<div>
-					<div className="text-[10px] uppercase tracking-wide text-red-600 dark:text-red-400 mb-1 flex items-center gap-1">
-						<span className="w-3 h-3 rounded bg-red-500/20 flex items-center justify-center text-red-600 dark:text-red-400">
+					<div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1 flex items-center gap-1">
+						<span className="w-3 h-3 rounded bg-muted flex items-center justify-center text-muted-foreground">
 							-
 						</span>
 						Old
 					</div>
-					<div className="bg-red-500/5 dark:bg-red-950/20 border border-red-500/20 dark:border-red-900/30 rounded-md overflow-hidden">
+					<div className="bg-muted/50 border border-border rounded-md overflow-hidden">
 						<MarkdownRenderer
 							content={`\`\`\`${ext}\n${input.oldString.length > 500 ? `${input.oldString.slice(0, 500)}\n// ... truncated` : input.oldString}\n\`\`\``}
 							className="text-xs [&_pre]:max-h-32 [&_pre]:overflow-y-auto [&_.markdown-content]:bg-transparent"
@@ -836,7 +836,12 @@ export function ToolCallCard({
 		return null;
 	}
 
-	const hasContent = input || output;
+	// Check if we have meaningful content to show
+	// For tool calls, input must have actual properties (not just an empty object)
+	// and output must be a non-empty string
+	const hasInput = input && Object.keys(input).length > 0;
+	const hasOutput = output && output.trim().length > 0;
+	const hasContent = hasInput || hasOutput;
 
 	return (
 		<div

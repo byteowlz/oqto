@@ -1,0 +1,18 @@
+{
+  "defaultProvider": "openai",
+  "defaultModel": "gpt-4o-mini",
+  "defaultThinkingLevel": "off",
+  "compaction": {
+    "enabled": true,
+    "reserveTokens": 16384,
+    "keepRecentTokens": 20000
+  },
+  "retry": {
+    "enabled": true,
+    "maxRetries": 3,
+    "baseDelayMs": 2000
+  },
+  "skills": {
+    "enabled": true
+  }
+}

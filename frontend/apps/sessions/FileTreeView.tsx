@@ -1,6 +1,5 @@
 "use client";
 
-import { useApp } from "@/components/app-context";
 import {
 	ContextMenu,
 	ContextMenuContent,
@@ -9,7 +8,7 @@ import {
 	ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import { FileIcon } from "@/components/ui/file-icon";
-import { fileserverProxyBaseUrl } from "@/lib/control-plane-client";
+import { fileserverWorkspaceBaseUrl } from "@/lib/control-plane-client";
 import { cn } from "@/lib/utils";
 import {
 	ChevronDown,
@@ -22,6 +21,8 @@ import {
 	LayoutGrid,
 	List,
 	Loader2,
+	PaintBucket,
+	Pencil,
 	Trash2,
 	Upload,
 } from "lucide-react";
@@ -40,12 +41,12 @@ export type FileNode = {
 const treeCache = new Map<string, { data: FileNode[]; timestamp: number }>();
 const TREE_CACHE_TTL_MS = 10000; // 10 seconds - shorter TTL since tree can change
 
-function getTreeCacheKey(sessionId: string, path: string): string {
-	return `${sessionId}:${path}`;
+function getTreeCacheKey(workspaceKey: string, path: string): string {
+	return `${workspaceKey}:${path}`;
 }
 
-function getCachedTree(sessionId: string, path: string): FileNode[] | null {
-	const key = getTreeCacheKey(sessionId, path);
+function getCachedTree(workspaceKey: string, path: string): FileNode[] | null {
+	const key = getTreeCacheKey(workspaceKey, path);
 	const entry = treeCache.get(key);
 	if (!entry) return null;
 	if (Date.now() - entry.timestamp > TREE_CACHE_TTL_MS) {
@@ -56,11 +57,11 @@ function getCachedTree(sessionId: string, path: string): FileNode[] | null {
 }
 
 function setCachedTree(
-	sessionId: string,
+	workspaceKey: string,
 	path: string,
 	data: FileNode[],
 ): void {
-	const key = getTreeCacheKey(sessionId, path);
+	const key = getTreeCacheKey(workspaceKey, path);
 	// Limit cache size
 	if (treeCache.size >= 20) {
 		const firstKey = treeCache.keys().next().value;
@@ -69,9 +70,14 @@ function setCachedTree(
 	treeCache.set(key, { data, timestamp: Date.now() });
 }
 
-async function fetchFileTree(baseUrl: string, path = "."): Promise<FileNode[]> {
+async function fetchFileTree(
+	baseUrl: string,
+	workspacePath: string,
+	path = ".",
+): Promise<FileNode[]> {
 	const url = new URL(`${baseUrl}/tree`, window.location.origin);
 	url.searchParams.set("path", path);
+	url.searchParams.set("workspace_path", workspacePath);
 	const res = await fetch(url.toString(), {
 		cache: "no-store",
 		credentials: "include",
@@ -85,12 +91,14 @@ async function fetchFileTree(baseUrl: string, path = "."): Promise<FileNode[]> {
 
 async function uploadFile(
 	baseUrl: string,
+	workspacePath: string,
 	destPath: string,
 	file: File,
 ): Promise<void> {
 	const url = new URL(`${baseUrl}/file`, window.location.origin);
 	url.searchParams.set("path", destPath);
 	url.searchParams.set("mkdir", "true");
+	url.searchParams.set("workspace_path", workspacePath);
 
 	const formData = new FormData();
 	formData.append("file", file);
@@ -107,9 +115,14 @@ async function uploadFile(
 	}
 }
 
-async function deleteFile(baseUrl: string, path: string): Promise<void> {
+async function deleteFile(
+	baseUrl: string,
+	workspacePath: string,
+	path: string,
+): Promise<void> {
 	const url = new URL(`${baseUrl}/file`, window.location.origin);
 	url.searchParams.set("path", path);
+	url.searchParams.set("workspace_path", workspacePath);
 
 	const res = await fetch(url.toString(), {
 		method: "DELETE",
@@ -122,9 +135,14 @@ async function deleteFile(baseUrl: string, path: string): Promise<void> {
 	}
 }
 
-async function createDirectory(baseUrl: string, path: string): Promise<void> {
+async function createDirectory(
+	baseUrl: string,
+	workspacePath: string,
+	path: string,
+): Promise<void> {
 	const url = new URL(`${baseUrl}/mkdir`, window.location.origin);
 	url.searchParams.set("path", path);
+	url.searchParams.set("workspace_path", workspacePath);
 
 	const res = await fetch(url.toString(), {
 		method: "PUT",
@@ -137,19 +155,48 @@ async function createDirectory(baseUrl: string, path: string): Promise<void> {
 	}
 }
 
-function getDownloadUrl(baseUrl: string, path: string): string {
+async function renameFile(
+	baseUrl: string,
+	workspacePath: string,
+	oldPath: string,
+	newPath: string,
+): Promise<void> {
+	const url = new URL(`${baseUrl}/rename`, window.location.origin);
+	url.searchParams.set("old_path", oldPath);
+	url.searchParams.set("new_path", newPath);
+	url.searchParams.set("workspace_path", workspacePath);
+
+	const res = await fetch(url.toString(), {
+		method: "POST",
+		credentials: "include",
+	});
+
+	if (!res.ok) {
+		const text = await res.text().catch(() => res.statusText);
+		throw new Error(text || `Rename failed (${res.status})`);
+	}
+}
+
+function getDownloadUrl(
+	baseUrl: string,
+	workspacePath: string,
+	path: string,
+): string {
 	const url = new URL(`${baseUrl}/download`, window.location.origin);
 	url.searchParams.set("path", path);
+	url.searchParams.set("workspace_path", workspacePath);
 	return url.toString();
 }
 
 function getDownloadZipUrl(
 	baseUrl: string,
+	workspacePath: string,
 	paths: string[],
 	name?: string,
 ): string {
 	const url = new URL(`${baseUrl}/download-zip`, window.location.origin);
 	url.searchParams.set("paths", paths.join(","));
+	url.searchParams.set("workspace_path", workspacePath);
 	if (name) {
 		url.searchParams.set("name", name);
 	}
@@ -213,6 +260,22 @@ function isPreviewable(filename: string): boolean {
 	return PREVIEWABLE_EXTENSIONS.has(ext) || !filename.includes(".");
 }
 
+// Image extensions that can be opened in canvas
+const IMAGE_EXTENSIONS = new Set([
+	".png",
+	".jpg",
+	".jpeg",
+	".gif",
+	".webp",
+	".svg",
+	".bmp",
+]);
+
+function isImageFile(filename: string): boolean {
+	const ext = filename.substring(filename.lastIndexOf(".")).toLowerCase();
+	return IMAGE_EXTENSIONS.has(ext);
+}
+
 function formatFileSize(bytes?: number): string {
 	if (bytes === undefined) return "-";
 	if (bytes < 1024) return `${bytes} B`;
@@ -250,6 +313,8 @@ export const initialFileTreeState: FileTreeState = {
 
 interface FileTreeViewProps {
 	onPreviewFile?: (filePath: string) => void;
+	onOpenInCanvas?: (filePath: string) => void;
+	workspacePath?: string | null;
 	/** External state for persistence across view switches */
 	state?: FileTreeState;
 	/** Callback to update external state */
@@ -258,19 +323,18 @@ interface FileTreeViewProps {
 
 export function FileTreeView({
 	onPreviewFile,
+	onOpenInCanvas,
+	workspacePath,
 	state,
 	onStateChange,
 }: FileTreeViewProps) {
-	const {
-		selectedWorkspaceSession,
-		selectedWorkspaceSessionId,
-		ensureOpencodeRunning,
-	} = useApp();
 	const [tree, setTree] = useState<FileNode[]>([]);
 	const [error, setError] = useState<string>("");
 	const [loading, setLoading] = useState(false);
 	const [uploading, setUploading] = useState(false);
 	const [newFolderName, setNewFolderName] = useState<string | null>(null);
+	const [renamingPath, setRenamingPath] = useState<string | null>(null);
+	const [renameValue, setRenameValue] = useState<string>("");
 	const fileInputRef = useRef<HTMLInputElement>(null);
 	const newFolderInputRef = useRef<HTMLInputElement>(null);
 
@@ -313,17 +377,15 @@ export function FileTreeView({
 		[onStateChange, state],
 	);
 
-	const fileserverBaseUrl = selectedWorkspaceSessionId
-		? fileserverProxyBaseUrl(selectedWorkspaceSessionId)
-		: null;
+	const fileserverBaseUrl = workspacePath ? fileserverWorkspaceBaseUrl() : null;
 
 	const loadTree = useCallback(
 		async (path: string, preserveState = false, skipCache = false) => {
-			if (!fileserverBaseUrl || !selectedWorkspaceSessionId) return;
+			if (!fileserverBaseUrl || !workspacePath) return;
 
 			// Check cache first (unless explicitly skipping)
 			if (!skipCache) {
-				const cached = getCachedTree(selectedWorkspaceSessionId, path);
+				const cached = getCachedTree(workspacePath, path);
 				if (cached) {
 					setTree(cached);
 					if (!preserveState) {
@@ -337,9 +399,13 @@ export function FileTreeView({
 			setLoading(true);
 			setError("");
 			try {
-				const data = await fetchFileTree(fileserverBaseUrl, path);
+				const data = await fetchFileTree(
+					fileserverBaseUrl,
+					workspacePath,
+					path,
+				);
 				// Cache the result
-				setCachedTree(selectedWorkspaceSessionId, path, data);
+				setCachedTree(workspacePath, path, data);
 				setTree(data);
 				if (!preserveState) {
 					updateState({ currentPath: path });
@@ -352,7 +418,7 @@ export function FileTreeView({
 				setLoading(false);
 			}
 		},
-		[fileserverBaseUrl, selectedWorkspaceSessionId, updateState],
+		[fileserverBaseUrl, updateState, workspacePath],
 	);
 
 	const refreshTree = useCallback(() => {
@@ -361,22 +427,10 @@ export function FileTreeView({
 	}, [loadTree, currentPath]);
 
 	useEffect(() => {
-		if (!selectedWorkspaceSessionId || !selectedWorkspaceSession) return;
-		if (selectedWorkspaceSession.status !== "running") {
-			if (selectedWorkspaceSession.workspace_path) {
-				void ensureOpencodeRunning(selectedWorkspaceSession.workspace_path);
-			}
-			return;
-		}
+		if (!workspacePath) return;
 		// Load tree for current path (uses cache if available)
 		loadTree(currentPath, true);
-	}, [
-		currentPath,
-		ensureOpencodeRunning,
-		loadTree,
-		selectedWorkspaceSession,
-		selectedWorkspaceSessionId,
-	]);
+	}, [currentPath, loadTree, workspacePath]);
 
 	// Focus new folder input when it appears
 	useEffect(() => {
@@ -443,7 +497,8 @@ export function FileTreeView({
 		event: React.ChangeEvent<HTMLInputElement>,
 	) => {
 		const files = event.target.files;
-		if (!files || files.length === 0 || !fileserverBaseUrl) return;
+		if (!files || files.length === 0 || !fileserverBaseUrl || !workspacePath)
+			return;
 
 		setUploading(true);
 		setError("");
@@ -452,7 +507,7 @@ export function FileTreeView({
 			for (const file of Array.from(files)) {
 				const destPath =
 					currentPath === "." ? file.name : `${currentPath}/${file.name}`;
-				await uploadFile(fileserverBaseUrl, destPath, file);
+				await uploadFile(fileserverBaseUrl, workspacePath, destPath, file);
 			}
 			await refreshTree();
 		} catch (err) {
@@ -467,13 +522,14 @@ export function FileTreeView({
 	};
 
 	const handleDownload = (path: string, isDirectory: boolean) => {
-		if (!fileserverBaseUrl) return;
-		const url = getDownloadUrl(fileserverBaseUrl, path);
+		if (!fileserverBaseUrl || !workspacePath) return;
+		const url = getDownloadUrl(fileserverBaseUrl, workspacePath, path);
 		window.open(url, "_blank");
 	};
 
 	const handleDownloadSelected = () => {
-		if (!fileserverBaseUrl || selectedFiles.size === 0) return;
+		if (!fileserverBaseUrl || !workspacePath || selectedFiles.size === 0)
+			return;
 
 		if (selectedFiles.size === 1) {
 			const path = Array.from(selectedFiles)[0];
@@ -481,6 +537,7 @@ export function FileTreeView({
 		} else {
 			const url = getDownloadZipUrl(
 				fileserverBaseUrl,
+				workspacePath,
 				Array.from(selectedFiles),
 				"selected-files.zip",
 			);
@@ -489,10 +546,10 @@ export function FileTreeView({
 	};
 
 	const handleDelete = async (path: string) => {
-		if (!fileserverBaseUrl) return;
+		if (!fileserverBaseUrl || !workspacePath) return;
 
 		try {
-			await deleteFile(fileserverBaseUrl, path);
+			await deleteFile(fileserverBaseUrl, workspacePath, path);
 			await refreshTree();
 			// Clear selection if deleted file was selected
 			if (selectedFiles.has(path)) {
@@ -506,11 +563,12 @@ export function FileTreeView({
 	};
 
 	const handleDeleteSelected = async () => {
-		if (!fileserverBaseUrl || selectedFiles.size === 0) return;
+		if (!fileserverBaseUrl || !workspacePath || selectedFiles.size === 0)
+			return;
 
 		try {
 			for (const path of selectedFiles) {
-				await deleteFile(fileserverBaseUrl, path);
+				await deleteFile(fileserverBaseUrl, workspacePath, path);
 			}
 			await refreshTree();
 			updateState({ selectedFiles: new Set() });
@@ -524,7 +582,7 @@ export function FileTreeView({
 	};
 
 	const handleCreateFolder = async () => {
-		if (!fileserverBaseUrl || !newFolderName?.trim()) {
+		if (!fileserverBaseUrl || !workspacePath || !newFolderName?.trim()) {
 			setNewFolderName(null);
 			return;
 		}
@@ -534,12 +592,57 @@ export function FileTreeView({
 				currentPath === "."
 					? newFolderName.trim()
 					: `${currentPath}/${newFolderName.trim()}`;
-			await createDirectory(fileserverBaseUrl, folderPath);
+			await createDirectory(fileserverBaseUrl, workspacePath, folderPath);
 			await refreshTree();
 		} catch (err) {
 			setError(err instanceof Error ? err.message : "Create folder failed");
 		} finally {
 			setNewFolderName(null);
+		}
+	};
+
+	const handleStartRename = (path: string, currentName: string) => {
+		setRenamingPath(path);
+		setRenameValue(currentName);
+	};
+
+	const handleCancelRename = () => {
+		setRenamingPath(null);
+		setRenameValue("");
+	};
+
+	const handleConfirmRename = async () => {
+		if (
+			!fileserverBaseUrl ||
+			!workspacePath ||
+			!renamingPath ||
+			!renameValue.trim()
+		) {
+			handleCancelRename();
+			return;
+		}
+
+		const newName = renameValue.trim();
+		const oldName = renamingPath.split("/").pop();
+
+		// Skip if name unchanged
+		if (newName === oldName) {
+			handleCancelRename();
+			return;
+		}
+
+		try {
+			// Build new path by replacing the last segment
+			const pathParts = renamingPath.split("/");
+			pathParts[pathParts.length - 1] = newName;
+			const newPath = pathParts.join("/");
+
+			await renameFile(fileserverBaseUrl, workspacePath, renamingPath, newPath);
+			await refreshTree();
+		} catch (err) {
+			setError(err instanceof Error ? err.message : "Rename failed");
+		} finally {
+			handleCancelRename();
 		}
 	};
 
@@ -560,10 +663,10 @@ export function FileTreeView({
 		return breadcrumbs;
 	};
 
-	if (!selectedWorkspaceSessionId) {
+	if (!workspacePath) {
 		return (
 			<div className="h-full flex items-center justify-center p-4 text-sm text-muted-foreground">
-				Select a workspace session to browse files.
+				Select a chat to browse files.
 			</div>
 		);
 	}
@@ -805,6 +908,13 @@ export function FileTreeView({
 						onNavigateToFolder={handleNavigateToFolder}
 						onDownload={handleDownload}
 						onDelete={handleDelete}
+						onRename={handleStartRename}
+						renamingPath={renamingPath}
+						renameValue={renameValue}
+						onRenameValueChange={setRenameValue}
+						onRenameConfirm={handleConfirmRename}
+						onRenameCancel={handleCancelRename}
+						onOpenInCanvas={onOpenInCanvas}
 						fileserverBaseUrl={fileserverBaseUrl}
 					/>
 				) : viewMode === "list" ? (
@@ -815,6 +925,13 @@ export function FileTreeView({
 						onNavigateToFolder={handleNavigateToFolder}
 						onDownload={handleDownload}
 						onDelete={handleDelete}
+						onRename={handleStartRename}
+						renamingPath={renamingPath}
+						renameValue={renameValue}
+						onRenameValueChange={setRenameValue}
+						onRenameConfirm={handleConfirmRename}
+						onRenameCancel={handleCancelRename}
+						onOpenInCanvas={onOpenInCanvas}
 						fileserverBaseUrl={fileserverBaseUrl}
 					/>
 				) : (
@@ -825,11 +942,58 @@ export function FileTreeView({
 						onNavigateToFolder={handleNavigateToFolder}
 						onDownload={handleDownload}
 						onDelete={handleDelete}
+						onRename={handleStartRename}
+						renamingPath={renamingPath}
+						renameValue={renameValue}
+						onRenameValueChange={setRenameValue}
+						onRenameConfirm={handleConfirmRename}
+						onRenameCancel={handleCancelRename}
+						onOpenInCanvas={onOpenInCanvas}
 						fileserverBaseUrl={fileserverBaseUrl}
 					/>
 				)}
 			</div>
 		</div>
+	);
+}
+
+// Rename input component with proper focus handling
+function RenameInput({
+	value,
+	onChange,
+	onConfirm,
+	onCancel,
+}: {
+	value: string;
+	onChange: (value: string) => void;
+	onConfirm: () => void;
+	onCancel: () => void;
+}) {
+	const inputRef = useRef<HTMLInputElement>(null);
+
+	useEffect(() => {
+		// Focus and select all text after mount
+		if (inputRef.current) {
+			inputRef.current.focus();
+			inputRef.current.select();
+		}
+	}, []);
+
+	return (
+		<input
+			ref={inputRef}
+			type="text"
+			value={value}
+			onChange={(e) => onChange(e.target.value)}
+			onKeyDown={(e) => {
+				e.stopPropagation();
+				if (e.key === "Enter") onConfirm();
+				if (e.key === "Escape") onCancel();
+			}}
+			onBlur={onConfirm}
+			className="flex-1 min-w-0 bg-background border border-input rounded px-1 text-sm text-foreground"
+			onClick={(e) => e.stopPropagation()}
+		/>
 	);
 }
 
@@ -839,16 +1003,35 @@ function FileContextMenu({
 	node,
 	onDownload,
 	onDelete,
+	onRename,
+	onOpenInCanvas,
 }: {
 	children: React.ReactNode;
 	node: FileNode;
 	onDownload: (path: string, isDirectory: boolean) => void;
 	onDelete: (path: string) => void;
+	onRename: (path: string, currentName: string) => void;
+	onOpenInCanvas?: (path: string) => void;
 }) {
+	const isImage = node.type === "file" && isImageFile(node.name);
+
 	return (
 		<ContextMenu>
 			<ContextMenuTrigger asChild>{children}</ContextMenuTrigger>
 			<ContextMenuContent>
+				{isImage && onOpenInCanvas && (
+					<>
+						<ContextMenuItem onClick={() => onOpenInCanvas(node.path)}>
+							<PaintBucket className="w-4 h-4 mr-2" />
+							Open in Canvas
+						</ContextMenuItem>
+						<ContextMenuSeparator />
+					</>
+				)}
+				<ContextMenuItem onClick={() => onRename(node.path, node.name)}>
+					<Pencil className="w-4 h-4 mr-2" />
+					Rename
+				</ContextMenuItem>
 				<ContextMenuItem
 					onClick={() => onDownload(node.path, node.type === "directory")}
 				>
@@ -878,6 +1061,13 @@ function TreeView({
 	onNavigateToFolder,
 	onDownload,
 	onDelete,
+	onRename,
+	renamingPath,
+	renameValue,
+	onRenameValueChange,
+	onRenameConfirm,
+	onRenameCancel,
+	onOpenInCanvas,
 	fileserverBaseUrl,
 }: {
 	nodes: FileNode[];
@@ -893,6 +1083,13 @@ function TreeView({
 	onNavigateToFolder: (path: string) => void;
 	onDownload: (path: string, isDirectory: boolean) => void;
 	onDelete: (path: string) => void;
+	onRename: (path: string, currentName: string) => void;
+	renamingPath: string | null;
+	renameValue: string;
+	onRenameValueChange: (value: string) => void;
+	onRenameConfirm: () => void;
+	onRenameCancel: () => void;
+	onOpenInCanvas?: (path: string) => void;
 	fileserverBaseUrl: string | null;
 }) {
 	// Sort: directories first, then files, both alphabetically
@@ -916,6 +1113,13 @@ function TreeView({
 					onNavigateToFolder={onNavigateToFolder}
 					onDownload={onDownload}
 					onDelete={onDelete}
+					onRename={onRename}
+					renamingPath={renamingPath}
+					renameValue={renameValue}
+					onRenameValueChange={onRenameValueChange}
+					onRenameConfirm={onRenameConfirm}
+					onRenameCancel={onRenameCancel}
+					onOpenInCanvas={onOpenInCanvas}
 				/>
 			))}
 		</ul>
@@ -933,6 +1137,13 @@ function TreeRow({
 	onNavigateToFolder,
 	onDownload,
 	onDelete,
+	onRename,
+	renamingPath,
+	renameValue,
+	onRenameValueChange,
+	onRenameConfirm,
+	onRenameCancel,
+	onOpenInCanvas,
 }: {
 	node: FileNode;
 	level: number;
@@ -948,10 +1159,18 @@ function TreeRow({
 	onNavigateToFolder: (path: string) => void;
 	onDownload: (path: string, isDirectory: boolean) => void;
 	onDelete: (path: string) => void;
+	onRename: (path: string, currentName: string) => void;
+	renamingPath: string | null;
+	renameValue: string;
+	onRenameValueChange: (value: string) => void;
+	onRenameConfirm: () => void;
+	onRenameCancel: () => void;
+	onOpenInCanvas?: (path: string) => void;
 }) {
 	const isDir = node.type === "directory";
 	const isExpanded = expanded[node.path];
 	const isSelected = selectedFiles.has(node.path);
+	const isRenaming = renamingPath === node.path;
 
 	// Sort children: directories first, then files
 	const sortedChildren = node.children
@@ -984,18 +1203,24 @@ function TreeRow({
 
 	return (
 		<li>
-			<FileContextMenu node={node} onDownload={onDownload} onDelete={onDelete}>
+			<FileContextMenu
+				node={node}
+				onDownload={onDownload}
+				onDelete={onDelete}
+				onRename={onRename}
+				onOpenInCanvas={onOpenInCanvas}
+			>
 				<button
 					type="button"
 					className={cn(
-						"flex items-center gap-1.5 py-1.5 px-2 cursor-pointer transition-colors",
+						"flex items-center gap-1.5 py-1.5 px-2 cursor-pointer transition-colors w-full",
 						isSelected
 							? "bg-primary/10 text-primary"
 							: "hover:bg-muted text-muted-foreground hover:text-foreground",
 					)}
 					style={{ paddingLeft: `${level * 16 + 8}px` }}
-					onClick={handleClick}
-					onDoubleClick={handleDoubleClick}
+					onClick={isRenaming ? undefined : handleClick}
+					onDoubleClick={isRenaming ? undefined : handleDoubleClick}
 				>
 					{isDir ? (
 						<span className="flex-shrink-0 text-muted-foreground">
@@ -1014,8 +1239,17 @@ function TreeRow({
 						size={18}
 						className="flex-shrink-0"
 					/>
-					<span className="truncate text-sm">{node.name}</span>
-					{isDir && node.children && (
+					{isRenaming ? (
+						<RenameInput
+							value={renameValue}
+							onChange={onRenameValueChange}
+							onConfirm={onRenameConfirm}
+							onCancel={onRenameCancel}
+						/>
+					) : (
+						<span className="truncate text-sm">{node.name}</span>
+					)}
+					{!isRenaming && isDir && node.children && (
 						<span className="text-xs text-muted-foreground/60 ml-auto pr-2">
 							{node.children.length}
 						</span>
@@ -1036,6 +1270,13 @@ function TreeRow({
 							onNavigateToFolder={onNavigateToFolder}
 							onDownload={onDownload}
 							onDelete={onDelete}
+							onRename={onRename}
+							renamingPath={renamingPath}
+							renameValue={renameValue}
+							onRenameValueChange={onRenameValueChange}
+							onRenameConfirm={onRenameConfirm}
+							onRenameCancel={onRenameCancel}
+							onOpenInCanvas={onOpenInCanvas}
 						/>
 					))}
 				</ul>
@@ -1052,6 +1293,13 @@ function ListView({
 	onNavigateToFolder,
 	onDownload,
 	onDelete,
+	onRename,
+	renamingPath,
+	renameValue,
+	onRenameValueChange,
+	onRenameConfirm,
+	onRenameCancel,
+	onOpenInCanvas,
 	fileserverBaseUrl,
 }: {
 	files: FileNode[];
@@ -1065,6 +1313,13 @@ function ListView({
 	onNavigateToFolder: (path: string) => void;
 	onDownload: (path: string, isDirectory: boolean) => void;
 	onDelete: (path: string) => void;
+	onRename: (path: string, currentName: string) => void;
+	renamingPath: string | null;
+	renameValue: string;
+	onRenameValueChange: (value: string) => void;
+	onRenameConfirm: () => void;
+	onRenameCancel: () => void;
+	onOpenInCanvas?: (path: string) => void;
 	fileserverBaseUrl: string | null;
 }) {
 	// Sort: directories first, then files
@@ -1087,16 +1342,20 @@ function ListView({
 			<div className="divide-y divide-border/50">
 				{sortedFiles.map((file) => {
 					const isSelected = selectedFiles.has(file.path);
+					const isRenaming = renamingPath === file.path;
 					return (
 						<FileContextMenu
 							key={file.path}
 							node={file}
 							onDownload={onDownload}
+							onOpenInCanvas={onOpenInCanvas}
 							onDelete={onDelete}
+							onRename={onRename}
 						>
 							<button
 								type="button"
 								onClick={(e) => {
+									if (isRenaming) return;
 									const isDir = file.type === "directory";
 									if (e.shiftKey) {
 										// Shift+click: select/multi-select
@@ -1113,7 +1372,7 @@ function ListView({
 									// Double-click does nothing special now (single click navigates folders)
 								}}
 								className={cn(
-									"flex items-center gap-2 px-3 py-2 transition-colors cursor-pointer",
+									"flex items-center gap-2 px-3 py-2 transition-colors cursor-pointer w-full",
 									isSelected ? "bg-primary/10" : "hover:bg-muted/50",
 								)}
 							>
@@ -1123,12 +1382,23 @@ function ListView({
 										isDirectory={file.type === "directory"}
 										size={20}
 									/>
-									<span className="truncate text-sm">{file.name}</span>
-									{file.type === "directory" && file.children && (
-										<span className="text-xs text-muted-foreground/60">
-											({file.children.length})
-										</span>
+									{isRenaming ? (
+										<RenameInput
+											value={renameValue}
+											onChange={onRenameValueChange}
+											onConfirm={onRenameConfirm}
+											onCancel={onRenameCancel}
+										/>
+									) : (
+										<span className="truncate text-sm">{file.name}</span>
 									)}
+									{!isRenaming &&
+										file.type === "directory" &&
+										file.children && (
+											<span className="text-xs text-muted-foreground/60">
+												({file.children.length})
+											</span>
+										)}
 								</div>
 								<div className="w-24 text-right text-xs text-muted-foreground hidden sm:block">
 									{formatDate(file.modified)}
@@ -1153,6 +1423,13 @@ function GridView({
 	onNavigateToFolder,
 	onDownload,
 	onDelete,
+	onRename,
+	renamingPath,
+	renameValue,
+	onRenameValueChange,
+	onRenameConfirm,
+	onRenameCancel,
+	onOpenInCanvas,
 	fileserverBaseUrl,
 }: {
 	files: FileNode[];
@@ -1166,6 +1443,13 @@ function GridView({
 	onNavigateToFolder: (path: string) => void;
 	onDownload: (path: string, isDirectory: boolean) => void;
 	onDelete: (path: string) => void;
+	onRename: (path: string, currentName: string) => void;
+	renamingPath: string | null;
+	renameValue: string;
+	onRenameValueChange: (value: string) => void;
+	onRenameConfirm: () => void;
+	onRenameCancel: () => void;
+	onOpenInCanvas?: (path: string) => void;
 	fileserverBaseUrl: string | null;
 }) {
 	// Sort: directories first, then files
@@ -1179,16 +1463,20 @@ function GridView({
 		<div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 p-2">
 			{sortedFiles.map((file) => {
 				const isSelected = selectedFiles.has(file.path);
+				const isRenaming = renamingPath === file.path;
 				return (
 					<FileContextMenu
 						key={file.path}
 						node={file}
 						onDownload={onDownload}
 						onDelete={onDelete}
+						onRename={onRename}
+						onOpenInCanvas={onOpenInCanvas}
 					>
 						<button
 							type="button"
 							onClick={(e) => {
+								if (isRenaming) return;
 								const isDir = file.type === "directory";
 								if (e.shiftKey) {
 									// Shift+click: select/multi-select
@@ -1214,12 +1502,21 @@ function GridView({
 								isDirectory={file.type === "directory"}
 								size={48}
 							/>
-							<span
-								className="text-xs text-center truncate w-full"
-								title={file.name}
-							>
-								{file.name}
-							</span>
+							{isRenaming ? (
+								<RenameInput
+									value={renameValue}
+									onChange={onRenameValueChange}
+									onConfirm={onRenameConfirm}
+									onCancel={onRenameCancel}
+								/>
+							) : (
+								<span
+									className="text-xs text-center truncate w-full"
+									title={file.name}
+								>
+									{file.name}
+								</span>
+							)}
 						</button>
 					</FileContextMenu>
 				);

@@ -318,6 +318,19 @@ where
 mod tests {
     use super::*;
 
+    fn make_dev_user(id: &str, name: &str, email: &str, password: &str, role: Role) -> DevUser {
+        let password_hash =
+            bcrypt::hash(password, bcrypt::DEFAULT_COST).expect("Failed to hash password");
+
+        DevUser {
+            id: id.to_string(),
+            name: name.to_string(),
+            email: email.to_string(),
+            password_hash,
+            role,
+        }
+    }
+
     #[test]
     fn test_auth_state_dev_mode() {
         let mut config = AuthConfig::default();
@@ -331,14 +344,14 @@ mod tests {
         let mut config = AuthConfig::default();
         config.dev_mode = true;
         config.dev_users = vec![
-            DevUser::new_with_plaintext(
+            make_dev_user(
                 "dev",
                 "Developer",
                 "dev@localhost",
                 "devpassword123",
                 Role::Admin,
             ),
-            DevUser::new_with_plaintext(
+            make_dev_user(
                 "user",
                 "Test User",
                 "user@localhost",
@@ -367,7 +380,7 @@ mod tests {
         // Create config with a JWT secret for testing
         let mut config = AuthConfig::default();
         config.dev_mode = true;
-        config.dev_users = vec![DevUser::new_with_plaintext(
+        config.dev_users = vec![make_dev_user(
             "dev",
             "Developer",
             "dev@localhost",
@@ -389,7 +402,7 @@ mod tests {
     fn test_dev_token_validation() {
         let mut config = AuthConfig::default();
         config.dev_mode = true;
-        config.dev_users = vec![DevUser::new_with_plaintext(
+        config.dev_users = vec![make_dev_user(
             "dev",
             "Developer",
             "dev@localhost",

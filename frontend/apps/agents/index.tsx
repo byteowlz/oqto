@@ -1,10 +1,10 @@
 "use client";
 
-import { useApp } from "@/components/app-context";
 import { PersonaBuilderChat } from "@/components/persona-builder-chat";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { useApp } from "@/hooks/use-app";
 import { fileserverProxyBaseUrl } from "@/lib/control-plane-client";
 import {
 	type OpenCodeAgent,
@@ -126,6 +126,7 @@ export function AgentsApp() {
 	const {
 		locale,
 		opencodeBaseUrl,
+		opencodeDirectory,
 		selectedWorkspaceSession,
 		createNewChat,
 		refreshOpencodeSessions,
@@ -169,14 +170,14 @@ export function AgentsApp() {
 	useEffect(() => {
 		if (!opencodeBaseUrl) return;
 		setLoading(true);
-		fetchAgents(opencodeBaseUrl)
+		fetchAgents(opencodeBaseUrl, { directory: opencodeDirectory })
 			.then((list) => setAgents(list))
 			.catch((err) => {
 				console.error("Failed to fetch agents:", err);
 				setAgents([]);
 			})
 			.finally(() => setLoading(false));
-	}, [opencodeBaseUrl]);
+	}, [opencodeBaseUrl, opencodeDirectory]);
 
 	const filteredAgents = useMemo(() => {
 		const term = search.trim().toLowerCase();
@@ -229,9 +230,13 @@ export function AgentsApp() {
 			try {
 				const session = await createNewChat();
 				if (session) {
-					await sendPartsAsync(opencodeBaseUrl, session.id, [
-						{ type: "agent", name: agentId },
-					]);
+					await sendPartsAsync(
+						opencodeBaseUrl,
+						session.id,
+						[{ type: "agent", name: agentId }],
+						undefined,
+						{ directory: opencodeDirectory },
+					);
 					await refreshOpencodeSessions();
 					setActiveAppId("sessions");
 				}
@@ -241,7 +246,13 @@ export function AgentsApp() {
 				setStartingAgentId(null);
 			}
 		},
-		[createNewChat, opencodeBaseUrl, refreshOpencodeSessions, setActiveAppId],
+		[
+			createNewChat,
+			opencodeBaseUrl,
+			opencodeDirectory,
+			refreshOpencodeSessions,
+			setActiveAppId,
+		],
 	);
 
 	const handleSave = useCallback(async () => {

@@ -6,9 +6,9 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use tokio::sync::{watch, RwLock};
+use tokio::sync::{RwLock, watch};
 
-use super::schema::{filter_schema_by_scope, SettingsScope};
+use super::schema::{SettingsScope, filter_schema_by_scope};
 
 /// A settings value with metadata about its source.
 #[derive(Debug, Clone, Serialize)]
@@ -41,19 +41,25 @@ pub struct SettingsService {
     values: Arc<RwLock<Value>>,
     /// Reload notification channel
     reload_tx: watch::Sender<()>,
-    /// Reload receiver (for subscribers)
-    reload_rx: watch::Receiver<()>,
 }
 
 impl SettingsService {
     /// Create a new settings service.
     pub fn new(schema: Value, config_dir: PathBuf, config_filename: &str) -> Result<Self> {
-        let (reload_tx, reload_rx) = watch::channel(());
-        
+        let (reload_tx, _reload_rx) = watch::channel(());
+
         let config_path = config_dir.join(config_filename);
+        tracing::info!("Loading settings from: {:?}", config_path);
+
         let values = if config_path.exists() {
-            load_toml_as_json(&config_path)?
+            let v = load_toml_as_json(&config_path)?;
+            // Debug: log sessions config at load time
+            if let Some(sessions) = v.get("sessions") {
+                tracing::info!("Loaded sessions config: {:?}", sessions);
+            }
+            v
         } else {
+            tracing::warn!("Config file not found: {:?}", config_path);
             Value::Object(serde_json::Map::new())
         };
 
@@ -63,7 +69,6 @@ impl SettingsService {
             config_filename: config_filename.to_string(),
             values: Arc::new(RwLock::new(values)),
             reload_tx,
-            reload_rx,
         })
     }
 
@@ -81,29 +86,47 @@ impl SettingsService {
     pub async fn get_values(&self, scope: SettingsScope) -> HashMap<String, SettingsValue> {
         let values = self.values.read().await;
         let filtered_schema = self.get_schema(scope);
-        
-        extract_values_with_metadata(&values, &filtered_schema, "")
+
+        // Debug: log what we're working with
+        if let Some(sessions) = values.get("sessions") {
+            tracing::debug!("Sessions config: {:?}", sessions);
+        } else {
+            tracing::debug!("No sessions config found in values");
+        }
+
+        let result = extract_values_with_metadata(&values, &filtered_schema, "");
+
+        // Debug: log the sessions.max_concurrent_sessions value
+        if let Some(max_sessions) = result.get("sessions.max_concurrent_sessions") {
+            tracing::info!("sessions.max_concurrent_sessions = {:?}", max_sessions);
+        }
+
+        result
     }
 
     /// Update configuration values.
-    /// 
+    ///
     /// Only allows updating values the user has permission to change.
     pub async fn update_values(&self, updates: ConfigUpdate, scope: SettingsScope) -> Result<()> {
         // Validate that user can update these paths
         let filtered_schema = self.get_schema(scope);
-        
+
         for path in updates.values.keys() {
             if !path_exists_in_schema(&filtered_schema, path) {
-                anyhow::bail!("Cannot update '{}': permission denied or invalid path", path);
+                anyhow::bail!(
+                    "Cannot update '{}': permission denied or invalid path",
+                    path
+                );
             }
         }
 
         // Read current TOML, apply updates, write back
         let config_path = self.config_path();
         let mut toml_value = if config_path.exists() {
-            let content = std::fs::read_to_string(&config_path)
-                .context("Failed to read config file")?;
-            content.parse::<toml::Value>()
+            let content =
+                std::fs::read_to_string(&config_path).context("Failed to read config file")?;
+            content
+                .parse::<toml::Value>()
                 .context("Failed to parse config file")?
         } else {
             toml::Value::Table(toml::map::Map::new())
@@ -115,17 +138,14 @@ impl SettingsService {
         }
 
         // Write back
-        let content = toml::to_string_pretty(&toml_value)
-            .context("Failed to serialize config")?;
-        
+        let content = toml::to_string_pretty(&toml_value).context("Failed to serialize config")?;
+
         // Ensure directory exists
         if let Some(parent) = config_path.parent() {
-            std::fs::create_dir_all(parent)
-                .context("Failed to create config directory")?;
+            std::fs::create_dir_all(parent).context("Failed to create config directory")?;
         }
-        
-        std::fs::write(&config_path, content)
-            .context("Failed to write config file")?;
+
+        std::fs::write(&config_path, content).context("Failed to write config file")?;
 
         // Reload cached values
         self.reload().await?;
@@ -153,21 +173,17 @@ impl SettingsService {
         tracing::info!("Settings reloaded from {:?}", config_path);
         Ok(())
     }
-
-    /// Subscribe to reload notifications.
-    pub fn subscribe(&self) -> watch::Receiver<()> {
-        self.reload_rx.clone()
-    }
 }
 
 /// Load a TOML file as JSON Value.
 fn load_toml_as_json(path: &Path) -> Result<Value> {
-    let content = std::fs::read_to_string(path)
-        .with_context(|| format!("Failed to read {:?}", path))?;
-    
-    let toml_value: toml::Value = content.parse()
+    let content =
+        std::fs::read_to_string(path).with_context(|| format!("Failed to read {:?}", path))?;
+
+    let toml_value: toml::Value = content
+        .parse()
         .with_context(|| format!("Failed to parse {:?}", path))?;
-    
+
     toml_to_json(&toml_value)
 }
 
@@ -176,11 +192,9 @@ fn toml_to_json(toml: &toml::Value) -> Result<Value> {
     match toml {
         toml::Value::String(s) => Ok(Value::String(s.clone())),
         toml::Value::Integer(i) => Ok(Value::Number((*i).into())),
-        toml::Value::Float(f) => {
-            serde_json::Number::from_f64(*f)
-                .map(Value::Number)
-                .ok_or_else(|| anyhow::anyhow!("Invalid float value"))
-        }
+        toml::Value::Float(f) => serde_json::Number::from_f64(*f)
+            .map(Value::Number)
+            .ok_or_else(|| anyhow::anyhow!("Invalid float value")),
         toml::Value::Boolean(b) => Ok(Value::Bool(*b)),
         toml::Value::Datetime(dt) => Ok(Value::String(dt.to_string())),
         toml::Value::Array(arr) => {
@@ -229,7 +243,7 @@ fn json_to_toml(json: &Value) -> Result<toml::Value> {
 /// Set a value in a TOML structure using a dotted path.
 fn set_toml_value(root: &mut toml::Value, path: &str, value: toml::Value) -> Result<()> {
     let parts: Vec<&str> = path.split('.').collect();
-    
+
     let mut current = root;
     for (i, part) in parts.iter().enumerate() {
         if i == parts.len() - 1 {
@@ -247,11 +261,14 @@ fn set_toml_value(root: &mut toml::Value, path: &str, value: toml::Value) -> Res
                     .entry(part.to_string())
                     .or_insert_with(|| toml::Value::Table(toml::map::Map::new()));
             } else {
-                anyhow::bail!("Cannot navigate path '{}': intermediate is not a table", path);
+                anyhow::bail!(
+                    "Cannot navigate path '{}': intermediate is not a table",
+                    path
+                );
             }
         }
     }
-    
+
     Ok(())
 }
 
@@ -298,7 +315,7 @@ fn extract_values_with_metadata(
 
                 // Check if this is a leaf value or a nested object
                 let prop_type = prop_schema.get("type").and_then(|t| t.as_str());
-                
+
                 if prop_type == Some("object") && prop_schema.get("properties").is_some() {
                     // Nested object - recurse
                     let nested_values = values.get(key).unwrap_or(&Value::Null);
@@ -314,11 +331,14 @@ fn extract_values_with_metadata(
                         .or_else(|| default_value.clone())
                         .unwrap_or(Value::Null);
 
-                    result.insert(path, SettingsValue {
-                        value,
-                        is_configured,
-                        default: default_value,
-                    });
+                    result.insert(
+                        path,
+                        SettingsValue {
+                            value,
+                            is_configured,
+                            default: default_value,
+                        },
+                    );
                 }
             }
         }
@@ -358,12 +378,17 @@ mod tests {
     #[test]
     fn test_set_toml_value() {
         let mut root = toml::Value::Table(toml::map::Map::new());
-        
-        set_toml_value(&mut root, "voice.default_voice", toml::Value::String("af_bella".to_string())).unwrap();
-        
+
+        set_toml_value(
+            &mut root,
+            "voice.default_voice",
+            toml::Value::String("af_bella".to_string()),
+        )
+        .unwrap();
+
         let voice = root.get("voice").unwrap().as_table().unwrap();
         let default_voice = voice.get("default_voice").unwrap().as_str().unwrap();
-        
+
         assert_eq!(default_voice, "af_bella");
     }
 

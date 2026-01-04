@@ -5,12 +5,22 @@ import {
 	FileTreeView,
 	initialFileTreeState,
 } from "@/apps/sessions/FileTreeView";
-import { MemoriesView } from "@/apps/sessions/MemoriesView";
-import { PreviewView } from "@/apps/sessions/PreviewView";
-import { TerminalView } from "@/apps/sessions/TerminalView";
-import { useApp } from "@/components/app-context";
+import { MainChatPiView } from "@/components/main-chat";
 import { Badge } from "@/components/ui/badge";
+import { BrailleSpinner } from "@/components/ui/braille-spinner";
 import { Button } from "@/components/ui/button";
+import {
+	ContextMenu,
+	ContextMenuContent,
+	ContextMenuItem,
+	ContextMenuSeparator,
+	ContextMenuTrigger,
+} from "@/components/ui/context-menu";
+import {
+	type FileAttachment,
+	FileAttachmentChip,
+	FileMentionPopup,
+} from "@/components/ui/file-mention-popup";
 import { Input } from "@/components/ui/input";
 import {
 	CopyButton,
@@ -20,6 +30,7 @@ import {
 	PermissionBanner,
 	PermissionDialog,
 } from "@/components/ui/permission-dialog";
+import { ReadAloudButton } from "@/components/ui/read-aloud-button";
 import { SlashCommandPopup } from "@/components/ui/slash-command-popup";
 import { ToolCallCard } from "@/components/ui/tool-call-card";
 import {
@@ -28,6 +39,7 @@ import {
 	type VoiceMode,
 	VoicePanel,
 } from "@/components/voice";
+import { useApp } from "@/hooks/use-app";
 import { useDictation } from "@/hooks/use-dictation";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useModelContextLimit } from "@/hooks/use-models-dev";
@@ -38,30 +50,42 @@ import {
 import { useVoiceMode } from "@/hooks/use-voice-mode";
 import {
 	type Features,
+	type MainChatSession,
 	type Persona,
+	type SessionAutoAttachMode,
 	controlPlaneDirectBaseUrl,
 	convertChatMessagesToOpenCode,
-	fileserverProxyBaseUrl,
+	fileserverWorkspaceBaseUrl,
 	getChatMessages,
 	getFeatures,
+	getMainChatAssistant,
 	getProjectLogoUrl,
 	getWorkspaceConfig,
+	listMainChatSessions,
+	opencodeProxyBaseUrl,
+	registerMainChatSession,
 } from "@/lib/control-plane-client";
+import { getFileTypeInfo } from "@/lib/file-types";
 import {
 	type OpenCodeAssistantMessage,
 	type OpenCodeMessageWithParts,
 	type OpenCodePart,
+	type OpenCodePartInput,
 	type Permission,
 	type PermissionResponse,
 	abortSession,
+	createSession,
 	fetchAgents,
 	fetchCommands,
 	fetchMessages,
+	fetchSessions,
+	forkSession,
 	invalidateMessageCache,
 	respondToPermission,
 	runShellCommandAsync,
 	sendCommandAsync,
 	sendMessageAsync,
+	sendPartsAsync,
 	subscribeToEvents,
 } from "@/lib/opencode-client";
 import { formatSessionDate, generateReadableId } from "@/lib/session-utils";
@@ -84,14 +108,21 @@ import {
 	Clock,
 	Copy,
 	Eye,
+	FileCode,
+	FileImage,
 	FileText,
 	Gauge,
+	GitBranch,
 	ListTodo,
 	Loader2,
 	MessageSquare,
 	Mic,
+	PaintBucket,
 	Paperclip,
+	RefreshCw,
 	Send,
+	Settings,
+	Sparkles,
 	Square,
 	StopCircle,
 	Terminal,
@@ -100,15 +131,49 @@ import {
 	XCircle,
 } from "lucide-react";
 import {
+	Suspense,
+	lazy,
 	memo,
 	startTransition,
 	useCallback,
 	useEffect,
+	useLayoutEffect,
 	useMemo,
 	useRef,
 	useState,
 	useTransition,
 } from "react";
+
+const PreviewView = lazy(() =>
+	import("@/apps/sessions/PreviewView").then((mod) => ({
+		default: mod.PreviewView,
+	})),
+);
+const TerminalView = lazy(() =>
+	import("@/apps/sessions/TerminalView").then((mod) => ({
+		default: mod.TerminalView,
+	})),
+);
+const MemoriesView = lazy(() =>
+	import("@/apps/sessions/MemoriesView").then((mod) => ({
+		default: mod.MemoriesView,
+	})),
+);
+const AgentSettingsView = lazy(() =>
+	import("@/apps/sessions/AgentSettingsView").then((mod) => ({
+		default: mod.AgentSettingsView,
+	})),
+);
+const TrxView = lazy(() =>
+	import("@/apps/sessions/TrxView").then((mod) => ({
+		default: mod.TrxView,
+	})),
+);
+const CanvasView = lazy(() =>
+	import("@/apps/sessions/CanvasView").then((mod) => ({
+		default: mod.CanvasView,
+	})),
+);
 
 // Todo item structure
 interface TodoItem {
@@ -118,11 +183,27 @@ interface TodoItem {
 	priority: "high" | "medium" | "low";
 }
 
+// Extended message type for Main Chat threading - includes session info
+type ThreadedMessage = OpenCodeMessageWithParts & {
+	/** Session ID this message belongs to (for Main Chat threading) */
+	_sessionId?: string;
+	/** Session title (for displaying session dividers) */
+	_sessionTitle?: string;
+	/** Whether this is the first message of a new session in the thread */
+	_isSessionStart?: boolean;
+};
+
 // Group consecutive messages from the same role
 type MessageGroup = {
 	role: "user" | "assistant";
 	messages: OpenCodeMessageWithParts[];
 	startIndex: number;
+	/** For Main Chat: session ID this group belongs to */
+	sessionId?: string;
+	/** For Main Chat: whether this group starts a new session */
+	isNewSession?: boolean;
+	/** For Main Chat: session title for divider */
+	sessionTitle?: string;
 };
 
 type ActiveView =
@@ -132,15 +213,28 @@ type ActiveView =
 	| "preview"
 	| "tasks"
 	| "memories"
-	| "voice";
+	| "voice"
+	| "settings"
+	| "canvas";
 
 function groupMessages(messages: OpenCodeMessageWithParts[]): MessageGroup[] {
 	const groups: MessageGroup[] = [];
 	let currentGroup: MessageGroup | null = null;
+	let lastSessionId: string | undefined;
 
 	messages.forEach((msg, index) => {
 		const role = msg.info.role;
-		if (!currentGroup || currentGroup.role !== role) {
+		const threadedMsg = msg as ThreadedMessage;
+		const currentSessionId = threadedMsg._sessionId;
+		const isNewSession =
+			currentSessionId !== lastSessionId && currentSessionId !== undefined;
+
+		// Start new group if role changes OR session changes (for Main Chat threading)
+		if (
+			!currentGroup ||
+			currentGroup.role !== role ||
+			(isNewSession && currentSessionId)
+		) {
 			if (currentGroup) {
 				groups.push(currentGroup);
 			}
@@ -148,7 +242,11 @@ function groupMessages(messages: OpenCodeMessageWithParts[]): MessageGroup[] {
 				role,
 				messages: [msg],
 				startIndex: index,
+				sessionId: currentSessionId,
+				isNewSession: isNewSession,
+				sessionTitle: threadedMsg._sessionTitle,
 			};
+			lastSessionId = currentSessionId;
 		} else {
 			currentGroup.messages.push(msg);
 		}
@@ -159,6 +257,20 @@ function groupMessages(messages: OpenCodeMessageWithParts[]): MessageGroup[] {
 	}
 
 	return groups;
+}
+
+// Session divider for Main Chat threaded view
+function SessionDivider({ title }: { title: string }) {
+	return (
+		<div className="flex items-center gap-3 py-3 px-2">
+			<div className="flex-1 h-px bg-border" />
+			<div className="flex items-center gap-2 text-xs text-muted-foreground">
+				<MessageSquare className="w-3 h-3" />
+				<span className="font-medium">{title}</span>
+			</div>
+			<div className="flex-1 h-px bg-border" />
+		</div>
+	);
 }
 
 function TabButton({
@@ -249,41 +361,113 @@ export function SessionsApp() {
 		locale,
 		workspaceSessions,
 		selectedWorkspaceSessionId,
+		setSelectedWorkspaceSessionId,
+		selectedWorkspaceSession,
 		opencodeBaseUrl,
 		selectedChatSessionId,
+		setSelectedChatSessionId,
 		selectedChatSession,
 		selectedChatFromHistory,
 		refreshOpencodeSessions,
+		refreshWorkspaceSessions,
 		refreshChatHistory,
 		ensureOpencodeRunning,
 		chatHistory,
 		projects,
 		startProjectSession,
 		setSessionBusy,
+		mainChatActive,
+		mainChatAssistantName,
+		mainChatCurrentSessionId,
+		setMainChatCurrentSessionId,
+		mainChatWorkspacePath,
+		setMainChatWorkspacePath,
 	} = useApp();
 	const [messages, setMessages] = useState<OpenCodeMessageWithParts[]>([]);
 	const [messageInput, setMessageInput] = useState("");
+	const [mainChatBaseUrl, setMainChatBaseUrl] = useState("");
+	const opencodeDirectory = useMemo(() => {
+		if (mainChatActive) return mainChatWorkspacePath ?? undefined;
+		return (
+			selectedChatFromHistory?.workspace_path ??
+			selectedWorkspaceSession?.workspace_path
+		);
+	}, [
+		mainChatActive,
+		mainChatWorkspacePath,
+		selectedChatFromHistory,
+		selectedWorkspaceSession,
+	]);
+	const opencodeRequestOptions = useMemo(
+		() => ({ directory: opencodeDirectory }),
+		[opencodeDirectory],
+	);
+	const effectiveOpencodeBaseUrl = useMemo(() => {
+		if (mainChatActive && mainChatBaseUrl) return mainChatBaseUrl;
+		return opencodeBaseUrl;
+	}, [mainChatActive, mainChatBaseUrl, opencodeBaseUrl]);
 
 	// Per-chat state (working indicator is per-session, not global)
 	const [chatStates, setChatStates] = useState<Map<string, "idle" | "sending">>(
 		new Map(),
 	);
-	const chatState = selectedChatSessionId
-		? chatStates.get(selectedChatSessionId) || "idle"
+	// In Main Chat mode, use mainChatCurrentSessionId; otherwise use selectedChatSessionId
+	const activeSessionId = mainChatActive
+		? mainChatCurrentSessionId
+		: selectedChatSessionId;
+	const chatState = activeSessionId
+		? chatStates.get(activeSessionId) || "idle"
 		: "idle";
 	const setChatState = useCallback(
 		(state: "idle" | "sending") => {
-			if (!selectedChatSessionId) return;
+			const sessionId = mainChatActive
+				? mainChatCurrentSessionId
+				: selectedChatSessionId;
+			if (!sessionId) return;
 			setChatStates((prev) => {
 				const next = new Map(prev);
-				next.set(selectedChatSessionId, state);
+				next.set(sessionId, state);
 				return next;
 			});
 			// Also update global busy state for sidebar indicator
-			setSessionBusy(selectedChatSessionId, state === "sending");
+			setSessionBusy(sessionId, state === "sending");
 		},
-		[selectedChatSessionId, setSessionBusy],
+		[
+			selectedChatSessionId,
+			mainChatActive,
+			mainChatCurrentSessionId,
+			setSessionBusy,
+		],
 	);
+
+	useEffect(() => {
+		if (!mainChatActive && mainChatBaseUrl) {
+			setMainChatBaseUrl("");
+		}
+	}, [mainChatActive, mainChatBaseUrl]);
+
+	useEffect(() => {
+		if (!mainChatActive || !mainChatAssistantName || mainChatWorkspacePath)
+			return;
+		let cancelled = false;
+		getMainChatAssistant(mainChatAssistantName)
+			.then((info) => {
+				if (!cancelled) {
+					setMainChatWorkspacePath(info.path);
+				}
+			})
+			.catch((err) => {
+				console.error("Failed to load Main Chat workspace path:", err);
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, [
+		mainChatActive,
+		mainChatAssistantName,
+		mainChatWorkspacePath,
+		setMainChatWorkspacePath,
+	]);
 
 	// Per-chat draft text cache (persists across session switches AND component remounts via localStorage)
 	const previousSessionIdRef = useRef<string | null>(null);
@@ -359,9 +543,27 @@ export function SessionsApp() {
 	const messagesContainerRef = useRef<HTMLDivElement>(null);
 	const messagesEndRef = useRef<HTMLDivElement>(null);
 
-	// Track if user has manually scrolled away from bottom
-	const isNearBottomRef = useRef(true);
+	// Track if auto-scroll is enabled (user hasn't scrolled away)
+	const autoScrollEnabledRef = useRef(true);
 	const lastSessionIdRef = useRef<string | null>(null);
+	// Track last scroll position to detect scroll direction
+	const lastScrollTopRef = useRef(0);
+	// Track if this is initial message load (for instant scroll) vs streaming (for smooth scroll)
+	const initialLoadRef = useRef(true);
+	const autoAttachAttemptRef = useRef<{
+		sessionId: string;
+		workspacePath: string;
+		mode: SessionAutoAttachMode;
+	} | null>(null);
+	const autoAttachScanAttemptRef = useRef<{
+		sessionId: string;
+		workspacePath: string;
+		runningSessionIds: string;
+	} | null>(null);
+	const sessionUnavailableRef = useRef<{
+		sessionId: string;
+		attemptedAt: number;
+	} | null>(null);
 	const fileInputRef = useRef<HTMLInputElement>(null);
 	const chatInputRef = useRef<HTMLTextAreaElement>(null);
 	const chatContainerRef = useRef<HTMLDivElement>(null);
@@ -378,6 +580,11 @@ export function SessionsApp() {
 		useState<SlashCommand[]>(builtInCommands);
 	const slashQuery = parseSlashInput(messageInput);
 
+	// File mention popup state
+	const [showFileMentionPopup, setShowFileMentionPopup] = useState(false);
+	const [fileMentionQuery, setFileMentionQuery] = useState("");
+	const [fileAttachments, setFileAttachments] = useState<FileAttachment[]>([]);
+
 	// Default agent for shell commands - use "build" as the default primary agent
 	const [defaultAgent, setDefaultAgent] = useState<string>("build");
 	const [isUploading, setIsUploading] = useState(false);
@@ -389,6 +596,17 @@ export function SessionsApp() {
 	const [activePermission, setActivePermission] = useState<Permission | null>(
 		null,
 	);
+
+	// Clear permission state when session changes
+	// Note: Permissions are received via SSE events (permission.updated), not fetched via REST
+	const prevSessionRef = useRef(selectedChatSessionId);
+	useEffect(() => {
+		if (prevSessionRef.current !== selectedChatSessionId) {
+			prevSessionRef.current = selectedChatSessionId;
+			setPendingPermissions([]);
+			setActivePermission(null);
+		}
+	});
 
 	// Track if we're on mobile layout (below lg breakpoint = 1024px)
 	const isMobileLayout = useIsMobile();
@@ -412,7 +630,7 @@ export function SessionsApp() {
 			return;
 		}
 
-		fetchCommands(opencodeBaseUrl)
+		fetchCommands(opencodeBaseUrl, opencodeRequestOptions)
 			.then((commands) => {
 				setSlashCommands(commandInfoToSlashCommands(commands));
 			})
@@ -420,7 +638,7 @@ export function SessionsApp() {
 				// Fall back to built-in commands
 				setSlashCommands(builtInCommands);
 			});
-	}, [opencodeBaseUrl]);
+	}, [opencodeBaseUrl, opencodeRequestOptions]);
 
 	// Voice mode - handles STT/TTS when voice feature is enabled
 	const handleVoiceTranscript = useCallback((text: string) => {
@@ -459,6 +677,24 @@ export function SessionsApp() {
 		onTranscript: handleDictationTranscript,
 		vadTimeoutMs: 3000, // Longer timeout for dictation (3s silence before auto-stop appending)
 	});
+
+	// Auto-resize textarea during dictation based on liveTranscript length
+	useEffect(() => {
+		if (!chatInputRef.current || !dictation.isActive) return;
+
+		const textarea = chatInputRef.current;
+		const transcript = dictation.liveTranscript;
+
+		if (!transcript) {
+			textarea.style.height = "36px";
+			return;
+		}
+
+		// Estimate height from transcript length (~50 chars per line at typical width)
+		const estimatedLines = Math.ceil(transcript.length / 50);
+		const estimatedHeight = Math.min(36 + (estimatedLines - 1) * 20, 200);
+		textarea.style.height = `${estimatedHeight}px`;
+	}, [dictation.isActive, dictation.liveTranscript]);
 
 	// Listen for voice commands from command palette and keyboard shortcuts
 	useVoiceCommandListener(
@@ -611,6 +847,12 @@ export function SessionsApp() {
 		setActiveView("preview");
 	}, []);
 
+	// Handler for opening a file in canvas from FileTreeView
+	const handleOpenInCanvas = useCallback((filePath: string) => {
+		setPreviewFilePath(filePath);
+		setActiveView("canvas");
+	}, []);
+
 	// Handler for file tree state changes (for persistence)
 	const handleFileTreeStateChange = useCallback((newState: FileTreeState) => {
 		setFileTreeState(newState);
@@ -638,7 +880,10 @@ export function SessionsApp() {
 				}
 
 				// No workspace config - fetch available agents and default to "build"
-				const agents = await fetchAgents(opencodeBaseUrl);
+				const agents = await fetchAgents(
+					opencodeBaseUrl,
+					opencodeRequestOptions,
+				);
 				console.log("Available agents:", agents);
 
 				// Prefer "build" agent (main agent with all tools), fallback to first primary agent
@@ -659,7 +904,7 @@ export function SessionsApp() {
 		};
 
 		loadAgentConfig();
-	}, [opencodeBaseUrl, selectedWorkspaceSessionId]);
+	}, [opencodeBaseUrl, opencodeRequestOptions, selectedWorkspaceSessionId]);
 
 	// Loading state management with timeout
 	useEffect(() => {
@@ -680,19 +925,24 @@ export function SessionsApp() {
 	// File upload handler
 	const handleFileUpload = useCallback(
 		async (files: FileList | null) => {
-			if (!files || files.length === 0 || !selectedWorkspaceSessionId) return;
+			if (!files || files.length === 0) return;
+			const workspacePath =
+				selectedChatFromHistory?.workspace_path ??
+				selectedWorkspaceSession?.workspace_path;
+			if (!workspacePath) return;
 
 			setIsUploading(true);
 			const uploadedFiles: { name: string; path: string }[] = [];
 
 			try {
-				const baseUrl = fileserverProxyBaseUrl(selectedWorkspaceSessionId);
+				const baseUrl = fileserverWorkspaceBaseUrl();
 
 				for (const file of Array.from(files)) {
 					const destPath = `uploads/${file.name}`;
 					const url = new URL(`${baseUrl}/file`, window.location.origin);
 					url.searchParams.set("path", destPath);
 					url.searchParams.set("mkdir", "true");
+					url.searchParams.set("workspace_path", workspacePath);
 
 					const formData = new FormData();
 					formData.append("file", file);
@@ -722,7 +972,7 @@ export function SessionsApp() {
 				}
 			}
 		},
-		[selectedWorkspaceSessionId],
+		[selectedChatFromHistory, selectedWorkspaceSession],
 	);
 
 	const removePendingUpload = useCallback((path: string) => {
@@ -740,13 +990,14 @@ export function SessionsApp() {
 				selectedChatSessionId,
 				permissionId,
 				response,
+				opencodeRequestOptions,
 			);
 			// Remove from pending list
 			setPendingPermissions((prev) =>
 				prev.filter((p) => p.id !== permissionId),
 			);
 		},
-		[opencodeBaseUrl, selectedChatSessionId],
+		[opencodeBaseUrl, opencodeRequestOptions, selectedChatSessionId],
 	);
 
 	// Show next permission when current one is dismissed
@@ -807,6 +1058,32 @@ export function SessionsApp() {
 		[],
 	);
 	const t = copy[locale];
+	const viewLoadingFallback = useMemo(
+		() => (
+			<div className="flex h-full items-center justify-center text-xs text-muted-foreground">
+				{locale === "de" ? "Lade..." : "Loading..."}
+			</div>
+		),
+		[locale],
+	);
+
+	const resumeWorkspacePath = mainChatActive
+		? (mainChatWorkspacePath ?? undefined)
+		: (selectedChatFromHistory?.workspace_path ??
+			selectedWorkspaceSession?.workspace_path);
+	const canResumeWithoutMessage = useMemo(() => {
+		if (!selectedChatSessionId) return false;
+		if (!resumeWorkspacePath) return false;
+		if (messageInput.trim()) return false;
+		if (pendingUploads.length > 0) return false;
+		return !opencodeBaseUrl;
+	}, [
+		messageInput,
+		opencodeBaseUrl,
+		pendingUploads.length,
+		resumeWorkspacePath,
+		selectedChatSessionId,
+	]);
 
 	// Determine if we're viewing a history-only session (no running opencode)
 	const isHistoryOnlySession = useMemo(() => {
@@ -826,6 +1103,129 @@ export function SessionsApp() {
 		}
 		return false;
 	}, [selectedChatSession, selectedChatFromHistory, selectedChatSessionId]);
+
+	const autoAttachMode = features.session_auto_attach ?? "off";
+	const autoAttachScan = features.session_auto_attach_scan ?? false;
+
+	// Reset chatState to idle when session becomes history-only (no live connection)
+	// This prevents "Agent working..." from showing when there's no SSE to receive idle events
+	useEffect(() => {
+		if (isHistoryOnlySession && activeSessionId && chatState === "sending") {
+			setChatState("idle");
+		}
+	}, [isHistoryOnlySession, activeSessionId, chatState, setChatState]);
+
+	// Auto-attach to running sessions (or resume) when opening history sessions.
+	useEffect(() => {
+		if (!selectedChatSessionId || !isHistoryOnlySession) return;
+		if (autoAttachMode === "off") return;
+		if (!selectedChatFromHistory?.workspace_path) return;
+
+		const workspacePath = selectedChatFromHistory.workspace_path;
+		const runningSessions = workspaceSessions.filter(
+			(session) =>
+				session.status === "running" &&
+				session.workspace_path === workspacePath,
+		);
+
+		if (runningSessions.length > 0) {
+			if (!autoAttachScan) {
+				const runningSession = runningSessions[0];
+				if (selectedWorkspaceSessionId !== runningSession.id) {
+					setSelectedWorkspaceSessionId(runningSession.id);
+				}
+				return;
+			}
+
+			const runningSessionIds = runningSessions
+				.map((session) => session.id)
+				.sort()
+				.join(",");
+			const lastScan = autoAttachScanAttemptRef.current;
+			if (
+				lastScan &&
+				lastScan.sessionId === selectedChatSessionId &&
+				lastScan.workspacePath === workspacePath &&
+				lastScan.runningSessionIds === runningSessionIds
+			) {
+				return;
+			}
+
+			autoAttachScanAttemptRef.current = {
+				sessionId: selectedChatSessionId,
+				workspacePath,
+				runningSessionIds,
+			};
+
+			let active = true;
+			void (async () => {
+				let matched: (typeof runningSessions)[number] | null = null;
+				for (const candidate of runningSessions) {
+					try {
+						const sessions = await fetchSessions(
+							opencodeProxyBaseUrl(candidate.id),
+							{ directory: workspacePath },
+						);
+						if (
+							sessions.some((session) => session.id === selectedChatSessionId)
+						) {
+							matched = candidate;
+							break;
+						}
+					} catch {
+						// Ignore scan failures and fall back to first running session.
+					}
+				}
+
+				if (!active) return;
+				const target = matched ?? runningSessions[0];
+				if (selectedWorkspaceSessionId !== target.id) {
+					setSelectedWorkspaceSessionId(target.id);
+				}
+			})();
+
+			return () => {
+				active = false;
+			};
+		}
+
+		if (autoAttachMode !== "resume") return;
+
+		const startingSession = workspaceSessions.find(
+			(session) =>
+				session.workspace_path === workspacePath &&
+				(session.status === "pending" || session.status === "starting"),
+		);
+		if (startingSession) return;
+
+		const lastAttempt = autoAttachAttemptRef.current;
+		if (
+			lastAttempt &&
+			lastAttempt.sessionId === selectedChatSessionId &&
+			lastAttempt.workspacePath === workspacePath &&
+			lastAttempt.mode === autoAttachMode
+		) {
+			return;
+		}
+
+		autoAttachAttemptRef.current = {
+			sessionId: selectedChatSessionId,
+			workspacePath,
+			mode: autoAttachMode,
+		};
+
+		void ensureOpencodeRunning(workspacePath);
+	}, [
+		autoAttachMode,
+		autoAttachScan,
+		ensureOpencodeRunning,
+		isHistoryOnlySession,
+		selectedChatFromHistory,
+		selectedChatSessionId,
+		selectedWorkspaceSessionId,
+		setSelectedWorkspaceSessionId,
+		workspaceSessions,
+	]);
 
 	// Merge messages to prevent flickering - preserves existing message references when unchanged
 	const mergeMessages = useCallback(
@@ -878,7 +1278,83 @@ export function SessionsApp() {
 		[],
 	);
 
+	// Load messages for Main Chat threaded view (all sessions combined)
+	const loadMainChatThreadedMessages = useCallback(async () => {
+		if (!mainChatAssistantName) return [];
+
+		try {
+			// Get all Main Chat sessions
+			const sessions = await listMainChatSessions(mainChatAssistantName);
+			if (sessions.length === 0) return [];
+
+			// Sort sessions by date (oldest first for chronological thread)
+			const sortedSessions = [...sessions].sort(
+				(a, b) =>
+					new Date(a.started_at).getTime() - new Date(b.started_at).getTime(),
+			);
+
+			// Load messages from each session and combine
+			const allMessages: ThreadedMessage[] = [];
+
+			for (const session of sortedSessions) {
+				try {
+					const historyMessages = await getChatMessages(session.session_id);
+					if (historyMessages.length > 0) {
+						const converted = convertChatMessagesToOpenCode(historyMessages);
+						// Add session metadata to each message
+						converted.forEach((msg, idx) => {
+							const threadedMsg: ThreadedMessage = {
+								...msg,
+								_sessionId: session.session_id,
+								_sessionTitle:
+									session.title ||
+									formatSessionDate(new Date(session.started_at).getTime()),
+								_isSessionStart: idx === 0,
+							};
+							allMessages.push(threadedMsg);
+						});
+					}
+				} catch {
+					// Ignore failures for individual sessions
+				}
+			}
+
+			return allMessages;
+		} catch (err) {
+			console.error("Failed to load Main Chat threaded messages:", err);
+			return [];
+		}
+	}, [mainChatAssistantName]);
+
 	const loadMessages = useCallback(async () => {
+		// Main Chat threaded view - shows all sessions combined
+		if (mainChatActive) {
+			if (mainChatAssistantName) {
+				try {
+					const threadedMessages = await loadMainChatThreadedMessages();
+					// Use merge to preserve optimistic messages (temp-* IDs)
+					startTransition(() => {
+						setMessages((prev) => {
+							// Keep any optimistic messages (temp-* IDs) that aren't in the loaded messages
+							const optimisticMessages = prev.filter((m) =>
+								m.info.id.startsWith("temp-"),
+							);
+							if (optimisticMessages.length === 0) {
+								return threadedMessages;
+							}
+							// Merge: loaded messages + optimistic messages at the end
+							return [...threadedMessages, ...optimisticMessages];
+						});
+					});
+				} catch (err) {
+					setStatus((err as Error).message);
+				}
+			} else {
+				setMessages([]);
+			}
+			return;
+		}
+
 		if (!selectedChatSessionId) return;
 
 		try {
@@ -889,6 +1365,7 @@ export function SessionsApp() {
 				loadedMessages = await fetchMessages(
 					opencodeBaseUrl,
 					selectedChatSessionId,
+					{ directory: opencodeDirectory },
 				);
 			} else {
 				// History-only view (or no live session): use disk history cache.
@@ -919,15 +1396,21 @@ export function SessionsApp() {
 			}
 
 			// Use merge to prevent flickering when updating
-			setMessages((prev) => mergeMessages(prev, loadedMessages));
+			startTransition(() => {
+				setMessages((prev) => mergeMessages(prev, loadedMessages));
+			});
 		} catch (err) {
 			setStatus((err as Error).message);
 		}
 	}, [
 		opencodeBaseUrl,
+		opencodeDirectory,
 		selectedChatSessionId,
 		isHistoryOnlySession,
 		mergeMessages,
+		mainChatActive,
+		mainChatAssistantName,
+		loadMainChatThreadedMessages,
 	]);
 
 	const [eventsTransportMode, setEventsTransportMode] = useState<
@@ -994,7 +1477,8 @@ export function SessionsApp() {
 			top: container.scrollHeight,
 			behavior,
 		});
-		isNearBottomRef.current = true;
+		autoScrollEnabledRef.current = true;
+		setShowScrollToBottom(false);
 	}, []);
 
 	useEffect(() => {
@@ -1008,12 +1492,25 @@ export function SessionsApp() {
 
 		const { scrollTop, scrollHeight, clientHeight } = container;
 		const distanceFromBottom = scrollHeight - scrollTop - clientHeight;
+		const lastScrollTop = lastScrollTopRef.current;
+		lastScrollTopRef.current = scrollTop;
 
-		// Track if user is near bottom (within 150px)
-		isNearBottomRef.current = distanceFromBottom < 150;
+		// Detect if user scrolled up (intentionally moving away from bottom)
+		const scrolledUp = scrollTop < lastScrollTop;
+		const isAtBottom = distanceFromBottom < 50;
 
-		// Show button when more than 300px from bottom
-		setShowScrollToBottom(distanceFromBottom > 300);
+		// Disable auto-scroll when user scrolls up away from bottom
+		if (scrolledUp && distanceFromBottom > 100) {
+			autoScrollEnabledRef.current = false;
+		}
+
+		// Re-enable auto-scroll when user scrolls to bottom
+		if (isAtBottom) {
+			autoScrollEnabledRef.current = true;
+		}
+
+		// Show button when not at bottom (use small threshold for better UX)
+		setShowScrollToBottom(distanceFromBottom > 100);
 	}, []);
 
 	const messageCount = messages.length;
@@ -1026,51 +1523,107 @@ export function SessionsApp() {
 		handleScroll();
 	}, [messageCount, handleScroll]);
 
-	// Scroll to bottom when switching sessions
+	// Reset state when switching sessions
 	useEffect(() => {
 		if (!selectedChatSessionId) return;
 
-		// Detect session switch
 		if (lastSessionIdRef.current !== selectedChatSessionId) {
 			lastSessionIdRef.current = selectedChatSessionId;
-			isNearBottomRef.current = true; // Reset to bottom on session switch
-
-			// Wait for messages to load and render, then scroll to bottom
-			const timeoutId = setTimeout(() => {
-				scrollToBottom("instant");
-			}, 50);
-
-			return () => clearTimeout(timeoutId);
+			autoScrollEnabledRef.current = true;
+			initialLoadRef.current = true;
 		}
-	}, [selectedChatSessionId, scrollToBottom]);
+	}, [selectedChatSessionId]);
 
-	// Auto-scroll to bottom when new messages arrive (if user is near bottom)
+	// Position at bottom synchronously before paint (no visible jump)
+	useLayoutEffect(() => {
+		if (messages.length === 0) return;
+
+		const container = messagesContainerRef.current;
+		if (!container) return;
+
+		if (initialLoadRef.current) {
+			// Set scroll position directly - no animation, no visible jump
+			container.scrollTop = container.scrollHeight;
+			initialLoadRef.current = false;
+		}
+	}, [messages]);
+
+	// Smooth scroll for new messages during conversation (after initial load)
 	useEffect(() => {
 		if (messages.length === 0) return;
-		if (!isNearBottomRef.current) return;
+		if (!autoScrollEnabledRef.current) return;
+		if (initialLoadRef.current) return; // Skip - handled by useLayoutEffect
 
-		// Scroll to bottom when messages change and user was near bottom
-		scrollToBottom("instant");
+		scrollToBottom("smooth");
 	}, [messages, scrollToBottom]);
 
 	useEffect(() => {
-		if (!opencodeBaseUrl) return;
+		if (!effectiveOpencodeBaseUrl || !activeSessionId) return;
 		const unsubscribe = subscribeToEvents(
-			opencodeBaseUrl,
+			effectiveOpencodeBaseUrl,
 			(event) => {
 				const eventType = event.type as string;
+
+				// Debug: log all events to help diagnose permission issues
+				if (eventType !== "message.updated") {
+					console.log("[SSE Event]", eventType, event.properties);
+				}
 
 				if (eventType === "transport.mode") {
 					const props = event.properties as { mode?: "sse" | "polling" } | null;
 					if (props?.mode) setEventsTransportMode(props.mode);
+					if (effectiveOpencodeBaseUrl && activeSessionId) {
+						invalidateMessageCache(
+							effectiveOpencodeBaseUrl,
+							activeSessionId,
+							opencodeDirectory,
+						);
+						requestMessageRefresh(250);
+					}
 					return;
+				}
+
+				if (eventType === "server.connected") {
+					if (effectiveOpencodeBaseUrl && activeSessionId) {
+						invalidateMessageCache(
+							effectiveOpencodeBaseUrl,
+							activeSessionId,
+							opencodeDirectory,
+						);
+						requestMessageRefresh(250);
+					}
+				}
+
+				if (eventType === "session.unavailable") {
+					if (
+						autoAttachMode === "resume" &&
+						selectedChatFromHistory?.workspace_path
+					) {
+						const now = Date.now();
+						const lastAttempt = sessionUnavailableRef.current;
+						if (
+							lastAttempt?.sessionId === selectedChatSessionId &&
+							now - lastAttempt.attemptedAt < 15_000
+						) {
+							return;
+						}
+						sessionUnavailableRef.current = {
+							sessionId: selectedChatSessionId ?? "",
+							attemptedAt: now,
+						};
+						void ensureOpencodeRunning(selectedChatFromHistory.workspace_path);
+					}
 				}
 
 				if (eventType === "session.idle") {
 					setChatState("idle");
 					// Invalidate cache and force refresh on idle
-					if (opencodeBaseUrl && selectedChatSessionId) {
-						invalidateMessageCache(opencodeBaseUrl, selectedChatSessionId);
+					if (effectiveOpencodeBaseUrl && activeSessionId) {
+						invalidateMessageCache(
+							effectiveOpencodeBaseUrl,
+							activeSessionId,
+							opencodeDirectory,
+						);
 					}
 					loadMessages();
 					refreshOpencodeSessions();
@@ -1109,19 +1662,30 @@ export function SessionsApp() {
 				// Refresh messages on any message event
 				if (eventType?.startsWith("message")) {
 					// Invalidate cache when messages change
-					if (opencodeBaseUrl && selectedChatSessionId) {
-						invalidateMessageCache(opencodeBaseUrl, selectedChatSessionId);
+					if (effectiveOpencodeBaseUrl && activeSessionId) {
+						invalidateMessageCache(
+							effectiveOpencodeBaseUrl,
+							activeSessionId,
+							opencodeDirectory,
+						);
 					}
 					// Coalesce refreshes to avoid hammering the server during streaming updates.
 					requestMessageRefresh(1000);
 				}
 			},
 			controlPlaneDirectBaseUrl(),
+			opencodeRequestOptions,
 		);
 		return unsubscribe;
 	}, [
-		opencodeBaseUrl,
+		autoAttachMode,
+		ensureOpencodeRunning,
+		effectiveOpencodeBaseUrl,
+		opencodeDirectory,
+		opencodeRequestOptions,
+		activeSessionId,
 		selectedChatSessionId,
+		selectedChatFromHistory,
 		loadMessages,
 		refreshOpencodeSessions,
 		refreshChatHistory,
@@ -1132,7 +1696,11 @@ export function SessionsApp() {
 	// Poll for message updates while assistant is working.
 	// This runs regardless of SSE status since SSE is unreliable through the proxy.
 	useEffect(() => {
-		if (chatState !== "sending" || !opencodeBaseUrl || !selectedChatSessionId)
+		if (
+			chatState !== "sending" ||
+			!effectiveOpencodeBaseUrl ||
+			!activeSessionId
+		)
 			return;
 
 		let active = true;
@@ -1143,11 +1711,15 @@ export function SessionsApp() {
 			if (!active) return;
 			try {
 				// Invalidate cache and fetch fresh data
-				invalidateMessageCache(opencodeBaseUrl, selectedChatSessionId);
+				invalidateMessageCache(
+					effectiveOpencodeBaseUrl,
+					activeSessionId,
+					opencodeDirectory,
+				);
 				const freshMessages = await fetchMessages(
-					opencodeBaseUrl,
-					selectedChatSessionId,
-					{ skipCache: true },
+					effectiveOpencodeBaseUrl,
+					activeSessionId,
+					{ skipCache: true, directory: opencodeDirectory },
 				);
 				if (!active) return;
 
@@ -1188,8 +1760,9 @@ export function SessionsApp() {
 		};
 	}, [
 		chatState,
-		opencodeBaseUrl,
-		selectedChatSessionId,
+		effectiveOpencodeBaseUrl,
+		opencodeDirectory,
+		activeSessionId,
 		refreshOpencodeSessions,
 		mergeMessages,
 		setChatState,
@@ -1217,7 +1790,9 @@ export function SessionsApp() {
 					// Double-escape detected - stop the agent
 					e.preventDefault();
 					if (opencodeBaseUrl && selectedChatSessionId) {
-						abortSession(opencodeBaseUrl, selectedChatSessionId)
+						abortSession(opencodeBaseUrl, selectedChatSessionId, {
+							directory: opencodeDirectory,
+						})
 							.then(() => {
 								setChatState("idle");
 								setStatus(locale === "de" ? "Abgebrochen" : "Stopped");
@@ -1234,7 +1809,14 @@ export function SessionsApp() {
 
 		window.addEventListener("keydown", handleKeyDown);
 		return () => window.removeEventListener("keydown", handleKeyDown);
-	}, [chatState, opencodeBaseUrl, selectedChatSessionId, locale, setChatState]);
+	}, [
+		chatState,
+		opencodeBaseUrl,
+		opencodeDirectory,
+		selectedChatSessionId,
+		locale,
+		setChatState,
+	]);
 
 	const selectedSession = useMemo(() => {
 		if (!selectedWorkspaceSessionId) return undefined;
@@ -1358,6 +1940,7 @@ export function SessionsApp() {
 					selectedChatSessionId,
 					cmd.name,
 					slashQuery.args,
+					opencodeRequestOptions,
 				);
 			} catch (err) {
 				console.error("Failed to send command:", err);
@@ -1366,20 +1949,211 @@ export function SessionsApp() {
 				);
 			}
 		},
-		[selectedChatSessionId, opencodeBaseUrl, slashQuery.args],
+		[
+			selectedChatSessionId,
+			opencodeBaseUrl,
+			opencodeRequestOptions,
+			slashQuery.args,
+		],
+	);
+
+	// Handle canvas save and add to chat
+	const handleCanvasSaveAndAddToChat = useCallback((filePath: string) => {
+		// Add the saved canvas image as a file attachment
+		const attachment: FileAttachment = {
+			id: `canvas-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+			path: filePath,
+			filename: filePath.split("/").pop() || filePath,
+			type: "file",
+		};
+		setFileAttachments((prev) => [...prev, attachment]);
+		// Switch to chat view so user can see the attachment and send
+		setActiveView("chat");
+		// Focus the chat input
+		setTimeout(() => {
+			chatInputRef.current?.focus();
+		}, 100);
+	}, []);
+
+	// Handle forking/branching a session from a specific message
+	// Creates a new session and copies the conversation context to clipboard for easy pasting
+	const handleForkSession = useCallback(
+		async (messageId: string) => {
+			// We need either an active session OR a way to resume one
+			const sessionId = activeSessionId || selectedChatSessionId;
+			if (!sessionId) {
+				setStatus(
+					locale === "de"
+						? "Keine Sitzung zum Verzweigen"
+						: "No session to fork",
+				);
+				return;
+			}
+
+			try {
+				// Determine the base URL - resume session if needed
+				let baseUrl = effectiveOpencodeBaseUrl;
+				let workspacePath = opencodeDirectory;
+
+				if (!baseUrl && resumeWorkspacePath) {
+					// Need to resume the session first
+					setStatus(
+						locale === "de"
+							? "Sitzung wird wiederhergestellt..."
+							: "Resuming session...",
+					);
+
+					const url = await ensureOpencodeRunning(resumeWorkspacePath);
+					if (!url) {
+						throw new Error(
+							locale === "de"
+								? "Sitzung konnte nicht wiederhergestellt werden"
+								: "Failed to resume session",
+						);
+					}
+					baseUrl = url;
+					workspacePath = resumeWorkspacePath;
+				}
+
+				if (!baseUrl) {
+					throw new Error(
+						locale === "de"
+							? "Keine aktive Sitzung zum Verzweigen"
+							: "No active session to fork",
+					);
+				}
+
+				setStatus(
+					locale === "de"
+						? "Sitzung wird verzweigt..."
+						: "Branching session...",
+				);
+
+				// Find all messages up to and including the selected message
+				const messageIndex = messages.findIndex((m) => m.info.id === messageId);
+
+				if (messageIndex === -1) {
+					throw new Error("Message not found");
+				}
+
+				// Get messages up to the selected point
+				const messagesToCopy = messages.slice(0, messageIndex + 1);
+
+				// Build a concise conversation transcript
+				const conversationTranscript = messagesToCopy
+					.map((msg) => {
+						const role = msg.info.role === "user" ? "User" : "Assistant";
+						const textParts = msg.parts
+							.filter((p) => p.type === "text" && p.text)
+							.map((p) => p.text)
+							.join("\n");
+						// Truncate long messages to keep context manageable
+						const truncated =
+							textParts.length > 500
+								? `${textParts.substring(0, 500)}...`
+								: textParts;
+						return `[${role}]: ${truncated}`;
+					})
+					.join("\n\n");
+
+				// Create a new session with parentID linking to original
+				const parentTitle =
+					selectedChatSession?.title ||
+					selectedChatFromHistory?.title ||
+					generateReadableId(sessionId);
+				const requestOptions = workspacePath
+					? { directory: workspacePath }
+					: opencodeRequestOptions;
+				const newSession = await createSession(
+					baseUrl,
+					`Branch: ${parentTitle}`,
+					sessionId, // parentID for linking
+					requestOptions,
+				);
+
+				// Refresh sessions to show the new session
+				await refreshOpencodeSessions();
+				await refreshChatHistory();
+
+				// Switch to the new session
+				if (newSession.id) {
+					setSelectedChatSessionId(newSession.id);
+
+					// Copy conversation context to clipboard
+					const contextForClipboard =
+						locale === "de"
+							? `[Kontext aus vorheriger Unterhaltung - bei Bedarf einfügen]\n\n${conversationTranscript}`
+							: `[Context from previous conversation - paste if needed]\n\n${conversationTranscript}`;
+
+					try {
+						await navigator.clipboard?.writeText(contextForClipboard);
+					} catch {
+						// Clipboard access may be denied, that's okay
+					}
+
+					setStatus(
+						locale === "de"
+							? "Verzweigt! Kontext in Zwischenablage kopiert."
+							: "Branched! Context copied to clipboard.",
+					);
+
+					// Focus the input for immediate typing
+					setTimeout(() => {
+						chatInputRef.current?.focus();
+					}, 100);
+
+					// Clear status after a moment
+					setTimeout(() => setStatus(""), 4000);
+				}
+			} catch (err) {
+				console.error("Failed to fork session:", err);
+				setStatus(
+					locale === "de"
+						? `Verzweigen fehlgeschlagen: ${err instanceof Error ? err.message : "Unbekannter Fehler"}`
+						: `Fork failed: ${err instanceof Error ? err.message : "Unknown error"}`,
+				);
+			}
+		},
+		[
+			effectiveOpencodeBaseUrl,
+			activeSessionId,
+			selectedChatSessionId,
+			selectedChatSession,
+			selectedChatFromHistory,
+			messages,
+			opencodeDirectory,
+			opencodeRequestOptions,
+			resumeWorkspacePath,
+			ensureOpencodeRunning,
+			locale,
+			refreshOpencodeSessions,
+			refreshChatHistory,
+			setSelectedChatSessionId,
+		],
 	);
 
 	const handleSend = async () => {
-		if (!selectedChatSessionId) return;
-		if (!messageInput.trim() && pendingUploads.length === 0) return;
+		// In Main Chat mode, we might need to create a session first
+		// In regular mode, we need a session ID
+		if (!mainChatActive && !selectedChatSessionId) return;
+		if (
+			!messageInput.trim() &&
+			pendingUploads.length === 0 &&
+			fileAttachments.length === 0
+		)
+			return;
 
 		// Stop dictation if active
 		if (dictation.isActive) {
 			dictation.stop();
 		}
 
-		// Close slash popup if open
+		// Close popups if open
 		setShowSlashPopup(false);
+		setShowFileMentionPopup(false);
+
+		// Capture file attachments before clearing
+		const currentFileAttachments = [...fileAttachments];
 
 		// Build message text with uploaded file paths
 		let messageText = messageInput.trim();
@@ -1397,51 +2171,115 @@ export function SessionsApp() {
 		const isShellCommand = messageText.startsWith("!");
 		const shellCommand = isShellCommand ? messageText.slice(1).trim() : "";
 
-		// Optimistic update - show user message immediately
-		const optimisticMessage: OpenCodeMessageWithParts = {
-			info: {
-				id: `temp-${Date.now()}`,
-				sessionID: selectedChatSessionId,
-				role: "user",
-				time: { created: Date.now() },
-			},
-			parts: [
-				{
-					id: `temp-part-${Date.now()}`,
-					sessionID: selectedChatSessionId,
-					messageID: `temp-${Date.now()}`,
-					type: "text",
-					text: messageText,
-				},
-			],
-		};
-
-		setMessages((prev) => [...prev, optimisticMessage]);
 		setMessageInput("");
 		// Reset textarea height to minimum
 		if (chatInputRef.current) {
 			chatInputRef.current.style.height = "36px";
 		}
-		// Clear draft cache for this session since message was sent
-		if (selectedChatSessionId) {
-			setDraft(selectedChatSessionId, "");
-		}
 		setPendingUploads([]);
+		setFileAttachments([]);
 		setChatState("sending");
 		setStatus("");
 
-		// Scroll to bottom immediately
-		setTimeout(() => scrollToBottom(), 50);
-
 		try {
-			// If we don't have an opencode URL (history-only session), start opencode first
 			let effectiveBaseUrl = opencodeBaseUrl;
-			if (!effectiveBaseUrl || isHistoryOnlySession) {
+			let effectiveDirectory = opencodeDirectory;
+			let targetSessionId: string;
+
+			// Main Chat mode: get workspace path from assistant info
+			if (mainChatActive && mainChatAssistantName) {
+				const assistantInfo = await getMainChatAssistant(mainChatAssistantName);
+				const workspacePath = assistantInfo.path;
+				effectiveDirectory = workspacePath;
+				setMainChatWorkspacePath(workspacePath);
+
+				setStatus(
+					locale === "de" ? "Starte Main Chat..." : "Starting Main Chat...",
+				);
+				const url = await ensureOpencodeRunning();
+				if (!url) {
+					throw new Error("Failed to start Main Chat session");
+				}
+				effectiveBaseUrl = url;
+				setMainChatBaseUrl(url);
+
+				// If no current session, create one with a title prefix
+				let resolvedMainChatSessionId = mainChatCurrentSessionId;
+				if (resolvedMainChatSessionId) {
+					const sessions = await fetchSessions(effectiveBaseUrl, {
+						directory: effectiveDirectory,
+					});
+					const mainSessions = sessions.filter(
+						(session) => session.directory === effectiveDirectory,
+					);
+					const matched = mainSessions.find(
+						(session) => session.id === resolvedMainChatSessionId,
+					);
+					const readableMatch = mainSessions.find(
+						(session) =>
+							generateReadableId(session.id) === resolvedMainChatSessionId,
+					);
+					const resolved = matched ?? readableMatch;
+					if (resolved) {
+						if (resolved.id !== resolvedMainChatSessionId) {
+							setMainChatCurrentSessionId(resolved.id);
+						}
+						resolvedMainChatSessionId = resolved.id;
+					} else {
+						resolvedMainChatSessionId = null;
+						setMainChatCurrentSessionId(null);
+					}
+				}
+
+				if (!resolvedMainChatSessionId) {
+					const sessionTitle = `[${mainChatAssistantName}] ${new Date().toLocaleDateString()}`;
+					const newSession = await createSession(
+						effectiveBaseUrl,
+						sessionTitle,
+						undefined,
+						{ directory: effectiveDirectory },
+					);
+
+					// Register with Main Chat backend
+					await registerMainChatSession(mainChatAssistantName, {
+						session_id: newSession.id,
+						title: sessionTitle,
+					});
+
+					// Update the current session ID
+					setMainChatCurrentSessionId(newSession.id);
+					targetSessionId = newSession.id;
+				} else {
+					targetSessionId = resolvedMainChatSessionId;
+				}
+				setStatus("");
+			} else if (isHistoryOnlySession) {
+				// Regular session: history-only, need to resume
+				const workspacePath = selectedChatFromHistory?.workspace_path;
+				if (!workspacePath) {
+					throw new Error("Cannot resume session: no workspace path found");
+				}
+				effectiveDirectory = workspacePath;
+
+				setStatus(
+					locale === "de"
+						? "Session wird wiederhergestellt..."
+						: "Resuming session...",
+				);
+				const url = await ensureOpencodeRunning(workspacePath);
+				if (!url) {
+					throw new Error("Failed to resume workspace session");
+				}
+				effectiveBaseUrl = url;
+				targetSessionId = selectedChatSessionId;
+				setStatus("");
+			} else if (!effectiveBaseUrl) {
 				// Get workspace path from history session
 				const workspacePath = selectedChatFromHistory?.workspace_path;
 				if (!workspacePath) {
 					throw new Error("Cannot resume session: no workspace path found");
 				}
+				effectiveDirectory = workspacePath;
 
 				// Start opencode for this workspace
 				setStatus(
@@ -1452,8 +2290,40 @@ export function SessionsApp() {
 					throw new Error("Failed to start OpenCode for this workspace");
 				}
 				effectiveBaseUrl = url;
+				targetSessionId = selectedChatSessionId;
 				setStatus("");
+			} else {
+				targetSessionId = selectedChatSessionId;
 			}
+
+			// Optimistic update - show user message immediately (now that we have the session ID)
+			const optimisticMessage: OpenCodeMessageWithParts = {
+				info: {
+					id: `temp-${Date.now()}`,
+					sessionID: targetSessionId,
+					role: "user",
+					time: { created: Date.now() },
+				},
+				parts: [
+					{
+						id: `temp-part-${Date.now()}`,
+						sessionID: targetSessionId,
+						messageID: `temp-${Date.now()}`,
+						type: "text",
+						text: messageText,
+					},
+				],
+			};
+
+			setMessages((prev) => [...prev, optimisticMessage]);
+
+			// Clear draft cache for this session since message was sent
+			if (targetSessionId) {
+				setDraft(targetSessionId, "");
+			}
+
+			// Scroll to bottom immediately
+			setTimeout(() => scrollToBottom(), 50);
 
 			if (isShellCommand && shellCommand) {
 				// Run shell command via opencode shell endpoint using "build" agent
@@ -1466,20 +2336,48 @@ export function SessionsApp() {
 				);
 				await runShellCommandAsync(
 					effectiveBaseUrl,
-					selectedChatSessionId,
+					targetSessionId,
 					shellCommand,
 					agentId,
+					{ directory: effectiveDirectory },
+				);
+			} else if (currentFileAttachments.length > 0) {
+				// Send with file parts
+				const parts: OpenCodePartInput[] = [
+					{ type: "text", text: messageText },
+				];
+				// Add file parts
+				for (const attachment of currentFileAttachments) {
+					parts.push({
+						type: "file",
+						mime: "text/plain", // Will be determined by backend
+						url: `file://${effectiveDirectory}/${attachment.path}`,
+						filename: attachment.filename,
+					});
+				}
+				await sendPartsAsync(
+					effectiveBaseUrl,
+					targetSessionId,
+					parts,
+					undefined,
+					{ directory: effectiveDirectory },
 				);
 			} else {
 				// Use async send - the response will come via SSE events
 				await sendMessageAsync(
 					effectiveBaseUrl,
-					selectedChatSessionId,
+					targetSessionId,
 					messageText,
+					undefined,
+					{ directory: effectiveDirectory },
 				);
 			}
 			// Invalidate cache and refresh messages to get the real message IDs
-			invalidateMessageCache(effectiveBaseUrl, selectedChatSessionId);
+			invalidateMessageCache(
+				effectiveBaseUrl,
+				targetSessionId,
+				effectiveDirectory,
+			);
 			loadMessages();
 		} catch (err) {
 			setStatus((err as Error).message);
@@ -1490,12 +2388,52 @@ export function SessionsApp() {
 		// Don't set idle here - wait for SSE session.idle event
 	};
 
+	const handleResume = async () => {
+		if (!selectedChatSessionId || !resumeWorkspacePath) return;
+
+		setStatus(
+			locale === "de"
+				? "Session wird wiederhergestellt..."
+				: "Resuming session...",
+		);
+
+		try {
+			const url = await ensureOpencodeRunning(resumeWorkspacePath);
+			if (!url) {
+				throw new Error(
+					locale === "de"
+						? "Sitzung konnte nicht wiederhergestellt werden"
+						: "Failed to resume session",
+				);
+			}
+
+			try {
+				const liveMessages = await fetchMessages(url, selectedChatSessionId, {
+					directory: resumeWorkspacePath,
+				});
+				if (liveMessages.length > 0) {
+					setMessages((prev) => mergeMessages(prev, liveMessages));
+				} else {
+					await loadMessages();
+				}
+			} catch {
+				await loadMessages();
+			}
+
+			setStatus("");
+		} catch (err) {
+			setStatus((err as Error).message);
+		}
+	};
+
 	const handleStop = async () => {
 		if (!opencodeBaseUrl || !selectedChatSessionId) return;
 		if (chatState !== "sending") return;
 
 		try {
-			await abortSession(opencodeBaseUrl, selectedChatSessionId);
+			await abortSession(opencodeBaseUrl, selectedChatSessionId, {
+				directory: opencodeDirectory,
+			});
 			// The SSE event will set the state to idle
 			// But set it immediately for responsiveness
 			setChatState("idle");
@@ -1632,6 +2570,15 @@ export function SessionsApp() {
 		);
 	}
 
+	// Session metadata for chat display
+	const readableId = selectedChatSession?.id
+		? generateReadableId(selectedChatSession.id)
+		: null;
+	// Extract workspace name from path (last segment)
+	const workspaceName = opencodeDirectory
+		? opencodeDirectory.split("/").filter(Boolean).pop() || null
+		: null;
+
 	// Chat content component (reused in both layouts)
 	const ChatContent = (
 		<div
@@ -1647,7 +2594,7 @@ export function SessionsApp() {
 			{/* Working indicator with stop button */}
 			{chatState === "sending" && (
 				<div className="flex items-center gap-1.5 px-2 py-0.5 bg-primary/10 text-xs text-primary">
-					<KnightRiderSpinner />
+					<BrailleSpinner />
 					<span className="font-medium flex-1">
 						{locale === "de" ? "Agent arbeitet..." : "Agent working..."}
 					</span>
@@ -1684,14 +2631,26 @@ export function SessionsApp() {
 						</button>
 					)}
 					{visibleGroups.map((group) => (
-						<MessageGroupCard
+						<div
 							key={
 								group.messages[0]?.info.id ||
 								`${group.role}-${group.startIndex}`
 							}
-							group={group}
-							persona={selectedSession?.persona}
-						/>
+						>
+							{/* Session divider for Main Chat threaded view */}
+							{group.isNewSession && group.sessionTitle && (
+								<SessionDivider title={group.sessionTitle} />
+							)}
+							<MessageGroupCard
+								group={group}
+								persona={selectedSession?.persona}
+								workspaceName={workspaceName}
+								readableId={readableId}
+								workspaceDirectory={opencodeDirectory}
+								onFork={handleForkSession}
+								locale={locale}
+							/>
+						</div>
 					))}
 					<div ref={messagesEndRef} />
 				</div>
@@ -1748,8 +2707,12 @@ export function SessionsApp() {
 						<Clock className="w-3 h-3" />
 						<span>
 							{locale === "de"
-								? "Sende eine Nachricht um diese Sitzung fortzusetzen"
-								: "Send a message to resume this session"}
+								? canResumeWithoutMessage
+									? "Nachricht senden oder ohne Nachricht fortsetzen"
+									: "Sende eine Nachricht um diese Sitzung fortzusetzen"
+								: canResumeWithoutMessage
+									? "Send a message or resume without one"
+									: "Send a message to resume this session"}
 						</span>
 					</div>
 				)}
@@ -1796,7 +2759,7 @@ export function SessionsApp() {
 						/>
 					)}
 					{/* Textarea wrapper with slash command popup */}
-					<div className="flex-1 relative flex items-center min-h-[32px]">
+					<div className="flex-1 relative flex flex-col min-h-[32px]">
 						<SlashCommandPopup
 							commands={slashCommands}
 							query={slashQuery.command}
@@ -1804,6 +2767,40 @@ export function SessionsApp() {
 							onSelect={handleSlashCommandSelect}
 							onClose={() => setShowSlashPopup(false)}
 						/>
+						<FileMentionPopup
+							query={fileMentionQuery}
+							isOpen={showFileMentionPopup}
+							workspacePath={resumeWorkspacePath}
+							onSelect={(attachment) => {
+								// Remove @query from input, only show chip
+								const newInput = messageInput.replace(/@[^\s]*$/, "");
+								setMessageInput(newInput);
+								setFileAttachments((prev) => [...prev, attachment]);
+								setShowFileMentionPopup(false);
+								setFileMentionQuery("");
+								chatInputRef.current?.focus();
+							}}
+							onClose={() => {
+								setShowFileMentionPopup(false);
+								setFileMentionQuery("");
+							}}
+						/>
+						{/* File attachment chips */}
+						{fileAttachments.length > 0 && (
+							<div className="flex flex-wrap gap-1 mb-1">
+								{fileAttachments.map((attachment) => (
+									<FileAttachmentChip
+										key={attachment.id}
+										attachment={attachment}
+										onRemove={() => {
+											setFileAttachments((prev) =>
+												prev.filter((a) => a.id !== attachment.id),
+											);
+										}}
+									/>
+								))}
+							</div>
+						)}
 						<textarea
 							ref={chatInputRef}
 							placeholder={
@@ -1826,8 +2823,18 @@ export function SessionsApp() {
 								// Show slash popup when typing /
 								if (value.startsWith("/")) {
 									setShowSlashPopup(true);
+									setShowFileMentionPopup(false);
 								} else {
 									setShowSlashPopup(false);
+								}
+								// Show file mention popup when typing @
+								const atMatch = value.match(/@([^\s]*)$/);
+								if (atMatch && !value.startsWith("/")) {
+									setShowFileMentionPopup(true);
+									setFileMentionQuery(atMatch[1]);
+								} else {
+									setShowFileMentionPopup(false);
+									setFileMentionQuery("");
 								}
 								// Auto-resize is handled by useEffect on messageInput change
 							}}
@@ -1843,6 +2850,17 @@ export function SessionsApp() {
 										return;
 									}
 								}
+								// Let file mention popup handle its keys
+								if (showFileMentionPopup) {
+									if (
+										["ArrowDown", "ArrowUp", "Enter", "Tab", "Escape"].includes(
+											e.key,
+										)
+									) {
+										// Popup handles via its own event listener
+										return;
+									}
+								}
 								if (e.key === "Enter" && !e.shiftKey) {
 									e.preventDefault();
 									handleSend();
@@ -1853,6 +2871,7 @@ export function SessionsApp() {
 								}
 								if (e.key === "Escape") {
 									setShowSlashPopup(false);
+									setShowFileMentionPopup(false);
 								}
 							}}
 							onPaste={(e) => {
@@ -1906,15 +2925,28 @@ export function SessionsApp() {
 					<Button
 						type="button"
 						data-voice-send
-						onClick={handleSend}
+						onClick={canResumeWithoutMessage ? handleResume : handleSend}
 						disabled={
 							chatState === "sending" ||
-							(!messageInput.trim() && pendingUploads.length === 0)
+							(!canResumeWithoutMessage &&
+								!messageInput.trim() &&
+								pendingUploads.length === 0 &&
+								fileAttachments.length === 0)
 						}
 						className="bg-primary hover:bg-primary/90 text-primary-foreground"
 					>
-						<Send className="w-4 h-4 sm:mr-2" />
-						<span className="hidden sm:inline">{t.send}</span>
+						{canResumeWithoutMessage ? (
+							<RefreshCw className="w-4 h-4 sm:mr-2" />
+						) : (
+							<Send className="w-4 h-4 sm:mr-2" />
+						)}
+						<span className="hidden sm:inline">
+							{canResumeWithoutMessage
+								? locale === "de"
+									? "Fortsetzen"
+									: "Resume"
+								: t.send}
+						</span>
 					</Button>
 				</div>
 			</div>
@@ -1977,9 +3009,6 @@ export function SessionsApp() {
 	const formattedDate = sessionCreatedAt
 		? formatSessionDate(sessionCreatedAt)
 		: null;
-	const readableId = selectedChatSession?.id
-		? generateReadableId(selectedChatSession.id)
-		: null;
 
 	// Clean up session title - remove ISO timestamp suffix if present (e.g., "New session - 2025-12-18T07:46:58.478Z")
 	const cleanSessionTitle = (() => {
@@ -2022,8 +3051,13 @@ export function SessionsApp() {
 						)}
 					</div>
 					<div className="flex items-center gap-2 text-xs text-foreground/60 dark:text-muted-foreground">
-						{readableId && <span className="font-mono">{readableId}</span>}
-						{readableId && formattedDate && (
+						{(workspaceName || readableId) && (
+							<span className="font-mono">
+								{workspaceName}
+								{readableId && ` [${readableId}]`}
+							</span>
+						)}
+						{(workspaceName || readableId) && formattedDate && (
 							<span className="opacity-50">|</span>
 						)}
 						{formattedDate && <span>{formattedDate}</span>}
@@ -2078,6 +3112,13 @@ export function SessionsApp() {
 							icon={Eye}
 							label={t.preview}
 						/>
+						<TabButton
+							activeView={activeView}
+							onSelect={setActiveView}
+							view="canvas"
+							icon={PaintBucket}
+							label="Canvas"
+						/>
 						{features.mmry_enabled && (
 							<TabButton
 								activeView={activeView}
@@ -2094,6 +3135,13 @@ export function SessionsApp() {
 							icon={Terminal}
 							label={t.terminal}
 						/>
+						<TabButton
+							activeView={activeView}
+							onSelect={setActiveView}
+							view="settings"
+							icon={Settings}
+							label={locale === "de" ? "Einstellungen" : "Settings"}
+						/>
 					</div>
 					{/* Mobile context window gauge - full width bar directly below tabs */}
 					<ContextWindowGauge
@@ -2107,27 +3155,74 @@ export function SessionsApp() {
 
 				{/* Mobile content */}
 				<div className="flex-1 min-h-0 bg-card border border-t-0 border-border rounded-b-xl p-1.5 sm:p-4 overflow-hidden flex flex-col">
-					{activeView === "chat" && ChatContent}
+					{activeView === "chat" &&
+						(mainChatActive ? (
+							<MainChatPiView
+								locale={locale}
+								className="flex-1"
+								features={features}
+								workspacePath={mainChatWorkspacePath}
+								assistantName={mainChatAssistantName}
+							/>
+						) : (
+							ChatContent
+						))}
 					{activeView === "files" && (
 						<FileTreeView
 							onPreviewFile={handlePreviewFile}
+							onOpenInCanvas={handleOpenInCanvas}
+							workspacePath={resumeWorkspacePath}
 							state={fileTreeState}
 							onStateChange={handleFileTreeStateChange}
 						/>
 					)}
 					{activeView === "preview" && (
-						<PreviewView filePath={previewFilePath} />
+						<Suspense fallback={viewLoadingFallback}>
+							<PreviewView
+								filePath={previewFilePath}
+								workspacePath={resumeWorkspacePath}
+							/>
+						</Suspense>
 					)}
 					{activeView === "tasks" && (
-						<TodoListView todos={latestTodos} emptyMessage={t.noTasks} />
+						<div className="flex flex-col h-full overflow-hidden">
+							<TodoListView todos={latestTodos} emptyMessage={t.noTasks} />
+							<Suspense fallback={viewLoadingFallback}>
+								<TrxView
+									workspacePath={resumeWorkspacePath}
+									className="flex-1 min-h-0 border-t border-border"
+								/>
+							</Suspense>
+						</div>
 					)}
 					{features.mmry_enabled && activeView === "memories" && (
-						<MemoriesView />
+						<Suspense fallback={viewLoadingFallback}>
+							<MemoriesView
+								workspacePath={resumeWorkspacePath}
+								storeName={mainChatActive ? mainChatAssistantName : null}
+							/>
+						</Suspense>
+					)}
+					{activeView === "settings" && (
+						<Suspense fallback={viewLoadingFallback}>
+							<AgentSettingsView />
+						</Suspense>
+					)}
+					{activeView === "canvas" && (
+						<Suspense fallback={viewLoadingFallback}>
+							<CanvasView
+								workspacePath={resumeWorkspacePath}
+								initialImagePath={previewFilePath}
+								onSaveAndAddToChat={handleCanvasSaveAndAddToChat}
+							/>
+						</Suspense>
 					)}
 					{/* Terminal only rendered in mobile layout when isMobileLayout is true */}
 					{isMobileLayout && (
 						<div className={activeView === "terminal" ? "h-full" : "hidden"}>
-							<TerminalView sessionId={selectedWorkspaceSessionId} />
+							<Suspense fallback={viewLoadingFallback}>
+								<TerminalView workspacePath={resumeWorkspacePath} />
+							</Suspense>
 						</div>
 					)}
 				</div>
@@ -2137,8 +3232,18 @@ export function SessionsApp() {
 			<div className="hidden lg:flex flex-1 min-h-0 gap-4 items-start">
 				{/* Chat panel */}
 				<div className="flex-[3] min-w-0 bg-card border border-border p-4 xl:p-6 flex flex-col min-h-0 h-full">
-					{SessionHeader}
-					{ChatContent}
+					{!mainChatActive && SessionHeader}
+					{mainChatActive ? (
+						<MainChatPiView
+							locale={locale}
+							className="flex-1"
+							features={features}
+							workspacePath={mainChatWorkspacePath}
+							assistantName={mainChatAssistantName}
+						/>
+					) : (
+						ChatContent
+					)}
 				</div>
 
 				{/* Sidebar panel */}
@@ -2169,6 +3274,14 @@ export function SessionsApp() {
 							label={t.preview}
 							hideLabel
 						/>
+						<TabButton
+							activeView={activeView}
+							onSelect={setActiveView}
+							view="canvas"
+							icon={PaintBucket}
+							label="Canvas"
+							hideLabel
+						/>
 						{features.mmry_enabled && (
 							<TabButton
 								activeView={activeView}
@@ -2197,34 +3310,78 @@ export function SessionsApp() {
 								hideLabel
 							/>
 						)}
+						<TabButton
+							activeView={activeView}
+							onSelect={setActiveView}
+							view="settings"
+							icon={Settings}
+							label={locale === "de" ? "Einstellungen" : "Settings"}
+							hideLabel
+						/>
 					</div>
 					<div className="flex-1 min-h-0 overflow-hidden">
 						{activeView === "files" && (
 							<FileTreeView
 								onPreviewFile={handlePreviewFile}
+								onOpenInCanvas={handleOpenInCanvas}
+								workspacePath={resumeWorkspacePath}
 								state={fileTreeState}
 								onStateChange={handleFileTreeStateChange}
 							/>
 						)}
 						{activeView === "preview" && (
-							<PreviewView filePath={previewFilePath} />
+							<Suspense fallback={viewLoadingFallback}>
+								<PreviewView
+									filePath={previewFilePath}
+									workspacePath={resumeWorkspacePath}
+								/>
+							</Suspense>
 						)}
 						{activeView === "tasks" && (
-							<TodoListView todos={latestTodos} emptyMessage={t.noTasks} />
+							<div className="flex flex-col h-full overflow-hidden">
+								<TodoListView todos={latestTodos} emptyMessage={t.noTasks} />
+								<Suspense fallback={viewLoadingFallback}>
+									<TrxView
+										workspacePath={resumeWorkspacePath}
+										className="flex-1 min-h-0 border-t border-border"
+									/>
+								</Suspense>
+							</div>
 						)}
 						{activeView === "chat" && (
 							<TodoListView todos={latestTodos} emptyMessage={t.noTasks} />
 						)}
 						{features.mmry_enabled && activeView === "memories" && (
-							<MemoriesView />
+							<Suspense fallback={viewLoadingFallback}>
+								<MemoriesView
+									workspacePath={resumeWorkspacePath}
+									storeName={mainChatActive ? mainChatAssistantName : null}
+								/>
+							</Suspense>
 						)}
 						{activeView === "voice" && voiceMode.isActive && (
 							<VoicePanel {...voicePanelProps} />
 						)}
+						{activeView === "settings" && (
+							<Suspense fallback={viewLoadingFallback}>
+								<AgentSettingsView />
+							</Suspense>
+						)}
+						{activeView === "canvas" && (
+							<Suspense fallback={viewLoadingFallback}>
+								<CanvasView
+									workspacePath={resumeWorkspacePath}
+									initialImagePath={previewFilePath}
+									onSaveAndAddToChat={handleCanvasSaveAndAddToChat}
+								/>
+							</Suspense>
+						)}
 						{/* Terminal only rendered in desktop layout when isMobileLayout is false */}
 						{!isMobileLayout && (
 							<div className={activeView === "terminal" ? "h-full" : "hidden"}>
-								<TerminalView sessionId={selectedWorkspaceSessionId} />
+								<Suspense fallback={viewLoadingFallback}>
+									<TerminalView workspacePath={resumeWorkspacePath} />
+								</Suspense>
 							</div>
 						)}
 					</div>
@@ -2247,8 +3404,25 @@ export function SessionsApp() {
 const MessageGroupCard = memo(function MessageGroupCard({
 	group,
 	persona,
-}: { group: MessageGroup; persona?: Persona | null }) {
+	workspaceName,
+	readableId,
+	workspaceDirectory,
+	onFork,
+	locale = "en",
+}: {
+	group: MessageGroup;
+	persona?: Persona | null;
+	workspaceName?: string | null;
+	readableId?: string | null;
+	workspaceDirectory?: string;
+	onFork?: (messageId: string) => void;
+	locale?: "de" | "en";
+}) {
 	const isUser = group.role === "user";
+
+	// Get the last message ID in the group (for forking from this point)
+	const lastMessage = group.messages[group.messages.length - 1];
+	const lastMessageId = lastMessage?.info.id;
 
 	// Get created time from first message
 	const firstMessage = group.messages[0];
@@ -2307,14 +3481,14 @@ const MessageGroupCard = memo(function MessageGroupCard({
 		.map((p) => p.text)
 		.join("\n\n");
 
-	// Get assistant display name from persona or default to "Assistant"
-	const assistantName = persona?.name || "Assistant";
+	// Get assistant display name: workspace name, persona name, or default
+	const assistantDisplayName = workspaceName || persona?.name || "Assistant";
 	const personaColor = persona?.color;
 
-	return (
+	const messageCard = (
 		<div
 			className={cn(
-				"transition-all duration-200 overflow-hidden",
+				"group transition-all duration-200 overflow-hidden",
 				isUser
 					? "sm:ml-8 bg-primary/20 dark:bg-primary/10 border border-primary/40 dark:border-primary/30"
 					: "sm:mr-8 bg-muted/50 border border-border",
@@ -2342,9 +3516,18 @@ const MessageGroupCard = memo(function MessageGroupCard({
 				) : (
 					<Bot className="w-3 h-3 sm:w-4 sm:h-4 text-primary flex-shrink-0" />
 				)}
-				<span className="text-sm font-medium text-foreground">
-					{isUser ? "You" : assistantName}
-				</span>
+				{isUser ? (
+					<span className="text-sm font-medium text-foreground">You</span>
+				) : (
+					<span className="text-sm font-medium text-foreground">
+						{assistantDisplayName}
+						{readableId && (
+							<span className="text-[9px] text-muted-foreground/70 ml-1">
+								[{readableId}]
+							</span>
+						)}
+					</span>
+				)}
 				{group.messages.length > 1 && (
 					<span
 						className={cn(
@@ -2358,8 +3541,13 @@ const MessageGroupCard = memo(function MessageGroupCard({
 					</span>
 				)}
 				<div className="flex-1" />
+				{/* Read aloud button for assistant messages */}
+				{!isUser && allTextContent && (
+					<ReadAloudButton text={allTextContent} className="ml-1" />
+				)}
+				{/* Timestamp */}
 				{createdAt && !Number.isNaN(createdAt.getTime()) && (
-					<span className="text-[9px] sm:text-[10px] text-foreground/50 dark:text-muted-foreground leading-none sm:leading-normal">
+					<span className="text-[9px] sm:text-[10px] text-foreground/50 dark:text-muted-foreground leading-none sm:leading-normal ml-2">
 						{createdAt.toLocaleTimeString([], {
 							hour: "2-digit",
 							minute: "2-digit",
@@ -2370,11 +3558,11 @@ const MessageGroupCard = memo(function MessageGroupCard({
 				{allTextContent && (
 					<CopyButton
 						text={allTextContent}
-						className="hidden sm:block opacity-0 group-hover:opacity-100 ml-2"
+						className="hidden sm:inline-flex ml-1 [&_svg]:w-3 [&_svg]:h-3"
 					/>
 				)}
 				{allTextContent && (
-					<CompactCopyButton text={allTextContent} className="sm:hidden ml-2" />
+					<CompactCopyButton text={allTextContent} className="sm:hidden ml-1" />
 				)}
 			</div>
 
@@ -2382,7 +3570,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 			<div className="px-2 sm:px-4 py-2 sm:py-3 group space-y-3 overflow-hidden">
 				{segments.length === 0 && !isUser && (
 					<div className="flex items-center gap-3 text-muted-foreground text-sm">
-						<KnightRiderSpinner />
+						<BrailleSpinner />
 						<span>Working...</span>
 					</div>
 				)}
@@ -2394,12 +3582,36 @@ const MessageGroupCard = memo(function MessageGroupCard({
 
 				{segments.map((segment) => {
 					if (segment.type === "text") {
+						// Parse @file references from the text
+						const fileRefPattern = /@([^\s@]+\.[a-zA-Z0-9]+)/g;
+						const matches = segment.content.match(fileRefPattern) || [];
+						const fileRefs = matches.map((m) => m.slice(1)); // Remove @ prefix
+						// Remove duplicates
+						const uniqueFileRefs = [...new Set(fileRefs)];
+						// Debug logging
+						if (segment.content.includes("@")) {
+							console.log(
+								"[FileRef] Content:",
+								segment.content.substring(0, 200),
+							);
+							console.log("[FileRef] Matches:", matches);
+							console.log("[FileRef] FileRefs:", fileRefs);
+							console.log("[FileRef] WorkspaceDir:", workspaceDirectory);
+						}
+
 						return (
-							<div key={segment.key} className="overflow-hidden">
+							<div key={segment.key} className="overflow-hidden space-y-2">
 								<MarkdownRenderer
 									content={segment.content}
 									className="text-sm text-foreground leading-relaxed overflow-hidden"
 								/>
+								{uniqueFileRefs.map((filePath) => (
+									<FileReferenceCard
+										key={filePath}
+										filePath={filePath}
+										workspacePath={workspaceDirectory}
+									/>
+								))}
 							</div>
 						);
 					}
@@ -2423,6 +3635,39 @@ const MessageGroupCard = memo(function MessageGroupCard({
 				})}
 			</div>
 		</div>
+	);
+
+	// If no fork handler, just render the card directly
+	if (!onFork || !lastMessageId) {
+		return messageCard;
+	}
+
+	// Wrap in context menu for fork functionality
+	return (
+		<ContextMenu>
+			<ContextMenuTrigger asChild>{messageCard}</ContextMenuTrigger>
+			<ContextMenuContent>
+				<ContextMenuItem
+					onClick={() => onFork(lastMessageId)}
+					className="gap-2"
+				>
+					<GitBranch className="w-4 h-4" />
+					{locale === "de" ? "Von hier verzweigen" : "Branch from here"}
+				</ContextMenuItem>
+				<ContextMenuSeparator />
+				<ContextMenuItem
+					onClick={() => {
+						if (allTextContent) {
+							navigator.clipboard?.writeText(allTextContent);
+						}
+					}}
+					className="gap-2"
+				>
+					<Copy className="w-4 h-4" />
+					{locale === "de" ? "Text kopieren" : "Copy text"}
+				</ContextMenuItem>
+			</ContextMenuContent>
+		</ContextMenu>
 	);
 });
 
@@ -2489,6 +3734,93 @@ const OtherPartCard = memo(function OtherPartCard({
 				</div>
 			)}
 		</div>
+	);
+});
+
+/** Renders a file reference card with preview for images */
+const FileReferenceCard = memo(function FileReferenceCard({
+	filePath,
+	workspacePath,
+}: {
+	filePath: string;
+	workspacePath?: string | null;
+}) {
+	const [isLoading, setIsLoading] = useState(true);
+	const [error, setError] = useState<string | null>(null);
+	const [imageLoaded, setImageLoaded] = useState(false);
+
+	const fileInfo = useMemo(() => getFileTypeInfo(filePath), [filePath]);
+	const isImage = fileInfo.category === "image";
+	const fileName = filePath.split("/").pop() || filePath;
+
+	// Build the file URL
+	const fileUrl = useMemo(() => {
+		const baseUrl = fileserverWorkspaceBaseUrl();
+		const encodedPath = encodeURIComponent(filePath);
+		const workspaceParam = workspacePath
+			? `&workspace_path=${encodeURIComponent(workspacePath)}`
+			: "";
+		const url = `${baseUrl}/read?path=${encodedPath}${workspaceParam}`;
+		console.log("[FileReferenceCard] URL:", url);
+		console.log("[FileReferenceCard] filePath:", filePath);
+		console.log("[FileReferenceCard] workspacePath:", workspacePath);
+		return url;
+	}, [filePath, workspacePath]);
+
+	// For images, render inline preview
+	if (isImage) {
+		return (
+			<div className="border border-border bg-muted/20 rounded overflow-hidden max-w-md">
+				<div className="flex items-center gap-2 px-3 py-2 bg-muted/50 border-b border-border">
+					<FileImage className="w-4 h-4 text-muted-foreground" />
+					<span className="text-xs font-medium truncate">{fileName}</span>
+				</div>
+				<div className="relative">
+					{isLoading && !imageLoaded && (
+						<div className="flex items-center justify-center p-4">
+							<Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
+						</div>
+					)}
+					{error ? (
+						<div className="flex items-center justify-center p-4 text-xs text-muted-foreground">
+							{error}
+						</div>
+					) : (
+						<img
+							src={fileUrl}
+							alt={fileName}
+							className={cn(
+								"max-w-full h-auto",
+								isLoading && !imageLoaded && "hidden",
+							)}
+							onLoad={() => {
+								setImageLoaded(true);
+								setIsLoading(false);
+							}}
+							onError={() => {
+								setError("Failed to load image");
+								setIsLoading(false);
+							}}
+						/>
+					)}
+				</div>
+			</div>
+		);
+	}
+
+	// For non-images, render a compact file reference link
+	const FileIcon = fileInfo.category === "code" ? FileCode : FileText;
+	return (
+		<a
+			href={fileUrl}
+			target="_blank"
+			rel="noopener noreferrer"
+			className="inline-flex items-center gap-2 px-3 py-1.5 border border-border bg-muted/20 rounded hover:bg-muted/40 transition-colors text-sm"
+		>
+			<FileIcon className="w-4 h-4 text-muted-foreground" />
+			<span className="font-medium">{fileName}</span>
+			<span className="text-xs text-muted-foreground">{filePath}</span>
+		</a>
 	);
 });
 
@@ -2672,119 +4004,6 @@ function ContextWindowGauge({
 				<span className="font-mono text-[10px]">{percentage.toFixed(0)}%</span>
 			</div>
 		</div>
-	);
-}
-
-function KnightRiderSpinner() {
-	return (
-		<>
-			<style>{`
-        @keyframes kitt-swoosh {
-          0% { left: -35%; opacity: 0; }
-          10% { left: 0%; opacity: 1; }
-          40% { left: 80%; opacity: 1; }
-          50% { left: 115%; opacity: 0; }
-          60% { left: 80%; opacity: 1; }
-          90% { left: 0%; opacity: 1; }
-          100% { left: -35%; opacity: 0; }
-        }
-        @keyframes kitt-ghost-1 {
-          0% { left: -33.5%; opacity: 0; }
-          10% { left: 1.5%; opacity: 0.6; }
-          40% { left: 78.5%; opacity: 0.6; }
-          50% { left: 113.5%; opacity: 0; }
-          60% { left: 78.5%; opacity: 0.6; }
-          90% { left: 1.5%; opacity: 0.6; }
-          100% { left: -33.5%; opacity: 0; }
-        }
-        @keyframes kitt-ghost-2 {
-          0% { left: -32%; opacity: 0; }
-          10% { left: 3%; opacity: 0.4; }
-          40% { left: 77%; opacity: 0.4; }
-          50% { left: 112%; opacity: 0; }
-          60% { left: 77%; opacity: 0.4; }
-          90% { left: 3%; opacity: 0.4; }
-          100% { left: -32%; opacity: 0; }
-        }
-        @keyframes kitt-ghost-3 {
-          0% { left: -30.5%; opacity: 0; }
-          10% { left: 4.5%; opacity: 0.25; }
-          40% { left: 75.5%; opacity: 0.25; }
-          50% { left: 110.5%; opacity: 0; }
-          60% { left: 75.5%; opacity: 0.25; }
-          90% { left: 4.5%; opacity: 0.25; }
-          100% { left: -30.5%; opacity: 0; }
-        }
-        @keyframes kitt-ghost-4 {
-          0% { left: -29%; opacity: 0; }
-          10% { left: 6%; opacity: 0.15; }
-          40% { left: 74%; opacity: 0.15; }
-          50% { left: 109%; opacity: 0; }
-          60% { left: 74%; opacity: 0.15; }
-          90% { left: 6%; opacity: 0.15; }
-          100% { left: -29%; opacity: 0; }
-        }
-      `}</style>
-			<div className="relative h-[6px] w-[60px] rounded-full overflow-hidden bg-primary/15">
-				{/* Ghost trails - furthest back */}
-				<div
-					className="absolute top-0 h-full rounded-full"
-					style={{
-						width: "20%",
-						background:
-							"linear-gradient(to right, transparent, var(--primary), transparent)",
-						animation:
-							"kitt-ghost-4 1.2s cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite",
-						filter: "blur(2px)",
-					}}
-				/>
-				<div
-					className="absolute top-0 h-full rounded-full"
-					style={{
-						width: "20%",
-						background:
-							"linear-gradient(to right, transparent, var(--primary), transparent)",
-						animation:
-							"kitt-ghost-3 1.2s cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite",
-						filter: "blur(1.5px)",
-					}}
-				/>
-				<div
-					className="absolute top-0 h-full rounded-full"
-					style={{
-						width: "20%",
-						background:
-							"linear-gradient(to right, transparent, var(--primary), transparent)",
-						animation:
-							"kitt-ghost-2 1.2s cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite",
-						filter: "blur(1px)",
-					}}
-				/>
-				<div
-					className="absolute top-0 h-full rounded-full"
-					style={{
-						width: "20%",
-						background:
-							"linear-gradient(to right, transparent, var(--primary), transparent)",
-						animation:
-							"kitt-ghost-1 1.2s cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite",
-						filter: "blur(0.5px)",
-					}}
-				/>
-				{/* Main bright light */}
-				<div
-					className="absolute top-0 h-full rounded-full"
-					style={{
-						width: "20%",
-						background:
-							"linear-gradient(to right, transparent, var(--primary), transparent)",
-						boxShadow: "0 0 8px var(--primary), 0 0 12px var(--primary)",
-						animation:
-							"kitt-swoosh 1.2s cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite",
-					}}
-				/>
-			</div>
-		</>
 	);
 }
 

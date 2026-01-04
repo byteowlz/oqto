@@ -37,7 +37,21 @@ bun install
 bun dev
 ```
 
-The app runs on [http://localhost:5173](http://localhost:5173) and immediately begins calling the configured services. Use `bun lint` to run the Biome + oxlint suite.
+The app runs on [http://localhost:3000](http://localhost:3000) and immediately begins calling the configured services. Use `bun lint` to run the Biome + oxlint suite.
+
+## Desktop (Tauri)
+
+The frontend remains a standard web app. For a desktop shell, run Tauri:
+
+```bash
+bun run tauri:dev
+```
+
+Build a desktop bundle with:
+
+```bash
+bun run tauri:build
+```
 
 ## Testing with Podman
 

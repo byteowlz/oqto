@@ -1,9 +1,7 @@
 //! JSON Schema handling with x-scope filtering.
 
-use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::path::Path;
 
 /// Scope for settings visibility.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -21,20 +19,6 @@ impl SettingsScope {
             SettingsScope::User => other == SettingsScope::User,
         }
     }
-}
-
-/// Load a JSON schema from a file.
-pub fn load_schema(path: &Path) -> Result<Value> {
-    let content = std::fs::read_to_string(path)
-        .with_context(|| format!("Failed to read schema from {:?}", path))?;
-
-    serde_json::from_str(&content)
-        .with_context(|| format!("Failed to parse schema from {:?}", path))
-}
-
-/// Load a JSON schema from embedded bytes.
-pub fn load_schema_from_bytes(bytes: &[u8]) -> Result<Value> {
-    serde_json::from_slice(bytes).context("Failed to parse embedded schema")
 }
 
 /// Filter a JSON schema based on the user's scope.

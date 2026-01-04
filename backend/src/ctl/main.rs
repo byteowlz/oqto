@@ -220,21 +220,17 @@ async fn handle_session(client: &OctoClient, command: SessionCommand, json: bool
                 println!("{}", body);
             } else {
                 let sessions: Vec<serde_json::Value> = serde_json::from_str(&body)?;
-                println!(
-                    "{:<12} {:<20} {:<10} {:<20}",
-                    "ID", "READABLE_ID", "STATUS", "IMAGE"
-                );
-                println!("{}", "-".repeat(70));
+                println!("{:<12} {:<10} {:<20}", "ID", "STATUS", "IMAGE");
+                println!("{}", "-".repeat(50));
                 for session in sessions {
                     println!(
-                        "{:<12} {:<20} {:<10} {:<20}",
+                        "{:<12} {:<10} {:<20}",
                         session["id"]
                             .as_str()
                             .unwrap_or("")
                             .chars()
                             .take(8)
                             .collect::<String>(),
-                        session["readable_id"].as_str().unwrap_or("-"),
                         session["status"].as_str().unwrap_or("-"),
                         session["image"].as_str().unwrap_or("-"),
                     );
@@ -249,7 +245,6 @@ async fn handle_session(client: &OctoClient, command: SessionCommand, json: bool
             } else {
                 let session: serde_json::Value = serde_json::from_str(&body)?;
                 println!("Session: {}", session["id"]);
-                println!("  Readable ID: {}", session["readable_id"]);
                 println!("  Status: {}", session["status"]);
                 println!("  Image: {}", session["image"]);
                 println!("  Container: {}", session["container_id"]);

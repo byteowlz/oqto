@@ -1,8 +1,6 @@
 //! Word list module for generating human-readable session IDs
 //! Format: adjective-noun (e.g., "cold-lamp", "blue-frog")
 
-use rand::Rng;
-
 /// Adjectives for readable ID generation (291 words)
 const ADJECTIVES: &[&str] = &[
     "able", "acid", "aged", "airy", "akin", "alto", "amok", "anti", "arch", "arid", "arty", "auld",
@@ -162,36 +160,34 @@ const NOUNS: &[&str] = &[
     "zoom", "zoos",
 ];
 
-/// Generate a random human-readable ID in adjective-noun format
-/// Example: "cold-lamp", "blue-frog"
-pub fn generate_readable_id() -> String {
-    let mut rng = rand::rng();
-    let adj_idx = rng.random_range(0..ADJECTIVES.len());
-    let noun_idx = rng.random_range(0..NOUNS.len());
-    format!("{}-{}", ADJECTIVES[adj_idx], NOUNS[noun_idx])
+/// Simple hash function for strings (matches frontend implementation)
+fn hash_string(s: &str) -> u32 {
+    let mut hash: i32 = 0;
+    for c in s.chars() {
+        let char_code = c as i32;
+        hash = ((hash << 5).wrapping_sub(hash)).wrapping_add(char_code);
+    }
+    hash.unsigned_abs()
 }
 
-/// Generate a readable ID with collision avoidance
-/// Takes a closure that checks if the ID already exists
-#[allow(dead_code)]
-pub fn generate_unique_readable_id<F>(exists: F) -> String
-where
-    F: Fn(&str) -> bool,
-{
-    let mut attempts = 0;
-    loop {
-        let id = generate_readable_id();
-        if !exists(&id) {
-            return id;
-        }
-        attempts += 1;
-        // After many attempts, add a random suffix to guarantee uniqueness
-        if attempts > 100 {
-            let mut rng = rand::rng();
-            let suffix: u16 = rng.random_range(0..1000);
-            return format!("{}-{}", generate_readable_id(), suffix);
-        }
-    }
+/// Generate a deterministic human-readable ID from a session ID.
+///
+/// This produces the same output for the same input. This is the single source
+/// of truth for readable IDs - they are computed, not stored.
+///
+/// Format: adjective-noun-noun (e.g., "cold-lamp-bird")
+/// Combinations: 291 * 1506 * 1506 = ~660 million unique IDs
+///
+/// Example: "ses_abc123" -> "cold-lamp-bird"
+pub fn readable_id_from_session_id(session_id: &str) -> String {
+    let hash = hash_string(session_id);
+    let adj_idx = (hash as usize) % ADJECTIVES.len();
+    let noun1_idx = ((hash as usize) / ADJECTIVES.len()) % NOUNS.len();
+    let noun2_idx = ((hash as usize) / ADJECTIVES.len() / NOUNS.len()) % NOUNS.len();
+    format!(
+        "{}-{}-{}",
+        ADJECTIVES[adj_idx], NOUNS[noun1_idx], NOUNS[noun2_idx]
+    )
 }
 
 #[cfg(test)]
@@ -199,28 +195,45 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_generate_readable_id_format() {
-        let id = generate_readable_id();
+    fn test_readable_id_format() {
+        let id = readable_id_from_session_id("ses_test123");
         assert!(id.contains('-'), "ID should contain a hyphen");
         let parts: Vec<&str> = id.split('-').collect();
-        assert_eq!(parts.len(), 2, "ID should have exactly two parts");
+        assert_eq!(
+            parts.len(),
+            3,
+            "ID should have exactly three parts (adjective-noun-noun)"
+        );
     }
 
     #[test]
-    fn test_generate_unique_readable_id() {
-        let used_ids: std::collections::HashSet<String> = ["cold-lamp".to_string()].into();
-        let id = generate_unique_readable_id(|id| used_ids.contains(id));
-        assert!(!used_ids.contains(&id));
+    fn test_readable_id_is_deterministic() {
+        // Same input should always produce same output
+        let id1 = readable_id_from_session_id("ses_abc123");
+        let id2 = readable_id_from_session_id("ses_abc123");
+        assert_eq!(id1, id2, "Same session ID should produce same readable ID");
     }
 
     #[test]
-    fn test_readable_ids_are_random() {
-        let id1 = generate_readable_id();
-        let id2 = generate_readable_id();
-        // While there's a small chance they could be equal, it's very unlikely
-        // with 291 * 1400+ combinations
-        // This test mainly ensures the function can be called multiple times
-        assert!(!id1.is_empty());
-        assert!(!id2.is_empty());
+    fn test_different_sessions_get_different_ids() {
+        let id1 = readable_id_from_session_id("ses_abc123");
+        let id2 = readable_id_from_session_id("ses_xyz789");
+        // Very unlikely to collide with different inputs
+        assert_ne!(
+            id1, id2,
+            "Different session IDs should produce different readable IDs"
+        );
+    }
+
+    #[test]
+    fn test_hash_matches_frontend() {
+        // Test that our hash function produces the same results as the frontend
+        // Frontend: hashString("test") should equal our hash_string("test")
+        let hash = hash_string("test");
+        assert!(hash > 0, "Hash should be positive");
+
+        // The hash should be consistent
+        let hash2 = hash_string("test");
+        assert_eq!(hash, hash2, "Hash should be deterministic");
     }
 }

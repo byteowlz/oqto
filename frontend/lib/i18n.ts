@@ -30,7 +30,11 @@ export function initI18n() {
 
 export function resolveStoredLocale(): Locale {
 	if (typeof window === "undefined") return defaultLocale;
-	const stored = window.localStorage.getItem(LOCALE_STORAGE_KEY);
-	if (stored === "en" || stored === "de") return stored;
+	try {
+		const stored = window.localStorage.getItem(LOCALE_STORAGE_KEY);
+		if (stored === "en" || stored === "de") return stored;
+	} catch {
+		// Ignore storage errors (private mode, denied access).
+	}
 	return defaultLocale;
 }

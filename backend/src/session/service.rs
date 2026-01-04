@@ -4,8 +4,7 @@
 //! - Container mode (Docker/Podman)
 //! - Local mode (native processes)
 //!
-//! The service can optionally use the `AgentBackend` abstraction for a unified
-//! interface across both modes.
+//! The service manages session lifecycles and runtime orchestration.
 
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -18,11 +17,9 @@ use log::{debug, error, info, warn};
 use serde::Serialize;
 use uuid::Uuid;
 
-use crate::agent_rpc::AgentBackend;
 use crate::container::{ContainerConfig, ContainerRuntimeApi, ContainerStats};
 use crate::eavs::{CreateKeyRequest, EavsApi, KeyPermissions};
 use crate::local::{LocalRuntime, LocalRuntimeConfig};
-use crate::wordlist;
 
 use super::models::{CreateSessionRequest, RuntimeMode, Session, SessionStatus};
 use super::repository::SessionRepository;
@@ -38,7 +35,13 @@ const DEFAULT_BASE_PORT: i64 = 41820;
 
 #[async_trait]
 trait SessionReadiness: Send + Sync {
-    async fn wait_for_session_services(&self, opencode_port: u16, ttyd_port: u16) -> Result<()>;
+    async fn wait_for_session_services(
+        &self,
+        opencode_port: u16,
+        fileserver_port: u16,
+        ttyd_port: u16,
+        require_opencode: bool,
+    ) -> Result<()>;
 }
 
 #[derive(Debug, Default)]
@@ -46,13 +49,20 @@ struct HttpSessionReadiness;
 
 #[async_trait]
 impl SessionReadiness for HttpSessionReadiness {
-    async fn wait_for_session_services(&self, opencode_port: u16, ttyd_port: u16) -> Result<()> {
+    async fn wait_for_session_services(
+        &self,
+        opencode_port: u16,
+        fileserver_port: u16,
+        ttyd_port: u16,
+        require_opencode: bool,
+    ) -> Result<()> {
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(5))
             .build()
             .context("building readiness HTTP client")?;
 
         let opencode_url = format!("http://localhost:{}/session", opencode_port);
+        let fileserver_url = format!("http://localhost:{}/tree?path=.", fileserver_port);
         let ttyd_url = format!("http://localhost:{}/", ttyd_port);
 
         let start = tokio::time::Instant::now();
@@ -64,8 +74,19 @@ impl SessionReadiness for HttpSessionReadiness {
         loop {
             attempts += 1;
 
-            let opencode_ok = client
-                .get(&opencode_url)
+            let opencode_ok = if require_opencode {
+                client
+                    .get(&opencode_url)
+                    .send()
+                    .await
+                    .map(|res| res.status().is_success())
+                    .unwrap_or(false)
+            } else {
+                true
+            };
+
+            let fileserver_ok = client
+                .get(&fileserver_url)
                 .send()
                 .await
                 .map(|res| res.status().is_success())
@@ -78,16 +99,17 @@ impl SessionReadiness for HttpSessionReadiness {
                 .map(|res| res.status().is_success())
                 .unwrap_or(false);
 
-            if opencode_ok && ttyd_ok {
+            if opencode_ok && ttyd_ok && fileserver_ok {
                 return Ok(());
             }
 
             if start.elapsed() >= timeout {
                 anyhow::bail!(
-                    "session services not ready after {} attempts over {:?} (opencode_ok={}, ttyd_ok={})",
+                    "session services not ready after {} attempts over {:?} (opencode_ok={}, fileserver_ok={}, ttyd_ok={})",
                     attempts,
                     timeout,
                     opencode_ok,
+                    fileserver_ok,
                     ttyd_ok
                 );
             }
@@ -129,6 +151,12 @@ pub struct SessionServiceConfig {
     /// URL for containers to reach the host mmry service.
     /// e.g., "http://host.docker.internal:8081" or "http://host.containers.internal:8081"
     pub mmry_container_url: Option<String>,
+    /// Maximum concurrent running sessions per user.
+    pub max_concurrent_sessions: i64,
+    /// Idle timeout in minutes before stopping a session.
+    pub idle_timeout_minutes: i64,
+    /// Idle cleanup check interval in seconds.
+    pub idle_check_interval_seconds: u64,
 }
 
 impl Default for SessionServiceConfig {
@@ -147,6 +175,9 @@ impl Default for SessionServiceConfig {
             single_user: false,
             mmry_enabled: false,
             mmry_container_url: None,
+            max_concurrent_sessions: SessionService::DEFAULT_MAX_CONCURRENT_SESSIONS,
+            idle_timeout_minutes: SessionService::DEFAULT_IDLE_TIMEOUT_MINUTES,
+            idle_check_interval_seconds: 5 * 60,
         }
     }
 }
@@ -173,8 +204,6 @@ pub struct SessionService {
     container_runtime: Option<Arc<dyn ContainerRuntimeApi>>,
     /// Local runtime (used when runtime_mode is Local).
     local_runtime: Option<Arc<LocalRuntime>>,
-    /// Unified agent backend (optional, for new AgentRPC-based architecture).
-    agent_backend: Option<Arc<dyn AgentBackend>>,
     eavs: Option<Arc<dyn EavsApi>>,
     readiness: Arc<dyn SessionReadiness>,
     config: SessionServiceConfig,
@@ -191,7 +220,6 @@ impl SessionService {
             repo,
             container_runtime: Some(runtime),
             local_runtime: None,
-            agent_backend: None,
             eavs: None,
             readiness: Arc::new(HttpSessionReadiness::default()),
             config,
@@ -209,7 +237,6 @@ impl SessionService {
             repo,
             container_runtime: Some(runtime),
             local_runtime: None,
-            agent_backend: None,
             eavs: Some(eavs),
             readiness: Arc::new(HttpSessionReadiness::default()),
             config,
@@ -226,7 +253,6 @@ impl SessionService {
             repo,
             container_runtime: None,
             local_runtime: Some(Arc::new(local_runtime)),
-            agent_backend: None,
             eavs: None,
             readiness: Arc::new(HttpSessionReadiness::default()),
             config,
@@ -244,60 +270,10 @@ impl SessionService {
             repo,
             container_runtime: None,
             local_runtime: Some(Arc::new(local_runtime)),
-            agent_backend: None,
             eavs: Some(eavs),
             readiness: Arc::new(HttpSessionReadiness::default()),
             config,
         }
-    }
-
-    /// Create a new session service with the unified AgentBackend.
-    ///
-    /// This constructor uses the new AgentRPC abstraction which provides
-    /// a unified interface for both local and container modes.
-    pub fn with_agent_backend(
-        repo: SessionRepository,
-        backend: Arc<dyn AgentBackend>,
-        config: SessionServiceConfig,
-    ) -> Self {
-        Self {
-            repo,
-            container_runtime: None,
-            local_runtime: None,
-            agent_backend: Some(backend),
-            eavs: None,
-            readiness: Arc::new(HttpSessionReadiness::default()),
-            config,
-        }
-    }
-
-    /// Create a new session service with AgentBackend and EAVS.
-    pub fn with_agent_backend_and_eavs(
-        repo: SessionRepository,
-        backend: Arc<dyn AgentBackend>,
-        eavs: Arc<dyn EavsApi>,
-        config: SessionServiceConfig,
-    ) -> Self {
-        Self {
-            repo,
-            container_runtime: None,
-            local_runtime: None,
-            agent_backend: Some(backend),
-            eavs: Some(eavs),
-            readiness: Arc::new(HttpSessionReadiness::default()),
-            config,
-        }
-    }
-
-    /// Get the agent backend (if available).
-    pub fn agent_backend(&self) -> Option<&Arc<dyn AgentBackend>> {
-        self.agent_backend.as_ref()
-    }
-
-    /// Get the runtime mode.
-    #[allow(dead_code)]
-    pub fn runtime_mode(&self) -> RuntimeMode {
-        self.config.runtime_mode
     }
 
     /// Get the container runtime (if available).
@@ -309,8 +285,6 @@ impl SessionService {
     fn local_runtime(&self) -> Option<&Arc<LocalRuntime>> {
         self.local_runtime.as_ref()
     }
-
-
 
     /// Get the base workspace directory for listing projects.
     pub fn workspace_root(&self) -> std::path::PathBuf {
@@ -421,6 +395,71 @@ impl SessionService {
         self.create_session(request).await
     }
 
+    /// Get or create the primary opencode session for the user.
+    ///
+    /// This uses the workspace root as the canonical opencode session target and
+    /// avoids tying opencode to per-workspace IO sessions.
+    pub async fn get_or_create_opencode_session(&self) -> Result<Session> {
+        let user_id = &self.config.default_user_id;
+        let workspace_root = self.workspace_root();
+        let workspace_root_str = workspace_root.to_string_lossy().to_string();
+
+        if let Some(session) = self
+            .repo
+            .find_running_for_workspace(user_id, &workspace_root_str)
+            .await?
+        {
+            if let Ok(Some(_new_digest)) = self.check_for_image_update(&session.id).await {
+                info!(
+                    "Primary opencode session {} has outdated image, auto-upgrading...",
+                    session.id
+                );
+                return self.upgrade_session(&session.id).await;
+            }
+            return Ok(session);
+        }
+
+        self.enforce_session_cap(user_id).await?;
+
+        if let Some(session) = self
+            .repo
+            .find_latest_stopped_for_workspace(user_id, &workspace_root_str)
+            .await?
+        {
+            info!(
+                "Resuming primary opencode session {} for workspace root {}",
+                session.id, workspace_root_str
+            );
+            match self.resume_session(&session.id).await {
+                Ok(resumed) => {
+                    if resumed.status == SessionStatus::Failed {
+                        anyhow::bail!("failed to resume session {}", resumed.id);
+                    }
+                    return Ok(resumed);
+                }
+                Err(err) => {
+                    if Self::is_retryable_unique_violation(&err) {
+                        warn!(
+                            "Resume port conflict for primary opencode session {}, creating new session instead",
+                            session.id
+                        );
+                    } else {
+                        return Err(err);
+                    }
+                }
+            }
+        }
+
+        let request = CreateSessionRequest {
+            workspace_path: Some(workspace_root_str),
+            image: None,
+            agent: None,
+            env: Default::default(),
+        };
+
+        self.create_session(request).await
+    }
+
     /// Create and start a new session.
     ///
     /// This method handles port allocation with retry logic to handle race conditions
@@ -431,6 +470,14 @@ impl SessionService {
     /// Security: the EAVS virtual key is never persisted to the database; it is passed
     /// directly into container env and then dropped.
     pub async fn create_session(&self, request: CreateSessionRequest) -> Result<Session> {
+        self.create_session_with_readiness(request, true).await
+    }
+
+    async fn create_session_with_readiness(
+        &self,
+        request: CreateSessionRequest,
+        require_opencode: bool,
+    ) -> Result<Session> {
         let image = request
             .image
             .unwrap_or_else(|| self.config.default_image.clone());
@@ -533,6 +580,7 @@ impl SessionService {
                     image_digest.as_deref(),
                     agent.as_deref(),
                     attempt,
+                    require_opencode,
                 )
                 .await
             {
@@ -593,11 +641,10 @@ impl SessionService {
         image_digest: Option<&str>,
         agent: Option<&str>,
         attempt: u32,
+        require_opencode: bool,
     ) -> Result<Session> {
         let session_id = Uuid::new_v4().to_string();
         let container_name = format!("{}{}", CONTAINER_NAME_PREFIX, &session_id[..8]);
-
-        let readable_id = self.generate_unique_readable_id().await?;
 
         // Find available ports (opencode, fileserver, ttyd, mmry, + agent ports). On retry, offset the search window.
         // Port layout:
@@ -645,7 +692,6 @@ impl SessionService {
         let now = Utc::now().to_rfc3339();
         let session = Session {
             id: session_id.clone(),
-            readable_id: Some(readable_id),
             container_id: None,
             container_name: container_name.clone(),
             user_id: self.config.default_user_id.clone(),
@@ -683,7 +729,7 @@ impl SessionService {
 
         // Start the container synchronously so callers can reliably know whether startup succeeded.
         if let Err(e) = self
-            .start_container(&session, eavs_virtual_key.as_deref())
+            .start_container(&session, eavs_virtual_key.as_deref(), require_opencode)
             .await
         {
             error!(
@@ -706,26 +752,6 @@ impl SessionService {
         }
 
         Ok(self.repo.get(&session.id).await?.unwrap_or(session))
-    }
-
-    /// Generate a unique human-readable ID for a session.
-    async fn generate_unique_readable_id(&self) -> Result<String> {
-        let mut attempts = 0;
-        loop {
-            let readable_id = wordlist::generate_readable_id();
-
-            // Check if this ID already exists
-            if !self.repo.readable_id_exists(&readable_id).await? {
-                return Ok(readable_id);
-            }
-
-            attempts += 1;
-            if attempts > 100 {
-                // After many attempts, add a random suffix
-                let suffix: u16 = rand::random::<u16>() % 1000;
-                return Ok(format!("{}-{}", wordlist::generate_readable_id(), suffix));
-            }
-        }
     }
 
     /// Create an EAVS virtual key for a session.
@@ -761,6 +787,7 @@ impl SessionService {
         &self,
         session: &Session,
         eavs_virtual_key: Option<&str>,
+        require_opencode: bool,
     ) -> Result<()> {
         debug!(
             "Starting session {} in {:?} mode",
@@ -768,8 +795,14 @@ impl SessionService {
         );
 
         match session.runtime_mode {
-            RuntimeMode::Container => self.start_container_mode(session, eavs_virtual_key).await,
-            RuntimeMode::Local => self.start_local_mode(session, eavs_virtual_key).await,
+            RuntimeMode::Container => {
+                self.start_container_mode(session, eavs_virtual_key, require_opencode)
+                    .await
+            }
+            RuntimeMode::Local => {
+                self.start_local_mode(session, eavs_virtual_key, require_opencode)
+                    .await
+            }
         }
     }
 
@@ -781,6 +814,7 @@ impl SessionService {
         &self,
         session: &Session,
         eavs_virtual_key: Option<&str>,
+        require_opencode: bool,
     ) -> Result<()> {
         let runtime = self
             .container_runtime()
@@ -868,7 +902,12 @@ impl SessionService {
         // This avoids clients receiving 502s due to fixed-delay startup races.
         if let Err(e) = self
             .readiness
-            .wait_for_session_services(session.opencode_port as u16, session.ttyd_port as u16)
+            .wait_for_session_services(
+                session.opencode_port as u16,
+                session.fileserver_port as u16,
+                session.ttyd_port as u16,
+                require_opencode,
+            )
             .await
         {
             // Best-effort cleanup: stop/remove the container, then surface the error.
@@ -898,6 +937,7 @@ impl SessionService {
         &self,
         session: &Session,
         eavs_virtual_key: Option<&str>,
+        require_opencode: bool,
     ) -> Result<()> {
         let local_runtime = self
             .local_runtime()
@@ -915,16 +955,22 @@ impl SessionService {
                 opencode_port, fileserver_port, ttyd_port
             );
             let cleared = local_runtime.clear_ports(&[opencode_port, fileserver_port, ttyd_port]);
-            
+
             // Check again after clearing
             if !local_runtime.check_ports_available(opencode_port, fileserver_port, ttyd_port) {
                 anyhow::bail!(
                     "Ports {}/{}/{} are still in use after cleanup (cleared {} processes). \
                      Another process may be using these ports.",
-                    opencode_port, fileserver_port, ttyd_port, cleared
+                    opencode_port,
+                    fileserver_port,
+                    ttyd_port,
+                    cleared
                 );
             }
-            info!("Cleared {} orphan process(es), ports now available", cleared);
+            info!(
+                "Cleared {} orphan process(es), ports now available",
+                cleared
+            );
         }
 
         // Build environment variables for the processes
@@ -969,7 +1015,12 @@ impl SessionService {
         // Wait for core services to become reachable
         if let Err(e) = self
             .readiness
-            .wait_for_session_services(session.opencode_port as u16, session.ttyd_port as u16)
+            .wait_for_session_services(
+                session.opencode_port as u16,
+                session.fileserver_port as u16,
+                session.ttyd_port as u16,
+                require_opencode,
+            )
             .await
         {
             // Best-effort cleanup: stop the processes
@@ -1053,7 +1104,19 @@ impl SessionService {
     /// For container mode: restarts the stopped container.
     /// For local mode: respawns the processes (workspace data is preserved).
     pub async fn resume_session(&self, session_id: &str) -> Result<Session> {
-        let session = self
+        self.resume_session_with_readiness(session_id, true).await
+    }
+
+    pub async fn resume_session_for_io(&self, session_id: &str) -> Result<Session> {
+        self.resume_session_with_readiness(session_id, false).await
+    }
+
+    async fn resume_session_with_readiness(
+        &self,
+        session_id: &str,
+        require_opencode: bool,
+    ) -> Result<Session> {
+        let mut session = self
             .repo
             .get(session_id)
             .await?
@@ -1083,11 +1146,81 @@ impl SessionService {
             session_id, session.runtime_mode
         );
 
-        // Mark as starting
-        self.repo
+        // Mark as starting (reassign ports first if local resume collides with active ports)
+        if let Err(err) = self
+            .repo
             .update_status(session_id, SessionStatus::Starting)
+            .await
+        {
+            if session.runtime_mode == RuntimeMode::Local
+                && Self::is_retryable_unique_violation(&err)
+            {
+                self.reassign_ports_for_resume(&mut session).await?;
+                self.repo
+                    .update_status(session_id, SessionStatus::Starting)
+                    .await?;
+            } else {
+                return Err(err);
+            }
+        }
+
+        // Wrap the resume logic to ensure we mark as failed on error
+        let result = self
+            .resume_session_inner(&mut session, session_id, require_opencode)
+            .await;
+
+        if let Err(ref e) = result {
+            error!("Failed to resume session {}: {:?}", session_id, e);
+            let _ = self
+                .repo
+                .mark_failed(session_id, &format!("resume failed: {}", e))
+                .await;
+        }
+
+        result
+    }
+
+    async fn reassign_ports_for_resume(&self, session: &mut Session) -> Result<()> {
+        let max_agents = session.max_agents.unwrap_or(Self::DEFAULT_MAX_AGENTS);
+        let base_port = self
+            .repo
+            .find_free_port_range_with_agents(self.config.base_port, max_agents)
+            .await?;
+        let new_mmry_port = session.mmry_port.map(|_| base_port + 3);
+        let new_agent_base_port = session.agent_base_port.map(|_| base_port + 4);
+
+        self.repo
+            .update_ports(
+                &session.id,
+                base_port,
+                base_port + 1,
+                base_port + 2,
+                new_mmry_port,
+                new_agent_base_port,
+            )
             .await?;
 
+        session.opencode_port = base_port;
+        session.fileserver_port = base_port + 1;
+        session.ttyd_port = base_port + 2;
+        session.mmry_port = new_mmry_port;
+        session.agent_base_port = new_agent_base_port;
+
+        info!(
+            "Reassigned ports for session {}: {}/{}/{}",
+            session.id, session.opencode_port, session.fileserver_port, session.ttyd_port
+        );
+
+        Ok(())
+    }
+
+    /// Inner resume logic - separated to allow proper error handling in the caller.
+    async fn resume_session_inner(
+        &self,
+        session: &mut Session,
+        session_id: &str,
+        require_opencode: bool,
+    ) -> Result<Session> {
         match session.runtime_mode {
             RuntimeMode::Container => {
                 let container_id = session
@@ -1108,7 +1241,7 @@ impl SessionService {
                     self.repo
                         .mark_failed(session_id, &format!("resume failed: {}", e))
                         .await?;
-                    return Ok(self.repo.get(session_id).await?.unwrap_or(session));
+                    return Ok(self.repo.get(session_id).await?.unwrap_or(session.clone()));
                 }
 
                 // Wait for services to become ready
@@ -1116,7 +1249,9 @@ impl SessionService {
                     .readiness
                     .wait_for_session_services(
                         session.opencode_port as u16,
+                        session.fileserver_port as u16,
                         session.ttyd_port as u16,
+                        require_opencode,
                     )
                     .await
                 {
@@ -1132,7 +1267,7 @@ impl SessionService {
                             &format!("services not ready after resume: {}", e),
                         )
                         .await?;
-                    return Ok(self.repo.get(session_id).await?.unwrap_or(session));
+                    return Ok(self.repo.get(session_id).await?.unwrap_or(session.clone()));
                 }
             }
             RuntimeMode::Local => {
@@ -1140,13 +1275,148 @@ impl SessionService {
                     .local_runtime()
                     .context("local runtime not available")?;
 
+                let mut opencode_port = session.opencode_port as u16;
+                let mut fileserver_port = session.fileserver_port as u16;
+                let mut ttyd_port = session.ttyd_port as u16;
+
+                if !local_runtime.check_ports_available(opencode_port, fileserver_port, ttyd_port) {
+                    warn!(
+                        "Ports {}/{}/{} are in use for session {}, attempting cleanup...",
+                        opencode_port, fileserver_port, ttyd_port, session_id
+                    );
+                    let cleared =
+                        local_runtime.clear_ports(&[opencode_port, fileserver_port, ttyd_port]);
+                    if local_runtime.check_ports_available(
+                        opencode_port,
+                        fileserver_port,
+                        ttyd_port,
+                    ) {
+                        info!(
+                            "Cleared {} orphan process(es), ports now available for session {}",
+                            cleared, session_id
+                        );
+                    } else {
+                        let max_agents = session.max_agents.unwrap_or(Self::DEFAULT_MAX_AGENTS);
+                        let base_port = self
+                            .repo
+                            .find_free_port_range_with_agents(self.config.base_port, max_agents)
+                            .await?;
+                        let new_opencode_port = base_port as u16;
+                        let new_fileserver_port = (base_port + 1) as u16;
+                        let new_ttyd_port = (base_port + 2) as u16;
+                        let new_mmry_port = session.mmry_port.map(|_| base_port + 3);
+                        let new_agent_base_port = session.agent_base_port.map(|_| base_port + 4);
+
+                        if !local_runtime.check_ports_available(
+                            new_opencode_port,
+                            new_fileserver_port,
+                            new_ttyd_port,
+                        ) {
+                            let cleared_new = local_runtime.clear_ports(&[
+                                new_opencode_port,
+                                new_fileserver_port,
+                                new_ttyd_port,
+                            ]);
+                            if !local_runtime.check_ports_available(
+                                new_opencode_port,
+                                new_fileserver_port,
+                                new_ttyd_port,
+                            ) {
+                                anyhow::bail!(
+                                    "Ports {}/{}/{} are still in use after cleanup (cleared {} processes) for session {}",
+                                    new_opencode_port,
+                                    new_fileserver_port,
+                                    new_ttyd_port,
+                                    cleared_new,
+                                    session_id
+                                );
+                            }
+                            info!(
+                                "Cleared {} orphan process(es), new ports now available for session {}",
+                                cleared_new, session_id
+                            );
+                        }
+
+                        self.repo
+                            .update_ports(
+                                session_id,
+                                base_port,
+                                base_port + 1,
+                                base_port + 2,
+                                new_mmry_port,
+                                new_agent_base_port,
+                            )
+                            .await?;
+
+                        info!(
+                            "Reassigned ports for session {}: {}/{}/{} -> {}/{}/{}",
+                            session_id,
+                            opencode_port,
+                            fileserver_port,
+                            ttyd_port,
+                            new_opencode_port,
+                            new_fileserver_port,
+                            new_ttyd_port
+                        );
+
+                        session.opencode_port = base_port;
+                        session.fileserver_port = base_port + 1;
+                        session.ttyd_port = base_port + 2;
+                        session.mmry_port = new_mmry_port;
+                        session.agent_base_port = new_agent_base_port;
+                        opencode_port = new_opencode_port;
+                        fileserver_port = new_fileserver_port;
+                        ttyd_port = new_ttyd_port;
+                    }
+                }
+
+                let mut eavs_virtual_key = None;
+                if let Some(eavs) = self.eavs.as_ref() {
+                    if let Some(ref key_id) = session.eavs_key_id {
+                        if let Err(e) = eavs.revoke_key(key_id).await {
+                            warn!(
+                                "Failed to revoke previous EAVS key {} for session {}: {:?}",
+                                key_id, session_id, e
+                            );
+                        }
+                    }
+
+                    match self.create_eavs_key(session_id).await {
+                        Ok((key_id, key_hash, key_value)) => {
+                            info!(
+                                "Created new EAVS key {} for resumed local session {}",
+                                key_id, session_id
+                            );
+                            eavs_virtual_key = Some(key_value);
+                            session.eavs_key_id = Some(key_id);
+                            session.eavs_key_hash = Some(key_hash);
+                            self.repo
+                                .update_eavs_keys(
+                                    session_id,
+                                    session.eavs_key_id.as_deref(),
+                                    session.eavs_key_hash.as_deref(),
+                                )
+                                .await?;
+                        }
+                        Err(e) => {
+                            warn!(
+                                "Failed to create EAVS key for resumed session {}: {:?}",
+                                session_id, e
+                            );
+                        }
+                    }
+                }
+
                 // Build environment variables
                 let mut env = std::collections::HashMap::new();
                 if let Some(ref eavs_url) = self.config.eavs_container_url {
                     env.insert("EAVS_URL".to_string(), eavs_url.clone());
                 }
-                // Note: EAVS virtual key is not stored, so we can't restore it for local mode resume
-                // The user may need to provide it again through environment
+                if let Some(ref virtual_key) = eavs_virtual_key {
+                    env.insert("EAVS_VIRTUAL_KEY".to_string(), virtual_key.clone());
+                    env.insert("ANTHROPIC_API_KEY".to_string(), virtual_key.clone());
+                    env.insert("OPENAI_API_KEY".to_string(), virtual_key.clone());
+                }
 
                 let workspace_path = PathBuf::from(&session.workspace_path);
 
@@ -1159,9 +1429,9 @@ impl SessionService {
                         &workspace_path,
                         session.agent.as_deref(),
                         None, // project_id - will be added with shared projects feature
-                        session.opencode_port as u16,
-                        session.fileserver_port as u16,
-                        session.ttyd_port as u16,
+                        opencode_port,
+                        fileserver_port,
+                        ttyd_port,
                         env,
                     )
                     .await
@@ -1178,7 +1448,7 @@ impl SessionService {
                         self.repo
                             .mark_failed(session_id, &format!("resume failed: {}", e))
                             .await?;
-                        return Ok(self.repo.get(session_id).await?.unwrap_or(session));
+                        return Ok(self.repo.get(session_id).await?.unwrap_or(session.clone()));
                     }
                 }
 
@@ -1187,7 +1457,9 @@ impl SessionService {
                     .readiness
                     .wait_for_session_services(
                         session.opencode_port as u16,
+                        session.fileserver_port as u16,
                         session.ttyd_port as u16,
+                        require_opencode,
                     )
                     .await
                 {
@@ -1202,7 +1474,7 @@ impl SessionService {
                             &format!("services not ready after resume: {}", e),
                         )
                         .await?;
-                    return Ok(self.repo.get(session_id).await?.unwrap_or(session));
+                    return Ok(self.repo.get(session_id).await?.unwrap_or(session.clone()));
                 }
             }
         }
@@ -1211,7 +1483,7 @@ impl SessionService {
         self.repo.mark_running(session_id).await?;
         info!("Session {} resumed successfully", session_id);
 
-        Ok(self.repo.get(session_id).await?.unwrap_or(session))
+        Ok(self.repo.get(session_id).await?.unwrap_or(session.clone()))
     }
 
     /// Get a session by ID.
@@ -1518,7 +1790,7 @@ impl SessionService {
         );
 
         // Start the container (this will update session status)
-        if let Err(e) = self.start_container(&session, None).await {
+        if let Err(e) = self.start_container(&session, None, true).await {
             error!(
                 "Failed to start upgraded container for session {}: {:?}",
                 session_id, e
@@ -1615,6 +1887,7 @@ impl SessionService {
                 let session_id = session.id.clone();
                 let container_id_owned = container_id.to_string();
                 let opencode_port = session.opencode_port as u16;
+                let fileserver_port = session.fileserver_port as u16;
                 let ttyd_port = session.ttyd_port as u16;
 
                 tokio::spawn(async move {
@@ -1650,7 +1923,7 @@ impl SessionService {
                     // Wait for services to become ready
                     if let Err(e) = service
                         .readiness
-                        .wait_for_session_services(opencode_port, ttyd_port)
+                        .wait_for_session_services(opencode_port, fileserver_port, ttyd_port, true)
                         .await
                     {
                         error!(
@@ -1976,7 +2249,11 @@ impl SessionService {
         let user_id = &self.config.default_user_id;
 
         // Check if we already have a running session for this workspace
-        if let Some(session) = self.repo.find_running_for_workspace(user_id, workspace_path).await? {
+        if let Some(session) = self
+            .repo
+            .find_running_for_workspace(user_id, workspace_path)
+            .await?
+        {
             info!(
                 "Found existing running session {} for workspace {}",
                 session.id, workspace_path
@@ -1986,8 +2263,38 @@ impl SessionService {
             return Ok(session);
         }
 
-        // Enforce LRU cap before creating a new session
+        // Enforce LRU cap before resuming or creating a new session
         self.enforce_session_cap(user_id).await?;
+
+        // Resume the most recently stopped session for this workspace, if any
+        if let Some(session) = self
+            .repo
+            .find_latest_stopped_for_workspace(user_id, workspace_path)
+            .await?
+        {
+            info!(
+                "Resuming stopped session {} for workspace {}",
+                session.id, workspace_path
+            );
+            match self.resume_session(&session.id).await {
+                Ok(resumed) => {
+                    if resumed.status == SessionStatus::Failed {
+                        anyhow::bail!("failed to resume session {}", resumed.id);
+                    }
+                    return Ok(resumed);
+                }
+                Err(err) => {
+                    if Self::is_retryable_unique_violation(&err) {
+                        warn!(
+                            "Resume port conflict for session {}, creating new session instead",
+                            session.id
+                        );
+                    } else {
+                        return Err(err);
+                    }
+                }
+            }
+        }
 
         // Create a new session for this workspace
         let request = CreateSessionRequest {
@@ -2000,31 +2307,83 @@ impl SessionService {
         self.create_session(request).await
     }
 
+    /// Get or create a session for IO (fileserver + ttyd) for a workspace path.
+    ///
+    /// This does NOT require opencode to be ready before returning.
+    pub async fn get_or_create_io_session_for_workspace(
+        &self,
+        workspace_path: &str,
+    ) -> Result<Session> {
+        let user_id = &self.config.default_user_id;
+
+        if let Some(session) = self
+            .repo
+            .find_running_for_workspace(user_id, workspace_path)
+            .await?
+        {
+            self.repo.touch_activity(&session.id).await?;
+            return Ok(session);
+        }
+
+        self.enforce_session_cap(user_id).await?;
+
+        if let Some(session) = self
+            .repo
+            .find_latest_stopped_for_workspace(user_id, workspace_path)
+            .await?
+        {
+            let resumed = self
+                .resume_session_with_readiness(&session.id, false)
+                .await?;
+            if resumed.status != SessionStatus::Failed {
+                return Ok(resumed);
+            }
+        }
+
+        let request = CreateSessionRequest {
+            workspace_path: Some(workspace_path.to_string()),
+            image: None,
+            agent: None,
+            env: Default::default(),
+        };
+
+        self.create_session_with_readiness(request, false).await
+    }
+
     /// Enforce the maximum concurrent sessions cap using LRU policy.
     ///
     /// If the user has reached the limit, stop the oldest idle session.
     async fn enforce_session_cap(&self, user_id: &str) -> Result<()> {
+        if self.config.max_concurrent_sessions <= 0 {
+            return Ok(());
+        }
+
         let running_count = self.repo.count_running_for_user(user_id).await?;
 
-        if running_count < Self::DEFAULT_MAX_CONCURRENT_SESSIONS {
+        if running_count < self.config.max_concurrent_sessions {
             return Ok(());
         }
 
         info!(
             "User {} has {} running sessions (limit: {}), stopping oldest",
-            user_id, running_count, Self::DEFAULT_MAX_CONCURRENT_SESSIONS
+            user_id, running_count, self.config.max_concurrent_sessions
         );
 
-        // Get sessions ordered by activity (oldest last)
-        let sessions = self.repo.list_running_for_user_by_activity(user_id).await?;
-
-        // Stop the oldest session (last in the list)
-        if let Some(oldest) = sessions.last() {
+        let idle_sessions = self
+            .repo
+            .list_idle_sessions(self.config.idle_timeout_minutes)
+            .await?;
+        if let Some(oldest_idle) = idle_sessions.first() {
             info!(
-                "Stopping oldest session {} (last activity: {:?}) to make room",
-                oldest.id, oldest.last_activity_at
+                "Stopping idle session {} (last activity: {:?}) to make room",
+                oldest_idle.id, oldest_idle.last_activity_at
             );
-            self.stop_session(&oldest.id).await?;
+            self.stop_session(&oldest_idle.id).await?;
+        } else {
+            anyhow::bail!(
+                "active sessions at limit ({}); no idle sessions available to stop",
+                self.config.max_concurrent_sessions
+            );
         }
 
         Ok(())
@@ -2231,7 +2590,9 @@ mod tests {
         async fn wait_for_session_services(
             &self,
             _opencode_port: u16,
+            _fileserver_port: u16,
             _ttyd_port: u16,
+            _require_opencode: bool,
         ) -> Result<()> {
             Ok(())
         }
@@ -2281,6 +2642,9 @@ mod tests {
             single_user: false,
             mmry_enabled: false,
             mmry_container_url: None,
+            max_concurrent_sessions: SessionService::DEFAULT_MAX_CONCURRENT_SESSIONS,
+            idle_timeout_minutes: SessionService::DEFAULT_IDLE_TIMEOUT_MINUTES,
+            idle_check_interval_seconds: 5 * 60,
         };
 
         let mut service = SessionService::with_eavs(repo.clone(), runtime.clone(), eavs, config);
@@ -2322,7 +2686,7 @@ mod tests {
 
         let session = Session {
             id: "session-1".to_string(),
-            readable_id: None,
+
             container_id: Some("container-1".to_string()),
             container_name: "octo-session-1".to_string(),
             user_id: "user-1".to_string(),
@@ -2429,31 +2793,6 @@ mod tests {
         assert!(service.eavs.is_some());
     }
 
-    #[tokio::test]
-    async fn test_session_service_runtime_mode() {
-        let db = Database::in_memory().await.unwrap();
-        let repo = SessionRepository::new(db.pool().clone());
-
-        // Container mode
-        let config = SessionServiceConfig {
-            runtime_mode: RuntimeMode::Container,
-            ..Default::default()
-        };
-        let fake_runtime = Arc::new(FakeRuntime::default());
-        let service = SessionService::new(repo.clone(), fake_runtime, config);
-        assert_eq!(service.runtime_mode(), RuntimeMode::Container);
-
-        // Local mode
-        let local_config = LocalRuntimeConfig::default();
-        let local_runtime = LocalRuntime::new(local_config);
-        let config = SessionServiceConfig {
-            runtime_mode: RuntimeMode::Local,
-            ..Default::default()
-        };
-        let service = SessionService::with_local_runtime(repo, local_runtime, config);
-        assert_eq!(service.runtime_mode(), RuntimeMode::Local);
-    }
-
     #[test]
     fn test_runtime_mode_default() {
         assert_eq!(RuntimeMode::default(), RuntimeMode::Container);
@@ -2493,5 +2832,383 @@ mod tests {
 
         assert_eq!(parsed_container, RuntimeMode::Container);
         assert_eq!(parsed_local, RuntimeMode::Local);
+    }
+
+    /// A fake runtime that can simulate failures for testing error handling.
+    #[derive(Default)]
+    struct FailingRuntime {
+        fail_start: Mutex<bool>,
+    }
+
+    impl FailingRuntime {
+        fn new(fail_start: bool) -> Self {
+            Self {
+                fail_start: Mutex::new(fail_start),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl ContainerRuntimeApi for FailingRuntime {
+        async fn create_container(
+            &self,
+            _config: &ContainerConfig,
+        ) -> crate::container::ContainerResult<String> {
+            Ok("fake-container-id".to_string())
+        }
+
+        async fn stop_container(
+            &self,
+            _container_id: &str,
+            _timeout_seconds: Option<u32>,
+        ) -> crate::container::ContainerResult<()> {
+            Ok(())
+        }
+
+        async fn start_container(
+            &self,
+            _container_id: &str,
+        ) -> crate::container::ContainerResult<()> {
+            if *self.fail_start.lock().unwrap() {
+                Err(crate::container::ContainerError::CommandFailed {
+                    command: "start".to_string(),
+                    message: "simulated start failure".to_string(),
+                })
+            } else {
+                Ok(())
+            }
+        }
+
+        async fn remove_container(
+            &self,
+            _container_id: &str,
+            _force: bool,
+        ) -> crate::container::ContainerResult<()> {
+            Ok(())
+        }
+
+        async fn list_containers(
+            &self,
+            _all: bool,
+        ) -> crate::container::ContainerResult<Vec<Container>> {
+            Ok(Vec::new())
+        }
+
+        async fn container_state_status(
+            &self,
+            _id_or_name: &str,
+        ) -> crate::container::ContainerResult<Option<String>> {
+            Ok(Some("running".to_string()))
+        }
+
+        async fn get_image_digest(
+            &self,
+            _image: &str,
+        ) -> crate::container::ContainerResult<Option<String>> {
+            Ok(None)
+        }
+
+        async fn get_stats(
+            &self,
+            container_id: &str,
+        ) -> crate::container::ContainerResult<ContainerStats> {
+            Ok(ContainerStats {
+                container_id: container_id.to_string(),
+                name: String::new(),
+                cpu_percent: String::new(),
+                mem_usage: String::new(),
+                mem_percent: String::new(),
+                net_io: String::new(),
+                block_io: String::new(),
+                pids: String::new(),
+            })
+        }
+
+        async fn exec_detached(
+            &self,
+            _container_id: &str,
+            _command: &[&str],
+        ) -> crate::container::ContainerResult<()> {
+            Ok(())
+        }
+
+        async fn exec_output(
+            &self,
+            _container_id: &str,
+            _command: &[&str],
+        ) -> crate::container::ContainerResult<String> {
+            Ok(String::new())
+        }
+    }
+
+    /// A readiness checker that always fails - for testing error handling.
+    #[derive(Default)]
+    struct FailingReadiness;
+
+    #[async_trait]
+    impl SessionReadiness for FailingReadiness {
+        async fn wait_for_session_services(
+            &self,
+            _opencode_port: u16,
+            _fileserver_port: u16,
+            _ttyd_port: u16,
+            _require_opencode: bool,
+        ) -> Result<()> {
+            anyhow::bail!("simulated readiness failure")
+        }
+    }
+
+    #[tokio::test]
+    async fn test_resume_session_marks_failed_on_container_start_error() {
+        let db = Database::in_memory().await.unwrap();
+        let repo = SessionRepository::new(db.pool().clone());
+        let runtime: Arc<dyn ContainerRuntimeApi> = Arc::new(FailingRuntime::new(true));
+
+        let config = SessionServiceConfig {
+            default_image: "test-image:latest".to_string(),
+            base_port: 41820,
+            runtime_mode: RuntimeMode::Container,
+            ..Default::default()
+        };
+
+        let mut service = SessionService::new(repo.clone(), runtime.clone(), config);
+        service.readiness = Arc::new(NoopReadiness::default());
+
+        // Create a stopped session in the database
+        let session = Session {
+            id: "test-session-1".to_string(),
+
+            container_id: Some("container-1".to_string()),
+            container_name: "octo-test-1".to_string(),
+            user_id: "user-1".to_string(),
+            workspace_path: "/tmp/workspace".to_string(),
+            agent: None,
+            image: "test-image:latest".to_string(),
+            image_digest: None,
+            opencode_port: 41821,
+            fileserver_port: 41822,
+            ttyd_port: 41823,
+            eavs_port: None,
+            agent_base_port: None,
+            max_agents: Some(10),
+            eavs_key_id: None,
+            eavs_key_hash: None,
+            eavs_virtual_key: None,
+            mmry_port: None,
+            status: SessionStatus::Stopped,
+            runtime_mode: RuntimeMode::Container,
+            created_at: Utc::now().to_rfc3339(),
+            started_at: None,
+            stopped_at: Some(Utc::now().to_rfc3339()),
+            last_activity_at: None,
+            error_message: None,
+        };
+
+        repo.create(&session).await.unwrap();
+
+        // Try to resume - should fail and mark as failed
+        let result = service.resume_session("test-session-1").await;
+        assert!(result.is_ok()); // Returns Ok with the failed session
+
+        let failed_session = result.unwrap();
+        assert_eq!(failed_session.status, SessionStatus::Failed);
+        assert!(failed_session.error_message.is_some());
+        assert!(
+            failed_session
+                .error_message
+                .unwrap()
+                .contains("resume failed")
+        );
+
+        // Verify in database
+        let stored = repo.get("test-session-1").await.unwrap().unwrap();
+        assert_eq!(stored.status, SessionStatus::Failed);
+    }
+
+    #[tokio::test]
+    async fn test_resume_session_marks_failed_on_readiness_timeout() {
+        let db = Database::in_memory().await.unwrap();
+        let repo = SessionRepository::new(db.pool().clone());
+        let runtime: Arc<dyn ContainerRuntimeApi> = Arc::new(FakeRuntime::default());
+
+        let config = SessionServiceConfig {
+            default_image: "test-image:latest".to_string(),
+            base_port: 41820,
+            runtime_mode: RuntimeMode::Container,
+            ..Default::default()
+        };
+
+        let mut service = SessionService::new(repo.clone(), runtime.clone(), config);
+        // Use failing readiness to simulate timeout
+        service.readiness = Arc::new(FailingReadiness::default());
+
+        // Create a stopped session
+        let session = Session {
+            id: "test-session-2".to_string(),
+
+            container_id: Some("container-2".to_string()),
+            container_name: "octo-test-2".to_string(),
+            user_id: "user-1".to_string(),
+            workspace_path: "/tmp/workspace2".to_string(),
+            agent: None,
+            image: "test-image:latest".to_string(),
+            image_digest: None,
+            opencode_port: 41824,
+            fileserver_port: 41825,
+            ttyd_port: 41826,
+            eavs_port: None,
+            agent_base_port: None,
+            max_agents: Some(10),
+            eavs_key_id: None,
+            eavs_key_hash: None,
+            eavs_virtual_key: None,
+            mmry_port: None,
+            status: SessionStatus::Stopped,
+            runtime_mode: RuntimeMode::Container,
+            created_at: Utc::now().to_rfc3339(),
+            started_at: None,
+            stopped_at: Some(Utc::now().to_rfc3339()),
+            last_activity_at: None,
+            error_message: None,
+        };
+
+        repo.create(&session).await.unwrap();
+
+        // Try to resume - should fail on readiness and mark as failed
+        let result = service.resume_session("test-session-2").await;
+        assert!(result.is_ok());
+
+        let failed_session = result.unwrap();
+        assert_eq!(failed_session.status, SessionStatus::Failed);
+        assert!(failed_session.error_message.is_some());
+
+        // Verify in database
+        let stored = repo.get("test-session-2").await.unwrap().unwrap();
+        assert_eq!(stored.status, SessionStatus::Failed);
+    }
+
+    #[tokio::test]
+    async fn test_resume_session_not_stopped_returns_error() {
+        let db = Database::in_memory().await.unwrap();
+        let repo = SessionRepository::new(db.pool().clone());
+        let runtime: Arc<dyn ContainerRuntimeApi> = Arc::new(FakeRuntime::default());
+
+        let config = SessionServiceConfig::default();
+        let service = SessionService::new(repo.clone(), runtime, config);
+
+        // Create a running session
+        let session = Session {
+            id: "test-session-3".to_string(),
+
+            container_id: Some("container-3".to_string()),
+            container_name: "octo-test-3".to_string(),
+            user_id: "user-1".to_string(),
+            workspace_path: "/tmp/workspace3".to_string(),
+            agent: None,
+            image: "test-image:latest".to_string(),
+            image_digest: None,
+            opencode_port: 41827,
+            fileserver_port: 41828,
+            ttyd_port: 41829,
+            eavs_port: None,
+            agent_base_port: None,
+            max_agents: Some(10),
+            eavs_key_id: None,
+            eavs_key_hash: None,
+            eavs_virtual_key: None,
+            mmry_port: None,
+            status: SessionStatus::Running, // Already running!
+            runtime_mode: RuntimeMode::Container,
+            created_at: Utc::now().to_rfc3339(),
+            started_at: Some(Utc::now().to_rfc3339()),
+            stopped_at: None,
+            last_activity_at: None,
+            error_message: None,
+        };
+
+        repo.create(&session).await.unwrap();
+
+        // Try to resume a running session - should return error
+        let result = service.resume_session("test-session-3").await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("must be stopped"));
+    }
+
+    #[tokio::test]
+    async fn test_resume_session_not_found_returns_error() {
+        let db = Database::in_memory().await.unwrap();
+        let repo = SessionRepository::new(db.pool().clone());
+        let runtime: Arc<dyn ContainerRuntimeApi> = Arc::new(FakeRuntime::default());
+
+        let config = SessionServiceConfig::default();
+        let service = SessionService::new(repo, runtime, config);
+
+        // Try to resume non-existent session
+        let result = service.resume_session("nonexistent-session").await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("not found"));
+    }
+
+    #[tokio::test]
+    async fn test_resume_session_success() {
+        let db = Database::in_memory().await.unwrap();
+        let repo = SessionRepository::new(db.pool().clone());
+        let runtime: Arc<dyn ContainerRuntimeApi> = Arc::new(FakeRuntime::default());
+
+        let config = SessionServiceConfig {
+            default_image: "test-image:latest".to_string(),
+            base_port: 41820,
+            runtime_mode: RuntimeMode::Container,
+            ..Default::default()
+        };
+
+        let mut service = SessionService::new(repo.clone(), runtime.clone(), config);
+        service.readiness = Arc::new(NoopReadiness::default());
+
+        // Create a stopped session
+        let session = Session {
+            id: "test-session-4".to_string(),
+
+            container_id: Some("container-4".to_string()),
+            container_name: "octo-test-4".to_string(),
+            user_id: "user-1".to_string(),
+            workspace_path: "/tmp/workspace4".to_string(),
+            agent: None,
+            image: "test-image:latest".to_string(),
+            image_digest: None,
+            opencode_port: 41830,
+            fileserver_port: 41831,
+            ttyd_port: 41832,
+            eavs_port: None,
+            agent_base_port: None,
+            max_agents: Some(10),
+            eavs_key_id: None,
+            eavs_key_hash: None,
+            eavs_virtual_key: None,
+            mmry_port: None,
+            status: SessionStatus::Stopped,
+            runtime_mode: RuntimeMode::Container,
+            created_at: Utc::now().to_rfc3339(),
+            started_at: None,
+            stopped_at: Some(Utc::now().to_rfc3339()),
+            last_activity_at: None,
+            error_message: None,
+        };
+
+        repo.create(&session).await.unwrap();
+
+        // Resume should succeed
+        let result = service.resume_session("test-session-4").await;
+        assert!(result.is_ok());
+
+        let resumed = result.unwrap();
+        assert_eq!(resumed.status, SessionStatus::Running);
+        assert!(resumed.error_message.is_none());
+
+        // Verify in database
+        let stored = repo.get("test-session-4").await.unwrap().unwrap();
+        assert_eq!(stored.status, SessionStatus::Running);
     }
 }

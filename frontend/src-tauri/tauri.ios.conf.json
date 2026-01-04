@@ -1,48 +1,48 @@
 {
-  "$schema": "https://schema.tauri.app/config/2",
-  "productName": "octo",
-  "version": "0.1.0",
-  "identifier": "com.octo.mobile",
-  "build": {
-    "beforeBuildCommand": "bun run build",
-    "frontendDist": "../dist"
-  },
-  "app": {
-    "windows": [
-      {
-        "title": "octo",
-        "decorations": false,
-        "width": 800,
-        "height": 600
-      }
-    ],
-    "security": {
-      "csp": null
-    }
-  },
-  "bundle": {
-    "active": true,
-    "targets": "all",
-    "icon": [
-      "icons/ios/AppIcon-20x20@1x.png",
-      "icons/ios/AppIcon-20x20@2x.png",
-      "icons/ios/AppIcon-20x20@3x.png",
-      "icons/ios/AppIcon-29x29@1x.png",
-      "icons/ios/AppIcon-29x29@2x.png",
-      "icons/ios/AppIcon-29x29@3x.png",
-      "icons/ios/AppIcon-40x40@1x.png",
-      "icons/ios/AppIcon-40x40@2x.png",
-      "icons/ios/AppIcon-40x40@3x.png",
-      "icons/ios/AppIcon-60x60@2x.png",
-      "icons/ios/AppIcon-60x60@3x.png",
-      "icons/ios/AppIcon-76x76@1x.png",
-      "icons/ios/AppIcon-76x76@2x.png",
-      "icons/ios/AppIcon-83.5x83.5@2x.png",
-      "icons/ios/AppIcon-512@2x.png",
-      "icons/icon.png"
-    ],
-    "iOS": {
-      "developmentTeam": "K8RV7BFSRS"
-    }
-  }
+	"$schema": "https://schema.tauri.app/config/2",
+	"productName": "octo",
+	"version": "0.1.0",
+	"identifier": "com.octo.mobile",
+	"build": {
+		"beforeBuildCommand": "bun run build",
+		"frontendDist": "../dist"
+	},
+	"app": {
+		"windows": [
+			{
+				"title": "octo",
+				"decorations": false,
+				"width": 800,
+				"height": 600
+			}
+		],
+		"security": {
+			"csp": null
+		}
+	},
+	"bundle": {
+		"active": true,
+		"targets": "all",
+		"icon": [
+			"icons/ios/AppIcon-20x20@1x.png",
+			"icons/ios/AppIcon-20x20@2x.png",
+			"icons/ios/AppIcon-20x20@3x.png",
+			"icons/ios/AppIcon-29x29@1x.png",
+			"icons/ios/AppIcon-29x29@2x.png",
+			"icons/ios/AppIcon-29x29@3x.png",
+			"icons/ios/AppIcon-40x40@1x.png",
+			"icons/ios/AppIcon-40x40@2x.png",
+			"icons/ios/AppIcon-40x40@3x.png",
+			"icons/ios/AppIcon-60x60@2x.png",
+			"icons/ios/AppIcon-60x60@3x.png",
+			"icons/ios/AppIcon-76x76@1x.png",
+			"icons/ios/AppIcon-76x76@2x.png",
+			"icons/ios/AppIcon-83.5x83.5@2x.png",
+			"icons/ios/AppIcon-512@2x.png",
+			"icons/icon.png"
+		],
+		"iOS": {
+			"developmentTeam": "K8RV7BFSRS"
+		}
+	}
 }

@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>ai.octo.server</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>{{OCTO_BINARY}}</string>
+        <string>serve</string>
+        {{SERVE_FLAGS}}
+    </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>OCTO_CONFIG</key>
+        <string>{{CONFIG_PATH}}</string>
+        <key>RUST_LOG</key>
+        <string>{{LOG_LEVEL}}</string>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:{{HOME}}/.cargo/bin</string>
+    </dict>
+
+    <key>WorkingDirectory</key>
+    <string>{{WORKING_DIR}}</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+        <key>Crashed</key>
+        <true/>
+    </dict>
+
+    <key>ThrottleInterval</key>
+    <integer>5</integer>
+
+    <key>StandardOutPath</key>
+    <string>{{LOG_DIR}}/octo.stdout.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>{{LOG_DIR}}/octo.stderr.log</string>
+</dict>
+</plist>

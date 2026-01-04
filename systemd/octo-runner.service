@@ -1,0 +1,39 @@
+# octo-runner systemd user service
+#
+# This service runs the octo-runner daemon for process isolation in multi-user mode.
+# It should be installed as a systemd user service for each Linux user that needs
+# to run agent processes.
+#
+# Installation:
+#   mkdir -p ~/.config/systemd/user
+#   cp octo-runner.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable octo-runner
+#   systemctl --user start octo-runner
+#
+# The runner listens on /run/user/<uid>/octo-runner.sock by default.
+# The main octo server communicates with runners via these sockets.
+
+[Unit]
+Description=Octo Runner - Process runner for multi-user isolation
+Documentation=https://github.com/byteowlz/octo
+After=default.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/octo-runner --socket %t/octo-runner.sock
+Restart=on-failure
+RestartSec=5
+
+# Environment
+Environment=RUST_LOG=info
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+ReadWritePaths=%h
+
+[Install]
+WantedBy=default.target

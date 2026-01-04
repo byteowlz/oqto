@@ -40,9 +40,9 @@ import {
 	type SetStateAction,
 	createContext,
 	useCallback,
-	useContext,
 	useEffect,
 	useMemo,
+	useRef,
 	useState,
 } from "react";
 
@@ -59,6 +59,7 @@ interface AppContextValue {
 	setSelectedWorkspaceSessionId: (id: string) => void;
 	selectedWorkspaceSession: WorkspaceSession | undefined;
 	opencodeBaseUrl: string;
+	opencodeDirectory?: string;
 	/** Chat sessions from disk (no running opencode needed) */
 	chatHistory: ChatSession[];
 	/** Live opencode sessions (requires running opencode) */
@@ -100,9 +101,20 @@ interface AppContextValue {
 	) => Promise<WorkspaceSession | null>;
 	projectDefaultAgents: Record<string, string>;
 	setProjectDefaultAgents: Dispatch<SetStateAction<Record<string, string>>>;
+	/** Main Chat state - when active, shows threaded view of all Main Chat sessions */
+	mainChatActive: boolean;
+	setMainChatActive: (active: boolean) => void;
+	mainChatAssistantName: string | null;
+	setMainChatAssistantName: (name: string | null) => void;
+	/** The current Main Chat session ID to send messages to (separate from selectedChatSessionId) */
+	mainChatCurrentSessionId: string | null;
+	setMainChatCurrentSessionId: (id: string | null) => void;
+	/** Workspace path for the Main Chat assistant */
+	mainChatWorkspacePath: string | null;
+	setMainChatWorkspacePath: (path: string | null) => void;
 }
 
-const AppContext = createContext<AppContextValue | null>(null);
+export const AppContext = createContext<AppContextValue | null>(null);
 
 export function AppProvider({ children }: { children: ReactNode }) {
 	const [locale, setLocaleState] = useState<Locale>("de");
@@ -117,12 +129,27 @@ export function AppProvider({ children }: { children: ReactNode }) {
 		useState<string>("");
 	// Chat history from disk (no running opencode needed)
 	const [chatHistory, setChatHistory] = useState<ChatSession[]>([]);
+	const chatHistoryRef = useRef<ChatSession[]>([]);
+	// Keep ref in sync with state
+	chatHistoryRef.current = chatHistory;
 	// Live opencode sessions (requires running opencode instance)
 	const [opencodeSessions, setOpencodeSessions] = useState<OpenCodeSession[]>(
 		[],
 	);
-	const [selectedChatSessionId, setSelectedChatSessionId] =
-		useState<string>("");
+	const [selectedChatSessionId, setSelectedChatSessionId] = useState<string>(
+		() => {
+			// Allow mock session ID via URL parameter for testing
+			if (typeof window !== "undefined") {
+				const params = new URLSearchParams(window.location.search);
+				const mockSession = params.get("mockSession");
+				if (mockSession) {
+					console.log("[Dev] Using mock session ID:", mockSession);
+					return mockSession;
+				}
+			}
+			return "";
+		},
+	);
 	// Available projects
 	const [projects, setProjects] = useState<ProjectEntry[]>([]);
 	const [projectDefaultAgents, setProjectDefaultAgents] = useState<
@@ -138,6 +165,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
 	});
 	// Track which chat sessions are currently busy (agent working)
 	const [busySessions, setBusySessions] = useState<Set<string>>(new Set());
+	// Main Chat state - when active, sessions app shows threaded view
+	const [mainChatActive, setMainChatActive] = useState(false);
+	const [mainChatAssistantName, setMainChatAssistantName] = useState<
+		string | null
+	>(null);
+	// The current Main Chat session ID to send messages to (separate from selectedChatSessionId)
+	const [mainChatCurrentSessionId, setMainChatCurrentSessionId] = useState<
+		string | null
+	>(null);
+	const [mainChatWorkspacePath, setMainChatWorkspacePath] = useState<
+		string | null
+	>(null);
 
 	const setSessionBusy = useCallback((sessionId: string, busy: boolean) => {
 		setBusySessions((prev) => {
@@ -168,10 +207,28 @@ export function AppProvider({ children }: { children: ReactNode }) {
 	}, [selectedWorkspaceSessionId, workspaceSessions]);
 
 	const opencodeBaseUrl = useMemo(() => {
+		// Allow mock server override via URL parameter for testing
+		// Usage: ?mockOpencode=http://localhost:7274
+		if (typeof window !== "undefined") {
+			const params = new URLSearchParams(window.location.search);
+			const mockUrl = params.get("mockOpencode");
+			if (mockUrl) {
+				console.log("[Dev] Using mock OpenCode server:", mockUrl);
+				return mockUrl;
+			}
+		}
 		if (!selectedWorkspaceSession) return "";
 		if (selectedWorkspaceSession.status !== "running") return "";
 		return opencodeProxyBaseUrl(selectedWorkspaceSession.id);
 	}, [selectedWorkspaceSession]);
+	const opencodeDirectory = useMemo(() => {
+		return (
+			selectedChatFromHistory?.workspace_path ??
+			selectedWorkspaceSession?.workspace_path
+		);
+	}, [selectedChatFromHistory, selectedWorkspaceSession]);
+
+	const sessionEventSubscriptions = useRef(new Map<string, () => void>());
 
 	useEffect(() => {
 		const initialLocale = resolveStoredLocale();
@@ -179,10 +236,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
 		document.documentElement.lang = initialLocale;
 		void i18n.changeLanguage(initialLocale);
 
-		const storedWorkspaceSessionId =
-			window.localStorage.getItem("workspaceSessionId") ?? "";
-		if (storedWorkspaceSessionId) {
-			setSelectedWorkspaceSessionId(storedWorkspaceSessionId);
+		try {
+			const storedWorkspaceSessionId =
+				window.localStorage.getItem("workspaceSessionId") ?? "";
+			if (storedWorkspaceSessionId) {
+				setSelectedWorkspaceSessionId(storedWorkspaceSessionId);
+			}
+		} catch {
+			// Ignore storage failures.
 		}
 	}, []);
 
@@ -190,11 +251,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
 	const refreshChatHistory = useCallback(async () => {
 		try {
 			// No limit - load all sessions from disk
-			const history = await listChatHistory({});
+			const history = await listChatHistory({ include_children: true });
 			setChatHistory(history);
 
 			// If no chat is selected but we have history, select the most recent one
-			if (history.length > 0) {
+			if (history.length > 0 && !mainChatActive) {
 				setSelectedChatSessionId((current) => {
 					if (current && history.some((s) => s.id === current)) return current;
 					return history[0].id;
@@ -203,7 +264,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 		} catch (err) {
 			console.error("Failed to load chat history:", err);
 		}
-	}, []);
+	}, [mainChatActive]);
 
 	const refreshWorkspaceSessions = useCallback(async () => {
 		try {
@@ -235,6 +296,28 @@ export function AppProvider({ children }: { children: ReactNode }) {
 			console.error("Failed to load sessions:", err);
 		}
 	}, []);
+
+	const handleOpencodeEvent = useCallback(
+		(event: {
+			type: string;
+			properties?: { sessionId?: string; sessionID?: string };
+		}) => {
+			const eventType = event.type;
+			const props = event.properties || {};
+			const sessionId = props.sessionId || props.sessionID;
+
+			if (eventType === "session.busy" && sessionId) {
+				setSessionBusy(sessionId, true);
+			} else if (eventType === "session.idle" && sessionId) {
+				setSessionBusy(sessionId, false);
+			}
+
+			if (eventType?.startsWith("session")) {
+				refreshWorkspaceSessions();
+			}
+		},
+		[refreshWorkspaceSessions, setSessionBusy],
+	);
 
 	// Start a new session for a specific project
 	const startProjectSession = useCallback(
@@ -322,28 +405,41 @@ export function AppProvider({ children }: { children: ReactNode }) {
 	}, [refreshWorkspaceSessions, refreshChatHistory]);
 
 	useEffect(() => {
-		if (!opencodeBaseUrl) return;
-		const unsubscribe = subscribeToEvents(
-			opencodeBaseUrl,
-			(event) => {
-				const eventType = event.type as string;
-				const props = event.properties as { sessionId?: string } | null;
-
-				// Track busy/idle state for sessions
-				if (eventType === "session.busy" && props?.sessionId) {
-					setSessionBusy(props.sessionId, true);
-				} else if (eventType === "session.idle" && props?.sessionId) {
-					setSessionBusy(props.sessionId, false);
-				}
-
-				if (eventType?.startsWith("session")) {
-					refreshWorkspaceSessions();
-				}
-			},
-			controlPlaneDirectBaseUrl(),
+		const runningSessions = workspaceSessions.filter(
+			(session) => session.status === "running",
 		);
-		return unsubscribe;
-	}, [opencodeBaseUrl, refreshWorkspaceSessions, setSessionBusy]);
+		const activeIds = new Set(runningSessions.map((session) => session.id));
+
+		for (const session of runningSessions) {
+			if (sessionEventSubscriptions.current.has(session.id)) {
+				continue;
+			}
+			const baseUrl = opencodeProxyBaseUrl(session.id);
+			const unsubscribe = subscribeToEvents(
+				baseUrl,
+				handleOpencodeEvent,
+				controlPlaneDirectBaseUrl(),
+				{ directory: session.workspace_path },
+			);
+			sessionEventSubscriptions.current.set(session.id, unsubscribe);
+		}
+
+		for (const [sessionId, unsubscribe] of sessionEventSubscriptions.current) {
+			if (!activeIds.has(sessionId)) {
+				unsubscribe();
+				sessionEventSubscriptions.current.delete(sessionId);
+			}
+		}
+	}, [workspaceSessions, handleOpencodeEvent]);
+
+	useEffect(() => {
+		return () => {
+			for (const unsubscribe of sessionEventSubscriptions.current.values()) {
+				unsubscribe();
+			}
+			sessionEventSubscriptions.current.clear();
+		};
+	}, []);
 
 	useEffect(() => {
 		if (!selectedWorkspaceSession) return;
@@ -360,51 +456,81 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
 	useEffect(() => {
 		if (!selectedWorkspaceSessionId) return;
-		window.localStorage.setItem(
-			"workspaceSessionId",
-			selectedWorkspaceSessionId,
-		);
+		try {
+			window.localStorage.setItem(
+				"workspaceSessionId",
+				selectedWorkspaceSessionId,
+			);
+		} catch {
+			// Ignore storage failures.
+		}
 	}, [selectedWorkspaceSessionId]);
 
 	useEffect(() => {
 		if (typeof window === "undefined") return;
-		localStorage.setItem(
-			"octo:projectDefaultAgents",
-			JSON.stringify(projectDefaultAgents),
-		);
+		try {
+			localStorage.setItem(
+				"octo:projectDefaultAgents",
+				JSON.stringify(projectDefaultAgents),
+			);
+		} catch {
+			// Ignore storage failures.
+		}
 	}, [projectDefaultAgents]);
 
 	const refreshOpencodeSessions = useCallback(async () => {
 		if (!opencodeBaseUrl) return;
 		try {
-			const sessions = await fetchSessions(opencodeBaseUrl);
+			const sessions = await fetchSessions(opencodeBaseUrl, {
+				directory: opencodeDirectory,
+			});
 			setOpencodeSessions(sessions);
-			// Select most recently updated session, or create one if none exist
-			if (sessions.length > 0) {
+			// Select most recently updated session, but don't override history-only views.
+			// Use ref to avoid chatHistory dependency causing re-renders
+			const history = chatHistoryRef.current;
+			if (sessions.length > 0 && !mainChatActive) {
 				const sorted = [...sessions].sort(
 					(a, b) => b.time.updated - a.time.updated,
 				);
 				setSelectedChatSessionId((current) => {
-					// Keep current if it exists in the list
-					if (current && sessions.some((s) => s.id === current)) return current;
+					if (!current) return sorted[0].id;
+					if (sessions.some((s) => s.id === current)) return current;
+					if (history.some((s) => s.id === current)) return current;
 					return sorted[0].id;
 				});
 			} else {
-				const created = await createSession(opencodeBaseUrl);
-				setOpencodeSessions([created]);
-				setSelectedChatSessionId(created.id);
+				if (!mainChatActive) {
+					setSelectedChatSessionId((current) => {
+						if (current && history.some((s) => s.id === current)) {
+							return current;
+						}
+						return current;
+					});
+				}
+				if (history.length === 0 && !mainChatActive) {
+					const created = await createSession(
+						opencodeBaseUrl,
+						undefined,
+						undefined,
+						{ directory: opencodeDirectory },
+					);
+					setOpencodeSessions([created]);
+					setSelectedChatSessionId(created.id);
+				}
 			}
 		} catch (err) {
 			console.error("Failed to load opencode sessions:", err);
 		}
-	}, [opencodeBaseUrl]);
+	}, [mainChatActive, opencodeBaseUrl, opencodeDirectory]);
 
 	const createNewChat = useCallback(
 		async (baseUrlOverride?: string): Promise<OpenCodeSession | null> => {
 			const baseUrl = baseUrlOverride || opencodeBaseUrl;
 			if (!baseUrl) return null;
 			try {
-				const created = await createSession(baseUrl);
+				const created = await createSession(baseUrl, undefined, undefined, {
+					directory: opencodeDirectory,
+				});
 				setOpencodeSessions((prev) => [created, ...prev]);
 				setSelectedChatSessionId(created.id);
 				// Refresh chat history to include the new session in the sidebar
@@ -418,7 +544,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 				return null;
 			}
 		},
-		[opencodeBaseUrl, refreshChatHistory],
+		[opencodeBaseUrl, opencodeDirectory, refreshChatHistory],
 	);
 
 	const createNewChatWithPersona = useCallback(
@@ -462,7 +588,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
 				const maxAttempts = 30;
 				while (attempts < maxAttempts) {
 					try {
-						const created = await createSession(baseUrl);
+						const created = await createSession(baseUrl, undefined, undefined, {
+							directory: resolvedPath,
+						});
 						setOpencodeSessions((prev) => [created, ...prev]);
 						setSelectedChatSessionId(created.id);
 						// Refresh chat history to include the new session in the sidebar
@@ -495,7 +623,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
 			const baseUrl = baseUrlOverride || opencodeBaseUrl;
 			if (!baseUrl) return false;
 			try {
-				await deleteSession(baseUrl, sessionId);
+				await deleteSession(baseUrl, sessionId, {
+					directory: opencodeDirectory,
+				});
 				setOpencodeSessions((prev) => prev.filter((s) => s.id !== sessionId));
 				// If we deleted the selected session, select another one
 				setSelectedChatSessionId((current) => {
@@ -513,7 +643,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 				return false;
 			}
 		},
-		[opencodeBaseUrl, opencodeSessions, refreshChatHistory],
+		[opencodeBaseUrl, opencodeDirectory, opencodeSessions, refreshChatHistory],
 	);
 
 	const renameChatSession = useCallback(
@@ -523,9 +653,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
 				if (opencodeBaseUrl) {
 					// Try to update via opencode API first (for live sessions)
 					try {
-						const updated = await updateSession(opencodeBaseUrl, sessionId, {
-							title,
-						});
+						const updated = await updateSession(
+							opencodeBaseUrl,
+							sessionId,
+							{ title },
+							{ directory: opencodeDirectory },
+						);
 						setOpencodeSessions((prev) =>
 							prev.map((s) => (s.id === sessionId ? updated : s)),
 						);
@@ -552,7 +685,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 				return false;
 			}
 		},
-		[opencodeBaseUrl],
+		[opencodeBaseUrl, opencodeDirectory],
 	);
 
 	const handleStopWorkspaceSession = useCallback(
@@ -634,6 +767,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 			setSelectedWorkspaceSessionId,
 			selectedWorkspaceSession,
 			opencodeBaseUrl,
+			opencodeDirectory,
 			chatHistory,
 			opencodeSessions,
 			selectedChatSessionId,
@@ -657,6 +791,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
 			startProjectSession,
 			projectDefaultAgents,
 			setProjectDefaultAgents,
+			mainChatActive,
+			setMainChatActive,
+			mainChatAssistantName,
+			setMainChatAssistantName,
+			mainChatCurrentSessionId,
+			setMainChatCurrentSessionId,
+			mainChatWorkspacePath,
+			setMainChatWorkspacePath,
 		}),
 		[
 			apps,
@@ -669,6 +811,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 			selectedWorkspaceSessionId,
 			selectedWorkspaceSession,
 			opencodeBaseUrl,
+			opencodeDirectory,
 			chatHistory,
 			opencodeSessions,
 			selectedChatSessionId,
@@ -690,16 +833,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
 			projects,
 			startProjectSession,
 			projectDefaultAgents,
+			mainChatActive,
+			mainChatAssistantName,
+			mainChatCurrentSessionId,
+			mainChatWorkspacePath,
 		],
 	);
 
 	return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
-}
-
-export function useApp() {
-	const ctx = useContext(AppContext);
-	if (!ctx) {
-		throw new Error("useApp must be used within an AppProvider");
-	}
-	return ctx;
 }

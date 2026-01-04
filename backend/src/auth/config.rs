@@ -179,55 +179,12 @@ pub struct DevUser {
     /// Email address.
     pub email: String,
     /// Password hash (bcrypt).
-    /// Use `new_with_plaintext` to create a user with automatic hashing.
     pub password_hash: String,
     /// Role.
     pub role: Role,
 }
 
 impl DevUser {
-    /// Create a new dev user with a pre-hashed password.
-    pub fn new(
-        id: impl Into<String>,
-        name: impl Into<String>,
-        email: impl Into<String>,
-        password_hash: impl Into<String>,
-        role: Role,
-    ) -> Self {
-        Self {
-            id: id.into(),
-            name: name.into(),
-            email: email.into(),
-            password_hash: password_hash.into(),
-            role,
-        }
-    }
-
-    /// Create a new dev user with a plaintext password (will be hashed).
-    /// This is a convenience method for creating users programmatically.
-    ///
-    /// Note: This is intentionally not used in Default::default() to avoid
-    /// expensive bcrypt hashing at startup. Use pre-computed hashes instead.
-    #[allow(dead_code)]
-    pub fn new_with_plaintext(
-        id: impl Into<String>,
-        name: impl Into<String>,
-        email: impl Into<String>,
-        password: &str,
-        role: Role,
-    ) -> Self {
-        let password_hash =
-            bcrypt::hash(password, bcrypt::DEFAULT_COST).expect("Failed to hash password");
-
-        Self {
-            id: id.into(),
-            name: name.into(),
-            email: email.into(),
-            password_hash,
-            role,
-        }
-    }
-
     /// Verify a password against this user's hash.
     pub fn verify_password(&self, password: &str) -> bool {
         bcrypt::verify(password, &self.password_hash).unwrap_or(false)
@@ -237,6 +194,19 @@ impl DevUser {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn make_dev_user(id: &str, name: &str, email: &str, password: &str, role: Role) -> DevUser {
+        let password_hash =
+            bcrypt::hash(password, bcrypt::DEFAULT_COST).expect("Failed to hash password");
+
+        DevUser {
+            id: id.to_string(),
+            name: name.to_string(),
+            email: email.to_string(),
+            password_hash,
+            role,
+        }
+    }
 
     #[test]
     fn test_auth_config_default() {
@@ -248,8 +218,8 @@ mod tests {
     }
 
     #[test]
-    fn test_dev_user_new_with_plaintext() {
-        let user = DevUser::new_with_plaintext(
+    fn test_dev_user_password_hashing() {
+        let user = make_dev_user(
             "test",
             "Test",
             "test@example.com",
@@ -265,7 +235,7 @@ mod tests {
 
     #[test]
     fn test_dev_user_password_verification() {
-        let user = DevUser::new_with_plaintext(
+        let user = make_dev_user(
             "test",
             "Test",
             "test@example.com",

@@ -2,7 +2,7 @@
 
 use axum::{
     body::Body,
-    extract::{Path, State, WebSocketUpgrade},
+    extract::{Path, Query, State, WebSocketUpgrade},
     http::{Request, StatusCode, Uri},
     response::{IntoResponse, Response, Sse},
 };
@@ -15,13 +15,179 @@ use crate::session::SessionStatus;
 
 use super::state::AppState;
 
+async fn ensure_session_active_for_proxy(
+    state: &AppState,
+    session_id: &str,
+    session: crate::session::Session,
+) -> Result<crate::session::Session, StatusCode> {
+    match session.status {
+        SessionStatus::Running | SessionStatus::Starting | SessionStatus::Pending => Ok(session),
+        SessionStatus::Stopped => {
+            warn!(
+                "Session {} is stopped; attempting to resume for proxy request",
+                session_id
+            );
+            match state.sessions.resume_session(session_id).await {
+                Ok(resumed) => Ok(resumed),
+                Err(err) => {
+                    error!("Failed to resume session {}: {:?}", session_id, err);
+                    Err(StatusCode::SERVICE_UNAVAILABLE)
+                }
+            }
+        }
+        SessionStatus::Stopping | SessionStatus::Failed => {
+            warn!("Attempted to proxy to inactive session {}", session_id);
+            Err(StatusCode::SERVICE_UNAVAILABLE)
+        }
+    }
+}
+
+async fn ensure_session_for_io_proxy(
+    state: &AppState,
+    session_id: &str,
+    session: crate::session::Session,
+) -> Result<crate::session::Session, StatusCode> {
+    if session.status != SessionStatus::Stopped {
+        return Ok(session);
+    }
+
+    warn!(
+        "Session {} is stopped; attempting to resume for IO proxy request",
+        session_id
+    );
+    match state.sessions.resume_session_for_io(session_id).await {
+        Ok(resumed) => Ok(resumed),
+        Err(err) => {
+            error!("Failed to resume session {}: {:?}", session_id, err);
+            Err(StatusCode::SERVICE_UNAVAILABLE)
+        }
+    }
+}
+
+#[derive(serde::Deserialize)]
+pub(crate) struct WorkspaceProxyQuery {
+    workspace_path: String,
+    store: Option<String>,
+}
+
+#[derive(serde::Deserialize)]
+pub(crate) struct OpencodeEventQuery {
+    directory: Option<String>,
+}
+
+fn build_fileserver_query(workspace_path: &str, query: Option<&str>) -> String {
+    let mut pairs: Vec<String> = Vec::new();
+    if let Some(query) = query {
+        for pair in query.split('&') {
+            if pair.is_empty() {
+                continue;
+            }
+            if pair.starts_with("workspace_path=") || pair.starts_with("directory=") {
+                continue;
+            }
+            pairs.push(pair.to_string());
+        }
+    }
+    pairs.push(format!("directory={}", urlencoding::encode(workspace_path)));
+    pairs.join("&")
+}
+
+/// Proxy WebSocket requests to the configured STT service.
+pub async fn proxy_voice_stt_ws(
+    State(state): State<AppState>,
+    ws: WebSocketUpgrade,
+) -> Result<impl IntoResponse, StatusCode> {
+    if !state.voice.enabled {
+        return Err(StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    let target_url = state.voice.stt_url.clone();
+
+    Ok(ws.on_upgrade(move |socket| async move {
+        if let Err(e) = handle_voice_ws_proxy(socket, target_url).await {
+            error!("Voice STT proxy error: {:?}", e);
+        }
+    }))
+}
+
+/// Proxy WebSocket requests to the configured TTS service.
+pub async fn proxy_voice_tts_ws(
+    State(state): State<AppState>,
+    ws: WebSocketUpgrade,
+) -> Result<impl IntoResponse, StatusCode> {
+    if !state.voice.enabled {
+        return Err(StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    let target_url = state.voice.tts_url.clone();
+
+    Ok(ws.on_upgrade(move |socket| async move {
+        if let Err(e) = handle_voice_ws_proxy(socket, target_url).await {
+            error!("Voice TTS proxy error: {:?}", e);
+        }
+    }))
+}
+
+async fn handle_voice_ws_proxy(
+    client_socket: axum::extract::ws::WebSocket,
+    target_url: String,
+) -> anyhow::Result<()> {
+    use axum::extract::ws::Message as AxumMessage;
+    use tokio_tungstenite::tungstenite::Message as TungsteniteMessage;
+
+    debug!("Proxying voice WebSocket to {}", target_url);
+
+    let (server_socket, _) = connect_async(target_url).await?;
+
+    let (mut client_tx, mut client_rx) = client_socket.split();
+    let (mut server_tx, mut server_rx) = server_socket.split();
+
+    let client_to_server = async {
+        while let Some(msg) = client_rx.next().await {
+            let msg = msg?;
+            let forward = match msg {
+                AxumMessage::Text(text) => TungsteniteMessage::Text(text.to_string().into()),
+                AxumMessage::Binary(data) => TungsteniteMessage::Binary(data),
+                AxumMessage::Ping(data) => TungsteniteMessage::Ping(data),
+                AxumMessage::Pong(data) => TungsteniteMessage::Pong(data),
+                AxumMessage::Close(_) => TungsteniteMessage::Close(None),
+            };
+            server_tx.send(forward).await?;
+        }
+        Ok::<(), anyhow::Error>(())
+    };
+
+    let server_to_client = async {
+        while let Some(msg) = server_rx.next().await {
+            let msg = msg?;
+            let forward = match msg {
+                TungsteniteMessage::Text(text) => AxumMessage::Text(text.to_string().into()),
+                TungsteniteMessage::Binary(data) => AxumMessage::Binary(data),
+                TungsteniteMessage::Ping(data) => AxumMessage::Ping(data),
+                TungsteniteMessage::Pong(data) => AxumMessage::Pong(data),
+                TungsteniteMessage::Close(_) => AxumMessage::Close(None),
+                TungsteniteMessage::Frame(_) => continue,
+            };
+            client_tx.send(forward).await?;
+        }
+        Ok::<(), anyhow::Error>(())
+    };
+
+    tokio::select! {
+        result = client_to_server => result?,
+        result = server_to_client => result?,
+    }
+
+    Ok(())
+}
+
 /// Proxy HTTP requests to a session's opencode server.
 pub async fn proxy_opencode(
     State(state): State<AppState>,
     Path((session_id, path)): Path<(String, String)>,
     req: Request<Body>,
 ) -> Result<Response, StatusCode> {
-    let session = state
+    let _requested = state
         .sessions
         .get_session(&session_id)
         .await
@@ -31,16 +197,24 @@ pub async fn proxy_opencode(
         })?
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    if !session.is_active() {
-        warn!("Attempted to proxy to inactive session {}", session_id);
-        return Err(StatusCode::SERVICE_UNAVAILABLE);
-    }
+    let opencode_session = state
+        .sessions
+        .get_or_create_opencode_session()
+        .await
+        .map_err(|e| {
+            error!("Failed to get primary opencode session: {:?}", e);
+            StatusCode::SERVICE_UNAVAILABLE
+        })?;
 
-    let starting = matches!(session.status, SessionStatus::Starting);
+    let opencode_session_id = opencode_session.id.clone();
+    let opencode_session =
+        ensure_session_active_for_proxy(&state, &opencode_session_id, opencode_session).await?;
+
+    let starting = matches!(opencode_session.status, SessionStatus::Starting);
     proxy_request(
         state.http_client.clone(),
         req,
-        session.opencode_port as u16,
+        opencode_session.opencode_port as u16,
         &path,
         starting,
     )
@@ -66,12 +240,7 @@ pub async fn proxy_fileserver(
         })?
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    // In single-user mode, allow access even when session is inactive
-    // since the fileserver runs independently of the opencode process
-    if !state.mmry.single_user && !session.is_active() {
-        warn!("Attempted to proxy to inactive session {}", session_id);
-        return Err(StatusCode::SERVICE_UNAVAILABLE);
-    }
+    let session = ensure_session_for_io_proxy(&state, &session_id, session).await?;
 
     let starting = matches!(session.status, SessionStatus::Starting);
     proxy_request(
@@ -84,15 +253,68 @@ pub async fn proxy_fileserver(
     .await
 }
 
+/// Proxy HTTP requests to a workspace file server by workspace path.
+pub async fn proxy_fileserver_for_workspace(
+    State(state): State<AppState>,
+    Path(path): Path<String>,
+    Query(query): Query<WorkspaceProxyQuery>,
+    req: Request<Body>,
+) -> Result<Response, StatusCode> {
+    let session = state
+        .sessions
+        .get_or_create_io_session_for_workspace(&query.workspace_path)
+        .await
+        .map_err(|e| {
+            error!(
+                "Failed to get IO session for workspace {}: {:?}",
+                query.workspace_path, e
+            );
+            StatusCode::SERVICE_UNAVAILABLE
+        })?;
+
+    let directory_query = build_fileserver_query(&query.workspace_path, req.uri().query());
+
+    let starting = matches!(session.status, SessionStatus::Starting);
+    proxy_request_with_query(
+        state.http_client.clone(),
+        req,
+        session.fileserver_port as u16,
+        &path,
+        starting,
+        Some(&directory_query),
+    )
+    .await
+}
+
 /// Generic HTTP proxy function.
 async fn proxy_request(
     client: Client<hyper_util::client::legacy::connect::HttpConnector, Body>,
-    mut req: Request<Body>,
+    req: Request<Body>,
     target_port: u16,
     target_path: &str,
     connect_errors_as_unavailable: bool,
 ) -> Result<Response, StatusCode> {
+    proxy_request_with_query(
+        client,
+        req,
+        target_port,
+        target_path,
+        connect_errors_as_unavailable,
+        None,
+    )
+    .await
+}
+
+async fn proxy_request_with_query(
+    client: Client<hyper_util::client::legacy::connect::HttpConnector, Body>,
+    req: Request<Body>,
+    target_port: u16,
+    target_path: &str,
+    connect_errors_as_unavailable: bool,
+    query_override: Option<&str>,
+) -> Result<Response, StatusCode> {
     let query = req.uri().query().unwrap_or("");
+    let query = query_override.unwrap_or(query);
     let mut target_uri = format!("http://localhost:{}/{}", target_port, target_path);
     if !query.is_empty() {
         target_uri.push('?');
@@ -106,27 +328,64 @@ async fn proxy_request(
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
-    // Update the request URI
-    *req.uri_mut() = uri;
-
-    // Ensure Host header matches the target authority.
-    if let Some(authority) = req.uri().authority() {
-        let value = axum::http::HeaderValue::from_str(authority.as_str()).map_err(|e| {
-            error!("Invalid Host header value {}: {:?}", authority.as_str(), e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
-        req.headers_mut().insert(axum::http::header::HOST, value);
-    }
-
-    // Forward the request
-    let response = client.request(req).await.map_err(|e| {
-        error!("Proxy request failed: {:?}", e);
-        if connect_errors_as_unavailable && e.is_connect() {
-            StatusCode::SERVICE_UNAVAILABLE
-        } else {
-            StatusCode::BAD_GATEWAY
-        }
+    let (parts, body) = req.into_parts();
+    let body_bytes = axum::body::to_bytes(body, usize::MAX).await.map_err(|e| {
+        error!("Failed to buffer proxy request body: {:?}", e);
+        StatusCode::BAD_GATEWAY
     })?;
+
+    let start = tokio::time::Instant::now();
+    let timeout = tokio::time::Duration::from_secs(15);
+    let mut attempts: u32 = 0;
+
+    let response = loop {
+        attempts += 1;
+        let mut forwarded = Request::builder()
+            .method(parts.method.clone())
+            .uri(uri.clone())
+            .version(parts.version)
+            .body(Body::from(body_bytes.clone()))
+            .map_err(|e| {
+                error!("Failed to build proxy request: {:?}", e);
+                StatusCode::INTERNAL_SERVER_ERROR
+            })?;
+
+        *forwarded.headers_mut() = parts.headers.clone();
+
+        // Ensure Host header matches the target authority.
+        if let Some(authority) = forwarded.uri().authority() {
+            let value = axum::http::HeaderValue::from_str(authority.as_str()).map_err(|e| {
+                error!("Invalid Host header value {}: {:?}", authority.as_str(), e);
+                StatusCode::INTERNAL_SERVER_ERROR
+            })?;
+            forwarded
+                .headers_mut()
+                .insert(axum::http::header::HOST, value);
+        }
+
+        match client.request(forwarded).await {
+            Ok(res) => break res,
+            Err(err) => {
+                if connect_errors_as_unavailable && err.is_connect() && start.elapsed() < timeout {
+                    let backoff_ms = (attempts.min(20) as u64) * 100;
+                    let backoff = tokio::time::Duration::from_millis(backoff_ms);
+                    debug!(
+                        "Proxy target not ready yet (attempt {}): {}; retrying in {:?}",
+                        attempts, err, backoff
+                    );
+                    tokio::time::sleep(backoff).await;
+                    continue;
+                }
+
+                error!("Proxy request failed: {:?}", err);
+                return Err(if connect_errors_as_unavailable && err.is_connect() {
+                    StatusCode::SERVICE_UNAVAILABLE
+                } else {
+                    StatusCode::BAD_GATEWAY
+                });
+            }
+        }
+    };
 
     // Convert hyper response to axum response
     let (parts, body) = response.into_parts();
@@ -149,23 +408,39 @@ pub async fn proxy_terminal_ws(
         })?
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    // Allow terminal connections during session startup. The WS proxy will wait
-    // briefly for ttyd to become available instead of immediately failing.
-    if matches!(
-        session.status,
-        SessionStatus::Stopping | SessionStatus::Stopped | SessionStatus::Failed
-    ) {
-        warn!(
-            "Attempted to proxy terminal to inactive session {}",
-            session_id
-        );
-        return Err(StatusCode::SERVICE_UNAVAILABLE);
-    }
+    let session = ensure_session_for_io_proxy(&state, &session_id, session).await?;
 
     let ttyd_port = session.ttyd_port;
 
     Ok(ws.on_upgrade(move |socket| async move {
-        if let Err(e) = handle_terminal_proxy(socket, ttyd_port as u16).await {
+        if let Err(e) = handle_terminal_proxy(socket, ttyd_port as u16, None).await {
+            error!("Terminal proxy error: {:?}", e);
+        }
+    }))
+}
+
+/// WebSocket upgrade handler for terminal proxy by workspace path.
+pub async fn proxy_terminal_ws_for_workspace(
+    State(state): State<AppState>,
+    Query(query): Query<WorkspaceProxyQuery>,
+    ws: WebSocketUpgrade,
+) -> Result<impl IntoResponse, StatusCode> {
+    let session = state
+        .sessions
+        .get_or_create_io_session_for_workspace(&query.workspace_path)
+        .await
+        .map_err(|e| {
+            error!(
+                "Failed to get IO session for workspace {}: {:?}",
+                query.workspace_path, e
+            );
+            StatusCode::SERVICE_UNAVAILABLE
+        })?;
+
+    let ttyd_port = session.ttyd_port;
+
+    Ok(ws.on_upgrade(move |socket| async move {
+        if let Err(e) = handle_terminal_proxy(socket, ttyd_port as u16, None).await {
             error!("Terminal proxy error: {:?}", e);
         }
     }))
@@ -193,6 +468,7 @@ pub async fn proxy_terminal_ws(
 async fn handle_terminal_proxy(
     client_socket: axum::extract::ws::WebSocket,
     ttyd_port: u16,
+    initial_command: Option<String>,
 ) -> anyhow::Result<()> {
     use axum::extract::ws::Message as AxumMessage;
     use tokio::time::{Duration, Instant};
@@ -248,6 +524,14 @@ async fn handle_terminal_proxy(
             init_msg.as_bytes().to_vec().into(),
         ))
         .await?;
+
+    if let Some(command) = initial_command {
+        let mut prefixed = vec![b'0'];
+        prefixed.extend_from_slice(command.as_bytes());
+        ttyd_write
+            .send(TungsteniteMessage::Binary(prefixed.into()))
+            .await?;
+    }
 
     // Split client socket
     let (mut client_write, mut client_read) = client_socket.split();
@@ -413,8 +697,9 @@ async fn handle_terminal_proxy(
 pub async fn proxy_opencode_events(
     State(state): State<AppState>,
     Path(session_id): Path<String>,
+    Query(query): Query<OpencodeEventQuery>,
 ) -> Result<Response, StatusCode> {
-    let session = state
+    let _requested = state
         .sessions
         .get_session(&session_id)
         .await
@@ -424,12 +709,28 @@ pub async fn proxy_opencode_events(
         })?
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    if !session.is_active() {
-        warn!("Attempted to proxy SSE to inactive session {}", session_id);
-        return Err(StatusCode::SERVICE_UNAVAILABLE);
-    }
+    let opencode_session = state
+        .sessions
+        .get_or_create_opencode_session()
+        .await
+        .map_err(|e| {
+            error!("Failed to get primary opencode session: {:?}", e);
+            StatusCode::SERVICE_UNAVAILABLE
+        })?;
 
-    let target_url = format!("http://localhost:{}/event", session.opencode_port);
+    let opencode_session_id = opencode_session.id.clone();
+    let opencode_session =
+        ensure_session_active_for_proxy(&state, &opencode_session_id, opencode_session).await?;
+
+    let target_url = if let Some(directory) = query.directory.as_deref() {
+        format!(
+            "http://localhost:{}/event?directory={}",
+            opencode_session.opencode_port,
+            urlencoding::encode(directory)
+        )
+    } else {
+        format!("http://localhost:{}/event", opencode_session.opencode_port)
+    };
     debug!("Proxying SSE events from {}", target_url);
 
     // Create HTTP client for SSE
@@ -549,18 +850,104 @@ fn get_mmry_target(
     }
 }
 
-/// Proxy request to a URL-based target.
+/// Derive mmry store name from session workspace path.
+///
+/// In single-user mode, each workspace maps to a separate mmry store.
+/// The store name is derived from the last component of the workspace path.
+/// For example: `/home/user/byteowlz/octo` -> `octo`
+fn get_mmry_store_name(state: &AppState, session: &crate::session::Session) -> Option<String> {
+    if !state.mmry.single_user {
+        // In multi-user mode, each session has its own mmry instance
+        return None;
+    }
+
+    // Extract the last path component as the store name
+    std::path::Path::new(&session.workspace_path)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(|s| s.to_string())
+}
+
+/// Derive mmry store name directly from a workspace path.
+///
+/// In single-user mode, each workspace maps to a separate mmry store.
+/// The store name is derived from the last component of the workspace path.
+/// For example: `/home/user/byteowlz/octo` -> `octo`
+fn get_mmry_store_name_from_path(state: &AppState, workspace_path: &str) -> Option<String> {
+    if !state.mmry.single_user {
+        return None;
+    }
+
+    let trimmed = workspace_path.trim_end_matches('/');
+    if trimmed.is_empty() {
+        return None;
+    }
+    std::path::Path::new(trimmed)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(|s| s.to_string())
+}
+
+fn resolve_mmry_store_for_workspace(
+    state: &AppState,
+    query: &WorkspaceProxyQuery,
+) -> Option<String> {
+    if let Some(store) = query.store.as_ref().and_then(|s| {
+        let trimmed = s.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    }) {
+        return Some(store);
+    }
+    get_mmry_store_name_from_path(state, &query.workspace_path)
+}
+
+/// Get the mmry target URL for workspace-based access (single-user mode only).
+fn get_mmry_target_for_workspace(state: &AppState) -> Result<String, StatusCode> {
+    if !state.mmry.enabled {
+        warn!("mmry integration is not enabled");
+        return Err(StatusCode::NOT_FOUND);
+    }
+
+    if !state.mmry.single_user {
+        // Workspace-based mmry access only works in single-user mode
+        warn!("Workspace-based mmry access requires single-user mode");
+        return Err(StatusCode::NOT_FOUND);
+    }
+
+    Ok(state.mmry.local_service_url.clone())
+}
+
+/// Proxy request to a URL-based target with optional store parameter.
 async fn proxy_request_to_url(
     client: Client<hyper_util::client::legacy::connect::HttpConnector, Body>,
     mut req: Request<Body>,
     target_base_url: &str,
     target_path: &str,
+    store: Option<&str>,
 ) -> Result<Response, StatusCode> {
     let query = req.uri().query().unwrap_or("");
     let mut target_uri = format!("{}/{}", target_base_url.trim_end_matches('/'), target_path);
-    if !query.is_empty() {
+
+    // Build query string with optional store parameter
+    let has_query = !query.is_empty();
+    let has_store = store.is_some();
+
+    if has_query || has_store {
         target_uri.push('?');
-        target_uri.push_str(query);
+        if has_query {
+            target_uri.push_str(query);
+        }
+        if let Some(store_name) = store {
+            if has_query {
+                target_uri.push('&');
+            }
+            target_uri.push_str("store=");
+            target_uri.push_str(store_name);
+        }
     }
 
     debug!("Proxying mmry request to {}", target_uri);
@@ -597,6 +984,79 @@ async fn proxy_request_to_url(
     Ok(Response::from_parts(parts, Body::new(body)))
 }
 
+fn build_mmry_query(query: Option<&str>) -> String {
+    let mut pairs: Vec<String> = Vec::new();
+    if let Some(query) = query {
+        for pair in query.split('&') {
+            if pair.is_empty() {
+                continue;
+            }
+            if pair.starts_with("workspace_path=") || pair.starts_with("store=") {
+                continue;
+            }
+            pairs.push(pair.to_string());
+        }
+    }
+    pairs.join("&")
+}
+
+async fn proxy_mmry_request_to_url(
+    client: Client<hyper_util::client::legacy::connect::HttpConnector, Body>,
+    mut req: Request<Body>,
+    target_base_url: &str,
+    target_path: &str,
+    store: Option<&str>,
+) -> Result<Response, StatusCode> {
+    let sanitized_query = build_mmry_query(req.uri().query());
+    let mut target_uri = format!("{}/{}", target_base_url.trim_end_matches('/'), target_path);
+
+    let has_query = !sanitized_query.is_empty();
+    let has_store = store.is_some();
+
+    if has_query || has_store {
+        target_uri.push('?');
+        if has_query {
+            target_uri.push_str(&sanitized_query);
+        }
+        if let Some(store_name) = store {
+            if has_query {
+                target_uri.push('&');
+            }
+            target_uri.push_str("store=");
+            target_uri.push_str(&urlencoding::encode(store_name));
+        }
+    }
+
+    debug!("Proxying mmry request to {}", target_uri);
+
+    let uri: Uri = target_uri.parse().map_err(|e| {
+        error!("Invalid target URI {}: {:?}", target_uri, e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+
+    *req.uri_mut() = uri;
+
+    if let Some(authority) = req.uri().authority() {
+        let value = axum::http::HeaderValue::from_str(authority.as_str()).map_err(|e| {
+            error!("Invalid Host header value {}: {:?}", authority.as_str(), e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+        req.headers_mut().insert(axum::http::header::HOST, value);
+    }
+
+    let response = client.request(req).await.map_err(|e| {
+        error!("Mmry proxy request failed: {:?}", e);
+        if e.is_connect() {
+            StatusCode::SERVICE_UNAVAILABLE
+        } else {
+            StatusCode::BAD_GATEWAY
+        }
+    })?;
+
+    let (parts, body) = response.into_parts();
+    Ok(Response::from_parts(parts, Body::new(body)))
+}
+
 /// Proxy HTTP requests to a session's mmry service.
 ///
 /// Routes: /session/{session_id}/memories/{*path}
@@ -624,7 +1084,15 @@ pub async fn proxy_mmry(
     }
 
     let target_url = get_mmry_target(&state, &session)?;
-    proxy_request_to_url(state.http_client.clone(), req, &target_url, &path).await
+    let store = get_mmry_store_name(&state, &session);
+    proxy_request_to_url(
+        state.http_client.clone(),
+        req,
+        &target_url,
+        &path,
+        store.as_deref(),
+    )
+    .await
 }
 
 /// Proxy search requests to a session's mmry service.
@@ -654,7 +1122,15 @@ pub async fn proxy_mmry_search(
     }
 
     let target_url = get_mmry_target(&state, &session)?;
-    proxy_request_to_url(state.http_client.clone(), req, &target_url, "v1/federation/search").await
+    let store = get_mmry_store_name(&state, &session);
+    proxy_request_to_url(
+        state.http_client.clone(),
+        req,
+        &target_url,
+        "v1/federation/search",
+        store.as_deref(),
+    )
+    .await
 }
 
 /// Proxy requests to list memories for a session.
@@ -683,7 +1159,15 @@ pub async fn proxy_mmry_list(
     }
 
     let target_url = get_mmry_target(&state, &session)?;
-    proxy_request_to_url(state.http_client.clone(), req, &target_url, "v1/memories").await
+    let store = get_mmry_store_name(&state, &session);
+    proxy_mmry_request_to_url(
+        state.http_client.clone(),
+        req,
+        &target_url,
+        "v1/memories",
+        store.as_deref(),
+    )
+    .await
 }
 
 /// Proxy requests to add a memory for a session.
@@ -712,7 +1196,15 @@ pub async fn proxy_mmry_add(
     }
 
     let target_url = get_mmry_target(&state, &session)?;
-    proxy_request_to_url(state.http_client.clone(), req, &target_url, "v1/agents/memories").await
+    let store = get_mmry_store_name(&state, &session);
+    proxy_mmry_request_to_url(
+        state.http_client.clone(),
+        req,
+        &target_url,
+        "v1/agents/memories",
+        store.as_deref(),
+    )
+    .await
 }
 
 /// Proxy requests to get/update/delete a specific memory.
@@ -741,8 +1233,16 @@ pub async fn proxy_mmry_memory(
     }
 
     let target_url = get_mmry_target(&state, &session)?;
+    let store = get_mmry_store_name(&state, &session);
     let path = format!("v1/memories/{}", memory_id);
-    proxy_request_to_url(state.http_client.clone(), req, &target_url, &path).await
+    proxy_mmry_request_to_url(
+        state.http_client.clone(),
+        req,
+        &target_url,
+        &path,
+        store.as_deref(),
+    )
+    .await
 }
 
 /// Proxy requests to list mmry stores for a session.
@@ -771,7 +1271,101 @@ pub async fn proxy_mmry_stores(
     }
 
     let target_url = get_mmry_target(&state, &session)?;
-    proxy_request_to_url(state.http_client.clone(), req, &target_url, "v1/stores").await
+    // Note: stores endpoint doesn't need a store parameter - it lists all stores
+    proxy_mmry_request_to_url(
+        state.http_client.clone(),
+        req,
+        &target_url,
+        "v1/stores",
+        None,
+    )
+    .await
+}
+
+// ============================================================================
+// Workspace-based Mmry Proxy Handlers (single-user mode)
+// ============================================================================
+
+/// Proxy requests to list memories for a workspace (single-user mode).
+///
+/// Routes: GET /workspace/memories
+pub async fn proxy_mmry_list_for_workspace(
+    State(state): State<AppState>,
+    Query(query): Query<WorkspaceProxyQuery>,
+    req: Request<Body>,
+) -> Result<Response, StatusCode> {
+    let target_url = get_mmry_target_for_workspace(&state)?;
+    let store = resolve_mmry_store_for_workspace(&state, &query);
+    proxy_mmry_request_to_url(
+        state.http_client.clone(),
+        req,
+        &target_url,
+        "v1/memories",
+        store.as_deref(),
+    )
+    .await
+}
+
+/// Proxy requests to add a memory for a workspace (single-user mode).
+///
+/// Routes: POST /workspace/memories
+pub async fn proxy_mmry_add_for_workspace(
+    State(state): State<AppState>,
+    Query(query): Query<WorkspaceProxyQuery>,
+    req: Request<Body>,
+) -> Result<Response, StatusCode> {
+    let target_url = get_mmry_target_for_workspace(&state)?;
+    let store = resolve_mmry_store_for_workspace(&state, &query);
+    proxy_mmry_request_to_url(
+        state.http_client.clone(),
+        req,
+        &target_url,
+        "v1/agents/memories",
+        store.as_deref(),
+    )
+    .await
+}
+
+/// Proxy search requests for a workspace (single-user mode).
+///
+/// Routes: POST /workspace/memories/search
+pub async fn proxy_mmry_search_for_workspace(
+    State(state): State<AppState>,
+    Query(query): Query<WorkspaceProxyQuery>,
+    req: Request<Body>,
+) -> Result<Response, StatusCode> {
+    let target_url = get_mmry_target_for_workspace(&state)?;
+    let store = resolve_mmry_store_for_workspace(&state, &query);
+    proxy_mmry_request_to_url(
+        state.http_client.clone(),
+        req,
+        &target_url,
+        "v1/federation/search",
+        store.as_deref(),
+    )
+    .await
+}
+
+/// Proxy requests to get/update/delete a specific memory for a workspace (single-user mode).
+///
+/// Routes: GET/PUT/DELETE /workspace/memories/{memory_id}
+pub async fn proxy_mmry_memory_for_workspace(
+    State(state): State<AppState>,
+    Path(memory_id): Path<String>,
+    Query(query): Query<WorkspaceProxyQuery>,
+    req: Request<Body>,
+) -> Result<Response, StatusCode> {
+    let target_url = get_mmry_target_for_workspace(&state)?;
+    let store = resolve_mmry_store_for_workspace(&state, &query);
+    let path = format!("v1/memories/{}", memory_id);
+    proxy_mmry_request_to_url(
+        state.http_client.clone(),
+        req,
+        &target_url,
+        &path,
+        store.as_deref(),
+    )
+    .await
 }
 
 // ============================================================================
@@ -786,7 +1380,7 @@ pub async fn proxy_opencode_agent(
     Path((session_id, agent_id, path)): Path<(String, String, String)>,
     req: Request<Body>,
 ) -> Result<Response, StatusCode> {
-    let session = state
+    let _requested = state
         .sessions
         .get_session(&session_id)
         .await
@@ -796,32 +1390,40 @@ pub async fn proxy_opencode_agent(
         })?
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    if !session.is_active() {
-        warn!("Attempted to proxy to inactive session {}", session_id);
-        return Err(StatusCode::SERVICE_UNAVAILABLE);
-    }
+    let opencode_session = state
+        .sessions
+        .get_or_create_opencode_session()
+        .await
+        .map_err(|e| {
+            error!("Failed to get primary opencode session: {:?}", e);
+            StatusCode::SERVICE_UNAVAILABLE
+        })?;
+
+    let opencode_session_id = opencode_session.id.clone();
+    let opencode_session =
+        ensure_session_active_for_proxy(&state, &opencode_session_id, opencode_session).await?;
 
     // Resolve the agent's port
     let port = state
         .agents
-        .get_agent_port(&session_id, &agent_id)
+        .get_agent_port(&opencode_session_id, &agent_id)
         .await
         .map_err(|e| {
             error!(
                 "Failed to get agent port for {}/{}: {:?}",
-                session_id, agent_id, e
+                opencode_session_id, agent_id, e
             );
             StatusCode::INTERNAL_SERVER_ERROR
         })?
         .ok_or_else(|| {
             warn!(
                 "Agent {} not found or not running in session {}",
-                agent_id, session_id
+                agent_id, opencode_session_id
             );
             StatusCode::NOT_FOUND
         })?;
 
-    let starting = matches!(session.status, SessionStatus::Starting);
+    let starting = matches!(opencode_session.status, SessionStatus::Starting);
     proxy_request(state.http_client.clone(), req, port, &path, starting).await
 }
 
@@ -831,8 +1433,9 @@ pub async fn proxy_opencode_agent(
 pub async fn proxy_opencode_agent_events(
     State(state): State<AppState>,
     Path((session_id, agent_id)): Path<(String, String)>,
+    Query(query): Query<OpencodeEventQuery>,
 ) -> Result<Response, StatusCode> {
-    let session = state
+    let _requested = state
         .sessions
         .get_session(&session_id)
         .await
@@ -842,32 +1445,48 @@ pub async fn proxy_opencode_agent_events(
         })?
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    if !session.is_active() {
-        warn!("Attempted to proxy SSE to inactive session {}", session_id);
-        return Err(StatusCode::SERVICE_UNAVAILABLE);
-    }
+    let opencode_session = state
+        .sessions
+        .get_or_create_opencode_session()
+        .await
+        .map_err(|e| {
+            error!("Failed to get primary opencode session: {:?}", e);
+            StatusCode::SERVICE_UNAVAILABLE
+        })?;
+
+    let opencode_session_id = opencode_session.id.clone();
+    let _opencode_session =
+        ensure_session_active_for_proxy(&state, &opencode_session_id, opencode_session).await?;
 
     // Resolve the agent's port
     let port = state
         .agents
-        .get_agent_port(&session_id, &agent_id)
+        .get_agent_port(&opencode_session_id, &agent_id)
         .await
         .map_err(|e| {
             error!(
                 "Failed to get agent port for {}/{}: {:?}",
-                session_id, agent_id, e
+                opencode_session_id, agent_id, e
             );
             StatusCode::INTERNAL_SERVER_ERROR
         })?
         .ok_or_else(|| {
             warn!(
                 "Agent {} not found or not running in session {}",
-                agent_id, session_id
+                agent_id, opencode_session_id
             );
             StatusCode::NOT_FOUND
         })?;
 
-    let target_url = format!("http://localhost:{}/event", port);
+    let target_url = if let Some(directory) = query.directory.as_deref() {
+        format!(
+            "http://localhost:{}/event?directory={}",
+            port,
+            urlencoding::encode(directory)
+        )
+    } else {
+        format!("http://localhost:{}/event", port)
+    };
     debug!(
         "Proxying agent SSE events from {} (agent: {})",
         target_url, agent_id

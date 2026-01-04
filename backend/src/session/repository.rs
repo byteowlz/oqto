@@ -7,7 +7,7 @@ use super::models::{Session, SessionStatus};
 
 /// All session columns for SELECT queries.
 const SESSION_COLUMNS: &str = r#"
-    id, readable_id, container_id, container_name, user_id, workspace_path, agent, image, image_digest,
+    id, container_id, container_name, user_id, workspace_path, agent, image, image_digest,
     opencode_port, fileserver_port, ttyd_port, eavs_port, agent_base_port, max_agents,
     eavs_key_id, eavs_key_hash, eavs_virtual_key, mmry_port,
     status, runtime_mode, created_at, started_at, stopped_at, last_activity_at, error_message
@@ -30,15 +30,14 @@ impl SessionRepository {
         sqlx::query(
             r#"
             INSERT INTO sessions (
-                id, readable_id, container_id, container_name, user_id, workspace_path, agent, image, image_digest,
+                id, container_id, container_name, user_id, workspace_path, agent, image, image_digest,
                 opencode_port, fileserver_port, ttyd_port, eavs_port, agent_base_port, max_agents,
                 eavs_key_id, eavs_key_hash, eavs_virtual_key, mmry_port,
                 status, runtime_mode, created_at, started_at, stopped_at, last_activity_at, error_message
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&session.id)
-        .bind(&session.readable_id)
         .bind(&session.container_id)
         .bind(&session.container_name)
         .bind(&session.user_id)
@@ -66,6 +65,30 @@ impl SessionRepository {
         .execute(&self.pool)
         .await
         .context("creating session")?;
+
+        Ok(())
+    }
+
+    /// Update EAVS key metadata for a session.
+    pub async fn update_eavs_keys(
+        &self,
+        session_id: &str,
+        key_id: Option<&str>,
+        key_hash: Option<&str>,
+    ) -> Result<()> {
+        sqlx::query(
+            r#"
+            UPDATE sessions
+            SET eavs_key_id = ?, eavs_key_hash = ?
+            WHERE id = ?
+            "#,
+        )
+        .bind(key_id)
+        .bind(key_hash)
+        .bind(session_id)
+        .execute(&self.pool)
+        .await
+        .context("updating session eavs keys")?;
 
         Ok(())
     }
@@ -184,6 +207,32 @@ impl SessionRepository {
         Ok(())
     }
 
+    /// Update session ports after a local resume reassigns them.
+    pub async fn update_ports(
+        &self,
+        id: &str,
+        opencode_port: i64,
+        fileserver_port: i64,
+        ttyd_port: i64,
+        mmry_port: Option<i64>,
+        agent_base_port: Option<i64>,
+    ) -> Result<()> {
+        sqlx::query(
+            "UPDATE sessions SET opencode_port = ?, fileserver_port = ?, ttyd_port = ?, mmry_port = ?, agent_base_port = ? WHERE id = ?",
+        )
+        .bind(opencode_port)
+        .bind(fileserver_port)
+        .bind(ttyd_port)
+        .bind(mmry_port)
+        .bind(agent_base_port)
+        .bind(id)
+        .execute(&self.pool)
+        .await
+        .context("updating session ports")?;
+
+        Ok(())
+    }
+
     /// Mark session as running.
     pub async fn mark_running(&self, id: &str) -> Result<()> {
         sqlx::query("UPDATE sessions SET status = 'running' WHERE id = ?")
@@ -231,17 +280,6 @@ impl SessionRepository {
             .context("deleting session")?;
 
         Ok(())
-    }
-
-    /// Check if a readable_id already exists.
-    pub async fn readable_id_exists(&self, readable_id: &str) -> Result<bool> {
-        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM sessions WHERE readable_id = ?")
-            .bind(readable_id)
-            .fetch_one(&self.pool)
-            .await
-            .context("checking readable_id existence")?;
-
-        Ok(count.0 > 0)
     }
 
     /// Find a stopped session for a user that can be resumed.
@@ -369,7 +407,11 @@ impl SessionRepository {
     }
 
     /// Find a running session for a specific workspace path.
-    pub async fn find_running_for_workspace(&self, user_id: &str, workspace_path: &str) -> Result<Option<Session>> {
+    pub async fn find_running_for_workspace(
+        &self,
+        user_id: &str,
+        workspace_path: &str,
+    ) -> Result<Option<Session>> {
         let query = format!(
             "SELECT {} FROM sessions WHERE user_id = ? AND workspace_path = ? AND status = 'running' LIMIT 1",
             SESSION_COLUMNS
@@ -384,13 +426,35 @@ impl SessionRepository {
         Ok(session)
     }
 
+    /// Find the most recently stopped session for a specific workspace path.
+    pub async fn find_latest_stopped_for_workspace(
+        &self,
+        user_id: &str,
+        workspace_path: &str,
+    ) -> Result<Option<Session>> {
+        let query = format!(
+            "SELECT {} FROM sessions WHERE user_id = ? AND workspace_path = ? AND status = 'stopped' AND container_id IS NOT NULL ORDER BY stopped_at DESC LIMIT 1",
+            SESSION_COLUMNS
+        );
+        let session = sqlx::query_as::<_, Session>(&query)
+            .bind(user_id)
+            .bind(workspace_path)
+            .fetch_optional(&self.pool)
+            .await
+            .context("finding stopped session for workspace")?;
+
+        Ok(session)
+    }
+
     /// Count running sessions for a user.
     pub async fn count_running_for_user(&self, user_id: &str) -> Result<i64> {
-        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM sessions WHERE user_id = ? AND status = 'running'")
-            .bind(user_id)
-            .fetch_one(&self.pool)
-            .await
-            .context("counting running sessions")?;
+        let count: (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM sessions WHERE user_id = ? AND status = 'running'",
+        )
+        .bind(user_id)
+        .fetch_one(&self.pool)
+        .await
+        .context("counting running sessions")?;
 
         Ok(count.0)
     }

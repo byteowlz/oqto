@@ -321,14 +321,21 @@ function SettingsSection({
 	expanded,
 	onToggle,
 }: SettingsSectionProps) {
+	const propertyCount = Object.keys(properties).length;
+
 	return (
-		<div className="border rounded-lg">
+		<div className="bg-background/50 border border-border rounded-lg overflow-hidden">
 			<button
 				type="button"
 				onClick={onToggle}
 				className="w-full flex items-center justify-between p-3 sm:p-4 hover:bg-muted/50 transition-colors"
 			>
-				<span className="font-medium text-sm sm:text-base">{category}</span>
+				<div className="flex items-center gap-2">
+					<span className="font-medium text-sm sm:text-base">{category}</span>
+					<span className="text-xs text-muted-foreground">
+						({propertyCount} {propertyCount === 1 ? "setting" : "settings"})
+					</span>
+				</div>
 				{expanded ? (
 					<ChevronDown className="h-4 w-4 text-muted-foreground flex-shrink-0" />
 				) : (
@@ -336,19 +343,21 @@ function SettingsSection({
 				)}
 			</button>
 			{expanded && (
-				<div className="border-t p-3 sm:p-4 space-y-3 sm:space-y-4">
-					{Object.entries(properties).map(([key, prop]) => (
-						<SettingsField
-							key={key}
-							path={key}
-							property={prop}
-							values={values}
-							getEffectiveValue={getEffectiveValue}
-							isModified={isModified}
-							onValueChange={onValueChange}
-							onReset={onReset}
-						/>
-					))}
+				<div className="border-t border-border bg-muted/20 p-3 sm:p-4">
+					<div className="space-y-4 sm:space-y-5">
+						{Object.entries(properties).map(([key, prop]) => (
+							<SettingsField
+								key={key}
+								path={key}
+								property={prop}
+								values={values}
+								getEffectiveValue={getEffectiveValue}
+								isModified={isModified}
+								onValueChange={onValueChange}
+								onReset={onReset}
+							/>
+						))}
+					</div>
 				</div>
 			)}
 		</div>
@@ -364,6 +373,23 @@ interface SettingsFieldProps {
 	onValueChange: (path: string, value: unknown) => void;
 	onReset: (path: string) => void;
 	prefix?: string;
+}
+
+// Format a path segment into a human-readable label
+function formatLabel(path: string): string {
+	return path
+		.split("_")
+		.map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+		.join(" ");
+}
+
+// Format enum value into human-readable label
+function formatEnumLabel(value: string): string {
+	// Handle snake_case and kebab-case
+	return value
+		.split(/[_-]/)
+		.map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+		.join(" ");
 }
 
 function SettingsField({
@@ -382,43 +408,95 @@ function SettingsField({
 	const modified = isModified(fullPath);
 	const isConfigured = setting?.is_configured || modified;
 	const hasDefault = setting?.default !== undefined;
+	const label = formatLabel(path);
 
 	// Handle nested objects
 	if (property.type === "object" && property.properties) {
 		return (
-			<div className="space-y-3 pl-2 sm:pl-4 border-l-2 border-muted">
-				<Label className="font-medium text-sm">{path}</Label>
-				{property.description && (
-					<p className="text-xs text-muted-foreground">
-						{property.description}
-					</p>
-				)}
-				{Object.entries(property.properties).map(([key, nestedProp]) => (
-					<SettingsField
-						key={key}
-						path={key}
-						property={nestedProp}
-						values={values}
-						getEffectiveValue={getEffectiveValue}
-						isModified={isModified}
-						onValueChange={onValueChange}
-						onReset={onReset}
-						prefix={fullPath}
-					/>
-				))}
+			<div className="space-y-4 p-3 bg-background/30 border border-border/50 rounded-md">
+				<div>
+					<Label className="font-medium text-sm">{label}</Label>
+					{property.description && (
+						<p className="text-xs text-muted-foreground mt-0.5">
+							{property.description}
+						</p>
+					)}
+				</div>
+				<div className="space-y-4 pl-3 border-l-2 border-primary/30">
+					{Object.entries(property.properties).map(([key, nestedProp]) => (
+						<SettingsField
+							key={key}
+							path={key}
+							property={nestedProp}
+							values={values}
+							getEffectiveValue={getEffectiveValue}
+							isModified={isModified}
+							onValueChange={onValueChange}
+							onReset={onReset}
+							prefix={fullPath}
+						/>
+					))}
+				</div>
 			</div>
 		);
 	}
 
 	const type = Array.isArray(property.type) ? property.type[0] : property.type;
 
+	// Boolean fields get a special compact layout
+	if (type === "boolean") {
+		return (
+			<div className="flex items-start justify-between gap-4 p-3 bg-background/30 border border-border/50 rounded-md">
+				<div className="flex-1 min-w-0">
+					<div className="flex flex-wrap items-center gap-1.5">
+						<Label htmlFor={fullPath} className="text-sm font-medium">
+							{label}
+						</Label>
+						{modified && (
+							<Badge
+								variant="default"
+								className="text-[10px] px-1.5 py-0 bg-amber-500"
+							>
+								modified
+							</Badge>
+						)}
+					</div>
+					{property.description && (
+						<p className="text-xs text-muted-foreground mt-0.5">
+							{property.description}
+						</p>
+					)}
+				</div>
+				<div className="flex items-center gap-2 flex-shrink-0">
+					<Switch
+						id={fullPath}
+						checked={Boolean(value)}
+						onCheckedChange={(checked) => onValueChange(fullPath, checked)}
+					/>
+					{hasDefault && isConfigured && (
+						<Button
+							type="button"
+							variant="ghost"
+							size="sm"
+							onClick={() => onReset(fullPath)}
+							title="Reset to default"
+							className="h-7 w-7 p-0"
+						>
+							<RotateCcw className="h-3 w-3" />
+						</Button>
+					)}
+				</div>
+			</div>
+		);
+	}
+
 	return (
-		<div className="space-y-1.5">
+		<div className="space-y-2 p-3 bg-background/30 border border-border/50 rounded-md">
 			<div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
-				<Label htmlFor={fullPath} className="text-sm break-all">
-					{path}
+				<Label htmlFor={fullPath} className="text-sm font-medium">
+					{label}
 				</Label>
-				{isConfigured && (
+				{isConfigured && !modified && (
 					<Badge
 						variant="secondary"
 						className="text-[10px] sm:text-xs px-1.5 py-0"
@@ -447,24 +525,23 @@ function SettingsField({
 				<p className="text-xs text-muted-foreground">{property.description}</p>
 			)}
 			<div className="flex items-center gap-2">
-				{type === "boolean" ? (
-					<Switch
-						id={fullPath}
-						checked={Boolean(value)}
-						onCheckedChange={(checked) => onValueChange(fullPath, checked)}
-					/>
-				) : property.enum ? (
+				{property.enum ? (
 					<Select
 						value={String(value ?? "")}
 						onValueChange={(v) => onValueChange(fullPath, v)}
 					>
-						<SelectTrigger className="w-full h-9 text-sm">
-							<SelectValue placeholder="Select..." />
+						<SelectTrigger
+							className={cn(
+								"w-full h-9 text-sm bg-background",
+								modified && "border-amber-500",
+							)}
+						>
+							<SelectValue placeholder="Select an option..." />
 						</SelectTrigger>
 						<SelectContent>
 							{property.enum.map((option) => (
 								<SelectItem key={option} value={option}>
-									{option}
+									{formatEnumLabel(option)}
 								</SelectItem>
 							))}
 						</SelectContent>
@@ -476,6 +553,9 @@ function SettingsField({
 						value={value !== undefined ? String(value) : ""}
 						min={property.minimum}
 						max={property.maximum}
+						placeholder={
+							hasDefault ? `Default: ${setting?.default}` : undefined
+						}
 						onChange={(e) => {
 							const v =
 								type === "integer"
@@ -483,15 +563,24 @@ function SettingsField({
 									: Number.parseFloat(e.target.value);
 							if (!Number.isNaN(v)) onValueChange(fullPath, v);
 						}}
-						className={cn("h-9 text-sm", modified && "border-amber-500")}
+						className={cn(
+							"h-9 text-sm bg-background",
+							modified && "border-amber-500",
+						)}
 					/>
 				) : (
 					<Input
 						id={fullPath}
 						type={property["x-sensitive"] ? "password" : "text"}
 						value={String(value ?? "")}
+						placeholder={
+							hasDefault ? `Default: ${setting?.default}` : undefined
+						}
 						onChange={(e) => onValueChange(fullPath, e.target.value)}
-						className={cn("h-9 text-sm", modified && "border-amber-500")}
+						className={cn(
+							"h-9 text-sm bg-background",
+							modified && "border-amber-500",
+						)}
 					/>
 				)}
 				{hasDefault && isConfigured && (
@@ -507,8 +596,8 @@ function SettingsField({
 					</Button>
 				)}
 			</div>
-			{hasDefault && (
-				<p className="text-xs text-muted-foreground truncate">
+			{hasDefault && !modified && (
+				<p className="text-[11px] text-muted-foreground/70">
 					Default: {JSON.stringify(setting?.default)}
 				</p>
 			)}

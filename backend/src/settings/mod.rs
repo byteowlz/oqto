@@ -9,5 +9,5 @@
 mod schema;
 mod service;
 
-pub use schema::{filter_schema_by_scope, load_schema, SettingsScope};
+pub use schema::SettingsScope;
 pub use service::{ConfigUpdate, SettingsService, SettingsValue};

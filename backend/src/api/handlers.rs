@@ -20,6 +20,7 @@ use tracing::{info, instrument, warn};
 use crate::auth::{AuthError, CurrentUser, RequireAdmin};
 use crate::observability::{CpuTimes, HostMetrics, read_host_metrics};
 use crate::session::{CreateSessionRequest, Session, SessionContainerStats};
+use crate::session_ui::SessionAutoAttachMode;
 use crate::user::{
     CreateUserRequest, UpdateUserRequest, UserInfo as DbUserInfo, UserListQuery, UserStats,
 };
@@ -55,6 +56,10 @@ pub async fn health() -> Json<HealthResponse> {
 pub struct FeaturesResponse {
     /// Whether mmry (memories) integration is enabled.
     pub mmry_enabled: bool,
+    /// Auto-attach mode when opening chat history.
+    pub session_auto_attach: SessionAutoAttachMode,
+    /// Whether to scan running sessions for matching chat session IDs.
+    pub session_auto_attach_scan: bool,
     /// Voice mode configuration (null if disabled).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub voice: Option<VoiceConfig>,
@@ -100,8 +105,8 @@ pub struct VisualizerVoice {
 pub async fn features(State(state): State<AppState>) -> Json<FeaturesResponse> {
     let voice = if state.voice.enabled {
         Some(VoiceConfig {
-            stt_url: state.voice.stt_url.clone(),
-            tts_url: state.voice.tts_url.clone(),
+            stt_url: "/api/voice/stt".to_string(),
+            tts_url: "/api/voice/tts".to_string(),
             vad_timeout_ms: state.voice.vad_timeout_ms,
             default_voice: state.voice.default_voice.clone(),
             default_speed: state.voice.default_speed,
@@ -111,9 +116,20 @@ pub async fn features(State(state): State<AppState>) -> Json<FeaturesResponse> {
             default_visualizer: state.voice.default_visualizer.clone(),
             interrupt_word_count: state.voice.interrupt_word_count,
             interrupt_backoff_ms: state.voice.interrupt_backoff_ms,
-            visualizer_voices: state.voice.visualizer_voices.iter().map(|(k, v)| {
-                (k.clone(), VisualizerVoice { voice: v.voice.clone(), speed: v.speed })
-            }).collect(),
+            visualizer_voices: state
+                .voice
+                .visualizer_voices
+                .iter()
+                .map(|(k, v)| {
+                    (
+                        k.clone(),
+                        VisualizerVoice {
+                            voice: v.voice.clone(),
+                            speed: v.speed,
+                        },
+                    )
+                })
+                .collect(),
         })
     } else {
         None
@@ -121,6 +137,8 @@ pub async fn features(State(state): State<AppState>) -> Json<FeaturesResponse> {
 
     Json(FeaturesResponse {
         mmry_enabled: state.mmry.enabled,
+        session_auto_attach: state.session_ui.auto_attach,
+        session_auto_attach_scan: state.session_ui.auto_attach_scan,
         voice,
     })
 }
@@ -161,18 +179,24 @@ pub async fn list_sessions(State(state): State<AppState>) -> ApiResult<Json<Vec<
     Ok(Json(sessions))
 }
 
-/// Get a specific session.
+/// Get a specific session by ID or readable alias.
+///
+/// The session_id parameter can be either:
+/// - A full session UUID (e.g., "6a03da55-2757-4d71-b421-af929bc4aef5")
+/// - A readable alias (e.g., "foxy-geek")
 #[instrument(skip(state))]
 pub async fn get_session(
     State(state): State<AppState>,
     Path(session_id): Path<String>,
 ) -> ApiResult<Json<Session>> {
-    state
-        .sessions
-        .get_session(&session_id)
-        .await?
-        .map(Json)
-        .ok_or_else(|| ApiError::not_found(format!("Session {} not found", session_id)))
+    if let Some(session) = state.sessions.get_session(&session_id).await? {
+        return Ok(Json(session));
+    }
+
+    Err(ApiError::not_found(format!(
+        "Session {} not found",
+        session_id
+    )))
 }
 
 /// Create a new session.
@@ -400,38 +424,46 @@ fn find_project_logo(project_path: &std::path::Path, project_name: &str) -> Opti
     }
 
     let entries = std::fs::read_dir(&logo_dir).ok()?;
-    
+
     // Collect all logo files
     let mut logos: Vec<(String, String, bool)> = Vec::new(); // (filename, variant, is_svg)
-    
+
     for entry in entries.flatten() {
         let path = entry.path();
         let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
         if ext != "svg" && ext != "png" {
             continue;
         }
-        
+
         let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
         let is_svg = ext == "svg";
-        
+
         // Extract variant from filename pattern: {project}_logo_{variant}.{ext}
         // or just {variant}.{ext} for simpler naming
-        let variant = if let Some(rest) = filename.strip_prefix(&format!("{}_logo_", project_name)) {
-            rest.strip_suffix(&format!(".{}", ext)).unwrap_or(rest).to_string()
+        let variant = if let Some(rest) = filename.strip_prefix(&format!("{}_logo_", project_name))
+        {
+            rest.strip_suffix(&format!(".{}", ext))
+                .unwrap_or(rest)
+                .to_string()
         } else if let Some(rest) = filename.strip_prefix("logo_") {
-            rest.strip_suffix(&format!(".{}", ext)).unwrap_or(rest).to_string()
+            rest.strip_suffix(&format!(".{}", ext))
+                .unwrap_or(rest)
+                .to_string()
         } else {
             // Fallback: use filename without extension as variant
-            filename.strip_suffix(&format!(".{}", ext)).unwrap_or(filename).to_string()
+            filename
+                .strip_suffix(&format!(".{}", ext))
+                .unwrap_or(filename)
+                .to_string()
         };
-        
+
         logos.push((filename.to_string(), variant, is_svg));
     }
-    
+
     if logos.is_empty() {
         return None;
     }
-    
+
     // Priority order for dark UI: white variants first, then SVG over PNG
     let variant_priority = |variant: &str| -> i32 {
         match variant {
@@ -443,7 +475,7 @@ fn find_project_logo(project_path: &std::path::Path, project_name: &str) -> Opti
             _ => 5,
         }
     };
-    
+
     logos.sort_by(|a, b| {
         let prio_a = variant_priority(&a.1);
         let prio_b = variant_priority(&b.1);
@@ -453,7 +485,7 @@ fn find_project_logo(project_path: &std::path::Path, project_name: &str) -> Opti
         // Prefer SVG over PNG
         b.2.cmp(&a.2)
     });
-    
+
     let (filename, variant, _) = &logos[0];
     Some(ProjectLogo {
         path: format!("logo/{}", filename),
@@ -471,7 +503,11 @@ pub async fn list_workspace_dirs(
     let relative = query.path.unwrap_or_else(|| ".".to_string());
     let rel_path = std::path::PathBuf::from(&relative);
 
-    if rel_path.is_absolute() || rel_path.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+    if rel_path.is_absolute()
+        || rel_path
+            .components()
+            .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
         return Err(ApiError::bad_request("invalid path"));
     }
 
@@ -482,14 +518,11 @@ pub async fn list_workspace_dirs(
 
     let mut dirs = Vec::new();
     for entry in entries {
-        let entry = entry.map_err(|e| ApiError::internal(format!("Failed to read directory entry: {}", e)))?;
+        let entry = entry
+            .map_err(|e| ApiError::internal(format!("Failed to read directory entry: {}", e)))?;
         let path = entry.path();
         if path.is_dir() {
-            let name = entry
-                .file_name()
-                .to_str()
-                .unwrap_or_default()
-                .to_string();
+            let name = entry.file_name().to_str().unwrap_or_default().to_string();
             let rel = path
                 .strip_prefix(&root)
                 .unwrap_or(&path)
@@ -522,7 +555,11 @@ pub async fn get_project_logo(
     let file_path = std::path::PathBuf::from(&path);
 
     // Security: prevent path traversal
-    if file_path.is_absolute() || file_path.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+    if file_path.is_absolute()
+        || file_path
+            .components()
+            .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
         return Err(ApiError::bad_request("invalid path"));
     }
 
@@ -531,17 +568,17 @@ pub async fn get_project_logo(
     if components.len() < 3 {
         return Err(ApiError::bad_request("invalid logo path"));
     }
-    
+
     // Check that the path contains "logo" as a directory component
-    let has_logo_dir = components.iter().any(|c| {
-        matches!(c, std::path::Component::Normal(s) if s.to_str() == Some("logo"))
-    });
+    let has_logo_dir = components
+        .iter()
+        .any(|c| matches!(c, std::path::Component::Normal(s) if s.to_str() == Some("logo")));
     if !has_logo_dir {
         return Err(ApiError::bad_request("path must be in logo/ directory"));
     }
 
     let full_path = root.join(&file_path);
-    
+
     // Check file exists and is a file
     if !full_path.is_file() {
         return Err(ApiError::not_found("logo not found"));
@@ -1291,11 +1328,17 @@ pub async fn list_agents(
     Path(session_id): Path<String>,
     Query(query): Query<AgentListQuery>,
 ) -> ApiResult<Json<Vec<AgentInfo>>> {
+    let opencode_session = state.sessions.get_or_create_opencode_session().await?;
     let agents = state
         .agents
-        .list_agents(&session_id, query.include_context)
+        .list_agents(&opencode_session.id, query.include_context)
         .await?;
-    info!(session_id = %session_id, count = agents.len(), "Listed agents");
+    info!(
+        requested_session_id = %session_id,
+        opencode_session_id = %opencode_session.id,
+        count = agents.len(),
+        "Listed agents"
+    );
     Ok(Json(agents))
 }
 
@@ -1306,9 +1349,10 @@ pub async fn get_agent(
     Path((session_id, agent_id)): Path<(String, String)>,
     Query(query): Query<AgentListQuery>,
 ) -> ApiResult<Json<AgentInfo>> {
+    let opencode_session = state.sessions.get_or_create_opencode_session().await?;
     state
         .agents
-        .get_agent(&session_id, &agent_id, query.include_context)
+        .get_agent(&opencode_session.id, &agent_id, query.include_context)
         .await?
         .map(Json)
         .ok_or_else(|| ApiError::not_found(format!("Agent {} not found", agent_id)))
@@ -1321,12 +1365,14 @@ pub async fn start_agent(
     Path(session_id): Path<String>,
     Json(request): Json<StartAgentRequest>,
 ) -> ApiResult<(StatusCode, Json<StartAgentResponse>)> {
+    let opencode_session = state.sessions.get_or_create_opencode_session().await?;
     let response = state
         .agents
-        .start_agent(&session_id, &request.directory)
+        .start_agent(&opencode_session.id, &request.directory)
         .await?;
     info!(
-        session_id = %session_id,
+        requested_session_id = %session_id,
+        opencode_session_id = %opencode_session.id,
         agent_id = %response.id,
         port = response.port,
         "Started agent"
@@ -1340,8 +1386,18 @@ pub async fn stop_agent(
     State(state): State<AppState>,
     Path((session_id, agent_id)): Path<(String, String)>,
 ) -> ApiResult<Json<StopAgentResponse>> {
-    let response = state.agents.stop_agent(&session_id, &agent_id).await?;
-    info!(session_id = %session_id, agent_id = %agent_id, stopped = response.stopped, "Stopped agent");
+    let opencode_session = state.sessions.get_or_create_opencode_session().await?;
+    let response = state
+        .agents
+        .stop_agent(&opencode_session.id, &agent_id)
+        .await?;
+    info!(
+        requested_session_id = %session_id,
+        opencode_session_id = %opencode_session.id,
+        agent_id = %agent_id,
+        stopped = response.stopped,
+        "Stopped agent"
+    );
     Ok(Json(response))
 }
 
@@ -1351,8 +1407,13 @@ pub async fn rediscover_agents(
     State(state): State<AppState>,
     Path(session_id): Path<String>,
 ) -> ApiResult<StatusCode> {
-    state.agents.rediscover_agents(&session_id).await?;
-    info!(session_id = %session_id, "Rediscovered agents");
+    let opencode_session = state.sessions.get_or_create_opencode_session().await?;
+    state.agents.rediscover_agents(&opencode_session.id).await?;
+    info!(
+        requested_session_id = %session_id,
+        opencode_session_id = %opencode_session.id,
+        "Rediscovered agents"
+    );
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -1363,17 +1424,19 @@ pub async fn create_agent(
     Path(session_id): Path<String>,
     Json(request): Json<CreateAgentRequest>,
 ) -> ApiResult<(StatusCode, Json<CreateAgentResponse>)> {
+    let opencode_session = state.sessions.get_or_create_opencode_session().await?;
     let response = state
         .agents
         .create_agent(
-            &session_id,
+            &opencode_session.id,
             &request.name,
             &request.description,
             request.scaffold.as_ref(),
         )
         .await?;
     info!(
-        session_id = %session_id,
+        requested_session_id = %session_id,
+        opencode_session_id = %opencode_session.id,
         agent_id = %response.id,
         directory = %response.directory,
         "Created agent"
@@ -1388,7 +1451,11 @@ pub async fn exec_agent_command(
     Path(session_id): Path<String>,
     Json(request): Json<AgentExecRequest>,
 ) -> ApiResult<Json<AgentExecResponse>> {
-    let response = state.agents.exec_command(&session_id, request).await?;
+    let opencode_session = state.sessions.get_or_create_opencode_session().await?;
+    let response = state
+        .agents
+        .exec_command(&opencode_session.id, request)
+        .await?;
     Ok(Json(response))
 }
 
@@ -1449,9 +1516,7 @@ pub async fn list_chat_history(
 
 /// Get a specific chat session by ID.
 #[instrument]
-pub async fn get_chat_session(
-    Path(session_id): Path<String>,
-) -> ApiResult<Json<ChatSession>> {
+pub async fn get_chat_session(Path(session_id): Path<String>) -> ApiResult<Json<ChatSession>> {
     crate::history::get_session(&session_id)
         .map_err(|e| ApiError::internal(format!("Failed to get chat session: {}", e)))?
         .map(Json)
@@ -1473,15 +1538,14 @@ pub async fn update_chat_session(
 ) -> ApiResult<Json<ChatSession>> {
     // Currently only title updates are supported
     if let Some(title) = request.title {
-        let session = crate::history::update_session_title(&session_id, &title)
-            .map_err(|e| {
-                if e.to_string().contains("not found") {
-                    ApiError::not_found(format!("Chat session {} not found", session_id))
-                } else {
-                    ApiError::internal(format!("Failed to update chat session: {}", e))
-                }
-            })?;
-        
+        let session = crate::history::update_session_title(&session_id, &title).map_err(|e| {
+            if e.to_string().contains("not found") {
+                ApiError::not_found(format!("Chat session {} not found", session_id))
+            } else {
+                ApiError::internal(format!("Failed to update chat session: {}", e))
+            }
+        })?;
+
         info!(session_id = %session_id, title = %title, "Updated chat session title");
         Ok(Json(session))
     } else {
@@ -1517,7 +1581,7 @@ pub async fn list_chat_history_grouped(
             if !query.include_children {
                 sessions.retain(|s| !s.is_child);
             }
-            
+
             // Apply limit per workspace
             if let Some(limit) = query.limit {
                 sessions.truncate(limit);
@@ -1585,7 +1649,10 @@ pub async fn get_chat_messages(
 // AgentRPC Handlers (new unified backend API)
 // ============================================================================
 
-use crate::agent_rpc::{self, Conversation as RpcConversation, Message as RpcMessage, HealthStatus as RpcHealthStatus, SessionHandle, SendMessagePart};
+use crate::agent_rpc::{
+    self, Conversation as RpcConversation, HealthStatus as RpcHealthStatus, Message as RpcMessage,
+    SendMessagePart, SessionHandle,
+};
 
 /// Request to start a new agent session.
 #[derive(Debug, Deserialize)]
@@ -1606,9 +1673,30 @@ pub struct StartAgentSessionRequest {
 #[derive(Debug, Deserialize)]
 pub struct SendAgentMessageRequest {
     /// Message text
-    pub text: String,
+    pub text: Option<String>,
+    /// Structured message parts
+    pub parts: Option<Vec<SendMessagePart>>,
+    /// Optional file part
+    pub file: Option<SendAgentFilePart>,
+    /// Optional agent mention part
+    pub agent: Option<SendAgentAgentPart>,
     /// Model override (optional)
     pub model: Option<agent_rpc::MessageModel>,
+}
+
+/// File part for agent messages.
+#[derive(Debug, Deserialize)]
+pub struct SendAgentFilePart {
+    pub mime: String,
+    pub url: String,
+    pub filename: Option<String>,
+}
+
+/// Agent part for agent messages.
+#[derive(Debug, Deserialize)]
+pub struct SendAgentAgentPart {
+    pub name: String,
+    pub id: Option<String>,
 }
 
 /// List conversations via AgentBackend.
@@ -1617,11 +1705,14 @@ pub async fn agent_list_conversations(
     State(state): State<AppState>,
     user: CurrentUser,
 ) -> ApiResult<Json<Vec<RpcConversation>>> {
-    let backend = state.agent_backend.as_ref().ok_or_else(|| {
-        ApiError::internal("AgentRPC backend not enabled")
-    })?;
+    let backend = state
+        .agent_backend
+        .as_ref()
+        .ok_or_else(|| ApiError::internal("AgentRPC backend not enabled"))?;
 
-    let conversations = backend.list_conversations(user.id()).await
+    let conversations = backend
+        .list_conversations(user.id())
+        .await
         .map_err(|e| ApiError::internal(format!("Failed to list conversations: {}", e)))?;
 
     info!(user_id = %user.id(), count = conversations.len(), "Listed agent conversations");
@@ -1635,13 +1726,18 @@ pub async fn agent_get_conversation(
     user: CurrentUser,
     Path(conversation_id): Path<String>,
 ) -> ApiResult<Json<RpcConversation>> {
-    let backend = state.agent_backend.as_ref().ok_or_else(|| {
-        ApiError::internal("AgentRPC backend not enabled")
-    })?;
+    let backend = state
+        .agent_backend
+        .as_ref()
+        .ok_or_else(|| ApiError::internal("AgentRPC backend not enabled"))?;
 
-    let conversation = backend.get_conversation(user.id(), &conversation_id).await
+    let conversation = backend
+        .get_conversation(user.id(), &conversation_id)
+        .await
         .map_err(|e| ApiError::internal(format!("Failed to get conversation: {}", e)))?
-        .ok_or_else(|| ApiError::not_found(format!("Conversation {} not found", conversation_id)))?;
+        .ok_or_else(|| {
+            ApiError::not_found(format!("Conversation {} not found", conversation_id))
+        })?;
 
     Ok(Json(conversation))
 }
@@ -1653,11 +1749,14 @@ pub async fn agent_get_messages(
     user: CurrentUser,
     Path(conversation_id): Path<String>,
 ) -> ApiResult<Json<Vec<RpcMessage>>> {
-    let backend = state.agent_backend.as_ref().ok_or_else(|| {
-        ApiError::internal("AgentRPC backend not enabled")
-    })?;
+    let backend = state
+        .agent_backend
+        .as_ref()
+        .ok_or_else(|| ApiError::internal("AgentRPC backend not enabled"))?;
 
-    let messages = backend.get_messages(user.id(), &conversation_id).await
+    let messages = backend
+        .get_messages(user.id(), &conversation_id)
+        .await
         .map_err(|e| ApiError::internal(format!("Failed to get messages: {}", e)))?;
 
     info!(user_id = %user.id(), conversation_id = %conversation_id, count = messages.len(), "Listed agent messages");
@@ -1671,9 +1770,10 @@ pub async fn agent_start_session(
     user: CurrentUser,
     Json(request): Json<StartAgentSessionRequest>,
 ) -> ApiResult<(StatusCode, Json<SessionHandle>)> {
-    let backend = state.agent_backend.as_ref().ok_or_else(|| {
-        ApiError::internal("AgentRPC backend not enabled")
-    })?;
+    let backend = state
+        .agent_backend
+        .as_ref()
+        .ok_or_else(|| ApiError::internal("AgentRPC backend not enabled"))?;
 
     let opts = agent_rpc::StartSessionOpts {
         model: request.model,
@@ -1684,7 +1784,9 @@ pub async fn agent_start_session(
     };
 
     let workdir = std::path::Path::new(&request.workdir);
-    let handle = backend.start_session(user.id(), workdir, opts).await
+    let handle = backend
+        .start_session(user.id(), workdir, opts)
+        .await
         .map_err(|e| ApiError::internal(format!("Failed to start session: {}", e)))?;
 
     info!(user_id = %user.id(), session_id = %handle.session_id, "Started agent session");
@@ -1699,16 +1801,40 @@ pub async fn agent_send_message(
     Path(session_id): Path<String>,
     Json(request): Json<SendAgentMessageRequest>,
 ) -> ApiResult<StatusCode> {
-    let backend = state.agent_backend.as_ref().ok_or_else(|| {
-        ApiError::internal("AgentRPC backend not enabled")
-    })?;
+    let backend = state
+        .agent_backend
+        .as_ref()
+        .ok_or_else(|| ApiError::internal("AgentRPC backend not enabled"))?;
+
+    let mut parts = request.parts.unwrap_or_default();
+    if let Some(file) = request.file {
+        parts.push(SendMessagePart::File {
+            mime: file.mime,
+            url: file.url,
+            filename: file.filename,
+        });
+    }
+    if let Some(agent) = request.agent {
+        parts.push(SendMessagePart::Agent {
+            name: agent.name,
+            id: agent.id,
+        });
+    }
+    if let Some(text) = request.text {
+        parts.push(SendMessagePart::Text { text });
+    }
+    if parts.is_empty() {
+        return Err(ApiError::bad_request("message must include text or parts"));
+    }
 
     let send_request = agent_rpc::SendMessageRequest {
-        parts: vec![SendMessagePart::Text { text: request.text }],
+        parts,
         model: request.model,
     };
 
-    backend.send_message(user.id(), &session_id, send_request).await
+    backend
+        .send_message(user.id(), &session_id, send_request)
+        .await
         .map_err(|e| ApiError::internal(format!("Failed to send message: {}", e)))?;
 
     info!(user_id = %user.id(), session_id = %session_id, "Sent message to agent session");
@@ -1722,11 +1848,14 @@ pub async fn agent_stop_session(
     user: CurrentUser,
     Path(session_id): Path<String>,
 ) -> ApiResult<StatusCode> {
-    let backend = state.agent_backend.as_ref().ok_or_else(|| {
-        ApiError::internal("AgentRPC backend not enabled")
-    })?;
+    let backend = state
+        .agent_backend
+        .as_ref()
+        .ok_or_else(|| ApiError::internal("AgentRPC backend not enabled"))?;
 
-    backend.stop_session(user.id(), &session_id).await
+    backend
+        .stop_session(user.id(), &session_id)
+        .await
         .map_err(|e| ApiError::internal(format!("Failed to stop session: {}", e)))?;
 
     info!(user_id = %user.id(), session_id = %session_id, "Stopped agent session");
@@ -1740,11 +1869,14 @@ pub async fn agent_get_session_url(
     user: CurrentUser,
     Path(session_id): Path<String>,
 ) -> ApiResult<Json<SessionUrlResponse>> {
-    let backend = state.agent_backend.as_ref().ok_or_else(|| {
-        ApiError::internal("AgentRPC backend not enabled")
-    })?;
+    let backend = state
+        .agent_backend
+        .as_ref()
+        .ok_or_else(|| ApiError::internal("AgentRPC backend not enabled"))?;
 
-    let url = backend.get_session_url(user.id(), &session_id).await
+    let url = backend
+        .get_session_url(user.id(), &session_id)
+        .await
         .map_err(|e| ApiError::internal(format!("Failed to get session URL: {}", e)))?;
 
     Ok(Json(SessionUrlResponse { session_id, url }))
@@ -1759,14 +1891,15 @@ pub struct SessionUrlResponse {
 
 /// Health check for the AgentRPC backend.
 #[instrument(skip(state))]
-pub async fn agent_health(
-    State(state): State<AppState>,
-) -> ApiResult<Json<RpcHealthStatus>> {
-    let backend = state.agent_backend.as_ref().ok_or_else(|| {
-        ApiError::internal("AgentRPC backend not enabled")
-    })?;
+pub async fn agent_health(State(state): State<AppState>) -> ApiResult<Json<RpcHealthStatus>> {
+    let backend = state
+        .agent_backend
+        .as_ref()
+        .ok_or_else(|| ApiError::internal("AgentRPC backend not enabled"))?;
 
-    let health = backend.health().await
+    let health = backend
+        .health()
+        .await
         .map_err(|e| ApiError::internal(format!("Health check failed: {}", e)))?;
 
     Ok(Json(health))
@@ -1781,11 +1914,14 @@ pub async fn agent_attach(
     user: CurrentUser,
     Path(session_id): Path<String>,
 ) -> Result<Sse<impl tokio_stream::Stream<Item = Result<Event, Infallible>>>, ApiError> {
-    let backend = state.agent_backend.as_ref().ok_or_else(|| {
-        ApiError::internal("AgentRPC backend not enabled")
-    })?;
+    let backend = state
+        .agent_backend
+        .as_ref()
+        .ok_or_else(|| ApiError::internal("AgentRPC backend not enabled"))?;
 
-    let event_stream = backend.attach(user.id(), &session_id).await
+    let event_stream = backend
+        .attach(user.id(), &session_id)
+        .await
         .map_err(|e| ApiError::internal(format!("Failed to attach to session: {}", e)))?;
 
     // Convert AgentEvent stream to SSE Event stream
@@ -1835,9 +1971,9 @@ pub async fn get_settings_schema(
 ) -> ApiResult<Json<serde_json::Value>> {
     let service = get_settings_service(&state, &query.app)?;
     let scope = user_to_scope(&user);
-    
+
     let schema = service.get_schema(scope);
-    
+
     info!(user_id = %user.id(), app = %query.app, scope = ?scope, "Retrieved settings schema");
     Ok(Json(schema))
 }
@@ -1851,9 +1987,9 @@ pub async fn get_settings_values(
 ) -> ApiResult<Json<HashMap<String, SettingsValue>>> {
     let service = get_settings_service(&state, &query.app)?;
     let scope = user_to_scope(&user);
-    
+
     let values = service.get_values(scope).await;
-    
+
     info!(user_id = %user.id(), app = %query.app, count = values.len(), "Retrieved settings values");
     Ok(Json(values))
 }
@@ -1868,13 +2004,15 @@ pub async fn update_settings_values(
 ) -> ApiResult<Json<HashMap<String, SettingsValue>>> {
     let service = get_settings_service(&state, &query.app)?;
     let scope = user_to_scope(&user);
-    
-    service.update_values(updates, scope).await
+
+    service
+        .update_values(updates, scope)
+        .await
         .map_err(|e| ApiError::bad_request(format!("Failed to update settings: {}", e)))?;
-    
+
     // Return updated values
     let values = service.get_values(scope).await;
-    
+
     info!(user_id = %user.id(), app = %query.app, "Updated settings");
     Ok(Json(values))
 }
@@ -1887,10 +2025,12 @@ pub async fn reload_settings(
     Query(query): Query<SettingsQuery>,
 ) -> ApiResult<Json<serde_json::Value>> {
     let service = get_settings_service(&state, &query.app)?;
-    
-    service.reload().await
+
+    service
+        .reload()
+        .await
         .map_err(|e| ApiError::internal(format!("Failed to reload settings: {}", e)))?;
-    
+
     info!(app = %query.app, "Settings reloaded");
     Ok(Json(serde_json::json!({ "status": "reloaded" })))
 }
@@ -1904,6 +2044,125 @@ fn user_to_scope(user: &CurrentUser) -> SettingsScope {
     }
 }
 
+// ============================================================================
+// OpenCode Global Config
+// ============================================================================
+
+/// Get the global opencode.json config for the current user.
+///
+/// Returns the contents of ~/.config/opencode/opencode.json
+/// In local mode, this is the server user's config.
+/// In container mode, this would be per-user (not yet implemented).
+#[instrument(skip(_user))]
+pub async fn get_global_opencode_config(_user: CurrentUser) -> ApiResult<Json<serde_json::Value>> {
+    // Get the config directory path
+    let config_path = get_global_opencode_config_path();
+
+    // Read and parse the config file
+    match tokio::fs::read_to_string(&config_path).await {
+        Ok(content) => {
+            // Parse as JSON - strip comments first since opencode.json supports JSONC
+            let stripped = strip_json_comments(&content);
+            let config: serde_json::Value = serde_json::from_str(&stripped)
+                .map_err(|e| ApiError::internal(format!("Failed to parse opencode.json: {}", e)))?;
+            Ok(Json(config))
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            // Return empty object if file doesn't exist
+            Ok(Json(serde_json::json!({})))
+        }
+        Err(e) => Err(ApiError::internal(format!(
+            "Failed to read opencode.json: {}",
+            e
+        ))),
+    }
+}
+
+/// Get the path to the global opencode.json config file.
+fn get_global_opencode_config_path() -> std::path::PathBuf {
+    // Default: ~/.config/opencode/opencode.json
+    if let Some(config_dir) = dirs::config_dir() {
+        config_dir.join("opencode").join("opencode.json")
+    } else if let Some(home) = dirs::home_dir() {
+        home.join(".config").join("opencode").join("opencode.json")
+    } else {
+        // Fallback
+        std::path::PathBuf::from("/etc/opencode/opencode.json")
+    }
+}
+
+/// Strip single-line (//) and multi-line (/* */) comments from JSON content,
+/// and remove trailing commas. This allows parsing JSONC (JSON with comments) files.
+fn strip_json_comments(input: &str) -> String {
+    let mut result = String::with_capacity(input.len());
+    let mut chars = input.chars().peekable();
+    let mut in_string = false;
+    let mut escape_next = false;
+
+    while let Some(c) = chars.next() {
+        if escape_next {
+            result.push(c);
+            escape_next = false;
+            continue;
+        }
+
+        if in_string {
+            result.push(c);
+            if c == '\\' {
+                escape_next = true;
+            } else if c == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+
+        match c {
+            '"' => {
+                in_string = true;
+                result.push(c);
+            }
+            '/' => {
+                if let Some(&next) = chars.peek() {
+                    match next {
+                        '/' => {
+                            // Single-line comment: skip until end of line
+                            chars.next(); // consume the second '/'
+                            while let Some(&ch) = chars.peek() {
+                                if ch == '\n' {
+                                    break;
+                                }
+                                chars.next();
+                            }
+                        }
+                        '*' => {
+                            // Multi-line comment: skip until */
+                            chars.next(); // consume the '*'
+                            while let Some(ch) = chars.next() {
+                                if ch == '*' {
+                                    if let Some(&'/') = chars.peek() {
+                                        chars.next(); // consume the '/'
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        _ => {
+                            result.push(c);
+                        }
+                    }
+                } else {
+                    result.push(c);
+                }
+            }
+            _ => {
+                result.push(c);
+            }
+        }
+    }
+
+    result
+}
+
 /// Get the settings service for an app.
 fn get_settings_service<'a>(state: &'a AppState, app: &str) -> ApiResult<&'a Arc<SettingsService>> {
     match app {
@@ -1912,4 +2171,344 @@ fn get_settings_service<'a>(state: &'a AppState, app: &str) -> ApiResult<&'a Arc
         _ => None,
     }
     .ok_or_else(|| ApiError::not_found(format!("Settings for app '{}' not found", app)))
+}
+
+// ============================================================================
+// TRX (Issue Tracking) Handlers
+// ============================================================================
+
+/// Dependency as returned by trx CLI.
+#[derive(Debug, Deserialize)]
+struct TrxDependency {
+    #[allow(dead_code)]
+    issue_id: String,
+    depends_on_id: String,
+    #[serde(rename = "type")]
+    dep_type: String,
+    #[allow(dead_code)]
+    created_at: String,
+}
+
+/// Raw TRX issue as returned by `trx list --json`.
+#[derive(Debug, Deserialize)]
+struct TrxIssueRaw {
+    id: String,
+    title: String,
+    #[serde(default)]
+    description: Option<String>,
+    status: String,
+    priority: i32,
+    issue_type: String,
+    created_at: String,
+    updated_at: String,
+    #[serde(default)]
+    closed_at: Option<String>,
+    #[serde(default)]
+    dependencies: Vec<TrxDependency>,
+}
+
+/// TRX issue as returned by API (transformed from raw).
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TrxIssue {
+    pub id: String,
+    pub title: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    pub status: String,
+    pub priority: i32,
+    pub issue_type: String,
+    pub created_at: String,
+    pub updated_at: String,
+    #[serde(default)]
+    pub closed_at: Option<String>,
+    #[serde(default)]
+    pub parent_id: Option<String>,
+    #[serde(default)]
+    pub labels: Vec<String>,
+    #[serde(default)]
+    pub blocked_by: Vec<String>,
+}
+
+impl From<TrxIssueRaw> for TrxIssue {
+    fn from(raw: TrxIssueRaw) -> Self {
+        // Extract parent_id from dependencies with type "parent_child"
+        let parent_id = raw
+            .dependencies
+            .iter()
+            .find(|d| d.dep_type == "parent_child")
+            .map(|d| d.depends_on_id.clone());
+
+        // Extract blocked_by from dependencies with type "blocks"
+        let blocked_by: Vec<String> = raw
+            .dependencies
+            .iter()
+            .filter(|d| d.dep_type == "blocks")
+            .map(|d| d.depends_on_id.clone())
+            .collect();
+
+        TrxIssue {
+            id: raw.id,
+            title: raw.title,
+            description: raw.description,
+            status: raw.status,
+            priority: raw.priority,
+            issue_type: raw.issue_type,
+            created_at: raw.created_at,
+            updated_at: raw.updated_at,
+            closed_at: raw.closed_at,
+            parent_id,
+            labels: Vec::new(),
+            blocked_by,
+        }
+    }
+}
+
+/// Request body for creating a TRX issue.
+#[derive(Debug, Deserialize)]
+pub struct CreateTrxIssueRequest {
+    pub title: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default = "default_issue_type")]
+    pub issue_type: String,
+    #[serde(default = "default_priority")]
+    pub priority: i32,
+    #[serde(default)]
+    pub parent_id: Option<String>,
+}
+
+fn default_issue_type() -> String {
+    "task".to_string()
+}
+
+fn default_priority() -> i32 {
+    2
+}
+
+/// Request body for updating a TRX issue.
+#[derive(Debug, Deserialize)]
+pub struct UpdateTrxIssueRequest {
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default)]
+    pub priority: Option<i32>,
+}
+
+/// Request body for closing a TRX issue.
+#[derive(Debug, Deserialize)]
+pub struct CloseTrxIssueRequest {
+    #[serde(default)]
+    pub reason: Option<String>,
+}
+
+/// Query parameters for workspace-based TRX routes.
+#[derive(Debug, Deserialize)]
+pub struct TrxWorkspaceQuery {
+    pub workspace_path: String,
+}
+
+/// Execute trx command in a workspace directory.
+async fn exec_trx_command(
+    workspace_path: &str,
+    args: &[&str],
+) -> Result<String, ApiError> {
+    use tokio::process::Command;
+
+    let output = Command::new("trx")
+        .args(args)
+        .arg("--json")
+        .current_dir(workspace_path)
+        .output()
+        .await
+        .map_err(|e| ApiError::internal(format!("Failed to execute trx: {}", e)))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(ApiError::internal(format!("trx command failed: {}", stderr)));
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+/// List TRX issues for a workspace.
+#[instrument(skip(_state))]
+pub async fn list_trx_issues(
+    State(_state): State<AppState>,
+    Query(query): Query<TrxWorkspaceQuery>,
+) -> ApiResult<Json<Vec<TrxIssue>>> {
+    let output = exec_trx_command(&query.workspace_path, &["list"]).await?;
+    
+    // Parse the raw JSON output and transform to API format
+    let raw_issues: Vec<TrxIssueRaw> = serde_json::from_str(&output)
+        .map_err(|e| ApiError::internal(format!("Failed to parse trx output: {}", e)))?;
+    
+    let issues: Vec<TrxIssue> = raw_issues.into_iter().map(TrxIssue::from).collect();
+    
+    Ok(Json(issues))
+}
+
+/// Get a specific TRX issue.
+#[instrument(skip(_state))]
+pub async fn get_trx_issue(
+    State(_state): State<AppState>,
+    Path(issue_id): Path<String>,
+    Query(query): Query<TrxWorkspaceQuery>,
+) -> ApiResult<Json<TrxIssue>> {
+    let output = exec_trx_command(&query.workspace_path, &["show", &issue_id]).await?;
+    
+    let raw_issue: TrxIssueRaw = serde_json::from_str(&output)
+        .map_err(|e| ApiError::internal(format!("Failed to parse trx output: {}", e)))?;
+    
+    Ok(Json(TrxIssue::from(raw_issue)))
+}
+
+/// Create a new TRX issue.
+#[instrument(skip(_state, request))]
+pub async fn create_trx_issue(
+    State(_state): State<AppState>,
+    Query(query): Query<TrxWorkspaceQuery>,
+    Json(request): Json<CreateTrxIssueRequest>,
+) -> ApiResult<Json<TrxIssue>> {
+    let mut args = vec![
+        "create",
+        &request.title,
+        "-t",
+        &request.issue_type,
+        "-p",
+    ];
+    let priority_str = request.priority.to_string();
+    args.push(&priority_str);
+    
+    if let Some(ref desc) = request.description {
+        args.push("-d");
+        args.push(desc);
+    }
+    
+    if let Some(ref parent) = request.parent_id {
+        args.push("--parent");
+        args.push(parent);
+    }
+    
+    let output = exec_trx_command(&query.workspace_path, &args).await?;
+    
+    // trx create --json returns the created issue
+    let raw_issue: TrxIssueRaw = serde_json::from_str(&output)
+        .map_err(|e| ApiError::internal(format!("Failed to parse trx output: {}", e)))?;
+    
+    let issue = TrxIssue::from(raw_issue);
+    info!(issue_id = %issue.id, "Created TRX issue");
+    Ok(Json(issue))
+}
+
+/// Update a TRX issue.
+#[instrument(skip(_state, request))]
+pub async fn update_trx_issue(
+    State(_state): State<AppState>,
+    Path(issue_id): Path<String>,
+    Query(query): Query<TrxWorkspaceQuery>,
+    Json(request): Json<UpdateTrxIssueRequest>,
+) -> ApiResult<Json<TrxIssue>> {
+    let mut args = vec!["update", &issue_id];
+    
+    // Build args based on what's being updated
+    let title_arg;
+    if let Some(ref title) = request.title {
+        args.push("--title");
+        title_arg = title.clone();
+        args.push(&title_arg);
+    }
+    
+    let desc_arg;
+    if let Some(ref desc) = request.description {
+        args.push("--description");
+        desc_arg = desc.clone();
+        args.push(&desc_arg);
+    }
+    
+    let status_arg;
+    if let Some(ref status) = request.status {
+        args.push("--status");
+        status_arg = status.clone();
+        args.push(&status_arg);
+    }
+    
+    let priority_arg;
+    if let Some(priority) = request.priority {
+        args.push("-p");
+        priority_arg = priority.to_string();
+        args.push(&priority_arg);
+    }
+    
+    let output = exec_trx_command(&query.workspace_path, &args).await?;
+    
+    // Parse the updated issue (trx update --json returns array with single issue)
+    let raw_issues: Vec<TrxIssueRaw> = serde_json::from_str(&output)
+        .map_err(|e| ApiError::internal(format!("Failed to parse trx output: {}", e)))?;
+    
+    let issue = raw_issues.into_iter().next()
+        .map(TrxIssue::from)
+        .ok_or_else(|| ApiError::internal("No issue returned from trx update"))?;
+    
+    info!(issue_id = %issue.id, "Updated TRX issue");
+    Ok(Json(issue))
+}
+
+/// Close a TRX issue.
+#[instrument(skip(_state, request))]
+pub async fn close_trx_issue(
+    State(_state): State<AppState>,
+    Path(issue_id): Path<String>,
+    Query(query): Query<TrxWorkspaceQuery>,
+    Json(request): Json<CloseTrxIssueRequest>,
+) -> ApiResult<Json<TrxIssue>> {
+    let mut args = vec!["close", &issue_id];
+    
+    let reason_arg;
+    if let Some(ref reason) = request.reason {
+        args.push("-r");
+        reason_arg = reason.clone();
+        args.push(&reason_arg);
+    }
+    
+    let output = exec_trx_command(&query.workspace_path, &args).await?;
+    
+    // Parse the closed issue
+    let raw_issues: Vec<TrxIssueRaw> = serde_json::from_str(&output)
+        .map_err(|e| ApiError::internal(format!("Failed to parse trx output: {}", e)))?;
+    
+    let issue = raw_issues.into_iter().next()
+        .map(TrxIssue::from)
+        .ok_or_else(|| ApiError::internal("No issue returned from trx close"))?;
+    
+    info!(issue_id = %issue.id, "Closed TRX issue");
+    Ok(Json(issue))
+}
+
+/// Sync TRX changes (git add and commit .trx/).
+#[instrument(skip(_state))]
+pub async fn sync_trx(
+    State(_state): State<AppState>,
+    Query(query): Query<TrxWorkspaceQuery>,
+) -> ApiResult<Json<serde_json::Value>> {
+    // Note: trx sync doesn't have JSON output, so we just check for success
+    use tokio::process::Command;
+
+    let output = Command::new("trx")
+        .args(["sync"])
+        .current_dir(&query.workspace_path)
+        .output()
+        .await
+        .map_err(|e| ApiError::internal(format!("Failed to execute trx sync: {}", e)))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(ApiError::internal(format!("trx sync failed: {}", stderr)));
+    }
+
+    info!("TRX synced");
+    Ok(Json(serde_json::json!({ "synced": true })))
 }
