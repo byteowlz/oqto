@@ -24,14 +24,18 @@ mod eavs;
 mod history;
 mod invite;
 mod local;
+mod main_chat;
 mod markdown;
 mod observability;
 mod session;
+mod session_ui;
 mod settings;
 mod user;
 mod wordlist;
 
 const APP_NAME: &str = "octo";
+
+use crate::session_ui::SessionAutoAttachMode;
 
 fn main() {
     if let Err(err) = try_main() {
@@ -438,6 +442,7 @@ struct AppConfig {
     eavs: Option<EavsConfig>,
     mmry: MmryConfig,
     voice: VoiceConfig,
+    sessions: SessionUiConfig,
     auth: auth::AuthConfig,
     /// Agent scaffolding configuration.
     scaffold: ScaffoldConfig,
@@ -497,6 +502,7 @@ impl Default for AppConfig {
             eavs: None,
             mmry: MmryConfig::default(),
             voice: VoiceConfig::default(),
+            sessions: SessionUiConfig::default(),
             auth: auth::AuthConfig::default(),
             scaffold: ScaffoldConfig::default(),
         }
@@ -610,6 +616,25 @@ impl Default for VoiceConfig {
                 ("orb".to_string(), VisualizerVoice { voice: "af_heart".to_string(), speed: 1.0 }),
                 ("kitt".to_string(), VisualizerVoice { voice: "am_michael".to_string(), speed: 1.1 }),
             ].into_iter().collect(),
+        }
+    }
+}
+
+/// Session UX configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+struct SessionUiConfig {
+    /// Auto-attach to a running session (or resume/start if configured).
+    auto_attach: SessionAutoAttachMode,
+    /// Scan running sessions for the selected chat session ID.
+    auto_attach_scan: bool,
+}
+
+impl Default for SessionUiConfig {
+    fn default() -> Self {
+        Self {
+            auto_attach: SessionAutoAttachMode::Off,
+            auto_attach_scan: false,
         }
     }
 }
@@ -1513,6 +1538,11 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
         }).collect(),
     };
 
+    let session_ui_state = api::SessionUiState {
+        auto_attach: ctx.config.sessions.auto_attach,
+        auto_attach_scan: ctx.config.sessions.auto_attach_scan,
+    };
+
     // Create settings services
     let octo_schema: serde_json::Value = serde_json::from_str(
         include_str!("../examples/backend.config.schema.json")
@@ -1563,6 +1593,7 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
             backend,
             mmry_state,
             voice_state,
+            session_ui_state,
         )
     } else {
         api::AppState::new(
@@ -1573,6 +1604,7 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
             auth_state,
             mmry_state,
             voice_state,
+            session_ui_state,
         )
     };
 
@@ -1581,6 +1613,14 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     if let Some(mmry_settings) = settings_mmry {
         state = state.with_settings_mmry(mmry_settings);
     }
+
+    // Initialize Main Chat service
+    // Uses the user data path as the workspace dir for per-user Main Chat data
+    let main_chat_workspace_dir = ctx.paths.data_dir.join("users");
+    let main_chat_service =
+        main_chat::MainChatService::new(main_chat_workspace_dir, ctx.config.local.single_user);
+    info!("Main Chat service initialized");
+    state = state.with_main_chat(main_chat_service);
 
     // Create router
     let app = api::create_router(state);

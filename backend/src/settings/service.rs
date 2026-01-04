@@ -41,14 +41,12 @@ pub struct SettingsService {
     values: Arc<RwLock<Value>>,
     /// Reload notification channel
     reload_tx: watch::Sender<()>,
-    /// Reload receiver (for subscribers)
-    reload_rx: watch::Receiver<()>,
 }
 
 impl SettingsService {
     /// Create a new settings service.
     pub fn new(schema: Value, config_dir: PathBuf, config_filename: &str) -> Result<Self> {
-        let (reload_tx, reload_rx) = watch::channel(());
+        let (reload_tx, _reload_rx) = watch::channel(());
         
         let config_path = config_dir.join(config_filename);
         let values = if config_path.exists() {
@@ -63,7 +61,6 @@ impl SettingsService {
             config_filename: config_filename.to_string(),
             values: Arc::new(RwLock::new(values)),
             reload_tx,
-            reload_rx,
         })
     }
 
@@ -154,10 +151,6 @@ impl SettingsService {
         Ok(())
     }
 
-    /// Subscribe to reload notifications.
-    pub fn subscribe(&self) -> watch::Receiver<()> {
-        self.reload_rx.clone()
-    }
 }
 
 /// Load a TOML file as JSON Value.

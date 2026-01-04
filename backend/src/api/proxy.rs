@@ -15,6 +15,124 @@ use crate::session::SessionStatus;
 
 use super::state::AppState;
 
+async fn ensure_session_active_for_proxy(
+    state: &AppState,
+    session_id: &str,
+    session: crate::session::Session,
+) -> Result<crate::session::Session, StatusCode> {
+    match session.status {
+        SessionStatus::Running | SessionStatus::Starting | SessionStatus::Pending => Ok(session),
+        SessionStatus::Stopped => {
+            warn!(
+                "Session {} is stopped; attempting to resume for proxy request",
+                session_id
+            );
+            match state.sessions.resume_session(session_id).await {
+                Ok(resumed) => Ok(resumed),
+                Err(err) => {
+                    error!("Failed to resume session {}: {:?}", session_id, err);
+                    Err(StatusCode::SERVICE_UNAVAILABLE)
+                }
+            }
+        }
+        SessionStatus::Stopping | SessionStatus::Failed => {
+            warn!("Attempted to proxy to inactive session {}", session_id);
+            Err(StatusCode::SERVICE_UNAVAILABLE)
+        }
+    }
+}
+
+/// Proxy WebSocket requests to the configured STT service.
+pub async fn proxy_voice_stt_ws(
+    State(state): State<AppState>,
+    ws: WebSocketUpgrade,
+) -> Result<impl IntoResponse, StatusCode> {
+    if !state.voice.enabled {
+        return Err(StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    let target_url = state.voice.stt_url.clone();
+
+    Ok(ws.on_upgrade(move |socket| async move {
+        if let Err(e) = handle_voice_ws_proxy(socket, target_url).await {
+            error!("Voice STT proxy error: {:?}", e);
+        }
+    }))
+}
+
+/// Proxy WebSocket requests to the configured TTS service.
+pub async fn proxy_voice_tts_ws(
+    State(state): State<AppState>,
+    ws: WebSocketUpgrade,
+) -> Result<impl IntoResponse, StatusCode> {
+    if !state.voice.enabled {
+        return Err(StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    let target_url = state.voice.tts_url.clone();
+
+    Ok(ws.on_upgrade(move |socket| async move {
+        if let Err(e) = handle_voice_ws_proxy(socket, target_url).await {
+            error!("Voice TTS proxy error: {:?}", e);
+        }
+    }))
+}
+
+async fn handle_voice_ws_proxy(
+    client_socket: axum::extract::ws::WebSocket,
+    target_url: String,
+) -> anyhow::Result<()> {
+    use axum::extract::ws::Message as AxumMessage;
+    use tokio_tungstenite::tungstenite::Message as TungsteniteMessage;
+
+    debug!("Proxying voice WebSocket to {}", target_url);
+
+    let (server_socket, _) = connect_async(target_url).await?;
+
+    let (mut client_tx, mut client_rx) = client_socket.split();
+    let (mut server_tx, mut server_rx) = server_socket.split();
+
+    let client_to_server = async {
+        while let Some(msg) = client_rx.next().await {
+            let msg = msg?;
+            let forward = match msg {
+                AxumMessage::Text(text) => TungsteniteMessage::Text(text.to_string().into()),
+                AxumMessage::Binary(data) => TungsteniteMessage::Binary(data),
+                AxumMessage::Ping(data) => TungsteniteMessage::Ping(data),
+                AxumMessage::Pong(data) => TungsteniteMessage::Pong(data),
+                AxumMessage::Close(_) => TungsteniteMessage::Close(None),
+            };
+            server_tx.send(forward).await?;
+        }
+        Ok::<(), anyhow::Error>(())
+    };
+
+    let server_to_client = async {
+        while let Some(msg) = server_rx.next().await {
+            let msg = msg?;
+            let forward = match msg {
+                TungsteniteMessage::Text(text) => {
+                    AxumMessage::Text(text.to_string().into())
+                }
+                TungsteniteMessage::Binary(data) => AxumMessage::Binary(data),
+                TungsteniteMessage::Ping(data) => AxumMessage::Ping(data),
+                TungsteniteMessage::Pong(data) => AxumMessage::Pong(data),
+                TungsteniteMessage::Close(_) => AxumMessage::Close(None),
+                TungsteniteMessage::Frame(_) => continue,
+            };
+            client_tx.send(forward).await?;
+        }
+        Ok::<(), anyhow::Error>(())
+    };
+
+    tokio::select! {
+        result = client_to_server => result?,
+        result = server_to_client => result?,
+    }
+
+    Ok(())
+}
+
 /// Proxy HTTP requests to a session's opencode server.
 pub async fn proxy_opencode(
     State(state): State<AppState>,
@@ -31,10 +149,7 @@ pub async fn proxy_opencode(
         })?
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    if !session.is_active() {
-        warn!("Attempted to proxy to inactive session {}", session_id);
-        return Err(StatusCode::SERVICE_UNAVAILABLE);
-    }
+    let _session = ensure_session_active_for_proxy(&state, &session_id, session.clone()).await?;
 
     let starting = matches!(session.status, SessionStatus::Starting);
     proxy_request(
@@ -149,18 +264,7 @@ pub async fn proxy_terminal_ws(
         })?
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    // Allow terminal connections during session startup. The WS proxy will wait
-    // briefly for ttyd to become available instead of immediately failing.
-    if matches!(
-        session.status,
-        SessionStatus::Stopping | SessionStatus::Stopped | SessionStatus::Failed
-    ) {
-        warn!(
-            "Attempted to proxy terminal to inactive session {}",
-            session_id
-        );
-        return Err(StatusCode::SERVICE_UNAVAILABLE);
-    }
+    let _session = ensure_session_active_for_proxy(&state, &session_id, session.clone()).await?;
 
     let ttyd_port = session.ttyd_port;
 
@@ -424,10 +528,7 @@ pub async fn proxy_opencode_events(
         })?
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    if !session.is_active() {
-        warn!("Attempted to proxy SSE to inactive session {}", session_id);
-        return Err(StatusCode::SERVICE_UNAVAILABLE);
-    }
+    let _session = ensure_session_active_for_proxy(&state, &session_id, session.clone()).await?;
 
     let target_url = format!("http://localhost:{}/event", session.opencode_port);
     debug!("Proxying SSE events from {}", target_url);
@@ -796,10 +897,7 @@ pub async fn proxy_opencode_agent(
         })?
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    if !session.is_active() {
-        warn!("Attempted to proxy to inactive session {}", session_id);
-        return Err(StatusCode::SERVICE_UNAVAILABLE);
-    }
+    let _session = ensure_session_active_for_proxy(&state, &session_id, session.clone()).await?;
 
     // Resolve the agent's port
     let port = state
@@ -842,10 +940,7 @@ pub async fn proxy_opencode_agent_events(
         })?
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    if !session.is_active() {
-        warn!("Attempted to proxy SSE to inactive session {}", session_id);
-        return Err(StatusCode::SERVICE_UNAVAILABLE);
-    }
+    let _session = ensure_session_active_for_proxy(&state, &session_id, session).await?;
 
     // Resolve the agent's port
     let port = state

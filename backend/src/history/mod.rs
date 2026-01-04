@@ -214,15 +214,6 @@ pub fn list_sessions_grouped() -> Result<HashMap<String, Vec<ChatSession>>> {
     Ok(grouped)
 }
 
-/// List sessions for a specific workspace path.
-pub fn list_sessions_for_workspace(workspace_path: &str) -> Result<Vec<ChatSession>> {
-    let sessions = list_sessions()?;
-    Ok(sessions
-        .into_iter()
-        .filter(|s| s.workspace_path == workspace_path)
-        .collect())
-}
-
 /// Get a single session by ID.
 pub fn get_session(session_id: &str) -> Result<Option<ChatSession>> {
     let sessions = list_sessions()?;
@@ -394,6 +385,7 @@ pub struct ChatMessage {
     pub summary_title: Option<String>,
     pub tokens_input: Option<i64>,
     pub tokens_output: Option<i64>,
+    pub tokens_reasoning: Option<i64>,
     pub cost: Option<f64>,
     /// Message content parts
     pub parts: Vec<ChatMessagePart>,
@@ -456,17 +448,6 @@ pub async fn get_session_messages_async(session_id: &str) -> Result<Vec<ChatMess
     }
 
     Ok(messages)
-}
-
-/// Invalidate the cache for a session.
-pub async fn invalidate_message_cache(session_id: &str) {
-    let mut cache = MESSAGE_CACHE.write().await;
-    cache.remove(session_id);
-}
-
-/// Get all messages for a session (sync version, for backwards compatibility).
-pub fn get_session_messages(session_id: &str) -> Result<Vec<ChatMessage>> {
-    get_session_messages_from_dir(session_id, &default_opencode_data_dir())
 }
 
 /// Get all messages for a session using parallel I/O.
@@ -537,7 +518,7 @@ fn load_single_message(msg_path: &Path, part_dir: &Path) -> Result<Option<ChatMe
         .with_context(|| format!("parsing message: {:?}", msg_path))?;
 
     // Load parts for this message
-    let parts = load_message_parts(&info.id, part_dir);
+    let parts = load_message_parts(&info.id, &info.session_id, part_dir);
 
     Ok(Some(ChatMessage {
         id: info.id.clone(),
@@ -552,6 +533,7 @@ fn load_single_message(msg_path: &Path, part_dir: &Path) -> Result<Option<ChatMe
         summary_title: info.summary.and_then(|s| s.title),
         tokens_input: info.tokens.as_ref().and_then(|t| t.input),
         tokens_output: info.tokens.as_ref().and_then(|t| t.output),
+        tokens_reasoning: info.tokens.as_ref().and_then(|t| t.reasoning),
         cost: info.cost,
         parts,
     }))
@@ -610,7 +592,7 @@ pub fn get_session_messages_from_dir(session_id: &str, opencode_dir: &Path) -> R
         };
 
         // Load parts for this message
-        let parts = load_message_parts(&info.id, &part_dir);
+        let parts = load_message_parts(&info.id, &info.session_id, &part_dir);
 
         messages.push(ChatMessage {
             id: info.id.clone(),
@@ -625,6 +607,7 @@ pub fn get_session_messages_from_dir(session_id: &str, opencode_dir: &Path) -> R
             summary_title: info.summary.and_then(|s| s.title),
             tokens_input: info.tokens.as_ref().and_then(|t| t.input),
             tokens_output: info.tokens.as_ref().and_then(|t| t.output),
+            tokens_reasoning: info.tokens.as_ref().and_then(|t| t.reasoning),
             cost: info.cost,
             parts,
         });
@@ -644,7 +627,7 @@ pub fn get_session_messages_from_dir(session_id: &str, opencode_dir: &Path) -> R
 }
 
 /// Load all parts for a specific message.
-fn load_message_parts(message_id: &str, part_dir: &Path) -> Vec<ChatMessagePart> {
+fn load_message_parts(message_id: &str, session_id: &str, part_dir: &Path) -> Vec<ChatMessagePart> {
     let msg_part_dir = part_dir.join(message_id);
 
     if !msg_part_dir.exists() {
@@ -686,6 +669,15 @@ fn load_message_parts(message_id: &str, part_dir: &Path) -> Vec<ChatMessagePart>
             Ok(i) => i,
             Err(_) => continue,
         };
+        if info.message_id != message_id || info.session_id != session_id {
+            tracing::debug!(
+                "Skipping part {} for mismatched IDs (message={}, session={})",
+                info.id,
+                info.message_id,
+                info.session_id
+            );
+            continue;
+        }
 
         // Convert to ChatMessagePart based on type
         let part = match info.part_type.as_str() {

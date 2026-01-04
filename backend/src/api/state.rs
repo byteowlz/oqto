@@ -11,7 +11,9 @@ use super::super::agent::AgentService;
 use crate::agent_rpc::AgentBackend;
 use crate::auth::AuthState;
 use crate::invite::InviteCodeRepository;
+use crate::main_chat::MainChatService;
 use crate::session::SessionService;
+use crate::session_ui::SessionAutoAttachMode;
 use crate::settings::SettingsService;
 use crate::user::UserService;
 
@@ -38,8 +40,8 @@ impl Default for MmryState {
 
 /// Voice mode configuration for the API layer.
 ///
-/// Frontend clients connect directly to STT/TTS WebSocket services.
-/// This state provides the URLs and default settings.
+/// Frontend clients connect to STT/TTS through backplane WebSocket proxies.
+/// This state provides the upstream URLs and default settings.
 #[derive(Clone, Debug)]
 pub struct VoiceState {
     /// Whether voice mode is enabled.
@@ -114,6 +116,22 @@ impl Default for VoiceState {
     }
 }
 
+/// Session UX configuration for the API layer.
+#[derive(Clone, Debug)]
+pub struct SessionUiState {
+    pub auto_attach: SessionAutoAttachMode,
+    pub auto_attach_scan: bool,
+}
+
+impl Default for SessionUiState {
+    fn default() -> Self {
+        Self {
+            auto_attach: SessionAutoAttachMode::Off,
+            auto_attach_scan: false,
+        }
+    }
+}
+
 /// Application state shared across all handlers.
 #[derive(Clone)]
 pub struct AppState {
@@ -135,10 +153,14 @@ pub struct AppState {
     pub mmry: MmryState,
     /// Voice mode configuration.
     pub voice: VoiceState,
+    /// Session UX configuration.
+    pub session_ui: SessionUiState,
     /// Settings service for octo config.
     pub settings_octo: Option<Arc<SettingsService>>,
     /// Settings service for mmry config.
     pub settings_mmry: Option<Arc<SettingsService>>,
+    /// Main Chat service for persistent assistants.
+    pub main_chat: Option<Arc<MainChatService>>,
 }
 
 impl AppState {
@@ -151,6 +173,7 @@ impl AppState {
         auth: AuthState,
         mmry: MmryState,
         voice: VoiceState,
+        session_ui: SessionUiState,
     ) -> Self {
         let http_client: Client<HttpConnector, Body> =
             Client::builder(TokioExecutor::new()).build_http();
@@ -165,8 +188,10 @@ impl AppState {
             agent_backend: None,
             mmry,
             voice,
+            session_ui,
             settings_octo: None,
             settings_mmry: None,
+            main_chat: None,
         }
     }
 
@@ -180,6 +205,7 @@ impl AppState {
         backend: Arc<dyn AgentBackend>,
         mmry: MmryState,
         voice: VoiceState,
+        session_ui: SessionUiState,
     ) -> Self {
         let http_client: Client<HttpConnector, Body> =
             Client::builder(TokioExecutor::new()).build_http();
@@ -194,8 +220,10 @@ impl AppState {
             agent_backend: Some(backend),
             mmry,
             voice,
+            session_ui,
             settings_octo: None,
             settings_mmry: None,
+            main_chat: None,
         }
     }
 
@@ -208,6 +236,12 @@ impl AppState {
     /// Set the mmry settings service.
     pub fn with_settings_mmry(mut self, service: SettingsService) -> Self {
         self.settings_mmry = Some(Arc::new(service));
+        self
+    }
+
+    /// Set the main chat service.
+    pub fn with_main_chat(mut self, service: MainChatService) -> Self {
+        self.main_chat = Some(Arc::new(service));
         self
     }
 }

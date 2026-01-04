@@ -1,3 +1,5 @@
+import { toAbsoluteWsUrl } from "@/lib/url";
+
 // ============================================================================
 // Auth Types
 // ============================================================================
@@ -122,13 +124,59 @@ type ApiErrorResponse = {
 };
 
 const trimTrailingSlash = (value: string) => value.replace(/\/$/, "");
+const controlPlaneStorageKey = "octo:controlPlaneUrl";
 
 const env =
 	(import.meta as ImportMeta & { env?: Record<string, string | undefined> })
 		.env ?? (typeof process !== "undefined" ? process.env : {});
 
+function normalizeControlPlaneUrl(value: string | null | undefined): string {
+	if (!value) return "";
+	return trimTrailingSlash(value.trim());
+}
+
+export function getControlPlaneBaseUrl(): string {
+	if (typeof window !== "undefined") {
+		try {
+			const stored = window.localStorage.getItem(controlPlaneStorageKey);
+			const normalized = normalizeControlPlaneUrl(stored);
+			if (normalized) return normalized;
+		} catch (err) {
+			console.warn("[control-plane] Failed to read stored base URL:", err);
+		}
+	}
+	return normalizeControlPlaneUrl(env.VITE_CONTROL_PLANE_URL ?? "");
+}
+
+export function setControlPlaneBaseUrl(value: string | null): void {
+	if (typeof window === "undefined") return;
+	const normalized = normalizeControlPlaneUrl(value ?? "");
+	try {
+		if (normalized) {
+			window.localStorage.setItem(controlPlaneStorageKey, normalized);
+		} else {
+			window.localStorage.removeItem(controlPlaneStorageKey);
+		}
+	} catch (err) {
+		console.warn("[control-plane] Failed to store base URL:", err);
+	}
+}
+
 export function controlPlaneDirectBaseUrl(): string {
-	return trimTrailingSlash(env.VITE_CONTROL_PLANE_URL ?? "");
+	return getControlPlaneBaseUrl();
+}
+
+export function controlPlaneApiUrl(path: string): string {
+	const base = getControlPlaneBaseUrl();
+	const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+	if (base) {
+		const stripped = normalizedPath.startsWith("/api")
+			? normalizedPath.replace(/^\/api/, "")
+			: normalizedPath;
+		return `${base}${stripped}`;
+	}
+	if (normalizedPath.startsWith("/api")) return normalizedPath;
+	return `/api${normalizedPath}`;
 }
 
 async function readApiError(res: Response): Promise<string> {
@@ -168,17 +216,28 @@ export type VoiceFeatureConfig = {
 	visualizer_voices: Record<string, VisualizerVoiceConfig>;
 };
 
+export type SessionAutoAttachMode = "off" | "attach" | "resume";
+
 export type Features = {
 	mmry_enabled: boolean;
+	session_auto_attach?: SessionAutoAttachMode;
+	session_auto_attach_scan?: boolean;
 	/** Voice configuration (present if voice mode is enabled) */
 	voice?: VoiceFeatureConfig | null;
 };
 
 export async function getFeatures(): Promise<Features> {
-	const res = await fetch("/api/features", { credentials: "include" });
+	const res = await fetch(controlPlaneApiUrl("/api/features"), {
+		credentials: "include",
+	});
 	if (!res.ok) {
 		// Return defaults if endpoint not available
-		return { mmry_enabled: false, voice: null };
+		return {
+			mmry_enabled: false,
+			voice: null,
+			session_auto_attach: "off",
+			session_auto_attach_scan: false,
+		};
 	}
 	return res.json();
 }
@@ -188,7 +247,7 @@ export async function getFeatures(): Promise<Features> {
 // ============================================================================
 
 export async function login(request: LoginRequest): Promise<LoginResponse> {
-	const res = await fetch("/api/auth/login", {
+	const res = await fetch(controlPlaneApiUrl("/api/auth/login"), {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify(request),
@@ -201,7 +260,7 @@ export async function login(request: LoginRequest): Promise<LoginResponse> {
 export async function register(
 	request: RegisterRequest,
 ): Promise<RegisterResponse> {
-	const res = await fetch("/api/auth/register", {
+	const res = await fetch(controlPlaneApiUrl("/api/auth/register"), {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify(request),
@@ -212,7 +271,7 @@ export async function register(
 }
 
 export async function logout(): Promise<void> {
-	const res = await fetch("/api/auth/logout", {
+	const res = await fetch(controlPlaneApiUrl("/api/auth/logout"), {
 		method: "POST",
 		credentials: "include",
 	});
@@ -220,7 +279,7 @@ export async function logout(): Promise<void> {
 }
 
 export async function getCurrentUser(): Promise<UserInfo | null> {
-	const res = await fetch("/api/me", {
+	const res = await fetch(controlPlaneApiUrl("/api/me"), {
 		credentials: "include",
 	});
 	if (res.status === 401) return null;
@@ -239,7 +298,7 @@ export async function devLogin(): Promise<boolean> {
 }
 
 export async function listWorkspaceSessions(): Promise<WorkspaceSession[]> {
-	const res = await fetch("/api/sessions", {
+	const res = await fetch(controlPlaneApiUrl("/api/sessions"), {
 		cache: "no-store",
 		credentials: "include",
 	});
@@ -258,7 +317,7 @@ export type ProjectEntry = {
 
 /** List available projects (directories in workspace_dir) */
 export async function listProjects(): Promise<ProjectEntry[]> {
-	const res = await fetch("/api/projects", {
+	const res = await fetch(controlPlaneApiUrl("/api/projects"), {
 		cache: "no-store",
 		credentials: "include",
 	});
@@ -269,7 +328,7 @@ export async function listProjects(): Promise<ProjectEntry[]> {
 export async function createWorkspaceSession(
 	request: CreateWorkspaceSessionRequest = {},
 ): Promise<WorkspaceSession> {
-	const res = await fetch("/api/sessions", {
+	const res = await fetch(controlPlaneApiUrl("/api/sessions"), {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify(request),
@@ -288,7 +347,7 @@ export async function createWorkspaceSession(
 export async function getOrCreateWorkspaceSession(
 	request: CreateWorkspaceSessionRequest = {},
 ): Promise<WorkspaceSession> {
-	const res = await fetch("/api/sessions/get-or-create", {
+	const res = await fetch(controlPlaneApiUrl("/api/sessions/get-or-create"), {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify(request),
@@ -306,35 +365,63 @@ export async function getOrCreateWorkspaceSession(
 export async function getOrCreateSessionForWorkspace(
 	workspacePath: string,
 ): Promise<WorkspaceSession> {
-	const res = await fetch("/api/sessions/get-or-create-for-workspace", {
-		method: "POST",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({ workspace_path: workspacePath }),
-		credentials: "include",
-	});
+	const res = await fetch(
+		controlPlaneApiUrl("/api/sessions/get-or-create-for-workspace"),
+		{
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ workspace_path: workspacePath }),
+			credentials: "include",
+		},
+	);
 	if (!res.ok) throw new Error(await readApiError(res));
 	return res.json();
 }
 
 /** Touch session activity to prevent idle timeout */
 export async function touchSessionActivity(sessionId: string): Promise<void> {
-	const res = await fetch(`/api/sessions/${sessionId}/activity`, {
-		method: "POST",
-		credentials: "include",
-	});
+	const res = await fetch(
+		controlPlaneApiUrl(`/api/sessions/${sessionId}/activity`),
+		{
+			method: "POST",
+			credentials: "include",
+		},
+	);
 	if (!res.ok) throw new Error(await readApiError(res));
 }
 
 export async function stopWorkspaceSession(sessionId: string): Promise<void> {
-	const res = await fetch(`/api/sessions/${sessionId}/stop`, {
-		method: "POST",
-		credentials: "include",
-	});
+	const res = await fetch(
+		controlPlaneApiUrl(`/api/sessions/${sessionId}/stop`),
+		{
+			method: "POST",
+			credentials: "include",
+		},
+	);
 	if (!res.ok) throw new Error(await readApiError(res));
 }
 
+export async function resumeWorkspaceSession(
+	sessionId: string,
+): Promise<WorkspaceSession> {
+	const res = await fetch(
+		controlPlaneApiUrl(`/api/sessions/${sessionId}/resume`),
+		{
+			method: "POST",
+			credentials: "include",
+		},
+	);
+	if (!res.ok) throw new Error(await readApiError(res));
+	const data = (await res.json()) as
+		| { session?: WorkspaceSession }
+		| WorkspaceSession;
+	if ("id" in data) return data;
+	if (data.session && "id" in data.session) return data.session;
+	throw new Error("Unexpected resume session response");
+}
+
 export async function deleteWorkspaceSession(sessionId: string): Promise<void> {
-	const res = await fetch(`/api/sessions/${sessionId}`, {
+	const res = await fetch(controlPlaneApiUrl(`/api/sessions/${sessionId}`), {
 		method: "DELETE",
 		credentials: "include",
 	});
@@ -350,9 +437,12 @@ export type SessionUpdateInfo = {
 export async function checkSessionUpdate(
 	sessionId: string,
 ): Promise<SessionUpdateInfo> {
-	const res = await fetch(`/api/sessions/${sessionId}/update`, {
-		credentials: "include",
-	});
+	const res = await fetch(
+		controlPlaneApiUrl(`/api/sessions/${sessionId}/update`),
+		{
+			credentials: "include",
+		},
+	);
 	if (!res.ok) throw new Error(await readApiError(res));
 	return res.json();
 }
@@ -360,10 +450,13 @@ export async function checkSessionUpdate(
 export async function upgradeWorkspaceSession(
 	sessionId: string,
 ): Promise<WorkspaceSession> {
-	const res = await fetch(`/api/sessions/${sessionId}/upgrade`, {
-		method: "POST",
-		credentials: "include",
-	});
+	const res = await fetch(
+		controlPlaneApiUrl(`/api/sessions/${sessionId}/upgrade`),
+		{
+			method: "POST",
+			credentials: "include",
+		},
+	);
 	if (!res.ok) throw new Error(await readApiError(res));
 	return res.json();
 }
@@ -374,7 +467,7 @@ export async function upgradeWorkspaceSession(
 
 /** List all available personas */
 export async function listPersonas(): Promise<Persona[]> {
-	const res = await fetch("/api/personas", {
+	const res = await fetch(controlPlaneApiUrl("/api/personas"), {
 		cache: "no-store",
 		credentials: "include",
 	});
@@ -384,7 +477,7 @@ export async function listPersonas(): Promise<Persona[]> {
 
 /** Get a specific persona by ID */
 export async function getPersona(personaId: string): Promise<Persona> {
-	const res = await fetch(`/api/personas/${personaId}`, {
+	const res = await fetch(controlPlaneApiUrl(`/api/personas/${personaId}`), {
 		credentials: "include",
 	});
 	if (!res.ok) throw new Error(await readApiError(res));
@@ -398,7 +491,10 @@ export async function getPersona(personaId: string): Promise<Persona> {
 export async function listWorkspaceDirectories(
 	path = ".",
 ): Promise<WorkspaceDirEntry[]> {
-	const url = new URL("/api/projects", window.location.origin);
+	const url = new URL(
+		controlPlaneApiUrl("/api/projects"),
+		window.location.origin,
+	);
 	url.searchParams.set("path", path);
 	const res = await fetch(url.toString(), {
 		cache: "no-store",
@@ -420,7 +516,7 @@ export function getProjectLogoUrl(
 	// Combine project path and logo path
 	// The path should be relative to workspace root, not absolute
 	const fullPath = `${projectPath}/${logoPath}`;
-	return `/api/projects/logo/${fullPath}`;
+	return controlPlaneApiUrl(`/api/projects/logo/${fullPath}`);
 }
 
 // ============================================================================
@@ -476,7 +572,10 @@ export type ChatHistoryQuery = {
 export async function listChatHistory(
 	query: ChatHistoryQuery = {},
 ): Promise<ChatSession[]> {
-	const url = new URL("/api/chat-history", window.location.origin);
+	const url = new URL(
+		controlPlaneApiUrl("/api/chat-history"),
+		window.location.origin,
+	);
 	if (query.workspace) url.searchParams.set("workspace", query.workspace);
 	if (query.include_children) url.searchParams.set("include_children", "true");
 	if (query.limit) url.searchParams.set("limit", query.limit.toString());
@@ -493,7 +592,10 @@ export async function listChatHistory(
 export async function listChatHistoryGrouped(
 	query: ChatHistoryQuery = {},
 ): Promise<GroupedChatHistory[]> {
-	const url = new URL("/api/chat-history/grouped", window.location.origin);
+	const url = new URL(
+		controlPlaneApiUrl("/api/chat-history/grouped"),
+		window.location.origin,
+	);
 	if (query.workspace) url.searchParams.set("workspace", query.workspace);
 	if (query.include_children) url.searchParams.set("include_children", "true");
 	if (query.limit) url.searchParams.set("limit", query.limit.toString());
@@ -508,9 +610,12 @@ export async function listChatHistoryGrouped(
 
 /** Get a specific chat session by ID */
 export async function getChatSession(sessionId: string): Promise<ChatSession> {
-	const res = await fetch(`/api/chat-history/${sessionId}`, {
-		credentials: "include",
-	});
+	const res = await fetch(
+		controlPlaneApiUrl(`/api/chat-history/${sessionId}`),
+		{
+			credentials: "include",
+		},
+	);
 	if (!res.ok) throw new Error(await readApiError(res));
 	return res.json();
 }
@@ -525,12 +630,15 @@ export async function updateChatSession(
 	sessionId: string,
 	updates: UpdateChatSessionRequest,
 ): Promise<ChatSession> {
-	const res = await fetch(`/api/chat-history/${sessionId}`, {
-		method: "PATCH",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify(updates),
-		credentials: "include",
-	});
+	const res = await fetch(
+		controlPlaneApiUrl(`/api/chat-history/${sessionId}`),
+		{
+			method: "PATCH",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(updates),
+			credentials: "include",
+		},
+	);
 	if (!res.ok) throw new Error(await readApiError(res));
 	return res.json();
 }
@@ -580,9 +688,12 @@ export type ChatMessage = {
 export async function getChatMessages(
 	sessionId: string,
 ): Promise<ChatMessage[]> {
-	const res = await fetch(`/api/chat-history/${sessionId}/messages`, {
-		credentials: "include",
-	});
+	const res = await fetch(
+		controlPlaneApiUrl(`/api/chat-history/${sessionId}/messages`),
+		{
+			credentials: "include",
+		},
+	);
 	if (!res.ok) throw new Error(await readApiError(res));
 	return res.json();
 }
@@ -679,7 +790,7 @@ export function convertChatMessagesToOpenCode(
 // ============================================================================
 
 export function opencodeProxyBaseUrl(sessionId: string) {
-	return `/api/session/${sessionId}/code`;
+	return controlPlaneApiUrl(`/api/session/${sessionId}/code`);
 }
 
 export function terminalProxyPath(sessionId: string) {
@@ -687,7 +798,11 @@ export function terminalProxyPath(sessionId: string) {
 }
 
 export function fileserverProxyBaseUrl(sessionId: string) {
-	return `/api/session/${sessionId}/files`;
+	return controlPlaneApiUrl(`/api/session/${sessionId}/files`);
+}
+
+export function voiceProxyWsUrl(kind: "stt" | "tts"): string {
+	return toAbsoluteWsUrl(controlPlaneApiUrl(`/api/voice/${kind}`));
 }
 
 // ============================================================================
@@ -747,7 +862,7 @@ export type SettingsUpdateRequest = {
 /** Get the JSON schema for an app's settings (filtered by user permissions) */
 export async function getSettingsSchema(app: string): Promise<unknown> {
 	const res = await fetch(
-		`/api/settings/schema?app=${encodeURIComponent(app)}`,
+		controlPlaneApiUrl(`/api/settings/schema?app=${encodeURIComponent(app)}`),
 		{
 			credentials: "include",
 		},
@@ -758,9 +873,12 @@ export async function getSettingsSchema(app: string): Promise<unknown> {
 
 /** Get current settings values for an app */
 export async function getSettingsValues(app: string): Promise<SettingsValues> {
-	const res = await fetch(`/api/settings?app=${encodeURIComponent(app)}`, {
-		credentials: "include",
-	});
+	const res = await fetch(
+		controlPlaneApiUrl(`/api/settings?app=${encodeURIComponent(app)}`),
+		{
+			credentials: "include",
+		},
+	);
 	if (!res.ok) throw new Error(await readApiError(res));
 	return res.json();
 }
@@ -770,12 +888,15 @@ export async function updateSettingsValues(
 	app: string,
 	updates: SettingsUpdateRequest,
 ): Promise<SettingsValues> {
-	const res = await fetch(`/api/settings?app=${encodeURIComponent(app)}`, {
-		method: "PATCH",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify(updates),
-		credentials: "include",
-	});
+	const res = await fetch(
+		controlPlaneApiUrl(`/api/settings?app=${encodeURIComponent(app)}`),
+		{
+			method: "PATCH",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(updates),
+			credentials: "include",
+		},
+	);
 	if (!res.ok) throw new Error(await readApiError(res));
 	return res.json();
 }
@@ -783,11 +904,176 @@ export async function updateSettingsValues(
 /** Reload settings from disk (admin only) */
 export async function reloadSettings(app: string): Promise<void> {
 	const res = await fetch(
-		`/api/settings/reload?app=${encodeURIComponent(app)}`,
+		controlPlaneApiUrl(`/api/settings/reload?app=${encodeURIComponent(app)}`),
 		{
 			method: "POST",
 			credentials: "include",
 		},
 	);
 	if (!res.ok) throw new Error(await readApiError(res));
+}
+
+// ============================================================================
+// Main Chat API
+// ============================================================================
+
+/** History entry type */
+export type MainChatHistoryType = "summary" | "decision" | "handoff" | "insight";
+
+/** History entry from Main Chat */
+export type MainChatHistoryEntry = {
+	id: number;
+	ts: string;
+	type: MainChatHistoryType;
+	content: string;
+	session_id?: string;
+	meta?: Record<string, unknown>;
+	created_at: string;
+};
+
+/** Main Chat session */
+export type MainChatSession = {
+	id: number;
+	session_id: string;
+	title?: string;
+	started_at: string;
+	ended_at?: string;
+	message_count: number;
+};
+
+/** Main Chat assistant info */
+export type MainChatAssistantInfo = {
+	name: string;
+	user_id: string;
+	path: string;
+	session_count: number;
+	history_count: number;
+	created_at?: string;
+};
+
+/** List all Main Chat assistants for the current user */
+export async function listMainChatAssistants(): Promise<string[]> {
+	const res = await fetch(controlPlaneApiUrl("/api/main"), {
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+	const data = await res.json();
+	return data.assistants ?? [];
+}
+
+/** Get info about a specific assistant */
+export async function getMainChatAssistant(name: string): Promise<MainChatAssistantInfo> {
+	const res = await fetch(controlPlaneApiUrl(`/api/main/${encodeURIComponent(name)}`), {
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+	return res.json();
+}
+
+/** Create a new Main Chat assistant */
+export async function createMainChatAssistant(name: string): Promise<MainChatAssistantInfo> {
+	const res = await fetch(controlPlaneApiUrl("/api/main"), {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ name }),
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+	return res.json();
+}
+
+/** Delete a Main Chat assistant */
+export async function deleteMainChatAssistant(name: string): Promise<void> {
+	const res = await fetch(controlPlaneApiUrl(`/api/main/${encodeURIComponent(name)}`), {
+		method: "DELETE",
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+}
+
+/** Get recent history for an assistant */
+export async function getMainChatHistory(
+	name: string,
+	limit = 20,
+): Promise<MainChatHistoryEntry[]> {
+	const res = await fetch(
+		controlPlaneApiUrl(`/api/main/${encodeURIComponent(name)}/history?limit=${limit}`),
+		{ credentials: "include" },
+	);
+	if (!res.ok) throw new Error(await readApiError(res));
+	return res.json();
+}
+
+/** Add a history entry */
+export async function addMainChatHistory(
+	name: string,
+	entry: {
+		type: MainChatHistoryType;
+		content: string;
+		session_id?: string;
+		meta?: Record<string, unknown>;
+	},
+): Promise<MainChatHistoryEntry> {
+	const res = await fetch(
+		controlPlaneApiUrl(`/api/main/${encodeURIComponent(name)}/history`),
+		{
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(entry),
+			credentials: "include",
+		},
+	);
+	if (!res.ok) throw new Error(await readApiError(res));
+	return res.json();
+}
+
+/** List sessions for an assistant */
+export async function listMainChatSessions(name: string): Promise<MainChatSession[]> {
+	const res = await fetch(
+		controlPlaneApiUrl(`/api/main/${encodeURIComponent(name)}/sessions`),
+		{ credentials: "include" },
+	);
+	if (!res.ok) throw new Error(await readApiError(res));
+	return res.json();
+}
+
+/** Register a new session with the assistant */
+export async function registerMainChatSession(
+	name: string,
+	session: { session_id: string; title?: string },
+): Promise<MainChatSession> {
+	const res = await fetch(
+		controlPlaneApiUrl(`/api/main/${encodeURIComponent(name)}/sessions`),
+		{
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(session),
+			credentials: "include",
+		},
+	);
+	if (!res.ok) throw new Error(await readApiError(res));
+	return res.json();
+}
+
+/** Get the latest session for an assistant */
+export async function getLatestMainChatSession(
+	name: string,
+): Promise<MainChatSession | null> {
+	const res = await fetch(
+		controlPlaneApiUrl(`/api/main/${encodeURIComponent(name)}/sessions/latest`),
+		{ credentials: "include" },
+	);
+	if (!res.ok) throw new Error(await readApiError(res));
+	return res.json();
+}
+
+/** Export history as JSONL */
+export async function exportMainChatHistory(name: string): Promise<string> {
+	const res = await fetch(
+		controlPlaneApiUrl(`/api/main/${encodeURIComponent(name)}/export`),
+		{ credentials: "include" },
+	);
+	if (!res.ok) throw new Error(await readApiError(res));
+	const data = await res.json();
+	return data.jsonl ?? "";
 }

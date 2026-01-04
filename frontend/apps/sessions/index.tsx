@@ -5,9 +5,6 @@ import {
 	FileTreeView,
 	initialFileTreeState,
 } from "@/apps/sessions/FileTreeView";
-import { MemoriesView } from "@/apps/sessions/MemoriesView";
-import { PreviewView } from "@/apps/sessions/PreviewView";
-import { TerminalView } from "@/apps/sessions/TerminalView";
 import { useApp } from "@/components/app-context";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -38,14 +35,20 @@ import {
 import { useVoiceMode } from "@/hooks/use-voice-mode";
 import {
 	type Features,
+	type SessionAutoAttachMode,
 	type Persona,
+	type MainChatSession,
 	controlPlaneDirectBaseUrl,
 	convertChatMessagesToOpenCode,
 	fileserverProxyBaseUrl,
 	getChatMessages,
 	getFeatures,
+	getMainChatAssistant,
 	getProjectLogoUrl,
 	getWorkspaceConfig,
+	listMainChatSessions,
+	opencodeProxyBaseUrl,
+	registerMainChatSession,
 } from "@/lib/control-plane-client";
 import {
 	type OpenCodeAssistantMessage,
@@ -54,9 +57,11 @@ import {
 	type Permission,
 	type PermissionResponse,
 	abortSession,
+	createSession,
 	fetchAgents,
 	fetchCommands,
 	fetchMessages,
+	fetchSessions,
 	invalidateMessageCache,
 	respondToPermission,
 	runShellCommandAsync,
@@ -91,7 +96,9 @@ import {
 	MessageSquare,
 	Mic,
 	Paperclip,
+	RefreshCw,
 	Send,
+	Sparkles,
 	Square,
 	StopCircle,
 	Terminal,
@@ -101,6 +108,8 @@ import {
 } from "lucide-react";
 import {
 	memo,
+	Suspense,
+	lazy,
 	startTransition,
 	useCallback,
 	useEffect,
@@ -110,6 +119,22 @@ import {
 	useTransition,
 } from "react";
 
+const PreviewView = lazy(() =>
+	import("@/apps/sessions/PreviewView").then((mod) => ({
+		default: mod.PreviewView,
+	})),
+);
+const TerminalView = lazy(() =>
+	import("@/apps/sessions/TerminalView").then((mod) => ({
+		default: mod.TerminalView,
+	})),
+);
+const MemoriesView = lazy(() =>
+	import("@/apps/sessions/MemoriesView").then((mod) => ({
+		default: mod.MemoriesView,
+	})),
+);
+
 // Todo item structure
 interface TodoItem {
 	id: string;
@@ -118,11 +143,27 @@ interface TodoItem {
 	priority: "high" | "medium" | "low";
 }
 
+// Extended message type for Main Chat threading - includes session info
+type ThreadedMessage = OpenCodeMessageWithParts & {
+	/** Session ID this message belongs to (for Main Chat threading) */
+	_sessionId?: string;
+	/** Session title (for displaying session dividers) */
+	_sessionTitle?: string;
+	/** Whether this is the first message of a new session in the thread */
+	_isSessionStart?: boolean;
+};
+
 // Group consecutive messages from the same role
 type MessageGroup = {
 	role: "user" | "assistant";
 	messages: OpenCodeMessageWithParts[];
 	startIndex: number;
+	/** For Main Chat: session ID this group belongs to */
+	sessionId?: string;
+	/** For Main Chat: whether this group starts a new session */
+	isNewSession?: boolean;
+	/** For Main Chat: session title for divider */
+	sessionTitle?: string;
 };
 
 type ActiveView =
@@ -137,10 +178,16 @@ type ActiveView =
 function groupMessages(messages: OpenCodeMessageWithParts[]): MessageGroup[] {
 	const groups: MessageGroup[] = [];
 	let currentGroup: MessageGroup | null = null;
+	let lastSessionId: string | undefined;
 
 	messages.forEach((msg, index) => {
 		const role = msg.info.role;
-		if (!currentGroup || currentGroup.role !== role) {
+		const threadedMsg = msg as ThreadedMessage;
+		const currentSessionId = threadedMsg._sessionId;
+		const isNewSession = currentSessionId !== lastSessionId && currentSessionId !== undefined;
+		
+		// Start new group if role changes OR session changes (for Main Chat threading)
+		if (!currentGroup || currentGroup.role !== role || (isNewSession && currentSessionId)) {
 			if (currentGroup) {
 				groups.push(currentGroup);
 			}
@@ -148,7 +195,11 @@ function groupMessages(messages: OpenCodeMessageWithParts[]): MessageGroup[] {
 				role,
 				messages: [msg],
 				startIndex: index,
+				sessionId: currentSessionId,
+				isNewSession: isNewSession,
+				sessionTitle: threadedMsg._sessionTitle,
 			};
+			lastSessionId = currentSessionId;
 		} else {
 			currentGroup.messages.push(msg);
 		}
@@ -159,6 +210,20 @@ function groupMessages(messages: OpenCodeMessageWithParts[]): MessageGroup[] {
 	}
 
 	return groups;
+}
+
+// Session divider for Main Chat threaded view
+function SessionDivider({ title }: { title: string }) {
+	return (
+		<div className="flex items-center gap-3 py-3 px-2">
+			<div className="flex-1 h-px bg-border" />
+			<div className="flex items-center gap-2 text-xs text-muted-foreground">
+				<MessageSquare className="w-3 h-3" />
+				<span className="font-medium">{title}</span>
+			</div>
+			<div className="flex-1 h-px bg-border" />
+		</div>
+	);
 }
 
 function TabButton({
@@ -249,17 +314,24 @@ export function SessionsApp() {
 		locale,
 		workspaceSessions,
 		selectedWorkspaceSessionId,
+		setSelectedWorkspaceSessionId,
+		selectedWorkspaceSession,
 		opencodeBaseUrl,
 		selectedChatSessionId,
 		selectedChatSession,
 		selectedChatFromHistory,
 		refreshOpencodeSessions,
+		refreshWorkspaceSessions,
 		refreshChatHistory,
 		ensureOpencodeRunning,
 		chatHistory,
 		projects,
 		startProjectSession,
 		setSessionBusy,
+		mainChatActive,
+		mainChatAssistantName,
+		mainChatCurrentSessionId,
+		setMainChatCurrentSessionId,
 	} = useApp();
 	const [messages, setMessages] = useState<OpenCodeMessageWithParts[]>([]);
 	const [messageInput, setMessageInput] = useState("");
@@ -268,21 +340,24 @@ export function SessionsApp() {
 	const [chatStates, setChatStates] = useState<Map<string, "idle" | "sending">>(
 		new Map(),
 	);
-	const chatState = selectedChatSessionId
-		? chatStates.get(selectedChatSessionId) || "idle"
+	// In Main Chat mode, use mainChatCurrentSessionId; otherwise use selectedChatSessionId
+	const activeSessionId = mainChatActive ? mainChatCurrentSessionId : selectedChatSessionId;
+	const chatState = activeSessionId
+		? chatStates.get(activeSessionId) || "idle"
 		: "idle";
 	const setChatState = useCallback(
 		(state: "idle" | "sending") => {
-			if (!selectedChatSessionId) return;
+			const sessionId = mainChatActive ? mainChatCurrentSessionId : selectedChatSessionId;
+			if (!sessionId) return;
 			setChatStates((prev) => {
 				const next = new Map(prev);
-				next.set(selectedChatSessionId, state);
+				next.set(sessionId, state);
 				return next;
 			});
 			// Also update global busy state for sidebar indicator
-			setSessionBusy(selectedChatSessionId, state === "sending");
+			setSessionBusy(sessionId, state === "sending");
 		},
-		[selectedChatSessionId, setSessionBusy],
+		[selectedChatSessionId, mainChatActive, mainChatCurrentSessionId, setSessionBusy],
 	);
 
 	// Per-chat draft text cache (persists across session switches AND component remounts via localStorage)
@@ -362,6 +437,20 @@ export function SessionsApp() {
 	// Track if user has manually scrolled away from bottom
 	const isNearBottomRef = useRef(true);
 	const lastSessionIdRef = useRef<string | null>(null);
+	const autoAttachAttemptRef = useRef<{
+		sessionId: string;
+		workspacePath: string;
+		mode: SessionAutoAttachMode;
+	} | null>(null);
+	const autoAttachScanAttemptRef = useRef<{
+		sessionId: string;
+		workspacePath: string;
+		runningSessionIds: string;
+	} | null>(null);
+	const sessionUnavailableRef = useRef<{
+		sessionId: string;
+		attemptedAt: number;
+	} | null>(null);
 	const fileInputRef = useRef<HTMLInputElement>(null);
 	const chatInputRef = useRef<HTMLTextAreaElement>(null);
 	const chatContainerRef = useRef<HTMLDivElement>(null);
@@ -807,6 +896,31 @@ export function SessionsApp() {
 		[],
 	);
 	const t = copy[locale];
+	const viewLoadingFallback = useMemo(
+		() => (
+			<div className="flex h-full items-center justify-center text-xs text-muted-foreground">
+				{locale === "de" ? "Lade..." : "Loading..."}
+			</div>
+		),
+		[locale],
+	);
+
+	const resumeWorkspacePath =
+		selectedChatFromHistory?.workspace_path ??
+		selectedWorkspaceSession?.workspace_path;
+	const canResumeWithoutMessage = useMemo(() => {
+		if (!selectedChatSessionId) return false;
+		if (!resumeWorkspacePath) return false;
+		if (messageInput.trim()) return false;
+		if (pendingUploads.length > 0) return false;
+		return !opencodeBaseUrl;
+	}, [
+		messageInput,
+		opencodeBaseUrl,
+		pendingUploads.length,
+		resumeWorkspacePath,
+		selectedChatSessionId,
+	]);
 
 	// Determine if we're viewing a history-only session (no running opencode)
 	const isHistoryOnlySession = useMemo(() => {
@@ -826,6 +940,126 @@ export function SessionsApp() {
 		}
 		return false;
 	}, [selectedChatSession, selectedChatFromHistory, selectedChatSessionId]);
+
+	const autoAttachMode = features.session_auto_attach ?? "off";
+	const autoAttachScan = features.session_auto_attach_scan ?? false;
+
+	// Reset chatState to idle when session becomes history-only (no live connection)
+	// This prevents "Agent working..." from showing when there's no SSE to receive idle events
+	useEffect(() => {
+		if (isHistoryOnlySession && activeSessionId && chatState === "sending") {
+			setChatState("idle");
+		}
+	}, [isHistoryOnlySession, activeSessionId, chatState, setChatState]);
+
+	// Auto-attach to running sessions (or resume) when opening history sessions.
+	useEffect(() => {
+		if (!selectedChatSessionId || !isHistoryOnlySession) return;
+		if (autoAttachMode === "off") return;
+		if (!selectedChatFromHistory?.workspace_path) return;
+
+		const workspacePath = selectedChatFromHistory.workspace_path;
+		const runningSessions = workspaceSessions.filter(
+			(session) =>
+				session.status === "running" &&
+				session.workspace_path === workspacePath,
+		);
+
+		if (runningSessions.length > 0) {
+			if (!autoAttachScan) {
+				const runningSession = runningSessions[0];
+				if (selectedWorkspaceSessionId !== runningSession.id) {
+					setSelectedWorkspaceSessionId(runningSession.id);
+				}
+				return;
+			}
+
+			const runningSessionIds = runningSessions
+				.map((session) => session.id)
+				.sort()
+				.join(",");
+			const lastScan = autoAttachScanAttemptRef.current;
+			if (
+				lastScan &&
+				lastScan.sessionId === selectedChatSessionId &&
+				lastScan.workspacePath === workspacePath &&
+				lastScan.runningSessionIds === runningSessionIds
+			) {
+				return;
+			}
+
+			autoAttachScanAttemptRef.current = {
+				sessionId: selectedChatSessionId,
+				workspacePath,
+				runningSessionIds,
+			};
+
+			let active = true;
+			void (async () => {
+				let matched: (typeof runningSessions)[number] | null = null;
+				for (const candidate of runningSessions) {
+					try {
+						const sessions = await fetchSessions(
+							opencodeProxyBaseUrl(candidate.id),
+						);
+						if (sessions.some((session) => session.id === selectedChatSessionId)) {
+							matched = candidate;
+							break;
+						}
+					} catch {
+						// Ignore scan failures and fall back to first running session.
+					}
+				}
+
+				if (!active) return;
+				const target = matched ?? runningSessions[0];
+				if (selectedWorkspaceSessionId !== target.id) {
+					setSelectedWorkspaceSessionId(target.id);
+				}
+			})();
+
+			return () => {
+				active = false;
+			};
+		}
+
+		if (autoAttachMode !== "resume") return;
+
+		const startingSession = workspaceSessions.find(
+			(session) =>
+				session.workspace_path === workspacePath &&
+				(session.status === "pending" || session.status === "starting"),
+		);
+		if (startingSession) return;
+
+		const lastAttempt = autoAttachAttemptRef.current;
+		if (
+			lastAttempt &&
+			lastAttempt.sessionId === selectedChatSessionId &&
+			lastAttempt.workspacePath === workspacePath &&
+			lastAttempt.mode === autoAttachMode
+		) {
+			return;
+		}
+
+		autoAttachAttemptRef.current = {
+			sessionId: selectedChatSessionId,
+			workspacePath,
+			mode: autoAttachMode,
+		};
+
+		void ensureOpencodeRunning(workspacePath);
+	}, [
+		autoAttachMode,
+		autoAttachScan,
+		ensureOpencodeRunning,
+		isHistoryOnlySession,
+		selectedChatFromHistory,
+		selectedChatSessionId,
+		selectedWorkspaceSessionId,
+		setSelectedWorkspaceSessionId,
+		workspaceSessions,
+	]);
 
 	// Merge messages to prevent flickering - preserves existing message references when unchanged
 	const mergeMessages = useCallback(
@@ -878,7 +1112,78 @@ export function SessionsApp() {
 		[],
 	);
 
+	// Load messages for Main Chat threaded view (all sessions combined)
+	const loadMainChatThreadedMessages = useCallback(async () => {
+		if (!mainChatAssistantName) return [];
+
+		try {
+			// Get all Main Chat sessions
+			const sessions = await listMainChatSessions(mainChatAssistantName);
+			if (sessions.length === 0) return [];
+
+			// Sort sessions by date (oldest first for chronological thread)
+			const sortedSessions = [...sessions].sort(
+				(a, b) => new Date(a.started_at).getTime() - new Date(b.started_at).getTime()
+			);
+
+			// Load messages from each session and combine
+			const allMessages: ThreadedMessage[] = [];
+			
+			for (const session of sortedSessions) {
+				try {
+					const historyMessages = await getChatMessages(session.session_id);
+					if (historyMessages.length > 0) {
+						const converted = convertChatMessagesToOpenCode(historyMessages);
+						// Add session metadata to each message
+						converted.forEach((msg, idx) => {
+							const threadedMsg: ThreadedMessage = {
+								...msg,
+								_sessionId: session.session_id,
+								_sessionTitle: session.title || formatSessionDate(new Date(session.started_at).getTime()),
+								_isSessionStart: idx === 0,
+							};
+							allMessages.push(threadedMsg);
+						});
+					}
+				} catch {
+					// Ignore failures for individual sessions
+				}
+			}
+
+			return allMessages;
+		} catch (err) {
+			console.error("Failed to load Main Chat threaded messages:", err);
+			return [];
+		}
+	}, [mainChatAssistantName]);
+
 	const loadMessages = useCallback(async () => {
+		// Main Chat threaded view - shows all sessions combined
+		if (mainChatActive) {
+			if (mainChatAssistantName) {
+				try {
+					const threadedMessages = await loadMainChatThreadedMessages();
+					// Use merge to preserve optimistic messages (temp-* IDs)
+					startTransition(() => {
+						setMessages((prev) => {
+							// Keep any optimistic messages (temp-* IDs) that aren't in the loaded messages
+							const optimisticMessages = prev.filter(m => m.info.id.startsWith("temp-"));
+							if (optimisticMessages.length === 0) {
+								return threadedMessages;
+							}
+							// Merge: loaded messages + optimistic messages at the end
+							return [...threadedMessages, ...optimisticMessages];
+						});
+					});
+				} catch (err) {
+					setStatus((err as Error).message);
+				}
+			} else {
+				setMessages([]);
+			}
+			return;
+		}
+
 		if (!selectedChatSessionId) return;
 
 		try {
@@ -919,7 +1224,9 @@ export function SessionsApp() {
 			}
 
 			// Use merge to prevent flickering when updating
-			setMessages((prev) => mergeMessages(prev, loadedMessages));
+			startTransition(() => {
+				setMessages((prev) => mergeMessages(prev, loadedMessages));
+			});
 		} catch (err) {
 			setStatus((err as Error).message);
 		}
@@ -928,6 +1235,9 @@ export function SessionsApp() {
 		selectedChatSessionId,
 		isHistoryOnlySession,
 		mergeMessages,
+		mainChatActive,
+		mainChatAssistantName,
+		loadMainChatThreadedMessages,
 	]);
 
 	const [eventsTransportMode, setEventsTransportMode] = useState<
@@ -1063,7 +1373,36 @@ export function SessionsApp() {
 				if (eventType === "transport.mode") {
 					const props = event.properties as { mode?: "sse" | "polling" } | null;
 					if (props?.mode) setEventsTransportMode(props.mode);
+					if (opencodeBaseUrl && selectedChatSessionId) {
+						invalidateMessageCache(opencodeBaseUrl, selectedChatSessionId);
+						requestMessageRefresh(250);
+					}
 					return;
+				}
+
+				if (eventType === "server.connected") {
+					if (opencodeBaseUrl && selectedChatSessionId) {
+						invalidateMessageCache(opencodeBaseUrl, selectedChatSessionId);
+						requestMessageRefresh(250);
+					}
+				}
+
+				if (eventType === "session.unavailable") {
+					if (autoAttachMode === "resume" && selectedChatFromHistory?.workspace_path) {
+						const now = Date.now();
+						const lastAttempt = sessionUnavailableRef.current;
+						if (
+							lastAttempt?.sessionId === selectedChatSessionId &&
+							now - lastAttempt.attemptedAt < 15_000
+						) {
+							return;
+						}
+						sessionUnavailableRef.current = {
+							sessionId: selectedChatSessionId ?? "",
+							attemptedAt: now,
+						};
+						void ensureOpencodeRunning(selectedChatFromHistory.workspace_path);
+					}
 				}
 
 				if (eventType === "session.idle") {
@@ -1120,8 +1459,11 @@ export function SessionsApp() {
 		);
 		return unsubscribe;
 	}, [
+		autoAttachMode,
+		ensureOpencodeRunning,
 		opencodeBaseUrl,
 		selectedChatSessionId,
+		selectedChatFromHistory,
 		loadMessages,
 		refreshOpencodeSessions,
 		refreshChatHistory,
@@ -1370,7 +1712,9 @@ export function SessionsApp() {
 	);
 
 	const handleSend = async () => {
-		if (!selectedChatSessionId) return;
+		// In Main Chat mode, we might need to create a session first
+		// In regular mode, we need a session ID
+		if (!mainChatActive && !selectedChatSessionId) return;
 		if (!messageInput.trim() && pendingUploads.length === 0) return;
 
 		// Stop dictation if active
@@ -1397,46 +1741,71 @@ export function SessionsApp() {
 		const isShellCommand = messageText.startsWith("!");
 		const shellCommand = isShellCommand ? messageText.slice(1).trim() : "";
 
-		// Optimistic update - show user message immediately
-		const optimisticMessage: OpenCodeMessageWithParts = {
-			info: {
-				id: `temp-${Date.now()}`,
-				sessionID: selectedChatSessionId,
-				role: "user",
-				time: { created: Date.now() },
-			},
-			parts: [
-				{
-					id: `temp-part-${Date.now()}`,
-					sessionID: selectedChatSessionId,
-					messageID: `temp-${Date.now()}`,
-					type: "text",
-					text: messageText,
-				},
-			],
-		};
-
-		setMessages((prev) => [...prev, optimisticMessage]);
 		setMessageInput("");
 		// Reset textarea height to minimum
 		if (chatInputRef.current) {
 			chatInputRef.current.style.height = "36px";
 		}
-		// Clear draft cache for this session since message was sent
-		if (selectedChatSessionId) {
-			setDraft(selectedChatSessionId, "");
-		}
 		setPendingUploads([]);
 		setChatState("sending");
 		setStatus("");
 
-		// Scroll to bottom immediately
-		setTimeout(() => scrollToBottom(), 50);
-
 		try {
-			// If we don't have an opencode URL (history-only session), start opencode first
 			let effectiveBaseUrl = opencodeBaseUrl;
-			if (!effectiveBaseUrl || isHistoryOnlySession) {
+			let targetSessionId: string;
+			
+			// Main Chat mode: get workspace path from assistant info
+			if (mainChatActive && mainChatAssistantName) {
+				const assistantInfo = await getMainChatAssistant(mainChatAssistantName);
+				const workspacePath = assistantInfo.path;
+				
+				setStatus(
+					locale === "de" ? "Starte Main Chat..." : "Starting Main Chat...",
+				);
+				const url = await ensureOpencodeRunning(workspacePath);
+				if (!url) {
+					throw new Error("Failed to start Main Chat session");
+				}
+				effectiveBaseUrl = url;
+				
+				// If no current session, create one with a title prefix
+				if (!mainChatCurrentSessionId) {
+					const sessionTitle = `[${mainChatAssistantName}] ${new Date().toLocaleDateString()}`;
+					const newSession = await createSession(effectiveBaseUrl, sessionTitle);
+					
+					// Register with Main Chat backend
+					await registerMainChatSession(mainChatAssistantName, {
+						session_id: newSession.id,
+						title: sessionTitle,
+					});
+					
+					// Update the current session ID
+					setMainChatCurrentSessionId(newSession.id);
+					targetSessionId = newSession.id;
+				} else {
+					targetSessionId = mainChatCurrentSessionId;
+				}
+				setStatus("");
+			} else if (isHistoryOnlySession) {
+				// Regular session: history-only, need to resume
+				const workspacePath = selectedChatFromHistory?.workspace_path;
+				if (!workspacePath) {
+					throw new Error("Cannot resume session: no workspace path found");
+				}
+
+				setStatus(
+					locale === "de"
+						? "Session wird wiederhergestellt..."
+						: "Resuming session...",
+				);
+				const url = await ensureOpencodeRunning(workspacePath);
+				if (!url) {
+					throw new Error("Failed to resume workspace session");
+				}
+				effectiveBaseUrl = url;
+				targetSessionId = selectedChatSessionId;
+				setStatus("");
+			} else if (!effectiveBaseUrl) {
 				// Get workspace path from history session
 				const workspacePath = selectedChatFromHistory?.workspace_path;
 				if (!workspacePath) {
@@ -1452,8 +1821,40 @@ export function SessionsApp() {
 					throw new Error("Failed to start OpenCode for this workspace");
 				}
 				effectiveBaseUrl = url;
+				targetSessionId = selectedChatSessionId;
 				setStatus("");
+			} else {
+				targetSessionId = selectedChatSessionId;
 			}
+
+			// Optimistic update - show user message immediately (now that we have the session ID)
+			const optimisticMessage: OpenCodeMessageWithParts = {
+				info: {
+					id: `temp-${Date.now()}`,
+					sessionID: targetSessionId,
+					role: "user",
+					time: { created: Date.now() },
+				},
+				parts: [
+					{
+						id: `temp-part-${Date.now()}`,
+						sessionID: targetSessionId,
+						messageID: `temp-${Date.now()}`,
+						type: "text",
+						text: messageText,
+					},
+				],
+			};
+
+			setMessages((prev) => [...prev, optimisticMessage]);
+			
+			// Clear draft cache for this session since message was sent
+			if (targetSessionId) {
+				setDraft(targetSessionId, "");
+			}
+
+			// Scroll to bottom immediately
+			setTimeout(() => scrollToBottom(), 50);
 
 			if (isShellCommand && shellCommand) {
 				// Run shell command via opencode shell endpoint using "build" agent
@@ -1466,7 +1867,7 @@ export function SessionsApp() {
 				);
 				await runShellCommandAsync(
 					effectiveBaseUrl,
-					selectedChatSessionId,
+					targetSessionId,
 					shellCommand,
 					agentId,
 				);
@@ -1474,12 +1875,12 @@ export function SessionsApp() {
 				// Use async send - the response will come via SSE events
 				await sendMessageAsync(
 					effectiveBaseUrl,
-					selectedChatSessionId,
+					targetSessionId,
 					messageText,
 				);
 			}
 			// Invalidate cache and refresh messages to get the real message IDs
-			invalidateMessageCache(effectiveBaseUrl, selectedChatSessionId);
+			invalidateMessageCache(effectiveBaseUrl, targetSessionId);
 			loadMessages();
 		} catch (err) {
 			setStatus((err as Error).message);
@@ -1488,6 +1889,40 @@ export function SessionsApp() {
 			setMessages((prev) => prev.filter((m) => !m.info.id.startsWith("temp-")));
 		}
 		// Don't set idle here - wait for SSE session.idle event
+	};
+
+	const handleResume = async () => {
+		if (!selectedChatSessionId || !resumeWorkspacePath) return;
+
+		setStatus(
+			locale === "de" ? "Session wird wiederhergestellt..." : "Resuming session...",
+		);
+
+		try {
+			const url = await ensureOpencodeRunning(resumeWorkspacePath);
+			if (!url) {
+				throw new Error(
+					locale === "de"
+						? "Sitzung konnte nicht wiederhergestellt werden"
+						: "Failed to resume session",
+				);
+			}
+
+			try {
+				const liveMessages = await fetchMessages(url, selectedChatSessionId);
+				if (liveMessages.length > 0) {
+					setMessages((prev) => mergeMessages(prev, liveMessages));
+				} else {
+					await loadMessages();
+				}
+			} catch {
+				await loadMessages();
+			}
+
+			setStatus("");
+		} catch (err) {
+			setStatus((err as Error).message);
+		}
 	};
 
 	const handleStop = async () => {
@@ -1684,14 +2119,19 @@ export function SessionsApp() {
 						</button>
 					)}
 					{visibleGroups.map((group) => (
-						<MessageGroupCard
-							key={
-								group.messages[0]?.info.id ||
-								`${group.role}-${group.startIndex}`
-							}
-							group={group}
-							persona={selectedSession?.persona}
-						/>
+						<div key={
+							group.messages[0]?.info.id ||
+							`${group.role}-${group.startIndex}`
+						}>
+							{/* Session divider for Main Chat threaded view */}
+							{group.isNewSession && group.sessionTitle && (
+								<SessionDivider title={group.sessionTitle} />
+							)}
+							<MessageGroupCard
+								group={group}
+								persona={selectedSession?.persona}
+							/>
+						</div>
 					))}
 					<div ref={messagesEndRef} />
 				</div>
@@ -1750,6 +2190,16 @@ export function SessionsApp() {
 							{locale === "de"
 								? "Sende eine Nachricht um diese Sitzung fortzusetzen"
 								: "Send a message to resume this session"}
+						</span>
+					</div>
+				)}
+				{canResumeWithoutMessage && (
+					<div className="flex items-center gap-1.5 px-1 pt-1 text-xs text-muted-foreground">
+						<RefreshCw className="w-3 h-3" />
+						<span>
+							{locale === "de"
+								? "Fortsetzen ohne Nachricht"
+								: "Resume without sending a message"}
 						</span>
 					</div>
 				)}
@@ -1906,15 +2356,27 @@ export function SessionsApp() {
 					<Button
 						type="button"
 						data-voice-send
-						onClick={handleSend}
+						onClick={canResumeWithoutMessage ? handleResume : handleSend}
 						disabled={
 							chatState === "sending" ||
-							(!messageInput.trim() && pendingUploads.length === 0)
+							(!canResumeWithoutMessage &&
+								!messageInput.trim() &&
+								pendingUploads.length === 0)
 						}
 						className="bg-primary hover:bg-primary/90 text-primary-foreground"
 					>
-						<Send className="w-4 h-4 sm:mr-2" />
-						<span className="hidden sm:inline">{t.send}</span>
+						{canResumeWithoutMessage ? (
+							<RefreshCw className="w-4 h-4 sm:mr-2" />
+						) : (
+							<Send className="w-4 h-4 sm:mr-2" />
+						)}
+						<span className="hidden sm:inline">
+							{canResumeWithoutMessage
+								? locale === "de"
+									? "Fortsetzen"
+									: "Resume"
+								: t.send}
+						</span>
 					</Button>
 				</div>
 			</div>
@@ -2116,18 +2578,24 @@ export function SessionsApp() {
 						/>
 					)}
 					{activeView === "preview" && (
-						<PreviewView filePath={previewFilePath} />
+						<Suspense fallback={viewLoadingFallback}>
+							<PreviewView filePath={previewFilePath} />
+						</Suspense>
 					)}
 					{activeView === "tasks" && (
 						<TodoListView todos={latestTodos} emptyMessage={t.noTasks} />
 					)}
 					{features.mmry_enabled && activeView === "memories" && (
-						<MemoriesView />
+						<Suspense fallback={viewLoadingFallback}>
+							<MemoriesView />
+						</Suspense>
 					)}
 					{/* Terminal only rendered in mobile layout when isMobileLayout is true */}
 					{isMobileLayout && (
 						<div className={activeView === "terminal" ? "h-full" : "hidden"}>
-							<TerminalView sessionId={selectedWorkspaceSessionId} />
+							<Suspense fallback={viewLoadingFallback}>
+								<TerminalView sessionId={selectedWorkspaceSessionId} />
+							</Suspense>
 						</div>
 					)}
 				</div>
@@ -2207,7 +2675,9 @@ export function SessionsApp() {
 							/>
 						)}
 						{activeView === "preview" && (
-							<PreviewView filePath={previewFilePath} />
+							<Suspense fallback={viewLoadingFallback}>
+								<PreviewView filePath={previewFilePath} />
+							</Suspense>
 						)}
 						{activeView === "tasks" && (
 							<TodoListView todos={latestTodos} emptyMessage={t.noTasks} />
@@ -2216,7 +2686,9 @@ export function SessionsApp() {
 							<TodoListView todos={latestTodos} emptyMessage={t.noTasks} />
 						)}
 						{features.mmry_enabled && activeView === "memories" && (
-							<MemoriesView />
+							<Suspense fallback={viewLoadingFallback}>
+								<MemoriesView />
+							</Suspense>
 						)}
 						{activeView === "voice" && voiceMode.isActive && (
 							<VoicePanel {...voicePanelProps} />
@@ -2224,7 +2696,9 @@ export function SessionsApp() {
 						{/* Terminal only rendered in desktop layout when isMobileLayout is false */}
 						{!isMobileLayout && (
 							<div className={activeView === "terminal" ? "h-full" : "hidden"}>
-								<TerminalView sessionId={selectedWorkspaceSessionId} />
+								<Suspense fallback={viewLoadingFallback}>
+									<TerminalView sessionId={selectedWorkspaceSessionId} />
+								</Suspense>
 							</div>
 						)}
 					</div>

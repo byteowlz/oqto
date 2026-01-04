@@ -8,6 +8,8 @@
 		"build": "vite build",
 		"preview": "vite preview",
 		"lint": "biome check . && bunx oxlint --import-plugin --tsconfig ./tsconfig.json .",
+		"tauri:dev": "bunx tauri dev",
+		"tauri:build": "bunx tauri build",
 		"test": "vitest",
 		"test:run": "vitest run"
 	},

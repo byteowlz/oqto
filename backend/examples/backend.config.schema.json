@@ -475,6 +475,26 @@
       },
       "additionalProperties": false
     },
+    "sessions": {
+      "type": "object",
+      "description": "Session UX configuration",
+      "x-scope": "admin",
+      "x-category": "Sessions",
+      "properties": {
+        "auto_attach": {
+          "type": "string",
+          "description": "Auto-attach to running sessions when opening chat history (\"resume\" will start a session if needed)",
+          "enum": ["off", "attach", "resume"],
+          "default": "off"
+        },
+        "auto_attach_scan": {
+          "type": "boolean",
+          "description": "Scan running sessions for the selected chat session ID before attaching",
+          "default": true
+        }
+      },
+      "additionalProperties": false
+    },
     "mmry": {
       "type": "object",
       "description": "Memory service (mmry) configuration",

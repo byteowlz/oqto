@@ -4,6 +4,7 @@ import { useApp } from "@/components/app-context";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { controlPlaneApiUrl } from "@/lib/control-plane-client";
 import { cn } from "@/lib/utils";
 import {
 	Brain,
@@ -66,7 +67,10 @@ async function fetchMemories(
 	offset = 0,
 	limit = 50,
 ): Promise<MemoryListResponse> {
-	const url = new URL(`/api/session/${sessionId}/memories`, window.location.origin);
+	const url = new URL(
+		controlPlaneApiUrl(`/api/session/${sessionId}/memories`),
+		window.location.origin,
+	);
 	url.searchParams.set("limit", limit.toString());
 	url.searchParams.set("offset", offset.toString());
 
@@ -88,16 +92,19 @@ async function searchMemories(
 	query: string,
 	limit = 50,
 ): Promise<Memory[]> {
-	const res = await fetch(`/api/session/${sessionId}/memories/search`, {
-		method: "POST",
-		credentials: "include",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({
-			query,
-			limit,
-			rerank: true,
-		}),
-	});
+	const res = await fetch(
+		controlPlaneApiUrl(`/api/session/${sessionId}/memories/search`),
+		{
+			method: "POST",
+			credentials: "include",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				query,
+				limit,
+				rerank: true,
+			}),
+		},
+	);
 	if (!res.ok) {
 		throw new Error(`Failed to search memories: ${res.statusText}`);
 	}
@@ -112,17 +119,20 @@ async function addMemory(
 	tags?: string[],
 	importance?: number,
 ): Promise<Memory> {
-	const res = await fetch(`/api/session/${sessionId}/memories`, {
-		method: "POST",
-		credentials: "include",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({
-			content,
-			category: category || "general",
-			tags: tags || [],
-			importance: importance || 5,
-		}),
-	});
+	const res = await fetch(
+		controlPlaneApiUrl(`/api/session/${sessionId}/memories`),
+		{
+			method: "POST",
+			credentials: "include",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				content,
+				category: category || "general",
+				tags: tags || [],
+				importance: importance || 5,
+			}),
+		},
+	);
 	if (!res.ok) {
 		const text = await res.text();
 		throw new Error(`Failed to add memory: ${text || res.statusText}`);
@@ -135,7 +145,7 @@ async function deleteMemory(
 	memoryId: string,
 ): Promise<void> {
 	const res = await fetch(
-		`/api/session/${sessionId}/memories/${memoryId}`,
+		controlPlaneApiUrl(`/api/session/${sessionId}/memories/${memoryId}`),
 		{
 			method: "DELETE",
 			credentials: "include",
@@ -155,7 +165,7 @@ async function updateMemory(
 	importance?: number,
 ): Promise<Memory> {
 	const res = await fetch(
-		`/api/session/${sessionId}/memories/${memoryId}`,
+		controlPlaneApiUrl(`/api/session/${sessionId}/memories/${memoryId}`),
 		{
 			method: "PUT",
 			credentials: "include",

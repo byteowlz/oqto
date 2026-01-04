@@ -346,26 +346,6 @@ impl LinuxUsersConfig {
         Ok(max_uid + 1)
     }
 
-    /// Set ownership of a directory to a Linux user.
-    pub fn chown_directory(&self, path: &std::path::Path, user_id: &str) -> Result<()> {
-        if !self.enabled {
-            return Ok(());
-        }
-
-        let username = self.linux_username(user_id);
-        let path_str = path.to_string_lossy();
-
-        info!("Setting ownership of '{}' to '{}'", path_str, username);
-
-        run_privileged_command(
-            self.use_sudo,
-            "chown",
-            &["-R", &format!("{}:{}", username, self.group), &path_str],
-        )
-        .with_context(|| format!("chown {} to {}", path_str, username))?;
-
-        Ok(())
-    }
 }
 
 /// Sanitize a user ID to be a valid Linux username.

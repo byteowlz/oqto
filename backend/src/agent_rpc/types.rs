@@ -155,7 +155,7 @@ pub struct SendMessageRequest {
 }
 
 /// Part of a message to send.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum SendMessagePart {
     #[serde(rename = "text")]

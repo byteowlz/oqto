@@ -18,6 +18,7 @@ use tokio_stream::{StreamExt, wrappers::IntervalStream};
 use tracing::{info, instrument, warn};
 
 use crate::auth::{AuthError, CurrentUser, RequireAdmin};
+use crate::session_ui::SessionAutoAttachMode;
 use crate::observability::{CpuTimes, HostMetrics, read_host_metrics};
 use crate::session::{CreateSessionRequest, Session, SessionContainerStats};
 use crate::user::{
@@ -55,6 +56,10 @@ pub async fn health() -> Json<HealthResponse> {
 pub struct FeaturesResponse {
     /// Whether mmry (memories) integration is enabled.
     pub mmry_enabled: bool,
+    /// Auto-attach mode when opening chat history.
+    pub session_auto_attach: SessionAutoAttachMode,
+    /// Whether to scan running sessions for matching chat session IDs.
+    pub session_auto_attach_scan: bool,
     /// Voice mode configuration (null if disabled).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub voice: Option<VoiceConfig>,
@@ -100,8 +105,8 @@ pub struct VisualizerVoice {
 pub async fn features(State(state): State<AppState>) -> Json<FeaturesResponse> {
     let voice = if state.voice.enabled {
         Some(VoiceConfig {
-            stt_url: state.voice.stt_url.clone(),
-            tts_url: state.voice.tts_url.clone(),
+            stt_url: "/api/voice/stt".to_string(),
+            tts_url: "/api/voice/tts".to_string(),
             vad_timeout_ms: state.voice.vad_timeout_ms,
             default_voice: state.voice.default_voice.clone(),
             default_speed: state.voice.default_speed,
@@ -121,6 +126,8 @@ pub async fn features(State(state): State<AppState>) -> Json<FeaturesResponse> {
 
     Json(FeaturesResponse {
         mmry_enabled: state.mmry.enabled,
+        session_auto_attach: state.session_ui.auto_attach,
+        session_auto_attach_scan: state.session_ui.auto_attach_scan,
         voice,
     })
 }
@@ -1606,9 +1613,30 @@ pub struct StartAgentSessionRequest {
 #[derive(Debug, Deserialize)]
 pub struct SendAgentMessageRequest {
     /// Message text
-    pub text: String,
+    pub text: Option<String>,
+    /// Structured message parts
+    pub parts: Option<Vec<SendMessagePart>>,
+    /// Optional file part
+    pub file: Option<SendAgentFilePart>,
+    /// Optional agent mention part
+    pub agent: Option<SendAgentAgentPart>,
     /// Model override (optional)
     pub model: Option<agent_rpc::MessageModel>,
+}
+
+/// File part for agent messages.
+#[derive(Debug, Deserialize)]
+pub struct SendAgentFilePart {
+    pub mime: String,
+    pub url: String,
+    pub filename: Option<String>,
+}
+
+/// Agent part for agent messages.
+#[derive(Debug, Deserialize)]
+pub struct SendAgentAgentPart {
+    pub name: String,
+    pub id: Option<String>,
 }
 
 /// List conversations via AgentBackend.
@@ -1703,8 +1731,31 @@ pub async fn agent_send_message(
         ApiError::internal("AgentRPC backend not enabled")
     })?;
 
+    let mut parts = request.parts.unwrap_or_default();
+    if let Some(file) = request.file {
+        parts.push(SendMessagePart::File {
+            mime: file.mime,
+            url: file.url,
+            filename: file.filename,
+        });
+    }
+    if let Some(agent) = request.agent {
+        parts.push(SendMessagePart::Agent {
+            name: agent.name,
+            id: agent.id,
+        });
+    }
+    if let Some(text) = request.text {
+        parts.push(SendMessagePart::Text { text });
+    }
+    if parts.is_empty() {
+        return Err(ApiError::bad_request(
+            "message must include text or parts",
+        ));
+    }
+
     let send_request = agent_rpc::SendMessageRequest {
-        parts: vec![SendMessagePart::Text { text: request.text }],
+        parts,
         model: request.model,
     };
 

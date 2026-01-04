@@ -4,8 +4,7 @@
 //! - Container mode (Docker/Podman)
 //! - Local mode (native processes)
 //!
-//! The service can optionally use the `AgentBackend` abstraction for a unified
-//! interface across both modes.
+//! The service manages session lifecycles and runtime orchestration.
 
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -18,7 +17,6 @@ use log::{debug, error, info, warn};
 use serde::Serialize;
 use uuid::Uuid;
 
-use crate::agent_rpc::AgentBackend;
 use crate::container::{ContainerConfig, ContainerRuntimeApi, ContainerStats};
 use crate::eavs::{CreateKeyRequest, EavsApi, KeyPermissions};
 use crate::local::{LocalRuntime, LocalRuntimeConfig};
@@ -173,8 +171,6 @@ pub struct SessionService {
     container_runtime: Option<Arc<dyn ContainerRuntimeApi>>,
     /// Local runtime (used when runtime_mode is Local).
     local_runtime: Option<Arc<LocalRuntime>>,
-    /// Unified agent backend (optional, for new AgentRPC-based architecture).
-    agent_backend: Option<Arc<dyn AgentBackend>>,
     eavs: Option<Arc<dyn EavsApi>>,
     readiness: Arc<dyn SessionReadiness>,
     config: SessionServiceConfig,
@@ -191,7 +187,6 @@ impl SessionService {
             repo,
             container_runtime: Some(runtime),
             local_runtime: None,
-            agent_backend: None,
             eavs: None,
             readiness: Arc::new(HttpSessionReadiness::default()),
             config,
@@ -209,7 +204,6 @@ impl SessionService {
             repo,
             container_runtime: Some(runtime),
             local_runtime: None,
-            agent_backend: None,
             eavs: Some(eavs),
             readiness: Arc::new(HttpSessionReadiness::default()),
             config,
@@ -226,7 +220,6 @@ impl SessionService {
             repo,
             container_runtime: None,
             local_runtime: Some(Arc::new(local_runtime)),
-            agent_backend: None,
             eavs: None,
             readiness: Arc::new(HttpSessionReadiness::default()),
             config,
@@ -244,60 +237,10 @@ impl SessionService {
             repo,
             container_runtime: None,
             local_runtime: Some(Arc::new(local_runtime)),
-            agent_backend: None,
             eavs: Some(eavs),
             readiness: Arc::new(HttpSessionReadiness::default()),
             config,
         }
-    }
-
-    /// Create a new session service with the unified AgentBackend.
-    ///
-    /// This constructor uses the new AgentRPC abstraction which provides
-    /// a unified interface for both local and container modes.
-    pub fn with_agent_backend(
-        repo: SessionRepository,
-        backend: Arc<dyn AgentBackend>,
-        config: SessionServiceConfig,
-    ) -> Self {
-        Self {
-            repo,
-            container_runtime: None,
-            local_runtime: None,
-            agent_backend: Some(backend),
-            eavs: None,
-            readiness: Arc::new(HttpSessionReadiness::default()),
-            config,
-        }
-    }
-
-    /// Create a new session service with AgentBackend and EAVS.
-    pub fn with_agent_backend_and_eavs(
-        repo: SessionRepository,
-        backend: Arc<dyn AgentBackend>,
-        eavs: Arc<dyn EavsApi>,
-        config: SessionServiceConfig,
-    ) -> Self {
-        Self {
-            repo,
-            container_runtime: None,
-            local_runtime: None,
-            agent_backend: Some(backend),
-            eavs: Some(eavs),
-            readiness: Arc::new(HttpSessionReadiness::default()),
-            config,
-        }
-    }
-
-    /// Get the agent backend (if available).
-    pub fn agent_backend(&self) -> Option<&Arc<dyn AgentBackend>> {
-        self.agent_backend.as_ref()
-    }
-
-    /// Get the runtime mode.
-    #[allow(dead_code)]
-    pub fn runtime_mode(&self) -> RuntimeMode {
-        self.config.runtime_mode
     }
 
     /// Get the container runtime (if available).
@@ -1053,7 +996,7 @@ impl SessionService {
     /// For container mode: restarts the stopped container.
     /// For local mode: respawns the processes (workspace data is preserved).
     pub async fn resume_session(&self, session_id: &str) -> Result<Session> {
-        let session = self
+        let mut session = self
             .repo
             .get(session_id)
             .await?
@@ -1140,6 +1083,104 @@ impl SessionService {
                     .local_runtime()
                     .context("local runtime not available")?;
 
+                let mut opencode_port = session.opencode_port as u16;
+                let mut fileserver_port = session.fileserver_port as u16;
+                let mut ttyd_port = session.ttyd_port as u16;
+
+                if !local_runtime.check_ports_available(opencode_port, fileserver_port, ttyd_port)
+                {
+                    warn!(
+                        "Ports {}/{}/{} are in use for session {}, attempting cleanup...",
+                        opencode_port, fileserver_port, ttyd_port, session_id
+                    );
+                    let cleared = local_runtime.clear_ports(&[
+                        opencode_port,
+                        fileserver_port,
+                        ttyd_port,
+                    ]);
+                    if local_runtime.check_ports_available(opencode_port, fileserver_port, ttyd_port)
+                    {
+                        info!(
+                            "Cleared {} orphan process(es), ports now available for session {}",
+                            cleared, session_id
+                        );
+                    } else {
+                        let max_agents = session
+                            .max_agents
+                            .unwrap_or(Self::DEFAULT_MAX_AGENTS);
+                        let base_port = self
+                            .repo
+                            .find_free_port_range_with_agents(self.config.base_port, max_agents)
+                            .await?;
+                        let new_opencode_port = base_port as u16;
+                        let new_fileserver_port = (base_port + 1) as u16;
+                        let new_ttyd_port = (base_port + 2) as u16;
+                        let new_mmry_port = session.mmry_port.map(|_| base_port + 3);
+                        let new_agent_base_port = session.agent_base_port.map(|_| base_port + 4);
+
+                        if !local_runtime.check_ports_available(
+                            new_opencode_port,
+                            new_fileserver_port,
+                            new_ttyd_port,
+                        ) {
+                            let cleared_new = local_runtime.clear_ports(&[
+                                new_opencode_port,
+                                new_fileserver_port,
+                                new_ttyd_port,
+                            ]);
+                            if !local_runtime.check_ports_available(
+                                new_opencode_port,
+                                new_fileserver_port,
+                                new_ttyd_port,
+                            ) {
+                                anyhow::bail!(
+                                    "Ports {}/{}/{} are still in use after cleanup (cleared {} processes) for session {}",
+                                    new_opencode_port,
+                                    new_fileserver_port,
+                                    new_ttyd_port,
+                                    cleared_new,
+                                    session_id
+                                );
+                            }
+                            info!(
+                                "Cleared {} orphan process(es), new ports now available for session {}",
+                                cleared_new, session_id
+                            );
+                        }
+
+                        self.repo
+                            .update_ports(
+                                session_id,
+                                base_port,
+                                base_port + 1,
+                                base_port + 2,
+                                new_mmry_port,
+                                new_agent_base_port,
+                            )
+                            .await?;
+
+                        info!(
+                            "Reassigned ports for session {}: {}/{}/{} -> {}/{}/{}",
+                            session_id,
+                            opencode_port,
+                            fileserver_port,
+                            ttyd_port,
+                            new_opencode_port,
+                            new_fileserver_port,
+                            new_ttyd_port
+                        );
+
+                        session.opencode_port = base_port;
+                        session.fileserver_port = base_port + 1;
+                        session.ttyd_port = base_port + 2;
+                        session.mmry_port = new_mmry_port;
+                        session.agent_base_port = new_agent_base_port;
+                        opencode_port = new_opencode_port;
+                        fileserver_port = new_fileserver_port;
+                        ttyd_port = new_ttyd_port;
+                    }
+                }
+
                 // Build environment variables
                 let mut env = std::collections::HashMap::new();
                 if let Some(ref eavs_url) = self.config.eavs_container_url {
@@ -1159,9 +1200,9 @@ impl SessionService {
                         &workspace_path,
                         session.agent.as_deref(),
                         None, // project_id - will be added with shared projects feature
-                        session.opencode_port as u16,
-                        session.fileserver_port as u16,
-                        session.ttyd_port as u16,
+                        opencode_port,
+                        fileserver_port,
+                        ttyd_port,
                         env,
                     )
                     .await
@@ -1986,8 +2027,25 @@ impl SessionService {
             return Ok(session);
         }
 
-        // Enforce LRU cap before creating a new session
+        // Enforce LRU cap before resuming or creating a new session
         self.enforce_session_cap(user_id).await?;
+
+        // Resume the most recently stopped session for this workspace, if any
+        if let Some(session) = self
+            .repo
+            .find_latest_stopped_for_workspace(user_id, workspace_path)
+            .await?
+        {
+            info!(
+                "Resuming stopped session {} for workspace {}",
+                session.id, workspace_path
+            );
+            let resumed = self.resume_session(&session.id).await?;
+            if resumed.status == SessionStatus::Failed {
+                anyhow::bail!("failed to resume session {}", resumed.id);
+            }
+            return Ok(resumed);
+        }
 
         // Create a new session for this workspace
         let request = CreateSessionRequest {
@@ -2427,31 +2485,6 @@ mod tests {
         assert!(service.local_runtime().is_some());
         assert!(service.container_runtime().is_none());
         assert!(service.eavs.is_some());
-    }
-
-    #[tokio::test]
-    async fn test_session_service_runtime_mode() {
-        let db = Database::in_memory().await.unwrap();
-        let repo = SessionRepository::new(db.pool().clone());
-
-        // Container mode
-        let config = SessionServiceConfig {
-            runtime_mode: RuntimeMode::Container,
-            ..Default::default()
-        };
-        let fake_runtime = Arc::new(FakeRuntime::default());
-        let service = SessionService::new(repo.clone(), fake_runtime, config);
-        assert_eq!(service.runtime_mode(), RuntimeMode::Container);
-
-        // Local mode
-        let local_config = LocalRuntimeConfig::default();
-        let local_runtime = LocalRuntime::new(local_config);
-        let config = SessionServiceConfig {
-            runtime_mode: RuntimeMode::Local,
-            ..Default::default()
-        };
-        let service = SessionService::with_local_runtime(repo, local_runtime, config);
-        assert_eq!(service.runtime_mode(), RuntimeMode::Local);
     }
 
     #[test]

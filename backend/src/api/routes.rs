@@ -13,6 +13,7 @@ use tracing::Level;
 use crate::auth::auth_middleware;
 
 use super::handlers;
+use super::main_chat as main_chat_handlers;
 use super::proxy;
 use super::state::AppState;
 
@@ -66,6 +67,9 @@ pub fn create_router(state: AppState) -> Router {
             post(handlers::upgrade_session),
         )
         .route("/sessions/updates", get(handlers::check_all_updates))
+        // Voice mode WebSocket proxies
+        .route("/voice/stt", get(proxy::proxy_voice_stt_ws))
+        .route("/voice/tts", get(proxy::proxy_voice_tts_ws))
         // Opencode events (legacy global endpoint)
         .route("/opencode/event", get(proxy::opencode_events))
         // SSE events proxy for specific session
@@ -229,6 +233,26 @@ pub fn create_router(state: AppState) -> Router {
             get(handlers::get_settings_values).patch(handlers::update_settings_values),
         )
         .route("/settings/reload", post(handlers::reload_settings))
+        // Main Chat routes (single persistent cross-project assistant per user)
+        .route(
+            "/main",
+            get(main_chat_handlers::get_main_chat)
+                .post(main_chat_handlers::initialize_main_chat)
+                .delete(main_chat_handlers::delete_main_chat),
+        )
+        .route(
+            "/main/history",
+            get(main_chat_handlers::get_history).post(main_chat_handlers::add_history),
+        )
+        .route("/main/export", get(main_chat_handlers::export_history))
+        .route(
+            "/main/sessions",
+            get(main_chat_handlers::list_sessions).post(main_chat_handlers::register_session),
+        )
+        .route(
+            "/main/sessions/latest",
+            get(main_chat_handlers::get_latest_session),
+        )
         // AgentRPC routes (unified backend API)
         .route("/agent/health", get(handlers::agent_health))
         .route(

@@ -127,6 +127,11 @@ impl LocalBackend {
             );
         }
 
+        if let Some(model) = &opts.model {
+            env.entry("OPENCODE_MODEL".to_string())
+                .or_insert_with(|| model.clone());
+        }
+
         env
     }
 
@@ -455,7 +460,4 @@ impl AgentBackend for LocalBackend {
             .map(|s| format!("http://localhost:{}", s.opencode_port)))
     }
 
-    fn user_data_dir(&self, user_id: &str) -> PathBuf {
-        self.opencode_data_dir(user_id)
-    }
 }

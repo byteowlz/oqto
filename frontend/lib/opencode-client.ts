@@ -126,6 +126,7 @@ export async function fetchSessions(
 ): Promise<OpenCodeSession[]> {
 	const res = await fetch(`${base(opencodeBaseUrl)}/session`, {
 		cache: "no-store",
+		credentials: "include",
 	});
 	return handleResponse<OpenCodeSession[]>(res);
 }
@@ -148,7 +149,7 @@ export async function fetchMessages(
 	// Fetch from server
 	const res = await fetch(
 		`${base(opencodeBaseUrl)}/session/${sessionId}/message`,
-		{ cache: "no-store" },
+		{ cache: "no-store", credentials: "include" },
 	);
 	const messages = await handleResponse<OpenCodeMessageWithParts[]>(res);
 
@@ -192,6 +193,7 @@ export async function sendMessage(
 				model,
 				parts: [{ type: "text", text: content }],
 			}),
+			credentials: "include",
 		},
 	);
 	return handleResponse<OpenCodeMessageWithParts>(res);
@@ -213,6 +215,7 @@ export async function sendMessageAsync(
 				model,
 				parts: [{ type: "text", text: content }],
 			}),
+			credentials: "include",
 		},
 	);
 	if (!res.ok) {
@@ -243,6 +246,7 @@ export async function sendPartsAsync(
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify(body),
+			credentials: "include",
 		},
 	);
 	if (!res.ok) {
@@ -260,6 +264,7 @@ export async function abortSession(
 		`${base(opencodeBaseUrl)}/session/${sessionId}/abort`,
 		{
 			method: "POST",
+			credentials: "include",
 		},
 	);
 	return handleResponse<boolean>(res);
@@ -278,6 +283,7 @@ export async function fetchAgents(
 ): Promise<OpenCodeAgent[]> {
 	const res = await fetch(`${base(opencodeBaseUrl)}/agent`, {
 		cache: "no-store",
+		credentials: "include",
 	});
 	return handleResponse<OpenCodeAgent[]>(res);
 }
@@ -304,6 +310,7 @@ export async function fetchConfig(
 ): Promise<OpenCodeConfig> {
 	const res = await fetch(`${base(opencodeBaseUrl)}/config`, {
 		cache: "no-store",
+		credentials: "include",
 	});
 	return handleResponse<OpenCodeConfig>(res);
 }
@@ -323,6 +330,7 @@ export async function fetchCommands(
 ): Promise<OpenCodeCommandInfo[]> {
 	const res = await fetch(`${base(opencodeBaseUrl)}/command`, {
 		cache: "no-store",
+		credentials: "include",
 	});
 	return handleResponse<OpenCodeCommandInfo[]>(res);
 }
@@ -343,6 +351,7 @@ export async function runShellCommand(
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify(body),
+			credentials: "include",
 		},
 	);
 	return handleResponse<OpenCodeMessageWithParts>(res);
@@ -364,6 +373,7 @@ export async function runShellCommandAsync(
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify(body),
+			credentials: "include",
 		},
 	);
 	if (!res.ok) {
@@ -396,6 +406,7 @@ export async function sendCommandAsync(
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({ command, arguments: args }),
+			credentials: "include",
 		},
 	);
 	if (!res.ok) {
@@ -422,6 +433,7 @@ export async function createSession(
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify({ title, parentID }),
+		credentials: "include",
 	});
 	return handleResponse<OpenCodeSession>(res);
 }
@@ -432,6 +444,7 @@ export async function deleteSession(
 ): Promise<void> {
 	const res = await fetch(`${base(opencodeBaseUrl)}/session/${sessionId}`, {
 		method: "DELETE",
+		credentials: "include",
 	});
 	if (!res.ok) {
 		const text = await res.text().catch(() => res.statusText);
@@ -448,6 +461,7 @@ export async function updateSession(
 		method: "PATCH",
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify(updates),
+		credentials: "include",
 	});
 	return handleResponse<OpenCodeSession>(res);
 }
@@ -486,6 +500,7 @@ export async function respondToPermission(
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({ response }),
+			credentials: "include",
 		},
 	);
 	if (!res.ok) {
@@ -501,7 +516,7 @@ export async function fetchPermissions(
 ): Promise<Permission[]> {
 	const res = await fetch(
 		`${base(opencodeBaseUrl)}/session/${sessionId}/permission`,
-		{ cache: "no-store" },
+		{ cache: "no-store", credentials: "include" },
 	);
 	// If endpoint doesn't exist or returns error, return empty array
 	if (!res.ok) {
@@ -600,6 +615,16 @@ export function subscribeToEvents(
 				emitStatusTransitions(status);
 				pollDelayMs = minPollDelayMs;
 			} else {
+				if (res.status === 503) {
+					const sessionId =
+						extractWorkspaceSessionIdFromOpencodeBaseUrl(opencodeBaseUrl);
+					if (sessionId) {
+						callback({
+							type: "session.unavailable",
+							properties: { sessionId },
+						});
+					}
+				}
 				pollDelayMs = Math.min(maxPollDelayMs, Math.round(pollDelayMs * 1.5));
 			}
 		} catch {

@@ -10,6 +10,7 @@
  */
 
 import { STTService, TTSService } from "@/lib/voice";
+import { voiceProxyWsUrl } from "@/lib/control-plane-client";
 import type {
 	VisualizerType,
 	VisualizerVoiceSettings,
@@ -331,7 +332,10 @@ export function useVoiceMode(options: UseVoiceModeOptions): UseVoiceModeReturn {
 
 		// Create STT service
 		if (!sttRef.current) {
-			sttRef.current = new STTService(config.stt_url, settings.vadTimeoutMs);
+			sttRef.current = new STTService(
+				voiceProxyWsUrl("stt"),
+				settings.vadTimeoutMs,
+			);
 			sttRef.current.setCallbacks({
 				onWord: (word) => {
 					setLiveTranscript((prev) => `${prev ? `${prev} ` : ""}${word}`);
@@ -393,7 +397,7 @@ export function useVoiceMode(options: UseVoiceModeOptions): UseVoiceModeReturn {
 
 		// Create TTS service
 		if (!ttsRef.current) {
-			ttsRef.current = new TTSService(config.tts_url);
+			ttsRef.current = new TTSService(voiceProxyWsUrl("tts"));
 			ttsRef.current.setCallbacks({
 				onPlaying: () => {
 					setVoiceState("speaking");

@@ -1,4 +1,5 @@
 import { Spinner } from "@/components/ui/spinner";
+import { controlPlaneApiUrl } from "@/lib/control-plane-client";
 import type React from "react";
 import { useEffect, useMemo, useState } from "react";
 import { Navigate, useLocation } from "react-router-dom";
@@ -15,7 +16,9 @@ export function RequireAuth({ children }: { children: React.ReactNode }) {
 
 		const checkAuth = async () => {
 			try {
-				const response = await fetch("/api/me", { credentials: "include" });
+				const response = await fetch(controlPlaneApiUrl("/api/me"), {
+					credentials: "include",
+				});
 				if (cancelled || pathAtRequest !== location.pathname) return;
 				if (response.status === 401) {
 					setStatus("unauth");

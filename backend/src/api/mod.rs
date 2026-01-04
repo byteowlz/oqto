@@ -4,6 +4,7 @@
 
 mod error;
 mod handlers;
+mod main_chat;
 mod proxy;
 mod routes;
 mod state;
@@ -12,4 +13,4 @@ mod state;
 #[allow(unused_imports)]
 pub use error::{ApiError, ApiResult, ErrorResponse};
 pub use routes::create_router;
-pub use state::{AppState, MmryState, VoiceState, VisualizerVoiceState};
+pub use state::{AppState, MmryState, SessionUiState, VoiceState, VisualizerVoiceState};

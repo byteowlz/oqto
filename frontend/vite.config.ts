@@ -48,6 +48,22 @@ export default defineConfig(({ mode }) => {
 				"@": path.resolve(__dirname, "./"),
 			},
 		},
+		optimizeDeps: {
+			include: [
+				"react",
+				"react-dom",
+				"react-router-dom",
+				"@tanstack/react-query",
+				"@tanstack/react-virtual",
+				"lucide-react",
+				"cmdk",
+				"react-markdown",
+				"remark-gfm",
+				"react-syntax-highlighter",
+				"recharts",
+			],
+			exclude: ["ghostty-web"],
+		},
 		server: {
 			host: true,
 			port: 3000,
@@ -85,6 +101,7 @@ export default defineConfig(({ mode }) => {
 				"/api": {
 					target: controlPlaneUrl,
 					changeOrigin: true,
+					ws: true,
 					rewrite: (pathValue) => pathValue.replace(/^\/api/, ""),
 				},
 			},

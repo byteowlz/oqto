@@ -1,5 +1,6 @@
 import { AgentPicker } from "@/components/agent-picker";
 import { AppProvider, useApp } from "@/components/app-context";
+import { MainChatEntry } from "@/components/main-chat";
 import {
 	CommandPalette,
 	useCommandPalette,
@@ -108,6 +109,12 @@ function AppShell() {
 		busySessions,
 		projectDefaultAgents,
 		setProjectDefaultAgents,
+		mainChatActive,
+		setMainChatActive,
+		mainChatAssistantName,
+		setMainChatAssistantName,
+		mainChatCurrentSessionId,
+		setMainChatCurrentSessionId,
 	} = useApp();
 	const location = useLocation();
 	const navigate = useNavigate();
@@ -195,10 +202,14 @@ function AppShell() {
 	// Persist pinned sessions to localStorage
 	useEffect(() => {
 		if (typeof window === "undefined") return;
-		localStorage.setItem(
-			"octo:pinnedSessions",
-			JSON.stringify([...pinnedSessions]),
-		);
+		try {
+			localStorage.setItem(
+				"octo:pinnedSessions",
+				JSON.stringify([...pinnedSessions]),
+			);
+		} catch {
+			// Ignore storage failures (private mode, denied access).
+		}
 	}, [pinnedSessions]);
 
 	const [selectedProjectKey, setSelectedProjectKey] = useState<string | null>(
@@ -223,7 +234,14 @@ function AppShell() {
 	// Persist pinned projects to localStorage
 	useEffect(() => {
 		if (typeof window === "undefined") return;
-		localStorage.setItem("octo:pinnedProjects", JSON.stringify(pinnedProjects));
+		try {
+			localStorage.setItem(
+				"octo:pinnedProjects",
+				JSON.stringify(pinnedProjects),
+			);
+		} catch {
+			// Ignore storage failures (private mode, denied access).
+		}
 	}, [pinnedProjects]);
 	const [directoryPickerOpen, setDirectoryPickerOpen] = useState(false);
 	const [directoryPickerPath, setDirectoryPickerPath] = useState(".");
@@ -337,6 +355,31 @@ function AppShell() {
 	// Session search
 	const [sessionSearch, setSessionSearch] = useState("");
 	const deferredSearch = useDeferredValue(sessionSearch);
+
+	// Handle Main Chat selection
+	const handleMainChatSelect = useCallback(
+		(assistantName: string, sessionId: string | null) => {
+			setMainChatAssistantName(assistantName);
+			setMainChatActive(true);
+			// Set the Main Chat current session ID (used for sending messages)
+			setMainChatCurrentSessionId(sessionId);
+			// Navigate to sessions view
+			setActiveAppId("sessions");
+		},
+		[setActiveAppId, setMainChatActive, setMainChatAssistantName, setMainChatCurrentSessionId],
+	);
+
+	// Handle Main Chat timeline session selection
+	const handleMainChatSessionSelect = useCallback(
+		(assistantName: string, sessionId: string) => {
+			setMainChatAssistantName(assistantName);
+			setMainChatActive(true);
+			// When clicking a specific session, use it as the current session for sending
+			setMainChatCurrentSessionId(sessionId);
+			setActiveAppId("sessions");
+		},
+		[setActiveAppId, setMainChatActive, setMainChatAssistantName, setMainChatCurrentSessionId],
+	);
 
 	// Build hierarchical session structure from chatHistory (disk-based, no opencode needed)
 	const sessionHierarchy = useMemo(() => {
@@ -664,6 +707,8 @@ function AppShell() {
 		setSelectedChatSessionId(sessionId);
 		setActiveAppId("sessions");
 		setMobileMenuOpen(false);
+		// Clear main chat selection when clicking a regular session
+		setMainChatActive(false);
 	};
 
 	// Context menu handlers
@@ -1234,6 +1279,18 @@ function AppShell() {
 									</div>
 								</div>
 								<div className="flex-1 overflow-y-auto space-y-0.5 px-1">
+									{/* Main Chat - Always at top */}
+									{!deferredSearch && !selectedProjectKey && (
+										<div className="mb-2 pb-2 border-b border-border/50">
+											<MainChatEntry
+												isSelected={mainChatActive}
+												activeSessionId={mainChatActive ? selectedChatSessionId : null}
+												onSelect={handleMainChatSelect}
+												onSessionSelect={handleMainChatSessionSelect}
+												locale={locale}
+											/>
+										</div>
+									)}
 									{filteredSessions.length === 0 && deferredSearch && (
 										<div className="text-sm text-muted-foreground/50 text-center py-4">
 											{locale === "de" ? "Keine Ergebnisse" : "No results"}
@@ -1684,30 +1741,28 @@ function AppShell() {
 					</div>
 				</div>
 
-				{/* New Chat button */}
-				{isSessionsView && (
-					<div className={`w-full ${sidebarCollapsed ? "px-2" : "px-3"} mt-1`}>
-						<Button
-							type="button"
-							variant="outline"
-							size="sm"
-							onClick={handleNewChat}
-							className={cn(
-								"w-full text-xs font-medium flex items-center gap-2 transition-colors",
-								"border-primary/50 hover:border-primary hover:bg-primary/10",
-								sidebarCollapsed ? "justify-center px-2" : "justify-start px-3",
-							)}
-						>
-							<Plus className="w-3.5 h-3.5 shrink-0" />
-							{!sidebarCollapsed && (
-								<span>{locale === "de" ? "Neuer Chat" : "New Chat"}</span>
-							)}
-						</Button>
-					</div>
-				)}
+				{/* New Chat button - always visible */}
+				<div className={`w-full ${sidebarCollapsed ? "px-2" : "px-3"} mt-1`}>
+					<Button
+						type="button"
+						variant="outline"
+						size="sm"
+						onClick={handleNewChat}
+						className={cn(
+							"w-full text-xs font-medium flex items-center gap-2 transition-colors",
+							"border-primary/50 hover:border-primary hover:bg-primary/10",
+							sidebarCollapsed ? "justify-center px-2" : "justify-start px-3",
+						)}
+					>
+						<Plus className="w-3.5 h-3.5 shrink-0" />
+						{!sidebarCollapsed && (
+							<span>{locale === "de" ? "Neuer Chat" : "New Chat"}</span>
+						)}
+					</Button>
+				</div>
 
-				{/* Project filter bar - always show when on sessions tab */}
-				{isSessionsView && !sidebarCollapsed && (
+				{/* Project filter bar - always visible when not collapsed */}
+				{!sidebarCollapsed && (
 					<div className="w-full px-1.5 mt-3">
 						<div className="relative px-0.5">
 							<div
@@ -1805,8 +1860,8 @@ function AppShell() {
 					</div>
 				)}
 
-				{/* Session history list - uses chatHistory (disk-based, no opencode needed) */}
-				{isSessionsView && !sidebarCollapsed && chatHistory.length > 0 && (
+				{/* Session history list - always visible when not collapsed */}
+				{!sidebarCollapsed && chatHistory.length > 0 && (
 					<div className="w-full px-1.5 mt-2 flex-1 min-h-0 flex flex-col">
 						<div className="flex items-center justify-between gap-2 py-1.5 px-1 border-t border-sidebar-border">
 							<div className="flex items-center gap-2">
@@ -1901,6 +1956,18 @@ function AppShell() {
 							</div>
 						</div>
 						<div className="flex-1 overflow-y-auto space-y-0.5">
+							{/* Main Chat - Always at top (mobile) */}
+							{!deferredSearch && !selectedProjectKey && (
+								<div className="mb-2 pb-2 border-b border-border/50 px-2">
+									<MainChatEntry
+										isSelected={mainChatActive}
+										activeSessionId={mainChatActive ? selectedChatSessionId : null}
+										onSelect={handleMainChatSelect}
+										onSessionSelect={handleMainChatSessionSelect}
+										locale={locale}
+									/>
+								</div>
+							)}
 							{filteredSessions.length === 0 && deferredSearch && (
 								<div className="text-xs text-muted-foreground/50 text-center py-4">
 									{locale === "de" ? "Keine Ergebnisse" : "No results"}
@@ -2243,8 +2310,8 @@ function AppShell() {
 					</div>
 				)}
 
-				{/* Collapsed session indicator */}
-				{isSessionsView && sidebarCollapsed && opencodeSessions.length > 0 && (
+				{/* Collapsed session indicator - always visible when collapsed */}
+				{sidebarCollapsed && (chatHistory.length > 0 || opencodeSessions.length > 0) && (
 					<div className="w-full px-2 mt-4">
 						<div className="border-t border-sidebar-border pt-2">
 							<button

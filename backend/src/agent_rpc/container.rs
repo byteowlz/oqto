@@ -378,6 +378,10 @@ impl AgentBackend for ContainerBackend {
         // Build container config
         let mut env = self.config.env.clone();
         env.extend(opts.env);
+        if let Some(model) = opts.model {
+            env.entry("OPENCODE_MODEL".to_string())
+                .or_insert(model);
+        }
 
         // Set XDG paths inside container
         env.insert("XDG_DATA_HOME".to_string(), "/home/dev/.local/share".to_string());
@@ -597,8 +601,4 @@ impl AgentBackend for ContainerBackend {
             .map(|s| format!("http://localhost:{}", s.opencode_port)))
     }
 
-    fn user_data_dir(&self, user_id: &str) -> PathBuf {
-        self.user_host_dir(user_id)
-            .join(".local/share/opencode")
-    }
 }

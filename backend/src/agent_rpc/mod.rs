@@ -116,30 +116,4 @@ pub trait AgentBackend: Send + Sync {
     /// This URL can be used directly by the frontend to communicate with opencode.
     async fn get_session_url(&self, user_id: &str, session_id: &str) -> Result<Option<String>>;
 
-    /// Get the data directory for a user's opencode storage.
-    ///
-    /// Used for reading chat history from disk.
-    fn user_data_dir(&self, user_id: &str) -> std::path::PathBuf;
-}
-
-/// Backend mode selector.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum BackendMode {
-    /// Local mode - opencode runs as native process
-    Local,
-    /// Container mode - opencode runs in Docker/Podman container
-    #[default]
-    Container,
-    /// Auto mode - prefers local if available, falls back to container
-    Auto,
-}
-
-impl std::fmt::Display for BackendMode {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            BackendMode::Local => write!(f, "local"),
-            BackendMode::Container => write!(f, "container"),
-            BackendMode::Auto => write!(f, "auto"),
-        }
-    }
 }

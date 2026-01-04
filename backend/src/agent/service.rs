@@ -60,20 +60,6 @@ pub struct AgentService {
 }
 
 impl AgentService {
-    /// Create a new agent service.
-    pub fn new(
-        runtime: Arc<dyn ContainerRuntimeApi>,
-        sessions: SessionService,
-        repo: AgentRepository,
-    ) -> Self {
-        Self {
-            runtime,
-            sessions,
-            repo,
-            scaffold_config: ScaffoldConfig::default(),
-        }
-    }
-
     /// Create a new agent service with custom scaffold configuration.
     pub fn with_scaffold_config(
         runtime: Arc<dyn ContainerRuntimeApi>,

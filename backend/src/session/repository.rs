@@ -184,6 +184,32 @@ impl SessionRepository {
         Ok(())
     }
 
+    /// Update session ports after a local resume reassigns them.
+    pub async fn update_ports(
+        &self,
+        id: &str,
+        opencode_port: i64,
+        fileserver_port: i64,
+        ttyd_port: i64,
+        mmry_port: Option<i64>,
+        agent_base_port: Option<i64>,
+    ) -> Result<()> {
+        sqlx::query(
+            "UPDATE sessions SET opencode_port = ?, fileserver_port = ?, ttyd_port = ?, mmry_port = ?, agent_base_port = ? WHERE id = ?",
+        )
+        .bind(opencode_port)
+        .bind(fileserver_port)
+        .bind(ttyd_port)
+        .bind(mmry_port)
+        .bind(agent_base_port)
+        .bind(id)
+        .execute(&self.pool)
+        .await
+        .context("updating session ports")?;
+
+        Ok(())
+    }
+
     /// Mark session as running.
     pub async fn mark_running(&self, id: &str) -> Result<()> {
         sqlx::query("UPDATE sessions SET status = 'running' WHERE id = ?")
@@ -380,6 +406,26 @@ impl SessionRepository {
             .fetch_optional(&self.pool)
             .await
             .context("finding running session for workspace")?;
+
+        Ok(session)
+    }
+
+    /// Find the most recently stopped session for a specific workspace path.
+    pub async fn find_latest_stopped_for_workspace(
+        &self,
+        user_id: &str,
+        workspace_path: &str,
+    ) -> Result<Option<Session>> {
+        let query = format!(
+            "SELECT {} FROM sessions WHERE user_id = ? AND workspace_path = ? AND status = 'stopped' AND container_id IS NOT NULL ORDER BY stopped_at DESC LIMIT 1",
+            SESSION_COLUMNS
+        );
+        let session = sqlx::query_as::<_, Session>(&query)
+            .bind(user_id)
+            .bind(workspace_path)
+            .fetch_optional(&self.pool)
+            .await
+            .context("finding stopped session for workspace")?;
 
         Ok(session)
     }

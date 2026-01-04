@@ -55,9 +55,13 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
 	const [theme, setThemeState] = useState<"light" | "dark">("dark");
 
 	useEffect(() => {
-		const stored = localStorage.getItem("theme");
-		if (stored === "light" || stored === "dark") {
-			setThemeState(stored);
+		try {
+			const stored = localStorage.getItem("theme");
+			if (stored === "light" || stored === "dark") {
+				setThemeState(stored);
+			}
+		} catch {
+			// Ignore storage failures.
 		}
 	}, []);
 
@@ -65,7 +69,11 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
 		const next = theme === "dark" ? "light" : "dark";
 		document.documentElement.classList.add("no-transitions");
 		document.documentElement.classList.toggle("dark", next === "dark");
-		localStorage.setItem("theme", next);
+		try {
+			localStorage.setItem("theme", next);
+		} catch {
+			// Ignore storage failures.
+		}
 		setThemeState(next);
 		requestAnimationFrame(() => {
 			requestAnimationFrame(() => {
