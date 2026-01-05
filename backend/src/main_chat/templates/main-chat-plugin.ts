@@ -1,20 +1,13 @@
 // Main Chat Plugin for OpenCode
-// 
+//
 // This plugin provides:
 // 1. Custom compaction prompts for Main Chat sessions
-// 2. Automatic persistence of summaries to Octo backend
+// 2. Local persistence of summaries/decisions/insights as JSONL
 // 3. History injection at session start
-//
-// Environment variables (set by Octo when launching):
-// - OCTO_API_URL: Backend URL (e.g., http://localhost:3000)
-// - MAIN_CHAT_NAME: Assistant name (e.g., "jarvis")
-// - MAIN_CHAT_TOKEN: Auth token for API calls
 
 import type { Plugin } from "@opencode-ai/plugin";
-
-const OCTO_API_URL = process.env.OCTO_API_URL || "http://localhost:3000";
-const ASSISTANT_NAME = process.env.MAIN_CHAT_NAME || "assistant";
-const AUTH_TOKEN = process.env.MAIN_CHAT_TOKEN || "";
+import { promises as fs } from "node:fs";
+import path from "node:path";
 
 interface HistoryEntry {
   ts: string;
@@ -24,84 +17,51 @@ interface HistoryEntry {
   meta?: Record<string, unknown>;
 }
 
+const HISTORY_DIR = path.join(".opencode", "main-chat");
+const HISTORY_FILE = path.join(HISTORY_DIR, "history.jsonl");
+
 /**
- * Fetch recent history entries from Octo backend.
+ * Read recent history entries from the local JSONL store.
  */
-async function fetchRecentHistory(limit: number = 10): Promise<HistoryEntry[]> {
+async function readRecentHistory(limit: number = 10): Promise<HistoryEntry[]> {
   try {
-    const response = await fetch(
-      `${OCTO_API_URL}/api/main/${ASSISTANT_NAME}/history?limit=${limit}`,
-      {
-        headers: {
-          Authorization: `Bearer ${AUTH_TOKEN}`,
-          "Content-Type": "application/json",
-        },
+    const raw = await fs.readFile(HISTORY_FILE, "utf8");
+    const lines = raw
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean);
+    const parsed = lines
+      .map((line) => {
+        try {
+          return JSON.parse(line) as HistoryEntry;
+        } catch {
+          return null;
+        }
+      })
+      .filter((entry): entry is HistoryEntry => Boolean(entry));
+    return parsed.slice(-limit);
+  } catch (error: unknown) {
+    if (error && typeof error === "object" && "code" in error) {
+      if ((error as { code?: string }).code === "ENOENT") {
+        return [];
       }
-    );
-
-    if (!response.ok) {
-      console.error(`Failed to fetch history: ${response.status}`);
-      return [];
     }
-
-    return await response.json();
-  } catch (error) {
-    console.error("Error fetching history:", error);
+    console.error("Error reading history:", error);
     return [];
   }
 }
 
 /**
- * Save a history entry to Octo backend.
+ * Append history entries to the local JSONL store.
  */
-async function saveHistoryEntry(entry: Omit<HistoryEntry, "ts">): Promise<boolean> {
-  try {
-    const response = await fetch(
-      `${OCTO_API_URL}/api/main/${ASSISTANT_NAME}/history`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${AUTH_TOKEN}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(entry),
-      }
-    );
-
-    if (!response.ok) {
-      console.error(`Failed to save history: ${response.status}`);
-      return false;
-    }
-
-    return true;
-  } catch (error) {
-    console.error("Error saving history:", error);
-    return false;
-  }
-}
-
-/**
- * Register a session with Octo backend.
- */
-async function registerSession(sessionId: string, title?: string): Promise<boolean> {
-  try {
-    const response = await fetch(
-      `${OCTO_API_URL}/api/main/${ASSISTANT_NAME}/sessions`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${AUTH_TOKEN}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ session_id: sessionId, title }),
-      }
-    );
-
-    return response.ok;
-  } catch (error) {
-    console.error("Error registering session:", error);
-    return false;
-  }
+async function appendHistory(entries: Omit<HistoryEntry, "ts">[]): Promise<void> {
+  if (entries.length === 0) return;
+  await fs.mkdir(HISTORY_DIR, { recursive: true });
+  const now = new Date().toISOString();
+  const lines = entries.map((entry) =>
+    JSON.stringify({ ...entry, ts: now }),
+  );
+  await fs.appendFile(HISTORY_FILE, `${lines.join("\n")}\n`, "utf8");
 }
 
 /**
@@ -157,7 +117,7 @@ function parseCompactionOutput(text: string): HistoryEntry[] {
 }
 
 export const MainChatPlugin: Plugin = async (ctx) => {
-  console.log(`Main Chat plugin loaded for assistant: ${ASSISTANT_NAME}`);
+  console.log("Main Chat plugin loaded");
 
   // Track current session for event handlers
   let currentSessionId: string | undefined;
@@ -175,7 +135,7 @@ export const MainChatPlugin: Plugin = async (ctx) => {
     }
 
     try {
-      const history = await fetchRecentHistory(10);
+      const history = await readRecentHistory(10);
       if (history.length === 0) {
         console.log("No history to inject");
         return;
@@ -190,7 +150,7 @@ export const MainChatPlugin: Plugin = async (ctx) => {
         content: `<system-context>
 ${contextBlock}
 
-This context is from your previous sessions as ${ASSISTANT_NAME}. 
+This context is from your previous sessions.
 Use this to maintain continuity and reference past decisions when relevant.
 </system-context>`,
         noReply: true,
@@ -207,7 +167,7 @@ Use this to maintain continuity and reference past decisions when relevant.
     // Custom compaction prompt
     "experimental.session.compacting": async (input, output) => {
       // Inject recent history as additional context for compaction
-      const history = await fetchRecentHistory(5);
+      const history = await readRecentHistory(5);
       if (history.length > 0) {
         output.context.push(formatHistoryForContext(history));
       }
@@ -239,9 +199,7 @@ Focus on what would be most useful for the assistant to know when resuming work 
         const props = event.properties as { id?: string; title?: string };
         if (props.id) {
           currentSessionId = props.id;
-          await registerSession(props.id, props.title);
-          console.log(`Registered session: ${props.id}`);
-          
+
           // Inject history context for the new session
           await injectHistoryContext(props.id);
         }
@@ -264,13 +222,14 @@ Focus on what would be most useful for the assistant to know when resuming work 
         if (props.summary) {
           const entries = parseCompactionOutput(props.summary);
           
-          for (const entry of entries) {
-            entry.session_id = props.sessionID || currentSessionId;
-            const saved = await saveHistoryEntry(entry);
-            if (saved) {
-              console.log(`Saved ${entry.type} entry`);
-            }
-          }
+          const sessionId = props.sessionID || currentSessionId;
+          await appendHistory(
+            entries.map((entry) => ({
+              ...entry,
+              session_id: sessionId,
+            })),
+          );
+          console.log(`Saved ${entries.length} history entries`);
         }
       }
     },
