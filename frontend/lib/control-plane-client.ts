@@ -1162,6 +1162,7 @@ export async function deleteMainChatAssistant(name: string): Promise<void> {
 		method: "DELETE",
 		credentials: "include",
 	});
+	if (res.status === 404) return;
 	if (!res.ok) throw new Error(await readApiError(res));
 }
 

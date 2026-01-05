@@ -344,20 +344,32 @@ export function SessionsApp() {
 		mainChatAssistantName,
 		mainChatCurrentSessionId,
 		setMainChatCurrentSessionId,
+		mainChatWorkspacePath,
+		setMainChatWorkspacePath,
 	} = useApp();
 	const [messages, setMessages] = useState<OpenCodeMessageWithParts[]>([]);
 	const [messageInput, setMessageInput] = useState("");
+	const [mainChatBaseUrl, setMainChatBaseUrl] = useState("");
 	const opencodeDirectory = useMemo(() => {
-		if (mainChatActive) return undefined;
+		if (mainChatActive) return mainChatWorkspacePath ?? undefined;
 		return (
 			selectedChatFromHistory?.workspace_path ??
 			selectedWorkspaceSession?.workspace_path
 		);
-	}, [mainChatActive, selectedChatFromHistory, selectedWorkspaceSession]);
+	}, [
+		mainChatActive,
+		mainChatWorkspacePath,
+		selectedChatFromHistory,
+		selectedWorkspaceSession,
+	]);
 	const opencodeRequestOptions = useMemo(
 		() => ({ directory: opencodeDirectory }),
 		[opencodeDirectory],
 	);
+	const effectiveOpencodeBaseUrl = useMemo(() => {
+		if (mainChatActive && mainChatBaseUrl) return mainChatBaseUrl;
+		return opencodeBaseUrl;
+	}, [mainChatActive, mainChatBaseUrl, opencodeBaseUrl]);
 
 	// Per-chat state (working indicator is per-session, not global)
 	const [chatStates, setChatStates] = useState<Map<string, "idle" | "sending">>(
@@ -391,6 +403,35 @@ export function SessionsApp() {
 			setSessionBusy,
 		],
 	);
+
+	useEffect(() => {
+		if (!mainChatActive && mainChatBaseUrl) {
+			setMainChatBaseUrl("");
+		}
+	}, [mainChatActive, mainChatBaseUrl]);
+
+	useEffect(() => {
+		if (!mainChatActive || !mainChatAssistantName || mainChatWorkspacePath)
+			return;
+		let cancelled = false;
+		getMainChatAssistant(mainChatAssistantName)
+			.then((info) => {
+				if (!cancelled) {
+					setMainChatWorkspacePath(info.path);
+				}
+			})
+			.catch((err) => {
+				console.error("Failed to load Main Chat workspace path:", err);
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, [
+		mainChatActive,
+		mainChatAssistantName,
+		mainChatWorkspacePath,
+		setMainChatWorkspacePath,
+	]);
 
 	// Per-chat draft text cache (persists across session switches AND component remounts via localStorage)
 	const previousSessionIdRef = useRef<string | null>(null);
@@ -946,9 +987,10 @@ export function SessionsApp() {
 		[locale],
 	);
 
-	const resumeWorkspacePath =
-		selectedChatFromHistory?.workspace_path ??
-		selectedWorkspaceSession?.workspace_path;
+	const resumeWorkspacePath = mainChatActive
+		? (mainChatWorkspacePath ?? undefined)
+		: (selectedChatFromHistory?.workspace_path ??
+			selectedWorkspaceSession?.workspace_path);
 	const canResumeWithoutMessage = useMemo(() => {
 		if (!selectedChatSessionId) return false;
 		if (!resumeWorkspacePath) return false;
@@ -1415,19 +1457,19 @@ export function SessionsApp() {
 	}, [messages, scrollToBottom]);
 
 	useEffect(() => {
-		if (!opencodeBaseUrl) return;
+		if (!effectiveOpencodeBaseUrl || !activeSessionId) return;
 		const unsubscribe = subscribeToEvents(
-			opencodeBaseUrl,
+			effectiveOpencodeBaseUrl,
 			(event) => {
 				const eventType = event.type as string;
 
 				if (eventType === "transport.mode") {
 					const props = event.properties as { mode?: "sse" | "polling" } | null;
 					if (props?.mode) setEventsTransportMode(props.mode);
-					if (opencodeBaseUrl && selectedChatSessionId) {
+					if (effectiveOpencodeBaseUrl && activeSessionId) {
 						invalidateMessageCache(
-							opencodeBaseUrl,
-							selectedChatSessionId,
+							effectiveOpencodeBaseUrl,
+							activeSessionId,
 							opencodeDirectory,
 						);
 						requestMessageRefresh(250);
@@ -1436,10 +1478,10 @@ export function SessionsApp() {
 				}
 
 				if (eventType === "server.connected") {
-					if (opencodeBaseUrl && selectedChatSessionId) {
+					if (effectiveOpencodeBaseUrl && activeSessionId) {
 						invalidateMessageCache(
-							opencodeBaseUrl,
-							selectedChatSessionId,
+							effectiveOpencodeBaseUrl,
+							activeSessionId,
 							opencodeDirectory,
 						);
 						requestMessageRefresh(250);
@@ -1470,10 +1512,10 @@ export function SessionsApp() {
 				if (eventType === "session.idle") {
 					setChatState("idle");
 					// Invalidate cache and force refresh on idle
-					if (opencodeBaseUrl && selectedChatSessionId) {
+					if (effectiveOpencodeBaseUrl && activeSessionId) {
 						invalidateMessageCache(
-							opencodeBaseUrl,
-							selectedChatSessionId,
+							effectiveOpencodeBaseUrl,
+							activeSessionId,
 							opencodeDirectory,
 						);
 					}
@@ -1514,10 +1556,10 @@ export function SessionsApp() {
 				// Refresh messages on any message event
 				if (eventType?.startsWith("message")) {
 					// Invalidate cache when messages change
-					if (opencodeBaseUrl && selectedChatSessionId) {
+					if (effectiveOpencodeBaseUrl && activeSessionId) {
 						invalidateMessageCache(
-							opencodeBaseUrl,
-							selectedChatSessionId,
+							effectiveOpencodeBaseUrl,
+							activeSessionId,
 							opencodeDirectory,
 						);
 					}
@@ -1532,9 +1574,10 @@ export function SessionsApp() {
 	}, [
 		autoAttachMode,
 		ensureOpencodeRunning,
-		opencodeBaseUrl,
+		effectiveOpencodeBaseUrl,
 		opencodeDirectory,
 		opencodeRequestOptions,
+		activeSessionId,
 		selectedChatSessionId,
 		selectedChatFromHistory,
 		loadMessages,
@@ -1547,7 +1590,11 @@ export function SessionsApp() {
 	// Poll for message updates while assistant is working.
 	// This runs regardless of SSE status since SSE is unreliable through the proxy.
 	useEffect(() => {
-		if (chatState !== "sending" || !opencodeBaseUrl || !selectedChatSessionId)
+		if (
+			chatState !== "sending" ||
+			!effectiveOpencodeBaseUrl ||
+			!activeSessionId
+		)
 			return;
 
 		let active = true;
@@ -1559,13 +1606,13 @@ export function SessionsApp() {
 			try {
 				// Invalidate cache and fetch fresh data
 				invalidateMessageCache(
-					opencodeBaseUrl,
-					selectedChatSessionId,
+					effectiveOpencodeBaseUrl,
+					activeSessionId,
 					opencodeDirectory,
 				);
 				const freshMessages = await fetchMessages(
-					opencodeBaseUrl,
-					selectedChatSessionId,
+					effectiveOpencodeBaseUrl,
+					activeSessionId,
 					{ skipCache: true, directory: opencodeDirectory },
 				);
 				if (!active) return;
@@ -1607,9 +1654,9 @@ export function SessionsApp() {
 		};
 	}, [
 		chatState,
-		opencodeBaseUrl,
+		effectiveOpencodeBaseUrl,
 		opencodeDirectory,
-		selectedChatSessionId,
+		activeSessionId,
 		refreshOpencodeSessions,
 		mergeMessages,
 		setChatState,
@@ -1853,18 +1900,47 @@ export function SessionsApp() {
 				const assistantInfo = await getMainChatAssistant(mainChatAssistantName);
 				const workspacePath = assistantInfo.path;
 				effectiveDirectory = workspacePath;
+				setMainChatWorkspacePath(workspacePath);
 
 				setStatus(
 					locale === "de" ? "Starte Main Chat..." : "Starting Main Chat...",
 				);
-				const url = await ensureOpencodeRunning(workspacePath);
+				const url = await ensureOpencodeRunning();
 				if (!url) {
 					throw new Error("Failed to start Main Chat session");
 				}
 				effectiveBaseUrl = url;
+				setMainChatBaseUrl(url);
 
 				// If no current session, create one with a title prefix
-				if (!mainChatCurrentSessionId) {
+				let resolvedMainChatSessionId = mainChatCurrentSessionId;
+				if (resolvedMainChatSessionId) {
+					const sessions = await fetchSessions(effectiveBaseUrl, {
+						directory: effectiveDirectory,
+					});
+					const mainSessions = sessions.filter(
+						(session) => session.directory === effectiveDirectory,
+					);
+					const matched = mainSessions.find(
+						(session) => session.id === resolvedMainChatSessionId,
+					);
+					const readableMatch = mainSessions.find(
+						(session) =>
+							generateReadableId(session.id) === resolvedMainChatSessionId,
+					);
+					const resolved = matched ?? readableMatch;
+					if (resolved) {
+						if (resolved.id !== resolvedMainChatSessionId) {
+							setMainChatCurrentSessionId(resolved.id);
+						}
+						resolvedMainChatSessionId = resolved.id;
+					} else {
+						resolvedMainChatSessionId = null;
+						setMainChatCurrentSessionId(null);
+					}
+				}
+
+				if (!resolvedMainChatSessionId) {
 					const sessionTitle = `[${mainChatAssistantName}] ${new Date().toLocaleDateString()}`;
 					const newSession = await createSession(
 						effectiveBaseUrl,
@@ -1883,7 +1959,7 @@ export function SessionsApp() {
 					setMainChatCurrentSessionId(newSession.id);
 					targetSessionId = newSession.id;
 				} else {
-					targetSessionId = mainChatCurrentSessionId;
+					targetSessionId = resolvedMainChatSessionId;
 				}
 				setStatus("");
 			} else if (isHistoryOnlySession) {
@@ -2673,6 +2749,13 @@ export function SessionsApp() {
 							icon={Terminal}
 							label={t.terminal}
 						/>
+						<TabButton
+							activeView={activeView}
+							onSelect={setActiveView}
+							view="settings"
+							icon={Settings}
+							label={locale === "de" ? "Einstellungen" : "Settings"}
+						/>
 					</div>
 					{/* Mobile context window gauge - full width bar directly below tabs */}
 					<ContextWindowGauge
@@ -2708,7 +2791,15 @@ export function SessionsApp() {
 					)}
 					{features.mmry_enabled && activeView === "memories" && (
 						<Suspense fallback={viewLoadingFallback}>
-							<MemoriesView workspacePath={resumeWorkspacePath} />
+							<MemoriesView
+								workspacePath={resumeWorkspacePath}
+								storeName={mainChatActive ? mainChatAssistantName : null}
+							/>
+						</Suspense>
+					)}
+					{activeView === "settings" && (
+						<Suspense fallback={viewLoadingFallback}>
+							<AgentSettingsView />
 						</Suspense>
 					)}
 					{/* Terminal only rendered in mobile layout when isMobileLayout is true */}
@@ -2820,7 +2911,10 @@ export function SessionsApp() {
 						)}
 						{features.mmry_enabled && activeView === "memories" && (
 							<Suspense fallback={viewLoadingFallback}>
-								<MemoriesView workspacePath={resumeWorkspacePath} />
+								<MemoriesView
+									workspacePath={resumeWorkspacePath}
+									storeName={mainChatActive ? mainChatAssistantName : null}
+								/>
 							</Suspense>
 						)}
 						{activeView === "voice" && voiceMode.isActive && (

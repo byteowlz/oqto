@@ -21,6 +21,7 @@ import {
 	type MainChatAssistantInfo,
 	type MainChatSession,
 	createMainChatAssistant,
+	deleteMainChatAssistant,
 	getLatestMainChatSession,
 	getMainChatAssistant,
 	listMainChatAssistants,
@@ -36,8 +37,9 @@ import {
 	Plus,
 	Settings,
 	Sparkles,
+	Trash2,
 } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 export interface MainChatEntryProps {
 	/** Whether this entry is currently selected */
@@ -75,6 +77,13 @@ export function MainChatEntry({
 	const [newName, setNewName] = useState("");
 	const [creating, setCreating] = useState(false);
 	const [error, setError] = useState<string | null>(null);
+	const [showResetDialog, setShowResetDialog] = useState(false);
+	const [resetName, setResetName] = useState("");
+	const [resetting, setResetting] = useState(false);
+	const [resetError, setResetError] = useState<string | null>(null);
+	const resetNameIsValid = useMemo(() => {
+		return Boolean(resetName.trim().match(/^[A-Za-z0-9_-]+$/));
+	}, [resetName]);
 
 	// Load assistant on mount
 	useEffect(() => {
@@ -141,6 +150,38 @@ export function MainChatEntry({
 			setError(message);
 		} finally {
 			setCreating(false);
+		}
+	}
+
+	async function handleReset() {
+		if (!resetName.trim()) return;
+		if (!resetNameIsValid) {
+			setResetError(
+				locale === "de"
+					? "Nur Buchstaben, Zahlen, Bindestriche und Unterstriche sind erlaubt."
+					: "Name can only contain letters, numbers, hyphens, and underscores.",
+			);
+			return;
+		}
+
+		try {
+			setResetting(true);
+			setResetError(null);
+			await deleteMainChatAssistant(resetName.trim());
+			const info = await createMainChatAssistant(resetName.trim());
+			setAssistantName(info.name);
+			setAssistantInfo(info);
+			setSessions([]);
+			setLatestSessionId(null);
+			setShowResetDialog(false);
+			setResetName("");
+			await loadAssistant();
+		} catch (err) {
+			console.error("Failed to reset main chat:", err);
+			const message = err instanceof Error ? err.message : "Failed to reset";
+			setResetError(message);
+		} finally {
+			setResetting(false);
 		}
 	}
 
@@ -286,6 +327,15 @@ export function MainChatEntry({
 						<Settings className="w-4 h-4 mr-2" />
 						{locale === "de" ? "Einstellungen" : "Settings"}
 					</ContextMenuItem>
+					<ContextMenuItem
+						onClick={() => {
+							setResetName(assistantName ?? "");
+							setShowResetDialog(true);
+						}}
+					>
+						<Trash2 className="w-4 h-4 mr-2" />
+						{locale === "de" ? "Zurucksetzen" : "Reset"}
+					</ContextMenuItem>
 				</ContextMenuContent>
 			</ContextMenu>
 
@@ -299,6 +349,17 @@ export function MainChatEntry({
 				error={error}
 				locale={locale}
 				isRename={Boolean(assistantName)}
+			/>
+			<ResetAssistantDialog
+				open={showResetDialog}
+				onOpenChange={setShowResetDialog}
+				name={resetName}
+				nameIsValid={resetNameIsValid}
+				onNameChange={setResetName}
+				onSubmit={handleReset}
+				loading={resetting}
+				error={resetError}
+				locale={locale}
 			/>
 		</>
 	);
@@ -462,6 +523,84 @@ function CreateAssistantDialog({
 							: locale === "de"
 								? "Erstellen"
 								: "Create"}
+					</Button>
+				</DialogFooter>
+			</DialogContent>
+		</Dialog>
+	);
+}
+
+function ResetAssistantDialog({
+	open,
+	onOpenChange,
+	name,
+	nameIsValid,
+	onNameChange,
+	onSubmit,
+	loading,
+	error,
+	locale,
+}: {
+	open: boolean;
+	onOpenChange: (open: boolean) => void;
+	name: string;
+	nameIsValid: boolean;
+	onNameChange: (name: string) => void;
+	onSubmit: () => void;
+	loading: boolean;
+	error: string | null;
+	locale: "en" | "de";
+}) {
+	return (
+		<Dialog open={open} onOpenChange={onOpenChange}>
+			<DialogContent>
+				<DialogHeader>
+					<DialogTitle>
+						{locale === "de" ? "Hauptchat zurucksetzen" : "Reset Main Chat"}
+					</DialogTitle>
+					<DialogDescription>
+						{locale === "de"
+							? "Dies loscht alle Main-Chat-Daten und startet frisch. Geben Sie einen neuen Namen ein."
+							: "This deletes all Main Chat data and starts fresh. Enter a new name."}
+					</DialogDescription>
+				</DialogHeader>
+
+				<div className="grid gap-4 py-4">
+					<div className="grid gap-2">
+						<Label htmlFor="main-chat-reset-name">
+							{locale === "de" ? "Neuer Name" : "New Name"}
+						</Label>
+						<Input
+							id="main-chat-reset-name"
+							value={name}
+							onChange={(e) => onNameChange(e.target.value)}
+							placeholder={locale === "de" ? "Name" : "Name"}
+						/>
+					</div>
+					<p className="text-xs text-muted-foreground">
+						{locale === "de"
+							? "Erlaubt: a-z, A-Z, 0-9, -, _"
+							: "Allowed: a-z, A-Z, 0-9, -, _"}
+					</p>
+					{error && <div className="text-sm text-destructive">{error}</div>}
+				</div>
+
+				<DialogFooter>
+					<Button variant="ghost" onClick={() => onOpenChange(false)}>
+						{locale === "de" ? "Abbrechen" : "Cancel"}
+					</Button>
+					<Button
+						variant="destructive"
+						onClick={onSubmit}
+						disabled={loading || !name.trim() || !nameIsValid}
+					>
+						{loading
+							? locale === "de"
+								? "Zurucksetzen..."
+								: "Resetting..."
+							: locale === "de"
+								? "Zurucksetzen"
+								: "Reset"}
 					</Button>
 				</DialogFooter>
 			</DialogContent>

@@ -110,6 +110,9 @@ interface AppContextValue {
 	/** The current Main Chat session ID to send messages to (separate from selectedChatSessionId) */
 	mainChatCurrentSessionId: string | null;
 	setMainChatCurrentSessionId: (id: string | null) => void;
+	/** Workspace path for the Main Chat assistant */
+	mainChatWorkspacePath: string | null;
+	setMainChatWorkspacePath: (path: string | null) => void;
 }
 
 const AppContext = createContext<AppContextValue | null>(null);
@@ -158,6 +161,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
 	>(null);
 	// The current Main Chat session ID to send messages to (separate from selectedChatSessionId)
 	const [mainChatCurrentSessionId, setMainChatCurrentSessionId] = useState<
+		string | null
+	>(null);
+	const [mainChatWorkspacePath, setMainChatWorkspacePath] = useState<
 		string | null
 	>(null);
 
@@ -228,7 +234,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 			setChatHistory(history);
 
 			// If no chat is selected but we have history, select the most recent one
-			if (history.length > 0) {
+			if (history.length > 0 && !mainChatActive) {
 				setSelectedChatSessionId((current) => {
 					if (current && history.some((s) => s.id === current)) return current;
 					return history[0].id;
@@ -237,7 +243,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 		} catch (err) {
 			console.error("Failed to load chat history:", err);
 		}
-	}, []);
+	}, [mainChatActive]);
 
 	const refreshWorkspaceSessions = useCallback(async () => {
 		try {
@@ -461,7 +467,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 			// Select most recently updated session, but don't override history-only views.
 			// Use ref to avoid chatHistory dependency causing re-renders
 			const history = chatHistoryRef.current;
-			if (sessions.length > 0) {
+			if (sessions.length > 0 && !mainChatActive) {
 				const sorted = [...sessions].sort(
 					(a, b) => b.time.updated - a.time.updated,
 				);
@@ -472,13 +478,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
 					return sorted[0].id;
 				});
 			} else {
-				setSelectedChatSessionId((current) => {
-					if (current && history.some((s) => s.id === current)) {
+				if (!mainChatActive) {
+					setSelectedChatSessionId((current) => {
+						if (current && history.some((s) => s.id === current)) {
+							return current;
+						}
 						return current;
-					}
-					return current;
-				});
-				if (history.length === 0) {
+					});
+				}
+				if (history.length === 0 && !mainChatActive) {
 					const created = await createSession(
 						opencodeBaseUrl,
 						undefined,
@@ -492,7 +500,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 		} catch (err) {
 			console.error("Failed to load opencode sessions:", err);
 		}
-	}, [opencodeBaseUrl, opencodeDirectory]);
+	}, [mainChatActive, opencodeBaseUrl, opencodeDirectory]);
 
 	const createNewChat = useCallback(
 		async (baseUrlOverride?: string): Promise<OpenCodeSession | null> => {
@@ -768,6 +776,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
 			setMainChatAssistantName,
 			mainChatCurrentSessionId,
 			setMainChatCurrentSessionId,
+			mainChatWorkspacePath,
+			setMainChatWorkspacePath,
 		}),
 		[
 			apps,
@@ -805,6 +815,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 			mainChatActive,
 			mainChatAssistantName,
 			mainChatCurrentSessionId,
+			mainChatWorkspacePath,
 		],
 	);
 

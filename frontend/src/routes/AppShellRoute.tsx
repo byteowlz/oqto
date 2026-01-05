@@ -43,6 +43,7 @@ import {
 	type ChatSession,
 	type Persona,
 	type ProjectLogo,
+	getMainChatAssistant,
 	getProjectLogoUrl,
 	getSettingsValues,
 	listWorkspaceDirectories,
@@ -118,6 +119,7 @@ function AppShell() {
 		setMainChatAssistantName,
 		mainChatCurrentSessionId,
 		setMainChatCurrentSessionId,
+		setMainChatWorkspacePath,
 	} = useApp();
 	const location = useLocation();
 	const navigate = useNavigate();
@@ -402,36 +404,56 @@ function AppShell() {
 
 	// Handle Main Chat selection
 	const handleMainChatSelect = useCallback(
-		(assistantName: string, sessionId: string | null) => {
+		async (assistantName: string, sessionId: string | null) => {
 			setMainChatAssistantName(assistantName);
 			setMainChatActive(true);
 			// Set the Main Chat current session ID (used for sending messages)
 			setMainChatCurrentSessionId(sessionId);
+			setSelectedChatSessionId("");
 			// Navigate to sessions view
 			setActiveAppId("sessions");
+			try {
+				const assistantInfo = await getMainChatAssistant(assistantName);
+				setMainChatWorkspacePath(assistantInfo.path);
+			} catch (err) {
+				console.error("Failed to load Main Chat assistant info:", err);
+				setMainChatWorkspacePath(null);
+			}
 		},
 		[
 			setActiveAppId,
 			setMainChatActive,
 			setMainChatAssistantName,
 			setMainChatCurrentSessionId,
+			setMainChatWorkspacePath,
+			setSelectedChatSessionId,
 		],
 	);
 
 	// Handle Main Chat timeline session selection
 	const handleMainChatSessionSelect = useCallback(
-		(assistantName: string, sessionId: string) => {
+		async (assistantName: string, sessionId: string) => {
 			setMainChatAssistantName(assistantName);
 			setMainChatActive(true);
 			// When clicking a specific session, use it as the current session for sending
 			setMainChatCurrentSessionId(sessionId);
+			setSelectedChatSessionId("");
 			setActiveAppId("sessions");
+			try {
+				const assistantInfo = await getMainChatAssistant(assistantName);
+				setMainChatWorkspacePath(assistantInfo.path);
+			} catch (err) {
+				console.error("Failed to load Main Chat assistant info:", err);
+				setMainChatWorkspacePath(null);
+			}
 		},
 		[
 			setActiveAppId,
 			setMainChatActive,
 			setMainChatAssistantName,
 			setMainChatCurrentSessionId,
+			setMainChatWorkspacePath,
+			setSelectedChatSessionId,
 		],
 	);
 
@@ -763,6 +785,7 @@ function AppShell() {
 		setMobileMenuOpen(false);
 		// Clear main chat selection when clicking a regular session
 		setMainChatActive(false);
+		setMainChatWorkspacePath(null);
 	};
 
 	// Context menu handlers
@@ -1345,7 +1368,7 @@ function AppShell() {
 											<MainChatEntry
 												isSelected={mainChatActive}
 												activeSessionId={
-													mainChatActive ? selectedChatSessionId : null
+													mainChatActive ? mainChatCurrentSessionId : null
 												}
 												onSelect={handleMainChatSelect}
 												onSessionSelect={handleMainChatSessionSelect}
@@ -1375,9 +1398,7 @@ function AppShell() {
 											<div key={session.id}>
 												<ContextMenu>
 													<ContextMenuTrigger asChild>
-														<button
-															type="button"
-															onClick={() => handleSessionClick(session.id)}
+														<div
 															className={cn(
 																"w-full px-2 py-2 text-left transition-colors flex items-start gap-1.5 cursor-pointer",
 																isSelected
@@ -1388,10 +1409,9 @@ function AppShell() {
 															{hasChildren ? (
 																<button
 																	type="button"
-																	onClick={(e) => {
-																		e.stopPropagation();
-																		toggleSessionExpanded(session.id);
-																	}}
+																	onClick={() =>
+																		toggleSessionExpanded(session.id)
+																	}
 																	className="mt-0.5 p-1 hover:bg-muted rounded flex-shrink-0 cursor-pointer"
 																>
 																	{isExpanded ? (
@@ -1403,7 +1423,11 @@ function AppShell() {
 															) : (
 																<MessageSquare className="w-4 h-4 mt-0.5 flex-shrink-0 text-primary/70" />
 															)}
-															<div className="flex-1 min-w-0">
+															<button
+																type="button"
+																onClick={() => handleSessionClick(session.id)}
+																className="flex-1 min-w-0 text-left"
+															>
 																<div className="flex items-center gap-1">
 																	{pinnedSessions.has(session.id) && (
 																		<Pin className="w-3 h-3 flex-shrink-0 text-primary/70" />
@@ -1431,8 +1455,8 @@ function AppShell() {
 																		)}
 																	</div>
 																)}
-															</div>
-														</button>
+															</button>
+														</div>
 													</ContextMenuTrigger>
 													<ContextMenuContent>
 														<ContextMenuItem
@@ -2030,7 +2054,7 @@ function AppShell() {
 									<MainChatEntry
 										isSelected={mainChatActive}
 										activeSessionId={
-											mainChatActive ? selectedChatSessionId : null
+											mainChatActive ? mainChatCurrentSessionId : null
 										}
 										onSelect={handleMainChatSelect}
 										onSessionSelect={handleMainChatSessionSelect}
@@ -2059,9 +2083,7 @@ function AppShell() {
 									<div key={session.id}>
 										<ContextMenu>
 											<ContextMenuTrigger asChild>
-												<button
-													type="button"
-													onClick={() => handleSessionClick(session.id)}
+												<div
 													className={cn(
 														"w-full px-2 py-1.5 text-left transition-colors flex items-start gap-1.5 cursor-pointer",
 														isSelected
@@ -2072,10 +2094,7 @@ function AppShell() {
 													{hasChildren ? (
 														<button
 															type="button"
-															onClick={(e) => {
-																e.stopPropagation();
-																toggleSessionExpanded(session.id);
-															}}
+															onClick={() => toggleSessionExpanded(session.id)}
 															className="mt-0.5 p-0.5 hover:bg-muted rounded flex-shrink-0 cursor-pointer"
 														>
 															{isExpanded ? (
@@ -2087,7 +2106,11 @@ function AppShell() {
 													) : (
 														<MessageSquare className="w-3.5 h-3.5 mt-0.5 flex-shrink-0 text-primary/70" />
 													)}
-													<div className="flex-1 min-w-0">
+													<button
+														type="button"
+														onClick={() => handleSessionClick(session.id)}
+														className="flex-1 min-w-0 text-left"
+													>
 														<div className="flex items-center gap-1">
 															{pinnedSessions.has(session.id) && (
 																<Pin className="w-3 h-3 flex-shrink-0 text-primary/70" />
@@ -2115,8 +2138,8 @@ function AppShell() {
 																)}
 															</div>
 														)}
-													</div>
-												</button>
+													</button>
+												</div>
 											</ContextMenuTrigger>
 											<ContextMenuContent>
 												<ContextMenuItem

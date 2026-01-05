@@ -40,6 +40,36 @@ interface Memory {
 	chunk_method?: string;
 }
 
+type RawMemory = Partial<Memory> & {
+	text?: string;
+	memory?: string;
+	data?: { content?: string };
+	metadata?: Record<string, unknown> | null;
+	tags?: string[] | null;
+	category?: string | null;
+	importance?: number | null;
+};
+
+function normalizeMemory(raw: RawMemory): Memory {
+	return {
+		id: raw.id ?? "",
+		memory_type: raw.memory_type ?? "text",
+		content: raw.content ?? raw.text ?? raw.memory ?? raw.data?.content ?? "",
+		metadata: raw.metadata ?? {},
+		importance: raw.importance ?? 0,
+		expires_at: raw.expires_at,
+		expired_at: raw.expired_at,
+		created_at: raw.created_at ?? new Date().toISOString(),
+		updated_at: raw.updated_at ?? new Date().toISOString(),
+		category: raw.category ?? "general",
+		tags: raw.tags ?? [],
+		parent_id: raw.parent_id,
+		chunk_index: raw.chunk_index,
+		total_chunks: raw.total_chunks,
+		chunk_method: raw.chunk_method,
+	};
+}
+
 interface MemoryListResponse {
 	memories: Memory[];
 	total: number;
@@ -60,13 +90,22 @@ interface MemoriesViewProps {
 	className?: string;
 	/** Workspace path for memory API calls */
 	workspacePath?: string | null;
+	/** Optional store override (e.g., main chat assistant name) */
+	storeName?: string | null;
 }
 
 // Build workspace memories URL with workspace_path query param
-function workspaceMemoriesUrl(workspacePath: string, path = ""): string {
+function workspaceMemoriesUrl(
+	workspacePath: string,
+	path = "",
+	storeName?: string | null,
+): string {
 	const base = controlPlaneApiUrl(`/api/workspace/memories${path}`);
 	const url = new URL(base, window.location.origin);
 	url.searchParams.set("workspace_path", workspacePath);
+	if (storeName) {
+		url.searchParams.set("store", storeName);
+	}
 	return url.toString();
 }
 
@@ -75,9 +114,10 @@ async function fetchMemories(
 	workspacePath: string,
 	offset = 0,
 	limit = 50,
+	storeName?: string | null,
 ): Promise<MemoryListResponse> {
 	const url = new URL(
-		workspaceMemoriesUrl(workspacePath),
+		workspaceMemoriesUrl(workspacePath, "", storeName),
 		window.location.origin,
 	);
 	url.searchParams.set("limit", limit.toString());
@@ -93,29 +133,44 @@ async function fetchMemories(
 		}
 		throw new Error(`Failed to fetch memories: ${res.statusText}`);
 	}
-	return res.json();
+	const data = (await res.json()) as {
+		memories?: RawMemory[];
+		total?: number;
+		offset?: number;
+		limit?: number;
+	};
+	return {
+		memories: (data.memories ?? []).map(normalizeMemory),
+		total: data.total ?? 0,
+		offset: data.offset ?? 0,
+		limit: data.limit ?? limit,
+	};
 }
 
 async function searchMemories(
 	workspacePath: string,
 	query: string,
 	limit = 50,
+	storeName?: string | null,
 ): Promise<Memory[]> {
-	const res = await fetch(workspaceMemoriesUrl(workspacePath, "/search"), {
-		method: "POST",
-		credentials: "include",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({
-			query,
-			limit,
-			rerank: true,
-		}),
-	});
+	const res = await fetch(
+		workspaceMemoriesUrl(workspacePath, "/search", storeName),
+		{
+			method: "POST",
+			credentials: "include",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				query,
+				limit,
+				rerank: true,
+			}),
+		},
+	);
 	if (!res.ok) {
 		throw new Error(`Failed to search memories: ${res.statusText}`);
 	}
-	const data: SearchResponse = await res.json();
-	return data.memories || [];
+	const data = (await res.json()) as SearchResponse;
+	return (data.memories ?? []).map((memory) => normalizeMemory(memory));
 }
 
 async function addMemory(
@@ -124,13 +179,16 @@ async function addMemory(
 	category?: string,
 	tags?: string[],
 	importance?: number,
+	storeName?: string | null,
 ): Promise<Memory> {
-	const res = await fetch(workspaceMemoriesUrl(workspacePath), {
+	const res = await fetch(workspaceMemoriesUrl(workspacePath, "", storeName), {
 		method: "POST",
 		credentials: "include",
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify({
 			content,
+			text: content,
+			memory: content,
 			category: category || "general",
 			tags: tags || [],
 			importance: importance || 5,
@@ -140,17 +198,22 @@ async function addMemory(
 		const text = await res.text();
 		throw new Error(`Failed to add memory: ${text || res.statusText}`);
 	}
-	return res.json();
+	const data = (await res.json()) as RawMemory;
+	return normalizeMemory(data);
 }
 
 async function deleteMemory(
 	workspacePath: string,
 	memoryId: string,
+	storeName?: string | null,
 ): Promise<void> {
-	const res = await fetch(workspaceMemoriesUrl(workspacePath, `/${memoryId}`), {
-		method: "DELETE",
-		credentials: "include",
-	});
+	const res = await fetch(
+		workspaceMemoriesUrl(workspacePath, `/${memoryId}`, storeName),
+		{
+			method: "DELETE",
+			credentials: "include",
+		},
+	);
 	if (!res.ok) {
 		throw new Error(`Failed to delete memory: ${res.statusText}`);
 	}
@@ -163,22 +226,29 @@ async function updateMemory(
 	category?: string,
 	tags?: string[],
 	importance?: number,
+	storeName?: string | null,
 ): Promise<Memory> {
-	const res = await fetch(workspaceMemoriesUrl(workspacePath, `/${memoryId}`), {
-		method: "PUT",
-		credentials: "include",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({
-			content,
-			...(category && { category }),
-			...(tags && { tags }),
-			...(importance && { importance }),
-		}),
-	});
+	const res = await fetch(
+		workspaceMemoriesUrl(workspacePath, `/${memoryId}`, storeName),
+		{
+			method: "PUT",
+			credentials: "include",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				content,
+				text: content,
+				memory: content,
+				...(category && { category }),
+				...(tags && { tags }),
+				...(importance && { importance }),
+			}),
+		},
+	);
 	if (!res.ok) {
 		throw new Error(`Failed to update memory: ${res.statusText}`);
 	}
-	return res.json();
+	const data = (await res.json()) as RawMemory;
+	return normalizeMemory(data);
 }
 
 function MemoryCard({
@@ -193,7 +263,7 @@ function MemoryCard({
 	isDeleting: boolean;
 }) {
 	const [isEditing, setIsEditing] = useState(false);
-	const [editContent, setEditContent] = useState(memory.content);
+	const [editContent, setEditContent] = useState(memory.content ?? "");
 	const [isSaving, setIsSaving] = useState(false);
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -221,7 +291,7 @@ function MemoryCard({
 	};
 
 	const handleCancel = () => {
-		setEditContent(memory.content);
+		setEditContent(memory.content ?? "");
 		setIsEditing(false);
 	};
 
@@ -339,7 +409,11 @@ function MemoryCard({
 	);
 }
 
-export function MemoriesView({ className, workspacePath }: MemoriesViewProps) {
+export function MemoriesView({
+	className,
+	workspacePath,
+	storeName,
+}: MemoriesViewProps) {
 	const [memories, setMemories] = useState<Memory[]>([]);
 	const [total, setTotal] = useState(0);
 	const [loading, setLoading] = useState(true);
@@ -360,7 +434,7 @@ export function MemoriesView({ className, workspacePath }: MemoriesViewProps) {
 		setError("");
 		setIsSearchMode(false);
 		try {
-			const data = await fetchMemories(workspacePath);
+			const data = await fetchMemories(workspacePath, 0, 50, storeName);
 			setMemories(data.memories);
 			setTotal(data.total);
 		} catch (err) {
@@ -368,7 +442,7 @@ export function MemoriesView({ className, workspacePath }: MemoriesViewProps) {
 		} finally {
 			setLoading(false);
 		}
-	}, [workspacePath]);
+	}, [workspacePath, storeName]);
 
 	useEffect(() => {
 		loadMemories();
@@ -392,7 +466,12 @@ export function MemoriesView({ className, workspacePath }: MemoriesViewProps) {
 		setError("");
 		setIsSearchMode(true);
 		try {
-			const results = await searchMemories(workspacePath, searchQuery);
+			const results = await searchMemories(
+				workspacePath,
+				searchQuery,
+				50,
+				storeName,
+			);
 			setMemories(results);
 			setTotal(results.length);
 		} catch (err) {
@@ -400,7 +479,7 @@ export function MemoriesView({ className, workspacePath }: MemoriesViewProps) {
 		} finally {
 			setIsSearching(false);
 		}
-	}, [workspacePath, searchQuery, loadMemories]);
+	}, [workspacePath, searchQuery, loadMemories, storeName]);
 
 	const handleClearSearch = useCallback(() => {
 		setSearchQuery("");
@@ -413,8 +492,15 @@ export function MemoriesView({ className, workspacePath }: MemoriesViewProps) {
 		setIsAdding(true);
 		setError("");
 		try {
-			const newMemory = await addMemory(workspacePath, newMemoryContent);
-			setMemories((prev) => [newMemory, ...prev]);
+			const newMemory = await addMemory(
+				workspacePath,
+				newMemoryContent,
+				undefined,
+				undefined,
+				undefined,
+				storeName,
+			);
+			setMemories((prev) => [normalizeMemory(newMemory), ...prev]);
 			setTotal((prev) => prev + 1);
 			setNewMemoryContent("");
 			setShowAddForm(false);
@@ -423,7 +509,7 @@ export function MemoriesView({ className, workspacePath }: MemoriesViewProps) {
 		} finally {
 			setIsAdding(false);
 		}
-	}, [workspacePath, newMemoryContent]);
+	}, [workspacePath, newMemoryContent, storeName]);
 
 	const handleDelete = useCallback(
 		async (memoryId: string) => {
@@ -431,7 +517,7 @@ export function MemoriesView({ className, workspacePath }: MemoriesViewProps) {
 
 			setDeletingId(memoryId);
 			try {
-				await deleteMemory(workspacePath, memoryId);
+				await deleteMemory(workspacePath, memoryId, storeName);
 				setMemories((prev) => prev.filter((m) => m.id !== memoryId));
 				setTotal((prev) => prev - 1);
 			} catch (err) {
@@ -442,7 +528,7 @@ export function MemoriesView({ className, workspacePath }: MemoriesViewProps) {
 				setDeletingId(null);
 			}
 		},
-		[workspacePath],
+		[workspacePath, storeName],
 	);
 
 	const handleEdit = useCallback(
@@ -450,7 +536,15 @@ export function MemoriesView({ className, workspacePath }: MemoriesViewProps) {
 			if (!workspacePath) return;
 
 			try {
-				const updated = await updateMemory(workspacePath, memoryId, content);
+				const updated = await updateMemory(
+					workspacePath,
+					memoryId,
+					content,
+					undefined,
+					undefined,
+					undefined,
+					storeName,
+				);
 				setMemories((prev) =>
 					prev.map((m) => (m.id === memoryId ? updated : m)),
 				);
@@ -461,7 +555,7 @@ export function MemoriesView({ className, workspacePath }: MemoriesViewProps) {
 				throw err; // Re-throw so the card knows to not exit edit mode
 			}
 		},
-		[workspacePath],
+		[workspacePath, storeName],
 	);
 
 	// No workspace selected

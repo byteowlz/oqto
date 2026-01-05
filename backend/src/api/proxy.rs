@@ -67,6 +67,7 @@ async fn ensure_session_for_io_proxy(
 #[derive(serde::Deserialize)]
 pub(crate) struct WorkspaceProxyQuery {
     workspace_path: String,
+    store: Option<String>,
 }
 
 #[derive(serde::Deserialize)]
@@ -438,13 +439,8 @@ pub async fn proxy_terminal_ws_for_workspace(
 
     let ttyd_port = session.ttyd_port;
 
-    let initial_command = format!(
-        "cd -- {}\n",
-        shell_escape_single_quotes(&query.workspace_path)
-    );
     Ok(ws.on_upgrade(move |socket| async move {
-        if let Err(e) = handle_terminal_proxy(socket, ttyd_port as u16, Some(initial_command)).await
-        {
+        if let Err(e) = handle_terminal_proxy(socket, ttyd_port as u16, None).await {
             error!("Terminal proxy error: {:?}", e);
         }
     }))
@@ -697,23 +693,6 @@ async fn handle_terminal_proxy(
     Ok(())
 }
 
-fn shell_escape_single_quotes(input: &str) -> String {
-    if input.is_empty() {
-        return "''".to_string();
-    }
-    let mut out = String::with_capacity(input.len() + 2);
-    out.push('\'');
-    for ch in input.chars() {
-        if ch == '\'' {
-            out.push_str("'\\''");
-        } else {
-            out.push(ch);
-        }
-    }
-    out.push('\'');
-    out
-}
-
 /// SSE events proxy for a specific session's opencode server.
 pub async fn proxy_opencode_events(
     State(state): State<AppState>,
@@ -899,10 +878,31 @@ fn get_mmry_store_name_from_path(state: &AppState, workspace_path: &str) -> Opti
         return None;
     }
 
-    std::path::Path::new(workspace_path)
+    let trimmed = workspace_path.trim_end_matches('/');
+    if trimmed.is_empty() {
+        return None;
+    }
+    std::path::Path::new(trimmed)
         .file_name()
         .and_then(|name| name.to_str())
         .map(|s| s.to_string())
+}
+
+fn resolve_mmry_store_for_workspace(
+    state: &AppState,
+    query: &WorkspaceProxyQuery,
+) -> Option<String> {
+    if let Some(store) = query.store.as_ref().and_then(|s| {
+        let trimmed = s.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    }) {
+        return Some(store);
+    }
+    get_mmry_store_name_from_path(state, &query.workspace_path)
 }
 
 /// Get the mmry target URL for workspace-based access (single-user mode only).
@@ -980,6 +980,79 @@ async fn proxy_request_to_url(
     })?;
 
     // Convert hyper response to axum response
+    let (parts, body) = response.into_parts();
+    Ok(Response::from_parts(parts, Body::new(body)))
+}
+
+fn build_mmry_query(query: Option<&str>) -> String {
+    let mut pairs: Vec<String> = Vec::new();
+    if let Some(query) = query {
+        for pair in query.split('&') {
+            if pair.is_empty() {
+                continue;
+            }
+            if pair.starts_with("workspace_path=") || pair.starts_with("store=") {
+                continue;
+            }
+            pairs.push(pair.to_string());
+        }
+    }
+    pairs.join("&")
+}
+
+async fn proxy_mmry_request_to_url(
+    client: Client<hyper_util::client::legacy::connect::HttpConnector, Body>,
+    mut req: Request<Body>,
+    target_base_url: &str,
+    target_path: &str,
+    store: Option<&str>,
+) -> Result<Response, StatusCode> {
+    let sanitized_query = build_mmry_query(req.uri().query());
+    let mut target_uri = format!("{}/{}", target_base_url.trim_end_matches('/'), target_path);
+
+    let has_query = !sanitized_query.is_empty();
+    let has_store = store.is_some();
+
+    if has_query || has_store {
+        target_uri.push('?');
+        if has_query {
+            target_uri.push_str(&sanitized_query);
+        }
+        if let Some(store_name) = store {
+            if has_query {
+                target_uri.push('&');
+            }
+            target_uri.push_str("store=");
+            target_uri.push_str(&urlencoding::encode(store_name));
+        }
+    }
+
+    debug!("Proxying mmry request to {}", target_uri);
+
+    let uri: Uri = target_uri.parse().map_err(|e| {
+        error!("Invalid target URI {}: {:?}", target_uri, e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+
+    *req.uri_mut() = uri;
+
+    if let Some(authority) = req.uri().authority() {
+        let value = axum::http::HeaderValue::from_str(authority.as_str()).map_err(|e| {
+            error!("Invalid Host header value {}: {:?}", authority.as_str(), e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+        req.headers_mut().insert(axum::http::header::HOST, value);
+    }
+
+    let response = client.request(req).await.map_err(|e| {
+        error!("Mmry proxy request failed: {:?}", e);
+        if e.is_connect() {
+            StatusCode::SERVICE_UNAVAILABLE
+        } else {
+            StatusCode::BAD_GATEWAY
+        }
+    })?;
+
     let (parts, body) = response.into_parts();
     Ok(Response::from_parts(parts, Body::new(body)))
 }
@@ -1087,7 +1160,7 @@ pub async fn proxy_mmry_list(
 
     let target_url = get_mmry_target(&state, &session)?;
     let store = get_mmry_store_name(&state, &session);
-    proxy_request_to_url(
+    proxy_mmry_request_to_url(
         state.http_client.clone(),
         req,
         &target_url,
@@ -1124,7 +1197,7 @@ pub async fn proxy_mmry_add(
 
     let target_url = get_mmry_target(&state, &session)?;
     let store = get_mmry_store_name(&state, &session);
-    proxy_request_to_url(
+    proxy_mmry_request_to_url(
         state.http_client.clone(),
         req,
         &target_url,
@@ -1162,7 +1235,7 @@ pub async fn proxy_mmry_memory(
     let target_url = get_mmry_target(&state, &session)?;
     let store = get_mmry_store_name(&state, &session);
     let path = format!("v1/memories/{}", memory_id);
-    proxy_request_to_url(
+    proxy_mmry_request_to_url(
         state.http_client.clone(),
         req,
         &target_url,
@@ -1199,7 +1272,7 @@ pub async fn proxy_mmry_stores(
 
     let target_url = get_mmry_target(&state, &session)?;
     // Note: stores endpoint doesn't need a store parameter - it lists all stores
-    proxy_request_to_url(
+    proxy_mmry_request_to_url(
         state.http_client.clone(),
         req,
         &target_url,
@@ -1222,8 +1295,8 @@ pub async fn proxy_mmry_list_for_workspace(
     req: Request<Body>,
 ) -> Result<Response, StatusCode> {
     let target_url = get_mmry_target_for_workspace(&state)?;
-    let store = get_mmry_store_name_from_path(&state, &query.workspace_path);
-    proxy_request_to_url(
+    let store = resolve_mmry_store_for_workspace(&state, &query);
+    proxy_mmry_request_to_url(
         state.http_client.clone(),
         req,
         &target_url,
@@ -1242,8 +1315,8 @@ pub async fn proxy_mmry_add_for_workspace(
     req: Request<Body>,
 ) -> Result<Response, StatusCode> {
     let target_url = get_mmry_target_for_workspace(&state)?;
-    let store = get_mmry_store_name_from_path(&state, &query.workspace_path);
-    proxy_request_to_url(
+    let store = resolve_mmry_store_for_workspace(&state, &query);
+    proxy_mmry_request_to_url(
         state.http_client.clone(),
         req,
         &target_url,
@@ -1262,8 +1335,8 @@ pub async fn proxy_mmry_search_for_workspace(
     req: Request<Body>,
 ) -> Result<Response, StatusCode> {
     let target_url = get_mmry_target_for_workspace(&state)?;
-    let store = get_mmry_store_name_from_path(&state, &query.workspace_path);
-    proxy_request_to_url(
+    let store = resolve_mmry_store_for_workspace(&state, &query);
+    proxy_mmry_request_to_url(
         state.http_client.clone(),
         req,
         &target_url,
@@ -1283,9 +1356,9 @@ pub async fn proxy_mmry_memory_for_workspace(
     req: Request<Body>,
 ) -> Result<Response, StatusCode> {
     let target_url = get_mmry_target_for_workspace(&state)?;
-    let store = get_mmry_store_name_from_path(&state, &query.workspace_path);
+    let store = resolve_mmry_store_for_workspace(&state, &query);
     let path = format!("v1/memories/{}", memory_id);
-    proxy_request_to_url(
+    proxy_mmry_request_to_url(
         state.http_client.clone(),
         req,
         &target_url,
