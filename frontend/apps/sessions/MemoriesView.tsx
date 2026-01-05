@@ -76,7 +76,10 @@ async function fetchMemories(
 	offset = 0,
 	limit = 50,
 ): Promise<MemoryListResponse> {
-	const url = new URL(workspaceMemoriesUrl(workspacePath), window.location.origin);
+	const url = new URL(
+		workspaceMemoriesUrl(workspacePath),
+		window.location.origin,
+	);
 	url.searchParams.set("limit", limit.toString());
 	url.searchParams.set("offset", offset.toString());
 
@@ -98,19 +101,16 @@ async function searchMemories(
 	query: string,
 	limit = 50,
 ): Promise<Memory[]> {
-	const res = await fetch(
-		workspaceMemoriesUrl(workspacePath, "/search"),
-		{
-			method: "POST",
-			credentials: "include",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({
-				query,
-				limit,
-				rerank: true,
-			}),
-		},
-	);
+	const res = await fetch(workspaceMemoriesUrl(workspacePath, "/search"), {
+		method: "POST",
+		credentials: "include",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({
+			query,
+			limit,
+			rerank: true,
+		}),
+	});
 	if (!res.ok) {
 		throw new Error(`Failed to search memories: ${res.statusText}`);
 	}
@@ -125,20 +125,17 @@ async function addMemory(
 	tags?: string[],
 	importance?: number,
 ): Promise<Memory> {
-	const res = await fetch(
-		workspaceMemoriesUrl(workspacePath),
-		{
-			method: "POST",
-			credentials: "include",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({
-				content,
-				category: category || "general",
-				tags: tags || [],
-				importance: importance || 5,
-			}),
-		},
-	);
+	const res = await fetch(workspaceMemoriesUrl(workspacePath), {
+		method: "POST",
+		credentials: "include",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({
+			content,
+			category: category || "general",
+			tags: tags || [],
+			importance: importance || 5,
+		}),
+	});
 	if (!res.ok) {
 		const text = await res.text();
 		throw new Error(`Failed to add memory: ${text || res.statusText}`);
@@ -150,13 +147,10 @@ async function deleteMemory(
 	workspacePath: string,
 	memoryId: string,
 ): Promise<void> {
-	const res = await fetch(
-		workspaceMemoriesUrl(workspacePath, `/${memoryId}`),
-		{
-			method: "DELETE",
-			credentials: "include",
-		},
-	);
+	const res = await fetch(workspaceMemoriesUrl(workspacePath, `/${memoryId}`), {
+		method: "DELETE",
+		credentials: "include",
+	});
 	if (!res.ok) {
 		throw new Error(`Failed to delete memory: ${res.statusText}`);
 	}
@@ -170,20 +164,17 @@ async function updateMemory(
 	tags?: string[],
 	importance?: number,
 ): Promise<Memory> {
-	const res = await fetch(
-		workspaceMemoriesUrl(workspacePath, `/${memoryId}`),
-		{
-			method: "PUT",
-			credentials: "include",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({
-				content,
-				...(category && { category }),
-				...(tags && { tags }),
-				...(importance && { importance }),
-			}),
-		},
-	);
+	const res = await fetch(workspaceMemoriesUrl(workspacePath, `/${memoryId}`), {
+		method: "PUT",
+		credentials: "include",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({
+			content,
+			...(category && { category }),
+			...(tags && { tags }),
+			...(importance && { importance }),
+		}),
+	});
 	if (!res.ok) {
 		throw new Error(`Failed to update memory: ${res.statusText}`);
 	}
@@ -401,10 +392,7 @@ export function MemoriesView({ className, workspacePath }: MemoriesViewProps) {
 		setError("");
 		setIsSearchMode(true);
 		try {
-			const results = await searchMemories(
-				workspacePath,
-				searchQuery,
-			);
+			const results = await searchMemories(workspacePath, searchQuery);
 			setMemories(results);
 			setTotal(results.length);
 		} catch (err) {
@@ -425,10 +413,7 @@ export function MemoriesView({ className, workspacePath }: MemoriesViewProps) {
 		setIsAdding(true);
 		setError("");
 		try {
-			const newMemory = await addMemory(
-				workspacePath,
-				newMemoryContent,
-			);
+			const newMemory = await addMemory(workspacePath, newMemoryContent);
 			setMemories((prev) => [newMemory, ...prev]);
 			setTotal((prev) => prev + 1);
 			setNewMemoryContent("");
@@ -465,11 +450,7 @@ export function MemoriesView({ className, workspacePath }: MemoriesViewProps) {
 			if (!workspacePath) return;
 
 			try {
-				const updated = await updateMemory(
-					workspacePath,
-					memoryId,
-					content,
-				);
+				const updated = await updateMemory(workspacePath, memoryId, content);
 				setMemories((prev) =>
 					prev.map((m) => (m.id === memoryId ? updated : m)),
 				);

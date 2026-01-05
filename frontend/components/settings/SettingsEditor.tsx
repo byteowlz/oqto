@@ -553,7 +553,9 @@ function SettingsField({
 						value={value !== undefined ? String(value) : ""}
 						min={property.minimum}
 						max={property.maximum}
-						placeholder={hasDefault ? `Default: ${setting?.default}` : undefined}
+						placeholder={
+							hasDefault ? `Default: ${setting?.default}` : undefined
+						}
 						onChange={(e) => {
 							const v =
 								type === "integer"

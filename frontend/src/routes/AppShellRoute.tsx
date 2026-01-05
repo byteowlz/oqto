@@ -1,10 +1,10 @@
 import { AgentPicker } from "@/components/agent-picker";
 import { AppProvider, useApp } from "@/components/app-context";
-import { MainChatEntry } from "@/components/main-chat";
 import {
 	CommandPalette,
 	useCommandPalette,
 } from "@/components/command-palette";
+import { MainChatEntry } from "@/components/main-chat";
 import {
 	AlertDialog,
 	AlertDialogAction,
@@ -44,6 +44,7 @@ import {
 	type Persona,
 	type ProjectLogo,
 	getProjectLogoUrl,
+	getSettingsValues,
 	listWorkspaceDirectories,
 } from "@/lib/control-plane-client";
 import { type OpenCodeAgent, fetchAgents } from "@/lib/opencode-client";
@@ -101,12 +102,14 @@ function AppShell() {
 		selectedChatFromHistory,
 		selectedWorkspaceSession,
 		opencodeBaseUrl,
+		opencodeDirectory,
 		ensureOpencodeRunning,
 		createNewChat,
 		createNewChatWithPersona,
 		deleteChatSession,
 		renameChatSession,
 		busySessions,
+		workspaceSessions,
 		projectDefaultAgents,
 		setProjectDefaultAgents,
 		mainChatActive,
@@ -178,6 +181,7 @@ function AppShell() {
 	const [agentPickerOpen, setAgentPickerOpen] = useState(false);
 	const [targetSessionId, setTargetSessionId] = useState<string>("");
 	const [renameValue, setRenameValue] = useState("");
+	const [sessionLimit, setSessionLimit] = useState<number>(3);
 
 	// Command palette
 	const { open: commandPaletteOpen, setOpen: setCommandPaletteOpen } =
@@ -219,6 +223,46 @@ function AppShell() {
 	const [workspaceDirectories, setWorkspaceDirectories] = useState<
 		{ name: string; path: string; logo?: ProjectLogo }[]
 	>([]);
+
+	const runningSessionCount = useMemo(
+		() =>
+			workspaceSessions.filter((session) => session.status === "running")
+				.length,
+		[workspaceSessions],
+	);
+	const sessionLimitLabel = useMemo(() => {
+		if (sessionLimit <= 0) return "∞";
+		return `${runningSessionCount}/${sessionLimit}`;
+	}, [runningSessionCount, sessionLimit]);
+
+	useEffect(() => {
+		let mounted = true;
+		getSettingsValues("octo")
+			.then((values) => {
+				if (!mounted) return;
+				console.log("[Settings] Loaded values:", values);
+				console.log(
+					"[Settings] sessions.max_concurrent_sessions:",
+					values["sessions.max_concurrent_sessions"],
+				);
+				const raw = values["sessions.max_concurrent_sessions"]?.value;
+				console.log("[Settings] raw value:", raw, "type:", typeof raw);
+				if (typeof raw === "number") {
+					console.log("[Settings] Setting sessionLimit to:", raw);
+					setSessionLimit(raw);
+				} else {
+					console.log(
+						"[Settings] NOT setting sessionLimit, raw is not a number",
+					);
+				}
+			})
+			.catch((err) => {
+				console.error("Failed to load session limits:", err);
+			});
+		return () => {
+			mounted = false;
+		};
+	}, []);
 
 	// Pinned projects for filter bar (persisted to localStorage)
 	const [pinnedProjects, setPinnedProjects] = useState<string[]>(() => {
@@ -366,7 +410,12 @@ function AppShell() {
 			// Navigate to sessions view
 			setActiveAppId("sessions");
 		},
-		[setActiveAppId, setMainChatActive, setMainChatAssistantName, setMainChatCurrentSessionId],
+		[
+			setActiveAppId,
+			setMainChatActive,
+			setMainChatAssistantName,
+			setMainChatCurrentSessionId,
+		],
 	);
 
 	// Handle Main Chat timeline session selection
@@ -378,7 +427,12 @@ function AppShell() {
 			setMainChatCurrentSessionId(sessionId);
 			setActiveAppId("sessions");
 		},
-		[setActiveAppId, setMainChatActive, setMainChatAssistantName, setMainChatCurrentSessionId],
+		[
+			setActiveAppId,
+			setMainChatActive,
+			setMainChatAssistantName,
+			setMainChatCurrentSessionId,
+		],
 	);
 
 	// Build hierarchical session structure from chatHistory (disk-based, no opencode needed)
@@ -469,7 +523,7 @@ function AppShell() {
 
 	useEffect(() => {
 		if (!opencodeBaseUrl) return;
-		fetchAgents(opencodeBaseUrl)
+		fetchAgents(opencodeBaseUrl, { directory: opencodeDirectory })
 			.then((agents) => {
 				setAvailableAgents(agents);
 			})
@@ -477,7 +531,7 @@ function AppShell() {
 				console.error("Failed to fetch agents:", err);
 				setAvailableAgents([]);
 			});
-	}, [opencodeBaseUrl]);
+	}, [opencodeBaseUrl, opencodeDirectory]);
 
 	// Filter and sort sessions (pinned first, then by recency)
 	const filteredSessions = useMemo(() => {
@@ -1046,7 +1100,7 @@ function AppShell() {
 									<button
 										type="button"
 										key={tab.id}
-									onClick={() => handleMobileNavClick(tab.id)}
+										onClick={() => handleMobileNavClick(tab.id)}
 										className="px-3 py-1.5 transition flex items-center gap-1.5"
 										style={{
 											backgroundColor: isActive ? navActiveBg : "transparent",
@@ -1086,6 +1140,12 @@ function AppShell() {
 											({filteredSessions.length}
 											{deferredSearch ? `/${chatHistory.length}` : ""})
 										</span>
+										{sessionLimitLabel && (
+											<span className="text-[10px] text-muted-foreground/60">
+												{locale === "de" ? "Laufend" : "Running"}{" "}
+												{sessionLimitLabel}
+											</span>
+										)}
 									</div>
 									{selectedProjectLabel && (
 										<button
@@ -1284,7 +1344,9 @@ function AppShell() {
 										<div className="mb-2 pb-2 border-b border-border/50">
 											<MainChatEntry
 												isSelected={mainChatActive}
-												activeSessionId={mainChatActive ? selectedChatSessionId : null}
+												activeSessionId={
+													mainChatActive ? selectedChatSessionId : null
+												}
 												onSelect={handleMainChatSelect}
 												onSessionSelect={handleMainChatSessionSelect}
 												locale={locale}
@@ -1317,7 +1379,7 @@ function AppShell() {
 															type="button"
 															onClick={() => handleSessionClick(session.id)}
 															className={cn(
-																"w-full px-2 py-2 text-left transition-colors flex items-start gap-1.5",
+																"w-full px-2 py-2 text-left transition-colors flex items-start gap-1.5 cursor-pointer",
 																isSelected
 																	? "bg-primary/15 border border-primary text-foreground"
 																	: "text-muted-foreground hover:bg-sidebar-accent border border-transparent",
@@ -1600,7 +1662,7 @@ function AppShell() {
 								variant="ghost"
 								size="icon"
 								rounded="full"
-							onClick={() => handleMobileNavClick("settings")}
+								onClick={() => handleMobileNavClick("settings")}
 								aria-label="Settings"
 								className={cn(
 									"hover:bg-sidebar-accent",
@@ -1616,7 +1678,7 @@ function AppShell() {
 								variant="ghost"
 								size="icon"
 								rounded="full"
-							onClick={() => handleMobileNavClick("admin")}
+								onClick={() => handleMobileNavClick("admin")}
 								aria-label="Admin"
 								className={cn(
 									"hover:bg-sidebar-accent",
@@ -1872,6 +1934,12 @@ function AppShell() {
 									({filteredSessions.length}
 									{deferredSearch ? `/${chatHistory.length}` : ""})
 								</span>
+								{sessionLimitLabel && (
+									<span className="text-[10px] text-muted-foreground/60">
+										{locale === "de" ? "Laufend" : "Running"}{" "}
+										{sessionLimitLabel}
+									</span>
+								)}
 							</div>
 							{selectedProjectLabel && (
 								<button
@@ -1961,7 +2029,9 @@ function AppShell() {
 								<div className="mb-2 pb-2 border-b border-border/50 px-2">
 									<MainChatEntry
 										isSelected={mainChatActive}
-										activeSessionId={mainChatActive ? selectedChatSessionId : null}
+										activeSessionId={
+											mainChatActive ? selectedChatSessionId : null
+										}
 										onSelect={handleMainChatSelect}
 										onSessionSelect={handleMainChatSessionSelect}
 										locale={locale}
@@ -1993,7 +2063,7 @@ function AppShell() {
 													type="button"
 													onClick={() => handleSessionClick(session.id)}
 													className={cn(
-														"w-full px-2 py-1.5 text-left transition-colors flex items-start gap-1.5",
+														"w-full px-2 py-1.5 text-left transition-colors flex items-start gap-1.5 cursor-pointer",
 														isSelected
 															? "bg-primary/15 border border-primary text-foreground"
 															: "text-muted-foreground hover:bg-sidebar-accent border border-transparent",
@@ -2277,7 +2347,7 @@ function AppShell() {
 								variant="ghost"
 								size="sm"
 								className="text-xs"
-							onClick={() => activateApp("agents")}
+								onClick={() => activateApp("agents")}
 							>
 								{locale === "de" ? "Erstellen" : "Create"}
 							</Button>
@@ -2311,20 +2381,21 @@ function AppShell() {
 				)}
 
 				{/* Collapsed session indicator - always visible when collapsed */}
-				{sidebarCollapsed && (chatHistory.length > 0 || opencodeSessions.length > 0) && (
-					<div className="w-full px-2 mt-4">
-						<div className="border-t border-sidebar-border pt-2">
-							<button
-								type="button"
-								onClick={() => setSidebarCollapsed(false)}
-								className="w-full p-2 text-muted-foreground hover:text-foreground transition-colors"
-								title={locale === "de" ? "Verlauf anzeigen" : "Show history"}
-							>
-								<Clock className="w-4 h-4 mx-auto" />
-							</button>
+				{sidebarCollapsed &&
+					(chatHistory.length > 0 || opencodeSessions.length > 0) && (
+						<div className="w-full px-2 mt-4">
+							<div className="border-t border-sidebar-border pt-2">
+								<button
+									type="button"
+									onClick={() => setSidebarCollapsed(false)}
+									className="w-full p-2 text-muted-foreground hover:text-foreground transition-colors"
+									title={locale === "de" ? "Verlauf anzeigen" : "Show history"}
+								>
+									<Clock className="w-4 h-4 mx-auto" />
+								</button>
+							</div>
 						</div>
-					</div>
-				)}
+					)}
 
 				<div
 					className={`w-full ${sidebarCollapsed ? "px-2 pb-3" : "px-4 pb-4"} mt-auto pt-3`}

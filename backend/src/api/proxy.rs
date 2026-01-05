@@ -69,16 +69,26 @@ pub(crate) struct WorkspaceProxyQuery {
     workspace_path: String,
 }
 
-fn strip_workspace_path_query(query: &str) -> Option<String> {
-    let filtered: Vec<&str> = query
-        .split('&')
-        .filter(|pair| !pair.starts_with("workspace_path=") && !pair.is_empty())
-        .collect();
-    if filtered.is_empty() {
-        None
-    } else {
-        Some(filtered.join("&"))
+#[derive(serde::Deserialize)]
+pub(crate) struct OpencodeEventQuery {
+    directory: Option<String>,
+}
+
+fn build_fileserver_query(workspace_path: &str, query: Option<&str>) -> String {
+    let mut pairs: Vec<String> = Vec::new();
+    if let Some(query) = query {
+        for pair in query.split('&') {
+            if pair.is_empty() {
+                continue;
+            }
+            if pair.starts_with("workspace_path=") || pair.starts_with("directory=") {
+                continue;
+            }
+            pairs.push(pair.to_string());
+        }
     }
+    pairs.push(format!("directory={}", urlencoding::encode(workspace_path)));
+    pairs.join("&")
 }
 
 /// Proxy WebSocket requests to the configured STT service.
@@ -176,7 +186,7 @@ pub async fn proxy_opencode(
     Path((session_id, path)): Path<(String, String)>,
     req: Request<Body>,
 ) -> Result<Response, StatusCode> {
-    let session = state
+    let _requested = state
         .sessions
         .get_session(&session_id)
         .await
@@ -186,13 +196,24 @@ pub async fn proxy_opencode(
         })?
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    let session = ensure_session_active_for_proxy(&state, &session_id, session).await?;
+    let opencode_session = state
+        .sessions
+        .get_or_create_opencode_session()
+        .await
+        .map_err(|e| {
+            error!("Failed to get primary opencode session: {:?}", e);
+            StatusCode::SERVICE_UNAVAILABLE
+        })?;
 
-    let starting = matches!(session.status, SessionStatus::Starting);
+    let opencode_session_id = opencode_session.id.clone();
+    let opencode_session =
+        ensure_session_active_for_proxy(&state, &opencode_session_id, opencode_session).await?;
+
+    let starting = matches!(opencode_session.status, SessionStatus::Starting);
     proxy_request(
         state.http_client.clone(),
         req,
-        session.opencode_port as u16,
+        opencode_session.opencode_port as u16,
         &path,
         starting,
     )
@@ -250,7 +271,7 @@ pub async fn proxy_fileserver_for_workspace(
             StatusCode::SERVICE_UNAVAILABLE
         })?;
 
-    let filtered_query = req.uri().query().and_then(strip_workspace_path_query);
+    let directory_query = build_fileserver_query(&query.workspace_path, req.uri().query());
 
     let starting = matches!(session.status, SessionStatus::Starting);
     proxy_request_with_query(
@@ -259,7 +280,7 @@ pub async fn proxy_fileserver_for_workspace(
         session.fileserver_port as u16,
         &path,
         starting,
-        filtered_query.as_deref(),
+        Some(&directory_query),
     )
     .await
 }
@@ -391,7 +412,7 @@ pub async fn proxy_terminal_ws(
     let ttyd_port = session.ttyd_port;
 
     Ok(ws.on_upgrade(move |socket| async move {
-        if let Err(e) = handle_terminal_proxy(socket, ttyd_port as u16).await {
+        if let Err(e) = handle_terminal_proxy(socket, ttyd_port as u16, None).await {
             error!("Terminal proxy error: {:?}", e);
         }
     }))
@@ -417,8 +438,13 @@ pub async fn proxy_terminal_ws_for_workspace(
 
     let ttyd_port = session.ttyd_port;
 
+    let initial_command = format!(
+        "cd -- {}\n",
+        shell_escape_single_quotes(&query.workspace_path)
+    );
     Ok(ws.on_upgrade(move |socket| async move {
-        if let Err(e) = handle_terminal_proxy(socket, ttyd_port as u16).await {
+        if let Err(e) = handle_terminal_proxy(socket, ttyd_port as u16, Some(initial_command)).await
+        {
             error!("Terminal proxy error: {:?}", e);
         }
     }))
@@ -446,6 +472,7 @@ pub async fn proxy_terminal_ws_for_workspace(
 async fn handle_terminal_proxy(
     client_socket: axum::extract::ws::WebSocket,
     ttyd_port: u16,
+    initial_command: Option<String>,
 ) -> anyhow::Result<()> {
     use axum::extract::ws::Message as AxumMessage;
     use tokio::time::{Duration, Instant};
@@ -501,6 +528,14 @@ async fn handle_terminal_proxy(
             init_msg.as_bytes().to_vec().into(),
         ))
         .await?;
+
+    if let Some(command) = initial_command {
+        let mut prefixed = vec![b'0'];
+        prefixed.extend_from_slice(command.as_bytes());
+        ttyd_write
+            .send(TungsteniteMessage::Binary(prefixed.into()))
+            .await?;
+    }
 
     // Split client socket
     let (mut client_write, mut client_read) = client_socket.split();
@@ -662,12 +697,30 @@ async fn handle_terminal_proxy(
     Ok(())
 }
 
+fn shell_escape_single_quotes(input: &str) -> String {
+    if input.is_empty() {
+        return "''".to_string();
+    }
+    let mut out = String::with_capacity(input.len() + 2);
+    out.push('\'');
+    for ch in input.chars() {
+        if ch == '\'' {
+            out.push_str("'\\''");
+        } else {
+            out.push(ch);
+        }
+    }
+    out.push('\'');
+    out
+}
+
 /// SSE events proxy for a specific session's opencode server.
 pub async fn proxy_opencode_events(
     State(state): State<AppState>,
     Path(session_id): Path<String>,
+    Query(query): Query<OpencodeEventQuery>,
 ) -> Result<Response, StatusCode> {
-    let session = state
+    let _requested = state
         .sessions
         .get_session(&session_id)
         .await
@@ -677,9 +730,28 @@ pub async fn proxy_opencode_events(
         })?
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    let session = ensure_session_active_for_proxy(&state, &session_id, session).await?;
+    let opencode_session = state
+        .sessions
+        .get_or_create_opencode_session()
+        .await
+        .map_err(|e| {
+            error!("Failed to get primary opencode session: {:?}", e);
+            StatusCode::SERVICE_UNAVAILABLE
+        })?;
 
-    let target_url = format!("http://localhost:{}/event", session.opencode_port);
+    let opencode_session_id = opencode_session.id.clone();
+    let opencode_session =
+        ensure_session_active_for_proxy(&state, &opencode_session_id, opencode_session).await?;
+
+    let target_url = if let Some(directory) = query.directory.as_deref() {
+        format!(
+            "http://localhost:{}/event?directory={}",
+            opencode_session.opencode_port,
+            urlencoding::encode(directory)
+        )
+    } else {
+        format!("http://localhost:{}/event", opencode_session.opencode_port)
+    };
     debug!("Proxying SSE events from {}", target_url);
 
     // Create HTTP client for SSE
@@ -1235,7 +1307,7 @@ pub async fn proxy_opencode_agent(
     Path((session_id, agent_id, path)): Path<(String, String, String)>,
     req: Request<Body>,
 ) -> Result<Response, StatusCode> {
-    let session = state
+    let _requested = state
         .sessions
         .get_session(&session_id)
         .await
@@ -1245,29 +1317,40 @@ pub async fn proxy_opencode_agent(
         })?
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    let session = ensure_session_active_for_proxy(&state, &session_id, session).await?;
+    let opencode_session = state
+        .sessions
+        .get_or_create_opencode_session()
+        .await
+        .map_err(|e| {
+            error!("Failed to get primary opencode session: {:?}", e);
+            StatusCode::SERVICE_UNAVAILABLE
+        })?;
+
+    let opencode_session_id = opencode_session.id.clone();
+    let opencode_session =
+        ensure_session_active_for_proxy(&state, &opencode_session_id, opencode_session).await?;
 
     // Resolve the agent's port
     let port = state
         .agents
-        .get_agent_port(&session_id, &agent_id)
+        .get_agent_port(&opencode_session_id, &agent_id)
         .await
         .map_err(|e| {
             error!(
                 "Failed to get agent port for {}/{}: {:?}",
-                session_id, agent_id, e
+                opencode_session_id, agent_id, e
             );
             StatusCode::INTERNAL_SERVER_ERROR
         })?
         .ok_or_else(|| {
             warn!(
                 "Agent {} not found or not running in session {}",
-                agent_id, session_id
+                agent_id, opencode_session_id
             );
             StatusCode::NOT_FOUND
         })?;
 
-    let starting = matches!(session.status, SessionStatus::Starting);
+    let starting = matches!(opencode_session.status, SessionStatus::Starting);
     proxy_request(state.http_client.clone(), req, port, &path, starting).await
 }
 
@@ -1277,8 +1360,9 @@ pub async fn proxy_opencode_agent(
 pub async fn proxy_opencode_agent_events(
     State(state): State<AppState>,
     Path((session_id, agent_id)): Path<(String, String)>,
+    Query(query): Query<OpencodeEventQuery>,
 ) -> Result<Response, StatusCode> {
-    let session = state
+    let _requested = state
         .sessions
         .get_session(&session_id)
         .await
@@ -1288,29 +1372,48 @@ pub async fn proxy_opencode_agent_events(
         })?
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    let _session = ensure_session_active_for_proxy(&state, &session_id, session).await?;
+    let opencode_session = state
+        .sessions
+        .get_or_create_opencode_session()
+        .await
+        .map_err(|e| {
+            error!("Failed to get primary opencode session: {:?}", e);
+            StatusCode::SERVICE_UNAVAILABLE
+        })?;
+
+    let opencode_session_id = opencode_session.id.clone();
+    let _opencode_session =
+        ensure_session_active_for_proxy(&state, &opencode_session_id, opencode_session).await?;
 
     // Resolve the agent's port
     let port = state
         .agents
-        .get_agent_port(&session_id, &agent_id)
+        .get_agent_port(&opencode_session_id, &agent_id)
         .await
         .map_err(|e| {
             error!(
                 "Failed to get agent port for {}/{}: {:?}",
-                session_id, agent_id, e
+                opencode_session_id, agent_id, e
             );
             StatusCode::INTERNAL_SERVER_ERROR
         })?
         .ok_or_else(|| {
             warn!(
                 "Agent {} not found or not running in session {}",
-                agent_id, session_id
+                agent_id, opencode_session_id
             );
             StatusCode::NOT_FOUND
         })?;
 
-    let target_url = format!("http://localhost:{}/event", port);
+    let target_url = if let Some(directory) = query.directory.as_deref() {
+        format!(
+            "http://localhost:{}/event?directory={}",
+            port,
+            urlencoding::encode(directory)
+        )
+    } else {
+        format!("http://localhost:{}/event", port)
+    };
     debug!(
         "Proxying agent SSE events from {} (agent: {})",
         target_url, agent_id

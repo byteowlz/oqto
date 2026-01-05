@@ -158,9 +158,15 @@ dev_mode = true
 # "off": never auto-attach
 # "attach": attach only if a session is already running
 # "resume": start/resume a session if none is running (resource-heavy)
-auto_attach = "off"
+auto_attach = "on"
 # Scan running sessions for the selected chat session ID before attaching.
 auto_attach_scan = true
+# Maximum concurrent running sessions per user.
+max_concurrent_sessions = 6
+# Idle timeout in minutes before stopping a session.
+idle_timeout_minutes = 30
+# Idle cleanup check interval in seconds.
+idle_check_interval_seconds = 300
 
 [scaffold]
 # Agent scaffolding configuration - defines the tool used to create new agent directories

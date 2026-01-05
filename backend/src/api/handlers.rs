@@ -1328,11 +1328,17 @@ pub async fn list_agents(
     Path(session_id): Path<String>,
     Query(query): Query<AgentListQuery>,
 ) -> ApiResult<Json<Vec<AgentInfo>>> {
+    let opencode_session = state.sessions.get_or_create_opencode_session().await?;
     let agents = state
         .agents
-        .list_agents(&session_id, query.include_context)
+        .list_agents(&opencode_session.id, query.include_context)
         .await?;
-    info!(session_id = %session_id, count = agents.len(), "Listed agents");
+    info!(
+        requested_session_id = %session_id,
+        opencode_session_id = %opencode_session.id,
+        count = agents.len(),
+        "Listed agents"
+    );
     Ok(Json(agents))
 }
 
@@ -1343,9 +1349,10 @@ pub async fn get_agent(
     Path((session_id, agent_id)): Path<(String, String)>,
     Query(query): Query<AgentListQuery>,
 ) -> ApiResult<Json<AgentInfo>> {
+    let opencode_session = state.sessions.get_or_create_opencode_session().await?;
     state
         .agents
-        .get_agent(&session_id, &agent_id, query.include_context)
+        .get_agent(&opencode_session.id, &agent_id, query.include_context)
         .await?
         .map(Json)
         .ok_or_else(|| ApiError::not_found(format!("Agent {} not found", agent_id)))
@@ -1358,12 +1365,14 @@ pub async fn start_agent(
     Path(session_id): Path<String>,
     Json(request): Json<StartAgentRequest>,
 ) -> ApiResult<(StatusCode, Json<StartAgentResponse>)> {
+    let opencode_session = state.sessions.get_or_create_opencode_session().await?;
     let response = state
         .agents
-        .start_agent(&session_id, &request.directory)
+        .start_agent(&opencode_session.id, &request.directory)
         .await?;
     info!(
-        session_id = %session_id,
+        requested_session_id = %session_id,
+        opencode_session_id = %opencode_session.id,
         agent_id = %response.id,
         port = response.port,
         "Started agent"
@@ -1377,8 +1386,18 @@ pub async fn stop_agent(
     State(state): State<AppState>,
     Path((session_id, agent_id)): Path<(String, String)>,
 ) -> ApiResult<Json<StopAgentResponse>> {
-    let response = state.agents.stop_agent(&session_id, &agent_id).await?;
-    info!(session_id = %session_id, agent_id = %agent_id, stopped = response.stopped, "Stopped agent");
+    let opencode_session = state.sessions.get_or_create_opencode_session().await?;
+    let response = state
+        .agents
+        .stop_agent(&opencode_session.id, &agent_id)
+        .await?;
+    info!(
+        requested_session_id = %session_id,
+        opencode_session_id = %opencode_session.id,
+        agent_id = %agent_id,
+        stopped = response.stopped,
+        "Stopped agent"
+    );
     Ok(Json(response))
 }
 
@@ -1388,8 +1407,13 @@ pub async fn rediscover_agents(
     State(state): State<AppState>,
     Path(session_id): Path<String>,
 ) -> ApiResult<StatusCode> {
-    state.agents.rediscover_agents(&session_id).await?;
-    info!(session_id = %session_id, "Rediscovered agents");
+    let opencode_session = state.sessions.get_or_create_opencode_session().await?;
+    state.agents.rediscover_agents(&opencode_session.id).await?;
+    info!(
+        requested_session_id = %session_id,
+        opencode_session_id = %opencode_session.id,
+        "Rediscovered agents"
+    );
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -1400,17 +1424,19 @@ pub async fn create_agent(
     Path(session_id): Path<String>,
     Json(request): Json<CreateAgentRequest>,
 ) -> ApiResult<(StatusCode, Json<CreateAgentResponse>)> {
+    let opencode_session = state.sessions.get_or_create_opencode_session().await?;
     let response = state
         .agents
         .create_agent(
-            &session_id,
+            &opencode_session.id,
             &request.name,
             &request.description,
             request.scaffold.as_ref(),
         )
         .await?;
     info!(
-        session_id = %session_id,
+        requested_session_id = %session_id,
+        opencode_session_id = %opencode_session.id,
         agent_id = %response.id,
         directory = %response.directory,
         "Created agent"
@@ -1425,7 +1451,11 @@ pub async fn exec_agent_command(
     Path(session_id): Path<String>,
     Json(request): Json<AgentExecRequest>,
 ) -> ApiResult<Json<AgentExecResponse>> {
-    let response = state.agents.exec_command(&session_id, request).await?;
+    let opencode_session = state.sessions.get_or_create_opencode_session().await?;
+    let response = state
+        .agents
+        .exec_command(&opencode_session.id, request)
+        .await?;
     Ok(Json(response))
 }
 

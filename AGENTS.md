@@ -110,91 +110,15 @@ agntz memory add "Voice stuff is complicated"
 
 ---
 
-## Issue Tracking with bd (beads)
-
-This project uses **bd (beads)** for ALL issue tracking.
-
-### Quick Commands
+## Issue Tracking (trx)
 
 ```bash
-bd ready                  # Show unblocked issues
-bd create "Title" -t task -p 2
-bd update <id> --status in_progress
-bd close <id> -r "Done"
-bd sync                   # Commit beads changes
+trx ready              # Show unblocked issues
+trx create "Title" -t task -p 2   # Create issue (types: bug/feature/task/epic/chore, priority: 0-4)
+trx update <id> --status in_progress
+trx close <id> -r "Done"
+trx sync               # Commit .trx/ changes
 ```
 
-### Workflow
+Priorities: 0=critical, 1=high, 2=medium, 3=low, 4=backlog
 
-1. **Start**: `bd ready` to find work
-2. **Claim**: `bd update <id> --status in_progress`
-3. **Work**: Implement and test
-4. **Complete**: `bd close <id> -r "Reason"`
-5. **Sync**: `bd sync` before ending session
-
-### Priorities
-
-- `0` - Critical (security, data loss)
-- `1` - High (major features)
-- `2` - Medium (default)
-- `3` - Low (polish)
-- `4` - Backlog (ideas)
-
----
-
-## Key Architecture Facts
-
-Run `agntz memory search "octo"` for full context. Core facts:
-
-- **x-opencode-directory header**: Every opencode API request can include this header to switch working directory
-- **Session storage**: ~/.local/share/opencode/storage/session/{projectID}/ where projectID is hash of workspace path
-- **Local mode**: Spawns opencode, fileserver, ttyd as native processes; ports 41820+ allocated per session
-- **Chat history API**: PATCH /api/chat-history/{id} for renaming sessions when no opencode running
-- **OpenCode API**: PATCH /session/{id} for live session updates (requires running opencode)
-- **Features endpoint**: /api/features returns {mmry_enabled, voice} - voice config gates voice/dictation UI
-- **Voice mode**: eaRS WebSocket for STT, kokorox WebSocket for TTS
-- **Session limits**: LRU cap of 3 concurrent, 30min idle timeout
-
----
-
-## Agent Messaging (mailz)
-
-Check messages at session start:
-
-```bash
-agntz mail inbox
-agntz mail send <recipient> "Subject" --body "Details"
-agntz reserve src/file.rs --reason "Refactoring"
-agntz release src/file.rs
-```
-
-Use for cross-repo coordination, handoffs, and file conflict prevention.
-
----
-
-## Skills for Complex Tasks
-
-For substantial multi-step tasks, use the **skill** tool to load specialized instructions:
-
-```bash
-# Load the codex-delegate skill for autonomous task execution
-skill codex-delegate
-```
-
-### Available Skills
-
-| Skill | Use For |
-|-------|---------|
-| **codex-delegate** | Delegate complex features to Codex CLI in automation mode. Runs in background tmux, tracks with beads, good for tasks that take 5-30+ minutes. |
-
-### When to Use Skills
-
-- Large features requiring planning, implementation, and testing
-- Tasks that can run autonomously while you continue other work
-- Multi-file refactoring with comprehensive test coverage
-
-### When NOT to Use Skills
-
-- Quick fixes or single-file changes
-- Tasks requiring back-and-forth dialogue
-- Time-sensitive work that needs immediate results

@@ -1,8 +1,6 @@
 //! Word list module for generating human-readable session IDs
 //! Format: adjective-noun (e.g., "cold-lamp", "blue-frog")
 
-
-
 /// Adjectives for readable ID generation (291 words)
 const ADJECTIVES: &[&str] = &[
     "able", "acid", "aged", "airy", "akin", "alto", "amok", "anti", "arch", "arid", "arty", "auld",
@@ -173,7 +171,7 @@ fn hash_string(s: &str) -> u32 {
 }
 
 /// Generate a deterministic human-readable ID from a session ID.
-/// 
+///
 /// This produces the same output for the same input. This is the single source
 /// of truth for readable IDs - they are computed, not stored.
 ///
@@ -186,7 +184,10 @@ pub fn readable_id_from_session_id(session_id: &str) -> String {
     let adj_idx = (hash as usize) % ADJECTIVES.len();
     let noun1_idx = ((hash as usize) / ADJECTIVES.len()) % NOUNS.len();
     let noun2_idx = ((hash as usize) / ADJECTIVES.len() / NOUNS.len()) % NOUNS.len();
-    format!("{}-{}-{}", ADJECTIVES[adj_idx], NOUNS[noun1_idx], NOUNS[noun2_idx])
+    format!(
+        "{}-{}-{}",
+        ADJECTIVES[adj_idx], NOUNS[noun1_idx], NOUNS[noun2_idx]
+    )
 }
 
 #[cfg(test)]
@@ -198,7 +199,11 @@ mod tests {
         let id = readable_id_from_session_id("ses_test123");
         assert!(id.contains('-'), "ID should contain a hyphen");
         let parts: Vec<&str> = id.split('-').collect();
-        assert_eq!(parts.len(), 3, "ID should have exactly three parts (adjective-noun-noun)");
+        assert_eq!(
+            parts.len(),
+            3,
+            "ID should have exactly three parts (adjective-noun-noun)"
+        );
     }
 
     #[test]
@@ -214,7 +219,10 @@ mod tests {
         let id1 = readable_id_from_session_id("ses_abc123");
         let id2 = readable_id_from_session_id("ses_xyz789");
         // Very unlikely to collide with different inputs
-        assert_ne!(id1, id2, "Different session IDs should produce different readable IDs");
+        assert_ne!(
+            id1, id2,
+            "Different session IDs should produce different readable IDs"
+        );
     }
 
     #[test]
@@ -223,7 +231,7 @@ mod tests {
         // Frontend: hashString("test") should equal our hash_string("test")
         let hash = hash_string("test");
         assert!(hash > 0, "Hash should be positive");
-        
+
         // The hash should be consistent
         let hash2 = hash_string("test");
         assert_eq!(hash, hash2, "Hash should be deterministic");

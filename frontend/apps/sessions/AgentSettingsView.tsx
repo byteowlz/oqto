@@ -47,11 +47,19 @@ interface AgentInfo {
 }
 
 export function AgentSettingsView({ className }: AgentSettingsViewProps) {
-	const { selectedWorkspaceSession, opencodeBaseUrl, busySessions, refreshWorkspaceSessions } = useApp();
+	const {
+		selectedWorkspaceSession,
+		opencodeBaseUrl,
+		opencodeDirectory,
+		busySessions,
+		refreshWorkspaceSessions,
+	} = useApp();
 	const sessionId = selectedWorkspaceSession?.id;
 
 	// Global config (~/.config/opencode/opencode.json) - read-only reference
-	const [globalConfig, setGlobalConfig] = useState<WorkspaceConfig | null>(null);
+	const [globalConfig, setGlobalConfig] = useState<WorkspaceConfig | null>(
+		null,
+	);
 	// Local workspace config (opencode.json in workspace root) - editable
 	const [localConfig, setLocalConfig] = useState<WorkspaceConfig | null>(null);
 	const [agents, setAgents] = useState<AgentInfo[]>([]);
@@ -61,7 +69,9 @@ export function AgentSettingsView({ className }: AgentSettingsViewProps) {
 	const [waitingForIdle, setWaitingForIdle] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [success, setSuccess] = useState(false);
-	const [pendingChanges, setPendingChanges] = useState<Partial<WorkspaceConfig>>({});
+	const [pendingChanges, setPendingChanges] = useState<
+		Partial<WorkspaceConfig>
+	>({});
 
 	// Check if the current chat session is busy
 	// We need to find the chat session ID associated with this workspace session
@@ -84,7 +94,9 @@ export function AgentSettingsView({ className }: AgentSettingsViewProps) {
 			let agentsList: AgentInfo[] = [];
 			if (opencodeBaseUrl) {
 				try {
-					const agentsData = await fetchAgents(opencodeBaseUrl);
+					const agentsData = await fetchAgents(opencodeBaseUrl, {
+						directory: opencodeDirectory,
+					});
 					// fetchAgents returns an array of OpenCodeAgent objects
 					agentsList = (agentsData || []).map((agent) => ({
 						id: agent.id,
@@ -105,7 +117,7 @@ export function AgentSettingsView({ className }: AgentSettingsViewProps) {
 		} finally {
 			setLoading(false);
 		}
-	}, [sessionId, opencodeBaseUrl]);
+	}, [sessionId, opencodeBaseUrl, opencodeDirectory]);
 
 	// For save operations, we work with local config only
 	const config = localConfig;
@@ -152,7 +164,9 @@ export function AgentSettingsView({ className }: AgentSettingsViewProps) {
 			// Refresh sessions list to get updated status
 			await refreshWorkspaceSessions();
 		} catch (err) {
-			setError(err instanceof Error ? err.message : "Failed to restart session");
+			setError(
+				err instanceof Error ? err.message : "Failed to restart session",
+			);
 		} finally {
 			setRestarting(false);
 			setWaitingForIdle(false);
@@ -176,8 +190,11 @@ export function AgentSettingsView({ className }: AgentSettingsViewProps) {
 
 	// Get effective value: pending changes > local config > global config
 	const getValue = useCallback(
-		<K extends keyof WorkspaceConfig>(key: K): WorkspaceConfig[K] | undefined => {
-			if (key in pendingChanges) return pendingChanges[key] as WorkspaceConfig[K];
+		<K extends keyof WorkspaceConfig>(
+			key: K,
+		): WorkspaceConfig[K] | undefined => {
+			if (key in pendingChanges)
+				return pendingChanges[key] as WorkspaceConfig[K];
 			if (localConfig?.[key] !== undefined) return localConfig[key];
 			return globalConfig?.[key];
 		},
@@ -186,7 +203,9 @@ export function AgentSettingsView({ className }: AgentSettingsViewProps) {
 
 	// Get the source of a value: "pending" | "local" | "global" | "default"
 	const getValueSource = useCallback(
-		(key: keyof WorkspaceConfig): "pending" | "local" | "global" | "default" => {
+		(
+			key: keyof WorkspaceConfig,
+		): "pending" | "local" | "global" | "default" => {
 			if (key in pendingChanges) return "pending";
 			if (localConfig?.[key] !== undefined) return "local";
 			if (globalConfig?.[key] !== undefined) return "global";
@@ -220,20 +239,19 @@ export function AgentSettingsView({ className }: AgentSettingsViewProps) {
 	);
 
 	// Reset a field
-	const handleReset = useCallback(
-		(key: keyof WorkspaceConfig) => {
-			setPendingChanges((prev) => {
-				const next = { ...prev };
-				delete next[key];
-				return next;
-			});
-		},
-		[],
-	);
+	const handleReset = useCallback((key: keyof WorkspaceConfig) => {
+		setPendingChanges((prev) => {
+			const next = { ...prev };
+			delete next[key];
+			return next;
+		});
+	}, []);
 
 	if (!sessionId) {
 		return (
-			<div className={cn("flex items-center justify-center h-full p-4", className)}>
+			<div
+				className={cn("flex items-center justify-center h-full p-4", className)}
+			>
 				<p className="text-sm text-muted-foreground">No session selected</p>
 			</div>
 		);
@@ -241,7 +259,9 @@ export function AgentSettingsView({ className }: AgentSettingsViewProps) {
 
 	if (loading) {
 		return (
-			<div className={cn("flex items-center justify-center h-full p-4", className)}>
+			<div
+				className={cn("flex items-center justify-center h-full p-4", className)}
+			>
 				<Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
 			</div>
 		);
@@ -264,7 +284,9 @@ export function AgentSettingsView({ className }: AgentSettingsViewProps) {
 						className="h-7 w-7 p-0"
 						title="Reload"
 					>
-						<RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
+						<RefreshCw
+							className={cn("h-3.5 w-3.5", loading && "animate-spin")}
+						/>
 					</Button>
 					<Button
 						type="button"
@@ -312,7 +334,11 @@ export function AgentSettingsView({ className }: AgentSettingsViewProps) {
 						onClick={handleRestart}
 						disabled={restarting || waitingForIdle}
 						className="h-6 px-2 text-[10px] flex-shrink-0"
-						title={waitingForIdle ? "Waiting for agent to finish..." : "Restart session"}
+						title={
+							waitingForIdle
+								? "Waiting for agent to finish..."
+								: "Restart session"
+						}
 					>
 						{restarting ? (
 							<Loader2 className="h-3 w-3 animate-spin" />
@@ -322,7 +348,11 @@ export function AgentSettingsView({ className }: AgentSettingsViewProps) {
 							<RotateCcw className="h-3 w-3" />
 						)}
 						<span className="ml-1">
-							{restarting ? "Restarting" : waitingForIdle ? "Waiting..." : "Restart"}
+							{restarting
+								? "Restarting"
+								: waitingForIdle
+									? "Waiting..."
+									: "Restart"}
 						</span>
 					</Button>
 				</div>
@@ -358,7 +388,9 @@ export function AgentSettingsView({ className }: AgentSettingsViewProps) {
 				>
 					<Select
 						value={getValue("default_agent") || "__none__"}
-						onValueChange={(v) => handleChange("default_agent", v === "__none__" ? undefined : v)}
+						onValueChange={(v) =>
+							handleChange("default_agent", v === "__none__" ? undefined : v)
+						}
 					>
 						<SelectTrigger
 							className={cn(
@@ -391,7 +423,12 @@ export function AgentSettingsView({ className }: AgentSettingsViewProps) {
 				>
 					<Select
 						value={getValue("share") || "__none__"}
-						onValueChange={(v) => handleChange("share", v === "__none__" ? undefined : v as ShareMode)}
+						onValueChange={(v) =>
+							handleChange(
+								"share",
+								v === "__none__" ? undefined : (v as ShareMode),
+							)
+						}
 					>
 						<SelectTrigger
 							className={cn(
@@ -416,7 +453,10 @@ export function AgentSettingsView({ className }: AgentSettingsViewProps) {
 					<Label className="text-xs font-medium">Compaction</Label>
 					<div className="space-y-2">
 						<div className="flex items-center justify-between">
-							<Label htmlFor="compaction-auto" className="text-xs text-muted-foreground">
+							<Label
+								htmlFor="compaction-auto"
+								className="text-xs text-muted-foreground"
+							>
 								Auto compaction
 							</Label>
 							<Switch
@@ -431,7 +471,10 @@ export function AgentSettingsView({ className }: AgentSettingsViewProps) {
 							/>
 						</div>
 						<div className="flex items-center justify-between">
-							<Label htmlFor="compaction-prune" className="text-xs text-muted-foreground">
+							<Label
+								htmlFor="compaction-prune"
+								className="text-xs text-muted-foreground"
+							>
 								Prune old messages
 							</Label>
 							<Switch
@@ -464,7 +507,10 @@ export function AgentSettingsView({ className }: AgentSettingsViewProps) {
 								.split("\n")
 								.map((l) => l.trim())
 								.filter((l) => l);
-							handleChange("instructions", lines.length > 0 ? lines : undefined);
+							handleChange(
+								"instructions",
+								lines.length > 0 ? lines : undefined,
+							);
 						}}
 						placeholder="AGENTS.md&#10;.opencode/instructions.md"
 						rows={3}
@@ -493,14 +539,18 @@ export function AgentSettingsView({ className }: AgentSettingsViewProps) {
 					</summary>
 					<div className="mt-2 space-y-2">
 						<div>
-							<p className="text-[10px] text-muted-foreground mb-1">Workspace config (editable):</p>
+							<p className="text-[10px] text-muted-foreground mb-1">
+								Workspace config (editable):
+							</p>
 							<pre className="p-2 text-[10px] bg-muted/50 border border-border rounded-md overflow-auto max-h-32">
 								{JSON.stringify({ ...localConfig, ...pendingChanges }, null, 2)}
 							</pre>
 						</div>
 						{globalConfig && Object.keys(globalConfig).length > 0 && (
 							<div>
-								<p className="text-[10px] text-muted-foreground mb-1">Global config (read-only):</p>
+								<p className="text-[10px] text-muted-foreground mb-1">
+									Global config (read-only):
+								</p>
 								<pre className="p-2 text-[10px] bg-muted/50 border border-dashed border-border rounded-md overflow-auto max-h-32">
 									{JSON.stringify(globalConfig, null, 2)}
 								</pre>
@@ -527,26 +577,32 @@ interface SettingFieldProps {
 	children: React.ReactNode;
 }
 
-function SettingField({ 
-	label, 
-	description, 
-	modified, 
+function SettingField({
+	label,
+	description,
+	modified,
 	source = "default",
 	setInLocal,
 	setInGlobal,
-	children 
+	children,
 }: SettingFieldProps) {
 	return (
 		<div className="space-y-1.5">
 			<div className="flex items-center gap-1.5 flex-wrap">
 				<Label className="text-xs font-medium">{label}</Label>
 				{modified && (
-					<Badge variant="default" className="text-[9px] px-1 py-0 bg-amber-500 h-4">
+					<Badge
+						variant="default"
+						className="text-[9px] px-1 py-0 bg-amber-500 h-4"
+					>
 						modified
 					</Badge>
 				)}
 				{!modified && setInLocal && (
-					<Badge variant="default" className="text-[9px] px-1 py-0 bg-blue-500 h-4">
+					<Badge
+						variant="default"
+						className="text-[9px] px-1 py-0 bg-blue-500 h-4"
+					>
 						local
 					</Badge>
 				)}
@@ -557,7 +613,10 @@ function SettingField({
 				)}
 				{/* Show if also set in global when local is active */}
 				{!modified && setInLocal && setInGlobal && (
-					<Badge variant="outline" className="text-[9px] px-1 py-0 h-4 text-muted-foreground">
+					<Badge
+						variant="outline"
+						className="text-[9px] px-1 py-0 h-4 text-muted-foreground"
+					>
 						overrides global
 					</Badge>
 				)}
@@ -589,7 +648,11 @@ const KNOWN_TOOLS = [
 	{ id: "todowrite", label: "Todo Write", description: "Write todos" },
 	{ id: "todoread", label: "Todo Read", description: "Read todos" },
 	{ id: "lsp", label: "LSP", description: "Language server features" },
-	{ id: "external_directory", label: "External Dir", description: "Access external directories" },
+	{
+		id: "external_directory",
+		label: "External Dir",
+		description: "Access external directories",
+	},
 ] as const;
 
 interface PermissionsSectionProps {
@@ -600,14 +663,25 @@ interface PermissionsSectionProps {
 	setInGlobal?: boolean;
 }
 
-function PermissionsSection({ permission, onChange, modified, setInLocal, setInGlobal }: PermissionsSectionProps) {
+function PermissionsSection({
+	permission,
+	onChange,
+	modified,
+	setInLocal,
+	setInGlobal,
+}: PermissionsSectionProps) {
 	// Determine if we have a global permission or per-tool permissions
 	const isGlobalPermission = typeof permission === "string";
-	const globalValue: PermissionAction | "__none__" = isGlobalPermission ? permission : "__none__";
-	const toolPermissions: Record<string, PermissionAction> = 
-		permission && typeof permission === "object" 
+	const globalValue: PermissionAction | "__none__" = isGlobalPermission
+		? permission
+		: "__none__";
+	const toolPermissions: Record<string, PermissionAction> =
+		permission && typeof permission === "object"
 			? Object.fromEntries(
-					Object.entries(permission).map(([k, v]) => [k, typeof v === "string" ? v : "ask"])
+					Object.entries(permission).map(([k, v]) => [
+						k,
+						typeof v === "string" ? v : "ask",
+					]),
 				)
 			: {};
 
@@ -625,8 +699,8 @@ function PermissionsSection({ permission, onChange, modified, setInLocal, setInG
 	// Handle individual tool permission change
 	const handleToolChange = (toolId: string, value: string) => {
 		// Start with existing object permissions or empty object
-		const currentObj: Record<string, PermissionAction> = 
-			permission && typeof permission === "object" 
+		const currentObj: Record<string, PermissionAction> =
+			permission && typeof permission === "object"
 				? { ...toolPermissions }
 				: {};
 
@@ -660,12 +734,18 @@ function PermissionsSection({ permission, onChange, modified, setInLocal, setInG
 			<div className="flex items-center gap-1.5 flex-wrap">
 				<Label className="text-xs font-medium">Permissions</Label>
 				{modified && (
-					<Badge variant="default" className="text-[9px] px-1 py-0 bg-amber-500 h-4">
+					<Badge
+						variant="default"
+						className="text-[9px] px-1 py-0 bg-amber-500 h-4"
+					>
 						modified
 					</Badge>
 				)}
 				{!modified && setInLocal && (
-					<Badge variant="default" className="text-[9px] px-1 py-0 bg-blue-500 h-4">
+					<Badge
+						variant="default"
+						className="text-[9px] px-1 py-0 bg-blue-500 h-4"
+					>
 						local
 					</Badge>
 				)}
@@ -675,7 +755,10 @@ function PermissionsSection({ permission, onChange, modified, setInLocal, setInG
 					</Badge>
 				)}
 				{!modified && setInLocal && setInGlobal && (
-					<Badge variant="outline" className="text-[9px] px-1 py-0 h-4 text-muted-foreground">
+					<Badge
+						variant="outline"
+						className="text-[9px] px-1 py-0 h-4 text-muted-foreground"
+					>
 						overrides global
 					</Badge>
 				)}
@@ -688,7 +771,9 @@ function PermissionsSection({ permission, onChange, modified, setInLocal, setInG
 			<div className="flex items-center justify-between py-1.5 border-b border-border/50">
 				<div className="flex flex-col">
 					<span className="text-xs font-medium">All Tools</span>
-					<span className="text-[10px] text-muted-foreground">Set permission for all tools</span>
+					<span className="text-[10px] text-muted-foreground">
+						Set permission for all tools
+					</span>
 				</div>
 				<Select value={globalValue} onValueChange={handleGlobalChange}>
 					<SelectTrigger className="h-7 w-24 text-xs bg-background">

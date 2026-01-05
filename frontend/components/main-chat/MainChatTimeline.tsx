@@ -1,12 +1,12 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback } from "react";
 import {
-	listMainChatSessions,
 	type MainChatSession,
+	listMainChatSessions,
 } from "@/lib/control-plane-client";
-import { cn } from "@/lib/utils";
 import { formatSessionDate } from "@/lib/session-utils";
+import { cn } from "@/lib/utils";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 export interface MainChatTimelineProps {
 	/** Assistant name */
@@ -41,7 +41,8 @@ export function MainChatTimeline({
 			.then((data) => {
 				// Sort by started_at ascending (oldest first, so timeline goes top to bottom)
 				const sorted = [...data].sort(
-					(a, b) => new Date(a.started_at).getTime() - new Date(b.started_at).getTime()
+					(a, b) =>
+						new Date(a.started_at).getTime() - new Date(b.started_at).getTime(),
 				);
 				setSessions(sorted);
 				onSessionsLoaded?.(sorted);
@@ -96,10 +97,18 @@ interface TimelineDotProps {
 	onClick: () => void;
 }
 
-function TimelineDot({ session, isActive, isFirst, isLast, onClick }: TimelineDotProps) {
+function TimelineDot({
+	session,
+	isActive,
+	isFirst,
+	isLast,
+	onClick,
+}: TimelineDotProps) {
 	const [showTooltip, setShowTooltip] = useState(false);
 
-	const formattedDate = formatSessionDate(new Date(session.started_at).getTime());
+	const formattedDate = formatSessionDate(
+		new Date(session.started_at).getTime(),
+	);
 	const title = session.title || formattedDate;
 
 	return (

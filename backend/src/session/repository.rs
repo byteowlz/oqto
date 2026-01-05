@@ -69,6 +69,30 @@ impl SessionRepository {
         Ok(())
     }
 
+    /// Update EAVS key metadata for a session.
+    pub async fn update_eavs_keys(
+        &self,
+        session_id: &str,
+        key_id: Option<&str>,
+        key_hash: Option<&str>,
+    ) -> Result<()> {
+        sqlx::query(
+            r#"
+            UPDATE sessions
+            SET eavs_key_id = ?, eavs_key_hash = ?
+            WHERE id = ?
+            "#,
+        )
+        .bind(key_id)
+        .bind(key_hash)
+        .bind(session_id)
+        .execute(&self.pool)
+        .await
+        .context("updating session eavs keys")?;
+
+        Ok(())
+    }
+
     /// Get a session by ID.
     pub async fn get(&self, id: &str) -> Result<Option<Session>> {
         let query = format!("SELECT {} FROM sessions WHERE id = ?", SESSION_COLUMNS);
@@ -96,8 +120,6 @@ impl SessionRepository {
 
         Ok(session)
     }
-
-
 
     /// List all sessions.
     pub async fn list(&self) -> Result<Vec<Session>> {
@@ -259,8 +281,6 @@ impl SessionRepository {
 
         Ok(())
     }
-
-
 
     /// Find a stopped session for a user that can be resumed.
     ///

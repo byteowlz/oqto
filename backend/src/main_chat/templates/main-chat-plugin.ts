@@ -19,6 +19,26 @@ interface HistoryEntry {
 
 const HISTORY_DIR = path.join(".opencode", "main-chat");
 const HISTORY_FILE = path.join(HISTORY_DIR, "history.jsonl");
+const CONFIG_FILE = path.join(HISTORY_DIR, "config.json");
+const MAIN_CHAT_TITLE_PREFIX = "[[main]]";
+const MAIN_CHAT_TITLE_FALLBACK = "Main chat";
+
+interface MainChatConfig {
+  history?: {
+    maxEntries?: number;
+  };
+  context?: {
+    maxTokens?: number;
+    maxRatio?: number;
+  };
+}
+
+const DEFAULT_CONFIG: MainChatConfig = {
+  history: {
+    maxEntries: 10,
+  },
+  context: {},
+};
 
 /**
  * Read recent history entries from the local JSONL store.
@@ -49,6 +69,68 @@ async function readRecentHistory(limit: number = 10): Promise<HistoryEntry[]> {
     console.error("Error reading history:", error);
     return [];
   }
+}
+
+async function loadConfig(): Promise<MainChatConfig> {
+  try {
+    const raw = await fs.readFile(CONFIG_FILE, "utf8");
+    return { ...DEFAULT_CONFIG, ...(JSON.parse(raw) as MainChatConfig) };
+  } catch (error: unknown) {
+    if (error && typeof error === "object" && "code" in error) {
+      if ((error as { code?: string }).code === "ENOENT") {
+        return DEFAULT_CONFIG;
+      }
+    }
+    console.error("Error reading config:", error);
+    return DEFAULT_CONFIG;
+  }
+}
+
+function estimateTokens(text: string): number {
+  return Math.ceil(text.length / 4);
+}
+
+function resolveContextLimit(
+  config: MainChatConfig,
+  sessionMaxContext: number | undefined,
+): number | undefined {
+  const maxTokens = config.context?.maxTokens;
+  const maxRatio = config.context?.maxRatio;
+  let limit: number | undefined = maxTokens;
+
+  if (maxRatio && sessionMaxContext && sessionMaxContext > 0) {
+    const ratioLimit = Math.floor(sessionMaxContext * maxRatio);
+    limit = typeof limit === "number" ? Math.min(limit, ratioLimit) : ratioLimit;
+  }
+
+  return limit;
+}
+
+function selectEntriesForContext(
+  entries: HistoryEntry[],
+  maxTokens?: number,
+): HistoryEntry[] {
+  if (!maxTokens) return entries;
+  const headerTokens = estimateTokens("## Recent Context (from previous sessions)");
+  let used = headerTokens;
+  const selected: HistoryEntry[] = [];
+
+  for (let i = entries.length - 1; i >= 0; i -= 1) {
+    const entry = entries[i];
+    const prefix = entry.type === "decision" ? "[decision]" :
+      entry.type === "handoff" ? "[handoff]" :
+      entry.type === "insight" ? "[insight]" :
+      "[summary]";
+    const line = `${prefix} ${entry.content}`;
+    const tokens = estimateTokens(line) + 2;
+    if (used + tokens > maxTokens) {
+      break;
+    }
+    used += tokens;
+    selected.push(entry);
+  }
+
+  return selected.reverse();
 }
 
 /**
@@ -123,6 +205,30 @@ export const MainChatPlugin: Plugin = async (ctx) => {
   let currentSessionId: string | undefined;
   // Track sessions where we've already injected history (to avoid duplicates)
   const injectedSessions = new Set<string>();
+  const updatingTitles = new Set<string>();
+  const handledSummaryMessages = new Set<string>();
+  const sessionTitles = new Map<string, string | undefined>();
+  const sessionContextLimits = new Map<string, number>();
+
+  async function ensureMainTitle(sessionId: string, title?: string): Promise<void> {
+    if (updatingTitles.has(sessionId)) return;
+    const baseTitle = title?.trim() || MAIN_CHAT_TITLE_FALLBACK;
+    if (baseTitle.startsWith(MAIN_CHAT_TITLE_PREFIX)) {
+      return;
+    }
+    const prefixedTitle = `${MAIN_CHAT_TITLE_PREFIX} ${baseTitle}`;
+    try {
+      updatingTitles.add(sessionId);
+      await ctx.client.session.update({
+        path: { id: sessionId },
+        body: { title: prefixedTitle },
+      });
+    } catch (error) {
+      console.error("Failed to update session title:", error);
+    } finally {
+      updatingTitles.delete(sessionId);
+    }
+  }
 
   /**
    * Inject history context into a new session.
@@ -135,7 +241,13 @@ export const MainChatPlugin: Plugin = async (ctx) => {
     }
 
     try {
-      const history = await readRecentHistory(10);
+      const config = await loadConfig();
+      const rawHistory = await readRecentHistory(config.history?.maxEntries ?? 10);
+      const maxTokens = resolveContextLimit(
+        config,
+        sessionContextLimits.get(sessionId),
+      );
+      const history = selectEntriesForContext(rawHistory, maxTokens);
       if (history.length === 0) {
         console.log("No history to inject");
         return;
@@ -164,10 +276,25 @@ Use this to maintain continuity and reference past decisions when relevant.
   }
 
   return {
+    "chat.params": async (input, output) => {
+      sessionContextLimits.set(input.sessionID, input.model.limit.context);
+      return output;
+    },
     // Custom compaction prompt
     "experimental.session.compacting": async (input, output) => {
+      if (input.sessionID && !sessionContextLimits.has(input.sessionID)) {
+        sessionContextLimits.set(input.sessionID, 0);
+      }
       // Inject recent history as additional context for compaction
-      const history = await readRecentHistory(5);
+      const config = await loadConfig();
+      const rawHistory = await readRecentHistory(
+        config.history?.maxEntries ?? 10,
+      );
+      const maxTokens = resolveContextLimit(
+        config,
+        sessionContextLimits.get(input.sessionID),
+      );
+      const history = selectEntriesForContext(rawHistory, maxTokens);
       if (history.length > 0) {
         output.context.push(formatHistoryForContext(history));
       }
@@ -194,14 +321,22 @@ Focus on what would be most useful for the assistant to know when resuming work 
 
     // Handle events
     event: async ({ event }) => {
+      if (event.type === "session.created" || event.type === "session.updated") {
+        const info = event.properties.info;
+        if (info?.id) {
+          sessionTitles.set(info.id, info.title ?? undefined);
+          await ensureMainTitle(info.id, info.title ?? undefined);
+        }
+      }
+
       // Track session creation and inject history
       if (event.type === "session.created") {
-        const props = event.properties as { id?: string; title?: string };
-        if (props.id) {
-          currentSessionId = props.id;
+        const info = event.properties.info;
+        if (info?.id) {
+          currentSessionId = info.id;
 
           // Inject history context for the new session
-          await injectHistoryContext(props.id);
+          await injectHistoryContext(info.id);
         }
       }
 
@@ -215,21 +350,40 @@ Focus on what would be most useful for the assistant to know when resuming work 
         }
       }
 
-      // Save compaction results
-      if (event.type === "session.compacted") {
-        const props = event.properties as { summary?: string; sessionID?: string };
-        
-        if (props.summary) {
-          const entries = parseCompactionOutput(props.summary);
-          
-          const sessionId = props.sessionID || currentSessionId;
+      if (event.type === "message.updated") {
+        const info = event.properties.info;
+        if (!info?.summary || info.role !== "assistant" || !info.finish) {
+          return;
+        }
+        const title = sessionTitles.get(info.sessionID);
+        if (!title?.startsWith(MAIN_CHAT_TITLE_PREFIX)) {
+          return;
+        }
+        if (handledSummaryMessages.has(info.id)) {
+          return;
+        }
+        handledSummaryMessages.add(info.id);
+
+        try {
+          const message = await ctx.client.session.message({
+            path: { id: info.sessionID, messageID: info.id },
+          });
+          const text = message.data.parts
+            .filter((part) => part.type === "text")
+            .map((part) => part.text)
+            .join("\n\n")
+            .trim();
+          if (!text) return;
+          const entries = parseCompactionOutput(text);
           await appendHistory(
             entries.map((entry) => ({
               ...entry,
-              session_id: sessionId,
+              session_id: info.sessionID,
             })),
           );
           console.log(`Saved ${entries.length} history entries`);
+        } catch (error) {
+          console.error("Failed to persist compaction summary:", error);
         }
       }
     },

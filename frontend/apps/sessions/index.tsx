@@ -35,12 +35,12 @@ import {
 import { useVoiceMode } from "@/hooks/use-voice-mode";
 import {
 	type Features,
-	type SessionAutoAttachMode,
-	type Persona,
 	type MainChatSession,
+	type Persona,
+	type SessionAutoAttachMode,
 	controlPlaneDirectBaseUrl,
 	convertChatMessagesToOpenCode,
-	fileserverProxyBaseUrl,
+	fileserverWorkspaceBaseUrl,
 	getChatMessages,
 	getFeatures,
 	getMainChatAssistant,
@@ -108,9 +108,9 @@ import {
 	XCircle,
 } from "lucide-react";
 import {
-	memo,
 	Suspense,
 	lazy,
+	memo,
 	startTransition,
 	useCallback,
 	useEffect,
@@ -191,10 +191,15 @@ function groupMessages(messages: OpenCodeMessageWithParts[]): MessageGroup[] {
 		const role = msg.info.role;
 		const threadedMsg = msg as ThreadedMessage;
 		const currentSessionId = threadedMsg._sessionId;
-		const isNewSession = currentSessionId !== lastSessionId && currentSessionId !== undefined;
-		
+		const isNewSession =
+			currentSessionId !== lastSessionId && currentSessionId !== undefined;
+
 		// Start new group if role changes OR session changes (for Main Chat threading)
-		if (!currentGroup || currentGroup.role !== role || (isNewSession && currentSessionId)) {
+		if (
+			!currentGroup ||
+			currentGroup.role !== role ||
+			(isNewSession && currentSessionId)
+		) {
 			if (currentGroup) {
 				groups.push(currentGroup);
 			}
@@ -342,19 +347,34 @@ export function SessionsApp() {
 	} = useApp();
 	const [messages, setMessages] = useState<OpenCodeMessageWithParts[]>([]);
 	const [messageInput, setMessageInput] = useState("");
+	const opencodeDirectory = useMemo(() => {
+		if (mainChatActive) return undefined;
+		return (
+			selectedChatFromHistory?.workspace_path ??
+			selectedWorkspaceSession?.workspace_path
+		);
+	}, [mainChatActive, selectedChatFromHistory, selectedWorkspaceSession]);
+	const opencodeRequestOptions = useMemo(
+		() => ({ directory: opencodeDirectory }),
+		[opencodeDirectory],
+	);
 
 	// Per-chat state (working indicator is per-session, not global)
 	const [chatStates, setChatStates] = useState<Map<string, "idle" | "sending">>(
 		new Map(),
 	);
 	// In Main Chat mode, use mainChatCurrentSessionId; otherwise use selectedChatSessionId
-	const activeSessionId = mainChatActive ? mainChatCurrentSessionId : selectedChatSessionId;
+	const activeSessionId = mainChatActive
+		? mainChatCurrentSessionId
+		: selectedChatSessionId;
 	const chatState = activeSessionId
 		? chatStates.get(activeSessionId) || "idle"
 		: "idle";
 	const setChatState = useCallback(
 		(state: "idle" | "sending") => {
-			const sessionId = mainChatActive ? mainChatCurrentSessionId : selectedChatSessionId;
+			const sessionId = mainChatActive
+				? mainChatCurrentSessionId
+				: selectedChatSessionId;
 			if (!sessionId) return;
 			setChatStates((prev) => {
 				const next = new Map(prev);
@@ -364,7 +384,12 @@ export function SessionsApp() {
 			// Also update global busy state for sidebar indicator
 			setSessionBusy(sessionId, state === "sending");
 		},
-		[selectedChatSessionId, mainChatActive, mainChatCurrentSessionId, setSessionBusy],
+		[
+			selectedChatSessionId,
+			mainChatActive,
+			mainChatCurrentSessionId,
+			setSessionBusy,
+		],
 	);
 
 	// Per-chat draft text cache (persists across session switches AND component remounts via localStorage)
@@ -508,7 +533,7 @@ export function SessionsApp() {
 			return;
 		}
 
-		fetchCommands(opencodeBaseUrl)
+		fetchCommands(opencodeBaseUrl, opencodeRequestOptions)
 			.then((commands) => {
 				setSlashCommands(commandInfoToSlashCommands(commands));
 			})
@@ -516,7 +541,7 @@ export function SessionsApp() {
 				// Fall back to built-in commands
 				setSlashCommands(builtInCommands);
 			});
-	}, [opencodeBaseUrl]);
+	}, [opencodeBaseUrl, opencodeRequestOptions]);
 
 	// Voice mode - handles STT/TTS when voice feature is enabled
 	const handleVoiceTranscript = useCallback((text: string) => {
@@ -734,7 +759,10 @@ export function SessionsApp() {
 				}
 
 				// No workspace config - fetch available agents and default to "build"
-				const agents = await fetchAgents(opencodeBaseUrl);
+				const agents = await fetchAgents(
+					opencodeBaseUrl,
+					opencodeRequestOptions,
+				);
 				console.log("Available agents:", agents);
 
 				// Prefer "build" agent (main agent with all tools), fallback to first primary agent
@@ -755,7 +783,7 @@ export function SessionsApp() {
 		};
 
 		loadAgentConfig();
-	}, [opencodeBaseUrl, selectedWorkspaceSessionId]);
+	}, [opencodeBaseUrl, opencodeRequestOptions, selectedWorkspaceSessionId]);
 
 	// Loading state management with timeout
 	useEffect(() => {
@@ -776,19 +804,24 @@ export function SessionsApp() {
 	// File upload handler
 	const handleFileUpload = useCallback(
 		async (files: FileList | null) => {
-			if (!files || files.length === 0 || !selectedWorkspaceSessionId) return;
+			if (!files || files.length === 0) return;
+			const workspacePath =
+				selectedChatFromHistory?.workspace_path ??
+				selectedWorkspaceSession?.workspace_path;
+			if (!workspacePath) return;
 
 			setIsUploading(true);
 			const uploadedFiles: { name: string; path: string }[] = [];
 
 			try {
-				const baseUrl = fileserverProxyBaseUrl(selectedWorkspaceSessionId);
+				const baseUrl = fileserverWorkspaceBaseUrl();
 
 				for (const file of Array.from(files)) {
 					const destPath = `uploads/${file.name}`;
 					const url = new URL(`${baseUrl}/file`, window.location.origin);
 					url.searchParams.set("path", destPath);
 					url.searchParams.set("mkdir", "true");
+					url.searchParams.set("workspace_path", workspacePath);
 
 					const formData = new FormData();
 					formData.append("file", file);
@@ -818,7 +851,7 @@ export function SessionsApp() {
 				}
 			}
 		},
-		[selectedWorkspaceSessionId],
+		[selectedChatFromHistory, selectedWorkspaceSession],
 	);
 
 	const removePendingUpload = useCallback((path: string) => {
@@ -836,13 +869,14 @@ export function SessionsApp() {
 				selectedChatSessionId,
 				permissionId,
 				response,
+				opencodeRequestOptions,
 			);
 			// Remove from pending list
 			setPendingPermissions((prev) =>
 				prev.filter((p) => p.id !== permissionId),
 			);
 		},
-		[opencodeBaseUrl, selectedChatSessionId],
+		[opencodeBaseUrl, opencodeRequestOptions, selectedChatSessionId],
 	);
 
 	// Show next permission when current one is dismissed
@@ -1008,8 +1042,11 @@ export function SessionsApp() {
 					try {
 						const sessions = await fetchSessions(
 							opencodeProxyBaseUrl(candidate.id),
+							{ directory: workspacePath },
 						);
-						if (sessions.some((session) => session.id === selectedChatSessionId)) {
+						if (
+							sessions.some((session) => session.id === selectedChatSessionId)
+						) {
 							matched = candidate;
 							break;
 						}
@@ -1130,12 +1167,13 @@ export function SessionsApp() {
 
 			// Sort sessions by date (oldest first for chronological thread)
 			const sortedSessions = [...sessions].sort(
-				(a, b) => new Date(a.started_at).getTime() - new Date(b.started_at).getTime()
+				(a, b) =>
+					new Date(a.started_at).getTime() - new Date(b.started_at).getTime(),
 			);
 
 			// Load messages from each session and combine
 			const allMessages: ThreadedMessage[] = [];
-			
+
 			for (const session of sortedSessions) {
 				try {
 					const historyMessages = await getChatMessages(session.session_id);
@@ -1146,7 +1184,9 @@ export function SessionsApp() {
 							const threadedMsg: ThreadedMessage = {
 								...msg,
 								_sessionId: session.session_id,
-								_sessionTitle: session.title || formatSessionDate(new Date(session.started_at).getTime()),
+								_sessionTitle:
+									session.title ||
+									formatSessionDate(new Date(session.started_at).getTime()),
 								_isSessionStart: idx === 0,
 							};
 							allMessages.push(threadedMsg);
@@ -1174,7 +1214,9 @@ export function SessionsApp() {
 					startTransition(() => {
 						setMessages((prev) => {
 							// Keep any optimistic messages (temp-* IDs) that aren't in the loaded messages
-							const optimisticMessages = prev.filter(m => m.info.id.startsWith("temp-"));
+							const optimisticMessages = prev.filter((m) =>
+								m.info.id.startsWith("temp-"),
+							);
 							if (optimisticMessages.length === 0) {
 								return threadedMessages;
 							}
@@ -1201,6 +1243,7 @@ export function SessionsApp() {
 				loadedMessages = await fetchMessages(
 					opencodeBaseUrl,
 					selectedChatSessionId,
+					{ directory: opencodeDirectory },
 				);
 			} else {
 				// History-only view (or no live session): use disk history cache.
@@ -1239,6 +1282,7 @@ export function SessionsApp() {
 		}
 	}, [
 		opencodeBaseUrl,
+		opencodeDirectory,
 		selectedChatSessionId,
 		isHistoryOnlySession,
 		mergeMessages,
@@ -1381,7 +1425,11 @@ export function SessionsApp() {
 					const props = event.properties as { mode?: "sse" | "polling" } | null;
 					if (props?.mode) setEventsTransportMode(props.mode);
 					if (opencodeBaseUrl && selectedChatSessionId) {
-						invalidateMessageCache(opencodeBaseUrl, selectedChatSessionId);
+						invalidateMessageCache(
+							opencodeBaseUrl,
+							selectedChatSessionId,
+							opencodeDirectory,
+						);
 						requestMessageRefresh(250);
 					}
 					return;
@@ -1389,13 +1437,20 @@ export function SessionsApp() {
 
 				if (eventType === "server.connected") {
 					if (opencodeBaseUrl && selectedChatSessionId) {
-						invalidateMessageCache(opencodeBaseUrl, selectedChatSessionId);
+						invalidateMessageCache(
+							opencodeBaseUrl,
+							selectedChatSessionId,
+							opencodeDirectory,
+						);
 						requestMessageRefresh(250);
 					}
 				}
 
 				if (eventType === "session.unavailable") {
-					if (autoAttachMode === "resume" && selectedChatFromHistory?.workspace_path) {
+					if (
+						autoAttachMode === "resume" &&
+						selectedChatFromHistory?.workspace_path
+					) {
 						const now = Date.now();
 						const lastAttempt = sessionUnavailableRef.current;
 						if (
@@ -1416,7 +1471,11 @@ export function SessionsApp() {
 					setChatState("idle");
 					// Invalidate cache and force refresh on idle
 					if (opencodeBaseUrl && selectedChatSessionId) {
-						invalidateMessageCache(opencodeBaseUrl, selectedChatSessionId);
+						invalidateMessageCache(
+							opencodeBaseUrl,
+							selectedChatSessionId,
+							opencodeDirectory,
+						);
 					}
 					loadMessages();
 					refreshOpencodeSessions();
@@ -1456,19 +1515,26 @@ export function SessionsApp() {
 				if (eventType?.startsWith("message")) {
 					// Invalidate cache when messages change
 					if (opencodeBaseUrl && selectedChatSessionId) {
-						invalidateMessageCache(opencodeBaseUrl, selectedChatSessionId);
+						invalidateMessageCache(
+							opencodeBaseUrl,
+							selectedChatSessionId,
+							opencodeDirectory,
+						);
 					}
 					// Coalesce refreshes to avoid hammering the server during streaming updates.
 					requestMessageRefresh(1000);
 				}
 			},
 			controlPlaneDirectBaseUrl(),
+			opencodeRequestOptions,
 		);
 		return unsubscribe;
 	}, [
 		autoAttachMode,
 		ensureOpencodeRunning,
 		opencodeBaseUrl,
+		opencodeDirectory,
+		opencodeRequestOptions,
 		selectedChatSessionId,
 		selectedChatFromHistory,
 		loadMessages,
@@ -1492,11 +1558,15 @@ export function SessionsApp() {
 			if (!active) return;
 			try {
 				// Invalidate cache and fetch fresh data
-				invalidateMessageCache(opencodeBaseUrl, selectedChatSessionId);
+				invalidateMessageCache(
+					opencodeBaseUrl,
+					selectedChatSessionId,
+					opencodeDirectory,
+				);
 				const freshMessages = await fetchMessages(
 					opencodeBaseUrl,
 					selectedChatSessionId,
-					{ skipCache: true },
+					{ skipCache: true, directory: opencodeDirectory },
 				);
 				if (!active) return;
 
@@ -1538,6 +1608,7 @@ export function SessionsApp() {
 	}, [
 		chatState,
 		opencodeBaseUrl,
+		opencodeDirectory,
 		selectedChatSessionId,
 		refreshOpencodeSessions,
 		mergeMessages,
@@ -1566,7 +1637,9 @@ export function SessionsApp() {
 					// Double-escape detected - stop the agent
 					e.preventDefault();
 					if (opencodeBaseUrl && selectedChatSessionId) {
-						abortSession(opencodeBaseUrl, selectedChatSessionId)
+						abortSession(opencodeBaseUrl, selectedChatSessionId, {
+							directory: opencodeDirectory,
+						})
 							.then(() => {
 								setChatState("idle");
 								setStatus(locale === "de" ? "Abgebrochen" : "Stopped");
@@ -1583,7 +1656,14 @@ export function SessionsApp() {
 
 		window.addEventListener("keydown", handleKeyDown);
 		return () => window.removeEventListener("keydown", handleKeyDown);
-	}, [chatState, opencodeBaseUrl, selectedChatSessionId, locale, setChatState]);
+	}, [
+		chatState,
+		opencodeBaseUrl,
+		opencodeDirectory,
+		selectedChatSessionId,
+		locale,
+		setChatState,
+	]);
 
 	const selectedSession = useMemo(() => {
 		if (!selectedWorkspaceSessionId) return undefined;
@@ -1707,6 +1787,7 @@ export function SessionsApp() {
 					selectedChatSessionId,
 					cmd.name,
 					slashQuery.args,
+					opencodeRequestOptions,
 				);
 			} catch (err) {
 				console.error("Failed to send command:", err);
@@ -1715,7 +1796,12 @@ export function SessionsApp() {
 				);
 			}
 		},
-		[selectedChatSessionId, opencodeBaseUrl, slashQuery.args],
+		[
+			selectedChatSessionId,
+			opencodeBaseUrl,
+			opencodeRequestOptions,
+			slashQuery.args,
+		],
 	);
 
 	const handleSend = async () => {
@@ -1759,13 +1845,15 @@ export function SessionsApp() {
 
 		try {
 			let effectiveBaseUrl = opencodeBaseUrl;
+			let effectiveDirectory = opencodeDirectory;
 			let targetSessionId: string;
-			
+
 			// Main Chat mode: get workspace path from assistant info
 			if (mainChatActive && mainChatAssistantName) {
 				const assistantInfo = await getMainChatAssistant(mainChatAssistantName);
 				const workspacePath = assistantInfo.path;
-				
+				effectiveDirectory = workspacePath;
+
 				setStatus(
 					locale === "de" ? "Starte Main Chat..." : "Starting Main Chat...",
 				);
@@ -1774,18 +1862,23 @@ export function SessionsApp() {
 					throw new Error("Failed to start Main Chat session");
 				}
 				effectiveBaseUrl = url;
-				
+
 				// If no current session, create one with a title prefix
 				if (!mainChatCurrentSessionId) {
 					const sessionTitle = `[${mainChatAssistantName}] ${new Date().toLocaleDateString()}`;
-					const newSession = await createSession(effectiveBaseUrl, sessionTitle);
-					
+					const newSession = await createSession(
+						effectiveBaseUrl,
+						sessionTitle,
+						undefined,
+						{ directory: effectiveDirectory },
+					);
+
 					// Register with Main Chat backend
 					await registerMainChatSession(mainChatAssistantName, {
 						session_id: newSession.id,
 						title: sessionTitle,
 					});
-					
+
 					// Update the current session ID
 					setMainChatCurrentSessionId(newSession.id);
 					targetSessionId = newSession.id;
@@ -1799,6 +1892,7 @@ export function SessionsApp() {
 				if (!workspacePath) {
 					throw new Error("Cannot resume session: no workspace path found");
 				}
+				effectiveDirectory = workspacePath;
 
 				setStatus(
 					locale === "de"
@@ -1818,6 +1912,7 @@ export function SessionsApp() {
 				if (!workspacePath) {
 					throw new Error("Cannot resume session: no workspace path found");
 				}
+				effectiveDirectory = workspacePath;
 
 				// Start opencode for this workspace
 				setStatus(
@@ -1854,7 +1949,7 @@ export function SessionsApp() {
 			};
 
 			setMessages((prev) => [...prev, optimisticMessage]);
-			
+
 			// Clear draft cache for this session since message was sent
 			if (targetSessionId) {
 				setDraft(targetSessionId, "");
@@ -1877,6 +1972,7 @@ export function SessionsApp() {
 					targetSessionId,
 					shellCommand,
 					agentId,
+					{ directory: effectiveDirectory },
 				);
 			} else {
 				// Use async send - the response will come via SSE events
@@ -1884,10 +1980,16 @@ export function SessionsApp() {
 					effectiveBaseUrl,
 					targetSessionId,
 					messageText,
+					undefined,
+					{ directory: effectiveDirectory },
 				);
 			}
 			// Invalidate cache and refresh messages to get the real message IDs
-			invalidateMessageCache(effectiveBaseUrl, targetSessionId);
+			invalidateMessageCache(
+				effectiveBaseUrl,
+				targetSessionId,
+				effectiveDirectory,
+			);
 			loadMessages();
 		} catch (err) {
 			setStatus((err as Error).message);
@@ -1902,7 +2004,9 @@ export function SessionsApp() {
 		if (!selectedChatSessionId || !resumeWorkspacePath) return;
 
 		setStatus(
-			locale === "de" ? "Session wird wiederhergestellt..." : "Resuming session...",
+			locale === "de"
+				? "Session wird wiederhergestellt..."
+				: "Resuming session...",
 		);
 
 		try {
@@ -1916,7 +2020,9 @@ export function SessionsApp() {
 			}
 
 			try {
-				const liveMessages = await fetchMessages(url, selectedChatSessionId);
+				const liveMessages = await fetchMessages(url, selectedChatSessionId, {
+					directory: resumeWorkspacePath,
+				});
 				if (liveMessages.length > 0) {
 					setMessages((prev) => mergeMessages(prev, liveMessages));
 				} else {
@@ -1937,7 +2043,9 @@ export function SessionsApp() {
 		if (chatState !== "sending") return;
 
 		try {
-			await abortSession(opencodeBaseUrl, selectedChatSessionId);
+			await abortSession(opencodeBaseUrl, selectedChatSessionId, {
+				directory: opencodeDirectory,
+			});
 			// The SSE event will set the state to idle
 			// But set it immediately for responsiveness
 			setChatState("idle");
@@ -2126,10 +2234,12 @@ export function SessionsApp() {
 						</button>
 					)}
 					{visibleGroups.map((group) => (
-						<div key={
-							group.messages[0]?.info.id ||
-							`${group.role}-${group.startIndex}`
-						}>
+						<div
+							key={
+								group.messages[0]?.info.id ||
+								`${group.role}-${group.startIndex}`
+							}
+						>
 							{/* Session divider for Main Chat threaded view */}
 							{group.isNewSession && group.sessionTitle && (
 								<SessionDivider title={group.sessionTitle} />
@@ -2587,7 +2697,10 @@ export function SessionsApp() {
 					)}
 					{activeView === "preview" && (
 						<Suspense fallback={viewLoadingFallback}>
-							<PreviewView filePath={previewFilePath} workspacePath={resumeWorkspacePath} />
+							<PreviewView
+								filePath={previewFilePath}
+								workspacePath={resumeWorkspacePath}
+							/>
 						</Suspense>
 					)}
 					{activeView === "tasks" && (
@@ -2693,7 +2806,10 @@ export function SessionsApp() {
 						)}
 						{activeView === "preview" && (
 							<Suspense fallback={viewLoadingFallback}>
-								<PreviewView filePath={previewFilePath} workspacePath={resumeWorkspacePath} />
+								<PreviewView
+									filePath={previewFilePath}
+									workspacePath={resumeWorkspacePath}
+								/>
 							</Suspense>
 						)}
 						{activeView === "tasks" && (

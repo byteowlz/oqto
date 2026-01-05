@@ -268,6 +268,7 @@ pub fn create_router(state: AppState) -> Router {
             "/main",
             get(main_chat_handlers::get_main_chat)
                 .post(main_chat_handlers::initialize_main_chat)
+                .patch(main_chat_handlers::update_main_chat)
                 .delete(main_chat_handlers::delete_main_chat),
         )
         .route(
@@ -363,6 +364,7 @@ fn build_cors_layer(state: &AppState) -> CorsLayer {
         header::ACCEPT,
         header::ORIGIN,
         header::COOKIE,
+        header::HeaderName::from_static("x-opencode-directory"),
     ];
 
     if allowed_origins.is_empty() {

@@ -93,6 +93,15 @@ impl MainChatService {
         })
     }
 
+    /// Update the assistant name for a user's Main Chat.
+    pub async fn update_main_chat_name(&self, user_id: &str, name: &str) -> Result<AssistantInfo> {
+        let db = self.get_db(user_id).await?;
+        let repo = MainChatRepository::new(&db);
+
+        repo.set_config("assistant_name", name).await?;
+        self.get_main_chat_info(user_id).await
+    }
+
     /// Initialize Main Chat for a user.
     pub async fn initialize_main_chat(
         &self,

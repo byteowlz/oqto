@@ -642,6 +642,12 @@ struct SessionUiConfig {
     auto_attach: SessionAutoAttachMode,
     /// Scan running sessions for the selected chat session ID.
     auto_attach_scan: bool,
+    /// Maximum concurrent running sessions per user.
+    max_concurrent_sessions: i64,
+    /// Idle timeout in minutes before stopping a session.
+    idle_timeout_minutes: i64,
+    /// Idle cleanup check interval in seconds.
+    idle_check_interval_seconds: u64,
 }
 
 impl Default for SessionUiConfig {
@@ -649,6 +655,9 @@ impl Default for SessionUiConfig {
         Self {
             auto_attach: SessionAutoAttachMode::Off,
             auto_attach_scan: false,
+            max_concurrent_sessions: session::SessionService::DEFAULT_MAX_CONCURRENT_SESSIONS,
+            idle_timeout_minutes: session::SessionService::DEFAULT_IDLE_TIMEOUT_MINUTES,
+            idle_check_interval_seconds: 5 * 60,
         }
     }
 }
@@ -1307,6 +1316,15 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     // Determine single_user mode from local config
     let single_user = ctx.config.local.single_user;
 
+    let eavs_url = if local_mode {
+        ctx.config.eavs.as_ref().map(|e| e.base_url.clone())
+    } else {
+        ctx.config
+            .eavs
+            .as_ref()
+            .and_then(|e| e.container_url.clone())
+    };
+
     let session_config = session::SessionServiceConfig {
         default_image,
         base_port,
@@ -1319,16 +1337,15 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
             .as_ref()
             .and_then(|e| e.default_session_budget_usd),
         default_session_rpm: ctx.config.eavs.as_ref().and_then(|e| e.default_session_rpm),
-        eavs_container_url: ctx
-            .config
-            .eavs
-            .as_ref()
-            .and_then(|e| e.container_url.clone()),
+        eavs_container_url: eavs_url,
         runtime_mode,
         local_config: local_runtime_config,
         single_user,
         mmry_enabled: ctx.config.mmry.enabled,
         mmry_container_url: ctx.config.mmry.container_url.clone(),
+        max_concurrent_sessions: ctx.config.sessions.max_concurrent_sessions,
+        idle_timeout_minutes: ctx.config.sessions.idle_timeout_minutes,
+        idle_check_interval_seconds: ctx.config.sessions.idle_check_interval_seconds,
     };
 
     let session_repo = session::SessionRepository::new(database.pool().clone());
@@ -1407,19 +1424,28 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
                 session_repo,
                 local_rt,
                 eavs,
-                session_config,
+                session_config.clone(),
             )
         } else {
-            session::SessionService::with_local_runtime(session_repo, local_rt, session_config)
+            session::SessionService::with_local_runtime(
+                session_repo,
+                local_rt,
+                session_config.clone(),
+            )
         }
     } else {
         let container_rt = container_runtime
             .clone()
             .expect("container runtime should be set in container mode");
         if let Some(eavs) = eavs_client.clone() {
-            session::SessionService::with_eavs(session_repo, container_rt, eavs, session_config)
+            session::SessionService::with_eavs(
+                session_repo,
+                container_rt,
+                eavs,
+                session_config.clone(),
+            )
         } else {
-            session::SessionService::new(session_repo, container_rt, session_config)
+            session::SessionService::new(session_repo, container_rt, session_config.clone())
         }
     };
 
@@ -1432,8 +1458,8 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     // Check every 5 minutes, stop sessions idle for 30 minutes
     let session_service_arc = std::sync::Arc::new(session_service.clone());
     let _idle_cleanup_handle = session_service_arc.start_idle_session_cleanup_task(
-        5 * 60, // Check every 5 minutes
-        session::SessionService::DEFAULT_IDLE_TIMEOUT_MINUTES,
+        session_config.idle_check_interval_seconds,
+        session_config.idle_timeout_minutes,
     );
 
     // Initialize agent service for managing opencode instances

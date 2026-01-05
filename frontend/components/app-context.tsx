@@ -43,6 +43,7 @@ import {
 	useContext,
 	useEffect,
 	useMemo,
+	useRef,
 	useState,
 } from "react";
 
@@ -59,6 +60,7 @@ interface AppContextValue {
 	setSelectedWorkspaceSessionId: (id: string) => void;
 	selectedWorkspaceSession: WorkspaceSession | undefined;
 	opencodeBaseUrl: string;
+	opencodeDirectory?: string;
 	/** Chat sessions from disk (no running opencode needed) */
 	chatHistory: ChatSession[];
 	/** Live opencode sessions (requires running opencode) */
@@ -125,6 +127,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
 		useState<string>("");
 	// Chat history from disk (no running opencode needed)
 	const [chatHistory, setChatHistory] = useState<ChatSession[]>([]);
+	const chatHistoryRef = useRef<ChatSession[]>([]);
+	// Keep ref in sync with state
+	chatHistoryRef.current = chatHistory;
 	// Live opencode sessions (requires running opencode instance)
 	const [opencodeSessions, setOpencodeSessions] = useState<OpenCodeSession[]>(
 		[],
@@ -148,9 +153,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
 	const [busySessions, setBusySessions] = useState<Set<string>>(new Set());
 	// Main Chat state - when active, sessions app shows threaded view
 	const [mainChatActive, setMainChatActive] = useState(false);
-	const [mainChatAssistantName, setMainChatAssistantName] = useState<string | null>(null);
+	const [mainChatAssistantName, setMainChatAssistantName] = useState<
+		string | null
+	>(null);
 	// The current Main Chat session ID to send messages to (separate from selectedChatSessionId)
-	const [mainChatCurrentSessionId, setMainChatCurrentSessionId] = useState<string | null>(null);
+	const [mainChatCurrentSessionId, setMainChatCurrentSessionId] = useState<
+		string | null
+	>(null);
 
 	const setSessionBusy = useCallback((sessionId: string, busy: boolean) => {
 		setBusySessions((prev) => {
@@ -185,6 +194,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
 		if (selectedWorkspaceSession.status !== "running") return "";
 		return opencodeProxyBaseUrl(selectedWorkspaceSession.id);
 	}, [selectedWorkspaceSession]);
+	const opencodeDirectory = useMemo(() => {
+		return (
+			selectedChatFromHistory?.workspace_path ??
+			selectedWorkspaceSession?.workspace_path
+		);
+	}, [selectedChatFromHistory, selectedWorkspaceSession]);
+
+	const sessionEventSubscriptions = useRef(new Map<string, () => void>());
 
 	useEffect(() => {
 		const initialLocale = resolveStoredLocale();
@@ -252,6 +269,28 @@ export function AppProvider({ children }: { children: ReactNode }) {
 			console.error("Failed to load sessions:", err);
 		}
 	}, []);
+
+	const handleOpencodeEvent = useCallback(
+		(event: {
+			type: string;
+			properties?: { sessionId?: string; sessionID?: string };
+		}) => {
+			const eventType = event.type;
+			const props = event.properties || {};
+			const sessionId = props.sessionId || props.sessionID;
+
+			if (eventType === "session.busy" && sessionId) {
+				setSessionBusy(sessionId, true);
+			} else if (eventType === "session.idle" && sessionId) {
+				setSessionBusy(sessionId, false);
+			}
+
+			if (eventType?.startsWith("session")) {
+				refreshWorkspaceSessions();
+			}
+		},
+		[refreshWorkspaceSessions, setSessionBusy],
+	);
 
 	// Start a new session for a specific project
 	const startProjectSession = useCallback(
@@ -339,28 +378,41 @@ export function AppProvider({ children }: { children: ReactNode }) {
 	}, [refreshWorkspaceSessions, refreshChatHistory]);
 
 	useEffect(() => {
-		if (!opencodeBaseUrl) return;
-		const unsubscribe = subscribeToEvents(
-			opencodeBaseUrl,
-			(event) => {
-				const eventType = event.type as string;
-				const props = event.properties as { sessionId?: string } | null;
-
-				// Track busy/idle state for sessions
-				if (eventType === "session.busy" && props?.sessionId) {
-					setSessionBusy(props.sessionId, true);
-				} else if (eventType === "session.idle" && props?.sessionId) {
-					setSessionBusy(props.sessionId, false);
-				}
-
-				if (eventType?.startsWith("session")) {
-					refreshWorkspaceSessions();
-				}
-			},
-			controlPlaneDirectBaseUrl(),
+		const runningSessions = workspaceSessions.filter(
+			(session) => session.status === "running",
 		);
-		return unsubscribe;
-	}, [opencodeBaseUrl, refreshWorkspaceSessions, setSessionBusy]);
+		const activeIds = new Set(runningSessions.map((session) => session.id));
+
+		for (const session of runningSessions) {
+			if (sessionEventSubscriptions.current.has(session.id)) {
+				continue;
+			}
+			const baseUrl = opencodeProxyBaseUrl(session.id);
+			const unsubscribe = subscribeToEvents(
+				baseUrl,
+				handleOpencodeEvent,
+				controlPlaneDirectBaseUrl(),
+				{ directory: session.workspace_path },
+			);
+			sessionEventSubscriptions.current.set(session.id, unsubscribe);
+		}
+
+		for (const [sessionId, unsubscribe] of sessionEventSubscriptions.current) {
+			if (!activeIds.has(sessionId)) {
+				unsubscribe();
+				sessionEventSubscriptions.current.delete(sessionId);
+			}
+		}
+	}, [workspaceSessions, handleOpencodeEvent]);
+
+	useEffect(() => {
+		return () => {
+			for (const unsubscribe of sessionEventSubscriptions.current.values()) {
+				unsubscribe();
+			}
+			sessionEventSubscriptions.current.clear();
+		};
+	}, []);
 
 	useEffect(() => {
 		if (!selectedWorkspaceSession) return;
@@ -402,9 +454,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
 	const refreshOpencodeSessions = useCallback(async () => {
 		if (!opencodeBaseUrl) return;
 		try {
-			const sessions = await fetchSessions(opencodeBaseUrl);
+			const sessions = await fetchSessions(opencodeBaseUrl, {
+				directory: opencodeDirectory,
+			});
 			setOpencodeSessions(sessions);
 			// Select most recently updated session, but don't override history-only views.
+			// Use ref to avoid chatHistory dependency causing re-renders
+			const history = chatHistoryRef.current;
 			if (sessions.length > 0) {
 				const sorted = [...sessions].sort(
 					(a, b) => b.time.updated - a.time.updated,
@@ -412,18 +468,23 @@ export function AppProvider({ children }: { children: ReactNode }) {
 				setSelectedChatSessionId((current) => {
 					if (!current) return sorted[0].id;
 					if (sessions.some((s) => s.id === current)) return current;
-					if (chatHistory.some((s) => s.id === current)) return current;
+					if (history.some((s) => s.id === current)) return current;
 					return sorted[0].id;
 				});
 			} else {
 				setSelectedChatSessionId((current) => {
-					if (current && chatHistory.some((s) => s.id === current)) {
+					if (current && history.some((s) => s.id === current)) {
 						return current;
 					}
 					return current;
 				});
-				if (chatHistory.length === 0) {
-					const created = await createSession(opencodeBaseUrl);
+				if (history.length === 0) {
+					const created = await createSession(
+						opencodeBaseUrl,
+						undefined,
+						undefined,
+						{ directory: opencodeDirectory },
+					);
 					setOpencodeSessions([created]);
 					setSelectedChatSessionId(created.id);
 				}
@@ -431,14 +492,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
 		} catch (err) {
 			console.error("Failed to load opencode sessions:", err);
 		}
-	}, [opencodeBaseUrl, chatHistory]);
+	}, [opencodeBaseUrl, opencodeDirectory]);
 
 	const createNewChat = useCallback(
 		async (baseUrlOverride?: string): Promise<OpenCodeSession | null> => {
 			const baseUrl = baseUrlOverride || opencodeBaseUrl;
 			if (!baseUrl) return null;
 			try {
-				const created = await createSession(baseUrl);
+				const created = await createSession(baseUrl, undefined, undefined, {
+					directory: opencodeDirectory,
+				});
 				setOpencodeSessions((prev) => [created, ...prev]);
 				setSelectedChatSessionId(created.id);
 				// Refresh chat history to include the new session in the sidebar
@@ -452,7 +515,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 				return null;
 			}
 		},
-		[opencodeBaseUrl, refreshChatHistory],
+		[opencodeBaseUrl, opencodeDirectory, refreshChatHistory],
 	);
 
 	const createNewChatWithPersona = useCallback(
@@ -496,7 +559,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
 				const maxAttempts = 30;
 				while (attempts < maxAttempts) {
 					try {
-						const created = await createSession(baseUrl);
+						const created = await createSession(baseUrl, undefined, undefined, {
+							directory: resolvedPath,
+						});
 						setOpencodeSessions((prev) => [created, ...prev]);
 						setSelectedChatSessionId(created.id);
 						// Refresh chat history to include the new session in the sidebar
@@ -529,7 +594,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
 			const baseUrl = baseUrlOverride || opencodeBaseUrl;
 			if (!baseUrl) return false;
 			try {
-				await deleteSession(baseUrl, sessionId);
+				await deleteSession(baseUrl, sessionId, {
+					directory: opencodeDirectory,
+				});
 				setOpencodeSessions((prev) => prev.filter((s) => s.id !== sessionId));
 				// If we deleted the selected session, select another one
 				setSelectedChatSessionId((current) => {
@@ -547,7 +614,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 				return false;
 			}
 		},
-		[opencodeBaseUrl, opencodeSessions, refreshChatHistory],
+		[opencodeBaseUrl, opencodeDirectory, opencodeSessions, refreshChatHistory],
 	);
 
 	const renameChatSession = useCallback(
@@ -557,9 +624,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
 				if (opencodeBaseUrl) {
 					// Try to update via opencode API first (for live sessions)
 					try {
-						const updated = await updateSession(opencodeBaseUrl, sessionId, {
-							title,
-						});
+						const updated = await updateSession(
+							opencodeBaseUrl,
+							sessionId,
+							{ title },
+							{ directory: opencodeDirectory },
+						);
 						setOpencodeSessions((prev) =>
 							prev.map((s) => (s.id === sessionId ? updated : s)),
 						);
@@ -586,7 +656,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 				return false;
 			}
 		},
-		[opencodeBaseUrl],
+		[opencodeBaseUrl, opencodeDirectory],
 	);
 
 	const handleStopWorkspaceSession = useCallback(
@@ -668,6 +738,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 			setSelectedWorkspaceSessionId,
 			selectedWorkspaceSession,
 			opencodeBaseUrl,
+			opencodeDirectory,
 			chatHistory,
 			opencodeSessions,
 			selectedChatSessionId,
@@ -709,6 +780,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 			selectedWorkspaceSessionId,
 			selectedWorkspaceSession,
 			opencodeBaseUrl,
+			opencodeDirectory,
 			chatHistory,
 			opencodeSessions,
 			selectedChatSessionId,

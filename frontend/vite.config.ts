@@ -95,8 +95,7 @@ export default defineConfig(({ mode }) => {
 				"/api/models-dev": {
 					target: "https://models.dev",
 					changeOrigin: true,
-					rewrite: (pathValue) =>
-						pathValue.replace(/^\/api\/models-dev/, ""),
+					rewrite: (pathValue) => pathValue.replace(/^\/api\/models-dev/, ""),
 				},
 				"/api": {
 					target: controlPlaneUrl,

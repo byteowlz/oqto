@@ -151,6 +151,12 @@ pub struct SessionServiceConfig {
     /// URL for containers to reach the host mmry service.
     /// e.g., "http://host.docker.internal:8081" or "http://host.containers.internal:8081"
     pub mmry_container_url: Option<String>,
+    /// Maximum concurrent running sessions per user.
+    pub max_concurrent_sessions: i64,
+    /// Idle timeout in minutes before stopping a session.
+    pub idle_timeout_minutes: i64,
+    /// Idle cleanup check interval in seconds.
+    pub idle_check_interval_seconds: u64,
 }
 
 impl Default for SessionServiceConfig {
@@ -169,6 +175,9 @@ impl Default for SessionServiceConfig {
             single_user: false,
             mmry_enabled: false,
             mmry_container_url: None,
+            max_concurrent_sessions: SessionService::DEFAULT_MAX_CONCURRENT_SESSIONS,
+            idle_timeout_minutes: SessionService::DEFAULT_IDLE_TIMEOUT_MINUTES,
+            idle_check_interval_seconds: 5 * 60,
         }
     }
 }
@@ -383,6 +392,71 @@ impl SessionService {
         }
 
         // No resumable session found, create a new one
+        self.create_session(request).await
+    }
+
+    /// Get or create the primary opencode session for the user.
+    ///
+    /// This uses the workspace root as the canonical opencode session target and
+    /// avoids tying opencode to per-workspace IO sessions.
+    pub async fn get_or_create_opencode_session(&self) -> Result<Session> {
+        let user_id = &self.config.default_user_id;
+        let workspace_root = self.workspace_root();
+        let workspace_root_str = workspace_root.to_string_lossy().to_string();
+
+        if let Some(session) = self
+            .repo
+            .find_running_for_workspace(user_id, &workspace_root_str)
+            .await?
+        {
+            if let Ok(Some(_new_digest)) = self.check_for_image_update(&session.id).await {
+                info!(
+                    "Primary opencode session {} has outdated image, auto-upgrading...",
+                    session.id
+                );
+                return self.upgrade_session(&session.id).await;
+            }
+            return Ok(session);
+        }
+
+        self.enforce_session_cap(user_id).await?;
+
+        if let Some(session) = self
+            .repo
+            .find_latest_stopped_for_workspace(user_id, &workspace_root_str)
+            .await?
+        {
+            info!(
+                "Resuming primary opencode session {} for workspace root {}",
+                session.id, workspace_root_str
+            );
+            match self.resume_session(&session.id).await {
+                Ok(resumed) => {
+                    if resumed.status == SessionStatus::Failed {
+                        anyhow::bail!("failed to resume session {}", resumed.id);
+                    }
+                    return Ok(resumed);
+                }
+                Err(err) => {
+                    if Self::is_retryable_unique_violation(&err) {
+                        warn!(
+                            "Resume port conflict for primary opencode session {}, creating new session instead",
+                            session.id
+                        );
+                    } else {
+                        return Err(err);
+                    }
+                }
+            }
+        }
+
+        let request = CreateSessionRequest {
+            workspace_path: Some(workspace_root_str),
+            image: None,
+            agent: None,
+            env: Default::default(),
+        };
+
         self.create_session(request).await
     }
 
@@ -1072,10 +1146,23 @@ impl SessionService {
             session_id, session.runtime_mode
         );
 
-        // Mark as starting
-        self.repo
+        // Mark as starting (reassign ports first if local resume collides with active ports)
+        if let Err(err) = self
+            .repo
             .update_status(session_id, SessionStatus::Starting)
-            .await?;
+            .await
+        {
+            if session.runtime_mode == RuntimeMode::Local
+                && Self::is_retryable_unique_violation(&err)
+            {
+                self.reassign_ports_for_resume(&mut session).await?;
+                self.repo
+                    .update_status(session_id, SessionStatus::Starting)
+                    .await?;
+            } else {
+                return Err(err);
+            }
+        }
 
         // Wrap the resume logic to ensure we mark as failed on error
         let result = self
@@ -1091,6 +1178,40 @@ impl SessionService {
         }
 
         result
+    }
+
+    async fn reassign_ports_for_resume(&self, session: &mut Session) -> Result<()> {
+        let max_agents = session.max_agents.unwrap_or(Self::DEFAULT_MAX_AGENTS);
+        let base_port = self
+            .repo
+            .find_free_port_range_with_agents(self.config.base_port, max_agents)
+            .await?;
+        let new_mmry_port = session.mmry_port.map(|_| base_port + 3);
+        let new_agent_base_port = session.agent_base_port.map(|_| base_port + 4);
+
+        self.repo
+            .update_ports(
+                &session.id,
+                base_port,
+                base_port + 1,
+                base_port + 2,
+                new_mmry_port,
+                new_agent_base_port,
+            )
+            .await?;
+
+        session.opencode_port = base_port;
+        session.fileserver_port = base_port + 1;
+        session.ttyd_port = base_port + 2;
+        session.mmry_port = new_mmry_port;
+        session.agent_base_port = new_agent_base_port;
+
+        info!(
+            "Reassigned ports for session {}: {}/{}/{}",
+            session.id, session.opencode_port, session.fileserver_port, session.ttyd_port
+        );
+
+        Ok(())
     }
 
     /// Inner resume logic - separated to allow proper error handling in the caller.
@@ -1249,13 +1370,53 @@ impl SessionService {
                     }
                 }
 
+                let mut eavs_virtual_key = None;
+                if let Some(eavs) = self.eavs.as_ref() {
+                    if let Some(ref key_id) = session.eavs_key_id {
+                        if let Err(e) = eavs.revoke_key(key_id).await {
+                            warn!(
+                                "Failed to revoke previous EAVS key {} for session {}: {:?}",
+                                key_id, session_id, e
+                            );
+                        }
+                    }
+
+                    match self.create_eavs_key(session_id).await {
+                        Ok((key_id, key_hash, key_value)) => {
+                            info!(
+                                "Created new EAVS key {} for resumed local session {}",
+                                key_id, session_id
+                            );
+                            eavs_virtual_key = Some(key_value);
+                            session.eavs_key_id = Some(key_id);
+                            session.eavs_key_hash = Some(key_hash);
+                            self.repo
+                                .update_eavs_keys(
+                                    session_id,
+                                    session.eavs_key_id.as_deref(),
+                                    session.eavs_key_hash.as_deref(),
+                                )
+                                .await?;
+                        }
+                        Err(e) => {
+                            warn!(
+                                "Failed to create EAVS key for resumed session {}: {:?}",
+                                session_id, e
+                            );
+                        }
+                    }
+                }
+
                 // Build environment variables
                 let mut env = std::collections::HashMap::new();
                 if let Some(ref eavs_url) = self.config.eavs_container_url {
                     env.insert("EAVS_URL".to_string(), eavs_url.clone());
                 }
-                // Note: EAVS virtual key is not stored, so we can't restore it for local mode resume
-                // The user may need to provide it again through environment
+                if let Some(ref virtual_key) = eavs_virtual_key {
+                    env.insert("EAVS_VIRTUAL_KEY".to_string(), virtual_key.clone());
+                    env.insert("ANTHROPIC_API_KEY".to_string(), virtual_key.clone());
+                    env.insert("OPENAI_API_KEY".to_string(), virtual_key.clone());
+                }
 
                 let workspace_path = PathBuf::from(&session.workspace_path);
 
@@ -2115,11 +2276,24 @@ impl SessionService {
                 "Resuming stopped session {} for workspace {}",
                 session.id, workspace_path
             );
-            let resumed = self.resume_session(&session.id).await?;
-            if resumed.status == SessionStatus::Failed {
-                anyhow::bail!("failed to resume session {}", resumed.id);
+            match self.resume_session(&session.id).await {
+                Ok(resumed) => {
+                    if resumed.status == SessionStatus::Failed {
+                        anyhow::bail!("failed to resume session {}", resumed.id);
+                    }
+                    return Ok(resumed);
+                }
+                Err(err) => {
+                    if Self::is_retryable_unique_violation(&err) {
+                        warn!(
+                            "Resume port conflict for session {}, creating new session instead",
+                            session.id
+                        );
+                    } else {
+                        return Err(err);
+                    }
+                }
             }
-            return Ok(resumed);
         }
 
         // Create a new session for this workspace
@@ -2180,29 +2354,36 @@ impl SessionService {
     ///
     /// If the user has reached the limit, stop the oldest idle session.
     async fn enforce_session_cap(&self, user_id: &str) -> Result<()> {
+        if self.config.max_concurrent_sessions <= 0 {
+            return Ok(());
+        }
+
         let running_count = self.repo.count_running_for_user(user_id).await?;
 
-        if running_count < Self::DEFAULT_MAX_CONCURRENT_SESSIONS {
+        if running_count < self.config.max_concurrent_sessions {
             return Ok(());
         }
 
         info!(
             "User {} has {} running sessions (limit: {}), stopping oldest",
-            user_id,
-            running_count,
-            Self::DEFAULT_MAX_CONCURRENT_SESSIONS
+            user_id, running_count, self.config.max_concurrent_sessions
         );
 
-        // Get sessions ordered by activity (oldest last)
-        let sessions = self.repo.list_running_for_user_by_activity(user_id).await?;
-
-        // Stop the oldest session (last in the list)
-        if let Some(oldest) = sessions.last() {
+        let idle_sessions = self
+            .repo
+            .list_idle_sessions(self.config.idle_timeout_minutes)
+            .await?;
+        if let Some(oldest_idle) = idle_sessions.first() {
             info!(
-                "Stopping oldest session {} (last activity: {:?}) to make room",
-                oldest.id, oldest.last_activity_at
+                "Stopping idle session {} (last activity: {:?}) to make room",
+                oldest_idle.id, oldest_idle.last_activity_at
             );
-            self.stop_session(&oldest.id).await?;
+            self.stop_session(&oldest_idle.id).await?;
+        } else {
+            anyhow::bail!(
+                "active sessions at limit ({}); no idle sessions available to stop",
+                self.config.max_concurrent_sessions
+            );
         }
 
         Ok(())
@@ -2461,6 +2642,9 @@ mod tests {
             single_user: false,
             mmry_enabled: false,
             mmry_container_url: None,
+            max_concurrent_sessions: SessionService::DEFAULT_MAX_CONCURRENT_SESSIONS,
+            idle_timeout_minutes: SessionService::DEFAULT_IDLE_TIMEOUT_MINUTES,
+            idle_check_interval_seconds: 5 * 60,
         };
 
         let mut service = SessionService::with_eavs(repo.clone(), runtime.clone(), eavs, config);
@@ -2502,7 +2686,7 @@ mod tests {
 
         let session = Session {
             id: "session-1".to_string(),
-            
+
             container_id: Some("container-1".to_string()),
             container_name: "octo-session-1".to_string(),
             user_id: "user-1".to_string(),
@@ -2793,7 +2977,7 @@ mod tests {
         // Create a stopped session in the database
         let session = Session {
             id: "test-session-1".to_string(),
-            
+
             container_id: Some("container-1".to_string()),
             container_name: "octo-test-1".to_string(),
             user_id: "user-1".to_string(),
@@ -2861,7 +3045,7 @@ mod tests {
         // Create a stopped session
         let session = Session {
             id: "test-session-2".to_string(),
-            
+
             container_id: Some("container-2".to_string()),
             container_name: "octo-test-2".to_string(),
             user_id: "user-1".to_string(),
@@ -2915,7 +3099,7 @@ mod tests {
         // Create a running session
         let session = Session {
             id: "test-session-3".to_string(),
-            
+
             container_id: Some("container-3".to_string()),
             container_name: "octo-test-3".to_string(),
             user_id: "user-1".to_string(),
@@ -2986,7 +3170,7 @@ mod tests {
         // Create a stopped session
         let session = Session {
             id: "test-session-4".to_string(),
-            
+
             container_id: Some("container-4".to_string()),
             container_name: "octo-test-4".to_string(),
             user_id: "user-1".to_string(),
@@ -3027,5 +3211,4 @@ mod tests {
         let stored = repo.get("test-session-4").await.unwrap().unwrap();
         assert_eq!(stored.status, SessionStatus::Running);
     }
-
 }

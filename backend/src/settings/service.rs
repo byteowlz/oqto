@@ -49,9 +49,17 @@ impl SettingsService {
         let (reload_tx, _reload_rx) = watch::channel(());
 
         let config_path = config_dir.join(config_filename);
+        tracing::info!("Loading settings from: {:?}", config_path);
+
         let values = if config_path.exists() {
-            load_toml_as_json(&config_path)?
+            let v = load_toml_as_json(&config_path)?;
+            // Debug: log sessions config at load time
+            if let Some(sessions) = v.get("sessions") {
+                tracing::info!("Loaded sessions config: {:?}", sessions);
+            }
+            v
         } else {
+            tracing::warn!("Config file not found: {:?}", config_path);
             Value::Object(serde_json::Map::new())
         };
 
@@ -79,7 +87,21 @@ impl SettingsService {
         let values = self.values.read().await;
         let filtered_schema = self.get_schema(scope);
 
-        extract_values_with_metadata(&values, &filtered_schema, "")
+        // Debug: log what we're working with
+        if let Some(sessions) = values.get("sessions") {
+            tracing::debug!("Sessions config: {:?}", sessions);
+        } else {
+            tracing::debug!("No sessions config found in values");
+        }
+
+        let result = extract_values_with_metadata(&values, &filtered_schema, "");
+
+        // Debug: log the sessions.max_concurrent_sessions value
+        if let Some(max_sessions) = result.get("sessions.max_concurrent_sessions") {
+            tracing::info!("sessions.max_concurrent_sessions = {:?}", max_sessions);
+        }
+
+        result
     }
 
     /// Update configuration values.

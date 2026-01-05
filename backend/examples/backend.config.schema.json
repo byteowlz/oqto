@@ -491,6 +491,24 @@
           "type": "boolean",
           "description": "Scan running sessions for the selected chat session ID before attaching",
           "default": true
+        },
+        "max_concurrent_sessions": {
+          "type": "integer",
+          "description": "Maximum concurrent running sessions per user (0 disables the cap)",
+          "minimum": 0,
+          "default": 3
+        },
+        "idle_timeout_minutes": {
+          "type": "integer",
+          "description": "Idle timeout in minutes before stopping a session",
+          "minimum": 1,
+          "default": 30
+        },
+        "idle_check_interval_seconds": {
+          "type": "integer",
+          "description": "Idle cleanup check interval in seconds",
+          "minimum": 10,
+          "default": 300
         }
       },
       "additionalProperties": false

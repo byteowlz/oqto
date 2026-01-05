@@ -28,8 +28,14 @@ TEMPLATES_DIR="${SCRIPT_DIR}/templates"
 : "${OCTO_CONTAINER_RUNTIME:=auto}"     # docker, podman, or auto
 : "${OCTO_INSTALL_DEPS:=yes}"           # yes or no
 : "${OCTO_INSTALL_SERVICE:=yes}"        # yes or no
+: "${OCTO_INSTALL_AGENT_TOOLS:=yes}"    # yes or no (mmry, trx, mailz via agntz)
 : "${OCTO_DEV_MODE:=true}"              # true or false (auth dev mode)
 : "${OCTO_LOG_LEVEL:=info}"             # error, warn, info, debug, trace
+
+# Agent tools installation tracking
+INSTALL_MMRY="false"
+INSTALL_TRX="false"
+INSTALL_MAILZ="false"
 
 # Paths (XDG compliant)
 : "${XDG_CONFIG_HOME:=$HOME/.config}"
@@ -381,6 +387,376 @@ install_ttyd_from_source() {
     log_info "Downloading ttyd binary..."
     sudo curl -L "$ttyd_url" -o /usr/local/bin/ttyd
     sudo chmod +x /usr/local/bin/ttyd
+}
+
+# ==============================================================================
+# Shell Tools Installation
+# ==============================================================================
+
+install_shell_tools() {
+    log_step "Installing shell tools"
+    
+    local tools_to_install=()
+    
+    # Check each tool
+    if ! command_exists tmux; then
+        tools_to_install+=("tmux")
+    else
+        log_success "tmux already installed: $(tmux -V)"
+    fi
+    
+    if ! command_exists fd; then
+        # fd is sometimes called fd-find on some systems
+        if ! command_exists fdfind; then
+            tools_to_install+=("fd")
+        else
+            log_success "fd already installed (as fdfind)"
+        fi
+    else
+        log_success "fd already installed: $(fd --version | head -1)"
+    fi
+    
+    if ! command_exists rg; then
+        tools_to_install+=("ripgrep")
+    else
+        log_success "ripgrep already installed: $(rg --version | head -1)"
+    fi
+    
+    if ! command_exists yazi; then
+        tools_to_install+=("yazi")
+    else
+        log_success "yazi already installed: $(yazi --version 2>/dev/null || echo 'version unknown')"
+    fi
+    
+    if ! command_exists zsh; then
+        tools_to_install+=("zsh")
+    else
+        log_success "zsh already installed: $(zsh --version)"
+    fi
+    
+    if ! command_exists zoxide; then
+        tools_to_install+=("zoxide")
+    else
+        log_success "zoxide already installed: $(zoxide --version)"
+    fi
+    
+    if [[ ${#tools_to_install[@]} -eq 0 ]]; then
+        log_success "All shell tools already installed"
+        return 0
+    fi
+    
+    log_info "Tools to install: ${tools_to_install[*]}"
+    
+    if ! confirm "Install missing shell tools?"; then
+        log_warn "Skipping shell tools installation"
+        return 0
+    fi
+    
+    case "$OS" in
+        macos)
+            install_shell_tools_macos "${tools_to_install[@]}"
+            ;;
+        linux)
+            install_shell_tools_linux "${tools_to_install[@]}"
+            ;;
+    esac
+}
+
+install_shell_tools_macos() {
+    local tools=("$@")
+    
+    if ! command_exists brew; then
+        log_warn "Homebrew not found. Installing Homebrew first..."
+        /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+    fi
+    
+    for tool in "${tools[@]}"; do
+        case "$tool" in
+            fd)
+                log_info "Installing fd..."
+                brew install fd
+                ;;
+            ripgrep)
+                log_info "Installing ripgrep..."
+                brew install ripgrep
+                ;;
+            yazi)
+                log_info "Installing yazi..."
+                brew install yazi
+                ;;
+            zoxide)
+                log_info "Installing zoxide..."
+                brew install zoxide
+                ;;
+            tmux)
+                log_info "Installing tmux..."
+                brew install tmux
+                ;;
+            zsh)
+                log_info "Installing zsh..."
+                brew install zsh
+                ;;
+        esac
+    done
+}
+
+install_shell_tools_linux() {
+    local tools=("$@")
+    
+    case "$OS_DISTRO" in
+        arch|manjaro|endeavouros)
+            install_shell_tools_arch "${tools[@]}"
+            ;;
+        debian|ubuntu|pop|linuxmint)
+            install_shell_tools_debian "${tools[@]}"
+            ;;
+        fedora|rhel|centos|rocky|almalinux)
+            install_shell_tools_fedora "${tools[@]}"
+            ;;
+        opensuse*)
+            install_shell_tools_opensuse "${tools[@]}"
+            ;;
+        *)
+            log_warn "Unknown distribution: $OS_DISTRO"
+            log_info "Attempting to install via cargo for Rust tools..."
+            install_shell_tools_cargo "${tools[@]}"
+            ;;
+    esac
+}
+
+install_shell_tools_arch() {
+    local tools=("$@")
+    local pacman_pkgs=()
+    
+    for tool in "${tools[@]}"; do
+        case "$tool" in
+            fd) pacman_pkgs+=("fd") ;;
+            ripgrep) pacman_pkgs+=("ripgrep") ;;
+            yazi) pacman_pkgs+=("yazi") ;;
+            zoxide) pacman_pkgs+=("zoxide") ;;
+            tmux) pacman_pkgs+=("tmux") ;;
+            zsh) pacman_pkgs+=("zsh") ;;
+        esac
+    done
+    
+    if [[ ${#pacman_pkgs[@]} -gt 0 ]]; then
+        log_info "Installing via pacman: ${pacman_pkgs[*]}"
+        sudo pacman -S --noconfirm "${pacman_pkgs[@]}"
+    fi
+}
+
+install_shell_tools_debian() {
+    local tools=("$@")
+    local apt_pkgs=()
+    local cargo_pkgs=()
+    
+    for tool in "${tools[@]}"; do
+        case "$tool" in
+            fd) apt_pkgs+=("fd-find") ;;
+            ripgrep) apt_pkgs+=("ripgrep") ;;
+            yazi) cargo_pkgs+=("yazi-fm") ;;  # yazi not in apt, use cargo
+            zoxide) cargo_pkgs+=("zoxide") ;; # newer versions via cargo
+            tmux) apt_pkgs+=("tmux") ;;
+            zsh) apt_pkgs+=("zsh") ;;
+        esac
+    done
+    
+    if [[ ${#apt_pkgs[@]} -gt 0 ]]; then
+        log_info "Installing via apt: ${apt_pkgs[*]}"
+        sudo apt-get update
+        sudo apt-get install -y "${apt_pkgs[@]}"
+    fi
+    
+    if [[ ${#cargo_pkgs[@]} -gt 0 ]]; then
+        install_shell_tools_cargo "${cargo_pkgs[@]}"
+    fi
+}
+
+install_shell_tools_fedora() {
+    local tools=("$@")
+    local dnf_pkgs=()
+    local cargo_pkgs=()
+    
+    for tool in "${tools[@]}"; do
+        case "$tool" in
+            fd) dnf_pkgs+=("fd-find") ;;
+            ripgrep) dnf_pkgs+=("ripgrep") ;;
+            yazi) cargo_pkgs+=("yazi-fm") ;;
+            zoxide) dnf_pkgs+=("zoxide") ;;
+            tmux) dnf_pkgs+=("tmux") ;;
+            zsh) dnf_pkgs+=("zsh") ;;
+        esac
+    done
+    
+    if [[ ${#dnf_pkgs[@]} -gt 0 ]]; then
+        log_info "Installing via dnf: ${dnf_pkgs[*]}"
+        sudo dnf install -y "${dnf_pkgs[@]}"
+    fi
+    
+    if [[ ${#cargo_pkgs[@]} -gt 0 ]]; then
+        install_shell_tools_cargo "${cargo_pkgs[@]}"
+    fi
+}
+
+install_shell_tools_opensuse() {
+    local tools=("$@")
+    local zypper_pkgs=()
+    local cargo_pkgs=()
+    
+    for tool in "${tools[@]}"; do
+        case "$tool" in
+            fd) zypper_pkgs+=("fd") ;;
+            ripgrep) zypper_pkgs+=("ripgrep") ;;
+            yazi) cargo_pkgs+=("yazi-fm") ;;
+            zoxide) cargo_pkgs+=("zoxide") ;;
+            tmux) zypper_pkgs+=("tmux") ;;
+            zsh) zypper_pkgs+=("zsh") ;;
+        esac
+    done
+    
+    if [[ ${#zypper_pkgs[@]} -gt 0 ]]; then
+        log_info "Installing via zypper: ${zypper_pkgs[*]}"
+        sudo zypper install -y "${zypper_pkgs[@]}"
+    fi
+    
+    if [[ ${#cargo_pkgs[@]} -gt 0 ]]; then
+        install_shell_tools_cargo "${cargo_pkgs[@]}"
+    fi
+}
+
+install_shell_tools_cargo() {
+    local tools=("$@")
+    
+    if ! command_exists cargo; then
+        log_error "Cargo not available. Cannot install tools via cargo."
+        return 1
+    fi
+    
+    for tool in "${tools[@]}"; do
+        case "$tool" in
+            yazi|yazi-fm)
+                log_info "Installing yazi via cargo..."
+                cargo install --locked yazi-fm yazi-cli
+                ;;
+            zoxide)
+                log_info "Installing zoxide via cargo..."
+                cargo install zoxide --locked
+                ;;
+            fd)
+                log_info "Installing fd via cargo..."
+                cargo install fd-find
+                ;;
+            ripgrep)
+                log_info "Installing ripgrep via cargo..."
+                cargo install ripgrep
+                ;;
+        esac
+    done
+}
+
+# ==============================================================================
+# Agent Tools Installation (agntz, mmry, trx, mailz)
+# ==============================================================================
+
+install_agntz() {
+    log_step "Installing agntz (Agent Tools)"
+    
+    if command_exists agntz; then
+        log_success "agntz already installed: $(agntz --version 2>/dev/null || echo 'version unknown')"
+        if ! confirm "Reinstall agntz?"; then
+            return 0
+        fi
+    fi
+    
+    if ! command_exists cargo; then
+        log_error "Cargo not available. Cannot install agntz."
+        return 1
+    fi
+    
+    log_info "Installing agntz via cargo..."
+    # agntz is part of the byteowlz tooling - install from crates.io or git
+    # Assuming it's published to crates.io, otherwise use git install
+    if cargo install agntz 2>/dev/null; then
+        log_success "agntz installed via crates.io"
+    else
+        log_info "Trying to install from git repository..."
+        cargo install --git https://github.com/byteowlz/agntz.git
+    fi
+    
+    if command_exists agntz; then
+        log_success "agntz installed successfully"
+    else
+        log_warn "agntz installation may have failed"
+        return 1
+    fi
+}
+
+select_agent_tools() {
+    log_step "Agent Tools Selection"
+    
+    echo
+    echo "Octo can install additional agent tools via agntz:"
+    echo
+    echo "  ${BOLD}mmry${NC} - Memory system for AI agents"
+    echo "    - Persistent memory storage and retrieval"
+    echo "    - Semantic search across memories"
+    echo
+    echo "  ${BOLD}trx${NC} - Transaction/task tracking"
+    echo "    - Track agent operations"
+    echo "    - Audit trail for actions"
+    echo
+    echo "  ${BOLD}mailz${NC} - Agent messaging system"
+    echo "    - Cross-agent communication"
+    echo "    - File reservation and coordination"
+    echo
+    
+    if confirm "Install mmry (memory system)?"; then
+        INSTALL_MMRY="true"
+    fi
+    
+    if confirm "Install trx (transaction tracking)?"; then
+        INSTALL_TRX="true"
+    fi
+    
+    if confirm "Install mailz (agent messaging)?"; then
+        INSTALL_MAILZ="true"
+    fi
+}
+
+install_agent_tools_via_agntz() {
+    log_step "Installing agent tools via agntz"
+    
+    if ! command_exists agntz; then
+        log_error "agntz not available. Skipping agent tools installation."
+        return 1
+    fi
+    
+    if [[ "$INSTALL_MMRY" == "true" ]]; then
+        log_info "Installing mmry..."
+        if agntz install mmry 2>/dev/null || cargo install mmry 2>/dev/null; then
+            log_success "mmry installed"
+        else
+            log_warn "Failed to install mmry. You can install it manually later."
+        fi
+    fi
+    
+    if [[ "$INSTALL_TRX" == "true" ]]; then
+        log_info "Installing trx..."
+        if agntz install trx 2>/dev/null || cargo install trx 2>/dev/null; then
+            log_success "trx installed"
+        else
+            log_warn "Failed to install trx. You can install it manually later."
+        fi
+    fi
+    
+    if [[ "$INSTALL_MAILZ" == "true" ]]; then
+        log_info "Installing mailz..."
+        if agntz install mailz 2>/dev/null || cargo install mailz 2>/dev/null; then
+            log_success "mailz installed"
+        else
+            log_warn "Failed to install mailz. You can install it manually later."
+        fi
+    fi
 }
 
 build_octo() {
@@ -985,6 +1361,28 @@ print_summary() {
         echo
     fi
     
+    echo "Shell tools:"
+    echo "  tmux:       $(which tmux 2>/dev/null || echo 'not installed')"
+    echo "  fd:         $(which fd 2>/dev/null || which fdfind 2>/dev/null || echo 'not installed')"
+    echo "  ripgrep:    $(which rg 2>/dev/null || echo 'not installed')"
+    echo "  yazi:       $(which yazi 2>/dev/null || echo 'not installed')"
+    echo "  zsh:        $(which zsh 2>/dev/null || echo 'not installed')"
+    echo "  zoxide:     $(which zoxide 2>/dev/null || echo 'not installed')"
+    echo
+    
+    echo "Agent tools:"
+    echo "  agntz:      $(which agntz 2>/dev/null || echo 'not installed')"
+    if [[ "$INSTALL_MMRY" == "true" ]]; then
+        echo "  mmry:       $(which mmry 2>/dev/null || echo 'not installed')"
+    fi
+    if [[ "$INSTALL_TRX" == "true" ]]; then
+        echo "  trx:        $(which trx 2>/dev/null || echo 'not installed')"
+    fi
+    if [[ "$INSTALL_MAILZ" == "true" ]]; then
+        echo "  mailz:      $(which mailz 2>/dev/null || echo 'not installed')"
+    fi
+    echo
+    
     echo "Next steps:"
     echo
     echo "  1. Start the server:"
@@ -1038,8 +1436,18 @@ Environment Variables:
   OCTO_CONTAINER_RUNTIME  docker, podman, or auto (default: auto)
   OCTO_INSTALL_DEPS       yes or no (default: yes)
   OCTO_INSTALL_SERVICE    yes or no (default: yes)
+  OCTO_INSTALL_AGENT_TOOLS yes or no (default: yes)
   OCTO_DEV_MODE           true or false (default: true)
   OCTO_LOG_LEVEL          error, warn, info, debug, trace (default: info)
+
+Shell Tools Installed:
+  tmux, fd, ripgrep, yazi, zsh, zoxide
+
+Agent Tools (via agntz):
+  agntz   - Agent operations CLI (always installed)
+  mmry    - Memory system (optional)
+  trx     - Transaction tracking (optional)
+  mailz   - Agent messaging (optional)
 
 Examples:
   # Interactive setup (recommended)
@@ -1103,9 +1511,25 @@ main() {
     
     # Install dependencies
     if [[ "$OCTO_INSTALL_DEPS" == "yes" ]]; then
+        # Shell tools (always useful)
+        install_shell_tools
+        
         if [[ "$SELECTED_BACKEND_MODE" == "local" ]]; then
             install_opencode
             install_ttyd
+        fi
+        
+        # Agent tools (agntz and optional mmry, trx, mailz)
+        if [[ "$OCTO_INSTALL_AGENT_TOOLS" == "yes" ]]; then
+            install_agntz
+            
+            if [[ "$NONINTERACTIVE" != "true" ]]; then
+                select_agent_tools
+            fi
+            
+            if [[ "$INSTALL_MMRY" == "true" || "$INSTALL_TRX" == "true" || "$INSTALL_MAILZ" == "true" ]]; then
+                install_agent_tools_via_agntz
+            fi
         fi
     fi
     

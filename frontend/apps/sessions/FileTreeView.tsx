@@ -355,7 +355,11 @@ export function FileTreeView({
 			setLoading(true);
 			setError("");
 			try {
-				const data = await fetchFileTree(fileserverBaseUrl, workspacePath, path);
+				const data = await fetchFileTree(
+					fileserverBaseUrl,
+					workspacePath,
+					path,
+				);
 				// Cache the result
 				setCachedTree(workspacePath, path, data);
 				setTree(data);
@@ -480,7 +484,8 @@ export function FileTreeView({
 	};
 
 	const handleDownloadSelected = () => {
-		if (!fileserverBaseUrl || !workspacePath || selectedFiles.size === 0) return;
+		if (!fileserverBaseUrl || !workspacePath || selectedFiles.size === 0)
+			return;
 
 		if (selectedFiles.size === 1) {
 			const path = Array.from(selectedFiles)[0];

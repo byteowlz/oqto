@@ -1,8 +1,12 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import {
+	ContextMenu,
+	ContextMenuContent,
+	ContextMenuItem,
+	ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 import {
 	Dialog,
 	DialogContent,
@@ -11,25 +15,29 @@ import {
 	DialogHeader,
 	DialogTitle,
 } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
-	ContextMenu,
-	ContextMenuContent,
-	ContextMenuItem,
-	ContextMenuTrigger,
-} from "@/components/ui/context-menu";
-import {
-	listMainChatAssistants,
-	createMainChatAssistant,
-	getMainChatAssistant,
-	getLatestMainChatSession,
-	listMainChatSessions,
 	type MainChatAssistantInfo,
 	type MainChatSession,
+	createMainChatAssistant,
+	getLatestMainChatSession,
+	getMainChatAssistant,
+	listMainChatAssistants,
+	listMainChatSessions,
+	updateMainChatAssistant,
 } from "@/lib/control-plane-client";
 import { formatSessionDate } from "@/lib/session-utils";
 import { cn } from "@/lib/utils";
-import { ChevronDown, ChevronRight, Loader2, Plus, Settings, Sparkles } from "lucide-react";
+import {
+	ChevronDown,
+	ChevronRight,
+	Loader2,
+	Plus,
+	Settings,
+	Sparkles,
+} from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
 
 export interface MainChatEntryProps {
 	/** Whether this entry is currently selected */
@@ -49,15 +57,16 @@ export interface MainChatEntryProps {
  * Shows a pinned entry for the user's main chat assistant.
  * If no assistant exists, shows a setup prompt.
  */
-export function MainChatEntry({ 
-	isSelected, 
+export function MainChatEntry({
+	isSelected,
 	activeSessionId,
-	onSelect, 
+	onSelect,
 	onSessionSelect,
-	locale = "en" 
+	locale = "en",
 }: MainChatEntryProps) {
 	const [assistantName, setAssistantName] = useState<string | null>(null);
-	const [assistantInfo, setAssistantInfo] = useState<MainChatAssistantInfo | null>(null);
+	const [assistantInfo, setAssistantInfo] =
+		useState<MainChatAssistantInfo | null>(null);
 	const [sessions, setSessions] = useState<MainChatSession[]>([]);
 	const [latestSessionId, setLatestSessionId] = useState<string | null>(null);
 	const [loading, setLoading] = useState(true);
@@ -76,24 +85,28 @@ export function MainChatEntry({
 		try {
 			setLoading(true);
 			const assistants = await listMainChatAssistants();
-			
+
 			if (assistants.length > 0) {
 				// Use the first assistant (users typically have one)
 				const name = assistants[0];
 				setAssistantName(name);
-				
+
 				// Load info, sessions, and latest session
 				const [info, sessionList, latestSession] = await Promise.all([
 					getMainChatAssistant(name),
 					listMainChatSessions(name),
 					getLatestMainChatSession(name),
 				]);
-				
+
 				setAssistantInfo(info);
 				// Sort sessions newest first for the timeline
-				setSessions(sessionList.sort(
-					(a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime()
-				));
+				setSessions(
+					sessionList.sort(
+						(a, b) =>
+							new Date(b.started_at).getTime() -
+							new Date(a.started_at).getTime(),
+					),
+				);
 				setLatestSessionId(latestSession?.session_id ?? null);
 			}
 		} catch (err) {
@@ -109,14 +122,23 @@ export function MainChatEntry({
 		try {
 			setCreating(true);
 			setError(null);
-			const info = await createMainChatAssistant(newName.trim());
+			const info = assistantName
+				? await updateMainChatAssistant(newName.trim())
+				: await createMainChatAssistant(newName.trim());
 			setAssistantName(info.name);
 			setAssistantInfo(info);
 			setShowCreateDialog(false);
 			setNewName("");
 		} catch (err) {
 			console.error("Failed to create assistant:", err);
-			setError(err instanceof Error ? err.message : "Failed to create");
+			const message = err instanceof Error ? err.message : "Failed to create";
+			if (message.includes("already exists")) {
+				await loadAssistant();
+				setShowCreateDialog(false);
+				setNewName("");
+				return;
+			}
+			setError(message);
 		} finally {
 			setCreating(false);
 		}
@@ -181,6 +203,7 @@ export function MainChatEntry({
 					loading={creating}
 					error={error}
 					locale={locale}
+					isRename={false}
 				/>
 			</>
 		);
@@ -223,13 +246,16 @@ export function MainChatEntry({
 								className="flex-1 min-w-0 text-left"
 							>
 								<div className="flex items-center gap-1">
-									<span className="text-sm truncate font-medium">{assistantName}</span>
+									<span className="text-sm truncate font-medium">
+										{assistantName}
+									</span>
 								</div>
 								<div className="text-xs text-muted-foreground/50 mt-0.5">
 									{locale === "de" ? "Hauptchat" : "Main Chat"}
 									{sessions.length > 0 && (
 										<span className="opacity-60">
-											{" "}{sessions.length}{" "}
+											{" "}
+											{sessions.length}{" "}
 											{locale === "de" ? "Sitzungen" : "sessions"}
 										</span>
 									)}
@@ -251,7 +277,12 @@ export function MainChatEntry({
 					</div>
 				</ContextMenuTrigger>
 				<ContextMenuContent>
-					<ContextMenuItem onClick={() => setShowCreateDialog(true)}>
+					<ContextMenuItem
+						onClick={() => {
+							setNewName(assistantName ?? "");
+							setShowCreateDialog(true);
+						}}
+					>
 						<Settings className="w-4 h-4 mr-2" />
 						{locale === "de" ? "Einstellungen" : "Settings"}
 					</ContextMenuItem>
@@ -267,6 +298,7 @@ export function MainChatEntry({
 				loading={creating}
 				error={error}
 				locale={locale}
+				isRename={Boolean(assistantName)}
 			/>
 		</>
 	);
@@ -295,7 +327,9 @@ function SessionTimeline({
 			<div className="flex flex-col gap-0.5">
 				{sessions.map((session) => {
 					const isActive = session.session_id === activeSessionId;
-					const formattedDate = formatSessionDate(new Date(session.started_at).getTime());
+					const formattedDate = formatSessionDate(
+						new Date(session.started_at).getTime(),
+					);
 
 					return (
 						<button
@@ -323,7 +357,9 @@ function SessionTimeline({
 								<span
 									className={cn(
 										"text-xs truncate block",
-										isActive ? "text-foreground font-medium" : "text-muted-foreground",
+										isActive
+											? "text-foreground font-medium"
+											: "text-muted-foreground",
 									)}
 								>
 									{session.title || formattedDate}
@@ -346,6 +382,7 @@ function CreateAssistantDialog({
 	loading,
 	error,
 	locale,
+	isRename,
 }: {
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
@@ -355,18 +392,25 @@ function CreateAssistantDialog({
 	loading: boolean;
 	error: string | null;
 	locale: "en" | "de";
+	isRename: boolean;
 }) {
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
 			<DialogContent>
 				<DialogHeader>
 					<DialogTitle>
-						{locale === "de" ? "Benennen Sie Ihren Assistenten" : "Name Your Assistant"}
+						{locale === "de"
+							? "Benennen Sie Ihren Assistenten"
+							: "Name Your Assistant"}
 					</DialogTitle>
 					<DialogDescription>
-						{locale === "de"
-							? "Geben Sie Ihrem KI-Assistenten einen Namen. Dieser wird verwendet, um Ihren persistenten Chat zu identifizieren."
-							: "Give your AI assistant a name. This will be used to identify your persistent chat across sessions."}
+						{isRename
+							? locale === "de"
+								? "Aktualisieren Sie den Namen Ihres Assistenten."
+								: "Update your assistant name."
+							: locale === "de"
+								? "Geben Sie Ihrem KI-Assistenten einen Namen. Dieser wird verwendet, um Ihren persistenten Chat zu identifizieren."
+								: "Give your AI assistant a name. This will be used to identify your persistent chat across sessions."}
 					</DialogDescription>
 				</DialogHeader>
 
@@ -377,7 +421,11 @@ function CreateAssistantDialog({
 						</Label>
 						<Input
 							id="assistant-name"
-							placeholder={locale === "de" ? "z.B. jarvis, govnr, friday" : "e.g., jarvis, govnr, friday"}
+							placeholder={
+								locale === "de"
+									? "z.B. jarvis, govnr, friday"
+									: "e.g., jarvis, govnr, friday"
+							}
 							value={name}
 							onChange={(e) => onNameChange(e.target.value)}
 							onKeyDown={(e) => {
@@ -398,12 +446,22 @@ function CreateAssistantDialog({
 				</div>
 
 				<DialogFooter>
-					<Button variant="outline" onClick={() => onOpenChange(false)} disabled={loading}>
+					<Button
+						variant="outline"
+						onClick={() => onOpenChange(false)}
+						disabled={loading}
+					>
 						{locale === "de" ? "Abbrechen" : "Cancel"}
 					</Button>
 					<Button onClick={onSubmit} disabled={loading || !name.trim()}>
 						{loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-						{locale === "de" ? "Erstellen" : "Create"}
+						{isRename
+							? locale === "de"
+								? "Speichern"
+								: "Save"
+							: locale === "de"
+								? "Erstellen"
+								: "Create"}
 					</Button>
 				</DialogFooter>
 			</DialogContent>

@@ -8,6 +8,10 @@ type MessageCache = {
 const messageCache = new Map<string, MessageCache>();
 const MESSAGE_CACHE_TTL = 30_000; // 30 seconds - cache is invalidated by SSE events anyway
 
+type OpencodeRequestOptions = {
+	directory?: string;
+};
+
 // Session type matching actual API response
 export type OpenCodeSession = {
 	id: string;
@@ -102,6 +106,12 @@ const base = (opencodeBaseUrl: string) => {
 	return trimTrailingSlash(opencodeBaseUrl);
 };
 
+const withDirectory = (url: string, directory?: string) => {
+	if (!directory) return url;
+	const joiner = url.includes("?") ? "&" : "?";
+	return `${url}${joiner}directory=${encodeURIComponent(directory)}`;
+};
+
 async function handleResponse<T>(res: Response): Promise<T> {
 	const contentType = res.headers.get("content-type") || "";
 
@@ -123,20 +133,24 @@ async function handleResponse<T>(res: Response): Promise<T> {
 
 export async function fetchSessions(
 	opencodeBaseUrl: string,
+	options?: OpencodeRequestOptions,
 ): Promise<OpenCodeSession[]> {
-	const res = await fetch(`${base(opencodeBaseUrl)}/session`, {
-		cache: "no-store",
-		credentials: "include",
-	});
+	const res = await fetch(
+		withDirectory(`${base(opencodeBaseUrl)}/session`, options?.directory),
+		{
+			cache: "no-store",
+			credentials: "include",
+		},
+	);
 	return handleResponse<OpenCodeSession[]>(res);
 }
 
 export async function fetchMessages(
 	opencodeBaseUrl: string,
 	sessionId: string,
-	options?: { skipCache?: boolean },
+	options?: { skipCache?: boolean; directory?: string },
 ): Promise<OpenCodeMessageWithParts[]> {
-	const cacheKey = `${opencodeBaseUrl}:${sessionId}`;
+	const cacheKey = `${opencodeBaseUrl}:${sessionId}:${options?.directory ?? ""}`;
 
 	// Check cache unless explicitly skipped
 	if (!options?.skipCache) {
@@ -148,7 +162,10 @@ export async function fetchMessages(
 
 	// Fetch from server
 	const res = await fetch(
-		`${base(opencodeBaseUrl)}/session/${sessionId}/message`,
+		withDirectory(
+			`${base(opencodeBaseUrl)}/session/${sessionId}/message`,
+			options?.directory,
+		),
 		{ cache: "no-store", credentials: "include" },
 	);
 	const messages = await handleResponse<OpenCodeMessageWithParts[]>(res);
@@ -167,8 +184,9 @@ export async function fetchMessages(
 export function invalidateMessageCache(
 	opencodeBaseUrl: string,
 	sessionId: string,
+	directory?: string,
 ): void {
-	const cacheKey = `${opencodeBaseUrl}:${sessionId}`;
+	const cacheKey = `${opencodeBaseUrl}:${sessionId}:${directory ?? ""}`;
 	messageCache.delete(cacheKey);
 }
 
@@ -182,10 +200,14 @@ export async function sendMessage(
 	sessionId: string,
 	content: string,
 	model?: { providerID: string; modelID: string },
+	options?: OpencodeRequestOptions,
 ) {
 	// Correct endpoint is /message with POST, body contains parts array
 	const res = await fetch(
-		`${base(opencodeBaseUrl)}/session/${sessionId}/message`,
+		withDirectory(
+			`${base(opencodeBaseUrl)}/session/${sessionId}/message`,
+			options?.directory,
+		),
 		{
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
@@ -204,10 +226,14 @@ export async function sendMessageAsync(
 	sessionId: string,
 	content: string,
 	model?: { providerID: string; modelID: string },
+	options?: OpencodeRequestOptions,
 ) {
 	// Async version - returns immediately, use SSE for updates
 	const res = await fetch(
-		`${base(opencodeBaseUrl)}/session/${sessionId}/prompt_async`,
+		withDirectory(
+			`${base(opencodeBaseUrl)}/session/${sessionId}/prompt_async`,
+			options?.directory,
+		),
 		{
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
@@ -236,12 +262,16 @@ export async function sendPartsAsync(
 	sessionId: string,
 	parts: OpenCodePartInput[],
 	model?: { providerID: string; modelID: string },
+	options?: OpencodeRequestOptions,
 ) {
 	const body: Record<string, unknown> = { parts };
 	if (model) body.model = model;
 
 	const res = await fetch(
-		`${base(opencodeBaseUrl)}/session/${sessionId}/prompt_async`,
+		withDirectory(
+			`${base(opencodeBaseUrl)}/session/${sessionId}/prompt_async`,
+			options?.directory,
+		),
 		{
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
@@ -259,9 +289,13 @@ export async function sendPartsAsync(
 export async function abortSession(
 	opencodeBaseUrl: string,
 	sessionId: string,
+	options?: OpencodeRequestOptions,
 ): Promise<boolean> {
 	const res = await fetch(
-		`${base(opencodeBaseUrl)}/session/${sessionId}/abort`,
+		withDirectory(
+			`${base(opencodeBaseUrl)}/session/${sessionId}/abort`,
+			options?.directory,
+		),
 		{
 			method: "POST",
 			credentials: "include",
@@ -280,11 +314,15 @@ export type OpenCodeAgent = {
 
 export async function fetchAgents(
 	opencodeBaseUrl: string,
+	options?: OpencodeRequestOptions,
 ): Promise<OpenCodeAgent[]> {
-	const res = await fetch(`${base(opencodeBaseUrl)}/agent`, {
-		cache: "no-store",
-		credentials: "include",
-	});
+	const res = await fetch(
+		withDirectory(`${base(opencodeBaseUrl)}/agent`, options?.directory),
+		{
+			cache: "no-store",
+			credentials: "include",
+		},
+	);
 	return handleResponse<OpenCodeAgent[]>(res);
 }
 
@@ -307,11 +345,15 @@ export type OpenCodeConfig = {
 
 export async function fetchConfig(
 	opencodeBaseUrl: string,
+	options?: OpencodeRequestOptions,
 ): Promise<OpenCodeConfig> {
-	const res = await fetch(`${base(opencodeBaseUrl)}/config`, {
-		cache: "no-store",
-		credentials: "include",
-	});
+	const res = await fetch(
+		withDirectory(`${base(opencodeBaseUrl)}/config`, options?.directory),
+		{
+			cache: "no-store",
+			credentials: "include",
+		},
+	);
 	return handleResponse<OpenCodeConfig>(res);
 }
 
@@ -327,11 +369,15 @@ export type OpenCodeCommandInfo = {
 
 export async function fetchCommands(
 	opencodeBaseUrl: string,
+	options?: OpencodeRequestOptions,
 ): Promise<OpenCodeCommandInfo[]> {
-	const res = await fetch(`${base(opencodeBaseUrl)}/command`, {
-		cache: "no-store",
-		credentials: "include",
-	});
+	const res = await fetch(
+		withDirectory(`${base(opencodeBaseUrl)}/command`, options?.directory),
+		{
+			cache: "no-store",
+			credentials: "include",
+		},
+	);
 	return handleResponse<OpenCodeCommandInfo[]>(res);
 }
 
@@ -341,12 +387,16 @@ export async function runShellCommand(
 	command: string,
 	agent: string,
 	model?: { providerID: string; modelID: string },
+	options?: OpencodeRequestOptions,
 ): Promise<OpenCodeMessageWithParts> {
 	const body: Record<string, unknown> = { command, agent };
 	if (model) body.model = model;
 
 	const res = await fetch(
-		`${base(opencodeBaseUrl)}/session/${sessionId}/shell`,
+		withDirectory(
+			`${base(opencodeBaseUrl)}/session/${sessionId}/shell`,
+			options?.directory,
+		),
 		{
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
@@ -363,12 +413,16 @@ export async function runShellCommandAsync(
 	command: string,
 	agent: string,
 	model?: { providerID: string; modelID: string },
+	options?: OpencodeRequestOptions,
 ): Promise<boolean> {
 	const body: Record<string, unknown> = { command, agent };
 	if (model) body.model = model;
 
 	const res = await fetch(
-		`${base(opencodeBaseUrl)}/session/${sessionId}/shell`,
+		withDirectory(
+			`${base(opencodeBaseUrl)}/session/${sessionId}/shell`,
+			options?.directory,
+		),
 		{
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
@@ -399,9 +453,13 @@ export async function sendCommandAsync(
 	sessionId: string,
 	command: string,
 	args = "",
+	options?: OpencodeRequestOptions,
 ): Promise<boolean> {
 	const res = await fetch(
-		`${base(opencodeBaseUrl)}/session/${sessionId}/command`,
+		withDirectory(
+			`${base(opencodeBaseUrl)}/session/${sessionId}/command`,
+			options?.directory,
+		),
 		{
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
@@ -428,24 +486,35 @@ export async function createSession(
 	opencodeBaseUrl: string,
 	title?: string,
 	parentID?: string,
+	options?: OpencodeRequestOptions,
 ): Promise<OpenCodeSession> {
-	const res = await fetch(`${base(opencodeBaseUrl)}/session`, {
-		method: "POST",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({ title, parentID }),
-		credentials: "include",
-	});
+	const res = await fetch(
+		withDirectory(`${base(opencodeBaseUrl)}/session`, options?.directory),
+		{
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ title, parentID }),
+			credentials: "include",
+		},
+	);
 	return handleResponse<OpenCodeSession>(res);
 }
 
 export async function deleteSession(
 	opencodeBaseUrl: string,
 	sessionId: string,
+	options?: OpencodeRequestOptions,
 ): Promise<void> {
-	const res = await fetch(`${base(opencodeBaseUrl)}/session/${sessionId}`, {
-		method: "DELETE",
-		credentials: "include",
-	});
+	const res = await fetch(
+		withDirectory(
+			`${base(opencodeBaseUrl)}/session/${sessionId}`,
+			options?.directory,
+		),
+		{
+			method: "DELETE",
+			credentials: "include",
+		},
+	);
 	if (!res.ok) {
 		const text = await res.text().catch(() => res.statusText);
 		throw new Error(text || `Request failed with ${res.status}`);
@@ -456,13 +525,20 @@ export async function updateSession(
 	opencodeBaseUrl: string,
 	sessionId: string,
 	updates: { title?: string },
+	options?: OpencodeRequestOptions,
 ): Promise<OpenCodeSession> {
-	const res = await fetch(`${base(opencodeBaseUrl)}/session/${sessionId}`, {
-		method: "PATCH",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify(updates),
-		credentials: "include",
-	});
+	const res = await fetch(
+		withDirectory(
+			`${base(opencodeBaseUrl)}/session/${sessionId}`,
+			options?.directory,
+		),
+		{
+			method: "PATCH",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(updates),
+			credentials: "include",
+		},
+	);
 	return handleResponse<OpenCodeSession>(res);
 }
 
@@ -493,9 +569,13 @@ export async function respondToPermission(
 	sessionId: string,
 	permissionId: string,
 	response: PermissionResponse,
+	options?: OpencodeRequestOptions,
 ): Promise<void> {
 	const res = await fetch(
-		`${base(opencodeBaseUrl)}/session/${sessionId}/permission/${permissionId}`,
+		withDirectory(
+			`${base(opencodeBaseUrl)}/session/${sessionId}/permission/${permissionId}`,
+			options?.directory,
+		),
 		{
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
@@ -513,9 +593,13 @@ export async function respondToPermission(
 export async function fetchPermissions(
 	opencodeBaseUrl: string,
 	sessionId: string,
+	options?: OpencodeRequestOptions,
 ): Promise<Permission[]> {
 	const res = await fetch(
-		`${base(opencodeBaseUrl)}/session/${sessionId}/permission`,
+		withDirectory(
+			`${base(opencodeBaseUrl)}/session/${sessionId}/permission`,
+			options?.directory,
+		),
 		{ cache: "no-store", credentials: "include" },
 	);
 	// If endpoint doesn't exist or returns error, return empty array
@@ -548,6 +632,7 @@ export function subscribeToEvents(
 	opencodeBaseUrl: string,
 	callback: EventCallback,
 	directControlPlaneUrl?: string,
+	options?: OpencodeRequestOptions,
 ) {
 	let active = true;
 	const statusBySession: Record<string, string> = {};
@@ -606,6 +691,9 @@ export function subscribeToEvents(
 					? "http://localhost"
 					: window.location.href,
 			);
+			if (options?.directory) {
+				statusUrl.searchParams.set("directory", options.directory);
+			}
 			const res = await fetch(statusUrl.toString(), {
 				cache: "no-store",
 				credentials: "include",
@@ -650,6 +738,9 @@ export function subscribeToEvents(
 			`${sseBase}/event`,
 			typeof window === "undefined" ? "http://localhost" : window.location.href,
 		);
+		if (options?.directory) {
+			url.searchParams.set("directory", options.directory);
+		}
 		return url.toString();
 	})();
 

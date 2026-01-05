@@ -377,9 +377,9 @@ export async function getOrCreateSessionForWorkspace(
 	return res.json();
 }
 
-/** 
+/**
  * Get a workspace session by ID or alias.
- * 
+ *
  * The sessionIdOrAlias can be either:
  * - A full session UUID (e.g., "6a03da55-2757-4d71-b421-af929bc4aef5")
  * - A readable alias (e.g., "foxy-geek")
@@ -458,7 +458,7 @@ export async function restartWorkspaceSession(
 ): Promise<WorkspaceSession> {
 	await stopWorkspaceSession(sessionId);
 	const session = await resumeWorkspaceSession(sessionId);
-	
+
 	// Wait for session to be fully running (poll every 500ms, max 30s)
 	const maxAttempts = 60;
 	for (let i = 0; i < maxAttempts; i++) {
@@ -472,7 +472,7 @@ export async function restartWorkspaceSession(
 		}
 		await new Promise((resolve) => setTimeout(resolve, 500));
 	}
-	
+
 	// Return what we have even if not fully running yet
 	return session;
 }
@@ -861,7 +861,9 @@ export function terminalWorkspaceProxyPath(workspacePath: string) {
 }
 
 export function memoriesWorkspaceBaseUrl(workspacePath: string) {
-	return controlPlaneApiUrl(`/api/workspace/memories?workspace_path=${encodeURIComponent(workspacePath)}`);
+	return controlPlaneApiUrl(
+		`/api/workspace/memories?workspace_path=${encodeURIComponent(workspacePath)}`,
+	);
 }
 
 export function voiceProxyWsUrl(kind: "stt" | "tts"): string {
@@ -876,12 +878,16 @@ export function voiceProxyWsUrl(kind: "stt" | "tts"): string {
 export type PermissionAction = "ask" | "allow" | "deny";
 
 /** Permission rule - can be a simple action or an object with pattern-specific rules */
-export type PermissionRule = PermissionAction | Record<string, PermissionAction>;
+export type PermissionRule =
+	| PermissionAction
+	| Record<string, PermissionAction>;
 
 /** Permission configuration for tools - can be a global action or per-tool config */
-export type PermissionConfig = PermissionAction | {
-	[toolName: string]: PermissionRule;
-};
+export type PermissionConfig =
+	| PermissionAction
+	| {
+			[toolName: string]: PermissionRule;
+	  };
 
 /** Compaction settings */
 export interface CompactionConfig {
@@ -1057,7 +1063,11 @@ export async function reloadSettings(app: string): Promise<void> {
 // ============================================================================
 
 /** History entry type */
-export type MainChatHistoryType = "summary" | "decision" | "handoff" | "insight";
+export type MainChatHistoryType =
+	| "summary"
+	| "decision"
+	| "handoff"
+	| "insight";
 
 /** History entry from Main Chat */
 export type MainChatHistoryEntry = {
@@ -1097,20 +1107,31 @@ export async function listMainChatAssistants(): Promise<string[]> {
 	});
 	if (!res.ok) throw new Error(await readApiError(res));
 	const data = await res.json();
-	return data.assistants ?? [];
+	if (data.exists && data.info?.name) {
+		return [data.info.name];
+	}
+	return [];
 }
 
 /** Get info about a specific assistant */
-export async function getMainChatAssistant(name: string): Promise<MainChatAssistantInfo> {
-	const res = await fetch(controlPlaneApiUrl(`/api/main/${encodeURIComponent(name)}`), {
+export async function getMainChatAssistant(
+	name: string,
+): Promise<MainChatAssistantInfo> {
+	const res = await fetch(controlPlaneApiUrl("/api/main"), {
 		credentials: "include",
 	});
 	if (!res.ok) throw new Error(await readApiError(res));
-	return res.json();
+	const data = await res.json();
+	if (!data.exists || !data.info) {
+		throw new Error("Main Chat not found");
+	}
+	return data.info;
 }
 
 /** Create a new Main Chat assistant */
-export async function createMainChatAssistant(name: string): Promise<MainChatAssistantInfo> {
+export async function createMainChatAssistant(
+	name: string,
+): Promise<MainChatAssistantInfo> {
 	const res = await fetch(controlPlaneApiUrl("/api/main"), {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
@@ -1121,9 +1142,23 @@ export async function createMainChatAssistant(name: string): Promise<MainChatAss
 	return res.json();
 }
 
+/** Update the Main Chat assistant name */
+export async function updateMainChatAssistant(
+	name: string,
+): Promise<MainChatAssistantInfo> {
+	const res = await fetch(controlPlaneApiUrl("/api/main"), {
+		method: "PATCH",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ name }),
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+	return res.json();
+}
+
 /** Delete a Main Chat assistant */
 export async function deleteMainChatAssistant(name: string): Promise<void> {
-	const res = await fetch(controlPlaneApiUrl(`/api/main/${encodeURIComponent(name)}`), {
+	const res = await fetch(controlPlaneApiUrl("/api/main"), {
 		method: "DELETE",
 		credentials: "include",
 	});
@@ -1136,7 +1171,7 @@ export async function getMainChatHistory(
 	limit = 20,
 ): Promise<MainChatHistoryEntry[]> {
 	const res = await fetch(
-		controlPlaneApiUrl(`/api/main/${encodeURIComponent(name)}/history?limit=${limit}`),
+		controlPlaneApiUrl(`/api/main/history?limit=${limit}`),
 		{ credentials: "include" },
 	);
 	if (!res.ok) throw new Error(await readApiError(res));
@@ -1153,25 +1188,23 @@ export async function addMainChatHistory(
 		meta?: Record<string, unknown>;
 	},
 ): Promise<MainChatHistoryEntry> {
-	const res = await fetch(
-		controlPlaneApiUrl(`/api/main/${encodeURIComponent(name)}/history`),
-		{
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify(entry),
-			credentials: "include",
-		},
-	);
+	const res = await fetch(controlPlaneApiUrl("/api/main/history"), {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(entry),
+		credentials: "include",
+	});
 	if (!res.ok) throw new Error(await readApiError(res));
 	return res.json();
 }
 
 /** List sessions for an assistant */
-export async function listMainChatSessions(name: string): Promise<MainChatSession[]> {
-	const res = await fetch(
-		controlPlaneApiUrl(`/api/main/${encodeURIComponent(name)}/sessions`),
-		{ credentials: "include" },
-	);
+export async function listMainChatSessions(
+	name: string,
+): Promise<MainChatSession[]> {
+	const res = await fetch(controlPlaneApiUrl("/api/main/sessions"), {
+		credentials: "include",
+	});
 	if (!res.ok) throw new Error(await readApiError(res));
 	return res.json();
 }
@@ -1181,15 +1214,12 @@ export async function registerMainChatSession(
 	name: string,
 	session: { session_id: string; title?: string },
 ): Promise<MainChatSession> {
-	const res = await fetch(
-		controlPlaneApiUrl(`/api/main/${encodeURIComponent(name)}/sessions`),
-		{
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify(session),
-			credentials: "include",
-		},
-	);
+	const res = await fetch(controlPlaneApiUrl("/api/main/sessions"), {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(session),
+		credentials: "include",
+	});
 	if (!res.ok) throw new Error(await readApiError(res));
 	return res.json();
 }
@@ -1198,20 +1228,18 @@ export async function registerMainChatSession(
 export async function getLatestMainChatSession(
 	name: string,
 ): Promise<MainChatSession | null> {
-	const res = await fetch(
-		controlPlaneApiUrl(`/api/main/${encodeURIComponent(name)}/sessions/latest`),
-		{ credentials: "include" },
-	);
+	const res = await fetch(controlPlaneApiUrl("/api/main/sessions/latest"), {
+		credentials: "include",
+	});
 	if (!res.ok) throw new Error(await readApiError(res));
 	return res.json();
 }
 
 /** Export history as JSONL */
 export async function exportMainChatHistory(name: string): Promise<string> {
-	const res = await fetch(
-		controlPlaneApiUrl(`/api/main/${encodeURIComponent(name)}/export`),
-		{ credentials: "include" },
-	);
+	const res = await fetch(controlPlaneApiUrl("/api/main/export"), {
+		credentials: "include",
+	});
 	if (!res.ok) throw new Error(await readApiError(res));
 	const data = await res.json();
 	return data.jsonl ?? "";

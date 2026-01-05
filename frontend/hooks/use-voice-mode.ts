@@ -9,8 +9,8 @@
  * - Settings persistence
  */
 
-import { STTService, TTSService } from "@/lib/voice";
 import { voiceProxyWsUrl } from "@/lib/control-plane-client";
+import { STTService, TTSService } from "@/lib/voice";
 import type {
 	VisualizerType,
 	VisualizerVoiceSettings,

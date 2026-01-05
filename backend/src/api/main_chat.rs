@@ -28,6 +28,13 @@ pub struct InitializeMainChatRequest {
     pub name: Option<String>,
 }
 
+/// Request to update Main Chat metadata.
+#[derive(Debug, Deserialize)]
+pub struct UpdateMainChatRequest {
+    /// New name for the assistant
+    pub name: String,
+}
+
 /// Request to add a history entry.
 #[derive(Debug, Deserialize)]
 pub struct AddHistoryRequest {
@@ -140,6 +147,41 @@ pub async fn initialize_main_chat(
         .map_err(|e| ApiError::internal(format!("Failed to initialize main chat: {}", e)))?;
 
     Ok((StatusCode::CREATED, Json(info)))
+}
+
+/// Update Main Chat for the current user.
+///
+/// PATCH /api/main
+pub async fn update_main_chat(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Json(req): Json<UpdateMainChatRequest>,
+) -> ApiResult<Json<AssistantInfo>> {
+    let service = get_main_chat_service(&state)?;
+
+    if req.name.is_empty() {
+        return Err(ApiError::bad_request("Name cannot be empty"));
+    }
+    if !req
+        .name
+        .chars()
+        .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
+    {
+        return Err(ApiError::bad_request(
+            "Name can only contain alphanumeric characters, hyphens, and underscores",
+        ));
+    }
+
+    if !service.main_chat_exists(user.id()) {
+        return Err(ApiError::not_found("Main Chat not found"));
+    }
+
+    let info = service
+        .update_main_chat_name(user.id(), &req.name)
+        .await
+        .map_err(|e| ApiError::internal(format!("Failed to update main chat: {}", e)))?;
+
+    Ok(Json(info))
 }
 
 /// Delete Main Chat for the current user.
