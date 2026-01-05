@@ -6,8 +6,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use super::db::{main_chat_db_path, main_chat_dir_path, MainChatDb};
-use super::models::{AssistantInfo, CreateHistoryEntry, CreateSession, HistoryEntry, MainChatSession};
+use super::db::{MainChatDb, main_chat_db_path, main_chat_dir_path};
+use super::models::{
+    AssistantInfo, CreateHistoryEntry, CreateSession, HistoryEntry, MainChatSession,
+};
 use super::repository::MainChatRepository;
 
 /// Service for managing main chat.
@@ -81,7 +83,10 @@ impl MainChatService {
         Ok(AssistantInfo {
             name,
             user_id: user_id.to_string(),
-            path: self.get_main_chat_dir(user_id).to_string_lossy().to_string(),
+            path: self
+                .get_main_chat_dir(user_id)
+                .to_string_lossy()
+                .to_string(),
             session_count,
             history_count,
             created_at,
@@ -89,15 +94,20 @@ impl MainChatService {
     }
 
     /// Initialize Main Chat for a user.
-    pub async fn initialize_main_chat(&self, user_id: &str, name: Option<&str>) -> Result<AssistantInfo> {
+    pub async fn initialize_main_chat(
+        &self,
+        user_id: &str,
+        name: Option<&str>,
+    ) -> Result<AssistantInfo> {
         if self.main_chat_exists(user_id) {
             anyhow::bail!("Main Chat already exists for user");
         }
 
         // Create directory structure
         let main_chat_dir = self.get_main_chat_dir(user_id);
-        std::fs::create_dir_all(&main_chat_dir)
-            .with_context(|| format!("creating main chat directory: {}", main_chat_dir.display()))?;
+        std::fs::create_dir_all(&main_chat_dir).with_context(|| {
+            format!("creating main chat directory: {}", main_chat_dir.display())
+        })?;
 
         // Create and initialize database
         let db = self.get_db(user_id).await?;
@@ -163,8 +173,9 @@ impl MainChatService {
         // Delete the directory
         let main_chat_dir = self.get_main_chat_dir(user_id);
         if main_chat_dir.exists() {
-            std::fs::remove_dir_all(&main_chat_dir)
-                .with_context(|| format!("deleting main chat directory: {}", main_chat_dir.display()))?;
+            std::fs::remove_dir_all(&main_chat_dir).with_context(|| {
+                format!("deleting main chat directory: {}", main_chat_dir.display())
+            })?;
         }
 
         Ok(())
@@ -211,7 +222,11 @@ impl MainChatService {
     // ========== Session Operations ==========
 
     /// Register a new session.
-    pub async fn add_session(&self, user_id: &str, session: CreateSession) -> Result<MainChatSession> {
+    pub async fn add_session(
+        &self,
+        user_id: &str,
+        session: CreateSession,
+    ) -> Result<MainChatSession> {
         let db = self.get_db(user_id).await?;
         let repo = MainChatRepository::new(&db);
         repo.add_session(session).await

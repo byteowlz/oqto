@@ -3,8 +3,8 @@
 use std::sync::Arc;
 
 use axum::body::Body;
-use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::client::legacy::Client;
+use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::rt::TokioExecutor;
 
 use super::super::agent::AgentService;

@@ -97,8 +97,6 @@ impl TryFrom<String> for RuntimeMode {
 pub struct Session {
     /// Unique session ID.
     pub id: String,
-    /// Human-readable session ID (e.g., "cold-lamp").
-    pub readable_id: Option<String>,
     /// Container ID (once started) or comma-separated PIDs for local mode.
     pub container_id: Option<String>,
     /// Container name (or session identifier for local mode).

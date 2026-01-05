@@ -2,7 +2,7 @@
 
 use axum::{
     body::Body,
-    extract::{Path, State, WebSocketUpgrade},
+    extract::{Path, Query, State, WebSocketUpgrade},
     http::{Request, StatusCode, Uri},
     response::{IntoResponse, Response, Sse},
 };
@@ -39,6 +39,45 @@ async fn ensure_session_active_for_proxy(
             warn!("Attempted to proxy to inactive session {}", session_id);
             Err(StatusCode::SERVICE_UNAVAILABLE)
         }
+    }
+}
+
+async fn ensure_session_for_io_proxy(
+    state: &AppState,
+    session_id: &str,
+    session: crate::session::Session,
+) -> Result<crate::session::Session, StatusCode> {
+    if session.status != SessionStatus::Stopped {
+        return Ok(session);
+    }
+
+    warn!(
+        "Session {} is stopped; attempting to resume for IO proxy request",
+        session_id
+    );
+    match state.sessions.resume_session_for_io(session_id).await {
+        Ok(resumed) => Ok(resumed),
+        Err(err) => {
+            error!("Failed to resume session {}: {:?}", session_id, err);
+            Err(StatusCode::SERVICE_UNAVAILABLE)
+        }
+    }
+}
+
+#[derive(serde::Deserialize)]
+pub(crate) struct WorkspaceProxyQuery {
+    workspace_path: String,
+}
+
+fn strip_workspace_path_query(query: &str) -> Option<String> {
+    let filtered: Vec<&str> = query
+        .split('&')
+        .filter(|pair| !pair.starts_with("workspace_path=") && !pair.is_empty())
+        .collect();
+    if filtered.is_empty() {
+        None
+    } else {
+        Some(filtered.join("&"))
     }
 }
 
@@ -111,9 +150,7 @@ async fn handle_voice_ws_proxy(
         while let Some(msg) = server_rx.next().await {
             let msg = msg?;
             let forward = match msg {
-                TungsteniteMessage::Text(text) => {
-                    AxumMessage::Text(text.to_string().into())
-                }
+                TungsteniteMessage::Text(text) => AxumMessage::Text(text.to_string().into()),
                 TungsteniteMessage::Binary(data) => AxumMessage::Binary(data),
                 TungsteniteMessage::Ping(data) => AxumMessage::Ping(data),
                 TungsteniteMessage::Pong(data) => AxumMessage::Pong(data),
@@ -181,12 +218,7 @@ pub async fn proxy_fileserver(
         })?
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    // In single-user mode, allow access even when session is inactive
-    // since the fileserver runs independently of the opencode process
-    if !state.mmry.single_user && !session.is_active() {
-        warn!("Attempted to proxy to inactive session {}", session_id);
-        return Err(StatusCode::SERVICE_UNAVAILABLE);
-    }
+    let session = ensure_session_for_io_proxy(&state, &session_id, session).await?;
 
     let starting = matches!(session.status, SessionStatus::Starting);
     proxy_request(
@@ -199,15 +231,68 @@ pub async fn proxy_fileserver(
     .await
 }
 
+/// Proxy HTTP requests to a workspace file server by workspace path.
+pub async fn proxy_fileserver_for_workspace(
+    State(state): State<AppState>,
+    Path(path): Path<String>,
+    Query(query): Query<WorkspaceProxyQuery>,
+    req: Request<Body>,
+) -> Result<Response, StatusCode> {
+    let session = state
+        .sessions
+        .get_or_create_io_session_for_workspace(&query.workspace_path)
+        .await
+        .map_err(|e| {
+            error!(
+                "Failed to get IO session for workspace {}: {:?}",
+                query.workspace_path, e
+            );
+            StatusCode::SERVICE_UNAVAILABLE
+        })?;
+
+    let filtered_query = req.uri().query().and_then(strip_workspace_path_query);
+
+    let starting = matches!(session.status, SessionStatus::Starting);
+    proxy_request_with_query(
+        state.http_client.clone(),
+        req,
+        session.fileserver_port as u16,
+        &path,
+        starting,
+        filtered_query.as_deref(),
+    )
+    .await
+}
+
 /// Generic HTTP proxy function.
 async fn proxy_request(
+    client: Client<hyper_util::client::legacy::connect::HttpConnector, Body>,
+    req: Request<Body>,
+    target_port: u16,
+    target_path: &str,
+    connect_errors_as_unavailable: bool,
+) -> Result<Response, StatusCode> {
+    proxy_request_with_query(
+        client,
+        req,
+        target_port,
+        target_path,
+        connect_errors_as_unavailable,
+        None,
+    )
+    .await
+}
+
+async fn proxy_request_with_query(
     client: Client<hyper_util::client::legacy::connect::HttpConnector, Body>,
     mut req: Request<Body>,
     target_port: u16,
     target_path: &str,
     connect_errors_as_unavailable: bool,
+    query_override: Option<&str>,
 ) -> Result<Response, StatusCode> {
     let query = req.uri().query().unwrap_or("");
+    let query = query_override.unwrap_or(query);
     let mut target_uri = format!("http://localhost:{}/{}", target_port, target_path);
     if !query.is_empty() {
         target_uri.push('?');
@@ -264,7 +349,34 @@ pub async fn proxy_terminal_ws(
         })?
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    let _session = ensure_session_active_for_proxy(&state, &session_id, session.clone()).await?;
+    let session = ensure_session_for_io_proxy(&state, &session_id, session).await?;
+
+    let ttyd_port = session.ttyd_port;
+
+    Ok(ws.on_upgrade(move |socket| async move {
+        if let Err(e) = handle_terminal_proxy(socket, ttyd_port as u16).await {
+            error!("Terminal proxy error: {:?}", e);
+        }
+    }))
+}
+
+/// WebSocket upgrade handler for terminal proxy by workspace path.
+pub async fn proxy_terminal_ws_for_workspace(
+    State(state): State<AppState>,
+    Query(query): Query<WorkspaceProxyQuery>,
+    ws: WebSocketUpgrade,
+) -> Result<impl IntoResponse, StatusCode> {
+    let session = state
+        .sessions
+        .get_or_create_io_session_for_workspace(&query.workspace_path)
+        .await
+        .map_err(|e| {
+            error!(
+                "Failed to get IO session for workspace {}: {:?}",
+                query.workspace_path, e
+            );
+            StatusCode::SERVICE_UNAVAILABLE
+        })?;
 
     let ttyd_port = session.ttyd_port;
 
@@ -650,18 +762,83 @@ fn get_mmry_target(
     }
 }
 
-/// Proxy request to a URL-based target.
+/// Derive mmry store name from session workspace path.
+///
+/// In single-user mode, each workspace maps to a separate mmry store.
+/// The store name is derived from the last component of the workspace path.
+/// For example: `/home/user/byteowlz/octo` -> `octo`
+fn get_mmry_store_name(state: &AppState, session: &crate::session::Session) -> Option<String> {
+    if !state.mmry.single_user {
+        // In multi-user mode, each session has its own mmry instance
+        return None;
+    }
+
+    // Extract the last path component as the store name
+    std::path::Path::new(&session.workspace_path)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(|s| s.to_string())
+}
+
+/// Derive mmry store name directly from a workspace path.
+///
+/// In single-user mode, each workspace maps to a separate mmry store.
+/// The store name is derived from the last component of the workspace path.
+/// For example: `/home/user/byteowlz/octo` -> `octo`
+fn get_mmry_store_name_from_path(state: &AppState, workspace_path: &str) -> Option<String> {
+    if !state.mmry.single_user {
+        return None;
+    }
+
+    std::path::Path::new(workspace_path)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(|s| s.to_string())
+}
+
+/// Get the mmry target URL for workspace-based access (single-user mode only).
+fn get_mmry_target_for_workspace(state: &AppState) -> Result<String, StatusCode> {
+    if !state.mmry.enabled {
+        warn!("mmry integration is not enabled");
+        return Err(StatusCode::NOT_FOUND);
+    }
+
+    if !state.mmry.single_user {
+        // Workspace-based mmry access only works in single-user mode
+        warn!("Workspace-based mmry access requires single-user mode");
+        return Err(StatusCode::NOT_FOUND);
+    }
+
+    Ok(state.mmry.local_service_url.clone())
+}
+
+/// Proxy request to a URL-based target with optional store parameter.
 async fn proxy_request_to_url(
     client: Client<hyper_util::client::legacy::connect::HttpConnector, Body>,
     mut req: Request<Body>,
     target_base_url: &str,
     target_path: &str,
+    store: Option<&str>,
 ) -> Result<Response, StatusCode> {
     let query = req.uri().query().unwrap_or("");
     let mut target_uri = format!("{}/{}", target_base_url.trim_end_matches('/'), target_path);
-    if !query.is_empty() {
+
+    // Build query string with optional store parameter
+    let has_query = !query.is_empty();
+    let has_store = store.is_some();
+
+    if has_query || has_store {
         target_uri.push('?');
-        target_uri.push_str(query);
+        if has_query {
+            target_uri.push_str(query);
+        }
+        if let Some(store_name) = store {
+            if has_query {
+                target_uri.push('&');
+            }
+            target_uri.push_str("store=");
+            target_uri.push_str(store_name);
+        }
     }
 
     debug!("Proxying mmry request to {}", target_uri);
@@ -725,7 +902,15 @@ pub async fn proxy_mmry(
     }
 
     let target_url = get_mmry_target(&state, &session)?;
-    proxy_request_to_url(state.http_client.clone(), req, &target_url, &path).await
+    let store = get_mmry_store_name(&state, &session);
+    proxy_request_to_url(
+        state.http_client.clone(),
+        req,
+        &target_url,
+        &path,
+        store.as_deref(),
+    )
+    .await
 }
 
 /// Proxy search requests to a session's mmry service.
@@ -755,7 +940,15 @@ pub async fn proxy_mmry_search(
     }
 
     let target_url = get_mmry_target(&state, &session)?;
-    proxy_request_to_url(state.http_client.clone(), req, &target_url, "v1/federation/search").await
+    let store = get_mmry_store_name(&state, &session);
+    proxy_request_to_url(
+        state.http_client.clone(),
+        req,
+        &target_url,
+        "v1/federation/search",
+        store.as_deref(),
+    )
+    .await
 }
 
 /// Proxy requests to list memories for a session.
@@ -784,7 +977,15 @@ pub async fn proxy_mmry_list(
     }
 
     let target_url = get_mmry_target(&state, &session)?;
-    proxy_request_to_url(state.http_client.clone(), req, &target_url, "v1/memories").await
+    let store = get_mmry_store_name(&state, &session);
+    proxy_request_to_url(
+        state.http_client.clone(),
+        req,
+        &target_url,
+        "v1/memories",
+        store.as_deref(),
+    )
+    .await
 }
 
 /// Proxy requests to add a memory for a session.
@@ -813,7 +1014,15 @@ pub async fn proxy_mmry_add(
     }
 
     let target_url = get_mmry_target(&state, &session)?;
-    proxy_request_to_url(state.http_client.clone(), req, &target_url, "v1/agents/memories").await
+    let store = get_mmry_store_name(&state, &session);
+    proxy_request_to_url(
+        state.http_client.clone(),
+        req,
+        &target_url,
+        "v1/agents/memories",
+        store.as_deref(),
+    )
+    .await
 }
 
 /// Proxy requests to get/update/delete a specific memory.
@@ -842,8 +1051,16 @@ pub async fn proxy_mmry_memory(
     }
 
     let target_url = get_mmry_target(&state, &session)?;
+    let store = get_mmry_store_name(&state, &session);
     let path = format!("v1/memories/{}", memory_id);
-    proxy_request_to_url(state.http_client.clone(), req, &target_url, &path).await
+    proxy_request_to_url(
+        state.http_client.clone(),
+        req,
+        &target_url,
+        &path,
+        store.as_deref(),
+    )
+    .await
 }
 
 /// Proxy requests to list mmry stores for a session.
@@ -872,7 +1089,101 @@ pub async fn proxy_mmry_stores(
     }
 
     let target_url = get_mmry_target(&state, &session)?;
-    proxy_request_to_url(state.http_client.clone(), req, &target_url, "v1/stores").await
+    // Note: stores endpoint doesn't need a store parameter - it lists all stores
+    proxy_request_to_url(
+        state.http_client.clone(),
+        req,
+        &target_url,
+        "v1/stores",
+        None,
+    )
+    .await
+}
+
+// ============================================================================
+// Workspace-based Mmry Proxy Handlers (single-user mode)
+// ============================================================================
+
+/// Proxy requests to list memories for a workspace (single-user mode).
+///
+/// Routes: GET /workspace/memories
+pub async fn proxy_mmry_list_for_workspace(
+    State(state): State<AppState>,
+    Query(query): Query<WorkspaceProxyQuery>,
+    req: Request<Body>,
+) -> Result<Response, StatusCode> {
+    let target_url = get_mmry_target_for_workspace(&state)?;
+    let store = get_mmry_store_name_from_path(&state, &query.workspace_path);
+    proxy_request_to_url(
+        state.http_client.clone(),
+        req,
+        &target_url,
+        "v1/memories",
+        store.as_deref(),
+    )
+    .await
+}
+
+/// Proxy requests to add a memory for a workspace (single-user mode).
+///
+/// Routes: POST /workspace/memories
+pub async fn proxy_mmry_add_for_workspace(
+    State(state): State<AppState>,
+    Query(query): Query<WorkspaceProxyQuery>,
+    req: Request<Body>,
+) -> Result<Response, StatusCode> {
+    let target_url = get_mmry_target_for_workspace(&state)?;
+    let store = get_mmry_store_name_from_path(&state, &query.workspace_path);
+    proxy_request_to_url(
+        state.http_client.clone(),
+        req,
+        &target_url,
+        "v1/agents/memories",
+        store.as_deref(),
+    )
+    .await
+}
+
+/// Proxy search requests for a workspace (single-user mode).
+///
+/// Routes: POST /workspace/memories/search
+pub async fn proxy_mmry_search_for_workspace(
+    State(state): State<AppState>,
+    Query(query): Query<WorkspaceProxyQuery>,
+    req: Request<Body>,
+) -> Result<Response, StatusCode> {
+    let target_url = get_mmry_target_for_workspace(&state)?;
+    let store = get_mmry_store_name_from_path(&state, &query.workspace_path);
+    proxy_request_to_url(
+        state.http_client.clone(),
+        req,
+        &target_url,
+        "v1/federation/search",
+        store.as_deref(),
+    )
+    .await
+}
+
+/// Proxy requests to get/update/delete a specific memory for a workspace (single-user mode).
+///
+/// Routes: GET/PUT/DELETE /workspace/memories/{memory_id}
+pub async fn proxy_mmry_memory_for_workspace(
+    State(state): State<AppState>,
+    Path(memory_id): Path<String>,
+    Query(query): Query<WorkspaceProxyQuery>,
+    req: Request<Body>,
+) -> Result<Response, StatusCode> {
+    let target_url = get_mmry_target_for_workspace(&state)?;
+    let store = get_mmry_store_name_from_path(&state, &query.workspace_path);
+    let path = format!("v1/memories/{}", memory_id);
+    proxy_request_to_url(
+        state.http_client.clone(),
+        req,
+        &target_url,
+        &path,
+        store.as_deref(),
+    )
+    .await
 }
 
 // ============================================================================

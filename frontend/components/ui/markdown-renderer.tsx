@@ -50,8 +50,7 @@ const CopyButton = memo(function CopyButton({
 			type="button"
 			onClick={handleCopy}
 			className={cn(
-				"p-1.5 rounded-md transition-colors",
-				"text-muted-foreground hover:text-foreground hover:bg-muted",
+				"p-1.5 text-muted-foreground",
 				className,
 			)}
 			title="Copy to clipboard"

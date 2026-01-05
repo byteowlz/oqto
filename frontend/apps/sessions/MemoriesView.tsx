@@ -1,6 +1,5 @@
 "use client";
 
-import { useApp } from "@/components/app-context";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -59,18 +58,25 @@ interface SearchResponse {
 
 interface MemoriesViewProps {
 	className?: string;
+	/** Workspace path for memory API calls */
+	workspacePath?: string | null;
 }
 
-// API functions
+// Build workspace memories URL with workspace_path query param
+function workspaceMemoriesUrl(workspacePath: string, path = ""): string {
+	const base = controlPlaneApiUrl(`/api/workspace/memories${path}`);
+	const url = new URL(base, window.location.origin);
+	url.searchParams.set("workspace_path", workspacePath);
+	return url.toString();
+}
+
+// API functions using workspace-based routes
 async function fetchMemories(
-	sessionId: string,
+	workspacePath: string,
 	offset = 0,
 	limit = 50,
 ): Promise<MemoryListResponse> {
-	const url = new URL(
-		controlPlaneApiUrl(`/api/session/${sessionId}/memories`),
-		window.location.origin,
-	);
+	const url = new URL(workspaceMemoriesUrl(workspacePath), window.location.origin);
 	url.searchParams.set("limit", limit.toString());
 	url.searchParams.set("offset", offset.toString());
 
@@ -88,12 +94,12 @@ async function fetchMemories(
 }
 
 async function searchMemories(
-	sessionId: string,
+	workspacePath: string,
 	query: string,
 	limit = 50,
 ): Promise<Memory[]> {
 	const res = await fetch(
-		controlPlaneApiUrl(`/api/session/${sessionId}/memories/search`),
+		workspaceMemoriesUrl(workspacePath, "/search"),
 		{
 			method: "POST",
 			credentials: "include",
@@ -113,14 +119,14 @@ async function searchMemories(
 }
 
 async function addMemory(
-	sessionId: string,
+	workspacePath: string,
 	content: string,
 	category?: string,
 	tags?: string[],
 	importance?: number,
 ): Promise<Memory> {
 	const res = await fetch(
-		controlPlaneApiUrl(`/api/session/${sessionId}/memories`),
+		workspaceMemoriesUrl(workspacePath),
 		{
 			method: "POST",
 			credentials: "include",
@@ -141,11 +147,11 @@ async function addMemory(
 }
 
 async function deleteMemory(
-	sessionId: string,
+	workspacePath: string,
 	memoryId: string,
 ): Promise<void> {
 	const res = await fetch(
-		controlPlaneApiUrl(`/api/session/${sessionId}/memories/${memoryId}`),
+		workspaceMemoriesUrl(workspacePath, `/${memoryId}`),
 		{
 			method: "DELETE",
 			credentials: "include",
@@ -157,7 +163,7 @@ async function deleteMemory(
 }
 
 async function updateMemory(
-	sessionId: string,
+	workspacePath: string,
 	memoryId: string,
 	content: string,
 	category?: string,
@@ -165,7 +171,7 @@ async function updateMemory(
 	importance?: number,
 ): Promise<Memory> {
 	const res = await fetch(
-		controlPlaneApiUrl(`/api/session/${sessionId}/memories/${memoryId}`),
+		workspaceMemoriesUrl(workspacePath, `/${memoryId}`),
 		{
 			method: "PUT",
 			credentials: "include",
@@ -342,8 +348,7 @@ function MemoryCard({
 	);
 }
 
-export function MemoriesView({ className }: MemoriesViewProps) {
-	const { selectedWorkspaceSessionId } = useApp();
+export function MemoriesView({ className, workspacePath }: MemoriesViewProps) {
 	const [memories, setMemories] = useState<Memory[]>([]);
 	const [total, setTotal] = useState(0);
 	const [loading, setLoading] = useState(true);
@@ -358,13 +363,13 @@ export function MemoriesView({ className }: MemoriesViewProps) {
 	const addTextareaRef = useRef<HTMLTextAreaElement>(null);
 
 	const loadMemories = useCallback(async () => {
-		if (!selectedWorkspaceSessionId) return;
+		if (!workspacePath) return;
 
 		setLoading(true);
 		setError("");
 		setIsSearchMode(false);
 		try {
-			const data = await fetchMemories(selectedWorkspaceSessionId);
+			const data = await fetchMemories(workspacePath);
 			setMemories(data.memories);
 			setTotal(data.total);
 		} catch (err) {
@@ -372,7 +377,7 @@ export function MemoriesView({ className }: MemoriesViewProps) {
 		} finally {
 			setLoading(false);
 		}
-	}, [selectedWorkspaceSessionId]);
+	}, [workspacePath]);
 
 	useEffect(() => {
 		loadMemories();
@@ -385,7 +390,7 @@ export function MemoriesView({ className }: MemoriesViewProps) {
 	}, [showAddForm]);
 
 	const handleSearch = useCallback(async () => {
-		if (!selectedWorkspaceSessionId) return;
+		if (!workspacePath) return;
 
 		if (!searchQuery.trim()) {
 			loadMemories();
@@ -397,7 +402,7 @@ export function MemoriesView({ className }: MemoriesViewProps) {
 		setIsSearchMode(true);
 		try {
 			const results = await searchMemories(
-				selectedWorkspaceSessionId,
+				workspacePath,
 				searchQuery,
 			);
 			setMemories(results);
@@ -407,7 +412,7 @@ export function MemoriesView({ className }: MemoriesViewProps) {
 		} finally {
 			setIsSearching(false);
 		}
-	}, [selectedWorkspaceSessionId, searchQuery, loadMemories]);
+	}, [workspacePath, searchQuery, loadMemories]);
 
 	const handleClearSearch = useCallback(() => {
 		setSearchQuery("");
@@ -415,13 +420,13 @@ export function MemoriesView({ className }: MemoriesViewProps) {
 	}, [loadMemories]);
 
 	const handleAdd = useCallback(async () => {
-		if (!selectedWorkspaceSessionId || !newMemoryContent.trim()) return;
+		if (!workspacePath || !newMemoryContent.trim()) return;
 
 		setIsAdding(true);
 		setError("");
 		try {
 			const newMemory = await addMemory(
-				selectedWorkspaceSessionId,
+				workspacePath,
 				newMemoryContent,
 			);
 			setMemories((prev) => [newMemory, ...prev]);
@@ -433,15 +438,15 @@ export function MemoriesView({ className }: MemoriesViewProps) {
 		} finally {
 			setIsAdding(false);
 		}
-	}, [selectedWorkspaceSessionId, newMemoryContent]);
+	}, [workspacePath, newMemoryContent]);
 
 	const handleDelete = useCallback(
 		async (memoryId: string) => {
-			if (!selectedWorkspaceSessionId) return;
+			if (!workspacePath) return;
 
 			setDeletingId(memoryId);
 			try {
-				await deleteMemory(selectedWorkspaceSessionId, memoryId);
+				await deleteMemory(workspacePath, memoryId);
 				setMemories((prev) => prev.filter((m) => m.id !== memoryId));
 				setTotal((prev) => prev - 1);
 			} catch (err) {
@@ -452,16 +457,16 @@ export function MemoriesView({ className }: MemoriesViewProps) {
 				setDeletingId(null);
 			}
 		},
-		[selectedWorkspaceSessionId],
+		[workspacePath],
 	);
 
 	const handleEdit = useCallback(
 		async (memoryId: string, content: string) => {
-			if (!selectedWorkspaceSessionId) return;
+			if (!workspacePath) return;
 
 			try {
 				const updated = await updateMemory(
-					selectedWorkspaceSessionId,
+					workspacePath,
 					memoryId,
 					content,
 				);
@@ -475,11 +480,11 @@ export function MemoriesView({ className }: MemoriesViewProps) {
 				throw err; // Re-throw so the card knows to not exit edit mode
 			}
 		},
-		[selectedWorkspaceSessionId],
+		[workspacePath],
 	);
 
-	// No session selected
-	if (!selectedWorkspaceSessionId) {
+	// No workspace selected
+	if (!workspacePath) {
 		return (
 			<div
 				className={cn(
@@ -489,7 +494,7 @@ export function MemoriesView({ className }: MemoriesViewProps) {
 			>
 				<div className="text-center text-muted-foreground">
 					<Brain className="w-12 h-12 mx-auto mb-2 opacity-50" />
-					<p className="text-sm">No session selected</p>
+					<p className="text-sm">Select a chat to view memories</p>
 				</div>
 			</div>
 		);

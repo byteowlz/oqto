@@ -6,15 +6,14 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use comrak::{markdown_to_html_with_plugins, Options, Plugins};
 use comrak::plugins::syntect::SyntectAdapter;
+use comrak::{Options, Plugins, markdown_to_html_with_plugins};
 use once_cell::sync::Lazy;
 use tokio::sync::RwLock;
 
 // Syntect adapter for code highlighting - initialized once
-static SYNTECT_ADAPTER: Lazy<SyntectAdapter> = Lazy::new(|| {
-    SyntectAdapter::new(Some("base16-ocean.dark"))
-});
+static SYNTECT_ADAPTER: Lazy<SyntectAdapter> =
+    Lazy::new(|| SyntectAdapter::new(Some("base16-ocean.dark")));
 
 // Simple LRU-ish cache for rendered markdown
 static RENDER_CACHE: Lazy<Arc<RwLock<MarkdownCache>>> = Lazy::new(|| {
@@ -42,16 +41,14 @@ impl MarkdownCache {
         // Prune if needed
         if self.entries.len() >= self.max_entries {
             // Remove oldest entries
-            let mut entries: Vec<_> = self.entries.iter()
-                .map(|(k, (_, t))| (*k, *t))
-                .collect();
+            let mut entries: Vec<_> = self.entries.iter().map(|(k, (_, t))| (*k, *t)).collect();
             entries.sort_by(|a, b| a.1.cmp(&b.1));
-            
+
             for (key, _) in entries.into_iter().take(self.max_entries / 4) {
                 self.entries.remove(&key);
             }
         }
-        
+
         self.entries.insert(hash, (html, std::time::Instant::now()));
     }
 }
@@ -65,11 +62,11 @@ fn hash_content(content: &str) -> u64 {
 }
 
 /// Render markdown to HTML with syntax highlighting.
-/// 
+///
 /// This is cached - repeated calls with the same content will return cached HTML.
 pub async fn render_markdown(content: &str) -> String {
     let hash = hash_content(content);
-    
+
     // Check cache
     {
         let cache = RENDER_CACHE.read().await;
@@ -77,22 +74,20 @@ pub async fn render_markdown(content: &str) -> String {
             return html;
         }
     }
-    
+
     // Render in blocking task (comrak/syntect are not async)
     let content_owned = content.to_string();
     let content_for_error = content.to_string();
-    let html = tokio::task::spawn_blocking(move || {
-        render_markdown_sync(&content_owned)
-    })
-    .await
-    .unwrap_or_else(|_| format!("<pre>{}</pre>", html_escape(&content_for_error)));
-    
+    let html = tokio::task::spawn_blocking(move || render_markdown_sync(&content_owned))
+        .await
+        .unwrap_or_else(|_| format!("<pre>{}</pre>", html_escape(&content_for_error)));
+
     // Cache result
     {
         let mut cache = RENDER_CACHE.write().await;
         cache.insert(hash, html.clone());
     }
-    
+
     html
 }
 
@@ -105,10 +100,10 @@ fn render_markdown_sync(content: &str) -> String {
     options.extension.tasklist = true;
     options.render.unsafe_ = false; // Don't allow raw HTML
     options.render.escape = true;
-    
+
     let mut plugins = Plugins::default();
     plugins.render.codefence_syntax_highlighter = Some(&*SYNTECT_ADAPTER);
-    
+
     markdown_to_html_with_plugins(content, &options, &plugins)
 }
 
@@ -124,10 +119,11 @@ fn html_escape(s: &str) -> String {
 /// Render multiple markdown strings in parallel.
 /// Returns a vector of HTML strings in the same order.
 pub async fn render_markdown_batch(contents: Vec<String>) -> Vec<String> {
-    let futures: Vec<_> = contents.into_iter()
+    let futures: Vec<_> = contents
+        .into_iter()
         .map(|c| async move { render_markdown(&c).await })
         .collect();
-    
+
     futures::future::join_all(futures).await
 }
 

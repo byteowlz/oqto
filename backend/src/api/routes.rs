@@ -1,10 +1,9 @@
 //! API route definitions.
 
-use axum::http::{header, HeaderValue, Method};
+use axum::http::{HeaderValue, Method, header};
 use axum::{
-    middleware,
+    Router, middleware,
     routing::{delete, get, post, put},
-    Router,
 };
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::trace::{DefaultMakeSpan, DefaultOnRequest, DefaultOnResponse, TraceLayer};
@@ -108,10 +107,36 @@ pub fn create_router(state: AppState) -> Router {
                 .delete(proxy::proxy_fileserver),
         )
         .route(
+            "/workspace/files/{*path}",
+            get(proxy::proxy_fileserver_for_workspace)
+                .post(proxy::proxy_fileserver_for_workspace)
+                .put(proxy::proxy_fileserver_for_workspace)
+                .delete(proxy::proxy_fileserver_for_workspace),
+        )
+        .route(
             "/sessions/{session_id}/terminal",
             get(proxy::proxy_terminal_ws),
         )
         .route("/session/{session_id}/term", get(proxy::proxy_terminal_ws))
+        .route(
+            "/workspace/term",
+            get(proxy::proxy_terminal_ws_for_workspace),
+        )
+        // Workspace-based mmry routes (single-user mode)
+        .route(
+            "/workspace/memories",
+            get(proxy::proxy_mmry_list_for_workspace).post(proxy::proxy_mmry_add_for_workspace),
+        )
+        .route(
+            "/workspace/memories/search",
+            post(proxy::proxy_mmry_search_for_workspace),
+        )
+        .route(
+            "/workspace/memories/{memory_id}",
+            get(proxy::proxy_mmry_memory_for_workspace)
+                .put(proxy::proxy_mmry_memory_for_workspace)
+                .delete(proxy::proxy_mmry_memory_for_workspace),
+        )
         // Sub-agent proxy routes
         .route(
             "/session/{session_id}/agent/{agent_id}/code/event",
@@ -233,6 +258,11 @@ pub fn create_router(state: AppState) -> Router {
             get(handlers::get_settings_values).patch(handlers::update_settings_values),
         )
         .route("/settings/reload", post(handlers::reload_settings))
+        // OpenCode global config
+        .route(
+            "/opencode/config",
+            get(handlers::get_global_opencode_config),
+        )
         // Main Chat routes (single persistent cross-project assistant per user)
         .route(
             "/main",

@@ -13,4 +13,4 @@ mod state;
 #[allow(unused_imports)]
 pub use error::{ApiError, ApiResult, ErrorResponse};
 pub use routes::create_router;
-pub use state::{AppState, MmryState, SessionUiState, VoiceState, VisualizerVoiceState};
+pub use state::{AppState, MmryState, SessionUiState, VisualizerVoiceState, VoiceState};

@@ -1,5 +1,7 @@
 //! Test utilities and common setup.
 
+use anyhow::Result;
+use async_trait::async_trait;
 use axum::Router;
 use octo::agent::{AgentRepository, AgentService, ScaffoldConfig};
 use octo::agent_rpc::{
@@ -13,18 +15,10 @@ use octo::db::Database;
 use octo::invite::InviteCodeRepository;
 use octo::session::{SessionRepository, SessionService, SessionServiceConfig};
 use octo::user::{UserRepository, UserService};
-use anyhow::Result;
-use async_trait::async_trait;
 use std::path::Path;
 use std::sync::Arc;
 
-fn make_dev_user(
-    id: &str,
-    name: &str,
-    email: &str,
-    password: &str,
-    role: Role,
-) -> DevUser {
+fn make_dev_user(id: &str, name: &str, email: &str, password: &str, role: Role) -> DevUser {
     let password_hash =
         bcrypt::hash(password, bcrypt::DEFAULT_COST).expect("Failed to hash password");
 
@@ -155,7 +149,6 @@ impl MockAgentBackend {
             healthy: true,
         }
     }
-
 }
 
 #[async_trait]
@@ -226,14 +219,12 @@ impl AgentBackend for MockAgentBackend {
         })
     }
 
-    async fn get_session_url(
-        &self,
-        _user_id: &str,
-        session_id: &str,
-    ) -> Result<Option<String>> {
-        Ok(Some(format!("http://localhost:41820/session/{}", session_id)))
+    async fn get_session_url(&self, _user_id: &str, session_id: &str) -> Result<Option<String>> {
+        Ok(Some(format!(
+            "http://localhost:41820/session/{}",
+            session_id
+        )))
     }
-
 }
 
 /// Create a test application with AgentBackend enabled.

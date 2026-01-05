@@ -836,7 +836,12 @@ export function ToolCallCard({
 		return null;
 	}
 
-	const hasContent = input || output;
+	// Check if we have meaningful content to show
+	// For tool calls, input must have actual properties (not just an empty object)
+	// and output must be a non-empty string
+	const hasInput = input && Object.keys(input).length > 0;
+	const hasOutput = output && output.trim().length > 0;
+	const hasContent = hasInput || hasOutput;
 
 	return (
 		<div

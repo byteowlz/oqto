@@ -98,6 +98,7 @@ import {
 	Paperclip,
 	RefreshCw,
 	Send,
+	Settings,
 	Sparkles,
 	Square,
 	StopCircle,
@@ -132,6 +133,11 @@ const TerminalView = lazy(() =>
 const MemoriesView = lazy(() =>
 	import("@/apps/sessions/MemoriesView").then((mod) => ({
 		default: mod.MemoriesView,
+	})),
+);
+const AgentSettingsView = lazy(() =>
+	import("@/apps/sessions/AgentSettingsView").then((mod) => ({
+		default: mod.AgentSettingsView,
 	})),
 );
 
@@ -173,7 +179,8 @@ type ActiveView =
 	| "preview"
 	| "tasks"
 	| "memories"
-	| "voice";
+	| "voice"
+	| "settings";
 
 function groupMessages(messages: OpenCodeMessageWithParts[]): MessageGroup[] {
 	const groups: MessageGroup[] = [];
@@ -2082,7 +2089,7 @@ export function SessionsApp() {
 			{/* Working indicator with stop button */}
 			{chatState === "sending" && (
 				<div className="flex items-center gap-1.5 px-2 py-0.5 bg-primary/10 text-xs text-primary">
-					<KnightRiderSpinner />
+					<BrailleSpinner />
 					<span className="font-medium flex-1">
 						{locale === "de" ? "Agent arbeitet..." : "Agent working..."}
 					</span>
@@ -2573,13 +2580,14 @@ export function SessionsApp() {
 					{activeView === "files" && (
 						<FileTreeView
 							onPreviewFile={handlePreviewFile}
+							workspacePath={resumeWorkspacePath}
 							state={fileTreeState}
 							onStateChange={handleFileTreeStateChange}
 						/>
 					)}
 					{activeView === "preview" && (
 						<Suspense fallback={viewLoadingFallback}>
-							<PreviewView filePath={previewFilePath} />
+							<PreviewView filePath={previewFilePath} workspacePath={resumeWorkspacePath} />
 						</Suspense>
 					)}
 					{activeView === "tasks" && (
@@ -2587,14 +2595,14 @@ export function SessionsApp() {
 					)}
 					{features.mmry_enabled && activeView === "memories" && (
 						<Suspense fallback={viewLoadingFallback}>
-							<MemoriesView />
+							<MemoriesView workspacePath={resumeWorkspacePath} />
 						</Suspense>
 					)}
 					{/* Terminal only rendered in mobile layout when isMobileLayout is true */}
 					{isMobileLayout && (
 						<div className={activeView === "terminal" ? "h-full" : "hidden"}>
 							<Suspense fallback={viewLoadingFallback}>
-								<TerminalView sessionId={selectedWorkspaceSessionId} />
+								<TerminalView workspacePath={resumeWorkspacePath} />
 							</Suspense>
 						</div>
 					)}
@@ -2665,18 +2673,27 @@ export function SessionsApp() {
 								hideLabel
 							/>
 						)}
+						<TabButton
+							activeView={activeView}
+							onSelect={setActiveView}
+							view="settings"
+							icon={Settings}
+							label={locale === "de" ? "Einstellungen" : "Settings"}
+							hideLabel
+						/>
 					</div>
 					<div className="flex-1 min-h-0 overflow-hidden">
 						{activeView === "files" && (
 							<FileTreeView
 								onPreviewFile={handlePreviewFile}
+								workspacePath={resumeWorkspacePath}
 								state={fileTreeState}
 								onStateChange={handleFileTreeStateChange}
 							/>
 						)}
 						{activeView === "preview" && (
 							<Suspense fallback={viewLoadingFallback}>
-								<PreviewView filePath={previewFilePath} />
+								<PreviewView filePath={previewFilePath} workspacePath={resumeWorkspacePath} />
 							</Suspense>
 						)}
 						{activeView === "tasks" && (
@@ -2687,17 +2704,22 @@ export function SessionsApp() {
 						)}
 						{features.mmry_enabled && activeView === "memories" && (
 							<Suspense fallback={viewLoadingFallback}>
-								<MemoriesView />
+								<MemoriesView workspacePath={resumeWorkspacePath} />
 							</Suspense>
 						)}
 						{activeView === "voice" && voiceMode.isActive && (
 							<VoicePanel {...voicePanelProps} />
 						)}
+						{activeView === "settings" && (
+							<Suspense fallback={viewLoadingFallback}>
+								<AgentSettingsView />
+							</Suspense>
+						)}
 						{/* Terminal only rendered in desktop layout when isMobileLayout is false */}
 						{!isMobileLayout && (
 							<div className={activeView === "terminal" ? "h-full" : "hidden"}>
 								<Suspense fallback={viewLoadingFallback}>
-									<TerminalView sessionId={selectedWorkspaceSessionId} />
+									<TerminalView workspacePath={resumeWorkspacePath} />
 								</Suspense>
 							</div>
 						)}
@@ -2856,7 +2878,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 			<div className="px-2 sm:px-4 py-2 sm:py-3 group space-y-3 overflow-hidden">
 				{segments.length === 0 && !isUser && (
 					<div className="flex items-center gap-3 text-muted-foreground text-sm">
-						<KnightRiderSpinner />
+						<BrailleSpinner />
 						<span>Working...</span>
 					</div>
 				)}
@@ -3149,116 +3171,24 @@ function ContextWindowGauge({
 	);
 }
 
-function KnightRiderSpinner() {
+// Braille patterns for spinner animation
+const BRAILLE_PATTERNS = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
+// 6-dot braille spinner - cycles through braille patterns
+function BrailleSpinner() {
+	const [frame, setFrame] = useState(0);
+
+	useEffect(() => {
+		const interval = setInterval(() => {
+			setFrame((f) => (f + 1) % BRAILLE_PATTERNS.length);
+		}, 80);
+		return () => clearInterval(interval);
+	}, []);
+
 	return (
-		<>
-			<style>{`
-        @keyframes kitt-swoosh {
-          0% { left: -35%; opacity: 0; }
-          10% { left: 0%; opacity: 1; }
-          40% { left: 80%; opacity: 1; }
-          50% { left: 115%; opacity: 0; }
-          60% { left: 80%; opacity: 1; }
-          90% { left: 0%; opacity: 1; }
-          100% { left: -35%; opacity: 0; }
-        }
-        @keyframes kitt-ghost-1 {
-          0% { left: -33.5%; opacity: 0; }
-          10% { left: 1.5%; opacity: 0.6; }
-          40% { left: 78.5%; opacity: 0.6; }
-          50% { left: 113.5%; opacity: 0; }
-          60% { left: 78.5%; opacity: 0.6; }
-          90% { left: 1.5%; opacity: 0.6; }
-          100% { left: -33.5%; opacity: 0; }
-        }
-        @keyframes kitt-ghost-2 {
-          0% { left: -32%; opacity: 0; }
-          10% { left: 3%; opacity: 0.4; }
-          40% { left: 77%; opacity: 0.4; }
-          50% { left: 112%; opacity: 0; }
-          60% { left: 77%; opacity: 0.4; }
-          90% { left: 3%; opacity: 0.4; }
-          100% { left: -32%; opacity: 0; }
-        }
-        @keyframes kitt-ghost-3 {
-          0% { left: -30.5%; opacity: 0; }
-          10% { left: 4.5%; opacity: 0.25; }
-          40% { left: 75.5%; opacity: 0.25; }
-          50% { left: 110.5%; opacity: 0; }
-          60% { left: 75.5%; opacity: 0.25; }
-          90% { left: 4.5%; opacity: 0.25; }
-          100% { left: -30.5%; opacity: 0; }
-        }
-        @keyframes kitt-ghost-4 {
-          0% { left: -29%; opacity: 0; }
-          10% { left: 6%; opacity: 0.15; }
-          40% { left: 74%; opacity: 0.15; }
-          50% { left: 109%; opacity: 0; }
-          60% { left: 74%; opacity: 0.15; }
-          90% { left: 6%; opacity: 0.15; }
-          100% { left: -29%; opacity: 0; }
-        }
-      `}</style>
-			<div className="relative h-[6px] w-[60px] rounded-full overflow-hidden bg-primary/15">
-				{/* Ghost trails - furthest back */}
-				<div
-					className="absolute top-0 h-full rounded-full"
-					style={{
-						width: "20%",
-						background:
-							"linear-gradient(to right, transparent, var(--primary), transparent)",
-						animation:
-							"kitt-ghost-4 1.2s cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite",
-						filter: "blur(2px)",
-					}}
-				/>
-				<div
-					className="absolute top-0 h-full rounded-full"
-					style={{
-						width: "20%",
-						background:
-							"linear-gradient(to right, transparent, var(--primary), transparent)",
-						animation:
-							"kitt-ghost-3 1.2s cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite",
-						filter: "blur(1.5px)",
-					}}
-				/>
-				<div
-					className="absolute top-0 h-full rounded-full"
-					style={{
-						width: "20%",
-						background:
-							"linear-gradient(to right, transparent, var(--primary), transparent)",
-						animation:
-							"kitt-ghost-2 1.2s cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite",
-						filter: "blur(1px)",
-					}}
-				/>
-				<div
-					className="absolute top-0 h-full rounded-full"
-					style={{
-						width: "20%",
-						background:
-							"linear-gradient(to right, transparent, var(--primary), transparent)",
-						animation:
-							"kitt-ghost-1 1.2s cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite",
-						filter: "blur(0.5px)",
-					}}
-				/>
-				{/* Main bright light */}
-				<div
-					className="absolute top-0 h-full rounded-full"
-					style={{
-						width: "20%",
-						background:
-							"linear-gradient(to right, transparent, var(--primary), transparent)",
-						boxShadow: "0 0 8px var(--primary), 0 0 12px var(--primary)",
-						animation:
-							"kitt-swoosh 1.2s cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite",
-					}}
-				/>
-			</div>
-		</>
+		<span className="text-primary font-mono text-sm">
+			{BRAILLE_PATTERNS[frame]}
+		</span>
 	);
 }
 

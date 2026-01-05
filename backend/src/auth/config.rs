@@ -195,13 +195,7 @@ impl DevUser {
 mod tests {
     use super::*;
 
-    fn make_dev_user(
-        id: &str,
-        name: &str,
-        email: &str,
-        password: &str,
-        role: Role,
-    ) -> DevUser {
+    fn make_dev_user(id: &str, name: &str, email: &str, password: &str, role: Role) -> DevUser {
         let password_hash =
             bcrypt::hash(password, bcrypt::DEFAULT_COST).expect("Failed to hash password");
 

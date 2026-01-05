@@ -385,7 +385,7 @@ export function PersonasApp() {
 								>
 									<div className="flex items-center justify-between">
 										<div className="font-medium text-sm">
-											{session.readable_id || session.id.slice(0, 8)}
+											{session.id.slice(0, 8)}
 										</div>
 										<div
 											className={cn(

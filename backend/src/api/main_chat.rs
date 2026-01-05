@@ -4,9 +4,9 @@
 //! The Main Chat stores history, sessions, and configuration.
 
 use axum::{
+    Json,
     extract::{Query, State},
     http::StatusCode,
-    Json,
 };
 use serde::{Deserialize, Serialize};
 

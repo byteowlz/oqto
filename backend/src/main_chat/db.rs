@@ -117,10 +117,7 @@ impl MainChatDb {
 
     /// Check if the database is healthy.
     pub async fn is_healthy(&self) -> bool {
-        sqlx::query("SELECT 1")
-            .fetch_one(&self.pool)
-            .await
-            .is_ok()
+        sqlx::query("SELECT 1").fetch_one(&self.pool).await.is_ok()
     }
 }
 
@@ -181,10 +178,10 @@ mod tests {
     #[tokio::test]
     async fn test_main_chat_paths_single_user() {
         let workspace_dir = Path::new("/home/user/octo");
-        
+
         let dir = main_chat_dir_path(workspace_dir, "ignored", true);
         assert_eq!(dir, PathBuf::from("/home/user/octo/main"));
-        
+
         let db = main_chat_db_path(workspace_dir, "ignored", true);
         assert_eq!(db, PathBuf::from("/home/user/octo/main/main_chat.db"));
     }
@@ -192,12 +189,15 @@ mod tests {
     #[tokio::test]
     async fn test_main_chat_paths_multi_user() {
         let workspace_dir = Path::new("/data/octo/workspaces");
-        
+
         let dir = main_chat_dir_path(workspace_dir, "user123", false);
         assert_eq!(dir, PathBuf::from("/data/octo/workspaces/user123/main"));
-        
+
         let db = main_chat_db_path(workspace_dir, "user123", false);
-        assert_eq!(db, PathBuf::from("/data/octo/workspaces/user123/main/main_chat.db"));
+        assert_eq!(
+            db,
+            PathBuf::from("/data/octo/workspaces/user123/main/main_chat.db")
+        );
     }
 
     #[test]
@@ -205,10 +205,10 @@ mod tests {
         let title = "2025-01-04";
         let prefixed = prefixed_title(title);
         assert_eq!(prefixed, "[[main]] 2025-01-04");
-        
+
         let stripped = strip_title_prefix(&prefixed);
         assert_eq!(stripped, "2025-01-04");
-        
+
         // Non-prefixed titles are returned as-is
         let normal = "Regular session";
         assert_eq!(strip_title_prefix(normal), "Regular session");

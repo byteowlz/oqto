@@ -1091,6 +1091,63 @@ pub async fn delete_file(
     }))
 }
 
+/// PUT /file - Write file contents directly (for simple text/JSON files)
+pub async fn write_file(
+    State(state): State<AppState>,
+    Query(query): Query<UploadQuery>,
+    body: axum::body::Bytes,
+) -> Result<Json<SuccessResponse>, FileServerError> {
+    let dest_path = resolve_path(&state.root_dir, &query.path)?;
+
+    // Create parent directories if requested
+    if query.mkdir {
+        if let Some(parent) = dest_path.parent() {
+            if parent != state.root_dir && !parent.exists() {
+                fs::create_dir_all(parent).await.map_err(|e| {
+                    error!("Failed to create directory: {}", e);
+                    FileServerError::CreateDirFailed(parent.display().to_string())
+                })?;
+            }
+        }
+    }
+
+    // SECURITY: Verify final path is within root
+    let canonical_root = state.root_dir.canonicalize().map_err(FileServerError::Io)?;
+    if let Ok(canonical_dest) = dest_path.canonicalize() {
+        if !canonical_dest.starts_with(&canonical_root) {
+            warn!("Write path escaped root: {:?}", dest_path);
+            return Err(FileServerError::PathTraversal);
+        }
+    } else if let Some(parent) = dest_path.parent() {
+        // File doesn't exist yet, check parent
+        if let Ok(canonical_parent) = parent.canonicalize() {
+            if !canonical_parent.starts_with(&canonical_root) {
+                warn!("Write path parent escaped root: {:?}", parent);
+                return Err(FileServerError::PathTraversal);
+            }
+        }
+    }
+
+    info!("Writing file: {} ({} bytes)", dest_path.display(), body.len());
+
+    // Write the file
+    let mut file = fs::File::create(&dest_path).await.map_err(|e| {
+        error!("Failed to create file: {}", e);
+        FileServerError::Io(e)
+    })?;
+
+    file.write_all(&body).await.map_err(|e| {
+        error!("Failed to write file: {}", e);
+        FileServerError::Io(e)
+    })?;
+
+    Ok(Json(SuccessResponse {
+        success: true,
+        message: format!("Written: {} ({} bytes)", query.path, body.len()),
+        path: Some(query.path),
+    }))
+}
+
 /// PUT /mkdir - Create directory
 pub async fn create_dir(
     State(state): State<AppState>,

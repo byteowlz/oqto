@@ -1816,15 +1816,18 @@ function hashString(str: string): number {
 
 /**
  * Generate a deterministic human-readable ID from a session ID
- * Format: adjective-noun (e.g., "cold-lamp", "blue-frog")
+ * Format: adjective-noun-noun (e.g., "cold-lamp-bird")
+ * Combinations: 291 * 1506 * 1506 = ~660 million unique IDs
  *
  * Uses a simple hash of the session ID to pick words from the lists
  */
 export function generateReadableId(sessionId: string): string {
 	const hash = hashString(sessionId);
 	const adjIndex = hash % ADJECTIVES.length;
-	const nounIndex = Math.floor(hash / ADJECTIVES.length) % NOUNS.length;
-	return `${ADJECTIVES[adjIndex]}-${NOUNS[nounIndex]}`;
+	const noun1Index = Math.floor(hash / ADJECTIVES.length) % NOUNS.length;
+	const noun2Index =
+		Math.floor(hash / ADJECTIVES.length / NOUNS.length) % NOUNS.length;
+	return `${ADJECTIVES[adjIndex]}-${NOUNS[noun1Index]}-${NOUNS[noun2Index]}`;
 }
 
 /**

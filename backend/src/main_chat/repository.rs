@@ -207,11 +207,7 @@ impl<'a> MainChatRepository<'a> {
     }
 
     /// Update session message count.
-    pub async fn update_session_message_count(
-        &self,
-        session_id: &str,
-        count: i64,
-    ) -> Result<()> {
+    pub async fn update_session_message_count(&self, session_id: &str, count: i64) -> Result<()> {
         sqlx::query("UPDATE sessions SET message_count = ? WHERE session_id = ?")
             .bind(count)
             .bind(session_id)

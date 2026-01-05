@@ -197,7 +197,10 @@ impl LocalRuntime {
                 project_id,
                 Some(workspace_path),
             )?;
-            let username = self.config.linux_users.effective_username(user_id, project_id);
+            let username = self
+                .config
+                .linux_users
+                .effective_username(user_id, project_id);
             info!("Running session as Linux user '{}' (UID {})", username, uid);
             RunAsUser::new(username, self.config.linux_users.use_sudo)
         } else {
@@ -210,7 +213,10 @@ impl LocalRuntime {
 
         // Set ownership if Linux user isolation is enabled
         if self.config.linux_users.enabled && !self.config.single_user {
-            let username = self.config.linux_users.effective_username(user_id, project_id);
+            let username = self
+                .config
+                .linux_users
+                .effective_username(user_id, project_id);
             self.config
                 .linux_users
                 .chown_directory_to_user(workspace_path, &username)?;
@@ -346,7 +352,12 @@ impl LocalRuntime {
     /// Check if a set of ports are available for use.
     ///
     /// Returns true if all ports are free, false if any are in use.
-    pub fn check_ports_available(&self, opencode_port: u16, fileserver_port: u16, ttyd_port: u16) -> bool {
+    pub fn check_ports_available(
+        &self,
+        opencode_port: u16,
+        fileserver_port: u16,
+        ttyd_port: u16,
+    ) -> bool {
         super::process::are_ports_available(&[opencode_port, fileserver_port, ttyd_port])
     }
 
@@ -358,38 +369,41 @@ impl LocalRuntime {
     /// Returns the number of processes killed.
     pub fn clear_ports(&self, ports: &[u16]) -> usize {
         let mut killed = 0;
-        
+
         for &port in ports {
             if let Some((pid, name)) = super::process::find_process_on_port(port) {
                 info!(
                     "Found orphan process '{}' (PID {}) on port {}, killing...",
                     name, pid, port
                 );
-                
+
                 // Try graceful kill first
                 if super::process::kill_process(pid) {
                     // Wait a bit for graceful shutdown
                     std::thread::sleep(std::time::Duration::from_millis(500));
-                    
+
                     // Check if still running, force kill if needed
                     if !super::process::is_port_available(port) {
                         info!("Process {} still running, force killing...", pid);
                         super::process::force_kill_process(pid);
                         std::thread::sleep(std::time::Duration::from_millis(200));
                     }
-                    
+
                     if super::process::is_port_available(port) {
                         killed += 1;
                         info!("Cleared orphan process on port {}", port);
                     } else {
-                        warn!("Failed to clear port {} - process may still be running", port);
+                        warn!(
+                            "Failed to clear port {} - process may still be running",
+                            port
+                        );
                     }
                 } else {
                     warn!("Failed to kill process {} on port {}", pid, port);
                 }
             }
         }
-        
+
         killed
     }
 
@@ -400,11 +414,11 @@ impl LocalRuntime {
     /// lingering processes and kills them.
     pub fn startup_cleanup(&self, base_port: u16) {
         info!("Running local runtime startup cleanup...");
-        
+
         // Check the default port range (base, base+1, base+2)
         let ports = [base_port, base_port + 1, base_port + 2];
         let cleared = self.clear_ports(&ports);
-        
+
         if cleared > 0 {
             info!("Cleared {} orphan process(es) during startup", cleared);
         } else {

@@ -613,9 +613,23 @@ impl Default for VoiceConfig {
             interrupt_word_count: 2,
             interrupt_backoff_ms: 5000,
             visualizer_voices: [
-                ("orb".to_string(), VisualizerVoice { voice: "af_heart".to_string(), speed: 1.0 }),
-                ("kitt".to_string(), VisualizerVoice { voice: "am_michael".to_string(), speed: 1.1 }),
-            ].into_iter().collect(),
+                (
+                    "orb".to_string(),
+                    VisualizerVoice {
+                        voice: "af_heart".to_string(),
+                        speed: 1.0,
+                    },
+                ),
+                (
+                    "kitt".to_string(),
+                    VisualizerVoice {
+                        voice: "am_michael".to_string(),
+                        speed: 1.1,
+                    },
+                ),
+            ]
+            .into_iter()
+            .collect(),
         }
     }
 }
@@ -640,7 +654,7 @@ impl Default for SessionUiConfig {
 }
 
 /// mmry (memory system) configuration.
-/// 
+///
 /// Supports two modes:
 /// 1. Single-user local: Proxy to user's existing mmry service (no process management)
 /// 2. Multi-user: Per-user mmry instances with isolated databases and ports
@@ -1142,7 +1156,10 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
         runtime_mode
     };
     let local_mode = runtime_mode == session::RuntimeMode::Local;
-    info!("Runtime mode: {:?} (backend.mode={:?})", runtime_mode, ctx.config.backend.mode);
+    info!(
+        "Runtime mode: {:?} (backend.mode={:?})",
+        runtime_mode, ctx.config.backend.mode
+    );
 
     // Initialize runtimes based on mode
     let container_runtime: Option<std::sync::Arc<container::ContainerRuntime>> = if !local_mode {
@@ -1415,7 +1432,7 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     // Check every 5 minutes, stop sessions idle for 30 minutes
     let session_service_arc = std::sync::Arc::new(session_service.clone());
     let _idle_cleanup_handle = session_service_arc.start_idle_session_cleanup_task(
-        5 * 60,  // Check every 5 minutes
+        5 * 60, // Check every 5 minutes
         session::SessionService::DEFAULT_IDLE_TIMEOUT_MINUTES,
     );
 
@@ -1481,7 +1498,13 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
                 };
                 let local_config = agent_rpc::LocalBackendConfig {
                     runtime: runtime_config,
-                    data_dir: std::path::PathBuf::from(&ctx.config.container.user_data_path.clone().unwrap_or_else(|| "./data".to_string())),
+                    data_dir: std::path::PathBuf::from(
+                        &ctx.config
+                            .container
+                            .user_data_path
+                            .clone()
+                            .unwrap_or_else(|| "./data".to_string()),
+                    ),
                     base_port: ctx.config.container.base_port,
                     single_user: ctx.config.local.single_user,
                 };
@@ -1500,7 +1523,13 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
                 let container_config = agent_rpc::ContainerBackendConfig {
                     image: ctx.config.container.default_image.clone(),
                     base_port: ctx.config.container.base_port,
-                    data_dir: std::path::PathBuf::from(&ctx.config.container.user_data_path.clone().unwrap_or_else(|| "./data".to_string())),
+                    data_dir: std::path::PathBuf::from(
+                        &ctx.config
+                            .container
+                            .user_data_path
+                            .clone()
+                            .unwrap_or_else(|| "./data".to_string()),
+                    ),
                     host_network: false,
                     env: std::collections::HashMap::new(),
                 };
@@ -1533,9 +1562,21 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
         default_visualizer: ctx.config.voice.default_visualizer.clone(),
         interrupt_word_count: ctx.config.voice.interrupt_word_count,
         interrupt_backoff_ms: ctx.config.voice.interrupt_backoff_ms,
-        visualizer_voices: ctx.config.voice.visualizer_voices.iter().map(|(k, v)| {
-            (k.clone(), api::VisualizerVoiceState { voice: v.voice.clone(), speed: v.speed })
-        }).collect(),
+        visualizer_voices: ctx
+            .config
+            .voice
+            .visualizer_voices
+            .iter()
+            .map(|(k, v)| {
+                (
+                    k.clone(),
+                    api::VisualizerVoiceState {
+                        voice: v.voice.clone(),
+                        speed: v.speed,
+                    },
+                )
+            })
+            .collect(),
     };
 
     let session_ui_state = api::SessionUiState {
@@ -1544,40 +1585,36 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     };
 
     // Create settings services
-    let octo_schema: serde_json::Value = serde_json::from_str(
-        include_str!("../examples/backend.config.schema.json")
-    ).expect("Failed to parse embedded octo schema");
-    
+    let octo_schema: serde_json::Value =
+        serde_json::from_str(include_str!("../examples/backend.config.schema.json"))
+            .expect("Failed to parse embedded octo schema");
+
     let octo_config_dir = default_config_dir()?;
-    let settings_octo = settings::SettingsService::new(
-        octo_schema,
-        octo_config_dir,
-        "config.toml",
-    ).context("Failed to create octo settings service")?;
+    let settings_octo = settings::SettingsService::new(octo_schema, octo_config_dir, "config.toml")
+        .context("Failed to create octo settings service")?;
 
     // Create mmry settings service if mmry is enabled
     let settings_mmry = if ctx.config.mmry.enabled {
         // mmry config is at ~/.config/mmry/config.toml
-        let mmry_config_dir = default_config_dir()?.parent()
+        let mmry_config_dir = default_config_dir()?
+            .parent()
             .map(|p| p.join("mmry"))
             .unwrap_or_else(|| PathBuf::from("~/.config/mmry"));
-        
+
         // Try to load mmry schema if it exists, otherwise create minimal schema
         let mmry_schema = std::fs::read_to_string(mmry_config_dir.join("config.schema.json"))
             .ok()
             .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or_else(|| serde_json::json!({
-                "$schema": "http://json-schema.org/draft-07/schema#",
-                "title": "mmry Configuration",
-                "type": "object",
-                "properties": {}
-            }));
-        
-        settings::SettingsService::new(
-            mmry_schema,
-            mmry_config_dir,
-            "config.toml",
-        ).ok()
+            .unwrap_or_else(|| {
+                serde_json::json!({
+                    "$schema": "http://json-schema.org/draft-07/schema#",
+                    "title": "mmry Configuration",
+                    "type": "object",
+                    "properties": {}
+                })
+            });
+
+        settings::SettingsService::new(mmry_schema, mmry_config_dir, "config.toml").ok()
     } else {
         None
     };

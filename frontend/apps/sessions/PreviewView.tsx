@@ -1,8 +1,7 @@
 "use client";
 
-import { useApp } from "@/components/app-context";
 import { Button } from "@/components/ui/button";
-import { fileserverProxyBaseUrl } from "@/lib/control-plane-client";
+import { fileserverWorkspaceBaseUrl } from "@/lib/control-plane-client";
 import { cn } from "@/lib/utils";
 import {
 	Download,
@@ -22,6 +21,7 @@ import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 
 interface PreviewViewProps {
 	filePath?: string | null;
+	workspacePath?: string | null;
 	className?: string;
 }
 
@@ -191,9 +191,14 @@ function isTypst(filename: string): boolean {
 	return TYPST_EXTENSIONS.has(ext);
 }
 
-function getFileUrl(baseUrl: string, path: string): string {
+function getFileUrl(
+	baseUrl: string,
+	workspacePath: string,
+	path: string,
+): string {
 	const url = new URL(`${baseUrl}/file`, window.location.origin);
 	url.searchParams.set("path", path);
+	url.searchParams.set("workspace_path", workspacePath);
 	return url.toString();
 }
 
@@ -202,10 +207,12 @@ const getImageUrl = getFileUrl;
 
 async function fetchFileContent(
 	baseUrl: string,
+	workspacePath: string,
 	path: string,
 ): Promise<string> {
 	const url = new URL(`${baseUrl}/file`, window.location.origin);
 	url.searchParams.set("path", path);
+	url.searchParams.set("workspace_path", workspacePath);
 	const res = await fetch(url.toString(), {
 		cache: "no-store",
 		credentials: "include",
@@ -219,11 +226,13 @@ async function fetchFileContent(
 
 async function saveFileContent(
 	baseUrl: string,
+	workspacePath: string,
 	path: string,
 	content: string,
 ): Promise<void> {
 	const url = new URL(`${baseUrl}/file`, window.location.origin);
 	url.searchParams.set("path", path);
+	url.searchParams.set("workspace_path", workspacePath);
 
 	// Create form data with the file content
 	const formData = new FormData();
@@ -243,8 +252,11 @@ async function saveFileContent(
 	}
 }
 
-export function PreviewView({ filePath, className }: PreviewViewProps) {
-	const { selectedWorkspaceSessionId } = useApp();
+export function PreviewView({
+	filePath,
+	workspacePath,
+	className,
+}: PreviewViewProps) {
 	const [content, setContent] = useState<string>("");
 	const [editedContent, setEditedContent] = useState<string>("");
 	const [showLoading, setShowLoading] = useState(false); // Delayed loading indicator
@@ -264,9 +276,7 @@ export function PreviewView({ filePath, className }: PreviewViewProps) {
 	const scrollContainerRef = useRef<HTMLDivElement>(null);
 	const savedScrollTopRef = useRef<number>(0);
 
-	const fileserverBaseUrl = selectedWorkspaceSessionId
-		? fileserverProxyBaseUrl(selectedWorkspaceSessionId)
-		: null;
+	const fileserverBaseUrl = workspacePath ? fileserverWorkspaceBaseUrl() : null;
 
 	// Detect dark mode
 	useEffect(() => {
@@ -291,7 +301,7 @@ export function PreviewView({ filePath, className }: PreviewViewProps) {
 			loadingTimerRef.current = null;
 		}
 
-		if (!filePath || !fileserverBaseUrl) {
+		if (!filePath || !fileserverBaseUrl || !workspacePath) {
 			setContent("");
 			setEditedContent("");
 			setIsEditing(false);
@@ -310,7 +320,7 @@ export function PreviewView({ filePath, className }: PreviewViewProps) {
 		}
 
 		// Check cache first for instant preview
-		const cacheKey = `${selectedWorkspaceSessionId}:${filePath}`;
+		const cacheKey = `${workspacePath}:${filePath}`;
 		const cached = getCachedContent(cacheKey);
 
 		if (cached !== null) {
@@ -331,7 +341,7 @@ export function PreviewView({ filePath, className }: PreviewViewProps) {
 		}, 150);
 
 		// Fetch raw content first (for editing)
-		fetchFileContent(fileserverBaseUrl, filePath)
+		fetchFileContent(fileserverBaseUrl, workspacePath, filePath)
 			.then((data) => {
 				// Cache and set raw content immediately
 				setCachedContent(cacheKey, data);
@@ -355,18 +365,23 @@ export function PreviewView({ filePath, className }: PreviewViewProps) {
 				loadingTimerRef.current = null;
 			}
 		};
-	}, [filePath, fileserverBaseUrl, selectedWorkspaceSessionId]);
+	}, [filePath, fileserverBaseUrl, workspacePath]);
 
 	const handleSave = useCallback(async () => {
-		if (!fileserverBaseUrl || !filePath || !selectedWorkspaceSessionId) return;
+		if (!fileserverBaseUrl || !filePath || !workspacePath) return;
 
 		setSaving(true);
 		setError("");
 		try {
-			await saveFileContent(fileserverBaseUrl, filePath, editedContent);
+			await saveFileContent(
+				fileserverBaseUrl,
+				workspacePath,
+				filePath,
+				editedContent,
+			);
 			setContent(editedContent);
 			// Update the cache with the new content
-			const cacheKey = `${selectedWorkspaceSessionId}:${filePath}`;
+			const cacheKey = `${workspacePath}:${filePath}`;
 			setCachedContent(cacheKey, editedContent);
 			setIsEditing(false);
 		} catch (err) {
@@ -374,7 +389,7 @@ export function PreviewView({ filePath, className }: PreviewViewProps) {
 		} finally {
 			setSaving(false);
 		}
-	}, [fileserverBaseUrl, filePath, editedContent, selectedWorkspaceSessionId]);
+	}, [fileserverBaseUrl, filePath, editedContent, workspacePath]);
 
 	const handleCancel = useCallback(() => {
 		setEditedContent(content);
@@ -445,12 +460,13 @@ export function PreviewView({ filePath, className }: PreviewViewProps) {
 	const isImageFile = isImage(filename);
 	const isPdfFile = isPdf(filename);
 	const isTypstFile = isTypst(filename);
-	const fileUrl = fileserverBaseUrl
-		? getFileUrl(fileserverBaseUrl, filePath)
-		: null;
+	const fileUrl =
+		fileserverBaseUrl && workspacePath
+			? getFileUrl(fileserverBaseUrl, workspacePath, filePath)
+			: null;
 	const imageUrl =
-		isImageFile && fileserverBaseUrl
-			? getImageUrl(fileserverBaseUrl, filePath)
+		isImageFile && fileserverBaseUrl && workspacePath
+			? getImageUrl(fileserverBaseUrl, workspacePath, filePath)
 			: null;
 
 	// For PDF files, render with iframe

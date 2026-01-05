@@ -83,13 +83,10 @@ impl ProcessHandle {
                 return Err(anyhow::anyhow!("failed to kill process: {}", e));
             }
         }
-        
+
         // Wait for the process to be reaped (prevents zombies)
         // Use a timeout to avoid hanging forever
-        match tokio::time::timeout(
-            std::time::Duration::from_secs(5),
-            self.child.wait()
-        ).await {
+        match tokio::time::timeout(std::time::Duration::from_secs(5), self.child.wait()).await {
             Ok(Ok(_)) => Ok(()), // Process exited cleanly
             Ok(Err(e)) => {
                 // Error waiting, but process might be gone
@@ -153,7 +150,7 @@ impl ProcessManager {
             "--hostname".to_string(),
             "0.0.0.0".to_string(),
         ];
-        
+
         if let Some(agent_name) = agent {
             args.push("--agent".to_string());
             args.push(agent_name.to_string());
@@ -529,15 +526,15 @@ pub fn are_ports_available(ports: &[u16]) -> bool {
 #[cfg(target_os = "linux")]
 pub fn find_process_on_port(port: u16) -> Option<(u32, String)> {
     use std::process::Command as StdCommand;
-    
+
     // Use ss or netstat to find the process
     let output = StdCommand::new("ss")
         .args(["-tlnp", &format!("sport = :{}", port)])
         .output()
         .ok()?;
-    
+
     let stdout = String::from_utf8_lossy(&output.stdout);
-    
+
     // Parse the output to find PID
     // Format: LISTEN 0 4096 0.0.0.0:41820 0.0.0.0:* users:(("opencode",pid=12345,fd=15))
     for line in stdout.lines().skip(1) {
@@ -557,7 +554,7 @@ pub fn find_process_on_port(port: u16) -> Option<(u32, String)> {
             }
         }
     }
-    
+
     None
 }
 
@@ -569,7 +566,7 @@ pub fn find_process_on_port(_port: u16) -> Option<(u32, String)> {
 /// Kill a process by PID.
 pub fn kill_process(pid: u32) -> bool {
     use std::process::Command as StdCommand;
-    
+
     StdCommand::new("kill")
         .arg(pid.to_string())
         .status()
@@ -580,7 +577,7 @@ pub fn kill_process(pid: u32) -> bool {
 /// Force kill a process by PID (SIGKILL).
 pub fn force_kill_process(pid: u32) -> bool {
     use std::process::Command as StdCommand;
-    
+
     StdCommand::new("kill")
         .args(["-9", &pid.to_string()])
         .status()
