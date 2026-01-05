@@ -186,7 +186,7 @@ pub async fn proxy_opencode(
         })?
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    let _session = ensure_session_active_for_proxy(&state, &session_id, session.clone()).await?;
+    let session = ensure_session_active_for_proxy(&state, &session_id, session).await?;
 
     let starting = matches!(session.status, SessionStatus::Starting);
     proxy_request(
@@ -285,7 +285,7 @@ async fn proxy_request(
 
 async fn proxy_request_with_query(
     client: Client<hyper_util::client::legacy::connect::HttpConnector, Body>,
-    mut req: Request<Body>,
+    req: Request<Body>,
     target_port: u16,
     target_path: &str,
     connect_errors_as_unavailable: bool,
@@ -306,27 +306,64 @@ async fn proxy_request_with_query(
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
-    // Update the request URI
-    *req.uri_mut() = uri;
-
-    // Ensure Host header matches the target authority.
-    if let Some(authority) = req.uri().authority() {
-        let value = axum::http::HeaderValue::from_str(authority.as_str()).map_err(|e| {
-            error!("Invalid Host header value {}: {:?}", authority.as_str(), e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
-        req.headers_mut().insert(axum::http::header::HOST, value);
-    }
-
-    // Forward the request
-    let response = client.request(req).await.map_err(|e| {
-        error!("Proxy request failed: {:?}", e);
-        if connect_errors_as_unavailable && e.is_connect() {
-            StatusCode::SERVICE_UNAVAILABLE
-        } else {
-            StatusCode::BAD_GATEWAY
-        }
+    let (parts, body) = req.into_parts();
+    let body_bytes = axum::body::to_bytes(body, usize::MAX).await.map_err(|e| {
+        error!("Failed to buffer proxy request body: {:?}", e);
+        StatusCode::BAD_GATEWAY
     })?;
+
+    let start = tokio::time::Instant::now();
+    let timeout = tokio::time::Duration::from_secs(15);
+    let mut attempts: u32 = 0;
+
+    let response = loop {
+        attempts += 1;
+        let mut forwarded = Request::builder()
+            .method(parts.method.clone())
+            .uri(uri.clone())
+            .version(parts.version)
+            .body(Body::from(body_bytes.clone()))
+            .map_err(|e| {
+                error!("Failed to build proxy request: {:?}", e);
+                StatusCode::INTERNAL_SERVER_ERROR
+            })?;
+
+        *forwarded.headers_mut() = parts.headers.clone();
+
+        // Ensure Host header matches the target authority.
+        if let Some(authority) = forwarded.uri().authority() {
+            let value = axum::http::HeaderValue::from_str(authority.as_str()).map_err(|e| {
+                error!("Invalid Host header value {}: {:?}", authority.as_str(), e);
+                StatusCode::INTERNAL_SERVER_ERROR
+            })?;
+            forwarded
+                .headers_mut()
+                .insert(axum::http::header::HOST, value);
+        }
+
+        match client.request(forwarded).await {
+            Ok(res) => break res,
+            Err(err) => {
+                if connect_errors_as_unavailable && err.is_connect() && start.elapsed() < timeout {
+                    let backoff_ms = (attempts.min(20) as u64) * 100;
+                    let backoff = tokio::time::Duration::from_millis(backoff_ms);
+                    debug!(
+                        "Proxy target not ready yet (attempt {}): {}; retrying in {:?}",
+                        attempts, err, backoff
+                    );
+                    tokio::time::sleep(backoff).await;
+                    continue;
+                }
+
+                error!("Proxy request failed: {:?}", err);
+                return Err(if connect_errors_as_unavailable && err.is_connect() {
+                    StatusCode::SERVICE_UNAVAILABLE
+                } else {
+                    StatusCode::BAD_GATEWAY
+                });
+            }
+        }
+    };
 
     // Convert hyper response to axum response
     let (parts, body) = response.into_parts();
@@ -640,7 +677,7 @@ pub async fn proxy_opencode_events(
         })?
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    let _session = ensure_session_active_for_proxy(&state, &session_id, session.clone()).await?;
+    let session = ensure_session_active_for_proxy(&state, &session_id, session).await?;
 
     let target_url = format!("http://localhost:{}/event", session.opencode_port);
     debug!("Proxying SSE events from {}", target_url);
@@ -1208,7 +1245,7 @@ pub async fn proxy_opencode_agent(
         })?
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    let _session = ensure_session_active_for_proxy(&state, &session_id, session.clone()).await?;
+    let session = ensure_session_active_for_proxy(&state, &session_id, session).await?;
 
     // Resolve the agent's port
     let port = state
