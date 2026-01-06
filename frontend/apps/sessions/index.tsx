@@ -55,6 +55,7 @@ import {
 	opencodeProxyBaseUrl,
 	registerMainChatSession,
 } from "@/lib/control-plane-client";
+import { getFileTypeInfo } from "@/lib/file-types";
 import {
 	type OpenCodeAssistantMessage,
 	type OpenCodeMessageWithParts,
@@ -96,6 +97,8 @@ import {
 	Clock,
 	Copy,
 	Eye,
+	FileCode,
+	FileImage,
 	FileText,
 	Gauge,
 	ListTodo,
@@ -2431,6 +2434,7 @@ export function SessionsApp() {
 								persona={selectedSession?.persona}
 								workspaceName={workspaceName}
 								readableId={readableId}
+								workspaceDirectory={opencodeDirectory}
 							/>
 						</div>
 					))}
@@ -3167,11 +3171,13 @@ const MessageGroupCard = memo(function MessageGroupCard({
 	persona,
 	workspaceName,
 	readableId,
+	workspaceDirectory,
 }: {
 	group: MessageGroup;
 	persona?: Persona | null;
 	workspaceName?: string | null;
 	readableId?: string | null;
+	workspaceDirectory?: string;
 }) {
 	const isUser = group.role === "user";
 
@@ -3328,12 +3334,36 @@ const MessageGroupCard = memo(function MessageGroupCard({
 
 				{segments.map((segment) => {
 					if (segment.type === "text") {
+						// Parse @file references from the text
+						const fileRefPattern = /@([^\s@]+\.[a-zA-Z0-9]+)/g;
+						const matches = segment.content.match(fileRefPattern) || [];
+						const fileRefs = matches.map((m) => m.slice(1)); // Remove @ prefix
+						// Remove duplicates
+						const uniqueFileRefs = [...new Set(fileRefs)];
+						// Debug logging
+						if (segment.content.includes("@")) {
+							console.log(
+								"[FileRef] Content:",
+								segment.content.substring(0, 200),
+							);
+							console.log("[FileRef] Matches:", matches);
+							console.log("[FileRef] FileRefs:", fileRefs);
+							console.log("[FileRef] WorkspaceDir:", workspaceDirectory);
+						}
+
 						return (
-							<div key={segment.key} className="overflow-hidden">
+							<div key={segment.key} className="overflow-hidden space-y-2">
 								<MarkdownRenderer
 									content={segment.content}
 									className="text-sm text-foreground leading-relaxed overflow-hidden"
 								/>
+								{uniqueFileRefs.map((filePath) => (
+									<FileReferenceCard
+										key={filePath}
+										filePath={filePath}
+										workspacePath={workspaceDirectory}
+									/>
+								))}
 							</div>
 						);
 					}
@@ -3423,6 +3453,93 @@ const OtherPartCard = memo(function OtherPartCard({
 				</div>
 			)}
 		</div>
+	);
+});
+
+/** Renders a file reference card with preview for images */
+const FileReferenceCard = memo(function FileReferenceCard({
+	filePath,
+	workspacePath,
+}: {
+	filePath: string;
+	workspacePath?: string | null;
+}) {
+	const [isLoading, setIsLoading] = useState(true);
+	const [error, setError] = useState<string | null>(null);
+	const [imageLoaded, setImageLoaded] = useState(false);
+
+	const fileInfo = useMemo(() => getFileTypeInfo(filePath), [filePath]);
+	const isImage = fileInfo.category === "image";
+	const fileName = filePath.split("/").pop() || filePath;
+
+	// Build the file URL
+	const fileUrl = useMemo(() => {
+		const baseUrl = fileserverWorkspaceBaseUrl();
+		const encodedPath = encodeURIComponent(filePath);
+		const workspaceParam = workspacePath
+			? `&workspace_path=${encodeURIComponent(workspacePath)}`
+			: "";
+		const url = `${baseUrl}/read?path=${encodedPath}${workspaceParam}`;
+		console.log("[FileReferenceCard] URL:", url);
+		console.log("[FileReferenceCard] filePath:", filePath);
+		console.log("[FileReferenceCard] workspacePath:", workspacePath);
+		return url;
+	}, [filePath, workspacePath]);
+
+	// For images, render inline preview
+	if (isImage) {
+		return (
+			<div className="border border-border bg-muted/20 rounded overflow-hidden max-w-md">
+				<div className="flex items-center gap-2 px-3 py-2 bg-muted/50 border-b border-border">
+					<FileImage className="w-4 h-4 text-muted-foreground" />
+					<span className="text-xs font-medium truncate">{fileName}</span>
+				</div>
+				<div className="relative">
+					{isLoading && !imageLoaded && (
+						<div className="flex items-center justify-center p-4">
+							<Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
+						</div>
+					)}
+					{error ? (
+						<div className="flex items-center justify-center p-4 text-xs text-muted-foreground">
+							{error}
+						</div>
+					) : (
+						<img
+							src={fileUrl}
+							alt={fileName}
+							className={cn(
+								"max-w-full h-auto",
+								isLoading && !imageLoaded && "hidden",
+							)}
+							onLoad={() => {
+								setImageLoaded(true);
+								setIsLoading(false);
+							}}
+							onError={() => {
+								setError("Failed to load image");
+								setIsLoading(false);
+							}}
+						/>
+					)}
+				</div>
+			</div>
+		);
+	}
+
+	// For non-images, render a compact file reference link
+	const FileIcon = fileInfo.category === "code" ? FileCode : FileText;
+	return (
+		<a
+			href={fileUrl}
+			target="_blank"
+			rel="noopener noreferrer"
+			className="inline-flex items-center gap-2 px-3 py-1.5 border border-border bg-muted/20 rounded hover:bg-muted/40 transition-colors text-sm"
+		>
+			<FileIcon className="w-4 h-4 text-muted-foreground" />
+			<span className="font-medium">{fileName}</span>
+			<span className="text-xs text-muted-foreground">{filePath}</span>
+		</a>
 	);
 });
 
