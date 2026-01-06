@@ -22,6 +22,7 @@ import {
 	List,
 	Loader2,
 	PaintBucket,
+	Pencil,
 	Trash2,
 	Upload,
 } from "lucide-react";
@@ -151,6 +152,28 @@ async function createDirectory(
 	if (!res.ok) {
 		const text = await res.text().catch(() => res.statusText);
 		throw new Error(text || `Create directory failed (${res.status})`);
+	}
+}
+
+async function renameFile(
+	baseUrl: string,
+	workspacePath: string,
+	oldPath: string,
+	newPath: string,
+): Promise<void> {
+	const url = new URL(`${baseUrl}/rename`, window.location.origin);
+	url.searchParams.set("old_path", oldPath);
+	url.searchParams.set("new_path", newPath);
+	url.searchParams.set("workspace_path", workspacePath);
+
+	const res = await fetch(url.toString(), {
+		method: "POST",
+		credentials: "include",
+	});
+
+	if (!res.ok) {
+		const text = await res.text().catch(() => res.statusText);
+		throw new Error(text || `Rename failed (${res.status})`);
 	}
 }
 
@@ -310,6 +333,8 @@ export function FileTreeView({
 	const [loading, setLoading] = useState(false);
 	const [uploading, setUploading] = useState(false);
 	const [newFolderName, setNewFolderName] = useState<string | null>(null);
+	const [renamingPath, setRenamingPath] = useState<string | null>(null);
+	const [renameValue, setRenameValue] = useState<string>("");
 	const fileInputRef = useRef<HTMLInputElement>(null);
 	const newFolderInputRef = useRef<HTMLInputElement>(null);
 
@@ -576,6 +601,51 @@ export function FileTreeView({
 		}
 	};
 
+	const handleStartRename = (path: string, currentName: string) => {
+		setRenamingPath(path);
+		setRenameValue(currentName);
+	};
+
+	const handleCancelRename = () => {
+		setRenamingPath(null);
+		setRenameValue("");
+	};
+
+	const handleConfirmRename = async () => {
+		if (
+			!fileserverBaseUrl ||
+			!workspacePath ||
+			!renamingPath ||
+			!renameValue.trim()
+		) {
+			handleCancelRename();
+			return;
+		}
+
+		const newName = renameValue.trim();
+		const oldName = renamingPath.split("/").pop();
+
+		// Skip if name unchanged
+		if (newName === oldName) {
+			handleCancelRename();
+			return;
+		}
+
+		try {
+			// Build new path by replacing the last segment
+			const pathParts = renamingPath.split("/");
+			pathParts[pathParts.length - 1] = newName;
+			const newPath = pathParts.join("/");
+
+			await renameFile(fileserverBaseUrl, workspacePath, renamingPath, newPath);
+			await refreshTree();
+		} catch (err) {
+			setError(err instanceof Error ? err.message : "Rename failed");
+		} finally {
+			handleCancelRename();
+		}
+	};
+
 	const clearSelection = () => {
 		updateState({ selectedFiles: new Set(), selectedFile: null });
 	};
@@ -838,6 +908,12 @@ export function FileTreeView({
 						onNavigateToFolder={handleNavigateToFolder}
 						onDownload={handleDownload}
 						onDelete={handleDelete}
+						onRename={handleStartRename}
+						renamingPath={renamingPath}
+						renameValue={renameValue}
+						onRenameValueChange={setRenameValue}
+						onRenameConfirm={handleConfirmRename}
+						onRenameCancel={handleCancelRename}
 						onOpenInCanvas={onOpenInCanvas}
 						fileserverBaseUrl={fileserverBaseUrl}
 					/>
@@ -849,6 +925,12 @@ export function FileTreeView({
 						onNavigateToFolder={handleNavigateToFolder}
 						onDownload={handleDownload}
 						onDelete={handleDelete}
+						onRename={handleStartRename}
+						renamingPath={renamingPath}
+						renameValue={renameValue}
+						onRenameValueChange={setRenameValue}
+						onRenameConfirm={handleConfirmRename}
+						onRenameCancel={handleCancelRename}
 						onOpenInCanvas={onOpenInCanvas}
 						fileserverBaseUrl={fileserverBaseUrl}
 					/>
@@ -860,6 +942,12 @@ export function FileTreeView({
 						onNavigateToFolder={handleNavigateToFolder}
 						onDownload={handleDownload}
 						onDelete={handleDelete}
+						onRename={handleStartRename}
+						renamingPath={renamingPath}
+						renameValue={renameValue}
+						onRenameValueChange={setRenameValue}
+						onRenameConfirm={handleConfirmRename}
+						onRenameCancel={handleCancelRename}
 						onOpenInCanvas={onOpenInCanvas}
 						fileserverBaseUrl={fileserverBaseUrl}
 					/>
@@ -869,18 +957,60 @@ export function FileTreeView({
 	);
 }
 
+// Rename input component with proper focus handling
+function RenameInput({
+	value,
+	onChange,
+	onConfirm,
+	onCancel,
+}: {
+	value: string;
+	onChange: (value: string) => void;
+	onConfirm: () => void;
+	onCancel: () => void;
+}) {
+	const inputRef = useRef<HTMLInputElement>(null);
+
+	useEffect(() => {
+		// Focus and select all text after mount
+		if (inputRef.current) {
+			inputRef.current.focus();
+			inputRef.current.select();
+		}
+	}, []);
+
+	return (
+		<input
+			ref={inputRef}
+			type="text"
+			value={value}
+			onChange={(e) => onChange(e.target.value)}
+			onKeyDown={(e) => {
+				e.stopPropagation();
+				if (e.key === "Enter") onConfirm();
+				if (e.key === "Escape") onCancel();
+			}}
+			onBlur={onConfirm}
+			className="flex-1 min-w-0 bg-background border border-input rounded px-1 text-sm text-foreground"
+			onClick={(e) => e.stopPropagation()}
+		/>
+	);
+}
+
 // Context menu wrapper for file items
 function FileContextMenu({
 	children,
 	node,
 	onDownload,
 	onDelete,
+	onRename,
 	onOpenInCanvas,
 }: {
 	children: React.ReactNode;
 	node: FileNode;
 	onDownload: (path: string, isDirectory: boolean) => void;
 	onDelete: (path: string) => void;
+	onRename: (path: string, currentName: string) => void;
 	onOpenInCanvas?: (path: string) => void;
 }) {
 	const isImage = node.type === "file" && isImageFile(node.name);
@@ -898,6 +1028,10 @@ function FileContextMenu({
 						<ContextMenuSeparator />
 					</>
 				)}
+				<ContextMenuItem onClick={() => onRename(node.path, node.name)}>
+					<Pencil className="w-4 h-4 mr-2" />
+					Rename
+				</ContextMenuItem>
 				<ContextMenuItem
 					onClick={() => onDownload(node.path, node.type === "directory")}
 				>
@@ -927,6 +1061,12 @@ function TreeView({
 	onNavigateToFolder,
 	onDownload,
 	onDelete,
+	onRename,
+	renamingPath,
+	renameValue,
+	onRenameValueChange,
+	onRenameConfirm,
+	onRenameCancel,
 	onOpenInCanvas,
 	fileserverBaseUrl,
 }: {
@@ -943,6 +1083,12 @@ function TreeView({
 	onNavigateToFolder: (path: string) => void;
 	onDownload: (path: string, isDirectory: boolean) => void;
 	onDelete: (path: string) => void;
+	onRename: (path: string, currentName: string) => void;
+	renamingPath: string | null;
+	renameValue: string;
+	onRenameValueChange: (value: string) => void;
+	onRenameConfirm: () => void;
+	onRenameCancel: () => void;
 	onOpenInCanvas?: (path: string) => void;
 	fileserverBaseUrl: string | null;
 }) {
@@ -967,6 +1113,12 @@ function TreeView({
 					onNavigateToFolder={onNavigateToFolder}
 					onDownload={onDownload}
 					onDelete={onDelete}
+					onRename={onRename}
+					renamingPath={renamingPath}
+					renameValue={renameValue}
+					onRenameValueChange={onRenameValueChange}
+					onRenameConfirm={onRenameConfirm}
+					onRenameCancel={onRenameCancel}
 					onOpenInCanvas={onOpenInCanvas}
 				/>
 			))}
@@ -985,6 +1137,12 @@ function TreeRow({
 	onNavigateToFolder,
 	onDownload,
 	onDelete,
+	onRename,
+	renamingPath,
+	renameValue,
+	onRenameValueChange,
+	onRenameConfirm,
+	onRenameCancel,
 	onOpenInCanvas,
 }: {
 	node: FileNode;
@@ -1001,11 +1159,18 @@ function TreeRow({
 	onNavigateToFolder: (path: string) => void;
 	onDownload: (path: string, isDirectory: boolean) => void;
 	onDelete: (path: string) => void;
+	onRename: (path: string, currentName: string) => void;
+	renamingPath: string | null;
+	renameValue: string;
+	onRenameValueChange: (value: string) => void;
+	onRenameConfirm: () => void;
+	onRenameCancel: () => void;
 	onOpenInCanvas?: (path: string) => void;
 }) {
 	const isDir = node.type === "directory";
 	const isExpanded = expanded[node.path];
 	const isSelected = selectedFiles.has(node.path);
+	const isRenaming = renamingPath === node.path;
 
 	// Sort children: directories first, then files
 	const sortedChildren = node.children
@@ -1042,19 +1207,20 @@ function TreeRow({
 				node={node}
 				onDownload={onDownload}
 				onDelete={onDelete}
+				onRename={onRename}
 				onOpenInCanvas={onOpenInCanvas}
 			>
 				<button
 					type="button"
 					className={cn(
-						"flex items-center gap-1.5 py-1.5 px-2 cursor-pointer transition-colors",
+						"flex items-center gap-1.5 py-1.5 px-2 cursor-pointer transition-colors w-full",
 						isSelected
 							? "bg-primary/10 text-primary"
 							: "hover:bg-muted text-muted-foreground hover:text-foreground",
 					)}
 					style={{ paddingLeft: `${level * 16 + 8}px` }}
-					onClick={handleClick}
-					onDoubleClick={handleDoubleClick}
+					onClick={isRenaming ? undefined : handleClick}
+					onDoubleClick={isRenaming ? undefined : handleDoubleClick}
 				>
 					{isDir ? (
 						<span className="flex-shrink-0 text-muted-foreground">
@@ -1073,8 +1239,17 @@ function TreeRow({
 						size={18}
 						className="flex-shrink-0"
 					/>
-					<span className="truncate text-sm">{node.name}</span>
-					{isDir && node.children && (
+					{isRenaming ? (
+						<RenameInput
+							value={renameValue}
+							onChange={onRenameValueChange}
+							onConfirm={onRenameConfirm}
+							onCancel={onRenameCancel}
+						/>
+					) : (
+						<span className="truncate text-sm">{node.name}</span>
+					)}
+					{!isRenaming && isDir && node.children && (
 						<span className="text-xs text-muted-foreground/60 ml-auto pr-2">
 							{node.children.length}
 						</span>
@@ -1095,6 +1270,12 @@ function TreeRow({
 							onNavigateToFolder={onNavigateToFolder}
 							onDownload={onDownload}
 							onDelete={onDelete}
+							onRename={onRename}
+							renamingPath={renamingPath}
+							renameValue={renameValue}
+							onRenameValueChange={onRenameValueChange}
+							onRenameConfirm={onRenameConfirm}
+							onRenameCancel={onRenameCancel}
 							onOpenInCanvas={onOpenInCanvas}
 						/>
 					))}
@@ -1112,6 +1293,12 @@ function ListView({
 	onNavigateToFolder,
 	onDownload,
 	onDelete,
+	onRename,
+	renamingPath,
+	renameValue,
+	onRenameValueChange,
+	onRenameConfirm,
+	onRenameCancel,
 	onOpenInCanvas,
 	fileserverBaseUrl,
 }: {
@@ -1126,6 +1313,12 @@ function ListView({
 	onNavigateToFolder: (path: string) => void;
 	onDownload: (path: string, isDirectory: boolean) => void;
 	onDelete: (path: string) => void;
+	onRename: (path: string, currentName: string) => void;
+	renamingPath: string | null;
+	renameValue: string;
+	onRenameValueChange: (value: string) => void;
+	onRenameConfirm: () => void;
+	onRenameCancel: () => void;
 	onOpenInCanvas?: (path: string) => void;
 	fileserverBaseUrl: string | null;
 }) {
@@ -1149,6 +1342,7 @@ function ListView({
 			<div className="divide-y divide-border/50">
 				{sortedFiles.map((file) => {
 					const isSelected = selectedFiles.has(file.path);
+					const isRenaming = renamingPath === file.path;
 					return (
 						<FileContextMenu
 							key={file.path}
@@ -1156,10 +1350,12 @@ function ListView({
 							onDownload={onDownload}
 							onOpenInCanvas={onOpenInCanvas}
 							onDelete={onDelete}
+							onRename={onRename}
 						>
 							<button
 								type="button"
 								onClick={(e) => {
+									if (isRenaming) return;
 									const isDir = file.type === "directory";
 									if (e.shiftKey) {
 										// Shift+click: select/multi-select
@@ -1176,7 +1372,7 @@ function ListView({
 									// Double-click does nothing special now (single click navigates folders)
 								}}
 								className={cn(
-									"flex items-center gap-2 px-3 py-2 transition-colors cursor-pointer",
+									"flex items-center gap-2 px-3 py-2 transition-colors cursor-pointer w-full",
 									isSelected ? "bg-primary/10" : "hover:bg-muted/50",
 								)}
 							>
@@ -1186,12 +1382,23 @@ function ListView({
 										isDirectory={file.type === "directory"}
 										size={20}
 									/>
-									<span className="truncate text-sm">{file.name}</span>
-									{file.type === "directory" && file.children && (
-										<span className="text-xs text-muted-foreground/60">
-											({file.children.length})
-										</span>
+									{isRenaming ? (
+										<RenameInput
+											value={renameValue}
+											onChange={onRenameValueChange}
+											onConfirm={onRenameConfirm}
+											onCancel={onRenameCancel}
+										/>
+									) : (
+										<span className="truncate text-sm">{file.name}</span>
 									)}
+									{!isRenaming &&
+										file.type === "directory" &&
+										file.children && (
+											<span className="text-xs text-muted-foreground/60">
+												({file.children.length})
+											</span>
+										)}
 								</div>
 								<div className="w-24 text-right text-xs text-muted-foreground hidden sm:block">
 									{formatDate(file.modified)}
@@ -1216,6 +1423,12 @@ function GridView({
 	onNavigateToFolder,
 	onDownload,
 	onDelete,
+	onRename,
+	renamingPath,
+	renameValue,
+	onRenameValueChange,
+	onRenameConfirm,
+	onRenameCancel,
 	onOpenInCanvas,
 	fileserverBaseUrl,
 }: {
@@ -1230,6 +1443,12 @@ function GridView({
 	onNavigateToFolder: (path: string) => void;
 	onDownload: (path: string, isDirectory: boolean) => void;
 	onDelete: (path: string) => void;
+	onRename: (path: string, currentName: string) => void;
+	renamingPath: string | null;
+	renameValue: string;
+	onRenameValueChange: (value: string) => void;
+	onRenameConfirm: () => void;
+	onRenameCancel: () => void;
 	onOpenInCanvas?: (path: string) => void;
 	fileserverBaseUrl: string | null;
 }) {
@@ -1244,17 +1463,20 @@ function GridView({
 		<div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 p-2">
 			{sortedFiles.map((file) => {
 				const isSelected = selectedFiles.has(file.path);
+				const isRenaming = renamingPath === file.path;
 				return (
 					<FileContextMenu
 						key={file.path}
 						node={file}
 						onDownload={onDownload}
 						onDelete={onDelete}
+						onRename={onRename}
 						onOpenInCanvas={onOpenInCanvas}
 					>
 						<button
 							type="button"
 							onClick={(e) => {
+								if (isRenaming) return;
 								const isDir = file.type === "directory";
 								if (e.shiftKey) {
 									// Shift+click: select/multi-select
@@ -1280,12 +1502,21 @@ function GridView({
 								isDirectory={file.type === "directory"}
 								size={48}
 							/>
-							<span
-								className="text-xs text-center truncate w-full"
-								title={file.name}
-							>
-								{file.name}
-							</span>
+							{isRenaming ? (
+								<RenameInput
+									value={renameValue}
+									onChange={onRenameValueChange}
+									onConfirm={onRenameConfirm}
+									onCancel={onRenameCancel}
+								/>
+							) : (
+								<span
+									className="text-xs text-center truncate w-full"
+									title={file.name}
+								>
+									{file.name}
+								</span>
+							)}
 						</button>
 					</FileContextMenu>
 				);

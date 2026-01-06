@@ -1899,6 +1899,24 @@ export function SessionsApp() {
 		],
 	);
 
+	// Handle canvas save and add to chat
+	const handleCanvasSaveAndAddToChat = useCallback((filePath: string) => {
+		// Add the saved canvas image as a file attachment
+		const attachment: FileAttachment = {
+			id: `canvas-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+			path: filePath,
+			filename: filePath.split("/").pop() || filePath,
+			type: "file",
+		};
+		setFileAttachments((prev) => [...prev, attachment]);
+		// Switch to chat view so user can see the attachment and send
+		setActiveView("chat");
+		// Focus the chat input
+		setTimeout(() => {
+			chatInputRef.current?.focus();
+		}, 100);
+	}, []);
+
 	const handleSend = async () => {
 		// In Main Chat mode, we might need to create a session first
 		// In regular mode, we need a session ID
@@ -2337,6 +2355,15 @@ export function SessionsApp() {
 		);
 	}
 
+	// Session metadata for chat display
+	const readableId = selectedChatSession?.id
+		? generateReadableId(selectedChatSession.id)
+		: null;
+	// Extract workspace name from path (last segment)
+	const workspaceName = opencodeDirectory
+		? opencodeDirectory.split("/").filter(Boolean).pop() || null
+		: null;
+
 	// Chat content component (reused in both layouts)
 	const ChatContent = (
 		<div
@@ -2402,6 +2429,8 @@ export function SessionsApp() {
 							<MessageGroupCard
 								group={group}
 								persona={selectedSession?.persona}
+								workspaceName={workspaceName}
+								readableId={readableId}
 							/>
 						</div>
 					))}
@@ -2762,13 +2791,6 @@ export function SessionsApp() {
 	const formattedDate = sessionCreatedAt
 		? formatSessionDate(sessionCreatedAt)
 		: null;
-	const readableId = selectedChatSession?.id
-		? generateReadableId(selectedChatSession.id)
-		: null;
-	// Extract workspace name from path (last segment)
-	const workspaceName = opencodeDirectory
-		? opencodeDirectory.split("/").filter(Boolean).pop() || null
-		: null;
 
 	// Clean up session title - remove ISO timestamp suffix if present (e.g., "New session - 2025-12-18T07:46:58.478Z")
 	const cleanSessionTitle = (() => {
@@ -2962,6 +2984,7 @@ export function SessionsApp() {
 							<CanvasView
 								workspacePath={resumeWorkspacePath}
 								initialImagePath={previewFilePath}
+								onSaveAndAddToChat={handleCanvasSaveAndAddToChat}
 							/>
 						</Suspense>
 					)}
@@ -3110,6 +3133,7 @@ export function SessionsApp() {
 								<CanvasView
 									workspacePath={resumeWorkspacePath}
 									initialImagePath={previewFilePath}
+									onSaveAndAddToChat={handleCanvasSaveAndAddToChat}
 								/>
 							</Suspense>
 						)}
@@ -3141,7 +3165,14 @@ export function SessionsApp() {
 const MessageGroupCard = memo(function MessageGroupCard({
 	group,
 	persona,
-}: { group: MessageGroup; persona?: Persona | null }) {
+	workspaceName,
+	readableId,
+}: {
+	group: MessageGroup;
+	persona?: Persona | null;
+	workspaceName?: string | null;
+	readableId?: string | null;
+}) {
 	const isUser = group.role === "user";
 
 	// Get created time from first message
@@ -3201,8 +3232,8 @@ const MessageGroupCard = memo(function MessageGroupCard({
 		.map((p) => p.text)
 		.join("\n\n");
 
-	// Get assistant display name from persona or default to "Assistant"
-	const assistantName = persona?.name || "Assistant";
+	// Get assistant display name: workspace name, persona name, or default
+	const assistantDisplayName = workspaceName || persona?.name || "Assistant";
 	const personaColor = persona?.color;
 
 	return (
@@ -3236,9 +3267,18 @@ const MessageGroupCard = memo(function MessageGroupCard({
 				) : (
 					<Bot className="w-3 h-3 sm:w-4 sm:h-4 text-primary flex-shrink-0" />
 				)}
-				<span className="text-sm font-medium text-foreground">
-					{isUser ? "You" : assistantName}
-				</span>
+				{isUser ? (
+					<span className="text-sm font-medium text-foreground">You</span>
+				) : (
+					<span className="text-sm font-medium text-foreground">
+						{assistantDisplayName}
+						{readableId && (
+							<span className="text-[9px] text-muted-foreground/70 ml-1">
+								[{readableId}]
+							</span>
+						)}
+					</span>
+				)}
 				{group.messages.length > 1 && (
 					<span
 						className={cn(

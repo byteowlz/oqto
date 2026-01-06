@@ -11,6 +11,7 @@ import {
 	Eraser,
 	Hand,
 	Highlighter,
+	MessageSquarePlus,
 	MousePointer2,
 	Pencil,
 	Redo2,
@@ -41,6 +42,8 @@ interface CanvasViewProps {
 	workspacePath?: string | null;
 	initialImagePath?: string | null;
 	className?: string;
+	/** Called when user clicks "Save & Add to Chat" - provides the saved file path */
+	onSaveAndAddToChat?: (filePath: string) => void;
 }
 
 type Tool =
@@ -285,6 +288,7 @@ export const CanvasView = memo(function CanvasView({
 	workspacePath,
 	initialImagePath,
 	className,
+	onSaveAndAddToChat,
 }: CanvasViewProps) {
 	// Canvas state
 	const [tool, setTool] = useState<Tool>("select");
@@ -750,9 +754,9 @@ export const CanvasView = memo(function CanvasView({
 		link.click();
 	}, []);
 
-	// Save to workspace
-	const saveToWorkspace = useCallback(async () => {
-		if (!stageRef.current || !fileserverBaseUrl || !workspacePath) return;
+	// Save to workspace - returns the filename if successful
+	const saveToWorkspace = useCallback(async (): Promise<string | null> => {
+		if (!stageRef.current || !fileserverBaseUrl || !workspacePath) return null;
 
 		const dataUrl = stageRef.current.toDataURL({ pixelRatio: 2 });
 
@@ -781,12 +785,21 @@ export const CanvasView = memo(function CanvasView({
 				throw new Error("Failed to save image");
 			}
 
-			// Could show a toast notification here
 			console.log("Saved to workspace:", filename);
+			return filename;
 		} catch (err) {
 			console.error("Failed to save:", err);
+			return null;
 		}
 	}, [fileserverBaseUrl, workspacePath]);
+
+	// Save and add to chat
+	const saveAndAddToChat = useCallback(async () => {
+		const filename = await saveToWorkspace();
+		if (filename && onSaveAndAddToChat) {
+			onSaveAndAddToChat(filename);
+		}
+	}, [saveToWorkspace, onSaveAndAddToChat]);
 
 	// Focus text input when it appears
 	useEffect(() => {
@@ -1071,7 +1084,7 @@ export const CanvasView = memo(function CanvasView({
 				</div>
 
 				{/* Upload and Save buttons */}
-				<div className="flex items-center gap-0.5 ml-auto">
+				<div className="flex items-center gap-0.5">
 					<input
 						ref={fileInputRef}
 						type="file"
@@ -1102,17 +1115,32 @@ export const CanvasView = memo(function CanvasView({
 						<span className="text-xs">Export</span>
 					</Button>
 					{workspacePath && (
-						<Button
-							type="button"
-							variant="default"
-							size="sm"
-							onClick={saveToWorkspace}
-							className="h-8 px-2"
-							title="Save to workspace"
-						>
-							<Save className="w-4 h-4 mr-1" />
-							<span className="text-xs">Save</span>
-						</Button>
+						<>
+							<Button
+								type="button"
+								variant="ghost"
+								size="sm"
+								onClick={saveToWorkspace}
+								className="h-8 px-2"
+								title="Save to workspace"
+							>
+								<Save className="w-4 h-4 mr-1" />
+								<span className="text-xs">Save</span>
+							</Button>
+							{onSaveAndAddToChat && (
+								<Button
+									type="button"
+									variant="ghost"
+									size="sm"
+									onClick={saveAndAddToChat}
+									className="h-8 px-2"
+									title="Save and add to chat"
+								>
+									<MessageSquarePlus className="w-4 h-4 mr-1" />
+									<span className="text-xs">Add to Chat</span>
+								</Button>
+							)}
+						</>
 					)}
 				</div>
 			</div>
@@ -1252,7 +1280,7 @@ export const CanvasView = memo(function CanvasView({
 				<span className="whitespace-nowrap">
 					{canvasWidth}x{canvasHeight}
 				</span>
-				<span className="hidden sm:inline opacity-70 ml-auto">
+				<span className="hidden sm:inline opacity-70">
 					Paste to add | V H P A R C T E
 				</span>
 			</div>

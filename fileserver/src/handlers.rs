@@ -166,6 +166,17 @@ pub struct WatchQuery {
     pub ext: Option<String>,
 }
 
+/// Query parameters for rename endpoint
+#[derive(Debug, Deserialize)]
+pub struct RenameQuery {
+    /// Optional directory to scope the root (relative to root_dir)
+    pub directory: Option<String>,
+    /// Current path relative to root
+    pub old_path: String,
+    /// New path relative to root
+    pub new_path: String,
+}
+
 // ============================================================================
 // Helper functions
 // ============================================================================
@@ -1257,6 +1268,76 @@ pub async fn create_dir(
         success: true,
         message: format!("Created directory: {}", query.path),
         path: Some(query.path),
+    }))
+}
+
+/// POST /rename - Rename/move a file or directory
+pub async fn rename_file(
+    State(state): State<AppState>,
+    Query(query): Query<RenameQuery>,
+) -> Result<Json<SuccessResponse>, FileServerError> {
+    let root_dir = resolve_request_root(&state.root_dir, query.directory.as_deref())?;
+    let old_path = resolve_and_verify_path(&root_dir, &query.old_path)?;
+    let new_path = resolve_path(&root_dir, &query.new_path)?;
+
+    if !old_path.exists() {
+        return Err(FileServerError::NotFound(query.old_path));
+    }
+
+    // SECURITY: Prevent renaming root directory
+    let canonical_root = root_dir.canonicalize().map_err(FileServerError::Io)?;
+    let canonical_old = old_path.canonicalize().map_err(FileServerError::Io)?;
+
+    if canonical_old == canonical_root {
+        warn!("Attempted to rename root directory: {:?}", query.old_path);
+        return Err(FileServerError::InvalidPath(
+            "Cannot rename root directory".to_string(),
+        ));
+    }
+
+    // Verify old path is within root
+    if !canonical_old.starts_with(&canonical_root) {
+        warn!("Old path escaped root after canonicalization: {:?}", old_path);
+        return Err(FileServerError::PathTraversal);
+    }
+
+    // Verify new path parent exists and is within root
+    if let Some(new_parent) = new_path.parent() {
+        if !new_parent.exists() {
+            return Err(FileServerError::NotFound(format!(
+                "Parent directory does not exist: {}",
+                new_parent.display()
+            )));
+        }
+        let canonical_parent = new_parent.canonicalize().map_err(FileServerError::Io)?;
+        if !canonical_parent.starts_with(&canonical_root) {
+            warn!("New path parent escaped root: {:?}", new_parent);
+            return Err(FileServerError::PathTraversal);
+        }
+    }
+
+    // Check if new path already exists
+    if new_path.exists() {
+        return Err(FileServerError::InvalidPath(format!(
+            "Destination already exists: {}",
+            query.new_path
+        )));
+    }
+
+    info!(
+        "Renaming: {} -> {}",
+        old_path.display(),
+        new_path.display()
+    );
+
+    fs::rename(&old_path, &new_path)
+        .await
+        .map_err(FileServerError::Io)?;
+
+    Ok(Json(SuccessResponse {
+        success: true,
+        message: format!("Renamed: {} -> {}", query.old_path, query.new_path),
+        path: Some(query.new_path),
     }))
 }
 
