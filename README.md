@@ -1,4 +1,6 @@
-# Octo
+![banner](banner.png)
+
+# octo
 
 Self-hosted platform for AI coding agents. Run OpenCode instances in isolated containers or native processes with web UI, terminal access, and file management.
 
@@ -107,11 +109,11 @@ VITE_CONTROL_PLANE_URL=http://localhost:8080
 
 ## Development
 
-| Component | Build | Lint | Test |
-|-----------|-------|------|------|
-| backend | `cargo build` | `cargo clippy && cargo fmt --check` | `cargo test` |
-| fileserver | `cargo build` | `cargo clippy && cargo fmt --check` | `cargo test` |
-| frontend | `bun run build` | `bun run lint` | `bun run test` |
+| Component  | Build           | Lint                                | Test           |
+| ---------- | --------------- | ----------------------------------- | -------------- |
+| backend    | `cargo build`   | `cargo clippy && cargo fmt --check` | `cargo test`   |
+| fileserver | `cargo build`   | `cargo clippy && cargo fmt --check` | `cargo test`   |
+| frontend   | `bun run build` | `bun run lint`                      | `bun run test` |
 
 ## CLI
 
@@ -129,15 +131,15 @@ octoctl image build           # Build container image
 
 ## API
 
-| Endpoint | Description |
-|----------|-------------|
-| `POST /api/sessions` | Create session |
-| `GET /api/sessions` | List sessions |
-| `DELETE /api/sessions/:id` | Delete session |
-| `/session/:id/code/*` | Proxy to OpenCode |
-| `/session/:id/files/*` | Proxy to fileserver |
-| `/session/:id/term` | WebSocket to terminal |
-| `/session/:id/code/event` | SSE event stream |
+| Endpoint                   | Description           |
+| -------------------------- | --------------------- |
+| `POST /api/sessions`       | Create session        |
+| `GET /api/sessions`        | List sessions         |
+| `DELETE /api/sessions/:id` | Delete session        |
+| `/session/:id/code/*`      | Proxy to OpenCode     |
+| `/session/:id/files/*`     | Proxy to fileserver   |
+| `/session/:id/term`        | WebSocket to terminal |
+| `/session/:id/code/event`  | SSE event stream      |
 
 ## Roadmap
 
