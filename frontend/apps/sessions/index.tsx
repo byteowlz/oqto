@@ -9,6 +9,13 @@ import { useApp } from "@/components/app-context";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
+	ContextMenu,
+	ContextMenuContent,
+	ContextMenuItem,
+	ContextMenuSeparator,
+	ContextMenuTrigger,
+} from "@/components/ui/context-menu";
+import {
 	type FileAttachment,
 	FileAttachmentChip,
 	FileMentionPopup,
@@ -69,6 +76,7 @@ import {
 	fetchCommands,
 	fetchMessages,
 	fetchSessions,
+	forkSession,
 	invalidateMessageCache,
 	respondToPermission,
 	runShellCommandAsync,
@@ -101,6 +109,7 @@ import {
 	FileImage,
 	FileText,
 	Gauge,
+	GitBranch,
 	ListTodo,
 	Loader2,
 	MessageSquare,
@@ -352,6 +361,7 @@ export function SessionsApp() {
 		selectedWorkspaceSession,
 		opencodeBaseUrl,
 		selectedChatSessionId,
+		setSelectedChatSessionId,
 		selectedChatSession,
 		selectedChatFromHistory,
 		refreshOpencodeSessions,
@@ -1920,6 +1930,163 @@ export function SessionsApp() {
 		}, 100);
 	}, []);
 
+	// Handle forking/branching a session from a specific message
+	// Creates a new session and copies the conversation context to clipboard for easy pasting
+	const handleForkSession = useCallback(
+		async (messageId: string) => {
+			// We need either an active session OR a way to resume one
+			const sessionId = activeSessionId || selectedChatSessionId;
+			if (!sessionId) {
+				setStatus(
+					locale === "de"
+						? "Keine Sitzung zum Verzweigen"
+						: "No session to fork",
+				);
+				return;
+			}
+
+			try {
+				// Determine the base URL - resume session if needed
+				let baseUrl = effectiveOpencodeBaseUrl;
+				let workspacePath = opencodeDirectory;
+
+				if (!baseUrl && resumeWorkspacePath) {
+					// Need to resume the session first
+					setStatus(
+						locale === "de"
+							? "Sitzung wird wiederhergestellt..."
+							: "Resuming session...",
+					);
+
+					const url = await ensureOpencodeRunning(resumeWorkspacePath);
+					if (!url) {
+						throw new Error(
+							locale === "de"
+								? "Sitzung konnte nicht wiederhergestellt werden"
+								: "Failed to resume session",
+						);
+					}
+					baseUrl = url;
+					workspacePath = resumeWorkspacePath;
+				}
+
+				if (!baseUrl) {
+					throw new Error(
+						locale === "de"
+							? "Keine aktive Sitzung zum Verzweigen"
+							: "No active session to fork",
+					);
+				}
+
+				setStatus(
+					locale === "de"
+						? "Sitzung wird verzweigt..."
+						: "Branching session...",
+				);
+
+				// Find all messages up to and including the selected message
+				const messageIndex = messages.findIndex((m) => m.info.id === messageId);
+
+				if (messageIndex === -1) {
+					throw new Error("Message not found");
+				}
+
+				// Get messages up to the selected point
+				const messagesToCopy = messages.slice(0, messageIndex + 1);
+
+				// Build a concise conversation transcript
+				const conversationTranscript = messagesToCopy
+					.map((msg) => {
+						const role = msg.info.role === "user" ? "User" : "Assistant";
+						const textParts = msg.parts
+							.filter((p) => p.type === "text" && p.text)
+							.map((p) => p.text)
+							.join("\n");
+						// Truncate long messages to keep context manageable
+						const truncated =
+							textParts.length > 500
+								? `${textParts.substring(0, 500)}...`
+								: textParts;
+						return `[${role}]: ${truncated}`;
+					})
+					.join("\n\n");
+
+				// Create a new session with parentID linking to original
+				const parentTitle =
+					selectedChatSession?.title ||
+					selectedChatFromHistory?.title ||
+					generateReadableId(sessionId);
+				const requestOptions = workspacePath
+					? { directory: workspacePath }
+					: opencodeRequestOptions;
+				const newSession = await createSession(
+					baseUrl,
+					`Branch: ${parentTitle}`,
+					sessionId, // parentID for linking
+					requestOptions,
+				);
+
+				// Refresh sessions to show the new session
+				await refreshOpencodeSessions();
+				await refreshChatHistory();
+
+				// Switch to the new session
+				if (newSession.id) {
+					setSelectedChatSessionId(newSession.id);
+
+					// Copy conversation context to clipboard
+					const contextForClipboard =
+						locale === "de"
+							? `[Kontext aus vorheriger Unterhaltung - bei Bedarf einfügen]\n\n${conversationTranscript}`
+							: `[Context from previous conversation - paste if needed]\n\n${conversationTranscript}`;
+
+					try {
+						await navigator.clipboard?.writeText(contextForClipboard);
+					} catch {
+						// Clipboard access may be denied, that's okay
+					}
+
+					setStatus(
+						locale === "de"
+							? "Verzweigt! Kontext in Zwischenablage kopiert."
+							: "Branched! Context copied to clipboard.",
+					);
+
+					// Focus the input for immediate typing
+					setTimeout(() => {
+						chatInputRef.current?.focus();
+					}, 100);
+
+					// Clear status after a moment
+					setTimeout(() => setStatus(""), 4000);
+				}
+			} catch (err) {
+				console.error("Failed to fork session:", err);
+				setStatus(
+					locale === "de"
+						? `Verzweigen fehlgeschlagen: ${err instanceof Error ? err.message : "Unbekannter Fehler"}`
+						: `Fork failed: ${err instanceof Error ? err.message : "Unknown error"}`,
+				);
+			}
+		},
+		[
+			effectiveOpencodeBaseUrl,
+			activeSessionId,
+			selectedChatSessionId,
+			selectedChatSession,
+			selectedChatFromHistory,
+			messages,
+			opencodeDirectory,
+			opencodeRequestOptions,
+			resumeWorkspacePath,
+			ensureOpencodeRunning,
+			locale,
+			refreshOpencodeSessions,
+			refreshChatHistory,
+			setSelectedChatSessionId,
+		],
+	);
+
 	const handleSend = async () => {
 		// In Main Chat mode, we might need to create a session first
 		// In regular mode, we need a session ID
@@ -2435,6 +2602,8 @@ export function SessionsApp() {
 								workspaceName={workspaceName}
 								readableId={readableId}
 								workspaceDirectory={opencodeDirectory}
+								onFork={handleForkSession}
+								locale={locale}
 							/>
 						</div>
 					))}
@@ -3172,14 +3341,22 @@ const MessageGroupCard = memo(function MessageGroupCard({
 	workspaceName,
 	readableId,
 	workspaceDirectory,
+	onFork,
+	locale = "en",
 }: {
 	group: MessageGroup;
 	persona?: Persona | null;
 	workspaceName?: string | null;
 	readableId?: string | null;
 	workspaceDirectory?: string;
+	onFork?: (messageId: string) => void;
+	locale?: "de" | "en";
 }) {
 	const isUser = group.role === "user";
+
+	// Get the last message ID in the group (for forking from this point)
+	const lastMessage = group.messages[group.messages.length - 1];
+	const lastMessageId = lastMessage?.info.id;
 
 	// Get created time from first message
 	const firstMessage = group.messages[0];
@@ -3242,7 +3419,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 	const assistantDisplayName = workspaceName || persona?.name || "Assistant";
 	const personaColor = persona?.color;
 
-	return (
+	const messageCard = (
 		<div
 			className={cn(
 				"transition-all duration-200 overflow-hidden",
@@ -3387,6 +3564,39 @@ const MessageGroupCard = memo(function MessageGroupCard({
 				})}
 			</div>
 		</div>
+	);
+
+	// If no fork handler, just render the card directly
+	if (!onFork || !lastMessageId) {
+		return messageCard;
+	}
+
+	// Wrap in context menu for fork functionality
+	return (
+		<ContextMenu>
+			<ContextMenuTrigger asChild>{messageCard}</ContextMenuTrigger>
+			<ContextMenuContent>
+				<ContextMenuItem
+					onClick={() => onFork(lastMessageId)}
+					className="gap-2"
+				>
+					<GitBranch className="w-4 h-4" />
+					{locale === "de" ? "Von hier verzweigen" : "Branch from here"}
+				</ContextMenuItem>
+				<ContextMenuSeparator />
+				<ContextMenuItem
+					onClick={() => {
+						if (allTextContent) {
+							navigator.clipboard?.writeText(allTextContent);
+						}
+					}}
+					className="gap-2"
+				>
+					<Copy className="w-4 h-4" />
+					{locale === "de" ? "Text kopieren" : "Copy text"}
+				</ContextMenuItem>
+			</ContextMenuContent>
+		</ContextMenu>
 	);
 });
 

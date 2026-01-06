@@ -152,6 +152,19 @@ impl MainChatService {
         std::fs::write(&agents_path, agents_content)
             .with_context(|| format!("writing AGENTS.md: {}", agents_path.display()))?;
 
+        // Create PERSONALITY.md from template (replace {{name}} placeholder)
+        let personality_template = include_str!("templates/PERSONALITY.md");
+        let personality_content = personality_template.replace("{{name}}", name);
+        let personality_path = main_chat_dir.join("PERSONALITY.md");
+        std::fs::write(&personality_path, personality_content)
+            .with_context(|| format!("writing PERSONALITY.md: {}", personality_path.display()))?;
+
+        // Create USER.md from template
+        let user_content = include_str!("templates/USER.md");
+        let user_path = main_chat_dir.join("USER.md");
+        std::fs::write(&user_path, user_content)
+            .with_context(|| format!("writing USER.md: {}", user_path.display()))?;
+
         // Create .opencode directory
         let opencode_dir = main_chat_dir.join(".opencode");
         std::fs::create_dir_all(&opencode_dir)?;

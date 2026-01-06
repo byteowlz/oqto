@@ -542,6 +542,32 @@ export async function updateSession(
 	return handleResponse<OpenCodeSession>(res);
 }
 
+/**
+ * Fork a session at a specific message point.
+ * Creates a new session with all conversation history up to (and including) the specified message.
+ * If no messageID is provided, forks from the current end of the conversation.
+ */
+export async function forkSession(
+	opencodeBaseUrl: string,
+	sessionId: string,
+	messageId?: string,
+	options?: OpencodeRequestOptions,
+): Promise<OpenCodeSession> {
+	const res = await fetch(
+		withDirectory(
+			`${base(opencodeBaseUrl)}/session/${sessionId}/fork`,
+			options?.directory,
+		),
+		{
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ messageID: messageId }),
+			credentials: "include",
+		},
+	);
+	return handleResponse<OpenCodeSession>(res);
+}
+
 export type EventCallback = (event: {
 	type: string;
 	properties: unknown;

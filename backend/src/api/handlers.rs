@@ -2177,7 +2177,37 @@ fn get_settings_service<'a>(state: &'a AppState, app: &str) -> ApiResult<&'a Arc
 // TRX (Issue Tracking) Handlers
 // ============================================================================
 
-/// TRX issue as returned by `trx list --json`.
+/// Dependency as returned by trx CLI.
+#[derive(Debug, Deserialize)]
+struct TrxDependency {
+    #[allow(dead_code)]
+    issue_id: String,
+    depends_on_id: String,
+    #[serde(rename = "type")]
+    dep_type: String,
+    #[allow(dead_code)]
+    created_at: String,
+}
+
+/// Raw TRX issue as returned by `trx list --json`.
+#[derive(Debug, Deserialize)]
+struct TrxIssueRaw {
+    id: String,
+    title: String,
+    #[serde(default)]
+    description: Option<String>,
+    status: String,
+    priority: i32,
+    issue_type: String,
+    created_at: String,
+    updated_at: String,
+    #[serde(default)]
+    closed_at: Option<String>,
+    #[serde(default)]
+    dependencies: Vec<TrxDependency>,
+}
+
+/// TRX issue as returned by API (transformed from raw).
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TrxIssue {
     pub id: String,
@@ -2197,6 +2227,40 @@ pub struct TrxIssue {
     pub labels: Vec<String>,
     #[serde(default)]
     pub blocked_by: Vec<String>,
+}
+
+impl From<TrxIssueRaw> for TrxIssue {
+    fn from(raw: TrxIssueRaw) -> Self {
+        // Extract parent_id from dependencies with type "parent_child"
+        let parent_id = raw
+            .dependencies
+            .iter()
+            .find(|d| d.dep_type == "parent_child")
+            .map(|d| d.depends_on_id.clone());
+
+        // Extract blocked_by from dependencies with type "blocks"
+        let blocked_by: Vec<String> = raw
+            .dependencies
+            .iter()
+            .filter(|d| d.dep_type == "blocks")
+            .map(|d| d.depends_on_id.clone())
+            .collect();
+
+        TrxIssue {
+            id: raw.id,
+            title: raw.title,
+            description: raw.description,
+            status: raw.status,
+            priority: raw.priority,
+            issue_type: raw.issue_type,
+            created_at: raw.created_at,
+            updated_at: raw.updated_at,
+            closed_at: raw.closed_at,
+            parent_id,
+            labels: Vec::new(),
+            blocked_by,
+        }
+    }
 }
 
 /// Request body for creating a TRX issue.
@@ -2278,9 +2342,11 @@ pub async fn list_trx_issues(
 ) -> ApiResult<Json<Vec<TrxIssue>>> {
     let output = exec_trx_command(&query.workspace_path, &["list"]).await?;
     
-    // Parse the JSON output - trx list --json returns an array of issues
-    let issues: Vec<TrxIssue> = serde_json::from_str(&output)
+    // Parse the raw JSON output and transform to API format
+    let raw_issues: Vec<TrxIssueRaw> = serde_json::from_str(&output)
         .map_err(|e| ApiError::internal(format!("Failed to parse trx output: {}", e)))?;
+    
+    let issues: Vec<TrxIssue> = raw_issues.into_iter().map(TrxIssue::from).collect();
     
     Ok(Json(issues))
 }
@@ -2294,10 +2360,10 @@ pub async fn get_trx_issue(
 ) -> ApiResult<Json<TrxIssue>> {
     let output = exec_trx_command(&query.workspace_path, &["show", &issue_id]).await?;
     
-    let issue: TrxIssue = serde_json::from_str(&output)
+    let raw_issue: TrxIssueRaw = serde_json::from_str(&output)
         .map_err(|e| ApiError::internal(format!("Failed to parse trx output: {}", e)))?;
     
-    Ok(Json(issue))
+    Ok(Json(TrxIssue::from(raw_issue)))
 }
 
 /// Create a new TRX issue.
@@ -2330,9 +2396,10 @@ pub async fn create_trx_issue(
     let output = exec_trx_command(&query.workspace_path, &args).await?;
     
     // trx create --json returns the created issue
-    let issue: TrxIssue = serde_json::from_str(&output)
+    let raw_issue: TrxIssueRaw = serde_json::from_str(&output)
         .map_err(|e| ApiError::internal(format!("Failed to parse trx output: {}", e)))?;
     
+    let issue = TrxIssue::from(raw_issue);
     info!(issue_id = %issue.id, "Created TRX issue");
     Ok(Json(issue))
 }
@@ -2379,10 +2446,11 @@ pub async fn update_trx_issue(
     let output = exec_trx_command(&query.workspace_path, &args).await?;
     
     // Parse the updated issue (trx update --json returns array with single issue)
-    let issues: Vec<TrxIssue> = serde_json::from_str(&output)
+    let raw_issues: Vec<TrxIssueRaw> = serde_json::from_str(&output)
         .map_err(|e| ApiError::internal(format!("Failed to parse trx output: {}", e)))?;
     
-    let issue = issues.into_iter().next()
+    let issue = raw_issues.into_iter().next()
+        .map(TrxIssue::from)
         .ok_or_else(|| ApiError::internal("No issue returned from trx update"))?;
     
     info!(issue_id = %issue.id, "Updated TRX issue");
@@ -2409,10 +2477,11 @@ pub async fn close_trx_issue(
     let output = exec_trx_command(&query.workspace_path, &args).await?;
     
     // Parse the closed issue
-    let issues: Vec<TrxIssue> = serde_json::from_str(&output)
+    let raw_issues: Vec<TrxIssueRaw> = serde_json::from_str(&output)
         .map_err(|e| ApiError::internal(format!("Failed to parse trx output: {}", e)))?;
     
-    let issue = issues.into_iter().next()
+    let issue = raw_issues.into_iter().next()
+        .map(TrxIssue::from)
         .ok_or_else(|| ApiError::internal("No issue returned from trx close"))?;
     
     info!(issue_id = %issue.id, "Closed TRX issue");

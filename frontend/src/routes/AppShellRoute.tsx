@@ -1716,23 +1716,74 @@ function AppShell() {
 							)}
 							{/* Search input - below Main Chat */}
 							<div className="relative mb-2 px-1">
-								<Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
+								<Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
 								<input
 									type="text"
 									placeholder={locale === "de" ? "Suchen..." : "Search..."}
 									value={sessionSearch}
 									onChange={(e) => setSessionSearch(e.target.value)}
-									className="w-full pl-7 pr-8 py-1.5 text-xs bg-sidebar-accent/50 border border-sidebar-border rounded placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary/50"
+									className="w-full pl-7 pr-14 py-1.5 text-xs bg-sidebar-accent/50 border border-sidebar-border rounded placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary/50"
 								/>
-								{sessionSearch && (
-									<button
-										type="button"
-										onClick={() => setSessionSearch("")}
-										className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-muted-foreground hover:text-foreground"
-									>
-										<X className="w-3 h-3" />
-									</button>
-								)}
+								<div className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-0.5">
+									{sessionSearch && (
+										<button
+											type="button"
+											onClick={() => setSessionSearch("")}
+											className="p-1 text-muted-foreground hover:text-foreground"
+										>
+											<X className="w-3 h-3" />
+										</button>
+									)}
+									<DropdownMenu>
+										<DropdownMenuTrigger asChild>
+											<button
+												type="button"
+												className={cn(
+													"p-1 transition-colors rounded",
+													selectedProjectKey
+														? "text-primary hover:text-primary/80"
+														: "text-muted-foreground hover:text-foreground",
+												)}
+												title={
+													locale === "de"
+														? "Nach Projekt filtern"
+														: "Filter by project"
+												}
+											>
+												<ChevronDown className="w-3.5 h-3.5" />
+											</button>
+										</DropdownMenuTrigger>
+										<DropdownMenuContent
+											align="end"
+											className="w-48 max-h-64 overflow-y-auto"
+										>
+											<DropdownMenuItem
+												onClick={handleProjectClear}
+												className={cn(!selectedProjectKey && "bg-accent")}
+											>
+												<span className="truncate">
+													{locale === "de" ? "Alle Projekte" : "All projects"}
+												</span>
+											</DropdownMenuItem>
+											<DropdownMenuSeparator />
+											{projectSummaries.map((project) => (
+												<DropdownMenuItem
+													key={project.key}
+													onClick={() => setSelectedProjectKey(project.key)}
+													className={cn(
+														selectedProjectKey === project.key && "bg-accent",
+													)}
+												>
+													<FolderKanban className="w-3.5 h-3.5 mr-2 flex-shrink-0 text-primary/70" />
+													<span className="truncate">{project.name}</span>
+													<span className="ml-auto text-[10px] text-muted-foreground">
+														{project.sessionCount}
+													</span>
+												</DropdownMenuItem>
+											))}
+										</DropdownMenuContent>
+									</DropdownMenu>
+								</div>
 							</div>
 							{/* History header - between search and chat list */}
 							<div className="flex items-center justify-between gap-2 py-1.5 px-1">
