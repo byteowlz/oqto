@@ -44,7 +44,6 @@ export function useDictation(options: UseDictationOptions): UseDictationReturn {
 	const { config, onTranscript, vadTimeoutMs } = options;
 
 	const sttRef = useRef<STTService | null>(null);
-	const animationRef = useRef<number | null>(null);
 	const smoothVolumeRef = useRef(0);
 	// Track the live transcript in a ref to avoid race conditions between VAD final and manual stop
 	const liveTranscriptRef = useRef("");
@@ -62,7 +61,11 @@ export function useDictation(options: UseDictationOptions): UseDictationReturn {
 		onTranscriptRef.current = onTranscript;
 	}, [onTranscript]);
 
-	// Volume smoothing animation loop
+	// Throttle transcript updates to reduce re-renders (update at most every 100ms)
+	const lastTranscriptUpdateRef = useRef(0);
+	const pendingTranscriptUpdateRef = useRef<number | null>(null);
+
+	// Volume smoothing loop - throttled to ~15fps to reduce re-renders
 	useEffect(() => {
 		if (!isActive) {
 			smoothVolumeRef.current = 0;
@@ -70,24 +73,18 @@ export function useDictation(options: UseDictationOptions): UseDictationReturn {
 			return;
 		}
 
-		const smoothingFactor = 0.15;
+		const smoothingFactor = 0.3; // Higher factor since we update less frequently
 
-		const animate = () => {
+		const intervalId = setInterval(() => {
 			const rawVolume = sttRef.current?.getInputVolume() ?? 0;
 			smoothVolumeRef.current +=
 				(rawVolume - smoothVolumeRef.current) * smoothingFactor;
 			if (smoothVolumeRef.current < 0.001) smoothVolumeRef.current = 0;
 			setInputVolume(smoothVolumeRef.current);
-			animationRef.current = requestAnimationFrame(animate);
-		};
-
-		animate();
+		}, 66); // ~15fps instead of 60fps
 
 		return () => {
-			if (animationRef.current) {
-				cancelAnimationFrame(animationRef.current);
-				animationRef.current = null;
-			}
+			clearInterval(intervalId);
 		};
 	}, [isActive]);
 
@@ -112,11 +109,26 @@ export function useDictation(options: UseDictationOptions): UseDictationReturn {
 			sttRef.current = new STTService(config.stt_url, timeout);
 			sttRef.current.setCallbacks({
 				onWord: (word) => {
-					setLiveTranscript((prev) => {
-						const newTranscript = `${prev ? `${prev} ` : ""}${word}`;
-						liveTranscriptRef.current = newTranscript;
-						return newTranscript;
-					});
+					// Update ref immediately (always accurate)
+					const newTranscript = `${liveTranscriptRef.current ? `${liveTranscriptRef.current} ` : ""}${word}`;
+					liveTranscriptRef.current = newTranscript;
+
+					// Throttle React state updates to max 10/sec to reduce re-renders
+					const now = Date.now();
+					if (now - lastTranscriptUpdateRef.current >= 100) {
+						lastTranscriptUpdateRef.current = now;
+						setLiveTranscript(newTranscript);
+					} else if (!pendingTranscriptUpdateRef.current) {
+						// Schedule update for end of throttle window
+						pendingTranscriptUpdateRef.current = window.setTimeout(
+							() => {
+								pendingTranscriptUpdateRef.current = null;
+								lastTranscriptUpdateRef.current = Date.now();
+								setLiveTranscript(liveTranscriptRef.current);
+							},
+							100 - (now - lastTranscriptUpdateRef.current),
+						);
+					}
 				},
 				onFinal: handleFinalTranscript,
 				onVadProgress: setVadProgress,
@@ -178,8 +190,9 @@ export function useDictation(options: UseDictationOptions): UseDictationReturn {
 	useEffect(() => {
 		return () => {
 			sttRef.current?.disconnect();
-			if (animationRef.current) {
-				cancelAnimationFrame(animationRef.current);
+			// Clear any pending transcript update timeout
+			if (pendingTranscriptUpdateRef.current) {
+				clearTimeout(pendingTranscriptUpdateRef.current);
 			}
 		};
 	}, []);

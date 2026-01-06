@@ -21,6 +21,7 @@ import {
 	LayoutGrid,
 	List,
 	Loader2,
+	PaintBucket,
 	Trash2,
 	Upload,
 } from "lucide-react";
@@ -236,6 +237,22 @@ function isPreviewable(filename: string): boolean {
 	return PREVIEWABLE_EXTENSIONS.has(ext) || !filename.includes(".");
 }
 
+// Image extensions that can be opened in canvas
+const IMAGE_EXTENSIONS = new Set([
+	".png",
+	".jpg",
+	".jpeg",
+	".gif",
+	".webp",
+	".svg",
+	".bmp",
+]);
+
+function isImageFile(filename: string): boolean {
+	const ext = filename.substring(filename.lastIndexOf(".")).toLowerCase();
+	return IMAGE_EXTENSIONS.has(ext);
+}
+
 function formatFileSize(bytes?: number): string {
 	if (bytes === undefined) return "-";
 	if (bytes < 1024) return `${bytes} B`;
@@ -273,6 +290,7 @@ export const initialFileTreeState: FileTreeState = {
 
 interface FileTreeViewProps {
 	onPreviewFile?: (filePath: string) => void;
+	onOpenInCanvas?: (filePath: string) => void;
 	workspacePath?: string | null;
 	/** External state for persistence across view switches */
 	state?: FileTreeState;
@@ -282,6 +300,7 @@ interface FileTreeViewProps {
 
 export function FileTreeView({
 	onPreviewFile,
+	onOpenInCanvas,
 	workspacePath,
 	state,
 	onStateChange,
@@ -819,6 +838,7 @@ export function FileTreeView({
 						onNavigateToFolder={handleNavigateToFolder}
 						onDownload={handleDownload}
 						onDelete={handleDelete}
+						onOpenInCanvas={onOpenInCanvas}
 						fileserverBaseUrl={fileserverBaseUrl}
 					/>
 				) : viewMode === "list" ? (
@@ -829,6 +849,7 @@ export function FileTreeView({
 						onNavigateToFolder={handleNavigateToFolder}
 						onDownload={handleDownload}
 						onDelete={handleDelete}
+						onOpenInCanvas={onOpenInCanvas}
 						fileserverBaseUrl={fileserverBaseUrl}
 					/>
 				) : (
@@ -839,6 +860,7 @@ export function FileTreeView({
 						onNavigateToFolder={handleNavigateToFolder}
 						onDownload={handleDownload}
 						onDelete={handleDelete}
+						onOpenInCanvas={onOpenInCanvas}
 						fileserverBaseUrl={fileserverBaseUrl}
 					/>
 				)}
@@ -853,16 +875,29 @@ function FileContextMenu({
 	node,
 	onDownload,
 	onDelete,
+	onOpenInCanvas,
 }: {
 	children: React.ReactNode;
 	node: FileNode;
 	onDownload: (path: string, isDirectory: boolean) => void;
 	onDelete: (path: string) => void;
+	onOpenInCanvas?: (path: string) => void;
 }) {
+	const isImage = node.type === "file" && isImageFile(node.name);
+
 	return (
 		<ContextMenu>
 			<ContextMenuTrigger asChild>{children}</ContextMenuTrigger>
 			<ContextMenuContent>
+				{isImage && onOpenInCanvas && (
+					<>
+						<ContextMenuItem onClick={() => onOpenInCanvas(node.path)}>
+							<PaintBucket className="w-4 h-4 mr-2" />
+							Open in Canvas
+						</ContextMenuItem>
+						<ContextMenuSeparator />
+					</>
+				)}
 				<ContextMenuItem
 					onClick={() => onDownload(node.path, node.type === "directory")}
 				>
@@ -892,6 +927,7 @@ function TreeView({
 	onNavigateToFolder,
 	onDownload,
 	onDelete,
+	onOpenInCanvas,
 	fileserverBaseUrl,
 }: {
 	nodes: FileNode[];
@@ -907,6 +943,7 @@ function TreeView({
 	onNavigateToFolder: (path: string) => void;
 	onDownload: (path: string, isDirectory: boolean) => void;
 	onDelete: (path: string) => void;
+	onOpenInCanvas?: (path: string) => void;
 	fileserverBaseUrl: string | null;
 }) {
 	// Sort: directories first, then files, both alphabetically
@@ -930,6 +967,7 @@ function TreeView({
 					onNavigateToFolder={onNavigateToFolder}
 					onDownload={onDownload}
 					onDelete={onDelete}
+					onOpenInCanvas={onOpenInCanvas}
 				/>
 			))}
 		</ul>
@@ -947,6 +985,7 @@ function TreeRow({
 	onNavigateToFolder,
 	onDownload,
 	onDelete,
+	onOpenInCanvas,
 }: {
 	node: FileNode;
 	level: number;
@@ -962,6 +1001,7 @@ function TreeRow({
 	onNavigateToFolder: (path: string) => void;
 	onDownload: (path: string, isDirectory: boolean) => void;
 	onDelete: (path: string) => void;
+	onOpenInCanvas?: (path: string) => void;
 }) {
 	const isDir = node.type === "directory";
 	const isExpanded = expanded[node.path];
@@ -998,7 +1038,12 @@ function TreeRow({
 
 	return (
 		<li>
-			<FileContextMenu node={node} onDownload={onDownload} onDelete={onDelete}>
+			<FileContextMenu
+				node={node}
+				onDownload={onDownload}
+				onDelete={onDelete}
+				onOpenInCanvas={onOpenInCanvas}
+			>
 				<button
 					type="button"
 					className={cn(
@@ -1050,6 +1095,7 @@ function TreeRow({
 							onNavigateToFolder={onNavigateToFolder}
 							onDownload={onDownload}
 							onDelete={onDelete}
+							onOpenInCanvas={onOpenInCanvas}
 						/>
 					))}
 				</ul>
@@ -1066,6 +1112,7 @@ function ListView({
 	onNavigateToFolder,
 	onDownload,
 	onDelete,
+	onOpenInCanvas,
 	fileserverBaseUrl,
 }: {
 	files: FileNode[];
@@ -1079,6 +1126,7 @@ function ListView({
 	onNavigateToFolder: (path: string) => void;
 	onDownload: (path: string, isDirectory: boolean) => void;
 	onDelete: (path: string) => void;
+	onOpenInCanvas?: (path: string) => void;
 	fileserverBaseUrl: string | null;
 }) {
 	// Sort: directories first, then files
@@ -1106,6 +1154,7 @@ function ListView({
 							key={file.path}
 							node={file}
 							onDownload={onDownload}
+							onOpenInCanvas={onOpenInCanvas}
 							onDelete={onDelete}
 						>
 							<button
@@ -1167,6 +1216,7 @@ function GridView({
 	onNavigateToFolder,
 	onDownload,
 	onDelete,
+	onOpenInCanvas,
 	fileserverBaseUrl,
 }: {
 	files: FileNode[];
@@ -1180,6 +1230,7 @@ function GridView({
 	onNavigateToFolder: (path: string) => void;
 	onDownload: (path: string, isDirectory: boolean) => void;
 	onDelete: (path: string) => void;
+	onOpenInCanvas?: (path: string) => void;
 	fileserverBaseUrl: string | null;
 }) {
 	// Sort: directories first, then files
@@ -1199,6 +1250,7 @@ function GridView({
 						node={file}
 						onDownload={onDownload}
 						onDelete={onDelete}
+						onOpenInCanvas={onOpenInCanvas}
 					>
 						<button
 							type="button"

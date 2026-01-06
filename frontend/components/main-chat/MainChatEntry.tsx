@@ -34,9 +34,9 @@ import {
 	ChevronDown,
 	ChevronRight,
 	Loader2,
+	MessageCircle,
 	Plus,
 	Settings,
-	Sparkles,
 	Trash2,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -279,7 +279,7 @@ export function MainChatEntry({
 									)}
 								</button>
 							) : (
-								<Sparkles className="w-4 h-4 mt-0.5 flex-shrink-0 text-primary" />
+								<MessageCircle className="w-4 h-4 mt-0.5 flex-shrink-0 text-primary" />
 							)}
 							<button
 								type="button"

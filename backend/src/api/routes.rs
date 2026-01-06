@@ -284,6 +284,11 @@ pub fn create_router(state: AppState) -> Router {
             "/main/sessions/latest",
             get(main_chat_handlers::get_latest_session),
         )
+        // TRX (issue tracking) routes - workspace-based
+        .route("/workspace/trx/issues", get(handlers::list_trx_issues).post(handlers::create_trx_issue))
+        .route("/workspace/trx/issues/{issue_id}", get(handlers::get_trx_issue).put(handlers::update_trx_issue))
+        .route("/workspace/trx/issues/{issue_id}/close", post(handlers::close_trx_issue))
+        .route("/workspace/trx/sync", post(handlers::sync_trx))
         // AgentRPC routes (unified backend API)
         .route("/agent/health", get(handlers::agent_health))
         .route(

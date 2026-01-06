@@ -242,12 +242,12 @@ export class STTService {
 			this.currentTranscript = "";
 		}, this.vadSilenceTimeoutMs);
 
-		// Progress callback at ~60fps for smooth UI updates
+		// Progress callback at ~15fps (every 66ms) - smooth enough for UI, reduces re-renders
 		this.vadProgressIntervalId = window.setInterval(() => {
 			const elapsed = Date.now() - this.vadStartTime;
 			const progress = Math.min(1, elapsed / this.vadSilenceTimeoutMs);
 			this.callbacks.onVadProgress?.(progress);
-		}, 16);
+		}, 66);
 	}
 
 	private clearVadTimeout() {

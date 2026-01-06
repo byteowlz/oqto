@@ -8,6 +8,11 @@ import {
 import { useApp } from "@/components/app-context";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+	type FileAttachment,
+	FileAttachmentChip,
+	FileMentionPopup,
+} from "@/components/ui/file-mention-popup";
 import { Input } from "@/components/ui/input";
 import {
 	CopyButton,
@@ -54,6 +59,7 @@ import {
 	type OpenCodeAssistantMessage,
 	type OpenCodeMessageWithParts,
 	type OpenCodePart,
+	type OpenCodePartInput,
 	type Permission,
 	type PermissionResponse,
 	abortSession,
@@ -67,6 +73,7 @@ import {
 	runShellCommandAsync,
 	sendCommandAsync,
 	sendMessageAsync,
+	sendPartsAsync,
 	subscribeToEvents,
 } from "@/lib/opencode-client";
 import { formatSessionDate, generateReadableId } from "@/lib/session-utils";
@@ -95,6 +102,7 @@ import {
 	Loader2,
 	MessageSquare,
 	Mic,
+	PaintBucket,
 	Paperclip,
 	RefreshCw,
 	Send,
@@ -140,6 +148,16 @@ const AgentSettingsView = lazy(() =>
 		default: mod.AgentSettingsView,
 	})),
 );
+const TrxView = lazy(() =>
+	import("@/apps/sessions/TrxView").then((mod) => ({
+		default: mod.TrxView,
+	})),
+);
+const CanvasView = lazy(() =>
+	import("@/apps/sessions/CanvasView").then((mod) => ({
+		default: mod.CanvasView,
+	})),
+);
 
 // Todo item structure
 interface TodoItem {
@@ -180,7 +198,8 @@ type ActiveView =
 	| "tasks"
 	| "memories"
 	| "voice"
-	| "settings";
+	| "settings"
+	| "canvas";
 
 function groupMessages(messages: OpenCodeMessageWithParts[]): MessageGroup[] {
 	const groups: MessageGroup[] = [];
@@ -540,6 +559,11 @@ export function SessionsApp() {
 		useState<SlashCommand[]>(builtInCommands);
 	const slashQuery = parseSlashInput(messageInput);
 
+	// File mention popup state
+	const [showFileMentionPopup, setShowFileMentionPopup] = useState(false);
+	const [fileMentionQuery, setFileMentionQuery] = useState("");
+	const [fileAttachments, setFileAttachments] = useState<FileAttachment[]>([]);
+
 	// Default agent for shell commands - use "build" as the default primary agent
 	const [defaultAgent, setDefaultAgent] = useState<string>("build");
 	const [isUploading, setIsUploading] = useState(false);
@@ -621,6 +645,24 @@ export function SessionsApp() {
 		onTranscript: handleDictationTranscript,
 		vadTimeoutMs: 3000, // Longer timeout for dictation (3s silence before auto-stop appending)
 	});
+
+	// Auto-resize textarea during dictation based on liveTranscript length
+	useEffect(() => {
+		if (!chatInputRef.current || !dictation.isActive) return;
+
+		const textarea = chatInputRef.current;
+		const transcript = dictation.liveTranscript;
+
+		if (!transcript) {
+			textarea.style.height = "36px";
+			return;
+		}
+
+		// Estimate height from transcript length (~50 chars per line at typical width)
+		const estimatedLines = Math.ceil(transcript.length / 50);
+		const estimatedHeight = Math.min(36 + (estimatedLines - 1) * 20, 200);
+		textarea.style.height = `${estimatedHeight}px`;
+	}, [dictation.isActive, dictation.liveTranscript]);
 
 	// Listen for voice commands from command palette and keyboard shortcuts
 	useVoiceCommandListener(
@@ -771,6 +813,12 @@ export function SessionsApp() {
 	const handlePreviewFile = useCallback((filePath: string) => {
 		setPreviewFilePath(filePath);
 		setActiveView("preview");
+	}, []);
+
+	// Handler for opening a file in canvas from FileTreeView
+	const handleOpenInCanvas = useCallback((filePath: string) => {
+		setPreviewFilePath(filePath);
+		setActiveView("canvas");
 	}, []);
 
 	// Handler for file tree state changes (for persistence)
@@ -1855,15 +1903,24 @@ export function SessionsApp() {
 		// In Main Chat mode, we might need to create a session first
 		// In regular mode, we need a session ID
 		if (!mainChatActive && !selectedChatSessionId) return;
-		if (!messageInput.trim() && pendingUploads.length === 0) return;
+		if (
+			!messageInput.trim() &&
+			pendingUploads.length === 0 &&
+			fileAttachments.length === 0
+		)
+			return;
 
 		// Stop dictation if active
 		if (dictation.isActive) {
 			dictation.stop();
 		}
 
-		// Close slash popup if open
+		// Close popups if open
 		setShowSlashPopup(false);
+		setShowFileMentionPopup(false);
+
+		// Capture file attachments before clearing
+		const currentFileAttachments = [...fileAttachments];
 
 		// Build message text with uploaded file paths
 		let messageText = messageInput.trim();
@@ -1887,6 +1944,7 @@ export function SessionsApp() {
 			chatInputRef.current.style.height = "36px";
 		}
 		setPendingUploads([]);
+		setFileAttachments([]);
 		setChatState("sending");
 		setStatus("");
 
@@ -2048,6 +2106,27 @@ export function SessionsApp() {
 					targetSessionId,
 					shellCommand,
 					agentId,
+					{ directory: effectiveDirectory },
+				);
+			} else if (currentFileAttachments.length > 0) {
+				// Send with file parts
+				const parts: OpenCodePartInput[] = [
+					{ type: "text", text: messageText },
+				];
+				// Add file parts
+				for (const attachment of currentFileAttachments) {
+					parts.push({
+						type: "file",
+						mime: "text/plain", // Will be determined by backend
+						url: `file://${effectiveDirectory}/${attachment.path}`,
+						filename: attachment.filename,
+					});
+				}
+				await sendPartsAsync(
+					effectiveBaseUrl,
+					targetSessionId,
+					parts,
+					undefined,
 					{ directory: effectiveDirectory },
 				);
 			} else {
@@ -2381,18 +2460,12 @@ export function SessionsApp() {
 						<Clock className="w-3 h-3" />
 						<span>
 							{locale === "de"
-								? "Sende eine Nachricht um diese Sitzung fortzusetzen"
-								: "Send a message to resume this session"}
-						</span>
-					</div>
-				)}
-				{canResumeWithoutMessage && (
-					<div className="flex items-center gap-1.5 px-1 pt-1 text-xs text-muted-foreground">
-						<RefreshCw className="w-3 h-3" />
-						<span>
-							{locale === "de"
-								? "Fortsetzen ohne Nachricht"
-								: "Resume without sending a message"}
+								? canResumeWithoutMessage
+									? "Nachricht senden oder ohne Nachricht fortsetzen"
+									: "Sende eine Nachricht um diese Sitzung fortzusetzen"
+								: canResumeWithoutMessage
+									? "Send a message or resume without one"
+									: "Send a message to resume this session"}
 						</span>
 					</div>
 				)}
@@ -2439,7 +2512,7 @@ export function SessionsApp() {
 						/>
 					)}
 					{/* Textarea wrapper with slash command popup */}
-					<div className="flex-1 relative flex items-center min-h-[32px]">
+					<div className="flex-1 relative flex flex-col min-h-[32px]">
 						<SlashCommandPopup
 							commands={slashCommands}
 							query={slashQuery.command}
@@ -2447,6 +2520,40 @@ export function SessionsApp() {
 							onSelect={handleSlashCommandSelect}
 							onClose={() => setShowSlashPopup(false)}
 						/>
+						<FileMentionPopup
+							query={fileMentionQuery}
+							isOpen={showFileMentionPopup}
+							workspacePath={resumeWorkspacePath}
+							onSelect={(attachment) => {
+								// Remove @query from input, only show chip
+								const newInput = messageInput.replace(/@[^\s]*$/, "");
+								setMessageInput(newInput);
+								setFileAttachments((prev) => [...prev, attachment]);
+								setShowFileMentionPopup(false);
+								setFileMentionQuery("");
+								chatInputRef.current?.focus();
+							}}
+							onClose={() => {
+								setShowFileMentionPopup(false);
+								setFileMentionQuery("");
+							}}
+						/>
+						{/* File attachment chips */}
+						{fileAttachments.length > 0 && (
+							<div className="flex flex-wrap gap-1 mb-1">
+								{fileAttachments.map((attachment) => (
+									<FileAttachmentChip
+										key={attachment.id}
+										attachment={attachment}
+										onRemove={() => {
+											setFileAttachments((prev) =>
+												prev.filter((a) => a.id !== attachment.id),
+											);
+										}}
+									/>
+								))}
+							</div>
+						)}
 						<textarea
 							ref={chatInputRef}
 							placeholder={
@@ -2469,8 +2576,18 @@ export function SessionsApp() {
 								// Show slash popup when typing /
 								if (value.startsWith("/")) {
 									setShowSlashPopup(true);
+									setShowFileMentionPopup(false);
 								} else {
 									setShowSlashPopup(false);
+								}
+								// Show file mention popup when typing @
+								const atMatch = value.match(/@([^\s]*)$/);
+								if (atMatch && !value.startsWith("/")) {
+									setShowFileMentionPopup(true);
+									setFileMentionQuery(atMatch[1]);
+								} else {
+									setShowFileMentionPopup(false);
+									setFileMentionQuery("");
 								}
 								// Auto-resize is handled by useEffect on messageInput change
 							}}
@@ -2486,6 +2603,17 @@ export function SessionsApp() {
 										return;
 									}
 								}
+								// Let file mention popup handle its keys
+								if (showFileMentionPopup) {
+									if (
+										["ArrowDown", "ArrowUp", "Enter", "Tab", "Escape"].includes(
+											e.key,
+										)
+									) {
+										// Popup handles via its own event listener
+										return;
+									}
+								}
 								if (e.key === "Enter" && !e.shiftKey) {
 									e.preventDefault();
 									handleSend();
@@ -2496,6 +2624,7 @@ export function SessionsApp() {
 								}
 								if (e.key === "Escape") {
 									setShowSlashPopup(false);
+									setShowFileMentionPopup(false);
 								}
 							}}
 							onPaste={(e) => {
@@ -2554,7 +2683,8 @@ export function SessionsApp() {
 							chatState === "sending" ||
 							(!canResumeWithoutMessage &&
 								!messageInput.trim() &&
-								pendingUploads.length === 0)
+								pendingUploads.length === 0 &&
+								fileAttachments.length === 0)
 						}
 						className="bg-primary hover:bg-primary/90 text-primary-foreground"
 					>
@@ -2635,6 +2765,10 @@ export function SessionsApp() {
 	const readableId = selectedChatSession?.id
 		? generateReadableId(selectedChatSession.id)
 		: null;
+	// Extract workspace name from path (last segment)
+	const workspaceName = opencodeDirectory
+		? opencodeDirectory.split("/").filter(Boolean).pop() || null
+		: null;
 
 	// Clean up session title - remove ISO timestamp suffix if present (e.g., "New session - 2025-12-18T07:46:58.478Z")
 	const cleanSessionTitle = (() => {
@@ -2677,8 +2811,13 @@ export function SessionsApp() {
 						)}
 					</div>
 					<div className="flex items-center gap-2 text-xs text-foreground/60 dark:text-muted-foreground">
-						{readableId && <span className="font-mono">{readableId}</span>}
-						{readableId && formattedDate && (
+						{(workspaceName || readableId) && (
+							<span className="font-mono">
+								{workspaceName}
+								{readableId && ` [${readableId}]`}
+							</span>
+						)}
+						{(workspaceName || readableId) && formattedDate && (
 							<span className="opacity-50">|</span>
 						)}
 						{formattedDate && <span>{formattedDate}</span>}
@@ -2733,6 +2872,13 @@ export function SessionsApp() {
 							icon={Eye}
 							label={t.preview}
 						/>
+						<TabButton
+							activeView={activeView}
+							onSelect={setActiveView}
+							view="canvas"
+							icon={PaintBucket}
+							label="Canvas"
+						/>
 						{features.mmry_enabled && (
 							<TabButton
 								activeView={activeView}
@@ -2773,6 +2919,7 @@ export function SessionsApp() {
 					{activeView === "files" && (
 						<FileTreeView
 							onPreviewFile={handlePreviewFile}
+							onOpenInCanvas={handleOpenInCanvas}
 							workspacePath={resumeWorkspacePath}
 							state={fileTreeState}
 							onStateChange={handleFileTreeStateChange}
@@ -2787,7 +2934,15 @@ export function SessionsApp() {
 						</Suspense>
 					)}
 					{activeView === "tasks" && (
-						<TodoListView todos={latestTodos} emptyMessage={t.noTasks} />
+						<div className="flex flex-col h-full overflow-hidden">
+							<TodoListView todos={latestTodos} emptyMessage={t.noTasks} />
+							<Suspense fallback={viewLoadingFallback}>
+								<TrxView
+									workspacePath={resumeWorkspacePath}
+									className="flex-1 min-h-0 border-t border-border"
+								/>
+							</Suspense>
+						</div>
 					)}
 					{features.mmry_enabled && activeView === "memories" && (
 						<Suspense fallback={viewLoadingFallback}>
@@ -2800,6 +2955,14 @@ export function SessionsApp() {
 					{activeView === "settings" && (
 						<Suspense fallback={viewLoadingFallback}>
 							<AgentSettingsView />
+						</Suspense>
+					)}
+					{activeView === "canvas" && (
+						<Suspense fallback={viewLoadingFallback}>
+							<CanvasView
+								workspacePath={resumeWorkspacePath}
+								initialImagePath={previewFilePath}
+							/>
 						</Suspense>
 					)}
 					{/* Terminal only rendered in mobile layout when isMobileLayout is true */}
@@ -2849,6 +3012,14 @@ export function SessionsApp() {
 							label={t.preview}
 							hideLabel
 						/>
+						<TabButton
+							activeView={activeView}
+							onSelect={setActiveView}
+							view="canvas"
+							icon={PaintBucket}
+							label="Canvas"
+							hideLabel
+						/>
 						{features.mmry_enabled && (
 							<TabButton
 								activeView={activeView}
@@ -2890,6 +3061,7 @@ export function SessionsApp() {
 						{activeView === "files" && (
 							<FileTreeView
 								onPreviewFile={handlePreviewFile}
+								onOpenInCanvas={handleOpenInCanvas}
 								workspacePath={resumeWorkspacePath}
 								state={fileTreeState}
 								onStateChange={handleFileTreeStateChange}
@@ -2904,7 +3076,15 @@ export function SessionsApp() {
 							</Suspense>
 						)}
 						{activeView === "tasks" && (
-							<TodoListView todos={latestTodos} emptyMessage={t.noTasks} />
+							<div className="flex flex-col h-full overflow-hidden">
+								<TodoListView todos={latestTodos} emptyMessage={t.noTasks} />
+								<Suspense fallback={viewLoadingFallback}>
+									<TrxView
+										workspacePath={resumeWorkspacePath}
+										className="flex-1 min-h-0 border-t border-border"
+									/>
+								</Suspense>
+							</div>
 						)}
 						{activeView === "chat" && (
 							<TodoListView todos={latestTodos} emptyMessage={t.noTasks} />
@@ -2923,6 +3103,14 @@ export function SessionsApp() {
 						{activeView === "settings" && (
 							<Suspense fallback={viewLoadingFallback}>
 								<AgentSettingsView />
+							</Suspense>
+						)}
+						{activeView === "canvas" && (
+							<Suspense fallback={viewLoadingFallback}>
+								<CanvasView
+									workspacePath={resumeWorkspacePath}
+									initialImagePath={previewFilePath}
+								/>
 							</Suspense>
 						)}
 						{/* Terminal only rendered in desktop layout when isMobileLayout is false */}

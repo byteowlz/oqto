@@ -2172,3 +2172,274 @@ fn get_settings_service<'a>(state: &'a AppState, app: &str) -> ApiResult<&'a Arc
     }
     .ok_or_else(|| ApiError::not_found(format!("Settings for app '{}' not found", app)))
 }
+
+// ============================================================================
+// TRX (Issue Tracking) Handlers
+// ============================================================================
+
+/// TRX issue as returned by `trx list --json`.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TrxIssue {
+    pub id: String,
+    pub title: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    pub status: String,
+    pub priority: i32,
+    pub issue_type: String,
+    pub created_at: String,
+    pub updated_at: String,
+    #[serde(default)]
+    pub closed_at: Option<String>,
+    #[serde(default)]
+    pub parent_id: Option<String>,
+    #[serde(default)]
+    pub labels: Vec<String>,
+    #[serde(default)]
+    pub blocked_by: Vec<String>,
+}
+
+/// Request body for creating a TRX issue.
+#[derive(Debug, Deserialize)]
+pub struct CreateTrxIssueRequest {
+    pub title: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default = "default_issue_type")]
+    pub issue_type: String,
+    #[serde(default = "default_priority")]
+    pub priority: i32,
+    #[serde(default)]
+    pub parent_id: Option<String>,
+}
+
+fn default_issue_type() -> String {
+    "task".to_string()
+}
+
+fn default_priority() -> i32 {
+    2
+}
+
+/// Request body for updating a TRX issue.
+#[derive(Debug, Deserialize)]
+pub struct UpdateTrxIssueRequest {
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default)]
+    pub priority: Option<i32>,
+}
+
+/// Request body for closing a TRX issue.
+#[derive(Debug, Deserialize)]
+pub struct CloseTrxIssueRequest {
+    #[serde(default)]
+    pub reason: Option<String>,
+}
+
+/// Query parameters for workspace-based TRX routes.
+#[derive(Debug, Deserialize)]
+pub struct TrxWorkspaceQuery {
+    pub workspace_path: String,
+}
+
+/// Execute trx command in a workspace directory.
+async fn exec_trx_command(
+    workspace_path: &str,
+    args: &[&str],
+) -> Result<String, ApiError> {
+    use tokio::process::Command;
+
+    let output = Command::new("trx")
+        .args(args)
+        .arg("--json")
+        .current_dir(workspace_path)
+        .output()
+        .await
+        .map_err(|e| ApiError::internal(format!("Failed to execute trx: {}", e)))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(ApiError::internal(format!("trx command failed: {}", stderr)));
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+/// List TRX issues for a workspace.
+#[instrument(skip(_state))]
+pub async fn list_trx_issues(
+    State(_state): State<AppState>,
+    Query(query): Query<TrxWorkspaceQuery>,
+) -> ApiResult<Json<Vec<TrxIssue>>> {
+    let output = exec_trx_command(&query.workspace_path, &["list"]).await?;
+    
+    // Parse the JSON output - trx list --json returns an array of issues
+    let issues: Vec<TrxIssue> = serde_json::from_str(&output)
+        .map_err(|e| ApiError::internal(format!("Failed to parse trx output: {}", e)))?;
+    
+    Ok(Json(issues))
+}
+
+/// Get a specific TRX issue.
+#[instrument(skip(_state))]
+pub async fn get_trx_issue(
+    State(_state): State<AppState>,
+    Path(issue_id): Path<String>,
+    Query(query): Query<TrxWorkspaceQuery>,
+) -> ApiResult<Json<TrxIssue>> {
+    let output = exec_trx_command(&query.workspace_path, &["show", &issue_id]).await?;
+    
+    let issue: TrxIssue = serde_json::from_str(&output)
+        .map_err(|e| ApiError::internal(format!("Failed to parse trx output: {}", e)))?;
+    
+    Ok(Json(issue))
+}
+
+/// Create a new TRX issue.
+#[instrument(skip(_state, request))]
+pub async fn create_trx_issue(
+    State(_state): State<AppState>,
+    Query(query): Query<TrxWorkspaceQuery>,
+    Json(request): Json<CreateTrxIssueRequest>,
+) -> ApiResult<Json<TrxIssue>> {
+    let mut args = vec![
+        "create",
+        &request.title,
+        "-t",
+        &request.issue_type,
+        "-p",
+    ];
+    let priority_str = request.priority.to_string();
+    args.push(&priority_str);
+    
+    if let Some(ref desc) = request.description {
+        args.push("-d");
+        args.push(desc);
+    }
+    
+    if let Some(ref parent) = request.parent_id {
+        args.push("--parent");
+        args.push(parent);
+    }
+    
+    let output = exec_trx_command(&query.workspace_path, &args).await?;
+    
+    // trx create --json returns the created issue
+    let issue: TrxIssue = serde_json::from_str(&output)
+        .map_err(|e| ApiError::internal(format!("Failed to parse trx output: {}", e)))?;
+    
+    info!(issue_id = %issue.id, "Created TRX issue");
+    Ok(Json(issue))
+}
+
+/// Update a TRX issue.
+#[instrument(skip(_state, request))]
+pub async fn update_trx_issue(
+    State(_state): State<AppState>,
+    Path(issue_id): Path<String>,
+    Query(query): Query<TrxWorkspaceQuery>,
+    Json(request): Json<UpdateTrxIssueRequest>,
+) -> ApiResult<Json<TrxIssue>> {
+    let mut args = vec!["update", &issue_id];
+    
+    // Build args based on what's being updated
+    let title_arg;
+    if let Some(ref title) = request.title {
+        args.push("--title");
+        title_arg = title.clone();
+        args.push(&title_arg);
+    }
+    
+    let desc_arg;
+    if let Some(ref desc) = request.description {
+        args.push("--description");
+        desc_arg = desc.clone();
+        args.push(&desc_arg);
+    }
+    
+    let status_arg;
+    if let Some(ref status) = request.status {
+        args.push("--status");
+        status_arg = status.clone();
+        args.push(&status_arg);
+    }
+    
+    let priority_arg;
+    if let Some(priority) = request.priority {
+        args.push("-p");
+        priority_arg = priority.to_string();
+        args.push(&priority_arg);
+    }
+    
+    let output = exec_trx_command(&query.workspace_path, &args).await?;
+    
+    // Parse the updated issue (trx update --json returns array with single issue)
+    let issues: Vec<TrxIssue> = serde_json::from_str(&output)
+        .map_err(|e| ApiError::internal(format!("Failed to parse trx output: {}", e)))?;
+    
+    let issue = issues.into_iter().next()
+        .ok_or_else(|| ApiError::internal("No issue returned from trx update"))?;
+    
+    info!(issue_id = %issue.id, "Updated TRX issue");
+    Ok(Json(issue))
+}
+
+/// Close a TRX issue.
+#[instrument(skip(_state, request))]
+pub async fn close_trx_issue(
+    State(_state): State<AppState>,
+    Path(issue_id): Path<String>,
+    Query(query): Query<TrxWorkspaceQuery>,
+    Json(request): Json<CloseTrxIssueRequest>,
+) -> ApiResult<Json<TrxIssue>> {
+    let mut args = vec!["close", &issue_id];
+    
+    let reason_arg;
+    if let Some(ref reason) = request.reason {
+        args.push("-r");
+        reason_arg = reason.clone();
+        args.push(&reason_arg);
+    }
+    
+    let output = exec_trx_command(&query.workspace_path, &args).await?;
+    
+    // Parse the closed issue
+    let issues: Vec<TrxIssue> = serde_json::from_str(&output)
+        .map_err(|e| ApiError::internal(format!("Failed to parse trx output: {}", e)))?;
+    
+    let issue = issues.into_iter().next()
+        .ok_or_else(|| ApiError::internal("No issue returned from trx close"))?;
+    
+    info!(issue_id = %issue.id, "Closed TRX issue");
+    Ok(Json(issue))
+}
+
+/// Sync TRX changes (git add and commit .trx/).
+#[instrument(skip(_state))]
+pub async fn sync_trx(
+    State(_state): State<AppState>,
+    Query(query): Query<TrxWorkspaceQuery>,
+) -> ApiResult<Json<serde_json::Value>> {
+    // Note: trx sync doesn't have JSON output, so we just check for success
+    use tokio::process::Command;
+
+    let output = Command::new("trx")
+        .args(["sync"])
+        .current_dir(&query.workspace_path)
+        .output()
+        .await
+        .map_err(|e| ApiError::internal(format!("Failed to execute trx sync: {}", e)))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(ApiError::internal(format!("trx sync failed: {}", stderr)));
+    }
+
+    info!("TRX synced");
+    Ok(Json(serde_json::json!({ "synced": true })))
+}
