@@ -40,7 +40,6 @@ import {
 	type SetStateAction,
 	createContext,
 	useCallback,
-	useContext,
 	useEffect,
 	useMemo,
 	useRef,
@@ -115,7 +114,7 @@ interface AppContextValue {
 	setMainChatWorkspacePath: (path: string | null) => void;
 }
 
-const AppContext = createContext<AppContextValue | null>(null);
+export const AppContext = createContext<AppContextValue | null>(null);
 
 export function AppProvider({ children }: { children: ReactNode }) {
 	const [locale, setLocaleState] = useState<Locale>("de");
@@ -137,8 +136,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
 	const [opencodeSessions, setOpencodeSessions] = useState<OpenCodeSession[]>(
 		[],
 	);
-	const [selectedChatSessionId, setSelectedChatSessionId] =
-		useState<string>("");
+	const [selectedChatSessionId, setSelectedChatSessionId] = useState<string>(
+		() => {
+			// Allow mock session ID via URL parameter for testing
+			if (typeof window !== "undefined") {
+				const params = new URLSearchParams(window.location.search);
+				const mockSession = params.get("mockSession");
+				if (mockSession) {
+					console.log("[Dev] Using mock session ID:", mockSession);
+					return mockSession;
+				}
+			}
+			return "";
+		},
+	);
 	// Available projects
 	const [projects, setProjects] = useState<ProjectEntry[]>([]);
 	const [projectDefaultAgents, setProjectDefaultAgents] = useState<
@@ -196,6 +207,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
 	}, [selectedWorkspaceSessionId, workspaceSessions]);
 
 	const opencodeBaseUrl = useMemo(() => {
+		// Allow mock server override via URL parameter for testing
+		// Usage: ?mockOpencode=http://localhost:7274
+		if (typeof window !== "undefined") {
+			const params = new URLSearchParams(window.location.search);
+			const mockUrl = params.get("mockOpencode");
+			if (mockUrl) {
+				console.log("[Dev] Using mock OpenCode server:", mockUrl);
+				return mockUrl;
+			}
+		}
 		if (!selectedWorkspaceSession) return "";
 		if (selectedWorkspaceSession.status !== "running") return "";
 		return opencodeProxyBaseUrl(selectedWorkspaceSession.id);
@@ -820,12 +841,4 @@ export function AppProvider({ children }: { children: ReactNode }) {
 	);
 
 	return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
-}
-
-export function useApp() {
-	const ctx = useContext(AppContext);
-	if (!ctx) {
-		throw new Error("useApp must be used within an AppProvider");
-	}
-	return ctx;
 }

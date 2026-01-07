@@ -1,10 +1,10 @@
 "use client";
 
-import { useApp } from "@/components/app-context";
 import { PersonaBuilderChat } from "@/components/persona-builder-chat";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { useApp } from "@/hooks/use-app";
 import { fileserverProxyBaseUrl } from "@/lib/control-plane-client";
 import {
 	type OpenCodeAgent,

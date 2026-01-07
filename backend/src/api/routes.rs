@@ -11,8 +11,10 @@ use tracing::Level;
 
 use crate::auth::auth_middleware;
 
+use super::delegate as delegate_handlers;
 use super::handlers;
 use super::main_chat as main_chat_handlers;
+use super::main_chat_pi as main_chat_pi_handlers;
 use super::proxy;
 use super::state::AppState;
 
@@ -284,6 +286,19 @@ pub fn create_router(state: AppState) -> Router {
             "/main/sessions/latest",
             get(main_chat_handlers::get_latest_session),
         )
+        // Main Chat Pi routes (Pi agent runtime for Main Chat)
+        .route("/main/pi/status", get(main_chat_pi_handlers::get_pi_status))
+        .route("/main/pi/session", post(main_chat_pi_handlers::start_pi_session).delete(main_chat_pi_handlers::close_session))
+        .route("/main/pi/state", get(main_chat_pi_handlers::get_pi_state))
+        .route("/main/pi/prompt", post(main_chat_pi_handlers::send_prompt))
+        .route("/main/pi/abort", post(main_chat_pi_handlers::abort_pi))
+        .route("/main/pi/messages", get(main_chat_pi_handlers::get_messages))
+        .route("/main/pi/compact", post(main_chat_pi_handlers::compact_session))
+        .route("/main/pi/new", post(main_chat_pi_handlers::new_session))
+        .route("/main/pi/stats", get(main_chat_pi_handlers::get_session_stats))
+        .route("/main/pi/ws", get(main_chat_pi_handlers::ws_handler))
+        .route("/main/pi/history", get(main_chat_pi_handlers::get_history).delete(main_chat_pi_handlers::clear_history))
+        .route("/main/pi/history/separator", post(main_chat_pi_handlers::add_separator))
         // TRX (issue tracking) routes - workspace-based
         .route("/workspace/trx/issues", get(handlers::list_trx_issues).post(handlers::create_trx_issue))
         .route("/workspace/trx/issues/{issue_id}", get(handlers::get_trx_issue).put(handlers::update_trx_issue))
@@ -335,11 +350,35 @@ pub fn create_router(state: AppState) -> Router {
         .route("/auth/logout", post(handlers::logout))
         // Keep dev_login for backwards compatibility
         .route("/auth/dev-login", post(handlers::dev_login))
+        .with_state(state.clone());
+
+    // Delegation routes (localhost-only, no auth - used by Pi extension)
+    // These routes check for localhost in the handler and reject non-local requests
+    let delegate_routes = Router::new()
+        .route("/delegate/start", post(delegate_handlers::start_session))
+        .route(
+            "/delegate/prompt/{session_id}",
+            post(delegate_handlers::send_prompt),
+        )
+        .route(
+            "/delegate/status/{session_id}",
+            get(delegate_handlers::get_status),
+        )
+        .route(
+            "/delegate/messages/{session_id}",
+            get(delegate_handlers::get_messages),
+        )
+        .route(
+            "/delegate/stop/{session_id}",
+            post(delegate_handlers::stop_session),
+        )
+        .route("/delegate/sessions", get(delegate_handlers::list_sessions))
         .with_state(state);
 
     Router::new()
         .merge(public_routes)
         .merge(protected_routes)
+        .merge(delegate_routes)
         .layer(cors)
         .layer(trace_layer)
 }

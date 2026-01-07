@@ -27,6 +27,7 @@ mod local;
 mod main_chat;
 mod markdown;
 mod observability;
+mod pi;
 mod session;
 mod session_ui;
 mod settings;
@@ -446,6 +447,8 @@ struct AppConfig {
     auth: auth::AuthConfig,
     /// Agent scaffolding configuration.
     scaffold: ScaffoldConfig,
+    /// Pi agent configuration for Main Chat.
+    pi: PiConfig,
 }
 
 /// Backend mode selection.
@@ -505,6 +508,7 @@ impl Default for AppConfig {
             sessions: SessionUiConfig::default(),
             auth: auth::AuthConfig::default(),
             scaffold: ScaffoldConfig::default(),
+            pi: PiConfig::default(),
         }
     }
 }
@@ -883,6 +887,47 @@ impl Default for ScaffoldConfig {
             github_arg: Some("--github".to_string()),
             private_arg: Some("--private".to_string()),
             description_arg: Some("--description".to_string()),
+        }
+    }
+}
+
+/// Pi agent configuration for Main Chat.
+///
+/// Pi is used as the agent runtime for Main Chat, providing streaming
+/// responses and built-in compaction.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PiConfig {
+    /// Whether Pi integration is enabled for Main Chat.
+    pub enabled: bool,
+    /// Path to the Pi CLI executable (e.g., "pi" or "/usr/local/bin/pi")
+    pub executable: String,
+    /// Default LLM provider (e.g., "anthropic", "openai")
+    pub default_provider: Option<String>,
+    /// Default model name (e.g., "claude-sonnet-4-20250514")
+    pub default_model: Option<String>,
+    /// Extension files to load (passed via --extension).
+    /// If empty, looks for bundled extensions in $DATA_DIR/extensions/
+    #[serde(default)]
+    pub extensions: Vec<String>,
+    /// Maximum session age before forcing fresh start (hours).
+    /// Default: 4 hours.
+    pub max_session_age_hours: Option<u64>,
+    /// Maximum session file size before forcing fresh start (bytes).
+    /// Default: 500KB.
+    pub max_session_size_bytes: Option<u64>,
+}
+
+impl Default for PiConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            executable: "pi".to_string(),
+            default_provider: Some("anthropic".to_string()),
+            default_model: Some("claude-sonnet-4-20250514".to_string()),
+            extensions: Vec::new(),
+            max_session_age_hours: None,
+            max_session_size_bytes: None,
         }
     }
 }
@@ -1681,9 +1726,56 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     // Uses the user data path as the workspace dir for per-user Main Chat data
     let main_chat_workspace_dir = ctx.paths.data_dir.join("users");
     let main_chat_service =
-        main_chat::MainChatService::new(main_chat_workspace_dir, ctx.config.local.single_user);
+        main_chat::MainChatService::new(main_chat_workspace_dir.clone(), ctx.config.local.single_user);
     info!("Main Chat service initialized");
     state = state.with_main_chat(main_chat_service);
+
+    // Initialize Main Chat Pi service for agent runtime (if enabled)
+    if ctx.config.pi.enabled {
+        // Resolve extensions: use config or fall back to bundled extension
+        let extensions = if ctx.config.pi.extensions.is_empty() {
+            // Look for bundled extension in data directory
+            let bundled_ext = ctx.paths.data_dir.join("extensions").join("octo-delegate.ts");
+            if bundled_ext.exists() {
+                info!("Using bundled Pi extension: {:?}", bundled_ext);
+                vec![bundled_ext.to_string_lossy().to_string()]
+            } else {
+                debug!("No bundled Pi extension found at {:?}", bundled_ext);
+                Vec::new()
+            }
+        } else {
+            ctx.config.pi.extensions.clone()
+        };
+
+        let main_chat_pi_config = main_chat::MainChatPiServiceConfig {
+            pi_executable: ctx.config.pi.executable.clone(),
+            default_provider: ctx.config.pi.default_provider.clone(),
+            default_model: ctx.config.pi.default_model.clone(),
+            extensions,
+            max_session_age_hours: ctx
+                .config
+                .pi
+                .max_session_age_hours
+                .unwrap_or(4),
+            max_session_size_bytes: ctx
+                .config
+                .pi
+                .max_session_size_bytes
+                .unwrap_or(500 * 1024),
+        };
+        let main_chat_pi_service = main_chat::MainChatPiService::new(
+            main_chat_workspace_dir,
+            ctx.config.local.single_user,
+            main_chat_pi_config,
+        );
+        info!(
+            "Main Chat Pi service initialized (executable: {})",
+            ctx.config.pi.executable
+        );
+        state = state.with_main_chat_pi(main_chat_pi_service);
+    } else {
+        info!("Main Chat Pi service disabled");
+    }
 
     // Create router
     let app = api::create_router(state);
@@ -1733,10 +1825,13 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
         info!("Shutdown complete");
     };
 
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal)
-        .await
-        .context("running server")?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal)
+    .await
+    .context("running server")?;
 
     Ok(())
 }

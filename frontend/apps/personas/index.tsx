@@ -1,8 +1,8 @@
 "use client";
 
-import { useApp } from "@/components/app-context";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { useApp } from "@/hooks/use-app";
 import { getDefaultAvatarUrl, resolveAvatarUrl } from "@/lib/avatar-utils";
 import {
 	type Persona,

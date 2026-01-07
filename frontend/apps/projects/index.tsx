@@ -1,7 +1,7 @@
 "use client";
 
-import { useApp } from "@/components/app-context";
 import { Button } from "@/components/ui/button";
+import { useApp } from "@/hooks/use-app";
 import {
 	type ProjectLogo,
 	getProjectLogoUrl,

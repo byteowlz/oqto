@@ -4,9 +4,9 @@ import {
 	AppContentLayout,
 	type SidebarTab,
 } from "@/components/app-content-layout";
-import { useApp } from "@/components/app-context";
 import { SettingsEditor } from "@/components/settings";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useApp } from "@/hooks/use-app";
 import { Brain, HelpCircle, Info, Keyboard, Settings } from "lucide-react";
 import { useMemo, useState } from "react";
 

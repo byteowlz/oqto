@@ -1245,3 +1245,228 @@ export async function exportMainChatHistory(name: string): Promise<string> {
 	const data = await res.json();
 	return data.jsonl ?? "";
 }
+
+// ============================================================================
+// Main Chat Pi API (Pi agent runtime for Main Chat)
+// ============================================================================
+
+/** Pi session status */
+export type MainChatPiStatus = {
+	exists: boolean;
+	session_active: boolean;
+};
+
+/** Pi model info */
+export type PiModelInfo = {
+	id: string;
+	provider: string;
+	name: string;
+};
+
+/** Pi session state */
+export type PiState = {
+	model: PiModelInfo | null;
+	thinking_level: string;
+	is_streaming: boolean;
+	is_compacting: boolean;
+	session_id: string | null;
+	message_count: number;
+	auto_compaction_enabled: boolean;
+};
+
+/** Pi session stats */
+export type PiSessionStats = {
+	session_id: string | null;
+	user_messages: number;
+	assistant_messages: number;
+	tool_calls: number;
+	total_messages: number;
+	cost: number;
+};
+
+/** Pi agent message */
+export type PiAgentMessage = {
+	role: string;
+	content: unknown;
+	timestamp?: number;
+	api?: string;
+	provider?: string;
+	model?: string;
+	usage?: {
+		input: number;
+		output: number;
+		cacheRead: number;
+		cacheWrite: number;
+		cost?: {
+			input: number;
+			output: number;
+			cacheRead: number;
+			cacheWrite: number;
+			total: number;
+		};
+	};
+	stopReason?: string;
+};
+
+/** Pi compaction result */
+export type PiCompactionResult = {
+	summary: string;
+	firstKeptEntryId: string;
+	tokensBefore: number;
+	details?: unknown;
+};
+
+/** Check Pi session status */
+export async function getMainChatPiStatus(): Promise<MainChatPiStatus> {
+	const res = await fetch(controlPlaneApiUrl("/api/main/pi/status"), {
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+	return res.json();
+}
+
+/** Start or get Pi session */
+export async function startMainChatPiSession(): Promise<PiState> {
+	const res = await fetch(controlPlaneApiUrl("/api/main/pi/session"), {
+		method: "POST",
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+	return res.json();
+}
+
+/** Get Pi session state */
+export async function getMainChatPiState(): Promise<PiState> {
+	const res = await fetch(controlPlaneApiUrl("/api/main/pi/state"), {
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+	return res.json();
+}
+
+/** Send a prompt to Pi */
+export async function sendMainChatPiPrompt(message: string): Promise<void> {
+	const res = await fetch(controlPlaneApiUrl("/api/main/pi/prompt"), {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ message }),
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+}
+
+/** Abort current Pi operation */
+export async function abortMainChatPi(): Promise<void> {
+	const res = await fetch(controlPlaneApiUrl("/api/main/pi/abort"), {
+		method: "POST",
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+}
+
+/** Get Pi messages */
+export async function getMainChatPiMessages(): Promise<PiAgentMessage[]> {
+	const res = await fetch(controlPlaneApiUrl("/api/main/pi/messages"), {
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+	return res.json();
+}
+
+/** Compact Pi session */
+export async function compactMainChatPi(
+	customInstructions?: string,
+): Promise<PiCompactionResult> {
+	const res = await fetch(controlPlaneApiUrl("/api/main/pi/compact"), {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ custom_instructions: customInstructions }),
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+	return res.json();
+}
+
+/** Start new Pi session (clear history) */
+export async function newMainChatPiSession(): Promise<PiState> {
+	const res = await fetch(controlPlaneApiUrl("/api/main/pi/new"), {
+		method: "POST",
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+	return res.json();
+}
+
+/** Get Pi session stats */
+export async function getMainChatPiStats(): Promise<PiSessionStats> {
+	const res = await fetch(controlPlaneApiUrl("/api/main/pi/stats"), {
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+	return res.json();
+}
+
+/** Close Pi session */
+export async function closeMainChatPiSession(): Promise<void> {
+	const res = await fetch(controlPlaneApiUrl("/api/main/pi/session"), {
+		method: "DELETE",
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+}
+
+/** Create WebSocket connection to Pi for streaming events */
+export function createMainChatPiWebSocket(): WebSocket {
+	const baseUrl = getControlPlaneBaseUrl();
+	if (baseUrl) {
+		// Direct connection to control plane - no /api prefix needed
+		const wsUrl = `${baseUrl.replace(/^http/, "ws")}/main/pi/ws`;
+		return new WebSocket(wsUrl);
+	}
+	// Proxied via frontend dev server - use /api prefix
+	const wsUrl = `${window.location.origin.replace(/^http/, "ws")}/api/main/pi/ws`;
+	return new WebSocket(wsUrl);
+}
+
+/** Chat message stored in main_chat.db for persistent display history */
+export type MainChatDbMessage = {
+	id: number;
+	role: "user" | "assistant" | "system";
+	/** JSON array of message parts (text, thinking, tool_use, tool_result) */
+	content: string;
+	pi_session_id: string | null;
+	timestamp: number;
+	created_at: string;
+};
+
+/** Get persistent chat history from database (survives Pi session restarts) */
+export async function getMainChatPiHistory(): Promise<MainChatDbMessage[]> {
+	const res = await fetch(controlPlaneApiUrl("/api/main/pi/history"), {
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+	return res.json();
+}
+
+/** Clear persistent chat history */
+export async function clearMainChatPiHistory(): Promise<{ deleted: number }> {
+	const res = await fetch(controlPlaneApiUrl("/api/main/pi/history"), {
+		method: "DELETE",
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+	return res.json();
+}
+
+/** Add a session separator to history (marks new conversation start) */
+export async function addMainChatPiSeparator(): Promise<MainChatDbMessage> {
+	const res = await fetch(
+		controlPlaneApiUrl("/api/main/pi/history/separator"),
+		{
+			method: "POST",
+			credentials: "include",
+		},
+	);
+	if (!res.ok) throw new Error(await readApiError(res));
+	return res.json();
+}

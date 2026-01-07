@@ -5,7 +5,8 @@ use chrono::Utc;
 
 use super::db::MainChatDb;
 use super::models::{
-    AssistantConfig, CreateHistoryEntry, CreateSession, HistoryEntry, MainChatSession,
+    AssistantConfig, ChatMessage, CreateChatMessage, CreateHistoryEntry, CreateSession,
+    HistoryEntry, MainChatSession,
 };
 
 /// Repository for main chat operations.
@@ -280,6 +281,144 @@ impl<'a> MainChatRepository<'a> {
             .await
             .context("deleting config")?;
         Ok(result.rows_affected() > 0)
+    }
+
+    // ========== Message Operations ==========
+
+    /// Add a chat message.
+    pub async fn add_message(&self, message: CreateChatMessage) -> Result<ChatMessage> {
+        let timestamp = Utc::now().timestamp_millis();
+        let role = message.role.to_string();
+        let content = message.content.to_string();
+
+        let id = sqlx::query_scalar::<_, i64>(
+            r#"
+            INSERT INTO messages (role, content, pi_session_id, timestamp)
+            VALUES (?, ?, ?, ?)
+            RETURNING id
+            "#,
+        )
+        .bind(&role)
+        .bind(&content)
+        .bind(&message.pi_session_id)
+        .bind(timestamp)
+        .fetch_one(self.db.pool())
+        .await
+        .context("inserting message")?;
+
+        self.get_message_by_id(id).await
+    }
+
+    /// Get a message by ID.
+    pub async fn get_message_by_id(&self, id: i64) -> Result<ChatMessage> {
+        sqlx::query_as::<_, ChatMessage>(
+            "SELECT id, role, content, pi_session_id, timestamp, created_at FROM messages WHERE id = ?",
+        )
+        .bind(id)
+        .fetch_one(self.db.pool())
+        .await
+        .context("fetching message")
+    }
+
+    /// Get all messages (for display history).
+    pub async fn get_all_messages(&self) -> Result<Vec<ChatMessage>> {
+        sqlx::query_as::<_, ChatMessage>(
+            r#"
+            SELECT id, role, content, pi_session_id, timestamp, created_at
+            FROM messages
+            ORDER BY timestamp ASC
+            "#,
+        )
+        .fetch_all(self.db.pool())
+        .await
+        .context("fetching all messages")
+    }
+
+    /// Get recent messages with limit.
+    pub async fn get_recent_messages(&self, limit: i64) -> Result<Vec<ChatMessage>> {
+        sqlx::query_as::<_, ChatMessage>(
+            r#"
+            SELECT id, role, content, pi_session_id, timestamp, created_at
+            FROM messages
+            ORDER BY timestamp DESC
+            LIMIT ?
+            "#,
+        )
+        .bind(limit)
+        .fetch_all(self.db.pool())
+        .await
+        .context("fetching recent messages")
+    }
+
+    /// Get messages since a timestamp.
+    pub async fn get_messages_since(&self, since_timestamp: i64) -> Result<Vec<ChatMessage>> {
+        sqlx::query_as::<_, ChatMessage>(
+            r#"
+            SELECT id, role, content, pi_session_id, timestamp, created_at
+            FROM messages
+            WHERE timestamp > ?
+            ORDER BY timestamp ASC
+            "#,
+        )
+        .bind(since_timestamp)
+        .fetch_all(self.db.pool())
+        .await
+        .context("fetching messages since timestamp")
+    }
+
+    /// Get messages for a specific Pi session.
+    pub async fn get_messages_for_pi_session(
+        &self,
+        pi_session_id: &str,
+    ) -> Result<Vec<ChatMessage>> {
+        sqlx::query_as::<_, ChatMessage>(
+            r#"
+            SELECT id, role, content, pi_session_id, timestamp, created_at
+            FROM messages
+            WHERE pi_session_id = ?
+            ORDER BY timestamp ASC
+            "#,
+        )
+        .bind(pi_session_id)
+        .fetch_all(self.db.pool())
+        .await
+        .context("fetching messages for Pi session")
+    }
+
+    /// Count total messages.
+    pub async fn count_messages(&self) -> Result<i64> {
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM messages")
+            .fetch_one(self.db.pool())
+            .await
+            .context("counting messages")
+    }
+
+    /// Delete old messages, keeping the most recent N.
+    pub async fn prune_messages(&self, keep_count: i64) -> Result<i64> {
+        let result = sqlx::query(
+            r#"
+            DELETE FROM messages
+            WHERE id NOT IN (
+                SELECT id FROM messages ORDER BY timestamp DESC LIMIT ?
+            )
+            "#,
+        )
+        .bind(keep_count)
+        .execute(self.db.pool())
+        .await
+        .context("pruning messages")?;
+
+        Ok(result.rows_affected() as i64)
+    }
+
+    /// Delete all messages (for new session with fresh history).
+    pub async fn clear_messages(&self) -> Result<i64> {
+        let result = sqlx::query("DELETE FROM messages")
+            .execute(self.db.pool())
+            .await
+            .context("clearing messages")?;
+
+        Ok(result.rows_affected() as i64)
     }
 }
 

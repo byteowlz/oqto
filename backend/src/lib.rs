@@ -14,6 +14,7 @@ pub mod invite;
 pub mod local;
 pub mod main_chat;
 pub mod markdown;
+pub mod pi;
 pub mod observability;
 pub mod session;
 pub mod session_ui;

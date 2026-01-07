@@ -8,7 +8,8 @@ use tokio::sync::RwLock;
 
 use super::db::{MainChatDb, main_chat_db_path, main_chat_dir_path};
 use super::models::{
-    AssistantInfo, CreateHistoryEntry, CreateSession, HistoryEntry, MainChatSession,
+    AssistantInfo, ChatMessage, CreateChatMessage, CreateHistoryEntry, CreateSession,
+    HistoryEntry, MainChatSession,
 };
 use super::repository::MainChatRepository;
 
@@ -139,12 +140,6 @@ impl MainChatService {
     async fn create_default_files(&self, user_id: &str, name: &str) -> Result<()> {
         let main_chat_dir = self.get_main_chat_dir(user_id);
 
-        // Create opencode.json from template
-        let opencode_content = include_str!("templates/opencode.json");
-        let opencode_path = main_chat_dir.join("opencode.json");
-        std::fs::write(&opencode_path, opencode_content)
-            .with_context(|| format!("writing opencode.json: {}", opencode_path.display()))?;
-
         // Create AGENTS.md from template (replace {{name}} placeholder)
         let agents_template = include_str!("templates/AGENTS.md");
         let agents_content = agents_template.replace("{{name}}", name);
@@ -165,7 +160,27 @@ impl MainChatService {
         std::fs::write(&user_path, user_content)
             .with_context(|| format!("writing USER.md: {}", user_path.display()))?;
 
-        // Create .opencode directory
+        // Create .pi directory for pi agent config
+        let pi_dir = main_chat_dir.join(".pi");
+        std::fs::create_dir_all(&pi_dir)?;
+
+        // Create pi settings.json
+        let pi_settings_content = include_str!("templates/pi-settings.json");
+        let pi_settings_path = pi_dir.join("settings.json");
+        std::fs::write(&pi_settings_path, pi_settings_content)
+            .with_context(|| format!("writing pi settings: {}", pi_settings_path.display()))?;
+
+        // Create sessions directory for pi
+        let sessions_dir = pi_dir.join("sessions");
+        std::fs::create_dir_all(&sessions_dir)?;
+
+        // Keep opencode.json for backward compatibility (existing sessions)
+        let opencode_content = include_str!("templates/opencode.json");
+        let opencode_path = main_chat_dir.join("opencode.json");
+        std::fs::write(&opencode_path, opencode_content)
+            .with_context(|| format!("writing opencode.json: {}", opencode_path.display()))?;
+
+        // Create .opencode directory for backward compatibility
         let opencode_dir = main_chat_dir.join(".opencode");
         std::fs::create_dir_all(&opencode_dir)?;
 
@@ -278,6 +293,51 @@ impl MainChatService {
         let db = self.get_db(user_id).await?;
         let repo = MainChatRepository::new(&db);
         repo.update_session_message_count(session_id, count).await
+    }
+
+    // ========== Message Operations ==========
+
+    /// Add a chat message.
+    pub async fn add_message(
+        &self,
+        user_id: &str,
+        message: CreateChatMessage,
+    ) -> Result<ChatMessage> {
+        let db = self.get_db(user_id).await?;
+        let repo = MainChatRepository::new(&db);
+        repo.add_message(message).await
+    }
+
+    /// Get all messages (display history).
+    pub async fn get_all_messages(&self, user_id: &str) -> Result<Vec<ChatMessage>> {
+        let db = self.get_db(user_id).await?;
+        let repo = MainChatRepository::new(&db);
+        repo.get_all_messages().await
+    }
+
+    /// Get recent messages.
+    pub async fn get_recent_messages(&self, user_id: &str, limit: i64) -> Result<Vec<ChatMessage>> {
+        let db = self.get_db(user_id).await?;
+        let repo = MainChatRepository::new(&db);
+        repo.get_recent_messages(limit).await
+    }
+
+    /// Get messages since a timestamp.
+    pub async fn get_messages_since(
+        &self,
+        user_id: &str,
+        since_timestamp: i64,
+    ) -> Result<Vec<ChatMessage>> {
+        let db = self.get_db(user_id).await?;
+        let repo = MainChatRepository::new(&db);
+        repo.get_messages_since(since_timestamp).await
+    }
+
+    /// Clear all messages (for fresh start).
+    pub async fn clear_messages(&self, user_id: &str) -> Result<i64> {
+        let db = self.get_db(user_id).await?;
+        let repo = MainChatRepository::new(&db);
+        repo.clear_messages().await
     }
 }
 

@@ -1,9 +1,6 @@
 import { AgentPicker } from "@/components/agent-picker";
-import { AppProvider, useApp } from "@/components/app-context";
-import {
-	CommandPalette,
-	useCommandPalette,
-} from "@/components/command-palette";
+import { AppProvider } from "@/components/app-context";
+import { CommandPalette } from "@/components/command-palette";
 import { MainChatEntry } from "@/components/main-chat";
 import {
 	AlertDialog,
@@ -39,6 +36,8 @@ import {
 	DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
+import { useApp } from "@/hooks/use-app";
+import { useCommandPalette } from "@/hooks/use-command-palette";
 import {
 	type ChatSession,
 	type Persona,

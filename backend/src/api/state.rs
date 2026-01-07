@@ -11,7 +11,7 @@ use super::super::agent::AgentService;
 use crate::agent_rpc::AgentBackend;
 use crate::auth::AuthState;
 use crate::invite::InviteCodeRepository;
-use crate::main_chat::MainChatService;
+use crate::main_chat::{MainChatService, MainChatPiService};
 use crate::session::SessionService;
 use crate::session_ui::SessionAutoAttachMode;
 use crate::settings::SettingsService;
@@ -161,6 +161,8 @@ pub struct AppState {
     pub settings_mmry: Option<Arc<SettingsService>>,
     /// Main Chat service for persistent assistants.
     pub main_chat: Option<Arc<MainChatService>>,
+    /// Main Chat Pi service for managing Pi subprocesses.
+    pub main_chat_pi: Option<Arc<MainChatPiService>>,
 }
 
 impl AppState {
@@ -192,6 +194,7 @@ impl AppState {
             settings_octo: None,
             settings_mmry: None,
             main_chat: None,
+            main_chat_pi: None,
         }
     }
 
@@ -224,6 +227,7 @@ impl AppState {
             settings_octo: None,
             settings_mmry: None,
             main_chat: None,
+            main_chat_pi: None,
         }
     }
 
@@ -242,6 +246,12 @@ impl AppState {
     /// Set the main chat service.
     pub fn with_main_chat(mut self, service: MainChatService) -> Self {
         self.main_chat = Some(Arc::new(service));
+        self
+    }
+
+    /// Set the main chat Pi service.
+    pub fn with_main_chat_pi(mut self, service: MainChatPiService) -> Self {
+        self.main_chat_pi = Some(Arc::new(service));
         self
     }
 }

@@ -1,6 +1,5 @@
 "use client";
 
-import { useApp } from "@/components/app-context";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -13,6 +12,7 @@ import {
 	SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { useApp } from "@/hooks/use-app";
 import {
 	type PermissionAction,
 	type PermissionConfig,

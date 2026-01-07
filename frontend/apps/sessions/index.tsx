@@ -5,8 +5,9 @@ import {
 	FileTreeView,
 	initialFileTreeState,
 } from "@/apps/sessions/FileTreeView";
-import { useApp } from "@/components/app-context";
+import { MainChatPiView } from "@/components/main-chat";
 import { Badge } from "@/components/ui/badge";
+import { BrailleSpinner } from "@/components/ui/braille-spinner";
 import { Button } from "@/components/ui/button";
 import {
 	ContextMenu,
@@ -29,6 +30,7 @@ import {
 	PermissionBanner,
 	PermissionDialog,
 } from "@/components/ui/permission-dialog";
+import { ReadAloudButton } from "@/components/ui/read-aloud-button";
 import { SlashCommandPopup } from "@/components/ui/slash-command-popup";
 import { ToolCallCard } from "@/components/ui/tool-call-card";
 import {
@@ -37,6 +39,7 @@ import {
 	type VoiceMode,
 	VoicePanel,
 } from "@/components/voice";
+import { useApp } from "@/hooks/use-app";
 import { useDictation } from "@/hooks/use-dictation";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useModelContextLimit } from "@/hooks/use-models-dev";
@@ -75,6 +78,7 @@ import {
 	fetchAgents,
 	fetchCommands,
 	fetchMessages,
+	fetchPermissions,
 	fetchSessions,
 	forkSession,
 	invalidateMessageCache,
@@ -134,6 +138,7 @@ import {
 	startTransition,
 	useCallback,
 	useEffect,
+	useLayoutEffect,
 	useMemo,
 	useRef,
 	useState,
@@ -539,9 +544,13 @@ export function SessionsApp() {
 	const messagesContainerRef = useRef<HTMLDivElement>(null);
 	const messagesEndRef = useRef<HTMLDivElement>(null);
 
-	// Track if user has manually scrolled away from bottom
-	const isNearBottomRef = useRef(true);
+	// Track if auto-scroll is enabled (user hasn't scrolled away)
+	const autoScrollEnabledRef = useRef(true);
 	const lastSessionIdRef = useRef<string | null>(null);
+	// Track last scroll position to detect scroll direction
+	const lastScrollTopRef = useRef(0);
+	// Track if this is initial message load (for instant scroll) vs streaming (for smooth scroll)
+	const initialLoadRef = useRef(true);
 	const autoAttachAttemptRef = useRef<{
 		sessionId: string;
 		workspacePath: string;
@@ -588,6 +597,31 @@ export function SessionsApp() {
 	const [activePermission, setActivePermission] = useState<Permission | null>(
 		null,
 	);
+
+	// Fetch pending permissions when session changes and clear stale state
+	useEffect(() => {
+		// Clear permission state on session change
+		setPendingPermissions([]);
+		setActivePermission(null);
+
+		if (!opencodeBaseUrl || !selectedChatSessionId) return;
+
+		// Fetch any existing pending permissions
+		fetchPermissions(
+			opencodeBaseUrl,
+			selectedChatSessionId,
+			opencodeRequestOptions,
+		)
+			.then((permissions) => {
+				if (permissions.length > 0) {
+					setPendingPermissions(permissions);
+					setActivePermission(permissions[0]);
+				}
+			})
+			.catch((err) => {
+				console.warn("[Permission] Failed to fetch pending permissions:", err);
+			});
+	}, [opencodeBaseUrl, selectedChatSessionId, opencodeRequestOptions]);
 
 	// Track if we're on mobile layout (below lg breakpoint = 1024px)
 	const isMobileLayout = useIsMobile();
@@ -1458,7 +1492,8 @@ export function SessionsApp() {
 			top: container.scrollHeight,
 			behavior,
 		});
-		isNearBottomRef.current = true;
+		autoScrollEnabledRef.current = true;
+		setShowScrollToBottom(false);
 	}, []);
 
 	useEffect(() => {
@@ -1472,12 +1507,25 @@ export function SessionsApp() {
 
 		const { scrollTop, scrollHeight, clientHeight } = container;
 		const distanceFromBottom = scrollHeight - scrollTop - clientHeight;
+		const lastScrollTop = lastScrollTopRef.current;
+		lastScrollTopRef.current = scrollTop;
 
-		// Track if user is near bottom (within 150px)
-		isNearBottomRef.current = distanceFromBottom < 150;
+		// Detect if user scrolled up (intentionally moving away from bottom)
+		const scrolledUp = scrollTop < lastScrollTop;
+		const isAtBottom = distanceFromBottom < 50;
 
-		// Show button when more than 300px from bottom
-		setShowScrollToBottom(distanceFromBottom > 300);
+		// Disable auto-scroll when user scrolls up away from bottom
+		if (scrolledUp && distanceFromBottom > 100) {
+			autoScrollEnabledRef.current = false;
+		}
+
+		// Re-enable auto-scroll when user scrolls to bottom
+		if (isAtBottom) {
+			autoScrollEnabledRef.current = true;
+		}
+
+		// Show button when not at bottom (use small threshold for better UX)
+		setShowScrollToBottom(distanceFromBottom > 100);
 	}, []);
 
 	const messageCount = messages.length;
@@ -1490,31 +1538,38 @@ export function SessionsApp() {
 		handleScroll();
 	}, [messageCount, handleScroll]);
 
-	// Scroll to bottom when switching sessions
+	// Reset state when switching sessions
 	useEffect(() => {
 		if (!selectedChatSessionId) return;
 
-		// Detect session switch
 		if (lastSessionIdRef.current !== selectedChatSessionId) {
 			lastSessionIdRef.current = selectedChatSessionId;
-			isNearBottomRef.current = true; // Reset to bottom on session switch
-
-			// Wait for messages to load and render, then scroll to bottom
-			const timeoutId = setTimeout(() => {
-				scrollToBottom("instant");
-			}, 50);
-
-			return () => clearTimeout(timeoutId);
+			autoScrollEnabledRef.current = true;
+			initialLoadRef.current = true;
 		}
-	}, [selectedChatSessionId, scrollToBottom]);
+	}, [selectedChatSessionId]);
 
-	// Auto-scroll to bottom when new messages arrive (if user is near bottom)
+	// Position at bottom synchronously before paint (no visible jump)
+	useLayoutEffect(() => {
+		if (messages.length === 0) return;
+
+		const container = messagesContainerRef.current;
+		if (!container) return;
+
+		if (initialLoadRef.current) {
+			// Set scroll position directly - no animation, no visible jump
+			container.scrollTop = container.scrollHeight;
+			initialLoadRef.current = false;
+		}
+	}, [messages]);
+
+	// Smooth scroll for new messages during conversation (after initial load)
 	useEffect(() => {
 		if (messages.length === 0) return;
-		if (!isNearBottomRef.current) return;
+		if (!autoScrollEnabledRef.current) return;
+		if (initialLoadRef.current) return; // Skip - handled by useLayoutEffect
 
-		// Scroll to bottom when messages change and user was near bottom
-		scrollToBottom("instant");
+		scrollToBottom("smooth");
 	}, [messages, scrollToBottom]);
 
 	useEffect(() => {
@@ -2655,7 +2710,7 @@ export function SessionsApp() {
 			/>
 
 			{/* Chat input - works for both live and history sessions */}
-			<div className="chat-input-container flex flex-col gap-1 bg-muted/30 border border-border px-2 py-1">
+			<div className="chat-input-container flex flex-col gap-1 bg-muted/30 border border-border border-t-0 px-2 py-1">
 				{/* Show hint for history sessions that will be resumed */}
 				{isHistoryOnlySession && (
 					<div className="flex items-center gap-1.5 px-1 pt-1 text-xs text-muted-foreground">
@@ -3110,7 +3165,18 @@ export function SessionsApp() {
 
 				{/* Mobile content */}
 				<div className="flex-1 min-h-0 bg-card border border-t-0 border-border rounded-b-xl p-1.5 sm:p-4 overflow-hidden flex flex-col">
-					{activeView === "chat" && ChatContent}
+					{activeView === "chat" &&
+						(mainChatActive ? (
+							<MainChatPiView
+								locale={locale}
+								className="flex-1"
+								features={features}
+								workspacePath={mainChatWorkspacePath}
+								assistantName={mainChatAssistantName}
+							/>
+						) : (
+							ChatContent
+						))}
 					{activeView === "files" && (
 						<FileTreeView
 							onPreviewFile={handlePreviewFile}
@@ -3176,8 +3242,18 @@ export function SessionsApp() {
 			<div className="hidden lg:flex flex-1 min-h-0 gap-4 items-start">
 				{/* Chat panel */}
 				<div className="flex-[3] min-w-0 bg-card border border-border p-4 xl:p-6 flex flex-col min-h-0 h-full">
-					{SessionHeader}
-					{ChatContent}
+					{!mainChatActive && SessionHeader}
+					{mainChatActive ? (
+						<MainChatPiView
+							locale={locale}
+							className="flex-1"
+							features={features}
+							workspacePath={mainChatWorkspacePath}
+							assistantName={mainChatAssistantName}
+						/>
+					) : (
+						ChatContent
+					)}
 				</div>
 
 				{/* Sidebar panel */}
@@ -3475,23 +3551,28 @@ const MessageGroupCard = memo(function MessageGroupCard({
 					</span>
 				)}
 				<div className="flex-1" />
+				{/* Copy button - full size on desktop, compact on mobile */}
+				{allTextContent && (
+					<CopyButton
+						text={allTextContent}
+						className="hidden sm:block opacity-0 group-hover:opacity-100"
+					/>
+				)}
+				{allTextContent && (
+					<CompactCopyButton text={allTextContent} className="sm:hidden" />
+				)}
+				{/* Read aloud button for assistant messages */}
+				{!isUser && allTextContent && (
+					<ReadAloudButton text={allTextContent} className="ml-1" />
+				)}
+				{/* Timestamp on the right */}
 				{createdAt && !Number.isNaN(createdAt.getTime()) && (
-					<span className="text-[9px] sm:text-[10px] text-foreground/50 dark:text-muted-foreground leading-none sm:leading-normal">
+					<span className="text-[9px] sm:text-[10px] text-foreground/50 dark:text-muted-foreground leading-none sm:leading-normal ml-2">
 						{createdAt.toLocaleTimeString([], {
 							hour: "2-digit",
 							minute: "2-digit",
 						})}
 					</span>
-				)}
-				{/* Copy button - full size on desktop, compact on mobile */}
-				{allTextContent && (
-					<CopyButton
-						text={allTextContent}
-						className="hidden sm:block opacity-0 group-hover:opacity-100 ml-2"
-					/>
-				)}
-				{allTextContent && (
-					<CompactCopyButton text={allTextContent} className="sm:hidden ml-2" />
 				)}
 			</div>
 
@@ -3933,27 +4014,6 @@ function ContextWindowGauge({
 				<span className="font-mono text-[10px]">{percentage.toFixed(0)}%</span>
 			</div>
 		</div>
-	);
-}
-
-// Braille patterns for spinner animation
-const BRAILLE_PATTERNS = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-
-// 6-dot braille spinner - cycles through braille patterns
-function BrailleSpinner() {
-	const [frame, setFrame] = useState(0);
-
-	useEffect(() => {
-		const interval = setInterval(() => {
-			setFrame((f) => (f + 1) % BRAILLE_PATTERNS.length);
-		}, 80);
-		return () => clearInterval(interval);
-	}, []);
-
-	return (
-		<span className="text-primary font-mono text-sm">
-			{BRAILLE_PATTERNS[frame]}
-		</span>
 	);
 }
 

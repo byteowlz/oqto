@@ -2,9 +2,11 @@
 //!
 //! Provides REST endpoints and proxy functionality for session management.
 
+mod delegate;
 mod error;
 mod handlers;
 mod main_chat;
+mod main_chat_pi;
 mod proxy;
 mod routes;
 mod state;

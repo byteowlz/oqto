@@ -254,7 +254,7 @@ Use verbose mode (`/verbose on`) only when debugging with the user.
 
 ## Agent Runtime: Pi
 
-Main Chat will use **Pi** (from clawdbot/pi-mono) as the agent runtime. This is an experiment - if Pi proves useful here, we can evaluate it for regular sessions too.
+Main Chat uses **Pi** (from [badlogic/pi-mono](https://github.com/badlogic/pi-mono)) as the agent runtime. This is an experiment - if Pi proves useful here, we can evaluate it for regular sessions too.
 
 ### Why Pi for Main Chat
 
@@ -262,7 +262,46 @@ Main Chat will use **Pi** (from clawdbot/pi-mono) as the agent runtime. This is 
 |---------|-----|----------|
 | Block streaming | Sends completed blocks | Token-by-token |
 | Compaction | Built-in with custom prompts | Plugin-based |
-| Session management | Gateway-based | File-based |
+| Session management | JSONL tree structure | File-based |
+| RPC Protocol | JSON over stdin/stdout | HTTP API |
+| Multi-provider | Built-in (OpenAI, Anthropic, Google, etc.) | Via eavs |
+
+### Pi Integration Architecture
+
+```
+┌─────────────────┐     WebSocket      ┌─────────────────┐
+│  Octo Frontend  │◄──────────────────►│  Octo Backend   │
+│  (React)        │                    │  (Rust)         │
+└─────────────────┘                    └────────┬────────┘
+                                                │
+                                       ┌────────▼────────┐
+                                       │   PiClient      │
+                                       │   (stdin/stdout)│
+                                       └────────┬────────┘
+                                                │ JSON RPC
+                                       ┌────────▼────────┐
+                                       │   Pi Subprocess │
+                                       │   --mode rpc    │
+                                       └─────────────────┘
+```
+
+### Pi RPC Commands
+
+Key commands for Main Chat:
+- `prompt` - Send user message
+- `get_state` - Get session state (model, streaming status, etc.)
+- `get_messages` - Get full conversation history
+- `compact` - Manually trigger compaction
+- `set_model` - Switch model mid-session
+- `abort` - Cancel current operation
+
+### Pi Events
+
+Events streamed during operation:
+- `agent_start` / `agent_end` - Agent lifecycle
+- `message_update` - Streaming text/thinking deltas
+- `tool_execution_*` - Tool call lifecycle
+- `auto_compaction_*` - Compaction events
 
 ### Message Storage
 

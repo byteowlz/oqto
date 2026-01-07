@@ -1,6 +1,5 @@
 "use client";
 
-import { useApp } from "@/components/app-context";
 import {
 	CommandDialog,
 	CommandEmpty,
@@ -11,6 +10,7 @@ import {
 	CommandSeparator,
 	CommandShortcut,
 } from "@/components/ui/command";
+import { useApp } from "@/hooks/use-app";
 import {
 	VOICE_SHORTCUTS,
 	formatShortcut,
@@ -27,8 +27,6 @@ import {
 	MessageSquare,
 	MoonStar,
 	Plus,
-	Search,
-	Settings,
 	Shield,
 	SunMedium,
 } from "lucide-react";
@@ -264,24 +262,4 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
 			</CommandList>
 		</CommandDialog>
 	);
-}
-
-// Hook for keyboard shortcut
-export function useCommandPalette() {
-	const [open, setOpen] = useState(false);
-
-	useEffect(() => {
-		const down = (e: KeyboardEvent) => {
-			// Cmd+K on Mac, Ctrl+K on Windows/Linux
-			if (e.key === "k" && (e.metaKey || e.ctrlKey)) {
-				e.preventDefault();
-				setOpen((prev) => !prev);
-			}
-		};
-
-		document.addEventListener("keydown", down);
-		return () => document.removeEventListener("keydown", down);
-	}, []);
-
-	return { open, setOpen };
 }
