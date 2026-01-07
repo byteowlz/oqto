@@ -36,7 +36,13 @@ export type PiStreamEvent = {
 export type PiMessagePart =
 	| { type: "text"; content: string }
 	| { type: "tool_use"; id: string; name: string; input: unknown }
-	| { type: "tool_result"; id: string; content: unknown; isError?: boolean }
+	| {
+			type: "tool_result";
+			id: string;
+			name?: string;
+			content: unknown;
+			isError?: boolean;
+	  }
 	| { type: "thinking"; content: string }
 	| { type: "separator"; content: string };
 
@@ -197,6 +203,8 @@ export function usePiChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 									parts.push({
 										type: "tool_result",
 										id: String(block.id ?? ""),
+										name:
+											typeof block.name === "string" ? block.name : undefined,
 										content: block.content,
 										isError: Boolean(block.isError),
 									});
@@ -299,6 +307,7 @@ export function usePiChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 					case "tool_result": {
 						const result = data.data as {
 							id: string;
+							name?: string;
 							content: unknown;
 							isError?: boolean;
 						};
@@ -307,6 +316,7 @@ export function usePiChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 							currentResultMsg.parts.push({
 								type: "tool_result",
 								id: result.id,
+								name: result.name,
 								content: result.content,
 								isError: result.isError,
 							});

@@ -621,15 +621,15 @@ export async function fetchPermissions(
 	sessionId: string,
 	options?: OpencodeRequestOptions,
 ): Promise<Permission[]> {
-	const res = await fetch(
-		withDirectory(
-			`${base(opencodeBaseUrl)}/session/${sessionId}/permission`,
-			options?.directory,
-		),
-		{ cache: "no-store", credentials: "include" },
+	const url = withDirectory(
+		`${base(opencodeBaseUrl)}/session/${sessionId}/permission`,
+		options?.directory,
 	);
+	console.log("[Permission] Fetching permissions from:", url);
+	const res = await fetch(url, { cache: "no-store", credentials: "include" });
 	// If endpoint doesn't exist or returns error, return empty array
 	if (!res.ok) {
+		console.log("[Permission] Fetch failed with status:", res.status);
 		return [];
 	}
 	return handleResponse<Permission[]>(res);
@@ -790,7 +790,6 @@ export function subscribeToEvents(
 		};
 
 		eventSource.onmessage = (event) => {
-			console.log("[SSE] Message received:", event.data?.substring?.(0, 100));
 			const parsed = tryParseJson(event.data);
 
 			if (
@@ -800,10 +799,17 @@ export function subscribeToEvents(
 				"type" in parsed
 			) {
 				const typed = parsed as { type: string; properties?: unknown };
+				// Log permission events fully for debugging
+				if (typed.type.startsWith("permission")) {
+					console.log("[SSE] Permission event:", typed.type, typed.properties);
+				} else if (typed.type !== "message.updated" && typed.type !== "message.part.updated") {
+					console.log("[SSE] Event:", typed.type);
+				}
 				callback({ type: typed.type, properties: typed.properties ?? typed });
 				return;
 			}
 
+			console.log("[SSE] Untyped message:", event.data?.substring?.(0, 100));
 			callback({
 				type: "message.updated",
 				properties: parsed ?? { raw: event.data },

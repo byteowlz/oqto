@@ -11,6 +11,10 @@ path = "src/main.rs"
 name = "octoctl"
 path = "src/ctl/main.rs"
 
+[[bin]]
+name = "octo-runner"
+path = "src/bin/octo-runner.rs"
+
 [lib]
 name = "octo"
 path = "src/lib.rs"

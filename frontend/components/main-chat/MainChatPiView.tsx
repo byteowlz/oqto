@@ -357,7 +357,7 @@ export function MainChatPiView({
 			/>
 
 			{/* Chat input - matches OpenCode style exactly */}
-			<div className="chat-input-container flex flex-col gap-1 bg-muted/30 border border-border border-t-0 px-2 py-1">
+			<div className="chat-input-container flex flex-col gap-1 bg-muted/30 border border-border px-2 py-1 mt-2">
 				<div className="flex items-center gap-2">
 					{/* File upload button */}
 					<button
@@ -534,7 +534,7 @@ const PiMessageCard = memo(function PiMessageCard({
 	return (
 		<div
 			className={cn(
-				"transition-all duration-200 overflow-hidden",
+				"group transition-all duration-200 overflow-hidden",
 				isUser
 					? "sm:ml-8 bg-primary/20 dark:bg-primary/10 border border-primary/40 dark:border-primary/30"
 					: "sm:mr-8 bg-muted/50 border border-border",
@@ -556,19 +556,11 @@ const PiMessageCard = memo(function PiMessageCard({
 					{displayName}
 				</span>
 				<div className="flex-1" />
-				{/* Copy button */}
-				{textContent && !message.isStreaming && (
-					<CopyButton
-						text={textContent}
-						className="opacity-0 group-hover:opacity-100"
-						size="sm"
-					/>
-				)}
 				{/* Read aloud button for assistant messages */}
 				{!isUser && textContent && !message.isStreaming && (
 					<ReadAloudButton text={textContent} className="ml-1" />
 				)}
-				{/* Timestamp on the right */}
+				{/* Timestamp */}
 				{createdAt && !Number.isNaN(createdAt.getTime()) && (
 					<span className="text-[9px] sm:text-[10px] text-foreground/50 dark:text-muted-foreground leading-none sm:leading-normal ml-2">
 						{createdAt.toLocaleTimeString([], {
@@ -576,6 +568,13 @@ const PiMessageCard = memo(function PiMessageCard({
 							minute: "2-digit",
 						})}
 					</span>
+				)}
+				{/* Copy button - to the right of timestamp */}
+				{textContent && !message.isStreaming && (
+					<CopyButton
+						text={textContent}
+						className="ml-1 [&_svg]:w-3 [&_svg]:h-3"
+					/>
 				)}
 			</div>
 
@@ -658,12 +657,16 @@ function PiPartRenderer({
 			return (
 				<ToolCallCard
 					part={{
-						type: "tool-invocation",
-						toolInvocation: {
-							toolName: part.name,
-							toolCallId: part.id,
-							state: "call",
-							args: part.input as Record<string, unknown>,
+						id: part.id,
+						sessionID: "",
+						messageID: "",
+						type: "tool",
+						tool: part.name,
+						callID: part.id,
+						state: {
+							status: "completed",
+							input: part.input as Record<string, unknown>,
+							title: part.name,
 						},
 					}}
 					defaultCollapsed={true}
@@ -675,13 +678,19 @@ function PiPartRenderer({
 			return (
 				<ToolCallCard
 					part={{
-						type: "tool-invocation",
-						toolInvocation: {
-							toolName: "result",
-							toolCallId: part.id,
-							state: "result",
-							args: {},
-							result: part.content,
+						id: part.id,
+						sessionID: "",
+						messageID: "",
+						type: "tool",
+						tool: part.name || "result",
+						callID: part.id,
+						state: {
+							status: "completed",
+							output:
+								typeof part.content === "string"
+									? part.content
+									: JSON.stringify(part.content),
+							title: part.name || "Tool Result",
 						},
 					}}
 					defaultCollapsed={true}

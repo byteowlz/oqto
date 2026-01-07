@@ -106,6 +106,13 @@ export function useTTS(): UseTTSResult {
 
 	const ttsRef = useRef<TTSService | null>(null);
 	const connectingRef = useRef(false);
+	const isConnectedRef = useRef(false);
+	const connectionPromiseRef = useRef<Promise<TTSService> | null>(null);
+
+	// Keep ref in sync with state
+	useEffect(() => {
+		isConnectedRef.current = isConnected;
+	}, [isConnected]);
 
 	// Cleanup on unmount
 	useEffect(() => {
@@ -120,26 +127,13 @@ export function useTTS(): UseTTSResult {
 
 	const ensureConnected = useCallback(async (): Promise<TTSService> => {
 		// Already have a connected service
-		if (ttsRef.current && isConnected) {
+		if (ttsRef.current?.isConnected()) {
 			return ttsRef.current;
 		}
 
-		// Already connecting
-		if (connectingRef.current && ttsRef.current) {
-			// Wait for connection
-			return new Promise((resolve, reject) => {
-				const checkInterval = setInterval(() => {
-					if (isConnected && ttsRef.current) {
-						clearInterval(checkInterval);
-						resolve(ttsRef.current);
-					}
-				}, 100);
-				// Timeout after 10s
-				setTimeout(() => {
-					clearInterval(checkInterval);
-					reject(new Error("Connection timeout"));
-				}, 10000);
-			});
+		// Already connecting - return the existing promise
+		if (connectingRef.current && connectionPromiseRef.current) {
+			return connectionPromiseRef.current;
 		}
 
 		// Create new service and connect
@@ -147,61 +141,71 @@ export function useTTS(): UseTTSResult {
 		setState("connecting");
 		setError(null);
 
-		try {
-			const wsUrl = voiceProxyWsUrl("tts");
-			const tts = new TTSService(wsUrl);
-
-			tts.setCallbacks({
-				onConnectionChange: (connected) => {
-					setIsConnected(connected);
-					if (!connected) {
-						setState("idle");
-					}
-				},
-				onPlaying: () => {
-					setState("speaking");
-				},
-				onStopped: () => {
-					setState("idle");
-				},
-				onError: (err) => {
-					setError(err);
-					setState("error");
-				},
-				onVoicesLoaded: (voices, currentVoice) => {
-					setAvailableVoices(voices);
-					// If stored voice is not available, update to current
-					if (voices.length > 0 && !voices.includes(settings.voice)) {
-						const newSettings = { ...settings, voice: currentVoice };
-						setSettings(newSettings);
-						saveTTSSettings(newSettings);
-					}
-				},
-			});
-
-			await tts.connect();
-
-			// Apply stored settings
-			const storedSettings = loadTTSSettings();
+		const connectPromise = (async (): Promise<TTSService> => {
 			try {
-				await tts.setVoice(storedSettings.voice);
-				await tts.setSpeed(storedSettings.speed);
-			} catch (e) {
-				console.warn("[TTS] Failed to apply stored settings:", e);
-			}
+				const wsUrl = voiceProxyWsUrl("tts");
+				const tts = new TTSService(wsUrl);
 
-			ttsRef.current = tts;
-			connectingRef.current = false;
-			setState("idle");
-			return tts;
-		} catch (err) {
-			connectingRef.current = false;
-			const message = err instanceof Error ? err.message : "Failed to connect";
-			setError(message);
-			setState("error");
-			throw err;
-		}
-	}, [isConnected, settings]);
+				tts.setCallbacks({
+					onConnectionChange: (connected) => {
+						setIsConnected(connected);
+						isConnectedRef.current = connected;
+						if (!connected) {
+							setState("idle");
+						}
+					},
+					onPlaying: () => {
+						setState("speaking");
+					},
+					onStopped: () => {
+						setState("idle");
+					},
+					onError: (err) => {
+						setError(err);
+						setState("error");
+					},
+					onVoicesLoaded: (voices, currentVoice) => {
+						setAvailableVoices(voices);
+						// If stored voice is not available, update to current
+						const storedSettings = loadTTSSettings();
+						if (voices.length > 0 && !voices.includes(storedSettings.voice)) {
+							const newSettings = { ...storedSettings, voice: currentVoice };
+							setSettings(newSettings);
+							saveTTSSettings(newSettings);
+						}
+					},
+				});
+
+				await tts.connect();
+
+				// Apply stored settings
+				const storedSettings = loadTTSSettings();
+				try {
+					await tts.setVoice(storedSettings.voice);
+					await tts.setSpeed(storedSettings.speed);
+				} catch (e) {
+					console.warn("[TTS] Failed to apply stored settings:", e);
+				}
+
+				ttsRef.current = tts;
+				connectingRef.current = false;
+				connectionPromiseRef.current = null;
+				setState("idle");
+				return tts;
+			} catch (err) {
+				connectingRef.current = false;
+				connectionPromiseRef.current = null;
+				const message =
+					err instanceof Error ? err.message : "Failed to connect";
+				setError(message);
+				setState("error");
+				throw err;
+			}
+		})();
+
+		connectionPromiseRef.current = connectPromise;
+		return connectPromise;
+	}, []);
 
 	const speak = useCallback(
 		async (text: string) => {
@@ -209,11 +213,16 @@ export function useTTS(): UseTTSResult {
 
 			try {
 				const tts = await ensureConnected();
-				setState("speaking");
+				// Don't set speaking state here - the onPlaying callback will handle it
 				await tts.speak(text);
-				setState("idle");
+				// Only set idle if we're still in speaking state (not already stopped)
+				setState((prev) => (prev === "speaking" ? "idle" : prev));
 			} catch (err) {
+				// Ignore "Playback stopped" errors - these are expected when user cancels
 				const message = err instanceof Error ? err.message : "TTS failed";
+				if (message === "Playback stopped") {
+					return;
+				}
 				setError(message);
 				setState("error");
 			}
@@ -285,7 +294,6 @@ export function useTTSWithParagraphs(text: string): UseTTSWithParagraphsResult {
 	const tts = useTTS();
 	const [currentIndex, setCurrentIndex] = useState(0);
 	const isPlayingRef = useRef(false);
-	const abortRef = useRef(false);
 	// Unique session ID to prevent race conditions when rapidly switching paragraphs
 	const sessionIdRef = useRef(0);
 
@@ -297,61 +305,68 @@ export function useTTSWithParagraphs(text: string): UseTTSWithParagraphsResult {
 		if (lastTextRef.current !== text) {
 			lastTextRef.current = text;
 			setCurrentIndex(0);
-			abortRef.current = true;
 			sessionIdRef.current++; // Invalidate any running sessions
 			tts.stop();
 		}
 	}, [text, tts]);
 
 	const speakParagraph = useCallback(
-		async (index: number, continueToNext = true, sessionId?: number) => {
+		async (index: number, sessionId: number, continueToNext = true) => {
 			if (index < 0 || index >= paragraphs.length) return;
 
-			// Use provided sessionId or create new one
-			const currentSession = sessionId ?? ++sessionIdRef.current;
-
 			// Check if this session is still valid
-			if (currentSession !== sessionIdRef.current) {
+			if (sessionId !== sessionIdRef.current) {
+				console.log(
+					"[TTS] Session invalidated, aborting speakParagraph",
+					sessionId,
+					"vs",
+					sessionIdRef.current,
+				);
 				return; // Session was invalidated, abort
 			}
 
-			abortRef.current = false;
 			isPlayingRef.current = true;
 			setCurrentIndex(index);
 
 			try {
+				// Check again before starting async operation
+				if (sessionId !== sessionIdRef.current) {
+					return;
+				}
+
 				await tts.speak(paragraphs[index]);
 
 				// Check session validity again after async operation
-				if (currentSession !== sessionIdRef.current) {
+				if (sessionId !== sessionIdRef.current) {
+					console.log(
+						"[TTS] Session invalidated after speak",
+						sessionId,
+						"vs",
+						sessionIdRef.current,
+					);
 					return; // Session was invalidated during playback
 				}
 
-				// If not aborted and continueToNext, proceed to next paragraph
-				if (
-					!abortRef.current &&
-					continueToNext &&
-					index < paragraphs.length - 1
-				) {
+				// If continueToNext, proceed to next paragraph
+				if (continueToNext && index < paragraphs.length - 1) {
 					// Small delay between paragraphs
 					await new Promise((resolve) => setTimeout(resolve, 300));
 
 					// Final check before recursing
-					if (!abortRef.current && currentSession === sessionIdRef.current) {
-						await speakParagraph(index + 1, true, currentSession);
+					if (sessionId === sessionIdRef.current) {
+						await speakParagraph(index + 1, sessionId, true);
 					}
 				}
-			} catch {
+			} catch (err) {
 				// Ignore errors from stopped playback
-				if (currentSession !== sessionIdRef.current) {
+				if (sessionId !== sessionIdRef.current) {
 					return;
 				}
+				console.error("[TTS] speakParagraph error:", err);
 			} finally {
 				// Only update playing state if this is still the active session
-				if (currentSession === sessionIdRef.current) {
-					if (!abortRef.current || index >= paragraphs.length - 1) {
-						isPlayingRef.current = false;
-					}
+				if (sessionId === sessionIdRef.current) {
+					isPlayingRef.current = false;
 				}
 			}
 		},
@@ -360,41 +375,50 @@ export function useTTSWithParagraphs(text: string): UseTTSWithParagraphsResult {
 
 	const play = useCallback(() => {
 		if (tts.isSpeaking) {
-			abortRef.current = true;
 			sessionIdRef.current++; // Invalidate current session
 			tts.stop();
 		} else {
-			speakParagraph(currentIndex, true);
+			const newSession = ++sessionIdRef.current;
+			speakParagraph(currentIndex, newSession, true);
 		}
 	}, [tts, currentIndex, speakParagraph]);
 
 	const stop = useCallback(() => {
-		abortRef.current = true;
 		sessionIdRef.current++; // Invalidate current session
 		tts.stop();
 	}, [tts]);
 
 	const previousParagraph = useCallback(() => {
 		if (currentIndex > 0) {
-			abortRef.current = true;
-			sessionIdRef.current++; // Invalidate current session
+			// Increment session first, then stop, then start new playback
+			const newSession = ++sessionIdRef.current;
 			tts.stop();
 			const newIndex = currentIndex - 1;
 			setCurrentIndex(newIndex);
-			// Start playing from the new paragraph with new session
-			setTimeout(() => speakParagraph(newIndex, true), 50);
+			// Use requestAnimationFrame to ensure state updates are flushed
+			requestAnimationFrame(() => {
+				// Double-check session is still valid
+				if (newSession === sessionIdRef.current) {
+					speakParagraph(newIndex, newSession, true);
+				}
+			});
 		}
 	}, [currentIndex, tts, speakParagraph]);
 
 	const nextParagraph = useCallback(() => {
 		if (currentIndex < paragraphs.length - 1) {
-			abortRef.current = true;
-			sessionIdRef.current++; // Invalidate current session
+			// Increment session first, then stop, then start new playback
+			const newSession = ++sessionIdRef.current;
 			tts.stop();
 			const newIndex = currentIndex + 1;
 			setCurrentIndex(newIndex);
-			// Start playing from the new paragraph with new session
-			setTimeout(() => speakParagraph(newIndex, true), 50);
+			// Use requestAnimationFrame to ensure state updates are flushed
+			requestAnimationFrame(() => {
+				// Double-check session is still valid
+				if (newSession === sessionIdRef.current) {
+					speakParagraph(newIndex, newSession, true);
+				}
+			});
 		}
 	}, [currentIndex, paragraphs.length, tts, speakParagraph]);
 

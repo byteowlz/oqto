@@ -78,7 +78,6 @@ import {
 	fetchAgents,
 	fetchCommands,
 	fetchMessages,
-	fetchPermissions,
 	fetchSessions,
 	forkSession,
 	invalidateMessageCache,
@@ -598,30 +597,16 @@ export function SessionsApp() {
 		null,
 	);
 
-	// Fetch pending permissions when session changes and clear stale state
+	// Clear permission state when session changes
+	// Note: Permissions are received via SSE events (permission.updated), not fetched via REST
+	const prevSessionRef = useRef(selectedChatSessionId);
 	useEffect(() => {
-		// Clear permission state on session change
-		setPendingPermissions([]);
-		setActivePermission(null);
-
-		if (!opencodeBaseUrl || !selectedChatSessionId) return;
-
-		// Fetch any existing pending permissions
-		fetchPermissions(
-			opencodeBaseUrl,
-			selectedChatSessionId,
-			opencodeRequestOptions,
-		)
-			.then((permissions) => {
-				if (permissions.length > 0) {
-					setPendingPermissions(permissions);
-					setActivePermission(permissions[0]);
-				}
-			})
-			.catch((err) => {
-				console.warn("[Permission] Failed to fetch pending permissions:", err);
-			});
-	}, [opencodeBaseUrl, selectedChatSessionId, opencodeRequestOptions]);
+		if (prevSessionRef.current !== selectedChatSessionId) {
+			prevSessionRef.current = selectedChatSessionId;
+			setPendingPermissions([]);
+			setActivePermission(null);
+		}
+	});
 
 	// Track if we're on mobile layout (below lg breakpoint = 1024px)
 	const isMobileLayout = useIsMobile();
@@ -1578,6 +1563,11 @@ export function SessionsApp() {
 			effectiveOpencodeBaseUrl,
 			(event) => {
 				const eventType = event.type as string;
+
+				// Debug: log all events to help diagnose permission issues
+				if (eventType !== "message.updated") {
+					console.log("[SSE Event]", eventType, event.properties);
+				}
 
 				if (eventType === "transport.mode") {
 					const props = event.properties as { mode?: "sse" | "polling" } | null;
@@ -2710,7 +2700,7 @@ export function SessionsApp() {
 			/>
 
 			{/* Chat input - works for both live and history sessions */}
-			<div className="chat-input-container flex flex-col gap-1 bg-muted/30 border border-border border-t-0 px-2 py-1">
+			<div className="chat-input-container flex flex-col gap-1 bg-muted/30 border border-border px-2 py-1">
 				{/* Show hint for history sessions that will be resumed */}
 				{isHistoryOnlySession && (
 					<div className="flex items-center gap-1.5 px-1 pt-1 text-xs text-muted-foreground">
@@ -3498,7 +3488,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 	const messageCard = (
 		<div
 			className={cn(
-				"transition-all duration-200 overflow-hidden",
+				"group transition-all duration-200 overflow-hidden",
 				isUser
 					? "sm:ml-8 bg-primary/20 dark:bg-primary/10 border border-primary/40 dark:border-primary/30"
 					: "sm:mr-8 bg-muted/50 border border-border",
@@ -3551,21 +3541,11 @@ const MessageGroupCard = memo(function MessageGroupCard({
 					</span>
 				)}
 				<div className="flex-1" />
-				{/* Copy button - full size on desktop, compact on mobile */}
-				{allTextContent && (
-					<CopyButton
-						text={allTextContent}
-						className="hidden sm:block opacity-0 group-hover:opacity-100"
-					/>
-				)}
-				{allTextContent && (
-					<CompactCopyButton text={allTextContent} className="sm:hidden" />
-				)}
 				{/* Read aloud button for assistant messages */}
 				{!isUser && allTextContent && (
 					<ReadAloudButton text={allTextContent} className="ml-1" />
 				)}
-				{/* Timestamp on the right */}
+				{/* Timestamp */}
 				{createdAt && !Number.isNaN(createdAt.getTime()) && (
 					<span className="text-[9px] sm:text-[10px] text-foreground/50 dark:text-muted-foreground leading-none sm:leading-normal ml-2">
 						{createdAt.toLocaleTimeString([], {
@@ -3573,6 +3553,16 @@ const MessageGroupCard = memo(function MessageGroupCard({
 							minute: "2-digit",
 						})}
 					</span>
+				)}
+				{/* Copy button - full size on desktop, compact on mobile */}
+				{allTextContent && (
+					<CopyButton
+						text={allTextContent}
+						className="hidden sm:inline-flex ml-1 [&_svg]:w-3 [&_svg]:h-3"
+					/>
+				)}
+				{allTextContent && (
+					<CompactCopyButton text={allTextContent} className="sm:hidden ml-1" />
 				)}
 			</div>
 

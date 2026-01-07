@@ -16,6 +16,7 @@ pub mod main_chat;
 pub mod markdown;
 pub mod pi;
 pub mod observability;
+pub mod runner;
 pub mod session;
 pub mod session_ui;
 pub mod settings;

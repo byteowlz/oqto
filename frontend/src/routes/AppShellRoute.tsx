@@ -411,6 +411,8 @@ function AppShell() {
 			setSelectedChatSessionId("");
 			// Navigate to sessions view
 			setActiveAppId("sessions");
+			// Close mobile menu
+			setMobileMenuOpen(false);
 			try {
 				const assistantInfo = await getMainChatAssistant(assistantName);
 				setMainChatWorkspacePath(assistantInfo.path);
@@ -438,6 +440,8 @@ function AppShell() {
 			setMainChatCurrentSessionId(sessionId);
 			setSelectedChatSessionId("");
 			setActiveAppId("sessions");
+			// Close mobile menu
+			setMobileMenuOpen(false);
 			try {
 				const assistantInfo = await getMainChatAssistant(assistantName);
 				setMainChatWorkspacePath(assistantInfo.path);
