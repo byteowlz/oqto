@@ -1038,7 +1038,7 @@ function AppShell() {
 	};
 
 	return (
-		<div className="flex h-screen bg-background text-foreground overflow-hidden">
+		<div className="flex h-dvh bg-background text-foreground overflow-hidden">
 			{/* Mobile header */}
 			<header
 				className="fixed top-0 left-0 right-0 h-14 flex items-center px-3 z-50 md:hidden"
@@ -1066,6 +1066,12 @@ function AppShell() {
 								.trim() || "Chat"}
 						</div>
 						<div className="text-[10px] text-muted-foreground truncate">
+							{opencodeDirectory && (
+								<span className="font-medium">
+									{opencodeDirectory.split("/").filter(Boolean).pop()}
+									{" | "}
+								</span>
+							)}
 							{generateReadableId(selectedChatFromHistory.id)}
 							{selectedChatFromHistory.updated_at && (
 								<span className="opacity-60">

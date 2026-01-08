@@ -574,14 +574,16 @@ export type EventCallback = (event: {
 }) => void;
 
 // Permission types for tool execution approval
+// Matches OpenCode SDK Permission type
 export type Permission = {
 	id: string;
+	type: string; // Permission type (e.g., "bash", "edit", "webfetch")
+	pattern?: string | string[];
 	sessionID: string;
+	messageID?: string;
+	callID?: string;
 	title: string;
-	description?: string;
-	tool: string;
-	input?: Record<string, unknown>;
-	risk?: "low" | "medium" | "high";
+	metadata: Record<string, unknown>;
 	time: {
 		created: number;
 	};

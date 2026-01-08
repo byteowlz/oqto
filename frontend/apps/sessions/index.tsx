@@ -143,6 +143,7 @@ import {
 	useState,
 	useTransition,
 } from "react";
+import { toast } from "sonner";
 
 const PreviewView = lazy(() =>
 	import("@/apps/sessions/PreviewView").then((mod) => ({
@@ -1657,6 +1658,27 @@ export function SessionsApp() {
 				setActivePermission((current) =>
 					current?.id === permissionID ? null : current,
 				);
+			}
+
+			// Handle session errors
+			if (eventType === "session.error") {
+				const { error } = event.properties as {
+					sessionID?: string;
+					error?: {
+						name: string;
+						data: { message: string };
+					};
+				};
+				const errorName = error?.name || "Error";
+				const errorMessage =
+					error?.data?.message || "An unknown error occurred";
+				console.error("[Session Error]", errorName, errorMessage);
+				toast.error(errorMessage, {
+					description: errorName !== "UnknownError" ? errorName : undefined,
+					duration: 8000,
+				});
+				// Reset chat state on error
+				setChatState("idle");
 			}
 
 			// Refresh messages on any message event

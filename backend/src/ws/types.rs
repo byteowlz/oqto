@@ -41,6 +41,15 @@ pub enum WsEvent {
     /// Session deleted.
     SessionDeleted { session_id: String },
 
+    /// Session error from OpenCode.
+    SessionError {
+        session_id: String,
+        error_type: String,
+        message: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        details: Option<Value>,
+    },
+
     // ========== Agent Connection Events ==========
     /// Agent (OpenCode/Pi) connected and ready.
     AgentConnected { session_id: String },
@@ -139,13 +148,20 @@ pub enum WsEvent {
 
     // ========== Permission Events ==========
     /// Permission request from agent.
+    /// Matches OpenCode SDK Permission type structure.
     PermissionRequest {
         session_id: String,
         permission_id: String,
-        tool_name: String,
-        description: String,
+        /// Permission type (e.g., "bash", "edit", "webfetch")
+        permission_type: String,
+        /// Human-readable title/description
+        title: String,
+        /// Optional pattern (e.g., command for bash, file path for edit)
         #[serde(skip_serializing_if = "Option::is_none")]
-        input: Option<Value>,
+        pattern: Option<Value>,
+        /// Additional metadata
+        #[serde(skip_serializing_if = "Option::is_none")]
+        metadata: Option<Value>,
     },
 
     /// Permission request resolved.

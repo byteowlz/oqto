@@ -83,14 +83,23 @@ export type SessionEvent =
 			delayMs: number;
 	  }
 	| { type: "agent.disconnected"; sessionId: string; reason: string }
+	| {
+			type: "session.error";
+			sessionId: string;
+			errorType: string;
+			message: string;
+			details?: unknown;
+	  }
 	| { type: "raw"; event: WsEvent };
 
+// Internal Permission type for WS events - matches backend WsEvent::PermissionRequest
 export type Permission = {
 	id: string;
 	sessionID: string;
-	toolName: string;
-	description: string;
-	input?: unknown;
+	type: string; // Permission type (e.g., "bash", "edit")
+	title: string;
+	pattern?: string | string[];
+	metadata?: Record<string, unknown>;
 };
 
 export type SessionEventCallback = (event: SessionEvent) => void;
@@ -284,19 +293,16 @@ function mapWsEventToSessionEvent(
 			return { type: "message.updated", sessionId };
 
 		case "permission_request":
-			if (
-				"permission_id" in event &&
-				"tool_name" in event &&
-				"description" in event
-			) {
+			if ("permission_id" in event && "permission_type" in event) {
 				return {
 					type: "permission.updated",
 					permission: {
 						id: event.permission_id,
 						sessionID: sessionId,
-						toolName: event.tool_name,
-						description: event.description,
-						input: event.input,
+						type: event.permission_type,
+						title: event.title ?? "",
+						pattern: event.pattern,
+						metadata: event.metadata,
 					},
 				};
 			}
@@ -308,6 +314,18 @@ function mapWsEventToSessionEvent(
 					type: "permission.replied",
 					permissionId: event.permission_id,
 					sessionId,
+				};
+			}
+			return null;
+
+		case "session_error":
+			if ("error_type" in event && "message" in event) {
+				return {
+					type: "session.error",
+					sessionId,
+					errorType: event.error_type,
+					message: event.message,
+					details: event.details,
 				};
 			}
 			return null;
@@ -509,19 +527,18 @@ function mapWsEventToLegacyEvent(event: WsEvent): LegacyEvent | null {
 			};
 
 		case "permission_request":
-			if (
-				"permission_id" in event &&
-				"tool_name" in event &&
-				"description" in event
-			) {
+			if ("permission_id" in event && "permission_type" in event) {
 				return {
 					type: "permission.updated",
 					properties: {
 						id: event.permission_id,
 						sessionID: "session_id" in event ? event.session_id : undefined,
-						toolName: event.tool_name,
-						description: event.description,
-						input: event.input,
+						type: event.permission_type,
+						title: event.title ?? "",
+						pattern: event.pattern,
+						metadata: event.metadata ?? {},
+						// Include time for SDK compatibility
+						time: { created: Date.now() },
 					},
 				};
 			}
@@ -535,6 +552,21 @@ function mapWsEventToLegacyEvent(event: WsEvent): LegacyEvent | null {
 						permissionID: event.permission_id,
 						sessionID: "session_id" in event ? event.session_id : undefined,
 						response: "granted" in event && event.granted ? "allow" : "deny",
+					},
+				};
+			}
+			return null;
+
+		case "session_error":
+			if ("error_type" in event && "message" in event) {
+				return {
+					type: "session.error",
+					properties: {
+						sessionID: "session_id" in event ? event.session_id : undefined,
+						error: {
+							name: event.error_type,
+							data: { message: event.message },
+						},
 					},
 				};
 			}

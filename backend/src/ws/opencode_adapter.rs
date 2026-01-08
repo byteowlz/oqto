@@ -185,6 +185,14 @@ impl OpenCodeAdapter {
                     debug!("SSE connection opened for session {}", self.session_id);
                 }
                 Ok(Event::Message(msg)) => {
+                    // Log permission-related raw SSE events
+                    if msg.data.contains("permission") {
+                        info!(
+                            "[Permission] Raw SSE event='{}' data={}",
+                            msg.event,
+                            &msg.data[..msg.data.len().min(500)]
+                        );
+                    }
                     // Parse and translate the event
                     if let Some(ws_event) = self.translate_sse_event(&msg.event, &msg.data) {
                         on_event(ws_event);
@@ -254,6 +262,14 @@ impl OpenCodeAdapter {
         
         // OpenCode events have a "type" field
         let event_type = data.get("type").and_then(|v| v.as_str()).unwrap_or("");
+
+        // Log permission events for debugging
+        if event_type.starts_with("permission") {
+            info!(
+                "[Permission] Received event type '{}' for session {}: {:?}",
+                event_type, session_id, data
+            );
+        }
 
         match event_type {
             // Session events
@@ -363,7 +379,7 @@ impl OpenCodeAdapter {
                 })
             }
 
-            // Permission events
+            // Permission events - matches OpenCode SDK Permission type
             "permission.created" | "permission.updated" => {
                 let props = data.get("properties");
                 let permission_id = props
@@ -371,23 +387,30 @@ impl OpenCodeAdapter {
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
-                let tool_name = props
-                    .and_then(|p| p.get("toolName"))
+                // "type" field contains permission type (e.g., "bash", "edit")
+                let permission_type = props
+                    .and_then(|p| p.get("type"))
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
-                let description = props
-                    .and_then(|p| p.get("input"))
-                    .map(|v| format!("{}", v))
-                    .unwrap_or_default();
-                let input = props.and_then(|p| p.get("input")).cloned();
+                // "title" field contains human-readable description
+                let title = props
+                    .and_then(|p| p.get("title"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                // "pattern" can be string or array
+                let pattern = props.and_then(|p| p.get("pattern")).cloned();
+                // "metadata" contains additional details
+                let metadata = props.and_then(|p| p.get("metadata")).cloned();
 
                 Some(WsEvent::PermissionRequest {
                     session_id,
                     permission_id,
-                    tool_name,
-                    description,
-                    input,
+                    permission_type,
+                    title,
+                    pattern,
+                    metadata,
                 })
             }
 
@@ -408,6 +431,37 @@ impl OpenCodeAdapter {
                     session_id,
                     permission_id,
                     granted,
+                })
+            }
+
+            // Session error events
+            "session.error" => {
+                let props = data.get("properties");
+                let error = props.and_then(|p| p.get("error"));
+                
+                let error_type = error
+                    .and_then(|e| e.get("name"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("UnknownError")
+                    .to_string();
+                
+                let message = error
+                    .and_then(|e| e.get("data"))
+                    .and_then(|d| d.get("message"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("An unknown error occurred")
+                    .to_string();
+                
+                info!(
+                    "[Error] Session {} error: {} - {}",
+                    session_id, error_type, message
+                );
+                
+                Some(WsEvent::SessionError {
+                    session_id,
+                    error_type,
+                    message,
+                    details: error.cloned(),
                 })
             }
 

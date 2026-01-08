@@ -114,8 +114,9 @@ export function PermissionDialog({
 
 	if (!permission) return null;
 
-	const toolInfo = getToolInfo(permission.tool);
-	const riskLevel = permission.risk || toolInfo.riskLevel;
+	// Use 'type' field for permission type (e.g., "bash", "edit")
+	const toolInfo = getToolInfo(permission.type);
+	const riskLevel = toolInfo.riskLevel;
 	const riskColor = getRiskColor(riskLevel);
 
 	return (
@@ -136,28 +137,31 @@ export function PermissionDialog({
 						</div>
 					</div>
 					<DialogDescription className="text-left">
-						{permission.title || `The agent wants to use ${permission.tool}`}
+						{permission.title || `The agent wants to use ${permission.type}`}
 					</DialogDescription>
 				</DialogHeader>
 
 				{/* Tool details */}
 				<div className="space-y-3">
-					{permission.description && (
-						<div className="text-sm text-foreground bg-muted/50 border border-border p-3 rounded-lg">
-							{permission.description}
+					{permission.pattern && (
+						<div className="text-sm text-foreground bg-muted/50 border border-border p-3 rounded-lg font-mono">
+							{Array.isArray(permission.pattern)
+								? permission.pattern.join(", ")
+								: permission.pattern}
 						</div>
 					)}
 
-					{permission.input && Object.keys(permission.input).length > 0 && (
-						<div className="space-y-2">
-							<p className="text-xs text-muted-foreground uppercase tracking-wide">
-								Parameters
-							</p>
-							<pre className="text-xs bg-muted/50 border border-border p-3 rounded-lg overflow-x-auto max-h-32">
-								{JSON.stringify(permission.input, null, 2)}
-							</pre>
-						</div>
-					)}
+					{permission.metadata &&
+						Object.keys(permission.metadata).length > 0 && (
+							<div className="space-y-2">
+								<p className="text-xs text-muted-foreground uppercase tracking-wide">
+									Details
+								</p>
+								<pre className="text-xs bg-muted/50 border border-border p-3 rounded-lg overflow-x-auto max-h-32">
+									{JSON.stringify(permission.metadata, null, 2)}
+								</pre>
+							</div>
+						)}
 
 					{/* Risk warning for high-risk actions */}
 					{riskLevel === "high" && (

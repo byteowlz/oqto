@@ -32,6 +32,13 @@ export type WsEvent =
 			workspace_path: string;
 	  }
 	| { type: "session_deleted"; session_id: string }
+	| {
+			type: "session_error";
+			session_id: string;
+			error_type: string;
+			message: string;
+			details?: unknown;
+	  }
 	| { type: "agent_connected"; session_id: string }
 	| { type: "agent_disconnected"; session_id: string; reason: string }
 	| {
@@ -89,9 +96,10 @@ export type WsEvent =
 			type: "permission_request";
 			session_id: string;
 			permission_id: string;
-			tool_name: string;
-			description: string;
-			input?: unknown;
+			permission_type: string;
+			title: string;
+			pattern?: unknown;
+			metadata?: unknown;
 	  }
 	| {
 			type: "permission_resolved";
