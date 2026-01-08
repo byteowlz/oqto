@@ -334,7 +334,13 @@ export const CanvasView = memo(function CanvasView({
 	const textInputRef = useRef<HTMLInputElement>(null);
 
 	// Detect dark mode for canvas background
-	const [isDarkMode, setIsDarkMode] = useState(false);
+	// Initialize with SSR-safe check to avoid flash of white
+	const [isDarkMode, setIsDarkMode] = useState(() => {
+		if (typeof document !== "undefined") {
+			return document.documentElement.classList.contains("dark");
+		}
+		return false;
+	});
 	useEffect(() => {
 		const checkDarkMode = () => {
 			setIsDarkMode(document.documentElement.classList.contains("dark"));
@@ -1145,10 +1151,11 @@ export const CanvasView = memo(function CanvasView({
 				</div>
 			</div>
 
-			{/* Canvas area */}
+			{/* Canvas area - background matches Konva canvas to prevent flash */}
 			<div
 				ref={containerRef}
-				className="flex-1 overflow-hidden bg-muted/50 dark:bg-zinc-900 relative"
+				className="flex-1 overflow-hidden relative"
+				style={{ backgroundColor: canvasBackgroundColor }}
 			>
 				<Stage
 					ref={stageRef}
