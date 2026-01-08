@@ -223,6 +223,8 @@ export type Features = {
 	session_auto_attach_scan?: boolean;
 	/** Voice configuration (present if voice mode is enabled) */
 	voice?: VoiceFeatureConfig | null;
+	/** Use WebSocket for real-time events instead of SSE */
+	websocket_events?: boolean;
 };
 
 export async function getFeatures(): Promise<Features> {
@@ -1261,6 +1263,13 @@ export type PiModelInfo = {
 	id: string;
 	provider: string;
 	name: string;
+	context_window: number;
+	max_tokens: number;
+};
+
+export type PiPromptCommandInfo = {
+	name: string;
+	description: string;
 };
 
 /** Pi session state */
@@ -1281,6 +1290,13 @@ export type PiSessionStats = {
 	assistant_messages: number;
 	tool_calls: number;
 	total_messages: number;
+	tokens: {
+		input: number;
+		output: number;
+		cache_read: number;
+		cache_write: number;
+		total: number;
+	};
 	cost: number;
 };
 
@@ -1385,6 +1401,41 @@ export async function compactMainChatPi(
 	});
 	if (!res.ok) throw new Error(await readApiError(res));
 	return res.json();
+}
+
+/** Set Pi session model */
+export async function setMainChatPiModel(
+	provider: string,
+	modelId: string,
+): Promise<PiState> {
+	const res = await fetch(controlPlaneApiUrl("/api/main/pi/model"), {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ provider, model_id: modelId }),
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+	return res.json();
+}
+
+/** Get available Pi models */
+export async function getMainChatPiModels(): Promise<PiModelInfo[]> {
+	const res = await fetch(controlPlaneApiUrl("/api/main/pi/models"), {
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+	const data = (await res.json()) as { models?: PiModelInfo[] };
+	return data.models ?? [];
+}
+
+/** Get available Pi prompt commands (slash templates). */
+export async function getMainChatPiCommands(): Promise<PiPromptCommandInfo[]> {
+	const res = await fetch(controlPlaneApiUrl("/api/main/pi/commands"), {
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+	const data = (await res.json()) as { commands?: PiPromptCommandInfo[] };
+	return data.commands ?? [];
 }
 
 /** Start new Pi session (clear history) */

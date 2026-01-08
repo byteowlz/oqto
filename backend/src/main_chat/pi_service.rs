@@ -15,7 +15,7 @@
 //! 2. Recent mmry entries (decisions, handoffs, insights)
 
 use anyhow::{Context, Result};
-use log::{info, warn, debug};
+use log::{debug, info};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -62,26 +62,16 @@ impl Default for MainChatPiServiceConfig {
 /// Information about the last Pi session for a directory.
 #[derive(Debug, Clone)]
 pub struct LastSessionInfo {
-    /// Path to the session file
-    pub path: PathBuf,
     /// File size in bytes
     pub size: u64,
     /// Last modification time
     pub modified: SystemTime,
-    /// Session ID (extracted from filename)
-    pub session_id: String,
 }
 
 /// Handle to a user's Pi session.
 pub struct UserPiSession {
     /// The Pi client for this user.
     pub client: Arc<PiClient>,
-    /// User ID.
-    pub user_id: String,
-    /// Working directory for the Pi session.
-    pub work_dir: PathBuf,
-    /// Whether this is a fresh session (vs continued)
-    pub is_fresh: bool,
 }
 
 /// Service for managing Pi sessions for Main Chat users.
@@ -149,17 +139,8 @@ impl MainChatPiService {
                     if let Ok(metadata) = entry.metadata() {
                         if let Ok(modified) = metadata.modified() {
                             let info = LastSessionInfo {
-                                path: path.clone(),
                                 size: metadata.len(),
                                 modified,
-                                session_id: path
-                                    .file_stem()
-                                    .and_then(|s| s.to_str())
-                                    .map(|s| {
-                                        // Extract UUID from filename like "2026-01-07T12-21-14-839Z_b13755be-..."
-                                        s.split('_').last().unwrap_or(s).to_string()
-                                    })
-                                    .unwrap_or_default(),
                             };
 
                             if latest.as_ref().map(|l| modified > l.modified).unwrap_or(true) {
@@ -307,31 +288,7 @@ impl MainChatPiService {
 
         Ok(UserPiSession {
             client: Arc::new(client),
-            user_id: user_id.to_string(),
-            work_dir,
-            is_fresh: !should_continue,
         })
-    }
-
-    /// Force a fresh session for a user, injecting context from previous session.
-    /// 
-    /// This is called when we want to start clean but maintain continuity.
-    /// Context injection happens via the first prompt after session creation.
-    pub async fn force_fresh_session(&self, user_id: &str) -> Result<Arc<UserPiSession>> {
-        // Close existing session if any
-        self.close_session(user_id).await?;
-
-        // Create fresh session
-        let session = self.create_session(user_id, true).await?;
-        let session = Arc::new(session);
-
-        // Store in cache
-        {
-            let mut sessions = self.sessions.write().await;
-            sessions.insert(user_id.to_string(), Arc::clone(&session));
-        }
-
-        Ok(session)
     }
 
     /// Close a user's Pi session.
@@ -356,17 +313,6 @@ impl MainChatPiService {
         sessions.contains_key(user_id)
     }
 
-    /// Get all active user IDs.
-    pub async fn active_users(&self) -> Vec<String> {
-        let sessions = self.sessions.read().await;
-        sessions.keys().cloned().collect()
-    }
-
-    /// Get info about the last session for a user (for debugging/status).
-    pub fn get_last_session_info(&self, user_id: &str) -> Option<LastSessionInfo> {
-        let work_dir = self.get_main_chat_dir(user_id);
-        self.find_last_session(&work_dir)
-    }
 }
 
 impl UserPiSession {
@@ -379,6 +325,18 @@ impl UserPiSession {
     /// Abort the current operation.
     pub async fn abort(&self) -> Result<()> {
         self.client.abort().await?;
+        Ok(())
+    }
+
+    /// Queue a steering message to interrupt the agent mid-run.
+    pub async fn steer(&self, message: &str) -> Result<()> {
+        self.client.steer(message).await?;
+        Ok(())
+    }
+
+    /// Queue a follow-up message for after the agent finishes.
+    pub async fn follow_up(&self, message: &str) -> Result<()> {
+        self.client.follow_up(message).await?;
         Ok(())
     }
 
@@ -408,9 +366,20 @@ impl UserPiSession {
         Ok(())
     }
 
+    /// Set the current model.
+    pub async fn set_model(&self, provider: &str, model_id: &str) -> Result<()> {
+        self.client.set_model(provider, model_id).await?;
+        Ok(())
+    }
+
     /// Get session statistics.
     pub async fn get_session_stats(&self) -> Result<SessionStats> {
         self.client.get_session_stats().await
+    }
+
+    /// Get available models.
+    pub async fn get_available_models(&self) -> Result<Vec<crate::pi::PiModel>> {
+        self.client.get_available_models().await
     }
 }
 
@@ -447,19 +416,15 @@ mod tests {
 
         // Fresh session (now)
         let fresh = LastSessionInfo {
-            path: PathBuf::from("/tmp/test.jsonl"),
             size: 1000,
             modified: SystemTime::now(),
-            session_id: "test".to_string(),
         };
         assert!(service.should_continue_session(&fresh));
 
         // Stale session (2 hours ago)
         let stale = LastSessionInfo {
-            path: PathBuf::from("/tmp/test.jsonl"),
             size: 1000,
             modified: SystemTime::now() - Duration::from_secs(2 * 3600),
-            session_id: "test".to_string(),
         };
         assert!(!service.should_continue_session(&stale));
     }
@@ -477,19 +442,15 @@ mod tests {
 
         // Small session
         let small = LastSessionInfo {
-            path: PathBuf::from("/tmp/test.jsonl"),
             size: 500,
             modified: SystemTime::now(),
-            session_id: "test".to_string(),
         };
         assert!(service.should_continue_session(&small));
 
         // Large session
         let large = LastSessionInfo {
-            path: PathBuf::from("/tmp/test.jsonl"),
             size: 2000,
             modified: SystemTime::now(),
-            session_id: "test".to_string(),
         };
         assert!(!service.should_continue_session(&large));
     }

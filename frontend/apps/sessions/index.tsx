@@ -9,6 +9,7 @@ import { MainChatPiView } from "@/components/main-chat";
 import { Badge } from "@/components/ui/badge";
 import { BrailleSpinner } from "@/components/ui/braille-spinner";
 import { Button } from "@/components/ui/button";
+import { ContextWindowGauge } from "@/components/ui/context-window-gauge";
 import {
 	ContextMenu,
 	ContextMenuContent,
@@ -31,6 +32,13 @@ import {
 	PermissionDialog,
 } from "@/components/ui/permission-dialog";
 import { ReadAloudButton } from "@/components/ui/read-aloud-button";
+import {
+	Select,
+	SelectContent,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from "@/components/ui/select";
 import { SlashCommandPopup } from "@/components/ui/slash-command-popup";
 import { ToolCallCard } from "@/components/ui/tool-call-card";
 import {
@@ -43,6 +51,7 @@ import { useApp } from "@/hooks/use-app";
 import { useDictation } from "@/hooks/use-dictation";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useModelContextLimit } from "@/hooks/use-models-dev";
+import { useSessionEvents } from "@/hooks/use-session-events";
 import {
 	useVoiceCommandListener,
 	useVoiceShortcuts,
@@ -78,6 +87,7 @@ import {
 	fetchAgents,
 	fetchCommands,
 	fetchMessages,
+	fetchProviders,
 	fetchSessions,
 	forkSession,
 	invalidateMessageCache,
@@ -86,9 +96,9 @@ import {
 	sendCommandAsync,
 	sendMessageAsync,
 	sendPartsAsync,
-	subscribeToEvents,
 } from "@/lib/opencode-client";
 import { formatSessionDate, generateReadableId } from "@/lib/session-utils";
+import { type ModelOption, filterModelOptions } from "@/lib/model-filter";
 import {
 	type SlashCommand,
 	builtInCommands,
@@ -111,7 +121,6 @@ import {
 	FileCode,
 	FileImage,
 	FileText,
-	Gauge,
 	GitBranch,
 	ListTodo,
 	Loader2,
@@ -143,6 +152,7 @@ import {
 	useState,
 	useTransition,
 } from "react";
+import { toast } from "sonner";
 
 const PreviewView = lazy(() =>
 	import("@/apps/sessions/PreviewView").then((mod) => ({
@@ -356,6 +366,51 @@ function CompactCopyButton({
 	);
 }
 
+function parseModelRef(value: string): { providerID: string; modelID: string } | null {
+	const trimmed = value.trim();
+	const separatorIndex = trimmed.indexOf("/");
+	if (separatorIndex <= 0 || separatorIndex === trimmed.length - 1) {
+		return null;
+	}
+	return {
+		providerID: trimmed.slice(0, separatorIndex),
+		modelID: trimmed.slice(separatorIndex + 1),
+	};
+}
+
+function normalizePermissionEvent(value: unknown): Permission | null {
+	if (!value || typeof value !== "object") return null;
+	const record = value as Record<string, unknown>;
+	const props =
+		typeof record.properties === "object" && record.properties !== null
+			? (record.properties as Record<string, unknown>)
+			: record;
+	const id =
+		(typeof props.id === "string" && props.id) ||
+		(typeof props.permissionID === "string" && props.permissionID) ||
+		"";
+	const type = typeof props.type === "string" ? props.type : "";
+	if (!id || !type) return null;
+	return {
+		id,
+		type,
+		sessionID: typeof props.sessionID === "string" ? props.sessionID : "",
+		title: typeof props.title === "string" ? props.title : "",
+		pattern:
+			typeof props.pattern === "string" || Array.isArray(props.pattern)
+				? (props.pattern as Permission["pattern"])
+				: undefined,
+		metadata:
+			typeof props.metadata === "object" && props.metadata !== null
+				? (props.metadata as Record<string, unknown>)
+				: {},
+		time:
+			typeof props.time === "object" && props.time !== null
+				? (props.time as Permission["time"])
+				: { created: Date.now() },
+	};
+}
+
 export function SessionsApp() {
 	const {
 		locale,
@@ -407,6 +462,74 @@ export function SessionsApp() {
 		return opencodeBaseUrl;
 	}, [mainChatActive, mainChatBaseUrl, opencodeBaseUrl]);
 
+	const [opencodeModelOptions, setOpencodeModelOptions] = useState<ModelOption[]>(
+		[],
+	);
+	const [selectedModelRef, setSelectedModelRef] = useState<string | null>(null);
+	const [isModelLoading, setIsModelLoading] = useState(false);
+	const [modelQuery, setModelQuery] = useState("");
+	const modelStorageKey = useMemo(() => {
+		if (!selectedWorkspaceSessionId || mainChatActive) return null;
+		return `octo:opencodeModel:${selectedWorkspaceSessionId}`;
+	}, [selectedWorkspaceSessionId, mainChatActive]);
+
+	useEffect(() => {
+		if (!modelStorageKey) {
+			setSelectedModelRef(null);
+			return;
+		}
+		const stored = localStorage.getItem(modelStorageKey);
+		setSelectedModelRef(stored || null);
+	}, [modelStorageKey]);
+
+	useEffect(() => {
+		if (!modelStorageKey) return;
+		if (selectedModelRef) {
+			localStorage.setItem(modelStorageKey, selectedModelRef);
+		} else {
+			localStorage.removeItem(modelStorageKey);
+		}
+	}, [modelStorageKey, selectedModelRef]);
+
+	useEffect(() => {
+		if (!effectiveOpencodeBaseUrl || mainChatActive) {
+			setOpencodeModelOptions([]);
+			return;
+		}
+		let active = true;
+		setIsModelLoading(true);
+		fetchProviders(effectiveOpencodeBaseUrl, { directory: opencodeDirectory })
+			.then((data) => {
+				if (!active) return;
+				const providers = data.providers ?? data.all ?? [];
+				const options: ModelOption[] = [];
+				for (const provider of providers) {
+					const models = provider.models ?? {};
+					for (const [modelKey, model] of Object.entries(models)) {
+						const modelId = model.id || modelKey;
+						if (!modelId) continue;
+						const value = `${provider.id}/${modelId}`;
+						const label = model.name
+							? `${provider.id}/${modelId} · ${model.name}`
+							: value;
+						options.push({ value, label });
+					}
+				}
+				options.sort((a, b) => a.label.localeCompare(b.label));
+				setOpencodeModelOptions(options);
+			})
+			.catch(() => {
+				if (active) setOpencodeModelOptions([]);
+			})
+			.finally(() => {
+				if (active) setIsModelLoading(false);
+			});
+
+		return () => {
+			active = false;
+		};
+	}, [effectiveOpencodeBaseUrl, opencodeDirectory, mainChatActive]);
+
 	// Per-chat state (working indicator is per-session, not global)
 	const [chatStates, setChatStates] = useState<Map<string, "idle" | "sending">>(
 		new Map(),
@@ -418,6 +541,10 @@ export function SessionsApp() {
 	const chatState = activeSessionId
 		? chatStates.get(activeSessionId) || "idle"
 		: "idle";
+	const selectedModelOverride = useMemo(() => {
+		if (!selectedModelRef) return undefined;
+		return parseModelRef(selectedModelRef) ?? undefined;
+	}, [selectedModelRef]);
 	const setChatState = useCallback(
 		(state: "idle" | "sending") => {
 			const sessionId = mainChatActive
@@ -564,6 +691,8 @@ export function SessionsApp() {
 		sessionId: string;
 		attemptedAt: number;
 	} | null>(null);
+	// Track the session ID that loadMessages is currently loading for (to prevent stale updates)
+	const loadingSessionIdRef = useRef<string | null>(null);
 	const fileInputRef = useRef<HTMLInputElement>(null);
 	const chatInputRef = useRef<HTMLTextAreaElement>(null);
 	const chatContainerRef = useRef<HTMLDivElement>(null);
@@ -1329,9 +1458,12 @@ export function SessionsApp() {
 	const loadMessages = useCallback(async () => {
 		// Main Chat threaded view - shows all sessions combined
 		if (mainChatActive) {
+			loadingSessionIdRef.current = "main-chat";
 			if (mainChatAssistantName) {
 				try {
 					const threadedMessages = await loadMainChatThreadedMessages();
+					// Check if we're still on main chat (session may have changed during async load)
+					if (loadingSessionIdRef.current !== "main-chat") return;
 					// Use merge to preserve optimistic messages (temp-* IDs)
 					startTransition(() => {
 						setMessages((prev) => {
@@ -1357,20 +1489,22 @@ export function SessionsApp() {
 
 		if (!selectedChatSessionId) return;
 
+		// Capture session ID at start to detect stale responses
+		const targetSessionId = selectedChatSessionId;
+		loadingSessionIdRef.current = targetSessionId;
+
 		try {
 			let loadedMessages: OpenCodeMessageWithParts[] = [];
 
 			if (opencodeBaseUrl && !isHistoryOnlySession) {
 				// Live opencode is authoritative for streaming updates.
-				loadedMessages = await fetchMessages(
-					opencodeBaseUrl,
-					selectedChatSessionId,
-					{ directory: opencodeDirectory },
-				);
+				loadedMessages = await fetchMessages(opencodeBaseUrl, targetSessionId, {
+					directory: opencodeDirectory,
+				});
 			} else {
 				// History-only view (or no live session): use disk history cache.
 				try {
-					const historyMessages = await getChatMessages(selectedChatSessionId);
+					const historyMessages = await getChatMessages(targetSessionId);
 					if (historyMessages.length > 0) {
 						loadedMessages = convertChatMessagesToOpenCode(historyMessages);
 					}
@@ -1386,13 +1520,18 @@ export function SessionsApp() {
 			) {
 				// If live returned nothing, fall back to disk history for older sessions.
 				try {
-					const historyMessages = await getChatMessages(selectedChatSessionId);
+					const historyMessages = await getChatMessages(targetSessionId);
 					if (historyMessages.length > 0) {
 						loadedMessages = convertChatMessagesToOpenCode(historyMessages);
 					}
 				} catch {
 					// Ignore history failures on fallback.
 				}
+			}
+
+			// Check if session changed during async load - discard stale response
+			if (loadingSessionIdRef.current !== targetSessionId) {
+				return;
 			}
 
 			// Use merge to prevent flickering when updating
@@ -1414,8 +1553,8 @@ export function SessionsApp() {
 	]);
 
 	const [eventsTransportMode, setEventsTransportMode] = useState<
-		"sse" | "polling"
-	>("sse");
+		"sse" | "polling" | "ws" | "reconnecting"
+	>(features.websocket_events ? "ws" : "sse");
 	const messageRefreshStateRef = useRef<{
 		timer: ReturnType<typeof setTimeout> | null;
 		inFlight: boolean;
@@ -1557,141 +1696,188 @@ export function SessionsApp() {
 		scrollToBottom("smooth");
 	}, [messages, scrollToBottom]);
 
-	useEffect(() => {
-		if (!effectiveOpencodeBaseUrl || !activeSessionId) return;
-		const unsubscribe = subscribeToEvents(
-			effectiveOpencodeBaseUrl,
-			(event) => {
-				const eventType = event.type as string;
+	// Event handler for session events (shared between WebSocket and SSE)
+	const handleSessionEvent = useCallback(
+		(event: { type: string; properties?: Record<string, unknown> | null }) => {
+			const eventType = event.type as string;
 
-				// Debug: log all events to help diagnose permission issues
-				if (eventType !== "message.updated") {
-					console.log("[SSE Event]", eventType, event.properties);
+			// Debug: log all events to help diagnose permission issues
+			if (eventType !== "message.updated") {
+				console.log("[Event]", eventType, event.properties);
+			}
+
+			if (eventType === "transport.mode") {
+				const props = event.properties as {
+					mode?: "sse" | "polling" | "ws" | "reconnecting";
+				} | null;
+				if (props?.mode) setEventsTransportMode(props.mode);
+				if (effectiveOpencodeBaseUrl && activeSessionId) {
+					invalidateMessageCache(
+						effectiveOpencodeBaseUrl,
+						activeSessionId,
+						opencodeDirectory,
+					);
+					requestMessageRefresh(250);
 				}
+				return;
+			}
 
-				if (eventType === "transport.mode") {
-					const props = event.properties as { mode?: "sse" | "polling" } | null;
-					if (props?.mode) setEventsTransportMode(props.mode);
-					if (effectiveOpencodeBaseUrl && activeSessionId) {
-						invalidateMessageCache(
-							effectiveOpencodeBaseUrl,
-							activeSessionId,
-							opencodeDirectory,
-						);
-						requestMessageRefresh(250);
-					}
-					return;
+			if (eventType === "server.connected") {
+				if (effectiveOpencodeBaseUrl && activeSessionId) {
+					invalidateMessageCache(
+						effectiveOpencodeBaseUrl,
+						activeSessionId,
+						opencodeDirectory,
+					);
+					requestMessageRefresh(250);
 				}
+			}
 
-				if (eventType === "server.connected") {
-					if (effectiveOpencodeBaseUrl && activeSessionId) {
-						invalidateMessageCache(
-							effectiveOpencodeBaseUrl,
-							activeSessionId,
-							opencodeDirectory,
-						);
-						requestMessageRefresh(250);
-					}
-				}
-
-				if (eventType === "session.unavailable") {
+			if (eventType === "session.unavailable") {
+				if (
+					autoAttachMode === "resume" &&
+					selectedChatFromHistory?.workspace_path
+				) {
+					const now = Date.now();
+					const lastAttempt = sessionUnavailableRef.current;
 					if (
-						autoAttachMode === "resume" &&
-						selectedChatFromHistory?.workspace_path
+						lastAttempt?.sessionId === selectedChatSessionId &&
+						now - lastAttempt.attemptedAt < 15_000
 					) {
-						const now = Date.now();
-						const lastAttempt = sessionUnavailableRef.current;
-						if (
-							lastAttempt?.sessionId === selectedChatSessionId &&
-							now - lastAttempt.attemptedAt < 15_000
-						) {
-							return;
-						}
-						sessionUnavailableRef.current = {
-							sessionId: selectedChatSessionId ?? "",
-							attemptedAt: now,
-						};
-						void ensureOpencodeRunning(selectedChatFromHistory.workspace_path);
+						return;
 					}
-				}
-
-				if (eventType === "session.idle") {
-					setChatState("idle");
-					// Invalidate cache and force refresh on idle
-					if (effectiveOpencodeBaseUrl && activeSessionId) {
-						invalidateMessageCache(
-							effectiveOpencodeBaseUrl,
-							activeSessionId,
-							opencodeDirectory,
-						);
-					}
-					loadMessages();
-					refreshOpencodeSessions();
-					// Refresh chat history to pick up auto-generated session titles
-					refreshChatHistory();
-				} else if (eventType === "session.busy") {
-					setChatState("sending");
-				}
-
-				// Handle permission events
-				if (eventType === "permission.updated") {
-					const permission = event.properties as Permission;
-					console.log("[Permission] Received permission request:", permission);
-					setPendingPermissions((prev) => {
-						// Avoid duplicates
-						if (prev.some((p) => p.id === permission.id)) return prev;
-						return [...prev, permission];
-					});
-					// Auto-show the first permission dialog if none is active
-					setActivePermission((current) => current || permission);
-				} else if (eventType === "permission.replied") {
-					const { permissionID } = event.properties as {
-						sessionID: string;
-						permissionID: string;
-						response: string;
+					sessionUnavailableRef.current = {
+						sessionId: selectedChatSessionId ?? "",
+						attemptedAt: now,
 					};
-					console.log("[Permission] Permission replied:", permissionID);
-					setPendingPermissions((prev) =>
-						prev.filter((p) => p.id !== permissionID),
-					);
-					setActivePermission((current) =>
-						current?.id === permissionID ? null : current,
-					);
+					void ensureOpencodeRunning(selectedChatFromHistory.workspace_path);
 				}
+			}
 
-				// Refresh messages on any message event
-				if (eventType?.startsWith("message")) {
-					// Invalidate cache when messages change
-					if (effectiveOpencodeBaseUrl && activeSessionId) {
-						invalidateMessageCache(
-							effectiveOpencodeBaseUrl,
-							activeSessionId,
-							opencodeDirectory,
-						);
-					}
-					// Coalesce refreshes to avoid hammering the server during streaming updates.
-					requestMessageRefresh(1000);
+			if (eventType === "session.idle") {
+				setChatState("idle");
+				// Invalidate cache and force refresh on idle
+				if (effectiveOpencodeBaseUrl && activeSessionId) {
+					invalidateMessageCache(
+						effectiveOpencodeBaseUrl,
+						activeSessionId,
+						opencodeDirectory,
+					);
 				}
-			},
-			controlPlaneDirectBaseUrl(),
-			opencodeRequestOptions,
-		);
-		return unsubscribe;
-	}, [
-		autoAttachMode,
-		ensureOpencodeRunning,
-		effectiveOpencodeBaseUrl,
-		opencodeDirectory,
-		opencodeRequestOptions,
-		activeSessionId,
-		selectedChatSessionId,
-		selectedChatFromHistory,
-		loadMessages,
-		refreshOpencodeSessions,
-		refreshChatHistory,
-		requestMessageRefresh,
-		setChatState,
-	]);
+				loadMessages();
+				refreshOpencodeSessions();
+				// Refresh chat history to pick up auto-generated session titles
+				refreshChatHistory();
+			} else if (eventType === "session.busy") {
+				setChatState("sending");
+			}
+
+			// Handle permission events
+			if (eventType === "permission.updated" || eventType === "permission.created") {
+				const permission = normalizePermissionEvent(event.properties);
+				if (!permission) return;
+				console.log("[Permission] Received permission request:", permission);
+				setPendingPermissions((prev) => {
+					// Avoid duplicates
+					if (prev.some((p) => p.id === permission.id)) return prev;
+					return [...prev, permission];
+				});
+				// Auto-show the first permission dialog if none is active
+				setActivePermission((current) => current || permission);
+			} else if (
+				eventType === "permission.replied" ||
+				eventType === "permission.resolved"
+			) {
+				const props = event.properties as Record<string, unknown> | undefined;
+				const permissionID =
+					(typeof props?.permissionID === "string" && props.permissionID) ||
+					(typeof props?.id === "string" && props.id) ||
+					(typeof props?.permission_id === "string" && props.permission_id) ||
+					"";
+				if (!permissionID) return;
+				console.log("[Permission] Permission replied:", permissionID);
+				setPendingPermissions((prev) =>
+					prev.filter((p) => p.id !== permissionID),
+				);
+				setActivePermission((current) =>
+					current?.id === permissionID ? null : current,
+				);
+			}
+
+			// Handle session errors
+			if (eventType === "session.error") {
+				const props = event.properties as Record<string, unknown> | undefined;
+				const error =
+					props && typeof props.error === "object" && props.error !== null
+						? (props.error as {
+								name?: string;
+								data?: { message?: string };
+							})
+						: null;
+				const errorName =
+					(typeof props?.error_type === "string" && props.error_type) ||
+					error?.name ||
+					"Error";
+				const errorMessage =
+					(typeof props?.message === "string" && props.message) ||
+					error?.data?.message ||
+					"An unknown error occurred";
+				console.error("[Session Error]", errorName, errorMessage);
+				toast.error(errorMessage, {
+					description: errorName !== "UnknownError" ? errorName : undefined,
+					duration: 8000,
+				});
+				// Reset chat state on error
+				setChatState("idle");
+			}
+
+			// Refresh messages on any message event
+			if (eventType?.startsWith("message")) {
+				// Invalidate cache when messages change
+				if (effectiveOpencodeBaseUrl && activeSessionId) {
+					invalidateMessageCache(
+						effectiveOpencodeBaseUrl,
+						activeSessionId,
+						opencodeDirectory,
+					);
+				}
+				// Coalesce refreshes to avoid hammering the server during streaming updates.
+				requestMessageRefresh(1000);
+			}
+		},
+		[
+			autoAttachMode,
+			ensureOpencodeRunning,
+			effectiveOpencodeBaseUrl,
+			opencodeDirectory,
+			activeSessionId,
+			selectedChatSessionId,
+			selectedChatFromHistory,
+			loadMessages,
+			refreshOpencodeSessions,
+			refreshChatHistory,
+			requestMessageRefresh,
+			setChatState,
+		],
+	);
+
+	// Subscribe to session events (uses WebSocket when enabled, SSE otherwise)
+	const { transportMode: sessionTransportMode } = useSessionEvents(
+		handleSessionEvent,
+		{
+			useWebSocket: features.websocket_events ?? false,
+			workspaceSessionId: selectedWorkspaceSessionId,
+			opencodeBaseUrl: effectiveOpencodeBaseUrl,
+			opencodeDirectory,
+			activeSessionId,
+			enabled: !!effectiveOpencodeBaseUrl && !!activeSessionId,
+		},
+	);
+
+	// Sync transport mode from hook
+	useEffect(() => {
+		setEventsTransportMode(sessionTransportMode);
+	}, [sessionTransportMode]);
 
 	// Poll for message updates while assistant is working.
 	// This runs regardless of SSE status since SSE is unreliable through the proxy.
@@ -1834,6 +2020,8 @@ export function SessionsApp() {
 	useEffect(() => {
 		setVisibleGroupCount(20);
 		setMessages([]); // Clear messages immediately on session switch
+		// Invalidate any in-flight loadMessages requests for the old session
+		loadingSessionIdRef.current = selectedChatSessionId ?? null;
 		if (!selectedChatSessionId) {
 			return;
 		}
@@ -1899,6 +2087,19 @@ export function SessionsApp() {
 		tokenUsage.modelID,
 		200000, // Default fallback
 	);
+
+	useEffect(() => {
+		if (mainChatActive) return;
+		if (selectedModelRef) return;
+		if (tokenUsage.providerID && tokenUsage.modelID) {
+			setSelectedModelRef(`${tokenUsage.providerID}/${tokenUsage.modelID}`);
+		}
+	}, [
+		mainChatActive,
+		selectedModelRef,
+		tokenUsage.providerID,
+		tokenUsage.modelID,
+	]);
 
 	// Extract the latest todo list from messages
 	const latestTodos = useMemo(() => {
@@ -2339,6 +2540,7 @@ export function SessionsApp() {
 					targetSessionId,
 					shellCommand,
 					agentId,
+					selectedModelOverride,
 					{ directory: effectiveDirectory },
 				);
 			} else if (currentFileAttachments.length > 0) {
@@ -2359,7 +2561,7 @@ export function SessionsApp() {
 					effectiveBaseUrl,
 					targetSessionId,
 					parts,
-					undefined,
+					selectedModelOverride,
 					{ directory: effectiveDirectory },
 				);
 			} else {
@@ -2368,7 +2570,7 @@ export function SessionsApp() {
 					effectiveBaseUrl,
 					targetSessionId,
 					messageText,
-					undefined,
+					selectedModelOverride,
 					{ directory: effectiveDirectory },
 				);
 			}
@@ -2753,7 +2955,6 @@ export function SessionsApp() {
 								if (voiceMode.isActive) voiceMode.stop();
 								if (dictation.isActive) dictation.stop();
 							}}
-							disabled={chatState === "sending"}
 							locale={locale}
 							className="flex-shrink-0"
 						/>
@@ -2927,11 +3128,10 @@ export function SessionsApp() {
 						data-voice-send
 						onClick={canResumeWithoutMessage ? handleResume : handleSend}
 						disabled={
-							chatState === "sending" ||
-							(!canResumeWithoutMessage &&
-								!messageInput.trim() &&
-								pendingUploads.length === 0 &&
-								fileAttachments.length === 0)
+							!canResumeWithoutMessage &&
+							!messageInput.trim() &&
+							pendingUploads.length === 0 &&
+							fileAttachments.length === 0
 						}
 						className="bg-primary hover:bg-primary/90 text-primary-foreground"
 					>
@@ -3023,6 +3223,58 @@ export function SessionsApp() {
 	})();
 
 	// Session header component for reuse
+	const showModelSwitcher =
+		!mainChatActive && !!effectiveOpencodeBaseUrl && !!activeSessionId;
+	const filteredModelOptions = filterModelOptions(
+		opencodeModelOptions,
+		modelQuery,
+	);
+	const modelSwitcher = showModelSwitcher ? (
+		<Select
+			value={selectedModelRef ?? undefined}
+			onValueChange={(value) => setSelectedModelRef(value)}
+			onOpenChange={(open) => {
+				if (open) setModelQuery("");
+			}}
+			disabled={isModelLoading || opencodeModelOptions.length === 0}
+		>
+			<SelectTrigger className="h-7 w-[220px] text-xs">
+				<SelectValue
+					placeholder={isModelLoading ? "Loading models..." : "Model"}
+				/>
+			</SelectTrigger>
+			<SelectContent>
+				<div
+					className="sticky top-0 z-10 bg-popover p-2 border-b border-border"
+					onPointerDown={(e) => e.stopPropagation()}
+					onKeyDown={(e) => e.stopPropagation()}
+				>
+					<Input
+						value={modelQuery}
+						onChange={(e) => setModelQuery(e.target.value)}
+						placeholder="Search models..."
+						aria-label="Search models"
+						className="h-8 text-xs"
+					/>
+				</div>
+				{opencodeModelOptions.length === 0 ? (
+					<SelectItem value="__none__" disabled>
+						No models available
+					</SelectItem>
+				) : filteredModelOptions.length === 0 ? (
+					<SelectItem value="__no_results__" disabled>
+						No matches
+					</SelectItem>
+				) : (
+					filteredModelOptions.map((option) => (
+						<SelectItem key={option.value} value={option.value}>
+							{option.label}
+						</SelectItem>
+					))
+				)}
+			</SelectContent>
+		</Select>
+	) : null;
 	const persona = selectedSession?.persona;
 	const SessionHeader = (
 		<div className="flex items-center justify-between pb-3 mb-3 border-b border-border">
@@ -3066,6 +3318,7 @@ export function SessionsApp() {
 			</div>
 			<div className="flex items-center gap-3 flex-shrink-0 ml-2">
 				{status && <span className="text-xs text-destructive">{status}</span>}
+				{modelSwitcher}
 				<ContextWindowGauge
 					inputTokens={tokenUsage.inputTokens}
 					outputTokens={tokenUsage.outputTokens}
@@ -3144,13 +3397,15 @@ export function SessionsApp() {
 						/>
 					</div>
 					{/* Mobile context window gauge - full width bar directly below tabs */}
-					<ContextWindowGauge
-						inputTokens={tokenUsage.inputTokens}
-						outputTokens={tokenUsage.outputTokens}
-						maxTokens={contextLimit}
-						locale={locale}
-						compact
-					/>
+					{!mainChatActive && (
+						<ContextWindowGauge
+							inputTokens={tokenUsage.inputTokens}
+							outputTokens={tokenUsage.outputTokens}
+							maxTokens={contextLimit}
+							locale={locale}
+							compact
+						/>
+					)}
 				</div>
 
 				{/* Mobile content */}
@@ -3438,6 +3693,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 	type Segment =
 		| { key: string; type: "text"; content: string }
 		| { key: string; type: "tool"; part: OpenCodePart }
+		| { key: string; type: "file"; part: OpenCodePart }
 		| { key: string; type: "other"; part: OpenCodePart };
 
 	const segments: Segment[] = [];
@@ -3465,6 +3721,9 @@ const MessageGroupCard = memo(function MessageGroupCard({
 		} else if (part.type === "tool") {
 			flushTextBuffer();
 			segments.push({ key: partKey, type: "tool", part });
+		} else if (part.type === "file") {
+			flushTextBuffer();
+			segments.push({ key: partKey, type: "file", part });
 		} else {
 			flushTextBuffer();
 			segments.push({ key: partKey, type: "other", part });
@@ -3588,16 +3847,6 @@ const MessageGroupCard = memo(function MessageGroupCard({
 						const fileRefs = matches.map((m) => m.slice(1)); // Remove @ prefix
 						// Remove duplicates
 						const uniqueFileRefs = [...new Set(fileRefs)];
-						// Debug logging
-						if (segment.content.includes("@")) {
-							console.log(
-								"[FileRef] Content:",
-								segment.content.substring(0, 200),
-							);
-							console.log("[FileRef] Matches:", matches);
-							console.log("[FileRef] FileRefs:", fileRefs);
-							console.log("[FileRef] WorkspaceDir:", workspaceDirectory);
-						}
 
 						return (
 							<div key={segment.key} className="overflow-hidden space-y-2">
@@ -3613,6 +3862,16 @@ const MessageGroupCard = memo(function MessageGroupCard({
 									/>
 								))}
 							</div>
+						);
+					}
+
+					if (segment.type === "file") {
+						return (
+							<FilePartCard
+								key={segment.key}
+								part={segment.part}
+								workspaceDirectory={workspaceDirectory}
+							/>
 						);
 					}
 
@@ -3737,13 +3996,101 @@ const OtherPartCard = memo(function OtherPartCard({
 	);
 });
 
+type FilePartDetails = {
+	filePath: string;
+	fileName: string;
+	directUrl?: string;
+};
+
+const extractFilePartDetails = (
+	part: OpenCodePart,
+	workspaceDirectory?: string,
+): FilePartDetails | null => {
+	const metadata = part.metadata ?? {};
+	const rawUrl =
+		part.url ||
+		(typeof metadata.url === "string" ? metadata.url : undefined) ||
+		null;
+	const metadataPath =
+		typeof metadata.path === "string"
+			? metadata.path
+			: typeof metadata.filePath === "string"
+				? metadata.filePath
+				: typeof metadata.file === "string"
+					? metadata.file
+					: null;
+	const fileName =
+		part.filename ||
+		(typeof metadata.filename === "string" ? metadata.filename : undefined) ||
+		metadataPath ||
+		"file";
+
+	if (typeof rawUrl === "string") {
+		if (rawUrl.startsWith("file://")) {
+			const absolutePath = decodeURIComponent(rawUrl.replace("file://", ""));
+			if (workspaceDirectory && absolutePath.startsWith(workspaceDirectory)) {
+				const relativePath = absolutePath
+					.slice(workspaceDirectory.length)
+					.replace(/^\/+/, "");
+				return {
+					filePath: relativePath || fileName,
+					fileName,
+				};
+			}
+			if (workspaceDirectory) {
+				return { filePath: metadataPath || fileName, fileName };
+			}
+			return { filePath: absolutePath, fileName };
+		}
+		if (rawUrl.startsWith("http://") || rawUrl.startsWith("https://")) {
+			return { filePath: metadataPath || fileName, fileName, directUrl: rawUrl };
+		}
+	}
+
+	if (metadataPath) {
+		return { filePath: metadataPath, fileName };
+	}
+
+	return fileName ? { filePath: fileName, fileName } : null;
+};
+
+const FilePartCard = memo(function FilePartCard({
+	part,
+	workspaceDirectory,
+}: {
+	part: OpenCodePart;
+	workspaceDirectory?: string;
+}) {
+	const details = useMemo(
+		() => extractFilePartDetails(part, workspaceDirectory),
+		[part, workspaceDirectory],
+	);
+
+	if (!details) {
+		return <OtherPartCard part={part} />;
+	}
+
+	return (
+		<FileReferenceCard
+			filePath={details.filePath}
+			workspacePath={workspaceDirectory}
+			directUrl={details.directUrl}
+			label={details.fileName}
+		/>
+	);
+});
+
 /** Renders a file reference card with preview for images */
 const FileReferenceCard = memo(function FileReferenceCard({
 	filePath,
 	workspacePath,
+	directUrl,
+	label,
 }: {
 	filePath: string;
 	workspacePath?: string | null;
+	directUrl?: string;
+	label?: string;
 }) {
 	const [isLoading, setIsLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
@@ -3751,21 +4098,26 @@ const FileReferenceCard = memo(function FileReferenceCard({
 
 	const fileInfo = useMemo(() => getFileTypeInfo(filePath), [filePath]);
 	const isImage = fileInfo.category === "image";
-	const fileName = filePath.split("/").pop() || filePath;
+	const fileName = label || filePath.split("/").pop() || filePath;
 
 	// Build the file URL
 	const fileUrl = useMemo(() => {
+		if (directUrl) return directUrl;
+		if (!workspacePath) return null;
 		const baseUrl = fileserverWorkspaceBaseUrl();
 		const encodedPath = encodeURIComponent(filePath);
-		const workspaceParam = workspacePath
-			? `&workspace_path=${encodeURIComponent(workspacePath)}`
-			: "";
-		const url = `${baseUrl}/read?path=${encodedPath}${workspaceParam}`;
-		console.log("[FileReferenceCard] URL:", url);
-		console.log("[FileReferenceCard] filePath:", filePath);
-		console.log("[FileReferenceCard] workspacePath:", workspacePath);
-		return url;
-	}, [filePath, workspacePath]);
+		const workspaceParam = `&workspace_path=${encodeURIComponent(workspacePath)}`;
+		return `${baseUrl}/read?path=${encodedPath}${workspaceParam}`;
+	}, [directUrl, filePath, workspacePath]);
+
+	if (!fileUrl) {
+		return (
+			<div className="inline-flex items-center gap-2 px-3 py-1.5 border border-border bg-muted/20 rounded text-xs text-muted-foreground">
+				<FileText className="w-4 h-4" />
+				<span className="truncate max-w-[220px]">{fileName}</span>
+			</div>
+		);
+	}
 
 	// For images, render inline preview
 	if (isImage) {
@@ -3939,72 +4291,5 @@ const TodoListView = memo(function TodoListView({
 		</div>
 	);
 });
-
-// Knight Rider style spinner component - classic KITT scanner effect with trailing swoosh
-// Context Window Gauge component
-function ContextWindowGauge({
-	inputTokens,
-	outputTokens,
-	maxTokens = 200000,
-	locale,
-	compact = false,
-}: {
-	inputTokens: number;
-	outputTokens: number;
-	maxTokens?: number;
-	locale: "de" | "en";
-	compact?: boolean;
-}) {
-	const totalTokens = inputTokens + outputTokens;
-	const percentage = Math.min((totalTokens / maxTokens) * 100, 100);
-
-	// Color based on usage
-	const getColor = () => {
-		if (percentage >= 90) return "bg-destructive";
-		if (percentage >= 70) return "bg-yellow-500";
-		return "bg-primary";
-	};
-
-	const formatTokens = (n: number) => {
-		if (n >= 1000000) return `${(n / 1000000).toFixed(1)}M`;
-		if (n >= 1000) return `${(n / 1000).toFixed(1)}K`;
-		return n.toString();
-	};
-
-	if (totalTokens === 0) return null;
-
-	// Compact mode for mobile - full width bar, no icon
-	if (compact) {
-		return (
-			<div
-				className="w-full h-1 bg-muted overflow-hidden"
-				title={`${locale === "de" ? "Kontextfenster" : "Context window"}: ${formatTokens(totalTokens)} / ${formatTokens(maxTokens)} tokens (${percentage.toFixed(0)}%)`}
-			>
-				<div
-					className={cn("h-full transition-all duration-300", getColor())}
-					style={{ width: `${percentage}%` }}
-				/>
-			</div>
-		);
-	}
-
-	return (
-		<div
-			className="flex items-center gap-2 text-xs text-muted-foreground"
-			title={`${locale === "de" ? "Kontextfenster" : "Context window"}: ${formatTokens(totalTokens)} / ${formatTokens(maxTokens)} tokens`}
-		>
-			<Gauge className="w-3.5 h-3.5" />
-			<div className="flex items-center gap-1.5">
-				<div className="w-16 h-1.5 bg-muted rounded-full overflow-hidden">
-					<div
-						className={cn("h-full transition-all duration-300", getColor())}
-						style={{ width: `${percentage}%` }}
-					/>
-				</div>
-				<span className="font-mono text-[10px]">{percentage.toFixed(0)}%</span>
-			</div>
-		</div>
-	);
-}
 
 export default SessionsApp;

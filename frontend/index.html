@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="de" data-preload="true" style="background:#000">
+<html lang="de" data-preload="true">
   <head>
     <script>
       (function () {
@@ -21,12 +21,14 @@
             : "dark";
         const isDark = theme === "dark" || (theme === "system" && prefersDark);
         if (isDark) root.classList.add("dark");
-        root.style.background = "#000";
+        root.style.background = isDark ? "#000" : "#fff";
         root.style.colorScheme = isDark ? "dark" : "light";
         document.addEventListener("DOMContentLoaded", () => {
-          document.body.style.background = "#000";
+          document.body.style.background = isDark ? "#000" : "#fff";
           const appRoot = document.getElementById("root");
-          if (appRoot) appRoot.style.background = "#000";
+          if (appRoot) appRoot.style.background = isDark ? "#000" : "#fff";
+          const logo = document.getElementById("preload-logo");
+          if (logo) logo.src = isDark ? "/octo_logo_new_white.png" : "/octo_logo_new_black.png";
         });
       })();
     </script>
@@ -40,7 +42,17 @@
       html[data-preload],
       html[data-preload] body,
       html[data-preload] #root {
+        background: inherit !important;
+      }
+      html.dark[data-preload],
+      html.dark[data-preload] body,
+      html.dark[data-preload] #root {
         background: #000 !important;
+      }
+      html:not(.dark)[data-preload],
+      html:not(.dark)[data-preload] body,
+      html:not(.dark)[data-preload] #root {
+        background: #fff !important;
       }
       #preload {
         min-height: 100vh;
@@ -48,37 +60,28 @@
         flex-direction: column;
         align-items: center;
         justify-content: center;
-        gap: 12px;
-        color: #e5e5e5;
-        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-          "Liberation Mono", "Courier New", monospace;
-        letter-spacing: 0.08em;
+        gap: 16px;
       }
-      #preload-spinner {
-        width: 28px;
-        height: 28px;
-        border-radius: 999px;
-        border: 2px solid rgba(229, 229, 229, 0.2);
-        border-top-color: #e5e5e5;
-        animation: preload-spin 0.8s linear infinite;
+      #preload-logo {
+        height: 48px;
+        width: auto;
+        animation: preload-pulse 2s ease-in-out infinite;
       }
-      #preload-text {
-        font-size: 12px;
-        text-transform: uppercase;
-      }
-      @keyframes preload-spin {
-        to {
-          transform: rotate(360deg);
+      @keyframes preload-pulse {
+        0%, 100% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0.5;
         }
       }
     </style>
     <title>octo - got tentacles?</title>
   </head>
-  <body class="font-mono antialiased bg-background text-foreground" style="background:#000">
-    <div id="root" style="background:#000">
+  <body class="font-mono antialiased bg-background text-foreground">
+    <div id="root">
       <div id="preload" aria-live="polite">
-        <div id="preload-spinner" aria-hidden="true"></div>
-        <div id="preload-text">Loading Octo</div>
+        <img id="preload-logo" src="/octo_logo_new_white.png" alt="OCTO" />
       </div>
     </div>
     <script type="module" src="/src/main.tsx"></script>

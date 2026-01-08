@@ -283,18 +283,6 @@ impl MainChatService {
         repo.get_latest_session().await
     }
 
-    /// Update session message count.
-    pub async fn update_session_message_count(
-        &self,
-        user_id: &str,
-        session_id: &str,
-        count: i64,
-    ) -> Result<()> {
-        let db = self.get_db(user_id).await?;
-        let repo = MainChatRepository::new(&db);
-        repo.update_session_message_count(session_id, count).await
-    }
-
     // ========== Message Operations ==========
 
     /// Add a chat message.
@@ -313,24 +301,6 @@ impl MainChatService {
         let db = self.get_db(user_id).await?;
         let repo = MainChatRepository::new(&db);
         repo.get_all_messages().await
-    }
-
-    /// Get recent messages.
-    pub async fn get_recent_messages(&self, user_id: &str, limit: i64) -> Result<Vec<ChatMessage>> {
-        let db = self.get_db(user_id).await?;
-        let repo = MainChatRepository::new(&db);
-        repo.get_recent_messages(limit).await
-    }
-
-    /// Get messages since a timestamp.
-    pub async fn get_messages_since(
-        &self,
-        user_id: &str,
-        since_timestamp: i64,
-    ) -> Result<Vec<ChatMessage>> {
-        let db = self.get_db(user_id).await?;
-        let repo = MainChatRepository::new(&db);
-        repo.get_messages_since(since_timestamp).await
     }
 
     /// Clear all messages (for fresh start).

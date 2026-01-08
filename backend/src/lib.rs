@@ -20,6 +20,6 @@ pub mod runner;
 pub mod session;
 pub mod session_ui;
 pub mod settings;
-pub mod storage;
 pub mod user;
 pub mod wordlist;
+pub mod ws;

@@ -63,13 +63,6 @@ pub struct HistoryEntry {
     pub created_at: String,
 }
 
-impl HistoryEntry {
-    /// Get the parsed entry type.
-    pub fn parsed_type(&self) -> Result<HistoryEntryType, String> {
-        self.entry_type.parse()
-    }
-}
-
 /// Input for creating a new history entry.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateHistoryEntry {
@@ -108,15 +101,6 @@ pub struct CreateSession {
     pub session_id: String,
     /// Optional title
     pub title: Option<String>,
-}
-
-/// Assistant-specific configuration.
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
-pub struct AssistantConfig {
-    /// Configuration key
-    pub key: String,
-    /// Configuration value (JSON)
-    pub value: String,
 }
 
 /// Full assistant info including metadata.
@@ -187,13 +171,6 @@ pub struct ChatMessage {
     pub created_at: String,
 }
 
-impl ChatMessage {
-    /// Get the parsed role.
-    pub fn parsed_role(&self) -> Result<MessageRole, String> {
-        self.role.parse()
-    }
-}
-
 /// Input for creating a new chat message.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateChatMessage {
@@ -203,26 +180,4 @@ pub struct CreateChatMessage {
     pub content: serde_json::Value,
     /// Pi session ID
     pub pi_session_id: Option<String>,
-}
-
-/// A content part in a message.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum MessagePart {
-    /// Text content
-    Text { text: String },
-    /// Thinking/reasoning content
-    Thinking { text: String },
-    /// Tool use
-    ToolUse {
-        id: String,
-        name: String,
-        input: serde_json::Value,
-    },
-    /// Tool result
-    ToolResult {
-        id: String,
-        name: String,
-        content: String,
-    },
 }

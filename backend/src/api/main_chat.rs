@@ -64,9 +64,6 @@ pub struct HistoryQuery {
     /// Maximum entries to return (default 20)
     #[serde(default = "default_limit")]
     pub limit: i64,
-    /// Filter by type
-    #[serde(rename = "type")]
-    pub entry_type: Option<String>,
 }
 
 fn default_limit() -> i64 {

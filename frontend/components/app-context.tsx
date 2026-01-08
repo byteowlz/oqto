@@ -31,9 +31,9 @@ import {
 	createSession,
 	deleteSession,
 	fetchSessions,
-	subscribeToEvents,
 	updateSession,
 } from "@/lib/opencode-client";
+import { type WsEvent, getWsClient } from "@/lib/ws-client";
 import {
 	type Dispatch,
 	type ReactNode,
@@ -80,7 +80,10 @@ interface AppContextValue {
 	 * If workspacePath is provided, ensures a session for that specific workspace.
 	 */
 	ensureOpencodeRunning: (workspacePath?: string) => Promise<string | null>;
-	createNewChat: (baseUrlOverride?: string) => Promise<OpenCodeSession | null>;
+	createNewChat: (
+		baseUrlOverride?: string,
+		directoryOverride?: string,
+	) => Promise<OpenCodeSession | null>;
 	createNewChatWithPersona: (
 		persona: Persona,
 		workspacePath?: string,
@@ -297,22 +300,25 @@ export function AppProvider({ children }: { children: ReactNode }) {
 		}
 	}, []);
 
-	const handleOpencodeEvent = useCallback(
-		(event: {
-			type: string;
-			properties?: { sessionId?: string; sessionID?: string };
-		}) => {
-			const eventType = event.type;
-			const props = event.properties || {};
-			const sessionId = props.sessionId || props.sessionID;
+	// Handle WebSocket events from all subscribed sessions
+	const handleWsEvent = useCallback(
+		(event: WsEvent) => {
+			const sessionId =
+				"session_id" in event ? (event.session_id as string) : undefined;
 
-			if (eventType === "session.busy" && sessionId) {
+			if (event.type === "session_busy" && sessionId) {
 				setSessionBusy(sessionId, true);
-			} else if (eventType === "session.idle" && sessionId) {
+			} else if (event.type === "session_idle" && sessionId) {
 				setSessionBusy(sessionId, false);
 			}
 
-			if (eventType?.startsWith("session")) {
+			// Refresh workspace sessions on relevant events
+			if (
+				event.type === "session_updated" ||
+				event.type === "session_deleted" ||
+				event.type === "agent_connected" ||
+				event.type === "agent_disconnected"
+			) {
 				refreshWorkspaceSessions();
 			}
 		},
@@ -404,38 +410,45 @@ export function AppProvider({ children }: { children: ReactNode }) {
 		refreshChatHistory();
 	}, [refreshWorkspaceSessions, refreshChatHistory]);
 
+	// Subscribe to WebSocket events for all running sessions
 	useEffect(() => {
+		const wsClient = getWsClient();
 		const runningSessions = workspaceSessions.filter(
 			(session) => session.status === "running",
 		);
 		const activeIds = new Set(runningSessions.map((session) => session.id));
 
+		// Subscribe to new sessions
 		for (const session of runningSessions) {
 			if (sessionEventSubscriptions.current.has(session.id)) {
 				continue;
 			}
-			const baseUrl = opencodeProxyBaseUrl(session.id);
-			const unsubscribe = subscribeToEvents(
-				baseUrl,
-				handleOpencodeEvent,
-				controlPlaneDirectBaseUrl(),
-				{ directory: session.workspace_path },
-			);
+			// Subscribe to session events via WebSocket
+			wsClient.subscribeSession(session.id);
+			const unsubscribe = wsClient.onSessionEvent(session.id, handleWsEvent);
 			sessionEventSubscriptions.current.set(session.id, unsubscribe);
 		}
 
+		// Unsubscribe from removed sessions
 		for (const [sessionId, unsubscribe] of sessionEventSubscriptions.current) {
 			if (!activeIds.has(sessionId)) {
 				unsubscribe();
+				wsClient.unsubscribeSession(sessionId);
 				sessionEventSubscriptions.current.delete(sessionId);
 			}
 		}
-	}, [workspaceSessions, handleOpencodeEvent]);
+	}, [workspaceSessions, handleWsEvent]);
 
+	// Cleanup on unmount
 	useEffect(() => {
 		return () => {
-			for (const unsubscribe of sessionEventSubscriptions.current.values()) {
+			const wsClient = getWsClient();
+			for (const [
+				sessionId,
+				unsubscribe,
+			] of sessionEventSubscriptions.current) {
 				unsubscribe();
+				wsClient.unsubscribeSession(sessionId);
 			}
 			sessionEventSubscriptions.current.clear();
 		};
@@ -524,12 +537,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
 	}, [mainChatActive, opencodeBaseUrl, opencodeDirectory]);
 
 	const createNewChat = useCallback(
-		async (baseUrlOverride?: string): Promise<OpenCodeSession | null> => {
+		async (
+			baseUrlOverride?: string,
+			directoryOverride?: string,
+		): Promise<OpenCodeSession | null> => {
 			const baseUrl = baseUrlOverride || opencodeBaseUrl;
 			if (!baseUrl) return null;
 			try {
+				const directory = directoryOverride || opencodeDirectory;
 				const created = await createSession(baseUrl, undefined, undefined, {
-					directory: opencodeDirectory,
+					directory,
 				});
 				setOpencodeSessions((prev) => [created, ...prev]);
 				setSelectedChatSessionId(created.id);

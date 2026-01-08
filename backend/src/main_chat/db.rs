@@ -60,14 +60,10 @@ CREATE TABLE IF NOT EXISTS config (
 INSERT OR IGNORE INTO config (key, value) VALUES ('schema_version', '2');
 "#;
 
-/// Main Chat session title prefix - stripped in frontend display.
-pub const MAIN_CHAT_TITLE_PREFIX: &str = "[[main]]";
-
 /// Per-user Main Chat database connection.
 #[derive(Debug, Clone)]
 pub struct MainChatDb {
     pool: SqlitePool,
-    path: PathBuf,
 }
 
 impl MainChatDb {
@@ -95,10 +91,7 @@ impl MainChatDb {
             .await
             .with_context(|| format!("connecting to main chat database: {}", path.display()))?;
 
-        let db = Self {
-            pool,
-            path: path.to_path_buf(),
-        };
+        let db = Self { pool };
         db.initialize_schema().await?;
 
         Ok(db)
@@ -118,19 +111,9 @@ impl MainChatDb {
         &self.pool
     }
 
-    /// Get the database file path.
-    pub fn path(&self) -> &Path {
-        &self.path
-    }
-
     /// Close the database connection.
     pub async fn close(&self) {
         self.pool.close().await;
-    }
-
-    /// Check if the database is healthy.
-    pub async fn is_healthy(&self) -> bool {
-        sqlx::query("SELECT 1").fetch_one(&self.pool).await.is_ok()
     }
 }
 
@@ -153,24 +136,6 @@ pub fn main_chat_db_path(workspace_dir: &Path, user_id: &str, single_user: bool)
     main_chat_dir_path(workspace_dir, user_id, single_user).join("main_chat.db")
 }
 
-/// Check if a user has a Main Chat set up.
-pub fn main_chat_exists(workspace_dir: &Path, user_id: &str, single_user: bool) -> bool {
-    main_chat_db_path(workspace_dir, user_id, single_user).exists()
-}
-
-/// Create a session title with the Main Chat prefix.
-pub fn prefixed_title(title: &str) -> String {
-    format!("{} {}", MAIN_CHAT_TITLE_PREFIX, title)
-}
-
-/// Strip the Main Chat prefix from a session title.
-pub fn strip_title_prefix(title: &str) -> &str {
-    title
-        .strip_prefix(MAIN_CHAT_TITLE_PREFIX)
-        .map(|s| s.trim_start())
-        .unwrap_or(title)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -182,7 +147,6 @@ mod tests {
         let db_path = temp.path().join("test.db");
 
         let db = MainChatDb::open(&db_path).await.unwrap();
-        assert!(db.is_healthy().await);
         assert!(db_path.exists());
 
         db.close().await;
@@ -213,17 +177,4 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_title_prefix() {
-        let title = "2025-01-04";
-        let prefixed = prefixed_title(title);
-        assert_eq!(prefixed, "[[main]] 2025-01-04");
-
-        let stripped = strip_title_prefix(&prefixed);
-        assert_eq!(stripped, "2025-01-04");
-
-        // Non-prefixed titles are returned as-is
-        let normal = "Regular session";
-        assert_eq!(strip_title_prefix(normal), "Regular session");
-    }
 }
