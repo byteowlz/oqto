@@ -63,6 +63,8 @@ pub struct FeaturesResponse {
     /// Voice mode configuration (null if disabled).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub voice: Option<VoiceConfig>,
+    /// Whether WebSocket events are enabled (vs SSE).
+    pub websocket_events: bool,
 }
 
 /// Voice configuration exposed to frontend.
@@ -140,6 +142,8 @@ pub async fn features(State(state): State<AppState>) -> Json<FeaturesResponse> {
         session_auto_attach: state.session_ui.auto_attach,
         session_auto_attach_scan: state.session_ui.auto_attach_scan,
         voice,
+        // WebSocket events are always enabled when the ws module is compiled in
+        websocket_events: true,
     })
 }
 

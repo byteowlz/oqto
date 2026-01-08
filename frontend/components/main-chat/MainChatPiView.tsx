@@ -2,16 +2,26 @@
 
 import { BrailleSpinner } from "@/components/ui/braille-spinner";
 import { Button } from "@/components/ui/button";
+import { ContextWindowGauge } from "@/components/ui/context-window-gauge";
 import {
 	type FileAttachment,
 	FileAttachmentChip,
 	FileMentionPopup,
 } from "@/components/ui/file-mention-popup";
+import { Input } from "@/components/ui/input";
 import {
 	CopyButton,
 	MarkdownRenderer,
 } from "@/components/ui/markdown-renderer";
 import { ReadAloudButton } from "@/components/ui/read-aloud-button";
+import { SlashCommandPopup } from "@/components/ui/slash-command-popup";
+import {
+	Select,
+	SelectContent,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from "@/components/ui/select";
 import { ToolCallCard } from "@/components/ui/tool-call-card";
 import {
 	VoiceMenuButton,
@@ -25,9 +35,16 @@ import {
 } from "@/hooks/usePiChat";
 import {
 	type Features,
+	compactMainChatPi,
 	fileserverWorkspaceBaseUrl,
+	getMainChatPiStats,
+	getMainChatPiCommands,
+	getMainChatPiModels,
+	setMainChatPiModel,
+	type PiModelInfo,
 } from "@/lib/control-plane-client";
 import { getFileTypeInfo } from "@/lib/file-types";
+import { type SlashCommand, fuzzyMatch, parseSlashInput } from "@/lib/slash-commands";
 import { cn } from "@/lib/utils";
 import {
 	Bot,
@@ -35,6 +52,7 @@ import {
 	File,
 	ImageIcon,
 	Loader2,
+	MessageSquare,
 	Paperclip,
 	Send,
 	StopCircle,
@@ -76,19 +94,41 @@ export function MainChatPiView({
 	workspacePath,
 	assistantName,
 }: MainChatPiViewProps) {
-	const { messages, isConnected, isStreaming, error, send, abort } =
-		usePiChat();
+	const {
+		messages,
+		isConnected,
+		isStreaming,
+		error,
+		send,
+		abort,
+		newSession,
+		state: piState,
+		refresh,
+	} = usePiChat();
 
 	const [input, setInput] = useState("");
 	const [fileAttachments, setFileAttachments] = useState<FileAttachment[]>([]);
 	const [showFileMentionPopup, setShowFileMentionPopup] = useState(false);
 	const [fileMentionQuery, setFileMentionQuery] = useState("");
+	const [showSlashPopup, setShowSlashPopup] = useState(false);
 	const [voiceMode, setVoiceMode] = useState<VoiceMode>(null);
 	const [isUploading, setIsUploading] = useState(false);
+	const [availableModels, setAvailableModels] = useState<PiModelInfo[]>([]);
+	const [selectedModelRef, setSelectedModelRef] = useState<string | null>(null);
+	const [isSwitchingModel, setIsSwitchingModel] = useState(false);
+	const [modelQuery, setModelQuery] = useState("");
+	const [commandError, setCommandError] = useState<Error | null>(null);
+	const [customCommands, setCustomCommands] = useState<SlashCommand[]>([]);
+	const [sessionTokens, setSessionTokens] = useState<{
+		input: number;
+		output: number;
+	} | null>(null);
 
 	const messagesEndRef = useRef<HTMLDivElement>(null);
+	const messagesContainerRef = useRef<HTMLDivElement>(null);
 	const inputRef = useRef<HTMLTextAreaElement>(null);
 	const fileInputRef = useRef<HTMLInputElement>(null);
+	const [isUserScrolled, setIsUserScrolled] = useState(false);
 
 	// Voice configuration
 	const voiceConfig = useMemo(
@@ -105,6 +145,94 @@ export function MainChatPiView({
 		[features?.voice],
 	);
 
+	const currentModelRef = useMemo(() => {
+		if (!piState?.model) return null;
+		return `${piState.model.provider}/${piState.model.id}`;
+	}, [piState?.model]);
+	const currentModelInfo = useMemo(() => {
+		if (piState?.model) {
+			return piState.model;
+		}
+		if (!selectedModelRef) return null;
+		return (
+			availableModels.find(
+				(model) => `${model.provider}/${model.id}` === selectedModelRef,
+			) ?? null
+		);
+	}, [availableModels, piState?.model, selectedModelRef]);
+	const contextWindowLimit = useMemo(() => {
+		if (!currentModelInfo) return 200000;
+		if (currentModelInfo.context_window > 0) {
+			return currentModelInfo.context_window;
+		}
+		if (currentModelInfo.max_tokens > 0) {
+			return currentModelInfo.max_tokens;
+		}
+		return 200000;
+	}, [currentModelInfo]);
+	const slashQuery = useMemo(() => parseSlashInput(input), [input]);
+	const builtInCommands = useMemo<SlashCommand[]>(
+		() => [
+			{ name: "compact", description: "Summarize context" },
+			{ name: "new", description: "Start a fresh session" },
+			{ name: "abort", description: "Abort current run" },
+			{ name: "steer", description: "Queue a steering message" },
+			{ name: "followup", description: "Queue a follow-up message" },
+			{ name: "model", description: "Switch model (provider/model)" },
+		],
+		[],
+	);
+	const builtInCommandNames = useMemo(
+		() => new Set(builtInCommands.map((cmd) => cmd.name)),
+		[builtInCommands],
+	);
+	const slashCommands = useMemo<SlashCommand[]>(() => {
+		const merged = [...builtInCommands];
+		const seen = new Set(merged.map((cmd) => cmd.name));
+		for (const cmd of customCommands) {
+			if (!seen.has(cmd.name)) {
+				merged.push(cmd);
+				seen.add(cmd.name);
+			}
+		}
+		return merged;
+	}, [builtInCommands, customCommands]);
+	const displayError = commandError ?? error;
+	const filteredModels = useMemo(() => {
+		const query = modelQuery.trim();
+		if (!query) return availableModels;
+		return availableModels.filter((model) => {
+			const fullRef = `${model.provider}/${model.id}`;
+			return (
+				fuzzyMatch(query, fullRef) ||
+				fuzzyMatch(query, model.provider) ||
+				fuzzyMatch(query, model.id) ||
+				(model.name ? fuzzyMatch(query, model.name) : false)
+			);
+		});
+	}, [availableModels, modelQuery]);
+	const messageTokenUsage = useMemo(() => {
+		let inputTokens = 0;
+		let outputTokens = 0;
+		for (const msg of messages) {
+			if (!msg.usage) continue;
+			inputTokens += msg.usage.input || 0;
+			outputTokens += msg.usage.output || 0;
+		}
+		return { inputTokens, outputTokens };
+	}, [messages]);
+	const gaugeTokens = useMemo(() => {
+		const total = messageTokenUsage.inputTokens + messageTokenUsage.outputTokens;
+		if (total > 0) return messageTokenUsage;
+		if (sessionTokens) {
+			return {
+				inputTokens: sessionTokens.input,
+				outputTokens: sessionTokens.output,
+			};
+		}
+		return { inputTokens: 0, outputTokens: 0 };
+	}, [messageTokenUsage, sessionTokens]);
+
 	// Dictation hook
 	const dictation = useDictation({
 		config: voiceConfig,
@@ -114,12 +242,85 @@ export function MainChatPiView({
 		vadTimeoutMs: features?.voice?.vad_timeout_ms,
 	});
 
-	// Auto-scroll to bottom when new messages arrive
+	useEffect(() => {
+		if (selectedModelRef || !currentModelRef) return;
+		setSelectedModelRef(currentModelRef);
+	}, [currentModelRef, selectedModelRef]);
+
+	useEffect(() => {
+		if (!isConnected) return;
+		let active = true;
+		getMainChatPiModels()
+			.then((models) => {
+				if (active) setAvailableModels(models);
+			})
+			.catch(() => {
+				if (active) setAvailableModels([]);
+			});
+		return () => {
+			active = false;
+		};
+	}, [isConnected]);
+
+	useEffect(() => {
+		if (!isConnected) return;
+		let active = true;
+		getMainChatPiCommands()
+			.then((commands) => {
+				if (!active) return;
+				setCustomCommands(
+					commands.map((cmd) => ({
+						name: cmd.name,
+						description: cmd.description,
+					})),
+				);
+			})
+			.catch(() => {
+				if (active) setCustomCommands([]);
+			});
+		return () => {
+			active = false;
+		};
+	}, [isConnected]);
+
+	const refreshStats = useCallback(async () => {
+		try {
+			const stats = await getMainChatPiStats();
+			if (stats.tokens) {
+				setSessionTokens({
+					input: stats.tokens.input ?? 0,
+					output: stats.tokens.output ?? 0,
+				});
+			}
+		} catch {
+			// Ignore stats errors; token gauge will fall back to message usage.
+		}
+	}, []);
+
+	useEffect(() => {
+		if (!isConnected || isStreaming) return;
+		refreshStats();
+	}, [isConnected, isStreaming, messages.length, refreshStats]);
+
+	// Auto-scroll to bottom when new messages arrive (only if user hasn't scrolled up)
 	useLayoutEffect(() => {
-		if (messages.length > 0) {
+		if (messages.length > 0 && !isUserScrolled) {
 			messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
 		}
-	});
+	}, [messages, isUserScrolled]);
+
+	// Detect user scroll to disable auto-scroll
+	const handleScroll = useCallback(() => {
+		const container = messagesContainerRef.current;
+		if (!container) return;
+
+		// Check if user is near the bottom (within 100px)
+		const isNearBottom =
+			container.scrollHeight - container.scrollTop - container.clientHeight <
+			100;
+
+		setIsUserScrolled(!isNearBottom);
+	}, []);
 
 	// Focus input on mount
 	useEffect(() => {
@@ -180,28 +381,139 @@ export function MainChatPiView({
 		[workspacePath],
 	);
 
-	const handleSend = useCallback(async () => {
-		const trimmed = input.trim();
-		if ((!trimmed && fileAttachments.length === 0) || isStreaming) return;
+	const handleModelChange = useCallback(
+		async (value: string) => {
+			const separatorIndex = value.indexOf("/");
+			if (separatorIndex <= 0 || separatorIndex === value.length - 1) return;
+			const provider = value.slice(0, separatorIndex);
+			const modelId = value.slice(separatorIndex + 1);
+			setSelectedModelRef(value);
+			setIsSwitchingModel(true);
+			try {
+				await setMainChatPiModel(provider, modelId);
+				await refresh();
+			} catch (err) {
+				console.error("Failed to switch model:", err);
+			} finally {
+				setIsSwitchingModel(false);
+			}
+		},
+		[refresh],
+	);
 
-		// Build message with file attachments
-		let message = trimmed;
-		if (fileAttachments.length > 0) {
-			const fileRefs = fileAttachments.map((f) => `@${f.path}`).join(" ");
-			message = `${fileRefs}\n\n${trimmed}`;
-		}
+	const runSlashCommand = useCallback(
+		async (command: string, args: string) => {
+			setCommandError(null);
+			const trimmedArgs = args.trim();
+			const needsArgs = ["steer", "followup", "model"].includes(command);
+			if (needsArgs && !trimmedArgs) {
+				setInput(`/${command} `);
+				inputRef.current?.focus();
+				return { handled: true, clearInput: false };
+			}
 
-		setInput("");
-		setFileAttachments([]);
-		// Reset textarea height
-		if (inputRef.current) {
-			inputRef.current.style.height = "auto";
-		}
-		await send(message);
-	}, [input, fileAttachments, isStreaming, send]);
+			switch (command) {
+				case "compact": {
+					await compactMainChatPi(trimmedArgs || undefined);
+					await refresh();
+					return { handled: true, clearInput: true };
+				}
+				case "new": {
+					await newSession();
+					return { handled: true, clearInput: true };
+				}
+				case "abort": {
+					await abort();
+					return { handled: true, clearInput: true };
+				}
+				case "steer": {
+					await send(trimmedArgs, { mode: "steer" });
+					return { handled: true, clearInput: true };
+				}
+				case "followup": {
+					await send(trimmedArgs, { mode: "follow_up" });
+					return { handled: true, clearInput: true };
+				}
+				case "model": {
+					const separatorIndex = trimmedArgs.indexOf("/");
+					if (separatorIndex <= 0 || separatorIndex === trimmedArgs.length - 1) {
+						throw new Error("Model must be provider/model");
+					}
+					await handleModelChange(trimmedArgs);
+					return { handled: true, clearInput: true };
+				}
+				default:
+					return { handled: false, clearInput: false };
+			}
+		},
+		[abort, handleModelChange, newSession, refresh, send],
+	);
+
+	const handleSend = useCallback(
+		async (mode: "steer" | "follow_up" = "steer") => {
+			const trimmed = input.trim();
+			if (!trimmed && fileAttachments.length === 0) return;
+
+			if (slashQuery.isSlash && builtInCommandNames.has(slashQuery.command)) {
+				try {
+					const result = await runSlashCommand(
+						slashQuery.command,
+						slashQuery.args,
+					);
+					if (result.handled) {
+						if (result.clearInput) {
+							setInput("");
+							setFileAttachments([]);
+							if (inputRef.current) {
+								inputRef.current.style.height = "auto";
+							}
+						}
+						setShowSlashPopup(false);
+						return;
+					}
+				} catch (err) {
+					setCommandError(
+						err instanceof Error ? err : new Error("Command failed"),
+					);
+					return;
+				}
+			}
+
+			// Build message with file attachments
+			let message = trimmed;
+			if (fileAttachments.length > 0) {
+				const fileRefs = fileAttachments.map((f) => `@${f.path}`).join(" ");
+				message = `${fileRefs}\n\n${trimmed}`;
+			}
+
+			setInput("");
+			setFileAttachments([]);
+			// Reset textarea height
+			if (inputRef.current) {
+				inputRef.current.style.height = "auto";
+			}
+			await send(message, { mode });
+		},
+		[
+		builtInCommandNames,
+		fileAttachments,
+		input,
+		runSlashCommand,
+		send,
+		slashQuery.command,
+		slashQuery.args,
+		slashQuery.isSlash,
+	]);
 
 	const handleKeyDown = useCallback(
 		(e: KeyboardEvent<HTMLTextAreaElement>) => {
+			if (showSlashPopup && slashQuery.isSlash && !slashQuery.args) {
+				if (
+					["ArrowDown", "ArrowUp", "Enter", "Tab", "Escape"].includes(e.key)
+				) {
+					return;
+				}
+			}
 			// Let file mention popup handle its keys
 			if (showFileMentionPopup) {
 				if (
@@ -212,19 +524,30 @@ export function MainChatPiView({
 			}
 			if (e.key === "Enter" && !e.shiftKey) {
 				e.preventDefault();
-				handleSend();
+				handleSend(e.ctrlKey || e.metaKey ? "follow_up" : "steer");
 			}
 			if (e.key === "Escape") {
 				setShowFileMentionPopup(false);
+				setShowSlashPopup(false);
 			}
 		},
-		[handleSend, showFileMentionPopup],
+		[handleSend, showFileMentionPopup, showSlashPopup, slashQuery],
 	);
 
 	const handleInputChange = useCallback(
 		(e: ChangeEvent<HTMLTextAreaElement>) => {
 			const value = e.target.value;
 			setInput(value);
+			setCommandError(null);
+
+			if (value.startsWith("/")) {
+				setShowSlashPopup(true);
+				setShowFileMentionPopup(false);
+				setFileMentionQuery("");
+				return;
+			}
+
+			setShowSlashPopup(false);
 
 			// Show file mention popup when typing @
 			const atMatch = value.match(/@([^\s]*)$/);
@@ -296,10 +619,107 @@ export function MainChatPiView({
 
 	return (
 		<div className={cn("flex flex-col h-full min-h-0", className)}>
+			<div className="flex items-center justify-between pb-3 mb-3 border-b border-border">
+				<div className="flex items-center gap-3 min-w-0 flex-1">
+					<div className="w-8 h-8 sm:w-10 sm:h-10 rounded-full flex items-center justify-center flex-shrink-0 bg-primary">
+						<MessageSquare className="w-4 h-4 sm:w-5 sm:h-5 text-primary-foreground" />
+					</div>
+					<div className="min-w-0 flex-1">
+						<div className="flex items-center gap-2">
+							<h1 className="text-base sm:text-lg font-semibold text-foreground tracking-wider truncate">
+								{assistantName || (locale === "de" ? "Hauptchat" : "Main Chat")}
+							</h1>
+						</div>
+						{workspacePath && (
+							<div className="flex items-center gap-2 text-xs text-foreground/60 dark:text-muted-foreground">
+								<span className="font-mono">
+									{workspacePath.split("/").pop()}
+								</span>
+							</div>
+						)}
+					</div>
+				</div>
+				<div className="flex items-center gap-3 flex-shrink-0 ml-2">
+					<Select
+						value={selectedModelRef ?? undefined}
+						onValueChange={handleModelChange}
+						onOpenChange={(open) => {
+							if (open) setModelQuery("");
+						}}
+						disabled={
+							isSwitchingModel || !isConnected || availableModels.length === 0
+						}
+					>
+						<SelectTrigger className="h-7 w-[220px] text-xs">
+							<SelectValue
+								placeholder={
+									isSwitchingModel
+										? locale === "de"
+											? "Wechsle Modell..."
+											: "Switching model..."
+										: locale === "de"
+											? "Modell"
+											: "Model"
+								}
+							/>
+						</SelectTrigger>
+						<SelectContent>
+							<div
+								className="sticky top-0 z-10 bg-popover p-2 border-b border-border"
+								onPointerDown={(e) => e.stopPropagation()}
+								onKeyDown={(e) => e.stopPropagation()}
+							>
+								<Input
+									value={modelQuery}
+									onChange={(e) => setModelQuery(e.target.value)}
+									placeholder={
+										locale === "de" ? "Modelle durchsuchen..." : "Search models..."
+									}
+									aria-label={
+										locale === "de"
+											? "Modelle durchsuchen"
+											: "Search models"
+									}
+									className="h-8 text-xs"
+								/>
+							</div>
+							{availableModels.length === 0 ? (
+								<SelectItem value="__none__" disabled>
+									{locale === "de"
+										? "Keine Modelle verfugbar"
+										: "No models available"}
+								</SelectItem>
+							) : filteredModels.length === 0 ? (
+								<SelectItem value="__no_results__" disabled>
+									{locale === "de" ? "Keine Treffer" : "No matches"}
+								</SelectItem>
+							) : (
+								filteredModels.map((model) => {
+									const value = `${model.provider}/${model.id}`;
+									return (
+										<SelectItem key={value} value={value}>
+											{model.name
+												? `${value} · ${model.name}`
+												: value}
+										</SelectItem>
+									);
+								})
+							)}
+						</SelectContent>
+					</Select>
+					<ContextWindowGauge
+						inputTokens={gaugeTokens.inputTokens}
+						outputTokens={gaugeTokens.outputTokens}
+						maxTokens={contextWindowLimit}
+						locale={locale}
+					/>
+				</div>
+			</div>
+
 			{/* Error banner */}
-			{error && (
+			{displayError && (
 				<div className="px-4 py-2 bg-destructive/10 text-destructive text-sm">
-					{error.message}
+					{displayError.message}
 				</div>
 			)}
 
@@ -328,7 +748,11 @@ export function MainChatPiView({
 
 			{/* Messages area */}
 			<div className="relative flex-1 min-h-0">
-				<div className="h-full bg-muted/30 border border-border p-2 sm:p-4 overflow-y-auto space-y-4 sm:space-y-6 scrollbar-hide">
+				<div
+					ref={messagesContainerRef}
+					onScroll={handleScroll}
+					className="h-full bg-muted/30 border border-border p-2 sm:p-4 overflow-y-auto space-y-4 sm:space-y-6 scrollbar-hide"
+				>
 					{messages.length === 0 && (
 						<div className="text-sm text-muted-foreground">{t.noMessages}</div>
 					)}
@@ -363,7 +787,7 @@ export function MainChatPiView({
 					<button
 						type="button"
 						onClick={() => fileInputRef.current?.click()}
-						disabled={isUploading || isStreaming}
+						disabled={isUploading}
 						className="flex-shrink-0 size-8 flex items-center justify-center text-muted-foreground hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
 						title={t.uploadFile}
 					>
@@ -382,14 +806,63 @@ export function MainChatPiView({
 							onConversation={handleVoiceConversation}
 							onDictation={handleVoiceDictation}
 							onStop={handleVoiceStop}
-							disabled={isStreaming}
 							locale={locale}
 							className="flex-shrink-0"
 						/>
 					)}
 
-					{/* Textarea wrapper with file mention popup */}
+					{/* Textarea wrapper with slash command popup */}
 					<div className="flex-1 relative flex flex-col min-h-[32px]">
+						<SlashCommandPopup
+							commands={slashCommands}
+							query={slashQuery.command}
+							isOpen={showSlashPopup && slashQuery.isSlash && !slashQuery.args}
+							onSelect={(cmd) => {
+								if (builtInCommandNames.has(cmd.name)) {
+									runSlashCommand(cmd.name, slashQuery.args)
+										.then((result) => {
+											if (result.clearInput) {
+												setInput("");
+												setFileAttachments([]);
+												if (inputRef.current) {
+													inputRef.current.style.height = "auto";
+												}
+											}
+											setShowSlashPopup(false);
+										})
+										.catch((err) => {
+											setCommandError(
+												err instanceof Error ? err : new Error("Command failed"),
+											);
+											setShowSlashPopup(false);
+										});
+									return;
+								}
+
+								if (slashQuery.args.trim()) {
+									send(`/${cmd.name} ${slashQuery.args.trim()}`)
+										.then(() => {
+											setInput("");
+											setFileAttachments([]);
+											if (inputRef.current) {
+												inputRef.current.style.height = "auto";
+											}
+											setShowSlashPopup(false);
+										})
+										.catch((err) => {
+											setCommandError(
+												err instanceof Error ? err : new Error("Command failed"),
+											);
+											setShowSlashPopup(false);
+										});
+								} else {
+									setInput(`/${cmd.name} `);
+									inputRef.current?.focus();
+									setShowSlashPopup(false);
+								}
+							}}
+							onClose={() => setShowSlashPopup(false)}
+						/>
 						<FileMentionPopup
 							query={fileMentionQuery}
 							isOpen={showFileMentionPopup}
@@ -462,7 +935,6 @@ export function MainChatPiView({
 								}, 300);
 							}}
 							rows={1}
-							disabled={isStreaming}
 							className="w-full bg-transparent border-none outline-none text-foreground placeholder:text-muted-foreground text-sm resize-none py-1.5 leading-5 max-h-[200px] overflow-y-auto"
 						/>
 					</div>
@@ -470,10 +942,8 @@ export function MainChatPiView({
 					{/* Send button */}
 					<Button
 						type="button"
-						onClick={handleSend}
-						disabled={
-							isStreaming || (!input.trim() && fileAttachments.length === 0)
-						}
+						onClick={() => handleSend("steer")}
+						disabled={!input.trim() && fileAttachments.length === 0}
 						className="bg-primary hover:bg-primary/90 text-primary-foreground"
 					>
 						<Send className="w-4 h-4 sm:mr-2" />
@@ -587,14 +1057,53 @@ const PiMessageCard = memo(function PiMessageCard({
 					</div>
 				)}
 
-				{message.parts.map((part, idx) => (
-					<PiPartRenderer
-						key={`${message.id}-part-${idx}`}
-						part={part}
-						locale={locale}
-						workspacePath={workspacePath}
-					/>
-				))}
+				{/* Render parts, combining tool_use with matching tool_result */}
+				{(() => {
+					// Build a map of tool_result by id for quick lookup
+					const toolResults = new Map<string, PiMessagePart>();
+					for (const part of message.parts) {
+						if (part.type === "tool_result") {
+							toolResults.set(part.id, part);
+						}
+					}
+					// Track which tool_results we've already rendered
+					const renderedResults = new Set<string>();
+
+					return message.parts.map((part, idx) => {
+						// Skip tool_result if it will be rendered with its tool_use
+						if (part.type === "tool_result" && renderedResults.has(part.id)) {
+							return null;
+						}
+
+						// For tool_use, find and combine with matching tool_result
+						if (part.type === "tool_use") {
+							const result = toolResults.get(part.id);
+							if (result && result.type === "tool_result") {
+								renderedResults.add(part.id);
+							}
+							return (
+								<PiPartRenderer
+									key={`${message.id}-part-${idx}`}
+									part={part}
+									toolResult={
+										result?.type === "tool_result" ? result : undefined
+									}
+									locale={locale}
+									workspacePath={workspacePath}
+								/>
+							);
+						}
+
+						return (
+							<PiPartRenderer
+								key={`${message.id}-part-${idx}`}
+								part={part}
+								locale={locale}
+								workspacePath={workspacePath}
+							/>
+						);
+					});
+				})()}
 
 				{/* Streaming indicator when there's already content */}
 				{message.isStreaming && message.parts.length > 0 && (
@@ -625,10 +1134,18 @@ const PiMessageCard = memo(function PiMessageCard({
  */
 function PiPartRenderer({
 	part,
+	toolResult,
 	locale,
 	workspacePath,
 }: {
 	part: PiMessagePart;
+	toolResult?: {
+		type: "tool_result";
+		id: string;
+		name?: string;
+		content: unknown;
+		isError?: boolean;
+	};
 	locale: "en" | "de";
 	workspacePath?: string | null;
 }) {
@@ -664,8 +1181,13 @@ function PiPartRenderer({
 						tool: part.name,
 						callID: part.id,
 						state: {
-							status: "completed",
+							status: toolResult ? "completed" : "running",
 							input: part.input as Record<string, unknown>,
+							output: toolResult
+								? typeof toolResult.content === "string"
+									? toolResult.content
+									: JSON.stringify(toolResult.content)
+								: undefined,
 							title: part.name,
 						},
 					}}
@@ -675,6 +1197,8 @@ function PiPartRenderer({
 			);
 
 		case "tool_result":
+			// Tool results are now rendered together with tool_use
+			// Only render standalone if there's no matching tool_use
 			return (
 				<ToolCallCard
 					part={{

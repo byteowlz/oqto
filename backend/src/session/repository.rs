@@ -357,14 +357,6 @@ impl SessionRepository {
         Ok(())
     }
 
-    /// Find a free port range starting from the given base port.
-    /// Returns the first available base port (opencode_port).
-    /// Allocates ports: opencode, fileserver, ttyd, + agent_count ports for sub-agents.
-    #[allow(dead_code)]
-    pub async fn find_free_port_range(&self, start_port: i64) -> Result<i64> {
-        self.find_free_port_range_with_agents(start_port, 10).await
-    }
-
     /// Update last activity timestamp for a session.
     pub async fn touch_activity(&self, id: &str) -> Result<()> {
         sqlx::query("UPDATE sessions SET last_activity_at = datetime('now') WHERE id = ?")
@@ -387,21 +379,6 @@ impl SessionRepository {
             .fetch_all(&self.pool)
             .await
             .context("listing idle sessions")?;
-
-        Ok(sessions)
-    }
-
-    /// List running sessions for a user, ordered by last activity (most recent first).
-    pub async fn list_running_for_user_by_activity(&self, user_id: &str) -> Result<Vec<Session>> {
-        let query = format!(
-            "SELECT {} FROM sessions WHERE user_id = ? AND status = 'running' ORDER BY COALESCE(last_activity_at, started_at) DESC",
-            SESSION_COLUMNS
-        );
-        let sessions = sqlx::query_as::<_, Session>(&query)
-            .bind(user_id)
-            .fetch_all(&self.pool)
-            .await
-            .context("listing running sessions by activity")?;
 
         Ok(sessions)
     }

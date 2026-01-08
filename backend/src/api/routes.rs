@@ -17,6 +17,7 @@ use super::main_chat as main_chat_handlers;
 use super::main_chat_pi as main_chat_pi_handlers;
 use super::proxy;
 use super::state::AppState;
+use crate::ws::ws_handler;
 
 /// Create the application router.
 pub fn create_router(state: AppState) -> Router {
@@ -34,6 +35,8 @@ pub fn create_router(state: AppState) -> Router {
 
     // Protected routes (require authentication)
     let protected_routes = Router::new()
+        // WebSocket endpoint for real-time communication
+        .route("/ws", get(ws_handler))
         // Project management
         .route("/projects", get(handlers::list_workspace_dirs))
         .route("/projects/logo/{*path}", get(handlers::get_project_logo))
@@ -294,6 +297,9 @@ pub fn create_router(state: AppState) -> Router {
         .route("/main/pi/abort", post(main_chat_pi_handlers::abort_pi))
         .route("/main/pi/messages", get(main_chat_pi_handlers::get_messages))
         .route("/main/pi/compact", post(main_chat_pi_handlers::compact_session))
+        .route("/main/pi/model", post(main_chat_pi_handlers::set_model))
+        .route("/main/pi/models", get(main_chat_pi_handlers::get_available_models))
+        .route("/main/pi/commands", get(main_chat_pi_handlers::get_prompt_commands))
         .route("/main/pi/new", post(main_chat_pi_handlers::new_session))
         .route("/main/pi/stats", get(main_chat_pi_handlers::get_session_stats))
         .route("/main/pi/ws", get(main_chat_pi_handlers::ws_handler))

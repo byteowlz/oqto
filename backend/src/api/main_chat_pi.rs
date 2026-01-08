@@ -31,16 +31,6 @@ use super::state::AppState;
 pub struct PromptRequest {
     /// The message to send.
     pub message: String,
-    /// Optional images (base64 encoded).
-    pub images: Option<Vec<ImageData>>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ImageData {
-    /// MIME type (e.g., "image/png")
-    pub media_type: String,
-    /// Base64-encoded image data.
-    pub data: String,
 }
 
 /// Request to compact the session.
@@ -48,6 +38,14 @@ pub struct ImageData {
 pub struct CompactRequest {
     /// Optional custom instructions for compaction.
     pub custom_instructions: Option<String>,
+}
+
+/// Request to set the current model.
+#[derive(Debug, Deserialize)]
+pub struct SetModelRequest {
+    pub provider: String,
+    #[serde(rename = "model_id")]
+    pub model_id: String,
 }
 
 /// Response for Pi state.
@@ -67,6 +65,10 @@ pub struct PiModelInfo {
     pub id: String,
     pub provider: String,
     pub name: String,
+    #[serde(rename = "context_window")]
+    pub context_window: u64,
+    #[serde(rename = "max_tokens")]
+    pub max_tokens: u64,
 }
 
 /// Response for session stats.
@@ -77,7 +79,38 @@ pub struct PiSessionStatsResponse {
     pub assistant_messages: u64,
     pub tool_calls: u64,
     pub total_messages: u64,
+    pub tokens: PiSessionTokensResponse,
     pub cost: f64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PiSessionTokensResponse {
+    pub input: u64,
+    pub output: u64,
+    #[serde(rename = "cache_read")]
+    pub cache_read: u64,
+    #[serde(rename = "cache_write")]
+    pub cache_write: u64,
+    pub total: u64,
+}
+
+/// Response for available models.
+#[derive(Debug, Serialize)]
+pub struct PiModelsResponse {
+    pub models: Vec<PiModelInfo>,
+}
+
+/// Prompt command info for Pi (slash command templates).
+#[derive(Debug, Serialize)]
+pub struct PiPromptCommandInfo {
+    pub name: String,
+    pub description: String,
+}
+
+/// Response for prompt commands.
+#[derive(Debug, Serialize)]
+pub struct PiPromptCommandsResponse {
+    pub commands: Vec<PiPromptCommandInfo>,
 }
 
 // ========== Handlers ==========
@@ -250,6 +283,136 @@ pub async fn compact_session(
     Ok(Json(result))
 }
 
+/// Set the current model.
+///
+/// POST /api/main/pi/model
+pub async fn set_model(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Json(req): Json<SetModelRequest>,
+) -> ApiResult<Json<PiStateResponse>> {
+    let pi_service = get_pi_service(&state)?;
+
+    let session = pi_service
+        .get_session(user.id())
+        .await
+        .ok_or_else(|| ApiError::not_found("Pi session not active"))?;
+
+    session
+        .set_model(&req.provider, &req.model_id)
+        .await
+        .map_err(|e| ApiError::internal(format!("Failed to set model: {}", e)))?;
+
+    let pi_state = session
+        .get_state()
+        .await
+        .map_err(|e| ApiError::internal(format!("Failed to get Pi state: {}", e)))?;
+
+    Ok(Json(pi_state_to_response(pi_state)))
+}
+
+/// Get available models for this session.
+///
+/// GET /api/main/pi/models
+pub async fn get_available_models(
+    State(state): State<AppState>,
+    user: CurrentUser,
+) -> ApiResult<Json<PiModelsResponse>> {
+    let pi_service = get_pi_service(&state)?;
+
+    let session = pi_service
+        .get_session(user.id())
+        .await
+        .ok_or_else(|| ApiError::not_found("Pi session not active"))?;
+
+    let models = session
+        .get_available_models()
+        .await
+        .map_err(|e| ApiError::internal(format!("Failed to get models: {}", e)))?;
+
+    let mapped = models
+        .into_iter()
+        .map(|model| PiModelInfo {
+            id: model.id,
+            provider: model.provider,
+            name: model.name,
+            context_window: model.context_window,
+            max_tokens: model.max_tokens,
+        })
+        .collect();
+
+    Ok(Json(PiModelsResponse { models: mapped }))
+}
+
+/// Get available prompt commands (slash templates) for Pi.
+///
+/// GET /api/main/pi/commands
+pub async fn get_prompt_commands(
+    State(state): State<AppState>,
+    user: CurrentUser,
+) -> ApiResult<Json<PiPromptCommandsResponse>> {
+    let service = get_main_chat_service(&state)?;
+
+    if !service.main_chat_exists(user.id()) {
+        return Err(ApiError::not_found("Main Chat not found"));
+    }
+
+    let main_chat_dir = service.get_main_chat_dir(user.id());
+    let mut commands = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+
+    let mut push_from_dir = |dir: std::path::PathBuf| {
+        if !dir.exists() {
+            return;
+        }
+        if let Ok(entries) = std::fs::read_dir(&dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if !path.is_file() {
+                    continue;
+                }
+                let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+                if !(ext.eq_ignore_ascii_case("md") || ext.eq_ignore_ascii_case("txt")) {
+                    continue;
+                }
+                let name = path
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
+                if name.is_empty() || seen.contains(&name) {
+                    continue;
+                }
+                let description = std::fs::read_to_string(&path)
+                    .ok()
+                    .and_then(|content| {
+                        content
+                            .lines()
+                            .map(|line| line.trim())
+                            .find(|line| !line.is_empty())
+                            .map(|line| line.trim_start_matches('#').trim().to_string())
+                    })
+                    .unwrap_or_else(|| "Custom prompt".to_string());
+                seen.insert(name.clone());
+                commands.push(PiPromptCommandInfo { name, description });
+            }
+        }
+    };
+
+    let local_pi_dir = main_chat_dir.join(".pi");
+    push_from_dir(local_pi_dir.join("prompts"));
+    push_from_dir(local_pi_dir.join("commands"));
+
+    if let Some(home) = dirs::home_dir() {
+        let global_pi_dir = home.join(".pi").join("agent");
+        push_from_dir(global_pi_dir.join("prompts"));
+        push_from_dir(global_pi_dir.join("commands"));
+    }
+
+    Ok(Json(PiPromptCommandsResponse { commands }))
+}
+
 /// Start a new Pi session (clear history).
 ///
 /// POST /api/main/pi/new
@@ -302,6 +465,13 @@ pub async fn get_session_stats(
         assistant_messages: stats.assistant_messages,
         tool_calls: stats.tool_calls,
         total_messages: stats.total_messages,
+        tokens: PiSessionTokensResponse {
+            input: stats.tokens.input,
+            output: stats.tokens.output,
+            cache_read: stats.tokens.cache_read,
+            cache_write: stats.tokens.cache_write,
+            total: stats.tokens.total,
+        },
         cost: stats.cost,
     }))
 }
@@ -508,7 +678,10 @@ async fn handle_ws(
                 match serde_json::from_str::<WsCommand>(&text) {
                     Ok(cmd) => {
                         // Save user message before sending to Pi
-                        if let WsCommand::Prompt { ref message } = cmd {
+                        if let WsCommand::Prompt { ref message }
+                        | WsCommand::Steer { ref message }
+                        | WsCommand::FollowUp { ref message } = cmd
+                        {
                             if let Some(svc) = &main_chat_svc {
                                 let content = serde_json::json!([{"type": "text", "text": message}]);
                                 if let Err(e) = svc
@@ -567,12 +740,10 @@ async fn handle_ws_command(session: &crate::main_chat::UserPiSession, cmd: WsCom
             session.prompt(&message).await?;
         }
         WsCommand::Steer { message } => {
-            // TODO: Implement steer via client
-            session.prompt(&message).await?;
+            session.steer(&message).await?;
         }
         WsCommand::FollowUp { message } => {
-            // TODO: Implement follow_up via client
-            session.prompt(&message).await?;
+            session.follow_up(&message).await?;
         }
         WsCommand::Abort => {
             session.abort().await?;
@@ -708,6 +879,8 @@ fn pi_state_to_response(state: PiState) -> PiStateResponse {
             id: m.id,
             provider: m.provider,
             name: m.name,
+            context_window: m.context_window,
+            max_tokens: m.max_tokens,
         }),
         thinking_level: state.thinking_level,
         is_streaming: state.is_streaming,

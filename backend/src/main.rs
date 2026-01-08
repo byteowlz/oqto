@@ -33,6 +33,7 @@ mod session_ui;
 mod settings;
 mod user;
 mod wordlist;
+mod ws;
 
 const APP_NAME: &str = "octo";
 

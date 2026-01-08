@@ -52,6 +52,9 @@ export type OpenCodePart = {
 	text?: string;
 	tool?: string;
 	callID?: string;
+	mime?: string;
+	url?: string;
+	filename?: string;
 	state?: {
 		status: "pending" | "running" | "completed" | "error";
 		input?: Record<string, unknown>;
@@ -343,6 +346,29 @@ export type OpenCodeConfig = {
 	// Other config fields we don't need for now
 };
 
+export type OpenCodeProviderModel = {
+	id: string;
+	name?: string;
+	limit?: {
+		context?: number;
+	};
+};
+
+export type OpenCodeProvider = {
+	id: string;
+	name?: string;
+	models?: Record<string, OpenCodeProviderModel>;
+};
+
+export type OpenCodeProvidersResponse = {
+	providers?: OpenCodeProvider[];
+	all?: OpenCodeProvider[];
+	default?: {
+		providerID?: string;
+		modelID?: string;
+	};
+};
+
 export async function fetchConfig(
 	opencodeBaseUrl: string,
 	options?: OpencodeRequestOptions,
@@ -355,6 +381,37 @@ export async function fetchConfig(
 		},
 	);
 	return handleResponse<OpenCodeConfig>(res);
+}
+
+export async function fetchProviders(
+	opencodeBaseUrl: string,
+	options?: OpencodeRequestOptions,
+): Promise<OpenCodeProvidersResponse> {
+	const providersUrl = withDirectory(
+		`${base(opencodeBaseUrl)}/config/providers`,
+		options?.directory,
+	);
+	try {
+		const res = await fetch(providersUrl, {
+			cache: "no-store",
+			credentials: "include",
+		});
+		if (res.ok) {
+			return handleResponse<OpenCodeProvidersResponse>(res);
+		}
+	} catch {
+		// Fall back to /provider
+	}
+
+	const fallbackUrl = withDirectory(
+		`${base(opencodeBaseUrl)}/provider`,
+		options?.directory,
+	);
+	const res = await fetch(fallbackUrl, {
+		cache: "no-store",
+		credentials: "include",
+	});
+	return handleResponse<OpenCodeProvidersResponse>(res);
 }
 
 // Command from the /command list endpoint (includes built-in + custom commands)
@@ -574,14 +631,16 @@ export type EventCallback = (event: {
 }) => void;
 
 // Permission types for tool execution approval
+// Matches OpenCode SDK Permission type
 export type Permission = {
 	id: string;
+	type: string; // Permission type (e.g., "bash", "edit", "webfetch")
+	pattern?: string | string[];
 	sessionID: string;
+	messageID?: string;
+	callID?: string;
 	title: string;
-	description?: string;
-	tool: string;
-	input?: Record<string, unknown>;
-	risk?: "low" | "medium" | "high";
+	metadata: Record<string, unknown>;
 	time: {
 		created: number;
 	};
@@ -802,7 +861,10 @@ export function subscribeToEvents(
 				// Log permission events fully for debugging
 				if (typed.type.startsWith("permission")) {
 					console.log("[SSE] Permission event:", typed.type, typed.properties);
-				} else if (typed.type !== "message.updated" && typed.type !== "message.part.updated") {
+				} else if (
+					typed.type !== "message.updated" &&
+					typed.type !== "message.part.updated"
+				) {
 					console.log("[SSE] Event:", typed.type);
 				}
 				callback({ type: typed.type, properties: typed.properties ?? typed });

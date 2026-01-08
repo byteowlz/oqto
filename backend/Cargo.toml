@@ -74,6 +74,10 @@ syntect = { version = "5", default-features = false, features = ["default-syntax
 
 # HTTP client (for EAVS communication and SSE proxying)
 reqwest = { version = "0.12", features = ["json", "stream"] }
+reqwest-eventsource = "0.6"
+
+# Concurrent data structures
+dashmap = "6"
 
 # Authentication
 jsonwebtoken = "9"

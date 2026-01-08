@@ -16,6 +16,7 @@ use crate::session::SessionService;
 use crate::session_ui::SessionAutoAttachMode;
 use crate::settings::SettingsService;
 use crate::user::UserService;
+use crate::ws::WsHub;
 
 /// Mmry configuration for the API layer.
 #[derive(Clone, Debug)]
@@ -163,6 +164,8 @@ pub struct AppState {
     pub main_chat: Option<Arc<MainChatService>>,
     /// Main Chat Pi service for managing Pi subprocesses.
     pub main_chat_pi: Option<Arc<MainChatPiService>>,
+    /// WebSocket hub for real-time communication.
+    pub ws_hub: Arc<WsHub>,
 }
 
 impl AppState {
@@ -195,6 +198,7 @@ impl AppState {
             settings_mmry: None,
             main_chat: None,
             main_chat_pi: None,
+            ws_hub: Arc::new(WsHub::new()),
         }
     }
 
@@ -228,6 +232,7 @@ impl AppState {
             settings_mmry: None,
             main_chat: None,
             main_chat_pi: None,
+            ws_hub: Arc::new(WsHub::new()),
         }
     }
 
