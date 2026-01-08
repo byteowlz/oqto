@@ -802,7 +802,10 @@ export function subscribeToEvents(
 				// Log permission events fully for debugging
 				if (typed.type.startsWith("permission")) {
 					console.log("[SSE] Permission event:", typed.type, typed.properties);
-				} else if (typed.type !== "message.updated" && typed.type !== "message.part.updated") {
+				} else if (
+					typed.type !== "message.updated" &&
+					typed.type !== "message.part.updated"
+				) {
 					console.log("[SSE] Event:", typed.type);
 				}
 				callback({ type: typed.type, properties: typed.properties ?? typed });

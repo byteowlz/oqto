@@ -43,6 +43,7 @@ import { useApp } from "@/hooks/use-app";
 import { useDictation } from "@/hooks/use-dictation";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useModelContextLimit } from "@/hooks/use-models-dev";
+import { useSessionEvents } from "@/hooks/use-session-events";
 import {
 	useVoiceCommandListener,
 	useVoiceShortcuts,
@@ -86,7 +87,6 @@ import {
 	sendCommandAsync,
 	sendMessageAsync,
 	sendPartsAsync,
-	subscribeToEvents,
 } from "@/lib/opencode-client";
 import { formatSessionDate, generateReadableId } from "@/lib/session-utils";
 import {
@@ -1414,8 +1414,8 @@ export function SessionsApp() {
 	]);
 
 	const [eventsTransportMode, setEventsTransportMode] = useState<
-		"sse" | "polling"
-	>("sse");
+		"sse" | "polling" | "ws" | "reconnecting"
+	>(features.websocket_events ? "ws" : "sse");
 	const messageRefreshStateRef = useRef<{
 		timer: ReturnType<typeof setTimeout> | null;
 		inFlight: boolean;
@@ -1557,141 +1557,155 @@ export function SessionsApp() {
 		scrollToBottom("smooth");
 	}, [messages, scrollToBottom]);
 
-	useEffect(() => {
-		if (!effectiveOpencodeBaseUrl || !activeSessionId) return;
-		const unsubscribe = subscribeToEvents(
-			effectiveOpencodeBaseUrl,
-			(event) => {
-				const eventType = event.type as string;
+	// Event handler for session events (shared between WebSocket and SSE)
+	const handleSessionEvent = useCallback(
+		(event: { type: string; properties?: Record<string, unknown> | null }) => {
+			const eventType = event.type as string;
 
-				// Debug: log all events to help diagnose permission issues
-				if (eventType !== "message.updated") {
-					console.log("[SSE Event]", eventType, event.properties);
+			// Debug: log all events to help diagnose permission issues
+			if (eventType !== "message.updated") {
+				console.log("[Event]", eventType, event.properties);
+			}
+
+			if (eventType === "transport.mode") {
+				const props = event.properties as {
+					mode?: "sse" | "polling" | "ws" | "reconnecting";
+				} | null;
+				if (props?.mode) setEventsTransportMode(props.mode);
+				if (effectiveOpencodeBaseUrl && activeSessionId) {
+					invalidateMessageCache(
+						effectiveOpencodeBaseUrl,
+						activeSessionId,
+						opencodeDirectory,
+					);
+					requestMessageRefresh(250);
 				}
+				return;
+			}
 
-				if (eventType === "transport.mode") {
-					const props = event.properties as { mode?: "sse" | "polling" } | null;
-					if (props?.mode) setEventsTransportMode(props.mode);
-					if (effectiveOpencodeBaseUrl && activeSessionId) {
-						invalidateMessageCache(
-							effectiveOpencodeBaseUrl,
-							activeSessionId,
-							opencodeDirectory,
-						);
-						requestMessageRefresh(250);
-					}
-					return;
+			if (eventType === "server.connected") {
+				if (effectiveOpencodeBaseUrl && activeSessionId) {
+					invalidateMessageCache(
+						effectiveOpencodeBaseUrl,
+						activeSessionId,
+						opencodeDirectory,
+					);
+					requestMessageRefresh(250);
 				}
+			}
 
-				if (eventType === "server.connected") {
-					if (effectiveOpencodeBaseUrl && activeSessionId) {
-						invalidateMessageCache(
-							effectiveOpencodeBaseUrl,
-							activeSessionId,
-							opencodeDirectory,
-						);
-						requestMessageRefresh(250);
-					}
-				}
-
-				if (eventType === "session.unavailable") {
+			if (eventType === "session.unavailable") {
+				if (
+					autoAttachMode === "resume" &&
+					selectedChatFromHistory?.workspace_path
+				) {
+					const now = Date.now();
+					const lastAttempt = sessionUnavailableRef.current;
 					if (
-						autoAttachMode === "resume" &&
-						selectedChatFromHistory?.workspace_path
+						lastAttempt?.sessionId === selectedChatSessionId &&
+						now - lastAttempt.attemptedAt < 15_000
 					) {
-						const now = Date.now();
-						const lastAttempt = sessionUnavailableRef.current;
-						if (
-							lastAttempt?.sessionId === selectedChatSessionId &&
-							now - lastAttempt.attemptedAt < 15_000
-						) {
-							return;
-						}
-						sessionUnavailableRef.current = {
-							sessionId: selectedChatSessionId ?? "",
-							attemptedAt: now,
-						};
-						void ensureOpencodeRunning(selectedChatFromHistory.workspace_path);
+						return;
 					}
-				}
-
-				if (eventType === "session.idle") {
-					setChatState("idle");
-					// Invalidate cache and force refresh on idle
-					if (effectiveOpencodeBaseUrl && activeSessionId) {
-						invalidateMessageCache(
-							effectiveOpencodeBaseUrl,
-							activeSessionId,
-							opencodeDirectory,
-						);
-					}
-					loadMessages();
-					refreshOpencodeSessions();
-					// Refresh chat history to pick up auto-generated session titles
-					refreshChatHistory();
-				} else if (eventType === "session.busy") {
-					setChatState("sending");
-				}
-
-				// Handle permission events
-				if (eventType === "permission.updated") {
-					const permission = event.properties as Permission;
-					console.log("[Permission] Received permission request:", permission);
-					setPendingPermissions((prev) => {
-						// Avoid duplicates
-						if (prev.some((p) => p.id === permission.id)) return prev;
-						return [...prev, permission];
-					});
-					// Auto-show the first permission dialog if none is active
-					setActivePermission((current) => current || permission);
-				} else if (eventType === "permission.replied") {
-					const { permissionID } = event.properties as {
-						sessionID: string;
-						permissionID: string;
-						response: string;
+					sessionUnavailableRef.current = {
+						sessionId: selectedChatSessionId ?? "",
+						attemptedAt: now,
 					};
-					console.log("[Permission] Permission replied:", permissionID);
-					setPendingPermissions((prev) =>
-						prev.filter((p) => p.id !== permissionID),
-					);
-					setActivePermission((current) =>
-						current?.id === permissionID ? null : current,
-					);
+					void ensureOpencodeRunning(selectedChatFromHistory.workspace_path);
 				}
+			}
 
-				// Refresh messages on any message event
-				if (eventType?.startsWith("message")) {
-					// Invalidate cache when messages change
-					if (effectiveOpencodeBaseUrl && activeSessionId) {
-						invalidateMessageCache(
-							effectiveOpencodeBaseUrl,
-							activeSessionId,
-							opencodeDirectory,
-						);
-					}
-					// Coalesce refreshes to avoid hammering the server during streaming updates.
-					requestMessageRefresh(1000);
+			if (eventType === "session.idle") {
+				setChatState("idle");
+				// Invalidate cache and force refresh on idle
+				if (effectiveOpencodeBaseUrl && activeSessionId) {
+					invalidateMessageCache(
+						effectiveOpencodeBaseUrl,
+						activeSessionId,
+						opencodeDirectory,
+					);
 				}
-			},
-			controlPlaneDirectBaseUrl(),
-			opencodeRequestOptions,
-		);
-		return unsubscribe;
-	}, [
-		autoAttachMode,
-		ensureOpencodeRunning,
-		effectiveOpencodeBaseUrl,
-		opencodeDirectory,
-		opencodeRequestOptions,
-		activeSessionId,
-		selectedChatSessionId,
-		selectedChatFromHistory,
-		loadMessages,
-		refreshOpencodeSessions,
-		refreshChatHistory,
-		requestMessageRefresh,
-		setChatState,
-	]);
+				loadMessages();
+				refreshOpencodeSessions();
+				// Refresh chat history to pick up auto-generated session titles
+				refreshChatHistory();
+			} else if (eventType === "session.busy") {
+				setChatState("sending");
+			}
+
+			// Handle permission events
+			if (eventType === "permission.updated") {
+				const permission = event.properties as Permission;
+				console.log("[Permission] Received permission request:", permission);
+				setPendingPermissions((prev) => {
+					// Avoid duplicates
+					if (prev.some((p) => p.id === permission.id)) return prev;
+					return [...prev, permission];
+				});
+				// Auto-show the first permission dialog if none is active
+				setActivePermission((current) => current || permission);
+			} else if (eventType === "permission.replied") {
+				const { permissionID } = event.properties as {
+					sessionID: string;
+					permissionID: string;
+					response: string;
+				};
+				console.log("[Permission] Permission replied:", permissionID);
+				setPendingPermissions((prev) =>
+					prev.filter((p) => p.id !== permissionID),
+				);
+				setActivePermission((current) =>
+					current?.id === permissionID ? null : current,
+				);
+			}
+
+			// Refresh messages on any message event
+			if (eventType?.startsWith("message")) {
+				// Invalidate cache when messages change
+				if (effectiveOpencodeBaseUrl && activeSessionId) {
+					invalidateMessageCache(
+						effectiveOpencodeBaseUrl,
+						activeSessionId,
+						opencodeDirectory,
+					);
+				}
+				// Coalesce refreshes to avoid hammering the server during streaming updates.
+				requestMessageRefresh(1000);
+			}
+		},
+		[
+			autoAttachMode,
+			ensureOpencodeRunning,
+			effectiveOpencodeBaseUrl,
+			opencodeDirectory,
+			activeSessionId,
+			selectedChatSessionId,
+			selectedChatFromHistory,
+			loadMessages,
+			refreshOpencodeSessions,
+			refreshChatHistory,
+			requestMessageRefresh,
+			setChatState,
+		],
+	);
+
+	// Subscribe to session events (uses WebSocket when enabled, SSE otherwise)
+	const { transportMode: sessionTransportMode } = useSessionEvents(
+		handleSessionEvent,
+		{
+			useWebSocket: features.websocket_events ?? false,
+			workspaceSessionId: selectedWorkspaceSessionId,
+			opencodeBaseUrl: effectiveOpencodeBaseUrl,
+			opencodeDirectory,
+			activeSessionId,
+			enabled: !!effectiveOpencodeBaseUrl && !!activeSessionId,
+		},
+	);
+
+	// Sync transport mode from hook
+	useEffect(() => {
+		setEventsTransportMode(sessionTransportMode);
+	}, [sessionTransportMode]);
 
 	// Poll for message updates while assistant is working.
 	// This runs regardless of SSE status since SSE is unreliable through the proxy.

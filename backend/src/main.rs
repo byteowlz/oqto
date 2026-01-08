@@ -27,12 +27,15 @@ mod local;
 mod main_chat;
 mod markdown;
 mod observability;
+mod persona;
 mod pi;
 mod session;
 mod session_ui;
 mod settings;
+mod storage;
 mod user;
 mod wordlist;
+mod ws;
 
 const APP_NAME: &str = "octo";
 

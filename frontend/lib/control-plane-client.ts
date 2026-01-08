@@ -223,6 +223,8 @@ export type Features = {
 	session_auto_attach_scan?: boolean;
 	/** Voice configuration (present if voice mode is enabled) */
 	voice?: VoiceFeatureConfig | null;
+	/** Use WebSocket for real-time events instead of SSE */
+	websocket_events?: boolean;
 };
 
 export async function getFeatures(): Promise<Features> {
