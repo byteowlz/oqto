@@ -4,10 +4,7 @@ use anyhow::{Context, Result};
 use chrono::Utc;
 
 use super::db::MainChatDb;
-use super::models::{
-    AssistantConfig, ChatMessage, CreateChatMessage, CreateHistoryEntry, CreateSession,
-    HistoryEntry, MainChatSession,
-};
+use super::models::{ChatMessage, CreateChatMessage, CreateHistoryEntry, CreateSession, HistoryEntry, MainChatSession};
 
 /// Repository for main chat operations.
 pub struct MainChatRepository<'a> {
@@ -74,68 +71,12 @@ impl<'a> MainChatRepository<'a> {
         .context("fetching recent history")
     }
 
-    /// Get history entries by type.
-    pub async fn get_history_by_type(
-        &self,
-        entry_type: &str,
-        limit: i64,
-    ) -> Result<Vec<HistoryEntry>> {
-        sqlx::query_as::<_, HistoryEntry>(
-            r#"
-            SELECT id, ts, type, content, session_id, meta, created_at
-            FROM history
-            WHERE type = ?
-            ORDER BY ts DESC
-            LIMIT ?
-            "#,
-        )
-        .bind(entry_type)
-        .bind(limit)
-        .fetch_all(self.db.pool())
-        .await
-        .context("fetching history by type")
-    }
-
-    /// Get history entries for a session.
-    pub async fn get_history_for_session(&self, session_id: &str) -> Result<Vec<HistoryEntry>> {
-        sqlx::query_as::<_, HistoryEntry>(
-            r#"
-            SELECT id, ts, type, content, session_id, meta, created_at
-            FROM history
-            WHERE session_id = ?
-            ORDER BY ts ASC
-            "#,
-        )
-        .bind(session_id)
-        .fetch_all(self.db.pool())
-        .await
-        .context("fetching history for session")
-    }
-
     /// Count total history entries.
     pub async fn count_history(&self) -> Result<i64> {
         sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM history")
             .fetch_one(self.db.pool())
             .await
             .context("counting history entries")
-    }
-
-    /// Delete old history entries, keeping the most recent N.
-    pub async fn prune_history(&self, keep_count: i64) -> Result<i64> {
-        let result = sqlx::query(
-            r#"
-            DELETE FROM history
-            WHERE id NOT IN (
-                SELECT id FROM history ORDER BY ts DESC LIMIT ?
-            )
-            "#,
-        )
-        .bind(keep_count)
-        .execute(self.db.pool())
-        .await
-        .context("pruning history")?;
-
-        Ok(result.rows_affected() as i64)
     }
 
     // ========== Session Operations ==========
@@ -173,20 +114,6 @@ impl<'a> MainChatRepository<'a> {
         .context("fetching session")
     }
 
-    /// Get a session by OpenCode session ID.
-    pub async fn get_session_by_session_id(
-        &self,
-        session_id: &str,
-    ) -> Result<Option<MainChatSession>> {
-        sqlx::query_as::<_, MainChatSession>(
-            "SELECT id, session_id, title, started_at, ended_at, message_count FROM sessions WHERE session_id = ?",
-        )
-        .bind(session_id)
-        .fetch_optional(self.db.pool())
-        .await
-        .context("fetching session by session_id")
-    }
-
     /// List all sessions.
     pub async fn list_sessions(&self) -> Result<Vec<MainChatSession>> {
         sqlx::query_as::<_, MainChatSession>(
@@ -205,29 +132,6 @@ impl<'a> MainChatRepository<'a> {
         .fetch_optional(self.db.pool())
         .await
         .context("fetching latest session")
-    }
-
-    /// Update session message count.
-    pub async fn update_session_message_count(&self, session_id: &str, count: i64) -> Result<()> {
-        sqlx::query("UPDATE sessions SET message_count = ? WHERE session_id = ?")
-            .bind(count)
-            .bind(session_id)
-            .execute(self.db.pool())
-            .await
-            .context("updating session message count")?;
-        Ok(())
-    }
-
-    /// Mark a session as ended.
-    pub async fn end_session(&self, session_id: &str) -> Result<()> {
-        let ended_at = Utc::now().to_rfc3339();
-        sqlx::query("UPDATE sessions SET ended_at = ? WHERE session_id = ?")
-            .bind(&ended_at)
-            .bind(session_id)
-            .execute(self.db.pool())
-            .await
-            .context("ending session")?;
-        Ok(())
     }
 
     /// Count total sessions.
@@ -264,26 +168,6 @@ impl<'a> MainChatRepository<'a> {
         .context("setting config")?;
         Ok(())
     }
-
-    /// Get all config values.
-    pub async fn get_all_config(&self) -> Result<Vec<AssistantConfig>> {
-        sqlx::query_as::<_, AssistantConfig>("SELECT key, value FROM config")
-            .fetch_all(self.db.pool())
-            .await
-            .context("fetching all config")
-    }
-
-    /// Delete a config value.
-    pub async fn delete_config(&self, key: &str) -> Result<bool> {
-        let result = sqlx::query("DELETE FROM config WHERE key = ?")
-            .bind(key)
-            .execute(self.db.pool())
-            .await
-            .context("deleting config")?;
-        Ok(result.rows_affected() > 0)
-    }
-
-    // ========== Message Operations ==========
 
     /// Add a chat message.
     pub async fn add_message(&self, message: CreateChatMessage) -> Result<ChatMessage> {
@@ -332,83 +216,6 @@ impl<'a> MainChatRepository<'a> {
         .fetch_all(self.db.pool())
         .await
         .context("fetching all messages")
-    }
-
-    /// Get recent messages with limit.
-    pub async fn get_recent_messages(&self, limit: i64) -> Result<Vec<ChatMessage>> {
-        sqlx::query_as::<_, ChatMessage>(
-            r#"
-            SELECT id, role, content, pi_session_id, timestamp, created_at
-            FROM messages
-            ORDER BY timestamp DESC
-            LIMIT ?
-            "#,
-        )
-        .bind(limit)
-        .fetch_all(self.db.pool())
-        .await
-        .context("fetching recent messages")
-    }
-
-    /// Get messages since a timestamp.
-    pub async fn get_messages_since(&self, since_timestamp: i64) -> Result<Vec<ChatMessage>> {
-        sqlx::query_as::<_, ChatMessage>(
-            r#"
-            SELECT id, role, content, pi_session_id, timestamp, created_at
-            FROM messages
-            WHERE timestamp > ?
-            ORDER BY timestamp ASC
-            "#,
-        )
-        .bind(since_timestamp)
-        .fetch_all(self.db.pool())
-        .await
-        .context("fetching messages since timestamp")
-    }
-
-    /// Get messages for a specific Pi session.
-    pub async fn get_messages_for_pi_session(
-        &self,
-        pi_session_id: &str,
-    ) -> Result<Vec<ChatMessage>> {
-        sqlx::query_as::<_, ChatMessage>(
-            r#"
-            SELECT id, role, content, pi_session_id, timestamp, created_at
-            FROM messages
-            WHERE pi_session_id = ?
-            ORDER BY timestamp ASC
-            "#,
-        )
-        .bind(pi_session_id)
-        .fetch_all(self.db.pool())
-        .await
-        .context("fetching messages for Pi session")
-    }
-
-    /// Count total messages.
-    pub async fn count_messages(&self) -> Result<i64> {
-        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM messages")
-            .fetch_one(self.db.pool())
-            .await
-            .context("counting messages")
-    }
-
-    /// Delete old messages, keeping the most recent N.
-    pub async fn prune_messages(&self, keep_count: i64) -> Result<i64> {
-        let result = sqlx::query(
-            r#"
-            DELETE FROM messages
-            WHERE id NOT IN (
-                SELECT id FROM messages ORDER BY timestamp DESC LIMIT ?
-            )
-            "#,
-        )
-        .bind(keep_count)
-        .execute(self.db.pool())
-        .await
-        .context("pruning messages")?;
-
-        Ok(result.rows_affected() as i64)
     }
 
     /// Delete all messages (for new session with fresh history).
@@ -484,27 +291,12 @@ mod tests {
         assert_eq!(session.session_id, "oc-12345");
 
         // Read
-        let fetched = repo
-            .get_session_by_session_id("oc-12345")
-            .await
-            .unwrap()
-            .unwrap();
+        let fetched = repo.get_session_by_id(session.id).await.unwrap();
         assert_eq!(fetched.id, session.id);
 
         // List
         let sessions = repo.list_sessions().await.unwrap();
         assert_eq!(sessions.len(), 1);
-
-        // Update count
-        repo.update_session_message_count("oc-12345", 42)
-            .await
-            .unwrap();
-        let updated = repo
-            .get_session_by_session_id("oc-12345")
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(updated.message_count, 42);
     }
 
     #[tokio::test]
@@ -524,10 +316,5 @@ mod tests {
         let value = repo.get_config("theme").await.unwrap();
         assert_eq!(value, Some("light".to_string()));
 
-        // Delete
-        let deleted = repo.delete_config("theme").await.unwrap();
-        assert!(deleted);
-        let value = repo.get_config("theme").await.unwrap();
-        assert!(value.is_none());
     }
 }

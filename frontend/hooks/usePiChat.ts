@@ -18,6 +18,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 export type PiEventType =
 	| "connected"
 	| "state"
+	| "message_start"
 	| "message"
 	| "text"
 	| "tool_use"
@@ -79,7 +80,7 @@ export type UsePiChatReturn = {
 	/** Current error if any */
 	error: Error | null;
 	/** Send a message */
-	send: (message: string) => Promise<void>;
+	send: (message: string, options?: PiSendOptions) => Promise<void>;
 	/** Abort current stream */
 	abort: () => Promise<void>;
 	/** Start new session (clear history) */
@@ -90,6 +91,13 @@ export type UsePiChatReturn = {
 	connect: () => void;
 	/** Disconnect from WebSocket */
 	disconnect: () => void;
+};
+
+export type PiSendMode = "prompt" | "steer" | "follow_up";
+
+export type PiSendOptions = {
+	mode?: PiSendMode;
+	queueIfStreaming?: boolean;
 };
 
 /**
@@ -247,6 +255,22 @@ export function usePiChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 					case "state":
 						setState(data.data as PiState);
 						break;
+
+					case "message_start": {
+						if (!streamingMessageRef.current) {
+							const assistantMessage: PiDisplayMessage = {
+								id: nextMessageId(),
+								role: "assistant",
+								parts: [],
+								timestamp: Date.now(),
+								isStreaming: true,
+							};
+							streamingMessageRef.current = assistantMessage;
+							setMessages((prev) => [...prev, assistantMessage]);
+						}
+						setIsStreaming(true);
+						break;
+					}
 
 					case "text": {
 						// Append text to streaming message
@@ -433,9 +457,7 @@ export function usePiChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 
 	// Send a message via WebSocket (which persists user messages)
 	const send = useCallback(
-		async (message: string) => {
-			if (isStreaming) return;
-
+		async (message: string, options?: PiSendOptions) => {
 			// Must be connected to send
 			if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
 				const err = new Error("Not connected to chat server");
@@ -445,7 +467,13 @@ export function usePiChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 			}
 
 			setError(null);
-			setIsStreaming(true);
+			let mode: PiSendMode = options?.mode ?? "prompt";
+			if (isStreaming && mode === "prompt" && (options?.queueIfStreaming ?? true)) {
+				mode = "follow_up";
+			}
+			if (!isStreaming && (mode === "follow_up" || mode === "steer")) {
+				mode = "prompt";
+			}
 
 			// Add user message immediately
 			const userMessage: PiDisplayMessage = {
@@ -456,29 +484,31 @@ export function usePiChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 			};
 			setMessages((prev) => [...prev, userMessage]);
 
-			// Create streaming assistant message placeholder
-			const assistantMessage: PiDisplayMessage = {
-				id: nextMessageId(),
-				role: "assistant",
-				parts: [],
-				timestamp: Date.now(),
-				isStreaming: true,
-			};
-			streamingMessageRef.current = assistantMessage;
-			setMessages((prev) => [...prev, assistantMessage]);
+			if (!isStreaming && mode === "prompt") {
+				setIsStreaming(true);
+				const assistantMessage: PiDisplayMessage = {
+					id: nextMessageId(),
+					role: "assistant",
+					parts: [],
+					timestamp: Date.now(),
+					isStreaming: true,
+				};
+				streamingMessageRef.current = assistantMessage;
+				setMessages((prev) => [...prev, assistantMessage]);
+			}
 
 			try {
 				// Send via WebSocket - backend will persist user message
-				wsRef.current.send(JSON.stringify({ type: "prompt", message }));
+				wsRef.current.send(JSON.stringify({ type: mode, message }));
 			} catch (e) {
 				const err = e instanceof Error ? e : new Error("Failed to send");
 				setError(err);
 				onError?.(err);
-				setIsStreaming(false);
 				if (streamingMessageRef.current) {
 					streamingMessageRef.current.isStreaming = false;
 					streamingMessageRef.current = null;
 				}
+				setIsStreaming(false);
 			}
 		},
 		[isStreaming, nextMessageId, onError],

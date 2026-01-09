@@ -116,16 +116,6 @@ impl PiClient {
         Ok(response)
     }
 
-    /// Send a command without waiting for response (fire and forget).
-    pub async fn send_command_async(&self, command: PiCommand) -> Result<()> {
-        let json = serde_json::to_string(&command).context("failed to serialize command")?;
-        self.command_tx
-            .send(json)
-            .await
-            .context("failed to send command to pi")?;
-        Ok(())
-    }
-
     /// Subscribe to events from pi.
     pub fn subscribe(&self) -> broadcast::Receiver<PiEvent> {
         self.event_tx.subscribe()
@@ -136,23 +126,6 @@ impl PiClient {
         self.send_command(PiCommand::Prompt {
             id: None,
             message: message.to_string(),
-            images: None,
-            streaming_behavior: None,
-        })
-        .await
-    }
-
-    /// Send a prompt with images.
-    pub async fn prompt_with_images(
-        &self,
-        message: &str,
-        images: Vec<ImageContent>,
-    ) -> Result<PiResponse> {
-        self.send_command(PiCommand::Prompt {
-            id: None,
-            message: message.to_string(),
-            images: Some(images),
-            streaming_behavior: None,
         })
         .await
     }
@@ -160,6 +133,24 @@ impl PiClient {
     /// Abort the current operation.
     pub async fn abort(&self) -> Result<PiResponse> {
         self.send_command(PiCommand::Abort { id: None }).await
+    }
+
+    /// Queue a steering message to interrupt the agent mid-run.
+    pub async fn steer(&self, message: &str) -> Result<PiResponse> {
+        self.send_command(PiCommand::Steer {
+            id: None,
+            message: message.to_string(),
+        })
+        .await
+    }
+
+    /// Queue a follow-up message for after the agent finishes.
+    pub async fn follow_up(&self, message: &str) -> Result<PiResponse> {
+        self.send_command(PiCommand::FollowUp {
+            id: None,
+            message: message.to_string(),
+        })
+        .await
     }
 
     /// Get current state.
@@ -197,10 +188,21 @@ impl PiClient {
         .await
     }
 
-    /// Set thinking level.
-    pub async fn set_thinking_level(&self, level: ThinkingLevel) -> Result<PiResponse> {
-        self.send_command(PiCommand::SetThinkingLevel { id: None, level })
-            .await
+    /// List all available models.
+    pub async fn get_available_models(&self) -> Result<Vec<PiModel>> {
+        let response = self
+            .send_command(PiCommand::GetAvailableModels { id: None })
+            .await?;
+        if !response.success {
+            anyhow::bail!("get_available_models failed: {:?}", response.error);
+        }
+        let data = response
+            .data
+            .context("get_available_models returned no data")?;
+        let models = data
+            .get("models")
+            .context("no models field in response")?;
+        serde_json::from_value(models.clone()).context("failed to parse models")
     }
 
     /// Compact context.

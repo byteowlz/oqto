@@ -32,8 +32,6 @@ pub struct OpenCodeAdapter {
     workspace_path: String,
     opencode_port: u16,
     state: Arc<RwLock<ConnectionState>>,
-    /// Flag to signal shutdown
-    shutdown: Arc<RwLock<bool>>,
 }
 
 impl OpenCodeAdapter {
@@ -44,23 +42,7 @@ impl OpenCodeAdapter {
             workspace_path,
             opencode_port,
             state: Arc::new(RwLock::new(ConnectionState::Disconnected)),
-            shutdown: Arc::new(RwLock::new(false)),
         }
-    }
-
-    /// Get the current connection state.
-    pub async fn state(&self) -> ConnectionState {
-        *self.state.read().await
-    }
-
-    /// Signal the adapter to shut down.
-    pub async fn shutdown(&self) {
-        *self.shutdown.write().await = true;
-    }
-
-    /// Check if shutdown was requested.
-    async fn should_shutdown(&self) -> bool {
-        *self.shutdown.read().await
     }
 
     /// Run the adapter, calling the callback for each event.
@@ -73,14 +55,6 @@ impl OpenCodeAdapter {
         let mut attempt = 0u32;
 
         loop {
-            if self.should_shutdown().await {
-                info!(
-                    "OpenCode adapter for session {} shutting down",
-                    self.session_id
-                );
-                break;
-            }
-
             // Update state
             if attempt > 0 {
                 *self.state.write().await = ConnectionState::Reconnecting;
@@ -176,10 +150,6 @@ impl OpenCodeAdapter {
 
         // Process events
         while let Some(event_result) = es.next().await {
-            if self.should_shutdown().await {
-                break;
-            }
-
             match event_result {
                 Ok(Event::Open) => {
                     debug!("SSE connection opened for session {}", self.session_id);
@@ -381,28 +351,32 @@ impl OpenCodeAdapter {
 
             // Permission events - matches OpenCode SDK Permission type
             "permission.created" | "permission.updated" => {
-                let props = data.get("properties");
+                let props = data.get("properties").unwrap_or(data);
                 let permission_id = props
-                    .and_then(|p| p.get("id"))
+                    .get("id")
+                    .or_else(|| props.get("permissionID"))
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
                 // "type" field contains permission type (e.g., "bash", "edit")
                 let permission_type = props
-                    .and_then(|p| p.get("type"))
+                    .get("permissionType")
+                    .or_else(|| props.get("permission_type"))
+                    .or_else(|| props.get("tool"))
+                    .or_else(|| props.get("type"))
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
                 // "title" field contains human-readable description
                 let title = props
-                    .and_then(|p| p.get("title"))
+                    .get("title")
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
                 // "pattern" can be string or array
-                let pattern = props.and_then(|p| p.get("pattern")).cloned();
+                let pattern = props.get("pattern").cloned();
                 // "metadata" contains additional details
-                let metadata = props.and_then(|p| p.get("metadata")).cloned();
+                let metadata = props.get("metadata").cloned();
 
                 Some(WsEvent::PermissionRequest {
                     session_id,
@@ -415,16 +389,17 @@ impl OpenCodeAdapter {
             }
 
             "permission.replied" => {
-                let props = data.get("properties");
+                let props = data.get("properties").unwrap_or(data);
                 let permission_id = props
-                    .and_then(|p| p.get("id"))
+                    .get("id")
+                    .or_else(|| props.get("permissionID"))
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
                 let granted = props
-                    .and_then(|p| p.get("result"))
+                    .get("result")
                     .and_then(|v| v.as_str())
-                    .map(|s| s == "granted")
+                    .map(|s| s == "granted" || s == "allow" || s == "yes")
                     .unwrap_or(false);
 
                 Some(WsEvent::PermissionResolved {
@@ -436,8 +411,8 @@ impl OpenCodeAdapter {
 
             // Session error events
             "session.error" => {
-                let props = data.get("properties");
-                let error = props.and_then(|p| p.get("error"));
+                let props = data.get("properties").unwrap_or(data);
+                let error = props.get("error");
                 
                 let error_type = error
                     .and_then(|e| e.get("name"))
@@ -500,4 +475,97 @@ fn is_recoverable_error(error: &reqwest_eventsource::Error) -> bool {
             | reqwest_eventsource::Error::InvalidStatusCode(..)
             | reqwest_eventsource::Error::Transport(_)
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn adapter() -> OpenCodeAdapter {
+        OpenCodeAdapter::new("sess-1".to_string(), "/tmp".to_string(), 1234)
+    }
+
+    #[test]
+    fn test_permission_event_with_properties() {
+        let adapter = adapter();
+        let data = json!({
+            "type": "permission.updated",
+            "properties": {
+                "id": "perm-1",
+                "type": "bash",
+                "title": "Run bash",
+                "pattern": "ls -la",
+                "metadata": { "foo": "bar" }
+            }
+        });
+        let event = adapter.translate_message_event(&data);
+        match event {
+            Some(WsEvent::PermissionRequest {
+                session_id,
+                permission_id,
+                permission_type,
+                title,
+                pattern,
+                metadata,
+            }) => {
+                assert_eq!(session_id, "sess-1");
+                assert_eq!(permission_id, "perm-1");
+                assert_eq!(permission_type, "bash");
+                assert_eq!(title, "Run bash");
+                assert_eq!(pattern, Some(json!("ls -la")));
+                assert_eq!(metadata, Some(json!({ "foo": "bar" })));
+            }
+            other => panic!("Expected permission request, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_permission_event_with_flat_payload() {
+        let adapter = adapter();
+        let data = json!({
+            "type": "permission.created",
+            "permissionID": "perm-2",
+            "permissionType": "edit",
+            "title": "Edit file"
+        });
+        let event = adapter.translate_message_event(&data);
+        match event {
+            Some(WsEvent::PermissionRequest {
+                permission_id,
+                permission_type,
+                title,
+                ..
+            }) => {
+                assert_eq!(permission_id, "perm-2");
+                assert_eq!(permission_type, "edit");
+                assert_eq!(title, "Edit file");
+            }
+            other => panic!("Expected permission request, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_session_error_event_with_flat_payload() {
+        let adapter = adapter();
+        let data = json!({
+            "type": "session.error",
+            "error": {
+                "name": "BadRequest",
+                "data": { "message": "Nope" }
+            }
+        });
+        let event = adapter.translate_message_event(&data);
+        match event {
+            Some(WsEvent::SessionError {
+                error_type,
+                message,
+                ..
+            }) => {
+                assert_eq!(error_type, "BadRequest");
+                assert_eq!(message, "Nope");
+            }
+            other => panic!("Expected session error, got {:?}", other),
+        }
+    }
 }

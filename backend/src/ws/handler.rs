@@ -148,7 +148,7 @@ async fn handle_ws_connection(
                 // Binary messages not supported for commands
                 debug!("Received binary message from user {}, ignoring", user_id);
             }
-            Ok(Message::Ping(data)) => {
+            Ok(Message::Ping(_data)) => {
                 // Respond to ping with pong - handled by axum
                 debug!("Received ping from user {}", user_id);
             }
@@ -232,7 +232,7 @@ async fn handle_command(
         WsCommand::SendMessage {
             session_id,
             message,
-            attachments,
+            attachments: _attachments,
         } => {
             // Verify user is subscribed
             if !hub.is_subscribed(user_id, &session_id) {
@@ -256,7 +256,7 @@ async fn handle_command(
                 opencode_session.opencode_port
             );
 
-            let mut request_body = serde_json::json!({
+            let request_body = serde_json::json!({
                 "message": message
             });
 
@@ -428,7 +428,7 @@ async fn handle_command(
 
         WsCommand::GetMessages {
             session_id,
-            after_id,
+            after_id: _after_id,
         } => {
             // This is a pull-based request - the client wants messages
             // We'll fetch them and send via the MessageUpdated event

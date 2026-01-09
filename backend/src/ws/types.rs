@@ -38,9 +38,6 @@ pub enum WsEvent {
         workspace_path: String,
     },
 
-    /// Session deleted.
-    SessionDeleted { session_id: String },
-
     /// Session error from OpenCode.
     SessionError {
         session_id: String,
@@ -68,16 +65,6 @@ pub enum WsEvent {
     },
 
     // ========== Agent Runtime Events ==========
-    /// Agent started processing a request.
-    AgentStart { session_id: String },
-
-    /// Agent finished processing.
-    AgentEnd {
-        session_id: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        error: Option<String>,
-    },
-
     /// Session is busy (agent working).
     SessionBusy { session_id: String },
 
@@ -85,13 +72,6 @@ pub enum WsEvent {
     SessionIdle { session_id: String },
 
     // ========== Message Streaming Events ==========
-    /// New message started.
-    MessageStart {
-        session_id: String,
-        message_id: String,
-        role: String,
-    },
-
     /// Text content delta (streaming).
     TextDelta {
         session_id: String,
@@ -104,12 +84,6 @@ pub enum WsEvent {
         session_id: String,
         message_id: String,
         delta: String,
-    },
-
-    /// Message completed.
-    MessageEnd {
-        session_id: String,
-        message_id: String,
     },
 
     /// Full message update (for non-streaming updates).
@@ -126,14 +100,6 @@ pub enum WsEvent {
         tool_name: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         input: Option<Value>,
-    },
-
-    /// Tool execution progress update.
-    ToolProgress {
-        session_id: String,
-        tool_call_id: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        partial_result: Option<Value>,
     },
 
     /// Tool execution completed.
@@ -172,19 +138,6 @@ pub enum WsEvent {
     },
 
     // ========== Compaction Events ==========
-    /// Auto-compaction started.
-    CompactionStart {
-        session_id: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        reason: Option<String>,
-    },
-
-    /// Auto-compaction completed.
-    CompactionEnd {
-        session_id: String,
-        success: bool,
-    },
-
     // ========== OpenCode-Specific Events ==========
     /// Raw OpenCode SSE event (for backwards compatibility).
     /// Contains the original event type and data.

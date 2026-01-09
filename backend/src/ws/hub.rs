@@ -4,7 +4,7 @@ use dashmap::DashMap;
 use log::{debug, info, warn};
 use std::collections::HashSet;
 use std::sync::Arc;
-use tokio::sync::{broadcast, mpsc, RwLock};
+use tokio::sync::{broadcast, mpsc};
 
 use super::types::{SessionSubscription, WsEvent};
 use super::opencode_adapter::OpenCodeAdapter;
@@ -161,25 +161,11 @@ impl WsHub {
         }
     }
 
-    /// Send an event to all subscribers of a session.
-    pub async fn broadcast_to_session(&self, session_id: &str, event: WsEvent) {
-        if let Some(subscribers) = self.session_subscribers.get(session_id) {
-            for user_id in subscribers.iter() {
-                self.send_to_user(user_id, event.clone()).await;
-            }
-        }
-    }
-
     /// Subscribe to the broadcast channel for hub events.
     ///
     /// Returns events as (session_id, event) tuples.
     pub fn subscribe_events(&self) -> broadcast::Receiver<(String, WsEvent)> {
         self.event_tx.subscribe()
-    }
-
-    /// Get the adapter for a session.
-    pub fn get_adapter(&self, session_id: &str) -> Option<Arc<OpenCodeAdapter>> {
-        self.adapters.get(session_id).map(|r| r.clone())
     }
 
     /// Check if a user is subscribed to a session.
@@ -204,26 +190,6 @@ impl WsHub {
             .collect()
     }
 
-    /// Get connection count for a user.
-    pub fn connection_count(&self, user_id: &str) -> usize {
-        self.connections
-            .get(user_id)
-            .map(|c| c.len())
-            .unwrap_or(0)
-    }
-
-    /// Get total connection count.
-    pub fn total_connections(&self) -> usize {
-        self.connections.iter().map(|e| e.value().len()).sum()
-    }
-
-    /// Get total subscriber count for a session.
-    pub fn session_subscriber_count(&self, session_id: &str) -> usize {
-        self.session_subscribers
-            .get(session_id)
-            .map(|s| s.len())
-            .unwrap_or(0)
-    }
 }
 
 impl Default for WsHub {

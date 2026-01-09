@@ -1116,7 +1116,7 @@ function AppShell() {
 			setMobileMenuOpen(false);
 			const baseUrl = await ensureOpencodeRunning(directory);
 			if (baseUrl) {
-				await createNewChat(baseUrl);
+				await createNewChat(baseUrl, directory);
 			}
 		},
 		[ensureOpencodeRunning, createNewChat, setActiveAppId],
@@ -1233,7 +1233,7 @@ function AppShell() {
 				>
 					<Menu className="w-5 h-5" />
 				</Button>
-				{/* Session info in center - uses chatHistory (disk-based, no opencode needed) */}
+				{/* Session info in center */}
 				{selectedChatFromHistory ? (
 					<div className="flex-1 min-w-0 px-3 text-center">
 						<div className="text-sm font-medium text-foreground truncate">
@@ -1260,6 +1260,16 @@ function AppShell() {
 							)}
 						</div>
 					</div>
+				) : mainChatActive ? (
+					<div className="flex-1 min-w-0 px-3 text-center">
+						<div className="text-sm font-medium text-foreground truncate">
+							{mainChatAssistantName ||
+								(locale === "de" ? "Hauptchat" : "Main Chat")}
+						</div>
+						<div className="text-[10px] text-muted-foreground truncate">
+							{locale === "de" ? "Hauptchat" : "Main Chat"}
+						</div>
+					</div>
 				) : (
 					<div className="flex-1 flex justify-center">
 						<img
@@ -1273,6 +1283,8 @@ function AppShell() {
 						/>
 					</div>
 				)}
+				{/* Spacer to balance the menu button and center the title */}
+				<div className="w-9 h-9 flex-shrink-0" />
 			</header>
 
 			{/* Mobile fullscreen menu */}

@@ -80,7 +80,10 @@ interface AppContextValue {
 	 * If workspacePath is provided, ensures a session for that specific workspace.
 	 */
 	ensureOpencodeRunning: (workspacePath?: string) => Promise<string | null>;
-	createNewChat: (baseUrlOverride?: string) => Promise<OpenCodeSession | null>;
+	createNewChat: (
+		baseUrlOverride?: string,
+		directoryOverride?: string,
+	) => Promise<OpenCodeSession | null>;
 	createNewChatWithPersona: (
 		persona: Persona,
 		workspacePath?: string,
@@ -534,12 +537,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
 	}, [mainChatActive, opencodeBaseUrl, opencodeDirectory]);
 
 	const createNewChat = useCallback(
-		async (baseUrlOverride?: string): Promise<OpenCodeSession | null> => {
+		async (
+			baseUrlOverride?: string,
+			directoryOverride?: string,
+		): Promise<OpenCodeSession | null> => {
 			const baseUrl = baseUrlOverride || opencodeBaseUrl;
 			if (!baseUrl) return null;
 			try {
+				const directory = directoryOverride || opencodeDirectory;
 				const created = await createSession(baseUrl, undefined, undefined, {
-					directory: opencodeDirectory,
+					directory,
 				});
 				setOpencodeSessions((prev) => [created, ...prev]);
 				setSelectedChatSessionId(created.id);

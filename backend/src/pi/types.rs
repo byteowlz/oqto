@@ -19,10 +19,6 @@ pub enum PiCommand {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
         message: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        images: Option<Vec<ImageContent>>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        streaming_behavior: Option<StreamingBehavior>,
     },
     /// Queue a steering message to interrupt the agent mid-run.
     Steer {
@@ -65,24 +61,8 @@ pub enum PiCommand {
         provider: String,
         model_id: String,
     },
-    /// Cycle to the next available model.
-    CycleModel {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        id: Option<String>,
-    },
     /// List all configured models.
     GetAvailableModels {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        id: Option<String>,
-    },
-    /// Set the reasoning/thinking level.
-    SetThinkingLevel {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        id: Option<String>,
-        level: ThinkingLevel,
-    },
-    /// Cycle through available thinking levels.
-    CycleThinkingLevel {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
     },
@@ -93,112 +73,11 @@ pub enum PiCommand {
         #[serde(skip_serializing_if = "Option::is_none")]
         custom_instructions: Option<String>,
     },
-    /// Enable or disable automatic compaction.
-    SetAutoCompaction {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        id: Option<String>,
-        enabled: bool,
-    },
-    /// Execute a shell command and add output to conversation context.
-    Bash {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        id: Option<String>,
-        command: String,
-    },
-    /// Abort a running bash command.
-    AbortBash {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        id: Option<String>,
-    },
     /// Get token usage and cost statistics.
     GetSessionStats {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
     },
-    /// Export session to an HTML file.
-    ExportHtml {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        id: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        output_path: Option<String>,
-    },
-    /// Load a different session file.
-    SwitchSession {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        id: Option<String>,
-        session_path: String,
-    },
-    /// Create a new branch from a previous user message.
-    Branch {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        id: Option<String>,
-        entry_id: String,
-    },
-    /// Get user messages available for branching.
-    GetBranchMessages {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        id: Option<String>,
-    },
-    /// Get the text content of the last assistant message.
-    GetLastAssistantText {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        id: Option<String>,
-    },
-    /// Enable or disable automatic retry on transient errors.
-    SetAutoRetry {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        id: Option<String>,
-        enabled: bool,
-    },
-    /// Abort an in-progress retry.
-    AbortRetry {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        id: Option<String>,
-    },
-    /// Control how steering messages are delivered.
-    SetSteeringMode {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        id: Option<String>,
-        mode: QueueMode,
-    },
-    /// Control how follow-up messages are delivered.
-    SetFollowUpMode {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        id: Option<String>,
-        mode: QueueMode,
-    },
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum StreamingBehavior {
-    Steer,
-    FollowUp,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ThinkingLevel {
-    Off,
-    Minimal,
-    Low,
-    Medium,
-    High,
-    Xhigh,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum QueueMode {
-    All,
-    OneAtATime,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ImageContent {
-    #[serde(rename = "type")]
-    pub content_type: String,
-    pub source: ImageSource,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -221,9 +100,6 @@ pub enum ImageSource {
 /// Response to a command.
 #[derive(Debug, Clone, Deserialize)]
 pub struct PiResponse {
-    #[serde(rename = "type")]
-    pub response_type: String, // Always "response"
-    pub command: String,
     pub success: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
