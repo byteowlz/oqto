@@ -1283,8 +1283,17 @@ function AppShell() {
 						/>
 					</div>
 				)}
-				{/* Spacer to balance the menu button and center the title */}
-				<div className="w-9 h-9 flex-shrink-0" />
+				{/* New chat button */}
+				<Button
+					type="button"
+					variant="ghost"
+					size="icon"
+					aria-label={locale === "de" ? "Neuer Chat" : "New Chat"}
+					onClick={handleNewChat}
+					className="text-muted-foreground hover:text-primary flex-shrink-0"
+				>
+					<Plus className="w-5 h-5" />
+				</Button>
 			</header>
 
 			{/* Mobile fullscreen menu */}
@@ -1315,13 +1324,17 @@ function AppShell() {
 						</Button>
 					</div>
 
-					<nav className="flex-1 w-full px-3 pt-3 flex flex-col min-h-0">
+					<div className="w-full px-4">
+						<div className="h-px w-full bg-primary/50" />
+					</div>
+
+					<nav className="flex-1 w-full px-3 pt-3 flex flex-col min-h-0 overflow-x-hidden">
 						{chatHistory.length > 0 && (
 							<div className="flex-1 min-h-0 flex flex-col">
 								{/* Sticky header section - Main Chat, Search, Sessions header */}
 								<div className="flex-shrink-0 space-y-0.5 px-1">
 									{/* Main Chat - Always at top */}
-									<div className="mb-2 pb-2 border-b border-border/50">
+									<div className="mb-2 pb-2">
 										<MainChatEntry
 											isSelected={mainChatActive}
 											activeSessionId={
@@ -1439,7 +1452,7 @@ function AppShell() {
 									</div>
 								</div>
 								{/* Scrollable chat list - grouped by project */}
-								<div className="flex-1 min-h-0 overflow-y-auto space-y-1 px-1">
+								<div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden space-y-1 px-1">
 									{filteredSessions.length === 0 && deferredSearch && (
 										<div className="text-sm text-muted-foreground/50 text-center py-4">
 											{locale === "de" ? "Keine Ergebnisse" : "No results"}
@@ -1746,7 +1759,7 @@ function AppShell() {
 										({projectSummaries.length})
 									</span>
 								</div>
-								<div className="flex-1 overflow-y-auto space-y-2 px-1">
+								<div className="flex-1 overflow-y-auto overflow-x-hidden space-y-2 px-1">
 									{projectSummaries.length === 0 ? (
 										<div className="text-sm text-muted-foreground/60 text-center py-6">
 											{locale === "de"
@@ -1841,7 +1854,7 @@ function AppShell() {
 										{locale === "de" ? "Erstellen" : "Create"}
 									</Button>
 								</div>
-								<div className="flex-1 overflow-y-auto space-y-2 px-1">
+								<div className="flex-1 overflow-y-auto overflow-x-hidden space-y-2 px-1">
 									{availableAgents.length === 0 ? (
 										<div className="text-sm text-muted-foreground/60 text-center py-6">
 											{locale === "de"
@@ -1986,13 +1999,22 @@ function AppShell() {
 						)}
 					</Button>
 				</div>
+				{sidebarCollapsed && (
+					<div className="w-full px-2">
+						<div className="h-px w-full bg-primary/50" />
+					</div>
+				)}
 				{/* Session history list - always visible when not collapsed */}
 				{!sidebarCollapsed && chatHistory.length > 0 && (
-					<div className="w-full px-1.5 mt-2 flex-1 min-h-0 flex flex-col border-t border-sidebar-border">
-						{/* Sticky header section - Main Chat, Search, Sessions header */}
-						<div className="flex-shrink-0 space-y-0.5">
+					<>
+						<div className="w-full px-4">
+							<div className="h-px w-full bg-primary/50" />
+						</div>
+						<div className="w-full px-1.5 mt-2 flex-1 min-h-0 flex flex-col overflow-x-hidden">
+							{/* Sticky header section - Main Chat, Search, Sessions header */}
+							<div className="flex-shrink-0 space-y-0.5">
 							{/* Main Chat - Always at top */}
-							<div className="mb-2 pb-2 border-b border-border/50 px-2 pt-2">
+							<div className="mb-2 pb-2 px-2 pt-2">
 								<MainChatEntry
 									isSelected={mainChatActive}
 									activeSessionId={
@@ -2157,7 +2179,7 @@ function AppShell() {
 							</div>
 						</div>
 						{/* Scrollable chat list - grouped by project */}
-						<div className="flex-1 min-h-0 overflow-y-auto space-y-1">
+						<div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden space-y-1">
 							{filteredSessions.length === 0 && deferredSearch && (
 								<div className="text-xs text-muted-foreground/50 text-center py-4">
 									{locale === "de" ? "Keine Ergebnisse" : "No results"}
@@ -2493,6 +2515,7 @@ function AppShell() {
 							})}
 						</div>
 					</div>
+					</>
 				)}
 
 				{activeAppId === "projects" && !sidebarCollapsed && (
@@ -2505,7 +2528,7 @@ function AppShell() {
 								({projectSummaries.length})
 							</span>
 						</div>
-						<div className="flex-1 overflow-y-auto space-y-2 px-1">
+						<div className="flex-1 overflow-y-auto overflow-x-hidden space-y-2 px-1">
 							{projectSummaries.length === 0 ? (
 								<div className="text-xs text-muted-foreground/60 text-center py-4">
 									{locale === "de" ? "Noch keine Projekte" : "No projects yet"}
@@ -2596,7 +2619,7 @@ function AppShell() {
 								{locale === "de" ? "Erstellen" : "Create"}
 							</Button>
 						</div>
-						<div className="flex-1 overflow-y-auto space-y-2 px-1">
+						<div className="flex-1 overflow-y-auto overflow-x-hidden space-y-2 px-1">
 							{availableAgents.length === 0 ? (
 								<div className="text-xs text-muted-foreground/60 text-center py-4">
 									{locale === "de"
@@ -2628,7 +2651,7 @@ function AppShell() {
 				{sidebarCollapsed &&
 					(chatHistory.length > 0 || opencodeSessions.length > 0) && (
 						<div className="w-full px-2 mt-4">
-							<div className="border-t border-sidebar-border pt-2">
+							<div className="pt-2">
 								<button
 									type="button"
 									onClick={() => setSidebarCollapsed(false)}
