@@ -25,9 +25,9 @@ export function RequireAuth({ children }: { children: React.ReactNode }) {
 							isDark ? "/octo_logo_new_white.png" : "/octo_logo_new_black.png"
 						}
 						alt="OCTO"
-						width={120}
-						height={48}
-						className="h-12 w-auto object-contain animate-pulse"
+						width={240}
+						height={96}
+						className="h-24 w-auto object-contain animate-pulse"
 					/>
 				</div>
 			</div>

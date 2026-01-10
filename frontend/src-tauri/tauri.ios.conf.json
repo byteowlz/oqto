@@ -43,7 +43,10 @@
 			"icons/icon.png"
 		],
 		"iOS": {
-			"developmentTeam": "K8RV7BFSRS"
+			"developmentTeam": "K8RV7BFSRS",
+			"infoPlist": {
+				"NSMicrophoneUsageDescription": "Octo uses the microphone for voice input and dictation."
+			}
 		}
 	}
 }

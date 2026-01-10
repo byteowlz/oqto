@@ -10,6 +10,7 @@ Two CLI tools are available for agent workflows:
 |------|---------|
 | **byt** | Cross-repo governance and management (catalog, schemas, releases) |
 | **agntz** | Day-to-day agent operations (memory, issues, mail, file reservations) |
+| **sx** | External searches via SearXNG (`sx "<query>" -p`) |
 
 ### agntz - Agent Operations
 

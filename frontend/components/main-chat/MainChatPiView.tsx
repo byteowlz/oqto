@@ -15,13 +15,6 @@ import {
 } from "@/components/ui/markdown-renderer";
 import { ReadAloudButton } from "@/components/ui/read-aloud-button";
 import { SlashCommandPopup } from "@/components/ui/slash-command-popup";
-import {
-	Select,
-	SelectContent,
-	SelectItem,
-	SelectTrigger,
-	SelectValue,
-} from "@/components/ui/select";
 import { ToolCallCard } from "@/components/ui/tool-call-card";
 import {
 	VoiceMenuButton,
@@ -85,6 +78,14 @@ export interface MainChatPiViewProps {
 	workspacePath?: string | null;
 	/** Assistant name to display (user-configured main chat name) */
 	assistantName?: string | null;
+	/** Hide the internal header (used when embedded in sessions app with external header) */
+	hideHeader?: boolean;
+	/** Callback to report token usage (for external gauge display) */
+	onTokenUsageChange?: (usage: {
+		inputTokens: number;
+		outputTokens: number;
+		maxTokens: number;
+	}) => void;
 }
 
 /**
@@ -97,6 +98,8 @@ export function MainChatPiView({
 	features,
 	workspacePath,
 	assistantName,
+	hideHeader = false,
+	onTokenUsageChange,
 }: MainChatPiViewProps) {
 	const {
 		messages,
@@ -238,6 +241,17 @@ export function MainChatPiView({
 		return { inputTokens: 0, outputTokens: 0 };
 	}, [messageTokenUsage, sessionTokens]);
 
+	// Report token usage to parent when it changes
+	useEffect(() => {
+		if (onTokenUsageChange) {
+			onTokenUsageChange({
+				inputTokens: gaugeTokens.inputTokens,
+				outputTokens: gaugeTokens.outputTokens,
+				maxTokens: contextWindowLimit,
+			});
+		}
+	}, [gaugeTokens, contextWindowLimit, onTokenUsageChange]);
+
 	// Dictation hook
 	const dictation = useDictation({
 		config: voiceConfig,
@@ -327,9 +341,13 @@ export function MainChatPiView({
 		setIsUserScrolled(!isNearBottom);
 	}, []);
 
-	// Focus input on mount
+	// Focus input on mount - only on desktop to avoid opening keyboard on mobile
 	useEffect(() => {
-		inputRef.current?.focus();
+		// Check if device has a coarse pointer (touch) - indicates mobile
+		const isTouchDevice = window.matchMedia("(pointer: coarse)").matches;
+		if (!isTouchDevice) {
+			inputRef.current?.focus();
+		}
 	}, []);
 
 	// Auto-resize textarea - input dependency is intentional to trigger on text changes
@@ -628,100 +646,41 @@ export function MainChatPiView({
 
 	return (
 		<div className={cn("flex flex-col h-full min-h-0", className)}>
-			<div className="flex items-center justify-between pb-3 mb-3 border-b border-border">
-				<div className="flex items-center gap-3 min-w-0 flex-1">
-					<div className="w-8 h-8 sm:w-10 sm:h-10 rounded-full flex items-center justify-center flex-shrink-0 bg-primary">
-						<MessageSquare className="w-4 h-4 sm:w-5 sm:h-5 text-primary-foreground" />
-					</div>
-					<div className="min-w-0 flex-1">
-						<div className="flex items-center gap-2">
-							<h1 className="text-base sm:text-lg font-semibold text-foreground tracking-wider truncate">
-								{assistantName || (locale === "de" ? "Hauptchat" : "Main Chat")}
-							</h1>
+			{!hideHeader && (
+				<div className="pb-3 mb-3 border-b border-border">
+					<div className="flex items-center justify-between">
+						<div className="flex items-center gap-3 min-w-0 flex-1">
+							<div className="w-8 h-8 sm:w-10 sm:h-10 rounded-full flex items-center justify-center flex-shrink-0 bg-primary">
+								<MessageSquare className="w-4 h-4 sm:w-5 sm:h-5 text-primary-foreground" />
+							</div>
+							<div className="min-w-0 flex-1">
+								<div className="flex items-center gap-2">
+									<h1 className="text-base sm:text-lg font-semibold text-foreground tracking-wider truncate">
+										{assistantName || (locale === "de" ? "Hauptchat" : "Main Chat")}
+									</h1>
+								</div>
+								{workspacePath && (
+									<div className="flex items-center gap-2 text-xs text-foreground/60 dark:text-muted-foreground">
+										<span className="font-mono">
+											{workspacePath.split("/").pop()}
+										</span>
+									</div>
+								)}
+							</div>
 						</div>
-						{workspacePath && (
-							<div className="flex items-center gap-2 text-xs text-foreground/60 dark:text-muted-foreground">
-								<span className="font-mono">
-									{workspacePath.split("/").pop()}
-								</span>
-							</div>
-						)}
+					</div>
+					{/* Context window gauge - full width bar at bottom of header */}
+					<div className="mt-2">
+						<ContextWindowGauge
+							inputTokens={gaugeTokens.inputTokens}
+							outputTokens={gaugeTokens.outputTokens}
+							maxTokens={contextWindowLimit}
+							locale={locale}
+							compact
+						/>
 					</div>
 				</div>
-				<div className="flex items-center gap-3 flex-shrink-0 ml-2">
-					<Select
-						value={selectedModelRef ?? undefined}
-						onValueChange={handleModelChange}
-						onOpenChange={(open) => {
-							if (open) setModelQuery("");
-						}}
-						disabled={
-							isSwitchingModel || !isConnected || availableModels.length === 0
-						}
-					>
-						<SelectTrigger className="h-7 w-[220px] text-xs">
-							<SelectValue
-								placeholder={
-									isSwitchingModel
-										? locale === "de"
-											? "Wechsle Modell..."
-											: "Switching model..."
-										: locale === "de"
-											? "Modell"
-											: "Model"
-								}
-							/>
-						</SelectTrigger>
-						<SelectContent>
-							<div
-								className="sticky top-0 z-10 bg-popover p-2 border-b border-border"
-								onPointerDown={(e) => e.stopPropagation()}
-								onKeyDown={(e) => e.stopPropagation()}
-							>
-								<Input
-									value={modelQuery}
-									onChange={(e) => setModelQuery(e.target.value)}
-									placeholder={
-										locale === "de"
-											? "Modelle durchsuchen..."
-											: "Search models..."
-									}
-									aria-label={
-										locale === "de" ? "Modelle durchsuchen" : "Search models"
-									}
-									className="h-8 text-xs"
-								/>
-							</div>
-							{availableModels.length === 0 ? (
-								<SelectItem value="__none__" disabled>
-									{locale === "de"
-										? "Keine Modelle verfugbar"
-										: "No models available"}
-								</SelectItem>
-							) : filteredModels.length === 0 ? (
-								<SelectItem value="__no_results__" disabled>
-									{locale === "de" ? "Keine Treffer" : "No matches"}
-								</SelectItem>
-							) : (
-								filteredModels.map((model) => {
-									const value = `${model.provider}/${model.id}`;
-									return (
-										<SelectItem key={value} value={value}>
-											{model.name ? `${value} · ${model.name}` : value}
-										</SelectItem>
-									);
-								})
-							)}
-						</SelectContent>
-					</Select>
-					<ContextWindowGauge
-						inputTokens={gaugeTokens.inputTokens}
-						outputTokens={gaugeTokens.outputTokens}
-						maxTokens={contextWindowLimit}
-						locale={locale}
-					/>
-				</div>
-			</div>
+			)}
 
 			{/* Error banner */}
 			{displayError && (
@@ -1005,7 +964,7 @@ const PiMessageCard = memo(function PiMessageCard({
 			(p): p is Extract<PiMessagePart, { type: "text" }> => p.type === "text",
 		)
 		.map((p) => p.content)
-		.join("\n\n");
+		.join("\n");
 
 	const createdAt = message.timestamp ? new Date(message.timestamp) : null;
 

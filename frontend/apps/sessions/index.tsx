@@ -5,7 +5,7 @@ import {
 	FileTreeView,
 	initialFileTreeState,
 } from "@/apps/sessions/FileTreeView";
-import { MainChatPiView } from "@/components/main-chat";
+import { MainChatPiView, MainChatSettingsView } from "@/components/main-chat";
 import { Badge } from "@/components/ui/badge";
 import { BrailleSpinner } from "@/components/ui/braille-spinner";
 import { Button } from "@/components/ui/button";
@@ -531,6 +531,13 @@ export function SessionsApp() {
 			active = false;
 		};
 	}, [effectiveOpencodeBaseUrl, opencodeDirectory, mainChatActive]);
+
+	// Main chat token usage (for mobile gauge)
+	const [mainChatTokenUsage, setMainChatTokenUsage] = useState<{
+		inputTokens: number;
+		outputTokens: number;
+		maxTokens: number;
+	}>({ inputTokens: 0, outputTokens: 0, maxTokens: 200000 });
 
 	// Per-chat state (working indicator is per-session, not global)
 	const [chatStates, setChatStates] = useState<Map<string, "idle" | "sending">>(
@@ -3365,53 +3372,60 @@ export function SessionsApp() {
 	) : null;
 	const persona = selectedSession?.persona;
 	const SessionHeader = (
-		<div className="flex items-center justify-between pb-3 mb-3 border-b border-border">
-			<div className="flex items-center gap-3 min-w-0 flex-1">
-				{/* Persona avatar/indicator */}
-				{persona && (
-					<div
-						className="w-8 h-8 sm:w-10 sm:h-10 rounded-full flex items-center justify-center flex-shrink-0"
-						style={{ backgroundColor: persona.color || "#6366f1" }}
-					>
-						<User className="w-4 h-4 sm:w-5 sm:h-5 text-white" />
-					</div>
-				)}
-				<div className="min-w-0 flex-1">
-					<div className="flex items-center gap-2">
-						<h1 className="text-base sm:text-lg font-semibold text-foreground tracking-wider truncate">
-							{cleanSessionTitle || t.title}
-						</h1>
-						{persona && (
-							<span
-								className="text-xs px-1.5 py-0.5 rounded-full text-white flex-shrink-0"
-								style={{ backgroundColor: persona.color || "#6366f1" }}
-							>
-								{persona.name}
-							</span>
-						)}
-					</div>
-					<div className="flex items-center gap-2 text-xs text-foreground/60 dark:text-muted-foreground">
-						{(workspaceName || readableId) && (
-							<span className="font-mono">
-								{workspaceName}
-								{readableId && ` [${readableId}]`}
-							</span>
-						)}
-						{(workspaceName || readableId) && formattedDate && (
-							<span className="opacity-50">|</span>
-						)}
-						{formattedDate && <span>{formattedDate}</span>}
+		<div className="pb-3 mb-3 border-b border-border">
+			<div className="flex items-center justify-between">
+				<div className="flex items-center gap-3 min-w-0 flex-1">
+					{/* Persona avatar/indicator */}
+					{persona && (
+						<div
+							className="w-8 h-8 sm:w-10 sm:h-10 rounded-full flex items-center justify-center flex-shrink-0"
+							style={{ backgroundColor: persona.color || "#6366f1" }}
+						>
+							<User className="w-4 h-4 sm:w-5 sm:h-5 text-white" />
+						</div>
+					)}
+					<div className="min-w-0 flex-1">
+						<div className="flex items-center gap-2">
+							<h1 className="text-base sm:text-lg font-semibold text-foreground tracking-wider truncate">
+								{cleanSessionTitle || t.title}
+							</h1>
+							{persona && (
+								<span
+									className="text-xs px-1.5 py-0.5 rounded-full text-white flex-shrink-0"
+									style={{ backgroundColor: persona.color || "#6366f1" }}
+								>
+									{persona.name}
+								</span>
+							)}
+						</div>
+						<div className="flex items-center gap-2 text-xs text-foreground/60 dark:text-muted-foreground">
+							{(workspaceName || readableId) && (
+								<span className="font-mono">
+									{workspaceName}
+									{readableId && ` [${readableId}]`}
+								</span>
+							)}
+							{(workspaceName || readableId) && formattedDate && (
+								<span className="opacity-50">|</span>
+							)}
+							{formattedDate && <span>{formattedDate}</span>}
+						</div>
 					</div>
 				</div>
+				{status && (
+					<span className="text-xs text-destructive flex-shrink-0 ml-2">
+						{status}
+					</span>
+				)}
 			</div>
-			<div className="flex items-center gap-3 flex-shrink-0 ml-2">
-				{status && <span className="text-xs text-destructive">{status}</span>}
-				{modelSwitcher}
+			{/* Context window gauge - full width bar at bottom of header */}
+			<div className="mt-2">
 				<ContextWindowGauge
 					inputTokens={tokenUsage.inputTokens}
 					outputTokens={tokenUsage.outputTokens}
 					maxTokens={contextLimit}
 					locale={locale}
+					compact
 				/>
 			</div>
 		</div>
@@ -3485,15 +3499,13 @@ export function SessionsApp() {
 						/>
 					</div>
 					{/* Mobile context window gauge - full width bar directly below tabs */}
-					{!mainChatActive && (
-						<ContextWindowGauge
-							inputTokens={tokenUsage.inputTokens}
-							outputTokens={tokenUsage.outputTokens}
-							maxTokens={contextLimit}
-							locale={locale}
-							compact
-						/>
-					)}
+					<ContextWindowGauge
+						inputTokens={mainChatActive ? mainChatTokenUsage.inputTokens : tokenUsage.inputTokens}
+						outputTokens={mainChatActive ? mainChatTokenUsage.outputTokens : tokenUsage.outputTokens}
+						maxTokens={mainChatActive ? mainChatTokenUsage.maxTokens : contextLimit}
+						locale={locale}
+						compact
+					/>
 				</div>
 
 				{/* Mobile content */}
@@ -3506,6 +3518,8 @@ export function SessionsApp() {
 								features={features}
 								workspacePath={mainChatWorkspacePath}
 								assistantName={mainChatAssistantName}
+								hideHeader
+								onTokenUsageChange={setMainChatTokenUsage}
 							/>
 						) : (
 							ChatContent
@@ -3548,7 +3562,16 @@ export function SessionsApp() {
 					)}
 					{activeView === "settings" && (
 						<Suspense fallback={viewLoadingFallback}>
-							<AgentSettingsView />
+							{mainChatActive ? (
+								<MainChatSettingsView locale={locale} />
+							) : (
+								<AgentSettingsView
+									modelOptions={opencodeModelOptions}
+									selectedModelRef={selectedModelRef}
+									onModelChange={setSelectedModelRef}
+									isModelLoading={isModelLoading}
+								/>
+							)}
 						</Suspense>
 					)}
 					{activeView === "canvas" && (
@@ -3583,6 +3606,7 @@ export function SessionsApp() {
 							features={features}
 							workspacePath={mainChatWorkspacePath}
 							assistantName={mainChatAssistantName}
+							onTokenUsageChange={setMainChatTokenUsage}
 						/>
 					) : (
 						ChatContent
@@ -3707,7 +3731,16 @@ export function SessionsApp() {
 						)}
 						{activeView === "settings" && (
 							<Suspense fallback={viewLoadingFallback}>
-								<AgentSettingsView />
+								{mainChatActive ? (
+									<MainChatSettingsView locale={locale} />
+								) : (
+									<AgentSettingsView
+										modelOptions={opencodeModelOptions}
+										selectedModelRef={selectedModelRef}
+										onModelChange={setSelectedModelRef}
+										isModelLoading={isModelLoading}
+									/>
+								)}
 							</Suspense>
 						)}
 						{activeView === "canvas" && (
@@ -3794,7 +3827,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 			segments.push({
 				key,
 				type: "text",
-				content: currentTextBuffer.join("\n\n"),
+				content: currentTextBuffer.join("\n"),
 			});
 			currentTextBuffer = [];
 			currentTextKeys = [];

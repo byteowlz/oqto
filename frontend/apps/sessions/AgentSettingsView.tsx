@@ -34,10 +34,23 @@ import {
 	RotateCcw,
 	Save,
 } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+
+interface ModelOption {
+	value: string;
+	label: string;
+}
 
 interface AgentSettingsViewProps {
 	className?: string;
+	/** Available models for runtime selection */
+	modelOptions?: ModelOption[];
+	/** Currently selected model ref (provider/model) */
+	selectedModelRef?: string | null;
+	/** Callback to change the selected model */
+	onModelChange?: (modelRef: string) => void;
+	/** Whether model options are loading */
+	isModelLoading?: boolean;
 }
 
 interface AgentInfo {
@@ -46,7 +59,13 @@ interface AgentInfo {
 	description?: string;
 }
 
-export function AgentSettingsView({ className }: AgentSettingsViewProps) {
+export function AgentSettingsView({
+	className,
+	modelOptions = [],
+	selectedModelRef,
+	onModelChange,
+	isModelLoading = false,
+}: AgentSettingsViewProps) {
 	const {
 		selectedWorkspaceSession,
 		opencodeBaseUrl,
@@ -247,6 +266,18 @@ export function AgentSettingsView({ className }: AgentSettingsViewProps) {
 		});
 	}, []);
 
+	// Model search/filter state - must be before early returns (Rules of Hooks)
+	const [modelQuery, setModelQuery] = useState("");
+	const filteredModelOptions = useMemo(() => {
+		const query = modelQuery.trim().toLowerCase();
+		if (!query) return modelOptions;
+		return modelOptions.filter(
+			(opt) =>
+				opt.value.toLowerCase().includes(query) ||
+				opt.label.toLowerCase().includes(query),
+		);
+	}, [modelOptions, modelQuery]);
+
 	if (!sessionId) {
 		return (
 			<div
@@ -318,210 +349,280 @@ export function AgentSettingsView({ className }: AgentSettingsViewProps) {
 			)}
 
 			{/* Settings form */}
-			<div className="flex-1 overflow-auto p-3 space-y-4">
-				{/* Restart hint and button */}
-				<div className="flex items-start gap-2 p-2.5 bg-muted/50 border border-border/50 rounded-md">
-					<Info className="h-3.5 w-3.5 mt-0.5 text-muted-foreground flex-shrink-0" />
-					<div className="flex-1 min-w-0">
-						<p className="text-[11px] text-muted-foreground">
-							Config changes require a session restart to take effect.
+			<div className="flex-1 overflow-y-auto overflow-x-hidden p-3 space-y-4">
+				{/* Runtime Model Selector - Live section */}
+				{modelOptions.length > 0 && onModelChange && (
+					<div className="p-3 bg-primary/5 border border-primary/20 rounded-lg space-y-2 overflow-hidden">
+						<div className="flex items-center gap-2">
+							<div className="w-2 h-2 rounded-full bg-green-500 animate-pulse flex-shrink-0" />
+							<Label className="text-xs font-medium">Live Model Selection</Label>
+						</div>
+						<Select
+							value={selectedModelRef ?? undefined}
+							onValueChange={onModelChange}
+							onOpenChange={(open) => {
+								if (open) setModelQuery("");
+							}}
+							disabled={isModelLoading}
+						>
+							<SelectTrigger className="h-8 text-xs w-full">
+								<SelectValue
+									placeholder={
+										isModelLoading ? "Loading models..." : "Select model"
+									}
+								/>
+							</SelectTrigger>
+							<SelectContent>
+								<div
+									className="sticky top-0 z-10 bg-popover p-2 border-b border-border"
+									onPointerDown={(e) => e.stopPropagation()}
+									onKeyDown={(e) => e.stopPropagation()}
+								>
+									<Input
+										value={modelQuery}
+										onChange={(e) => setModelQuery(e.target.value)}
+										placeholder="Search models..."
+										aria-label="Search models"
+										className="h-8 text-xs"
+									/>
+								</div>
+								{modelOptions.length === 0 ? (
+									<SelectItem value="__none__" disabled>
+										No models available
+									</SelectItem>
+								) : filteredModelOptions.length === 0 ? (
+									<SelectItem value="__no_results__" disabled>
+										No matches
+									</SelectItem>
+								) : (
+									filteredModelOptions.map((option) => (
+										<SelectItem
+											key={option.value}
+											value={option.value}
+											className="text-xs"
+										>
+											<span className="truncate block max-w-[250px]">
+												{option.label}
+											</span>
+										</SelectItem>
+									))
+								)}
+							</SelectContent>
+						</Select>
+						<p className="text-[10px] text-muted-foreground">
+							Changes take effect immediately for this session
 						</p>
 					</div>
-					<Button
-						type="button"
-						variant="outline"
-						size="sm"
-						onClick={handleRestart}
-						disabled={restarting || waitingForIdle}
-						className="h-6 px-2 text-[10px] flex-shrink-0"
-						title={
-							waitingForIdle
-								? "Waiting for agent to finish..."
-								: "Restart session"
-						}
-					>
-						{restarting ? (
-							<Loader2 className="h-3 w-3 animate-spin" />
-						) : waitingForIdle ? (
-							<Loader2 className="h-3 w-3 animate-spin" />
-						) : (
-							<RotateCcw className="h-3 w-3" />
-						)}
-						<span className="ml-1">
-							{restarting
-								? "Restarting"
-								: waitingForIdle
-									? "Waiting..."
-									: "Restart"}
-						</span>
-					</Button>
-				</div>
-				{/* Model */}
-				<SettingField
-					label="Model"
-					description="Provider/model (e.g., anthropic/claude-sonnet-4-20250514)"
-					modified={isModified("model")}
-					source={getValueSource("model")}
-					setInLocal={isSetInLocal("model")}
-					setInGlobal={isSetInGlobal("model")}
-				>
-					<Input
-						value={getValue("model") || ""}
-						onChange={(e) => handleChange("model", e.target.value || undefined)}
-						placeholder="anthropic/claude-sonnet-4-20250514"
-						className={cn(
-							"h-8 text-xs bg-background",
-							isModified("model") && "border-amber-500",
-							getValueSource("model") === "global" && "border-dashed",
-						)}
-					/>
-				</SettingField>
+				)}
 
-				{/* Default Agent */}
-				<SettingField
-					label="Default Agent"
-					description="Agent to use for new sessions"
-					modified={isModified("default_agent")}
-					source={getValueSource("default_agent")}
-					setInLocal={isSetInLocal("default_agent")}
-					setInGlobal={isSetInGlobal("default_agent")}
-				>
-					<Select
-						value={getValue("default_agent") || "__none__"}
-						onValueChange={(v) =>
-							handleChange("default_agent", v === "__none__" ? undefined : v)
-						}
+				{/* OpenCode Config Section */}
+				<div className="border border-border rounded-lg overflow-hidden">
+					<div className="flex items-center justify-between px-3 py-2 bg-muted/50 border-b border-border">
+						<Label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+							OpenCode Configuration
+						</Label>
+						<Button
+							type="button"
+							variant="outline"
+							size="sm"
+							onClick={handleRestart}
+							disabled={restarting || waitingForIdle}
+							className="h-6 px-2 text-[10px]"
+							title={
+								waitingForIdle
+									? "Waiting for agent to finish..."
+									: "Restart session to apply changes"
+							}
+						>
+							{restarting ? (
+								<Loader2 className="h-3 w-3 animate-spin" />
+							) : waitingForIdle ? (
+								<Loader2 className="h-3 w-3 animate-spin" />
+							) : (
+								<RotateCcw className="h-3 w-3" />
+							)}
+							<span className="ml-1">
+								{restarting
+									? "Restarting"
+									: waitingForIdle
+										? "Waiting..."
+										: "Restart"}
+							</span>
+						</Button>
+					</div>
+
+					{/* Model */}
+					<SettingField
+						label="Model"
+						description="Provider/model (e.g., anthropic/claude-sonnet-4-20250514)"
+						modified={isModified("model")}
+						source={getValueSource("model")}
+						setInLocal={isSetInLocal("model")}
+						setInGlobal={isSetInGlobal("model")}
+						odd
 					>
-						<SelectTrigger
+						<Input
+							value={getValue("model") || ""}
+							onChange={(e) =>
+								handleChange("model", e.target.value || undefined)
+							}
+							placeholder="anthropic/claude-sonnet-4-20250514"
 							className={cn(
 								"h-8 text-xs bg-background",
-								isModified("default_agent") && "border-amber-500",
-								getValueSource("default_agent") === "global" && "border-dashed",
+								isModified("model") && "border-amber-500",
+								getValueSource("model") === "global" && "border-dashed",
 							)}
-						>
-							<SelectValue placeholder="Select agent..." />
-						</SelectTrigger>
-						<SelectContent>
-							<SelectItem value="__none__">Default</SelectItem>
-							{agents.map((agent) => (
-								<SelectItem key={agent.id} value={agent.id}>
-									{agent.name}
-								</SelectItem>
-							))}
-						</SelectContent>
-					</Select>
-				</SettingField>
+						/>
+					</SettingField>
 
-				{/* Share Mode */}
-				<SettingField
-					label="Share Mode"
-					description="How to handle session sharing"
-					modified={isModified("share")}
-					source={getValueSource("share")}
-					setInLocal={isSetInLocal("share")}
-					setInGlobal={isSetInGlobal("share")}
-				>
-					<Select
-						value={getValue("share") || "__none__"}
-						onValueChange={(v) =>
-							handleChange(
-								"share",
-								v === "__none__" ? undefined : (v as ShareMode),
-							)
-						}
+					{/* Default Agent */}
+					<SettingField
+						label="Default Agent"
+						description="Agent to use for new sessions"
+						modified={isModified("default_agent")}
+						source={getValueSource("default_agent")}
+						setInLocal={isSetInLocal("default_agent")}
+						setInGlobal={isSetInGlobal("default_agent")}
 					>
-						<SelectTrigger
-							className={cn(
-								"h-8 text-xs bg-background",
-								isModified("share") && "border-amber-500",
-								getValueSource("share") === "global" && "border-dashed",
-							)}
+						<Select
+							value={getValue("default_agent") || "__none__"}
+							onValueChange={(v) =>
+								handleChange("default_agent", v === "__none__" ? undefined : v)
+							}
 						>
-							<SelectValue placeholder="Select mode..." />
-						</SelectTrigger>
-						<SelectContent>
-							<SelectItem value="__none__">Default</SelectItem>
-							<SelectItem value="manual">Manual</SelectItem>
-							<SelectItem value="auto">Auto</SelectItem>
-							<SelectItem value="disabled">Disabled</SelectItem>
-						</SelectContent>
-					</Select>
-				</SettingField>
+							<SelectTrigger
+								className={cn(
+									"h-8 text-xs bg-background",
+									isModified("default_agent") && "border-amber-500",
+									getValueSource("default_agent") === "global" &&
+										"border-dashed",
+								)}
+							>
+								<SelectValue placeholder="Select agent..." />
+							</SelectTrigger>
+							<SelectContent>
+								<SelectItem value="__none__">Default</SelectItem>
+								{agents.map((agent) => (
+									<SelectItem key={agent.id} value={agent.id}>
+										{agent.name}
+									</SelectItem>
+								))}
+							</SelectContent>
+						</Select>
+					</SettingField>
 
-				{/* Compaction Settings */}
-				<div className="space-y-3 p-3 bg-muted/30 border border-border/50 rounded-md">
-					<Label className="text-xs font-medium">Compaction</Label>
-					<div className="space-y-2">
-						<div className="flex items-center justify-between">
-							<Label
-								htmlFor="compaction-auto"
-								className="text-xs text-muted-foreground"
+					{/* Share Mode */}
+					<SettingField
+						label="Share Mode"
+						description="How to handle session sharing"
+						modified={isModified("share")}
+						source={getValueSource("share")}
+						setInLocal={isSetInLocal("share")}
+						setInGlobal={isSetInGlobal("share")}
+						odd
+					>
+						<Select
+							value={getValue("share") || "__none__"}
+							onValueChange={(v) =>
+								handleChange(
+									"share",
+									v === "__none__" ? undefined : (v as ShareMode),
+								)
+							}
+						>
+							<SelectTrigger
+								className={cn(
+									"h-8 text-xs bg-background",
+									isModified("share") && "border-amber-500",
+									getValueSource("share") === "global" && "border-dashed",
+								)}
 							>
-								Auto compaction
-							</Label>
-							<Switch
-								id="compaction-auto"
-								checked={getValue("compaction")?.auto ?? false}
-								onCheckedChange={(checked) =>
-									handleChange("compaction", {
-										...getValue("compaction"),
-										auto: checked,
-									})
-								}
-							/>
-						</div>
-						<div className="flex items-center justify-between">
-							<Label
-								htmlFor="compaction-prune"
-								className="text-xs text-muted-foreground"
-							>
-								Prune old messages
-							</Label>
-							<Switch
-								id="compaction-prune"
-								checked={getValue("compaction")?.prune ?? false}
-								onCheckedChange={(checked) =>
-									handleChange("compaction", {
-										...getValue("compaction"),
-										prune: checked,
-									})
-								}
-							/>
+								<SelectValue placeholder="Select mode..." />
+							</SelectTrigger>
+							<SelectContent>
+								<SelectItem value="__none__">Default</SelectItem>
+								<SelectItem value="manual">Manual</SelectItem>
+								<SelectItem value="auto">Auto</SelectItem>
+								<SelectItem value="disabled">Disabled</SelectItem>
+							</SelectContent>
+						</Select>
+					</SettingField>
+
+					{/* Compaction Settings */}
+					<div className="p-3 space-y-2 border-b border-border">
+						<Label className="text-xs font-medium">Compaction</Label>
+						<div className="space-y-2">
+							<div className="flex items-center justify-between">
+								<Label
+									htmlFor="compaction-auto"
+									className="text-xs text-muted-foreground"
+								>
+									Auto compaction
+								</Label>
+								<Switch
+									id="compaction-auto"
+									checked={getValue("compaction")?.auto ?? false}
+									onCheckedChange={(checked) =>
+										handleChange("compaction", {
+											...getValue("compaction"),
+											auto: checked,
+										})
+									}
+								/>
+							</div>
+							<div className="flex items-center justify-between">
+								<Label
+									htmlFor="compaction-prune"
+									className="text-xs text-muted-foreground"
+								>
+									Prune old messages
+								</Label>
+								<Switch
+									id="compaction-prune"
+									checked={getValue("compaction")?.prune ?? false}
+									onCheckedChange={(checked) =>
+										handleChange("compaction", {
+											...getValue("compaction"),
+											prune: checked,
+										})
+									}
+								/>
+							</div>
 						</div>
 					</div>
-				</div>
 
-				{/* Instructions */}
-				<SettingField
-					label="Instructions"
-					description="Paths to instruction files (one per line)"
-					modified={isModified("instructions")}
-					source={getValueSource("instructions")}
-					setInLocal={isSetInLocal("instructions")}
-					setInGlobal={isSetInGlobal("instructions")}
-				>
-					<textarea
-						value={(getValue("instructions") || []).join("\n")}
-						onChange={(e) => {
-							const lines = e.target.value
-								.split("\n")
-								.map((l) => l.trim())
-								.filter((l) => l);
-							handleChange(
-								"instructions",
-								lines.length > 0 ? lines : undefined,
-							);
-						}}
-						placeholder="AGENTS.md&#10;.opencode/instructions.md"
-						rows={3}
-						className={cn(
-							"w-full px-3 py-2 text-xs bg-background border rounded-md resize-none",
-							"focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2",
-							isModified("instructions") && "border-amber-500",
-							getValueSource("instructions") === "global" && "border-dashed",
-						)}
-					/>
-				</SettingField>
+					{/* Instructions */}
+					<SettingField
+						label="Instructions"
+						description="Paths to instruction files (one per line)"
+						modified={isModified("instructions")}
+						source={getValueSource("instructions")}
+						setInLocal={isSetInLocal("instructions")}
+						setInGlobal={isSetInGlobal("instructions")}
+					>
+						<textarea
+							value={(getValue("instructions") || []).join("\n")}
+							onChange={(e) => {
+								const lines = e.target.value
+									.split("\n")
+									.map((l) => l.trim())
+									.filter((l) => l);
+								handleChange(
+									"instructions",
+									lines.length > 0 ? lines : undefined,
+								);
+							}}
+							placeholder="AGENTS.md&#10;.opencode/instructions.md"
+							rows={3}
+							className={cn(
+								"w-full px-3 py-2 text-xs bg-background border rounded-md resize-none",
+								"focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2",
+								isModified("instructions") && "border-amber-500",
+								getValueSource("instructions") === "global" && "border-dashed",
+							)}
+						/>
+					</SettingField>
+				</div>
 
 				{/* Permissions */}
 				<PermissionsSection
@@ -542,7 +643,7 @@ export function AgentSettingsView({ className }: AgentSettingsViewProps) {
 							<p className="text-[10px] text-muted-foreground mb-1">
 								Workspace config (editable):
 							</p>
-							<pre className="p-2 text-[10px] bg-muted/50 border border-border rounded-md overflow-auto max-h-32">
+							<pre className="p-2 text-[10px] bg-muted/50 border border-border rounded-md overflow-x-auto max-h-32">
 								{JSON.stringify({ ...localConfig, ...pendingChanges }, null, 2)}
 							</pre>
 						</div>
@@ -551,7 +652,7 @@ export function AgentSettingsView({ className }: AgentSettingsViewProps) {
 								<p className="text-[10px] text-muted-foreground mb-1">
 									Global config (read-only):
 								</p>
-								<pre className="p-2 text-[10px] bg-muted/50 border border-dashed border-border rounded-md overflow-auto max-h-32">
+								<pre className="p-2 text-[10px] bg-muted/50 border border-dashed border-border rounded-md overflow-x-auto max-h-32">
 									{JSON.stringify(globalConfig, null, 2)}
 								</pre>
 							</div>
@@ -574,6 +675,8 @@ interface SettingFieldProps {
 	setInLocal?: boolean;
 	/** Explicitly set in global config */
 	setInGlobal?: boolean;
+	/** Alternating row background */
+	odd?: boolean;
 	children: React.ReactNode;
 }
 
@@ -584,10 +687,16 @@ function SettingField({
 	source = "default",
 	setInLocal,
 	setInGlobal,
+	odd,
 	children,
 }: SettingFieldProps) {
 	return (
-		<div className="space-y-1.5">
+		<div
+			className={cn(
+				"p-3 space-y-1.5 border-b border-border last:border-b-0",
+				odd && "bg-muted/30",
+			)}
+		>
 			<div className="flex items-center gap-1.5 flex-wrap">
 				<Label className="text-xs font-medium">{label}</Label>
 				{modified && (
