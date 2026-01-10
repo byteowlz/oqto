@@ -1,14 +1,12 @@
 "use client";
 
-import {
-	AppContentLayout,
-	type SidebarTab,
-} from "@/components/app-content-layout";
 import { SettingsEditor } from "@/components/settings";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Button } from "@/components/ui/button";
 import { useApp } from "@/hooks/use-app";
-import { Brain, HelpCircle, Info, Keyboard, Settings } from "lucide-react";
-import { useMemo, useState } from "react";
+import { cn } from "@/lib/utils";
+import { Brain, HelpCircle, Info, Keyboard, Settings, X } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
+import { useState } from "react";
 
 function SettingsHelpPanel({ locale }: { locale: "en" | "de" }) {
 	const t = {
@@ -122,98 +120,123 @@ function ShortcutsPanel({ locale }: { locale: "en" | "de" }) {
 	);
 }
 
+interface TabButtonProps {
+	active: boolean;
+	onClick: () => void;
+	icon: LucideIcon;
+	label: string;
+}
+
+function TabButton({ active, onClick, icon: Icon, label }: TabButtonProps) {
+	return (
+		<button
+			type="button"
+			onClick={onClick}
+			className={cn(
+				"flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-medium transition-colors rounded-md",
+				active
+					? "bg-primary text-primary-foreground"
+					: "text-muted-foreground hover:text-foreground hover:bg-muted/50",
+			)}
+		>
+			<Icon className="w-3.5 h-3.5" />
+			<span>{label}</span>
+		</button>
+	);
+}
+
 export function SettingsApp() {
-	const { locale } = useApp();
-	const [activeTab, setActiveTab] = useState("octo");
+	const { locale, setActiveAppId } = useApp();
+	const [activeTab, setActiveTab] = useState<
+		"octo" | "mmry" | "help" | "shortcuts"
+	>("octo");
 
 	// TODO: Check if user is admin from context
 	const isAdmin = true; // For now assume admin
 
+	const handleClose = () => {
+		setActiveAppId("sessions");
+	};
+
 	const t = {
 		en: {
-			title: "Settings",
 			octoTab: "Octo",
 			mmryTab: "Memory",
-			octoDesc: "Configure the Octo workspace platform",
-			mmryDesc: "Configure memory service settings",
 			help: "Help",
-			shortcuts: "Shortcuts",
+			shortcuts: "Keys",
+			close: "Close",
 		},
 		de: {
-			title: "Einstellungen",
 			octoTab: "Octo",
 			mmryTab: "Speicher",
-			octoDesc: "Octo Workspace-Plattform konfigurieren",
-			mmryDesc: "Speicherdiensteinstellungen konfigurieren",
 			help: "Hilfe",
-			shortcuts: "Tastenkurzel",
+			shortcuts: "Tasten",
+			close: "Schliessen",
 		},
 	}[locale];
 
-	const sidebarTabs: SidebarTab[] = useMemo(
-		() => [
-			{
-				id: "help",
-				label: t.help,
-				icon: HelpCircle,
-				content: <SettingsHelpPanel locale={locale} />,
-			},
-			{
-				id: "shortcuts",
-				label: t.shortcuts,
-				icon: Keyboard,
-				content: <ShortcutsPanel locale={locale} />,
-			},
-		],
-		[locale, t.help, t.shortcuts],
-	);
-
-	const header = (
-		<div className="flex items-center justify-between pb-3 mb-3 border-b border-border">
-			<h1 className="text-lg sm:text-xl font-semibold">{t.title}</h1>
-			<Tabs value={activeTab} onValueChange={setActiveTab}>
-				<TabsList className="h-8">
-					<TabsTrigger
-						value="octo"
-						className="gap-1.5 text-xs sm:text-sm h-7 px-2 sm:px-3"
-					>
-						<Settings className="h-3.5 w-3.5" />
-						<span className="hidden sm:inline">{t.octoTab}</span>
-					</TabsTrigger>
-					<TabsTrigger
-						value="mmry"
-						className="gap-1.5 text-xs sm:text-sm h-7 px-2 sm:px-3"
-					>
-						<Brain className="h-3.5 w-3.5" />
-						<span className="hidden sm:inline">{t.mmryTab}</span>
-					</TabsTrigger>
-				</TabsList>
-			</Tabs>
-		</div>
-	);
-
 	return (
-		<AppContentLayout
-			mainTabLabel={t.title}
-			mainTabIcon={Settings}
-			sidebarTabs={sidebarTabs}
-			defaultSidebarTab="help"
-			header={header}
-		>
-			<div className="flex-1 min-h-0 overflow-y-auto scrollbar-hide">
-				<div className="max-w-3xl mx-auto">
-					<Tabs value={activeTab}>
-						<TabsContent value="octo" className="mt-0">
-							<SettingsEditor app="octo" title={t.octoDesc} isAdmin={isAdmin} />
-						</TabsContent>
+		<div className="flex flex-col h-full min-h-0 p-1 sm:p-4 md:p-6">
+			{/* Unified tab bar */}
+			<div className="bg-card border border-border rounded-t-xl sm:rounded-xl sm:mb-4 px-2 py-1.5 flex items-center gap-1 overflow-x-auto scrollbar-hide">
+				{/* Close button - desktop only */}
+				<Button
+					type="button"
+					variant="ghost"
+					size="sm"
+					onClick={handleClose}
+					className="hidden md:flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground mr-2"
+					aria-label={t.close}
+				>
+					<X className="w-3.5 h-3.5" />
+					<span>{t.close}</span>
+				</Button>
+				<div className="hidden md:block w-px h-5 bg-border mr-1" />
+				<TabButton
+					active={activeTab === "octo"}
+					onClick={() => setActiveTab("octo")}
+					icon={Settings}
+					label={t.octoTab}
+				/>
+				<TabButton
+					active={activeTab === "mmry"}
+					onClick={() => setActiveTab("mmry")}
+					icon={Brain}
+					label={t.mmryTab}
+				/>
+				<div className="w-px h-5 bg-border mx-1" />
+				<TabButton
+					active={activeTab === "help"}
+					onClick={() => setActiveTab("help")}
+					icon={HelpCircle}
+					label={t.help}
+				/>
+				<TabButton
+					active={activeTab === "shortcuts"}
+					onClick={() => setActiveTab("shortcuts")}
+					icon={Keyboard}
+					label={t.shortcuts}
+				/>
+			</div>
 
-						<TabsContent value="mmry" className="mt-0">
-							<SettingsEditor app="mmry" title={t.mmryDesc} isAdmin={isAdmin} />
-						</TabsContent>
-					</Tabs>
+			{/* Content area */}
+			<div className="flex-1 min-h-0 bg-card border border-border border-t-0 sm:border-t rounded-b-xl sm:rounded-xl overflow-hidden">
+				<div className="h-full overflow-y-auto scrollbar-hide">
+					{activeTab === "octo" && (
+						<div className="sm:max-w-3xl sm:mx-auto">
+							<SettingsEditor app="octo" isAdmin={isAdmin} />
+						</div>
+					)}
+					{activeTab === "mmry" && (
+						<div className="sm:max-w-3xl sm:mx-auto">
+							<SettingsEditor app="mmry" isAdmin={isAdmin} />
+						</div>
+					)}
+					{activeTab === "help" && <SettingsHelpPanel locale={locale} />}
+					{activeTab === "shortcuts" && <ShortcutsPanel locale={locale} />}
 				</div>
 			</div>
-		</AppContentLayout>
+		</div>
 	);
 }
 

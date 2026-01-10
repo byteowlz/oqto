@@ -4,7 +4,10 @@ use anyhow::{Context, Result};
 use chrono::Utc;
 
 use super::db::MainChatDb;
-use super::models::{ChatMessage, CreateChatMessage, CreateHistoryEntry, CreateSession, HistoryEntry, MainChatSession};
+use super::models::{
+    ChatMessage, CreateChatMessage, CreateHistoryEntry, CreateSession, HistoryEntry,
+    MainChatSession,
+};
 
 /// Repository for main chat operations.
 pub struct MainChatRepository<'a> {
@@ -315,6 +318,5 @@ mod tests {
         repo.set_config("theme", "light").await.unwrap();
         let value = repo.get_config("theme").await.unwrap();
         assert_eq!(value, Some("light".to_string()));
-
     }
 }

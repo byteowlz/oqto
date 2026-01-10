@@ -90,6 +90,7 @@ pub async fn test_app() -> Router {
     let invite_repo = InviteCodeRepository::new(db.pool().clone());
 
     // Create app state and router
+    let max_proxy_body_bytes = 10 * 1024 * 1024;
     let state = api::AppState::new(
         session_service,
         agent_service,
@@ -99,8 +100,10 @@ pub async fn test_app() -> Router {
         api::MmryState::default(),
         api::VoiceState::default(),
         api::SessionUiState::default(),
+        api::TemplatesState::default(),
+        max_proxy_body_bytes,
     );
-    api::create_router(state)
+    api::create_router_with_config(state, 100)
 }
 
 // ============================================================================
@@ -254,6 +257,7 @@ pub async fn test_app_with_agent_backend() -> Router {
 
     let mock_backend = Arc::new(MockAgentBackend::new());
 
+    let max_proxy_body_bytes = 10 * 1024 * 1024;
     let state = api::AppState::with_agent_backend(
         session_service,
         agent_service,
@@ -264,8 +268,10 @@ pub async fn test_app_with_agent_backend() -> Router {
         api::MmryState::default(),
         api::VoiceState::default(),
         api::SessionUiState::default(),
+        api::TemplatesState::default(),
+        max_proxy_body_bytes,
     );
-    api::create_router(state)
+    api::create_router_with_config(state, 100)
 }
 
 /// Create a test application with AgentBackend and return a valid token.
@@ -302,6 +308,7 @@ pub async fn test_app_with_token() -> (Router, String) {
     // Create invite code repository
     let invite_repo = InviteCodeRepository::new(db.pool().clone());
 
+    let max_proxy_body_bytes = 10 * 1024 * 1024;
     let state = api::AppState::new(
         session_service,
         agent_service,
@@ -311,8 +318,10 @@ pub async fn test_app_with_token() -> (Router, String) {
         api::MmryState::default(),
         api::VoiceState::default(),
         api::SessionUiState::default(),
+        api::TemplatesState::default(),
+        max_proxy_body_bytes,
     );
-    (api::create_router(state), token)
+    (api::create_router_with_config(state, 100), token)
 }
 
 /// Create a test application and return a valid token for a regular user.
@@ -348,6 +357,7 @@ pub async fn test_app_with_user_token() -> (Router, String) {
     // Create invite code repository
     let invite_repo = InviteCodeRepository::new(db.pool().clone());
 
+    let max_proxy_body_bytes = 10 * 1024 * 1024;
     let state = api::AppState::new(
         session_service,
         agent_service,
@@ -357,6 +367,8 @@ pub async fn test_app_with_user_token() -> (Router, String) {
         api::MmryState::default(),
         api::VoiceState::default(),
         api::SessionUiState::default(),
+        api::TemplatesState::default(),
+        max_proxy_body_bytes,
     );
-    (api::create_router(state), token)
+    (api::create_router_with_config(state, 100), token)
 }

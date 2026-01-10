@@ -119,10 +119,10 @@ function TimelineDot({
 				onMouseEnter={() => setShowTooltip(true)}
 				onMouseLeave={() => setShowTooltip(false)}
 				className={cn(
-					"relative z-10 w-3 h-3 rounded-full transition-all",
-					"border-2 border-background",
+					"relative z-10 w-2.5 h-2.5 transition-all",
+					"border border-background",
 					isActive
-						? "bg-primary scale-125 ring-2 ring-primary/30"
+						? "bg-primary scale-125"
 						: "bg-muted-foreground/40 hover:bg-muted-foreground/60 hover:scale-110",
 				)}
 				title={title}

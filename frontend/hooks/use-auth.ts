@@ -2,6 +2,8 @@ import {
 	type UserInfo,
 	logout as apiLogout,
 	controlPlaneApiUrl,
+	getAuthHeaders,
+	setAuthToken,
 } from "@/lib/control-plane-client";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
@@ -13,21 +15,41 @@ export const authKeys = {
 };
 
 async function fetchCurrentUser(): Promise<UserInfo | null> {
+	const headers = getAuthHeaders();
+	const url = controlPlaneApiUrl("/api/me");
+	console.log(
+		"[auth] fetchCurrentUser",
+		url,
+		"headers:",
+		JSON.stringify(headers),
+	);
+
 	try {
-		const response = await fetch(controlPlaneApiUrl("/api/me"), {
+		const response = await fetch(url, {
+			headers: { ...headers },
 			credentials: "include",
 		});
+		console.log("[auth] /me response:", response.status);
 		if (response.status === 401) {
+			// Clear any stale token
+			console.log("[auth] 401 - clearing token");
+			setAuthToken(null);
 			return null;
 		}
 		if (!response.ok) {
-			// Non-auth errors - allow app to render
-			return { id: "", name: "", email: "", role: "" } as UserInfo;
+			// Non-auth errors - return null to show login screen
+			// This allows user to configure backend URL
+			console.warn("[auth] Non-OK response from /me:", response.status);
+			return null;
 		}
-		return response.json();
-	} catch {
-		// If the API is not reachable, allow the app to render
-		return { id: "", name: "", email: "", role: "" } as UserInfo;
+		const data = await response.json();
+		console.log("[auth] /me user:", data);
+		return data;
+	} catch (error) {
+		// If the API is not reachable, return null to show login screen
+		// This allows user to configure backend URL on mobile
+		console.warn("[auth] Failed to reach backend:", error);
+		return null;
 	}
 }
 

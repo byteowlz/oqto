@@ -5,11 +5,11 @@ import {
 	FileTreeView,
 	initialFileTreeState,
 } from "@/apps/sessions/FileTreeView";
-import { MainChatPiView } from "@/components/main-chat";
+import { MainChatPiView, MainChatSettingsView } from "@/components/main-chat";
+import { A2UICallCard } from "@/components/ui/a2ui-call-card";
 import { Badge } from "@/components/ui/badge";
 import { BrailleSpinner } from "@/components/ui/braille-spinner";
 import { Button } from "@/components/ui/button";
-import { ContextWindowGauge } from "@/components/ui/context-window-gauge";
 import {
 	ContextMenu,
 	ContextMenuContent,
@@ -17,6 +17,8 @@ import {
 	ContextMenuSeparator,
 	ContextMenuTrigger,
 } from "@/components/ui/context-menu";
+import { ContextWindowGauge } from "@/components/ui/context-window-gauge";
+import { ProviderIcon } from "@/components/ui/provider-icon";
 import {
 	type FileAttachment,
 	FileAttachmentChip,
@@ -42,11 +44,17 @@ import {
 import { SlashCommandPopup } from "@/components/ui/slash-command-popup";
 import { ToolCallCard } from "@/components/ui/tool-call-card";
 import {
+	UserQuestionBanner,
+	UserQuestionDialog,
+} from "@/components/ui/user-question-dialog";
+import {
+	DictationOverlay,
 	VoiceInputOverlay,
 	VoiceMenuButton,
 	type VoiceMode,
 	VoicePanel,
 } from "@/components/voice";
+import { type A2UISurfaceState, useA2UI } from "@/hooks/use-a2ui";
 import { useApp } from "@/hooks/use-app";
 import { useDictation } from "@/hooks/use-dictation";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -57,6 +65,7 @@ import {
 	useVoiceShortcuts,
 } from "@/hooks/use-voice-commands";
 import { useVoiceMode } from "@/hooks/use-voice-mode";
+import type { A2UIUserAction } from "@/lib/a2ui/types";
 import {
 	type Features,
 	type MainChatSession,
@@ -73,8 +82,11 @@ import {
 	listMainChatSessions,
 	opencodeProxyBaseUrl,
 	registerMainChatSession,
+	workspaceFileUrl,
 } from "@/lib/control-plane-client";
 import { getFileTypeInfo } from "@/lib/file-types";
+import { getMessageText } from "@/lib/message-text";
+import { type ModelOption, filterModelOptions } from "@/lib/model-filter";
 import {
 	type OpenCodeAssistantMessage,
 	type OpenCodeMessageWithParts,
@@ -82,6 +94,8 @@ import {
 	type OpenCodePartInput,
 	type Permission,
 	type PermissionResponse,
+	type QuestionAnswer,
+	type QuestionRequest,
 	abortSession,
 	createSession,
 	fetchAgents,
@@ -91,14 +105,19 @@ import {
 	fetchSessions,
 	forkSession,
 	invalidateMessageCache,
+	rejectQuestion,
+	replyToQuestion,
 	respondToPermission,
 	runShellCommandAsync,
 	sendCommandAsync,
 	sendMessageAsync,
 	sendPartsAsync,
 } from "@/lib/opencode-client";
+import {
+	normalizePermissionEvent,
+	parseSessionErrorEvent,
+} from "@/lib/session-events";
 import { formatSessionDate, generateReadableId } from "@/lib/session-utils";
-import { type ModelOption, filterModelOptions } from "@/lib/model-filter";
 import {
 	type SlashCommand,
 	builtInCommands,
@@ -114,19 +133,23 @@ import {
 	Check,
 	CheckSquare,
 	ChevronDown,
+	ChevronUp,
 	CircleDot,
 	Clock,
 	Copy,
-	Eye,
 	FileCode,
 	FileImage,
 	FileText,
 	GitBranch,
 	ListTodo,
 	Loader2,
+	Maximize2,
 	MessageSquare,
 	Mic,
+	Minimize2,
 	PaintBucket,
+	PanelLeftClose,
+	PanelRightClose,
 	Paperclip,
 	RefreshCw,
 	Send,
@@ -140,11 +163,13 @@ import {
 	XCircle,
 } from "lucide-react";
 import {
+	Profiler,
 	Suspense,
 	lazy,
 	memo,
 	startTransition,
 	useCallback,
+	useDeferredValue,
 	useEffect,
 	useLayoutEffect,
 	useMemo,
@@ -153,6 +178,15 @@ import {
 	useTransition,
 } from "react";
 import { toast } from "sonner";
+
+function isPerfDebugEnabled(): boolean {
+	if (!import.meta.env.DEV) return false;
+	try {
+		return localStorage.getItem("debug:perf") === "1";
+	} catch {
+		return false;
+	}
+}
 
 const PreviewView = lazy(() =>
 	import("@/apps/sessions/PreviewView").then((mod) => ({
@@ -220,12 +254,180 @@ type ActiveView =
 	| "chat"
 	| "files"
 	| "terminal"
-	| "preview"
 	| "tasks"
 	| "memories"
 	| "voice"
 	| "settings"
 	| "canvas";
+
+type ExpandedView = "preview" | "canvas" | "memories" | "terminal" | null;
+
+type ChatMessagesPaneProps = {
+	messages: OpenCodeMessageWithParts[];
+	messagesLoading: boolean;
+	selectedChatSessionId: string | undefined;
+	sessionHadMessages: boolean;
+	hasHiddenMessages: boolean;
+	messageGroupsLength: number;
+	visibleGroups: MessageGroup[];
+	visibleGroupCount: number;
+	a2uiByGroupIndex: Map<number, A2UISurfaceState[]>;
+	locale: "de" | "en";
+	noMessagesText: string;
+	persona?: Persona | null;
+	workspaceName?: string | null;
+	readableId?: string | null;
+	workspaceDirectory?: string;
+	onFork?: (messageId: string) => void;
+	onScroll: () => void;
+	messagesContainerRef: { current: HTMLDivElement | null };
+	messagesEndRef: { current: HTMLDivElement | null };
+	showScrollToBottom: boolean;
+	scrollToBottom: (behavior?: ScrollBehavior) => void;
+	loadMoreMessages: () => void;
+	onA2UIAction?: (action: A2UIUserAction) => void;
+};
+
+const ChatMessagesPane = memo(function ChatMessagesPane({
+	messages,
+	messagesLoading,
+	selectedChatSessionId,
+	sessionHadMessages,
+	hasHiddenMessages,
+	messageGroupsLength,
+	visibleGroups,
+	visibleGroupCount,
+	a2uiByGroupIndex,
+	locale,
+	noMessagesText,
+	persona,
+	workspaceName,
+	readableId,
+	workspaceDirectory,
+	onFork,
+	onScroll,
+	messagesContainerRef,
+	messagesEndRef,
+	showScrollToBottom,
+	scrollToBottom,
+	loadMoreMessages,
+	onA2UIAction,
+}: ChatMessagesPaneProps) {
+	return (
+		<>
+			<div
+				ref={messagesContainerRef}
+				onScroll={onScroll}
+				className="h-full bg-muted/30 border border-border p-2 sm:p-4 overflow-y-auto scrollbar-hide"
+			>
+				{messages.length === 0 &&
+					messagesLoading &&
+					selectedChatSessionId &&
+					sessionHadMessages && (
+					<div className="animate-pulse">
+						{/* User message skeleton */}
+						<div className="sm:ml-8 bg-primary/10 border border-primary/20">
+							<div className="flex items-center gap-2 px-2 sm:px-3 py-1.5 sm:py-2 border-b border-primary/20">
+								<div className="w-3 h-3 sm:w-4 sm:h-4 bg-primary/30" />
+								<div className="h-3 bg-primary/30 w-12" />
+								<div className="flex-1" />
+								<div className="h-2 bg-primary/20 w-10" />
+							</div>
+							<div className="px-2 sm:px-4 py-2 sm:py-3 space-y-2">
+								<div className="h-3 bg-primary/20 w-3/4" />
+								<div className="h-3 bg-primary/20 w-1/2" />
+							</div>
+						</div>
+						{/* Assistant message skeleton */}
+						<div className="mt-4 sm:mt-6 sm:mr-8 bg-muted/50 border border-border">
+								<div className="flex items-center gap-2 px-2 sm:px-3 py-1.5 sm:py-2 border-b border-border">
+									<div className="w-3 h-3 sm:w-4 sm:h-4 bg-muted" />
+									<div className="h-3 bg-muted w-16" />
+									<div className="flex-1" />
+									<div className="h-2 bg-muted/70 w-10" />
+								</div>
+								<div className="px-2 sm:px-4 py-2 sm:py-3 space-y-2">
+									<div className="h-3 bg-muted w-full" />
+									<div className="h-3 bg-muted w-5/6" />
+									<div className="h-3 bg-muted w-4/5" />
+									<div className="h-3 bg-muted w-2/3" />
+								</div>
+							</div>
+							{/* Another user message skeleton */}
+							<div className="mt-4 sm:mt-6 sm:ml-8 bg-primary/10 border border-primary/20">
+								<div className="flex items-center gap-2 px-2 sm:px-3 py-1.5 sm:py-2 border-b border-primary/20">
+									<div className="w-3 h-3 sm:w-4 sm:h-4 bg-primary/30" />
+									<div className="h-3 bg-primary/30 w-12" />
+									<div className="flex-1" />
+									<div className="h-2 bg-primary/20 w-10" />
+								</div>
+								<div className="px-2 sm:px-4 py-2 sm:py-3 space-y-2">
+									<div className="h-3 bg-primary/20 w-2/3" />
+								</div>
+							</div>
+						</div>
+					)}
+
+				{messages.length === 0 && !messagesLoading && !sessionHadMessages && (
+					<div className="text-sm text-muted-foreground">{noMessagesText}</div>
+				)}
+
+				{hasHiddenMessages && (
+					<button
+						type="button"
+						onClick={loadMoreMessages}
+						className="w-full py-2 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 border border-dashed border-border transition-colors"
+					>
+						{locale === "de"
+							? `${messageGroupsLength - visibleGroupCount} altere Nachrichten laden...`
+							: `Load ${messageGroupsLength - visibleGroupCount} older messages...`}
+					</button>
+				)}
+
+				{/* Message groups with A2UI surfaces embedded */}
+				{visibleGroups.map((group, groupIndex) => (
+					<div
+						key={
+							group.messages[0]?.info.id || `${group.role}-${group.startIndex}`
+						}
+						className={groupIndex > 0 ? "mt-4 sm:mt-6" : ""}
+					>
+						{/* Session divider for Main Chat threaded view */}
+						{group.isNewSession && group.sessionTitle && (
+							<SessionDivider title={group.sessionTitle} />
+						)}
+						<MessageGroupCard
+							group={group}
+							persona={persona}
+							workspaceName={workspaceName}
+							readableId={readableId}
+							workspaceDirectory={workspaceDirectory}
+							onFork={onFork}
+							locale={locale}
+							a2uiSurfaces={a2uiByGroupIndex.get(groupIndex)}
+							onA2UIAction={onA2UIAction}
+							messageId={group.messages[0]?.info.id}
+						/>
+					</div>
+				))}
+
+				<div ref={messagesEndRef} data-messages-end />
+			</div>
+
+			{/* Jump to bottom button */}
+			{showScrollToBottom && (
+				<button
+					type="button"
+					onClick={() => scrollToBottom()}
+					className="absolute bottom-2 left-2 right-2 sm:left-1/2 sm:-translate-x-1/2 sm:right-auto sm:w-auto z-50 flex items-center justify-center gap-2 px-3 py-2 bg-primary hover:bg-primary/90 text-primary-foreground text-sm font-medium shadow-lg"
+				>
+					<ArrowDown className="w-4 h-4" />
+					<span className="sm:inline">Jump to bottom</span>
+				</button>
+			)}
+		</>
+	);
+});
 
 function groupMessages(messages: OpenCodeMessageWithParts[]): MessageGroup[] {
 	const groups: MessageGroup[] = [];
@@ -325,6 +527,44 @@ function TabButton({
 	);
 }
 
+// Collapsed sidebar tab button - vertical stacked icon
+function CollapsedTabButton({
+	activeView,
+	onSelect,
+	view,
+	icon: Icon,
+	label,
+	badge,
+}: {
+	activeView: ActiveView;
+	onSelect: (view: ActiveView) => void;
+	view: ActiveView;
+	icon: React.ComponentType<{ className?: string }>;
+	label: string;
+	badge?: number;
+}) {
+	return (
+		<button
+			type="button"
+			onClick={() => onSelect(view)}
+			className={cn(
+				"w-8 h-8 flex items-center justify-center relative transition-colors rounded",
+				activeView === view
+					? "bg-primary/15 text-foreground border border-primary"
+					: "text-muted-foreground border border-transparent hover:border-border hover:bg-muted/50",
+			)}
+			title={label}
+		>
+			<Icon className="w-4 h-4" />
+			{badge !== undefined && badge > 0 && (
+				<span className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-pink-500 text-white text-[9px] rounded-full flex items-center justify-center">
+					{badge}
+				</span>
+			)}
+		</button>
+	);
+}
+
 // Compact copy button for message headers
 function CompactCopyButton({
 	text,
@@ -366,7 +606,9 @@ function CompactCopyButton({
 	);
 }
 
-function parseModelRef(value: string): { providerID: string; modelID: string } | null {
+function parseModelRef(
+	value: string,
+): { providerID: string; modelID: string } | null {
 	const trimmed = value.trim();
 	const separatorIndex = trimmed.indexOf("/");
 	if (separatorIndex <= 0 || separatorIndex === trimmed.length - 1) {
@@ -378,40 +620,7 @@ function parseModelRef(value: string): { providerID: string; modelID: string } |
 	};
 }
 
-function normalizePermissionEvent(value: unknown): Permission | null {
-	if (!value || typeof value !== "object") return null;
-	const record = value as Record<string, unknown>;
-	const props =
-		typeof record.properties === "object" && record.properties !== null
-			? (record.properties as Record<string, unknown>)
-			: record;
-	const id =
-		(typeof props.id === "string" && props.id) ||
-		(typeof props.permissionID === "string" && props.permissionID) ||
-		"";
-	const type = typeof props.type === "string" ? props.type : "";
-	if (!id || !type) return null;
-	return {
-		id,
-		type,
-		sessionID: typeof props.sessionID === "string" ? props.sessionID : "",
-		title: typeof props.title === "string" ? props.title : "",
-		pattern:
-			typeof props.pattern === "string" || Array.isArray(props.pattern)
-				? (props.pattern as Permission["pattern"])
-				: undefined,
-		metadata:
-			typeof props.metadata === "object" && props.metadata !== null
-				? (props.metadata as Record<string, unknown>)
-				: {},
-		time:
-			typeof props.time === "object" && props.time !== null
-				? (props.time as Permission["time"])
-				: { created: Date.now() },
-	};
-}
-
-export function SessionsApp() {
+export const SessionsApp = memo(function SessionsApp() {
 	const {
 		locale,
 		workspaceSessions,
@@ -437,9 +646,103 @@ export function SessionsApp() {
 		setMainChatCurrentSessionId,
 		mainChatWorkspacePath,
 		setMainChatWorkspacePath,
+		scrollToMessageId,
+		setScrollToMessageId,
 	} = useApp();
 	const [messages, setMessages] = useState<OpenCodeMessageWithParts[]>([]);
-	const [messageInput, setMessageInput] = useState("");
+	// Ref to track messages for A2UI anchoring
+	const messagesRef = useRef(messages);
+	useEffect(() => {
+		messagesRef.current = messages;
+	}, [messages]);
+	// Use ref for input value to avoid re-renders on every keystroke
+	// Only sync to state when needed for deferred computations
+	const messageInputRef = useRef("");
+	const [messageInputState, setMessageInputState] = useState("");
+	// Debounce state sync to avoid blocking
+	const inputSyncTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const syncInputToState = useCallback((value: string) => {
+		messageInputRef.current = value;
+		if (inputSyncTimeoutRef.current) {
+			clearTimeout(inputSyncTimeoutRef.current);
+		}
+		// Sync to state after 100ms for deferred computations
+		inputSyncTimeoutRef.current = setTimeout(() => {
+			startTransition(() => {
+				setMessageInputState(value);
+			});
+		}, 100);
+	}, []);
+	// For backward compatibility - direct access uses ref, deferred uses state
+	const messageInput = messageInputState;
+	const setMessageInput = useCallback((value: string) => {
+		messageInputRef.current = value;
+		// Update textarea directly
+		if (chatInputRef.current) {
+			chatInputRef.current.value = value;
+		}
+		// Sync to state for derived values
+		syncInputToState(value);
+	}, [syncInputToState]);
+
+	const perfEnabled = isPerfDebugEnabled();
+	const perfReasonRef = useRef<string>("");
+	const onProfilerRender = useCallback(
+		(
+			id: string,
+			phase: "mount" | "update" | "nested-update",
+			actualDuration: number,
+			baseDuration: number,
+			startTime: number,
+			commitTime: number,
+		) => {
+			if (!perfEnabled) return;
+			if (actualDuration < 16) return;
+			console.debug("[perf] render", {
+				id,
+				phase,
+				actualDuration: Math.round(actualDuration),
+				baseDuration: Math.round(baseDuration),
+				reason: perfReasonRef.current,
+				startTime: Math.round(startTime),
+				commitTime: Math.round(commitTime),
+			});
+			perfReasonRef.current = "";
+		},
+		[perfEnabled],
+	);
+
+	const chatInputResizeRef = useRef<{
+		raf: number | null;
+		value: string;
+	}>({ raf: null, value: "" });
+
+	// Helper to set message input and resize textarea.
+	// Coalesce resize work to a single RAF to avoid reflow storms while typing.
+	const setMessageInputWithResize = useCallback((value: string) => {
+		messageInputRef.current = value;
+		if (chatInputRef.current) {
+			chatInputRef.current.value = value;
+		}
+		syncInputToState(value);
+		chatInputResizeRef.current.value = value;
+
+		if (chatInputResizeRef.current.raf !== null) return;
+
+		chatInputResizeRef.current.raf = requestAnimationFrame(() => {
+			chatInputResizeRef.current.raf = null;
+			const textarea = chatInputRef.current;
+			if (!textarea) return;
+
+			const currentValue = chatInputResizeRef.current.value;
+			// Reset to base height first, then expand if needed.
+			textarea.style.height = "36px";
+			if (currentValue) {
+				textarea.style.height = `${Math.min(textarea.scrollHeight, 200)}px`;
+			}
+		});
+	}, [syncInputToState]);
+
 	const [mainChatBaseUrl, setMainChatBaseUrl] = useState("");
 	const opencodeDirectory = useMemo(() => {
 		if (mainChatActive) return mainChatWorkspacePath ?? undefined;
@@ -462,9 +765,9 @@ export function SessionsApp() {
 		return opencodeBaseUrl;
 	}, [mainChatActive, mainChatBaseUrl, opencodeBaseUrl]);
 
-	const [opencodeModelOptions, setOpencodeModelOptions] = useState<ModelOption[]>(
-		[],
-	);
+	const [opencodeModelOptions, setOpencodeModelOptions] = useState<
+		ModelOption[]
+	>([]);
 	const [selectedModelRef, setSelectedModelRef] = useState<string | null>(null);
 	const [isModelLoading, setIsModelLoading] = useState(false);
 	const [modelQuery, setModelQuery] = useState("");
@@ -493,7 +796,11 @@ export function SessionsApp() {
 
 	useEffect(() => {
 		if (!effectiveOpencodeBaseUrl || mainChatActive) {
+			if (!effectiveOpencodeBaseUrl) {
+				console.debug("[Models] No opencode URL, clearing model options");
+			}
 			setOpencodeModelOptions([]);
+			setIsModelLoading(false);
 			return;
 		}
 		let active = true;
@@ -518,7 +825,8 @@ export function SessionsApp() {
 				options.sort((a, b) => a.label.localeCompare(b.label));
 				setOpencodeModelOptions(options);
 			})
-			.catch(() => {
+			.catch((err) => {
+				console.error("Failed to fetch models:", err);
 				if (active) setOpencodeModelOptions([]);
 			})
 			.finally(() => {
@@ -529,6 +837,13 @@ export function SessionsApp() {
 			active = false;
 		};
 	}, [effectiveOpencodeBaseUrl, opencodeDirectory, mainChatActive]);
+
+	// Main chat token usage (for mobile gauge)
+	const [mainChatTokenUsage, setMainChatTokenUsage] = useState<{
+		inputTokens: number;
+		outputTokens: number;
+		maxTokens: number;
+	}>({ inputTokens: 0, outputTokens: 0, maxTokens: 200000 });
 
 	// Per-chat state (working indicator is per-session, not global)
 	const [chatStates, setChatStates] = useState<Map<string, "idle" | "sending">>(
@@ -598,6 +913,11 @@ export function SessionsApp() {
 
 	// Per-chat draft text cache (persists across session switches AND component remounts via localStorage)
 	const previousSessionIdRef = useRef<string | null>(null);
+	// Debounce timer for saving drafts to localStorage
+	const draftSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
+		null,
+	);
+	const draftWriteTokenRef = useRef(0);
 
 	// Helper to get/set drafts from localStorage
 	const getDraft = useCallback((sessionId: string): string => {
@@ -637,31 +957,34 @@ export function SessionsApp() {
 		// Restore draft for current session when switching (or clear if none)
 		if (currId && currId !== prevId) {
 			const savedDraft = getDraft(currId);
-			setMessageInput(savedDraft);
+			messageInputRef.current = savedDraft;
+			if (chatInputRef.current) {
+				chatInputRef.current.value = savedDraft;
+			}
+			syncInputToState(savedDraft);
+			// Auto-resize after draft restoration
+			requestAnimationFrame(() => {
+				if (chatInputRef.current) {
+					const textarea = chatInputRef.current;
+					if (!savedDraft) {
+						textarea.style.height = "36px";
+					} else {
+						textarea.style.height = "36px";
+						textarea.style.height = `${Math.min(textarea.scrollHeight, 200)}px`;
+					}
+				}
+			});
 		}
 
 		previousSessionIdRef.current = currId;
-	}, [selectedChatSessionId, getDraft]);
-
-	// Auto-resize textarea when messageInput changes programmatically (e.g., draft restoration)
-	useEffect(() => {
-		if (chatInputRef.current) {
-			const textarea = chatInputRef.current;
-			if (!messageInput) {
-				// No content - reset to minimum height
-				textarea.style.height = "36px";
-			} else {
-				// Has content - calculate needed height
-				textarea.style.height = "36px"; // Reset first to get accurate scrollHeight
-				const scrollHeight = textarea.scrollHeight;
-				textarea.style.height = `${Math.min(scrollHeight, 200)}px`;
-			}
-		}
-	}, [messageInput]);
+	}, [selectedChatSessionId, getDraft, syncInputToState]);
 
 	const [isLoading, setIsLoading] = useState(true);
+	const [messagesLoading, setMessagesLoading] = useState(false);
 	const [showTimeoutError, setShowTimeoutError] = useState(false);
 	const [activeView, setActiveView] = useState<ActiveView>("chat");
+	const [expandedView, setExpandedView] = useState<ExpandedView>(null);
+	const [rightSidebarCollapsed, setRightSidebarCollapsed] = useState(false);
 	const [status, setStatus] = useState<string>("");
 	const [showScrollToBottom, setShowScrollToBottom] = useState(false);
 	const [previewFilePath, setPreviewFilePath] = useState<string | null>(null);
@@ -677,6 +1000,11 @@ export function SessionsApp() {
 	const lastScrollTopRef = useRef(0);
 	// Track if this is initial message load (for instant scroll) vs streaming (for smooth scroll)
 	const initialLoadRef = useRef(true);
+	// Cache scroll positions per session (sessionId -> scrollTop, null means bottom)
+	const scrollPositionCacheRef = useRef<Map<string, number | null>>(new Map());
+	const pendingVoiceScrollRef = useRef(false);
+	// Track sessions that have had messages loaded (to show skeleton only for sessions with history)
+	const sessionsWithMessagesRef = useRef<Set<string>>(new Set());
 	const autoAttachAttemptRef = useRef<{
 		sessionId: string;
 		workspacePath: string;
@@ -707,7 +1035,12 @@ export function SessionsApp() {
 	const [showSlashPopup, setShowSlashPopup] = useState(false);
 	const [slashCommands, setSlashCommands] =
 		useState<SlashCommand[]>(builtInCommands);
-	const slashQuery = parseSlashInput(messageInput);
+	// Use deferred value for slash parsing to avoid blocking input
+	const deferredMessageInput = useDeferredValue(messageInput);
+	const slashQuery = useMemo(
+		() => parseSlashInput(deferredMessageInput),
+		[deferredMessageInput],
+	);
 
 	// File mention popup state
 	const [showFileMentionPopup, setShowFileMentionPopup] = useState(false);
@@ -726,16 +1059,58 @@ export function SessionsApp() {
 		null,
 	);
 
-	// Clear permission state when session changes
-	// Note: Permissions are received via SSE events (permission.updated), not fetched via REST
+	// Question state (for user question/multiple choice selection)
+	const [pendingQuestions, setPendingQuestions] = useState<QuestionRequest[]>(
+		[],
+	);
+	const [activeQuestion, setActiveQuestion] = useState<QuestionRequest | null>(
+		null,
+	);
+	const [lastCompactionAt, setLastCompactionAt] = useState<number | null>(null);
+
+	// A2UI surfaces using the modular hook
+	const {
+		surfaces: a2uiSurfaces,
+		handleAction: handleA2UIAction,
+		handleDismiss: handleA2UIDismiss,
+		clearSurfaces: clearA2UISurfaces,
+	} = useA2UI(messagesRef, {
+		onSurfaceReceived: () => {
+			// Auto-scroll to show new A2UI surface
+			setTimeout(() => {
+				const endEl = document.querySelector("[data-messages-end]");
+				if (endEl) {
+					endEl.scrollIntoView({ behavior: "smooth", block: "end" });
+				} else {
+					scrollToBottom("smooth");
+				}
+			}, 200);
+		},
+	});
+
+	// Clear permission, question, and A2UI state when session changes
+	// Note: Permissions/Questions/A2UI are received via WS events, not fetched via REST
 	const prevSessionRef = useRef(selectedChatSessionId);
 	useEffect(() => {
 		if (prevSessionRef.current !== selectedChatSessionId) {
 			prevSessionRef.current = selectedChatSessionId;
 			setPendingPermissions([]);
 			setActivePermission(null);
+			setPendingQuestions([]);
+			setActiveQuestion(null);
+			clearA2UISurfaces();
+			setLastCompactionAt(null);
 		}
 	});
+
+	useEffect(() => {
+		// Reset compaction marker when switching between Main Chat and session view.
+		if (mainChatActive) {
+			setLastCompactionAt(null);
+		} else {
+			setLastCompactionAt(null);
+		}
+	}, [mainChatActive]);
 
 	// Track if we're on mobile layout (below lg breakpoint = 1024px)
 	const isMobileLayout = useIsMobile();
@@ -743,12 +1118,44 @@ export function SessionsApp() {
 	// Feature flags from backend
 	const [features, setFeatures] = useState<Features>({ mmry_enabled: false });
 
+	// Connection diagnostics for debugging (especially iOS)
+	const [connectionDiagnostics, setConnectionDiagnostics] = useState<{
+		controlPlaneUrl: string;
+		lastError: string | null;
+		lastAttempt: number | null;
+		featuresLoaded: boolean;
+	}>({
+		controlPlaneUrl: controlPlaneDirectBaseUrl(),
+		lastError: null,
+		lastAttempt: null,
+		featuresLoaded: false,
+	});
+
 	// Fetch features on mount
 	useEffect(() => {
+		const url = controlPlaneDirectBaseUrl();
+		setConnectionDiagnostics((prev) => ({
+			...prev,
+			controlPlaneUrl: url,
+			lastAttempt: Date.now(),
+		}));
+
 		getFeatures()
-			.then(setFeatures)
-			.catch(() => {
-				// Silently ignore - features will remain disabled
+			.then((f) => {
+				setFeatures(f);
+				setConnectionDiagnostics((prev) => ({
+					...prev,
+					featuresLoaded: true,
+					lastError: null,
+				}));
+			})
+			.catch((err) => {
+				// Capture error for diagnostics
+				setConnectionDiagnostics((prev) => ({
+					...prev,
+					lastError: err instanceof Error ? err.message : String(err),
+					featuresLoaded: false,
+				}));
 			});
 	}, []);
 
@@ -770,17 +1177,20 @@ export function SessionsApp() {
 	}, [opencodeBaseUrl, opencodeRequestOptions]);
 
 	// Voice mode - handles STT/TTS when voice feature is enabled
-	const handleVoiceTranscript = useCallback((text: string) => {
-		// Set the transcript as message input and send it
-		setMessageInput(text);
-		// We'll trigger send after a small delay to allow state to update
-		setTimeout(() => {
-			const sendBtn = document.querySelector(
-				"[data-voice-send]",
-			) as HTMLButtonElement;
-			if (sendBtn) sendBtn.click();
-		}, 100);
-	}, []);
+	const handleVoiceTranscript = useCallback(
+		(text: string) => {
+			// Set the transcript as message input and send it
+			setMessageInputWithResize(text);
+			// We'll trigger send after a small delay to allow state to update
+			setTimeout(() => {
+				const sendBtn = document.querySelector(
+					"[data-voice-send]",
+				) as HTMLButtonElement;
+				if (sendBtn) sendBtn.click();
+			}, 100);
+		},
+		[setMessageInputWithResize],
+	);
 
 	const voiceMode = useVoiceMode({
 		config: features.voice ?? null,
@@ -788,42 +1198,33 @@ export function SessionsApp() {
 	});
 
 	// Dictation mode - speech to text for the input field
-	// Use a ref to track the current message input for dictation appending
-	// This ensures dictation always appends to the latest value, even when user is typing
-	const messageInputRef = useRef(messageInput);
-	useEffect(() => {
-		messageInputRef.current = messageInput;
-	}, [messageInput]);
+	// messageInputRef is already defined above for uncontrolled input
 
 	const handleDictationTranscript = useCallback((text: string) => {
-		// Always append to the current value using the ref to avoid stale closures
+		// Always append to the current value using the ref to avoid stale closures.
+		// Keep the textarea stable during dictation; the dictation overlay is the input UI.
 		const currentValue = messageInputRef.current;
-		setMessageInput(currentValue ? `${currentValue} ${text}` : text);
-	}, []);
+		const newValue = currentValue ? `${currentValue} ${text}` : text;
+		messageInputRef.current = newValue;
+		if (chatInputRef.current) {
+			chatInputRef.current.value = newValue;
+		}
+		syncInputToState(newValue);
+	}, [syncInputToState]);
 
 	const dictation = useDictation({
 		config: features.voice ?? null,
 		onTranscript: handleDictationTranscript,
-		vadTimeoutMs: 3000, // Longer timeout for dictation (3s silence before auto-stop appending)
+		vadTimeoutMs: 3000,
+		autoSendOnFinal: true,
+		autoSendDelayMs: 50,
+		onAutoSend: () => {
+			const sendBtn = document.querySelector(
+				"[data-voice-send]",
+			) as HTMLButtonElement | null;
+			sendBtn?.click();
+		},
 	});
-
-	// Auto-resize textarea during dictation based on liveTranscript length
-	useEffect(() => {
-		if (!chatInputRef.current || !dictation.isActive) return;
-
-		const textarea = chatInputRef.current;
-		const transcript = dictation.liveTranscript;
-
-		if (!transcript) {
-			textarea.style.height = "36px";
-			return;
-		}
-
-		// Estimate height from transcript length (~50 chars per line at typical width)
-		const estimatedLines = Math.ceil(transcript.length / 50);
-		const estimatedHeight = Math.min(36 + (estimatedLines - 1) * 20, 200);
-		textarea.style.height = `${estimatedHeight}px`;
-	}, [dictation.isActive, dictation.liveTranscript]);
 
 	// Listen for voice commands from command palette and keyboard shortcuts
 	useVoiceCommandListener(
@@ -858,6 +1259,26 @@ export function SessionsApp() {
 		messageId: string | null;
 		sentLength: number; // How many characters we've already sent
 	}>({ messageId: null, sentLength: 0 });
+	const voiceActivationRef = useRef(false);
+
+	// Seed TTS stream state when voice mode is activated to avoid reading history
+	useEffect(() => {
+		if (voiceMode.isActive && !voiceActivationRef.current) {
+			const lastAssistant = [...messages]
+				.reverse()
+				.find((message) => message.info.role === "assistant");
+			if (lastAssistant) {
+				const fullText = getMessageText(lastAssistant.parts);
+				ttsStreamStateRef.current = {
+					messageId: lastAssistant.info.id,
+					sentLength: fullText.length,
+				};
+			} else {
+				ttsStreamStateRef.current = { messageId: null, sentLength: 0 };
+			}
+		}
+		voiceActivationRef.current = voiceMode.isActive;
+	}, [voiceMode.isActive, messages]);
 
 	// Auto-TTS: Stream assistant responses to TTS as text arrives
 	// Kokorox handles sentence segmentation internally
@@ -878,18 +1299,9 @@ export function SessionsApp() {
 			streamState.sentLength = 0;
 		}
 
-		// Extract text content from the message parts
-		const textParts = lastMessage.parts
-			.filter(
-				(p): p is OpenCodePart & { type: "text"; text: string } =>
-					p.type === "text" && typeof p.text === "string",
-			)
-			.map((p) => p.text);
+		const fullText = getMessageText(lastMessage.parts);
 
-		if (textParts.length === 0) return;
-
-		// Get full text so far
-		const fullText = textParts.join("\n\n");
+		if (!fullText) return;
 
 		// Nothing new to send
 		if (fullText.length <= streamState.sentLength) return;
@@ -973,8 +1385,50 @@ export function SessionsApp() {
 	// Handler for previewing a file from FileTreeView
 	const handlePreviewFile = useCallback((filePath: string) => {
 		setPreviewFilePath(filePath);
-		setActiveView("preview");
+		setActiveView("files");
 	}, []);
+
+	const closePreview = useCallback(() => {
+		setPreviewFilePath(null);
+		setExpandedView((prev) => (prev === "preview" ? null : prev));
+	}, []);
+
+	const toggleExpandedView = useCallback(
+		(view: Exclude<ExpandedView, null>) => {
+			if (isMobileLayout) return;
+			if (view === "preview" && !previewFilePath) return;
+			if (view === "memories" && !features.mmry_enabled) return;
+			setExpandedView((prev) => {
+				const next = prev === view ? null : view;
+				if (next) {
+					setRightSidebarCollapsed(false);
+				}
+				return next;
+			});
+		},
+		[isMobileLayout, previewFilePath, features.mmry_enabled],
+	);
+
+	useEffect(() => {
+		if (!previewFilePath && expandedView === "preview") {
+			setExpandedView(null);
+		}
+	}, [previewFilePath, expandedView]);
+
+	const lastPreviewSessionKeyRef = useRef<string | null>(null);
+	useEffect(() => {
+		const nextKey = mainChatActive ? "main" : selectedChatSessionId || "none";
+		if (lastPreviewSessionKeyRef.current === null) {
+			lastPreviewSessionKeyRef.current = nextKey;
+			return;
+		}
+		if (lastPreviewSessionKeyRef.current !== nextKey) {
+			lastPreviewSessionKeyRef.current = nextKey;
+			if (previewFilePath) {
+				setPreviewFilePath(null);
+			}
+		}
+	}, [mainChatActive, previewFilePath, selectedChatSessionId]);
 
 	// Handler for opening a file in canvas from FileTreeView
 	const handleOpenInCanvas = useCallback((filePath: string) => {
@@ -1145,6 +1599,56 @@ export function SessionsApp() {
 		}
 	}, [pendingPermissions]);
 
+	// Question response handler
+	const handleQuestionReply = useCallback(
+		async (requestId: string, answers: QuestionAnswer[]) => {
+			if (!effectiveOpencodeBaseUrl) {
+				throw new Error("No opencode connection");
+			}
+			await replyToQuestion(
+				effectiveOpencodeBaseUrl,
+				requestId,
+				answers,
+				opencodeRequestOptions,
+			);
+			// Remove from pending list
+			setPendingQuestions((prev) => prev.filter((q) => q.id !== requestId));
+		},
+		[effectiveOpencodeBaseUrl, opencodeRequestOptions],
+	);
+
+	// Question reject handler
+	const handleQuestionReject = useCallback(
+		async (requestId: string) => {
+			if (!effectiveOpencodeBaseUrl) {
+				throw new Error("No opencode connection");
+			}
+			await rejectQuestion(
+				effectiveOpencodeBaseUrl,
+				requestId,
+				opencodeRequestOptions,
+			);
+			// Remove from pending list
+			setPendingQuestions((prev) => prev.filter((q) => q.id !== requestId));
+		},
+		[effectiveOpencodeBaseUrl, opencodeRequestOptions],
+	);
+
+	// Show next question when current one is dismissed
+	const handleQuestionDismiss = useCallback(() => {
+		setActiveQuestion((current) => {
+			const next = pendingQuestions.find((q) => q.id !== current?.id);
+			return next || null;
+		});
+	}, [pendingQuestions]);
+
+	// Open question dialog when clicking the banner
+	const handleQuestionBannerClick = useCallback(() => {
+		if (pendingQuestions.length > 0) {
+			setActiveQuestion(pendingQuestions[0]);
+		}
+	}, [pendingQuestions]);
+
 	const copy = useMemo(
 		() => ({
 			de: {
@@ -1203,11 +1707,11 @@ export function SessionsApp() {
 	const canResumeWithoutMessage = useMemo(() => {
 		if (!selectedChatSessionId) return false;
 		if (!resumeWorkspacePath) return false;
-		if (messageInput.trim()) return false;
+		if (deferredMessageInput.trim()) return false;
 		if (pendingUploads.length > 0) return false;
 		return !opencodeBaseUrl;
 	}, [
-		messageInput,
+		deferredMessageInput,
 		opencodeBaseUrl,
 		pendingUploads.length,
 		resumeWorkspacePath,
@@ -1357,19 +1861,39 @@ export function SessionsApp() {
 	]);
 
 	// Merge messages to prevent flickering - preserves existing message references when unchanged
+	// Also preserves optimistic (temp-*) messages that haven't been confirmed yet
 	const mergeMessages = useCallback(
 		(
 			prev: OpenCodeMessageWithParts[],
 			next: OpenCodeMessageWithParts[],
 		): OpenCodeMessageWithParts[] => {
 			if (prev.length === 0) return next;
-			if (next.length === 0) return next;
+			if (next.length === 0) {
+				// Keep optimistic messages even if server returns empty
+				const optimistic = prev.filter((m) => m.info.id.startsWith("temp-"));
+				return optimistic.length > 0 ? optimistic : next;
+			}
 
 			// Build a map of existing messages by ID for quick lookup
 			const prevById = new Map(prev.map((m) => [m.info.id, m]));
 
+			// Preserve optimistic messages (temp-*) that don't have corresponding real messages yet
+			// Check if any next message has similar content to optimistic ones
+			const optimisticMessages = prev.filter((m) => m.info.id.startsWith("temp-"));
+			const nextIds = new Set(next.map((m) => m.info.id));
+			const pendingOptimistic = optimisticMessages.filter((optMsg) => {
+				// Keep optimistic message if there's no user message with the same text in next
+				const optText = optMsg.parts.find((p) => p.type === "text")?.text || "";
+				const hasMatchingRealMessage = next.some((m) => {
+					if (m.info.role !== "user") return false;
+					const realText = m.parts.find((p) => p.type === "text")?.text || "";
+					return realText === optText;
+				});
+				return !hasMatchingRealMessage;
+			});
+
 			// Merge: keep existing reference if message hasn't changed, otherwise use new one
-			return next.map((newMsg) => {
+			const merged = next.map((newMsg) => {
 				const existing = prevById.get(newMsg.info.id);
 				if (!existing) return newMsg;
 
@@ -1403,6 +1927,9 @@ export function SessionsApp() {
 				// No significant changes detected, keep existing reference
 				return existing;
 			});
+
+			// Add pending optimistic messages at the end
+			return pendingOptimistic.length > 0 ? [...merged, ...pendingOptimistic] : merged;
 		},
 		[],
 	);
@@ -1456,34 +1983,10 @@ export function SessionsApp() {
 	}, [mainChatAssistantName]);
 
 	const loadMessages = useCallback(async () => {
-		// Main Chat threaded view - shows all sessions combined
+		// Main Chat Pi view handles its own messages via usePiChat - skip loading here
 		if (mainChatActive) {
 			loadingSessionIdRef.current = "main-chat";
-			if (mainChatAssistantName) {
-				try {
-					const threadedMessages = await loadMainChatThreadedMessages();
-					// Check if we're still on main chat (session may have changed during async load)
-					if (loadingSessionIdRef.current !== "main-chat") return;
-					// Use merge to preserve optimistic messages (temp-* IDs)
-					startTransition(() => {
-						setMessages((prev) => {
-							// Keep any optimistic messages (temp-* IDs) that aren't in the loaded messages
-							const optimisticMessages = prev.filter((m) =>
-								m.info.id.startsWith("temp-"),
-							);
-							if (optimisticMessages.length === 0) {
-								return threadedMessages;
-							}
-							// Merge: loaded messages + optimistic messages at the end
-							return [...threadedMessages, ...optimisticMessages];
-						});
-					});
-				} catch (err) {
-					setStatus((err as Error).message);
-				}
-			} else {
-				setMessages([]);
-			}
+			// Don't load messages - MainChatPiView has its own cached message loading
 			return;
 		}
 
@@ -1492,6 +1995,7 @@ export function SessionsApp() {
 		// Capture session ID at start to detect stale responses
 		const targetSessionId = selectedChatSessionId;
 		loadingSessionIdRef.current = targetSessionId;
+		setMessagesLoading(true);
 
 		try {
 			let loadedMessages: OpenCodeMessageWithParts[] = [];
@@ -1534,12 +2038,19 @@ export function SessionsApp() {
 				return;
 			}
 
+			// Track that this session has messages (for skeleton display logic)
+			if (loadedMessages.length > 0) {
+				sessionsWithMessagesRef.current.add(targetSessionId);
+			}
+
 			// Use merge to prevent flickering when updating
 			startTransition(() => {
 				setMessages((prev) => mergeMessages(prev, loadedMessages));
 			});
 		} catch (err) {
 			setStatus((err as Error).message);
+		} finally {
+			setMessagesLoading(false);
 		}
 	}, [
 		opencodeBaseUrl,
@@ -1548,8 +2059,6 @@ export function SessionsApp() {
 		isHistoryOnlySession,
 		mergeMessages,
 		mainChatActive,
-		mainChatAssistantName,
-		loadMainChatThreadedMessages,
 	]);
 
 	const [eventsTransportMode, setEventsTransportMode] = useState<
@@ -1620,11 +2129,37 @@ export function SessionsApp() {
 		setShowScrollToBottom(false);
 	}, []);
 
+	// Force auto-scroll while voice mode is active (even if user previously scrolled up)
+	useEffect(() => {
+		if (!voiceMode.isActive) return;
+
+		autoScrollEnabledRef.current = true;
+		setShowScrollToBottom(false);
+		pendingVoiceScrollRef.current = true;
+
+		if (selectedChatSessionId) {
+			scrollPositionCacheRef.current.set(selectedChatSessionId, null);
+		}
+
+		if (messagesContainerRef.current) {
+			scrollToBottom("auto");
+			pendingVoiceScrollRef.current = false;
+		}
+	}, [voiceMode.isActive, selectedChatSessionId, scrollToBottom]);
+
+	// Apply pending voice-mode auto-scroll when returning to chat view
+	useEffect(() => {
+		if (activeView !== "chat") return;
+		if (!pendingVoiceScrollRef.current) return;
+		scrollToBottom("auto");
+		pendingVoiceScrollRef.current = false;
+	}, [activeView, scrollToBottom]);
+
 	useEffect(() => {
 		loadMessages();
 	}, [loadMessages]);
 
-	// Handle scroll events to show/hide scroll to bottom button
+	// Handle scroll events to show/hide scroll to bottom button and cache position
 	const handleScroll = useCallback(() => {
 		const container = messagesContainerRef.current;
 		if (!container) return;
@@ -1648,18 +2183,33 @@ export function SessionsApp() {
 			autoScrollEnabledRef.current = true;
 		}
 
+		// Cache scroll position for current session
+		if (selectedChatSessionId) {
+			if (isAtBottom) {
+				// At bottom - clear cached position so next load scrolls to bottom
+				scrollPositionCacheRef.current.set(selectedChatSessionId, null);
+			} else {
+				// Save scroll position
+				scrollPositionCacheRef.current.set(selectedChatSessionId, scrollTop);
+			}
+		}
+
 		// Show button when not at bottom (use small threshold for better UX)
 		setShowScrollToBottom(distanceFromBottom > 100);
-	}, []);
+	}, [selectedChatSessionId]);
 
 	const messageCount = messages.length;
 
-	// Check scroll position when messages change
+	// Check scroll position when messages change or content might have resized
 	useEffect(() => {
 		if (messageCount === 0) {
 			setShowScrollToBottom(false);
+			return;
 		}
-		handleScroll();
+		// Use RAF to wait for DOM update before checking scroll position
+		requestAnimationFrame(() => {
+			handleScroll();
+		});
 	}, [messageCount, handleScroll]);
 
 	// Reset state when switching sessions
@@ -1668,24 +2218,38 @@ export function SessionsApp() {
 
 		if (lastSessionIdRef.current !== selectedChatSessionId) {
 			lastSessionIdRef.current = selectedChatSessionId;
-			autoScrollEnabledRef.current = true;
+			// Check if we have a cached scroll position for this session
+			const cachedPosition = scrollPositionCacheRef.current.get(
+				selectedChatSessionId,
+			);
+			// Enable auto-scroll only if no cached position (user was at bottom)
+			autoScrollEnabledRef.current =
+				cachedPosition === null || cachedPosition === undefined;
 			initialLoadRef.current = true;
 		}
 	}, [selectedChatSessionId]);
 
-	// Position at bottom synchronously before paint (no visible jump)
+	// Position at cached position or bottom synchronously before paint (no visible jump)
 	useLayoutEffect(() => {
 		if (messages.length === 0) return;
 
 		const container = messagesContainerRef.current;
 		if (!container) return;
 
-		if (initialLoadRef.current) {
-			// Set scroll position directly - no animation, no visible jump
-			container.scrollTop = container.scrollHeight;
+		if (initialLoadRef.current && selectedChatSessionId) {
+			const cachedPosition = scrollPositionCacheRef.current.get(
+				selectedChatSessionId,
+			);
+			if (cachedPosition !== null && cachedPosition !== undefined) {
+				// Restore user's scroll position instantly
+				container.scrollTop = cachedPosition;
+			} else {
+				// Scroll to bottom instantly (no animation)
+				container.scrollTop = container.scrollHeight;
+			}
 			initialLoadRef.current = false;
 		}
-	}, [messages]);
+	}, [messages, selectedChatSessionId]);
 
 	// Smooth scroll for new messages during conversation (after initial load)
 	useEffect(() => {
@@ -1693,8 +2257,41 @@ export function SessionsApp() {
 		if (!autoScrollEnabledRef.current) return;
 		if (initialLoadRef.current) return; // Skip - handled by useLayoutEffect
 
-		scrollToBottom("smooth");
+		// Use RAF to ensure DOM has updated before scrolling
+		requestAnimationFrame(() => {
+			if (autoScrollEnabledRef.current) {
+				scrollToBottom("smooth");
+			}
+		});
 	}, [messages, scrollToBottom]);
+
+	// Scroll to message when scrollToMessageId changes (from search results)
+	useEffect(() => {
+		if (!scrollToMessageId || !messagesContainerRef.current) return;
+
+		// Find the message element with this ID
+		const messageEl = messagesContainerRef.current.querySelector(
+			`[data-message-id="${scrollToMessageId}"]`,
+		);
+
+		if (messageEl) {
+			// Disable auto-scroll to prevent jumping back to bottom
+			autoScrollEnabledRef.current = false;
+
+			// Scroll to the message
+			requestAnimationFrame(() => {
+				messageEl.scrollIntoView({ behavior: "auto", block: "center" });
+				// Add highlight animation
+				messageEl.classList.add("search-highlight");
+				setTimeout(() => {
+					messageEl.classList.remove("search-highlight");
+				}, 2000);
+			});
+
+			// Clear the scroll target
+			setScrollToMessageId(null);
+		}
+	}, [scrollToMessageId, setScrollToMessageId]);
 
 	// Event handler for session events (shared between WebSocket and SSE)
 	const handleSessionEvent = useCallback(
@@ -1711,26 +2308,32 @@ export function SessionsApp() {
 					mode?: "sse" | "polling" | "ws" | "reconnecting";
 				} | null;
 				if (props?.mode) setEventsTransportMode(props.mode);
-				if (effectiveOpencodeBaseUrl && activeSessionId) {
-					invalidateMessageCache(
-						effectiveOpencodeBaseUrl,
-						activeSessionId,
-						opencodeDirectory,
-					);
-					requestMessageRefresh(250);
-				}
+				// Defer refresh to avoid blocking message handler
+				startTransition(() => {
+					if (effectiveOpencodeBaseUrl && activeSessionId) {
+						invalidateMessageCache(
+							effectiveOpencodeBaseUrl,
+							activeSessionId,
+							opencodeDirectory,
+						);
+						requestMessageRefresh(250);
+					}
+				});
 				return;
 			}
 
 			if (eventType === "server.connected") {
-				if (effectiveOpencodeBaseUrl && activeSessionId) {
-					invalidateMessageCache(
-						effectiveOpencodeBaseUrl,
-						activeSessionId,
-						opencodeDirectory,
-					);
-					requestMessageRefresh(250);
-				}
+				// Defer refresh to avoid blocking message handler
+				startTransition(() => {
+					if (effectiveOpencodeBaseUrl && activeSessionId) {
+						invalidateMessageCache(
+							effectiveOpencodeBaseUrl,
+							activeSessionId,
+							opencodeDirectory,
+						);
+						requestMessageRefresh(250);
+					}
+				});
 			}
 
 			if (eventType === "session.unavailable") {
@@ -1756,24 +2359,29 @@ export function SessionsApp() {
 
 			if (eventType === "session.idle") {
 				setChatState("idle");
-				// Invalidate cache and force refresh on idle
-				if (effectiveOpencodeBaseUrl && activeSessionId) {
-					invalidateMessageCache(
-						effectiveOpencodeBaseUrl,
-						activeSessionId,
-						opencodeDirectory,
-					);
-				}
-				loadMessages();
-				refreshOpencodeSessions();
-				// Refresh chat history to pick up auto-generated session titles
-				refreshChatHistory();
+				// Invalidate cache and force refresh on idle - defer to avoid blocking
+				startTransition(() => {
+					if (effectiveOpencodeBaseUrl && activeSessionId) {
+						invalidateMessageCache(
+							effectiveOpencodeBaseUrl,
+							activeSessionId,
+							opencodeDirectory,
+						);
+					}
+					loadMessages();
+					refreshOpencodeSessions();
+					// Refresh chat history to pick up auto-generated session titles
+					refreshChatHistory();
+				});
 			} else if (eventType === "session.busy") {
 				setChatState("sending");
 			}
 
 			// Handle permission events
-			if (eventType === "permission.updated" || eventType === "permission.created") {
+			if (
+				eventType === "permission.updated" ||
+				eventType === "permission.created"
+			) {
 				const permission = normalizePermissionEvent(event.properties);
 				if (!permission) return;
 				console.log("[Permission] Received permission request:", permission);
@@ -1804,24 +2412,43 @@ export function SessionsApp() {
 				);
 			}
 
-			// Handle session errors
-			if (eventType === "session.error") {
+			// Handle question events (user question / multiple choice)
+			if (eventType === "question.asked") {
+				const props = event.properties as QuestionRequest | undefined;
+				if (!props?.id || !props?.questions) return;
+				console.log("[Question] Received question request:", props);
+				setPendingQuestions((prev) => {
+					// Avoid duplicates
+					if (prev.some((q) => q.id === props.id)) return prev;
+					return [...prev, props];
+				});
+				// Auto-show the first question dialog if none is active
+				setActiveQuestion((current) => current || props);
+			} else if (
+				eventType === "question.replied" ||
+				eventType === "question.rejected"
+			) {
 				const props = event.properties as Record<string, unknown> | undefined;
-				const error =
-					props && typeof props.error === "object" && props.error !== null
-						? (props.error as {
-								name?: string;
-								data?: { message?: string };
-							})
-						: null;
-				const errorName =
-					(typeof props?.error_type === "string" && props.error_type) ||
-					error?.name ||
-					"Error";
-				const errorMessage =
-					(typeof props?.message === "string" && props.message) ||
-					error?.data?.message ||
-					"An unknown error occurred";
+				const requestID =
+					(typeof props?.requestID === "string" && props.requestID) ||
+					(typeof props?.id === "string" && props.id) ||
+					"";
+				if (!requestID) return;
+				console.log("[Question] Question resolved:", requestID);
+				setPendingQuestions((prev) => prev.filter((q) => q.id !== requestID));
+				setActiveQuestion((current) =>
+					current?.id === requestID ? null : current,
+				);
+			}
+
+			// Handle session errors
+			if (eventType === "session.error" || eventType === "error") {
+				const errorInfo =
+					typeof event.properties === "string"
+						? { name: "Error", message: event.properties }
+						: parseSessionErrorEvent(event.properties);
+				const errorName = errorInfo?.name ?? "Error";
+				const errorMessage = errorInfo?.message ?? "An unknown error occurred";
 				console.error("[Session Error]", errorName, errorMessage);
 				toast.error(errorMessage, {
 					description: errorName !== "UnknownError" ? errorName : undefined,
@@ -1831,18 +2458,77 @@ export function SessionsApp() {
 				setChatState("idle");
 			}
 
+			if (eventType === "compaction.end" || eventType === "compaction_end") {
+				const props = event.properties as { success?: boolean } | null;
+				if (!props || props.success !== false) {
+					// Defer non-critical UI update
+					startTransition(() => {
+						setLastCompactionAt(Date.now());
+					});
+				}
+			}
+
 			// Refresh messages on any message event
 			if (eventType?.startsWith("message")) {
-				// Invalidate cache when messages change
-				if (effectiveOpencodeBaseUrl && activeSessionId) {
-					invalidateMessageCache(
-						effectiveOpencodeBaseUrl,
-						activeSessionId,
-						opencodeDirectory,
+				// Defer cache invalidation and refresh to avoid blocking message handler
+				startTransition(() => {
+					// Invalidate cache when messages change
+					if (effectiveOpencodeBaseUrl && activeSessionId) {
+						invalidateMessageCache(
+							effectiveOpencodeBaseUrl,
+							activeSessionId,
+							opencodeDirectory,
+						);
+					}
+					// Coalesce refreshes to avoid hammering the server during streaming updates.
+					requestMessageRefresh(1000);
+				});
+			}
+
+			// Handle A2UI surface events
+			if (eventType === "a2ui.surface") {
+				const props = event.properties as {
+					sessionId?: string;
+					surfaceId?: string;
+					messages?: unknown[];
+					blocking?: boolean;
+					requestId?: string;
+				} | null;
+				if (props?.surfaceId && props?.messages) {
+					console.log("[A2UI] Surface received:", props.surfaceId, props);
+					setA2uiSurfaces((prev) => {
+						// Replace existing surface with same ID or add new
+						const existing = prev.findIndex(
+							(s) => s.surfaceId === props.surfaceId,
+						);
+						const newSurface: A2UISurface = {
+							surfaceId: props.surfaceId,
+							sessionId: props.sessionId ?? "",
+							messages: props.messages as A2UIMessage[],
+							blocking: props.blocking ?? false,
+							requestId: props.requestId,
+						};
+						if (existing >= 0) {
+							const updated = [...prev];
+							updated[existing] = newSurface;
+							return updated;
+						}
+						return [...prev, newSurface];
+					});
+				}
+			}
+
+			// Handle A2UI action resolved (remove blocking surface)
+			if (eventType === "a2ui.action_resolved") {
+				const props = event.properties as {
+					requestId?: string;
+				} | null;
+				if (props?.requestId) {
+					console.log("[A2UI] Action resolved:", props.requestId);
+					setA2uiSurfaces((prev) =>
+						prev.filter((s) => s.requestId !== props.requestId),
 					);
 				}
-				// Coalesce refreshes to avoid hammering the server during streaming updates.
-				requestMessageRefresh(1000);
 			}
 		},
 		[
@@ -1862,6 +2548,7 @@ export function SessionsApp() {
 	);
 
 	// Subscribe to session events (uses WebSocket when enabled, SSE otherwise)
+	// Disabled when Main Chat is active - MainChatPiView handles its own events
 	const { transportMode: sessionTransportMode } = useSessionEvents(
 		handleSessionEvent,
 		{
@@ -1870,7 +2557,8 @@ export function SessionsApp() {
 			opencodeBaseUrl: effectiveOpencodeBaseUrl,
 			opencodeDirectory,
 			activeSessionId,
-			enabled: !!effectiveOpencodeBaseUrl && !!activeSessionId,
+			enabled:
+				!mainChatActive && !!effectiveOpencodeBaseUrl && !!activeSessionId,
 		},
 	);
 
@@ -1879,10 +2567,14 @@ export function SessionsApp() {
 		setEventsTransportMode(sessionTransportMode);
 	}, [sessionTransportMode]);
 
+	// A2UI events are now handled by the useA2UI hook
+
 	// Poll for message updates while assistant is working.
 	// This runs regardless of SSE status since SSE is unreliable through the proxy.
+	// Disabled when Main Chat is active - MainChatPiView handles its own polling.
 	useEffect(() => {
 		if (
+			mainChatActive ||
 			chatState !== "sending" ||
 			!effectiveOpencodeBaseUrl ||
 			!activeSessionId
@@ -1945,6 +2637,7 @@ export function SessionsApp() {
 			if (timer) window.clearTimeout(timer);
 		};
 	}, [
+		mainChatActive,
 		chatState,
 		effectiveOpencodeBaseUrl,
 		opencodeDirectory,
@@ -2022,6 +2715,13 @@ export function SessionsApp() {
 		setMessages([]); // Clear messages immediately on session switch
 		// Invalidate any in-flight loadMessages requests for the old session
 		loadingSessionIdRef.current = selectedChatSessionId ?? null;
+		// Set loading state for sessions that have had messages before
+		if (
+			selectedChatSessionId &&
+			sessionsWithMessagesRef.current.has(selectedChatSessionId)
+		) {
+			setMessagesLoading(true);
+		}
 		if (!selectedChatSessionId) {
 			return;
 		}
@@ -2036,6 +2736,46 @@ export function SessionsApp() {
 	}, [messageGroups, visibleGroupCount]);
 
 	const hasHiddenMessages = messageGroups.length > visibleGroupCount;
+
+	// Map A2UI surfaces to their corresponding message group
+	// A2UI surfaces are attached to the message group containing their anchor message
+	const a2uiByGroupIndex = useMemo(() => {
+		const map = new Map<number, typeof a2uiSurfaces>();
+		for (const surface of a2uiSurfaces) {
+			// Find the group containing the anchor message ID
+			let targetGroupIndex = -1;
+			if (surface.anchorMessageId) {
+				for (let i = 0; i < visibleGroups.length; i++) {
+					const group = visibleGroups[i];
+					if (
+						group.messages.some((m) => m.info.id === surface.anchorMessageId)
+					) {
+						targetGroupIndex = i;
+						break;
+					}
+				}
+			}
+			// If no anchor or not found, attach to the last assistant group
+			if (targetGroupIndex === -1) {
+				for (let i = visibleGroups.length - 1; i >= 0; i--) {
+					if (visibleGroups[i].role === "assistant") {
+						targetGroupIndex = i;
+						break;
+					}
+				}
+			}
+			// Fallback to last group
+			if (targetGroupIndex === -1 && visibleGroups.length > 0) {
+				targetGroupIndex = visibleGroups.length - 1;
+			}
+			if (targetGroupIndex >= 0) {
+				const existing = map.get(targetGroupIndex) || [];
+				existing.push(surface);
+				map.set(targetGroupIndex, existing);
+			}
+		}
+		return map;
+	}, [visibleGroups, a2uiSurfaces]);
 
 	const loadMoreMessages = useCallback(() => {
 		setVisibleGroupCount((prev) => Math.min(prev + 20, messageGroups.length));
@@ -2060,7 +2800,21 @@ export function SessionsApp() {
 		}
 
 		// Only count tokens from messages after the last compaction
-		const startIndex = lastCompactionIndex >= 0 ? lastCompactionIndex + 1 : 0;
+		let startIndex = lastCompactionIndex >= 0 ? lastCompactionIndex + 1 : 0;
+		if (lastCompactionAt) {
+			const timeIndex = messages.findIndex((msg) => {
+				const created = msg.info.time?.created;
+				return typeof created === "number" && created >= lastCompactionAt;
+			});
+			if (timeIndex >= 0) {
+				startIndex = Math.max(startIndex, timeIndex);
+			} else if (messages.length > 0) {
+				const lastCreated = messages[messages.length - 1]?.info.time?.created;
+				if (typeof lastCreated === "number" && lastCreated < lastCompactionAt) {
+					startIndex = messages.length;
+				}
+			}
+		}
 
 		for (let i = startIndex; i < messages.length; i++) {
 			const msg = messages[i];
@@ -2079,7 +2833,7 @@ export function SessionsApp() {
 		}
 
 		return { inputTokens, outputTokens, providerID, modelID };
-	}, [messages]);
+	}, [lastCompactionAt, messages]);
 
 	// Get context limit from models.dev based on current model
 	const contextLimit = useModelContextLimit(
@@ -2129,10 +2883,13 @@ export function SessionsApp() {
 			// Send opencode command (e.g., /init, /undo, /redo, or custom commands)
 			if (!selectedChatSessionId || !opencodeBaseUrl) return;
 
-			setMessageInput("");
+			// Clear input
+			messageInputRef.current = "";
 			if (chatInputRef.current) {
+				chatInputRef.current.value = "";
 				chatInputRef.current.style.height = "36px";
 			}
+			syncInputToState("");
 
 			try {
 				// Command name without slash, args separately
@@ -2155,6 +2912,7 @@ export function SessionsApp() {
 			opencodeBaseUrl,
 			opencodeRequestOptions,
 			slashQuery.args,
+			syncInputToState,
 		],
 	);
 
@@ -2337,8 +3095,13 @@ export function SessionsApp() {
 		// In Main Chat mode, we might need to create a session first
 		// In regular mode, we need a session ID
 		if (!mainChatActive && !selectedChatSessionId) return;
+
+		// Use the ref value directly to avoid race conditions with debounced state sync.
+		// The user may type and press Enter before the 100ms debounce fires.
+		const currentInput = messageInputRef.current.trim();
+
 		if (
-			!messageInput.trim() &&
+			!currentInput &&
 			pendingUploads.length === 0 &&
 			fileAttachments.length === 0
 		)
@@ -2357,7 +3120,7 @@ export function SessionsApp() {
 		const currentFileAttachments = [...fileAttachments];
 
 		// Build message text with uploaded file paths
-		let messageText = messageInput.trim();
+		let messageText = currentInput;
 		if (pendingUploads.length > 0) {
 			const uploadPrefix =
 				pendingUploads.length === 1
@@ -2372,11 +3135,15 @@ export function SessionsApp() {
 		const isShellCommand = messageText.startsWith("!");
 		const shellCommand = isShellCommand ? messageText.slice(1).trim() : "";
 
-		setMessageInput("");
-		// Reset textarea height to minimum
-		if (chatInputRef.current) {
-			chatInputRef.current.style.height = "36px";
+		// Cancel any pending draft save and invalidate stale writes
+		if (draftSaveTimeoutRef.current) {
+			clearTimeout(draftSaveTimeoutRef.current);
+			draftSaveTimeoutRef.current = null;
 		}
+		draftWriteTokenRef.current++;
+
+		// Clear input and reset textarea height via the resize handler
+		setMessageInputWithResize("");
 		setPendingUploads([]);
 		setFileAttachments([]);
 		setChatState("sending");
@@ -2580,7 +3347,20 @@ export function SessionsApp() {
 				targetSessionId,
 				effectiveDirectory,
 			);
-			loadMessages();
+			
+			// Fetch messages directly using the base URL we just used (not loadMessages which
+			// uses stale state values that haven't updated yet after resuming a session)
+			try {
+				const freshMessages = await fetchMessages(
+					effectiveBaseUrl,
+					targetSessionId,
+					{ skipCache: true, directory: effectiveDirectory },
+				);
+				setMessages((prev) => mergeMessages(prev, freshMessages));
+			} catch {
+				// Fallback to disk history if live fetch fails
+				loadMessages();
+			}
 		} catch (err) {
 			setStatus((err as Error).message);
 			setChatState("idle");
@@ -2589,6 +3369,104 @@ export function SessionsApp() {
 		}
 		// Don't set idle here - wait for SSE session.idle event
 	};
+
+	// Ref to hold latest handleSend for stable callback
+	const handleSendRef = useRef(handleSend);
+	handleSendRef.current = handleSend;
+
+	// Memoized input change handler to prevent re-renders
+	const handleInputChange = useCallback(
+		(e: React.ChangeEvent<HTMLTextAreaElement>) => {
+			const value = e.target.value;
+
+			// Update ref immediately for responsive feel
+			messageInputRef.current = value;
+
+			// Keep textarea stable during dictation to avoid reflow storms.
+			if (dictation.isActive) {
+				e.target.style.height = "36px";
+				syncInputToState(value);
+			} else {
+				setMessageInputWithResize(value);
+			}
+
+			// Debounce draft persistence to localStorage (300ms)
+			if (draftSaveTimeoutRef.current) {
+				clearTimeout(draftSaveTimeoutRef.current);
+			}
+			const draftToken = ++draftWriteTokenRef.current;
+			draftSaveTimeoutRef.current = setTimeout(() => {
+				if (draftWriteTokenRef.current !== draftToken) return;
+				if (selectedChatSessionId) {
+					setDraft(selectedChatSessionId, value);
+				}
+			}, 300);
+
+			// Defer popup state updates to avoid blocking input
+			startTransition(() => {
+				// Show slash popup when typing /
+				if (value.startsWith("/")) {
+					setShowSlashPopup(true);
+					setShowFileMentionPopup(false);
+				} else {
+					setShowSlashPopup(false);
+				}
+				// Show file mention popup when typing @
+				const atMatch = value.match(/@([^\s]*)$/);
+				if (atMatch && !value.startsWith("/")) {
+					setShowFileMentionPopup(true);
+					setFileMentionQuery(atMatch[1]);
+				} else {
+					setShowFileMentionPopup(false);
+					setFileMentionQuery("");
+				}
+			});
+		},
+		[
+			selectedChatSessionId,
+			setDraft,
+			setMessageInputWithResize,
+			dictation.isActive,
+			syncInputToState,
+		],
+	);
+
+	// Memoized key down handler to prevent re-renders
+	const handleInputKeyDown = useCallback(
+		(e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+			// Let slash popup handle arrow keys, enter, tab when open
+			if (showSlashPopup && slashQuery.isSlash && !slashQuery.args) {
+				if (
+					["ArrowDown", "ArrowUp", "Enter", "Tab", "Escape"].includes(e.key)
+				) {
+					// Popup will handle these via its own event listener
+					return;
+				}
+			}
+			// Let file mention popup handle its keys
+			if (showFileMentionPopup) {
+				if (
+					["ArrowDown", "ArrowUp", "Enter", "Tab", "Escape"].includes(e.key)
+				) {
+					// Popup handles via its own event listener
+					return;
+				}
+			}
+			if (e.key === "Enter" && !e.shiftKey) {
+				e.preventDefault();
+				handleSendRef.current();
+				// Reset textarea height after sending
+				if (chatInputRef.current) {
+					chatInputRef.current.style.height = "auto";
+				}
+			}
+			if (e.key === "Escape") {
+				setShowSlashPopup(false);
+				setShowFileMentionPopup(false);
+			}
+		},
+		[showSlashPopup, slashQuery.isSlash, slashQuery.args, showFileMentionPopup],
+	);
 
 	const handleResume = async () => {
 		if (!selectedChatSessionId || !resumeWorkspacePath) return;
@@ -2686,6 +3564,114 @@ export function SessionsApp() {
 		</div>
 	);
 
+	const showExpandedPreview =
+		expandedView === "preview" && Boolean(previewFilePath);
+	const showExpandedCanvas = expandedView === "canvas";
+	const showExpandedMemories =
+		expandedView === "memories" && features.mmry_enabled;
+	const showExpandedTerminal = expandedView === "terminal";
+	const chatInSidebar = !isMobileLayout && expandedView !== null;
+
+	const expandedPanel = (
+		<div className="flex flex-col h-full overflow-hidden">
+			{showExpandedPreview && (
+				<Suspense fallback={viewLoadingFallback}>
+					<PreviewView
+						filePath={previewFilePath}
+						workspacePath={resumeWorkspacePath}
+						onClose={closePreview}
+						onToggleExpand={() => toggleExpandedView("preview")}
+						isExpanded
+						showExpand={!isMobileLayout}
+					/>
+				</Suspense>
+			)}
+			{showExpandedCanvas && (
+				<div className="flex flex-col h-full overflow-hidden">
+					{!isMobileLayout && (
+						<div className="flex items-center justify-between px-2 py-1 border-b border-border bg-muted/30">
+							<span className="text-xs text-muted-foreground">Canvas</span>
+							<button
+								type="button"
+								onClick={() => toggleExpandedView("canvas")}
+								className="p-1 text-muted-foreground hover:text-foreground hover:bg-muted/50"
+								aria-label="Collapse canvas"
+							>
+								<Minimize2 className="w-3.5 h-3.5" />
+							</button>
+						</div>
+					)}
+					<div className="flex-1 min-h-0">
+						<Suspense fallback={viewLoadingFallback}>
+							<CanvasView
+								workspacePath={resumeWorkspacePath}
+								initialImagePath={previewFilePath}
+								onSaveAndAddToChat={handleCanvasSaveAndAddToChat}
+							/>
+						</Suspense>
+					</div>
+				</div>
+			)}
+			{showExpandedMemories && (
+				<div className="flex flex-col h-full overflow-hidden">
+					{!isMobileLayout && (
+						<div className="flex items-center justify-between px-2 py-1 border-b border-border bg-muted/30">
+							<span className="text-xs text-muted-foreground">
+								{t.memories}
+							</span>
+							<button
+								type="button"
+								onClick={() => toggleExpandedView("memories")}
+								className="p-1 text-muted-foreground hover:text-foreground hover:bg-muted/50"
+								aria-label="Collapse memories"
+							>
+								<Minimize2 className="w-3.5 h-3.5" />
+							</button>
+						</div>
+					)}
+					<div className="flex-1 min-h-0">
+						<Suspense fallback={viewLoadingFallback}>
+							<MemoriesView
+								workspacePath={resumeWorkspacePath}
+								storeName={null}
+							/>
+						</Suspense>
+					</div>
+				</div>
+			)}
+			{showExpandedTerminal && (
+				<div className="flex flex-col h-full overflow-hidden">
+					{!isMobileLayout && (
+						<div className="flex items-center justify-between px-2 py-1 border-b border-border bg-muted/30">
+							<span className="text-xs text-muted-foreground">
+								{t.terminal}
+							</span>
+							<button
+								type="button"
+								onClick={() => toggleExpandedView("terminal")}
+								className="p-1 text-muted-foreground hover:text-foreground hover:bg-muted/50"
+								aria-label="Collapse terminal"
+							>
+								<Minimize2 className="w-3.5 h-3.5" />
+							</button>
+						</div>
+					)}
+					<div className="flex-1 min-h-0">
+						<Suspense fallback={viewLoadingFallback}>
+							<TerminalView workspacePath={resumeWorkspacePath} />
+						</Suspense>
+					</div>
+				</div>
+			)}
+		</div>
+	);
+
+	useEffect(() => {
+		if (chatInSidebar && rightSidebarCollapsed) {
+			setRightSidebarCollapsed(false);
+		}
+	}, [chatInSidebar, rightSidebarCollapsed]);
+
 	// Show loading skeleton or error only if we have no sessions AND no chat history
 	if (workspaceSessions.length === 0 && chatHistory.length === 0) {
 		// Show skeleton while loading, project selector after timeout
@@ -2734,8 +3720,59 @@ export function SessionsApp() {
 									})}
 								</div>
 							) : (
-								<div className="text-sm text-muted-foreground">
-									{t.configNotice}
+								<div className="space-y-4">
+									<div className="text-sm text-muted-foreground">
+										{t.configNotice}
+									</div>
+									{/* Connection diagnostics for debugging (especially iOS) */}
+									<div className="mt-4 p-3 bg-muted/30 rounded text-xs font-mono space-y-1">
+										<div className="font-semibold text-foreground mb-2">
+											Connection Diagnostics:
+										</div>
+										<div>
+											<span className="text-muted-foreground">
+												Backend URL:
+											</span>{" "}
+											<span className="text-foreground break-all">
+												{connectionDiagnostics.controlPlaneUrl || "(not set)"}
+											</span>
+										</div>
+										<div>
+											<span className="text-muted-foreground">
+												Features loaded:
+											</span>{" "}
+											<span
+												className={
+													connectionDiagnostics.featuresLoaded
+														? "text-green-500"
+														: "text-red-500"
+												}
+											>
+												{connectionDiagnostics.featuresLoaded ? "Yes" : "No"}
+											</span>
+										</div>
+										{connectionDiagnostics.lastError && (
+											<div>
+												<span className="text-muted-foreground">
+													Last error:
+												</span>{" "}
+												<span className="text-red-500 break-all">
+													{connectionDiagnostics.lastError}
+												</span>
+											</div>
+										)}
+										<div>
+											<span className="text-muted-foreground">Sessions:</span>{" "}
+											<span className="text-foreground">
+												{workspaceSessions.length} workspace,{" "}
+												{chatHistory.length} chat history
+											</span>
+										</div>
+										<div>
+											<span className="text-muted-foreground">Projects:</span>{" "}
+											<span className="text-foreground">{projects.length}</span>
+										</div>
+									</div>
 								</div>
 							)}
 						</div>
@@ -2782,7 +3819,7 @@ export function SessionsApp() {
 		: null;
 
 	// Chat content component (reused in both layouts)
-	const ChatContent = (
+	const renderChatContent = (allowExpanded: boolean) => (
 		<div
 			ref={chatContainerRef}
 			className="flex-1 flex flex-col gap-2 sm:gap-4 min-h-0"
@@ -2791,6 +3828,12 @@ export function SessionsApp() {
 			<PermissionBanner
 				count={pendingPermissions.length}
 				onClick={handlePermissionBannerClick}
+			/>
+
+			{/* User question banner */}
+			<UserQuestionBanner
+				count={pendingQuestions.length}
+				onClick={handleQuestionBannerClick}
 			/>
 
 			{/* Working indicator with stop button */}
@@ -2813,60 +3856,122 @@ export function SessionsApp() {
 				</div>
 			)}
 			<div className="relative flex-1 min-h-0">
-				<div
-					ref={messagesContainerRef}
-					onScroll={handleScroll}
-					className="h-full bg-muted/30 border border-border p-2 sm:p-4 overflow-y-auto space-y-4 sm:space-y-6 scrollbar-hide"
-				>
-					{messages.length === 0 && (
-						<div className="text-sm text-muted-foreground">{t.noMessages}</div>
-					)}
-					{hasHiddenMessages && (
-						<button
-							type="button"
-							onClick={loadMoreMessages}
-							className="w-full py-2 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 border border-dashed border-border transition-colors"
-						>
-							{locale === "de"
-								? `${messageGroups.length - visibleGroupCount} altere Nachrichten laden...`
-								: `Load ${messageGroups.length - visibleGroupCount} older messages...`}
-						</button>
-					)}
-					{visibleGroups.map((group) => (
-						<div
-							key={
-								group.messages[0]?.info.id ||
-								`${group.role}-${group.startIndex}`
-							}
-						>
-							{/* Session divider for Main Chat threaded view */}
-							{group.isNewSession && group.sessionTitle && (
-								<SessionDivider title={group.sessionTitle} />
-							)}
-							<MessageGroupCard
-								group={group}
-								persona={selectedSession?.persona}
-								workspaceName={workspaceName}
-								readableId={readableId}
-								workspaceDirectory={opencodeDirectory}
-								onFork={handleForkSession}
-								locale={locale}
+				{allowExpanded && showExpandedPreview ? (
+					<div className="h-full bg-muted/30 border border-border overflow-hidden">
+						<Suspense fallback={viewLoadingFallback}>
+							<PreviewView
+								filePath={previewFilePath}
+								workspacePath={resumeWorkspacePath}
+								onClose={closePreview}
+								onToggleExpand={() => toggleExpandedView("preview")}
+								isExpanded
+								showExpand={!isMobileLayout}
 							/>
+						</Suspense>
+					</div>
+				) : allowExpanded && showExpandedCanvas ? (
+					<div className="h-full bg-muted/30 border border-border overflow-hidden flex flex-col">
+						{!isMobileLayout && (
+							<div className="flex items-center justify-between px-2 py-1 border-b border-border bg-muted/30">
+								<span className="text-xs text-muted-foreground">Canvas</span>
+								<button
+									type="button"
+									onClick={() => toggleExpandedView("canvas")}
+									className="p-1 text-muted-foreground hover:text-foreground hover:bg-muted/50"
+									aria-label="Collapse canvas"
+								>
+									<Minimize2 className="w-3.5 h-3.5" />
+								</button>
+							</div>
+						)}
+						<div className="flex-1 min-h-0">
+							<Suspense fallback={viewLoadingFallback}>
+								<CanvasView
+									workspacePath={resumeWorkspacePath}
+									initialImagePath={previewFilePath}
+									onSaveAndAddToChat={handleCanvasSaveAndAddToChat}
+								/>
+							</Suspense>
 						</div>
-					))}
-					<div ref={messagesEndRef} />
-				</div>
-
-				{/* Jump to bottom button */}
-				{showScrollToBottom && (
-					<button
-						type="button"
-						onClick={() => scrollToBottom()}
-						className="absolute bottom-2 left-2 right-2 sm:left-1/2 sm:-translate-x-1/2 sm:right-auto sm:w-auto z-50 flex items-center justify-center gap-2 px-3 py-2 bg-primary hover:bg-primary/90 text-primary-foreground text-sm font-medium shadow-lg"
-					>
-						<ArrowDown className="w-4 h-4" />
-						<span className="sm:inline">Jump to bottom</span>
-					</button>
+					</div>
+				) : allowExpanded && showExpandedMemories ? (
+					<div className="h-full bg-muted/30 border border-border overflow-hidden flex flex-col">
+						{!isMobileLayout && (
+							<div className="flex items-center justify-between px-2 py-1 border-b border-border bg-muted/30">
+								<span className="text-xs text-muted-foreground">
+									{t.memories}
+								</span>
+								<button
+									type="button"
+									onClick={() => toggleExpandedView("memories")}
+									className="p-1 text-muted-foreground hover:text-foreground hover:bg-muted/50"
+									aria-label="Collapse memories"
+								>
+									<Minimize2 className="w-3.5 h-3.5" />
+								</button>
+							</div>
+						)}
+						<div className="flex-1 min-h-0">
+							<Suspense fallback={viewLoadingFallback}>
+								<MemoriesView
+									workspacePath={resumeWorkspacePath}
+									storeName={null}
+								/>
+							</Suspense>
+						</div>
+					</div>
+				) : allowExpanded && showExpandedTerminal ? (
+					<div className="h-full bg-muted/30 border border-border overflow-hidden flex flex-col">
+						{!isMobileLayout && (
+							<div className="flex items-center justify-between px-2 py-1 border-b border-border bg-muted/30">
+								<span className="text-xs text-muted-foreground">
+									{t.terminal}
+								</span>
+								<button
+									type="button"
+									onClick={() => toggleExpandedView("terminal")}
+									className="p-1 text-muted-foreground hover:text-foreground hover:bg-muted/50"
+									aria-label="Collapse terminal"
+								>
+									<Minimize2 className="w-3.5 h-3.5" />
+								</button>
+							</div>
+						)}
+						<div className="flex-1 min-h-0">
+							<Suspense fallback={viewLoadingFallback}>
+								<TerminalView workspacePath={resumeWorkspacePath} />
+							</Suspense>
+						</div>
+					</div>
+				) : (
+					<ChatMessagesPane
+						messages={messages}
+						messagesLoading={messagesLoading}
+						selectedChatSessionId={selectedChatSessionId ?? undefined}
+						sessionHadMessages={Boolean(
+							selectedChatSessionId &&
+								sessionsWithMessagesRef.current.has(selectedChatSessionId),
+						)}
+						hasHiddenMessages={hasHiddenMessages}
+						messageGroupsLength={messageGroups.length}
+						visibleGroups={visibleGroups}
+						visibleGroupCount={visibleGroupCount}
+						a2uiByGroupIndex={a2uiByGroupIndex}
+						locale={locale}
+						noMessagesText={t.noMessages}
+						persona={selectedSession?.persona}
+						workspaceName={workspaceName}
+						readableId={readableId}
+						workspaceDirectory={opencodeDirectory}
+						onFork={handleForkSession}
+						onScroll={handleScroll}
+						messagesContainerRef={messagesContainerRef}
+						messagesEndRef={messagesEndRef}
+						showScrollToBottom={showScrollToBottom}
+						scrollToBottom={scrollToBottom}
+						loadMoreMessages={loadMoreMessages}
+						onA2UIAction={handleA2UIAction}
+					/>
 				)}
 			</div>
 
@@ -2903,8 +4008,8 @@ export function SessionsApp() {
 
 			{/* Chat input - works for both live and history sessions */}
 			<div className="chat-input-container flex flex-col gap-1 bg-muted/30 border border-border px-2 py-1">
-				{/* Show hint for history sessions that will be resumed */}
-				{isHistoryOnlySession && (
+				{/* Show hint for history sessions that will be resumed - hide when sending/resuming */}
+				{isHistoryOnlySession && chatState === "idle" && (
 					<div className="flex items-center gap-1.5 px-1 pt-1 text-xs text-muted-foreground">
 						<Clock className="w-3 h-3" />
 						<span>
@@ -2923,7 +4028,7 @@ export function SessionsApp() {
 						type="button"
 						onClick={() => fileInputRef.current?.click()}
 						disabled={isUploading}
-						className="flex-shrink-0 size-8 flex items-center justify-center text-muted-foreground hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+						className="flex-shrink-0 h-8 px-2 flex items-center justify-center text-muted-foreground hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
 						title={locale === "de" ? "Datei hochladen" : "Upload file"}
 					>
 						{isUploading ? (
@@ -2975,7 +4080,7 @@ export function SessionsApp() {
 							onSelect={(attachment) => {
 								// Remove @query from input, only show chip
 								const newInput = messageInput.replace(/@[^\s]*$/, "");
-								setMessageInput(newInput);
+								setMessageInputWithResize(newInput);
 								setFileAttachments((prev) => [...prev, attachment]);
 								setShowFileMentionPopup(false);
 								setFileMentionQuery("");
@@ -3002,126 +4107,166 @@ export function SessionsApp() {
 								))}
 							</div>
 						)}
-						<textarea
-							ref={chatInputRef}
-							placeholder={
-								dictation.isActive && dictation.liveTranscript
-									? dictation.liveTranscript
-									: isHistoryOnlySession
+						{features.voice && dictation.isActive ? (
+							<DictationOverlay
+								open
+								value={messageInputRef.current}
+								liveTranscript={dictation.liveTranscript}
+								placeholder={
+									locale === "de" ? "Sprechen Sie..." : "Speak now..."
+								}
+								vadProgress={dictation.vadProgress}
+								autoSend={dictation.autoSendEnabled}
+								onAutoSendChange={dictation.setAutoSendEnabled}
+								onStop={() => {
+									// Use cancel() to stop without auto-send - user clicked X
+									dictation.cancel();
+									requestAnimationFrame(() => {
+										setMessageInputWithResize(messageInputRef.current);
+									});
+								}}
+								onChange={handleInputChange}
+								onKeyDown={handleInputKeyDown}
+								onPaste={(e) => {
+									// Handle pasted files (images, etc.)
+									const items = e.clipboardData?.items;
+									if (!items) return;
+
+									const files: File[] = [];
+									let imageIndex = 0;
+									for (const item of Array.from(items)) {
+										if (item.kind === "file") {
+											const file = item.getAsFile();
+											if (file) {
+												// Rename generic clipboard image names to be unique
+												const isGenericName =
+													/^image\.(png|gif|jpg|jpeg|webp)$/i.test(file.name);
+												if (isGenericName) {
+													const ext = file.name.split(".").pop() || "png";
+													const uniqueName = `pasted-image-${Date.now()}-${imageIndex++}.${ext}`;
+													const renamedFile = new File([file], uniqueName, {
+														type: file.type,
+													});
+													files.push(renamedFile);
+												} else {
+													files.push(file);
+												}
+											}
+										}
+									}
+
+									if (files.length > 0) {
+										// Prevent default paste behavior for files
+										e.preventDefault();
+										// Create a FileList-like object and upload
+										const dataTransfer = new DataTransfer();
+										for (const file of files) {
+											dataTransfer.items.add(file);
+										}
+										handleFileUpload(dataTransfer.files);
+									}
+									// If no files, let the default paste behavior handle text
+								}}
+								onBlur={() => {
+									// Delay closing to allow click on popup items
+									setTimeout(() => setShowSlashPopup(false), 150);
+								}}
+								onFocus={(e) => {
+									// Scroll input into view on mobile when keyboard opens
+									setTimeout(() => {
+										e.target.scrollIntoView({
+											behavior: "smooth",
+											block: "nearest",
+										});
+									}, 300);
+								}}
+							/>
+						) : (
+							<textarea
+								ref={(el) => {
+									chatInputRef.current = el;
+									// Sync initial value from ref when textarea mounts
+									if (el && messageInputRef.current) {
+										el.value = messageInputRef.current;
+									}
+								}}
+								autoComplete="off"
+								autoCorrect="off"
+								autoCapitalize="sentences"
+								spellCheck={false}
+								enterKeyHint="send"
+								data-form-type="other"
+								placeholder={
+									isHistoryOnlySession
 										? locale === "de"
 											? "Nachricht zum Fortsetzen..."
 											: "Message to resume..."
-										: dictation.isActive
-											? locale === "de"
-												? "Sprechen Sie..."
-												: "Speak now..."
-											: t.inputPlaceholder
-							}
-							value={messageInput}
-							onChange={(e) => {
-								const value = e.target.value;
-								setMessageInput(value);
-								// Show slash popup when typing /
-								if (value.startsWith("/")) {
-									setShowSlashPopup(true);
-									setShowFileMentionPopup(false);
-								} else {
-									setShowSlashPopup(false);
+										: t.inputPlaceholder
 								}
-								// Show file mention popup when typing @
-								const atMatch = value.match(/@([^\s]*)$/);
-								if (atMatch && !value.startsWith("/")) {
-									setShowFileMentionPopup(true);
-									setFileMentionQuery(atMatch[1]);
-								} else {
-									setShowFileMentionPopup(false);
-									setFileMentionQuery("");
-								}
-								// Auto-resize is handled by useEffect on messageInput change
-							}}
-							onKeyDown={(e) => {
-								// Let slash popup handle arrow keys, enter, tab when open
-								if (showSlashPopup && slashQuery.isSlash && !slashQuery.args) {
-									if (
-										["ArrowDown", "ArrowUp", "Enter", "Tab", "Escape"].includes(
-											e.key,
-										)
-									) {
-										// Popup will handle these via its own event listener
-										return;
-									}
-								}
-								// Let file mention popup handle its keys
-								if (showFileMentionPopup) {
-									if (
-										["ArrowDown", "ArrowUp", "Enter", "Tab", "Escape"].includes(
-											e.key,
-										)
-									) {
-										// Popup handles via its own event listener
-										return;
-									}
-								}
-								if (e.key === "Enter" && !e.shiftKey) {
-									e.preventDefault();
-									handleSend();
-									// Reset textarea height after sending
-									if (chatInputRef.current) {
-										chatInputRef.current.style.height = "auto";
-									}
-								}
-								if (e.key === "Escape") {
-									setShowSlashPopup(false);
-									setShowFileMentionPopup(false);
-								}
-							}}
-							onPaste={(e) => {
-								// Handle pasted files (images, etc.)
-								const items = e.clipboardData?.items;
-								if (!items) return;
+								defaultValue=""
+								onChange={handleInputChange}
+								onKeyDown={handleInputKeyDown}
+								onPaste={(e) => {
+									// Handle pasted files (images, etc.)
+									const items = e.clipboardData?.items;
+									if (!items) return;
 
-								const files: File[] = [];
-								for (const item of Array.from(items)) {
-									if (item.kind === "file") {
-										const file = item.getAsFile();
-										if (file) {
-											files.push(file);
+									const files: File[] = [];
+									let imageIndex = 0;
+									for (const item of Array.from(items)) {
+										if (item.kind === "file") {
+											const file = item.getAsFile();
+											if (file) {
+												// Rename generic clipboard image names to be unique
+												const isGenericName =
+													/^image\.(png|gif|jpg|jpeg|webp)$/i.test(file.name);
+												if (isGenericName) {
+													const ext = file.name.split(".").pop() || "png";
+													const uniqueName = `pasted-image-${Date.now()}-${imageIndex++}.${ext}`;
+													const renamedFile = new File([file], uniqueName, {
+														type: file.type,
+													});
+													files.push(renamedFile);
+												} else {
+													files.push(file);
+												}
+											}
 										}
 									}
-								}
 
-								if (files.length > 0) {
-									// Prevent default paste behavior for files
-									e.preventDefault();
-									// Create a FileList-like object and upload
-									const dataTransfer = new DataTransfer();
-									for (const file of files) {
-										dataTransfer.items.add(file);
+									if (files.length > 0) {
+										// Prevent default paste behavior for files
+										e.preventDefault();
+										// Create a FileList-like object and upload
+										const dataTransfer = new DataTransfer();
+										for (const file of files) {
+											dataTransfer.items.add(file);
+										}
+										handleFileUpload(dataTransfer.files);
 									}
-									handleFileUpload(dataTransfer.files);
-								}
-								// If no files, let the default paste behavior handle text
-							}}
-							onBlur={() => {
-								// Delay closing to allow click on popup items
-								setTimeout(() => setShowSlashPopup(false), 150);
-							}}
-							onFocus={(e) => {
-								// Show popup if input starts with /
-								if (messageInput.startsWith("/")) {
-									setShowSlashPopup(true);
-								}
-								// Scroll input into view on mobile when keyboard opens
-								setTimeout(() => {
-									e.target.scrollIntoView({
-										behavior: "smooth",
-										block: "nearest",
-									});
-								}, 300);
-							}}
-							rows={1}
-							className="w-full bg-transparent border-none outline-none text-foreground placeholder:text-muted-foreground text-sm resize-none py-1.5 leading-5 max-h-[200px] overflow-y-auto"
-						/>
+									// If no files, let the default paste behavior handle text
+								}}
+								onBlur={() => {
+									// Delay closing to allow click on popup items
+									setTimeout(() => setShowSlashPopup(false), 150);
+								}}
+								onFocus={(e) => {
+									// Show popup if input starts with /
+									if (deferredMessageInput.startsWith("/")) {
+										setShowSlashPopup(true);
+									}
+									// Scroll input into view on mobile when keyboard opens
+									setTimeout(() => {
+										e.target.scrollIntoView({
+											behavior: "smooth",
+											block: "nearest",
+										});
+									}, 300);
+								}}
+								rows={1}
+								className="w-full bg-transparent border-none outline-none text-foreground placeholder:text-muted-foreground text-sm resize-none py-1.5 leading-5 max-h-[200px] overflow-y-auto"
+							/>
+						)}
 					</div>
 					<Button
 						type="button"
@@ -3129,24 +4274,19 @@ export function SessionsApp() {
 						onClick={canResumeWithoutMessage ? handleResume : handleSend}
 						disabled={
 							!canResumeWithoutMessage &&
-							!messageInput.trim() &&
+							!deferredMessageInput.trim() &&
 							pendingUploads.length === 0 &&
 							fileAttachments.length === 0
 						}
-						className="bg-primary hover:bg-primary/90 text-primary-foreground"
+						className="flex-shrink-0 h-8 px-2 flex items-center justify-center text-muted-foreground hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed transition-colors p-0 bg-transparent hover:bg-transparent"
+						variant="ghost"
+						size="icon"
 					>
 						{canResumeWithoutMessage ? (
-							<RefreshCw className="w-4 h-4 sm:mr-2" />
+							<RefreshCw className="w-4 h-4" />
 						) : (
-							<Send className="w-4 h-4 sm:mr-2" />
+							<Send className="w-4 h-4" />
 						)}
-						<span className="hidden sm:inline">
-							{canResumeWithoutMessage
-								? locale === "de"
-									? "Fortsetzen"
-									: "Resume"
-								: t.send}
-						</span>
 					</Button>
 				</div>
 			</div>
@@ -3169,6 +4309,7 @@ export function SessionsApp() {
 				onSettingsChange={{
 					setVisualizer: voiceMode.setVisualizer,
 					setMuted: voiceMode.setMuted,
+					setMicMuted: voiceMode.setMicMuted,
 					setContinuous: voiceMode.setContinuous,
 					setVoice: voiceMode.setVoice,
 					setSpeed: voiceMode.setSpeed,
@@ -3192,6 +4333,7 @@ export function SessionsApp() {
 		onSettingsChange: {
 			setVisualizer: voiceMode.setVisualizer,
 			setMuted: voiceMode.setMuted,
+			setMicMuted: voiceMode.setMicMuted,
 			setContinuous: voiceMode.setContinuous,
 			setVoice: voiceMode.setVoice,
 			setSpeed: voiceMode.setSpeed,
@@ -3199,6 +4341,31 @@ export function SessionsApp() {
 			setInterruptWordCount: voiceMode.setInterruptWordCount,
 		},
 	};
+
+	const filesView = previewFilePath ? (
+		<div className="flex flex-col h-full overflow-hidden">
+			<Suspense fallback={viewLoadingFallback}>
+				<PreviewView
+					filePath={previewFilePath}
+					workspacePath={resumeWorkspacePath}
+					onClose={closePreview}
+					onToggleExpand={() => toggleExpandedView("preview")}
+					isExpanded={expandedView === "preview"}
+					showExpand={!isMobileLayout}
+				/>
+			</Suspense>
+		</div>
+	) : (
+		<div className="flex flex-col h-full overflow-hidden">
+			<FileTreeView
+				onPreviewFile={handlePreviewFile}
+				onOpenInCanvas={handleOpenInCanvas}
+				workspacePath={resumeWorkspacePath}
+				state={fileTreeState}
+				onStateChange={handleFileTreeStateChange}
+			/>
+		</div>
+	);
 
 	const incompleteTasks = latestTodos.filter(
 		(t) => t.status !== "completed" && t.status !== "cancelled",
@@ -3259,77 +4426,91 @@ export function SessionsApp() {
 				</div>
 				{opencodeModelOptions.length === 0 ? (
 					<SelectItem value="__none__" disabled>
-						No models available
+						{isModelLoading ? "Loading..." : "Start a session to select models"}
 					</SelectItem>
 				) : filteredModelOptions.length === 0 ? (
 					<SelectItem value="__no_results__" disabled>
 						No matches
 					</SelectItem>
 				) : (
-					filteredModelOptions.map((option) => (
-						<SelectItem key={option.value} value={option.value}>
-							{option.label}
-						</SelectItem>
-					))
+					filteredModelOptions.map((option) => {
+						const provider = option.value.split("/")[0];
+						return (
+							<SelectItem key={option.value} value={option.value} textValue={option.label}>
+								<span className="flex items-center gap-2">
+									<ProviderIcon provider={provider} className="w-4 h-4 flex-shrink-0" />
+									<span>{option.label}</span>
+								</span>
+							</SelectItem>
+						);
+					})
 				)}
 			</SelectContent>
 		</Select>
 	) : null;
 	const persona = selectedSession?.persona;
+
 	const SessionHeader = (
-		<div className="flex items-center justify-between pb-3 mb-3 border-b border-border">
-			<div className="flex items-center gap-3 min-w-0 flex-1">
-				{/* Persona avatar/indicator */}
-				{persona && (
-					<div
-						className="w-8 h-8 sm:w-10 sm:h-10 rounded-full flex items-center justify-center flex-shrink-0"
-						style={{ backgroundColor: persona.color || "#6366f1" }}
-					>
-						<User className="w-4 h-4 sm:w-5 sm:h-5 text-white" />
-					</div>
-				)}
-				<div className="min-w-0 flex-1">
-					<div className="flex items-center gap-2">
-						<h1 className="text-base sm:text-lg font-semibold text-foreground tracking-wider truncate">
-							{cleanSessionTitle || t.title}
-						</h1>
-						{persona && (
-							<span
-								className="text-xs px-1.5 py-0.5 rounded-full text-white flex-shrink-0"
-								style={{ backgroundColor: persona.color || "#6366f1" }}
-							>
-								{persona.name}
-							</span>
-						)}
-					</div>
-					<div className="flex items-center gap-2 text-xs text-foreground/60 dark:text-muted-foreground">
-						{(workspaceName || readableId) && (
-							<span className="font-mono">
-								{workspaceName}
-								{readableId && ` [${readableId}]`}
-							</span>
-						)}
-						{(workspaceName || readableId) && formattedDate && (
-							<span className="opacity-50">|</span>
-						)}
-						{formattedDate && <span>{formattedDate}</span>}
+		<div className="pb-3 mb-3 border-b border-border pr-10">
+			<div className="flex items-center justify-between">
+				<div className="flex items-center gap-3 min-w-0 flex-1">
+					{/* Persona avatar/indicator */}
+					{persona && (
+						<div
+							className="w-8 h-8 sm:w-10 sm:h-10 rounded-full flex items-center justify-center flex-shrink-0"
+							style={{ backgroundColor: persona.color || "#6366f1" }}
+						>
+							<User className="w-4 h-4 sm:w-5 sm:h-5 text-white" />
+						</div>
+					)}
+					<div className="min-w-0 flex-1">
+						<div className="flex items-center gap-2">
+							<h1 className="text-base sm:text-lg font-semibold text-foreground tracking-wider truncate">
+								{cleanSessionTitle || t.title}
+							</h1>
+							{persona && (
+								<span
+									className="text-xs px-1.5 py-0.5 rounded-full text-white flex-shrink-0"
+									style={{ backgroundColor: persona.color || "#6366f1" }}
+								>
+									{persona.name}
+								</span>
+							)}
+						</div>
+						<div className="flex items-center gap-2 text-xs text-foreground/60 dark:text-muted-foreground">
+							{(workspaceName || readableId) && (
+								<span className="font-mono truncate">
+									{workspaceName}
+									{readableId && ` [${readableId}]`}
+								</span>
+							)}
+							{(workspaceName || readableId) && formattedDate && (
+								<span className="opacity-50">|</span>
+							)}
+							{formattedDate && <span className="flex-shrink-0">{formattedDate}</span>}
+						</div>
 					</div>
 				</div>
+				{status && (
+					<span className="text-xs text-destructive flex-shrink-0 ml-2 max-w-[150px] truncate">
+						{status}
+					</span>
+				)}
 			</div>
-			<div className="flex items-center gap-3 flex-shrink-0 ml-2">
-				{status && <span className="text-xs text-destructive">{status}</span>}
-				{modelSwitcher}
+			{/* Context window gauge - full width bar at bottom of header */}
+			<div className="mt-2">
 				<ContextWindowGauge
 					inputTokens={tokenUsage.inputTokens}
 					outputTokens={tokenUsage.outputTokens}
 					maxTokens={contextLimit}
 					locale={locale}
+					compact
 				/>
 			</div>
 		</div>
 	);
 
-	return (
+	const app = (
 		<div className="flex flex-col h-full min-h-0 p-1 sm:p-4 md:p-6 gap-1 sm:gap-4">
 			{/* Mobile layout: single panel with tabs */}
 			<div className="flex-1 min-h-0 flex flex-col lg:hidden">
@@ -3357,13 +4538,6 @@ export function SessionsApp() {
 							view="files"
 							icon={FileText}
 							label={t.files}
-						/>
-						<TabButton
-							activeView={activeView}
-							onSelect={setActiveView}
-							view="preview"
-							icon={Eye}
-							label={t.preview}
 						/>
 						<TabButton
 							activeView={activeView}
@@ -3397,19 +4571,32 @@ export function SessionsApp() {
 						/>
 					</div>
 					{/* Mobile context window gauge - full width bar directly below tabs */}
-					{!mainChatActive && (
-						<ContextWindowGauge
-							inputTokens={tokenUsage.inputTokens}
-							outputTokens={tokenUsage.outputTokens}
-							maxTokens={contextLimit}
-							locale={locale}
-							compact
-						/>
-					)}
+					<ContextWindowGauge
+						inputTokens={
+							mainChatActive
+								? mainChatTokenUsage.inputTokens
+								: tokenUsage.inputTokens
+						}
+						outputTokens={
+							mainChatActive
+								? mainChatTokenUsage.outputTokens
+								: tokenUsage.outputTokens
+						}
+						maxTokens={
+							mainChatActive ? mainChatTokenUsage.maxTokens : contextLimit
+						}
+						locale={locale}
+						compact
+					/>
 				</div>
 
 				{/* Mobile content */}
-				<div className="flex-1 min-h-0 bg-card border border-t-0 border-border rounded-b-xl p-1.5 sm:p-4 overflow-hidden flex flex-col">
+				<div
+					className={cn(
+						"flex-1 min-h-0 bg-card border border-t-0 border-border rounded-b-xl p-1.5 sm:p-4 overflow-hidden flex flex-col",
+						activeView === "chat" && "pb-0",
+					)}
+				>
 					{activeView === "chat" &&
 						(mainChatActive ? (
 							<MainChatPiView
@@ -3418,63 +4605,124 @@ export function SessionsApp() {
 								features={features}
 								workspacePath={mainChatWorkspacePath}
 								assistantName={mainChatAssistantName}
+								hideHeader
+								onTokenUsageChange={setMainChatTokenUsage}
+								scrollToSessionId={mainChatCurrentSessionId}
+								scrollToMessageId={scrollToMessageId}
+								onScrollToMessageComplete={() => setScrollToMessageId(null)}
 							/>
 						) : (
-							ChatContent
+							renderChatContent(true)
 						))}
-					{activeView === "files" && (
-						<FileTreeView
-							onPreviewFile={handlePreviewFile}
-							onOpenInCanvas={handleOpenInCanvas}
-							workspacePath={resumeWorkspacePath}
-							state={fileTreeState}
-							onStateChange={handleFileTreeStateChange}
-						/>
-					)}
-					{activeView === "preview" && (
-						<Suspense fallback={viewLoadingFallback}>
-							<PreviewView
-								filePath={previewFilePath}
-								workspacePath={resumeWorkspacePath}
-							/>
-						</Suspense>
-					)}
+					{activeView === "files" && filesView}
 					{activeView === "tasks" && (
 						<div className="flex flex-col h-full overflow-hidden">
 							<TodoListView todos={latestTodos} emptyMessage={t.noTasks} />
-							<Suspense fallback={viewLoadingFallback}>
-								<TrxView
-									workspacePath={resumeWorkspacePath}
-									className="flex-1 min-h-0 border-t border-border"
-								/>
-							</Suspense>
+
+							<TrxView
+								key={resumeWorkspacePath ?? "no-workspace"}
+								workspacePath={resumeWorkspacePath}
+								className="flex-1 min-h-0 border-t border-border"
+							onStartIssue={(issueId, title, description) => {
+								const content = description
+									? `Working on #${issueId}: ${title}\n\n${description}\n\n`
+									: `Working on #${issueId}: ${title}\n\n`;
+								setMessageInputWithResize(content);
+								// On mobile, switch to chat view
+								if (window.innerWidth < 768) {
+									setActiveView("chat");
+								}
+							}}
+							onStartIssueNewSession={async (issueId, title, description) => {
+								if (!resumeWorkspacePath) return;
+								try {
+									const url =
+										await ensureOpencodeRunning(resumeWorkspacePath);
+									if (!url) return;
+									const newSession = await createSession(
+										url,
+										`#${issueId}: ${title}`,
+										undefined,
+										{ directory: resumeWorkspacePath },
+									);
+									await refreshOpencodeSessions();
+									await refreshChatHistory();
+									if (newSession.id) {
+										setSelectedChatSessionId(newSession.id);
+										const content = description
+											? `Working on #${issueId}: ${title}\n\n${description}\n\n`
+											: `Working on #${issueId}: ${title}\n\n`;
+										setMessageInputWithResize(content);
+										if (window.innerWidth < 768) {
+											setActiveView("chat");
+										}
+									}
+								} catch (err) {
+									console.error("Failed to start issue in new session:", err);
+								}
+							}}
+							/>
 						</div>
 					)}
 					{features.mmry_enabled && activeView === "memories" && (
 						<Suspense fallback={viewLoadingFallback}>
 							<MemoriesView
 								workspacePath={resumeWorkspacePath}
-								storeName={mainChatActive ? mainChatAssistantName : null}
+								storeName={null}
 							/>
 						</Suspense>
 					)}
 					{activeView === "settings" && (
 						<Suspense fallback={viewLoadingFallback}>
-							<AgentSettingsView />
+							{mainChatActive ? (
+								<MainChatSettingsView locale={locale} />
+							) : (
+								<AgentSettingsView
+									modelOptions={opencodeModelOptions}
+									selectedModelRef={selectedModelRef}
+									onModelChange={setSelectedModelRef}
+									isModelLoading={isModelLoading}
+								/>
+							)}
 						</Suspense>
 					)}
 					{activeView === "canvas" && (
-						<Suspense fallback={viewLoadingFallback}>
-							<CanvasView
-								workspacePath={resumeWorkspacePath}
-								initialImagePath={previewFilePath}
-								onSaveAndAddToChat={handleCanvasSaveAndAddToChat}
-							/>
-						</Suspense>
+						<div className="flex flex-col h-full overflow-hidden">
+							{!isMobileLayout && (
+								<div className="flex items-center justify-between px-2 py-1 border-b border-border bg-muted/30">
+									<span className="text-xs text-muted-foreground">Canvas</span>
+									<button
+										type="button"
+										onClick={() => toggleExpandedView("canvas")}
+										className="p-1 text-muted-foreground hover:text-foreground hover:bg-muted/50"
+										aria-label={
+											expandedView === "canvas"
+												? "Collapse canvas"
+												: "Expand canvas"
+										}
+									>
+										{expandedView === "canvas" ? (
+											<Minimize2 className="w-3.5 h-3.5" />
+										) : (
+											<Maximize2 className="w-3.5 h-3.5" />
+										)}
+									</button>
+								</div>
+							)}
+							<div className="flex-1 min-h-0">
+								<Suspense fallback={viewLoadingFallback}>
+									<CanvasView
+										workspacePath={resumeWorkspacePath}
+										initialImagePath={previewFilePath}
+										onSaveAndAddToChat={handleCanvasSaveAndAddToChat}
+									/>
+								</Suspense>
+							</div>
+						</div>
 					)}
-					{/* Terminal only rendered in mobile layout when isMobileLayout is true */}
-					{isMobileLayout && (
-						<div className={activeView === "terminal" ? "h-full" : "hidden"}>
+					{/* Only mount the terminal when visible (terminal rendering is expensive). */}
+					{isMobileLayout && activeView === "terminal" && (
+						<div className="h-full">
 							<Suspense fallback={viewLoadingFallback}>
 								<TerminalView workspacePath={resumeWorkspacePath} />
 							</Suspense>
@@ -3486,160 +4734,469 @@ export function SessionsApp() {
 			{/* Desktop layout: side by side */}
 			<div className="hidden lg:flex flex-1 min-h-0 gap-4 items-start">
 				{/* Chat panel */}
-				<div className="flex-[3] min-w-0 bg-card border border-border p-4 xl:p-6 flex flex-col min-h-0 h-full">
+				<div className="flex-[3] min-w-0 bg-card border border-border p-4 xl:p-6 flex flex-col min-h-0 h-full relative">
+					{/* Sidebar collapse toggle button */}
+					<button
+						type="button"
+						onClick={() => setRightSidebarCollapsed((prev) => !prev)}
+						className="absolute top-4 right-4 xl:top-6 xl:right-6 p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted/50 rounded transition-colors z-10"
+						title={
+							rightSidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"
+						}
+					>
+						{rightSidebarCollapsed ? (
+							<PanelLeftClose className="w-4 h-4" />
+						) : (
+							<PanelRightClose className="w-4 h-4" />
+						)}
+					</button>
 					{!mainChatActive && SessionHeader}
 					{mainChatActive ? (
-						<MainChatPiView
-							locale={locale}
-							className="flex-1"
-							features={features}
-							workspacePath={mainChatWorkspacePath}
-							assistantName={mainChatAssistantName}
-						/>
+						expandedView ? (
+							expandedPanel
+						) : (
+							<MainChatPiView
+								locale={locale}
+								className="flex-1"
+								features={features}
+								workspacePath={mainChatWorkspacePath}
+								assistantName={mainChatAssistantName}
+								onTokenUsageChange={setMainChatTokenUsage}
+								scrollToSessionId={mainChatCurrentSessionId}
+								scrollToMessageId={scrollToMessageId}
+								onScrollToMessageComplete={() => setScrollToMessageId(null)}
+							/>
+						)
+					) : chatInSidebar ? (
+						expandedPanel
 					) : (
-						ChatContent
+						renderChatContent(true)
 					)}
 				</div>
 
-				{/* Sidebar panel */}
-				<div className="flex-[2] min-w-[320px] max-w-[420px] bg-card border border-border flex flex-col min-h-0 h-full">
-					<div className="flex gap-1 p-2 border-b border-border">
-						<TabButton
-							activeView={activeView}
-							onSelect={setActiveView}
-							view="tasks"
-							icon={ListTodo}
-							label={t.tasks}
-							badge={incompleteTasks}
-							hideLabel
-						/>
-						<TabButton
-							activeView={activeView}
-							onSelect={setActiveView}
-							view="files"
-							icon={FileText}
-							label={t.files}
-							hideLabel
-						/>
-						<TabButton
-							activeView={activeView}
-							onSelect={setActiveView}
-							view="preview"
-							icon={Eye}
-							label={t.preview}
-							hideLabel
-						/>
-						<TabButton
-							activeView={activeView}
-							onSelect={setActiveView}
-							view="canvas"
-							icon={PaintBucket}
-							label="Canvas"
-							hideLabel
-						/>
-						{features.mmry_enabled && (
-							<TabButton
+				{/* Sidebar panel - collapsible */}
+				<div
+					className={cn(
+						"bg-card border border-border flex flex-col min-h-0 h-full transition-all duration-200",
+						rightSidebarCollapsed
+							? "w-12 items-center"
+							: "flex-[2] min-w-[320px] max-w-[420px]",
+					)}
+				>
+					{rightSidebarCollapsed ? (
+						/* Collapsed sidebar - vertical icon strip */
+						<div className="flex flex-col gap-1 p-2 h-full overflow-y-auto">
+							<CollapsedTabButton
 								activeView={activeView}
-								onSelect={setActiveView}
-								view="memories"
-								icon={Brain}
-								label={t.memories}
-								hideLabel
+								onSelect={(view) => {
+									setActiveView(view);
+									setRightSidebarCollapsed(false);
+								}}
+								view="tasks"
+								icon={ListTodo}
+								label={t.tasks}
+								badge={incompleteTasks}
 							/>
-						)}
-						<TabButton
-							activeView={activeView}
-							onSelect={setActiveView}
-							view="terminal"
-							icon={Terminal}
-							label={t.terminal}
-							hideLabel
-						/>
-						{voiceMode.isActive && features.voice && (
-							<TabButton
+							<CollapsedTabButton
 								activeView={activeView}
-								onSelect={setActiveView}
-								view="voice"
-								icon={Mic}
-								label="Voice"
-								hideLabel
+								onSelect={(view) => {
+									setActiveView(view);
+									setRightSidebarCollapsed(false);
+								}}
+								view="files"
+								icon={FileText}
+								label={t.files}
 							/>
-						)}
-						<TabButton
-							activeView={activeView}
-							onSelect={setActiveView}
-							view="settings"
-							icon={Settings}
-							label={locale === "de" ? "Einstellungen" : "Settings"}
-							hideLabel
-						/>
-					</div>
-					<div className="flex-1 min-h-0 overflow-hidden">
-						{activeView === "files" && (
-							<FileTreeView
-								onPreviewFile={handlePreviewFile}
-								onOpenInCanvas={handleOpenInCanvas}
-								workspacePath={resumeWorkspacePath}
-								state={fileTreeState}
-								onStateChange={handleFileTreeStateChange}
+							<CollapsedTabButton
+								activeView={activeView}
+								onSelect={(view) => {
+									setActiveView(view);
+									setRightSidebarCollapsed(false);
+								}}
+								view="canvas"
+								icon={PaintBucket}
+								label="Canvas"
 							/>
-						)}
-						{activeView === "preview" && (
-							<Suspense fallback={viewLoadingFallback}>
-								<PreviewView
-									filePath={previewFilePath}
-									workspacePath={resumeWorkspacePath}
+							{features.mmry_enabled && (
+								<CollapsedTabButton
+									activeView={activeView}
+									onSelect={(view) => {
+										setActiveView(view);
+										setRightSidebarCollapsed(false);
+									}}
+									view="memories"
+									icon={Brain}
+									label={t.memories}
 								/>
-							</Suspense>
-						)}
-						{activeView === "tasks" && (
-							<div className="flex flex-col h-full overflow-hidden">
-								<TodoListView todos={latestTodos} emptyMessage={t.noTasks} />
-								<Suspense fallback={viewLoadingFallback}>
-									<TrxView
-										workspacePath={resumeWorkspacePath}
-										className="flex-1 min-h-0 border-t border-border"
-									/>
-								</Suspense>
-							</div>
-						)}
-						{activeView === "chat" && (
-							<TodoListView todos={latestTodos} emptyMessage={t.noTasks} />
-						)}
-						{features.mmry_enabled && activeView === "memories" && (
-							<Suspense fallback={viewLoadingFallback}>
-								<MemoriesView
-									workspacePath={resumeWorkspacePath}
-									storeName={mainChatActive ? mainChatAssistantName : null}
+							)}
+							<CollapsedTabButton
+								activeView={activeView}
+								onSelect={(view) => {
+									setActiveView(view);
+									setRightSidebarCollapsed(false);
+								}}
+								view="terminal"
+								icon={Terminal}
+								label={t.terminal}
+							/>
+							{voiceMode.isActive && features.voice && (
+								<CollapsedTabButton
+									activeView={activeView}
+									onSelect={(view) => {
+										setActiveView(view);
+										setRightSidebarCollapsed(false);
+									}}
+									view="voice"
+									icon={Mic}
+									label="Voice"
 								/>
-							</Suspense>
-						)}
-						{activeView === "voice" && voiceMode.isActive && (
-							<VoicePanel {...voicePanelProps} />
-						)}
-						{activeView === "settings" && (
-							<Suspense fallback={viewLoadingFallback}>
-								<AgentSettingsView />
-							</Suspense>
-						)}
-						{activeView === "canvas" && (
-							<Suspense fallback={viewLoadingFallback}>
-								<CanvasView
-									workspacePath={resumeWorkspacePath}
-									initialImagePath={previewFilePath}
-									onSaveAndAddToChat={handleCanvasSaveAndAddToChat}
-								/>
-							</Suspense>
-						)}
-						{/* Terminal only rendered in desktop layout when isMobileLayout is false */}
-						{!isMobileLayout && (
-							<div className={activeView === "terminal" ? "h-full" : "hidden"}>
-								<Suspense fallback={viewLoadingFallback}>
-									<TerminalView workspacePath={resumeWorkspacePath} />
-								</Suspense>
-							</div>
-						)}
-					</div>
+							)}
+							<CollapsedTabButton
+								activeView={activeView}
+								onSelect={(view) => {
+									setActiveView(view);
+									setRightSidebarCollapsed(false);
+								}}
+								view="settings"
+								icon={Settings}
+								label={locale === "de" ? "Einstellungen" : "Settings"}
+							/>
+						</div>
+					) : (
+						/* Expanded sidebar */
+						<>
+							{chatInSidebar ? (
+								<div className="flex flex-col h-full min-h-0">
+									<div className="flex items-center justify-between px-2 py-1 border-b border-border bg-muted/30">
+										<span className="text-xs text-muted-foreground">
+											{t.chat}
+										</span>
+										<button
+											type="button"
+											onClick={() => setExpandedView(null)}
+											className="p-1 text-muted-foreground hover:text-foreground hover:bg-muted/50"
+											aria-label="Return chat to main panel"
+										>
+											<Minimize2 className="w-3.5 h-3.5" />
+										</button>
+									</div>
+									<div className="sidebar-chat flex-1 min-h-0 overflow-hidden flex flex-col">
+										{mainChatActive ? (
+											<MainChatPiView
+												locale={locale}
+												className="flex-1"
+												features={features}
+												workspacePath={mainChatWorkspacePath}
+												assistantName={mainChatAssistantName}
+												hideHeader
+												onTokenUsageChange={setMainChatTokenUsage}
+												scrollToSessionId={mainChatCurrentSessionId}
+												scrollToMessageId={scrollToMessageId}
+												onScrollToMessageComplete={() =>
+													setScrollToMessageId(null)
+												}
+											/>
+										) : (
+											renderChatContent(false)
+										)}
+									</div>
+								</div>
+							) : (
+								<>
+									<div className="flex gap-1 p-2 border-b border-border">
+										<TabButton
+											activeView={activeView}
+											onSelect={setActiveView}
+											view="tasks"
+											icon={ListTodo}
+											label={t.tasks}
+											badge={incompleteTasks}
+											hideLabel
+										/>
+										<TabButton
+											activeView={activeView}
+											onSelect={setActiveView}
+											view="files"
+											icon={FileText}
+											label={t.files}
+											hideLabel
+										/>
+										<TabButton
+											activeView={activeView}
+											onSelect={setActiveView}
+											view="canvas"
+											icon={PaintBucket}
+											label="Canvas"
+											hideLabel
+										/>
+										{features.mmry_enabled && (
+											<TabButton
+												activeView={activeView}
+												onSelect={setActiveView}
+												view="memories"
+												icon={Brain}
+												label={t.memories}
+												hideLabel
+											/>
+										)}
+										<TabButton
+											activeView={activeView}
+											onSelect={setActiveView}
+											view="terminal"
+											icon={Terminal}
+											label={t.terminal}
+											hideLabel
+										/>
+										{voiceMode.isActive && features.voice && (
+											<TabButton
+												activeView={activeView}
+												onSelect={setActiveView}
+												view="voice"
+												icon={Mic}
+												label="Voice"
+												hideLabel
+											/>
+										)}
+										<TabButton
+											activeView={activeView}
+											onSelect={setActiveView}
+											view="settings"
+											icon={Settings}
+											label={locale === "de" ? "Einstellungen" : "Settings"}
+											hideLabel
+										/>
+									</div>
+									<div className="flex-1 min-h-0 overflow-hidden">
+										{activeView === "files" && filesView}
+										{activeView === "tasks" && (
+											<div className="flex flex-col h-full overflow-hidden">
+												<TodoListView
+													todos={latestTodos}
+													emptyMessage={t.noTasks}
+												/>
+
+												<TrxView
+													key={resumeWorkspacePath ?? "no-workspace"}
+													workspacePath={resumeWorkspacePath}
+													className="flex-1 min-h-0 border-t border-border"
+											onStartIssue={(issueId, title, description) => {
+													const content = description
+														? `Working on #${issueId}: ${title}\n\n${description}\n\n`
+														: `Working on #${issueId}: ${title}\n\n`;
+													setMessageInputWithResize(content);
+													setActiveView("chat");
+												}}
+												onStartIssueNewSession={async (issueId, title, description) => {
+													if (!resumeWorkspacePath) return;
+													try {
+														const url =
+															await ensureOpencodeRunning(
+																resumeWorkspacePath,
+															);
+														if (!url) return;
+														const newSession = await createSession(
+															url,
+															`#${issueId}: ${title}`,
+															undefined,
+															{ directory: resumeWorkspacePath },
+														);
+														await refreshOpencodeSessions();
+														await refreshChatHistory();
+														if (newSession.id) {
+															setSelectedChatSessionId(newSession.id);
+															const content = description
+																? `Working on #${issueId}: ${title}\n\n${description}\n\n`
+																: `Working on #${issueId}: ${title}\n\n`;
+															setMessageInputWithResize(content);
+															setActiveView("chat");
+														}
+													} catch (err) {
+														console.error(
+															"Failed to start issue in new session:",
+															err,
+														);
+													}
+												}}
+												/>
+											</div>
+										)}
+										{activeView === "chat" && (
+											<div className="flex flex-col h-full overflow-hidden">
+												<TodoListView
+													todos={latestTodos}
+													emptyMessage={t.noTasks}
+												/>
+												<TrxView
+													key={resumeWorkspacePath ?? "no-workspace"}
+													workspacePath={resumeWorkspacePath}
+													className="flex-1 min-h-0 border-t border-border"
+											onStartIssue={(issueId, title, description) => {
+													const content = description
+														? `Working on #${issueId}: ${title}\n\n${description}\n\n`
+														: `Working on #${issueId}: ${title}\n\n`;
+													setMessageInputWithResize(content);
+												}}
+												onStartIssueNewSession={async (issueId, title, description) => {
+													if (!resumeWorkspacePath) return;
+													try {
+														const url =
+															await ensureOpencodeRunning(
+																resumeWorkspacePath,
+															);
+														if (!url) return;
+														const newSession = await createSession(
+															url,
+															`#${issueId}: ${title}`,
+															undefined,
+															{ directory: resumeWorkspacePath },
+														);
+														await refreshOpencodeSessions();
+														await refreshChatHistory();
+														if (newSession.id) {
+															setSelectedChatSessionId(newSession.id);
+															const content = description
+																? `Working on #${issueId}: ${title}\n\n${description}\n\n`
+																: `Working on #${issueId}: ${title}\n\n`;
+															setMessageInputWithResize(content);
+														}
+													} catch (err) {
+														console.error(
+															"Failed to start issue in new session:",
+															err,
+														);
+													}
+												}}
+												/>
+											</div>
+										)}
+										{features.mmry_enabled && activeView === "memories" && (
+											<div className="flex flex-col h-full overflow-hidden">
+												{!isMobileLayout && (
+													<div className="flex items-center justify-between px-2 py-1 border-b border-border bg-muted/30">
+														<span className="text-xs text-muted-foreground">
+															{t.memories}
+														</span>
+														<button
+															type="button"
+															onClick={() => toggleExpandedView("memories")}
+															className="p-1 text-muted-foreground hover:text-foreground hover:bg-muted/50"
+															aria-label={
+																expandedView === "memories"
+																	? "Collapse memories"
+																	: "Expand memories"
+															}
+														>
+															{expandedView === "memories" ? (
+																<Minimize2 className="w-3.5 h-3.5" />
+															) : (
+																<Maximize2 className="w-3.5 h-3.5" />
+															)}
+														</button>
+													</div>
+												)}
+												<div className="flex-1 min-h-0">
+													<Suspense fallback={viewLoadingFallback}>
+														<MemoriesView
+															workspacePath={resumeWorkspacePath}
+															storeName={null}
+														/>
+													</Suspense>
+												</div>
+											</div>
+										)}
+										{activeView === "voice" && voiceMode.isActive && (
+											<VoicePanel {...voicePanelProps} />
+										)}
+										{activeView === "settings" && (
+											<Suspense fallback={viewLoadingFallback}>
+												{mainChatActive ? (
+													<MainChatSettingsView locale={locale} />
+												) : (
+													<AgentSettingsView
+														modelOptions={opencodeModelOptions}
+														selectedModelRef={selectedModelRef}
+														onModelChange={setSelectedModelRef}
+														isModelLoading={isModelLoading}
+													/>
+												)}
+											</Suspense>
+										)}
+										{activeView === "canvas" && (
+											<div className="flex flex-col h-full overflow-hidden">
+												{!isMobileLayout && (
+													<div className="flex items-center justify-between px-2 py-1 border-b border-border bg-muted/30">
+														<span className="text-xs text-muted-foreground">
+															Canvas
+														</span>
+														<button
+															type="button"
+															onClick={() => toggleExpandedView("canvas")}
+															className="p-1 text-muted-foreground hover:text-foreground hover:bg-muted/50"
+															aria-label={
+																expandedView === "canvas"
+																	? "Collapse canvas"
+																	: "Expand canvas"
+															}
+														>
+															{expandedView === "canvas" ? (
+																<Minimize2 className="w-3.5 h-3.5" />
+															) : (
+																<Maximize2 className="w-3.5 h-3.5" />
+															)}
+														</button>
+													</div>
+												)}
+												<div className="flex-1 min-h-0">
+													<Suspense fallback={viewLoadingFallback}>
+														<CanvasView
+															workspacePath={resumeWorkspacePath}
+															initialImagePath={previewFilePath}
+															onSaveAndAddToChat={handleCanvasSaveAndAddToChat}
+														/>
+													</Suspense>
+												</div>
+											</div>
+										)}
+										{/* Only mount the terminal when visible (terminal rendering is expensive). */}
+										{!isMobileLayout && activeView === "terminal" && (
+											<div className="h-full">
+												<div className="flex flex-col h-full overflow-hidden">
+													<div className="flex items-center justify-between px-2 py-1 border-b border-border bg-muted/30">
+														<span className="text-xs text-muted-foreground">
+															{t.terminal}
+														</span>
+														<button
+															type="button"
+															onClick={() => toggleExpandedView("terminal")}
+															className="p-1 text-muted-foreground hover:text-foreground hover:bg-muted/50"
+															aria-label={
+																expandedView === "terminal"
+																	? "Collapse terminal"
+																	: "Expand terminal"
+															}
+														>
+															{expandedView === "terminal" ? (
+																<Minimize2 className="w-3.5 h-3.5" />
+															) : (
+																<Maximize2 className="w-3.5 h-3.5" />
+															)}
+														</button>
+													</div>
+													<div className="flex-1 min-h-0">
+														<Suspense fallback={viewLoadingFallback}>
+															<TerminalView
+																workspacePath={resumeWorkspacePath}
+															/>
+														</Suspense>
+													</div>
+												</div>
+											</div>
+										)}
+									</div>
+								</>
+							)}
+						</>
+					)}
 				</div>
 			</div>
 
@@ -3650,11 +5207,27 @@ export function SessionsApp() {
 				onDismiss={handlePermissionDismiss}
 			/>
 
+			{/* User question dialog */}
+			<UserQuestionDialog
+				request={activeQuestion}
+				onReply={handleQuestionReply}
+				onReject={handleQuestionReject}
+				onDismiss={handleQuestionDismiss}
+			/>
+
 			{/* Voice mode overlay - mobile only */}
 			{mobileVoiceOverlay}
 		</div>
 	);
-}
+
+	return perfEnabled ? (
+		<Profiler id="SessionsApp" onRender={onProfilerRender}>
+			{app}
+		</Profiler>
+	) : (
+		app
+	);
+});
 
 const MessageGroupCard = memo(function MessageGroupCard({
 	group,
@@ -3664,6 +5237,9 @@ const MessageGroupCard = memo(function MessageGroupCard({
 	workspaceDirectory,
 	onFork,
 	locale = "en",
+	a2uiSurfaces = [],
+	onA2UIAction,
+	messageId,
 }: {
 	group: MessageGroup;
 	persona?: Persona | null;
@@ -3672,6 +5248,9 @@ const MessageGroupCard = memo(function MessageGroupCard({
 	workspaceDirectory?: string;
 	onFork?: (messageId: string) => void;
 	locale?: "de" | "en";
+	a2uiSurfaces?: A2UISurfaceState[];
+	onA2UIAction?: (action: A2UIUserAction) => void;
+	messageId?: string;
 }) {
 	const isUser = group.role === "user";
 
@@ -3688,17 +5267,24 @@ const MessageGroupCard = memo(function MessageGroupCard({
 	// Get all parts from all messages in order, preserving their sequence
 	const allParts = group.messages.flatMap((msg) => msg.parts);
 
-	// Group consecutive text parts together, but keep tool and other parts separate
+	// Group consecutive text parts together, but keep tool, file, and A2UI parts separate
 	// This creates "segments" that maintain the original order
 	type Segment =
-		| { key: string; type: "text"; content: string }
-		| { key: string; type: "tool"; part: OpenCodePart }
-		| { key: string; type: "file"; part: OpenCodePart }
-		| { key: string; type: "other"; part: OpenCodePart };
+		| { key: string; type: "text"; content: string; timestamp?: number }
+		| { key: string; type: "tool"; part: OpenCodePart; timestamp?: number }
+		| { key: string; type: "file"; part: OpenCodePart; timestamp?: number }
+		| {
+				key: string;
+				type: "a2ui";
+				surface: (typeof a2uiSurfaces)[0];
+				timestamp: number;
+		  }
+		| { key: string; type: "other"; part: OpenCodePart; timestamp?: number };
 
 	const segments: Segment[] = [];
 	let currentTextBuffer: string[] = [];
 	let currentTextKeys: string[] = [];
+	let lastTimestamp = 0;
 
 	const flushTextBuffer = () => {
 		if (currentTextBuffer.length > 0) {
@@ -3707,6 +5293,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 				key,
 				type: "text",
 				content: currentTextBuffer.join("\n\n"),
+				timestamp: lastTimestamp,
 			});
 			currentTextBuffer = [];
 			currentTextKeys = [];
@@ -3715,21 +5302,57 @@ const MessageGroupCard = memo(function MessageGroupCard({
 
 	for (const [index, part] of allParts.entries()) {
 		const partKey = part.id ?? `${part.type}-${index}`;
+		// Get timestamp from tool state if available
+		const partTimestamp =
+			part.type === "tool" && part.state?.time?.start
+				? part.state.time.start
+				: lastTimestamp + index;
+		lastTimestamp = partTimestamp;
+
 		if (part.type === "text" && typeof part.text === "string") {
 			currentTextBuffer.push(part.text);
 			currentTextKeys.push(partKey);
 		} else if (part.type === "tool") {
 			flushTextBuffer();
-			segments.push({ key: partKey, type: "tool", part });
+			segments.push({
+				key: partKey,
+				type: "tool",
+				part,
+				timestamp: partTimestamp,
+			});
 		} else if (part.type === "file") {
 			flushTextBuffer();
-			segments.push({ key: partKey, type: "file", part });
+			segments.push({
+				key: partKey,
+				type: "file",
+				part,
+				timestamp: partTimestamp,
+			});
 		} else {
 			flushTextBuffer();
-			segments.push({ key: partKey, type: "other", part });
+			segments.push({
+				key: partKey,
+				type: "other",
+				part,
+				timestamp: partTimestamp,
+			});
 		}
 	}
 	flushTextBuffer();
+
+	// Insert A2UI surfaces into segments based on their creation timestamp
+	for (const surface of a2uiSurfaces) {
+		const surfaceTimestamp = surface.createdAt.getTime();
+		segments.push({
+			key: `a2ui-${surface.surfaceId}`,
+			type: "a2ui",
+			surface,
+			timestamp: surfaceTimestamp,
+		});
+	}
+
+	// Sort segments by timestamp to interleave A2UI with tool calls
+	segments.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
 
 	// Get all text content for copy button
 	const allTextContent = allParts
@@ -3746,6 +5369,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 
 	const messageCard = (
 		<div
+			data-message-id={messageId}
 			className={cn(
 				"group transition-all duration-200 overflow-hidden",
 				isUser
@@ -3849,19 +5473,34 @@ const MessageGroupCard = memo(function MessageGroupCard({
 						const uniqueFileRefs = [...new Set(fileRefs)];
 
 						return (
-							<div key={segment.key} className="overflow-hidden space-y-2">
-								<MarkdownRenderer
-									content={segment.content}
-									className="text-sm text-foreground leading-relaxed overflow-hidden"
-								/>
-								{uniqueFileRefs.map((filePath) => (
-									<FileReferenceCard
-										key={filePath}
-										filePath={filePath}
-										workspacePath={workspaceDirectory}
-									/>
-								))}
-							</div>
+							<ContextMenu key={segment.key}>
+								<ContextMenuTrigger className="contents">
+									<div className="overflow-hidden space-y-2 select-none sm:select-auto">
+										<MarkdownRenderer
+											content={segment.content}
+											className="text-sm text-foreground leading-relaxed overflow-hidden"
+										/>
+										{uniqueFileRefs.map((filePath) => (
+											<FileReferenceCard
+												key={filePath}
+												filePath={filePath}
+												workspacePath={workspaceDirectory}
+											/>
+										))}
+									</div>
+								</ContextMenuTrigger>
+								<ContextMenuContent>
+									<ContextMenuItem
+										onClick={() =>
+											navigator.clipboard?.writeText(segment.content)
+										}
+										className="gap-2"
+									>
+										<Copy className="w-4 h-4" />
+										{locale === "de" ? "Kopieren" : "Copy"}
+									</ContextMenuItem>
+								</ContextMenuContent>
+							</ContextMenu>
 						);
 					}
 
@@ -3890,41 +5529,55 @@ const MessageGroupCard = memo(function MessageGroupCard({
 						return <OtherPartCard key={segment.key} part={segment.part} />;
 					}
 
+					if (segment.type === "a2ui") {
+						return (
+							<A2UICallCard
+								key={segment.key}
+								surfaceId={segment.surface.surfaceId}
+								messages={segment.surface.messages}
+								blocking={segment.surface.blocking}
+								requestId={segment.surface.requestId}
+								answered={segment.surface.answered}
+								answeredAction={segment.surface.answeredAction}
+								answeredAt={segment.surface.answeredAt}
+								onAction={onA2UIAction}
+								defaultCollapsed={segment.surface.answered}
+							/>
+						);
+					}
+
 					return null;
 				})}
 			</div>
 		</div>
 	);
 
-	// If no fork handler, just render the card directly
-	if (!onFork || !lastMessageId) {
-		return messageCard;
-	}
-
-	// Wrap in context menu for fork functionality
+	// Always wrap in context menu for copy all (and fork if available)
 	return (
 		<ContextMenu>
-			<ContextMenuTrigger asChild>{messageCard}</ContextMenuTrigger>
+			<ContextMenuTrigger className="contents">{messageCard}</ContextMenuTrigger>
 			<ContextMenuContent>
-				<ContextMenuItem
-					onClick={() => onFork(lastMessageId)}
-					className="gap-2"
-				>
-					<GitBranch className="w-4 h-4" />
-					{locale === "de" ? "Von hier verzweigen" : "Branch from here"}
-				</ContextMenuItem>
-				<ContextMenuSeparator />
-				<ContextMenuItem
-					onClick={() => {
-						if (allTextContent) {
-							navigator.clipboard?.writeText(allTextContent);
-						}
-					}}
-					className="gap-2"
-				>
-					<Copy className="w-4 h-4" />
-					{locale === "de" ? "Text kopieren" : "Copy text"}
-				</ContextMenuItem>
+				{allTextContent && (
+					<ContextMenuItem
+						onClick={() => navigator.clipboard?.writeText(allTextContent)}
+						className="gap-2"
+					>
+						<Copy className="w-4 h-4" />
+						{locale === "de" ? "Alles kopieren" : "Copy all"}
+					</ContextMenuItem>
+				)}
+				{onFork && lastMessageId && (
+					<>
+						{allTextContent && <ContextMenuSeparator />}
+						<ContextMenuItem
+							onClick={() => onFork(lastMessageId)}
+							className="gap-2"
+						>
+							<GitBranch className="w-4 h-4" />
+							{locale === "de" ? "Von hier verzweigen" : "Branch from here"}
+						</ContextMenuItem>
+					</>
+				)}
 			</ContextMenuContent>
 		</ContextMenu>
 	);
@@ -4043,7 +5696,11 @@ const extractFilePartDetails = (
 			return { filePath: absolutePath, fileName };
 		}
 		if (rawUrl.startsWith("http://") || rawUrl.startsWith("https://")) {
-			return { filePath: metadataPath || fileName, fileName, directUrl: rawUrl };
+			return {
+				filePath: metadataPath || fileName,
+				fileName,
+				directUrl: rawUrl,
+			};
 		}
 	}
 
@@ -4104,10 +5761,7 @@ const FileReferenceCard = memo(function FileReferenceCard({
 	const fileUrl = useMemo(() => {
 		if (directUrl) return directUrl;
 		if (!workspacePath) return null;
-		const baseUrl = fileserverWorkspaceBaseUrl();
-		const encodedPath = encodeURIComponent(filePath);
-		const workspaceParam = `&workspace_path=${encodeURIComponent(workspacePath)}`;
-		return `${baseUrl}/read?path=${encodedPath}${workspaceParam}`;
+		return workspaceFileUrl(workspacePath, filePath);
 	}, [directUrl, filePath, workspacePath]);
 
 	if (!fileUrl) {
@@ -4180,6 +5834,8 @@ const TodoListView = memo(function TodoListView({
 	todos,
 	emptyMessage,
 }: { todos: TodoItem[]; emptyMessage: string }) {
+	const [isCollapsed, setIsCollapsed] = useState(false);
+
 	// Group todos by status for summary
 	const summary = useMemo(() => {
 		const pending = todos.filter((t) => t.status === "pending").length;
@@ -4190,20 +5846,44 @@ const TodoListView = memo(function TodoListView({
 	}, [todos]);
 
 	if (todos.length === 0) {
+		// Return null when empty to allow TrxView to take full space
+		return null;
+	}
+
+	// Collapsed view - just a status bar
+	if (isCollapsed) {
 		return (
-			<div className="flex items-center justify-center h-full p-4">
-				<div className="text-center">
-					<ListTodo className="w-12 h-12 text-muted-foreground/30 mx-auto mb-3" />
-					<p className="text-sm text-muted-foreground">{emptyMessage}</p>
+			<button
+				type="button"
+				onClick={() => setIsCollapsed(false)}
+				className="flex-shrink-0 w-full flex items-center justify-between px-3 py-2 border-b border-border bg-muted/30 hover:bg-muted/50 transition-colors"
+			>
+				<div className="flex items-center gap-3 text-[11px] text-muted-foreground">
+					<ListTodo className="w-3.5 h-3.5" />
+					<span className="font-medium">Tasks</span>
+					<span>{summary.total} total</span>
+					{summary.inProgress > 0 && (
+						<span className="flex items-center gap-1 text-primary">
+							<CircleDot className="w-3 h-3" />
+							{summary.inProgress}
+						</span>
+					)}
+					{summary.pending > 0 && (
+						<span className="flex items-center gap-1 text-muted-foreground">
+							<Square className="w-3 h-3" />
+							{summary.pending}
+						</span>
+					)}
 				</div>
-			</div>
+				<ChevronUp className="w-3.5 h-3.5 text-muted-foreground" />
+			</button>
 		);
 	}
 
 	return (
-		<div className="flex flex-col h-full">
+		<div className="flex flex-col flex-shrink-0 max-h-[40%] overflow-hidden">
 			{/* Summary header */}
-			<div className="p-3 border-b border-border bg-muted/30">
+			<div className="px-3 py-2 border-b border-border bg-muted/30">
 				<div className="flex items-center justify-between text-xs">
 					<span className="text-muted-foreground">{summary.total} tasks</span>
 					<div className="flex items-center gap-3">
@@ -4225,12 +5905,20 @@ const TodoListView = memo(function TodoListView({
 								{summary.completed}
 							</span>
 						)}
+						<button
+							type="button"
+							onClick={() => setIsCollapsed(true)}
+							className="p-1 hover:bg-muted rounded transition-colors"
+							title="Collapse"
+						>
+							<ChevronDown className="w-3 h-3 text-muted-foreground" />
+						</button>
 					</div>
 				</div>
 			</div>
 
 			{/* Todo list */}
-			<div className="flex-1 overflow-y-auto p-2 space-y-1">
+			<div className="flex-1 overflow-y-auto px-3 py-2 space-y-1">
 				{todos.map((todo, idx) => (
 					<div
 						key={todo.id || idx}

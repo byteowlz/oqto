@@ -3,8 +3,8 @@
 use axum::{
     body::Body,
     extract::{Path, Query, State, WebSocketUpgrade},
-    http::{Request, StatusCode, Uri},
-    response::{IntoResponse, Response, Sse},
+    http::{HeaderMap, Request, StatusCode, Uri},
+    response::{IntoResponse, Response},
 };
 use futures::{SinkExt, StreamExt};
 use hyper_util::client::legacy::Client;
@@ -90,6 +90,20 @@ fn build_fileserver_query(workspace_path: &str, query: Option<&str>) -> String {
     }
     pairs.push(format!("directory={}", urlencoding::encode(workspace_path)));
     pairs.join("&")
+}
+
+fn enforce_proxy_body_limit(headers: &HeaderMap, max_body_bytes: usize) -> Result<(), StatusCode> {
+    if let Some(value) = headers.get(axum::http::header::CONTENT_LENGTH) {
+        let length = value
+            .to_str()
+            .ok()
+            .and_then(|raw| raw.parse::<usize>().ok())
+            .ok_or(StatusCode::BAD_REQUEST)?;
+        if length > max_body_bytes {
+            return Err(StatusCode::PAYLOAD_TOO_LARGE);
+        }
+    }
+    Ok(())
 }
 
 /// Proxy WebSocket requests to the configured STT service.
@@ -217,6 +231,7 @@ pub async fn proxy_opencode(
         opencode_session.opencode_port as u16,
         &path,
         starting,
+        state.max_proxy_body_bytes,
     )
     .await
 }
@@ -249,6 +264,7 @@ pub async fn proxy_fileserver(
         session.fileserver_port as u16,
         &path,
         starting,
+        state.max_proxy_body_bytes,
     )
     .await
 }
@@ -282,6 +298,7 @@ pub async fn proxy_fileserver_for_workspace(
         &path,
         starting,
         Some(&directory_query),
+        state.max_proxy_body_bytes,
     )
     .await
 }
@@ -293,6 +310,7 @@ async fn proxy_request(
     target_port: u16,
     target_path: &str,
     connect_errors_as_unavailable: bool,
+    max_body_bytes: usize,
 ) -> Result<Response, StatusCode> {
     proxy_request_with_query(
         client,
@@ -301,6 +319,7 @@ async fn proxy_request(
         target_path,
         connect_errors_as_unavailable,
         None,
+        max_body_bytes,
     )
     .await
 }
@@ -312,6 +331,7 @@ async fn proxy_request_with_query(
     target_path: &str,
     connect_errors_as_unavailable: bool,
     query_override: Option<&str>,
+    max_body_bytes: usize,
 ) -> Result<Response, StatusCode> {
     let query = req.uri().query().unwrap_or("");
     let query = query_override.unwrap_or(query);
@@ -329,10 +349,31 @@ async fn proxy_request_with_query(
     })?;
 
     let (parts, body) = req.into_parts();
-    let body_bytes = axum::body::to_bytes(body, usize::MAX).await.map_err(|e| {
-        error!("Failed to buffer proxy request body: {:?}", e);
-        StatusCode::BAD_GATEWAY
-    })?;
+
+    // Log content-type for debugging multipart issues
+    if let Some(ct) = parts.headers.get(axum::http::header::CONTENT_TYPE) {
+        warn!("Proxy request Content-Type: {:?}", ct);
+    }
+    if let Some(cl) = parts.headers.get(axum::http::header::CONTENT_LENGTH) {
+        warn!("Proxy request Content-Length header: {:?}", cl);
+    }
+
+    enforce_proxy_body_limit(&parts.headers, max_body_bytes)?;
+    let body_bytes = axum::body::to_bytes(body, max_body_bytes)
+        .await
+        .map_err(|e| {
+            if e.to_string().contains("length limit") {
+                warn!(
+                    "Proxy request body exceeded limit of {} bytes",
+                    max_body_bytes
+                );
+                return StatusCode::PAYLOAD_TOO_LARGE;
+            }
+            error!("Failed to buffer proxy request body: {:?}", e);
+            StatusCode::BAD_GATEWAY
+        })?;
+
+    warn!("Proxy request body size: {} bytes", body_bytes.len());
 
     let start = tokio::time::Instant::now();
     let timeout = tokio::time::Duration::from_secs(15);
@@ -351,6 +392,24 @@ async fn proxy_request_with_query(
             })?;
 
         *forwarded.headers_mut() = parts.headers.clone();
+
+        // Update Content-Length to match actual body size (important for multipart uploads
+        // where the original Content-Length may not match after buffering).
+        // Also remove Transfer-Encoding since we're sending a fixed-length body.
+        forwarded
+            .headers_mut()
+            .remove(axum::http::header::TRANSFER_ENCODING);
+        let new_content_length = body_bytes.len().to_string();
+        warn!(
+            "Setting Content-Length to {} (was: {:?})",
+            new_content_length,
+            parts.headers.get(axum::http::header::CONTENT_LENGTH)
+        );
+        forwarded.headers_mut().insert(
+            axum::http::header::CONTENT_LENGTH,
+            axum::http::HeaderValue::from_str(&new_content_length)
+                .expect("content-length is valid"),
+        );
 
         // Ensure Host header matches the target authority.
         if let Some(authority) = forwarded.uri().authority() {
@@ -796,28 +855,135 @@ pub async fn proxy_opencode_events(
     Ok(response)
 }
 
-/// SSE events stream for opencode (legacy global endpoint - deprecated).
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn enforce_proxy_body_limit_allows_small() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            axum::http::header::CONTENT_LENGTH,
+            axum::http::HeaderValue::from_static("10"),
+        );
+        assert!(enforce_proxy_body_limit(&headers, 20).is_ok());
+    }
+
+    #[test]
+    fn enforce_proxy_body_limit_rejects_large() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            axum::http::header::CONTENT_LENGTH,
+            axum::http::HeaderValue::from_static("128"),
+        );
+        assert_eq!(
+            enforce_proxy_body_limit(&headers, 64).unwrap_err(),
+            StatusCode::PAYLOAD_TOO_LARGE
+        );
+    }
+
+    #[test]
+    fn enforce_proxy_body_limit_rejects_invalid_length() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            axum::http::header::CONTENT_LENGTH,
+            axum::http::HeaderValue::from_static("nope"),
+        );
+        assert_eq!(
+            enforce_proxy_body_limit(&headers, 64).unwrap_err(),
+            StatusCode::BAD_REQUEST
+        );
+    }
+}
+
+/// SSE events stream for opencode global events.
+///
+/// Proxies to opencode's /global/event endpoint which provides events for all
+/// directories/sessions. The SDK expects this endpoint to receive real-time
+/// updates about sessions, messages, permissions, etc.
 pub async fn opencode_events(
-    State(_state): State<AppState>,
-) -> Result<
-    Sse<
-        impl tokio_stream::Stream<Item = Result<axum::response::sse::Event, std::convert::Infallible>>,
-    >,
-    StatusCode,
-> {
-    use axum::response::sse::Event;
-    use std::time::Duration;
-    use tokio::time;
-    use tokio_stream::{StreamExt, wrappers::IntervalStream};
+    State(state): State<AppState>,
+) -> Result<Response, StatusCode> {
+    let opencode_session = state
+        .sessions
+        .get_or_create_opencode_session()
+        .await
+        .map_err(|e| {
+            error!("Failed to get primary opencode session: {:?}", e);
+            StatusCode::SERVICE_UNAVAILABLE
+        })?;
 
-    // For now, send a keep-alive every 30 seconds
-    // This endpoint is deprecated - use /session/:id/code/event instead
-    let interval = time::interval(Duration::from_secs(30));
-    let stream = StreamExt::map(IntervalStream::new(interval), |_| {
-        Ok(Event::default().data("{\"type\":\"keepalive\"}"))
-    });
+    let opencode_session_id = opencode_session.id.clone();
+    let opencode_session =
+        ensure_session_active_for_proxy(&state, &opencode_session_id, opencode_session).await?;
 
-    Ok(Sse::new(stream))
+    let target_url = format!(
+        "http://localhost:{}/global/event",
+        opencode_session.opencode_port
+    );
+    debug!("Proxying global SSE events from {}", target_url);
+
+    // Create HTTP client for SSE
+    let client = reqwest::Client::new();
+
+    // During startup, opencode may not be ready yet. Retry the initial connect for a short period.
+    let start = tokio::time::Instant::now();
+    let timeout = tokio::time::Duration::from_secs(20);
+    let mut attempts: u32 = 0;
+
+    let response = loop {
+        attempts += 1;
+        match client
+            .get(&target_url)
+            .header("Accept", "text/event-stream")
+            .send()
+            .await
+        {
+            Ok(res) => break res,
+            Err(err) => {
+                // Only retry connection-level failures.
+                if !err.is_connect() || start.elapsed() >= timeout {
+                    error!(
+                        "Failed to connect to opencode global SSE after {} attempts over {:?}: {:?}",
+                        attempts, timeout, err
+                    );
+                    return Err(StatusCode::BAD_GATEWAY);
+                }
+
+                let backoff_ms = (attempts.min(20) as u64) * 100;
+                let backoff = tokio::time::Duration::from_millis(backoff_ms);
+                debug!(
+                    "opencode global SSE not ready yet (attempt {}): {}; retrying in {:?}",
+                    attempts, err, backoff
+                );
+                tokio::time::sleep(backoff).await;
+            }
+        }
+    };
+
+    if !response.status().is_success() {
+        error!("Opencode global SSE returned status: {}", response.status());
+        return Err(StatusCode::BAD_GATEWAY);
+    }
+
+    // Convert reqwest byte stream to axum body stream
+    let stream = response.bytes_stream();
+    let body = Body::from_stream(stream);
+
+    // Build SSE response with proper headers
+    let response = Response::builder()
+        .status(StatusCode::OK)
+        .header("Content-Type", "text/event-stream")
+        .header("Cache-Control", "no-cache")
+        .header("Connection", "keep-alive")
+        .header("X-Accel-Buffering", "no") // Disable nginx buffering if present
+        .body(body)
+        .map_err(|e| {
+            error!("Failed to build global SSE response: {:?}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+
+    Ok(response)
 }
 
 // ============================================================================
@@ -848,6 +1014,32 @@ fn get_mmry_target(
         })?;
         Ok(format!("http://localhost:{}", port))
     }
+}
+
+async fn resolve_mmry_session_target(
+    state: &AppState,
+    session_id: &str,
+) -> Result<(String, Option<String>), StatusCode> {
+    let session = state
+        .sessions
+        .get_session(session_id)
+        .await
+        .map_err(|e| {
+            error!("Failed to get session {}: {:?}", session_id, e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    // In single-user mode, allow access even when session is inactive
+    // since we're proxying to a shared local mmry service
+    if !state.mmry.single_user && !session.is_active() {
+        warn!("Attempted to proxy mmry to inactive session {}", session_id);
+        return Err(StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    let target_url = get_mmry_target(state, &session)?;
+    let store = get_mmry_store_name(state, &session);
+    Ok((target_url, store))
 }
 
 /// Derive mmry store name from session workspace path.
@@ -1066,25 +1258,7 @@ pub async fn proxy_mmry(
     Path((session_id, path)): Path<(String, String)>,
     req: Request<Body>,
 ) -> Result<Response, StatusCode> {
-    let session = state
-        .sessions
-        .get_session(&session_id)
-        .await
-        .map_err(|e| {
-            error!("Failed to get session {}: {:?}", session_id, e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?
-        .ok_or(StatusCode::NOT_FOUND)?;
-
-    // In single-user mode, allow access even when session is inactive
-    // since we're proxying to a shared local mmry service
-    if !state.mmry.single_user && !session.is_active() {
-        warn!("Attempted to proxy mmry to inactive session {}", session_id);
-        return Err(StatusCode::SERVICE_UNAVAILABLE);
-    }
-
-    let target_url = get_mmry_target(&state, &session)?;
-    let store = get_mmry_store_name(&state, &session);
+    let (target_url, store) = resolve_mmry_session_target(&state, &session_id).await?;
     proxy_request_to_url(
         state.http_client.clone(),
         req,
@@ -1104,25 +1278,7 @@ pub async fn proxy_mmry_search(
     Path(session_id): Path<String>,
     req: Request<Body>,
 ) -> Result<Response, StatusCode> {
-    let session = state
-        .sessions
-        .get_session(&session_id)
-        .await
-        .map_err(|e| {
-            error!("Failed to get session {}: {:?}", session_id, e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?
-        .ok_or(StatusCode::NOT_FOUND)?;
-
-    // In single-user mode, allow access even when session is inactive
-    // since we're proxying to a shared local mmry service
-    if !state.mmry.single_user && !session.is_active() {
-        warn!("Attempted to proxy mmry to inactive session {}", session_id);
-        return Err(StatusCode::SERVICE_UNAVAILABLE);
-    }
-
-    let target_url = get_mmry_target(&state, &session)?;
-    let store = get_mmry_store_name(&state, &session);
+    let (target_url, store) = resolve_mmry_session_target(&state, &session_id).await?;
     proxy_request_to_url(
         state.http_client.clone(),
         req,
@@ -1141,25 +1297,7 @@ pub async fn proxy_mmry_list(
     Path(session_id): Path<String>,
     req: Request<Body>,
 ) -> Result<Response, StatusCode> {
-    let session = state
-        .sessions
-        .get_session(&session_id)
-        .await
-        .map_err(|e| {
-            error!("Failed to get session {}: {:?}", session_id, e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?
-        .ok_or(StatusCode::NOT_FOUND)?;
-
-    // In single-user mode, allow access even when session is inactive
-    // since we're proxying to a shared local mmry service
-    if !state.mmry.single_user && !session.is_active() {
-        warn!("Attempted to proxy mmry to inactive session {}", session_id);
-        return Err(StatusCode::SERVICE_UNAVAILABLE);
-    }
-
-    let target_url = get_mmry_target(&state, &session)?;
-    let store = get_mmry_store_name(&state, &session);
+    let (target_url, store) = resolve_mmry_session_target(&state, &session_id).await?;
     proxy_mmry_request_to_url(
         state.http_client.clone(),
         req,
@@ -1178,25 +1316,7 @@ pub async fn proxy_mmry_add(
     Path(session_id): Path<String>,
     req: Request<Body>,
 ) -> Result<Response, StatusCode> {
-    let session = state
-        .sessions
-        .get_session(&session_id)
-        .await
-        .map_err(|e| {
-            error!("Failed to get session {}: {:?}", session_id, e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?
-        .ok_or(StatusCode::NOT_FOUND)?;
-
-    // In single-user mode, allow access even when session is inactive
-    // since we're proxying to a shared local mmry service
-    if !state.mmry.single_user && !session.is_active() {
-        warn!("Attempted to proxy mmry to inactive session {}", session_id);
-        return Err(StatusCode::SERVICE_UNAVAILABLE);
-    }
-
-    let target_url = get_mmry_target(&state, &session)?;
-    let store = get_mmry_store_name(&state, &session);
+    let (target_url, store) = resolve_mmry_session_target(&state, &session_id).await?;
     proxy_mmry_request_to_url(
         state.http_client.clone(),
         req,
@@ -1215,25 +1335,7 @@ pub async fn proxy_mmry_memory(
     Path((session_id, memory_id)): Path<(String, String)>,
     req: Request<Body>,
 ) -> Result<Response, StatusCode> {
-    let session = state
-        .sessions
-        .get_session(&session_id)
-        .await
-        .map_err(|e| {
-            error!("Failed to get session {}: {:?}", session_id, e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?
-        .ok_or(StatusCode::NOT_FOUND)?;
-
-    // In single-user mode, allow access even when session is inactive
-    // since we're proxying to a shared local mmry service
-    if !state.mmry.single_user && !session.is_active() {
-        warn!("Attempted to proxy mmry to inactive session {}", session_id);
-        return Err(StatusCode::SERVICE_UNAVAILABLE);
-    }
-
-    let target_url = get_mmry_target(&state, &session)?;
-    let store = get_mmry_store_name(&state, &session);
+    let (target_url, store) = resolve_mmry_session_target(&state, &session_id).await?;
     let path = format!("v1/memories/{}", memory_id);
     proxy_mmry_request_to_url(
         state.http_client.clone(),
@@ -1253,24 +1355,7 @@ pub async fn proxy_mmry_stores(
     Path(session_id): Path<String>,
     req: Request<Body>,
 ) -> Result<Response, StatusCode> {
-    let session = state
-        .sessions
-        .get_session(&session_id)
-        .await
-        .map_err(|e| {
-            error!("Failed to get session {}: {:?}", session_id, e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?
-        .ok_or(StatusCode::NOT_FOUND)?;
-
-    // In single-user mode, allow access even when session is inactive
-    // since we're proxying to a shared local mmry service
-    if !state.mmry.single_user && !session.is_active() {
-        warn!("Attempted to proxy mmry to inactive session {}", session_id);
-        return Err(StatusCode::SERVICE_UNAVAILABLE);
-    }
-
-    let target_url = get_mmry_target(&state, &session)?;
+    let (target_url, _store) = resolve_mmry_session_target(&state, &session_id).await?;
     // Note: stores endpoint doesn't need a store parameter - it lists all stores
     proxy_mmry_request_to_url(
         state.http_client.clone(),
@@ -1424,7 +1509,15 @@ pub async fn proxy_opencode_agent(
         })?;
 
     let starting = matches!(opencode_session.status, SessionStatus::Starting);
-    proxy_request(state.http_client.clone(), req, port, &path, starting).await
+    proxy_request(
+        state.http_client.clone(),
+        req,
+        port,
+        &path,
+        starting,
+        state.max_proxy_body_bytes,
+    )
+    .await
 }
 
 /// SSE events proxy for a specific agent's opencode server.

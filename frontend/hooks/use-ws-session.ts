@@ -10,7 +10,6 @@ import {
 	type WsEvent,
 	getWsClient,
 } from "@/lib/ws-client";
-import { useQueryClient } from "@tanstack/react-query";
 import {
 	useCallback,
 	useEffect,
@@ -18,7 +17,6 @@ import {
 	useState,
 	useSyncExternalStore,
 } from "react";
-import { openCodeKeys } from "./use-opencode";
 
 // ============================================================================
 // Connection State Hook
@@ -90,6 +88,19 @@ export type SessionEvent =
 			message: string;
 			details?: unknown;
 	  }
+	| {
+			type: "a2ui.surface";
+			sessionId: string;
+			surfaceId: string;
+			messages: unknown[];
+			blocking: boolean;
+			requestId?: string;
+	  }
+	| {
+			type: "a2ui.action_resolved";
+			sessionId: string;
+			requestId: string;
+	  }
 	| { type: "raw"; event: WsEvent };
 
 // Internal Permission type for WS events - matches backend WsEvent::PermissionRequest
@@ -131,8 +142,7 @@ export function useWsSession(
 	},
 ) {
 	const client = getWsClient();
-	const queryClient = useQueryClient();
-	const { enabled = true, opencodeBaseUrl, activeSessionId } = options ?? {};
+	const { enabled = true } = options ?? {};
 
 	// Keep callback ref stable to avoid re-subscriptions
 	const onEventRef = useRef(onEvent);
@@ -152,25 +162,45 @@ export function useWsSession(
 		client.subscribeSession(sessionId);
 		setIsSubscribed(true);
 
+		let deltaTimer: ReturnType<typeof setTimeout> | null = null;
+		let deltaLastEmitAt = 0;
+		let deltaPending = false;
+
+		const emitMessageUpdated = () => {
+			onEventRef.current({ type: "message.updated", sessionId });
+		};
+
+		const scheduleMessageUpdated = (minIntervalMs: number) => {
+			deltaPending = true;
+			if (deltaTimer) return;
+
+			const elapsed = Date.now() - deltaLastEmitAt;
+			const wait = Math.max(0, minIntervalMs - elapsed);
+			deltaTimer = setTimeout(() => {
+				deltaTimer = null;
+				if (!deltaPending) return;
+				deltaPending = false;
+				deltaLastEmitAt = Date.now();
+				emitMessageUpdated();
+			}, wait);
+		};
+
 		// Handle events for this session
 		const unsubscribe = client.onSessionEvent(sessionId, (event: WsEvent) => {
+			// Deltas can come in extremely frequently; throttle them to keep typing responsive.
+			if (event.type === "text_delta" || event.type === "thinking_delta") {
+				scheduleMessageUpdated(250);
+				return;
+			}
+
 			const mapped = mapWsEventToSessionEvent(event, sessionId);
 			if (mapped) {
 				onEventRef.current(mapped);
 			}
 
-			// Invalidate query cache on message updates
-			if (opencodeBaseUrl && activeSessionId) {
-				if (
-					event.type === "message_updated" ||
-					event.type === "message_end" ||
-					event.type === "session_idle"
-				) {
-					queryClient.invalidateQueries({
-						queryKey: openCodeKeys.messages(opencodeBaseUrl, activeSessionId),
-					});
-				}
-			}
+			// Note: React Query cache invalidation removed - SessionsApp uses manual message loading
+			// via loadMessages() and requestMessageRefresh(), not useOpenCodeMessages hook.
+			// The event callback above handles notifying components of changes.
 		});
 
 		// Emit initial transport mode event
@@ -184,15 +214,12 @@ export function useWsSession(
 			unsubscribe();
 			client.unsubscribeSession(sessionId);
 			setIsSubscribed(false);
+			if (deltaTimer) {
+				clearTimeout(deltaTimer);
+				deltaTimer = null;
+			}
 		};
-	}, [
-		sessionId,
-		enabled,
-		client,
-		queryClient,
-		opencodeBaseUrl,
-		activeSessionId,
-	]);
+	}, [sessionId, enabled, client]);
 
 	// Action methods
 	const sendMessage = useCallback(
@@ -286,6 +313,18 @@ function mapWsEventToSessionEvent(
 		case "agent_connected":
 			return { type: "server.connected" };
 
+		case "error":
+			if ("message" in event) {
+				return {
+					type: "session.error",
+					sessionId,
+					errorType: "BackendError",
+					message: event.message,
+					details: event,
+				};
+			}
+			return null;
+
 		case "message_updated":
 		case "message_end":
 		case "text_delta":
@@ -333,6 +372,29 @@ function mapWsEventToSessionEvent(
 		case "opencode_event":
 			// Pass through raw OpenCode events for components that need them
 			return { type: "raw", event };
+
+		case "a2ui_surface":
+			if ("surface_id" in event && "messages" in event) {
+				return {
+					type: "a2ui.surface",
+					sessionId,
+					surfaceId: event.surface_id,
+					messages: event.messages as unknown[],
+					blocking: event.blocking ?? false,
+					requestId: event.request_id,
+				};
+			}
+			return null;
+
+		case "a2ui_action_resolved":
+			if ("request_id" in event) {
+				return {
+					type: "a2ui.action_resolved",
+					sessionId,
+					requestId: event.request_id,
+				};
+			}
+			return null;
 
 		default:
 			// Return raw event for unhandled types
@@ -441,10 +503,41 @@ export function useWsSessionEvents(
 			properties: { mode: "ws", reason: "websocket" },
 		});
 
+		let deltaTimer: ReturnType<typeof setTimeout> | null = null;
+		let deltaLastEmitAt = 0;
+		let deltaPending = false;
+
+		const scheduleLegacyMessageUpdated = (sessionId: string, minIntervalMs: number) => {
+			deltaPending = true;
+			if (deltaTimer) return;
+
+			const elapsed = Date.now() - deltaLastEmitAt;
+			const wait = Math.max(0, minIntervalMs - elapsed);
+			deltaTimer = setTimeout(() => {
+				deltaTimer = null;
+				if (!deltaPending) return;
+				deltaPending = false;
+				deltaLastEmitAt = Date.now();
+				onEventRef.current({
+					type: "message.updated",
+					properties: { sessionId },
+				});
+			}, wait);
+		};
+
 		// Handle events for this session
 		const unsubscribe = client.onSessionEvent(
 			workspaceSessionId,
 			(event: WsEvent) => {
+				if (event.type === "text_delta" || event.type === "thinking_delta") {
+					const sessionId =
+						"session_id" in event
+							? (event.session_id as string)
+							: workspaceSessionId;
+					scheduleLegacyMessageUpdated(sessionId, 250);
+					return;
+				}
+
 				const legacy = mapWsEventToLegacyEvent(event);
 				if (legacy) {
 					onEventRef.current(legacy);
@@ -456,6 +549,10 @@ export function useWsSessionEvents(
 			unsubscribe();
 			client.unsubscribeSession(workspaceSessionId);
 			setIsSubscribed(false);
+			if (deltaTimer) {
+				clearTimeout(deltaTimer);
+				deltaTimer = null;
+			}
 		};
 	}, [workspaceSessionId, enabled, client]);
 
@@ -514,6 +611,18 @@ function mapWsEventToLegacyEvent(event: WsEvent): LegacyEvent | null {
 		case "agent_connected":
 			return { type: "server.connected", properties: {} };
 
+		case "error":
+			return {
+				type: "session.error",
+				properties: {
+					sessionID: "session_id" in event ? event.session_id : undefined,
+					error: {
+						name: "BackendError",
+						data: { message: "message" in event ? event.message : "" },
+					},
+				},
+			};
+
 		case "message_updated":
 		case "message_end":
 		case "text_delta":
@@ -557,6 +666,32 @@ function mapWsEventToLegacyEvent(event: WsEvent): LegacyEvent | null {
 			}
 			return null;
 
+		case "question_request":
+			if ("request_id" in event && "questions" in event) {
+				return {
+					type: "question.asked",
+					properties: {
+						id: event.request_id,
+						sessionID: "session_id" in event ? event.session_id : undefined,
+						questions: event.questions,
+						tool: event.tool,
+					},
+				};
+			}
+			return null;
+
+		case "question_resolved":
+			if ("request_id" in event) {
+				return {
+					type: "question.replied",
+					properties: {
+						requestID: event.request_id,
+						sessionID: "session_id" in event ? event.session_id : undefined,
+					},
+				};
+			}
+			return null;
+
 		case "session_error":
 			if ("error_type" in event && "message" in event) {
 				return {
@@ -572,12 +707,57 @@ function mapWsEventToLegacyEvent(event: WsEvent): LegacyEvent | null {
 			}
 			return null;
 
+		case "compaction_start":
+			return {
+				type: "compaction.start",
+				properties: {
+					sessionID: "session_id" in event ? event.session_id : undefined,
+					reason: "reason" in event ? event.reason : undefined,
+				},
+			};
+
+		case "compaction_end":
+			return {
+				type: "compaction.end",
+				properties: {
+					sessionID: "session_id" in event ? event.session_id : undefined,
+					success: "success" in event ? event.success : undefined,
+				},
+			};
+
 		case "opencode_event":
 			// Pass through the inner event type if available
 			if ("event_type" in event && "data" in event) {
 				return {
 					type: event.event_type,
 					properties: event.data as Record<string, unknown>,
+				};
+			}
+			return null;
+
+		case "a2ui_surface":
+			if ("surface_id" in event && "messages" in event) {
+				return {
+					type: "a2ui.surface",
+					properties: {
+						sessionId: "session_id" in event ? event.session_id : undefined,
+						surfaceId: event.surface_id,
+						messages: event.messages,
+						blocking: event.blocking ?? false,
+						requestId: event.request_id,
+					},
+				};
+			}
+			return null;
+
+		case "a2ui_action_resolved":
+			if ("request_id" in event) {
+				return {
+					type: "a2ui.action_resolved",
+					properties: {
+						sessionId: "session_id" in event ? event.session_id : undefined,
+						requestId: event.request_id,
+					},
 				};
 			}
 			return null;

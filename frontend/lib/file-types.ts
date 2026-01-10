@@ -49,9 +49,14 @@ const extensionToLanguage: Record<string, string> = {
 	xml: "xml",
 	toml: "toml",
 	csv: "csv",
+	ini: "ini",
+	conf: "ini",
+	cfg: "ini",
+	properties: "properties",
 
 	// Config files
 	env: "bash",
+	envrc: "bash",
 	sh: "bash",
 	bash: "bash",
 	zsh: "bash",
@@ -100,6 +105,16 @@ const extensionToLanguage: Record<string, string> = {
 	tex: "latex",
 	latex: "latex",
 	typ: "typst",
+	j2: "jinja2",
+	jinja: "jinja2",
+	jinja2: "jinja2",
+	njk: "jinja2",
+	nunjucks: "jinja2",
+	tmpl: "jinja2",
+	tpl: "jinja2",
+	hbs: "handlebars",
+	handlebars: "handlebars",
+	mustache: "mustache",
 
 	// Database
 	sql: "sql",
@@ -121,6 +136,10 @@ const extensionToLanguage: Record<string, string> = {
 	patch: "diff",
 	proto: "protobuf",
 	asm: "nasm",
+	example: "text",
+	txt: "text",
+	text: "text",
+	log: "text",
 };
 
 // Image extensions
@@ -190,12 +209,24 @@ export function getFileExtension(filename: string): string {
 		cmakelists: "cmake",
 		".gitignore": "gitignore",
 		".gitattributes": "gitignore",
+		".gitmodules": "gitignore",
 		".dockerignore": "dockerignore",
 		".env": "env",
 		".env.local": "env",
 		".env.example": "env",
+		".envrc": "envrc",
+		".editorconfig": "ini",
+		".npmrc": "ini",
+		".yarnrc": "ini",
+		".pnpmrc": "ini",
+		".prettierignore": "gitignore",
+		".eslintignore": "gitignore",
 		".prettierrc": "json",
 		".eslintrc": "json",
+		".babelrc": "json",
+		".stylelintrc": "json",
+		"justfile": "makefile",
+		"justfile.js": "javascript",
 	};
 
 	for (const [special, lang] of Object.entries(specialFiles)) {

@@ -256,7 +256,7 @@ export function MainChatEntry({
 	return (
 		<>
 			<ContextMenu>
-				<ContextMenuTrigger asChild>
+				<ContextMenuTrigger className="contents">
 					<div>
 						<div
 							className={cn(
@@ -380,11 +380,8 @@ function SessionTimeline({
 	locale: "en" | "de";
 }) {
 	return (
-		<div className="relative pl-2">
-			{/* Vertical line */}
-			<div className="absolute left-[5px] top-1 bottom-1 w-0.5 bg-border" />
-
-			{/* Session dots */}
+		<div className="relative">
+			{/* Session items */}
 			<div className="flex flex-col gap-0.5">
 				{sessions.map((session) => {
 					const isActive = session.session_id === activeSessionId;
@@ -405,10 +402,9 @@ function SessionTimeline({
 							{/* Dot */}
 							<div
 								className={cn(
-									"relative z-10 w-2.5 h-2.5 rounded-full flex-shrink-0 transition-all",
-									"border border-background",
+									"relative z-10 w-2 h-2 flex-shrink-0 transition-all",
 									isActive
-										? "bg-primary scale-110 ring-2 ring-primary/30"
+										? "bg-primary"
 										: "bg-muted-foreground/40 group-hover:bg-muted-foreground/60",
 								)}
 							/>

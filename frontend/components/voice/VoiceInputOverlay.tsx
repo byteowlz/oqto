@@ -63,6 +63,7 @@ export interface VoiceInputOverlayProps {
 	onSettingsChange: {
 		setVisualizer: (type: VisualizerType) => void;
 		setMuted: (muted: boolean) => void;
+		setMicMuted: (muted: boolean) => void;
 		setContinuous: (continuous: boolean) => void;
 		setVoice: (voice: string) => void;
 		setSpeed: (speed: number) => void;
@@ -156,6 +157,21 @@ export function VoiceInputOverlay({
 							<VolumeX className="size-4" />
 						) : (
 							<Volume2 className="size-4" />
+						)}
+					</Button>
+
+					{/* Mic mute toggle */}
+					<Button
+						type="button"
+						variant="ghost"
+						size="icon-sm"
+						onClick={() => onSettingsChange.setMicMuted(!settings.micMuted)}
+						className={cn(settings.micMuted && "text-muted-foreground")}
+					>
+						{settings.micMuted ? (
+							<MicOff className="size-4" />
+						) : (
+							<Mic className="size-4" />
 						)}
 					</Button>
 
@@ -335,7 +351,8 @@ export function VoiceInputOverlay({
 						"Speak now... (silence will auto-send)"}
 					{voiceState === "processing" && "Processing your message..."}
 					{voiceState === "speaking" && "Agent is responding..."}
-					{voiceState === "idle" && "Voice mode ready"}
+					{voiceState === "idle" &&
+						(settings.micMuted ? "Mic muted" : "Voice mode ready")}
 				</p>
 			</div>
 		</div>

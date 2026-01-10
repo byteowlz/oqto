@@ -10,6 +10,7 @@ use std::path::Path;
 
 use super::linux_users::LinuxUsersConfig;
 use super::process::{ProcessManager, RunAsUser};
+use super::sandbox::SandboxConfig;
 
 /// Configuration for the local runtime.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -33,6 +34,13 @@ pub struct LocalRuntimeConfig {
     /// Linux user isolation configuration.
     #[serde(default)]
     pub linux_users: LinuxUsersConfig,
+    /// Sandbox configuration for process isolation.
+    #[serde(default)]
+    pub sandbox: Option<SandboxConfig>,
+    /// Whether to clean up local session processes on startup.
+    pub cleanup_on_startup: bool,
+    /// Whether to stop sessions when the backend shuts down.
+    pub stop_sessions_on_shutdown: bool,
 }
 
 impl Default for LocalRuntimeConfig {
@@ -45,6 +53,9 @@ impl Default for LocalRuntimeConfig {
             default_agent: None,
             single_user: false,
             linux_users: LinuxUsersConfig::default(),
+            sandbox: None,
+            cleanup_on_startup: false,
+            stop_sessions_on_shutdown: false,
         }
     }
 }
@@ -251,6 +262,7 @@ impl LocalRuntime {
         // Start opencode in workspace_path, optionally with --agent flag
         // Use provided agent, fall back to default_agent from config
         let effective_agent = agent.or(self.config.default_agent.as_deref());
+        let sandbox = self.config.sandbox.as_ref().filter(|s| s.enabled);
         let opencode_pid = self
             .process_manager
             .spawn_opencode(
@@ -261,6 +273,7 @@ impl LocalRuntime {
                 effective_agent,
                 env,
                 &run_as,
+                sandbox,
             )
             .await
             .context("starting opencode")?;
@@ -412,7 +425,7 @@ impl LocalRuntime {
     /// This should be called when the server starts to clean up any orphan
     /// processes from previous runs. It checks the base port range for any
     /// lingering processes and kills them.
-    pub fn startup_cleanup(&self, base_port: u16) {
+    pub fn startup_cleanup(&self, base_port: u16) -> usize {
         info!("Running local runtime startup cleanup...");
 
         // Check the default port range (base, base+1, base+2)
@@ -424,6 +437,8 @@ impl LocalRuntime {
         } else {
             info!("No orphan processes found during startup");
         }
+
+        cleared
     }
 }
 
@@ -723,6 +738,9 @@ mod tests {
             default_agent: None,
             single_user: true,
             linux_users: LinuxUsersConfig::default(),
+            sandbox: None,
+            cleanup_on_startup: false,
+            stop_sessions_on_shutdown: false,
         };
 
         // Test serialization
@@ -901,6 +919,9 @@ mod tests {
                 use_sudo: true,
                 create_home: true,
             },
+            sandbox: None,
+            cleanup_on_startup: false,
+            stop_sessions_on_shutdown: false,
         };
 
         // Test serialization round-trip

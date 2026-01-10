@@ -1,0 +1,894 @@
+# Issues
+
+## Open
+
+### [octo-af5j.7.6] Release manifest generator (byt release) (P1, task)
+byt release command that: 1) Reads component list from octo/release.toml, 2) Fetches current version from each repo (Cargo.toml, package.json, go.mod), 3) Generates versions.toml with all pinned versions, 4) Optionally tags all repos with octo-0.2.0 tag
+
+### [octo-af5j.7.1] Version manifest file format (P1, task)
+Define versions.toml or versions.json schema that lists all component versions for a release. Embedded in binary or fetched at runtime.
+
+### [octo-af5j.7] Dependency version pinning and compatibility matrix (P1, feature)
+Pin versions of opencode, pi, mmry, fileserver, ttyd, and other dependencies for each Octo release. Ensure all components are tested together. Include in release artifacts.
+
+### [octo-af5j.3] Self-Update Command (P1, feature)
+octoctl self-update command that downloads latest binary, verifies checksum, replaces current binary, and restarts service. Support for update channels (stable/beta).
+
+### [octo-af5j.2] Template Repository & Versioning (P1, feature)
+Separate templates into dedicated repo with version control. Enable template updates independent of binary releases. Track installed template versions per-agent.
+
+### [octo-af5j.1] Binary Release Pipeline (P1, feature)
+Build and distribute pre-compiled binaries for Linux (x86_64, arm64) and macOS (Intel, Apple Silicon). Eliminates need for Rust toolchain on user machines.
+
+### [octo-af5j] Release & Update System (P1, epic)
+Comprehensive system for distributing Octo releases, managing updates in the field, and expanding runtime options including Proxmox LXC support.
+
+### [workspace-jux6.1] Lazy load main app components (P1, task)
+Convert synchronous imports in apps/index.ts to React.lazy() imports. Currently SessionsApp, AgentsApp, ProjectsApp, SettingsApp, AdminApp are all bundled together. This blocks initial render with unused code.
+
+Location: frontend/apps/index.ts:1-56
+
+Implementation:
+...
+
+
+### [workspace-jux6] Improve web app startup performance and reduce reload friction (P1, epic)
+Optimize frontend startup times and eliminate unnecessary reloads. Current bottlenecks include synchronous i18n init, auth checks on every route, no code splitting for main apps, no service worker, and aggressive cache-busting.
+
+### [workspace-5pmk.11] Add backend URL configuration to login form (P1, task)
+Add a 'Server URL' field to the login form allowing users to specify the backend URL. Store in localStorage for persistence. Show connection status indicator. Default to current origin for web, require input for mobile apps.
+
+### [octo-s4ez] Define context model and context sources (local + remote) (P2, task)
+## Goal
+Define what "context" means for agent interactions in Octo, and how it is represented, versioned, and sourced, so features like global agent invoke (`octo-skks`) and agent-driven UI control (`octo-wzvn`) can reliably inject context now and later.
+
+## Context Model (Proposed)
+A versioned envelope composed of multiple context "sources".
+...
+
+
+### [octo-wzvn] Agent-driven UI control (conversational navigation) (P2, feature)
+## Problem
+Users want to navigate and operate the Octo web UI conversationally. The agent should be able to trigger UI actions (e.g., expanding/collapsing panels/canvas, switching apps/routes, opening dialogs, selecting sessions, focusing inputs) so the user can say what they want and the UI responds.
+
+## Proposed Feature
+Introduce a controlled "agent actions" layer that exposes safe UI commands to the agent (via tool calls / structured messages), such as:
+...
+
+
+### [octo-skks] Global main agent invoke with context injection (P2, feature)
+## Problem\nUsers want to invoke the Main Agent from any page in the web app, and have the agent automatically receive UI/runtime context (current page/route, active app/view, selected agent/persona if applicable, selected workspace directory/project, current session IDs).\n\n## Proposed Feature\nAdd a globally-available Main Agent entrypoint (e.g., hotkey + floating button + command palette action) that opens the Main Chat/agent panel. When the user sends a message, inject a structured context block into the message/system prompt containing:\n- Current route/pathname\n- Active app/view (e.g. sessions/settings/admin)\n- Active agent/persona (if any)\n- Current workspace directory / project key\n- Current workspace session ID + current chat session ID (if available)\n\n## Acceptance Criteria\n- Main Agent can be opened from any page without navigation side effects.\n- Sent messages include the context injection reliably and deterministically.\n- Context injection is visible in logs/devtools (or can be toggled) for debugging.\n- Works when OpenCode is not running (falls back to disk/history context).\n- No regression to existing Main Chat / Sessions flows.\n\n## Notes\nImplementation likely touches: app shell routing, global UI overlay, and the message send pipeline (control-plane / opencode proxy headers).
+
+### [octo-k8z1.8] Session management: Browser lifecycle (start/stop with session) (P2, task)
+
+### [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (P2, task)
+
+### [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (P2, task)
+
+### [octo-k8z1.5] Frontend: Add browser tab to central pane view switcher (P2, task)
+
+### [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (P2, task)
+
+### [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (P2, task)
+
+### [octo-k8z1.2] Backend: WebSocket proxy for screencast stream (P2, task)
+
+### [octo-k8z1.1] Backend: Integrate agent-browser daemon per session (P2, task)
+
+### [octo-k8z1] Add server-side browser feature (Option B) using agent-browser (P2, feature)
+
+### [octo-9qkv] Improve opencode chat error notifications (top-right toast) (P2, feature)
+Request: Provide clearer, more visible notifications for errors like session disconnect/resume failures, instead of (or in addition to) inline red banners. Prefer a popup/toast in the top-right that matches the app style.
+
+Motivation:
+- Current inline messages (e.g., 'resuming session' red text) can be easy to miss and can overlap UI controls.
+
+...
+
+
+### [octo-2r4f] Add slug field to session model and API responses (P2, task)
+
+### [octo-6pkd] Left sidebar: '+' next to SESSIONS should create session in current project; add separate 'new directory/project' button (P2, feature)
+UX change request:
+- The "+" button next to "SESSIONS" in the left sidebar should open/create a new session/chat within the project the user is currently in.
+- Add a separate "new dir" button for the existing create project functionality to make the distinction clearer.
+
+Confirmed behavior:
+...
+
+
+### [octo-af5j.7.5] LXC template version tags (P2, task)
+Same as container images but for LXC templates. octo-agent-0.2.0.tar.zst with pinned components.
+
+### [octo-af5j.7.4] Container image version tags (P2, task)
+Tag container images with Octo release version. octo-agent:0.2.0 contains exact pinned versions. Latest tag follows stable channel.
+
+### [octo-af5j.7.3] Bundled component downloads (P2, task)
+Release artifacts include or reference exact versions of opencode, pi, mmry, fileserver. Self-update fetches matching versions.
+
+### [octo-af5j.7.2] Component version checking at startup (P2, task)
+On startup, verify installed component versions match expected. Warn on mismatch, offer to update. Block startup on critical incompatibility.
+
+### [octo-4me3] Security/perf/idiomatic audit fixes (P2, epic)
+Bundle of findings from the comprehensive review; child issues are linked as blockers.
+
+### [octo-af5j.4.7.5] LXC template download and preparation (P2, task)
+Download octo-agent LXC template to local storage. Or build from Dockerfile equivalent. Pre-warm template cache.
+
+### [octo-af5j.4.7.4] Octo backend installation on Proxmox host (P2, task)
+Install octo binary, configure for Proxmox runtime mode, create API token for LXC management, set up systemd service.
+
+### [octo-af5j.4.7.3] Storage configuration (P2, task)
+Set up local-lvm or ZFS pool for container storage. Configure template storage location. Optional: add NFS/Ceph for shared storage.
+
+### [octo-af5j.4.7.2] Network configuration for Proxmox (P2, task)
+Configure vmbr0 bridge, optional NAT for agent containers, firewall rules. Support single NIC and multi-NIC setups.
+
+### [octo-af5j.4.7.1] Proxmox VE installation automation (P2, task)
+Add Proxmox repo to Debian, install pve-manager, configure grub for IOMMU if needed. Handle both fresh Debian and Proxmox ISO scenarios.
+
+### [octo-af5j.4.7] Proxmox automated installer (P2, feature)
+Script that takes a fresh Debian/bare-metal system, installs Proxmox VE, configures networking, and bootstraps Octo with LXC runtime. Single command to go from bare metal to running Octo instance.
+
+### [octo-af5j.6.2] Platform detection and binary selection (P2, task)
+Detect OS (Linux/macOS), arch (x86_64/arm64), libc (glibc/musl). Download matching binary. Fallback to source build if no binary.
+
+### [octo-af5j.6.1] One-liner install command (P2, task)
+curl -fsSL https://octo.ai/install.sh | sh - Downloads binary, adds to PATH, runs initial setup wizard.
+
+### [octo-af5j.5.2] Migration scripts framework (P2, task)
+Embedded migration functions (v0->v1, v1->v2, etc). Apply in order. Track applied migrations.
+
+### [octo-af5j.5.1] Config version detection (P2, task)
+Add version field to config.toml. Detect missing version as v0. Warn on unknown version.
+
+### [octo-af5j.6] Installation Script Overhaul (P2, feature)
+Rewrite setup.sh to download pre-built binaries instead of compiling. Detect platform, fetch correct binary, install to PATH. One-liner install like rustup.
+
+### [octo-af5j.5] Config Migration System (P2, feature)
+Detect config.toml version, apply migrations for breaking changes. Backup before migrating. Support dry-run mode.
+
+### [octo-af5j.4.3] RuntimeBackend trait implementation for Proxmox (P2, task)
+Implement create/start/stop/exec/logs for LXC. Map agent sessions to VMID range. Handle networking (bridge, NAT, port forwarding).
+
+### [octo-af5j.4.2] LXC template for agent containers (P2, task)
+Minimal LXC template with opencode, fileserver, ttyd pre-installed. Based on Arch or Alpine. Published to Proxmox template storage.
+
+### [octo-af5j.4.1] Proxmox API client (P2, task)
+Rust client for Proxmox REST API. Authentication (API tokens), node discovery, LXC CRUD operations, exec/console access.
+
+### [octo-af5j.3.3] Service restart orchestration (P2, task)
+Gracefully stop running sessions, replace binary, restart systemd/launchd service. Handle in-flight requests. Rollback on failure.
+
+### [octo-af5j.3.2] Binary download and verification (P2, task)
+Download correct platform binary, verify SHA256 checksum, optionally verify GPG signature. Atomic replacement of current binary.
+
+### [octo-af5j.3.1] Update check endpoint (P2, task)
+GitHub API or dedicated endpoint to check latest version. Compare with installed version. Cache results to avoid rate limits.
+
+### [octo-af5j.2.4] Agent template version tracking (P2, task)
+Store template version used when creating agent. Enable 'octoctl agent update-templates' to upgrade individual agents.
+
+### [octo-af5j.2.3] octoctl templates command (P2, task)
+CLI for template management: list, install, update, diff. Track installed versions in ~/.config/octo/templates.lock
+
+### [octo-af5j.2.2] Template manifest format (P2, task)
+Define manifest.json schema: template metadata, version, compatibility range, variables/placeholders, dependencies between templates.
+
+### [octo-af5j.2.1] Create octo-templates repository (P2, task)
+New repo with versioned templates: AGENTS.md variants, opencode.json presets, plugins, scaffold templates. Semantic versioning independent of octo core.
+
+### [octo-af5j.1.4] Version embedding in binaries (P2, task)
+Embed git tag/commit in binaries at build time. octo --version shows semver + commit hash.
+
+### [octo-af5j.1.3] GitHub Releases integration (P2, task)
+Automate publishing to GitHub Releases on tag push. Generate changelog from commits. Upload all platform artifacts.
+
+### [octo-af5j.1.2] Release artifact packaging (P2, task)
+Package binaries as tarballs with install script, checksums (SHA256), and signatures. Include octo, octoctl, fileserver binaries.
+
+### [octo-af5j.1.1] GitHub Actions workflow for cross-compilation (P2, task)
+CI workflow using cross-rs or native runners to build for linux-x86_64, linux-arm64, darwin-x86_64, darwin-arm64
+
+### [octo-af5j.4] Proxmox LXC Runtime (P2, feature)
+New runtime backend using Proxmox API to provision LXC containers for agent sessions. Stronger isolation than Docker, native systemd support, persistent containers with snapshots.
+
+### [octo-jq8j] Remove/gate client logs that leak auth headers (P2, bug)
+frontend/hooks/use-auth.ts logs getAuthHeaders (including auth tokens) and full user objects to console. This risks leaking credentials/PII in production logs and shared devices. Gate logs behind a dev flag or strip sensitive fields before logging.
+
+### [octo-e22z] Enforce size limits in write_file (P2, bug)
+fileserver/src/handlers.rs: write_file accepts axum::body::Bytes with no max size enforcement, unlike upload_file which uses max_upload_size. This allows oversized writes and memory pressure. Apply the same size limit (and return 413) or stream to disk with backpressure.
+
+### [octo-fxhc] Stream zip downloads to avoid large in-memory buffers (P2, task)
+fileserver/src/handlers.rs: create_zip_from_paths reads entire files and builds zip data in a Vec<u8>, which can exhaust memory for large files/directories. Consider streaming zip output or enforcing a size limit with early abort.
+
+### [octo-xdyc] Restrict trx commands to validated workspace paths (P2, bug)
+backend/src/api/handlers.rs: exec_trx_command runs  with current_dir set from TrxWorkspaceQuery.workspace_path without validation. This lets authenticated users run trx in arbitrary directories (creating/modifying .trx there). Resolve workspace_path via session metadata or enforce allowed roots before executing.
+
+### [octo-1rb4.1] Make turn taking more robust (P2, task)
+
+### [octo-wmrf.5] MCP Tool: a2ui_surface (P2, task)
+Create MCP tool for agents to emit A2UI surfaces. Parameters: surface_id, messages (A2UI JSON), blocking (bool). Non-blocking returns immediately, blocking waits for userAction response. Works for OpenCode agents, Pi agent, and future CLI agents.
+
+### [octo-374f] Cache-aware conversation compaction for Main Chat (P2, feature)
+Implement smart compaction that preserves LLM cache benefits. Key strategies: 1) Hide tool calls in UI but keep in API payload, 2) Tiered compaction (hot/warm/cold zones), 3) Append-only summarization at checkpoints, 4) Provider-aware caching (OpenAI auto vs Anthropic explicit). UI shows collapsed/expandable tool calls. Research needed on optimal checkpoint intervals and summary strategies.
+
+### [octo-jrya] Notification system for agents and external events (P2, feature)
+Add a notification system to Octo that agents can push to via HTTP API. Includes: SQLite storage, REST API (POST /api/notify, GET /api/notifications, etc.), WebSocket broadcast to frontend, right sidebar tab with notification list, optional popup toasts, ntfy.sh integration for external push. CLI: curl-based for agents. Config in octo settings for ntfy URL/token.
+
+### [octo-7fms] Main Chat: Enhanced compaction (observation masking, 8-section summary) (P2, task)
+Enhance Main Chat compaction with two-phase approach:
+
+Phase 1: Observation Masking (cheap, zero tokens)
+- Replace old tool results with placeholder: [Previous output elided for brevity]
+- Preserves: system prompt, recent N messages, file state
+...
+
+
+### [workspace-jux6.5] Add service worker for static asset caching (P2, task)
+No service worker exists. Static assets (JS/CSS bundles) are re-fetched on every visit.
+
+Implementation:
+- Add vite-plugin-pwa dependency
+- Configure workbox to cache static assets
+...
+
+
+### [workspace-jux6.4] Prefetch critical data during idle time (P2, task)
+Critical data like workspace sessions and chat history is fetched on-demand, causing delays when navigating.
+
+Location: frontend/components/app-context.tsx
+
+Implementation:
+...
+
+
+### [workspace-jux6.3] Add manual chunks to Vite build config (P2, task)
+No explicit chunking strategy exists. Vite bundles everything with default splitting which is suboptimal.
+
+Location: frontend/vite.config.ts
+
+Implementation:
+...
+
+
+### [workspace-4eyc] Main Chat: JSONL export and backup (P2, task)
+Export mechanism for Main Chat history:
+
+/export command with options:
+- /export - export full history as JSONL
+- /export --sessions - export session list  
+...
+
+
+### [workspace-5pmk.9] Configure iOS and Android targets (P2, task)
+Run tauri ios init and tauri android init. Configure permissions (microphone, network), app icons, splash screens, and build settings for both platforms.
+
+### [workspace-5pmk.8] Add mobile-responsive UI adjustments (P2, task)
+Ensure touch targets (44px min), safe areas (notch/home indicator), and gestures work on mobile. Test terminal and voice mode UX on touch devices.
+
+### [workspace-5pmk.7] Implement Tauri main with backend startup (P2, task)
+Start Axum backend on app launch, configure webview to load from backend URL. Handle graceful shutdown.
+
+### [workspace-5pmk.6] Create Tauri project structure (P2, task)
+Initialize src-tauri/ directory with Cargo.toml, tauri.conf.json, capabilities, and icons. Configure build commands for Next.js static export.
+
+### [workspace-5pmk.5] Update voice URL resolution for proxy mode (P2, task)
+Detect Tauri/proxied mode, use relative WebSocket paths (/api/voice/stt, /api/voice/tts) instead of direct URLs from config.
+
+### [workspace-5pmk.4] Remove server-side auth from frontend (P2, task)
+Delete middleware.ts, implement client-side auth guard in app layout. Check auth_token cookie on mount, redirect to /login if invalid.
+
+### [workspace-5pmk.3] Configure frontend for static export (P2, task)
+Set output: export in next.config.ts, disable image optimization, remove rewrites (backend handles routing).
+
+### [workspace-5pmk.2] Add voice WebSocket proxies to backend (P2, task)
+Add bidirectional WS proxy routes for eaRS (/api/voice/stt) and kokorox (/api/voice/tts). Simple passthrough, no protocol translation needed.
+
+### [workspace-5pmk.1] Add static file serving to backend (P2, task)
+Use tower_http::services::ServeDir to serve frontend static export from /, with SPA fallback to index.html. Enables: (1) single-binary deployment without separate web server, (2) webapp mode without Next.js server, (3) simpler CORS since everything is same-origin.
+
+### [workspace-gg16.7] Local mode: Per-user mmry service management (P2, task)
+For local mode, spawn mmry service per Linux user (similar to opencode). Use user's home directory for database. Generate user-specific config with remote embedding delegation. Add to session lifecycle (start/stop).
+
+### [workspace-gg16.5] Frontend: Memories tab UI components (P2, task)
+Build Memories tab with Radix UI components. MemoryList (paginated, sortable), MemorySearch (query input, mode selector, rerank toggle), MemoryCard (content, category, tags, importance, date), MemoryEditor (add/edit form with validation), StoreSelector (per-repo stores).
+
+### [workspace-gg16.4] Frontend: React Query hooks for memories API (P2, task)
+Create TanStack Query hooks: useMemories, useMemorySearch, useCreateMemory, useUpdateMemory, useDeleteMemory. Handle pagination, optimistic updates, error states. Type definitions for Memory objects.
+
+### [workspace-gg16.3] Backend: Add mmry proxy API routes (P2, task)
+Add Axum routes to proxy mmry operations to user's instance. Routes: GET/POST /api/sessions/{id}/memories, GET/PUT/DELETE /api/sessions/{id}/memories/{memory_id}, POST /api/sessions/{id}/memories/search. Determine store from session workspace. Handle auth.
+
+### [workspace-gg16.2] Per-user mmry instance management (P2, task)
+Octo backend spawns/manages lean mmry instance per user. Each user gets own SQLite database (~user/.local/share/mmry/ or container volume). Config delegates embeddings to host mmry-service. Track instance lifecycle similar to opencode/fileserver/ttyd.
+
+### [workspace-x7gm.5] Frontend: Project management UI (P2, task)
+Add UI for:
+- Creating and managing projects
+- Inviting users to projects
+- Switching between personal workspaces and shared projects
+
+### [workspace-x7gm.4] Update AgentBackend to support project-based sessions (P2, task)
+Modify LocalBackend and ContainerBackend to:
+1. Check if workspace path belongs to a project
+2. Use project's Linux user instead of platform user's Linux user
+3. Store session data under project user's directory
+
+### [workspace-x7gm.3] Add project management API endpoints (P2, task)
+API endpoints:
+- POST /projects - Create project
+- GET /projects - List user's projects
+- GET /projects/{id} - Get project details
+- PUT /projects/{id} - Update project
+...
+
+
+### [workspace-x7gm.2] Implement Project service and repository (P2, task)
+Create ProjectRepository and ProjectService for CRUD operations on projects and memberships.
+
+### [workspace-x7gm.1] Add projects and project_members tables to database (P2, task)
+Create migrations for projects and project_members tables as defined in the epic.
+
+### [workspace-x7gm] Shared Projects: Multi-user access to same project/workspace (P2, epic)
+Enable multiple platform users to access the same project/workspace with proper isolation.
+
+## Design
+
+### Core Concept
+...
+
+
+### [octo-k8z1.12] Documentation: Browser feature usage guide (P3, chore)
+
+### [octo-k8z1.11] Container mode: Browser container per session (Docker/Podman) (P3, task)
+
+### [octo-k8z1.10] Human-in-the-loop: Credential access approval modal (P3, task)
+
+### [octo-k8z1.9] Credential vault: UI for storing encrypted credentials (P3, task)
+
+### [octo-af5j.4.7.6] First-run wizard for Proxmox+Octo (P3, task)
+Interactive or config-file based wizard: set admin password, configure EAVS API keys, set resource limits, create first user/agent.
+
+### [octo-af5j.4.6] GPU passthrough for LXC (P3, task)
+Pass NVIDIA GPU to LXC containers for local LLM inference. Share GPU across multiple containers.
+
+### [octo-af5j.4.5] Proxmox cluster support (P3, task)
+Distribute agent containers across cluster nodes. Handle migration. Resource balancing.
+
+### [octo-af5j.4.4] LXC snapshot support (P3, task)
+Create snapshots before risky operations. Rollback on failure. Scheduled snapshots for long-running agents.
+
+### [octo-af5j.3.4] Update channels (stable/beta/nightly) (P3, task)
+Support multiple release channels. Config option to set preferred channel. Beta gets release candidates, nightly gets every commit.
+
+### [octo-vne5] Move simple tree file walk off the async runtime (P3, task)
+fileserver/src/handlers.rs: get_simple_file_list uses WalkDir synchronously on the async thread. On large directories this can block the runtime and slow all requests. Run this in spawn_blocking or switch to an async walker.
+
+### [octo-wmrf.7] A2UI Custom Components Catalog (P3, task)
+Define Octo-specific A2UI component catalog extending standard catalog. Custom components: CodeBlock (syntax highlighted), DiffView, FileTree, ProgressBar, Terminal, MarkdownView. Register with renderer, document for agent use.
+
+### [octo-a9ds] Main Chat: Agent coordination via mailz (P3, task)
+Enable agent coordination for Main Chat:
+
+1. mailz integration (messaging only):
+   - Check inbox on session start
+   - Send messages to other agents (e.g., govnr)
+...
+
+
+### [octo-a9mc] Main Chat: skdlr heartbeat integration (P3, task)
+Integrate skdlr for periodic heartbeats in Main Chat:
+
+1. skdlr schedule configuration:
+   - Heartbeat schedule (e.g., every 4 hours)
+   - Command: octo main-chat heartbeat
+...
+
+
+### [workspace-ufvs] Integrate qmd for document search (P3, task)
+Add qmd (tobi/qmd) as optional document search backend. qmd excels at hybrid search (BM25 + Vector + Query Expansion + Re-ranking) for existing knowledge bases, meeting notes, docs. Complementary to mmry which handles agent memories. Consider: MCP server integration, collection management, hybrid with mmry for different use cases.
+
+### [workspace-jux6.6] Make i18n loading async (P3, task)
+initI18n() is called synchronously in main.tsx:8, blocking React render until translations load.
+
+Location: frontend/src/main.tsx:8
+
+Implementation:
+...
+
+
+### [workspace-5pmk.10] Add platform-specific native features (P3, task)
+Desktop: window management, system tray, keyboard shortcuts. Mobile: haptic feedback, safe area insets, native share. Use Tauri plugins and conditional compilation.
+
+### [octo-gpj7] Avoid unwrap on WS event serialization (P4, chore)
+backend/src/ws/handler.rs and backend/src/ws/types.rs use serde_json::to_string(...).unwrap(). A serialization failure would panic the server. Use map_err/Result and return an error response instead, even if failure is unlikely.
+
+### [octo-92yw] Deduplicate mmry proxy session checks (P4, chore)
+backend/src/api/proxy.rs: proxy_mmry_* handlers repeat the same session lookup + active check + target/store resolution. Factor into a helper to reduce duplication and keep behavior consistent when rules change.
+
+### [octo-h975] Main Chat: Message visibility filtering (hide tools by default) (P4, task)
+Filter message visibility in Main Chat to show cleaner output:
+
+Current behavior: All messages (including tool calls) visible in chat
+Desired behavior: Tool calls hidden by default, toggle to show
+
+...
+
+
+## Closed
+
+- [octo-9zek] changes to opencode settings in the sidbar are not getting saved (closed 2026-01-14)
+- [octo-g6a4] Opencode chats feel laggy (session navigation + text input) (closed 2026-01-14)
+- [octo-kh71] Chat history loads very slowly (closed 2026-01-14)
+- [octo-m0bn] issue content from trx doesn't get injected in text input when using "start here" or "start in new session" (closed 2026-01-14)
+- [octo-dbr4] text doesn't get removed from input box on send (closed 2026-01-14)
+- [octo-8zxp] No gaps between messages in main chat on mobile  (closed 2026-01-14)
+- [octo-zh73] Memoize AppShell and SessionsApp components to prevent unnecessary re-renders (closed 2026-01-14)
+- [octo-3kwr] Split monolithic AppContext into focused contexts (UIContext, SessionContext, ChatContext) (closed 2026-01-14)
+- [octo-51gz] Live model selection is broken (closed 2026-01-14)
+- [octo-rhhp] Sessions fail to load with JSON parse error when API returns error response (closed 2026-01-14)
+- [octo-qcqj] Auto-scroll to bottom is broken (closed 2026-01-14)
+- [octo-jz9c] Scroll-to-bottom button doesn't always appear (closed 2026-01-14)
+- [octo-843s] When sending a new message to a suspended chat, the page needs to be reloaded to surface the sent message and the response (closed 2026-01-14)
+- [octo-kgph] send messages dissapear and only reappear when agent responds (closed 2026-01-14)
+- [octo-4ye3] Radix UI ContextMenu infinite loop on session.updated events (closed 2026-01-14)
+- [octo-sf9p] Sidebar collapse button overlaps long titles (closed 2026-01-14)
+- [octo-2gvy] 'Resuming session' banner overlaps right sidebar collapse button (desktop) (closed 2026-01-14)
+- [octo-cewe] Suspended session banner persists after sending resume message (closed 2026-01-14)
+- [octo-54m3] Text input field stays enlarged after sending long message (closed 2026-01-14)
+- [octo-rd70] Light theme is too low contrast (closed 2026-01-14)
+- [octo-9900] Dictation overlay: live transcript not shown in main textarea (closed 2026-01-14)
+- [octo-7m6b] Validate workspace_path against allowed roots (closed 2026-01-14)
+- [octo-wjaf] Cap proxy body buffering to avoid memory DoS (closed 2026-01-14)
+- [octo-hew1] Add persistent bottom status bar (model, active sessions, version) (closed 2026-01-14)
+- [octo-mhdx] Upgrade OpenCode to 1.1.10+ to address CVE-2026-22813 (XSS/RCE vulnerability) (closed 2026-01-14)
+- [octo-maa6] Live model selector missing in right settings sidebar (opencode chats) (closed 2026-01-14)
+- [octo-5k7c] Sessions disconnect unexpectedly (closed 2026-01-14)
+- [octo-5mht] Main chat stream shows only 'working' until tab switch; streaming deltas not rendering (closed 2026-01-14)
+- [octo-3m3t] Add /global/event SSE endpoint to backend (closed 2026-01-14)
+- [octo-arxh] Update WebSocket handler to use new opencode session routes (closed 2026-01-14)
+- [octo-y0en] New messages some times don't render only when user posts follow up or reloads browser  (closed 2026-01-13)
+- [octo-21ty] Main Chat streaming replies vanish on view switch (closed 2026-01-13)
+- [octo-tf6x] Fix file preview flicker and extend text file support (closed 2026-01-13)
+- [octo-twk9] Project templates: new project from templates repo (closed 2026-01-13)
+- [octo-gk69] Voice mode TTS stops after a few words (closed 2026-01-13)
+- [octo-3df0] Clear file preview on session switch (closed 2026-01-13)
+- [octo-1rb4] STT + TSS Improvements (closed 2026-01-13)
+- [octo-d1ah] Load ONBOARD.md into main chat session (closed 2026-01-13)
+- [octo-pqe0] Main chat canvas expansion does nothing (closed 2026-01-13)
+- [octo-6svs] Chat input typing lag (closed 2026-01-13)
+- [octo-a8jp] Search result jumps should be instant (closed 2026-01-13)
+- [octo-sym3] Agent settings list keys should be unique (closed 2026-01-13)
+- [octo-5nzg] Terminal content disappears when expanded (closed 2026-01-13)
+- [octo-7a53] Sidebar chat input should stick to bottom when expanded (closed 2026-01-13)
+- [octo-3n5p] New session creation should be instant in sidebar (closed 2026-01-13)
+- [octo-szp2] Sidebar chat cannot scroll after moving chat (closed 2026-01-13)
+- [octo-6193] Chat input hidden when chat moved to sidebar (closed 2026-01-13)
+- [octo-z750] Fix expanded view not showing in main panel (closed 2026-01-13)
+- [octo-q75j] Fix SessionsApp hook order error (closed 2026-01-13)
+- [octo-d8g0] Main chat duplicate message keys cause ordering issues (closed 2026-01-13)
+- [octo-stzw] Move chat to sidebar when expanded view is active (closed 2026-01-13)
+- [octo-v907] Expand memories/terminal into chat panel (closed 2026-01-13)
+- [octo-zk9m] Expand preview/canvas into chat panel and replace file tree (closed 2026-01-13)
+- [octo-k8t5] Fix scrollToBottom initialization error (closed 2026-01-13)
+- [octo-apmw] Sent chat input reappears after sending (closed 2026-01-13)
+- [octo-nb5p] Reduce switch component height (closed 2026-01-13)
+- [octo-xc3w] Auto-scroll chat while voice mode is active (closed 2026-01-13)
+- [octo-qex7] Add mic mute option in voice mode (closed 2026-01-13)
+- [octo-g7n4] Remove rounded corners across UI except radio buttons (closed 2026-01-13)
+- [octo-m5p2] Voice mode reads prior messages when activated (closed 2026-01-13)
+- [octo-vy54] Read aloud button status flickers during playback (closed 2026-01-13)
+- [octo-1gc5] Add integration test for chat image preview URLs (closed 2026-01-13)
+- [octo-3sbc] Chat file previews not rendering images (closed 2026-01-13)
+- [octo-gqah] Remove mobile chat bottom gap (closed 2026-01-13)
+- [octo-g5yw] Mobile chat input background reaches bottom (closed 2026-01-13)
+- [octo-t9sq] Allow editing extensionless text files (closed 2026-01-13)
+- [octo-5e8a] Inline file preview keeps file tree visible (closed 2026-01-13)
+- [octo-ncj2] Cass search agent filter handling (closed 2026-01-13)
+- [octo-8wbn] Unify file and preview views (closed 2026-01-13)
+- [octo-py9j] Icon-only send button styling (closed 2026-01-13)
+- [octo-ghdb] Mobile chat input bar fills width (closed 2026-01-13)
+- [octo-5de7] Cass search: mobile mode switch + results (closed 2026-01-13)
+- [workspace-hg9w] Beads dashboard in Projects View (closed 2026-01-12)
+- [workspace-o6a7] Main Chat: mmry integration (closed 2026-01-12)
+- [octo-vmpt] Main Chat: Pi agent runtime integration (closed 2026-01-12)
+- [octo-knwd] Main Chat: Integrate Pi agent runtime (closed 2026-01-12)
+- [octo-wmrf] A2UI Integration - Agent-Driven UI for Octo (closed 2026-01-12)
+- [octo-p3yr] test (closed 2026-01-12)
+- [octo-mwhw] Test issue (closed 2026-01-12)
+- [octo-n2xy] Canvas: Canvas content disappering when switching tabs (closed 2026-01-12)
+- [octo-n2xy.1] Canvas state loss needs proper solution (state lifting or context) (closed 2026-01-12)
+- [octo-rmt7] Tauri app: bottom input area has incorrect background color (closed 2026-01-11)
+- [octo-d4e5] right clicking always also selects parts of the interface as text on mobile (e.g. when trying to just open a context menu, part of the interface is also always selected) (closed 2026-01-11)
+- [octo-ga3h] Tauri: File access permissions for Tauri app not set (closed 2026-01-11)
+- [workspace-92h2] Context window gauge doesn't reset after compaction - need to monitor opencode events and reset (closed 2026-01-11)
+- [octo-zmvc] Main chat mmry on frontend not displaying the correct store (closed 2026-01-11)
+- [octo-phy4] Pasted images only have "Image.png" as the name, even when pasting multiple images. we need to enumerate better (closed 2026-01-11)
+- [octo-wmrf.6] CLI A2UI Renderer (closed 2026-01-11)
+- [octo-wmrf.2] Backend A2UI Request Manager (closed 2026-01-11)
+- [octo-wmrf.4] Integrate A2UI in Chat Timeline (closed 2026-01-11)
+- [octo-wmrf.3] React A2UI Renderer (closed 2026-01-11)
+- [workspace-vmu2] Main Chat: Persistent cross-project AI assistant (closed 2026-01-11)
+- [octo-ww2y] Enforce Bearer auth on backend proxies (closed 2026-01-11)
+- [octo-wmrf.1] A2UI Message Part Type (closed 2026-01-11)
+- [octo-wmrf.9] Backend Test Harness for Mock Messages (closed 2026-01-11)
+- [octo-wmrf.8] Disable OpenCode mcp_question tool (closed 2026-01-11)
+- [octo-n13x] Make the entire interface perfectly navigable via keyboard (closed 2026-01-11)
+- [workspace-5pmk] Tauri Desktop & Mobile App (closed 2026-01-11)
+- [workspace-gg16] Integrate mmry memory system into Octo frontend (closed 2026-01-11)
+- [octo-7yrq] Tauri iOS: Native HTTP via reqwest for reliable networking (closed 2026-01-09)
+- [octo-zhzr] Add model switcher + fix opencode permission/error events (closed 2026-01-09)
+- [octo-7yjt] Build octo-runner daemon for multi-user process isolation (closed 2026-01-07)
+- [octo-gfsk] Main Chat: Personality templates (PERSONALITY.md, USER.md, enhanced AGENTS.md) (closed 2026-01-06)
+- [workspace-jux6.2] Cache auth status to avoid repeated /api/me calls (closed 2026-01-06)
+- [octo-bvw0] Adopt single opencode per user with directory scoping + per-dir fileserver view (closed 2026-01-06)
+- [octo-2qa6] Dictation gets progressively slower while speaking - buffering issue (closed 2026-01-06)
+- [octo-xf08] Image annotation canvas in middle panel (closed 2026-01-05)
+- [octo-v2ed] TRX sidebar integration - view and edit issues in right panel (closed 2026-01-05)
+- [octo-v2ed.1] Backend: Add trx proxy API routes (closed 2026-01-05)
+- [octo-2h79] Session reliability fixes (proxy resume, local EAVS, startup retry) (closed 2026-01-05)
+- [workspace-8t16] mmry proxy in single-user mode doesn't pass store parameter - all sessions show same memories (closed 2026-01-04)
+- [workspace-pnwb] Main Chat: History injection on session start (closed 2026-01-04)
+- [workspace-u73l] Main Chat: Frontend session threading (closed 2026-01-04)
+- [workspace-2hjz] Remove preload screen after mount (closed 2026-01-04)
+- [workspace-1fqu] Improve Vite dev startup and message load responsiveness (closed 2026-01-04)
+- [workspace-rr3j] Main Chat: First-start setup flow (closed 2026-01-04)
+- [workspace-oewk] Main Chat: opencode plugin for compaction (closed 2026-01-04)
+- [workspace-jj70] Add resume button when disconnected (closed 2026-01-04)
+- [workspace-c42p] Main Chat: Backend API endpoints (closed 2026-01-04)
+- [workspace-8ink] Main Chat: Per-assistant SQLite database (closed 2026-01-04)
+- [workspace-h9pr] Fix local session resume to reallocate ports (closed 2026-01-04)
+- [workspace-paxf] Auto-attach running sessions + improve reconnect handling (closed 2026-01-04)
+- [workspace-yiq1] Eliminate backend warnings (closed 2026-01-04)
+- [workspace-30r0] Migrate frontend from Next.js to Vite + React (closed 2026-01-03)
+- [workspace-30r0.6] Remove Next.js and clean up dependencies (closed 2026-01-03)
+- [workspace-30r0.5] Update build and dev scripts (closed 2026-01-03)
+- [workspace-30r0.4] Migrate components and hooks (closed 2026-01-03)
+- [workspace-30r0.3] Replace next-intl with react-i18next (closed 2026-01-03)
+- [workspace-30r0.2] Set up routing with React Router or TanStack Router (closed 2026-01-03)
+- [workspace-30r0.1] Initialize Vite + React project structure (closed 2026-01-03)
+- [workspace-6tr3] Dictation should work while focused in input box (closed 2026-01-03)
+- [workspace-3o61] Fix sidebar icon buttons to be circles properly (closed 2026-01-03)
+- [workspace-gg16.8] Config: Add mmry settings to octo config.toml (closed 2026-01-03)
+- [workspace-ts8y] Settings system: Schema-driven config management UI (closed 2026-01-03)
+- [workspace-ts8y.6] Frontend: Settings navigation and command palette (closed 2026-01-03)
+- [workspace-ts8y.5] Frontend: SettingsEditor component (closed 2026-01-03)
+- [workspace-ts8y.4] Backend: Wire up settings services in main.rs (closed 2026-01-03)
+- [workspace-ts8y.3] Schema: Update config schema with x-scope and voice settings (closed 2026-01-03)
+- [workspace-ts8y.2] Backend: Settings API endpoints (closed 2026-01-03)
+- [workspace-ts8y.1] Backend: Settings module with schema filtering and TOML management (closed 2026-01-03)
+- [workspace-fz04] Dictation button for speech-to-text input (closed 2026-01-03)
+- [workspace-u4yp] Project filter bar in chat sidebar with circular icons (closed 2026-01-03)
+- [workspace-mnwx] Project logos: Auto-detect and display logos from logo/ directory (closed 2026-01-03)
+- [workspace-nbjc] Voice mode continues playing after stop button clicked (closed 2026-01-03)
+- [workspace-bam5] Add slash commands with popup list and fuzzy filter (closed 2026-01-02)
+- [workspace-98bw] Evaluate rootless Podman as default container runtime (closed 2026-01-02)
+- [workspace-y8em] Memory delete button not visible on mobile (closed 2026-01-02)
+- [workspace-j2qv] mmry search returns 'Not Found' error in frontend (closed 2026-01-02)
+- [workspace-9ekt] Save button frozen when editing files (closed 2026-01-01)
+- [workspace-nkl1] EavsClient::new panics on HTTP client build failure (closed 2025-12-31)
+- [workspace-zjat] Unused syntax highlighter imports in PreviewView increase bundle size (closed 2025-12-31)
+- [workspace-b5yr] Duplicate projectDefaultAgents localStorage state and event handlers (closed 2025-12-31)
+- [workspace-hj2w] fileserver upload buffers entire file in memory (closed 2025-12-31)
+- [workspace-gfnq] fileserver upload can follow symlink and write outside root (closed 2025-12-31)
+- [workspace-d7rq] Auth tokens stored in localStorage and passed via URL query params (closed 2025-12-31)
+- [workspace-vz0r] Frontend auto-login uses hardcoded dev credentials (closed 2025-12-31)
+- [workspace-w2vi] AuthConfig defaults to dev_mode with known dev credentials (closed 2025-12-31)
+- [workspace-8vv8] Context Window Gauge: Dynamic model limits from models.dev (closed 2025-12-31)
+- [workspace-gg16.1] Host: Configure central mmry-service for embeddings (closed 2025-12-31)
+- [workspace-gg16.6] Container mode: Add mmry to agent container image (closed 2025-12-31)
+- [workspace-vhvq] Show busy agents in chat history sidebar (closed 2025-12-30)
+- [workspace-twx2] Fix sent message reappearing in text input (closed 2025-12-30)
+- [workspace-eo1i] Fix message flickering during polling updates (closed 2025-12-30)
+- [workspace-wtbk] Remove bottom stop button from chat input (closed 2025-12-30)
+- [workspace-4d69] Add activity indicator for busy sessions in sidebar (closed 2025-12-30)
+- [workspace-wgv5] Add context window gauge to chat UI (closed 2025-12-30)
+- [workspace-onrt.2] Auto Linux user creation implemented (closed 2025-12-30)
+- [workspace-onrt.1] AgentRPC API handlers and tests (closed 2025-12-30)
+- [workspace-onrt] Multi-user architecture: AgentRPC abstraction (closed 2025-12-30)
+- [workspace-5t8k] Add backend mode configuration (closed 2025-12-30)
+- [workspace-5gpd] Standardize data storage location across modes (closed 2025-12-30)
+- [workspace-mswd] Refactor Docker backend to use AgentRPC interface (closed 2025-12-30)
+- [workspace-9cjp] Implement Local backend with systemd user services (closed 2025-12-30)
+- [workspace-ahuw] Define AgentRPC interface for unified local/docker backends (closed 2025-12-30)
+- [workspace-bd08] Lazy startup of opencode on message send (closed 2025-12-30)
+- [workspace-dnv0] Session lifecycle: idle timeout and LRU cleanup (closed 2025-12-30)
+- [workspace-wmr3] Multi-workspace session resume: start opencode for history session's workspace (closed 2025-12-30)
+- [workspace-ut8u] Load chat messages from disk for viewing history (closed 2025-12-30)
+- [workspace-idug] Fix project session count mismatch (closed 2025-12-30)
+- [workspace-2oao] Remove 100 session limit from chat history (closed 2025-12-30)
+- [workspace-y074] Agent/Persona Management UI (closed 2025-12-29)
+- [workspace-kdxm] persona.toml structure for agent + UI metadata (closed 2025-12-29)
+- [workspace-wslo] Workdir picker when starting chat (closed 2025-12-29)
+- [workspace-cfg0] Meta-agent sidebar for agent building (closed 2025-12-29)
+- [workspace-9fiq] Agent creator UI with form fields (closed 2025-12-29)
+- [workspace-bp30] Agents view: list and manage opencode agents (closed 2025-12-29)
+- [workspace-9wu5] Projects view: list workspace directories (closed 2025-12-29)
+- [workspace-2jb2] Add project name to chat metadata row (closed 2025-12-29)
+- [workspace-nsg5] Refactor sidebar: Chats/Projects/Agents tabs (closed 2025-12-29)
+- [workspace-mrri] Refactor Persona to reference opencode agents (closed 2025-12-29)
+- [workspace-aasa] Per-chat agent working indicator (closed 2025-12-29)
+- [workspace-ka70] Per-chat draft text persistence (closed 2025-12-29)
+- [workspace-lkqj] Fix chat pinning functionality (closed 2025-12-29)
+- [workspace-u35] Security: Per-user UID isolation for container mounts (closed 2025-12-29)
+- [workspace-92j] Idiomatic: let _ = user pattern to silence unused variable - use underscore prefix instead (closed 2025-12-29)
+- [workspace-8qs] Idiomatic: Excessive use of clone() on Arc - Arc::clone(&x) preferred for clarity (closed 2025-12-29)
+- [workspace-ulx] LOW: Redundant canonicalization in fileserver (closed 2025-12-29)
+- [workspace-eah] LOW: Magic numbers without constants (closed 2025-12-29)
+- [workspace-cbm] LOW: Verbose pattern match could use if-let (closed 2025-12-29)
+- [workspace-7dk] LOW: Unnecessary lifetime parameter (closed 2025-12-29)
+- [workspace-jgh] LOW: Manual Default impl could use derive (closed 2025-12-29)
+- [workspace-n92] LOW: Unused import warning suppression (closed 2025-12-29)
+- [workspace-9rz] LOW: Inefficient string allocation for extension checks (closed 2025-12-29)
+- [workspace-rg4] LOW: Repeated modified time extraction pattern (closed 2025-12-29)
+- [workspace-fv3] LOW: Repeated SuccessResponse construction (closed 2025-12-29)
+- [workspace-4vj] LOW: Using Box<dyn Error> instead of anyhow in main (closed 2025-12-29)
+- [workspace-677] LOW: Manual error conversion instead of From impl (closed 2025-12-29)
+- [workspace-czk] LOW: Using to_string_lossy without handling invalid UTF-8 (closed 2025-12-29)
+- [workspace-oux] LOW: Blocking I/O in Config::from_file (closed 2025-12-29)
+- [workspace-j0q] Performance: ContainerRuntime clones the entire runtime for each session service operation (closed 2025-12-29)
+- [workspace-y9p] Performance: Invite code batch creation runs N sequential DB queries instead of batch insert (closed 2025-12-29)
+- [workspace-rta] Code Duplication: Cookie building logic duplicated across login, dev_login, and register handlers (closed 2025-12-29)
+- [workspace-9to] Code Duplication: SQL SELECT column list repeated in 6+ repository methods without a const or macro (closed 2025-12-29)
+- [workspace-kh1] Code Duplication: Error handling pattern for container commands repeated in every ContainerRuntime method (closed 2025-12-29)
+- [workspace-qlu] Idiomatic: Use thiserror for all error types instead of manual impl for ConfigValidationError (closed 2025-12-29)
+- [workspace-do4] Idiomatic: Use From trait instead of into() calls for type conversions where possible (closed 2025-12-29)
+- [workspace-d89] Idiomatic: Replace manual string building with format! or write! macros in container command args (closed 2025-12-29)
+- [workspace-rys] Idiomatic: Use ? operator consistently instead of explicit match on Result in handlers (closed 2025-12-29)
+- [workspace-w1x] Idiomatic: Use Cow<str> for paths that may or may not be owned to reduce allocations (closed 2025-12-29)
+- [workspace-4yi] Correctness: Delete session does not check if container still exists before returning success (closed 2025-12-29)
+- [workspace-u2y] MEDIUM: Blocking I/O in async context (fileserver) (closed 2025-12-29)
+- [workspace-7pu] MEDIUM: Repeated root path validation pattern (closed 2025-12-29)
+- [workspace-6b5] MEDIUM: Silent error ignoring in fileserver WalkDir (closed 2025-12-29)
+- [workspace-vqp.8] EAVS logging: Stream logs to backend for monitoring/analytics (closed 2025-12-29)
+- [workspace-vqp] Integrate EAVS for AI provider interception and virtual keys (closed 2025-12-29)
+- [workspace-vqp.6] Backend: Aggregate usage/cost data from EAVS per session/user (closed 2025-12-29)
+- [workspace-6f9] Test SSE streaming in production environment (closed 2025-12-29)
+- [workspace-c7l] Configure Caddy for SSE proxy passthrough (closed 2025-12-29)
+- [workspace-ivc] Architecture: Support multiple opencode agents per container (closed 2025-12-29)
+- [workspace-ot3] Architecture: Multi-user project collaboration via additional containers (closed 2025-12-29)
+- [workspace-hcl] Add list virtualization for chat messages in sessions app (closed 2025-12-29)
+- [workspace-2w2] User modes: Simplified, Light Coding, Terminal Terminator (closed 2025-12-29)
+- [workspace-p54] display user mode after first login (closed 2025-12-29)
+- [workspace-ivc.15] Backend: Track agent per opencode session (closed 2025-12-29)
+- [workspace-xba] Frontend: Model switcher component (closed 2025-12-29)
+- [workspace-4k1] Backend: Add user_mode to user profile (closed 2025-12-29)
+- [workspace-zl6] Security: Logout does not include Secure flag conditional like login does (closed 2025-12-29)
+- [workspace-mz4] Security: Port range finder has no upper bound check before 65530 allowing very high port allocation (closed 2025-12-29)
+- [workspace-e4c] Security: proxy_request forwards all headers including potentially sensitive ones to containers (closed 2025-12-29)
+- [workspace-99m] Security: File upload loads entire file into memory before size check (closed 2025-12-29)
+- [workspace-2qd] Code Duplication: UserInfo struct duplicated in handlers.rs vs user/models.rs with different field names (closed 2025-12-29)
+- [workspace-dqo] Idiomatic: Replace Vec<String> bind_values pattern with query builder or typed query approach (closed 2025-12-29)
+- [workspace-eje] Correctness: Race condition between port allocation query and container creation (closed 2025-12-29)
+- [workspace-483] Correctness: WebSocket proxy silently drops Ping/Pong messages instead of forwarding them (closed 2025-12-29)
+- [workspace-85i] Correctness: opencode_events SSE handler is stub that only sends keepalives, not actual events (closed 2025-12-29)
+- [workspace-1c1] Correctness: get_or_create_from_oidc does not actually link external_id to existing user (closed 2025-12-29)
+- [workspace-w9x] Correctness: Session 2-second sleep before marking running is arbitrary and may not reflect actual readiness (closed 2025-12-29)
+- [workspace-gok] Correctness: stop_session does not wait for container stop before marking stopped in DB (closed 2025-12-29)
+- [workspace-415] Correctness: Unused code flagged by compiler warnings should be cleaned up or feature-gated (closed 2025-12-29)
+- [workspace-97k] Implement proper SSE client with reconnection logic (closed 2025-12-29)
+- [workspace-2az] Terminal WebSocket connection is slow (5-10 second delay) (closed 2025-12-29)
+- [workspace-me0] opencode session names are still not the generated human readable names in the frontend. Its always called 'Workspace Session' but each session has a unique specific descriptive name (closed 2025-12-29)
+- [workspace-917] Add horizontal margins inside terminal content (closed 2025-12-29)
+- [workspace-vkd] pinning a chat in the sidebar does nothing (closed 2025-12-29)
+- [workspace-ivc.10] Frontend: Agent display and filtering in session sidebar (closed 2025-12-29)
+- [workspace-ivc.11] Frontend: Overhaul Agents section (closed 2025-12-29)
+- [workspace-9uvd] Show persona in chat history list (closed 2025-12-29)
+- [workspace-qu71] Create persona detail/edit view (closed 2025-12-29)
+- [workspace-qvx] Implement dual-mode file browser UI (simple vs power user) (closed 2025-12-29)
+- [workspace-e6k] Implement user file injection via @filename references (closed 2025-12-29)
+- [workspace-r9o] MEDIUM: File size checked after full read (DoS vector) (closed 2025-12-29)
+- [workspace-qsz] MEDIUM: Overly permissive CORS in fileserver (closed 2025-12-29)
+- [workspace-wyv] MEDIUM: Unnecessary clone of Session in spawned task (closed 2025-12-29)
+- [workspace-6ue] MEDIUM: String-based error type matching is fragile (closed 2025-12-29)
+- [workspace-a8n] MEDIUM: Duplicate proxy error handling (closed 2025-12-29)
+- [workspace-7rz] MEDIUM: Duplicate user query boilerplate (closed 2025-12-29)
+- [workspace-v0y] MEDIUM: Duplicate session query boilerplate (closed 2025-12-29)
+- [workspace-7nb] MEDIUM: Database pool size may be too small (closed 2025-12-29)
+- [workspace-6hl] MEDIUM: Blocking filesystem check in async context (closed 2025-12-29)
+- [workspace-72t] MEDIUM: No input validation on session workspace path (closed 2025-12-29)
+- [workspace-26u] MEDIUM: No rate limiting on login endpoint (closed 2025-12-29)
+- [workspace-lfu.22] App Documentation Template (closed 2025-12-29)
+- [workspace-lfu.20] Data Table Component (closed 2025-12-29)
+- [workspace-lfu.19] Metrics Cards Component (closed 2025-12-29)
+- [workspace-lfu.17] Keyboard Shortcuts System (closed 2025-12-29)
+- [workspace-lfu.14] Status Bar Component (closed 2025-12-29)
+- [workspace-9aa.4.7] Add byteowlz toolbox to container image (closed 2025-12-29)
+- [workspace-9aa.4.6] Implement template generation system in backend (closed 2025-12-29)
+- [workspace-9aa.3.9] Implement session view - code editor panel (closed 2025-12-29)
+- [workspace-9aa.3.2] Implement OIDC authentication with dev bypass (closed 2025-12-29)
+- [workspace-9aa] AI Agent Workspace Platform - V1 Implementation (closed 2025-12-29)
+- [workspace-9aa.4] Agent Runtime & Templates (closed 2025-12-29)
+- [workspace-9aa.3] Frontend Application (closed 2025-12-29)
+- [workspace-9aa.2] Backend Control Plane (closed 2025-12-29)
+- [workspace-9aa.1.4] Set up GitLab CI/CD pipeline (closed 2025-12-29)
+- [workspace-9aa.1.2] Create Ansible playbook for application deployment (closed 2025-12-29)
+- [workspace-9aa.1.1] Create Ansible playbook for VPS base setup (closed 2025-12-29)
+- [workspace-9aa.1] Infrastructure & Deployment (closed 2025-12-29)
+- [workspace-6la] Scheduled tasks / Cron system (closed 2025-12-29)
+- [workspace-0w6] Integrate byt for project scaffolding (closed 2025-12-29)
+- [workspace-7mz] Integrate mmry for agent memory (closed 2025-12-29)
+- [workspace-tb6] Integrate dgrm (Excalidraw) for diagramming (closed 2025-12-29)
+- [workspace-6ot] Integrate A2UI (Artifact-to-UI) support (closed 2025-12-29)
+- [workspace-ivg] Live voice mode (closed 2025-12-29)
+- [workspace-dk5] Fix skill locations to match opencode discovery paths (closed 2025-12-29)
+- [workspace-s02] Config: Add agent.workdir to config.toml (closed 2025-12-29)
+- [workspace-45p] Add WebSocket support for real-time events (closed 2025-12-29)
+- [workspace-c1h.3] Persona system: Container injection (closed 2025-12-29)
+- [workspace-c1h] Persona system: Core architecture (closed 2025-12-29)
+- [workspace-c1h.2] Persona system: Frontend picker UI (closed 2025-12-29)
+- [workspace-c1h.1] Persona system: Backend API (closed 2025-12-29)
+- [workspace-u7j] Backend: Add readiness checks before marking session running (closed 2025-12-29)
+- [workspace-l4n] Frontend: Add session management (stop/delete/upgrade) (closed 2025-12-29)
+- [workspace-ltxe] Frontend: Use server-side syntax highlighting in PreviewView (closed 2025-12-28)
+- [workspace-x74g] Server-side syntax highlighting in fileserver (closed 2025-12-28)
+- [workspace-01x] Show persona indicator in chat view (closed 2025-12-28)
+- [workspace-0qc] Replace Agents section with Personas in frontend (closed 2025-12-28)
+- [workspace-zln] Add persona info to session/chat model (closed 2025-12-28)
+- [workspace-acx] Define default persona (govnr) (closed 2025-12-28)
+- [workspace-npk] Investigate: x-opencode-directory behavior with sessions (closed 2025-12-28)
+- [workspace-34b] URGENT: Fix live permission display on frontend (closed 2025-12-28)
+- [workspace-egj] Mobile UI optimizations: native app feel (closed 2025-12-27)
+- [workspace-upf] Agent runtime status + scaffolding integration (byt) (closed 2025-12-26)
+- [workspace-9aa.2.11] Implement admin observability endpoints (closed 2025-12-25)
+- [workspace-wrv] Add WebSocket endpoint for file change notifications (closed 2025-12-25)
+- [workspace-ivc.16] Backend: Create agent directory and AGENTS.md (closed 2025-12-18)
+- [workspace-ivc.9] Backend proxy routing for sub-agents (closed 2025-12-18)
+- [workspace-ivc.13] Control plane: Agent management API (closed 2025-12-18)
+- [workspace-ivc.6] Refactor container lifecycle: stop without remove (closed 2025-12-18)
+- [workspace-ivc.8] Add agent discovery endpoint to fileserver or backend (closed 2025-12-18)
+- [workspace-ivc.14] Container: Agent helper script for control plane (closed 2025-12-18)
+- [workspace-ivc.12] Hot-reload agents when new directory is created (closed 2025-12-18)
+- [workspace-ivc.7] Update entrypoint.sh to start multiple agents (closed 2025-12-18)
+- [workspace-ivc.4] Frontend: Multi-agent session view (closed 2025-12-18)
+- [workspace-ivc.5] Proxy routing for sub-agents (closed 2025-12-18)
+- [workspace-ivc.3] Backend API: Register and track sub-agents (closed 2025-12-18)
+- [workspace-ivc.2] Agent directory structure convention (closed 2025-12-18)
+- [workspace-ivc.1] Agent spawner service inside container (closed 2025-12-18)
+- [workspace-cjs] Fix Dockerfile.arm64 parity + remove chsh (closed 2025-12-18)
+- [workspace-nk8] Container: Mount workspace as user home directory (closed 2025-12-18)
+- [workspace-ycc] LOW: Repeated string allocations in error mapping (closed 2025-12-18)
+- [workspace-16p] Security: EAVS virtual key stored temporarily in database before being cleared (closed 2025-12-18)
+- [workspace-770] Correctness: Session container startup spawned in background with no way to await or check result (closed 2025-12-18)
+- [workspace-cw5] LOW: Minimum password length too short (6 chars) (closed 2025-12-18)
+- [workspace-gfo] Fix podman JSON parsing for Created field returning integer instead of string (closed 2025-12-17)
+- [workspace-1hu] Orchestrator: Handle orphan containers and port conflicts (closed 2025-12-17)
+- [workspace-jah] Add download and ZIP endpoints to fileserver (closed 2025-12-17)
+- [workspace-ur0] Add file upload, download, and multi-select to FileTreeView (closed 2025-12-17)
+- [workspace-f7j] Enhance FileTreeView with collapsible folders, navigation, and state persistence (closed 2025-12-17)
+- [workspace-iqa] Reorder sidebar navigation - Chats first (closed 2025-12-17)
+- [workspace-39d] Update sidebar logo to new OCTO branding with theme support (closed 2025-12-17)
+- [workspace-lzt] Command palette added to frontend (closed 2025-12-17)
+- [workspace-37i] Deleting a chat from the context menu in the sidebar doesnt work (closed 2025-12-17)
+- [workspace-605] Terminal shows 'Waiting...' even when connected (closed 2025-12-17)
+- [workspace-s4q] Add client-side message caching to reduce API calls (closed 2025-12-17)
+- [workspace-r0a] Fix ghostty-web terminal memory leak - clean up sessionConnections map entries (closed 2025-12-17)
+- [workspace-mot] Throttle ResizeObserver in ghostty-terminal to prevent excessive fit() calls (closed 2025-12-17)
+- [workspace-eeg] Memoize markdown-renderer components to prevent expensive re-renders (closed 2025-12-17)
+- [workspace-bb6] Fix KnightRiderSpinner 60fps animation - use CSS animations or requestAnimationFrame (closed 2025-12-17)
+- [workspace-vvt] Optimize message polling frequency (closed 2025-12-17)
+- [workspace-63u] Consolidate polling intervals - replace multiple polling with single SSE connection (closed 2025-12-17)
+- [workspace-1om] Performance: build_tree uses sync std::fs::read_dir in async context (closed 2025-12-17)
+- [workspace-9ak] MEDIUM: HTTP client created per request (performance) (closed 2025-12-17)
+- [workspace-waa] Performance: HTTP client created per-request in proxy_request instead of being reused (closed 2025-12-17)
+- [workspace-5yn] Performance: bd commands take ~10s due to daemon auto-start (closed 2025-12-17)
+- [workspace-0mn] Frontend: Add new chat button to sidebar (closed 2025-12-17)
+- [workspace-p2e] Fix startup-time proxy flakiness (502/WS) (closed 2025-12-17)
+- [workspace-rrl] Frontend: stop 300ms /session/status polling (use SSE) (closed 2025-12-17)
+- [workspace-ht4] Terminal WebSocket connects but immediately closes - stuck on connecting (closed 2025-12-17)
+- [workspace-mzz] Frontend: Fix missing logo asset causing Next image 400 (closed 2025-12-17)
+- [workspace-86w] Fix React Strict Mode double-invoke breaking WebSocket connections in GhosttyTerminal (closed 2025-12-17)
+- [workspace-8pn] Security: Container runtime uses shell command execution without sanitizing image names (closed 2025-12-16)
+- [workspace-crz] Correctness: register handler validates invite then creates user then consumes - TOCTOU vulnerability (closed 2025-12-16)
+- [workspace-lc8] Security: DevUser bcrypt hashing at default() runs on startup, causing slowdown and leaking timing (closed 2025-12-16)
+- [workspace-eq9] Security: Weak JWT secret generation uses non-cryptographic PRNG (closed 2025-12-16)
+- [workspace-vqp.5] Backend API: Revoke virtual key when session ends (closed 2025-12-16)
+- [workspace-vqp.4] Backend API: Set budget/rate limits per user on virtual keys (closed 2025-12-16)
+- [workspace-vqp.3] Backend API: Create virtual key when session starts (closed 2025-12-16)
+- [workspace-vqp.1] Add EAVS to container image (install/configure in Dockerfile) (closed 2025-12-16)
+- [workspace-vqp.7] EAVS config: Configure upstream providers (env vars for API keys) (closed 2025-12-16)
+- [workspace-vqp.2] Configure opencode to use EAVS as proxy endpoint (closed 2025-12-16)
+- [workspace-7va] Refactor podman module to support both Docker and Podman runtimes (closed 2025-12-16)
+- [workspace-7va.5] Update compose file comments and documentation (closed 2025-12-16)
+- [workspace-7va.4] Update backend config.toml with container runtime setting (closed 2025-12-16)
+- [workspace-7va.3] Handle Docker vs Podman differences (volume :Z suffix, etc) (closed 2025-12-16)
+- [workspace-7va.2] Add ContainerRuntime enum (Docker/Podman) and config option (closed 2025-12-16)
+- [workspace-7va.1] Rename podman module to container module (closed 2025-12-16)
+- [workspace-vj3] Implement invite code authentication system (closed 2025-12-16)
+- [workspace-vj3.8] Update frontend login to use JWT auth (closed 2025-12-16)
+- [workspace-vj3.7] Build frontend registration page (closed 2025-12-16)
+- [workspace-vj3.6] Implement CLI for invite code batch generation (closed 2025-12-16)
+- [workspace-vj3.5] Add admin API for invite code management (closed 2025-12-16)
+- [workspace-vj3.4] Implement JWT authentication flow (closed 2025-12-16)
+- [workspace-vj3.3] Add registration endpoint with invite code validation (closed 2025-12-16)
+- [workspace-vj3.2] Implement invite code repository and service (closed 2025-12-16)
+- [workspace-vj3.1] Add invite_codes table to database schema (closed 2025-12-16)
+- [workspace-9aa.4.5] Create Meeting Synth template configuration (closed 2025-12-16)
+- [workspace-9aa.4.4] Create Research Assistant template configuration (closed 2025-12-16)
+- [workspace-9aa.4.3] Create Coding Copilot template configuration (closed 2025-12-16)
+- [workspace-lfu.21] Real-time Charts Component (closed 2025-12-16)
+- [workspace-lfu.12] Preview Panel Component (closed 2025-12-16)
+- [workspace-lfu.18] Empty States & Loading Patterns (closed 2025-12-16)
+- [workspace-lfu.15] Toast/Notification System (closed 2025-12-16)
+- [workspace-35m] Add i18n (internationalization) support to frontend (closed 2025-12-16)
+- [workspace-9aa.2.12] Add structured logging and error handling (closed 2025-12-16)
+- [workspace-9aa.2.10] Implement session management API (closed 2025-12-16)
+- [workspace-9aa.2.9] Implement user and project management API (closed 2025-12-16)
+- [workspace-9aa.2.7] Implement WebSocket proxy for terminal (closed 2025-12-16)
+- [workspace-9aa.2.6] Implement HTTP proxy for opencode API (closed 2025-12-16)
+- [workspace-9aa.1.3] Configure Caddy reverse proxy (closed 2025-12-16)
+- [workspace-9aa.1.5] Create docker-compose/podman-compose for local development (closed 2025-12-16)
+- [workspace-vrc] HIGH: Repeated error-to-ApiError conversion logic (duplication) (closed 2025-12-16)
+- [workspace-btb] HIGH: Full file read into memory for downloads (closed 2025-12-16)
+- [workspace-qzc] HIGH: Memory leak via Box::leak in podman module (closed 2025-12-16)
+- [workspace-037] MEDIUM: Directory deletion allows deleting root (closed 2025-12-16)
+- [workspace-q05] HIGH: Unsanitized uploaded filename in fileserver (closed 2025-12-16)
+- [workspace-wix] HIGH: Path traversal TOCTOU vulnerability in fileserver (closed 2025-12-16)
+- [workspace-96q] HIGH: CORS allows any origin in backend API (closed 2025-12-16)
+- [workspace-dku] HIGH: Auth cookie missing Secure flag (closed 2025-12-16)
+- [workspace-mbz] CRITICAL: Plaintext passwords stored for dev users (closed 2025-12-16)
+- [workspace-wss] CRITICAL: Hardcoded default JWT secret in auth config (closed 2025-12-16)
+- [workspace-11i] Implement file preview components in frontend (closed 2025-12-15)
+- [workspace-9aa.3.15] Implement admin dashboard - metrics charts (closed 2025-12-15)
+- [workspace-9aa.3.14] Implement admin dashboard - sessions list (closed 2025-12-15)
+- [workspace-9aa.3.13] Implement admin dashboard - overview (closed 2025-12-15)
+- [workspace-9aa.3.12] Implement resizable split-pane layout (closed 2025-12-15)
+- [workspace-9aa.3.11] Implement session view - preview panel (closed 2025-12-15)
+- [workspace-9aa.3.10] Implement session view - terminal panel (closed 2025-12-15)
+- [workspace-9aa.3.8] Implement session view - file tree panel (closed 2025-12-15)
+- [workspace-9aa.3.7] Implement session view - chat panel (closed 2025-12-15)
+- [workspace-9aa.3.6] Implement agent gallery/selector (closed 2025-12-15)
+- [workspace-9aa.3.5] Implement workspace picker page (closed 2025-12-15)
+- [workspace-9aa.3.4] Create shared layout with navigation (closed 2025-12-15)
+- [workspace-9aa.3.3] Set up internationalization (i18n) with next-intl (closed 2025-12-15)
+- [workspace-bxo] Integrate fileserver API into frontend file browser (closed 2025-12-15)
+- [workspace-9oq] Route fileserver requests through backend proxy with auth (closed 2025-12-15)
+- [workspace-9aa.4.2] Create entrypoint script for container (closed 2025-12-15)
+- [workspace-8hj] Add fileserver binary to container build pipeline (closed 2025-12-15)
+- [workspace-9aa.4.1] Create base agent-runtime Containerfile (closed 2025-12-15)
+- [workspace-9aa.2.5] Implement session orchestration service (closed 2025-12-15)
+- [workspace-9aa.3.1] Set up Next.js project structure and routing (closed 2025-12-15)
+- [workspace-lfu.16] App State Management Pattern (closed 2025-12-15)
+- [workspace-lfu.13] Resizable Split Pane System (closed 2025-12-15)
+- [workspace-lfu.8] Agent Template Selector - Clean Card UI (closed 2025-12-15)
+- [workspace-lfu.7] Admin App - Dashboard & Monitoring (closed 2025-12-15)
+- [workspace-lfu.6] Sessions App - Active Session Interface (closed 2025-12-15)
+- [workspace-lfu.5] Workspaces App - Grid View & Actions (closed 2025-12-15)
+- [workspace-lfu.11] Terminal Component - xterm.js Integration (closed 2025-12-15)
+- [workspace-lfu.10] File Tree Component (closed 2025-12-15)
+- [workspace-lfu.9] Chat Interface Component (closed 2025-12-15)
+- [workspace-9aa.3.16] Create API client and React Query setup (closed 2025-12-15)
+- [workspace-lfu.4] Navigation System - Text-Based Menu Items (closed 2025-12-15)
+- [workspace-lfu.3] App Shell Layout - Sidebar & Main Content Area (closed 2025-12-15)
+- [workspace-lfu.2] App Registry System - Core Architecture (closed 2025-12-15)
+- [workspace-9aa.2.4] Implement Podman container management (closed 2025-12-15)
+- [workspace-9aa.2.2] Implement SQLite database layer with sqlx (closed 2025-12-15)
+- [workspace-9aa.2.1] Refactor backend from CLI to Axum web server (closed 2025-12-15)
+- [workspace-ook] Implement standalone Rust fileserver for container workdir access (closed 2025-12-15)
+- [workspace-8zn] Source map error in ghostty-web WebAssembly (closed 2025-12-15)
+- [workspace-er5] React hydration mismatch due to Dark Reader browser extension (closed 2025-12-15)
+- [workspace-unw] Layout forced before page fully loaded causing flash of unstyled content (closed 2025-12-15)
+- [workspace-5h0.7] Update frontend to use backend API for session management (closed 2025-12-15)
+- [workspace-ztq] Terminal WebSocket connection failure to localhost:41822 (closed 2025-12-15)
+- [workspace-9xw] SSE connection failure to opencode event API endpoint (closed 2025-12-15)
+- [workspace-cyl] API /api/opencode/event returning Internal Server Error (closed 2025-12-15)
+- [workspace-9aa.2.3] Implement storage abstraction layer (closed 2025-12-15)
+- [workspace-9aa.2.8] Implement authentication middleware (closed 2025-12-15)
+- [workspace-5h0] Implement Rust backend container orchestration via Podman (closed 2025-12-15)
+- [workspace-5h0.6] Add serve subcommand to start the API server (closed 2025-12-15)
+- [workspace-5h0.5] Implement REST API endpoints for session lifecycle (closed 2025-12-15)
+- [workspace-5h0.4] Implement HTTP/WebSocket proxy for container services (closed 2025-12-15)
+- [workspace-5h0.3] Implement session management and state tracking (closed 2025-12-15)
+- [workspace-5h0.2] Implement Podman container management module (closed 2025-12-15)
+- [workspace-5h0.1] Add Axum web framework and core dependencies (closed 2025-12-15)
+- [workspace-tcz] Multi-container architecture with Traefik routing (closed 2025-12-12)
+- [workspace-3tb] Update frontend config for terminal WebSocket URL (closed 2025-12-12)
+- [workspace-bc0] Create docker-compose with Traefik and internal network (closed 2025-12-12)
+- [workspace-c84] Create Caddy configuration for dynamic container routing (closed 2025-12-12)
+- [workspace-jxj] Create Traefik configuration for dynamic container routing (closed 2025-12-12)
+- [workspace-x24] Add ttyd for web terminal to Dockerfiles (closed 2025-12-12)
+- [workspace-10] Remove rounded corners across frontend UI (closed 2025-12-12)
+- [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
+- [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
+- [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)

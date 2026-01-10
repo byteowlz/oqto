@@ -3,6 +3,9 @@
   "theme": "tinty",
   "autoshare": false,
   "autoupdate": true,
+  "permission": {
+    "question": "deny"
+  },
   "mode": {
     "build": {},
     "plan": {},

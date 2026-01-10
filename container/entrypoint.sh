@@ -8,6 +8,7 @@ OPENCODE_PORT="${OPENCODE_PORT:-41820}"
 FILESERVER_PORT="${FILESERVER_PORT:-41821}"
 TTYD_PORT="${TTYD_PORT:-41822}"
 MMRY_PORT="${MMRY_PORT:-41823}"
+PI_BRIDGE_PORT="${PI_BRIDGE_PORT:-41824}"
 WORKSPACE_DIR="${WORKSPACE_DIR:-${HOME_DIR}/workspace}"
 SKEL_DIR="${SKEL_DIR:-/usr/local/share/skel}"
 OPENCODE_SEED_DIR="${OPENCODE_SEED_DIR:-/opt/opencode}"
@@ -27,6 +28,7 @@ echo "OpenCode server port: ${OPENCODE_PORT}"
 echo "File server port: ${FILESERVER_PORT}"
 echo "TTY terminal port: ${TTYD_PORT}"
 echo "mmry service port: ${MMRY_PORT}"
+echo "Pi bridge port: ${PI_BRIDGE_PORT}"
 echo "Workspace directory: ${WORKSPACE_DIR}"
 if [ -n "${EAVS_URL}" ]; then
     echo "EAVS proxy URL: ${EAVS_URL}"
@@ -187,6 +189,36 @@ EOF
     # Start mmry service in background
     mmry service run &
     MMRY_PID=$!
+fi
+
+# Start pi-bridge if enabled and both pi-bridge and Pi CLI are available
+# PI_BRIDGE_ENABLED is set by the orchestrator when Main Chat uses container runtime
+# PI_EXECUTABLE can be set to override the Pi CLI path (default: "pi")
+PI_EXECUTABLE="${PI_EXECUTABLE:-pi}"
+if [ "${PI_BRIDGE_ENABLED:-false}" = "true" ]; then
+    if command -v pi-bridge &> /dev/null && command -v "${PI_EXECUTABLE}" &> /dev/null; then
+        echo "Starting pi-bridge on port ${PI_BRIDGE_PORT}..."
+        
+        # Pi-bridge will spawn the Pi CLI in RPC mode
+        # Work directory is the workspace so Pi has access to project files
+        pi-bridge \
+            --port "${PI_BRIDGE_PORT}" \
+            --host 0.0.0.0 \
+            --work-dir "${WORKSPACE_DIR}" \
+            --pi-executable "${PI_EXECUTABLE}" \
+            ${PI_PROVIDER:+--provider "${PI_PROVIDER}"} \
+            ${PI_MODEL:+--model "${PI_MODEL}"} \
+            &
+        PI_BRIDGE_PID=$!
+        echo "pi-bridge started with PID ${PI_BRIDGE_PID}"
+    else
+        if ! command -v pi-bridge &> /dev/null; then
+            echo "Warning: pi-bridge enabled but pi-bridge binary not found"
+        fi
+        if ! command -v "${PI_EXECUTABLE}" &> /dev/null; then
+            echo "Warning: pi-bridge enabled but Pi CLI (${PI_EXECUTABLE}) not found"
+        fi
+    fi
 fi
 
 # Give services a moment to start

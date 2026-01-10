@@ -29,6 +29,7 @@ import type {
 import {
 	ChevronDown,
 	ChevronUp,
+	Mic,
 	MicOff,
 	Settings2,
 	Volume2,
@@ -63,6 +64,7 @@ export interface VoicePanelProps {
 	onSettingsChange: {
 		setVisualizer: (type: VisualizerType) => void;
 		setMuted: (muted: boolean) => void;
+		setMicMuted: (muted: boolean) => void;
 		setContinuous: (continuous: boolean) => void;
 		setVoice: (voice: string) => void;
 		setSpeed: (speed: number) => void;
@@ -124,7 +126,8 @@ export function VoicePanel({
 					{voiceState === "listening" && "Listening..."}
 					{voiceState === "processing" && "Processing..."}
 					{voiceState === "speaking" && "Speaking..."}
-					{voiceState === "idle" && "Ready"}
+					{voiceState === "idle" &&
+						(settings.micMuted ? "Mic muted" : "Ready")}
 				</span>
 			</div>
 
@@ -193,6 +196,24 @@ export function VoicePanel({
 								<VolumeX className="size-4" />
 							) : (
 								<Volume2 className="size-4" />
+							)}
+						</Button>
+
+						{/* Mic mute toggle */}
+						<Button
+							type="button"
+							variant="ghost"
+							size="sm"
+							onClick={() => onSettingsChange.setMicMuted(!settings.micMuted)}
+							className={cn(
+								"h-8 w-8 p-0",
+								settings.micMuted && "text-muted-foreground",
+							)}
+						>
+							{settings.micMuted ? (
+								<MicOff className="size-4" />
+							) : (
+								<Mic className="size-4" />
 							)}
 						</Button>
 

@@ -70,6 +70,7 @@ dev:
 install:
     cd frontend && bun install
     cd backend && cargo install --path .
+    cd backend && cargo install --path . --bin octo-runner
     cd fileserver && cargo install --path .
 
 # Build container image
@@ -91,3 +92,86 @@ reload:
 # Reload backend but don't restart server
 reload-stop:
     ./scripts/reload-backend.sh --no-start
+
+# Bump version across all components
+# Usage: just bump patch|minor|major|x.y.z
+bump version:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    ROOT="$(git rev-parse --show-toplevel)"
+    
+    # Get current version from backend/Cargo.toml
+    current=$(grep -m1 '^version = ' "$ROOT/backend/Cargo.toml" | sed 's/version = "\(.*\)"/\1/')
+    
+    # Parse current version
+    IFS='.' read -r major minor patch <<< "$current"
+    
+    # Calculate new version
+    case "{{version}}" in
+        patch)
+            new_version="$major.$minor.$((patch + 1))"
+            ;;
+        minor)
+            new_version="$major.$((minor + 1)).0"
+            ;;
+        major)
+            new_version="$((major + 1)).0.0"
+            ;;
+        *)
+            # Assume explicit version
+            new_version="{{version}}"
+            ;;
+    esac
+    
+    echo "Bumping $current -> $new_version"
+    
+    # Update Rust Cargo.toml files (match the version line after [package])
+    sed -i '0,/^version = /s/^version = ".*"/version = "'"$new_version"'"/' "$ROOT/backend/Cargo.toml"
+    sed -i '0,/^version = /s/^version = ".*"/version = "'"$new_version"'"/' "$ROOT/fileserver/Cargo.toml"
+    sed -i '0,/^version = /s/^version = ".*"/version = "'"$new_version"'"/' "$ROOT/frontend/src-tauri/Cargo.toml"
+    
+    # Update package.json files
+    cd "$ROOT/frontend" && bun pm pkg set version="$new_version"
+    cd "$ROOT/pi-extension" && bun pm pkg set version="$new_version"
+    
+    # Update tauri.conf.json
+    jq --arg v "$new_version" '.version = $v' "$ROOT/frontend/src-tauri/tauri.conf.json" > "$ROOT/frontend/src-tauri/tauri.conf.json.tmp" \
+        && mv "$ROOT/frontend/src-tauri/tauri.conf.json.tmp" "$ROOT/frontend/src-tauri/tauri.conf.json"
+    
+    echo "Bumped all components to $new_version"
+
+# Release: bump version, commit, and tag
+# Usage: just release patch|minor|major|x.y.z
+release version:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    
+    # Check for uncommitted changes
+    if ! git diff --quiet || ! git diff --cached --quiet; then
+        echo "Error: uncommitted changes exist. Commit or stash them first."
+        exit 1
+    fi
+    
+    # Get current version to calculate new one for commit message
+    current=$(grep -m1 '^version = ' backend/Cargo.toml | sed 's/version = "\(.*\)"/\1/')
+    IFS='.' read -r major minor patch <<< "$current"
+    
+    case "{{version}}" in
+        patch) new_version="$major.$minor.$((patch + 1))" ;;
+        minor) new_version="$major.$((minor + 1)).0" ;;
+        major) new_version="$((major + 1)).0.0" ;;
+        *) new_version="{{version}}" ;;
+    esac
+    
+    # Bump versions
+    just bump {{version}}
+    
+    # Commit and tag
+    git add -A
+    git commit -m "release: v$new_version"
+    git tag -a "v$new_version" -m "Release v$new_version"
+    
+    echo ""
+    echo "Released v$new_version"
+    echo "Run 'git push && git push --tags' to publish"

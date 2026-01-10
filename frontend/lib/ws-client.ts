@@ -9,7 +9,20 @@
  * - Connection state management
  */
 
-import { getControlPlaneBaseUrl } from "./control-plane-client";
+import { getAuthToken, getControlPlaneBaseUrl } from "./control-plane-client";
+
+function isWsDebugEnabled(): boolean {
+	if (!import.meta.env.DEV) return false;
+	try {
+		// Enable with: localStorage.setItem("debug:ws", "1")
+		if (typeof localStorage !== "undefined") {
+			return localStorage.getItem("debug:ws") === "1";
+		}
+	} catch {
+		// ignore
+	}
+	return false;
+}
 
 // ============================================================================
 // Event Types (from backend)
@@ -107,6 +120,18 @@ export type WsEvent =
 			permission_id: string;
 			granted: boolean;
 	  }
+	| {
+			type: "question_request";
+			session_id: string;
+			request_id: string;
+			questions: unknown;
+			tool?: unknown;
+	  }
+	| {
+			type: "question_resolved";
+			session_id: string;
+			request_id: string;
+	  }
 	| { type: "compaction_start"; session_id: string; reason?: string }
 	| { type: "compaction_end"; session_id: string; success: boolean }
 	| {
@@ -114,6 +139,19 @@ export type WsEvent =
 			session_id: string;
 			event_type: string;
 			data: unknown;
+	  }
+	| {
+			type: "a2ui_surface";
+			session_id: string;
+			surface_id: string;
+			messages: unknown[];
+			blocking?: boolean;
+			request_id?: string;
+	  }
+	| {
+			type: "a2ui_action_resolved";
+			session_id: string;
+			request_id: string;
 	  };
 
 // ============================================================================
@@ -139,8 +177,28 @@ export type WsCommand =
 			permission_id: string;
 			granted: boolean;
 	  }
+	| {
+			type: "question_reply";
+			session_id: string;
+			request_id: string;
+			answers: unknown;
+	  }
+	| {
+			type: "question_reject";
+			session_id: string;
+			request_id: string;
+	  }
 	| { type: "refresh_session"; session_id: string }
-	| { type: "get_messages"; session_id: string; after_id?: string };
+	| { type: "get_messages"; session_id: string; after_id?: string }
+	| {
+			type: "a2ui_action";
+			session_id: string;
+			surface_id: string;
+			request_id?: string;
+			action_name: string;
+			source_component_id: string;
+			context: Record<string, unknown>;
+	  };
 
 export type Attachment = {
 	type: string;
@@ -212,12 +270,16 @@ class OctoWsClient {
 	/** Connect to the WebSocket server */
 	connect(): void {
 		if (this.ws?.readyState === WebSocket.OPEN) {
-			console.debug("[ws] Already connected");
+			if (isWsDebugEnabled()) {
+				console.debug("[ws] Already connected");
+			}
 			return;
 		}
 
 		if (this.ws?.readyState === WebSocket.CONNECTING) {
-			console.debug("[ws] Connection already in progress");
+			if (isWsDebugEnabled()) {
+				console.debug("[ws] Connection already in progress");
+			}
 			return;
 		}
 
@@ -310,6 +372,25 @@ class OctoWsClient {
 		});
 	}
 
+	/** Reply to a question request */
+	replyQuestion(sessionId: string, requestId: string, answers: unknown): void {
+		this.send({
+			type: "question_reply",
+			session_id: sessionId,
+			request_id: requestId,
+			answers,
+		});
+	}
+
+	/** Reject a question request */
+	rejectQuestion(sessionId: string, requestId: string): void {
+		this.send({
+			type: "question_reject",
+			session_id: sessionId,
+			request_id: requestId,
+		});
+	}
+
 	/** Request session state refresh */
 	refreshSession(sessionId: string): void {
 		this.send({ type: "refresh_session", session_id: sessionId });
@@ -321,6 +402,26 @@ class OctoWsClient {
 			type: "get_messages",
 			session_id: sessionId,
 			after_id: afterId,
+		});
+	}
+
+	/** Send A2UI user action */
+	sendA2UIAction(
+		sessionId: string,
+		surfaceId: string,
+		actionName: string,
+		sourceComponentId: string,
+		context: Record<string, unknown>,
+		requestId?: string,
+	): void {
+		this.send({
+			type: "a2ui_action",
+			session_id: sessionId,
+			surface_id: surfaceId,
+			request_id: requestId,
+			action_name: actionName,
+			source_component_id: sourceComponentId,
+			context,
 		});
 	}
 
@@ -371,11 +472,22 @@ class OctoWsClient {
 			wsUrl = `${window.location.origin.replace(/^http/, "ws")}/api/ws`;
 		}
 
-		console.debug("[ws] Connecting to", wsUrl);
+		// Add auth token as query parameter for WebSocket auth
+		const token = getAuthToken();
+		if (token) {
+			const separator = wsUrl.includes("?") ? "&" : "?";
+			wsUrl = `${wsUrl}${separator}token=${encodeURIComponent(token)}`;
+		}
+
+		if (isWsDebugEnabled()) {
+			console.debug("[ws] Connecting to", wsUrl);
+		}
 		this.ws = new WebSocket(wsUrl);
 
 		this.ws.onopen = () => {
-			console.debug("[ws] Connected");
+			if (isWsDebugEnabled()) {
+				console.debug("[ws] Connected");
+			}
 			this.reconnectAttempt = 0;
 			this.setConnectionState("connected");
 			this.resetPingTimeout();
@@ -397,6 +509,12 @@ class OctoWsClient {
 		this.ws.onmessage = (event) => {
 			try {
 				const data = JSON.parse(event.data) as WsEvent;
+				// Avoid logging full payloads (can be huge + slow).
+				if (isWsDebugEnabled() && data.type !== "ping") {
+					console.debug("[ws] Received event:", data.type, {
+						session_id: "session_id" in data ? data.session_id : undefined,
+					});
+				}
 				this.handleEvent(data);
 			} catch (err) {
 				console.warn("[ws] Failed to parse message:", err, event.data);
@@ -408,7 +526,9 @@ class OctoWsClient {
 		};
 
 		this.ws.onclose = (event) => {
-			console.debug("[ws] Connection closed:", event.code, event.reason);
+			if (isWsDebugEnabled()) {
+				console.debug("[ws] Connection closed:", event.code, event.reason);
+			}
 			this.ws = null;
 			this.clearPingTimeout();
 
@@ -445,6 +565,11 @@ class OctoWsClient {
 		// Reset ping timeout on any message
 		this.resetPingTimeout();
 
+		// Debug: log A2UI events (opt-in)
+		if (isWsDebugEnabled() && event.type === "a2ui_surface") {
+			console.debug("[ws] A2UI surface received");
+		}
+
 		// Get session ID from event
 		const sessionId =
 			"session_id" in event
@@ -478,7 +603,9 @@ class OctoWsClient {
 	private setConnectionState(state: ConnectionState): void {
 		if (this.connectionState === state) return;
 
-		console.debug("[ws] Connection state:", state);
+		if (isWsDebugEnabled()) {
+			console.debug("[ws] Connection state:", state);
+		}
 		this.connectionState = state;
 
 		for (const handler of this.connectionStateHandlers) {
@@ -509,9 +636,11 @@ class OctoWsClient {
 		const jitter = Math.random() * 0.2 * delay;
 		const totalDelay = delay + jitter;
 
-		console.debug(
-			`[ws] Reconnecting in ${Math.round(totalDelay)}ms (attempt ${this.reconnectAttempt})`,
-		);
+		if (isWsDebugEnabled()) {
+			console.debug(
+				`[ws] Reconnecting in ${Math.round(totalDelay)}ms (attempt ${this.reconnectAttempt})`,
+			);
+		}
 
 		this.reconnectTimeout = setTimeout(() => {
 			this.reconnectTimeout = null;

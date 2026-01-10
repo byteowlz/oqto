@@ -111,27 +111,28 @@ const CodeBlockWithTheme = memo(function CodeBlockWithTheme({
 				</span>
 				<CopyButton text={codeString} />
 			</div>
-			<SyntaxHighlighter
-				style={
-					(isDarkMode ? oneDark : oneLight) as Record<
-						string,
-						React.CSSProperties
-					>
-				}
-				language={match ? match[1] : "text"}
-				PreTag="div"
-				wrapLongLines={true}
-				customStyle={{
-					margin: 0,
-					padding: "1rem",
-					backgroundColor: "var(--code-bg)",
-					fontSize: "0.75rem",
-					overflowX: "hidden",
-					wordBreak: "break-word",
-				}}
-			>
-				{codeString}
-			</SyntaxHighlighter>
+			<div className="overflow-x-auto">
+				<SyntaxHighlighter
+					style={
+						(isDarkMode ? oneDark : oneLight) as Record<
+							string,
+							React.CSSProperties
+						>
+					}
+					language={match ? match[1] : "text"}
+					PreTag="div"
+					wrapLongLines={false}
+					customStyle={{
+						margin: 0,
+						padding: "1rem",
+						backgroundColor: "var(--code-bg)",
+						fontSize: "0.75rem",
+						minWidth: "fit-content",
+					}}
+				>
+					{codeString}
+				</SyntaxHighlighter>
+			</div>
 		</div>
 	);
 });
@@ -214,7 +215,7 @@ const markdownComponents: Components = {
 	table({ children }) {
 		return (
 			<div className="overflow-x-auto my-3">
-				<table className="min-w-full border border-border rounded-lg overflow-hidden">
+				<table className="border border-border rounded-lg overflow-hidden text-xs w-max min-w-full">
 					{children}
 				</table>
 			</div>
@@ -231,14 +232,16 @@ const markdownComponents: Components = {
 	},
 	th({ children }) {
 		return (
-			<th className="px-3 py-2 text-left text-sm font-semibold text-foreground">
+			<th className="px-2 py-1.5 text-left text-xs font-semibold text-foreground whitespace-nowrap">
 				{children}
 			</th>
 		);
 	},
 	td({ children }) {
 		return (
-			<td className="px-3 py-2 text-sm text-muted-foreground">{children}</td>
+			<td className="px-2 py-1.5 text-xs text-muted-foreground max-w-[200px]">
+				{children}
+			</td>
 		);
 	},
 	hr() {

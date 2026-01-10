@@ -20,6 +20,7 @@ use uuid::Uuid;
 use crate::container::{ContainerConfig, ContainerRuntimeApi, ContainerStats};
 use crate::eavs::{CreateKeyRequest, EavsApi, KeyPermissions};
 use crate::local::{LocalRuntime, LocalRuntimeConfig};
+use crate::projects;
 
 use super::models::{CreateSessionRequest, RuntimeMode, Session, SessionStatus};
 use super::repository::SessionRepository;
@@ -157,6 +158,13 @@ pub struct SessionServiceConfig {
     pub idle_timeout_minutes: i64,
     /// Idle cleanup check interval in seconds.
     pub idle_check_interval_seconds: u64,
+    /// Whether Pi (Main Chat AI) is enabled in container mode.
+    /// When true, pi-bridge will be started inside containers.
+    pub pi_bridge_enabled: bool,
+    /// Default LLM provider for Pi (e.g., "anthropic").
+    pub pi_provider: Option<String>,
+    /// Default model for Pi (e.g., "claude-sonnet-4-20250514").
+    pub pi_model: Option<String>,
 }
 
 impl Default for SessionServiceConfig {
@@ -178,6 +186,9 @@ impl Default for SessionServiceConfig {
             max_concurrent_sessions: SessionService::DEFAULT_MAX_CONCURRENT_SESSIONS,
             idle_timeout_minutes: SessionService::DEFAULT_IDLE_TIMEOUT_MINUTES,
             idle_check_interval_seconds: 5 * 60,
+            pi_bridge_enabled: false,
+            pi_provider: None,
+            pi_model: None,
         }
     }
 }
@@ -307,6 +318,47 @@ impl SessionService {
         std::path::PathBuf::from("/workspace")
     }
 
+    fn allowed_workspace_roots(&self) -> Vec<std::path::PathBuf> {
+        let mut roots = Vec::new();
+
+        let workspace_root = self.workspace_root();
+        roots.push(workspace_root.canonicalize().unwrap_or(workspace_root));
+
+        // Always include the data directory (user_data_path) as an allowed root.
+        // This is needed because Main Chat stores its data in the data directory
+        // (e.g., ~/.local/share/octo/users/main) rather than the workspace directory.
+        let data_root = std::path::PathBuf::from(&self.config.user_data_path);
+        roots.push(data_root.canonicalize().unwrap_or(data_root));
+
+        roots
+    }
+
+    fn resolve_workspace_path(&self, path: &str) -> Result<std::path::PathBuf> {
+        let requested = std::path::PathBuf::from(path);
+        let resolved = if requested.is_absolute() {
+            requested
+        } else {
+            self.workspace_root().join(&requested)
+        };
+
+        if !resolved.exists() {
+            anyhow::bail!("workspace path does not exist: {}", resolved.display());
+        }
+
+        let canonical = resolved
+            .canonicalize()
+            .with_context(|| format!("resolving workspace path {}", resolved.display()))?;
+        let allowed_roots = self.allowed_workspace_roots();
+        if !allowed_roots.iter().any(|root| canonical.starts_with(root)) {
+            anyhow::bail!(
+                "workspace path {} is outside allowed roots",
+                canonical.display()
+            );
+        }
+
+        Ok(canonical)
+    }
+
     /// Maximum number of retries for port allocation conflicts.
     const MAX_PORT_ALLOCATION_RETRIES: u32 = 5;
 
@@ -324,7 +376,7 @@ impl SessionService {
 
         // Check for running sessions that need upgrading
         let running_sessions = self.repo.list_running_for_user(user_id).await?;
-        for session in running_sessions {
+        if let Some(session) = running_sessions.into_iter().next() {
             if let Ok(Some(_new_digest)) = self.check_for_image_update(&session.id).await {
                 info!(
                     "Running session {} has outdated image, auto-upgrading...",
@@ -501,16 +553,9 @@ impl SessionService {
 
         // Determine user home path - either provided or create per-user home directory.
         let user_home_path = if let Some(path) = request.workspace_path {
-            // Resolve relative paths against the workspace root
-            let resolved_path = if std::path::Path::new(&path).is_absolute() {
-                std::path::PathBuf::from(&path)
-            } else {
-                self.workspace_root().join(&path)
-            };
-            if !resolved_path.exists() {
-                anyhow::bail!("workspace path does not exist: {}", resolved_path.display());
-            }
-            resolved_path.to_string_lossy().to_string()
+            self.resolve_workspace_path(&path)?
+                .to_string_lossy()
+                .to_string()
         } else {
             let user_id = &self.config.default_user_id;
 
@@ -882,6 +927,24 @@ impl SessionService {
             }
         }
 
+        // Pass pi-bridge config to container if enabled
+        // pi-bridge runs inside the container and provides HTTP/WS access to Pi
+        if self.config.pi_bridge_enabled {
+            config = config
+                .env("PI_BRIDGE_ENABLED", "true")
+                .env("PI_BRIDGE_PORT", "41824");
+            // Map pi-bridge port (internal 41824 -> same external port for simplicity)
+            // The backend's ContainerPiRuntime will connect to localhost:41824 via the mapped port
+            config = config.port(41824, 41824);
+            if let Some(ref provider) = self.config.pi_provider {
+                config = config.env("PI_PROVIDER", provider);
+            }
+            if let Some(ref model) = self.config.pi_model {
+                config = config.env("PI_MODEL", model);
+            }
+            info!("Enabled pi-bridge for session {} on port 41824", session.id);
+        }
+
         // Create and start the container
         let container_id = runtime
             .create_container(&config)
@@ -986,16 +1049,16 @@ impl SessionService {
         }
 
         let workspace_path = PathBuf::from(&session.workspace_path);
+        let project_id = self.project_id_for_workspace(&workspace_path);
 
         // Start all services
-        // TODO: Add project_id support when shared projects are implemented
         let pids = local_runtime
             .start_session(
                 &session.id,
                 &session.user_id,
                 &workspace_path,
                 session.agent.as_deref(),
-                None, // project_id - will be added with shared projects feature
+                project_id.as_deref(),
                 opencode_port,
                 fileserver_port,
                 ttyd_port,
@@ -1419,16 +1482,16 @@ impl SessionService {
                 }
 
                 let workspace_path = PathBuf::from(&session.workspace_path);
+                let project_id = self.project_id_for_workspace(&workspace_path);
 
                 // Respawn the processes (local mode doesn't preserve process state)
-                // TODO: Add project_id support when shared projects are implemented
                 match local_runtime
                     .resume_session(
                         session_id,
                         &session.user_id,
                         &workspace_path,
                         session.agent.as_deref(),
-                        None, // project_id - will be added with shared projects feature
+                        project_id.as_deref(),
                         opencode_port,
                         fileserver_port,
                         ttyd_port,
@@ -1631,7 +1694,8 @@ impl SessionService {
                 }
                 RuntimeMode::Local => {
                     if let Some(local_runtime) = self.local_runtime() {
-                        local_runtime.is_session_running(&session.id).await
+                        self.is_local_session_running_best_effort(local_runtime.as_ref(), &session)
+                            .await
                     } else {
                         false
                     }
@@ -1972,6 +2036,56 @@ impl SessionService {
         }
     }
 
+    fn parse_local_session_pids(container_id: Option<&str>) -> Option<Vec<u32>> {
+        let container_id = container_id?;
+        let pids: Vec<u32> = container_id
+            .split(',')
+            .filter_map(|raw| raw.trim().parse::<u32>().ok())
+            .collect();
+        if pids.is_empty() {
+            return None;
+        }
+        Some(pids)
+    }
+
+    fn are_local_session_pids_running(pids: &[u32]) -> bool {
+        #[cfg(target_os = "linux")]
+        {
+            pids.iter()
+                .all(|pid| std::path::Path::new(&format!("/proc/{}", pid)).exists())
+        }
+
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = pids;
+            false
+        }
+    }
+
+    async fn is_local_session_running_best_effort(
+        &self,
+        local_runtime: &LocalRuntime,
+        session: &Session,
+    ) -> bool {
+        if local_runtime.is_session_running(&session.id).await {
+            return true;
+        }
+
+        if let Some(pids) = Self::parse_local_session_pids(session.container_id.as_deref()) {
+            if Self::are_local_session_pids_running(&pids) {
+                return true;
+            }
+        }
+
+        // Fallback: if expected ports are still bound, treat as running.
+        let ports = [
+            session.opencode_port as u16,
+            session.fileserver_port as u16,
+            session.ttyd_port as u16,
+        ];
+        ports.iter().any(|port| !crate::local::is_port_available(*port))
+    }
+
     /// Reconcile local mode session state.
     async fn reconcile_local_mode_state(&self, session: Session) -> Result<Session> {
         let local_runtime = match self.local_runtime() {
@@ -1979,10 +2093,12 @@ impl SessionService {
             None => return Ok(session),
         };
 
-        if local_runtime.is_session_running(&session.id).await {
+        if self
+            .is_local_session_running_best_effort(local_runtime.as_ref(), &session)
+            .await
+        {
             Ok(session)
         } else {
-            // Processes are not running - mark as stopped
             warn!(
                 "Local processes for session {} are not running, marking as stopped",
                 session.id
@@ -2008,9 +2124,15 @@ impl SessionService {
 
         // 0. For local mode: clean up orphan processes on base ports
         if self.config.runtime_mode == RuntimeMode::Local {
-            if let Some(local_runtime) = self.local_runtime() {
-                let base_port = self.config.base_port as u16;
-                local_runtime.startup_cleanup(base_port);
+            if let (Some(local_runtime), Some(local_config)) =
+                (self.local_runtime(), self.config.local_config.as_ref())
+            {
+                if local_config.cleanup_on_startup {
+                    let base_port = self.config.base_port as u16;
+                    local_runtime.startup_cleanup(base_port);
+                } else {
+                    info!("Skipping local startup cleanup (preserve running sessions)");
+                }
             }
         }
 
@@ -2040,6 +2162,18 @@ impl SessionService {
 
         info!("Startup cleanup complete");
         Ok(())
+    }
+
+    /// Manually clean up orphan local session processes.
+    pub async fn cleanup_local_orphans(&self) -> Result<usize> {
+        if self.config.runtime_mode != RuntimeMode::Local {
+            anyhow::bail!("local cleanup is only available in local mode");
+        }
+        let local_runtime = self
+            .local_runtime()
+            .context("local runtime not available")?;
+        let base_port = self.config.base_port as u16;
+        Ok(local_runtime.startup_cleanup(base_port))
     }
 
     /// Clean up stopped containers that have been stopped for too long.
@@ -2305,6 +2439,20 @@ impl SessionService {
         };
 
         self.create_session(request).await
+    }
+
+    fn project_id_for_workspace(&self, workspace_path: &PathBuf) -> Option<String> {
+        match projects::read_metadata(workspace_path) {
+            Ok(Some(metadata)) if metadata.shared => Some(metadata.project_id),
+            Ok(_) => None,
+            Err(err) => {
+                warn!(
+                    "Failed to read project metadata for {:?}: {:?}",
+                    workspace_path, err
+                );
+                None
+            }
+        }
     }
 
     /// Get or create a session for IO (fileserver + ttyd) for a workspace path.
@@ -2627,11 +2775,12 @@ mod tests {
         let fake_runtime = Arc::new(FakeRuntime::default());
         let runtime: Arc<dyn ContainerRuntimeApi> = fake_runtime.clone();
         let eavs: Arc<dyn EavsApi> = Arc::new(FakeEavs::default());
+        let workspace_dir = tempfile::tempdir().unwrap();
 
         let config = SessionServiceConfig {
             default_image: "test-image:latest".to_string(),
             base_port: 41820,
-            user_data_path: "./data".to_string(),
+            user_data_path: workspace_dir.path().to_string_lossy().to_string(),
             skel_path: None,
             default_user_id: "default".to_string(),
             default_session_budget_usd: Some(10.0),
@@ -2645,12 +2794,14 @@ mod tests {
             max_concurrent_sessions: SessionService::DEFAULT_MAX_CONCURRENT_SESSIONS,
             idle_timeout_minutes: SessionService::DEFAULT_IDLE_TIMEOUT_MINUTES,
             idle_check_interval_seconds: 5 * 60,
+            pi_bridge_enabled: false,
+            pi_provider: None,
+            pi_model: None,
         };
 
         let mut service = SessionService::with_eavs(repo.clone(), runtime.clone(), eavs, config);
         service.readiness = Arc::new(NoopReadiness::default());
 
-        let workspace_dir = tempfile::tempdir().unwrap();
         let session = service
             .create_session(CreateSessionRequest {
                 workspace_path: Some(workspace_dir.path().to_string_lossy().to_string()),
@@ -2720,6 +2871,49 @@ mod tests {
         assert_eq!(report.stats.len(), 1);
         assert_eq!(report.stats[0].session_id, "session-1");
         assert_eq!(report.stats[0].container_id, "container-1");
+    }
+
+    #[tokio::test]
+    async fn resolve_workspace_path_enforces_allowed_roots() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let workspace_root = temp_dir.path().join("workspaces");
+        std::fs::create_dir_all(&workspace_root).unwrap();
+
+        let allowed = workspace_root.join("project");
+        std::fs::create_dir_all(&allowed).unwrap();
+
+        let outside = temp_dir.path().join("outside");
+        std::fs::create_dir_all(&outside).unwrap();
+
+        let local_config = LocalRuntimeConfig {
+            workspace_dir: workspace_root.to_string_lossy().to_string(),
+            single_user: true,
+            ..Default::default()
+        };
+        let local_runtime = LocalRuntime::new(local_config.clone());
+        let config = SessionServiceConfig {
+            runtime_mode: RuntimeMode::Local,
+            local_config: Some(local_config),
+            single_user: true,
+            ..Default::default()
+        };
+
+        let db = Database::in_memory().await.unwrap();
+        let repo = SessionRepository::new(db.pool().clone());
+        let service = SessionService::with_local_runtime(repo, local_runtime, config);
+
+        let resolved = service
+            .resolve_workspace_path(allowed.to_string_lossy().as_ref())
+            .unwrap();
+        assert_eq!(resolved, allowed.canonicalize().unwrap());
+
+        let relative = service.resolve_workspace_path("project").unwrap();
+        assert_eq!(relative, allowed.canonicalize().unwrap());
+
+        let err = service
+            .resolve_workspace_path(outside.to_string_lossy().as_ref())
+            .unwrap_err();
+        assert!(err.to_string().contains("outside allowed roots"));
     }
 
     #[test]

@@ -40,8 +40,5 @@
 //! Octo communicates with the appropriate runner via Unix socket to
 //! spawn processes that run with that user's privileges.
 
-mod client;
-mod protocol;
-
-pub use client::{RunnerClient, DEFAULT_SOCKET_PATTERN};
-pub use protocol::*;
+pub mod client;
+pub mod protocol;

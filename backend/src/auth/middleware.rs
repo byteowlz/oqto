@@ -13,6 +13,27 @@ use std::sync::Arc;
 
 use super::{AuthConfig, AuthError, Claims, DevUser, Role};
 
+/// Extract a Bearer token from an Authorization header value.
+fn bearer_token_from_header(header_value: &str) -> Result<&str, AuthError> {
+    let mut parts = header_value.split_whitespace();
+    let scheme = parts.next().ok_or(AuthError::InvalidAuthHeader)?;
+
+    if !scheme.eq_ignore_ascii_case("bearer") {
+        return Err(AuthError::InvalidAuthHeader);
+    }
+
+    let token = parts.next().ok_or(AuthError::InvalidAuthHeader)?;
+    if token.is_empty() {
+        return Err(AuthError::InvalidAuthHeader);
+    }
+
+    if parts.next().is_some() {
+        return Err(AuthError::InvalidAuthHeader);
+    }
+
+    Ok(token)
+}
+
 fn token_from_cookie_header<'a>(cookie_header: &'a str, cookie_name: &str) -> Option<&'a str> {
     cookie_header.split(';').map(str::trim).find_map(|pair| {
         let (name, value) = pair.split_once('=')?;
@@ -233,7 +254,8 @@ where
 /// Supports multiple auth methods in priority order:
 /// 1. Authorization: Bearer <token> header
 /// 2. auth_token cookie
-/// 3. X-Dev-User header (dev mode only)
+/// 3. token query parameter (for WebSocket connections)
+/// 4. X-Dev-User header (dev mode only)
 pub async fn auth_middleware(
     State(auth): State<AuthState>,
     mut req: axum::http::Request<axum::body::Body>,
@@ -252,15 +274,30 @@ pub async fn auth_middleware(
         .and_then(|h| h.to_str().ok())
         .and_then(|cookie_header| token_from_cookie_header(cookie_header, "auth_token"));
 
+    // Allow token in query parameter for WebSocket connections (browsers can't set headers on WS)
+    let query_token = req.uri().query().and_then(|q| {
+        q.split('&').find_map(|pair| {
+            let mut parts = pair.splitn(2, '=');
+            let key = parts.next()?;
+            let value = parts.next()?;
+            if key == "token" {
+                // URL decode the token value
+                urlencoding::decode(value).ok().map(|s| s.into_owned())
+            } else {
+                None
+            }
+        })
+    });
+
     let claims = if let Some(header) = auth_header {
         // Parse Bearer token
-        let token = header
-            .strip_prefix("Bearer ")
-            .ok_or(AuthError::InvalidAuthHeader)?;
+        let token = bearer_token_from_header(header)?;
 
         // Validate token
         auth.validate_token(token)?
     } else if let Some(token) = cookie_token {
+        auth.validate_token(token)?
+    } else if let Some(ref token) = query_token {
         auth.validate_token(token)?
     } else if auth.is_dev_mode() {
         // In dev mode, allow X-Dev-User header
@@ -317,6 +354,41 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_bearer_token_from_header_valid() {
+        assert_eq!(
+            bearer_token_from_header("Bearer abc.def.ghi").unwrap(),
+            "abc.def.ghi"
+        );
+        assert_eq!(
+            bearer_token_from_header("bearer   token123").unwrap(),
+            "token123"
+        );
+        assert_eq!(
+            bearer_token_from_header("   Bearer\tmixed-case ").unwrap(),
+            "mixed-case"
+        );
+    }
+
+    #[test]
+    fn test_bearer_token_from_header_invalid() {
+        let cases = [
+            "",
+            "Bearer",
+            "Bearer ",
+            "Token something",
+            "Bearer token extra",
+            "bear token",
+        ];
+
+        for case in cases {
+            assert!(
+                bearer_token_from_header(case).is_err(),
+                "{case} should fail"
+            );
+        }
+    }
 
     fn make_dev_user(id: &str, name: &str, email: &str, password: &str, role: Role) -> DevUser {
         let password_hash =

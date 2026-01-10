@@ -107,6 +107,7 @@ export interface UseVoiceModeReturn {
 	settings: VoiceSettings;
 	setVisualizer: (type: VisualizerType) => void;
 	setMuted: (muted: boolean) => void;
+	setMicMuted: (muted: boolean) => void;
 	setContinuous: (continuous: boolean) => void;
 	setVoice: (voice: string) => void;
 	setSpeed: (speed: number) => void;
@@ -159,6 +160,10 @@ export function useVoiceMode(options: UseVoiceModeOptions): UseVoiceModeReturn {
 	// Track word count for interrupt-by-speaking
 	const interruptWordCountRef = useRef(0);
 	const interruptBackoffTimerRef = useRef<number | null>(null);
+	const ttsStartedAtRef = useRef<number | null>(null);
+
+	// Use word array instead of string concatenation for O(1) word accumulation
+	const liveWordsRef = useRef<string[]>([]);
 
 	// Apply config defaults on mount
 	useEffect(() => {
@@ -192,7 +197,19 @@ export function useVoiceMode(options: UseVoiceModeOptions): UseVoiceModeReturn {
 					// localStorage overrides are loaded via loadVisualizerVoices but we
 					// want config to be authoritative - user can change in UI which saves to localStorage
 					// For now, always use config values on load
-					console.log("[Voice] Applying config visualizer voices:", fromConfig);
+					try {
+						if (
+							import.meta.env.DEV &&
+							localStorage.getItem("debug:voice") === "1"
+						) {
+							console.debug(
+								"[Voice] Applying config visualizer voices:",
+								fromConfig,
+							);
+						}
+					} catch {
+						// ignore
+					}
 					return fromConfig;
 				});
 			}
@@ -214,11 +231,20 @@ export function useVoiceMode(options: UseVoiceModeOptions): UseVoiceModeReturn {
 		const vizVoice = visualizerVoices[settings.visualizer];
 		const tts = ttsRef.current;
 		if (vizVoice && tts?.isConnected()) {
-			console.log(
-				"[Voice] Switching to visualizer voice:",
-				settings.visualizer,
-				vizVoice,
-			);
+			try {
+				if (
+					import.meta.env.DEV &&
+					localStorage.getItem("debug:voice") === "1"
+				) {
+					console.debug(
+						"[Voice] Switching to visualizer voice:",
+						settings.visualizer,
+						vizVoice,
+					);
+				}
+			} catch {
+				// ignore
+			}
 
 			// Stop current playback and capture any pending text
 			const pendingTexts = tts.stopPlayback();
@@ -296,6 +322,8 @@ export function useVoiceMode(options: UseVoiceModeOptions): UseVoiceModeReturn {
 			if (!text.trim()) return;
 
 			console.log("[Voice] Final transcript:", text);
+			// Clear word array and UI state
+			liveWordsRef.current = [];
 			setLiveTranscript("");
 			setVoiceState("processing");
 
@@ -338,7 +366,24 @@ export function useVoiceMode(options: UseVoiceModeOptions): UseVoiceModeReturn {
 			);
 			sttRef.current.setCallbacks({
 				onWord: (word) => {
-					setLiveTranscript((prev) => `${prev ? `${prev} ` : ""}${word}`);
+					if (settingsRef.current.micMuted) {
+						return;
+					}
+					const tts = ttsRef.current;
+					if (tts?.getIsPlaying()) {
+						const outputLevel = tts.getOutputVolume();
+						const inputLevel = sttRef.current?.getInputVolume() ?? 0;
+						const startedAt = ttsStartedAtRef.current;
+						const ageMs = startedAt ? Date.now() - startedAt : 0;
+						const likelyEcho =
+							outputLevel > 0.02 && inputLevel <= outputLevel * 1.2;
+						if (likelyEcho && ageMs < 1500) {
+							return;
+						}
+					}
+					// O(1) array push instead of O(n) string concatenation
+					liveWordsRef.current.push(word);
+					setLiveTranscript(liveWordsRef.current.join(" "));
 
 					// Check for interrupt-by-speaking while TTS is playing
 					if (
@@ -383,8 +428,18 @@ export function useVoiceMode(options: UseVoiceModeOptions): UseVoiceModeReturn {
 						}
 					}
 				},
-				onFinal: handleFinalTranscript,
-				onVadProgress: setVadProgress,
+				onFinal: (text) => {
+					if (settingsRef.current.micMuted) {
+						return;
+					}
+					handleFinalTranscript(text);
+				},
+				onVadProgress: (progress) => {
+					if (settingsRef.current.micMuted) {
+						return;
+					}
+					setVadProgress(progress);
+				},
 				onError: (err) => {
 					console.error("[Voice] STT error:", err);
 					setError(err);
@@ -403,16 +458,24 @@ export function useVoiceMode(options: UseVoiceModeOptions): UseVoiceModeReturn {
 					setVoiceState("speaking");
 					// Reset interrupt word count when TTS starts
 					interruptWordCountRef.current = 0;
+					ttsStartedAtRef.current = Date.now();
 				},
 				onStopped: () => {
 					// Return to listening if continuous mode and still active
-					if (settingsRef.current.continuous && isActiveRef.current) {
+					if (
+						settingsRef.current.continuous &&
+						isActiveRef.current &&
+						!settingsRef.current.micMuted
+					) {
 						setVoiceState("listening");
-						// STT should already be listening for interrupt, just update state
+						if (!sttRef.current?.getIsListening()) {
+							sttRef.current?.startListening().catch(console.error);
+						}
 					} else {
 						setVoiceState("idle");
 					}
 					interruptWordCountRef.current = 0;
+					ttsStartedAtRef.current = null;
 				},
 				onVoicesLoaded: (voices, currentVoice) => {
 					setAvailableVoices(voices);
@@ -444,6 +507,10 @@ export function useVoiceMode(options: UseVoiceModeOptions): UseVoiceModeReturn {
 		try {
 			await initServices();
 			setIsActive(true);
+			if (settingsRef.current.micMuted) {
+				setVoiceState("idle");
+				return;
+			}
 			setVoiceState("listening");
 			await sttRef.current?.startListening();
 		} catch (err) {
@@ -459,6 +526,7 @@ export function useVoiceMode(options: UseVoiceModeOptions): UseVoiceModeReturn {
 	const stop = useCallback(() => {
 		setIsActive(false);
 		setVoiceState("idle");
+		liveWordsRef.current = [];
 		setLiveTranscript("");
 		setVadProgress(0);
 
@@ -469,11 +537,11 @@ export function useVoiceMode(options: UseVoiceModeOptions): UseVoiceModeReturn {
 	// Interrupt TTS
 	const interrupt = useCallback(() => {
 		ttsRef.current?.stopPlayback();
-		if (isActive && settings.continuous) {
+		if (isActive && settings.continuous && !settings.micMuted) {
 			setVoiceState("listening");
 			sttRef.current?.startListening().catch(console.error);
 		}
-	}, [isActive, settings.continuous]);
+	}, [isActive, settings.continuous, settings.micMuted]);
 
 	// Speak text
 	const speak = useCallback(
@@ -492,7 +560,10 @@ export function useVoiceMode(options: UseVoiceModeOptions): UseVoiceModeReturn {
 
 			// Keep listening for interrupt-by-speaking (if enabled)
 			// Only stop listening if interrupt is disabled
-			if (settings.interruptWordCount <= 0) {
+			// Note: we use settingsRef here to avoid stale closure issues
+			if (settingsRef.current.micMuted) {
+				sttRef.current?.stopListening();
+			} else if (settingsRef.current.interruptWordCount <= 0) {
 				sttRef.current?.stopListening();
 			} else {
 				// Make sure we're listening for potential interrupt
@@ -505,7 +576,7 @@ export function useVoiceMode(options: UseVoiceModeOptions): UseVoiceModeReturn {
 			interruptWordCountRef.current = 0;
 			await ttsRef.current.speak(text);
 		},
-		[isActive, settings.interruptWordCount],
+		[isActive],
 	);
 
 	// Settings setters
@@ -516,6 +587,27 @@ export function useVoiceMode(options: UseVoiceModeOptions): UseVoiceModeReturn {
 	const setMuted = useCallback((muted: boolean) => {
 		setSettings((prev) => ({ ...prev, muted }));
 		ttsRef.current?.setMuted(muted);
+	}, []);
+
+	const setMicMuted = useCallback((muted: boolean) => {
+		setSettings((prev) => ({ ...prev, micMuted: muted }));
+		if (muted) {
+			sttRef.current?.stopListening();
+			setLiveTranscript("");
+			setVadProgress(0);
+			if (
+				voiceStateRef.current === "listening" ||
+				voiceStateRef.current === "processing"
+			) {
+				setVoiceState("idle");
+			}
+			return;
+		}
+
+		if (isActiveRef.current) {
+			setVoiceState("listening");
+			sttRef.current?.startListening().catch(console.error);
+		}
 	}, []);
 
 	const setContinuous = useCallback((continuous: boolean) => {
@@ -590,6 +682,7 @@ export function useVoiceMode(options: UseVoiceModeOptions): UseVoiceModeReturn {
 		settings,
 		setVisualizer,
 		setMuted,
+		setMicMuted,
 		setContinuous,
 		setVoice,
 		setSpeed,

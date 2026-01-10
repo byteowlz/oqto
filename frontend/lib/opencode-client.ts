@@ -1,3 +1,5 @@
+import { getAuthHeaders } from "./control-plane-client";
+
 // Message cache for client-side caching
 type MessageCache = {
 	messages: OpenCodeMessageWithParts[];
@@ -395,6 +397,7 @@ export async function fetchProviders(
 		const res = await fetch(providersUrl, {
 			cache: "no-store",
 			credentials: "include",
+			headers: getAuthHeaders(),
 		});
 		if (res.ok) {
 			return handleResponse<OpenCodeProvidersResponse>(res);
@@ -410,6 +413,7 @@ export async function fetchProviders(
 	const res = await fetch(fallbackUrl, {
 		cache: "no-store",
 		credentials: "include",
+		headers: getAuthHeaders(),
 	});
 	return handleResponse<OpenCodeProvidersResponse>(res);
 }
@@ -648,6 +652,36 @@ export type Permission = {
 
 export type PermissionResponse = "yes" | "no" | "always" | "never";
 
+// Question types for user question/multiple choice selection
+// Matches OpenCode Question types
+export type QuestionOption = {
+	label: string; // Display text (1-5 words, concise)
+	description: string; // Explanation of choice
+};
+
+export type QuestionInfo = {
+	question: string; // Complete question
+	header: string; // Very short label (max 12 chars)
+	options: QuestionOption[]; // Available choices
+	multiple?: boolean; // Allow selecting multiple choices
+};
+
+export type QuestionRequest = {
+	id: string; // Request ID (question_*)
+	sessionID: string;
+	questions: QuestionInfo[];
+	tool?: {
+		messageID: string;
+		callID: string;
+	};
+};
+
+export type QuestionAnswer = string[]; // Array of selected labels
+
+export type QuestionReply = {
+	answers: QuestionAnswer[]; // User answers in order of questions
+};
+
 // Respond to a permission request
 export async function respondToPermission(
 	opencodeBaseUrl: string,
@@ -692,6 +726,70 @@ export async function fetchPermissions(
 		return [];
 	}
 	return handleResponse<Permission[]>(res);
+}
+
+// Fetch pending questions
+export async function fetchQuestions(
+	opencodeBaseUrl: string,
+	options?: OpencodeRequestOptions,
+): Promise<QuestionRequest[]> {
+	const url = withDirectory(
+		`${base(opencodeBaseUrl)}/question`,
+		options?.directory,
+	);
+	const res = await fetch(url, { cache: "no-store", credentials: "include" });
+	if (!res.ok) {
+		console.log("[Question] Fetch failed with status:", res.status);
+		return [];
+	}
+	return handleResponse<QuestionRequest[]>(res);
+}
+
+// Reply to a question request
+export async function replyToQuestion(
+	opencodeBaseUrl: string,
+	requestId: string,
+	answers: QuestionAnswer[],
+	options?: OpencodeRequestOptions,
+): Promise<void> {
+	const res = await fetch(
+		withDirectory(
+			`${base(opencodeBaseUrl)}/question/${requestId}/reply`,
+			options?.directory,
+		),
+		{
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ answers }),
+			credentials: "include",
+		},
+	);
+	if (!res.ok) {
+		const text = await res.text().catch(() => res.statusText);
+		throw new Error(text || `Request failed with ${res.status}`);
+	}
+}
+
+// Reject a question request
+export async function rejectQuestion(
+	opencodeBaseUrl: string,
+	requestId: string,
+	options?: OpencodeRequestOptions,
+): Promise<void> {
+	const res = await fetch(
+		withDirectory(
+			`${base(opencodeBaseUrl)}/question/${requestId}/reject`,
+			options?.directory,
+		),
+		{
+			method: "POST",
+			credentials: "include",
+		},
+	);
+	if (!res.ok) {
+		const text = await res.text().catch(() => res.statusText);
+		throw new Error(text || `Request failed with ${res.status}`);
+	}
 }
 
 type SessionStatusMap = Record<string, { status: string }>;
@@ -784,9 +882,14 @@ export function subscribeToEvents(
 				credentials: "include",
 			});
 			if (res.ok) {
-				const status = (await res.json()) as SessionStatusMap;
-				emitStatusTransitions(status);
-				pollDelayMs = minPollDelayMs;
+				try {
+					const status = (await res.json()) as SessionStatusMap;
+					emitStatusTransitions(status);
+					pollDelayMs = minPollDelayMs;
+				} catch {
+					// JSON parse error - treat as transient failure
+					pollDelayMs = Math.min(maxPollDelayMs, Math.round(pollDelayMs * 1.5));
+				}
 			} else {
 				if (res.status === 503) {
 					const sessionId =
@@ -858,9 +961,11 @@ export function subscribeToEvents(
 				"type" in parsed
 			) {
 				const typed = parsed as { type: string; properties?: unknown };
-				// Log permission events fully for debugging
+				// Log permission and question events fully for debugging
 				if (typed.type.startsWith("permission")) {
 					console.log("[SSE] Permission event:", typed.type, typed.properties);
+				} else if (typed.type.startsWith("question")) {
+					console.log("[SSE] Question event:", typed.type, typed.properties);
 				} else if (
 					typed.type !== "message.updated" &&
 					typed.type !== "message.part.updated"

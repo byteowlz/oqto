@@ -123,6 +123,35 @@ function generateId(): string {
 	return `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 }
 
+// Canvas state cache - persists across component unmounts
+interface CanvasStateCache {
+	annotations: Annotation[];
+	history: Annotation[][];
+	historyIndex: number;
+	scale: number;
+	position: { x: number; y: number };
+	tool: Tool;
+	color: string;
+	strokeWidth: number;
+	fontSize: number;
+	backgroundImageSrc: string | null;
+	backgroundSize: { width: number; height: number };
+}
+
+const canvasCache: { state: CanvasStateCache | null } = { state: null };
+
+function saveCanvasState(state: CanvasStateCache) {
+	canvasCache.state = state;
+}
+
+function loadCanvasState(): CanvasStateCache | null {
+	return canvasCache.state;
+}
+
+function clearCanvasCache() {
+	canvasCache.state = null;
+}
+
 // Tool button component
 const ToolButton = memo(function ToolButton({
 	tool,
@@ -290,30 +319,96 @@ export const CanvasView = memo(function CanvasView({
 	className,
 	onSaveAndAddToChat,
 }: CanvasViewProps) {
-	// Canvas state
-	const [tool, setTool] = useState<Tool>("select");
-	const [color, setColor] = useState("#ff0000");
-	const [strokeWidth, setStrokeWidth] = useState(3);
-	const [fontSize, setFontSize] = useState(16);
-	const [annotations, setAnnotations] = useState<Annotation[]>([]);
+	// Load cached state on mount
+	const cached = loadCanvasState();
+
+	// Canvas state - initialize from cache if available
+	const [tool, setTool] = useState<Tool>(cached?.tool ?? "select");
+	const [color, setColor] = useState(cached?.color ?? "#ff0000");
+	const [strokeWidth, setStrokeWidth] = useState(cached?.strokeWidth ?? 3);
+	const [fontSize, setFontSize] = useState(cached?.fontSize ?? 16);
+	const [annotations, setAnnotations] = useState<Annotation[]>(
+		cached?.annotations ?? [],
+	);
 	const [selectedId, setSelectedId] = useState<string | null>(null);
-	const [history, setHistory] = useState<Annotation[][]>([[]]);
-	const [historyIndex, setHistoryIndex] = useState(0);
-	const [scale, setScale] = useState(1);
-	const [position, setPosition] = useState({ x: 0, y: 0 });
+	const [history, setHistory] = useState<Annotation[][]>(
+		cached?.history ?? [[]],
+	);
+	const [historyIndex, setHistoryIndex] = useState(cached?.historyIndex ?? 0);
+	const [scale, setScale] = useState(cached?.scale ?? 1);
+	const [position, setPosition] = useState(cached?.position ?? { x: 0, y: 0 });
 
 	// Background image state
 	const [backgroundImage, setBackgroundImage] =
 		useState<HTMLImageElement | null>(null);
-	const [backgroundSize, setBackgroundSize] = useState({
-		width: 800,
-		height: 600,
-	});
+	const [backgroundImageSrc, setBackgroundImageSrc] = useState<string | null>(
+		cached?.backgroundImageSrc ?? null,
+	);
+	const [backgroundSize, setBackgroundSize] = useState(
+		cached?.backgroundSize ?? { width: 800, height: 600 },
+	);
 
 	// Pasted/loaded images cache
 	const [imageCache, setImageCache] = useState<Map<string, HTMLImageElement>>(
 		new Map(),
 	);
+
+	// Restore background image from cached src
+	useEffect(() => {
+		if (backgroundImageSrc && !backgroundImage) {
+			const img = new Image();
+			img.crossOrigin = "anonymous";
+			img.onload = () => setBackgroundImage(img);
+			img.src = backgroundImageSrc;
+		}
+	}, [backgroundImageSrc, backgroundImage]);
+
+	// Restore image annotations from cache on mount
+	const initialAnnotations = cached?.annotations;
+	useEffect(() => {
+		if (initialAnnotations) {
+			for (const ann of initialAnnotations) {
+				if (ann.type === "image") {
+					const img = new Image();
+					img.onload = () => {
+						setImageCache((prev) => new Map(prev).set(ann.id, img));
+					};
+					img.src = ann.src;
+				}
+			}
+		}
+	}, [initialAnnotations]);
+
+	// Save state to cache on unmount
+	useEffect(() => {
+		return () => {
+			saveCanvasState({
+				annotations,
+				history,
+				historyIndex,
+				scale,
+				position,
+				tool,
+				color,
+				strokeWidth,
+				fontSize,
+				backgroundImageSrc,
+				backgroundSize,
+			});
+		};
+	}, [
+		annotations,
+		history,
+		historyIndex,
+		scale,
+		position,
+		tool,
+		color,
+		strokeWidth,
+		fontSize,
+		backgroundImageSrc,
+		backgroundSize,
+	]);
 
 	// Drawing state
 	const [isDrawing, setIsDrawing] = useState(false);
@@ -367,13 +462,15 @@ export const CanvasView = memo(function CanvasView({
 		url.searchParams.set("path", initialImagePath);
 		url.searchParams.set("workspace_path", workspacePath);
 
+		const imgSrc = url.toString();
 		const img = new Image();
 		img.crossOrigin = "anonymous";
 		img.onload = () => {
 			setBackgroundImage(img);
+			setBackgroundImageSrc(imgSrc);
 			setBackgroundSize({ width: img.width, height: img.height });
 		};
-		img.src = url.toString();
+		img.src = imgSrc;
 	}, [initialImagePath, fileserverBaseUrl, workspacePath]);
 
 	// Handle paste events for images
@@ -396,6 +493,7 @@ export const CanvasView = memo(function CanvasView({
 							// If no background, use as background
 							if (!backgroundImage) {
 								setBackgroundImage(img);
+								setBackgroundImageSrc(dataUrl);
 								setBackgroundSize({ width: img.width, height: img.height });
 							} else {
 								// Add as annotation
@@ -461,6 +559,7 @@ export const CanvasView = memo(function CanvasView({
 					// If no background, use as background
 					if (!backgroundImage) {
 						setBackgroundImage(img);
+						setBackgroundImageSrc(dataUrl);
 						setBackgroundSize({ width: img.width, height: img.height });
 					} else {
 						// Add as annotation
@@ -529,6 +628,10 @@ export const CanvasView = memo(function CanvasView({
 		setAnnotations([]);
 		addToHistory([]);
 		setSelectedId(null);
+		setBackgroundImage(null);
+		setBackgroundImageSrc(null);
+		setImageCache(new Map());
+		clearCanvasCache();
 	}, [addToHistory]);
 
 	// Zoom controls

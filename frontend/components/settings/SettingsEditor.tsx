@@ -20,15 +20,7 @@ import {
 	updateSettingsValues,
 } from "@/lib/control-plane-client";
 import { cn } from "@/lib/utils";
-import {
-	AlertCircle,
-	Check,
-	ChevronDown,
-	ChevronRight,
-	Loader2,
-	RotateCcw,
-	Save,
-} from "lucide-react";
+import { AlertCircle, Check, Loader2, RotateCcw, Save } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
 interface SettingsEditorProps {
@@ -75,9 +67,6 @@ export function SettingsEditor({
 	const [saving, setSaving] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [success, setSuccess] = useState(false);
-	const [expandedSections, setExpandedSections] = useState<Set<string>>(
-		new Set(),
-	);
 
 	// Load schema and values
 	const loadSettings = useCallback(async () => {
@@ -170,19 +159,6 @@ export function SettingsEditor({
 		[pendingChanges],
 	);
 
-	// Toggle section expansion
-	const toggleSection = useCallback((section: string) => {
-		setExpandedSections((prev) => {
-			const next = new Set(prev);
-			if (next.has(section)) {
-				next.delete(section);
-			} else {
-				next.add(section);
-			}
-			return next;
-		});
-	}, []);
-
 	if (loading) {
 		return (
 			<div className="flex items-center justify-center p-8">
@@ -204,66 +180,54 @@ export function SettingsEditor({
 	const hasChanges = Object.keys(pendingChanges).length > 0;
 
 	return (
-		<div className="space-y-4 sm:space-y-6">
-			{/* Header */}
-			<div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-				<div className="min-w-0">
-					<h2 className="text-base sm:text-lg font-semibold truncate">
-						{title || schema.title || `${app} Settings`}
-					</h2>
-					{schema.description && (
-						<p className="text-xs sm:text-sm text-muted-foreground line-clamp-2">
-							{schema.description}
-						</p>
-					)}
-				</div>
-				<div className="flex items-center gap-2 flex-shrink-0">
-					{isAdmin && (
-						<Button
-							type="button"
-							variant="outline"
-							size="sm"
-							onClick={handleReload}
-							className="h-8 px-2 sm:px-3"
-						>
-							<RotateCcw className="h-4 w-4 sm:mr-1" />
-							<span className="hidden sm:inline">Reload</span>
-						</Button>
-					)}
-					<Button
-						type="button"
-						size="sm"
-						onClick={handleSave}
-						disabled={!hasChanges || saving}
-						className="h-8 px-2 sm:px-3"
-					>
-						{saving ? (
-							<Loader2 className="h-4 w-4 sm:mr-1 animate-spin" />
-						) : success ? (
-							<Check className="h-4 w-4 sm:mr-1" />
-						) : (
-							<Save className="h-4 w-4 sm:mr-1" />
-						)}
-						<span className="hidden sm:inline">
-							{saving ? "Saving..." : success ? "Saved" : "Save Changes"}
-						</span>
-						<span className="sm:hidden">
-							{saving ? "..." : success ? "OK" : "Save"}
-						</span>
-					</Button>
-				</div>
-			</div>
-
+		<div className="space-y-0 sm:space-y-4">
 			{/* Error message */}
 			{error && (
-				<div className="flex items-center gap-2 p-3 bg-destructive/10 text-destructive rounded-md">
-					<AlertCircle className="h-4 w-4" />
+				<div className="flex items-center gap-2 px-4 sm:px-0 py-2 bg-destructive/10 text-destructive sm:rounded-md">
+					<AlertCircle className="h-4 w-4 flex-shrink-0" />
 					<span className="text-sm">{error}</span>
 				</div>
 			)}
 
+			{/* Floating action buttons */}
+			{(hasChanges || isAdmin) && (
+				<div className="fixed bottom-6 right-6 z-20 flex items-center gap-2">
+					{isAdmin && (
+						<Button
+							type="button"
+							variant="outline"
+							size="icon"
+							onClick={handleReload}
+							className="h-10 w-10 rounded-full shadow-lg bg-background"
+						>
+							<RotateCcw className="h-4 w-4" />
+						</Button>
+					)}
+					{hasChanges && (
+						<Button
+							type="button"
+							size="sm"
+							onClick={handleSave}
+							disabled={saving}
+							className="h-10 px-4 rounded-full shadow-lg"
+						>
+							{saving ? (
+								<Loader2 className="h-4 w-4 animate-spin" />
+							) : success ? (
+								<Check className="h-4 w-4" />
+							) : (
+								<>
+									<Save className="h-4 w-4 mr-2" />
+									Save
+								</>
+							)}
+						</Button>
+					)}
+				</div>
+			)}
+
 			{/* Settings sections */}
-			<div className="space-y-3 sm:space-y-4">
+			<div className="space-y-2 sm:space-y-6">
 				{Object.entries(groupedProperties).map(([category, properties]) => (
 					<SettingsSection
 						key={category}
@@ -274,8 +238,6 @@ export function SettingsEditor({
 						isModified={isModified}
 						onValueChange={handleValueChange}
 						onReset={handleReset}
-						expanded={expandedSections.has(category)}
-						onToggle={() => toggleSection(category)}
 					/>
 				))}
 			</div>
@@ -306,8 +268,6 @@ interface SettingsSectionProps {
 	isModified: (path: string) => boolean;
 	onValueChange: (path: string, value: unknown) => void;
 	onReset: (path: string) => void;
-	expanded: boolean;
-	onToggle: () => void;
 }
 
 function SettingsSection({
@@ -318,48 +278,32 @@ function SettingsSection({
 	isModified,
 	onValueChange,
 	onReset,
-	expanded,
-	onToggle,
 }: SettingsSectionProps) {
-	const propertyCount = Object.keys(properties).length;
-
 	return (
-		<div className="bg-background/50 border border-border rounded-lg overflow-hidden">
-			<button
-				type="button"
-				onClick={onToggle}
-				className="w-full flex items-center justify-between p-3 sm:p-4 hover:bg-muted/50 transition-colors"
-			>
-				<div className="flex items-center gap-2">
-					<span className="font-medium text-sm sm:text-base">{category}</span>
-					<span className="text-xs text-muted-foreground">
-						({propertyCount} {propertyCount === 1 ? "setting" : "settings"})
-					</span>
+		<div>
+			{/* Section header */}
+			<div className="px-4 sm:px-0 pt-4 pb-2">
+				<h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+					{category}
+				</h3>
+			</div>
+			{/* Section content */}
+			<div className="sm:bg-background/50 sm:border sm:border-border sm:rounded-lg overflow-hidden">
+				<div className="divide-y divide-border/50">
+					{Object.entries(properties).map(([key, prop]) => (
+						<SettingsField
+							key={key}
+							path={key}
+							property={prop}
+							values={values}
+							getEffectiveValue={getEffectiveValue}
+							isModified={isModified}
+							onValueChange={onValueChange}
+							onReset={onReset}
+						/>
+					))}
 				</div>
-				{expanded ? (
-					<ChevronDown className="h-4 w-4 text-muted-foreground flex-shrink-0" />
-				) : (
-					<ChevronRight className="h-4 w-4 text-muted-foreground flex-shrink-0" />
-				)}
-			</button>
-			{expanded && (
-				<div className="border-t border-border bg-muted/20 p-3 sm:p-4">
-					<div className="space-y-4 sm:space-y-5">
-						{Object.entries(properties).map(([key, prop]) => (
-							<SettingsField
-								key={key}
-								path={key}
-								property={prop}
-								values={values}
-								getEffectiveValue={getEffectiveValue}
-								isModified={isModified}
-								onValueChange={onValueChange}
-								onReset={onReset}
-							/>
-						))}
-					</div>
-				</div>
-			)}
+			</div>
 		</div>
 	);
 }
@@ -413,8 +357,8 @@ function SettingsField({
 	// Handle nested objects
 	if (property.type === "object" && property.properties) {
 		return (
-			<div className="space-y-4 p-3 bg-background/30 border border-border/50 rounded-md">
-				<div>
+			<div className="px-4 sm:px-3 py-3">
+				<div className="mb-2">
 					<Label className="font-medium text-sm">{label}</Label>
 					{property.description && (
 						<p className="text-xs text-muted-foreground mt-0.5">
@@ -422,7 +366,7 @@ function SettingsField({
 						</p>
 					)}
 				</div>
-				<div className="space-y-4 pl-3 border-l-2 border-primary/30">
+				<div className="space-y-0 divide-y divide-border/30 bg-muted/30 rounded-md overflow-hidden">
 					{Object.entries(property.properties).map(([key, nestedProp]) => (
 						<SettingsField
 							key={key}
@@ -446,28 +390,23 @@ function SettingsField({
 	// Boolean fields get a special compact layout
 	if (type === "boolean") {
 		return (
-			<div className="flex items-start justify-between gap-4 p-3 bg-background/30 border border-border/50 rounded-md">
+			<div className="flex items-center justify-between gap-3 px-4 sm:px-3 py-3 sm:bg-background/30 sm:border sm:border-border/50 sm:rounded-md">
 				<div className="flex-1 min-w-0">
-					<div className="flex flex-wrap items-center gap-1.5">
-						<Label htmlFor={fullPath} className="text-sm font-medium">
+					<div className="flex items-center gap-2">
+						<Label htmlFor={fullPath} className="text-sm font-normal">
 							{label}
 						</Label>
 						{modified && (
-							<Badge
-								variant="default"
-								className="text-[10px] px-1.5 py-0 bg-amber-500"
-							>
-								modified
-							</Badge>
+							<span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
 						)}
 					</div>
 					{property.description && (
-						<p className="text-xs text-muted-foreground mt-0.5">
+						<p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">
 							{property.description}
 						</p>
 					)}
 				</div>
-				<div className="flex items-center gap-2 flex-shrink-0">
+				<div className="flex items-center gap-1 flex-shrink-0">
 					<Switch
 						id={fullPath}
 						checked={Boolean(value)}
@@ -480,9 +419,9 @@ function SettingsField({
 							size="sm"
 							onClick={() => onReset(fullPath)}
 							title="Reset to default"
-							className="h-7 w-7 p-0"
+							className="h-8 w-8 p-0 opacity-50 hover:opacity-100"
 						>
-							<RotateCcw className="h-3 w-3" />
+							<RotateCcw className="h-3.5 w-3.5" />
 						</Button>
 					)}
 				</div>
@@ -491,38 +430,37 @@ function SettingsField({
 	}
 
 	return (
-		<div className="space-y-2 p-3 bg-background/30 border border-border/50 rounded-md">
-			<div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
-				<Label htmlFor={fullPath} className="text-sm font-medium">
-					{label}
-				</Label>
-				{isConfigured && !modified && (
-					<Badge
-						variant="secondary"
-						className="text-[10px] sm:text-xs px-1.5 py-0"
-					>
-						configured
-					</Badge>
-				)}
-				{modified && (
-					<Badge
-						variant="default"
-						className="text-[10px] sm:text-xs px-1.5 py-0 bg-amber-500"
-					>
-						modified
-					</Badge>
-				)}
+		<div className="px-4 sm:px-3 py-3 sm:bg-background/30 sm:border sm:border-border/50 sm:rounded-md space-y-2">
+			<div className="flex items-center justify-between gap-2">
+				<div className="flex items-center gap-2 min-w-0">
+					<Label htmlFor={fullPath} className="text-sm font-normal truncate">
+						{label}
+					</Label>
+					{modified && (
+						<span className="w-1.5 h-1.5 rounded-full bg-amber-500 flex-shrink-0" />
+					)}
+					{isConfigured && !modified && (
+						<Badge
+							variant="secondary"
+							className="text-[10px] px-1.5 py-0 flex-shrink-0"
+						>
+							set
+						</Badge>
+					)}
+				</div>
 				{property["x-sensitive"] && (
 					<Badge
 						variant="outline"
-						className="text-[10px] sm:text-xs px-1.5 py-0"
+						className="text-[10px] px-1.5 py-0 flex-shrink-0"
 					>
-						sensitive
+						secret
 					</Badge>
 				)}
 			</div>
 			{property.description && (
-				<p className="text-xs text-muted-foreground">{property.description}</p>
+				<p className="text-xs text-muted-foreground line-clamp-2">
+					{property.description}
+				</p>
 			)}
 			<div className="flex items-center gap-2">
 				{property.enum ? (
@@ -532,11 +470,11 @@ function SettingsField({
 					>
 						<SelectTrigger
 							className={cn(
-								"w-full h-9 text-sm bg-background",
-								modified && "border-amber-500",
+								"w-full h-10 text-sm bg-background",
+								modified && "ring-1 ring-amber-500",
 							)}
 						>
-							<SelectValue placeholder="Select an option..." />
+							<SelectValue placeholder="Select..." />
 						</SelectTrigger>
 						<SelectContent>
 							{property.enum.map((option) => (
@@ -553,9 +491,7 @@ function SettingsField({
 						value={value !== undefined ? String(value) : ""}
 						min={property.minimum}
 						max={property.maximum}
-						placeholder={
-							hasDefault ? `Default: ${setting?.default}` : undefined
-						}
+						placeholder={hasDefault ? `${setting?.default}` : undefined}
 						onChange={(e) => {
 							const v =
 								type === "integer"
@@ -564,22 +500,41 @@ function SettingsField({
 							if (!Number.isNaN(v)) onValueChange(fullPath, v);
 						}}
 						className={cn(
-							"h-9 text-sm bg-background",
-							modified && "border-amber-500",
+							"h-10 text-sm bg-background",
+							modified && "ring-1 ring-amber-500",
 						)}
 					/>
 				) : (
 					<Input
 						id={fullPath}
 						type={property["x-sensitive"] ? "password" : "text"}
-						value={String(value ?? "")}
-						placeholder={
-							hasDefault ? `Default: ${setting?.default}` : undefined
+						value={
+							value === null || value === undefined
+								? ""
+								: typeof value === "object"
+									? JSON.stringify(value)
+									: String(value)
 						}
-						onChange={(e) => onValueChange(fullPath, e.target.value)}
+						placeholder={hasDefault ? `${setting?.default}` : undefined}
+						onChange={(e) => {
+							const text = e.target.value;
+							// Try to parse as JSON if it looks like an object/array
+							if (
+								(text.startsWith("{") && text.endsWith("}")) ||
+								(text.startsWith("[") && text.endsWith("]"))
+							) {
+								try {
+									onValueChange(fullPath, JSON.parse(text));
+									return;
+								} catch {
+									// Fall through to string value
+								}
+							}
+							onValueChange(fullPath, text);
+						}}
 						className={cn(
-							"h-9 text-sm bg-background",
-							modified && "border-amber-500",
+							"h-10 text-sm bg-background",
+							modified && "ring-1 ring-amber-500",
 						)}
 					/>
 				)}
@@ -590,17 +545,12 @@ function SettingsField({
 						size="sm"
 						onClick={() => onReset(fullPath)}
 						title="Reset to default"
-						className="h-9 w-9 p-0 flex-shrink-0"
+						className="h-10 w-10 p-0 flex-shrink-0 opacity-50 hover:opacity-100"
 					>
-						<RotateCcw className="h-3 w-3" />
+						<RotateCcw className="h-4 w-4" />
 					</Button>
 				)}
 			</div>
-			{hasDefault && !modified && (
-				<p className="text-[11px] text-muted-foreground/70">
-					Default: {JSON.stringify(setting?.default)}
-				</p>
-			)}
 		</div>
 	);
 }

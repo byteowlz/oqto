@@ -1,5 +1,6 @@
 //! API route definitions.
 
+use axum::extract::DefaultBodyLimit;
 use axum::http::{HeaderValue, Method, header};
 use axum::{
     Router, middleware,
@@ -11,6 +12,7 @@ use tracing::Level;
 
 use crate::auth::auth_middleware;
 
+use super::a2ui as a2ui_handlers;
 use super::delegate as delegate_handlers;
 use super::handlers;
 use super::main_chat as main_chat_handlers;
@@ -19,10 +21,11 @@ use super::proxy;
 use super::state::AppState;
 use crate::ws::ws_handler;
 
-/// Create the application router.
-pub fn create_router(state: AppState) -> Router {
+/// Create the application router with configurable max upload size.
+pub fn create_router_with_config(state: AppState, max_upload_size_mb: usize) -> Router {
     // CORS configuration - use specific origins from config
     let cors = build_cors_layer(&state);
+    let max_body_size = max_upload_size_mb * 1024 * 1024;
 
     // Tracing layer with request IDs and timing
     let trace_layer = TraceLayer::new_for_http()
@@ -40,6 +43,10 @@ pub fn create_router(state: AppState) -> Router {
         // Project management
         .route("/projects", get(handlers::list_workspace_dirs))
         .route("/projects/logo/{*path}", get(handlers::get_project_logo))
+        .route(
+            "/projects/templates",
+            get(handlers::list_project_templates).post(handlers::create_project_from_template),
+        )
         // Session management
         .route("/sessions", get(handlers::list_sessions))
         .route("/sessions", post(handlers::create_session))
@@ -163,6 +170,12 @@ pub fn create_router(state: AppState) -> Router {
             "/admin/sessions/{session_id}",
             delete(handlers::admin_force_stop_session),
         )
+        .route(
+            "/admin/local/cleanup",
+            post(handlers::admin_cleanup_local_sessions),
+        )
+        // Admin routes - stats
+        .route("/admin/stats", get(handlers::get_admin_stats))
         // Admin routes - user management
         .route("/admin/users", get(handlers::list_users))
         .route("/admin/users", post(handlers::create_user))
@@ -291,24 +304,61 @@ pub fn create_router(state: AppState) -> Router {
         )
         // Main Chat Pi routes (Pi agent runtime for Main Chat)
         .route("/main/pi/status", get(main_chat_pi_handlers::get_pi_status))
-        .route("/main/pi/session", post(main_chat_pi_handlers::start_pi_session).delete(main_chat_pi_handlers::close_session))
+        .route(
+            "/main/pi/session",
+            post(main_chat_pi_handlers::start_pi_session)
+                .delete(main_chat_pi_handlers::close_session),
+        )
         .route("/main/pi/state", get(main_chat_pi_handlers::get_pi_state))
         .route("/main/pi/prompt", post(main_chat_pi_handlers::send_prompt))
         .route("/main/pi/abort", post(main_chat_pi_handlers::abort_pi))
-        .route("/main/pi/messages", get(main_chat_pi_handlers::get_messages))
-        .route("/main/pi/compact", post(main_chat_pi_handlers::compact_session))
+        .route(
+            "/main/pi/messages",
+            get(main_chat_pi_handlers::get_messages),
+        )
+        .route(
+            "/main/pi/compact",
+            post(main_chat_pi_handlers::compact_session),
+        )
         .route("/main/pi/model", post(main_chat_pi_handlers::set_model))
-        .route("/main/pi/models", get(main_chat_pi_handlers::get_available_models))
-        .route("/main/pi/commands", get(main_chat_pi_handlers::get_prompt_commands))
+        .route(
+            "/main/pi/models",
+            get(main_chat_pi_handlers::get_available_models),
+        )
+        .route(
+            "/main/pi/commands",
+            get(main_chat_pi_handlers::get_prompt_commands),
+        )
         .route("/main/pi/new", post(main_chat_pi_handlers::new_session))
-        .route("/main/pi/stats", get(main_chat_pi_handlers::get_session_stats))
+        .route("/main/pi/reset", post(main_chat_pi_handlers::reset_session))
+        .route(
+            "/main/pi/stats",
+            get(main_chat_pi_handlers::get_session_stats),
+        )
         .route("/main/pi/ws", get(main_chat_pi_handlers::ws_handler))
-        .route("/main/pi/history", get(main_chat_pi_handlers::get_history).delete(main_chat_pi_handlers::clear_history))
-        .route("/main/pi/history/separator", post(main_chat_pi_handlers::add_separator))
+        .route(
+            "/main/pi/history",
+            get(main_chat_pi_handlers::get_history).delete(main_chat_pi_handlers::clear_history),
+        )
+        .route(
+            "/main/pi/history/separator",
+            post(main_chat_pi_handlers::add_separator),
+        )
+        // CASS (Coding Agent Session Search) routes
+        .route("/search", get(handlers::search_sessions))
         // TRX (issue tracking) routes - workspace-based
-        .route("/workspace/trx/issues", get(handlers::list_trx_issues).post(handlers::create_trx_issue))
-        .route("/workspace/trx/issues/{issue_id}", get(handlers::get_trx_issue).put(handlers::update_trx_issue))
-        .route("/workspace/trx/issues/{issue_id}/close", post(handlers::close_trx_issue))
+        .route(
+            "/workspace/trx/issues",
+            get(handlers::list_trx_issues).post(handlers::create_trx_issue),
+        )
+        .route(
+            "/workspace/trx/issues/{issue_id}",
+            get(handlers::get_trx_issue).put(handlers::update_trx_issue),
+        )
+        .route(
+            "/workspace/trx/issues/{issue_id}/close",
+            post(handlers::close_trx_issue),
+        )
         .route("/workspace/trx/sync", post(handlers::sync_trx))
         // AgentRPC routes (unified backend API)
         .route("/agent/health", get(handlers::agent_health))
@@ -350,6 +400,7 @@ pub fn create_router(state: AppState) -> Router {
     // Public routes (no authentication)
     let public_routes = Router::new()
         .route("/health", get(handlers::health))
+        .route("/ws/debug", get(handlers::ws_debug))
         .route("/features", get(handlers::features))
         .route("/auth/login", post(handlers::login))
         .route("/auth/register", post(handlers::register))
@@ -379,12 +430,36 @@ pub fn create_router(state: AppState) -> Router {
             post(delegate_handlers::stop_session),
         )
         .route("/delegate/sessions", get(delegate_handlers::list_sessions))
+        .with_state(state.clone());
+
+    // Test harness routes (dev mode only, no auth)
+    // These routes allow sending mock events to test frontend features
+    let test_routes = Router::new()
+        .route("/test/event", post(super::test_harness::send_mock_event))
+        .route("/test/a2ui", post(super::test_harness::send_mock_a2ui))
+        .route(
+            "/test/a2ui/sample",
+            post(super::test_harness::send_sample_a2ui),
+        )
+        .with_state(state.clone());
+
+    // A2UI routes (for agents to send UI surfaces)
+    // These routes allow agents to display interactive UI in the frontend
+    let a2ui_routes = Router::new()
+        .route("/a2ui/surface", post(a2ui_handlers::send_surface))
+        .route(
+            "/a2ui/surface/{session_id}/{surface_id}",
+            delete(a2ui_handlers::delete_surface),
+        )
         .with_state(state);
 
     Router::new()
         .merge(public_routes)
         .merge(protected_routes)
         .merge(delegate_routes)
+        .merge(test_routes)
+        .merge(a2ui_routes)
+        .layer(DefaultBodyLimit::max(max_body_size))
         .layer(cors)
         .layer(trace_layer)
 }
@@ -419,22 +494,14 @@ fn build_cors_layer(state: &AppState) -> CorsLayer {
 
     if allowed_origins.is_empty() {
         if dev_mode {
-            // In dev mode with no configured origins, allow common local origins
-            tracing::warn!(
-                "CORS: No origins configured, using default localhost origins for dev mode"
-            );
+            // In dev mode with no configured origins, allow any origin
+            tracing::warn!("CORS: No origins configured in dev mode, allowing any origin");
             CorsLayer::new()
-                .allow_origin([
-                    "http://localhost:3000".parse::<HeaderValue>().unwrap(),
-                    "http://localhost:3001".parse::<HeaderValue>().unwrap(),
-                    "http://localhost:8080".parse::<HeaderValue>().unwrap(),
-                    "http://127.0.0.1:3000".parse::<HeaderValue>().unwrap(),
-                    "http://127.0.0.1:3001".parse::<HeaderValue>().unwrap(),
-                    "http://127.0.0.1:8080".parse::<HeaderValue>().unwrap(),
-                ])
+                .allow_origin(AllowOrigin::any())
                 .allow_methods(methods)
                 .allow_headers(headers)
-                .allow_credentials(true)
+            // Note: allow_credentials(true) is incompatible with allow_origin(any())
+            // For dev mode this is acceptable
         } else {
             // In production with no configured origins, deny all cross-origin requests
             tracing::warn!(

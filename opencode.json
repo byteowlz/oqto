@@ -1,4 +1,11 @@
 {
   "share": "disabled",
-  "$schema": "https://opencode.ai/config.json"
+  "$schema": "https://opencode.ai/config.json",
+  "permission": {
+    "external_directory": "allow",
+    "question": "deny"
+  },
+  "compaction": {
+    "auto": true
+  }
 }

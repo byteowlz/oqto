@@ -11,13 +11,14 @@ Self-hosted platform for AI coding agents. Run OpenCode instances in isolated co
 - Supports container mode (Docker/Podman) or local mode (native processes)
 - Multi-user with JWT auth and invite codes
 - Voice mode (STT/TTS) via eaRS and kokorox
+- Agent tools for memory and task tracking (agntz, mmry, trx)
 
 ## Architecture
 
 ```
                     ┌─────────────────────────────────────┐
                     │            Octo Backend             │
-                    │              (Rust)                 │
+                    │  (octo, octoctl, octo-runner, pi)  │
                     ├─────────────────────────────────────┤
   Browser/App ───►  │  REST API · WebSocket · SSE Proxy  │
                     └──────────────┬──────────────────────┘
@@ -31,28 +32,60 @@ Self-hosted platform for AI coding agents. Run OpenCode instances in isolated co
    │  · opencode  │       │  · opencode  │       │  · opencode  │
    │  · fileserver│       │  · fileserver│       │  · fileserver│
    │  · ttyd      │       │  · ttyd      │       │  · ttyd      │
+   │  · pi        │       │  · pi        │       │  · pi        │
    └──────────────┘       └──────────────┘       └──────────────┘
+
+Agent Tools (CLI):
+  agntz   - Memory, issues, mail, reservations
+  mmry    - Memory system (optional, integrated)
+  trx     - Task tracking (optional, integrated)
+  mailz   - Agent messaging (optional)
 ```
 
 ## Quick Start
 
-### Prerequisites
+### Automated Setup (Recommended)
 
-- Rust toolchain
-- Bun
-- Docker or Podman (for container mode)
-
-### Run locally
+For a complete setup experience with all prerequisites handled automatically:
 
 ```bash
-# Backend
-cd backend
-cargo run --bin octo -- serve
-
-# Frontend (separate terminal)
-cd frontend
-bun install && bun dev
+./setup.sh
 ```
+
+The interactive script will guide you through:
+- User mode selection (single-user or multi-user)
+- Backend mode selection (local processes or containers)
+- Installing all dependencies (Rust, Bun, agent tools, shell tools)
+- Building Octo components
+- Generating configuration files
+- Installing system services (optional)
+
+For detailed manual setup instructions and prerequisite documentation, see [SETUP.md](./SETUP.md).
+
+### Manual Setup
+
+If you prefer to install components manually:
+
+1. Install core dependencies (Rust, Bun, Docker/Podman)
+2. Build the backend and fileserver:
+   ```bash
+   cargo install --path backend
+   cargo install --path fileserver
+   ```
+3. Build the frontend:
+   ```bash
+   cd frontend && bun install && bun run build
+   ```
+4. Install agent tools (opencode, ttyd, agntz, byt)
+5. Configure `~/.config/octo/config.toml`
+6. Start services:
+   ```bash
+   # Backend
+   octo serve
+
+   # Frontend (development)
+   cd frontend && bun dev
+   ```
 
 Open `http://localhost:3000`. Default dev login: check backend logs for credentials.
 
@@ -81,24 +114,31 @@ browser-tools/  Browser automation scripts
 
 ## Configuration
 
+For complete configuration options, see [backend/examples/config.toml](./backend/examples/config.toml).
+
 ### Backend (`~/.config/octo/config.toml`)
 
-```toml
-[server]
+```toml[server]
 port = 8080
 
 [container]
-runtime = "docker"  # or "podman" or "local"
+runtime = "docker"  # or "podman"
 default_image = "octo-dev:latest"
 
-[auth]
-jwt_secret = "change-me"
-dev_mode = true  # enables dev login
+[local]
+enabled = false  # Set to true for local mode
+opencode_binary = "opencode"
+fileserver_binary = "fileserver"
+ttyd_binary = "ttyd"
 
-[voice]
+[auth]
+dev_mode = true  # enables dev users
+# jwt_secret = "change-me"  # Required when dev_mode = false
+
+[pi]
 enabled = true
-stt_url = "ws://localhost:8765"  # eaRS
-tts_url = "ws://localhost:8766"  # kokorox
+executable = "pi"
+default_provider = "anthropic"
 ```
 
 ### Frontend (`.env.local`)
@@ -106,6 +146,8 @@ tts_url = "ws://localhost:8766"  # kokorox
 ```bash
 VITE_CONTROL_PLANE_URL=http://localhost:8080
 ```
+
+Run `./setup.sh` to generate configuration files automatically.
 
 ## Development
 
@@ -140,6 +182,15 @@ octoctl image build           # Build container image
 | `/session/:id/files/*`     | Proxy to fileserver   |
 | `/session/:id/term`        | WebSocket to terminal |
 | `/session/:id/code/event`  | SSE event stream      |
+
+## Documentation
+
+- [SETUP.md](./SETUP.md) - Comprehensive setup and installation guide
+- [AGENTS.md](./AGENTS.md) - Agent development guidelines
+- [backend/README.md](./backend/README.md) - Backend documentation
+- [frontend/README.md](./frontend/README.md) - Frontend documentation
+- [deploy/systemd/README.md](./deploy/systemd/README.md) - Systemd service setup
+- [backend/examples/config.toml](./backend/examples/config.toml) - Full configuration reference
 
 ## Roadmap
 

@@ -27,8 +27,8 @@ mod repository;
 mod service;
 
 pub use models::{
-    AssistantInfo, ChatMessage, CreateChatMessage, CreateHistoryEntry, CreateSession,
-    HistoryEntry, HistoryEntryType, MainChatSession, MessageRole,
+    AssistantInfo, ChatMessage, CreateChatMessage, CreateHistoryEntry, CreateSession, HistoryEntry,
+    HistoryEntryType, MainChatSession, MessageRole,
 };
-pub use pi_service::{MainChatPiService, MainChatPiServiceConfig, UserPiSession};
+pub use pi_service::{MainChatPiService, MainChatPiServiceConfig, PiRuntimeMode, UserPiSession};
 pub use service::MainChatService;
