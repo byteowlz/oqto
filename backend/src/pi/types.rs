@@ -120,9 +120,7 @@ pub enum PiEvent {
     /// Agent begins processing.
     AgentStart,
     /// Agent completes.
-    AgentEnd {
-        messages: Vec<AgentMessage>,
-    },
+    AgentEnd { messages: Vec<AgentMessage> },
     /// New turn begins.
     TurnStart,
     /// Turn completes.
@@ -132,9 +130,7 @@ pub enum PiEvent {
         tool_results: Vec<ToolResultMessage>,
     },
     /// Message begins.
-    MessageStart {
-        message: AgentMessage,
-    },
+    MessageStart { message: AgentMessage },
     /// Streaming update.
     MessageUpdate {
         message: AgentMessage,
@@ -142,9 +138,7 @@ pub enum PiEvent {
         assistant_message_event: AssistantMessageEvent,
     },
     /// Message completes.
-    MessageEnd {
-        message: AgentMessage,
-    },
+    MessageEnd { message: AgentMessage },
     /// Tool begins execution.
     ToolExecutionStart {
         #[serde(rename = "toolCallId")]
@@ -174,9 +168,7 @@ pub enum PiEvent {
         is_error: bool,
     },
     /// Auto-compaction begins.
-    AutoCompactionStart {
-        reason: String,
-    },
+    AutoCompactionStart { reason: String },
     /// Auto-compaction completes.
     AutoCompactionEnd {
         result: Option<CompactionResult>,
@@ -477,14 +469,14 @@ impl PiMessage {
     pub fn parse(line: &str) -> Result<Self, serde_json::Error> {
         // First, check if it's a response
         let value: Value = serde_json::from_str(line)?;
-        
+
         if let Some(msg_type) = value.get("type").and_then(|v| v.as_str()) {
             if msg_type == "response" {
                 let response: PiResponse = serde_json::from_value(value)?;
                 return Ok(PiMessage::Response(response));
             }
         }
-        
+
         // Otherwise, try to parse as an event
         let event: PiEvent = serde_json::from_value(value)?;
         Ok(PiMessage::Event(event))

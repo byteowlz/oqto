@@ -6,8 +6,8 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc};
 
-use super::types::{SessionSubscription, WsEvent};
 use super::opencode_adapter::OpenCodeAdapter;
+use super::types::{SessionSubscription, WsEvent};
 
 /// Size of the broadcast channel for events.
 const EVENT_BUFFER_SIZE: usize = 256;
@@ -89,7 +89,7 @@ impl WsHub {
         subscription: SessionSubscription,
     ) -> anyhow::Result<()> {
         let session_id = subscription.session_id.clone();
-        
+
         // Add user to session subscribers
         self.session_subscribers
             .entry(session_id.clone())
@@ -103,25 +103,24 @@ impl WsHub {
                 subscription.workspace_path.clone(),
                 subscription.opencode_port,
             );
-            
+
             let adapter = Arc::new(adapter);
             self.adapters.insert(session_id.clone(), adapter.clone());
-            
+
             // Start the adapter and forward events to hub
             let event_tx = self.event_tx.clone();
             let session_id_clone = session_id.clone();
-            
+
             tokio::spawn(async move {
-                adapter.run(move |event| {
-                    let _ = event_tx.send((session_id_clone.clone(), event));
-                }).await;
+                adapter
+                    .run(move |event| {
+                        let _ = event_tx.send((session_id_clone.clone(), event));
+                    })
+                    .await;
             });
         }
 
-        info!(
-            "User {} subscribed to session {}",
-            user_id, session_id
-        );
+        info!("User {} subscribed to session {}", user_id, session_id);
         Ok(())
     }
 
@@ -129,10 +128,7 @@ impl WsHub {
     pub fn unsubscribe_session(&self, user_id: &str, session_id: &str) {
         if let Some(mut subscribers) = self.session_subscribers.get_mut(session_id) {
             subscribers.remove(user_id);
-            info!(
-                "User {} unsubscribed from session {}",
-                user_id, session_id
-            );
+            info!("User {} unsubscribed from session {}", user_id, session_id);
         }
 
         // If no more subscribers, consider cleaning up the adapter
@@ -152,10 +148,7 @@ impl WsHub {
         if let Some(conns) = self.connections.get(user_id) {
             for (i, tx) in conns.iter().enumerate() {
                 if tx.send(event.clone()).await.is_err() {
-                    warn!(
-                        "Failed to send event to user {} connection {}",
-                        user_id, i
-                    );
+                    warn!("Failed to send event to user {} connection {}", user_id, i);
                 }
             }
         }
@@ -189,7 +182,6 @@ impl WsHub {
             })
             .collect()
     }
-
 }
 
 impl Default for WsHub {

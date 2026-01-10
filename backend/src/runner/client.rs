@@ -60,8 +60,7 @@ impl RunnerClient {
             .await
             .context("reading response")?;
 
-        let resp: RunnerResponse =
-            serde_json::from_str(&line).context("parsing response")?;
+        let resp: RunnerResponse = serde_json::from_str(&line).context("parsing response")?;
 
         // Check for error response
         if let RunnerResponse::Error(e) = &resp {
@@ -168,7 +167,11 @@ impl RunnerClient {
     }
 
     /// Write data to a process's stdin.
-    pub async fn write_stdin(&self, id: impl Into<String>, data: impl Into<String>) -> Result<usize> {
+    pub async fn write_stdin(
+        &self,
+        id: impl Into<String>,
+        data: impl Into<String>,
+    ) -> Result<usize> {
         let req = RunnerRequest::WriteStdin(WriteStdinRequest {
             id: id.into(),
             data: data.into(),

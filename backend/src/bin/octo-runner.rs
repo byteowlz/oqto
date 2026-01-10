@@ -23,12 +23,15 @@ use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::process::{Child, Command};
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::{RwLock, broadcast};
 
 use octo::runner::*;
 
 #[derive(Parser, Debug)]
-#[command(name = "octo-runner", about = "Process runner daemon for multi-user isolation")]
+#[command(
+    name = "octo-runner",
+    about = "Process runner daemon for multi-user isolation"
+)]
 struct Args {
     /// Socket path to listen on.
     /// Defaults to /run/octo/runner-{username}.sock

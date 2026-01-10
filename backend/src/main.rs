@@ -1726,8 +1726,10 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     // Initialize Main Chat service
     // Uses the user data path as the workspace dir for per-user Main Chat data
     let main_chat_workspace_dir = ctx.paths.data_dir.join("users");
-    let main_chat_service =
-        main_chat::MainChatService::new(main_chat_workspace_dir.clone(), ctx.config.local.single_user);
+    let main_chat_service = main_chat::MainChatService::new(
+        main_chat_workspace_dir.clone(),
+        ctx.config.local.single_user,
+    );
     info!("Main Chat service initialized");
     state = state.with_main_chat(main_chat_service);
 
@@ -1736,7 +1738,11 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
         // Resolve extensions: use config or fall back to bundled extension
         let extensions = if ctx.config.pi.extensions.is_empty() {
             // Look for bundled extension in data directory
-            let bundled_ext = ctx.paths.data_dir.join("extensions").join("octo-delegate.ts");
+            let bundled_ext = ctx
+                .paths
+                .data_dir
+                .join("extensions")
+                .join("octo-delegate.ts");
             if bundled_ext.exists() {
                 info!("Using bundled Pi extension: {:?}", bundled_ext);
                 vec![bundled_ext.to_string_lossy().to_string()]
@@ -1753,16 +1759,8 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
             default_provider: ctx.config.pi.default_provider.clone(),
             default_model: ctx.config.pi.default_model.clone(),
             extensions,
-            max_session_age_hours: ctx
-                .config
-                .pi
-                .max_session_age_hours
-                .unwrap_or(4),
-            max_session_size_bytes: ctx
-                .config
-                .pi
-                .max_session_size_bytes
-                .unwrap_or(500 * 1024),
+            max_session_age_hours: ctx.config.pi.max_session_age_hours.unwrap_or(4),
+            max_session_size_bytes: ctx.config.pi.max_session_size_bytes.unwrap_or(500 * 1024),
         };
         let main_chat_pi_service = main_chat::MainChatPiService::new(
             main_chat_workspace_dir,

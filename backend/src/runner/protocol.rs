@@ -271,7 +271,11 @@ mod tests {
         let req = RunnerRequest::SpawnProcess(SpawnProcessRequest {
             id: "proc-1".to_string(),
             binary: "/usr/bin/opencode".to_string(),
-            args: vec!["serve".to_string(), "--port".to_string(), "8080".to_string()],
+            args: vec![
+                "serve".to_string(),
+                "--port".to_string(),
+                "8080".to_string(),
+            ],
             cwd: PathBuf::from("/home/user/project"),
             env: HashMap::from([("FOO".to_string(), "bar".to_string())]),
         });
@@ -305,7 +309,7 @@ mod tests {
     #[test]
     fn test_error_response() {
         let resp = RunnerResponse::error(ErrorCode::ProcessNotFound, "No such process: foo");
-        
+
         match resp {
             RunnerResponse::Error(e) => {
                 assert_eq!(e.code, ErrorCode::ProcessNotFound);

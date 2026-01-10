@@ -23,7 +23,9 @@ use std::time::{Duration, SystemTime};
 use tokio::process::Command;
 use tokio::sync::{RwLock, broadcast};
 
-use crate::pi::{PiClient, PiClientConfig, PiEvent, PiState, AgentMessage, CompactionResult, SessionStats};
+use crate::pi::{
+    AgentMessage, CompactionResult, PiClient, PiClientConfig, PiEvent, PiState, SessionStats,
+};
 
 /// Session freshness thresholds
 const SESSION_MAX_AGE_HOURS: u64 = 4;
@@ -124,7 +126,7 @@ impl MainChatPiService {
     /// Find the most recent Pi session file for a directory.
     fn find_last_session(&self, work_dir: &PathBuf) -> Option<LastSessionInfo> {
         let sessions_dir = self.get_pi_sessions_dir(work_dir);
-        
+
         if !sessions_dir.exists() {
             debug!("Pi sessions directory does not exist: {:?}", sessions_dir);
             return None;
@@ -143,7 +145,11 @@ impl MainChatPiService {
                                 modified,
                             };
 
-                            if latest.as_ref().map(|l| modified > l.modified).unwrap_or(true) {
+                            if latest
+                                .as_ref()
+                                .map(|l| modified > l.modified)
+                                .unwrap_or(true)
+                            {
                                 latest = Some(info);
                             }
                         }
@@ -158,11 +164,13 @@ impl MainChatPiService {
     /// Check if a session should be continued or if we need a fresh start.
     fn should_continue_session(&self, last_session: &LastSessionInfo) -> bool {
         let now = SystemTime::now();
-        
+
         // Check age
-        let age = now.duration_since(last_session.modified).unwrap_or(Duration::MAX);
+        let age = now
+            .duration_since(last_session.modified)
+            .unwrap_or(Duration::MAX);
         let max_age = Duration::from_secs(self.config.max_session_age_hours * 3600);
-        
+
         if age > max_age {
             info!(
                 "Session too old ({:?} > {:?}), starting fresh",
@@ -211,13 +219,13 @@ impl MainChatPiService {
     }
 
     /// Create a new Pi session for a user.
-    /// 
+    ///
     /// # Arguments
     /// * `user_id` - The user ID
     /// * `force_fresh` - If true, always start a fresh session regardless of staleness
     async fn create_session(&self, user_id: &str, force_fresh: bool) -> Result<UserPiSession> {
         let work_dir = self.get_main_chat_dir(user_id);
-        
+
         // Ensure the directory exists
         if !work_dir.exists() {
             anyhow::bail!("Main Chat directory does not exist for user: {}", user_id);
@@ -225,28 +233,33 @@ impl MainChatPiService {
 
         // Determine if we should continue or start fresh
         let last_session = self.find_last_session(&work_dir);
-        let should_continue = !force_fresh && last_session
-            .as_ref()
-            .map(|s| self.should_continue_session(s))
-            .unwrap_or(false);
+        let should_continue = !force_fresh
+            && last_session
+                .as_ref()
+                .map(|s| self.should_continue_session(s))
+                .unwrap_or(false);
 
         info!(
             "Starting Pi session for user {} in {:?}, continue={}, provider={:?}, model={:?}",
-            user_id, work_dir, should_continue, self.config.default_provider, self.config.default_model
+            user_id,
+            work_dir,
+            should_continue,
+            self.config.default_provider,
+            self.config.default_model
         );
 
         // Build the command
         let mut cmd = Command::new(&self.config.pi_executable);
         cmd.arg("--mode").arg("rpc");
-        
+
         // Continue or fresh start
         if should_continue {
             cmd.arg("--continue");
         }
         // Note: If not continuing, Pi will start a fresh session automatically
-        
+
         cmd.current_dir(&work_dir);
-        
+
         // Set up stdio
         cmd.stdin(std::process::Stdio::piped());
         cmd.stdout(std::process::Stdio::piped());
@@ -259,7 +272,7 @@ impl MainChatPiService {
         if let Some(ref model) = self.config.default_model {
             cmd.arg("--model").arg(model);
         }
-        
+
         // Add extensions
         for extension in &self.config.extensions {
             cmd.arg("--extension").arg(extension);
@@ -312,7 +325,6 @@ impl MainChatPiService {
         let sessions = self.sessions.read().await;
         sessions.contains_key(user_id)
     }
-
 }
 
 impl UserPiSession {
@@ -395,12 +407,16 @@ mod tests {
             true,
             MainChatPiServiceConfig::default(),
         );
-        
+
         let work_dir = PathBuf::from("/home/user/.local/share/octo/users/main");
         let sessions_dir = service.get_pi_sessions_dir(&work_dir);
-        
+
         // Should escape slashes and wrap with dashes
-        assert!(sessions_dir.to_string_lossy().contains("home-user-.local-share-octo-users-main"));
+        assert!(
+            sessions_dir
+                .to_string_lossy()
+                .contains("home-user-.local-share-octo-users-main")
+        );
     }
 
     #[test]
@@ -461,14 +477,15 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let main_dir = temp.path().join("main");
         std::fs::create_dir_all(&main_dir).unwrap();
-        
+
         // Create minimal pi settings
         let pi_dir = main_dir.join(".pi");
         std::fs::create_dir_all(&pi_dir).unwrap();
         std::fs::write(
             pi_dir.join("settings.json"),
-            r#"{"defaultProvider": "openai", "defaultModel": "gpt-4o-mini"}"#
-        ).unwrap();
+            r#"{"defaultProvider": "openai", "defaultModel": "gpt-4o-mini"}"#,
+        )
+        .unwrap();
 
         let service = MainChatPiService::new(
             temp.path().to_path_buf(),

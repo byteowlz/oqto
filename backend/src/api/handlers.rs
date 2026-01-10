@@ -2316,10 +2316,7 @@ pub struct TrxWorkspaceQuery {
 }
 
 /// Execute trx command in a workspace directory.
-async fn exec_trx_command(
-    workspace_path: &str,
-    args: &[&str],
-) -> Result<String, ApiError> {
+async fn exec_trx_command(workspace_path: &str, args: &[&str]) -> Result<String, ApiError> {
     use tokio::process::Command;
 
     let output = Command::new("trx")
@@ -2332,7 +2329,10 @@ async fn exec_trx_command(
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(ApiError::internal(format!("trx command failed: {}", stderr)));
+        return Err(ApiError::internal(format!(
+            "trx command failed: {}",
+            stderr
+        )));
     }
 
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
@@ -2345,13 +2345,13 @@ pub async fn list_trx_issues(
     Query(query): Query<TrxWorkspaceQuery>,
 ) -> ApiResult<Json<Vec<TrxIssue>>> {
     let output = exec_trx_command(&query.workspace_path, &["list"]).await?;
-    
+
     // Parse the raw JSON output and transform to API format
     let raw_issues: Vec<TrxIssueRaw> = serde_json::from_str(&output)
         .map_err(|e| ApiError::internal(format!("Failed to parse trx output: {}", e)))?;
-    
+
     let issues: Vec<TrxIssue> = raw_issues.into_iter().map(TrxIssue::from).collect();
-    
+
     Ok(Json(issues))
 }
 
@@ -2363,10 +2363,10 @@ pub async fn get_trx_issue(
     Query(query): Query<TrxWorkspaceQuery>,
 ) -> ApiResult<Json<TrxIssue>> {
     let output = exec_trx_command(&query.workspace_path, &["show", &issue_id]).await?;
-    
+
     let raw_issue: TrxIssueRaw = serde_json::from_str(&output)
         .map_err(|e| ApiError::internal(format!("Failed to parse trx output: {}", e)))?;
-    
+
     Ok(Json(TrxIssue::from(raw_issue)))
 }
 
@@ -2377,32 +2377,26 @@ pub async fn create_trx_issue(
     Query(query): Query<TrxWorkspaceQuery>,
     Json(request): Json<CreateTrxIssueRequest>,
 ) -> ApiResult<Json<TrxIssue>> {
-    let mut args = vec![
-        "create",
-        &request.title,
-        "-t",
-        &request.issue_type,
-        "-p",
-    ];
+    let mut args = vec!["create", &request.title, "-t", &request.issue_type, "-p"];
     let priority_str = request.priority.to_string();
     args.push(&priority_str);
-    
+
     if let Some(ref desc) = request.description {
         args.push("-d");
         args.push(desc);
     }
-    
+
     if let Some(ref parent) = request.parent_id {
         args.push("--parent");
         args.push(parent);
     }
-    
+
     let output = exec_trx_command(&query.workspace_path, &args).await?;
-    
+
     // trx create --json returns the created issue
     let raw_issue: TrxIssueRaw = serde_json::from_str(&output)
         .map_err(|e| ApiError::internal(format!("Failed to parse trx output: {}", e)))?;
-    
+
     let issue = TrxIssue::from(raw_issue);
     info!(issue_id = %issue.id, "Created TRX issue");
     Ok(Json(issue))
@@ -2417,7 +2411,7 @@ pub async fn update_trx_issue(
     Json(request): Json<UpdateTrxIssueRequest>,
 ) -> ApiResult<Json<TrxIssue>> {
     let mut args = vec!["update", &issue_id];
-    
+
     // Build args based on what's being updated
     let title_arg;
     if let Some(ref title) = request.title {
@@ -2425,38 +2419,40 @@ pub async fn update_trx_issue(
         title_arg = title.clone();
         args.push(&title_arg);
     }
-    
+
     let desc_arg;
     if let Some(ref desc) = request.description {
         args.push("--description");
         desc_arg = desc.clone();
         args.push(&desc_arg);
     }
-    
+
     let status_arg;
     if let Some(ref status) = request.status {
         args.push("--status");
         status_arg = status.clone();
         args.push(&status_arg);
     }
-    
+
     let priority_arg;
     if let Some(priority) = request.priority {
         args.push("-p");
         priority_arg = priority.to_string();
         args.push(&priority_arg);
     }
-    
+
     let output = exec_trx_command(&query.workspace_path, &args).await?;
-    
+
     // Parse the updated issue (trx update --json returns array with single issue)
     let raw_issues: Vec<TrxIssueRaw> = serde_json::from_str(&output)
         .map_err(|e| ApiError::internal(format!("Failed to parse trx output: {}", e)))?;
-    
-    let issue = raw_issues.into_iter().next()
+
+    let issue = raw_issues
+        .into_iter()
+        .next()
         .map(TrxIssue::from)
         .ok_or_else(|| ApiError::internal("No issue returned from trx update"))?;
-    
+
     info!(issue_id = %issue.id, "Updated TRX issue");
     Ok(Json(issue))
 }
@@ -2470,24 +2466,26 @@ pub async fn close_trx_issue(
     Json(request): Json<CloseTrxIssueRequest>,
 ) -> ApiResult<Json<TrxIssue>> {
     let mut args = vec!["close", &issue_id];
-    
+
     let reason_arg;
     if let Some(ref reason) = request.reason {
         args.push("-r");
         reason_arg = reason.clone();
         args.push(&reason_arg);
     }
-    
+
     let output = exec_trx_command(&query.workspace_path, &args).await?;
-    
+
     // Parse the closed issue
     let raw_issues: Vec<TrxIssueRaw> = serde_json::from_str(&output)
         .map_err(|e| ApiError::internal(format!("Failed to parse trx output: {}", e)))?;
-    
-    let issue = raw_issues.into_iter().next()
+
+    let issue = raw_issues
+        .into_iter()
+        .next()
         .map(TrxIssue::from)
         .ok_or_else(|| ApiError::internal("No issue returned from trx close"))?;
-    
+
     info!(issue_id = %issue.id, "Closed TRX issue");
     Ok(Json(issue))
 }

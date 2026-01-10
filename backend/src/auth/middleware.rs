@@ -13,6 +13,27 @@ use std::sync::Arc;
 
 use super::{AuthConfig, AuthError, Claims, DevUser, Role};
 
+/// Extract a Bearer token from an Authorization header value.
+fn bearer_token_from_header(header_value: &str) -> Result<&str, AuthError> {
+    let mut parts = header_value.split_whitespace();
+    let scheme = parts.next().ok_or(AuthError::InvalidAuthHeader)?;
+
+    if !scheme.eq_ignore_ascii_case("bearer") {
+        return Err(AuthError::InvalidAuthHeader);
+    }
+
+    let token = parts.next().ok_or(AuthError::InvalidAuthHeader)?;
+    if token.is_empty() {
+        return Err(AuthError::InvalidAuthHeader);
+    }
+
+    if parts.next().is_some() {
+        return Err(AuthError::InvalidAuthHeader);
+    }
+
+    Ok(token)
+}
+
 fn token_from_cookie_header<'a>(cookie_header: &'a str, cookie_name: &str) -> Option<&'a str> {
     cookie_header.split(';').map(str::trim).find_map(|pair| {
         let (name, value) = pair.split_once('=')?;
@@ -254,9 +275,7 @@ pub async fn auth_middleware(
 
     let claims = if let Some(header) = auth_header {
         // Parse Bearer token
-        let token = header
-            .strip_prefix("Bearer ")
-            .ok_or(AuthError::InvalidAuthHeader)?;
+        let token = bearer_token_from_header(header)?;
 
         // Validate token
         auth.validate_token(token)?
@@ -317,6 +336,41 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_bearer_token_from_header_valid() {
+        assert_eq!(
+            bearer_token_from_header("Bearer abc.def.ghi").unwrap(),
+            "abc.def.ghi"
+        );
+        assert_eq!(
+            bearer_token_from_header("bearer   token123").unwrap(),
+            "token123"
+        );
+        assert_eq!(
+            bearer_token_from_header("   Bearer\tmixed-case ").unwrap(),
+            "mixed-case"
+        );
+    }
+
+    #[test]
+    fn test_bearer_token_from_header_invalid() {
+        let cases = [
+            "",
+            "Bearer",
+            "Bearer ",
+            "Token something",
+            "Bearer token extra",
+            "bear token",
+        ];
+
+        for case in cases {
+            assert!(
+                bearer_token_from_header(case).is_err(),
+                "{case} should fail"
+            );
+        }
+    }
 
     fn make_dev_user(id: &str, name: &str, email: &str, password: &str, role: Role) -> DevUser {
         let password_hash =

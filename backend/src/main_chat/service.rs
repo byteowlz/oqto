@@ -8,8 +8,8 @@ use tokio::sync::RwLock;
 
 use super::db::{MainChatDb, main_chat_db_path, main_chat_dir_path};
 use super::models::{
-    AssistantInfo, ChatMessage, CreateChatMessage, CreateHistoryEntry, CreateSession,
-    HistoryEntry, MainChatSession,
+    AssistantInfo, ChatMessage, CreateChatMessage, CreateHistoryEntry, CreateSession, HistoryEntry,
+    MainChatSession,
 };
 use super::repository::MainChatRepository;
 

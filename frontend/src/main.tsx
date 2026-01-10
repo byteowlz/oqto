@@ -1,3 +1,6 @@
+// Tauri fetch polyfill MUST be imported first to intercept all fetch calls
+import "@/lib/tauri-fetch-polyfill";
+
 import { Providers } from "@/components/providers";
 import { initI18n } from "@/lib/i18n";
 import React from "react";

@@ -9,7 +9,7 @@
  * - Connection state management
  */
 
-import { getControlPlaneBaseUrl } from "./control-plane-client";
+import { getAuthToken, getControlPlaneBaseUrl } from "./control-plane-client";
 
 // ============================================================================
 // Event Types (from backend)
@@ -369,6 +369,13 @@ class OctoWsClient {
 		} else {
 			// Proxied via frontend dev server
 			wsUrl = `${window.location.origin.replace(/^http/, "ws")}/api/ws`;
+		}
+
+		// Add auth token as query parameter for WebSocket auth
+		const token = getAuthToken();
+		if (token) {
+			const separator = wsUrl.includes("?") ? "&" : "?";
+			wsUrl = `${wsUrl}${separator}token=${encodeURIComponent(token)}`;
 		}
 
 		console.debug("[ws] Connecting to", wsUrl);

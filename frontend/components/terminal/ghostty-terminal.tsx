@@ -1,5 +1,6 @@
 "use client";
 
+import { getAuthToken } from "@/lib/control-plane-client";
 import { FitAddon, Terminal, init } from "ghostty-web";
 import {
 	forwardRef,
@@ -305,11 +306,19 @@ export const GhosttyTerminal = forwardRef<
 					) {
 						clearReconnect();
 
+						// Add auth token as query parameter for WebSocket auth
+						let wsUrlWithAuth = currentWsUrl;
+						const token = getAuthToken();
+						if (token) {
+							const separator = currentWsUrl.includes("?") ? "&" : "?";
+							wsUrlWithAuth = `${currentWsUrl}${separator}token=${encodeURIComponent(token)}`;
+						}
+
 						console.log(
 							`Terminal [${sessionId}]: connecting WebSocket to ${currentWsUrl.substring(0, 60)}...`,
 						);
 
-						const socket = new WebSocket(currentWsUrl);
+						const socket = new WebSocket(wsUrlWithAuth);
 						socket.binaryType = "arraybuffer";
 						session.socket = socket;
 						setStatus("connecting");

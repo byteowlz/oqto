@@ -366,7 +366,9 @@ function CompactCopyButton({
 	);
 }
 
-function parseModelRef(value: string): { providerID: string; modelID: string } | null {
+function parseModelRef(
+	value: string,
+): { providerID: string; modelID: string } | null {
 	const trimmed = value.trim();
 	const separatorIndex = trimmed.indexOf("/");
 	if (separatorIndex <= 0 || separatorIndex === trimmed.length - 1) {
@@ -462,9 +464,9 @@ export function SessionsApp() {
 		return opencodeBaseUrl;
 	}, [mainChatActive, mainChatBaseUrl, opencodeBaseUrl]);
 
-	const [opencodeModelOptions, setOpencodeModelOptions] = useState<ModelOption[]>(
-		[],
-	);
+	const [opencodeModelOptions, setOpencodeModelOptions] = useState<
+		ModelOption[]
+	>([]);
 	const [selectedModelRef, setSelectedModelRef] = useState<string | null>(null);
 	const [isModelLoading, setIsModelLoading] = useState(false);
 	const [modelQuery, setModelQuery] = useState("");
@@ -743,12 +745,44 @@ export function SessionsApp() {
 	// Feature flags from backend
 	const [features, setFeatures] = useState<Features>({ mmry_enabled: false });
 
+	// Connection diagnostics for debugging (especially iOS)
+	const [connectionDiagnostics, setConnectionDiagnostics] = useState<{
+		controlPlaneUrl: string;
+		lastError: string | null;
+		lastAttempt: number | null;
+		featuresLoaded: boolean;
+	}>({
+		controlPlaneUrl: controlPlaneDirectBaseUrl(),
+		lastError: null,
+		lastAttempt: null,
+		featuresLoaded: false,
+	});
+
 	// Fetch features on mount
 	useEffect(() => {
+		const url = controlPlaneDirectBaseUrl();
+		setConnectionDiagnostics((prev) => ({
+			...prev,
+			controlPlaneUrl: url,
+			lastAttempt: Date.now(),
+		}));
+
 		getFeatures()
-			.then(setFeatures)
-			.catch(() => {
-				// Silently ignore - features will remain disabled
+			.then((f) => {
+				setFeatures(f);
+				setConnectionDiagnostics((prev) => ({
+					...prev,
+					featuresLoaded: true,
+					lastError: null,
+				}));
+			})
+			.catch((err) => {
+				// Capture error for diagnostics
+				setConnectionDiagnostics((prev) => ({
+					...prev,
+					lastError: err instanceof Error ? err.message : String(err),
+					featuresLoaded: false,
+				}));
 			});
 	}, []);
 
@@ -1773,7 +1807,10 @@ export function SessionsApp() {
 			}
 
 			// Handle permission events
-			if (eventType === "permission.updated" || eventType === "permission.created") {
+			if (
+				eventType === "permission.updated" ||
+				eventType === "permission.created"
+			) {
 				const permission = normalizePermissionEvent(event.properties);
 				if (!permission) return;
 				console.log("[Permission] Received permission request:", permission);
@@ -2734,8 +2771,59 @@ export function SessionsApp() {
 									})}
 								</div>
 							) : (
-								<div className="text-sm text-muted-foreground">
-									{t.configNotice}
+								<div className="space-y-4">
+									<div className="text-sm text-muted-foreground">
+										{t.configNotice}
+									</div>
+									{/* Connection diagnostics for debugging (especially iOS) */}
+									<div className="mt-4 p-3 bg-muted/30 rounded text-xs font-mono space-y-1">
+										<div className="font-semibold text-foreground mb-2">
+											Connection Diagnostics:
+										</div>
+										<div>
+											<span className="text-muted-foreground">
+												Backend URL:
+											</span>{" "}
+											<span className="text-foreground break-all">
+												{connectionDiagnostics.controlPlaneUrl || "(not set)"}
+											</span>
+										</div>
+										<div>
+											<span className="text-muted-foreground">
+												Features loaded:
+											</span>{" "}
+											<span
+												className={
+													connectionDiagnostics.featuresLoaded
+														? "text-green-500"
+														: "text-red-500"
+												}
+											>
+												{connectionDiagnostics.featuresLoaded ? "Yes" : "No"}
+											</span>
+										</div>
+										{connectionDiagnostics.lastError && (
+											<div>
+												<span className="text-muted-foreground">
+													Last error:
+												</span>{" "}
+												<span className="text-red-500 break-all">
+													{connectionDiagnostics.lastError}
+												</span>
+											</div>
+										)}
+										<div>
+											<span className="text-muted-foreground">Sessions:</span>{" "}
+											<span className="text-foreground">
+												{workspaceSessions.length} workspace,{" "}
+												{chatHistory.length} chat history
+											</span>
+										</div>
+										<div>
+											<span className="text-muted-foreground">Projects:</span>{" "}
+											<span className="text-foreground">{projects.length}</span>
+										</div>
+									</div>
 								</div>
 							)}
 						</div>
@@ -4043,7 +4131,11 @@ const extractFilePartDetails = (
 			return { filePath: absolutePath, fileName };
 		}
 		if (rawUrl.startsWith("http://") || rawUrl.startsWith("https://")) {
-			return { filePath: metadataPath || fileName, fileName, directUrl: rawUrl };
+			return {
+				filePath: metadataPath || fileName,
+				fileName,
+				directUrl: rawUrl,
+			};
 		}
 	}
 

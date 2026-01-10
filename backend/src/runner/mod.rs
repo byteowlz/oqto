@@ -43,5 +43,5 @@
 mod client;
 mod protocol;
 
-pub use client::{RunnerClient, DEFAULT_SOCKET_PATTERN};
+pub use client::{DEFAULT_SOCKET_PATTERN, RunnerClient};
 pub use protocol::*;

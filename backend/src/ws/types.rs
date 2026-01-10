@@ -52,10 +52,7 @@ pub enum WsEvent {
     AgentConnected { session_id: String },
 
     /// Agent disconnected.
-    AgentDisconnected {
-        session_id: String,
-        reason: String,
-    },
+    AgentDisconnected { session_id: String, reason: String },
 
     /// Attempting to reconnect to agent.
     AgentReconnecting {
@@ -87,10 +84,7 @@ pub enum WsEvent {
     },
 
     /// Full message update (for non-streaming updates).
-    MessageUpdated {
-        session_id: String,
-        message: Value,
-    },
+    MessageUpdated { session_id: String, message: Value },
 
     // ========== Tool Events ==========
     /// Tool execution started.

@@ -100,7 +100,6 @@ impl ProcessHandle {
             }
         }
     }
-
 }
 
 /// Manager for local processes.
@@ -121,7 +120,6 @@ impl ProcessManager {
     }
 
     // Pi process management is handled by Main Chat Pi service.
-
 
     /// Spawn opencode serve.
     ///

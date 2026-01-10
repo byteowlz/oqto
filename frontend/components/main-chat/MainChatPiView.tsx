@@ -44,7 +44,11 @@ import {
 	type PiModelInfo,
 } from "@/lib/control-plane-client";
 import { getFileTypeInfo } from "@/lib/file-types";
-import { type SlashCommand, fuzzyMatch, parseSlashInput } from "@/lib/slash-commands";
+import {
+	type SlashCommand,
+	fuzzyMatch,
+	parseSlashInput,
+} from "@/lib/slash-commands";
 import { cn } from "@/lib/utils";
 import {
 	Bot,
@@ -222,7 +226,8 @@ export function MainChatPiView({
 		return { inputTokens, outputTokens };
 	}, [messages]);
 	const gaugeTokens = useMemo(() => {
-		const total = messageTokenUsage.inputTokens + messageTokenUsage.outputTokens;
+		const total =
+			messageTokenUsage.inputTokens + messageTokenUsage.outputTokens;
 		if (total > 0) return messageTokenUsage;
 		if (sessionTokens) {
 			return {
@@ -436,7 +441,10 @@ export function MainChatPiView({
 				}
 				case "model": {
 					const separatorIndex = trimmedArgs.indexOf("/");
-					if (separatorIndex <= 0 || separatorIndex === trimmedArgs.length - 1) {
+					if (
+						separatorIndex <= 0 ||
+						separatorIndex === trimmedArgs.length - 1
+					) {
 						throw new Error("Model must be provider/model");
 					}
 					await handleModelChange(trimmedArgs);
@@ -495,15 +503,16 @@ export function MainChatPiView({
 			await send(message, { mode });
 		},
 		[
-		builtInCommandNames,
-		fileAttachments,
-		input,
-		runSlashCommand,
-		send,
-		slashQuery.command,
-		slashQuery.args,
-		slashQuery.isSlash,
-	]);
+			builtInCommandNames,
+			fileAttachments,
+			input,
+			runSlashCommand,
+			send,
+			slashQuery.command,
+			slashQuery.args,
+			slashQuery.isSlash,
+		],
+	);
 
 	const handleKeyDown = useCallback(
 		(e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -673,12 +682,12 @@ export function MainChatPiView({
 									value={modelQuery}
 									onChange={(e) => setModelQuery(e.target.value)}
 									placeholder={
-										locale === "de" ? "Modelle durchsuchen..." : "Search models..."
+										locale === "de"
+											? "Modelle durchsuchen..."
+											: "Search models..."
 									}
 									aria-label={
-										locale === "de"
-											? "Modelle durchsuchen"
-											: "Search models"
+										locale === "de" ? "Modelle durchsuchen" : "Search models"
 									}
 									className="h-8 text-xs"
 								/>
@@ -698,9 +707,7 @@ export function MainChatPiView({
 									const value = `${model.provider}/${model.id}`;
 									return (
 										<SelectItem key={value} value={value}>
-											{model.name
-												? `${value} · ${model.name}`
-												: value}
+											{model.name ? `${value} · ${model.name}` : value}
 										</SelectItem>
 									);
 								})
@@ -832,7 +839,9 @@ export function MainChatPiView({
 										})
 										.catch((err) => {
 											setCommandError(
-												err instanceof Error ? err : new Error("Command failed"),
+												err instanceof Error
+													? err
+													: new Error("Command failed"),
 											);
 											setShowSlashPopup(false);
 										});
@@ -851,7 +860,9 @@ export function MainChatPiView({
 										})
 										.catch((err) => {
 											setCommandError(
-												err instanceof Error ? err : new Error("Command failed"),
+												err instanceof Error
+													? err
+													: new Error("Command failed"),
 											);
 											setShowSlashPopup(false);
 										});

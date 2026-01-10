@@ -5,7 +5,10 @@
 
 use axum::{
     Json,
-    extract::{State, WebSocketUpgrade, ws::{Message, WebSocket}},
+    extract::{
+        State, WebSocketUpgrade,
+        ws::{Message, WebSocket},
+    },
     http::StatusCode,
     response::Response,
 };
@@ -153,7 +156,9 @@ pub async fn start_pi_session(
 
     // Ensure Main Chat exists
     if !main_chat_service.main_chat_exists(user.id()) {
-        return Err(ApiError::not_found("Main Chat not found. Initialize it first."));
+        return Err(ApiError::not_found(
+            "Main Chat not found. Initialize it first.",
+        ));
     }
 
     // Get or create session
@@ -219,10 +224,7 @@ pub async fn send_prompt(
 /// Abort current Pi operation.
 ///
 /// POST /api/main/pi/abort
-pub async fn abort_pi(
-    State(state): State<AppState>,
-    user: CurrentUser,
-) -> ApiResult<StatusCode> {
+pub async fn abort_pi(State(state): State<AppState>, user: CurrentUser) -> ApiResult<StatusCode> {
     let pi_service = get_pi_service(&state)?;
 
     let session = pi_service
@@ -683,7 +685,8 @@ async fn handle_ws(
                         | WsCommand::FollowUp { ref message } = cmd
                         {
                             if let Some(svc) = &main_chat_svc {
-                                let content = serde_json::json!([{"type": "text", "text": message}]);
+                                let content =
+                                    serde_json::json!([{"type": "text", "text": message}]);
                                 if let Err(e) = svc
                                     .add_message(
                                         &user_id,
@@ -734,7 +737,10 @@ enum WsCommand {
     Compact { custom_instructions: Option<String> },
 }
 
-async fn handle_ws_command(session: &crate::main_chat::UserPiSession, cmd: WsCommand) -> anyhow::Result<()> {
+async fn handle_ws_command(
+    session: &crate::main_chat::UserPiSession,
+    cmd: WsCommand,
+) -> anyhow::Result<()> {
     match cmd {
         WsCommand::Prompt { message } => {
             session.prompt(&message).await?;
@@ -751,7 +757,9 @@ async fn handle_ws_command(session: &crate::main_chat::UserPiSession, cmd: WsCom
         WsCommand::NewSession => {
             session.new_session().await?;
         }
-        WsCommand::Compact { custom_instructions } => {
+        WsCommand::Compact {
+            custom_instructions,
+        } => {
             session.compact(custom_instructions.as_deref()).await?;
         }
     }
@@ -897,7 +905,7 @@ fn transform_pi_event_for_ws(event: &PiEvent) -> Option<Value> {
     match event {
         PiEvent::AgentStart => Some(serde_json::json!({"type": "agent_start"})),
         PiEvent::AgentEnd { .. } => Some(serde_json::json!({"type": "done"})),
-        PiEvent::TurnStart => None, // Don't forward
+        PiEvent::TurnStart => None,      // Don't forward
         PiEvent::TurnEnd { .. } => None, // Don't forward
         PiEvent::MessageStart { message } => {
             if message.role == "assistant" {
@@ -906,57 +914,61 @@ fn transform_pi_event_for_ws(event: &PiEvent) -> Option<Value> {
                 None
             }
         }
-        PiEvent::MessageUpdate { assistant_message_event, .. } => {
+        PiEvent::MessageUpdate {
+            assistant_message_event,
+            ..
+        } => {
             // Transform streaming updates into simpler events
             match assistant_message_event {
-                AssistantMessageEvent::TextDelta { delta, .. } => {
-                    Some(serde_json::json!({
-                        "type": "text",
-                        "data": delta
-                    }))
-                }
-                AssistantMessageEvent::ThinkingDelta { delta, .. } => {
-                    Some(serde_json::json!({
-                        "type": "thinking",
-                        "data": delta
-                    }))
-                }
-                AssistantMessageEvent::ToolcallEnd { tool_call, .. } => {
-                    Some(serde_json::json!({
-                        "type": "tool_use",
-                        "data": {
-                            "id": tool_call.id,
-                            "name": tool_call.name,
-                            "input": tool_call.arguments
-                        }
-                    }))
-                }
-                _ => None // Skip other message updates
+                AssistantMessageEvent::TextDelta { delta, .. } => Some(serde_json::json!({
+                    "type": "text",
+                    "data": delta
+                })),
+                AssistantMessageEvent::ThinkingDelta { delta, .. } => Some(serde_json::json!({
+                    "type": "thinking",
+                    "data": delta
+                })),
+                AssistantMessageEvent::ToolcallEnd { tool_call, .. } => Some(serde_json::json!({
+                    "type": "tool_use",
+                    "data": {
+                        "id": tool_call.id,
+                        "name": tool_call.name,
+                        "input": tool_call.arguments
+                    }
+                })),
+                _ => None, // Skip other message updates
             }
         }
         PiEvent::MessageEnd { .. } => None, // Will be handled by AgentEnd
-        PiEvent::ToolExecutionStart { tool_call_id, tool_name, args } => {
-            Some(serde_json::json!({
-                "type": "tool_start",
-                "data": {
-                    "id": tool_call_id,
-                    "name": tool_name,
-                    "input": args
-                }
-            }))
+        PiEvent::ToolExecutionStart {
+            tool_call_id,
+            tool_name,
+            args,
+        } => Some(serde_json::json!({
+            "type": "tool_start",
+            "data": {
+                "id": tool_call_id,
+                "name": tool_name,
+                "input": args
+            }
+        })),
+        PiEvent::ToolExecutionEnd {
+            tool_call_id,
+            tool_name,
+            result,
+            ..
+        } => Some(serde_json::json!({
+            "type": "tool_result",
+            "data": {
+                "id": tool_call_id,
+                "name": tool_name,
+                "content": result
+            }
+        })),
+        PiEvent::AutoCompactionStart { .. } => {
+            Some(serde_json::json!({"type": "compaction_start"}))
         }
-        PiEvent::ToolExecutionEnd { tool_call_id, tool_name, result, .. } => {
-            Some(serde_json::json!({
-                "type": "tool_result",
-                "data": {
-                    "id": tool_call_id,
-                    "name": tool_name,
-                    "content": result
-                }
-            }))
-        }
-        PiEvent::AutoCompactionStart { .. } => Some(serde_json::json!({"type": "compaction_start"})),
         PiEvent::AutoCompactionEnd { .. } => Some(serde_json::json!({"type": "compaction"})),
-        _ => None // Skip other events
+        _ => None, // Skip other events
     }
 }

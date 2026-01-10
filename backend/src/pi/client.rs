@@ -7,7 +7,7 @@ use log::{debug, error, info, warn};
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Child;
-use tokio::sync::{broadcast, mpsc, Mutex, RwLock};
+use tokio::sync::{Mutex, RwLock, broadcast, mpsc};
 
 use super::types::*;
 
@@ -36,7 +36,8 @@ pub struct PiClient {
     /// Broadcast channel for events from pi.
     event_tx: broadcast::Sender<PiEvent>,
     /// Pending response receivers (keyed by request ID).
-    pending_responses: Arc<RwLock<std::collections::HashMap<String, tokio::sync::oneshot::Sender<PiResponse>>>>,
+    pending_responses:
+        Arc<RwLock<std::collections::HashMap<String, tokio::sync::oneshot::Sender<PiResponse>>>>,
     /// Counter for generating unique request IDs.
     request_counter: Arc<Mutex<u64>>,
     /// Handle to the background tasks.
@@ -199,9 +200,7 @@ impl PiClient {
         let data = response
             .data
             .context("get_available_models returned no data")?;
-        let models = data
-            .get("models")
-            .context("no models field in response")?;
+        let models = data.get("models").context("no models field in response")?;
         serde_json::from_value(models.clone()).context("failed to parse models")
     }
 
@@ -282,7 +281,9 @@ impl PiClient {
     async fn stdout_reader_task(
         stdout: tokio::process::ChildStdout,
         event_tx: broadcast::Sender<PiEvent>,
-        pending_responses: Arc<RwLock<std::collections::HashMap<String, tokio::sync::oneshot::Sender<PiResponse>>>>,
+        pending_responses: Arc<
+            RwLock<std::collections::HashMap<String, tokio::sync::oneshot::Sender<PiResponse>>>,
+        >,
     ) {
         let reader = BufReader::new(stdout);
         let mut lines = reader.lines();
@@ -300,12 +301,18 @@ impl PiClient {
 
             match PiMessage::parse(&line) {
                 Ok(PiMessage::Response(response)) => {
-                    info!("Parsed as response, id={:?}, success={}", response.id, response.success);
+                    info!(
+                        "Parsed as response, id={:?}, success={}",
+                        response.id, response.success
+                    );
                     // If response has an ID, send to waiting receiver
                     if let Some(ref id) = response.id {
                         let mut pending = pending_responses.write().await;
                         let pending_count = pending.len();
-                        info!("Looking for request ID {} in {} pending requests", id, pending_count);
+                        info!(
+                            "Looking for request ID {} in {} pending requests",
+                            id, pending_count
+                        );
                         if let Some(tx) = pending.remove(id) {
                             info!("Found pending request, sending response");
                             let _ = tx.send(response);
@@ -324,7 +331,10 @@ impl PiClient {
                 Err(e) => {
                     // Safely truncate for logging, respecting Unicode char boundaries
                     let display_line: String = line.chars().take(200).collect();
-                    warn!("Failed to parse pi message: {:?}, line: {}", e, display_line);
+                    warn!(
+                        "Failed to parse pi message: {:?}, line: {}",
+                        e, display_line
+                    );
                 }
             }
         }

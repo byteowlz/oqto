@@ -2,8 +2,8 @@
 
 use axum::{
     extract::{
-        ws::{Message, WebSocket},
         State, WebSocketUpgrade,
+        ws::{Message, WebSocket},
     },
     response::Response,
 };
@@ -57,7 +57,10 @@ async fn handle_ws_connection(
         ))
         .await
     {
-        error!("Failed to send connected message to user {}: {}", user_id, e);
+        error!(
+            "Failed to send connected message to user {}: {}",
+            user_id, e
+        );
         hub.unregister_connection(&user_id, conn_id);
         return;
     }
@@ -71,7 +74,7 @@ async fn handle_ws_connection(
     let send_task = tokio::spawn(async move {
         // Ping ticker
         let mut ping_interval = tokio::time::interval(Duration::from_secs(PING_INTERVAL_SECS));
-        
+
         loop {
             tokio::select! {
                 // Events from the per-connection channel
@@ -87,7 +90,7 @@ async fn handle_ws_connection(
                         break;
                     }
                 }
-                
+
                 // Events from the hub broadcast channel (session events)
                 Ok((session_id, event)) = hub_events.recv() => {
                     // Only forward events for sessions this user is subscribed to
@@ -104,7 +107,7 @@ async fn handle_ws_connection(
                         }
                     }
                 }
-                
+
                 // Periodic ping
                 _ = ping_interval.tick() => {
                     let ping_json = serde_json::to_string(&WsEvent::Ping).unwrap();
@@ -168,12 +171,12 @@ async fn handle_ws_connection(
 
     // Clean up
     send_task.abort();
-    
+
     // Unsubscribe from all sessions
     for session_id in hub.user_subscriptions(&user_id) {
         hub.unsubscribe_session(&user_id, &session_id);
     }
-    
+
     hub.unregister_connection(&user_id, conn_id);
     info!("WebSocket connection closed for user {}", user_id);
 }
@@ -432,7 +435,7 @@ async fn handle_command(
         } => {
             // This is a pull-based request - the client wants messages
             // We'll fetch them and send via the MessageUpdated event
-            
+
             // Verify user is subscribed
             if !hub.is_subscribed(user_id, &session_id) {
                 anyhow::bail!("Not subscribed to session");
@@ -463,7 +466,7 @@ async fn handle_command(
 
             if response.status().is_success() {
                 let messages: serde_json::Value = response.json().await?;
-                
+
                 // Send each message as an update
                 if let Some(msgs) = messages.as_array() {
                     for msg in msgs {

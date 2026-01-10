@@ -131,9 +131,7 @@ impl OpenCodeAdapter {
             .build()
             .context("Failed to build HTTP client")?;
 
-        let request_builder = client
-            .get(&url)
-            .header("Accept", "text/event-stream");
+        let request_builder = client.get(&url).header("Accept", "text/event-stream");
 
         let mut es = EventSource::new(request_builder)?;
 
@@ -143,10 +141,7 @@ impl OpenCodeAdapter {
             session_id: self.session_id.clone(),
         });
 
-        info!(
-            "Connected to OpenCode SSE for session {}",
-            self.session_id
-        );
+        info!("Connected to OpenCode SSE for session {}", self.session_id);
 
         // Process events
         while let Some(event_result) = es.next().await {
@@ -178,10 +173,7 @@ impl OpenCodeAdapter {
                         // Will reconnect in the outer loop
                         return Err(anyhow::anyhow!("SSE stream error: {:?}", e));
                     } else {
-                        error!(
-                            "Fatal SSE error for session {}: {:?}",
-                            self.session_id, e
-                        );
+                        error!("Fatal SSE error for session {}: {:?}", self.session_id, e);
                         return Err(anyhow::anyhow!("Fatal SSE error: {:?}", e));
                     }
                 }
@@ -229,7 +221,7 @@ impl OpenCodeAdapter {
     /// Translate an OpenCode message event.
     fn translate_message_event(&self, data: &Value) -> Option<WsEvent> {
         let session_id = self.session_id.clone();
-        
+
         // OpenCode events have a "type" field
         let event_type = data.get("type").and_then(|v| v.as_str()).unwrap_or("");
 
@@ -253,7 +245,10 @@ impl OpenCodeAdapter {
             // Message events
             "message.created" | "message.updated" => {
                 let message = data.get("properties").cloned().unwrap_or(data.clone());
-                Some(WsEvent::MessageUpdated { session_id, message })
+                Some(WsEvent::MessageUpdated {
+                    session_id,
+                    message,
+                })
             }
 
             // Part events (streaming)
@@ -267,13 +262,14 @@ impl OpenCodeAdapter {
                     .to_string();
 
                 let part = data.get("properties").and_then(|p| p.get("part"));
-                
+
                 if let Some(part) = part {
                     let part_type = part.get("type").and_then(|v| v.as_str()).unwrap_or("");
-                    
+
                     match part_type {
                         "text" => {
-                            let content = part.get("content").and_then(|v| v.as_str()).unwrap_or("");
+                            let content =
+                                part.get("content").and_then(|v| v.as_str()).unwrap_or("");
                             // For updated parts, send the full content as delta
                             // The frontend should handle deduplication
                             if !content.is_empty() {
@@ -285,7 +281,8 @@ impl OpenCodeAdapter {
                             }
                         }
                         "thinking" => {
-                            let content = part.get("content").and_then(|v| v.as_str()).unwrap_or("");
+                            let content =
+                                part.get("content").and_then(|v| v.as_str()).unwrap_or("");
                             if !content.is_empty() {
                                 return Some(WsEvent::ThinkingDelta {
                                     session_id,
@@ -295,11 +292,13 @@ impl OpenCodeAdapter {
                             }
                         }
                         "tool-invocation" => {
-                            let tool_call_id = part.get("toolInvocationID")
+                            let tool_call_id = part
+                                .get("toolInvocationID")
                                 .and_then(|v| v.as_str())
                                 .unwrap_or("")
                                 .to_string();
-                            let tool_name = part.get("toolName")
+                            let tool_name = part
+                                .get("toolName")
                                 .and_then(|v| v.as_str())
                                 .unwrap_or("")
                                 .to_string();
@@ -340,7 +339,7 @@ impl OpenCodeAdapter {
                         _ => {}
                     }
                 }
-                
+
                 // Default: forward as raw event
                 Some(WsEvent::OpencodeEvent {
                     session_id,
@@ -413,25 +412,25 @@ impl OpenCodeAdapter {
             "session.error" => {
                 let props = data.get("properties").unwrap_or(data);
                 let error = props.get("error");
-                
+
                 let error_type = error
                     .and_then(|e| e.get("name"))
                     .and_then(|v| v.as_str())
                     .unwrap_or("UnknownError")
                     .to_string();
-                
+
                 let message = error
                     .and_then(|e| e.get("data"))
                     .and_then(|d| d.get("message"))
                     .and_then(|v| v.as_str())
                     .unwrap_or("An unknown error occurred")
                     .to_string();
-                
+
                 info!(
                     "[Error] Session {} error: {} - {}",
                     session_id, error_type, message
                 );
-                
+
                 Some(WsEvent::SessionError {
                     session_id,
                     error_type,
@@ -458,10 +457,10 @@ fn calculate_backoff(attempt: u32) -> u64 {
     let base = BASE_BACKOFF_MS as f64;
     let exp = 2.0_f64.powi(attempt.min(10) as i32);
     let delay = (base * exp) as u64;
-    
+
     // Add jitter (up to 20%)
     let jitter = (delay as f64 * 0.2 * rand::random::<f64>()) as u64;
-    
+
     (delay + jitter).min(MAX_BACKOFF_MS)
 }
 

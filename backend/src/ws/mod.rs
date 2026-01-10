@@ -29,10 +29,10 @@
 //! └───────────────────┘           └───────────────────┘           └───────────────────┘
 //! ```
 
-mod types;
-mod hub;
 mod handler;
+mod hub;
 mod opencode_adapter;
+mod types;
 
-pub use hub::WsHub;
 pub use handler::ws_handler;
+pub use hub::WsHub;

@@ -1,4 +1,55 @@
 import { toAbsoluteWsUrl } from "@/lib/url";
+import { isTauri } from "@/lib/tauri-fetch-polyfill";
+
+// ============================================================================
+// Token Storage (for Tauri/mobile where cookies don't work)
+// ============================================================================
+
+const AUTH_TOKEN_KEY = "octo:authToken";
+
+export function getAuthToken(): string | null {
+	if (typeof window === "undefined") return null;
+	return localStorage.getItem(AUTH_TOKEN_KEY);
+}
+
+export function setAuthToken(token: string | null): void {
+	if (typeof window === "undefined") return;
+	if (token) {
+		localStorage.setItem(AUTH_TOKEN_KEY, token);
+	} else {
+		localStorage.removeItem(AUTH_TOKEN_KEY);
+	}
+}
+
+/**
+ * Get auth headers for requests.
+ * Uses Bearer token if available (works for both Tauri and browser).
+ */
+export function getAuthHeaders(): Record<string, string> {
+	const token = getAuthToken();
+	if (!token) return {};
+	return { Authorization: `Bearer ${token}` };
+}
+
+/**
+ * Authenticated fetch - automatically includes auth headers for Tauri
+ */
+async function authFetch(
+	input: RequestInfo | URL,
+	init?: RequestInit,
+): Promise<Response> {
+	const headers = {
+		...getAuthHeaders(),
+		...(init?.headers instanceof Headers
+			? Object.fromEntries(init.headers.entries())
+			: (init?.headers as Record<string, string> | undefined)),
+	};
+	return fetch(input, {
+		...init,
+		headers,
+		credentials: "include",
+	});
+}
 
 // ============================================================================
 // Auth Types
@@ -228,7 +279,7 @@ export type Features = {
 };
 
 export async function getFeatures(): Promise<Features> {
-	const res = await fetch(controlPlaneApiUrl("/api/features"), {
+	const res = await authFetch(controlPlaneApiUrl("/api/features"), {
 		credentials: "include",
 	});
 	if (!res.ok) {
@@ -255,7 +306,12 @@ export async function login(request: LoginRequest): Promise<LoginResponse> {
 		credentials: "include",
 	});
 	if (!res.ok) throw new Error(await readApiError(res));
-	return res.json();
+	const data: LoginResponse = await res.json();
+	// Store token for Tauri/mobile
+	if (data.token) {
+		setAuthToken(data.token);
+	}
+	return data;
 }
 
 export async function register(
@@ -268,19 +324,27 @@ export async function register(
 		credentials: "include",
 	});
 	if (!res.ok) throw new Error(await readApiError(res));
-	return res.json();
+	const data: RegisterResponse = await res.json();
+	// Store token for Tauri/mobile
+	if (data.token) {
+		setAuthToken(data.token);
+	}
+	return data;
 }
 
 export async function logout(): Promise<void> {
-	const res = await fetch(controlPlaneApiUrl("/api/auth/logout"), {
+	const res = await authFetch(controlPlaneApiUrl("/api/auth/logout"), {
 		method: "POST",
+		headers: { ...getAuthHeaders() },
 		credentials: "include",
 	});
+	// Clear token regardless of response
+	setAuthToken(null);
 	if (!res.ok) throw new Error(await readApiError(res));
 }
 
 export async function getCurrentUser(): Promise<UserInfo | null> {
-	const res = await fetch(controlPlaneApiUrl("/api/me"), {
+	const res = await authFetch(controlPlaneApiUrl("/api/me"), {
 		credentials: "include",
 	});
 	if (res.status === 401) return null;
@@ -299,7 +363,7 @@ export async function devLogin(): Promise<boolean> {
 }
 
 export async function listWorkspaceSessions(): Promise<WorkspaceSession[]> {
-	const res = await fetch(controlPlaneApiUrl("/api/sessions"), {
+	const res = await authFetch(controlPlaneApiUrl("/api/sessions"), {
 		cache: "no-store",
 		credentials: "include",
 	});
@@ -318,7 +382,7 @@ export type ProjectEntry = {
 
 /** List available projects (directories in workspace_dir) */
 export async function listProjects(): Promise<ProjectEntry[]> {
-	const res = await fetch(controlPlaneApiUrl("/api/projects"), {
+	const res = await authFetch(controlPlaneApiUrl("/api/projects"), {
 		cache: "no-store",
 		credentials: "include",
 	});
@@ -329,7 +393,7 @@ export async function listProjects(): Promise<ProjectEntry[]> {
 export async function createWorkspaceSession(
 	request: CreateWorkspaceSessionRequest = {},
 ): Promise<WorkspaceSession> {
-	const res = await fetch(controlPlaneApiUrl("/api/sessions"), {
+	const res = await authFetch(controlPlaneApiUrl("/api/sessions"), {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify(request),
@@ -348,12 +412,15 @@ export async function createWorkspaceSession(
 export async function getOrCreateWorkspaceSession(
 	request: CreateWorkspaceSessionRequest = {},
 ): Promise<WorkspaceSession> {
-	const res = await fetch(controlPlaneApiUrl("/api/sessions/get-or-create"), {
-		method: "POST",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify(request),
-		credentials: "include",
-	});
+	const res = await authFetch(
+		controlPlaneApiUrl("/api/sessions/get-or-create"),
+		{
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(request),
+			credentials: "include",
+		},
+	);
 	if (!res.ok) throw new Error(await readApiError(res));
 	return res.json();
 }
@@ -366,7 +433,7 @@ export async function getOrCreateWorkspaceSession(
 export async function getOrCreateSessionForWorkspace(
 	workspacePath: string,
 ): Promise<WorkspaceSession> {
-	const res = await fetch(
+	const res = await authFetch(
 		controlPlaneApiUrl("/api/sessions/get-or-create-for-workspace"),
 		{
 			method: "POST",
@@ -389,7 +456,7 @@ export async function getOrCreateSessionForWorkspace(
 export async function getWorkspaceSession(
 	sessionIdOrAlias: string,
 ): Promise<WorkspaceSession | null> {
-	const res = await fetch(
+	const res = await authFetch(
 		controlPlaneApiUrl(`/api/sessions/${sessionIdOrAlias}`),
 		{
 			credentials: "include",
@@ -402,7 +469,7 @@ export async function getWorkspaceSession(
 
 /** Touch session activity to prevent idle timeout */
 export async function touchSessionActivity(sessionId: string): Promise<void> {
-	const res = await fetch(
+	const res = await authFetch(
 		controlPlaneApiUrl(`/api/sessions/${sessionId}/activity`),
 		{
 			method: "POST",
@@ -413,7 +480,7 @@ export async function touchSessionActivity(sessionId: string): Promise<void> {
 }
 
 export async function stopWorkspaceSession(sessionId: string): Promise<void> {
-	const res = await fetch(
+	const res = await authFetch(
 		controlPlaneApiUrl(`/api/sessions/${sessionId}/stop`),
 		{
 			method: "POST",
@@ -426,7 +493,7 @@ export async function stopWorkspaceSession(sessionId: string): Promise<void> {
 export async function resumeWorkspaceSession(
 	sessionId: string,
 ): Promise<WorkspaceSession> {
-	const res = await fetch(
+	const res = await authFetch(
 		controlPlaneApiUrl(`/api/sessions/${sessionId}/resume`),
 		{
 			method: "POST",
@@ -443,10 +510,13 @@ export async function resumeWorkspaceSession(
 }
 
 export async function deleteWorkspaceSession(sessionId: string): Promise<void> {
-	const res = await fetch(controlPlaneApiUrl(`/api/sessions/${sessionId}`), {
-		method: "DELETE",
-		credentials: "include",
-	});
+	const res = await authFetch(
+		controlPlaneApiUrl(`/api/sessions/${sessionId}`),
+		{
+			method: "DELETE",
+			credentials: "include",
+		},
+	);
 	if (!res.ok) throw new Error(await readApiError(res));
 }
 
@@ -488,7 +558,7 @@ export type SessionUpdateInfo = {
 export async function checkSessionUpdate(
 	sessionId: string,
 ): Promise<SessionUpdateInfo> {
-	const res = await fetch(
+	const res = await authFetch(
 		controlPlaneApiUrl(`/api/sessions/${sessionId}/update`),
 		{
 			credentials: "include",
@@ -501,7 +571,7 @@ export async function checkSessionUpdate(
 export async function upgradeWorkspaceSession(
 	sessionId: string,
 ): Promise<WorkspaceSession> {
-	const res = await fetch(
+	const res = await authFetch(
 		controlPlaneApiUrl(`/api/sessions/${sessionId}/upgrade`),
 		{
 			method: "POST",
@@ -518,7 +588,7 @@ export async function upgradeWorkspaceSession(
 
 /** List all available personas */
 export async function listPersonas(): Promise<Persona[]> {
-	const res = await fetch(controlPlaneApiUrl("/api/personas"), {
+	const res = await authFetch(controlPlaneApiUrl("/api/personas"), {
 		cache: "no-store",
 		credentials: "include",
 	});
@@ -528,9 +598,12 @@ export async function listPersonas(): Promise<Persona[]> {
 
 /** Get a specific persona by ID */
 export async function getPersona(personaId: string): Promise<Persona> {
-	const res = await fetch(controlPlaneApiUrl(`/api/personas/${personaId}`), {
-		credentials: "include",
-	});
+	const res = await authFetch(
+		controlPlaneApiUrl(`/api/personas/${personaId}`),
+		{
+			credentials: "include",
+		},
+	);
 	if (!res.ok) throw new Error(await readApiError(res));
 	return res.json();
 }
@@ -547,7 +620,7 @@ export async function listWorkspaceDirectories(
 		window.location.origin,
 	);
 	url.searchParams.set("path", path);
-	const res = await fetch(url.toString(), {
+	const res = await authFetch(url.toString(), {
 		cache: "no-store",
 		credentials: "include",
 	});
@@ -633,7 +706,7 @@ export async function listChatHistory(
 	if (query.include_children) url.searchParams.set("include_children", "true");
 	if (query.limit) url.searchParams.set("limit", query.limit.toString());
 
-	const res = await fetch(url.toString(), {
+	const res = await authFetch(url.toString(), {
 		cache: "no-store",
 		credentials: "include",
 	});
@@ -653,7 +726,7 @@ export async function listChatHistoryGrouped(
 	if (query.include_children) url.searchParams.set("include_children", "true");
 	if (query.limit) url.searchParams.set("limit", query.limit.toString());
 
-	const res = await fetch(url.toString(), {
+	const res = await authFetch(url.toString(), {
 		cache: "no-store",
 		credentials: "include",
 	});
@@ -663,7 +736,7 @@ export async function listChatHistoryGrouped(
 
 /** Get a specific chat session by ID */
 export async function getChatSession(sessionId: string): Promise<ChatSession> {
-	const res = await fetch(
+	const res = await authFetch(
 		controlPlaneApiUrl(`/api/chat-history/${sessionId}`),
 		{
 			credentials: "include",
@@ -683,7 +756,7 @@ export async function updateChatSession(
 	sessionId: string,
 	updates: UpdateChatSessionRequest,
 ): Promise<ChatSession> {
-	const res = await fetch(
+	const res = await authFetch(
 		controlPlaneApiUrl(`/api/chat-history/${sessionId}`),
 		{
 			method: "PATCH",
@@ -741,7 +814,7 @@ export type ChatMessage = {
 export async function getChatMessages(
 	sessionId: string,
 ): Promise<ChatMessage[]> {
-	const res = await fetch(
+	const res = await authFetch(
 		controlPlaneApiUrl(`/api/chat-history/${sessionId}/messages`),
 		{
 			credentials: "include",
@@ -928,7 +1001,7 @@ export interface WorkspaceConfig {
  */
 export async function getGlobalOpencodeConfig(): Promise<WorkspaceConfig | null> {
 	try {
-		const res = await fetch(controlPlaneApiUrl("/api/opencode/config"), {
+		const res = await authFetch(controlPlaneApiUrl("/api/opencode/config"), {
 			credentials: "include",
 		});
 		if (!res.ok) return null;
@@ -948,7 +1021,7 @@ export async function getWorkspaceConfig(
 	sessionId: string,
 ): Promise<WorkspaceConfig | null> {
 	try {
-		const res = await fetch(
+		const res = await authFetch(
 			`${fileserverProxyBaseUrl(sessionId)}/file?path=opencode.json`,
 			{ credentials: "include" },
 		);
@@ -969,7 +1042,7 @@ export async function saveWorkspaceConfig(
 	sessionId: string,
 	config: WorkspaceConfig,
 ): Promise<void> {
-	const res = await fetch(
+	const res = await authFetch(
 		`${fileserverProxyBaseUrl(sessionId)}/file?path=opencode.json`,
 		{
 			method: "PUT",
@@ -1008,7 +1081,7 @@ export type SettingsUpdateRequest = {
 
 /** Get the JSON schema for an app's settings (filtered by user permissions) */
 export async function getSettingsSchema(app: string): Promise<unknown> {
-	const res = await fetch(
+	const res = await authFetch(
 		controlPlaneApiUrl(`/api/settings/schema?app=${encodeURIComponent(app)}`),
 		{
 			credentials: "include",
@@ -1020,7 +1093,7 @@ export async function getSettingsSchema(app: string): Promise<unknown> {
 
 /** Get current settings values for an app */
 export async function getSettingsValues(app: string): Promise<SettingsValues> {
-	const res = await fetch(
+	const res = await authFetch(
 		controlPlaneApiUrl(`/api/settings?app=${encodeURIComponent(app)}`),
 		{
 			credentials: "include",
@@ -1035,7 +1108,7 @@ export async function updateSettingsValues(
 	app: string,
 	updates: SettingsUpdateRequest,
 ): Promise<SettingsValues> {
-	const res = await fetch(
+	const res = await authFetch(
 		controlPlaneApiUrl(`/api/settings?app=${encodeURIComponent(app)}`),
 		{
 			method: "PATCH",
@@ -1050,7 +1123,7 @@ export async function updateSettingsValues(
 
 /** Reload settings from disk (admin only) */
 export async function reloadSettings(app: string): Promise<void> {
-	const res = await fetch(
+	const res = await authFetch(
 		controlPlaneApiUrl(`/api/settings/reload?app=${encodeURIComponent(app)}`),
 		{
 			method: "POST",
@@ -1104,7 +1177,7 @@ export type MainChatAssistantInfo = {
 
 /** List all Main Chat assistants for the current user */
 export async function listMainChatAssistants(): Promise<string[]> {
-	const res = await fetch(controlPlaneApiUrl("/api/main"), {
+	const res = await authFetch(controlPlaneApiUrl("/api/main"), {
 		credentials: "include",
 	});
 	if (!res.ok) throw new Error(await readApiError(res));
@@ -1119,7 +1192,7 @@ export async function listMainChatAssistants(): Promise<string[]> {
 export async function getMainChatAssistant(
 	name: string,
 ): Promise<MainChatAssistantInfo> {
-	const res = await fetch(controlPlaneApiUrl("/api/main"), {
+	const res = await authFetch(controlPlaneApiUrl("/api/main"), {
 		credentials: "include",
 	});
 	if (!res.ok) throw new Error(await readApiError(res));
@@ -1134,7 +1207,7 @@ export async function getMainChatAssistant(
 export async function createMainChatAssistant(
 	name: string,
 ): Promise<MainChatAssistantInfo> {
-	const res = await fetch(controlPlaneApiUrl("/api/main"), {
+	const res = await authFetch(controlPlaneApiUrl("/api/main"), {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify({ name }),
@@ -1148,7 +1221,7 @@ export async function createMainChatAssistant(
 export async function updateMainChatAssistant(
 	name: string,
 ): Promise<MainChatAssistantInfo> {
-	const res = await fetch(controlPlaneApiUrl("/api/main"), {
+	const res = await authFetch(controlPlaneApiUrl("/api/main"), {
 		method: "PATCH",
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify({ name }),
@@ -1160,7 +1233,7 @@ export async function updateMainChatAssistant(
 
 /** Delete a Main Chat assistant */
 export async function deleteMainChatAssistant(name: string): Promise<void> {
-	const res = await fetch(controlPlaneApiUrl("/api/main"), {
+	const res = await authFetch(controlPlaneApiUrl("/api/main"), {
 		method: "DELETE",
 		credentials: "include",
 	});
@@ -1173,7 +1246,7 @@ export async function getMainChatHistory(
 	name: string,
 	limit = 20,
 ): Promise<MainChatHistoryEntry[]> {
-	const res = await fetch(
+	const res = await authFetch(
 		controlPlaneApiUrl(`/api/main/history?limit=${limit}`),
 		{ credentials: "include" },
 	);
@@ -1191,7 +1264,7 @@ export async function addMainChatHistory(
 		meta?: Record<string, unknown>;
 	},
 ): Promise<MainChatHistoryEntry> {
-	const res = await fetch(controlPlaneApiUrl("/api/main/history"), {
+	const res = await authFetch(controlPlaneApiUrl("/api/main/history"), {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify(entry),
@@ -1205,7 +1278,7 @@ export async function addMainChatHistory(
 export async function listMainChatSessions(
 	name: string,
 ): Promise<MainChatSession[]> {
-	const res = await fetch(controlPlaneApiUrl("/api/main/sessions"), {
+	const res = await authFetch(controlPlaneApiUrl("/api/main/sessions"), {
 		credentials: "include",
 	});
 	if (!res.ok) throw new Error(await readApiError(res));
@@ -1217,7 +1290,7 @@ export async function registerMainChatSession(
 	name: string,
 	session: { session_id: string; title?: string },
 ): Promise<MainChatSession> {
-	const res = await fetch(controlPlaneApiUrl("/api/main/sessions"), {
+	const res = await authFetch(controlPlaneApiUrl("/api/main/sessions"), {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify(session),
@@ -1231,7 +1304,7 @@ export async function registerMainChatSession(
 export async function getLatestMainChatSession(
 	name: string,
 ): Promise<MainChatSession | null> {
-	const res = await fetch(controlPlaneApiUrl("/api/main/sessions/latest"), {
+	const res = await authFetch(controlPlaneApiUrl("/api/main/sessions/latest"), {
 		credentials: "include",
 	});
 	if (!res.ok) throw new Error(await readApiError(res));
@@ -1240,7 +1313,7 @@ export async function getLatestMainChatSession(
 
 /** Export history as JSONL */
 export async function exportMainChatHistory(name: string): Promise<string> {
-	const res = await fetch(controlPlaneApiUrl("/api/main/export"), {
+	const res = await authFetch(controlPlaneApiUrl("/api/main/export"), {
 		credentials: "include",
 	});
 	if (!res.ok) throw new Error(await readApiError(res));
@@ -1334,7 +1407,7 @@ export type PiCompactionResult = {
 
 /** Check Pi session status */
 export async function getMainChatPiStatus(): Promise<MainChatPiStatus> {
-	const res = await fetch(controlPlaneApiUrl("/api/main/pi/status"), {
+	const res = await authFetch(controlPlaneApiUrl("/api/main/pi/status"), {
 		credentials: "include",
 	});
 	if (!res.ok) throw new Error(await readApiError(res));
@@ -1343,7 +1416,7 @@ export async function getMainChatPiStatus(): Promise<MainChatPiStatus> {
 
 /** Start or get Pi session */
 export async function startMainChatPiSession(): Promise<PiState> {
-	const res = await fetch(controlPlaneApiUrl("/api/main/pi/session"), {
+	const res = await authFetch(controlPlaneApiUrl("/api/main/pi/session"), {
 		method: "POST",
 		credentials: "include",
 	});
@@ -1353,7 +1426,7 @@ export async function startMainChatPiSession(): Promise<PiState> {
 
 /** Get Pi session state */
 export async function getMainChatPiState(): Promise<PiState> {
-	const res = await fetch(controlPlaneApiUrl("/api/main/pi/state"), {
+	const res = await authFetch(controlPlaneApiUrl("/api/main/pi/state"), {
 		credentials: "include",
 	});
 	if (!res.ok) throw new Error(await readApiError(res));
@@ -1362,7 +1435,7 @@ export async function getMainChatPiState(): Promise<PiState> {
 
 /** Send a prompt to Pi */
 export async function sendMainChatPiPrompt(message: string): Promise<void> {
-	const res = await fetch(controlPlaneApiUrl("/api/main/pi/prompt"), {
+	const res = await authFetch(controlPlaneApiUrl("/api/main/pi/prompt"), {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify({ message }),
@@ -1373,7 +1446,7 @@ export async function sendMainChatPiPrompt(message: string): Promise<void> {
 
 /** Abort current Pi operation */
 export async function abortMainChatPi(): Promise<void> {
-	const res = await fetch(controlPlaneApiUrl("/api/main/pi/abort"), {
+	const res = await authFetch(controlPlaneApiUrl("/api/main/pi/abort"), {
 		method: "POST",
 		credentials: "include",
 	});
@@ -1382,7 +1455,7 @@ export async function abortMainChatPi(): Promise<void> {
 
 /** Get Pi messages */
 export async function getMainChatPiMessages(): Promise<PiAgentMessage[]> {
-	const res = await fetch(controlPlaneApiUrl("/api/main/pi/messages"), {
+	const res = await authFetch(controlPlaneApiUrl("/api/main/pi/messages"), {
 		credentials: "include",
 	});
 	if (!res.ok) throw new Error(await readApiError(res));
@@ -1393,7 +1466,7 @@ export async function getMainChatPiMessages(): Promise<PiAgentMessage[]> {
 export async function compactMainChatPi(
 	customInstructions?: string,
 ): Promise<PiCompactionResult> {
-	const res = await fetch(controlPlaneApiUrl("/api/main/pi/compact"), {
+	const res = await authFetch(controlPlaneApiUrl("/api/main/pi/compact"), {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify({ custom_instructions: customInstructions }),
@@ -1408,7 +1481,7 @@ export async function setMainChatPiModel(
 	provider: string,
 	modelId: string,
 ): Promise<PiState> {
-	const res = await fetch(controlPlaneApiUrl("/api/main/pi/model"), {
+	const res = await authFetch(controlPlaneApiUrl("/api/main/pi/model"), {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify({ provider, model_id: modelId }),
@@ -1420,7 +1493,7 @@ export async function setMainChatPiModel(
 
 /** Get available Pi models */
 export async function getMainChatPiModels(): Promise<PiModelInfo[]> {
-	const res = await fetch(controlPlaneApiUrl("/api/main/pi/models"), {
+	const res = await authFetch(controlPlaneApiUrl("/api/main/pi/models"), {
 		credentials: "include",
 	});
 	if (!res.ok) throw new Error(await readApiError(res));
@@ -1430,7 +1503,7 @@ export async function getMainChatPiModels(): Promise<PiModelInfo[]> {
 
 /** Get available Pi prompt commands (slash templates). */
 export async function getMainChatPiCommands(): Promise<PiPromptCommandInfo[]> {
-	const res = await fetch(controlPlaneApiUrl("/api/main/pi/commands"), {
+	const res = await authFetch(controlPlaneApiUrl("/api/main/pi/commands"), {
 		credentials: "include",
 	});
 	if (!res.ok) throw new Error(await readApiError(res));
@@ -1440,7 +1513,7 @@ export async function getMainChatPiCommands(): Promise<PiPromptCommandInfo[]> {
 
 /** Start new Pi session (clear history) */
 export async function newMainChatPiSession(): Promise<PiState> {
-	const res = await fetch(controlPlaneApiUrl("/api/main/pi/new"), {
+	const res = await authFetch(controlPlaneApiUrl("/api/main/pi/new"), {
 		method: "POST",
 		credentials: "include",
 	});
@@ -1450,7 +1523,7 @@ export async function newMainChatPiSession(): Promise<PiState> {
 
 /** Get Pi session stats */
 export async function getMainChatPiStats(): Promise<PiSessionStats> {
-	const res = await fetch(controlPlaneApiUrl("/api/main/pi/stats"), {
+	const res = await authFetch(controlPlaneApiUrl("/api/main/pi/stats"), {
 		credentials: "include",
 	});
 	if (!res.ok) throw new Error(await readApiError(res));
@@ -1459,7 +1532,7 @@ export async function getMainChatPiStats(): Promise<PiSessionStats> {
 
 /** Close Pi session */
 export async function closeMainChatPiSession(): Promise<void> {
-	const res = await fetch(controlPlaneApiUrl("/api/main/pi/session"), {
+	const res = await authFetch(controlPlaneApiUrl("/api/main/pi/session"), {
 		method: "DELETE",
 		credentials: "include",
 	});
@@ -1469,13 +1542,19 @@ export async function closeMainChatPiSession(): Promise<void> {
 /** Create WebSocket connection to Pi for streaming events */
 export function createMainChatPiWebSocket(): WebSocket {
 	const baseUrl = getControlPlaneBaseUrl();
+	let wsUrl: string;
 	if (baseUrl) {
 		// Direct connection to control plane - no /api prefix needed
-		const wsUrl = `${baseUrl.replace(/^http/, "ws")}/main/pi/ws`;
-		return new WebSocket(wsUrl);
+		wsUrl = `${baseUrl.replace(/^http/, "ws")}/main/pi/ws`;
+	} else {
+		// Proxied via frontend dev server - use /api prefix
+		wsUrl = `${window.location.origin.replace(/^http/, "ws")}/api/main/pi/ws`;
 	}
-	// Proxied via frontend dev server - use /api prefix
-	const wsUrl = `${window.location.origin.replace(/^http/, "ws")}/api/main/pi/ws`;
+	// Add auth token as query parameter for WebSocket auth
+	const token = getAuthToken();
+	if (token) {
+		wsUrl = `${wsUrl}?token=${encodeURIComponent(token)}`;
+	}
 	return new WebSocket(wsUrl);
 }
 
@@ -1492,7 +1571,7 @@ export type MainChatDbMessage = {
 
 /** Get persistent chat history from database (survives Pi session restarts) */
 export async function getMainChatPiHistory(): Promise<MainChatDbMessage[]> {
-	const res = await fetch(controlPlaneApiUrl("/api/main/pi/history"), {
+	const res = await authFetch(controlPlaneApiUrl("/api/main/pi/history"), {
 		credentials: "include",
 	});
 	if (!res.ok) throw new Error(await readApiError(res));
@@ -1501,7 +1580,7 @@ export async function getMainChatPiHistory(): Promise<MainChatDbMessage[]> {
 
 /** Clear persistent chat history */
 export async function clearMainChatPiHistory(): Promise<{ deleted: number }> {
-	const res = await fetch(controlPlaneApiUrl("/api/main/pi/history"), {
+	const res = await authFetch(controlPlaneApiUrl("/api/main/pi/history"), {
 		method: "DELETE",
 		credentials: "include",
 	});
@@ -1511,7 +1590,7 @@ export async function clearMainChatPiHistory(): Promise<{ deleted: number }> {
 
 /** Add a session separator to history (marks new conversation start) */
 export async function addMainChatPiSeparator(): Promise<MainChatDbMessage> {
-	const res = await fetch(
+	const res = await authFetch(
 		controlPlaneApiUrl("/api/main/pi/history/separator"),
 		{
 			method: "POST",

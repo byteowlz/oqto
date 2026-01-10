@@ -11,7 +11,7 @@ use super::super::agent::AgentService;
 use crate::agent_rpc::AgentBackend;
 use crate::auth::AuthState;
 use crate::invite::InviteCodeRepository;
-use crate::main_chat::{MainChatService, MainChatPiService};
+use crate::main_chat::{MainChatPiService, MainChatService};
 use crate::session::SessionService;
 use crate::session_ui::SessionAutoAttachMode;
 use crate::settings::SettingsService;

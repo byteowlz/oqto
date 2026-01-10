@@ -291,24 +291,58 @@ pub fn create_router(state: AppState) -> Router {
         )
         // Main Chat Pi routes (Pi agent runtime for Main Chat)
         .route("/main/pi/status", get(main_chat_pi_handlers::get_pi_status))
-        .route("/main/pi/session", post(main_chat_pi_handlers::start_pi_session).delete(main_chat_pi_handlers::close_session))
+        .route(
+            "/main/pi/session",
+            post(main_chat_pi_handlers::start_pi_session)
+                .delete(main_chat_pi_handlers::close_session),
+        )
         .route("/main/pi/state", get(main_chat_pi_handlers::get_pi_state))
         .route("/main/pi/prompt", post(main_chat_pi_handlers::send_prompt))
         .route("/main/pi/abort", post(main_chat_pi_handlers::abort_pi))
-        .route("/main/pi/messages", get(main_chat_pi_handlers::get_messages))
-        .route("/main/pi/compact", post(main_chat_pi_handlers::compact_session))
+        .route(
+            "/main/pi/messages",
+            get(main_chat_pi_handlers::get_messages),
+        )
+        .route(
+            "/main/pi/compact",
+            post(main_chat_pi_handlers::compact_session),
+        )
         .route("/main/pi/model", post(main_chat_pi_handlers::set_model))
-        .route("/main/pi/models", get(main_chat_pi_handlers::get_available_models))
-        .route("/main/pi/commands", get(main_chat_pi_handlers::get_prompt_commands))
+        .route(
+            "/main/pi/models",
+            get(main_chat_pi_handlers::get_available_models),
+        )
+        .route(
+            "/main/pi/commands",
+            get(main_chat_pi_handlers::get_prompt_commands),
+        )
         .route("/main/pi/new", post(main_chat_pi_handlers::new_session))
-        .route("/main/pi/stats", get(main_chat_pi_handlers::get_session_stats))
+        .route(
+            "/main/pi/stats",
+            get(main_chat_pi_handlers::get_session_stats),
+        )
         .route("/main/pi/ws", get(main_chat_pi_handlers::ws_handler))
-        .route("/main/pi/history", get(main_chat_pi_handlers::get_history).delete(main_chat_pi_handlers::clear_history))
-        .route("/main/pi/history/separator", post(main_chat_pi_handlers::add_separator))
+        .route(
+            "/main/pi/history",
+            get(main_chat_pi_handlers::get_history).delete(main_chat_pi_handlers::clear_history),
+        )
+        .route(
+            "/main/pi/history/separator",
+            post(main_chat_pi_handlers::add_separator),
+        )
         // TRX (issue tracking) routes - workspace-based
-        .route("/workspace/trx/issues", get(handlers::list_trx_issues).post(handlers::create_trx_issue))
-        .route("/workspace/trx/issues/{issue_id}", get(handlers::get_trx_issue).put(handlers::update_trx_issue))
-        .route("/workspace/trx/issues/{issue_id}/close", post(handlers::close_trx_issue))
+        .route(
+            "/workspace/trx/issues",
+            get(handlers::list_trx_issues).post(handlers::create_trx_issue),
+        )
+        .route(
+            "/workspace/trx/issues/{issue_id}",
+            get(handlers::get_trx_issue).put(handlers::update_trx_issue),
+        )
+        .route(
+            "/workspace/trx/issues/{issue_id}/close",
+            post(handlers::close_trx_issue),
+        )
         .route("/workspace/trx/sync", post(handlers::sync_trx))
         // AgentRPC routes (unified backend API)
         .route("/agent/health", get(handlers::agent_health))
