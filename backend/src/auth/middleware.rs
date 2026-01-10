@@ -254,7 +254,8 @@ where
 /// Supports multiple auth methods in priority order:
 /// 1. Authorization: Bearer <token> header
 /// 2. auth_token cookie
-/// 3. X-Dev-User header (dev mode only)
+/// 3. token query parameter (for WebSocket connections)
+/// 4. X-Dev-User header (dev mode only)
 pub async fn auth_middleware(
     State(auth): State<AuthState>,
     mut req: axum::http::Request<axum::body::Body>,
@@ -273,6 +274,25 @@ pub async fn auth_middleware(
         .and_then(|h| h.to_str().ok())
         .and_then(|cookie_header| token_from_cookie_header(cookie_header, "auth_token"));
 
+    // Allow token in query parameter for WebSocket connections (browsers can't set headers on WS)
+    let query_token = req
+        .uri()
+        .query()
+        .and_then(|q| {
+            q.split('&')
+                .find_map(|pair| {
+                    let mut parts = pair.splitn(2, '=');
+                    let key = parts.next()?;
+                    let value = parts.next()?;
+                    if key == "token" {
+                        // URL decode the token value
+                        urlencoding::decode(value).ok().map(|s| s.into_owned())
+                    } else {
+                        None
+                    }
+                })
+        });
+
     let claims = if let Some(header) = auth_header {
         // Parse Bearer token
         let token = bearer_token_from_header(header)?;
@@ -280,6 +300,8 @@ pub async fn auth_middleware(
         // Validate token
         auth.validate_token(token)?
     } else if let Some(token) = cookie_token {
+        auth.validate_token(token)?
+    } else if let Some(ref token) = query_token {
         auth.validate_token(token)?
     } else if auth.is_dev_mode() {
         // In dev mode, allow X-Dev-User header

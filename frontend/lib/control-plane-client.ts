@@ -16,8 +16,13 @@ export function setAuthToken(token: string | null): void {
 	if (typeof window === "undefined") return;
 	if (token) {
 		localStorage.setItem(AUTH_TOKEN_KEY, token);
+		// Also set as cookie for WebSocket auth (browsers can't set headers on WS)
+		// Use SameSite=Lax to allow cross-origin requests from same site
+		document.cookie = `auth_token=${encodeURIComponent(token)}; path=/; SameSite=Lax`;
 	} else {
 		localStorage.removeItem(AUTH_TOKEN_KEY);
+		// Clear the cookie
+		document.cookie = "auth_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
 	}
 }
 

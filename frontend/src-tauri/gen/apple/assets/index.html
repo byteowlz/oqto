@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="de" data-preload="true">
+  <head>
+    <script>
+      (function () {
+        const root = document.documentElement;
+        let storedTheme = null;
+        try {
+          storedTheme = localStorage.getItem("theme");
+        } catch {
+          storedTheme = null;
+        }
+        const prefersDark =
+          window.matchMedia &&
+          window.matchMedia("(prefers-color-scheme: dark)").matches;
+        const theme =
+          storedTheme === "light" ||
+          storedTheme === "dark" ||
+          storedTheme === "system"
+            ? storedTheme
+            : "dark";
+        const isDark = theme === "dark" || (theme === "system" && prefersDark);
+        if (isDark) root.classList.add("dark");
+        root.style.background = isDark ? "#000" : "#fff";
+        root.style.colorScheme = isDark ? "dark" : "light";
+        document.addEventListener("DOMContentLoaded", () => {
+          document.body.style.background = isDark ? "#000" : "#fff";
+          const appRoot = document.getElementById("root");
+          if (appRoot) appRoot.style.background = isDark ? "#000" : "#fff";
+          const logo = document.getElementById("preload-logo");
+          if (logo) logo.src = isDark ? "/octo_logo_new_white.png" : "/octo_logo_new_black.png";
+        });
+      })();
+    </script>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
+    />
+    <meta name="theme-color" content="#000000" />
+    <style>
+      html[data-preload],
+      html[data-preload] body,
+      html[data-preload] #root {
+        background: inherit !important;
+      }
+      html.dark[data-preload],
+      html.dark[data-preload] body,
+      html.dark[data-preload] #root {
+        background: #000 !important;
+      }
+      html:not(.dark)[data-preload],
+      html:not(.dark)[data-preload] body,
+      html:not(.dark)[data-preload] #root {
+        background: #fff !important;
+      }
+      #preload {
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 16px;
+      }
+      #preload-logo {
+        height: 48px;
+        width: auto;
+        animation: preload-pulse 2s ease-in-out infinite;
+      }
+      @keyframes preload-pulse {
+        0%, 100% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0.5;
+        }
+      }
+    </style>
+    <title>octo - got tentacles?</title>
+    <script type="module" crossorigin src="/assets/index-RFMA0cqP.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-DY1psRM1.css">
+  </head>
+  <body class="font-mono antialiased bg-background text-foreground">
+    <div id="root">
+      <div id="preload" aria-live="polite">
+        <img id="preload-logo" src="/octo_logo_new_white.png" alt="OCTO" />
+      </div>
+    </div>
+    <div id="error-display" style="display:none; position:fixed; top:0; left:0; right:0; background:red; color:white; padding:20px; font-size:12px; white-space:pre-wrap; z-index:99999; max-height:50vh; overflow:auto;"></div>
+    <script>
+      window.onerror = function(msg, url, line, col, error) {
+        var el = document.getElementById('error-display');
+        el.style.display = 'block';
+        el.textContent = 'ERROR: ' + msg + '\nURL: ' + url + '\nLine: ' + line + '\nCol: ' + col + '\n' + (error ? error.stack : '');
+        return false;
+      };
+      window.addEventListener('unhandledrejection', function(e) {
+        var el = document.getElementById('error-display');
+        el.style.display = 'block';
+        el.textContent = 'PROMISE ERROR: ' + (e.reason ? (e.reason.message || e.reason) : e) + '\n' + (e.reason && e.reason.stack ? e.reason.stack : '');
+      });
+    </script>
+  </body>
+</html>

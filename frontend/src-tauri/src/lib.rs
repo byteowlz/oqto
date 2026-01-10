@@ -21,6 +21,39 @@ struct DiscoveredServer {
     response_time_ms: u64,
 }
 
+/// Simple ping command to test if Tauri invoke is working
+#[tauri::command]
+fn ping() -> String {
+    log::info!("[ping] Tauri invoke is working!");
+    "pong".to_string()
+}
+
+/// Test HTTP connectivity with detailed error logging
+#[tauri::command]
+async fn test_http(url: String) -> Result<String, String> {
+    log::info!("[test_http] Testing connection to: {}", url);
+    
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| {
+            log::error!("[test_http] Failed to build client: {}", e);
+            format!("Client build error: {}", e)
+        })?;
+    
+    match client.get(&url).send().await {
+        Ok(response) => {
+            let status = response.status();
+            log::info!("[test_http] Success! Status: {}", status);
+            Ok(format!("Connected! Status: {}", status))
+        }
+        Err(e) => {
+            log::error!("[test_http] Connection failed: {}", e);
+            Err(format!("Connection error: {}", e))
+        }
+    }
+}
+
 #[tauri::command]
 async fn http_get(url: String, headers: Option<HashMap<String, String>>) -> Result<HttpResponse, String> {
     log::info!("[http_get] Request to: {}", url);
@@ -314,6 +347,8 @@ fn parse_sse_message(message: &str) -> Option<String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_cors_fetch::init())
+        .plugin(tauri_plugin_websocket::init())
         .setup(|app| {
             // Always enable logging for debugging (including release builds)
             app.handle().plugin(
@@ -321,9 +356,12 @@ pub fn run() {
                     .level(log::LevelFilter::Debug)
                     .build(),
             )?;
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            ping,
+            test_http,
             http_get,
             http_post,
             http_put,

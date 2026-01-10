@@ -1,5 +1,9 @@
-// Tauri fetch polyfill MUST be imported first to intercept all fetch calls
+// Tauri polyfills MUST be imported first to intercept all fetch/WebSocket calls
 import "@/lib/tauri-fetch-polyfill";
+import { installTauriWebSocketPolyfill } from "@/lib/tauri-websocket-polyfill";
+
+// Install WebSocket polyfill for Tauri iOS
+installTauriWebSocketPolyfill();
 
 import { Providers } from "@/components/providers";
 import { initI18n } from "@/lib/i18n";

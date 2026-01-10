@@ -1,119 +1,11 @@
 /**
  * Tauri Fetch Polyfill + Global Auth Interceptor
  *
- * This module does two things:
- * 1. When running in Tauri, replaces window.fetch with native HTTP via reqwest
- *    (bypasses iOS WebView restrictions)
- * 2. Automatically injects Authorization headers for all control plane requests
- *    (works in both Tauri and browser)
+ * Automatically injects Authorization headers for all control plane requests.
+ * Works in both Tauri and browser environments.
  *
  * Import this once at app startup (e.g., in main.tsx) BEFORE any fetch calls.
- *
- * Usage:
- *   import "@/lib/tauri-fetch-polyfill";
  */
-
-import { invoke } from "@tauri-apps/api/core";
-
-interface TauriHttpResponse {
-	status: number;
-	data: unknown;
-	ok: boolean;
-}
-
-/**
- * Check if running in Tauri environment
- */
-function isTauri(): boolean {
-	return typeof window !== "undefined" && "__TAURI__" in window;
-}
-
-/**
- * Convert Headers object to plain Record
- */
-function headersToRecord(
-	headers?: HeadersInit,
-): Record<string, string> | undefined {
-	if (!headers) return undefined;
-
-	if (headers instanceof Headers) {
-		const record: Record<string, string> = {};
-		headers.forEach((value, key) => {
-			record[key] = value;
-		});
-		return record;
-	}
-
-	if (Array.isArray(headers)) {
-		const record: Record<string, string> = {};
-		for (const [key, value] of headers) {
-			record[key] = value;
-		}
-		return record;
-	}
-
-	return headers as Record<string, string>;
-}
-
-/**
- * Parse body from RequestInit
- */
-async function parseBody(body: BodyInit | null | undefined): Promise<unknown> {
-	if (!body) return null;
-
-	if (typeof body === "string") {
-		try {
-			return JSON.parse(body);
-		} catch {
-			return body;
-		}
-	}
-
-	if (body instanceof FormData) {
-		const obj: Record<string, unknown> = {};
-		body.forEach((value, key) => {
-			obj[key] = value;
-		});
-		return obj;
-	}
-
-	if (body instanceof URLSearchParams) {
-		const obj: Record<string, string> = {};
-		body.forEach((value, key) => {
-			obj[key] = value;
-		});
-		return obj;
-	}
-
-	if (body instanceof Blob) {
-		const text = await body.text();
-		try {
-			return JSON.parse(text);
-		} catch {
-			return text;
-		}
-	}
-
-	return body;
-}
-
-/**
- * Create a Response-like object from Tauri HTTP response
- */
-function createResponse(tauriResponse: TauriHttpResponse): Response {
-	const body =
-		typeof tauriResponse.data === "string"
-			? tauriResponse.data
-			: JSON.stringify(tauriResponse.data);
-
-	return new Response(body, {
-		status: tauriResponse.status,
-		statusText: tauriResponse.ok ? "OK" : "Error",
-		headers: {
-			"Content-Type": "application/json",
-		},
-	});
-}
 
 // Store original fetch before we potentially override it
 const originalFetch =
@@ -143,33 +35,23 @@ function getControlPlaneBaseUrl(): string {
 
 /**
  * Check if a URL should receive auth headers.
- * Returns true for control plane URLs (both direct and proxied).
  */
 function shouldAddAuth(url: string): boolean {
-	// Skip auth endpoints - they're used to GET the token
 	if (url.includes("/auth/login") || url.includes("/auth/register")) {
 		return false;
 	}
 
 	const controlPlaneBase = getControlPlaneBaseUrl();
 
-	// Direct control plane URL (e.g., http://archlinux:8080/...)
 	if (controlPlaneBase && url.startsWith(controlPlaneBase)) {
 		return true;
 	}
 
-	// Proxied via dev server (e.g., /api/... on same origin)
 	if (url.startsWith("/api/") || url.includes("/api/")) {
 		return true;
 	}
 
-	// Workspace file operations (proxied)
-	if (url.includes("/workspace/")) {
-		return true;
-	}
-
-	// Session-specific proxied endpoints
-	if (url.includes("/session/")) {
+	if (url.includes("/workspace/") || url.includes("/session/")) {
 		return true;
 	}
 
@@ -198,21 +80,17 @@ function addAuthHeaders(init?: RequestInit): RequestInit {
 		headers = { ...existingHeaders };
 	}
 
-	// Don't override if already set
 	if (!headers.Authorization && !headers.authorization) {
 		headers.Authorization = `Bearer ${token}`;
 	}
 
-	return {
-		...init,
-		headers,
-	};
+	return { ...init, headers };
 }
 
 /**
- * Tauri-native fetch implementation
+ * Fetch with auth interceptor
  */
-async function tauriFetch(
+async function fetchWithAuth(
 	input: RequestInfo | URL,
 	init?: RequestInit,
 ): Promise<Response> {
@@ -223,126 +101,29 @@ async function tauriFetch(
 				? input.toString()
 				: input.url;
 
-	// Add auth headers if needed
 	const authInit = shouldAddAuth(url) ? addAuthHeaders(init) : init;
-
-	const method = authInit?.method?.toUpperCase() || "GET";
-	const headers = headersToRecord(authInit?.headers);
-
-	// Add Content-Type for JSON bodies if not present
-	const finalHeaders = { ...headers };
-	if (
-		init?.body &&
-		!finalHeaders["Content-Type"] &&
-		!finalHeaders["content-type"]
-	) {
-		finalHeaders["Content-Type"] = "application/json";
-	}
-
-	console.log("[tauri-fetch]", method, url);
-
-	try {
-		let response: TauriHttpResponse;
-
-		switch (method) {
-			case "GET":
-				response = await invoke<TauriHttpResponse>("http_get", {
-					url,
-					headers: Object.keys(finalHeaders).length > 0 ? finalHeaders : null,
-				});
-				console.log("[tauri-fetch] Response:", response.status, response.ok);
-				break;
-
-			case "POST": {
-				const body = await parseBody(authInit?.body);
-				response = await invoke<TauriHttpResponse>("http_post", {
-					url,
-					body: body ?? {},
-					headers: Object.keys(finalHeaders).length > 0 ? finalHeaders : null,
-				});
-				break;
-			}
-
-			case "PUT": {
-				const body = await parseBody(authInit?.body);
-				response = await invoke<TauriHttpResponse>("http_put", {
-					url,
-					body: body ?? {},
-					headers: Object.keys(finalHeaders).length > 0 ? finalHeaders : null,
-				});
-				break;
-			}
-
-			case "PATCH": {
-				const body = await parseBody(authInit?.body);
-				response = await invoke<TauriHttpResponse>("http_patch", {
-					url,
-					body: body ?? {},
-					headers: Object.keys(finalHeaders).length > 0 ? finalHeaders : null,
-				});
-				break;
-			}
-
-			case "DELETE":
-				response = await invoke<TauriHttpResponse>("http_delete", {
-					url,
-					headers: Object.keys(finalHeaders).length > 0 ? finalHeaders : null,
-				});
-				break;
-
-			default:
-				// Fall back to native fetch for unsupported methods
-				console.warn("[tauri-fetch] Unsupported method, falling back:", method);
-				return originalFetch(input, authInit);
-		}
-
-		return createResponse(response);
-	} catch (error) {
-		console.error("[tauri-fetch] Request failed:", method, url, error);
-		// Re-throw as TypeError to match fetch API behavior
-		throw new TypeError(`Network request failed: ${String(error)}`);
-	}
-}
-
-/**
- * Browser fetch with auth interceptor (for non-Tauri environments)
- */
-async function browserFetchWithAuth(
-	input: RequestInfo | URL,
-	init?: RequestInit,
-): Promise<Response> {
-	const url =
-		typeof input === "string"
-			? input
-			: input instanceof URL
-				? input.toString()
-				: input.url;
-
-	// Add auth headers if needed
-	const authInit = shouldAddAuth(url) ? addAuthHeaders(init) : init;
-
 	return originalFetch(input, authInit);
 }
 
 /**
- * Install the fetch interceptor.
- * - In Tauri: uses native HTTP via reqwest + adds auth
- * - In browser: uses native fetch + adds auth
+ * Check if running in Tauri environment
  */
-export function installTauriFetchPolyfill(): void {
-	if (isTauri()) {
-		console.log(
-			"[tauri-fetch] Installing Tauri fetch polyfill for native HTTP",
-		);
-		window.fetch = tauriFetch;
-	} else {
-		console.log("[tauri-fetch] Installing auth interceptor for browser fetch");
-		window.fetch = browserFetchWithAuth;
-	}
+export function isTauri(): boolean {
+	if (typeof window === "undefined") return false;
+	if ("__TAURI__" in window) return true;
+	if ("__TAURI_INTERNALS__" in window) return true;
+	return false;
 }
 
 /**
- * Restore original fetch (useful for testing)
+ * Install the fetch interceptor
+ */
+export function installTauriFetchPolyfill(): void {
+	window.fetch = fetchWithAuth;
+}
+
+/**
+ * Restore original fetch
  */
 export function restoreFetch(): void {
 	window.fetch = originalFetch;
@@ -351,5 +132,4 @@ export function restoreFetch(): void {
 // Auto-install on import
 installTauriFetchPolyfill();
 
-// Also export for manual use
-export { tauriFetch, originalFetch, isTauri };
+export { originalFetch };
