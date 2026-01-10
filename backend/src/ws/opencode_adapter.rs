@@ -204,18 +204,47 @@ impl OpenCodeAdapter {
             }
         };
 
-        // Translate based on event type
-        match event_type {
-            "message" | "" => self.translate_message_event(&parsed),
-            _ => {
-                // Unknown event type, forward as-is
-                Some(WsEvent::OpencodeEvent {
-                    session_id,
-                    event_type: event_type.to_string(),
-                    data: parsed,
-                })
+        // Prefer the embedded "type" field when present (OpenCode message events).
+        if parsed.get("type").and_then(|v| v.as_str()).is_some() {
+            return self.translate_message_event(&parsed);
+        }
+
+        // Some OpenCode servers emit non-"message" SSE events with no "type" field.
+        // Wrap those so we can reuse the message translation path.
+        if !event_type.is_empty() && event_type != "message" {
+            debug!(
+                "Wrapping SSE event '{}' without type for session {}",
+                event_type, session_id
+            );
+            let wrapped = if let Some(map) = parsed.as_object() {
+                if map.contains_key("properties") {
+                    let mut obj = map.clone();
+                    obj.insert("type".to_string(), Value::String(event_type.to_string()));
+                    Value::Object(obj)
+                } else {
+                    let mut obj = serde_json::Map::new();
+                    obj.insert("type".to_string(), Value::String(event_type.to_string()));
+                    obj.insert("properties".to_string(), Value::Object(map.clone()));
+                    Value::Object(obj)
+                }
+            } else {
+                let mut obj = serde_json::Map::new();
+                obj.insert("type".to_string(), Value::String(event_type.to_string()));
+                obj.insert("properties".to_string(), parsed.clone());
+                Value::Object(obj)
+            };
+
+            if let Some(ws_event) = self.translate_message_event(&wrapped) {
+                return Some(ws_event);
             }
         }
+
+        // Fallback: forward unknown events as-is
+        Some(WsEvent::OpencodeEvent {
+            session_id,
+            event_type: event_type.to_string(),
+            data: parsed,
+        })
     }
 
     /// Translate an OpenCode message event.
@@ -555,6 +584,55 @@ mod tests {
             }
         });
         let event = adapter.translate_message_event(&data);
+        match event {
+            Some(WsEvent::SessionError {
+                error_type,
+                message,
+                ..
+            }) => {
+                assert_eq!(error_type, "BadRequest");
+                assert_eq!(message, "Nope");
+            }
+            other => panic!("Expected session error, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_sse_session_error_event_without_type() {
+        let adapter = adapter();
+        let data = json!({
+            "error": {
+                "name": "BadRequest",
+                "data": { "message": "Nope" }
+            }
+        });
+        let event = adapter.translate_sse_event("session.error", &data.to_string());
+        match event {
+            Some(WsEvent::SessionError {
+                error_type,
+                message,
+                ..
+            }) => {
+                assert_eq!(error_type, "BadRequest");
+                assert_eq!(message, "Nope");
+            }
+            other => panic!("Expected session error, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_sse_event_with_type_field_from_non_message_event() {
+        let adapter = adapter();
+        let data = json!({
+            "type": "session.error",
+            "properties": {
+                "error": {
+                    "name": "BadRequest",
+                    "data": { "message": "Nope" }
+                }
+            }
+        });
+        let event = adapter.translate_sse_event("error", &data.to_string());
         match event {
             Some(WsEvent::SessionError {
                 error_type,

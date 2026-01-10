@@ -324,7 +324,7 @@ impl SessionService {
 
         // Check for running sessions that need upgrading
         let running_sessions = self.repo.list_running_for_user(user_id).await?;
-        for session in running_sessions {
+        if let Some(session) = running_sessions.into_iter().next() {
             if let Ok(Some(_new_digest)) = self.check_for_image_update(&session.id).await {
                 info!(
                     "Running session {} has outdated image, auto-upgrading...",
