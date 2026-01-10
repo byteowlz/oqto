@@ -5,6 +5,7 @@
  * It doesn't trigger TTS responses - it's just for typing by speaking.
  */
 
+import { voiceProxyWsUrl } from "@/lib/control-plane-client";
 import { STTService } from "@/lib/voice";
 import type { VoiceConfig } from "@/lib/voice/types";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -106,7 +107,8 @@ export function useDictation(options: UseDictationOptions): UseDictationReturn {
 
 		if (!sttRef.current) {
 			const timeout = vadTimeoutMs ?? config.vad_timeout_ms ?? 2000;
-			sttRef.current = new STTService(config.stt_url, timeout);
+			// Use voiceProxyWsUrl to get the full URL with auth token
+			sttRef.current = new STTService(voiceProxyWsUrl("stt"), timeout);
 			sttRef.current.setCallbacks({
 				onWord: (word) => {
 					// Update ref immediately (always accurate)

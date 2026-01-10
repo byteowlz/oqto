@@ -947,7 +947,14 @@ export function memoriesWorkspaceBaseUrl(workspacePath: string) {
 }
 
 export function voiceProxyWsUrl(kind: "stt" | "tts"): string {
-	return toAbsoluteWsUrl(controlPlaneApiUrl(`/api/voice/${kind}`));
+	let wsUrl = toAbsoluteWsUrl(controlPlaneApiUrl(`/api/voice/${kind}`));
+	// Add auth token for WebSocket authentication
+	const token = getAuthToken();
+	if (token) {
+		const separator = wsUrl.includes("?") ? "&" : "?";
+		wsUrl = `${wsUrl}${separator}token=${encodeURIComponent(token)}`;
+	}
+	return wsUrl;
 }
 
 // ============================================================================
