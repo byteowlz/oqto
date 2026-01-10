@@ -2,8 +2,8 @@
 
 use axum::{
     extract::{
-        ws::{Message, WebSocket},
         State, WebSocketUpgrade,
+        ws::{Message, WebSocket},
     },
     response::Response,
 };
@@ -51,13 +51,20 @@ async fn handle_ws_connection(
     let (mut event_rx, conn_id) = hub.register_connection(&user_id);
 
     // Send connected message
-    if let Err(e) = sender
-        .send(Message::Text(
-            serde_json::to_string(&WsEvent::Connected).unwrap().into(),
-        ))
-        .await
-    {
-        error!("Failed to send connected message to user {}: {}", user_id, e);
+    let connected_json = match serde_json::to_string(&WsEvent::Connected) {
+        Ok(json) => json,
+        Err(e) => {
+            error!("Failed to serialize connected event for {}: {}", user_id, e);
+            hub.unregister_connection(&user_id, conn_id);
+            return;
+        }
+    };
+
+    if let Err(e) = sender.send(Message::Text(connected_json.into())).await {
+        error!(
+            "Failed to send connected message to user {}: {}",
+            user_id, e
+        );
         hub.unregister_connection(&user_id, conn_id);
         return;
     }
@@ -71,7 +78,7 @@ async fn handle_ws_connection(
     let send_task = tokio::spawn(async move {
         // Ping ticker
         let mut ping_interval = tokio::time::interval(Duration::from_secs(PING_INTERVAL_SECS));
-        
+
         loop {
             tokio::select! {
                 // Events from the per-connection channel
@@ -87,7 +94,7 @@ async fn handle_ws_connection(
                         break;
                     }
                 }
-                
+
                 // Events from the hub broadcast channel (session events)
                 Ok((session_id, event)) = hub_events.recv() => {
                     // Only forward events for sessions this user is subscribed to
@@ -104,12 +111,19 @@ async fn handle_ws_connection(
                         }
                     }
                 }
-                
+
                 // Periodic ping
                 _ = ping_interval.tick() => {
-                    let ping_json = serde_json::to_string(&WsEvent::Ping).unwrap();
-                    if sender.send(Message::Text(ping_json.into())).await.is_err() {
-                        break;
+                    match serde_json::to_string(&WsEvent::Ping) {
+                        Ok(ping_json) => {
+                            if sender.send(Message::Text(ping_json.into())).await.is_err() {
+                                break;
+                            }
+                        }
+                        Err(e) => {
+                            warn!("Failed to serialize ping event: {}", e);
+                            break;
+                        }
                     }
                 }
             }
@@ -168,12 +182,12 @@ async fn handle_ws_connection(
 
     // Clean up
     send_task.abort();
-    
+
     // Unsubscribe from all sessions
     for session_id in hub.user_subscriptions(&user_id) {
         hub.unsubscribe_session(&user_id, &session_id);
     }
-    
+
     hub.unregister_connection(&user_id, conn_id);
     info!("WebSocket connection closed for user {}", user_id);
 }
@@ -215,7 +229,7 @@ async fn handle_command(
                 user_id,
                 WsEvent::SessionUpdated {
                     session_id: session_id.clone(),
-                    status: format!("{:?}", opencode_session.status),
+                    status: opencode_session.status.to_string(),
                     workspace_path: opencode_session.workspace_path.clone(),
                 },
             )
@@ -252,12 +266,12 @@ async fn handle_command(
             // Send message via HTTP to opencode
             let client = reqwest::Client::new();
             let url = format!(
-                "http://localhost:{}/session/message/async",
-                opencode_session.opencode_port
+                "http://localhost:{}/session/{}/prompt_async",
+                opencode_session.opencode_port, session_id
             );
 
             let request_body = serde_json::json!({
-                "message": message
+                "parts": [{"type": "text", "text": message}]
             });
 
             // Add directory header for workspace scoping
@@ -296,14 +310,30 @@ async fn handle_command(
             // Send parts via HTTP to opencode
             let client = reqwest::Client::new();
             let url = format!(
-                "http://localhost:{}/session/message/parts/async",
-                opencode_session.opencode_port
+                "http://localhost:{}/session/{}/prompt_async",
+                opencode_session.opencode_port, session_id
             );
+
+            // Convert WS parts to opencode prompt parts format
+            let opencode_parts: Vec<serde_json::Value> = parts
+                .iter()
+                .map(|p| match p {
+                    super::types::MessagePart::Text { text } => {
+                        serde_json::json!({"type": "text", "text": text})
+                    }
+                    super::types::MessagePart::Image { url } => {
+                        serde_json::json!({"type": "image", "url": url})
+                    }
+                    super::types::MessagePart::File { path } => {
+                        serde_json::json!({"type": "file", "path": path})
+                    }
+                })
+                .collect();
 
             let response = client
                 .post(&url)
                 .header("x-opencode-directory", &session.workspace_path)
-                .json(&serde_json::json!({ "parts": parts }))
+                .json(&serde_json::json!({ "parts": opencode_parts }))
                 .send()
                 .await?;
 
@@ -335,8 +365,8 @@ async fn handle_command(
             // Send abort via HTTP to opencode
             let client = reqwest::Client::new();
             let url = format!(
-                "http://localhost:{}/session/abort",
-                opencode_session.opencode_port
+                "http://localhost:{}/session/{}/abort",
+                opencode_session.opencode_port, session_id
             );
 
             let response = client
@@ -377,8 +407,8 @@ async fn handle_command(
             // Send permission reply via HTTP to opencode
             let client = reqwest::Client::new();
             let url = format!(
-                "http://localhost:{}/permission/{}",
-                opencode_session.opencode_port, permission_id
+                "http://localhost:{}/session/{}/permissions/{}",
+                opencode_session.opencode_port, session_id, permission_id
             );
 
             let result = if granted { "granted" } else { "denied" };
@@ -393,6 +423,90 @@ async fn handle_command(
                 let status = response.status();
                 let body = response.text().await.unwrap_or_default();
                 anyhow::bail!("Failed to reply to permission: {} - {}", status, body);
+            }
+
+            Ok(())
+        }
+
+        WsCommand::QuestionReply {
+            session_id,
+            request_id,
+            answers,
+        } => {
+            // Verify user is subscribed
+            if !hub.is_subscribed(user_id, &session_id) {
+                anyhow::bail!("Not subscribed to session");
+            }
+
+            // Get session
+            let session = state
+                .sessions
+                .get_session(&session_id)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("Session not found"))?;
+
+            // Get opencode session
+            let opencode_session = state.sessions.get_or_create_opencode_session().await?;
+
+            // Send question reply via HTTP to opencode
+            let client = reqwest::Client::new();
+            let url = format!(
+                "http://localhost:{}/question/{}/reply",
+                opencode_session.opencode_port, request_id
+            );
+
+            let response = client
+                .post(&url)
+                .header("x-opencode-directory", &session.workspace_path)
+                .json(&serde_json::json!({ "answers": answers }))
+                .send()
+                .await?;
+
+            if !response.status().is_success() {
+                let status = response.status();
+                let body = response.text().await.unwrap_or_default();
+                anyhow::bail!("Failed to reply to question: {} - {}", status, body);
+            }
+
+            Ok(())
+        }
+
+        WsCommand::QuestionReject {
+            session_id,
+            request_id,
+        } => {
+            // Verify user is subscribed
+            if !hub.is_subscribed(user_id, &session_id) {
+                anyhow::bail!("Not subscribed to session");
+            }
+
+            // Get session
+            let session = state
+                .sessions
+                .get_session(&session_id)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("Session not found"))?;
+
+            // Get opencode session
+            let opencode_session = state.sessions.get_or_create_opencode_session().await?;
+
+            // Send question reject via HTTP to opencode
+            let client = reqwest::Client::new();
+            let url = format!(
+                "http://localhost:{}/question/{}/reject",
+                opencode_session.opencode_port, request_id
+            );
+
+            let response = client
+                .post(&url)
+                .header("x-opencode-directory", &session.workspace_path)
+                .send()
+                .await?;
+
+            if !response.status().is_success() {
+                let status = response.status();
+                let body = response.text().await.unwrap_or_default();
+                anyhow::bail!("Failed to reject question: {} - {}", status, body);
             }
 
             Ok(())
@@ -417,7 +531,7 @@ async fn handle_command(
                 user_id,
                 WsEvent::SessionUpdated {
                     session_id,
-                    status: format!("{:?}", opencode_session.status),
+                    status: opencode_session.status.to_string(),
                     workspace_path: session.workspace_path,
                 },
             )
@@ -432,7 +546,7 @@ async fn handle_command(
         } => {
             // This is a pull-based request - the client wants messages
             // We'll fetch them and send via the MessageUpdated event
-            
+
             // Verify user is subscribed
             if !hub.is_subscribed(user_id, &session_id) {
                 anyhow::bail!("Not subscribed to session");
@@ -451,8 +565,8 @@ async fn handle_command(
             // Fetch messages from opencode
             let client = reqwest::Client::new();
             let url = format!(
-                "http://localhost:{}/session/messages",
-                opencode_session.opencode_port
+                "http://localhost:{}/session/{}/message",
+                opencode_session.opencode_port, session_id
             );
 
             let response = client
@@ -463,7 +577,7 @@ async fn handle_command(
 
             if response.status().is_success() {
                 let messages: serde_json::Value = response.json().await?;
-                
+
                 // Send each message as an update
                 if let Some(msgs) = messages.as_array() {
                     for msg in msgs {
@@ -478,6 +592,58 @@ async fn handle_command(
                     }
                 }
             }
+
+            Ok(())
+        }
+
+        WsCommand::A2uiAction {
+            session_id,
+            surface_id,
+            request_id,
+            action_name,
+            source_component_id,
+            context,
+        } => {
+            tracing::info!(
+                session_id = %session_id,
+                surface_id = %surface_id,
+                action_name = %action_name,
+                source_component_id = %source_component_id,
+                "Received A2UI action"
+            );
+
+            // Convert context from Value to HashMap<String, Value>
+            let context_map: std::collections::HashMap<String, serde_json::Value> = context
+                .as_object()
+                .map(|obj| obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+                .unwrap_or_default();
+
+            // If this is a blocking request, forward to the pending request handler
+            if let Some(ref req_id) = request_id {
+                let handled = crate::api::a2ui::handle_a2ui_action(
+                    &state.pending_a2ui_requests,
+                    req_id,
+                    action_name.clone(),
+                    source_component_id.clone(),
+                    context_map,
+                );
+
+                if handled {
+                    tracing::info!(request_id = %req_id, "A2UI blocking request resolved");
+                }
+
+                // Send resolved event to frontend
+                hub.send_to_user(
+                    user_id,
+                    WsEvent::A2uiActionResolved {
+                        session_id: session_id.clone(),
+                        request_id: req_id.clone(),
+                    },
+                )
+                .await;
+            }
+
+            let _ = surface_id; // Silence unused warning
 
             Ok(())
         }

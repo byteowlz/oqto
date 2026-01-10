@@ -47,6 +47,8 @@ export interface VoiceSettings {
 	visualizer: VisualizerType;
 	/** TTS muted */
 	muted: boolean;
+	/** Microphone muted */
+	micMuted: boolean;
 	/** Continuous mode enabled */
 	continuous: boolean;
 	/** Selected voice ID */
@@ -77,6 +79,7 @@ export interface VisualizerVoiceSettings {
 export const DEFAULT_VOICE_SETTINGS: VoiceSettings = {
 	visualizer: "orb",
 	muted: false,
+	micMuted: false,
 	continuous: true,
 	voice: "af_heart",
 	speed: 1.0,

@@ -1,0 +1,101 @@
+# Sandbox configuration for Octo agents.
+# Copy this file to ~/.config/octo/sandbox.toml to enable process sandboxing.
+#
+# SECURITY NOTE: This file is kept separate from config.toml intentionally.
+# Agents can modify config.toml but cannot modify sandbox.toml, ensuring
+# they cannot weaken their own security restrictions.
+#
+# Sandboxing uses:
+# - Linux: bubblewrap (bwrap) for namespace isolation
+# - macOS: sandbox-exec with Seatbelt profiles
+
+"$schema" = "https://raw.githubusercontent.com/byteowlz/schemas/refs/heads/main/octo/octo.sandbox.schema.json"
+
+# Enable process sandboxing (default: false)
+enabled = false
+
+# Sandbox profile preset (default: "development")
+# - "minimal": Protects secrets only (~/.ssh, ~/.gnupg, ~/.aws)
+# - "development": Protects secrets, allows tool installation (~/.cargo, ~/.npm, etc.)
+# - "strict": Network isolation, PID isolation, limited write access
+profile = "development"
+
+# Paths to deny read access (blocks these completely)
+# Agents cannot read files in these directories
+deny_read = ["~/.ssh", "~/.gnupg", "~/.aws"]
+
+# Paths to allow write access (in addition to workspace directory)
+# Note: ~/.config/octo is allowed so agents can modify config.toml
+allow_write = [
+  "~/.cargo",
+  "~/.rustup",
+  "~/.local/bin",
+  "~/.npm",
+  "~/.bun",
+  "~/.config/octo", # Allow config.toml edits
+  "/tmp",
+]
+
+# Paths to explicitly deny write access (takes precedence over allow_write)
+# This file is always protected automatically, but you can add more paths here
+deny_write = [
+  "~/.config/octo/sandbox.toml", # Always protected (added automatically)
+]
+
+# Isolate network namespace (default: false)
+# When true, the sandboxed process has no network access
+isolate_network = false
+
+# Isolate PID namespace (default: true)
+# When true, the sandboxed process cannot see other processes
+isolate_pid = true
+
+# Additional paths to bind read-only into the sandbox
+# extra_ro_bind = ["/opt/shared-tools"]
+
+# Additional paths to bind read-write into the sandbox
+# extra_rw_bind = ["/data/shared"]
+
+# ==============================================================================
+# Per-Workspace Configuration
+# ==============================================================================
+#
+# Workspaces can have their own sandbox settings in .octo/sandbox.toml
+# These settings are MERGED with global config using these rules:
+#
+# - deny_read: Union (workspace can ADD paths, not remove)
+# - deny_write: Union (workspace can ADD paths, not remove)
+# - allow_write: Intersection (must be allowed by BOTH global and workspace)
+# - isolate_network/isolate_pid: OR (if either enables, it's enabled)
+#
+# This ensures workspaces can only STRENGTHEN security, never weaken it.
+#
+# Example workspace .octo/sandbox.toml:
+#
+#   # This project doesn't need network access
+#   isolate_network = true
+#
+#   # Also protect kubernetes config for this project
+#   deny_read = ["~/.kube"]
+#
+# ==============================================================================
+# Profile Presets
+# ==============================================================================
+#
+# "minimal" profile:
+#   deny_read = ["~/.ssh", "~/.gnupg", "~/.aws"]
+#   allow_write = ["/tmp"]
+#   isolate_network = false
+#   isolate_pid = false
+#
+# "development" profile (default):
+#   deny_read = ["~/.ssh", "~/.gnupg", "~/.aws"]
+#   allow_write = ["~/.cargo", "~/.rustup", "~/.local/bin", "~/.npm", "~/.bun", "~/.config/octo", "/tmp"]
+#   isolate_network = false
+#   isolate_pid = true
+#
+# "strict" profile:
+#   deny_read = ["~/.ssh", "~/.gnupg", "~/.aws", "~/.kube"]
+#   allow_write = ["/tmp"]
+#   isolate_network = true
+#   isolate_pid = true

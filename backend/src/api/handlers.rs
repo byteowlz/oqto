@@ -1,8 +1,10 @@
 //! API request handlers.
 
 use std::convert::Infallible;
+use std::fs;
+use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::Context;
 use axum::{
@@ -13,12 +15,15 @@ use axum::{
     response::{AppendHeaders, IntoResponse},
 };
 use serde::{Deserialize, Serialize};
+use tokio::process::Command;
 use tokio::sync::Mutex;
 use tokio_stream::{StreamExt, wrappers::IntervalStream};
 use tracing::{info, instrument, warn};
+use uuid::Uuid;
 
 use crate::auth::{AuthError, CurrentUser, RequireAdmin};
 use crate::observability::{CpuTimes, HostMetrics, read_host_metrics};
+use crate::projects::{self, ProjectMetadata};
 use crate::session::{CreateSessionRequest, Session, SessionContainerStats};
 use crate::session_ui::SessionAutoAttachMode;
 use crate::user::{
@@ -48,6 +53,61 @@ pub async fn health() -> Json<HealthResponse> {
     Json(HealthResponse {
         status: "ok".to_string(),
         version: env!("CARGO_PKG_VERSION").to_string(),
+    })
+}
+
+/// Admin stats response for status bar.
+#[derive(Debug, Serialize)]
+pub struct AdminStatsResponse {
+    pub total_users: i64,
+    pub active_users: i64,
+    pub total_sessions: i64,
+    pub running_sessions: i64,
+}
+
+/// Get admin stats for the status bar (admin only).
+#[instrument(skip(state, _user))]
+pub async fn get_admin_stats(
+    State(state): State<AppState>,
+    RequireAdmin(_user): RequireAdmin,
+) -> ApiResult<Json<AdminStatsResponse>> {
+    // Get user stats
+    let user_stats = state.users.get_stats().await?;
+
+    // Get session counts
+    let sessions = state.sessions.list_sessions().await?;
+    let total_sessions = sessions.len() as i64;
+    let running_sessions = sessions
+        .iter()
+        .filter(|s| s.status == crate::session::SessionStatus::Running)
+        .count() as i64;
+
+    // Count active users (users with running sessions)
+    let active_user_ids: std::collections::HashSet<_> = sessions
+        .iter()
+        .filter(|s| s.status == crate::session::SessionStatus::Running)
+        .map(|s| s.user_id.as_str())
+        .collect();
+    let active_users = active_user_ids.len() as i64;
+
+    Ok(Json(AdminStatsResponse {
+        total_users: user_stats.total,
+        active_users,
+        total_sessions,
+        running_sessions,
+    }))
+}
+
+/// WebSocket debug info.
+#[derive(Debug, Serialize)]
+pub struct WsDebugResponse {
+    pub connected_users: usize,
+}
+
+/// Get WebSocket debug info (public, harmless).
+pub async fn ws_debug(State(state): State<AppState>) -> Json<WsDebugResponse> {
+    Json(WsDebugResponse {
+        connected_users: state.ws_hub.connected_user_count(),
     })
 }
 
@@ -419,6 +479,24 @@ pub struct ProjectLogo {
     pub variant: String,
 }
 
+/// Project template entry.
+#[derive(Debug, Serialize)]
+pub struct ProjectTemplateEntry {
+    pub name: String,
+    pub path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+/// Request to create a project from a template.
+#[derive(Debug, Deserialize)]
+pub struct CreateProjectFromTemplateRequest {
+    pub template_path: String,
+    pub project_path: String,
+    #[serde(default)]
+    pub shared: bool,
+}
+
 /// Find the best logo file for a project directory.
 /// Prefers SVG over PNG, and "white" variants for dark UI.
 fn find_project_logo(project_path: &std::path::Path, project_name: &str) -> Option<ProjectLogo> {
@@ -497,6 +575,105 @@ fn find_project_logo(project_path: &std::path::Path, project_name: &str) -> Opti
     })
 }
 
+fn sanitize_relative_path(raw: &str) -> Result<PathBuf, ApiError> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err(ApiError::bad_request("path is required"));
+    }
+    let normalized = trimmed.replace('\\', "/");
+    if std::path::Path::new(&normalized).is_absolute() {
+        return Err(ApiError::bad_request("invalid path"));
+    }
+    let normalized = normalized.trim_matches('/');
+    let rel_path = PathBuf::from(normalized);
+    if rel_path.is_absolute()
+        || rel_path
+            .components()
+            .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        return Err(ApiError::bad_request("invalid path"));
+    }
+    Ok(rel_path)
+}
+
+fn read_template_description(template_dir: &std::path::Path) -> Option<String> {
+    let metadata_path = template_dir.join("template.json");
+    let contents = fs::read_to_string(metadata_path).ok()?;
+    let value: serde_json::Value = serde_json::from_str(&contents).ok()?;
+    value
+        .get("description")
+        .and_then(|v| v.as_str())
+        .map(|v| v.to_string())
+}
+
+fn copy_template_dir(src: &std::path::Path, dest: &std::path::Path) -> Result<(), ApiError> {
+    fs::create_dir_all(dest)
+        .map_err(|e| ApiError::internal(format!("Failed to create project dir: {}", e)))?;
+    for entry in fs::read_dir(src)
+        .map_err(|e| ApiError::internal(format!("Failed to read template dir: {}", e)))?
+    {
+        let entry = entry
+            .map_err(|e| ApiError::internal(format!("Failed to read template entry: {}", e)))?;
+        let file_type = entry.file_type().map_err(|e| {
+            ApiError::internal(format!("Failed to read template entry type: {}", e))
+        })?;
+        let file_name = entry.file_name();
+        if file_name.to_string_lossy() == ".git" {
+            continue;
+        }
+        let src_path = entry.path();
+        let dest_path = dest.join(&file_name);
+        if file_type.is_dir() {
+            copy_template_dir(&src_path, &dest_path)?;
+        } else if file_type.is_file() {
+            fs::copy(&src_path, &dest_path)
+                .map_err(|e| ApiError::internal(format!("Failed to copy template file: {}", e)))?;
+        }
+    }
+    Ok(())
+}
+
+async fn maybe_sync_templates_repo(state: &AppState) -> Result<(), ApiError> {
+    let repo_path = match state.templates.repo_path.as_ref() {
+        Some(path) => path.clone(),
+        None => return Ok(()),
+    };
+    if !state.templates.sync_on_list {
+        return Ok(());
+    }
+    let should_sync = {
+        let last_sync = state.templates.last_sync.lock().await;
+        match *last_sync {
+            Some(instant) if instant.elapsed() < state.templates.sync_interval => false,
+            _ => true,
+        }
+    };
+    if !should_sync {
+        return Ok(());
+    }
+    if !repo_path.join(".git").exists() {
+        return Err(ApiError::internal("templates repo is not a git repository"));
+    }
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(&repo_path)
+        .arg("pull")
+        .arg("--ff-only")
+        .output()
+        .await
+        .map_err(|e| ApiError::internal(format!("Failed to run git pull: {}", e)))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(ApiError::internal(format!(
+            "Failed to sync templates repo: {}",
+            stderr.trim()
+        )));
+    }
+    let mut last_sync = state.templates.last_sync.lock().await;
+    *last_sync = Some(Instant::now());
+    Ok(())
+}
+
 /// List directories under the workspace root (projects view).
 #[instrument(skip(state))]
 pub async fn list_workspace_dirs(
@@ -544,6 +721,161 @@ pub async fn list_workspace_dirs(
 
     dirs.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(Json(dirs))
+}
+
+/// List available project templates from the templates repository.
+#[instrument(skip(state))]
+pub async fn list_project_templates(
+    State(state): State<AppState>,
+) -> ApiResult<Json<Vec<ProjectTemplateEntry>>> {
+    let repo_path = match state.templates.repo_path.as_ref() {
+        Some(path) => path.clone(),
+        None => return Ok(Json(Vec::new())),
+    };
+
+    maybe_sync_templates_repo(&state).await?;
+
+    let entries = fs::read_dir(&repo_path)
+        .with_context(|| format!("reading templates directory {:?}", repo_path))
+        .map_err(|e| ApiError::internal(format!("Failed to list templates: {}", e)))?;
+
+    let mut templates = Vec::new();
+    for entry in entries {
+        let entry =
+            entry.map_err(|e| ApiError::internal(format!("Failed to read template: {}", e)))?;
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name.starts_with('.') {
+            continue;
+        }
+        let rel = path
+            .strip_prefix(&repo_path)
+            .unwrap_or(&path)
+            .to_string_lossy()
+            .to_string();
+        let description = read_template_description(&path);
+        templates.push(ProjectTemplateEntry {
+            name,
+            path: rel,
+            description,
+        });
+    }
+    templates.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(Json(templates))
+}
+
+/// Create a new project from a template.
+#[instrument(skip(state, request))]
+pub async fn create_project_from_template(
+    State(state): State<AppState>,
+    Json(request): Json<CreateProjectFromTemplateRequest>,
+) -> ApiResult<Json<WorkspaceDirEntry>> {
+    let repo_path = state
+        .templates
+        .repo_path
+        .clone()
+        .ok_or_else(|| ApiError::bad_request("templates repo not configured"))?;
+
+    maybe_sync_templates_repo(&state).await?;
+
+    let template_rel = sanitize_relative_path(&request.template_path)?;
+    let template_dir = repo_path.join(&template_rel);
+    if !template_dir.is_dir() {
+        return Err(ApiError::bad_request("template not found"));
+    }
+
+    let project_rel = sanitize_relative_path(&request.project_path)?;
+    let is_current_dir = project_rel
+        .components()
+        .all(|c| matches!(c, std::path::Component::CurDir));
+    if is_current_dir {
+        return Err(ApiError::bad_request("project path is required"));
+    }
+
+    let workspace_root = state.sessions.workspace_root();
+    let target_dir = workspace_root.join(&project_rel);
+    if target_dir.exists() {
+        return Err(ApiError::bad_request("project path already exists"));
+    }
+
+    copy_template_dir(&template_dir, &target_dir)?;
+
+    let status = Command::new("git")
+        .arg("init")
+        .arg("--branch")
+        .arg("main")
+        .current_dir(&target_dir)
+        .status()
+        .await
+        .map_err(|e| ApiError::internal(format!("Failed to init git repo: {}", e)))?;
+    if !status.success() {
+        return Err(ApiError::internal("git init failed"));
+    }
+
+    if request.shared {
+        let metadata = ProjectMetadata {
+            project_id: format!("proj_{}", Uuid::new_v4().simple()),
+            shared: true,
+            template_path: Some(template_rel.to_string_lossy().to_string()),
+        };
+        projects::write_metadata(&target_dir, &metadata)
+            .context("writing project metadata")
+            .map_err(|e| ApiError::internal(format!("Failed to write project metadata: {}", e)))?;
+    }
+
+    let name = project_rel
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("project")
+        .to_string();
+    let rel_path = project_rel.to_string_lossy().to_string();
+    let logo = find_project_logo(&target_dir, &name);
+    Ok(Json(WorkspaceDirEntry {
+        name,
+        path: if rel_path.is_empty() {
+            ".".to_string()
+        } else {
+            rel_path
+        },
+        entry_type: "directory".to_string(),
+        logo,
+    }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{copy_template_dir, sanitize_relative_path};
+    use std::fs;
+
+    #[test]
+    fn sanitize_relative_path_rejects_invalid() {
+        assert!(sanitize_relative_path("../foo").is_err());
+        assert!(sanitize_relative_path("/absolute").is_err());
+    }
+
+    #[test]
+    fn sanitize_relative_path_accepts_nested() {
+        let path = sanitize_relative_path("projects/demo").unwrap();
+        assert_eq!(path.to_string_lossy(), "projects/demo");
+    }
+
+    #[test]
+    fn copy_template_dir_skips_git_dir() {
+        let temp = tempfile::tempdir().unwrap();
+        let src = temp.path().join("template");
+        let dest = temp.path().join("project");
+        fs::create_dir_all(src.join(".git")).unwrap();
+        fs::write(src.join("README.md"), "hello").unwrap();
+        fs::write(src.join(".git").join("HEAD"), "ref").unwrap();
+
+        copy_template_dir(&src, &dest).unwrap();
+
+        assert!(dest.join("README.md").exists());
+        assert!(!dest.join(".git").exists());
+    }
 }
 
 /// Serve a project logo file.
@@ -923,6 +1255,22 @@ pub async fn admin_force_stop_session(
 
     info!(session_id = %session_id, "Admin force stopped session");
     Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Debug, Serialize)]
+pub struct LocalCleanupResponse {
+    cleared: usize,
+}
+
+/// Clean up orphan local session processes (admin only).
+#[instrument(skip(state, _user))]
+pub async fn admin_cleanup_local_sessions(
+    State(state): State<AppState>,
+    RequireAdmin(_user): RequireAdmin,
+) -> ApiResult<Json<LocalCleanupResponse>> {
+    let cleared = state.sessions.cleanup_local_orphans().await?;
+    info!(cleared, "Admin cleaned up local sessions");
+    Ok(Json(LocalCleanupResponse { cleared }))
 }
 
 /// SSE metrics stream (admin only).
@@ -2236,10 +2584,14 @@ pub struct TrxIssue {
 impl From<TrxIssueRaw> for TrxIssue {
     fn from(raw: TrxIssueRaw) -> Self {
         // Extract parent_id from dependencies with type "parent_child"
+        // Also check "blocks" type where depends_on_id is a prefix of issue_id (hierarchical IDs like octo-k8z1.1 -> octo-k8z1)
         let parent_id = raw
             .dependencies
             .iter()
-            .find(|d| d.dep_type == "parent_child")
+            .find(|d| {
+                d.dep_type == "parent_child"
+                    || (d.dep_type == "blocks" && raw.id.starts_with(&format!("{}.", d.depends_on_id)))
+            })
             .map(|d| d.depends_on_id.clone());
 
         // Extract blocked_by from dependencies with type "blocks"
@@ -2316,10 +2668,7 @@ pub struct TrxWorkspaceQuery {
 }
 
 /// Execute trx command in a workspace directory.
-async fn exec_trx_command(
-    workspace_path: &str,
-    args: &[&str],
-) -> Result<String, ApiError> {
+async fn exec_trx_command(workspace_path: &str, args: &[&str]) -> Result<String, ApiError> {
     use tokio::process::Command;
 
     let output = Command::new("trx")
@@ -2332,7 +2681,10 @@ async fn exec_trx_command(
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(ApiError::internal(format!("trx command failed: {}", stderr)));
+        return Err(ApiError::internal(format!(
+            "trx command failed: {}",
+            stderr
+        )));
     }
 
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
@@ -2345,13 +2697,13 @@ pub async fn list_trx_issues(
     Query(query): Query<TrxWorkspaceQuery>,
 ) -> ApiResult<Json<Vec<TrxIssue>>> {
     let output = exec_trx_command(&query.workspace_path, &["list"]).await?;
-    
+
     // Parse the raw JSON output and transform to API format
     let raw_issues: Vec<TrxIssueRaw> = serde_json::from_str(&output)
         .map_err(|e| ApiError::internal(format!("Failed to parse trx output: {}", e)))?;
-    
+
     let issues: Vec<TrxIssue> = raw_issues.into_iter().map(TrxIssue::from).collect();
-    
+
     Ok(Json(issues))
 }
 
@@ -2363,10 +2715,10 @@ pub async fn get_trx_issue(
     Query(query): Query<TrxWorkspaceQuery>,
 ) -> ApiResult<Json<TrxIssue>> {
     let output = exec_trx_command(&query.workspace_path, &["show", &issue_id]).await?;
-    
+
     let raw_issue: TrxIssueRaw = serde_json::from_str(&output)
         .map_err(|e| ApiError::internal(format!("Failed to parse trx output: {}", e)))?;
-    
+
     Ok(Json(TrxIssue::from(raw_issue)))
 }
 
@@ -2377,32 +2729,26 @@ pub async fn create_trx_issue(
     Query(query): Query<TrxWorkspaceQuery>,
     Json(request): Json<CreateTrxIssueRequest>,
 ) -> ApiResult<Json<TrxIssue>> {
-    let mut args = vec![
-        "create",
-        &request.title,
-        "-t",
-        &request.issue_type,
-        "-p",
-    ];
+    let mut args = vec!["create", &request.title, "-t", &request.issue_type, "-p"];
     let priority_str = request.priority.to_string();
     args.push(&priority_str);
-    
+
     if let Some(ref desc) = request.description {
         args.push("-d");
         args.push(desc);
     }
-    
+
     if let Some(ref parent) = request.parent_id {
         args.push("--parent");
         args.push(parent);
     }
-    
+
     let output = exec_trx_command(&query.workspace_path, &args).await?;
-    
+
     // trx create --json returns the created issue
     let raw_issue: TrxIssueRaw = serde_json::from_str(&output)
         .map_err(|e| ApiError::internal(format!("Failed to parse trx output: {}", e)))?;
-    
+
     let issue = TrxIssue::from(raw_issue);
     info!(issue_id = %issue.id, "Created TRX issue");
     Ok(Json(issue))
@@ -2417,7 +2763,7 @@ pub async fn update_trx_issue(
     Json(request): Json<UpdateTrxIssueRequest>,
 ) -> ApiResult<Json<TrxIssue>> {
     let mut args = vec!["update", &issue_id];
-    
+
     // Build args based on what's being updated
     let title_arg;
     if let Some(ref title) = request.title {
@@ -2425,38 +2771,36 @@ pub async fn update_trx_issue(
         title_arg = title.clone();
         args.push(&title_arg);
     }
-    
+
     let desc_arg;
     if let Some(ref desc) = request.description {
         args.push("--description");
         desc_arg = desc.clone();
         args.push(&desc_arg);
     }
-    
+
     let status_arg;
     if let Some(ref status) = request.status {
         args.push("--status");
         status_arg = status.clone();
         args.push(&status_arg);
     }
-    
+
     let priority_arg;
     if let Some(priority) = request.priority {
         args.push("-p");
         priority_arg = priority.to_string();
         args.push(&priority_arg);
     }
-    
+
     let output = exec_trx_command(&query.workspace_path, &args).await?;
-    
-    // Parse the updated issue (trx update --json returns array with single issue)
-    let raw_issues: Vec<TrxIssueRaw> = serde_json::from_str(&output)
+
+    // Parse the updated issue (trx update --json returns a single issue object)
+    let raw_issue: TrxIssueRaw = serde_json::from_str(&output)
         .map_err(|e| ApiError::internal(format!("Failed to parse trx output: {}", e)))?;
-    
-    let issue = raw_issues.into_iter().next()
-        .map(TrxIssue::from)
-        .ok_or_else(|| ApiError::internal("No issue returned from trx update"))?;
-    
+
+    let issue = TrxIssue::from(raw_issue);
+
     info!(issue_id = %issue.id, "Updated TRX issue");
     Ok(Json(issue))
 }
@@ -2470,24 +2814,22 @@ pub async fn close_trx_issue(
     Json(request): Json<CloseTrxIssueRequest>,
 ) -> ApiResult<Json<TrxIssue>> {
     let mut args = vec!["close", &issue_id];
-    
+
     let reason_arg;
     if let Some(ref reason) = request.reason {
         args.push("-r");
         reason_arg = reason.clone();
         args.push(&reason_arg);
     }
-    
+
     let output = exec_trx_command(&query.workspace_path, &args).await?;
-    
-    // Parse the closed issue
-    let raw_issues: Vec<TrxIssueRaw> = serde_json::from_str(&output)
+
+    // Parse the closed issue (trx close --json returns a single issue object)
+    let raw_issue: TrxIssueRaw = serde_json::from_str(&output)
         .map_err(|e| ApiError::internal(format!("Failed to parse trx output: {}", e)))?;
-    
-    let issue = raw_issues.into_iter().next()
-        .map(TrxIssue::from)
-        .ok_or_else(|| ApiError::internal("No issue returned from trx close"))?;
-    
+
+    let issue = TrxIssue::from(raw_issue);
+
     info!(issue_id = %issue.id, "Closed TRX issue");
     Ok(Json(issue))
 }
@@ -2515,4 +2857,247 @@ pub async fn sync_trx(
 
     info!("TRX synced");
     Ok(Json(serde_json::json!({ "synced": true })))
+}
+
+// ============================================================================
+// CASS (Coding Agent Session Search) handlers
+// ============================================================================
+
+/// Query parameters for cass search.
+#[derive(Debug, Deserialize)]
+pub struct CassSearchQuery {
+    /// Search query string.
+    pub q: String,
+    /// Agent filter: "all", "pi_agent", "opencode", or comma-separated list.
+    #[serde(default = "default_agent_filter")]
+    pub agents: String,
+    /// Maximum number of results.
+    #[serde(default = "default_search_limit")]
+    pub limit: usize,
+}
+
+fn default_agent_filter() -> String {
+    "all".to_string()
+}
+
+fn default_search_limit() -> usize {
+    50
+}
+
+/// A single search hit from cass.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CassSearchHit {
+    /// Agent type (pi_agent, opencode, etc.)
+    pub agent: String,
+    /// Path to the session file.
+    pub source_path: String,
+    /// Session identifier extracted from path.
+    #[serde(default)]
+    pub session_id: Option<String>,
+    /// Workspace/project directory.
+    #[serde(default)]
+    pub workspace: Option<String>,
+    /// Message ID if available.
+    #[serde(default)]
+    pub message_id: Option<String>,
+    /// Line number in the source file.
+    #[serde(default)]
+    pub line_number: Option<usize>,
+    /// Matched content snippet.
+    #[serde(default)]
+    pub snippet: Option<String>,
+    /// Search relevance score.
+    #[serde(default)]
+    pub score: Option<f64>,
+    /// Timestamp of the message (cass uses created_at).
+    #[serde(default, alias = "created_at")]
+    pub timestamp: Option<i64>,
+    /// Role (user, assistant, system).
+    #[serde(default)]
+    pub role: Option<String>,
+    /// Session/conversation title if available.
+    #[serde(default)]
+    pub title: Option<String>,
+    /// Full content (cass returns this)
+    #[serde(default)]
+    pub content: Option<String>,
+    /// Match type from cass
+    #[serde(default)]
+    pub match_type: Option<String>,
+    /// Origin kind from cass
+    #[serde(default)]
+    pub origin_kind: Option<String>,
+    /// Source ID from cass
+    #[serde(default)]
+    pub source_id: Option<String>,
+}
+
+/// Response from cass search.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CassSearchResponse {
+    pub hits: Vec<CassSearchHit>,
+    /// Total count from cass (field is "count" in cass output)
+    #[serde(default, alias = "count")]
+    pub total: Option<usize>,
+    #[serde(default)]
+    pub elapsed_ms: Option<u64>,
+    #[serde(default)]
+    pub cursor: Option<String>,
+}
+
+/// Search across coding agent sessions using cass.
+#[instrument(skip(_state))]
+pub async fn search_sessions(
+    State(_state): State<AppState>,
+    Query(query): Query<CassSearchQuery>,
+) -> ApiResult<Json<CassSearchResponse>> {
+    use tokio::process::Command;
+
+    // Don't search empty queries
+    if query.q.trim().is_empty() {
+        return Ok(Json(CassSearchResponse {
+            hits: vec![],
+            total: Some(0),
+            elapsed_ms: Some(0),
+            cursor: None,
+        }));
+    }
+
+    // Build cass command
+    let args = build_cass_args(&query);
+
+    // Try to find cass in common locations
+    let cass_path = std::env::var("CASS_PATH")
+        .ok()
+        .or_else(|| {
+            // Check common locations
+            let home = std::env::var("HOME").ok()?;
+            let local_bin = format!("{}/.local/bin/cass", home);
+            if std::path::Path::new(&local_bin).exists() {
+                return Some(local_bin);
+            }
+            None
+        })
+        .unwrap_or_else(|| "cass".to_string());
+
+    let output = Command::new(&cass_path)
+        .args(&args)
+        .env("HOME", std::env::var("HOME").unwrap_or_default())
+        .output()
+        .await
+        .map_err(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                ApiError::internal(format!(
+                    "cass not found at '{}'. Install from: https://github.com/Dicklesworthstone/coding_agent_session_search",
+                    cass_path
+                ))
+            } else {
+                ApiError::internal(format!("Failed to execute cass: {}", e))
+            }
+        })?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        // Check for common errors
+        if stderr.contains("index") && stderr.contains("not found") {
+            return Err(ApiError::internal(
+                "cass index not built. Run 'cass index --full' to build the search index.",
+            ));
+        }
+        return Err(ApiError::internal(format!(
+            "cass search failed: {}",
+            stderr
+        )));
+    }
+
+    // Parse cass JSON output
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let response: CassSearchResponse = serde_json::from_str(&stdout).map_err(|e| {
+        ApiError::internal(format!(
+            "Failed to parse cass output: {}. Output: {}",
+            e,
+            stdout.chars().take(500).collect::<String>()
+        ))
+    })?;
+
+    Ok(Json(response))
+}
+
+fn build_cass_args(query: &CassSearchQuery) -> Vec<String> {
+    let mut args = vec![
+        "search".to_string(),
+        query.q.clone(),
+        "--robot".to_string(),
+        "--robot-meta".to_string(),
+        "--limit".to_string(),
+        query.limit.to_string(),
+    ];
+
+    let agents = query.agents.trim();
+    if !agents.is_empty() && agents != "all" {
+        for agent in agents
+            .split(',')
+            .map(|agent| agent.trim())
+            .filter(|a| !a.is_empty())
+        {
+            args.push("--agent".to_string());
+            args.push(agent.to_string());
+        }
+    }
+
+    args
+}
+
+#[cfg(test)]
+mod cass_search_tests {
+    use super::{CassSearchQuery, build_cass_args};
+
+    fn base_query() -> CassSearchQuery {
+        CassSearchQuery {
+            q: "hello".to_string(),
+            agents: "all".to_string(),
+            limit: 50,
+        }
+    }
+
+    #[test]
+    fn cass_args_skip_all_agent_filter() {
+        let query = base_query();
+        let args = build_cass_args(&query);
+        assert!(!args.contains(&"--agent".to_string()));
+    }
+
+    #[test]
+    fn cass_args_supports_multiple_agents() {
+        let mut query = base_query();
+        query.agents = "opencode,pi_agent".to_string();
+        let args = build_cass_args(&query);
+        assert_eq!(
+            args,
+            vec![
+                "search",
+                "hello",
+                "--robot",
+                "--robot-meta",
+                "--limit",
+                "50",
+                "--agent",
+                "opencode",
+                "--agent",
+                "pi_agent",
+            ]
+            .into_iter()
+            .map(str::to_string)
+            .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn cass_args_trims_agent_tokens() {
+        let mut query = base_query();
+        query.agents = " opencode , pi_agent , ".to_string();
+        let args = build_cass_args(&query);
+        assert!(args.contains(&"opencode".to_string()));
+        assert!(args.contains(&"pi_agent".to_string()));
+    }
 }

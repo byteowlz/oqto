@@ -3,7 +3,7 @@
 //! Provides administrative commands for managing the Octo server,
 //! including container management, image refresh, and housekeeping.
 
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
 use std::process::ExitCode;
 
 use anyhow::{Context, Result};
@@ -29,6 +29,8 @@ async fn try_main() -> Result<()> {
         Command::Session { command } => handle_session(&client, command, cli.json).await,
         Command::Container { command } => handle_container(&client, command, cli.json).await,
         Command::Image { command } => handle_image(&client, command, cli.json).await,
+        Command::A2ui { command } => handle_a2ui(&client, command, cli.json).await,
+        Command::Local { command } => handle_local(&client, command, cli.json).await,
     }
 }
 
@@ -73,6 +75,19 @@ enum Command {
     Image {
         #[command(subcommand)]
         command: ImageCommand,
+    },
+
+    /// Manage local mode processes
+    Local {
+        #[command(subcommand)]
+        command: LocalCommand,
+    },
+
+    /// Send A2UI surface to user (for agents)
+    #[command(name = "a2ui")]
+    A2ui {
+        #[command(subcommand)]
+        command: A2uiCommand,
     },
 }
 
@@ -147,10 +162,215 @@ enum ImageCommand {
     },
 }
 
+#[derive(Debug, Subcommand)]
+enum LocalCommand {
+    /// Clean up orphan local session processes
+    Cleanup,
+}
+
+#[derive(Debug, Subcommand)]
+enum A2uiCommand {
+    /// Send a button prompt to the user
+    Button {
+        /// Session ID (defaults to OCTO_SESSION_ID env var)
+        #[arg(long, short, env = "OCTO_SESSION_ID")]
+        session: String,
+        /// Prompt text to display
+        #[arg(long, short)]
+        prompt: Option<String>,
+        /// Button labels (comma-separated or multiple -b flags)
+        #[arg(long, short = 'b', value_delimiter = ',')]
+        buttons: Vec<String>,
+        /// Timeout in seconds (default: 300)
+        #[arg(long, short, default_value = "300")]
+        timeout: u64,
+    },
+    /// Send a text input prompt to the user
+    Input {
+        /// Session ID (defaults to OCTO_SESSION_ID env var)
+        #[arg(long, short, env = "OCTO_SESSION_ID")]
+        session: String,
+        /// Prompt text to display
+        prompt: String,
+        /// Placeholder text for the input field
+        #[arg(long)]
+        placeholder: Option<String>,
+        /// Input type: text, number, password, long
+        #[arg(long, default_value = "text")]
+        input_type: String,
+        /// Timeout in seconds (default: 300)
+        #[arg(long, short, default_value = "300")]
+        timeout: u64,
+    },
+    /// Send a multiple choice prompt to the user
+    Choice {
+        /// Session ID (defaults to OCTO_SESSION_ID env var)
+        #[arg(long, short, env = "OCTO_SESSION_ID")]
+        session: String,
+        /// Prompt text to display
+        #[arg(long, short)]
+        prompt: Option<String>,
+        /// Choices (comma-separated or multiple -c flags)
+        #[arg(long, short = 'c', value_delimiter = ',')]
+        choices: Vec<String>,
+        /// Allow multiple selections
+        #[arg(long)]
+        multi: bool,
+        /// Timeout in seconds (default: 300)
+        #[arg(long, short, default_value = "300")]
+        timeout: u64,
+    },
+    /// Send a checkbox (boolean) prompt to the user
+    Checkbox {
+        /// Session ID (defaults to OCTO_SESSION_ID env var)
+        #[arg(long, short, env = "OCTO_SESSION_ID")]
+        session: String,
+        /// Label text for the checkbox
+        label: String,
+        /// Initial checked state
+        #[arg(long)]
+        checked: bool,
+        /// Timeout in seconds (default: 300)
+        #[arg(long, short, default_value = "300")]
+        timeout: u64,
+    },
+    /// Send a slider (numeric) prompt to the user
+    Slider {
+        /// Session ID (defaults to OCTO_SESSION_ID env var)
+        #[arg(long, short, env = "OCTO_SESSION_ID")]
+        session: String,
+        /// Prompt text to display
+        #[arg(long, short)]
+        prompt: Option<String>,
+        /// Minimum value
+        #[arg(long, default_value = "0")]
+        min: f64,
+        /// Maximum value
+        #[arg(long, default_value = "100")]
+        max: f64,
+        /// Initial value
+        #[arg(long)]
+        value: Option<f64>,
+        /// Timeout in seconds (default: 300)
+        #[arg(long, short, default_value = "300")]
+        timeout: u64,
+    },
+    /// Send a date/time input prompt to the user
+    Datetime {
+        /// Session ID (defaults to OCTO_SESSION_ID env var)
+        #[arg(long, short, env = "OCTO_SESSION_ID")]
+        session: String,
+        /// Prompt text to display
+        #[arg(long, short)]
+        prompt: Option<String>,
+        /// Enable date selection
+        #[arg(long, default_value = "true")]
+        date: bool,
+        /// Enable time selection
+        #[arg(long)]
+        time: bool,
+        /// Initial value (ISO 8601 format)
+        #[arg(long)]
+        value: Option<String>,
+        /// Timeout in seconds (default: 300)
+        #[arg(long, short, default_value = "300")]
+        timeout: u64,
+    },
+    /// Display text message (non-blocking)
+    Text {
+        /// Session ID (defaults to OCTO_SESSION_ID env var)
+        #[arg(long, short, env = "OCTO_SESSION_ID")]
+        session: String,
+        /// Text to display
+        text: String,
+        /// Text style: body, h1, h2, h3, h4, h5, caption
+        #[arg(long, default_value = "body")]
+        style: String,
+    },
+    /// Display an image
+    Image {
+        /// Session ID (defaults to OCTO_SESSION_ID env var)
+        #[arg(long, short, env = "OCTO_SESSION_ID")]
+        session: String,
+        /// Image URL
+        url: String,
+        /// Image fit: contain, cover, fill, none, scale-down
+        #[arg(long, default_value = "contain")]
+        fit: String,
+        /// Add confirm button to make it blocking
+        #[arg(long)]
+        confirm: bool,
+        /// Timeout in seconds (default: 300)
+        #[arg(long, short, default_value = "300")]
+        timeout: u64,
+    },
+    /// Display a video
+    Video {
+        /// Session ID (defaults to OCTO_SESSION_ID env var)
+        #[arg(long, short, env = "OCTO_SESSION_ID")]
+        session: String,
+        /// Video URL
+        url: String,
+        /// Add confirm button to make it blocking
+        #[arg(long)]
+        confirm: bool,
+        /// Timeout in seconds (default: 300)
+        #[arg(long, short, default_value = "300")]
+        timeout: u64,
+    },
+    /// Display an audio player
+    Audio {
+        /// Session ID (defaults to OCTO_SESSION_ID env var)
+        #[arg(long, short, env = "OCTO_SESSION_ID")]
+        session: String,
+        /// Audio URL
+        url: String,
+        /// Description text
+        #[arg(long)]
+        description: Option<String>,
+        /// Add confirm button to make it blocking
+        #[arg(long)]
+        confirm: bool,
+        /// Timeout in seconds (default: 300)
+        #[arg(long, short, default_value = "300")]
+        timeout: u64,
+    },
+    /// Display tabbed content
+    Tabs {
+        /// Session ID (defaults to OCTO_SESSION_ID env var)
+        #[arg(long, short, env = "OCTO_SESSION_ID")]
+        session: String,
+        /// Tab definitions as JSON array: [{"title":"Tab1","content":"text1"},...]
+        tabs: String,
+        /// Add confirm button to make it blocking
+        #[arg(long)]
+        confirm: bool,
+        /// Timeout in seconds (default: 300)
+        #[arg(long, short, default_value = "300")]
+        timeout: u64,
+    },
+    /// Send raw A2UI JSON messages
+    Raw {
+        /// Session ID (defaults to OCTO_SESSION_ID env var)
+        #[arg(long, short, env = "OCTO_SESSION_ID")]
+        session: String,
+        /// A2UI messages as JSON (reads from stdin if not provided)
+        messages: Option<String>,
+        /// Block until user responds
+        #[arg(long, short)]
+        blocking: bool,
+        /// Timeout in seconds (default: 300)
+        #[arg(long, short, default_value = "300")]
+        timeout: u64,
+    },
+}
+
 /// HTTP client for communicating with Octo server
 struct OctoClient {
     base_url: String,
     client: reqwest::Client,
+    dev_user: Option<String>,
+    auth_token: Option<String>,
 }
 
 impl OctoClient {
@@ -158,13 +378,27 @@ impl OctoClient {
         Self {
             base_url: base_url.trim_end_matches('/').to_string(),
             client: reqwest::Client::new(),
+            dev_user: std::env::var("OCTO_DEV_USER").ok(),
+            auth_token: std::env::var("OCTO_AUTH_TOKEN").ok(),
+        }
+    }
+
+    fn with_auth_headers(
+        &self,
+        req: reqwest::RequestBuilder,
+    ) -> reqwest::RequestBuilder {
+        if let Some(token) = self.auth_token.as_ref() {
+            req.bearer_auth(token)
+        } else if let Some(user) = self.dev_user.as_ref() {
+            req.header("X-Dev-User", user)
+        } else {
+            req
         }
     }
 
     async fn get(&self, path: &str) -> Result<reqwest::Response> {
         let url = format!("{}{}", self.base_url, path);
-        self.client
-            .get(&url)
+        self.with_auth_headers(self.client.get(&url))
             .send()
             .await
             .context("sending request to server")
@@ -172,8 +406,7 @@ impl OctoClient {
 
     async fn post(&self, path: &str) -> Result<reqwest::Response> {
         let url = format!("{}{}", self.base_url, path);
-        self.client
-            .post(&url)
+        self.with_auth_headers(self.client.post(&url))
             .send()
             .await
             .context("sending request to server")
@@ -181,8 +414,19 @@ impl OctoClient {
 
     async fn delete(&self, path: &str) -> Result<reqwest::Response> {
         let url = format!("{}{}", self.base_url, path);
-        self.client
-            .delete(&url)
+        self.with_auth_headers(self.client.delete(&url))
+            .send()
+            .await
+            .context("sending request to server")
+    }
+
+    async fn post_json<T: serde::Serialize>(
+        &self,
+        path: &str,
+        body: &T,
+    ) -> Result<reqwest::Response> {
+        let url = format!("{}{}", self.base_url, path);
+        self.with_auth_headers(self.client.post(&url).json(body))
             .send()
             .await
             .context("sending request to server")
@@ -519,5 +763,822 @@ async fn handle_image(client: &OctoClient, command: ImageCommand, json: bool) ->
             }
         }
     }
+    Ok(())
+}
+
+async fn handle_local(client: &OctoClient, command: LocalCommand, json: bool) -> Result<()> {
+    match command {
+        LocalCommand::Cleanup => {
+            let response = client.post("/admin/local/cleanup").await?;
+            let status = response.status();
+            let body = response.text().await?;
+            if status.is_success() {
+                if json {
+                    println!("{}", body);
+                } else {
+                    let payload: serde_json::Value = serde_json::from_str(&body)?;
+                    let cleared = payload["cleared"].as_u64().unwrap_or(0);
+                    println!("Cleared {} local process(es)", cleared);
+                }
+            } else {
+                anyhow::bail!("Failed to clean up local sessions: {}", body);
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn handle_a2ui(client: &OctoClient, command: A2uiCommand, json: bool) -> Result<()> {
+    match command {
+        A2uiCommand::Button {
+            session,
+            prompt,
+            buttons,
+            timeout,
+        } => {
+            if buttons.is_empty() {
+                anyhow::bail!("At least one button is required");
+            }
+
+            // Build A2UI messages for buttons
+            let surface_id = format!(
+                "btn-{}",
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_millis()
+            );
+
+            let mut components = vec![];
+            let mut button_ids = vec![];
+
+            // Add prompt text if provided
+            if let Some(ref text) = prompt {
+                components.push(serde_json::json!({
+                    "id": "prompt",
+                    "component": {
+                        "Text": {
+                            "text": { "literalString": text }
+                        }
+                    }
+                }));
+            }
+
+            // Add buttons
+            for (i, label) in buttons.iter().enumerate() {
+                let btn_id = format!("btn_{}", i);
+                let txt_id = format!("txt_{}", i);
+                button_ids.push(btn_id.clone());
+
+                components.push(serde_json::json!({
+                    "id": txt_id,
+                    "component": {
+                        "Text": {
+                            "text": { "literalString": label }
+                        }
+                    }
+                }));
+
+                components.push(serde_json::json!({
+                    "id": btn_id,
+                    "component": {
+                        "Button": {
+                            "child": txt_id,
+                            "primary": i == 0,
+                            "action": {
+                                "name": label,
+                                "context": []
+                            }
+                        }
+                    }
+                }));
+            }
+
+            // Build row layout for buttons
+            let mut row_children: Vec<String> = button_ids;
+            if prompt.is_some() {
+                row_children.insert(0, "prompt".to_string());
+            }
+
+            // Create column layout
+            components.push(serde_json::json!({
+                "id": "row",
+                "component": {
+                    "Row": {
+                        "children": row_children.iter().skip(if prompt.is_some() { 1 } else { 0 }).collect::<Vec<_>>(),
+                        "mainAxisAlignment": "start",
+                        "crossAxisAlignment": "center",
+                        "spacing": 8
+                    }
+                }
+            }));
+
+            let root_children: Vec<&str> = if prompt.is_some() {
+                vec!["prompt", "row"]
+            } else {
+                vec!["row"]
+            };
+
+            components.push(serde_json::json!({
+                "id": "root",
+                "component": {
+                    "Column": {
+                        "children": root_children,
+                        "spacing": 12
+                    }
+                }
+            }));
+
+            let messages = vec![
+                serde_json::json!({
+                    "surfaceUpdate": {
+                        "surfaceId": surface_id,
+                        "components": components
+                    }
+                }),
+                serde_json::json!({
+                    "beginRendering": {
+                        "surfaceId": surface_id,
+                        "root": "root"
+                    }
+                }),
+            ];
+
+            send_a2ui_surface(client, &session, messages, true, timeout, json).await
+        }
+
+        A2uiCommand::Input {
+            session,
+            prompt,
+            placeholder,
+            input_type,
+            timeout,
+        } => {
+            let surface_id = gen_surface_id("input");
+            let text_field_type = match input_type.as_str() {
+                "number" => "number",
+                "password" => "obscured",
+                "long" => "longText",
+                _ => "shortText",
+            };
+            let placeholder_text = placeholder.as_deref().unwrap_or("Enter text...");
+
+            let components = vec![
+                serde_json::json!({
+                    "id": "prompt_text",
+                    "component": {
+                        "Text": { "text": { "literalString": prompt } }
+                    }
+                }),
+                serde_json::json!({
+                    "id": "input_field",
+                    "component": {
+                        "TextField": {
+                            "label": { "literalString": placeholder_text },
+                            "text": { "path": "/user_input" },
+                            "textFieldType": text_field_type
+                        }
+                    }
+                }),
+                serde_json::json!({
+                    "id": "submit_text",
+                    "component": {
+                        "Text": { "text": { "literalString": "Submit" } }
+                    }
+                }),
+                serde_json::json!({
+                    "id": "submit_btn",
+                    "component": {
+                        "Button": {
+                            "child": "submit_text",
+                            "primary": true,
+                            "action": {
+                                "name": "submit",
+                                "context": [{ "key": "user_input" }]
+                            }
+                        }
+                    }
+                }),
+                serde_json::json!({
+                    "id": "root",
+                    "component": {
+                        "Column": {
+                            "children": ["prompt_text", "input_field", "submit_btn"],
+                            "spacing": 12
+                        }
+                    }
+                }),
+            ];
+
+            let messages = build_surface_messages(&surface_id, components);
+            send_a2ui_surface(client, &session, messages, true, timeout, json).await
+        }
+
+        A2uiCommand::Choice {
+            session,
+            prompt,
+            choices,
+            multi,
+            timeout,
+        } => {
+            if choices.is_empty() {
+                anyhow::bail!("At least one choice is required");
+            }
+
+            let surface_id = format!(
+                "choice-{}",
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_millis()
+            );
+
+            let mut components = vec![];
+
+            if let Some(ref text) = prompt {
+                components.push(serde_json::json!({
+                    "id": "prompt",
+                    "component": {
+                        "Text": {
+                            "text": { "literalString": text }
+                        }
+                    }
+                }));
+            }
+
+            // Build options for MultipleChoice
+            let options: Vec<serde_json::Value> = choices
+                .iter()
+                .map(|c| serde_json::json!({ "label": c, "value": c }))
+                .collect();
+
+            components.push(serde_json::json!({
+                "id": "choices",
+                "component": {
+                    "MultipleChoice": {
+                        "dataKey": "selection",
+                        "options": options,
+                        "multiSelect": multi
+                    }
+                }
+            }));
+
+            components.push(serde_json::json!({
+                "id": "submit_text",
+                "component": {
+                    "Text": {
+                        "text": { "literalString": "Confirm" }
+                    }
+                }
+            }));
+
+            components.push(serde_json::json!({
+                "id": "submit_btn",
+                "component": {
+                    "Button": {
+                        "child": "submit_text",
+                        "primary": true,
+                        "action": {
+                            "name": "selected",
+                            "context": [{ "key": "selection" }]
+                        }
+                    }
+                }
+            }));
+
+            let root_children: Vec<&str> = if prompt.is_some() {
+                vec!["prompt", "choices", "submit_btn"]
+            } else {
+                vec!["choices", "submit_btn"]
+            };
+
+            components.push(serde_json::json!({
+                "id": "root",
+                "component": {
+                    "Column": {
+                        "children": root_children,
+                        "spacing": 12
+                    }
+                }
+            }));
+
+            let messages = vec![
+                serde_json::json!({
+                    "surfaceUpdate": {
+                        "surfaceId": surface_id,
+                        "components": components
+                    }
+                }),
+                serde_json::json!({
+                    "beginRendering": {
+                        "surfaceId": surface_id,
+                        "root": "root"
+                    }
+                }),
+            ];
+
+            send_a2ui_surface(client, &session, messages, true, timeout, json).await
+        }
+
+        A2uiCommand::Checkbox {
+            session,
+            label,
+            checked,
+            timeout,
+        } => {
+            let surface_id = gen_surface_id("checkbox");
+            let components = vec![
+                serde_json::json!({
+                    "id": "checkbox",
+                    "component": {
+                        "CheckBox": {
+                            "label": { "literalString": label },
+                            "value": { "literalBoolean": checked }
+                        }
+                    }
+                }),
+                serde_json::json!({
+                    "id": "submit_text",
+                    "component": { "Text": { "text": { "literalString": "Confirm" } } }
+                }),
+                serde_json::json!({
+                    "id": "submit_btn",
+                    "component": {
+                        "Button": {
+                            "child": "submit_text",
+                            "primary": true,
+                            "action": { "name": "confirmed", "context": [{ "key": "checked" }] }
+                        }
+                    }
+                }),
+                serde_json::json!({
+                    "id": "root",
+                    "component": { "Column": { "children": ["checkbox", "submit_btn"], "spacing": 12 } }
+                }),
+            ];
+            let messages = build_surface_messages(&surface_id, components);
+            send_a2ui_surface(client, &session, messages, true, timeout, json).await
+        }
+
+        A2uiCommand::Slider {
+            session,
+            prompt,
+            min,
+            max,
+            value,
+            timeout,
+        } => {
+            let surface_id = gen_surface_id("slider");
+            let initial_value = value.unwrap_or(min);
+            let mut components = vec![];
+
+            if let Some(ref text) = prompt {
+                components.push(serde_json::json!({
+                    "id": "prompt",
+                    "component": { "Text": { "text": { "literalString": text } } }
+                }));
+            }
+
+            components.push(serde_json::json!({
+                "id": "slider",
+                "component": {
+                    "Slider": {
+                        "value": { "literalNumber": initial_value },
+                        "minValue": min,
+                        "maxValue": max
+                    }
+                }
+            }));
+            components.push(serde_json::json!({
+                "id": "submit_text",
+                "component": { "Text": { "text": { "literalString": "Confirm" } } }
+            }));
+            components.push(serde_json::json!({
+                "id": "submit_btn",
+                "component": {
+                    "Button": {
+                        "child": "submit_text",
+                        "primary": true,
+                        "action": { "name": "confirmed", "context": [{ "key": "slider_value" }] }
+                    }
+                }
+            }));
+
+            let root_children: Vec<&str> = if prompt.is_some() {
+                vec!["prompt", "slider", "submit_btn"]
+            } else {
+                vec!["slider", "submit_btn"]
+            };
+            components.push(serde_json::json!({
+                "id": "root",
+                "component": { "Column": { "children": root_children, "spacing": 12 } }
+            }));
+
+            let messages = build_surface_messages(&surface_id, components);
+            send_a2ui_surface(client, &session, messages, true, timeout, json).await
+        }
+
+        A2uiCommand::Datetime {
+            session,
+            prompt,
+            date,
+            time,
+            value,
+            timeout,
+        } => {
+            let surface_id = gen_surface_id("datetime");
+            let mut components = vec![];
+
+            if let Some(ref text) = prompt {
+                components.push(serde_json::json!({
+                    "id": "prompt",
+                    "component": { "Text": { "text": { "literalString": text } } }
+                }));
+            }
+
+            components.push(serde_json::json!({
+                "id": "datetime",
+                "component": {
+                    "DateTimeInput": {
+                        "value": { "literalString": value.as_deref().unwrap_or("") },
+                        "enableDate": date,
+                        "enableTime": time
+                    }
+                }
+            }));
+            components.push(serde_json::json!({
+                "id": "submit_text",
+                "component": { "Text": { "text": { "literalString": "Confirm" } } }
+            }));
+            components.push(serde_json::json!({
+                "id": "submit_btn",
+                "component": {
+                    "Button": {
+                        "child": "submit_text",
+                        "primary": true,
+                        "action": { "name": "confirmed", "context": [{ "key": "datetime_value" }] }
+                    }
+                }
+            }));
+
+            let root_children: Vec<&str> = if prompt.is_some() {
+                vec!["prompt", "datetime", "submit_btn"]
+            } else {
+                vec!["datetime", "submit_btn"]
+            };
+            components.push(serde_json::json!({
+                "id": "root",
+                "component": { "Column": { "children": root_children, "spacing": 12 } }
+            }));
+
+            let messages = build_surface_messages(&surface_id, components);
+            send_a2ui_surface(client, &session, messages, true, timeout, json).await
+        }
+
+        A2uiCommand::Text {
+            session,
+            text,
+            style,
+        } => {
+            let surface_id = gen_surface_id("text");
+            let usage_hint = match style.as_str() {
+                "h1" | "h2" | "h3" | "h4" | "h5" | "caption" | "body" => Some(style.as_str()),
+                _ => None,
+            };
+            let mut text_component = serde_json::json!({
+                "Text": { "text": { "literalString": text } }
+            });
+            if let Some(hint) = usage_hint {
+                text_component["Text"]["usageHint"] = serde_json::json!(hint);
+            }
+            let components = vec![serde_json::json!({
+                "id": "root",
+                "component": text_component
+            })];
+            let messages = build_surface_messages(&surface_id, components);
+            // Non-blocking for text display
+            send_a2ui_surface(client, &session, messages, false, 0, json).await
+        }
+
+        A2uiCommand::Image {
+            session,
+            url,
+            fit,
+            confirm,
+            timeout,
+        } => {
+            let surface_id = gen_surface_id("image");
+            let mut components = vec![serde_json::json!({
+                "id": "image",
+                "component": {
+                    "Image": {
+                        "url": { "literalString": url },
+                        "fit": fit
+                    }
+                }
+            })];
+
+            let root_children: Vec<&str> = if confirm {
+                components.push(serde_json::json!({
+                    "id": "confirm_text",
+                    "component": { "Text": { "text": { "literalString": "OK" } } }
+                }));
+                components.push(serde_json::json!({
+                    "id": "confirm_btn",
+                    "component": {
+                        "Button": {
+                            "child": "confirm_text",
+                            "primary": true,
+                            "action": { "name": "confirmed", "context": [] }
+                        }
+                    }
+                }));
+                vec!["image", "confirm_btn"]
+            } else {
+                vec!["image"]
+            };
+
+            components.push(serde_json::json!({
+                "id": "root",
+                "component": { "Column": { "children": root_children, "spacing": 12 } }
+            }));
+
+            let messages = build_surface_messages(&surface_id, components);
+            send_a2ui_surface(client, &session, messages, confirm, timeout, json).await
+        }
+
+        A2uiCommand::Video {
+            session,
+            url,
+            confirm,
+            timeout,
+        } => {
+            let surface_id = gen_surface_id("video");
+            let mut components = vec![serde_json::json!({
+                "id": "video",
+                "component": { "Video": { "url": { "literalString": url } } }
+            })];
+
+            let root_children: Vec<&str> = if confirm {
+                components.push(serde_json::json!({
+                    "id": "confirm_text",
+                    "component": { "Text": { "text": { "literalString": "OK" } } }
+                }));
+                components.push(serde_json::json!({
+                    "id": "confirm_btn",
+                    "component": {
+                        "Button": {
+                            "child": "confirm_text",
+                            "primary": true,
+                            "action": { "name": "confirmed", "context": [] }
+                        }
+                    }
+                }));
+                vec!["video", "confirm_btn"]
+            } else {
+                vec!["video"]
+            };
+
+            components.push(serde_json::json!({
+                "id": "root",
+                "component": { "Column": { "children": root_children, "spacing": 12 } }
+            }));
+
+            let messages = build_surface_messages(&surface_id, components);
+            send_a2ui_surface(client, &session, messages, confirm, timeout, json).await
+        }
+
+        A2uiCommand::Audio {
+            session,
+            url,
+            description,
+            confirm,
+            timeout,
+        } => {
+            let surface_id = gen_surface_id("audio");
+            let mut audio_component = serde_json::json!({
+                "AudioPlayer": { "url": { "literalString": url } }
+            });
+            if let Some(ref desc) = description {
+                audio_component["AudioPlayer"]["description"] =
+                    serde_json::json!({ "literalString": desc });
+            }
+
+            let mut components = vec![serde_json::json!({
+                "id": "audio",
+                "component": audio_component
+            })];
+
+            let root_children: Vec<&str> = if confirm {
+                components.push(serde_json::json!({
+                    "id": "confirm_text",
+                    "component": { "Text": { "text": { "literalString": "OK" } } }
+                }));
+                components.push(serde_json::json!({
+                    "id": "confirm_btn",
+                    "component": {
+                        "Button": {
+                            "child": "confirm_text",
+                            "primary": true,
+                            "action": { "name": "confirmed", "context": [] }
+                        }
+                    }
+                }));
+                vec!["audio", "confirm_btn"]
+            } else {
+                vec!["audio"]
+            };
+
+            components.push(serde_json::json!({
+                "id": "root",
+                "component": { "Column": { "children": root_children, "spacing": 12 } }
+            }));
+
+            let messages = build_surface_messages(&surface_id, components);
+            send_a2ui_surface(client, &session, messages, confirm, timeout, json).await
+        }
+
+        A2uiCommand::Tabs {
+            session,
+            tabs,
+            confirm,
+            timeout,
+        } => {
+            let tab_defs: Vec<serde_json::Value> =
+                serde_json::from_str(&tabs).context("parsing tabs JSON")?;
+
+            let surface_id = gen_surface_id("tabs");
+            let mut components = vec![];
+            let mut tab_items = vec![];
+
+            for (i, tab) in tab_defs.iter().enumerate() {
+                let title = tab.get("title").and_then(|t| t.as_str()).unwrap_or("Tab");
+                let content = tab.get("content").and_then(|c| c.as_str()).unwrap_or("");
+
+                let content_id = format!("tab_content_{}", i);
+                components.push(serde_json::json!({
+                    "id": content_id,
+                    "component": { "Text": { "text": { "literalString": content } } }
+                }));
+
+                tab_items.push(serde_json::json!({
+                    "title": { "literalString": title },
+                    "child": content_id
+                }));
+            }
+
+            components.push(serde_json::json!({
+                "id": "tabs",
+                "component": { "Tabs": { "tabItems": tab_items } }
+            }));
+
+            let root_children: Vec<&str> = if confirm {
+                components.push(serde_json::json!({
+                    "id": "confirm_text",
+                    "component": { "Text": { "text": { "literalString": "OK" } } }
+                }));
+                components.push(serde_json::json!({
+                    "id": "confirm_btn",
+                    "component": {
+                        "Button": {
+                            "child": "confirm_text",
+                            "primary": true,
+                            "action": { "name": "confirmed", "context": [] }
+                        }
+                    }
+                }));
+                vec!["tabs", "confirm_btn"]
+            } else {
+                vec!["tabs"]
+            };
+
+            components.push(serde_json::json!({
+                "id": "root",
+                "component": { "Column": { "children": root_children, "spacing": 12 } }
+            }));
+
+            let messages = build_surface_messages(&surface_id, components);
+            send_a2ui_surface(client, &session, messages, confirm, timeout, json).await
+        }
+
+        A2uiCommand::Raw {
+            session,
+            messages,
+            blocking,
+            timeout,
+        } => {
+            let parsed_messages: Vec<serde_json::Value> = if let Some(msg_str) = messages {
+                serde_json::from_str(&msg_str).context("parsing A2UI messages JSON")?
+            } else {
+                // Read from stdin
+                let mut input = String::new();
+                io::stdin()
+                    .read_to_string(&mut input)
+                    .context("reading from stdin")?;
+                serde_json::from_str(&input).context("parsing A2UI messages from stdin")?
+            };
+
+            send_a2ui_surface(client, &session, parsed_messages, blocking, timeout, json).await
+        }
+    }
+}
+
+fn gen_surface_id(prefix: &str) -> String {
+    format!(
+        "{}-{}",
+        prefix,
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis()
+    )
+}
+
+fn build_surface_messages(
+    surface_id: &str,
+    components: Vec<serde_json::Value>,
+) -> Vec<serde_json::Value> {
+    vec![
+        serde_json::json!({
+            "surfaceUpdate": {
+                "surfaceId": surface_id,
+                "components": components
+            }
+        }),
+        serde_json::json!({
+            "beginRendering": {
+                "surfaceId": surface_id,
+                "root": "root"
+            }
+        }),
+    ]
+}
+
+async fn send_a2ui_surface(
+    client: &OctoClient,
+    session_id: &str,
+    messages: Vec<serde_json::Value>,
+    blocking: bool,
+    timeout_secs: u64,
+    json: bool,
+) -> Result<()> {
+    let body = serde_json::json!({
+        "session_id": session_id,
+        "messages": messages,
+        "blocking": blocking,
+        "timeout_secs": timeout_secs,
+    });
+
+    let response = client.post_json("/a2ui/surface", &body).await?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        anyhow::bail!("A2UI request failed ({}): {}", status, body);
+    }
+
+    let result: serde_json::Value = response.json().await?;
+
+    if json {
+        println!("{}", serde_json::to_string(&result)?);
+    } else if blocking {
+        // Extract the action name and context for human-readable output
+        if let Some(action) = result.get("action") {
+            let name = action
+                .get("name")
+                .and_then(|n| n.as_str())
+                .unwrap_or("unknown");
+            println!("{}", name);
+
+            // Print context values if any
+            if let Some(context) = action.get("context").and_then(|c| c.as_array()) {
+                for ctx in context {
+                    if let (Some(key), Some(value)) =
+                        (ctx.get("key").and_then(|k| k.as_str()), ctx.get("value"))
+                    {
+                        eprintln!("{}={}", key, value);
+                    }
+                }
+            }
+        } else {
+            // Timeout or dismissed
+            if result
+                .get("timeout")
+                .and_then(|t| t.as_bool())
+                .unwrap_or(false)
+            {
+                anyhow::bail!("A2UI request timed out");
+            }
+            println!("dismissed");
+        }
+    } else {
+        // Non-blocking, just confirm it was sent
+        if let Some(request_id) = result.get("request_id").and_then(|r| r.as_str()) {
+            println!("Surface sent (request_id: {})", request_id);
+        } else {
+            println!("Surface sent");
+        }
+    }
+
     Ok(())
 }

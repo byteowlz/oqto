@@ -1,6 +1,6 @@
 [package]
 name = "octo"
-version = "0.1.0"
+version = "0.3.1"
 edition = "2024"
 
 [[bin]]
@@ -14,6 +14,14 @@ path = "src/ctl/main.rs"
 [[bin]]
 name = "octo-runner"
 path = "src/bin/octo-runner.rs"
+
+[[bin]]
+name = "octo-sandbox"
+path = "src/bin/octo-sandbox.rs"
+
+[[bin]]
+name = "pi-bridge"
+path = "src/bin/pi-bridge.rs"
 
 [lib]
 name = "octo"

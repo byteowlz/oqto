@@ -7,9 +7,23 @@ import type * as React from "react";
 import { cn } from "@/lib/utils";
 
 function ContextMenu({
+	onOpenChange,
 	...props
 }: React.ComponentProps<typeof ContextMenuPrimitive.Root>) {
-	return <ContextMenuPrimitive.Root data-slot="context-menu" {...props} />;
+	return (
+		<ContextMenuPrimitive.Root
+			data-slot="context-menu"
+			onOpenChange={(open) => {
+				// Clear text selection when context menu opens on mobile
+				// This prevents the "select + context menu" issue on long press
+				if (open) {
+					window.getSelection()?.removeAllRanges();
+				}
+				onOpenChange?.(open);
+			}}
+			{...props}
+		/>
+	);
 }
 
 function ContextMenuTrigger({

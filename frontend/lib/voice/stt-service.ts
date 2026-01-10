@@ -8,7 +8,20 @@
  * - Format: 32-bit float PCM
  * - Sample Rate: 24000 Hz
  * - Channels: Mono
+ *
+ * Performance optimizations:
+ * - Audio frame batching: reduces WS message rate from ~187/sec to ~23/sec
+ * - Backpressure handling: drops frames when WS buffer exceeds threshold
+ * - Word array accumulation: avoids O(n^2) string concatenation
  */
+
+// Backpressure config
+const WS_BUFFER_HIGH_WATER = 256 * 1024; // 256KB - start dropping frames
+const WS_BUFFER_LOW_WATER = 64 * 1024; // 64KB - resume sending
+
+// Batching config: at 24kHz with 128-sample worklet chunks, we get ~187 chunks/sec
+// Batching 8 chunks = ~23 sends/sec, ~42ms worth of audio per send
+const AUDIO_BATCH_SIZE = 8;
 
 /** Message types from eaRS server */
 interface STTMessage {
@@ -62,10 +75,20 @@ export class STTService {
 	private vadSilenceTimeoutMs: number;
 	private vadProgressIntervalId: number | null = null;
 	private vadStartTime = 0;
-	private currentTranscript = "";
 	private isListening = false;
 	private audioSetupToken = 0;
 	private selectedDeviceId: string | null = null;
+
+	// Use word array instead of string concatenation (avoids O(n^2) growth)
+	private transcriptWords: string[] = [];
+
+	// Audio batching state
+	private audioBatchBuffer: Float32Array[] = [];
+	private audioBatchTotalSamples = 0;
+
+	// Backpressure state
+	private isBackpressured = false;
+	private droppedFrameCount = 0;
 
 	constructor(
 		private wsUrl: string,
@@ -190,19 +213,19 @@ export class STTService {
 		switch (message.type) {
 			case "word":
 				if (message.word) {
-					this.currentTranscript +=
-						(this.currentTranscript ? " " : "") + message.word;
+					// Use array push instead of string concat (O(1) vs O(n))
+					this.transcriptWords.push(message.word);
 					this.resetVadTimeout();
 					this.callbacks.onWord?.(message.word);
 				}
 				break;
 
 			case "final":
-				this.clearVadTimeout();
+				this.clearVadTimeout(true);
 				if (message.text) {
 					this.callbacks.onFinal?.(message.text);
 				}
-				this.currentTranscript = "";
+				this.transcriptWords = [];
 				break;
 
 			case "pause":
@@ -212,7 +235,7 @@ export class STTService {
 
 			case "error":
 				console.error("[STT] Server error:", message.message);
-				this.clearVadTimeout();
+				this.clearVadTimeout(true);
 				this.callbacks.onError?.(message.message || "Unknown error");
 				break;
 
@@ -227,19 +250,21 @@ export class STTService {
 	}
 
 	private resetVadTimeout() {
-		this.clearVadTimeout();
+		// Reset timers but don't emit a progress reset on every word.
+		this.clearVadTimeout(false);
 		this.vadStartTime = Date.now();
 
 		// Set timeout for silence detection
 		this.vadTimeoutId = window.setTimeout(() => {
 			console.log("[STT] VAD timeout - silence detected");
-			const finalTranscript = this.currentTranscript.trim();
-			this.clearVadTimeout();
+			// Join words only when needed (single allocation)
+			const finalTranscript = this.transcriptWords.join(" ").trim();
+			this.clearVadTimeout(true);
 
 			if (finalTranscript) {
 				this.callbacks.onFinal?.(finalTranscript);
 			}
-			this.currentTranscript = "";
+			this.transcriptWords = [];
 		}, this.vadSilenceTimeoutMs);
 
 		// Progress callback at ~15fps (every 66ms) - smooth enough for UI, reduces re-renders
@@ -250,7 +275,7 @@ export class STTService {
 		}, 66);
 	}
 
-	private clearVadTimeout() {
+	private clearVadTimeout(resetProgress = true) {
 		if (this.vadTimeoutId !== null) {
 			clearTimeout(this.vadTimeoutId);
 			this.vadTimeoutId = null;
@@ -259,7 +284,9 @@ export class STTService {
 			clearInterval(this.vadProgressIntervalId);
 			this.vadProgressIntervalId = null;
 		}
-		this.callbacks.onVadProgress?.(0);
+		if (resetProgress) {
+			this.callbacks.onVadProgress?.(0);
+		}
 	}
 
 	/**
@@ -375,19 +402,47 @@ export class STTService {
 
 		const workletNode = new AudioWorkletNode(audioContext, "audio-processor");
 
-		// Send audio chunks to WebSocket
+		// Send audio chunks to WebSocket with batching and backpressure
 		workletNode.port.onmessage = (e) => {
 			if (!this.isListening) return;
+			if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
 
-			if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-				const samples = e.data;
-				const buffer = new Float32Array(samples);
-				try {
-					this.ws.send(buffer.buffer);
-				} catch (error) {
-					console.error("[STT] Error sending audio:", error);
-					this.stopListening();
+			const samples: Float32Array = e.data;
+
+			// Check backpressure: if WS buffer is full, drop frames
+			const buffered = this.ws.bufferedAmount;
+			if (this.isBackpressured) {
+				// In backpressure mode - check if we can resume
+				if (buffered < WS_BUFFER_LOW_WATER) {
+					this.isBackpressured = false;
+					if (this.droppedFrameCount > 0) {
+						console.log(
+							`[STT] Backpressure cleared, dropped ${this.droppedFrameCount} frames`,
+						);
+						this.droppedFrameCount = 0;
+					}
+				} else {
+					// Still congested - drop this frame
+					this.droppedFrameCount++;
+					return;
 				}
+			} else if (buffered > WS_BUFFER_HIGH_WATER) {
+				// Enter backpressure mode
+				this.isBackpressured = true;
+				console.warn(
+					`[STT] Backpressure: WS buffer ${Math.round(buffered / 1024)}KB > ${Math.round(WS_BUFFER_HIGH_WATER / 1024)}KB threshold`,
+				);
+				this.droppedFrameCount++;
+				return;
+			}
+
+			// Add to batch buffer
+			this.audioBatchBuffer.push(samples);
+			this.audioBatchTotalSamples += samples.length;
+
+			// Send when batch is full
+			if (this.audioBatchBuffer.length >= AUDIO_BATCH_SIZE) {
+				this.flushAudioBatch();
 			}
 		};
 
@@ -413,6 +468,37 @@ export class STTService {
 	}
 
 	/**
+	 * Flush batched audio frames to WebSocket.
+	 */
+	private flushAudioBatch() {
+		if (this.audioBatchBuffer.length === 0) return;
+		if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+			this.audioBatchBuffer = [];
+			this.audioBatchTotalSamples = 0;
+			return;
+		}
+
+		// Merge all chunks into single buffer (one allocation)
+		const merged = new Float32Array(this.audioBatchTotalSamples);
+		let offset = 0;
+		for (const chunk of this.audioBatchBuffer) {
+			merged.set(chunk, offset);
+			offset += chunk.length;
+		}
+
+		// Clear batch state
+		this.audioBatchBuffer = [];
+		this.audioBatchTotalSamples = 0;
+
+		try {
+			this.ws.send(merged.buffer);
+		} catch (error) {
+			console.error("[STT] Error sending batched audio:", error);
+			this.stopListening();
+		}
+	}
+
+	/**
 	 * Stop listening and release audio resources.
 	 */
 	stopListening() {
@@ -420,6 +506,9 @@ export class STTService {
 		this.audioSetupToken++;
 		this.isListening = false;
 		this.clearVadTimeout();
+
+		// Flush any remaining batched audio
+		this.flushAudioBatch();
 
 		if (this.workletNode) {
 			try {
@@ -505,7 +594,11 @@ export class STTService {
 		console.log("[STT] Disconnecting...");
 		this.isListening = false;
 		this.clearVadTimeout();
-		this.currentTranscript = "";
+		this.transcriptWords = [];
+		this.audioBatchBuffer = [];
+		this.audioBatchTotalSamples = 0;
+		this.isBackpressured = false;
+		this.droppedFrameCount = 0;
 		this.stopListening();
 
 		if (this.ws) {
@@ -567,7 +660,7 @@ export class STTService {
 	 * Get current transcript being accumulated.
 	 */
 	getCurrentTranscript(): string {
-		return this.currentTranscript;
+		return this.transcriptWords.join(" ");
 	}
 
 	/**

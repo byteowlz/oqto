@@ -488,13 +488,11 @@ pub async fn watch_ws(
     }
 
     let ext_filter = parse_extension_filter(&query.ext);
-    let state = state.clone();
-    Ok(ws.on_upgrade(move |socket| watch_socket(socket, state, root_dir, path, ext_filter)))
+    Ok(ws.on_upgrade(move |socket| watch_socket(socket, root_dir, path, ext_filter)))
 }
 
 async fn watch_socket(
     mut socket: WebSocket,
-    state: AppState,
     root_dir: PathBuf,
     watch_path: PathBuf,
     ext_filter: Option<HashSet<String>>,
@@ -636,7 +634,19 @@ pub async fn get_tree(
     match query.mode {
         ViewMode::Simple => {
             // Flat list of office files only
-            let files = get_simple_file_list(&state, &root_dir, &path, max_depth)?;
+            let state = state.clone();
+            let root_dir = root_dir.clone();
+            let path = path.clone();
+            let files = tokio::task::spawn_blocking(move || {
+                get_simple_file_list(&state, &root_dir, &path, max_depth)
+            })
+            .await
+            .map_err(|err| {
+                FileServerError::Io(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    err.to_string(),
+                ))
+            })??;
             Ok(Json(files))
         }
         ViewMode::Full => {
@@ -989,6 +999,7 @@ pub async fn upload_file(
     Query(query): Query<UploadQuery>,
     mut multipart: Multipart,
 ) -> Result<Json<SuccessResponse>, FileServerError> {
+    warn!("Upload file request received for path: {}", query.path);
     let root_dir = resolve_request_root(&state.root_dir, query.directory.as_deref())?;
     // Use resolve_path for initial path building; deeper checks happen below.
     let dest_path = resolve_path(&root_dir, &query.path)?;
@@ -1005,128 +1016,133 @@ pub async fn upload_file(
         }
     }
 
-    while let Some(mut field) = multipart.next_field().await.map_err(|e| {
-        error!("Multipart error: {}", e);
-        FileServerError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+    let mut field = match multipart.next_field().await.map_err(|e| {
+        error!("Multipart error parsing field: {:?}", e);
+        FileServerError::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("Error parsing `multipart/form-data` request: {}", e),
+        ))
     })? {
-        // Get and SANITIZE the filename
-        let raw_filename = field
-            .file_name()
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| "upload".to_string());
+        Some(field) => field,
+        None => {
+            return Err(FileServerError::InvalidPath(
+                "Missing file upload data".to_string(),
+            ));
+        }
+    };
 
-        let file_name = sanitize_filename(&raw_filename).ok_or_else(|| {
-            warn!("Rejected invalid filename: {:?}", raw_filename);
-            FileServerError::InvalidPath(format!("Invalid filename: {}", raw_filename))
-        })?;
+    // Get and SANITIZE the filename
+    let raw_filename = field
+        .file_name()
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| "upload".to_string());
 
-        // Determine final path
-        let final_path = if dest_path.is_dir() || query.path.ends_with('/') {
-            // If destination is a directory, use the sanitized filename
-            let dir_path = if dest_path.exists() {
-                dest_path.clone()
-            } else if query.mkdir {
-                fs::create_dir_all(&dest_path).await.map_err(|_| {
-                    FileServerError::CreateDirFailed(dest_path.display().to_string())
-                })?;
-                dest_path.clone()
-            } else {
-                return Err(FileServerError::NotFound(query.path.clone()));
-            };
-            dir_path.join(&file_name)
-        } else {
+    let file_name = sanitize_filename(&raw_filename).ok_or_else(|| {
+        warn!("Rejected invalid filename: {:?}", raw_filename);
+        FileServerError::InvalidPath(format!("Invalid filename: {}", raw_filename))
+    })?;
+
+    // Determine final path
+    let final_path = if dest_path.is_dir() || query.path.ends_with('/') {
+        // If destination is a directory, use the sanitized filename
+        let dir_path = if dest_path.exists() {
             dest_path.clone()
+        } else if query.mkdir {
+            fs::create_dir_all(&dest_path)
+                .await
+                .map_err(|_| FileServerError::CreateDirFailed(dest_path.display().to_string()))?;
+            dest_path.clone()
+        } else {
+            return Err(FileServerError::NotFound(query.path.clone()));
         };
+        dir_path.join(&file_name)
+    } else {
+        dest_path.clone()
+    };
 
-        // Re-validate the final path is within root (belt-and-suspenders)
-        let canonical_root = root_dir.canonicalize().map_err(FileServerError::Io)?;
-        if final_path.exists() {
-            let metadata = fs::symlink_metadata(&final_path)
-                .await
-                .map_err(FileServerError::Io)?;
-            if metadata.file_type().is_symlink() {
-                warn!("Refusing to overwrite symlink: {:?}", final_path);
-                return Err(FileServerError::PathTraversal);
-            }
-            if metadata.is_dir() {
-                return Err(FileServerError::NotAFile);
-            }
-            let canonical_path = final_path.canonicalize().map_err(FileServerError::Io)?;
-            if !canonical_path.starts_with(&canonical_root) {
-                warn!("Final path resolved outside root: {:?}", final_path);
-                return Err(FileServerError::PathTraversal);
-            }
-        } else if let Some(parent) = final_path.parent() {
-            if parent.exists() {
-                let canonical_parent = parent.canonicalize().map_err(FileServerError::Io)?;
-                if !canonical_parent.starts_with(&canonical_root) {
-                    warn!("Final path parent outside root: {:?}", final_path);
-                    return Err(FileServerError::PathTraversal);
-                }
-            }
-        }
-
-        let parent_dir = final_path
-            .parent()
-            .ok_or_else(|| FileServerError::InvalidPath("Missing parent directory".to_string()))?;
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0);
-        let temp_name = format!(".upload-{}-{}", file_name, nonce);
-        let temp_path = parent_dir.join(temp_name);
-        let mut temp_file = fs::File::create(&temp_path)
+    // Re-validate the final path is within root (belt-and-suspenders)
+    let canonical_root = root_dir.canonicalize().map_err(FileServerError::Io)?;
+    if final_path.exists() {
+        let metadata = fs::symlink_metadata(&final_path)
             .await
             .map_err(FileServerError::Io)?;
-
-        let mut total_size = 0u64;
-        while let Some(chunk) = field.chunk().await.map_err(|e| {
-            error!("Failed to read upload data: {}", e);
-            FileServerError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e))
-        })? {
-            total_size = total_size.saturating_add(chunk.len() as u64);
-            if total_size > state.config.max_upload_size {
-                let _ = fs::remove_file(&temp_path).await;
-                return Err(FileServerError::FileTooLarge {
-                    size: total_size,
-                    limit: state.config.max_upload_size,
-                });
+        if metadata.file_type().is_symlink() {
+            warn!("Refusing to overwrite symlink: {:?}", final_path);
+            return Err(FileServerError::PathTraversal);
+        }
+        if metadata.is_dir() {
+            return Err(FileServerError::NotAFile);
+        }
+        let canonical_path = final_path.canonicalize().map_err(FileServerError::Io)?;
+        if !canonical_path.starts_with(&canonical_root) {
+            warn!("Final path resolved outside root: {:?}", final_path);
+            return Err(FileServerError::PathTraversal);
+        }
+    } else if let Some(parent) = final_path.parent() {
+        if parent.exists() {
+            let canonical_parent = parent.canonicalize().map_err(FileServerError::Io)?;
+            if !canonical_parent.starts_with(&canonical_root) {
+                warn!("Final path parent outside root: {:?}", final_path);
+                return Err(FileServerError::PathTraversal);
             }
-            temp_file
-                .write_all(&chunk)
-                .await
-                .map_err(FileServerError::Io)?;
         }
-        temp_file.flush().await.map_err(FileServerError::Io)?;
-
-        info!(
-            "Uploading file: {} ({} bytes)",
-            final_path.display(),
-            total_size
-        );
-
-        if final_path.exists() {
-            fs::remove_file(&final_path)
-                .await
-                .map_err(FileServerError::Io)?;
-        }
-        fs::rename(&temp_path, &final_path)
-            .await
-            .map_err(FileServerError::Io)?;
-
-        let relative_path = get_relative_path(&root_dir, &final_path);
-
-        return Ok(Json(SuccessResponse {
-            success: true,
-            message: format!("File uploaded: {}", file_name),
-            path: Some(relative_path),
-        }));
     }
 
-    Err(FileServerError::Io(std::io::Error::new(
-        std::io::ErrorKind::InvalidData,
-        "No file in upload",
-    )))
+    let parent_dir = final_path
+        .parent()
+        .ok_or_else(|| FileServerError::InvalidPath("Missing parent directory".to_string()))?;
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let temp_name = format!(".upload-{}-{}", file_name, nonce);
+    let temp_path = parent_dir.join(temp_name);
+    let mut temp_file = fs::File::create(&temp_path)
+        .await
+        .map_err(FileServerError::Io)?;
+
+    let mut total_size = 0u64;
+    while let Some(chunk) = field.chunk().await.map_err(|e| {
+        error!("Failed to read upload data: {}", e);
+        FileServerError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+    })? {
+        total_size = total_size.saturating_add(chunk.len() as u64);
+        if total_size > state.config.max_upload_size {
+            let _ = fs::remove_file(&temp_path).await;
+            return Err(FileServerError::FileTooLarge {
+                size: total_size,
+                limit: state.config.max_upload_size,
+            });
+        }
+        temp_file
+            .write_all(&chunk)
+            .await
+            .map_err(FileServerError::Io)?;
+    }
+    temp_file.flush().await.map_err(FileServerError::Io)?;
+
+    info!(
+        "Uploading file: {} ({} bytes)",
+        final_path.display(),
+        total_size
+    );
+
+    if final_path.exists() {
+        fs::remove_file(&final_path)
+            .await
+            .map_err(FileServerError::Io)?;
+    }
+    fs::rename(&temp_path, &final_path)
+        .await
+        .map_err(FileServerError::Io)?;
+
+    let relative_path = get_relative_path(&root_dir, &final_path);
+
+    Ok(Json(SuccessResponse {
+        success: true,
+        message: format!("File uploaded: {}", file_name),
+        path: Some(relative_path),
+    }))
 }
 
 /// DELETE /file - Delete file or directory
@@ -1297,7 +1313,10 @@ pub async fn rename_file(
 
     // Verify old path is within root
     if !canonical_old.starts_with(&canonical_root) {
-        warn!("Old path escaped root after canonicalization: {:?}", old_path);
+        warn!(
+            "Old path escaped root after canonicalization: {:?}",
+            old_path
+        );
         return Err(FileServerError::PathTraversal);
     }
 
@@ -1324,11 +1343,7 @@ pub async fn rename_file(
         )));
     }
 
-    info!(
-        "Renaming: {} -> {}",
-        old_path.display(),
-        new_path.display()
-    );
+    info!("Renaming: {} -> {}", old_path.display(), new_path.display());
 
     fs::rename(&old_path, &new_path)
         .await

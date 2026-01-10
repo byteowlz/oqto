@@ -33,6 +33,11 @@ pub enum RunnerRequest {
     /// Read available data from a process's stdout (for RPC processes).
     ReadStdout(ReadStdoutRequest),
 
+    /// Subscribe to stdout stream (for RPC processes).
+    /// Lines are pushed as they arrive via StdoutLine responses.
+    /// The subscription ends when the process exits or client disconnects.
+    SubscribeStdout(SubscribeStdoutRequest),
+
     /// Health check.
     Ping,
 
@@ -61,6 +66,15 @@ pub enum RunnerResponse {
 
     /// Data read from stdout.
     StdoutRead(StdoutReadResponse),
+
+    /// Subscription to stdout started.
+    StdoutSubscribed(StdoutSubscribedResponse),
+
+    /// A line from stdout (pushed during subscription).
+    StdoutLine(StdoutLineResponse),
+
+    /// Stdout subscription ended (process exited).
+    StdoutEnd(StdoutEndResponse),
 
     /// Pong response to ping.
     Pong,
@@ -142,6 +156,13 @@ pub struct ReadStdoutRequest {
     pub timeout_ms: u64,
 }
 
+/// Request to subscribe to stdout stream.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubscribeStdoutRequest {
+    /// Process ID.
+    pub id: String,
+}
+
 // ============================================================================
 // Response types
 // ============================================================================
@@ -221,6 +242,31 @@ pub struct StdoutReadResponse {
     pub has_more: bool,
 }
 
+/// Response confirming stdout subscription started.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StdoutSubscribedResponse {
+    /// Process ID.
+    pub id: String,
+}
+
+/// A line from stdout (pushed during subscription).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StdoutLineResponse {
+    /// Process ID.
+    pub id: String,
+    /// The line content.
+    pub line: String,
+}
+
+/// Stdout subscription ended.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StdoutEndResponse {
+    /// Process ID.
+    pub id: String,
+    /// Exit code if process exited.
+    pub exit_code: Option<i32>,
+}
+
 /// Error response.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ErrorResponse {
@@ -252,16 +298,6 @@ pub enum ErrorCode {
     Internal,
 }
 
-impl RunnerResponse {
-    /// Create an error response.
-    pub fn error(code: ErrorCode, message: impl Into<String>) -> Self {
-        RunnerResponse::Error(ErrorResponse {
-            code,
-            message: message.into(),
-        })
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -271,7 +307,11 @@ mod tests {
         let req = RunnerRequest::SpawnProcess(SpawnProcessRequest {
             id: "proc-1".to_string(),
             binary: "/usr/bin/opencode".to_string(),
-            args: vec!["serve".to_string(), "--port".to_string(), "8080".to_string()],
+            args: vec![
+                "serve".to_string(),
+                "--port".to_string(),
+                "8080".to_string(),
+            ],
             cwd: PathBuf::from("/home/user/project"),
             env: HashMap::from([("FOO".to_string(), "bar".to_string())]),
         });
@@ -304,8 +344,11 @@ mod tests {
 
     #[test]
     fn test_error_response() {
-        let resp = RunnerResponse::error(ErrorCode::ProcessNotFound, "No such process: foo");
-        
+        let resp = RunnerResponse::Error(ErrorResponse {
+            code: ErrorCode::ProcessNotFound,
+            message: "No such process: foo".to_string(),
+        });
+
         match resp {
             RunnerResponse::Error(e) => {
                 assert_eq!(e.code, ErrorCode::ProcessNotFound);

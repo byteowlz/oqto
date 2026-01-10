@@ -10,6 +10,8 @@ import {
 	getMainChatPiHistory,
 	getMainChatPiState,
 	newMainChatPiSession,
+	registerMainChatSession,
+	resetMainChatPiSession,
 	startMainChatPiSession,
 } from "@/lib/control-plane-client";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -45,7 +47,8 @@ export type PiMessagePart =
 			isError?: boolean;
 	  }
 	| { type: "thinking"; content: string }
-	| { type: "separator"; content: string };
+	| { type: "separator"; content: string; sessionId?: string }
+	| { type: "compaction"; content: string };
 
 /** Display message with parts */
 export type PiDisplayMessage = {
@@ -85,6 +88,8 @@ export type UsePiChatReturn = {
 	abort: () => Promise<void>;
 	/** Start new session (clear history) */
 	newSession: () => Promise<void>;
+	/** Reset session - restarts Pi process to reload PERSONALITY.md and USER.md */
+	resetSession: () => Promise<void>;
 	/** Reload messages from server */
 	refresh: () => Promise<void>;
 	/** Connect to WebSocket */
@@ -100,6 +105,197 @@ export type PiSendOptions = {
 	queueIfStreaming?: boolean;
 };
 
+// localStorage keys for persistent cache
+const STORAGE_KEY_MESSAGES = "octo:mainChat:messages";
+const STORAGE_KEY_STATE = "octo:mainChat:state";
+const STORAGE_KEY_TIMESTAMP = "octo:mainChat:timestamp";
+const STORAGE_KEY_SCROLL = "octo:mainChat:scrollPosition";
+
+// In-memory cache for instant access (populated from localStorage on load)
+const memoryCache = {
+	messages: null as PiDisplayMessage[] | null,
+	state: null as PiState | null,
+	timestamp: 0,
+	scrollPosition: null as number | null, // null = scroll to bottom, number = user's scroll position
+	initialized: false,
+};
+
+const PI_MESSAGE_ID_PATTERN = /^pi-msg-(\d+)$/;
+
+function getMaxPiMessageId(messages: PiDisplayMessage[]): number {
+	let maxId = 0;
+	for (const message of messages) {
+		const match = PI_MESSAGE_ID_PATTERN.exec(message.id);
+		if (!match) continue;
+		const value = Number.parseInt(match[1] ?? "0", 10);
+		if (!Number.isNaN(value) && value > maxId) {
+			maxId = value;
+		}
+	}
+	return maxId;
+}
+
+// Initialize cache from localStorage synchronously on module load
+function initializeCacheFromStorage() {
+	if (memoryCache.initialized || typeof window === "undefined") return;
+	memoryCache.initialized = true;
+
+	try {
+		const storedMessages = localStorage.getItem(STORAGE_KEY_MESSAGES);
+		const storedState = localStorage.getItem(STORAGE_KEY_STATE);
+		const storedTimestamp = localStorage.getItem(STORAGE_KEY_TIMESTAMP);
+		const storedScroll = localStorage.getItem(STORAGE_KEY_SCROLL);
+
+		if (storedMessages) {
+			memoryCache.messages = JSON.parse(storedMessages);
+		}
+		if (storedState) {
+			memoryCache.state = JSON.parse(storedState);
+		}
+		if (storedTimestamp) {
+			memoryCache.timestamp = Number.parseInt(storedTimestamp, 10);
+		}
+		if (storedScroll) {
+			memoryCache.scrollPosition = Number.parseInt(storedScroll, 10);
+		}
+	} catch {
+		// Ignore parse errors - will fetch fresh data
+	}
+}
+
+// Run initialization immediately
+initializeCacheFromStorage();
+
+// Maximum messages to cache in localStorage (keep last N for performance)
+const MAX_CACHED_MESSAGES = 100;
+
+// Update cache (both memory and localStorage)
+function updateMessageCache(messages: PiDisplayMessage[]) {
+	memoryCache.messages = messages;
+	memoryCache.timestamp = Date.now();
+
+	// Persist to localStorage asynchronously - limit size for performance
+	queueMicrotask(() => {
+		try {
+			// Only cache the last N messages to keep localStorage small
+			const toCache =
+				messages.length > MAX_CACHED_MESSAGES
+					? messages.slice(-MAX_CACHED_MESSAGES)
+					: messages;
+			localStorage.setItem(STORAGE_KEY_MESSAGES, JSON.stringify(toCache));
+			localStorage.setItem(
+				STORAGE_KEY_TIMESTAMP,
+				String(memoryCache.timestamp),
+			);
+		} catch {
+			// Ignore storage errors (quota exceeded, etc.)
+		}
+	});
+}
+
+// Update state cache
+function updateStateCache(state: PiState) {
+	memoryCache.state = state;
+
+	// Persist to localStorage asynchronously
+	queueMicrotask(() => {
+		try {
+			localStorage.setItem(STORAGE_KEY_STATE, JSON.stringify(state));
+		} catch {
+			// Ignore storage errors
+		}
+	});
+}
+
+// Get cached messages (instant)
+function getCachedMessages(): PiDisplayMessage[] {
+	return memoryCache.messages ?? [];
+}
+
+// Get cached state (instant)
+function getCachedState(): PiState | null {
+	return memoryCache.state;
+}
+
+// Check if cache is fresh enough to skip network fetch
+function isCacheFresh(): boolean {
+	// Cache is fresh for 5 minutes
+	return memoryCache.timestamp > 0 && Date.now() - memoryCache.timestamp < 300000;
+}
+
+function shouldPreserveLocalMessage(message: PiDisplayMessage): boolean {
+	// Local optimistic messages (not yet persisted) use pi-msg-* IDs.
+	// Keep them when server refreshes history to avoid clobbering in-flight streaming.
+	if (PI_MESSAGE_ID_PATTERN.test(message.id)) return true;
+	if (message.id.startsWith("compaction-")) return true;
+	return false;
+}
+
+function mergeServerMessages(
+	previous: PiDisplayMessage[],
+	serverMessages: PiDisplayMessage[],
+): PiDisplayMessage[] {
+	const serverIds = new Set(serverMessages.map((m) => m.id));
+	const preserved = previous.filter(
+		(m) => shouldPreserveLocalMessage(m) && !serverIds.has(m.id),
+	);
+	return preserved.length > 0 ? [...serverMessages, ...preserved] : serverMessages;
+}
+
+// Get cached scroll position (null = bottom)
+export function getCachedScrollPosition(): number | null {
+	return memoryCache.scrollPosition;
+}
+
+// Save scroll position to cache
+export function setCachedScrollPosition(position: number | null) {
+	memoryCache.scrollPosition = position;
+
+	// Persist asynchronously
+	queueMicrotask(() => {
+		try {
+			if (position === null) {
+				localStorage.removeItem(STORAGE_KEY_SCROLL);
+			} else {
+				localStorage.setItem(STORAGE_KEY_SCROLL, String(position));
+			}
+		} catch {
+			// Ignore
+		}
+	});
+}
+
+// Global WebSocket connection cache - survives component remounts
+type WsConnectionState = {
+	ws: WebSocket | null;
+	isConnected: boolean;
+	sessionStarted: boolean;
+	listeners: Set<(connected: boolean) => void>;
+};
+
+const wsCache: WsConnectionState = {
+	ws: null,
+	isConnected: false,
+	sessionStarted: false,
+	listeners: new Set(),
+};
+
+// Subscribe to connection state changes
+function subscribeToConnectionState(listener: (connected: boolean) => void) {
+	wsCache.listeners.add(listener);
+	return () => {
+		wsCache.listeners.delete(listener);
+	};
+}
+
+// Notify all listeners of connection state change
+function notifyConnectionStateChange(connected: boolean) {
+	wsCache.isConnected = connected;
+	for (const listener of wsCache.listeners) {
+		listener(connected);
+	}
+}
+
 /**
  * Hook for managing Pi chat in Main Chat mode.
  * Handles WebSocket connection, message streaming, and state.
@@ -107,15 +303,28 @@ export type PiSendOptions = {
 export function usePiChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 	const { autoConnect = true, onMessageComplete, onError } = options;
 
-	const [state, setState] = useState<PiState | null>(null);
-	const [messages, setMessages] = useState<PiDisplayMessage[]>([]);
-	const [isConnected, setIsConnected] = useState(false);
+	// Initialize with cached data for INSTANT display - no loading states
+	const [state, setState] = useState<PiState | null>(getCachedState);
+	const [messages, setMessages] =
+		useState<PiDisplayMessage[]>(getCachedMessages);
+	// Assume connected if we have cached data - optimistic
+	const [isConnected, setIsConnected] = useState(
+		wsCache.isConnected || getCachedMessages().length > 0,
+	);
 	const [isStreaming, setIsStreaming] = useState(false);
 	const [error, setError] = useState<Error | null>(null);
 
-	const wsRef = useRef<WebSocket | null>(null);
+	// Track if this hook instance owns the WebSocket
+	const isOwnerRef = useRef(false);
 	const streamingMessageRef = useRef<PiDisplayMessage | null>(null);
-	const messageIdRef = useRef(0);
+	const messageIdRef = useRef(getMaxPiMessageId(getCachedMessages()));
+	const refreshRef = useRef<(() => Promise<void>) | null>(null);
+	const initStartedRef = useRef(false);
+
+	// Subscribe to global connection state changes
+	useEffect(() => {
+		return subscribeToConnectionState(setIsConnected);
+	}, []);
 
 	// Generate unique message ID
 	const nextMessageId = useCallback(() => {
@@ -287,12 +496,15 @@ export function usePiChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 									content: text,
 								});
 							}
-							// Update messages state
+							// Update messages state - create new parts array for React to detect change
 							setMessages((prev) => {
 								const idx = prev.findIndex((m) => m.id === currentTextMsg.id);
 								if (idx >= 0) {
 									const updated = [...prev];
-									updated[idx] = { ...currentTextMsg };
+									updated[idx] = {
+										...currentTextMsg,
+										parts: currentTextMsg.parts.map(p => ({ ...p })),
+									};
 									return updated;
 								}
 								return prev;
@@ -319,7 +531,10 @@ export function usePiChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 								const idx = prev.findIndex((m) => m.id === currentToolMsg.id);
 								if (idx >= 0) {
 									const updated = [...prev];
-									updated[idx] = { ...currentToolMsg };
+									updated[idx] = {
+										...currentToolMsg,
+										parts: currentToolMsg.parts.map(p => ({ ...p })),
+									};
 									return updated;
 								}
 								return prev;
@@ -348,7 +563,10 @@ export function usePiChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 								const idx = prev.findIndex((m) => m.id === currentResultMsg.id);
 								if (idx >= 0) {
 									const updated = [...prev];
-									updated[idx] = { ...currentResultMsg };
+									updated[idx] = {
+										...currentResultMsg,
+										parts: currentResultMsg.parts.map(p => ({ ...p })),
+									};
 									return updated;
 								}
 								return prev;
@@ -361,7 +579,10 @@ export function usePiChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 						// Mark message as complete
 						if (streamingMessageRef.current) {
 							streamingMessageRef.current.isStreaming = false;
-							const completedMessage = { ...streamingMessageRef.current };
+							const completedMessage = {
+								...streamingMessageRef.current,
+								parts: streamingMessageRef.current.parts.map(p => ({ ...p })),
+							};
 							setMessages((prev) => {
 								const idx = prev.findIndex((m) => m.id === completedMessage.id);
 								if (idx >= 0) {
@@ -393,25 +614,48 @@ export function usePiChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 					}
 
 					case "compaction":
-						// Reload messages after compaction
-						refresh();
+						// Add a compaction marker message so token counting can reset
+						setMessages((prev) => [
+							...prev,
+							{
+								id: `compaction-${Date.now()}`,
+								role: "system",
+								parts: [{ type: "compaction", content: "Context compacted" }],
+								timestamp: Date.now(),
+							},
+						]);
+						// Also refresh to sync with server state (use ref to avoid circular dependency)
+						refreshRef.current?.();
 						break;
 				}
 			} catch (e) {
 				console.error("Failed to parse Pi WebSocket message:", e);
 			}
 		},
-		[onMessageComplete, onError],
+		[onMessageComplete, onError, nextMessageId],
 	);
 
-	// Connect to WebSocket
+	// Connect to WebSocket - uses global cache to survive remounts
 	const connect = useCallback(() => {
-		if (wsRef.current?.readyState === WebSocket.OPEN) return;
+		// If global WebSocket is already open and healthy, reuse it
+		if (wsCache.ws?.readyState === WebSocket.OPEN) {
+			// Just attach our message handler
+			wsCache.ws.onmessage = handleWsMessage;
+			isOwnerRef.current = true;
+			return;
+		}
+
+		// Close any stale connection
+		if (wsCache.ws && wsCache.ws.readyState !== WebSocket.CLOSED) {
+			wsCache.ws.close();
+		}
 
 		const ws = createMainChatPiWebSocket();
+		wsCache.ws = ws;
+		isOwnerRef.current = true;
 
 		ws.onopen = () => {
-			setIsConnected(true);
+			notifyConnectionStateChange(true);
 			setError(null);
 		};
 
@@ -424,42 +668,72 @@ export function usePiChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 		};
 
 		ws.onclose = () => {
-			setIsConnected(false);
+			notifyConnectionStateChange(false);
+			// Clear the global ws reference on close
+			if (wsCache.ws === ws) {
+				wsCache.ws = null;
+				wsCache.sessionStarted = false;
+			}
 		};
-
-		wsRef.current = ws;
 	}, [handleWsMessage, onError]);
 
-	// Disconnect from WebSocket
-	const disconnect = useCallback(() => {
-		if (wsRef.current) {
-			wsRef.current.close();
-			wsRef.current = null;
+	// Disconnect from WebSocket - only actually disconnects if we're the owner
+	const disconnect = useCallback((force = false) => {
+		if (force && wsCache.ws) {
+			wsCache.ws.close();
+			wsCache.ws = null;
+			wsCache.sessionStarted = false;
+			notifyConnectionStateChange(false);
 		}
-		setIsConnected(false);
+		isOwnerRef.current = false;
 	}, []);
 
-	// Refresh messages and state from server
+	// Refresh messages and state from server (background, non-blocking)
 	const refresh = useCallback(async () => {
+		// Don't refresh while streaming - can cause race conditions with local messages
+		if (isStreaming) {
+			return;
+		}
 		try {
 			const [piState, dbMessages] = await Promise.all([
 				getMainChatPiState(),
 				getMainChatPiHistory(),
 			]);
 			setState(piState);
-			setMessages(convertDbToDisplayMessages(dbMessages));
+			updateStateCache(piState);
+			const displayMessages = convertDbToDisplayMessages(dbMessages);
+			setMessages((previous) => mergeServerMessages(previous, displayMessages));
 		} catch (e) {
-			const err = e instanceof Error ? e : new Error("Failed to refresh");
-			setError(err);
-			onError?.(err);
+			// Don't show errors for background refresh - we have cached data
+			console.warn("Background refresh failed:", e);
 		}
-	}, [convertDbToDisplayMessages, onError]);
+	}, [convertDbToDisplayMessages, isStreaming]);
+
+	// Keep refreshRef in sync so handleWsMessage can call it
+	useEffect(() => {
+		refreshRef.current = refresh;
+	}, [refresh]);
+
+	// Keep cache in sync when messages change
+	useEffect(() => {
+		if (messages.length > 0) {
+			updateMessageCache(messages);
+		}
+	}, [messages]);
+
+	// Ensure nextMessageId never collides with cached/loaded messages
+	useEffect(() => {
+		const maxId = getMaxPiMessageId(messages);
+		if (maxId > messageIdRef.current) {
+			messageIdRef.current = maxId;
+		}
+	}, [messages]);
 
 	// Send a message via WebSocket (which persists user messages)
 	const send = useCallback(
 		async (message: string, options?: PiSendOptions) => {
 			// Must be connected to send
-			if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+			if (!wsCache.ws || wsCache.ws.readyState !== WebSocket.OPEN) {
 				const err = new Error("Not connected to chat server");
 				setError(err);
 				onError?.(err);
@@ -468,7 +742,11 @@ export function usePiChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 
 			setError(null);
 			let mode: PiSendMode = options?.mode ?? "prompt";
-			if (isStreaming && mode === "prompt" && (options?.queueIfStreaming ?? true)) {
+			if (
+				isStreaming &&
+				mode === "prompt" &&
+				(options?.queueIfStreaming ?? true)
+			) {
 				mode = "follow_up";
 			}
 			if (!isStreaming && (mode === "follow_up" || mode === "steer")) {
@@ -499,7 +777,7 @@ export function usePiChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 
 			try {
 				// Send via WebSocket - backend will persist user message
-				wsRef.current.send(JSON.stringify({ type: mode, message }));
+				wsCache.ws.send(JSON.stringify({ type: mode, message }));
 			} catch (e) {
 				const err = e instanceof Error ? e : new Error("Failed to send");
 				setError(err);
@@ -538,11 +816,30 @@ export function usePiChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 			// Then create new Pi session
 			const newState = await newMainChatPiSession();
 			setState(newState);
-			// Add separator to display
+
+			// Register the new session with main chat backend
+			if (newState.session_id) {
+				try {
+					await registerMainChatSession("default", {
+						session_id: newState.session_id,
+						title: `Session ${new Date().toLocaleDateString()}`,
+					});
+				} catch (regErr) {
+					console.warn("Failed to register session:", regErr);
+				}
+			}
+
+			// Add separator to display with session ID for scroll targeting
 			const separatorDisplay: PiDisplayMessage = {
 				id: `pi-db-${separatorMsg.id}`,
 				role: "system",
-				parts: [{ type: "separator", content: "New conversation started" }],
+				parts: [
+					{
+						type: "separator",
+						content: "New conversation started",
+						sessionId: newState.session_id,
+					},
+				],
 				timestamp: separatorMsg.timestamp,
 			};
 			setMessages((prev) => [...prev, separatorDisplay]);
@@ -555,41 +852,148 @@ export function usePiChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 		}
 	}, [onError]);
 
-	// Initialize on mount
+	// Reset session - restarts Pi process to reload PERSONALITY.md and USER.md
+	const resetSession = useCallback(async () => {
+		try {
+			// Force disconnect WebSocket first
+			disconnect(true);
+
+			// Add separator to mark reset
+			const separatorMsg = await addMainChatPiSeparator();
+
+			// Reset the session (this restarts the Pi process)
+			const newState = await resetMainChatPiSession();
+			setState(newState);
+			wsCache.sessionStarted = true;
+
+			// Register the new session with main chat backend
+			if (newState.session_id) {
+				try {
+					await registerMainChatSession("default", {
+						session_id: newState.session_id,
+						title: `Session ${new Date().toLocaleDateString()}`,
+					});
+				} catch (regErr) {
+					console.warn("Failed to register session:", regErr);
+				}
+			}
+
+			// Add separator to display with session ID for scroll targeting
+			const separatorDisplay: PiDisplayMessage = {
+				id: `pi-db-${separatorMsg.id}`,
+				role: "system",
+				parts: [
+					{
+						type: "separator",
+						content: "Session reset - reloaded personality",
+						sessionId: newState.session_id,
+					},
+				],
+				timestamp: separatorMsg.timestamp,
+			};
+			setMessages((prev) => [...prev, separatorDisplay]);
+			streamingMessageRef.current = null;
+
+			// Reconnect WebSocket
+			connect();
+		} catch (e) {
+			const err = e instanceof Error ? e : new Error("Failed to reset session");
+			setError(err);
+			onError?.(err);
+		}
+	}, [connect, disconnect, onError]);
+
+	// Keep WebSocket handler in sync when callback changes
 	useEffect(() => {
+		if (isOwnerRef.current && wsCache.ws?.readyState === WebSocket.OPEN) {
+			wsCache.ws.onmessage = handleWsMessage;
+		}
+	}, [handleWsMessage]);
+
+	// Initialize on mount - INSTANT with cached data, background refresh
+	useEffect(() => {
+		// Prevent double initialization in strict mode
+		if (initStartedRef.current) return;
+		initStartedRef.current = true;
+
 		let mounted = true;
 
-		const init = async () => {
+		// If WebSocket already connected, just reattach handler
+		if (wsCache.ws?.readyState === WebSocket.OPEN) {
+			wsCache.ws.onmessage = handleWsMessage;
+			isOwnerRef.current = true;
+			setIsConnected(true);
+
+			// Background refresh if cache is stale
+			if (!isCacheFresh()) {
+				refresh();
+			}
+			return () => {
+				mounted = false;
+				isOwnerRef.current = false;
+			};
+		}
+
+		// Start session and connect in background - UI already has cached data
+		const initSession = async () => {
 			try {
-				// Start or get session
+				// Start session (may already be running on backend)
 				const piState = await startMainChatPiSession();
 				if (!mounted) return;
-				setState(piState);
 
-				// Load persistent history from database (survives Pi session restarts)
-				const dbMessages = await getMainChatPiHistory();
-				if (!mounted) return;
-				setMessages(convertDbToDisplayMessages(dbMessages));
+				setState(piState);
+				updateStateCache(piState);
+				wsCache.sessionStarted = true;
 
 				// Connect WebSocket
 				if (autoConnect) {
 					connect();
 				}
+
+				// Fetch fresh history in background
+				getMainChatPiHistory()
+					.then((dbMessages) => {
+						if (!mounted) return;
+						const displayMessages = convertDbToDisplayMessages(dbMessages);
+						// Only update if we got data
+						if (displayMessages.length > 0) {
+							setMessages((previous) =>
+								mergeServerMessages(previous, displayMessages),
+							);
+						}
+					})
+					.catch(() => {
+						// Ignore - we have cached data
+					});
 			} catch (e) {
 				if (!mounted) return;
-				const err = e instanceof Error ? e : new Error("Failed to initialize");
-				setError(err);
-				onError?.(err);
+				// Only show error if we have no cached data
+				if (getCachedMessages().length === 0) {
+					const err =
+						e instanceof Error ? e : new Error("Failed to initialize");
+					setError(err);
+					onError?.(err);
+				} else {
+					console.warn("Session init failed, using cached data:", e);
+				}
 			}
 		};
 
-		init();
+		initSession();
 
 		return () => {
 			mounted = false;
-			disconnect();
+			isOwnerRef.current = false;
+			initStartedRef.current = false;
 		};
-	}, [autoConnect, connect, disconnect, convertDbToDisplayMessages, onError]);
+	}, [
+		autoConnect,
+		connect,
+		convertDbToDisplayMessages,
+		handleWsMessage,
+		onError,
+		refresh,
+	]);
 
 	return {
 		state,
@@ -600,6 +1004,7 @@ export function usePiChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 		send,
 		abort,
 		newSession,
+		resetSession,
 		refresh,
 		connect,
 		disconnect,

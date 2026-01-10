@@ -1,4 +1,4 @@
-# Stage 1: Build fileserver and tmpltr
+# Stage 1: Build fileserver, pi-bridge, and tmpltr
 # Run from repository root: docker build -f container/Dockerfile .
 FROM rust:latest AS rust-builder
 
@@ -8,6 +8,7 @@ WORKDIR /build
 RUN apt-get update && apt-get install -y --no-install-recommends \
     pkg-config \
     git \
+    libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Build fileserver
@@ -15,7 +16,14 @@ COPY fileserver/Cargo.toml fileserver/Cargo.lock ./
 COPY fileserver/src ./src
 RUN cargo build --release
 
+# Build pi-bridge from backend
+WORKDIR /build/backend
+COPY backend/Cargo.toml backend/Cargo.lock ./
+COPY backend/src ./src
+RUN cargo build --release --bin pi-bridge
+
 # Build tmpltr
+WORKDIR /build
 RUN git clone --depth 1 https://github.com/byteowlz/tmpltr.git /build/tmpltr && \
     cd /build/tmpltr && \
     cargo build --release
@@ -33,6 +41,7 @@ ARG OPENCODE_PORT=41820
 ARG FILESERVER_PORT=41821
 ARG TTYD_PORT=41822
 ARG MMRY_PORT=41823
+ARG PI_BRIDGE_PORT=41824
 
 # Environment variables
 ENV LANG=en_US.UTF-8
@@ -47,6 +56,7 @@ ENV OPENCODE_PORT=${OPENCODE_PORT}
 ENV FILESERVER_PORT=${FILESERVER_PORT}
 ENV TTYD_PORT=${TTYD_PORT}
 ENV MMRY_PORT=${MMRY_PORT}
+ENV PI_BRIDGE_PORT=${PI_BRIDGE_PORT}
 # EAVS_URL is set by orchestrator - points to host EAVS instance
 ENV EAVS_URL=""
 # MMRY_HOST_URL is set by orchestrator - points to host mmry service for embeddings
@@ -94,6 +104,11 @@ ENV PATH="/usr/local/bun/bin:${PATH}"
 # Note: EAVS runs on the host, not in containers - containers connect via EAVS_URL
 COPY --from=rust-builder /build/target/release/fileserver /usr/local/bin/fileserver
 RUN chmod +x /usr/local/bin/fileserver
+
+# Copy pi-bridge binary from builder stage
+# pi-bridge spawns Pi in RPC mode and exposes HTTP/WebSocket API
+COPY --from=rust-builder /build/backend/target/release/pi-bridge /usr/local/bin/pi-bridge
+RUN chmod +x /usr/local/bin/pi-bridge
 
 # Copy tmpltr binary from builder stage
 COPY --from=rust-builder /build/tmpltr/target/release/tmpltr /usr/local/bin/tmpltr
@@ -186,11 +201,12 @@ USER ${USERNAME}
 # Working directory
 WORKDIR /home/${USERNAME}/workspace
 
-# Expose ports for opencode serve, file server, ttyd terminal, and mmry
+# Expose ports for opencode serve, file server, ttyd terminal, mmry, and pi-bridge
 EXPOSE ${OPENCODE_PORT}
 EXPOSE ${FILESERVER_PORT}
 EXPOSE ${TTYD_PORT}
 EXPOSE ${MMRY_PORT}
+EXPOSE ${PI_BRIDGE_PORT}
 
 # Entrypoint (in /usr/local/bin so it's not overwritten by home mount)
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

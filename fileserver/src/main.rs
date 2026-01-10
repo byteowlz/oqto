@@ -2,6 +2,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use axum::extract::DefaultBodyLimit;
 use axum::Router;
 use clap::Parser;
 use tower_http::cors::{Any, CorsLayer};
@@ -88,6 +89,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     info!("Serving files from: {}", root_dir.display());
+    
+    let max_upload_size = config.max_upload_size as usize;
+    info!("Max upload size: {} bytes ({} MB)", max_upload_size, max_upload_size / 1024 / 1024);
 
     let state = AppState {
         root_dir,
@@ -103,6 +107,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Build router
     let app = Router::new()
         .merge(routes::file_routes())
+        .layer(DefaultBodyLimit::max(max_upload_size))
         .layer(cors)
         .layer(TraceLayer::new_for_http())
         .with_state(state);

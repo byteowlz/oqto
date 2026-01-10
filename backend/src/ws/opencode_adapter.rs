@@ -131,9 +131,7 @@ impl OpenCodeAdapter {
             .build()
             .context("Failed to build HTTP client")?;
 
-        let request_builder = client
-            .get(&url)
-            .header("Accept", "text/event-stream");
+        let request_builder = client.get(&url).header("Accept", "text/event-stream");
 
         let mut es = EventSource::new(request_builder)?;
 
@@ -143,10 +141,7 @@ impl OpenCodeAdapter {
             session_id: self.session_id.clone(),
         });
 
-        info!(
-            "Connected to OpenCode SSE for session {}",
-            self.session_id
-        );
+        info!("Connected to OpenCode SSE for session {}", self.session_id);
 
         // Process events
         while let Some(event_result) = es.next().await {
@@ -178,10 +173,7 @@ impl OpenCodeAdapter {
                         // Will reconnect in the outer loop
                         return Err(anyhow::anyhow!("SSE stream error: {:?}", e));
                     } else {
-                        error!(
-                            "Fatal SSE error for session {}: {:?}",
-                            self.session_id, e
-                        );
+                        error!("Fatal SSE error for session {}: {:?}", self.session_id, e);
                         return Err(anyhow::anyhow!("Fatal SSE error: {:?}", e));
                     }
                 }
@@ -212,24 +204,53 @@ impl OpenCodeAdapter {
             }
         };
 
-        // Translate based on event type
-        match event_type {
-            "message" | "" => self.translate_message_event(&parsed),
-            _ => {
-                // Unknown event type, forward as-is
-                Some(WsEvent::OpencodeEvent {
-                    session_id,
-                    event_type: event_type.to_string(),
-                    data: parsed,
-                })
+        // Prefer the embedded "type" field when present (OpenCode message events).
+        if parsed.get("type").and_then(|v| v.as_str()).is_some() {
+            return self.translate_message_event(&parsed);
+        }
+
+        // Some OpenCode servers emit non-"message" SSE events with no "type" field.
+        // Wrap those so we can reuse the message translation path.
+        if !event_type.is_empty() && event_type != "message" {
+            debug!(
+                "Wrapping SSE event '{}' without type for session {}",
+                event_type, session_id
+            );
+            let wrapped = if let Some(map) = parsed.as_object() {
+                if map.contains_key("properties") {
+                    let mut obj = map.clone();
+                    obj.insert("type".to_string(), Value::String(event_type.to_string()));
+                    Value::Object(obj)
+                } else {
+                    let mut obj = serde_json::Map::new();
+                    obj.insert("type".to_string(), Value::String(event_type.to_string()));
+                    obj.insert("properties".to_string(), Value::Object(map.clone()));
+                    Value::Object(obj)
+                }
+            } else {
+                let mut obj = serde_json::Map::new();
+                obj.insert("type".to_string(), Value::String(event_type.to_string()));
+                obj.insert("properties".to_string(), parsed.clone());
+                Value::Object(obj)
+            };
+
+            if let Some(ws_event) = self.translate_message_event(&wrapped) {
+                return Some(ws_event);
             }
         }
+
+        // Fallback: forward unknown events as-is
+        Some(WsEvent::OpencodeEvent {
+            session_id,
+            event_type: event_type.to_string(),
+            data: parsed,
+        })
     }
 
     /// Translate an OpenCode message event.
     fn translate_message_event(&self, data: &Value) -> Option<WsEvent> {
         let session_id = self.session_id.clone();
-        
+
         // OpenCode events have a "type" field
         let event_type = data.get("type").and_then(|v| v.as_str()).unwrap_or("");
 
@@ -253,7 +274,10 @@ impl OpenCodeAdapter {
             // Message events
             "message.created" | "message.updated" => {
                 let message = data.get("properties").cloned().unwrap_or(data.clone());
-                Some(WsEvent::MessageUpdated { session_id, message })
+                Some(WsEvent::MessageUpdated {
+                    session_id,
+                    message,
+                })
             }
 
             // Part events (streaming)
@@ -267,13 +291,14 @@ impl OpenCodeAdapter {
                     .to_string();
 
                 let part = data.get("properties").and_then(|p| p.get("part"));
-                
+
                 if let Some(part) = part {
                     let part_type = part.get("type").and_then(|v| v.as_str()).unwrap_or("");
-                    
+
                     match part_type {
                         "text" => {
-                            let content = part.get("content").and_then(|v| v.as_str()).unwrap_or("");
+                            let content =
+                                part.get("content").and_then(|v| v.as_str()).unwrap_or("");
                             // For updated parts, send the full content as delta
                             // The frontend should handle deduplication
                             if !content.is_empty() {
@@ -285,7 +310,8 @@ impl OpenCodeAdapter {
                             }
                         }
                         "thinking" => {
-                            let content = part.get("content").and_then(|v| v.as_str()).unwrap_or("");
+                            let content =
+                                part.get("content").and_then(|v| v.as_str()).unwrap_or("");
                             if !content.is_empty() {
                                 return Some(WsEvent::ThinkingDelta {
                                     session_id,
@@ -295,11 +321,13 @@ impl OpenCodeAdapter {
                             }
                         }
                         "tool-invocation" => {
-                            let tool_call_id = part.get("toolInvocationID")
+                            let tool_call_id = part
+                                .get("toolInvocationID")
                                 .and_then(|v| v.as_str())
                                 .unwrap_or("")
                                 .to_string();
-                            let tool_name = part.get("toolName")
+                            let tool_name = part
+                                .get("toolName")
                                 .and_then(|v| v.as_str())
                                 .unwrap_or("")
                                 .to_string();
@@ -340,7 +368,7 @@ impl OpenCodeAdapter {
                         _ => {}
                     }
                 }
-                
+
                 // Default: forward as raw event
                 Some(WsEvent::OpencodeEvent {
                     session_id,
@@ -355,6 +383,8 @@ impl OpenCodeAdapter {
                 let permission_id = props
                     .get("id")
                     .or_else(|| props.get("permissionID"))
+                    .or_else(|| props.get("permissionId"))
+                    .or_else(|| props.get("permission_id"))
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
@@ -393,6 +423,8 @@ impl OpenCodeAdapter {
                 let permission_id = props
                     .get("id")
                     .or_else(|| props.get("permissionID"))
+                    .or_else(|| props.get("permissionId"))
+                    .or_else(|| props.get("permission_id"))
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
@@ -409,34 +441,88 @@ impl OpenCodeAdapter {
                 })
             }
 
+            // Question events - matches OpenCode Question type
+            "question.asked" => {
+                let props = data.get("properties").unwrap_or(data);
+                let request_id = props
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let questions = props
+                    .get("questions")
+                    .cloned()
+                    .unwrap_or(serde_json::json!([]));
+                let tool = props.get("tool").cloned();
+
+                info!(
+                    "[Question] Session {} question request: {}",
+                    session_id, request_id
+                );
+
+                Some(WsEvent::QuestionRequest {
+                    session_id,
+                    request_id,
+                    questions,
+                    tool,
+                })
+            }
+
+            "question.replied" | "question.rejected" => {
+                let props = data.get("properties").unwrap_or(data);
+                let request_id = props
+                    .get("requestID")
+                    .or_else(|| props.get("id"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+
+                info!(
+                    "[Question] Session {} question resolved: {}",
+                    session_id, request_id
+                );
+
+                Some(WsEvent::QuestionResolved {
+                    session_id,
+                    request_id,
+                })
+            }
+
             // Session error events
             "session.error" => {
                 let props = data.get("properties").unwrap_or(data);
                 let error = props.get("error");
-                
-                let error_type = error
-                    .and_then(|e| e.get("name"))
+
+                let error_type = props
+                    .get("error_type")
                     .and_then(|v| v.as_str())
+                    .or_else(|| props.get("errorType").and_then(|v| v.as_str()))
+                    .or_else(|| error.and_then(|e| e.get("name")).and_then(|v| v.as_str()))
                     .unwrap_or("UnknownError")
                     .to_string();
-                
-                let message = error
-                    .and_then(|e| e.get("data"))
-                    .and_then(|d| d.get("message"))
+
+                let message = props
+                    .get("message")
                     .and_then(|v| v.as_str())
+                    .or_else(|| {
+                        error
+                            .and_then(|e| e.get("data"))
+                            .and_then(|d| d.get("message"))
+                            .and_then(|v| v.as_str())
+                    })
                     .unwrap_or("An unknown error occurred")
                     .to_string();
-                
+
                 info!(
                     "[Error] Session {} error: {} - {}",
                     session_id, error_type, message
                 );
-                
+
                 Some(WsEvent::SessionError {
                     session_id,
                     error_type,
                     message,
-                    details: error.cloned(),
+                    details: error.cloned().or_else(|| props.get("details").cloned()),
                 })
             }
 
@@ -458,10 +544,10 @@ fn calculate_backoff(attempt: u32) -> u64 {
     let base = BASE_BACKOFF_MS as f64;
     let exp = 2.0_f64.powi(attempt.min(10) as i32);
     let delay = (base * exp) as u64;
-    
+
     // Add jitter (up to 20%)
     let jitter = (delay as f64 * 0.2 * rand::random::<f64>()) as u64;
-    
+
     (delay + jitter).min(MAX_BACKOFF_MS)
 }
 
@@ -546,6 +632,36 @@ mod tests {
     }
 
     #[test]
+    fn test_permission_event_with_snake_case_fields() {
+        let adapter = adapter();
+        let data = json!({
+            "type": "permission.updated",
+            "properties": {
+                "permission_id": "perm-3",
+                "permission_type": "bash",
+                "title": "Run bash",
+                "pattern": "pwd"
+            }
+        });
+        let event = adapter.translate_message_event(&data);
+        match event {
+            Some(WsEvent::PermissionRequest {
+                permission_id,
+                permission_type,
+                title,
+                pattern,
+                ..
+            }) => {
+                assert_eq!(permission_id, "perm-3");
+                assert_eq!(permission_type, "bash");
+                assert_eq!(title, "Run bash");
+                assert_eq!(pattern, Some(json!("pwd")));
+            }
+            other => panic!("Expected permission request, got {:?}", other),
+        }
+    }
+
+    #[test]
     fn test_session_error_event_with_flat_payload() {
         let adapter = adapter();
         let data = json!({
@@ -556,6 +672,79 @@ mod tests {
             }
         });
         let event = adapter.translate_message_event(&data);
+        match event {
+            Some(WsEvent::SessionError {
+                error_type,
+                message,
+                ..
+            }) => {
+                assert_eq!(error_type, "BadRequest");
+                assert_eq!(message, "Nope");
+            }
+            other => panic!("Expected session error, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_session_error_event_with_flat_error_fields() {
+        let adapter = adapter();
+        let data = json!({
+            "type": "session.error",
+            "error_type": "BadRequest",
+            "message": "Nope"
+        });
+        let event = adapter.translate_message_event(&data);
+        match event {
+            Some(WsEvent::SessionError {
+                error_type,
+                message,
+                details,
+                ..
+            }) => {
+                assert_eq!(error_type, "BadRequest");
+                assert_eq!(message, "Nope");
+                assert!(details.is_none());
+            }
+            other => panic!("Expected session error, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_sse_session_error_event_without_type() {
+        let adapter = adapter();
+        let data = json!({
+            "error": {
+                "name": "BadRequest",
+                "data": { "message": "Nope" }
+            }
+        });
+        let event = adapter.translate_sse_event("session.error", &data.to_string());
+        match event {
+            Some(WsEvent::SessionError {
+                error_type,
+                message,
+                ..
+            }) => {
+                assert_eq!(error_type, "BadRequest");
+                assert_eq!(message, "Nope");
+            }
+            other => panic!("Expected session error, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_sse_event_with_type_field_from_non_message_event() {
+        let adapter = adapter();
+        let data = json!({
+            "type": "session.error",
+            "properties": {
+                "error": {
+                    "name": "BadRequest",
+                    "data": { "message": "Nope" }
+                }
+            }
+        });
+        let event = adapter.translate_sse_event("error", &data.to_string());
         match event {
             Some(WsEvent::SessionError {
                 error_type,

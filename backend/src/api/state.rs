@@ -1,17 +1,21 @@
 //! Application state shared across handlers.
 
+use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use axum::body::Body;
 use hyper_util::client::legacy::Client;
 use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::rt::TokioExecutor;
+use tokio::sync::Mutex;
 
 use super::super::agent::AgentService;
+use super::a2ui::PendingA2uiRequests;
 use crate::agent_rpc::AgentBackend;
 use crate::auth::AuthState;
 use crate::invite::InviteCodeRepository;
-use crate::main_chat::{MainChatService, MainChatPiService};
+use crate::main_chat::{MainChatPiService, MainChatService};
 use crate::session::SessionService;
 use crate::session_ui::SessionAutoAttachMode;
 use crate::settings::SettingsService;
@@ -133,6 +137,32 @@ impl Default for SessionUiState {
     }
 }
 
+/// Project template repository configuration/state.
+#[derive(Clone, Debug)]
+pub struct TemplatesState {
+    pub repo_path: Option<PathBuf>,
+    pub sync_on_list: bool,
+    pub sync_interval: Duration,
+    pub last_sync: Arc<Mutex<Option<Instant>>>,
+}
+
+impl TemplatesState {
+    pub fn new(repo_path: Option<PathBuf>, sync_on_list: bool, sync_interval: Duration) -> Self {
+        Self {
+            repo_path,
+            sync_on_list,
+            sync_interval,
+            last_sync: Arc::new(Mutex::new(None)),
+        }
+    }
+}
+
+impl Default for TemplatesState {
+    fn default() -> Self {
+        Self::new(None, true, Duration::from_secs(120))
+    }
+}
+
 /// Application state shared across all handlers.
 #[derive(Clone)]
 pub struct AppState {
@@ -156,6 +186,8 @@ pub struct AppState {
     pub voice: VoiceState,
     /// Session UX configuration.
     pub session_ui: SessionUiState,
+    /// Project templates configuration.
+    pub templates: TemplatesState,
     /// Settings service for octo config.
     pub settings_octo: Option<Arc<SettingsService>>,
     /// Settings service for mmry config.
@@ -166,6 +198,10 @@ pub struct AppState {
     pub main_chat_pi: Option<Arc<MainChatPiService>>,
     /// WebSocket hub for real-time communication.
     pub ws_hub: Arc<WsHub>,
+    /// Pending A2UI blocking requests (request_id -> response channel).
+    pub pending_a2ui_requests: PendingA2uiRequests,
+    /// Max proxy body size (bytes) for buffered proxy requests.
+    pub max_proxy_body_bytes: usize,
 }
 
 impl AppState {
@@ -179,6 +215,8 @@ impl AppState {
         mmry: MmryState,
         voice: VoiceState,
         session_ui: SessionUiState,
+        templates: TemplatesState,
+        max_proxy_body_bytes: usize,
     ) -> Self {
         let http_client: Client<HttpConnector, Body> =
             Client::builder(TokioExecutor::new()).build_http();
@@ -194,11 +232,14 @@ impl AppState {
             mmry,
             voice,
             session_ui,
+            templates,
             settings_octo: None,
             settings_mmry: None,
             main_chat: None,
             main_chat_pi: None,
             ws_hub: Arc::new(WsHub::new()),
+            pending_a2ui_requests: super::a2ui::new_pending_requests(),
+            max_proxy_body_bytes,
         }
     }
 
@@ -213,6 +254,8 @@ impl AppState {
         mmry: MmryState,
         voice: VoiceState,
         session_ui: SessionUiState,
+        templates: TemplatesState,
+        max_proxy_body_bytes: usize,
     ) -> Self {
         let http_client: Client<HttpConnector, Body> =
             Client::builder(TokioExecutor::new()).build_http();
@@ -228,11 +271,14 @@ impl AppState {
             mmry,
             voice,
             session_ui,
+            templates,
             settings_octo: None,
             settings_mmry: None,
             main_chat: None,
             main_chat_pi: None,
             ws_hub: Arc::new(WsHub::new()),
+            pending_a2ui_requests: super::a2ui::new_pending_requests(),
+            max_proxy_body_bytes,
         }
     }
 

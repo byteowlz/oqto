@@ -1,7 +1,7 @@
 "use client";
 
-import { Gauge } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Gauge } from "lucide-react";
 
 export function ContextWindowGauge({
 	inputTokens,
@@ -30,8 +30,6 @@ export function ContextWindowGauge({
 		if (n >= 1000) return `${(n / 1000).toFixed(1)}K`;
 		return n.toString();
 	};
-
-	if (totalTokens === 0) return null;
 
 	if (compact) {
 		return (

@@ -9,6 +9,8 @@ import {
 	Eye,
 	FileText,
 	Loader2,
+	Maximize2,
+	Minimize2,
 	Pencil,
 	Save,
 	X,
@@ -23,6 +25,11 @@ interface PreviewViewProps {
 	filePath?: string | null;
 	workspacePath?: string | null;
 	className?: string;
+	onClose?: () => void;
+	onToggleExpand?: () => void;
+	isExpanded?: boolean;
+	showExpand?: boolean;
+	showHeader?: boolean;
 }
 
 // Simple LRU cache for file contents
@@ -172,7 +179,11 @@ function getLanguage(filename: string): string {
 }
 
 function isEditable(filename: string): boolean {
-	const ext = filename.substring(filename.lastIndexOf(".")).toLowerCase();
+	const dotIndex = filename.lastIndexOf(".");
+	if (dotIndex === -1) {
+		return true;
+	}
+	const ext = filename.slice(dotIndex).toLowerCase();
 	return EDITABLE_EXTENSIONS.has(ext);
 }
 
@@ -256,6 +267,11 @@ export function PreviewView({
 	filePath,
 	workspacePath,
 	className,
+	onClose,
+	onToggleExpand,
+	isExpanded = false,
+	showExpand = false,
+	showHeader = true,
 }: PreviewViewProps) {
 	const [content, setContent] = useState<string>("");
 	const [editedContent, setEditedContent] = useState<string>("");
@@ -468,50 +484,78 @@ export function PreviewView({
 		isImageFile && fileserverBaseUrl && workspacePath
 			? getImageUrl(fileserverBaseUrl, workspacePath, filePath)
 			: null;
+	const ExpandIcon = isExpanded ? Minimize2 : Maximize2;
+	const expandLabel = isExpanded ? "Collapse preview" : "Expand preview";
 
 	// For PDF files, render with iframe
 	if (isPdfFile && fileUrl) {
 		return (
 			<div className={cn("h-full flex flex-col overflow-hidden", className)}>
 				{/* Header */}
-				<div className="flex-shrink-0 flex items-center justify-between px-2 py-1 border-b border-border bg-muted/30">
-					<div className="flex items-center gap-1.5 flex-1 min-w-0">
-						<FileText className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
-						<p
-							className="text-xs font-mono text-muted-foreground truncate"
-							title={filePath}
-						>
-							{filename}
-						</p>
+				{showHeader && (
+					<div className="flex-shrink-0 flex items-center justify-between px-2 py-1 border-b border-border bg-muted/30">
+						<div className="flex items-center gap-1.5 flex-1 min-w-0">
+							<FileText className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
+							<p
+								className="text-xs font-mono text-muted-foreground truncate"
+								title={filePath}
+							>
+								{filename}
+							</p>
+						</div>
+						<div className="flex items-center gap-0.5 ml-2">
+							<Button
+								type="button"
+								variant="ghost"
+								size="sm"
+								onClick={() => window.open(fileUrl, "_blank")}
+								className="h-6 px-1.5 text-xs"
+								title="Open in new tab"
+							>
+								<ExternalLink className="w-3 h-3" />
+							</Button>
+							<Button
+								type="button"
+								variant="ghost"
+								size="sm"
+								onClick={() => {
+									const link = document.createElement("a");
+									link.href = fileUrl;
+									link.download = filename;
+									link.click();
+								}}
+								className="h-6 px-1.5 text-xs"
+								title="Download"
+							>
+								<Download className="w-3 h-3" />
+							</Button>
+							{showExpand && onToggleExpand && (
+								<Button
+									type="button"
+									variant="ghost"
+									size="sm"
+									onClick={onToggleExpand}
+									className="h-6 px-1.5 text-xs"
+									title={expandLabel}
+								>
+									<ExpandIcon className="w-3 h-3" />
+								</Button>
+							)}
+							{onClose && (
+								<Button
+									type="button"
+									variant="ghost"
+									size="sm"
+									onClick={onClose}
+									className="h-6 px-1.5 text-xs"
+									title="Close preview"
+								>
+									<X className="w-3 h-3" />
+								</Button>
+							)}
+						</div>
 					</div>
-					<div className="flex items-center gap-0.5 ml-2">
-						<Button
-							type="button"
-							variant="ghost"
-							size="sm"
-							onClick={() => window.open(fileUrl, "_blank")}
-							className="h-6 px-1.5 text-xs"
-							title="Open in new tab"
-						>
-							<ExternalLink className="w-3 h-3" />
-						</Button>
-						<Button
-							type="button"
-							variant="ghost"
-							size="sm"
-							onClick={() => {
-								const link = document.createElement("a");
-								link.href = fileUrl;
-								link.download = filename;
-								link.click();
-							}}
-							className="h-6 px-1.5 text-xs"
-							title="Download"
-						>
-							<Download className="w-3 h-3" />
-						</Button>
-					</div>
-				</div>
+				)}
 
 				{/* PDF content */}
 				<div className="flex-1 overflow-hidden bg-muted/30">
@@ -530,14 +574,42 @@ export function PreviewView({
 		return (
 			<div className={cn("h-full flex flex-col overflow-hidden", className)}>
 				{/* Header */}
-				<div className="flex-shrink-0 flex items-center justify-between px-2 py-1 border-b border-border bg-muted/30">
-					<p
-						className="text-xs font-mono text-muted-foreground truncate flex-1"
-						title={filePath}
-					>
-						{filename}
-					</p>
-				</div>
+				{showHeader && (
+					<div className="flex-shrink-0 flex items-center justify-between px-2 py-1 border-b border-border bg-muted/30">
+						<p
+							className="text-xs font-mono text-muted-foreground truncate flex-1"
+							title={filePath}
+						>
+							{filename}
+						</p>
+						<div className="flex items-center gap-0.5 ml-2">
+							{showExpand && onToggleExpand && (
+								<Button
+									type="button"
+									variant="ghost"
+									size="sm"
+									onClick={onToggleExpand}
+									className="h-6 px-1.5 text-xs"
+									title={expandLabel}
+								>
+									<ExpandIcon className="w-3 h-3" />
+								</Button>
+							)}
+							{onClose && (
+								<Button
+									type="button"
+									variant="ghost"
+									size="sm"
+									onClick={onClose}
+									className="h-6 px-1.5 text-xs"
+									title="Close preview"
+								>
+									<X className="w-3 h-3" />
+								</Button>
+							)}
+						</div>
+					</div>
+				)}
 
 				{/* Image content */}
 				<div className="flex-1 overflow-auto flex items-center justify-center p-4 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAiIGhlaWdodD0iMjAiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PGRlZnM+PHBhdHRlcm4gaWQ9ImdyaWQiIHdpZHRoPSIyMCIgaGVpZ2h0PSIyMCIgcGF0dGVyblVuaXRzPSJ1c2VyU3BhY2VPblVzZSI+PHJlY3QgZmlsbD0iIzgwODA4MCIgeD0iMCIgeT0iMCIgd2lkdGg9IjEwIiBoZWlnaHQ9IjEwIiBvcGFjaXR5PSIwLjEiLz48cmVjdCBmaWxsPSIjODA4MDgwIiB4PSIxMCIgeT0iMTAiIHdpZHRoPSIxMCIgaGVpZ2h0PSIxMCIgb3BhY2l0eT0iMC4xIi8+PC9wYXR0ZXJuPjwvZGVmcz48cmVjdCBmaWxsPSJ1cmwoI2dyaWQpIiB3aWR0aD0iMTAwJSIgaGVpZ2h0PSIxMDAlIi8+PC9zdmc+')]">
@@ -557,60 +629,88 @@ export function PreviewView({
 	return (
 		<div className={cn("h-full flex flex-col overflow-hidden", className)}>
 			{/* Header */}
-			<div className="flex-shrink-0 flex items-center justify-between px-2 py-1 border-b border-border bg-muted/30">
-				<p
-					className="text-xs font-mono text-muted-foreground truncate flex-1"
-					title={filePath}
-				>
-					{filename}
-					{isEditing && <span className="ml-2 text-primary">(editing)</span>}
-				</p>
-				<div className="flex items-center gap-0.5 ml-2">
-					{isEditing ? (
-						<>
+			{showHeader && (
+				<div className="flex-shrink-0 flex items-center justify-between px-2 py-1 border-b border-border bg-muted/30">
+					<p
+						className="text-xs font-mono text-muted-foreground truncate flex-1"
+						title={filePath}
+					>
+						{filename}
+						{isEditing && (
+							<span className="ml-2 text-primary">(editing)</span>
+						)}
+					</p>
+					<div className="flex items-center gap-0.5 ml-2">
+						{isEditing ? (
+							<>
+								<Button
+									type="button"
+									variant="ghost"
+									size="sm"
+									onClick={handleCancel}
+									disabled={saving}
+									className="h-6 px-1.5 text-xs"
+								>
+									<X className="w-3 h-3 mr-1" />
+									Cancel
+								</Button>
+								<Button
+									type="button"
+									variant="default"
+									size="sm"
+									onClick={handleSave}
+									disabled={saving}
+									className="h-6 px-1.5 text-xs"
+								>
+									{saving ? (
+										<Loader2 className="w-3 h-3 mr-1 animate-spin" />
+									) : (
+										<Save className="w-3 h-3 mr-1" />
+									)}
+									Save
+								</Button>
+							</>
+						) : (
+							canEdit && (
+								<Button
+									type="button"
+									variant="ghost"
+									size="sm"
+									onClick={handleStartEdit}
+									className="h-6 px-1.5 text-xs"
+								>
+									<Pencil className="w-3 h-3 mr-1" />
+									Edit
+								</Button>
+							)
+						)}
+						{showExpand && onToggleExpand && (
 							<Button
 								type="button"
 								variant="ghost"
 								size="sm"
-								onClick={handleCancel}
-								disabled={saving}
+								onClick={onToggleExpand}
 								className="h-6 px-1.5 text-xs"
+								title={expandLabel}
 							>
-								<X className="w-3 h-3 mr-1" />
-								Cancel
+								<ExpandIcon className="w-3 h-3" />
 							</Button>
-							<Button
-								type="button"
-								variant="default"
-								size="sm"
-								onClick={handleSave}
-								disabled={saving}
-								className="h-6 px-1.5 text-xs"
-							>
-								{saving ? (
-									<Loader2 className="w-3 h-3 mr-1 animate-spin" />
-								) : (
-									<Save className="w-3 h-3 mr-1" />
-								)}
-								Save
-							</Button>
-						</>
-					) : (
-						canEdit && (
+						)}
+						{onClose && (
 							<Button
 								type="button"
 								variant="ghost"
 								size="sm"
-								onClick={handleStartEdit}
+								onClick={onClose}
 								className="h-6 px-1.5 text-xs"
+								title="Close preview"
 							>
-								<Pencil className="w-3 h-3 mr-1" />
-								Edit
+								<X className="w-3 h-3" />
 							</Button>
-						)
-					)}
+						)}
+					</div>
 				</div>
-			</div>
+			)}
 
 			{/* Error message */}
 			{error && (

@@ -140,6 +140,11 @@ OCTO__CONTAINER__RUNTIME=docker
 - Data and state directories default to `$XDG_DATA_HOME/octo` and `$XDG_STATE_HOME/octo` (falling back to `~/.local/share` and `~/.local/state` when unset). Override inside the config file.
 - Values support `~` expansion and environment variables (e.g. `$HOME/logs/app.log`).
 
+## Authentication
+
+- API requests should send `Authorization: Bearer <jwt>` headers. The backend now accepts the Bearer scheme regardless of casing and ignores extra whitespace, making it compatible with diverse HTTP clients.
+- Browser-based flows (SSE/EventSource or WebSocket fallbacks) can omit the header and rely on the `auth_token` HttpOnly cookie that is issued during login. Cookies inherit the standard SameSite=Lax policy so same-origin requests always include them.
+
 ## Graceful Shutdown
 
 When the octo server receives SIGTERM or SIGINT (Ctrl+C), it:

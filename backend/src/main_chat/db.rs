@@ -176,5 +176,4 @@ mod tests {
             PathBuf::from("/data/octo/workspaces/user123/main/main_chat.db")
         );
     }
-
 }

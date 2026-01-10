@@ -2,6 +2,7 @@
 //!
 //! Handles spawning and managing native processes for opencode, fileserver, and ttyd.
 //! Supports running processes as specific Linux users for multi-user isolation.
+//! Optionally wraps processes in a bubblewrap sandbox for additional security.
 
 use anyhow::{Context, Result};
 use log::{debug, info, warn};
@@ -11,6 +12,8 @@ use std::process::Stdio;
 use std::sync::Arc;
 use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
+
+use super::sandbox::SandboxConfig;
 
 /// Options for running a process as a specific user.
 #[derive(Debug, Clone, Default)]
@@ -100,7 +103,6 @@ impl ProcessHandle {
             }
         }
     }
-
 }
 
 /// Manager for local processes.
@@ -122,10 +124,10 @@ impl ProcessManager {
 
     // Pi process management is handled by Main Chat Pi service.
 
-
     /// Spawn opencode serve.
     ///
     /// If `agent` is provided, it is passed via the --agent flag.
+    /// If `sandbox` is provided and enabled, wraps the process in bubblewrap.
     pub async fn spawn_opencode(
         &self,
         session_id: &str,
@@ -135,10 +137,11 @@ impl ProcessManager {
         agent: Option<&str>,
         env: HashMap<String, String>,
         run_as: &RunAsUser,
+        sandbox: Option<&SandboxConfig>,
     ) -> Result<u32> {
         info!(
-            "Spawning opencode serve on port {} for session {}, agent: {:?}",
-            port, session_id, agent
+            "Spawning opencode serve on port {} for session {}, agent: {:?}, sandbox: {}",
+            port, session_id, agent, sandbox.map(|s| s.enabled).unwrap_or(false)
         );
 
         let mut args = vec![
@@ -156,12 +159,13 @@ impl ProcessManager {
 
         let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
         let child = self
-            .spawn_as_user(
+            .spawn_sandboxed(
                 run_as,
                 opencode_binary,
                 &args_refs,
                 Some(workspace_dir),
                 env,
+                sandbox,
             )
             .await
             .context("spawning opencode")?;
@@ -388,6 +392,53 @@ impl ProcessManager {
         };
 
         Ok(child)
+    }
+
+    /// Spawn a process with optional sandboxing.
+    ///
+    /// If sandbox config is provided and enabled, wraps the command with bubblewrap.
+    /// Falls back to direct spawn if bwrap is not available.
+    pub async fn spawn_sandboxed(
+        &self,
+        run_as: &RunAsUser,
+        binary: &str,
+        args: &[&str],
+        cwd: Option<&Path>,
+        env: HashMap<String, String>,
+        sandbox: Option<&SandboxConfig>,
+    ) -> Result<Child> {
+        // Check if sandboxing should be applied
+        let workspace = cwd.unwrap_or(Path::new("."));
+
+        // Merge global sandbox config with workspace-specific config
+        let effective_sandbox = sandbox.filter(|s| s.enabled).map(|global| {
+            global.with_workspace_config(workspace)
+        });
+
+        let sandbox_args = effective_sandbox
+            .as_ref()
+            .filter(|s| s.enabled)
+            .and_then(|s| s.build_bwrap_args(workspace));
+
+        if let Some(bwrap_args) = sandbox_args {
+            // Spawn with bwrap wrapper
+            info!("Spawning {} with sandbox (bwrap)", binary);
+
+            // Build the full command: bwrap [bwrap_args] -- binary [args]
+            let mut full_args: Vec<String> = bwrap_args;
+            full_args.push(binary.to_string());
+            full_args.extend(args.iter().map(|s| s.to_string()));
+
+            let full_args_refs: Vec<&str> = full_args.iter().map(|s| s.as_str()).collect();
+
+            // For sandboxed execution, we run bwrap as the target user
+            // bwrap handles the actual command execution inside the sandbox
+            self.spawn_as_user(run_as, "bwrap", &full_args_refs, None, env)
+                .await
+        } else {
+            // Direct spawn without sandbox
+            self.spawn_as_user(run_as, binary, args, cwd, env).await
+        }
     }
 
     /// Stop all processes for a session.

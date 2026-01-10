@@ -105,21 +105,21 @@
 :root {
 	--radius: 0;
 	--background: oklch(0.9702 0 0);
-	--foreground: oklch(0.518 0.0127 226.1559);
+	--foreground: oklch(0.25 0.015 230);
 	--card: oklch(0.9249 0 0);
-	--card-foreground: oklch(0.518 0.0127 226.1559);
+	--card-foreground: oklch(0.25 0.015 230);
 	--popover: oklch(0.9702 0 0);
-	--popover-foreground: oklch(0.518 0.0127 226.1559);
-	--primary: oklch(0.8279 0.0385 229.4561);
-	--primary-foreground: oklch(0.3391 0.0139 235.2901);
+	--popover-foreground: oklch(0.25 0.015 230);
+	--primary: oklch(0.45 0.12 160);
+	--primary-foreground: oklch(0.98 0 0);
 	--secondary: oklch(0.8926 0.0354 234.8416);
 	--secondary-foreground: oklch(0.1435 0.0018 196.9603);
 	--muted: oklch(0.9067 0 0);
-	--muted-foreground: oklch(0.678 0.0118 234.9092);
+	--muted-foreground: oklch(0.45 0.015 230);
 	--accent: oklch(0.8588 0.0406 231.8804);
-	--accent-foreground: oklch(0.3391 0.0139 235.2901);
-	--destructive: oklch(0.4539 0.0686 27.5687);
-	--border: oklch(0.8576 0 0);
+	--accent-foreground: oklch(0.25 0.015 230);
+	--destructive: oklch(0.5 0.18 25);
+	--border: oklch(0.82 0 0);
 	--input: oklch(0.9067 0 0);
 	--ring: oklch(0.796 0.0347 255.2349);
 	--chart-1: oklch(0.8488 0.0483 247.4285);
@@ -128,14 +128,14 @@
 	--chart-4: oklch(0.9542 0.0172 67.6199);
 	--chart-5: oklch(0.796 0.0347 255.2349);
 	--sidebar: oklch(0.9249 0 0);
-	--sidebar-foreground: oklch(0.518 0.0127 226.1559);
-	--sidebar-primary: oklch(0.796 0.0347 255.2349);
-	--sidebar-primary-foreground: oklch(0.3391 0.0139 235.2901);
+	--sidebar-foreground: oklch(0.25 0.015 230);
+	--sidebar-primary: oklch(0.45 0.12 160);
+	--sidebar-primary-foreground: oklch(0.98 0 0);
 	--sidebar-accent: oklch(0.92 0 0);
-	--sidebar-accent-foreground: oklch(0.3 0 0);
-	--sidebar-border: oklch(0.8576 0 0);
-	--sidebar-ring: oklch(0.796 0.0347 255.2349);
-	--destructive-foreground: oklch(0.3391 0.0139 235.2901);
+	--sidebar-accent-foreground: oklch(0.25 0 0);
+	--sidebar-border: oklch(0.82 0 0);
+	--sidebar-ring: oklch(0.45 0.12 160);
+	--destructive-foreground: oklch(0.98 0 0);
 	--font-sans: "JetBrainsMono Nerd Font", ui-monospace, monospace;
 	--font-serif: "JetBrainsMono Nerd Font", ui-monospace, monospace;
 	--font-mono: "JetBrainsMono Nerd Font", ui-monospace, monospace;
@@ -247,7 +247,6 @@
 @layer base {
 	* {
 		@apply border-border outline-ring/50;
-		border-radius: 0 !important;
 	}
 	body {
 		@apply bg-background text-foreground;
@@ -256,8 +255,13 @@
 }
 
 /* Custom scrollbar styling - thin, flat, matches theme */
+/* Hidden by default, visible on hover */
 * {
 	scrollbar-width: thin;
+	scrollbar-color: transparent transparent;
+}
+
+*:hover {
 	scrollbar-color: var(--muted-foreground) transparent;
 }
 
@@ -272,10 +276,17 @@
 }
 
 /* Use box-shadow inset trick for sharp rectangular scrollbar in Chromium */
+/* Hidden by default */
 *::-webkit-scrollbar-thumb {
 	background: transparent;
-	box-shadow: inset 0 0 0 10px var(--muted-foreground);
+	box-shadow: inset 0 0 0 10px transparent;
 	border: 3px solid transparent;
+	transition: box-shadow 0.2s ease;
+}
+
+/* Show on container hover */
+*:hover::-webkit-scrollbar-thumb {
+	box-shadow: inset 0 0 0 10px var(--muted-foreground);
 }
 
 *::-webkit-scrollbar-thumb:hover {
@@ -286,14 +297,24 @@
 	background: transparent;
 }
 
-/* Sidebar scrollbar - even more subtle */
+/* Sidebar scrollbar - even more subtle, hidden by default */
 .sidebar-scroll,
 [data-sidebar] {
+	scrollbar-color: transparent transparent;
+}
+
+.sidebar-scroll:hover,
+[data-sidebar]:hover {
 	scrollbar-color: var(--sidebar-border) transparent;
 }
 
 .sidebar-scroll::-webkit-scrollbar-thumb,
 [data-sidebar]::-webkit-scrollbar-thumb {
+	box-shadow: inset 0 0 0 10px transparent;
+}
+
+.sidebar-scroll:hover::-webkit-scrollbar-thumb,
+[data-sidebar]:hover::-webkit-scrollbar-thumb {
 	box-shadow: inset 0 0 0 10px var(--sidebar-border);
 }
 
@@ -358,6 +379,10 @@
 	.chat-input-container textarea {
 		min-height: unset;
 	}
+	/* Exclude switch component - has its own sizing */
+	[data-slot="switch"] {
+		min-height: unset;
+	}
 }
 
 /* Prevent pull-to-refresh on mobile */
@@ -390,6 +415,50 @@ body {
 	.chat-input-container {
 		position: sticky;
 		bottom: 0;
-		background: inherit;
+		/* Use explicit muted background instead of inherit to ensure correct color in Tauri */
+		background-color: oklch(from var(--muted) l c h / 0.3);
+		width: calc(100% + 0.75rem);
+		margin-left: -0.375rem;
+		margin-right: -0.375rem;
+		margin-bottom: -0.375rem;
+		padding-bottom: 0.25rem;
+		border-left: none;
+		border-right: none;
+		border-radius: 0;
 	}
+}
+
+* {
+	border-radius: 0 !important;
+}
+
+input[type="radio"] {
+	border-radius: 9999px !important;
+}
+
+/* Search result highlight animation */
+@keyframes search-highlight-pulse {
+	0% {
+		box-shadow: 0 0 0 0 oklch(from var(--primary) l c h / 0.7);
+	}
+	50% {
+		box-shadow: 0 0 0 4px oklch(from var(--primary) l c h / 0.3);
+	}
+	100% {
+		box-shadow: 0 0 0 0 oklch(from var(--primary) l c h / 0);
+	}
+}
+
+.search-highlight {
+	animation: search-highlight-pulse 0.6s ease-out 3;
+	outline: 2px solid oklch(from var(--primary) l c h / 0.5);
+	outline-offset: 2px;
+}
+
+.sidebar-chat .chat-input-container {
+	width: 100%;
+	margin-left: 0;
+	margin-right: 0;
+	margin-bottom: 0;
+	padding-bottom: 0;
 }

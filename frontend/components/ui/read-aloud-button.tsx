@@ -53,6 +53,7 @@ export function ReadAloudButton({
 		totalParagraphs,
 		hasPrevious,
 		hasNext,
+		isReading,
 		settings,
 		availableVoices,
 		setVoice,
@@ -69,6 +70,7 @@ export function ReadAloudButton({
 	}, [isSpeaking, stop, play]);
 
 	const isConnecting = state === "connecting";
+	const isActive = isReading || isSpeaking;
 	const isDisabled = !text.trim() || isConnecting;
 	const showNavigation = totalParagraphs > 1;
 
@@ -82,11 +84,11 @@ export function ReadAloudButton({
 					"inline-flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50 disabled:cursor-not-allowed p-1",
 					className,
 				)}
-				title={isSpeaking ? "Stop reading" : "Read aloud"}
+				title={isActive ? "Stop reading" : "Read aloud"}
 			>
 				{isConnecting ? (
 					<Loader2 className="w-3.5 h-3.5 animate-spin" />
-				) : isSpeaking ? (
+				) : isActive ? (
 					<Square className="w-3.5 h-3.5 fill-current" />
 				) : (
 					<Volume2 className="w-3.5 h-3.5" />
@@ -116,17 +118,17 @@ export function ReadAloudButton({
 				onClick={handleClick}
 				disabled={isDisabled}
 				className="inline-flex items-center justify-center gap-1.5 text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50 disabled:cursor-not-allowed px-2 py-1 text-xs"
-				title={isSpeaking ? "Stop reading" : "Read aloud"}
+				title={isActive ? "Stop reading" : "Read aloud"}
 			>
 				{isConnecting ? (
 					<Loader2 className="w-3.5 h-3.5 animate-spin" />
-				) : isSpeaking ? (
+				) : isActive ? (
 					<Square className="w-3.5 h-3.5 fill-current" />
 				) : (
 					<Volume2 className="w-3.5 h-3.5" />
 				)}
 				<span>
-					{isSpeaking
+					{isActive
 						? showNavigation
 							? `${currentParagraph + 1}/${totalParagraphs}`
 							: "Stop"

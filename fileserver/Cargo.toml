@@ -1,6 +1,6 @@
 [package]
 name = "fileserver"
-version = "0.1.0"
+version = "0.3.1"
 edition = "2021"
 description = "Lightweight file server for container workspace access"
 license = "MIT"

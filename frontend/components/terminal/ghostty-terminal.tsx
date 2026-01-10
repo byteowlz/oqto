@@ -1,5 +1,15 @@
 "use client";
 
+import { getAuthToken } from "@/lib/control-plane-client";
+
+function isTerminalDebugEnabled(): boolean {
+	if (!import.meta.env.DEV) return false;
+	try {
+		return localStorage.getItem("debug:terminal") === "1";
+	} catch {
+		return false;
+	}
+}
 import { FitAddon, Terminal, init } from "ghostty-web";
 import {
 	forwardRef,
@@ -174,9 +184,11 @@ export const GhosttyTerminal = forwardRef<
 				);
 				const jitter = Math.floor(Math.random() * 200);
 				const delay = baseDelay + jitter;
-				console.log(
-					`Terminal [${sessionId}]: reconnecting in ${delay}ms (${why})`,
-				);
+				if (isTerminalDebugEnabled()) {
+					console.debug(
+						`Terminal [${sessionId}]: reconnecting in ${delay}ms (${why})`,
+					);
+				}
 				session.reconnectTimeout = setTimeout(() => {
 					session.reconnectTimeout = null;
 					void setup();
@@ -190,12 +202,17 @@ export const GhosttyTerminal = forwardRef<
 				const isSocketUsable =
 					socketState === WebSocket.CONNECTING ||
 					socketState === WebSocket.OPEN;
+				const hasAttachedTerminal =
+					Boolean(session.terminal?.element) &&
+					session.terminal?.element === containerRef.current;
 
-				// Skip if already have a usable socket
-				if (isSocketUsable) {
-					console.log(
-						`Terminal [${sessionId}]: socket already ${socketState === WebSocket.OPEN ? "open" : "connecting"}, skipping`,
-					);
+				// Skip if already have a usable socket and attached terminal
+				if (isSocketUsable && hasAttachedTerminal) {
+					if (isTerminalDebugEnabled()) {
+						console.debug(
+							`Terminal [${sessionId}]: socket already ${socketState === WebSocket.OPEN ? "open" : "connecting"}, skipping`,
+						);
+					}
 					if (mountedRef.current) {
 						if (socketState === WebSocket.OPEN) {
 							setStatus("connected");
@@ -213,7 +230,9 @@ export const GhosttyTerminal = forwardRef<
 
 				if (!currentWsUrl) {
 					if (mountedRef.current) setStatus("waiting");
-					console.log(`Terminal [${sessionId}]: no wsUrl, waiting...`);
+					if (isTerminalDebugEnabled()) {
+						console.debug(`Terminal [${sessionId}]: no wsUrl, waiting...`);
+					}
 					return;
 				}
 
@@ -221,15 +240,20 @@ export const GhosttyTerminal = forwardRef<
 				if (mountedRef.current) setStatus("connecting");
 
 				// Double-check we're not already setting up
-				if (session.isConnecting) {
-					console.log(
-						`Terminal [${sessionId}]: setup already in progress, skipping`,
-					);
-					return;
-				}
+					if (session.isConnecting) {
+						if (isTerminalDebugEnabled()) {
+							console.debug(
+								`Terminal [${sessionId}]: setup already in progress, skipping`,
+							);
+						}
+						return;
+					}
+
 
 				session.isConnecting = true;
-				console.log(`Terminal [${sessionId}]: starting setup...`);
+				if (isTerminalDebugEnabled()) {
+					console.debug(`Terminal [${sessionId}]: starting setup...`);
+				}
 
 				try {
 					// Initialize ghostty
@@ -256,7 +280,9 @@ export const GhosttyTerminal = forwardRef<
 
 					// Create terminal if not exists
 					if (!session.terminal && containerRef.current) {
-						console.log(`Terminal [${sessionId}]: creating terminal...`);
+						if (isTerminalDebugEnabled()) {
+							console.debug(`Terminal [${sessionId}]: creating terminal...`);
+						}
 						// Get theme colors from CSS variables
 						const computedStyle = getComputedStyle(document.documentElement);
 						const terminalBg =
@@ -296,6 +322,12 @@ export const GhosttyTerminal = forwardRef<
 								session.socket.send(resizeMsg);
 							}
 						});
+
+						if (session.socket?.readyState === WebSocket.OPEN) {
+							const { cols, rows } = terminal;
+							const resizeMsg = JSON.stringify({ columns: cols, rows });
+							session.socket.send(resizeMsg);
+						}
 					}
 
 					// Connect WebSocket if not connected
@@ -305,17 +337,31 @@ export const GhosttyTerminal = forwardRef<
 					) {
 						clearReconnect();
 
-						console.log(
+						// Add auth token as query parameter for WebSocket auth
+						let wsUrlWithAuth = currentWsUrl;
+						const token = getAuthToken();
+						if (token) {
+							const separator = currentWsUrl.includes("?") ? "&" : "?";
+							wsUrlWithAuth = `${currentWsUrl}${separator}token=${encodeURIComponent(token)}`;
+						}
+
+					if (isTerminalDebugEnabled()) {
+						console.debug(
 							`Terminal [${sessionId}]: connecting WebSocket to ${currentWsUrl.substring(0, 60)}...`,
 						);
+					}
 
-						const socket = new WebSocket(currentWsUrl);
+
+						const socket = new WebSocket(wsUrlWithAuth);
 						socket.binaryType = "arraybuffer";
 						session.socket = socket;
 						setStatus("connecting");
 
-						socket.onopen = () => {
-							console.log(`Terminal [${sessionId}]: connected!`);
+					socket.onopen = () => {
+						if (isTerminalDebugEnabled()) {
+							console.debug(`Terminal [${sessionId}]: connected!`);
+						}
+
 							session.isConnecting = false;
 							session.reconnectAttempts = 0;
 							if (mountedRef.current) {
@@ -342,10 +388,13 @@ export const GhosttyTerminal = forwardRef<
 							scheduleReconnect("error");
 						};
 
-						socket.onclose = (event) => {
-							console.log(
+					socket.onclose = (event) => {
+						if (isTerminalDebugEnabled()) {
+							console.debug(
 								`Terminal [${sessionId}]: connection closed (code=${event.code} clean=${event.wasClean})`,
 							);
+						}
+
 							session.isConnecting = false;
 							session.socket = null;
 							if (mountedRef.current) {

@@ -1,7 +1,14 @@
 "use client";
 
+import { A2UICallCard } from "@/components/ui/a2ui-call-card";
 import { BrailleSpinner } from "@/components/ui/braille-spinner";
 import { Button } from "@/components/ui/button";
+import {
+	ContextMenu,
+	ContextMenuContent,
+	ContextMenuItem,
+	ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 import { ContextWindowGauge } from "@/components/ui/context-window-gauge";
 import {
 	type FileAttachment,
@@ -15,44 +22,46 @@ import {
 } from "@/components/ui/markdown-renderer";
 import { ReadAloudButton } from "@/components/ui/read-aloud-button";
 import { SlashCommandPopup } from "@/components/ui/slash-command-popup";
-import {
-	Select,
-	SelectContent,
-	SelectItem,
-	SelectTrigger,
-	SelectValue,
-} from "@/components/ui/select";
 import { ToolCallCard } from "@/components/ui/tool-call-card";
+import { DictationOverlay } from "@/components/voice";
 import {
 	VoiceMenuButton,
 	type VoiceMode,
 } from "@/components/voice/VoiceMenuButton";
+import { type A2UISurfaceState, useA2UI } from "@/hooks/use-a2ui";
 import { useDictation } from "@/hooks/use-dictation";
 import {
 	type PiDisplayMessage,
 	type PiMessagePart,
+	getCachedScrollPosition,
+	setCachedScrollPosition,
 	usePiChat,
 } from "@/hooks/usePiChat";
 import {
 	type Features,
+	type PiModelInfo,
 	compactMainChatPi,
 	fileserverWorkspaceBaseUrl,
-	getMainChatPiStats,
 	getMainChatPiCommands,
 	getMainChatPiModels,
+	getMainChatPiStats,
 	setMainChatPiModel,
-	type PiModelInfo,
+	workspaceFileUrl,
 } from "@/lib/control-plane-client";
 import { getFileTypeInfo } from "@/lib/file-types";
-import { type SlashCommand, fuzzyMatch, parseSlashInput } from "@/lib/slash-commands";
+import {
+	type SlashCommand,
+	fuzzyMatch,
+	parseSlashInput,
+} from "@/lib/slash-commands";
 import { cn } from "@/lib/utils";
 import {
 	Bot,
+	Copy,
 	ExternalLink,
 	File,
 	ImageIcon,
 	Loader2,
-	MessageSquare,
 	Paperclip,
 	Send,
 	StopCircle,
@@ -81,6 +90,20 @@ export interface MainChatPiViewProps {
 	workspacePath?: string | null;
 	/** Assistant name to display (user-configured main chat name) */
 	assistantName?: string | null;
+	/** Hide the internal header (used when embedded in sessions app with external header) */
+	hideHeader?: boolean;
+	/** Callback to report token usage (for external gauge display) */
+	onTokenUsageChange?: (usage: {
+		inputTokens: number;
+		outputTokens: number;
+		maxTokens: number;
+	}) => void;
+	/** Session ID to scroll to (when clicking session in sidebar) */
+	scrollToSessionId?: string | null;
+	/** Message ID to scroll to (from search results) */
+	scrollToMessageId?: string | null;
+	/** Callback when scroll target is reached (to clear the target) */
+	onScrollToMessageComplete?: () => void;
 }
 
 /**
@@ -93,6 +116,11 @@ export function MainChatPiView({
 	features,
 	workspacePath,
 	assistantName,
+	hideHeader = false,
+	onTokenUsageChange,
+	scrollToSessionId,
+	scrollToMessageId,
+	onScrollToMessageComplete,
 }: MainChatPiViewProps) {
 	const {
 		messages,
@@ -102,11 +130,20 @@ export function MainChatPiView({
 		send,
 		abort,
 		newSession,
+		resetSession,
 		state: piState,
 		refresh,
 	} = usePiChat();
 
-	const [input, setInput] = useState("");
+	// Draft persistence - restore from localStorage on mount
+	const [input, setInput] = useState(() => {
+		if (typeof window === "undefined") return "";
+		try {
+			return localStorage.getItem("octo:mainChatDraft") || "";
+		} catch {
+			return "";
+		}
+	});
 	const [fileAttachments, setFileAttachments] = useState<FileAttachment[]>([]);
 	const [showFileMentionPopup, setShowFileMentionPopup] = useState(false);
 	const [fileMentionQuery, setFileMentionQuery] = useState("");
@@ -128,7 +165,52 @@ export function MainChatPiView({
 	const messagesContainerRef = useRef<HTMLDivElement>(null);
 	const inputRef = useRef<HTMLTextAreaElement>(null);
 	const fileInputRef = useRef<HTMLInputElement>(null);
-	const [isUserScrolled, setIsUserScrolled] = useState(false);
+	const draftSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
+		null,
+	);
+	const initialScrollDoneRef = useRef(false);
+	// Initialize from cached scroll position - null means bottom
+	const [isUserScrolled, setIsUserScrolled] = useState(
+		() => getCachedScrollPosition() !== null,
+	);
+	// Pagination: start with last 30 messages, load more on scroll up
+	const INITIAL_MESSAGES = 30;
+	const LOAD_MORE_COUNT = 30;
+	const [visibleCount, setVisibleCount] = useState(INITIAL_MESSAGES);
+
+	// A2UI integration - adapt Pi messages to expected format
+	const a2uiMessagesRef = useRef<Array<{ info: { id: string; role: string } }>>(
+		[],
+	);
+	// Keep ref in sync with messages
+	a2uiMessagesRef.current = messages.map((m) => ({
+		info: { id: m.id, role: m.role },
+	}));
+
+	const { surfaces: a2uiSurfaces, handleAction: handleA2UIAction } = useA2UI(
+		a2uiMessagesRef,
+		{
+			onSurfaceReceived: useCallback(() => {
+				// Auto-scroll when A2UI surface arrives
+				if (!isUserScrolled) {
+					messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+				}
+			}, [isUserScrolled]),
+		},
+	);
+
+	// Memoized map of message ID to surfaces to avoid creating new arrays on each render
+	const surfacesByMessageId = useMemo(() => {
+		const map = new Map<string, A2UISurfaceState[]>();
+		for (const surface of a2uiSurfaces) {
+			if (surface.anchorMessageId) {
+				const existing = map.get(surface.anchorMessageId) || [];
+				existing.push(surface);
+				map.set(surface.anchorMessageId, existing);
+			}
+		}
+		return map;
+	}, [a2uiSurfaces]);
 
 	// Voice configuration
 	const voiceConfig = useMemo(
@@ -175,6 +257,7 @@ export function MainChatPiView({
 		() => [
 			{ name: "compact", description: "Summarize context" },
 			{ name: "new", description: "Start a fresh session" },
+			{ name: "reset", description: "Reload personality and user files" },
 			{ name: "abort", description: "Abort current run" },
 			{ name: "steer", description: "Queue a steering message" },
 			{ name: "followup", description: "Queue a follow-up message" },
@@ -214,7 +297,21 @@ export function MainChatPiView({
 	const messageTokenUsage = useMemo(() => {
 		let inputTokens = 0;
 		let outputTokens = 0;
-		for (const msg of messages) {
+
+		// Find the index of the last compaction message
+		let lastCompactionIndex = -1;
+		for (let i = messages.length - 1; i >= 0; i--) {
+			const msg = messages[i];
+			if (msg.parts.some((part) => part.type === "compaction")) {
+				lastCompactionIndex = i;
+				break;
+			}
+		}
+
+		// Only count tokens from messages after the last compaction
+		const startIndex = lastCompactionIndex >= 0 ? lastCompactionIndex + 1 : 0;
+		for (let i = startIndex; i < messages.length; i++) {
+			const msg = messages[i];
 			if (!msg.usage) continue;
 			inputTokens += msg.usage.input || 0;
 			outputTokens += msg.usage.output || 0;
@@ -222,7 +319,8 @@ export function MainChatPiView({
 		return { inputTokens, outputTokens };
 	}, [messages]);
 	const gaugeTokens = useMemo(() => {
-		const total = messageTokenUsage.inputTokens + messageTokenUsage.outputTokens;
+		const total =
+			messageTokenUsage.inputTokens + messageTokenUsage.outputTokens;
 		if (total > 0) return messageTokenUsage;
 		if (sessionTokens) {
 			return {
@@ -233,6 +331,17 @@ export function MainChatPiView({
 		return { inputTokens: 0, outputTokens: 0 };
 	}, [messageTokenUsage, sessionTokens]);
 
+	// Report token usage to parent when it changes
+	useEffect(() => {
+		if (onTokenUsageChange) {
+			onTokenUsageChange({
+				inputTokens: gaugeTokens.inputTokens,
+				outputTokens: gaugeTokens.outputTokens,
+				maxTokens: contextWindowLimit,
+			});
+		}
+	}, [gaugeTokens, contextWindowLimit, onTokenUsageChange]);
+
 	// Dictation hook
 	const dictation = useDictation({
 		config: voiceConfig,
@@ -240,6 +349,14 @@ export function MainChatPiView({
 			setInput((prev) => (prev ? `${prev} ${text}` : text));
 		}, []),
 		vadTimeoutMs: features?.voice?.vad_timeout_ms,
+		autoSendOnFinal: true,
+		autoSendDelayMs: 50,
+		onAutoSend: () => {
+			const sendBtn = document.querySelector(
+				"[data-dictation-send]",
+			) as HTMLButtonElement | null;
+			sendBtn?.click();
+		},
 	});
 
 	useEffect(() => {
@@ -297,19 +414,98 @@ export function MainChatPiView({
 		}
 	}, []);
 
+	// biome-ignore lint/correctness/useExhaustiveDependencies: messages.length triggers refresh when message count changes
 	useEffect(() => {
 		if (!isConnected || isStreaming) return;
 		refreshStats();
 	}, [isConnected, isStreaming, messages.length, refreshStats]);
 
-	// Auto-scroll to bottom when new messages arrive (only if user hasn't scrolled up)
-	useLayoutEffect(() => {
-		if (messages.length > 0 && !isUserScrolled) {
-			messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-		}
-	}, [messages, isUserScrolled]);
+	// Scroll to session when scrollToSessionId changes
+	useEffect(() => {
+		if (!scrollToSessionId || !messagesContainerRef.current) return;
 
-	// Detect user scroll to disable auto-scroll
+		// Find the separator element with this session ID
+		const separator = messagesContainerRef.current.querySelector(
+			`[data-session-id="${scrollToSessionId}"]`,
+		);
+
+		if (separator) {
+			separator.scrollIntoView({ behavior: "smooth", block: "start" });
+			setIsUserScrolled(true); // Prevent auto-scroll from overriding
+		}
+	}, [scrollToSessionId]);
+
+	// Scroll to message when scrollToMessageId changes (from search results)
+	useEffect(() => {
+		if (!scrollToMessageId || !messagesContainerRef.current) return;
+
+		// Find the message element with this ID
+		const messageEl = messagesContainerRef.current.querySelector(
+			`[data-message-id="${scrollToMessageId}"]`,
+		);
+
+		if (messageEl) {
+			// Ensure we have enough messages visible
+			const messageIndex = messages.findIndex(
+				(m) => m.id === scrollToMessageId,
+			);
+			if (messageIndex !== -1) {
+				const messagesFromEnd = messages.length - messageIndex;
+				if (messagesFromEnd > visibleCount) {
+					setVisibleCount(messagesFromEnd + 10);
+				}
+			}
+
+			// Scroll to the message
+			requestAnimationFrame(() => {
+				messageEl.scrollIntoView({ behavior: "smooth", block: "center" });
+				// Add highlight animation
+				messageEl.classList.add("search-highlight");
+				setTimeout(() => {
+					messageEl.classList.remove("search-highlight");
+				}, 2000);
+			});
+
+			setIsUserScrolled(true);
+			onScrollToMessageComplete?.();
+		}
+	}, [scrollToMessageId, messages, visibleCount, onScrollToMessageComplete]);
+
+	// Initial scroll position - instant, no animation
+	useLayoutEffect(() => {
+		if (initialScrollDoneRef.current || !messagesContainerRef.current) return;
+		if (messages.length === 0) return;
+
+		initialScrollDoneRef.current = true;
+		const container = messagesContainerRef.current;
+		const cachedPosition = getCachedScrollPosition();
+
+		if (cachedPosition !== null) {
+			// Restore user's scroll position instantly
+			container.scrollTop = cachedPosition;
+		} else {
+			// Scroll to bottom instantly (no animation)
+			container.scrollTop = container.scrollHeight;
+		}
+	}, [messages.length]);
+
+	// Auto-scroll to bottom when NEW messages arrive (only if user hasn't scrolled up)
+	const prevMessageCountRef = useRef(messages.length);
+	useLayoutEffect(() => {
+		const prevCount = prevMessageCountRef.current;
+		prevMessageCountRef.current = messages.length;
+
+		// Only auto-scroll if messages were added (not on initial load)
+		if (messages.length > prevCount) {
+			// Ensure new messages are visible
+			setVisibleCount((prev) => Math.max(prev, INITIAL_MESSAGES));
+			if (!isUserScrolled) {
+				messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+			}
+		}
+	}, [messages.length, isUserScrolled]);
+
+	// Detect user scroll to disable auto-scroll, save position, and load more messages
 	const handleScroll = useCallback(() => {
 		const container = messagesContainerRef.current;
 		if (!container) return;
@@ -319,23 +515,70 @@ export function MainChatPiView({
 			container.scrollHeight - container.scrollTop - container.clientHeight <
 			100;
 
-		setIsUserScrolled(!isNearBottom);
+		// Check if user scrolled to the top - load more messages
+		const isNearTop = container.scrollTop < 100;
+		if (isNearTop && visibleCount < messages.length) {
+			// Preserve scroll position when loading more
+			const prevScrollHeight = container.scrollHeight;
+			setVisibleCount((prev) =>
+				Math.min(prev + LOAD_MORE_COUNT, messages.length),
+			);
+			// After state update, adjust scroll to maintain position
+			requestAnimationFrame(() => {
+				const newScrollHeight = container.scrollHeight;
+				container.scrollTop = newScrollHeight - prevScrollHeight;
+			});
+		}
+
+		const userScrolled = !isNearBottom;
+		setIsUserScrolled(userScrolled);
+
+		// Save scroll position to cache
+		if (userScrolled) {
+			setCachedScrollPosition(container.scrollTop);
+		} else {
+			// At bottom - clear saved position so next mount scrolls to bottom
+			setCachedScrollPosition(null);
+		}
+	}, [visibleCount, messages.length]);
+
+	// Focus input on mount - only on desktop to avoid opening keyboard on mobile
+	useEffect(() => {
+		// Check if device has a coarse pointer (touch) - indicates mobile
+		const isTouchDevice = window.matchMedia("(pointer: coarse)").matches;
+		if (!isTouchDevice) {
+			inputRef.current?.focus();
+		}
 	}, []);
 
-	// Focus input on mount
+	// Auto-resize is now handled inline in handleInputChange for better performance.
+	// This effect is only needed for programmatic input changes (e.g., dictation, file select).
+	const lastInputLengthRef = useRef(input.length);
 	useEffect(() => {
-		inputRef.current?.focus();
-	}, []);
+		// Keep the textarea stable during dictation; the DictationOverlay shows the transcript.
+		if (dictation.isActive) {
+			lastInputLengthRef.current = input.length;
+			if (inputRef.current) {
+				inputRef.current.style.height = "36px";
+			}
+			return;
+		}
 
-	// Auto-resize textarea - input dependency is intentional to trigger on text changes
-	// biome-ignore lint/correctness/useExhaustiveDependencies: input triggers resize calculation
-	useEffect(() => {
+		// Only resize if the input changed programmatically (not via typing, which is handled inline)
+		const currentLength = input.length;
+		const lastLength = lastInputLengthRef.current;
+		// Skip if this is likely a single character change (typing)
+		if (Math.abs(currentLength - lastLength) <= 1) {
+			lastInputLengthRef.current = currentLength;
+			return;
+		}
+		lastInputLengthRef.current = currentLength;
 		const textarea = inputRef.current;
 		if (textarea) {
 			textarea.style.height = "auto";
 			textarea.style.height = `${Math.min(textarea.scrollHeight, 200)}px`;
 		}
-	}, [input]);
+	}, [dictation.isActive, input]);
 
 	// Handle file upload
 	const handleFileUpload = useCallback(
@@ -422,6 +665,10 @@ export function MainChatPiView({
 					await newSession();
 					return { handled: true, clearInput: true };
 				}
+				case "reset": {
+					await resetSession();
+					return { handled: true, clearInput: true };
+				}
 				case "abort": {
 					await abort();
 					return { handled: true, clearInput: true };
@@ -436,7 +683,10 @@ export function MainChatPiView({
 				}
 				case "model": {
 					const separatorIndex = trimmedArgs.indexOf("/");
-					if (separatorIndex <= 0 || separatorIndex === trimmedArgs.length - 1) {
+					if (
+						separatorIndex <= 0 ||
+						separatorIndex === trimmedArgs.length - 1
+					) {
 						throw new Error("Model must be provider/model");
 					}
 					await handleModelChange(trimmedArgs);
@@ -446,7 +696,7 @@ export function MainChatPiView({
 					return { handled: false, clearInput: false };
 			}
 		},
-		[abort, handleModelChange, newSession, refresh, send],
+		[abort, handleModelChange, newSession, refresh, resetSession, send],
 	);
 
 	const handleSend = useCallback(
@@ -479,15 +729,28 @@ export function MainChatPiView({
 				}
 			}
 
+			// Check for shell command (starts with "!")
+			const isShellCommand = trimmed.startsWith("!");
+			const shellCommand = isShellCommand ? trimmed.slice(1).trim() : "";
+
 			// Build message with file attachments
 			let message = trimmed;
-			if (fileAttachments.length > 0) {
+			if (isShellCommand && shellCommand) {
+				// Convert shell command to a prompt for Pi's bash tool
+				message = `Run this shell command and show me the output:\n\`\`\`bash\n${shellCommand}\n\`\`\``;
+			} else if (fileAttachments.length > 0) {
 				const fileRefs = fileAttachments.map((f) => `@${f.path}`).join(" ");
 				message = `${fileRefs}\n\n${trimmed}`;
 			}
 
 			setInput("");
 			setFileAttachments([]);
+			// Clear draft from localStorage
+			try {
+				localStorage.removeItem("octo:mainChatDraft");
+			} catch {
+				// Ignore localStorage errors
+			}
 			// Reset textarea height
 			if (inputRef.current) {
 				inputRef.current.style.height = "auto";
@@ -495,15 +758,16 @@ export function MainChatPiView({
 			await send(message, { mode });
 		},
 		[
-		builtInCommandNames,
-		fileAttachments,
-		input,
-		runSlashCommand,
-		send,
-		slashQuery.command,
-		slashQuery.args,
-		slashQuery.isSlash,
-	]);
+			builtInCommandNames,
+			fileAttachments,
+			input,
+			runSlashCommand,
+			send,
+			slashQuery.command,
+			slashQuery.args,
+			slashQuery.isSlash,
+		],
+	);
 
 	const handleKeyDown = useCallback(
 		(e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -536,9 +800,35 @@ export function MainChatPiView({
 
 	const handleInputChange = useCallback(
 		(e: ChangeEvent<HTMLTextAreaElement>) => {
-			const value = e.target.value;
+			const textarea = e.target;
+			const value = textarea.value;
 			setInput(value);
 			setCommandError(null);
+
+			// Keep textarea stable during dictation to avoid reflow storms.
+			if (dictation.isActive) {
+				textarea.style.height = "36px";
+			} else {
+				// Auto-resize textarea immediately
+				textarea.style.height = "auto";
+				textarea.style.height = `${Math.min(textarea.scrollHeight, 200)}px`;
+			}
+
+			// Debounce draft persistence to localStorage (300ms)
+			if (draftSaveTimeoutRef.current) {
+				clearTimeout(draftSaveTimeoutRef.current);
+			}
+			draftSaveTimeoutRef.current = setTimeout(() => {
+				try {
+					if (value.trim()) {
+						localStorage.setItem("octo:mainChatDraft", value);
+					} else {
+						localStorage.removeItem("octo:mainChatDraft");
+					}
+				} catch {
+					// Ignore localStorage errors
+				}
+			}, 300);
 
 			if (value.startsWith("/")) {
 				setShowSlashPopup(true);
@@ -550,7 +840,7 @@ export function MainChatPiView({
 			setShowSlashPopup(false);
 
 			// Show file mention popup when typing @
-			const atMatch = value.match(/@([^\s]*)$/);
+			const atMatch = value.match(/@[^\s]*$/);
 			if (atMatch) {
 				setShowFileMentionPopup(true);
 				setFileMentionQuery(atMatch[1]);
@@ -559,7 +849,7 @@ export function MainChatPiView({
 				setFileMentionQuery("");
 			}
 		},
-		[],
+		[dictation.isActive],
 	);
 
 	const handleFileSelect = useCallback((file: FileAttachment) => {
@@ -587,7 +877,8 @@ export function MainChatPiView({
 	}, [dictation]);
 
 	const handleVoiceStop = useCallback(() => {
-		dictation.stop();
+		// Use cancel() to stop without auto-send - user clicked X
+		dictation.cancel();
 		setVoiceMode(null);
 	}, [dictation]);
 
@@ -619,17 +910,12 @@ export function MainChatPiView({
 
 	return (
 		<div className={cn("flex flex-col h-full min-h-0", className)}>
-			<div className="flex items-center justify-between pb-3 mb-3 border-b border-border">
-				<div className="flex items-center gap-3 min-w-0 flex-1">
-					<div className="w-8 h-8 sm:w-10 sm:h-10 rounded-full flex items-center justify-center flex-shrink-0 bg-primary">
-						<MessageSquare className="w-4 h-4 sm:w-5 sm:h-5 text-primary-foreground" />
-					</div>
+			{!hideHeader && (
+				<div className="pb-3 mb-3 border-b border-border">
 					<div className="min-w-0 flex-1">
-						<div className="flex items-center gap-2">
-							<h1 className="text-base sm:text-lg font-semibold text-foreground tracking-wider truncate">
-								{assistantName || (locale === "de" ? "Hauptchat" : "Main Chat")}
-							</h1>
-						</div>
+						<h1 className="text-base sm:text-lg font-semibold text-foreground tracking-wider truncate">
+							{assistantName || (locale === "de" ? "Hauptchat" : "Main Chat")}
+						</h1>
 						{workspacePath && (
 							<div className="flex items-center gap-2 text-xs text-foreground/60 dark:text-muted-foreground">
 								<span className="font-mono">
@@ -638,95 +924,22 @@ export function MainChatPiView({
 							</div>
 						)}
 					</div>
-				</div>
-				<div className="flex items-center gap-3 flex-shrink-0 ml-2">
-					<Select
-						value={selectedModelRef ?? undefined}
-						onValueChange={handleModelChange}
-						onOpenChange={(open) => {
-							if (open) setModelQuery("");
-						}}
-						disabled={
-							isSwitchingModel || !isConnected || availableModels.length === 0
-						}
-					>
-						<SelectTrigger className="h-7 w-[220px] text-xs">
-							<SelectValue
-								placeholder={
-									isSwitchingModel
-										? locale === "de"
-											? "Wechsle Modell..."
-											: "Switching model..."
-										: locale === "de"
-											? "Modell"
-											: "Model"
-								}
-							/>
-						</SelectTrigger>
-						<SelectContent>
-							<div
-								className="sticky top-0 z-10 bg-popover p-2 border-b border-border"
-								onPointerDown={(e) => e.stopPropagation()}
-								onKeyDown={(e) => e.stopPropagation()}
-							>
-								<Input
-									value={modelQuery}
-									onChange={(e) => setModelQuery(e.target.value)}
-									placeholder={
-										locale === "de" ? "Modelle durchsuchen..." : "Search models..."
-									}
-									aria-label={
-										locale === "de"
-											? "Modelle durchsuchen"
-											: "Search models"
-									}
-									className="h-8 text-xs"
-								/>
-							</div>
-							{availableModels.length === 0 ? (
-								<SelectItem value="__none__" disabled>
-									{locale === "de"
-										? "Keine Modelle verfugbar"
-										: "No models available"}
-								</SelectItem>
-							) : filteredModels.length === 0 ? (
-								<SelectItem value="__no_results__" disabled>
-									{locale === "de" ? "Keine Treffer" : "No matches"}
-								</SelectItem>
-							) : (
-								filteredModels.map((model) => {
-									const value = `${model.provider}/${model.id}`;
-									return (
-										<SelectItem key={value} value={value}>
-											{model.name
-												? `${value} · ${model.name}`
-												: value}
-										</SelectItem>
-									);
-								})
-							)}
-						</SelectContent>
-					</Select>
-					<ContextWindowGauge
-						inputTokens={gaugeTokens.inputTokens}
-						outputTokens={gaugeTokens.outputTokens}
-						maxTokens={contextWindowLimit}
-						locale={locale}
-					/>
-				</div>
-			</div>
-
-			{/* Error banner */}
-			{displayError && (
-				<div className="px-4 py-2 bg-destructive/10 text-destructive text-sm">
-					{displayError.message}
+					<div className="mt-2">
+						<ContextWindowGauge
+							inputTokens={gaugeTokens.inputTokens}
+							outputTokens={gaugeTokens.outputTokens}
+							maxTokens={contextWindowLimit}
+							locale={locale}
+							compact
+						/>
+					</div>
 				</div>
 			)}
 
-			{/* Connection status */}
-			{!isConnected && (
-				<div className="px-4 py-2 bg-yellow-500/10 text-yellow-600 text-sm">
-					{locale === "de" ? "Verbindung wird hergestellt..." : "Connecting..."}
+			{/* Error banner - only show if no cached messages available */}
+			{displayError && messages.length === 0 && (
+				<div className="px-4 py-2 bg-destructive/10 text-destructive text-sm">
+					{displayError.message}
 				</div>
 			)}
 
@@ -751,20 +964,31 @@ export function MainChatPiView({
 				<div
 					ref={messagesContainerRef}
 					onScroll={handleScroll}
-					className="h-full bg-muted/30 border border-border p-2 sm:p-4 overflow-y-auto space-y-4 sm:space-y-6 scrollbar-hide"
+					className="h-full bg-muted/30 border border-border p-2 sm:p-4 overflow-y-auto scrollbar-hide"
 				>
 					{messages.length === 0 && (
 						<div className="text-sm text-muted-foreground">{t.noMessages}</div>
 					)}
 
-					{messages.map((message) => (
-						<PiMessageCard
-							key={message.id}
-							message={message}
-							locale={locale}
-							workspacePath={workspacePath}
-							assistantName={assistantName}
-						/>
+					{/* Load more indicator */}
+					{messages.length > visibleCount && (
+						<div className="text-center text-xs text-muted-foreground py-2">
+							{messages.length - visibleCount} older messages...
+						</div>
+					)}
+
+					{/* Only render the last visibleCount messages for performance */}
+					{messages.slice(-visibleCount).map((message, index) => (
+						<div key={message.id} className={index > 0 ? "mt-4 sm:mt-6" : ""}>
+							<PiMessageCard
+								message={message}
+								locale={locale}
+								workspacePath={workspacePath}
+								assistantName={assistantName}
+								a2uiSurfaces={surfacesByMessageId.get(message.id)}
+								onA2UIAction={handleA2UIAction}
+							/>
+						</div>
 					))}
 
 					<div ref={messagesEndRef} />
@@ -788,7 +1012,7 @@ export function MainChatPiView({
 						type="button"
 						onClick={() => fileInputRef.current?.click()}
 						disabled={isUploading}
-						className="flex-shrink-0 size-8 flex items-center justify-center text-muted-foreground hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+						className="flex-shrink-0 h-8 px-2 flex items-center justify-center text-muted-foreground hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
 						title={t.uploadFile}
 					>
 						{isUploading ? (
@@ -832,7 +1056,9 @@ export function MainChatPiView({
 										})
 										.catch((err) => {
 											setCommandError(
-												err instanceof Error ? err : new Error("Command failed"),
+												err instanceof Error
+													? err
+													: new Error("Command failed"),
 											);
 											setShowSlashPopup(false);
 										});
@@ -851,7 +1077,9 @@ export function MainChatPiView({
 										})
 										.catch((err) => {
 											setCommandError(
-												err instanceof Error ? err : new Error("Command failed"),
+												err instanceof Error
+													? err
+													: new Error("Command failed"),
 											);
 											setShowSlashPopup(false);
 										});
@@ -891,63 +1119,141 @@ export function MainChatPiView({
 							</div>
 						)}
 
-						<textarea
-							ref={inputRef}
-							placeholder={
-								dictation.isActive && dictation.liveTranscript
-									? dictation.liveTranscript
-									: dictation.isActive
-										? t.speakNow
-										: t.inputPlaceholder
-							}
-							value={input}
-							onChange={handleInputChange}
-							onKeyDown={handleKeyDown}
-							onPaste={(e) => {
-								// Handle pasted files
-								const items = e.clipboardData?.items;
-								if (!items) return;
+						{hasVoice && dictation.isActive ? (
+							<DictationOverlay
+								open
+								value={input}
+								liveTranscript={dictation.liveTranscript}
+								placeholder={t.speakNow}
+								vadProgress={dictation.vadProgress}
+								autoSend={dictation.autoSendEnabled}
+								onAutoSendChange={dictation.setAutoSendEnabled}
+								onStop={handleVoiceStop}
+								onChange={handleInputChange}
+								onKeyDown={handleKeyDown}
+								onPaste={(e) => {
+									// Handle pasted files
+									const items = e.clipboardData?.items;
+									if (!items) return;
 
-								const files: File[] = [];
-								for (const item of Array.from(items)) {
-									if (item.kind === "file") {
-										const file = item.getAsFile();
-										if (file) files.push(file);
+									const files: File[] = [];
+									let imageIndex = 0;
+									for (const item of Array.from(items)) {
+										if (item.kind === "file") {
+											const file = item.getAsFile();
+											if (file) {
+												// Rename generic clipboard image names to be unique
+												const isGenericName =
+													/^image\.(png|gif|jpg|jpeg|webp)$/i.test(file.name);
+												if (isGenericName) {
+													const ext = file.name.split(".").pop() || "png";
+													const uniqueName = `pasted-image-${Date.now()}-${imageIndex++}.${ext}`;
+													const renamedFile = new File([file], uniqueName, {
+														type: file.type,
+													});
+													files.push(renamedFile);
+												} else {
+													files.push(file);
+												}
+											}
+										}
 									}
-								}
 
-								if (files.length > 0) {
-									e.preventDefault();
-									const dataTransfer = new DataTransfer();
-									for (const file of files) {
-										dataTransfer.items.add(file);
+									if (files.length > 0) {
+										e.preventDefault();
+										const dataTransfer = new DataTransfer();
+										for (const file of files) {
+											dataTransfer.items.add(file);
+										}
+										handleFileUpload(dataTransfer.files);
 									}
-									handleFileUpload(dataTransfer.files);
-								}
-							}}
-							onFocus={(e) => {
-								// Scroll input into view on mobile when keyboard opens
-								setTimeout(() => {
-									e.target.scrollIntoView({
-										behavior: "smooth",
-										block: "nearest",
-									});
-								}, 300);
-							}}
-							rows={1}
-							className="w-full bg-transparent border-none outline-none text-foreground placeholder:text-muted-foreground text-sm resize-none py-1.5 leading-5 max-h-[200px] overflow-y-auto"
-						/>
+								}}
+								onFocus={(e) => {
+									// Scroll input into view on mobile when keyboard opens
+									setTimeout(() => {
+										e.target.scrollIntoView({
+											behavior: "smooth",
+											block: "nearest",
+										});
+									}, 300);
+								}}
+							/>
+						) : (
+							<textarea
+								ref={inputRef}
+								autoComplete="off"
+								autoCorrect="off"
+								autoCapitalize="sentences"
+								spellCheck={false}
+								enterKeyHint="send"
+								data-form-type="other"
+								placeholder={t.inputPlaceholder}
+								value={input}
+								onChange={handleInputChange}
+								onKeyDown={handleKeyDown}
+								onPaste={(e) => {
+									// Handle pasted files
+									const items = e.clipboardData?.items;
+									if (!items) return;
+
+									const files: File[] = [];
+									let imageIndex = 0;
+									for (const item of Array.from(items)) {
+										if (item.kind === "file") {
+											const file = item.getAsFile();
+											if (file) {
+												// Rename generic clipboard image names to be unique
+												const isGenericName =
+													/^image\.(png|gif|jpg|jpeg|webp)$/i.test(file.name);
+												if (isGenericName) {
+													const ext = file.name.split(".").pop() || "png";
+													const uniqueName = `pasted-image-${Date.now()}-${imageIndex++}.${ext}`;
+													const renamedFile = new File([file], uniqueName, {
+														type: file.type,
+													});
+													files.push(renamedFile);
+												} else {
+													files.push(file);
+												}
+											}
+										}
+									}
+
+									if (files.length > 0) {
+										e.preventDefault();
+										const dataTransfer = new DataTransfer();
+										for (const file of files) {
+											dataTransfer.items.add(file);
+										}
+										handleFileUpload(dataTransfer.files);
+									}
+								}}
+								onFocus={(e) => {
+									// Scroll input into view on mobile when keyboard opens
+									setTimeout(() => {
+										e.target.scrollIntoView({
+											behavior: "smooth",
+											block: "nearest",
+										});
+									}, 300);
+								}}
+								rows={1}
+								className="w-full bg-transparent border-none outline-none text-foreground placeholder:text-muted-foreground text-sm resize-none py-1.5 leading-5 max-h-[200px] overflow-y-auto"
+							/>
+						)}
 					</div>
 
 					{/* Send button */}
 					<Button
 						type="button"
+						data-dictation-send
 						onClick={() => handleSend("steer")}
 						disabled={!input.trim() && fileAttachments.length === 0}
-						className="bg-primary hover:bg-primary/90 text-primary-foreground"
+						className="flex-shrink-0 h-8 px-2 flex items-center justify-center text-muted-foreground hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed transition-colors p-0 bg-transparent hover:bg-transparent"
+						variant="ghost"
+						size="icon"
 					>
-						<Send className="w-4 h-4 sm:mr-2" />
-						<span className="hidden sm:inline">{t.send}</span>
+						<Send className="w-4 h-4" />
 					</Button>
 				</div>
 			</div>
@@ -963,23 +1269,30 @@ const PiMessageCard = memo(function PiMessageCard({
 	locale,
 	workspacePath,
 	assistantName,
+	a2uiSurfaces,
+	onA2UIAction,
 }: {
 	message: PiDisplayMessage;
 	locale: "en" | "de";
 	workspacePath?: string | null;
 	assistantName?: string | null;
+	a2uiSurfaces?: A2UISurfaceState[];
+	onA2UIAction?: (action: import("@/lib/a2ui/types").A2UIUserAction) => void;
 }) {
 	const isUser = message.role === "user";
 	const isSystem = message.role === "system";
 
 	// Handle system messages (separators) differently
 	if (isSystem) {
+		const separatorPart = message.parts[0];
+		const sessionId =
+			separatorPart?.type === "separator" ? separatorPart.sessionId : undefined;
 		return (
-			<div className="flex items-center gap-4 py-2">
+			<div className="flex items-center gap-4 py-2" data-session-id={sessionId}>
 				<div className="flex-1 h-px bg-border" />
 				<span className="text-xs text-muted-foreground px-2">
-					{message.parts[0]?.type === "separator"
-						? message.parts[0].content
+					{separatorPart?.type === "separator"
+						? separatorPart.content
 						: locale === "de"
 							? "Neue Unterhaltung"
 							: "New conversation"}
@@ -994,15 +1307,16 @@ const PiMessageCard = memo(function PiMessageCard({
 			(p): p is Extract<PiMessagePart, { type: "text" }> => p.type === "text",
 		)
 		.map((p) => p.content)
-		.join("\n\n");
+		.join("\n");
 
 	const createdAt = message.timestamp ? new Date(message.timestamp) : null;
 
 	// Use configured assistant name or fallback to "Assistant"
 	const displayName = isUser ? "You" : assistantName || "Assistant";
 
-	return (
+	const messageCard = (
 		<div
+			data-message-id={message.id}
 			className={cn(
 				"group transition-all duration-200 overflow-hidden",
 				isUser
@@ -1105,6 +1419,26 @@ const PiMessageCard = memo(function PiMessageCard({
 					});
 				})()}
 
+				{/* A2UI surfaces anchored to this message */}
+				{a2uiSurfaces && a2uiSurfaces.length > 0 && (
+					<div className="space-y-2 mt-2">
+						{a2uiSurfaces.map((surface) => (
+							<A2UICallCard
+								key={surface.surfaceId}
+								surfaceId={surface.surfaceId}
+								messages={surface.messages}
+								blocking={surface.blocking}
+								requestId={surface.requestId}
+								answered={surface.answered}
+								answeredAction={surface.answeredAction}
+								answeredAt={surface.answeredAt}
+								onAction={onA2UIAction}
+								defaultCollapsed={surface.answered}
+							/>
+						))}
+					</div>
+				)}
+
 				{/* Streaming indicator when there's already content */}
 				{message.isStreaming && message.parts.length > 0 && (
 					<div className="flex items-center gap-3 text-muted-foreground text-sm">
@@ -1126,6 +1460,26 @@ const PiMessageCard = memo(function PiMessageCard({
 				)}
 			</div>
 		</div>
+	);
+
+	// Only wrap in context menu if there's text content to copy
+	if (!textContent) {
+		return messageCard;
+	}
+
+	return (
+		<ContextMenu>
+			<ContextMenuTrigger className="contents">{messageCard}</ContextMenuTrigger>
+			<ContextMenuContent>
+				<ContextMenuItem
+					onClick={() => navigator.clipboard?.writeText(textContent)}
+					className="gap-2"
+				>
+					<Copy className="w-4 h-4" />
+					{locale === "de" ? "Alles kopieren" : "Copy all"}
+				</ContextMenuItem>
+			</ContextMenuContent>
+		</ContextMenu>
 	);
 });
 
@@ -1155,6 +1509,7 @@ function PiPartRenderer({
 				<TextWithFileReferences
 					content={part.content}
 					workspacePath={workspacePath}
+					locale={locale}
 				/>
 			);
 
@@ -1238,13 +1593,16 @@ function PiPartRenderer({
 
 /**
  * Renders text content with @file references as inline previews.
+ * Wrapped in context menu for copy functionality on mobile.
  */
 function TextWithFileReferences({
 	content,
 	workspacePath,
+	locale = "en",
 }: {
 	content: string;
 	workspacePath?: string | null;
+	locale?: "en" | "de";
 }) {
 	// Parse @file references
 	const fileRefPattern = /@([^\s@]+\.[a-zA-Z0-9]+)/g;
@@ -1252,28 +1610,44 @@ function TextWithFileReferences({
 	const fileRefs = [...new Set(matches.map((m) => m.slice(1)))]; // Remove @ prefix
 
 	return (
-		<div className="space-y-2">
-			<MarkdownRenderer content={content} className="text-sm leading-relaxed" />
-			{/* Render file reference cards */}
-			{fileRefs.length > 0 && workspacePath && (
-				<div className="flex flex-wrap gap-2 mt-2">
-					{fileRefs.map((filePath) => (
-						<FileReferenceCard
-							key={filePath}
-							filePath={filePath}
-							workspacePath={workspacePath}
-						/>
-					))}
+		<ContextMenu>
+			<ContextMenuTrigger className="contents">
+				<div className="space-y-2 select-none sm:select-auto">
+					<MarkdownRenderer
+						content={content}
+						className="text-sm leading-relaxed"
+					/>
+					{/* Render file reference cards */}
+					{fileRefs.length > 0 && workspacePath && (
+						<div className="flex flex-wrap gap-2 mt-2">
+							{fileRefs.map((filePath) => (
+								<FileReferenceCard
+									key={filePath}
+									filePath={filePath}
+									workspacePath={workspacePath}
+								/>
+							))}
+						</div>
+					)}
 				</div>
-			)}
-		</div>
+			</ContextMenuTrigger>
+			<ContextMenuContent>
+				<ContextMenuItem
+					onClick={() => navigator.clipboard?.writeText(content)}
+					className="gap-2"
+				>
+					<Copy className="w-4 h-4" />
+					{locale === "de" ? "Kopieren" : "Copy"}
+				</ContextMenuItem>
+			</ContextMenuContent>
+		</ContextMenu>
 	);
 }
 
 /**
  * Card for displaying a @file reference with preview.
  */
-const FileReferenceCard = memo(function FileReferenceCard({
+export const FileReferenceCard = memo(function FileReferenceCard({
 	filePath,
 	workspacePath,
 }: {
@@ -1286,8 +1660,7 @@ const FileReferenceCard = memo(function FileReferenceCard({
 	const fileInfo = useMemo(() => getFileTypeInfo(filePath), [filePath]);
 	const isImage = fileInfo.category === "image";
 
-	const baseUrl = fileserverWorkspaceBaseUrl();
-	const fileUrl = `${baseUrl}/read?path=${encodeURIComponent(filePath)}&workspace_path=${encodeURIComponent(workspacePath)}`;
+	const fileUrl = workspaceFileUrl(workspacePath, filePath);
 
 	if (isImage && !imageError) {
 		return (

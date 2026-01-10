@@ -1,0 +1,15 @@
+{
+	"$schema": "../gen/schemas/mobile-schema.json",
+	"identifier": "ios-capability",
+	"description": "iOS-specific capabilities",
+	"platforms": ["iOS"],
+	"windows": ["main"],
+	"permissions": [
+		"core:default",
+		"cors-fetch:default",
+		"websocket:default",
+		"fs:default",
+		"fs:allow-read",
+		"fs:allow-write"
+	]
+}
