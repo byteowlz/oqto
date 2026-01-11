@@ -442,6 +442,29 @@ pub async fn new_session(
     Ok(Json(pi_state_to_response(pi_state)))
 }
 
+/// Reset Pi session - closes and recreates the session.
+/// This re-reads PERSONALITY.md and USER.md files.
+///
+/// POST /api/main/pi/reset
+pub async fn reset_session(
+    State(state): State<AppState>,
+    user: CurrentUser,
+) -> ApiResult<Json<PiStateResponse>> {
+    let pi_service = get_pi_service(&state)?;
+
+    let session = pi_service
+        .reset_session(user.id())
+        .await
+        .map_err(|e| ApiError::internal(format!("Failed to reset session: {}", e)))?;
+
+    let pi_state = session
+        .get_state()
+        .await
+        .map_err(|e| ApiError::internal(format!("Failed to get Pi state: {}", e)))?;
+
+    Ok(Json(pi_state_to_response(pi_state)))
+}
+
 /// Get session statistics.
 ///
 /// GET /api/main/pi/stats

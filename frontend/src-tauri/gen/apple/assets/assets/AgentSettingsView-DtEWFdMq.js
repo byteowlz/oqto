@@ -1,4 +1,711 @@
-import{u as ne,r as t,g as re,b as le,d as ie,s as oe,e as ce,j as e,c as N,L as I,B as U,R as de,C as ue,S as xe,i as me,I as he,k as pe,l as fe,m as P,n as W,p as F,q as T,t as o,v as R,w as se,x as y}from"./index-g0x4qx2V.js";function Ne({className:i}){var $,ee;const{selectedWorkspaceSession:d,opencodeBaseUrl:c,opencodeDirectory:_,busySessions:g,refreshWorkspaceSessions:h}=ne(),a=d==null?void 0:d.id,[n,V]=t.useState(null),[r,D]=t.useState(null),[l,p]=t.useState([]),[x,H]=t.useState(!0),[B,K]=t.useState(!1),[z,Q]=t.useState(!1),[S,X]=t.useState(!1),[Y,k]=t.useState(null),[Z,M]=t.useState(!1),[u,E]=t.useState({}),L=a?g.has(a):!1,q=t.useCallback(async()=>{if(a){H(!0),k(null);try{const[s,v]=await Promise.all([re(),le(a)]);let m=[];if(c)try{m=(await ie(c,{directory:_})||[]).map(O=>({id:O.id,name:O.name||O.id,description:O.description}))}catch{}V(s||{}),D(v||{}),p(m),E({})}catch(s){k(s instanceof Error?s.message:"Failed to load settings")}finally{H(!1)}}},[a,c,_]);t.useEffect(()=>{q()},[q]);const te=t.useCallback(async()=>{if(!(!a||Object.keys(u).length===0)){K(!0),k(null),M(!1);try{const s={...r,...u};await oe(a,s),D(s),E({}),M(!0),setTimeout(()=>M(!1),2e3)}catch(s){k(s instanceof Error?s.message:"Failed to save settings")}finally{K(!1)}}},[a,r,u]),J=t.useCallback(async()=>{if(a){if(L){X(!0);return}Q(!0),k(null);try{await ce(a),await h()}catch(s){k(s instanceof Error?s.message:"Failed to restart session")}finally{Q(!1),X(!1)}}},[a,L,h]);t.useEffect(()=>{S&&!L&&a&&J()},[S,L,a,J]);const w=t.useCallback((s,v)=>{E(m=>({...m,[s]:v}))},[]),f=t.useCallback(s=>s in u?u[s]:(r==null?void 0:r[s])!==void 0?r[s]:n==null?void 0:n[s],[r,n,u]),j=t.useCallback(s=>s in u?"pending":(r==null?void 0:r[s])!==void 0?"local":(n==null?void 0:n[s])!==void 0?"global":"default",[r,n,u]),C=t.useCallback(s=>(r==null?void 0:r[s])!==void 0,[r]),A=t.useCallback(s=>(n==null?void 0:n[s])!==void 0,[n]),b=t.useCallback(s=>s in u,[u]);if(t.useCallback(s=>{E(v=>{const m={...v};return delete m[s],m})},[]),!a)return e.jsx("div",{className:N("flex items-center justify-center h-full p-4",i),children:e.jsx("p",{className:"text-sm text-muted-foreground",children:"No session selected"})});if(x)return e.jsx("div",{className:N("flex items-center justify-center h-full p-4",i),children:e.jsx(I,{className:"h-6 w-6 animate-spin text-muted-foreground"})});const ae=Object.keys(u).length>0;return e.jsxs("div",{className:N("flex flex-col h-full",i),children:[e.jsxs("div",{className:"flex items-center justify-between p-3 border-b border-border",children:[e.jsx("span",{className:"text-sm font-medium",children:"Agent Settings"}),e.jsxs("div",{className:"flex items-center gap-1",children:[e.jsx(U,{type:"button",variant:"ghost",size:"sm",onClick:q,disabled:x,className:"h-7 w-7 p-0",title:"Reload",children:e.jsx(de,{className:N("h-3.5 w-3.5",x&&"animate-spin")})}),e.jsxs(U,{type:"button",size:"sm",onClick:te,disabled:!ae||B,className:"h-7 px-2",children:[B?e.jsx(I,{className:"h-3.5 w-3.5 animate-spin"}):Z?e.jsx(ue,{className:"h-3.5 w-3.5"}):e.jsx(xe,{className:"h-3.5 w-3.5"}),e.jsx("span",{className:"ml-1.5 text-xs",children:B?"Saving":Z?"Saved":"Save"})]})]})]}),Y&&e.jsxs("div",{className:"flex items-center gap-2 p-3 m-3 bg-destructive/10 text-destructive rounded-md",children:[e.jsx(me,{className:"h-4 w-4 flex-shrink-0"}),e.jsx("span",{className:"text-xs",children:Y})]}),e.jsxs("div",{className:"flex-1 overflow-auto p-3 space-y-4",children:[e.jsxs("div",{className:"flex items-start gap-2 p-2.5 bg-muted/50 border border-border/50 rounded-md",children:[e.jsx(he,{className:"h-3.5 w-3.5 mt-0.5 text-muted-foreground flex-shrink-0"}),e.jsx("div",{className:"flex-1 min-w-0",children:e.jsx("p",{className:"text-[11px] text-muted-foreground",children:"Config changes require a session restart to take effect."})}),e.jsxs(U,{type:"button",variant:"outline",size:"sm",onClick:J,disabled:z||S,className:"h-6 px-2 text-[10px] flex-shrink-0",title:S?"Waiting for agent to finish...":"Restart session",children:[z?e.jsx(I,{className:"h-3 w-3 animate-spin"}):S?e.jsx(I,{className:"h-3 w-3 animate-spin"}):e.jsx(pe,{className:"h-3 w-3"}),e.jsx("span",{className:"ml-1",children:z?"Restarting":S?"Waiting...":"Restart"})]})]}),e.jsx(G,{label:"Model",description:"Provider/model (e.g., anthropic/claude-sonnet-4-20250514)",modified:b("model"),source:j("model"),setInLocal:C("model"),setInGlobal:A("model"),children:e.jsx(fe,{value:f("model")||"",onChange:s=>w("model",s.target.value||void 0),placeholder:"anthropic/claude-sonnet-4-20250514",className:N("h-8 text-xs bg-background",b("model")&&"border-amber-500",j("model")==="global"&&"border-dashed")})}),e.jsx(G,{label:"Default Agent",description:"Agent to use for new sessions",modified:b("default_agent"),source:j("default_agent"),setInLocal:C("default_agent"),setInGlobal:A("default_agent"),children:e.jsxs(P,{value:f("default_agent")||"__none__",onValueChange:s=>w("default_agent",s==="__none__"?void 0:s),children:[e.jsx(W,{className:N("h-8 text-xs bg-background",b("default_agent")&&"border-amber-500",j("default_agent")==="global"&&"border-dashed"),children:e.jsx(F,{placeholder:"Select agent..."})}),e.jsxs(T,{children:[e.jsx(o,{value:"__none__",children:"Default"}),l.map(s=>e.jsx(o,{value:s.id,children:s.name},s.id))]})]})}),e.jsx(G,{label:"Share Mode",description:"How to handle session sharing",modified:b("share"),source:j("share"),setInLocal:C("share"),setInGlobal:A("share"),children:e.jsxs(P,{value:f("share")||"__none__",onValueChange:s=>w("share",s==="__none__"?void 0:s),children:[e.jsx(W,{className:N("h-8 text-xs bg-background",b("share")&&"border-amber-500",j("share")==="global"&&"border-dashed"),children:e.jsx(F,{placeholder:"Select mode..."})}),e.jsxs(T,{children:[e.jsx(o,{value:"__none__",children:"Default"}),e.jsx(o,{value:"manual",children:"Manual"}),e.jsx(o,{value:"auto",children:"Auto"}),e.jsx(o,{value:"disabled",children:"Disabled"})]})]})}),e.jsxs("div",{className:"space-y-3 p-3 bg-muted/30 border border-border/50 rounded-md",children:[e.jsx(R,{className:"text-xs font-medium",children:"Compaction"}),e.jsxs("div",{className:"space-y-2",children:[e.jsxs("div",{className:"flex items-center justify-between",children:[e.jsx(R,{htmlFor:"compaction-auto",className:"text-xs text-muted-foreground",children:"Auto compaction"}),e.jsx(se,{id:"compaction-auto",checked:(($=f("compaction"))==null?void 0:$.auto)??!1,onCheckedChange:s=>w("compaction",{...f("compaction"),auto:s})})]}),e.jsxs("div",{className:"flex items-center justify-between",children:[e.jsx(R,{htmlFor:"compaction-prune",className:"text-xs text-muted-foreground",children:"Prune old messages"}),e.jsx(se,{id:"compaction-prune",checked:((ee=f("compaction"))==null?void 0:ee.prune)??!1,onCheckedChange:s=>w("compaction",{...f("compaction"),prune:s})})]})]})]}),e.jsx(G,{label:"Instructions",description:"Paths to instruction files (one per line)",modified:b("instructions"),source:j("instructions"),setInLocal:C("instructions"),setInGlobal:A("instructions"),children:e.jsx("textarea",{value:(f("instructions")||[]).join(`
-`),onChange:s=>{const v=s.target.value.split(`
-`).map(m=>m.trim()).filter(m=>m);w("instructions",v.length>0?v:void 0)},placeholder:`AGENTS.md
-.opencode/instructions.md`,rows:3,className:N("w-full px-3 py-2 text-xs bg-background border rounded-md resize-none","focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2",b("instructions")&&"border-amber-500",j("instructions")==="global"&&"border-dashed")})}),e.jsx(ge,{permission:f("permission"),onChange:s=>w("permission",s),modified:b("permission"),setInLocal:C("permission"),setInGlobal:A("permission")}),e.jsxs("details",{className:"group",children:[e.jsx("summary",{className:"cursor-pointer text-xs text-muted-foreground hover:text-foreground",children:"View raw config (JSON)"}),e.jsxs("div",{className:"mt-2 space-y-2",children:[e.jsxs("div",{children:[e.jsx("p",{className:"text-[10px] text-muted-foreground mb-1",children:"Workspace config (editable):"}),e.jsx("pre",{className:"p-2 text-[10px] bg-muted/50 border border-border rounded-md overflow-auto max-h-32",children:JSON.stringify({...r,...u},null,2)})]}),n&&Object.keys(n).length>0&&e.jsxs("div",{children:[e.jsx("p",{className:"text-[10px] text-muted-foreground mb-1",children:"Global config (read-only):"}),e.jsx("pre",{className:"p-2 text-[10px] bg-muted/50 border border-dashed border-border rounded-md overflow-auto max-h-32",children:JSON.stringify(n,null,2)})]})]})]})]})]})}function G({label:i,description:d,modified:c,source:_="default",setInLocal:g,setInGlobal:h,children:a}){return e.jsxs("div",{className:"space-y-1.5",children:[e.jsxs("div",{className:"flex items-center gap-1.5 flex-wrap",children:[e.jsx(R,{className:"text-xs font-medium",children:i}),c&&e.jsx(y,{variant:"default",className:"text-[9px] px-1 py-0 bg-amber-500 h-4",children:"modified"}),!c&&g&&e.jsx(y,{variant:"default",className:"text-[9px] px-1 py-0 bg-blue-500 h-4",children:"local"}),!c&&!g&&h&&e.jsx(y,{variant:"secondary",className:"text-[9px] px-1 py-0 h-4",children:"global"}),!c&&g&&h&&e.jsx(y,{variant:"outline",className:"text-[9px] px-1 py-0 h-4 text-muted-foreground",children:"overrides global"})]}),d&&e.jsx("p",{className:"text-[11px] text-muted-foreground",children:d}),a]})}const be=[{id:"read",label:"Read",description:"Read files"},{id:"edit",label:"Edit",description:"Edit files"},{id:"bash",label:"Bash",description:"Execute shell commands"},{id:"glob",label:"Glob",description:"Search for files by pattern"},{id:"grep",label:"Grep",description:"Search file contents"},{id:"list",label:"List",description:"List directory contents"},{id:"task",label:"Task",description:"Create sub-agents"},{id:"webfetch",label:"Web Fetch",description:"Fetch URLs"},{id:"websearch",label:"Web Search",description:"Search the web"},{id:"codesearch",label:"Code Search",description:"Search code"},{id:"todowrite",label:"Todo Write",description:"Write todos"},{id:"todoread",label:"Todo Read",description:"Read todos"},{id:"lsp",label:"LSP",description:"Language server features"},{id:"external_directory",label:"External Dir",description:"Access external directories"}];function ge({permission:i,onChange:d,modified:c,setInLocal:_,setInGlobal:g}){const h=typeof i=="string",a=h?i:"__none__",n=i&&typeof i=="object"?Object.fromEntries(Object.entries(i).map(([l,p])=>[l,typeof p=="string"?p:"ask"])):{},V=l=>{d(l==="__none__"?void 0:l)},r=(l,p)=>{const x=i&&typeof i=="object"?{...n}:{};p==="__none__"?(delete x[l],Object.keys(x).length===0?d(void 0):d(x)):(x[l]=p,d(x))},D=l=>h?i:n[l]||"__none__";return e.jsxs("div",{className:"space-y-3 p-3 bg-muted/30 border border-border/50 rounded-md",children:[e.jsxs("div",{className:"flex items-center gap-1.5 flex-wrap",children:[e.jsx(R,{className:"text-xs font-medium",children:"Permissions"}),c&&e.jsx(y,{variant:"default",className:"text-[9px] px-1 py-0 bg-amber-500 h-4",children:"modified"}),!c&&_&&e.jsx(y,{variant:"default",className:"text-[9px] px-1 py-0 bg-blue-500 h-4",children:"local"}),!c&&!_&&g&&e.jsx(y,{variant:"secondary",className:"text-[9px] px-1 py-0 h-4",children:"global"}),!c&&_&&g&&e.jsx(y,{variant:"outline",className:"text-[9px] px-1 py-0 h-4 text-muted-foreground",children:"overrides global"})]}),e.jsx("p",{className:"text-[11px] text-muted-foreground",children:"Control which tools require confirmation before use"}),e.jsxs("div",{className:"flex items-center justify-between py-1.5 border-b border-border/50",children:[e.jsxs("div",{className:"flex flex-col",children:[e.jsx("span",{className:"text-xs font-medium",children:"All Tools"}),e.jsx("span",{className:"text-[10px] text-muted-foreground",children:"Set permission for all tools"})]}),e.jsxs(P,{value:a,onValueChange:V,children:[e.jsx(W,{className:"h-7 w-24 text-xs bg-background",children:e.jsx(F,{})}),e.jsxs(T,{children:[e.jsx(o,{value:"__none__",children:"Per-tool"}),e.jsx(o,{value:"allow",children:"Allow"}),e.jsx(o,{value:"ask",children:"Ask"}),e.jsx(o,{value:"deny",children:"Deny"})]})]})]}),!h&&e.jsx("div",{className:"space-y-1 max-h-64 overflow-y-auto",children:be.map(l=>{const p=D(l.id);return e.jsxs("div",{className:"flex items-center justify-between py-1 px-1 rounded hover:bg-muted/50",children:[e.jsxs("div",{className:"flex flex-col min-w-0 flex-1 mr-2",children:[e.jsx("span",{className:"text-xs",children:l.label}),e.jsx("span",{className:"text-[10px] text-muted-foreground truncate",children:l.description})]}),e.jsxs(P,{value:p,onValueChange:x=>r(l.id,x),children:[e.jsx(W,{className:"h-6 w-20 text-[10px] bg-background",children:e.jsx(F,{})}),e.jsxs(T,{children:[e.jsx(o,{value:"__none__",children:"Default"}),e.jsx(o,{value:"allow",children:"Allow"}),e.jsx(o,{value:"ask",children:"Ask"}),e.jsx(o,{value:"deny",children:"Deny"})]})]})]},l.id)})})]})}export{Ne as AgentSettingsView};
+import {
+	p as F,
+	L as I,
+	c as N,
+	m as P,
+	v as R,
+	q as T,
+	B as U,
+	n as W,
+	e as ce,
+	R as de,
+	j as e,
+	l as fe,
+	I as he,
+	d as ie,
+	b as le,
+	i as me,
+	u as ne,
+	t as o,
+	s as oe,
+	k as pe,
+	g as re,
+	w as se,
+	r as t,
+	C as ue,
+	S as xe,
+	x as y,
+} from "./index-g0x4qx2V.js";
+function Ne({ className: i }) {
+	let $;
+	let ee;
+	const {
+		selectedWorkspaceSession: d,
+		opencodeBaseUrl: c,
+		opencodeDirectory: _,
+		busySessions: g,
+		refreshWorkspaceSessions: h,
+	} = ne();
+	const a = d == null ? void 0 : d.id;
+	const [n, V] = t.useState(null);
+	const [r, D] = t.useState(null);
+	const [l, p] = t.useState([]);
+	const [x, H] = t.useState(!0);
+	const [B, K] = t.useState(!1);
+	const [z, Q] = t.useState(!1);
+	const [S, X] = t.useState(!1);
+	const [Y, k] = t.useState(null);
+	const [Z, M] = t.useState(!1);
+	const [u, E] = t.useState({});
+	const L = a ? g.has(a) : !1;
+	const q = t.useCallback(async () => {
+		if (a) {
+			H(!0), k(null);
+			try {
+				const [s, v] = await Promise.all([re(), le(a)]);
+				let m = [];
+				if (c)
+					try {
+						m = ((await ie(c, { directory: _ })) || []).map((O) => ({
+							id: O.id,
+							name: O.name || O.id,
+							description: O.description,
+						}));
+					} catch {}
+				V(s || {}), D(v || {}), p(m), E({});
+			} catch (s) {
+				k(s instanceof Error ? s.message : "Failed to load settings");
+			} finally {
+				H(!1);
+			}
+		}
+	}, [a, c, _]);
+	t.useEffect(() => {
+		q();
+	}, [q]);
+	const te = t.useCallback(async () => {
+		if (!(!a || Object.keys(u).length === 0)) {
+			K(!0), k(null), M(!1);
+			try {
+				const s = { ...r, ...u };
+				await oe(a, s), D(s), E({}), M(!0), setTimeout(() => M(!1), 2e3);
+			} catch (s) {
+				k(s instanceof Error ? s.message : "Failed to save settings");
+			} finally {
+				K(!1);
+			}
+		}
+	}, [a, r, u]);
+	const J = t.useCallback(async () => {
+		if (a) {
+			if (L) {
+				X(!0);
+				return;
+			}
+			Q(!0), k(null);
+			try {
+				await ce(a), await h();
+			} catch (s) {
+				k(s instanceof Error ? s.message : "Failed to restart session");
+			} finally {
+				Q(!1), X(!1);
+			}
+		}
+	}, [a, L, h]);
+	t.useEffect(() => {
+		S && !L && a && J();
+	}, [S, L, a, J]);
+	const w = t.useCallback((s, v) => {
+		E((m) => ({ ...m, [s]: v }));
+	}, []);
+	const f = t.useCallback(
+		(s) =>
+			s in u
+				? u[s]
+				: (r == null ? void 0 : r[s]) !== void 0
+					? r[s]
+					: n == null
+						? void 0
+						: n[s],
+		[r, n, u],
+	);
+	const j = t.useCallback(
+		(s) =>
+			s in u
+				? "pending"
+				: (r == null ? void 0 : r[s]) !== void 0
+					? "local"
+					: (n == null ? void 0 : n[s]) !== void 0
+						? "global"
+						: "default",
+		[r, n, u],
+	);
+	const C = t.useCallback((s) => (r == null ? void 0 : r[s]) !== void 0, [r]);
+	const A = t.useCallback((s) => (n == null ? void 0 : n[s]) !== void 0, [n]);
+	const b = t.useCallback((s) => s in u, [u]);
+	if (
+		(t.useCallback((s) => {
+			E((v) => {
+				const m = { ...v };
+				return delete m[s], m;
+			});
+		}, []),
+		!a)
+	)
+		return e.jsx("div", {
+			className: N("flex items-center justify-center h-full p-4", i),
+			children: e.jsx("p", {
+				className: "text-sm text-muted-foreground",
+				children: "No session selected",
+			}),
+		});
+	if (x)
+		return e.jsx("div", {
+			className: N("flex items-center justify-center h-full p-4", i),
+			children: e.jsx(I, {
+				className: "h-6 w-6 animate-spin text-muted-foreground",
+			}),
+		});
+	const ae = Object.keys(u).length > 0;
+	return e.jsxs("div", {
+		className: N("flex flex-col h-full", i),
+		children: [
+			e.jsxs("div", {
+				className:
+					"flex items-center justify-between p-3 border-b border-border",
+				children: [
+					e.jsx("span", {
+						className: "text-sm font-medium",
+						children: "Agent Settings",
+					}),
+					e.jsxs("div", {
+						className: "flex items-center gap-1",
+						children: [
+							e.jsx(U, {
+								type: "button",
+								variant: "ghost",
+								size: "sm",
+								onClick: q,
+								disabled: x,
+								className: "h-7 w-7 p-0",
+								title: "Reload",
+								children: e.jsx(de, {
+									className: N("h-3.5 w-3.5", x && "animate-spin"),
+								}),
+							}),
+							e.jsxs(U, {
+								type: "button",
+								size: "sm",
+								onClick: te,
+								disabled: !ae || B,
+								className: "h-7 px-2",
+								children: [
+									B
+										? e.jsx(I, { className: "h-3.5 w-3.5 animate-spin" })
+										: Z
+											? e.jsx(ue, { className: "h-3.5 w-3.5" })
+											: e.jsx(xe, { className: "h-3.5 w-3.5" }),
+									e.jsx("span", {
+										className: "ml-1.5 text-xs",
+										children: B ? "Saving" : Z ? "Saved" : "Save",
+									}),
+								],
+							}),
+						],
+					}),
+				],
+			}),
+			Y &&
+				e.jsxs("div", {
+					className:
+						"flex items-center gap-2 p-3 m-3 bg-destructive/10 text-destructive rounded-md",
+					children: [
+						e.jsx(me, { className: "h-4 w-4 flex-shrink-0" }),
+						e.jsx("span", { className: "text-xs", children: Y }),
+					],
+				}),
+			e.jsxs("div", {
+				className: "flex-1 overflow-auto p-3 space-y-4",
+				children: [
+					e.jsxs("div", {
+						className:
+							"flex items-start gap-2 p-2.5 bg-muted/50 border border-border/50 rounded-md",
+						children: [
+							e.jsx(he, {
+								className:
+									"h-3.5 w-3.5 mt-0.5 text-muted-foreground flex-shrink-0",
+							}),
+							e.jsx("div", {
+								className: "flex-1 min-w-0",
+								children: e.jsx("p", {
+									className: "text-[11px] text-muted-foreground",
+									children:
+										"Config changes require a session restart to take effect.",
+								}),
+							}),
+							e.jsxs(U, {
+								type: "button",
+								variant: "outline",
+								size: "sm",
+								onClick: J,
+								disabled: z || S,
+								className: "h-6 px-2 text-[10px] flex-shrink-0",
+								title: S ? "Waiting for agent to finish..." : "Restart session",
+								children: [
+									z
+										? e.jsx(I, { className: "h-3 w-3 animate-spin" })
+										: S
+											? e.jsx(I, { className: "h-3 w-3 animate-spin" })
+											: e.jsx(pe, { className: "h-3 w-3" }),
+									e.jsx("span", {
+										className: "ml-1",
+										children: z ? "Restarting" : S ? "Waiting..." : "Restart",
+									}),
+								],
+							}),
+						],
+					}),
+					e.jsx(G, {
+						label: "Model",
+						description:
+							"Provider/model (e.g., anthropic/claude-sonnet-4-20250514)",
+						modified: b("model"),
+						source: j("model"),
+						setInLocal: C("model"),
+						setInGlobal: A("model"),
+						children: e.jsx(fe, {
+							value: f("model") || "",
+							onChange: (s) => w("model", s.target.value || void 0),
+							placeholder: "anthropic/claude-sonnet-4-20250514",
+							className: N(
+								"h-8 text-xs bg-background",
+								b("model") && "border-amber-500",
+								j("model") === "global" && "border-dashed",
+							),
+						}),
+					}),
+					e.jsx(G, {
+						label: "Default Agent",
+						description: "Agent to use for new sessions",
+						modified: b("default_agent"),
+						source: j("default_agent"),
+						setInLocal: C("default_agent"),
+						setInGlobal: A("default_agent"),
+						children: e.jsxs(P, {
+							value: f("default_agent") || "__none__",
+							onValueChange: (s) =>
+								w("default_agent", s === "__none__" ? void 0 : s),
+							children: [
+								e.jsx(W, {
+									className: N(
+										"h-8 text-xs bg-background",
+										b("default_agent") && "border-amber-500",
+										j("default_agent") === "global" && "border-dashed",
+									),
+									children: e.jsx(F, { placeholder: "Select agent..." }),
+								}),
+								e.jsxs(T, {
+									children: [
+										e.jsx(o, { value: "__none__", children: "Default" }),
+										l.map((s) =>
+											e.jsx(o, { value: s.id, children: s.name }, s.id),
+										),
+									],
+								}),
+							],
+						}),
+					}),
+					e.jsx(G, {
+						label: "Share Mode",
+						description: "How to handle session sharing",
+						modified: b("share"),
+						source: j("share"),
+						setInLocal: C("share"),
+						setInGlobal: A("share"),
+						children: e.jsxs(P, {
+							value: f("share") || "__none__",
+							onValueChange: (s) => w("share", s === "__none__" ? void 0 : s),
+							children: [
+								e.jsx(W, {
+									className: N(
+										"h-8 text-xs bg-background",
+										b("share") && "border-amber-500",
+										j("share") === "global" && "border-dashed",
+									),
+									children: e.jsx(F, { placeholder: "Select mode..." }),
+								}),
+								e.jsxs(T, {
+									children: [
+										e.jsx(o, { value: "__none__", children: "Default" }),
+										e.jsx(o, { value: "manual", children: "Manual" }),
+										e.jsx(o, { value: "auto", children: "Auto" }),
+										e.jsx(o, { value: "disabled", children: "Disabled" }),
+									],
+								}),
+							],
+						}),
+					}),
+					e.jsxs("div", {
+						className:
+							"space-y-3 p-3 bg-muted/30 border border-border/50 rounded-md",
+						children: [
+							e.jsx(R, {
+								className: "text-xs font-medium",
+								children: "Compaction",
+							}),
+							e.jsxs("div", {
+								className: "space-y-2",
+								children: [
+									e.jsxs("div", {
+										className: "flex items-center justify-between",
+										children: [
+											e.jsx(R, {
+												htmlFor: "compaction-auto",
+												className: "text-xs text-muted-foreground",
+												children: "Auto compaction",
+											}),
+											e.jsx(se, {
+												id: "compaction-auto",
+												checked:
+													(($ = f("compaction")) == null ? void 0 : $.auto) ??
+													!1,
+												onCheckedChange: (s) =>
+													w("compaction", { ...f("compaction"), auto: s }),
+											}),
+										],
+									}),
+									e.jsxs("div", {
+										className: "flex items-center justify-between",
+										children: [
+											e.jsx(R, {
+												htmlFor: "compaction-prune",
+												className: "text-xs text-muted-foreground",
+												children: "Prune old messages",
+											}),
+											e.jsx(se, {
+												id: "compaction-prune",
+												checked:
+													((ee = f("compaction")) == null
+														? void 0
+														: ee.prune) ?? !1,
+												onCheckedChange: (s) =>
+													w("compaction", { ...f("compaction"), prune: s }),
+											}),
+										],
+									}),
+								],
+							}),
+						],
+					}),
+					e.jsx(G, {
+						label: "Instructions",
+						description: "Paths to instruction files (one per line)",
+						modified: b("instructions"),
+						source: j("instructions"),
+						setInLocal: C("instructions"),
+						setInGlobal: A("instructions"),
+						children: e.jsx("textarea", {
+							value: (f("instructions") || []).join(`
+`),
+							onChange: (s) => {
+								const v = s.target.value
+									.split(`
+`)
+									.map((m) => m.trim())
+									.filter((m) => m);
+								w("instructions", v.length > 0 ? v : void 0);
+							},
+							placeholder: `AGENTS.md
+.opencode/instructions.md`,
+							rows: 3,
+							className: N(
+								"w-full px-3 py-2 text-xs bg-background border rounded-md resize-none",
+								"focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2",
+								b("instructions") && "border-amber-500",
+								j("instructions") === "global" && "border-dashed",
+							),
+						}),
+					}),
+					e.jsx(ge, {
+						permission: f("permission"),
+						onChange: (s) => w("permission", s),
+						modified: b("permission"),
+						setInLocal: C("permission"),
+						setInGlobal: A("permission"),
+					}),
+					e.jsxs("details", {
+						className: "group",
+						children: [
+							e.jsx("summary", {
+								className:
+									"cursor-pointer text-xs text-muted-foreground hover:text-foreground",
+								children: "View raw config (JSON)",
+							}),
+							e.jsxs("div", {
+								className: "mt-2 space-y-2",
+								children: [
+									e.jsxs("div", {
+										children: [
+											e.jsx("p", {
+												className: "text-[10px] text-muted-foreground mb-1",
+												children: "Workspace config (editable):",
+											}),
+											e.jsx("pre", {
+												className:
+													"p-2 text-[10px] bg-muted/50 border border-border rounded-md overflow-auto max-h-32",
+												children: JSON.stringify({ ...r, ...u }, null, 2),
+											}),
+										],
+									}),
+									n &&
+										Object.keys(n).length > 0 &&
+										e.jsxs("div", {
+											children: [
+												e.jsx("p", {
+													className: "text-[10px] text-muted-foreground mb-1",
+													children: "Global config (read-only):",
+												}),
+												e.jsx("pre", {
+													className:
+														"p-2 text-[10px] bg-muted/50 border border-dashed border-border rounded-md overflow-auto max-h-32",
+													children: JSON.stringify(n, null, 2),
+												}),
+											],
+										}),
+								],
+							}),
+						],
+					}),
+				],
+			}),
+		],
+	});
+}
+function G({
+	label: i,
+	description: d,
+	modified: c,
+	source: _ = "default",
+	setInLocal: g,
+	setInGlobal: h,
+	children: a,
+}) {
+	return e.jsxs("div", {
+		className: "space-y-1.5",
+		children: [
+			e.jsxs("div", {
+				className: "flex items-center gap-1.5 flex-wrap",
+				children: [
+					e.jsx(R, { className: "text-xs font-medium", children: i }),
+					c &&
+						e.jsx(y, {
+							variant: "default",
+							className: "text-[9px] px-1 py-0 bg-amber-500 h-4",
+							children: "modified",
+						}),
+					!c &&
+						g &&
+						e.jsx(y, {
+							variant: "default",
+							className: "text-[9px] px-1 py-0 bg-blue-500 h-4",
+							children: "local",
+						}),
+					!c &&
+						!g &&
+						h &&
+						e.jsx(y, {
+							variant: "secondary",
+							className: "text-[9px] px-1 py-0 h-4",
+							children: "global",
+						}),
+					!c &&
+						g &&
+						h &&
+						e.jsx(y, {
+							variant: "outline",
+							className: "text-[9px] px-1 py-0 h-4 text-muted-foreground",
+							children: "overrides global",
+						}),
+				],
+			}),
+			d &&
+				e.jsx("p", {
+					className: "text-[11px] text-muted-foreground",
+					children: d,
+				}),
+			a,
+		],
+	});
+}
+const be = [
+	{ id: "read", label: "Read", description: "Read files" },
+	{ id: "edit", label: "Edit", description: "Edit files" },
+	{ id: "bash", label: "Bash", description: "Execute shell commands" },
+	{ id: "glob", label: "Glob", description: "Search for files by pattern" },
+	{ id: "grep", label: "Grep", description: "Search file contents" },
+	{ id: "list", label: "List", description: "List directory contents" },
+	{ id: "task", label: "Task", description: "Create sub-agents" },
+	{ id: "webfetch", label: "Web Fetch", description: "Fetch URLs" },
+	{ id: "websearch", label: "Web Search", description: "Search the web" },
+	{ id: "codesearch", label: "Code Search", description: "Search code" },
+	{ id: "todowrite", label: "Todo Write", description: "Write todos" },
+	{ id: "todoread", label: "Todo Read", description: "Read todos" },
+	{ id: "lsp", label: "LSP", description: "Language server features" },
+	{
+		id: "external_directory",
+		label: "External Dir",
+		description: "Access external directories",
+	},
+];
+function ge({
+	permission: i,
+	onChange: d,
+	modified: c,
+	setInLocal: _,
+	setInGlobal: g,
+}) {
+	const h = typeof i === "string";
+	const a = h ? i : "__none__";
+	const n =
+		i && typeof i === "object"
+			? Object.fromEntries(
+					Object.entries(i).map(([l, p]) => [
+						l,
+						typeof p === "string" ? p : "ask",
+					]),
+				)
+			: {};
+	const V = (l) => {
+		d(l === "__none__" ? void 0 : l);
+	};
+	const r = (l, p) => {
+		const x = i && typeof i === "object" ? { ...n } : {};
+		p === "__none__"
+			? (delete x[l], Object.keys(x).length === 0 ? d(void 0) : d(x))
+			: ((x[l] = p), d(x));
+	};
+	const D = (l) => (h ? i : n[l] || "__none__");
+	return e.jsxs("div", {
+		className: "space-y-3 p-3 bg-muted/30 border border-border/50 rounded-md",
+		children: [
+			e.jsxs("div", {
+				className: "flex items-center gap-1.5 flex-wrap",
+				children: [
+					e.jsx(R, {
+						className: "text-xs font-medium",
+						children: "Permissions",
+					}),
+					c &&
+						e.jsx(y, {
+							variant: "default",
+							className: "text-[9px] px-1 py-0 bg-amber-500 h-4",
+							children: "modified",
+						}),
+					!c &&
+						_ &&
+						e.jsx(y, {
+							variant: "default",
+							className: "text-[9px] px-1 py-0 bg-blue-500 h-4",
+							children: "local",
+						}),
+					!c &&
+						!_ &&
+						g &&
+						e.jsx(y, {
+							variant: "secondary",
+							className: "text-[9px] px-1 py-0 h-4",
+							children: "global",
+						}),
+					!c &&
+						_ &&
+						g &&
+						e.jsx(y, {
+							variant: "outline",
+							className: "text-[9px] px-1 py-0 h-4 text-muted-foreground",
+							children: "overrides global",
+						}),
+				],
+			}),
+			e.jsx("p", {
+				className: "text-[11px] text-muted-foreground",
+				children: "Control which tools require confirmation before use",
+			}),
+			e.jsxs("div", {
+				className:
+					"flex items-center justify-between py-1.5 border-b border-border/50",
+				children: [
+					e.jsxs("div", {
+						className: "flex flex-col",
+						children: [
+							e.jsx("span", {
+								className: "text-xs font-medium",
+								children: "All Tools",
+							}),
+							e.jsx("span", {
+								className: "text-[10px] text-muted-foreground",
+								children: "Set permission for all tools",
+							}),
+						],
+					}),
+					e.jsxs(P, {
+						value: a,
+						onValueChange: V,
+						children: [
+							e.jsx(W, {
+								className: "h-7 w-24 text-xs bg-background",
+								children: e.jsx(F, {}),
+							}),
+							e.jsxs(T, {
+								children: [
+									e.jsx(o, { value: "__none__", children: "Per-tool" }),
+									e.jsx(o, { value: "allow", children: "Allow" }),
+									e.jsx(o, { value: "ask", children: "Ask" }),
+									e.jsx(o, { value: "deny", children: "Deny" }),
+								],
+							}),
+						],
+					}),
+				],
+			}),
+			!h &&
+				e.jsx("div", {
+					className: "space-y-1 max-h-64 overflow-y-auto",
+					children: be.map((l) => {
+						const p = D(l.id);
+						return e.jsxs(
+							"div",
+							{
+								className:
+									"flex items-center justify-between py-1 px-1 rounded hover:bg-muted/50",
+								children: [
+									e.jsxs("div", {
+										className: "flex flex-col min-w-0 flex-1 mr-2",
+										children: [
+											e.jsx("span", {
+												className: "text-xs",
+												children: l.label,
+											}),
+											e.jsx("span", {
+												className: "text-[10px] text-muted-foreground truncate",
+												children: l.description,
+											}),
+										],
+									}),
+									e.jsxs(P, {
+										value: p,
+										onValueChange: (x) => r(l.id, x),
+										children: [
+											e.jsx(W, {
+												className: "h-6 w-20 text-[10px] bg-background",
+												children: e.jsx(F, {}),
+											}),
+											e.jsxs(T, {
+												children: [
+													e.jsx(o, { value: "__none__", children: "Default" }),
+													e.jsx(o, { value: "allow", children: "Allow" }),
+													e.jsx(o, { value: "ask", children: "Ask" }),
+													e.jsx(o, { value: "deny", children: "Deny" }),
+												],
+											}),
+										],
+									}),
+								],
+							},
+							l.id,
+						);
+					}),
+				}),
+		],
+	});
+}
+export { Ne as AgentSettingsView };

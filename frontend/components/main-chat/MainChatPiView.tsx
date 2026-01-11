@@ -28,13 +28,13 @@ import {
 } from "@/hooks/usePiChat";
 import {
 	type Features,
+	type PiModelInfo,
 	compactMainChatPi,
 	fileserverWorkspaceBaseUrl,
-	getMainChatPiStats,
 	getMainChatPiCommands,
 	getMainChatPiModels,
+	getMainChatPiStats,
 	setMainChatPiModel,
-	type PiModelInfo,
 } from "@/lib/control-plane-client";
 import { getFileTypeInfo } from "@/lib/file-types";
 import {
@@ -109,11 +109,20 @@ export function MainChatPiView({
 		send,
 		abort,
 		newSession,
+		resetSession,
 		state: piState,
 		refresh,
 	} = usePiChat();
 
-	const [input, setInput] = useState("");
+	// Draft persistence - restore from localStorage on mount
+	const [input, setInput] = useState(() => {
+		if (typeof window === "undefined") return "";
+		try {
+			return localStorage.getItem("octo:mainChatDraft") || "";
+		} catch {
+			return "";
+		}
+	});
 	const [fileAttachments, setFileAttachments] = useState<FileAttachment[]>([]);
 	const [showFileMentionPopup, setShowFileMentionPopup] = useState(false);
 	const [fileMentionQuery, setFileMentionQuery] = useState("");
@@ -182,6 +191,7 @@ export function MainChatPiView({
 		() => [
 			{ name: "compact", description: "Summarize context" },
 			{ name: "new", description: "Start a fresh session" },
+			{ name: "reset", description: "Reload personality and user files" },
 			{ name: "abort", description: "Abort current run" },
 			{ name: "steer", description: "Queue a steering message" },
 			{ name: "followup", description: "Queue a follow-up message" },
@@ -445,6 +455,10 @@ export function MainChatPiView({
 					await newSession();
 					return { handled: true, clearInput: true };
 				}
+				case "reset": {
+					await resetSession();
+					return { handled: true, clearInput: true };
+				}
 				case "abort": {
 					await abort();
 					return { handled: true, clearInput: true };
@@ -472,7 +486,7 @@ export function MainChatPiView({
 					return { handled: false, clearInput: false };
 			}
 		},
-		[abort, handleModelChange, newSession, refresh, send],
+		[abort, handleModelChange, newSession, refresh, resetSession, send],
 	);
 
 	const handleSend = useCallback(
@@ -505,15 +519,28 @@ export function MainChatPiView({
 				}
 			}
 
+			// Check for shell command (starts with "!")
+			const isShellCommand = trimmed.startsWith("!");
+			const shellCommand = isShellCommand ? trimmed.slice(1).trim() : "";
+
 			// Build message with file attachments
 			let message = trimmed;
-			if (fileAttachments.length > 0) {
+			if (isShellCommand && shellCommand) {
+				// Convert shell command to a prompt for Pi's bash tool
+				message = `Run this shell command and show me the output:\n\`\`\`bash\n${shellCommand}\n\`\`\``;
+			} else if (fileAttachments.length > 0) {
 				const fileRefs = fileAttachments.map((f) => `@${f.path}`).join(" ");
 				message = `${fileRefs}\n\n${trimmed}`;
 			}
 
 			setInput("");
 			setFileAttachments([]);
+			// Clear draft from localStorage
+			try {
+				localStorage.removeItem("octo:mainChatDraft");
+			} catch {
+				// Ignore localStorage errors
+			}
 			// Reset textarea height
 			if (inputRef.current) {
 				inputRef.current.style.height = "auto";
@@ -566,6 +593,17 @@ export function MainChatPiView({
 			const value = e.target.value;
 			setInput(value);
 			setCommandError(null);
+
+			// Persist draft to localStorage
+			try {
+				if (value.trim()) {
+					localStorage.setItem("octo:mainChatDraft", value);
+				} else {
+					localStorage.removeItem("octo:mainChatDraft");
+				}
+			} catch {
+				// Ignore localStorage errors
+			}
 
 			if (value.startsWith("/")) {
 				setShowSlashPopup(true);
@@ -656,7 +694,8 @@ export function MainChatPiView({
 							<div className="min-w-0 flex-1">
 								<div className="flex items-center gap-2">
 									<h1 className="text-base sm:text-lg font-semibold text-foreground tracking-wider truncate">
-										{assistantName || (locale === "de" ? "Hauptchat" : "Main Chat")}
+										{assistantName ||
+											(locale === "de" ? "Hauptchat" : "Main Chat")}
 									</h1>
 								</div>
 								{workspacePath && (

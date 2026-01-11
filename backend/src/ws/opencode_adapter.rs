@@ -437,6 +437,53 @@ impl OpenCodeAdapter {
                 })
             }
 
+            // Question events - matches OpenCode Question type
+            "question.asked" => {
+                let props = data.get("properties").unwrap_or(data);
+                let request_id = props
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let questions = props
+                    .get("questions")
+                    .cloned()
+                    .unwrap_or(serde_json::json!([]));
+                let tool = props.get("tool").cloned();
+
+                info!(
+                    "[Question] Session {} question request: {}",
+                    session_id, request_id
+                );
+
+                Some(WsEvent::QuestionRequest {
+                    session_id,
+                    request_id,
+                    questions,
+                    tool,
+                })
+            }
+
+            "question.replied" | "question.rejected" => {
+                let props = data.get("properties").unwrap_or(data);
+                let request_id = props
+                    .get("requestID")
+                    .or_else(|| props.get("id"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+
+                info!(
+                    "[Question] Session {} question resolved: {}",
+                    session_id, request_id
+                );
+
+                Some(WsEvent::QuestionResolved {
+                    session_id,
+                    request_id,
+                })
+            }
+
             // Session error events
             "session.error" => {
                 let props = data.get("properties").unwrap_or(data);

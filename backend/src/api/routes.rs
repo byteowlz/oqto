@@ -317,6 +317,7 @@ pub fn create_router(state: AppState) -> Router {
             get(main_chat_pi_handlers::get_prompt_commands),
         )
         .route("/main/pi/new", post(main_chat_pi_handlers::new_session))
+        .route("/main/pi/reset", post(main_chat_pi_handlers::reset_session))
         .route(
             "/main/pi/stats",
             get(main_chat_pi_handlers::get_session_stats),

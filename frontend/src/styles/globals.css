@@ -256,8 +256,13 @@
 }
 
 /* Custom scrollbar styling - thin, flat, matches theme */
+/* Hidden by default, visible on hover */
 * {
 	scrollbar-width: thin;
+	scrollbar-color: transparent transparent;
+}
+
+*:hover {
 	scrollbar-color: var(--muted-foreground) transparent;
 }
 
@@ -272,10 +277,17 @@
 }
 
 /* Use box-shadow inset trick for sharp rectangular scrollbar in Chromium */
+/* Hidden by default */
 *::-webkit-scrollbar-thumb {
 	background: transparent;
-	box-shadow: inset 0 0 0 10px var(--muted-foreground);
+	box-shadow: inset 0 0 0 10px transparent;
 	border: 3px solid transparent;
+	transition: box-shadow 0.2s ease;
+}
+
+/* Show on container hover */
+*:hover::-webkit-scrollbar-thumb {
+	box-shadow: inset 0 0 0 10px var(--muted-foreground);
 }
 
 *::-webkit-scrollbar-thumb:hover {
@@ -286,14 +298,24 @@
 	background: transparent;
 }
 
-/* Sidebar scrollbar - even more subtle */
+/* Sidebar scrollbar - even more subtle, hidden by default */
 .sidebar-scroll,
 [data-sidebar] {
+	scrollbar-color: transparent transparent;
+}
+
+.sidebar-scroll:hover,
+[data-sidebar]:hover {
 	scrollbar-color: var(--sidebar-border) transparent;
 }
 
 .sidebar-scroll::-webkit-scrollbar-thumb,
 [data-sidebar]::-webkit-scrollbar-thumb {
+	box-shadow: inset 0 0 0 10px transparent;
+}
+
+.sidebar-scroll:hover::-webkit-scrollbar-thumb,
+[data-sidebar]:hover::-webkit-scrollbar-thumb {
 	box-shadow: inset 0 0 0 10px var(--sidebar-border);
 }
 

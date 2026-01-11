@@ -10,9 +10,9 @@ import {
 	SelectValue,
 } from "@/components/ui/select";
 import {
+	type PiModelInfo,
 	getMainChatPiModels,
 	setMainChatPiModel,
-	type PiModelInfo,
 } from "@/lib/control-plane-client";
 import { fuzzyMatch } from "@/lib/slash-commands";
 import { cn } from "@/lib/utils";

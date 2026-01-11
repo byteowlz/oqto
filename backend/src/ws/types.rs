@@ -131,6 +131,25 @@ pub enum WsEvent {
         granted: bool,
     },
 
+    // ========== Question Events ==========
+    /// Question request from agent (user question / multiple choice).
+    /// Matches OpenCode Question.Request type structure.
+    QuestionRequest {
+        session_id: String,
+        request_id: String,
+        /// Array of questions to ask
+        questions: Value,
+        /// Optional tool context
+        #[serde(skip_serializing_if = "Option::is_none")]
+        tool: Option<Value>,
+    },
+
+    /// Question request resolved.
+    QuestionResolved {
+        session_id: String,
+        request_id: String,
+    },
+
     // ========== Compaction Events ==========
     // ========== OpenCode-Specific Events ==========
     /// Raw OpenCode SSE event (for backwards compatibility).
@@ -185,6 +204,21 @@ pub enum WsCommand {
         session_id: String,
         permission_id: String,
         granted: bool,
+    },
+
+    // ========== Question Commands ==========
+    /// Reply to a question request.
+    QuestionReply {
+        session_id: String,
+        request_id: String,
+        /// Array of answers (each answer is an array of selected labels)
+        answers: Value,
+    },
+
+    /// Reject/dismiss a question request.
+    QuestionReject {
+        session_id: String,
+        request_id: String,
     },
 
     // ========== Session Management ==========

@@ -401,6 +401,90 @@ async fn handle_command(
             Ok(())
         }
 
+        WsCommand::QuestionReply {
+            session_id,
+            request_id,
+            answers,
+        } => {
+            // Verify user is subscribed
+            if !hub.is_subscribed(user_id, &session_id) {
+                anyhow::bail!("Not subscribed to session");
+            }
+
+            // Get session
+            let session = state
+                .sessions
+                .get_session(&session_id)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("Session not found"))?;
+
+            // Get opencode session
+            let opencode_session = state.sessions.get_or_create_opencode_session().await?;
+
+            // Send question reply via HTTP to opencode
+            let client = reqwest::Client::new();
+            let url = format!(
+                "http://localhost:{}/question/{}/reply",
+                opencode_session.opencode_port, request_id
+            );
+
+            let response = client
+                .post(&url)
+                .header("x-opencode-directory", &session.workspace_path)
+                .json(&serde_json::json!({ "answers": answers }))
+                .send()
+                .await?;
+
+            if !response.status().is_success() {
+                let status = response.status();
+                let body = response.text().await.unwrap_or_default();
+                anyhow::bail!("Failed to reply to question: {} - {}", status, body);
+            }
+
+            Ok(())
+        }
+
+        WsCommand::QuestionReject {
+            session_id,
+            request_id,
+        } => {
+            // Verify user is subscribed
+            if !hub.is_subscribed(user_id, &session_id) {
+                anyhow::bail!("Not subscribed to session");
+            }
+
+            // Get session
+            let session = state
+                .sessions
+                .get_session(&session_id)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("Session not found"))?;
+
+            // Get opencode session
+            let opencode_session = state.sessions.get_or_create_opencode_session().await?;
+
+            // Send question reject via HTTP to opencode
+            let client = reqwest::Client::new();
+            let url = format!(
+                "http://localhost:{}/question/{}/reject",
+                opencode_session.opencode_port, request_id
+            );
+
+            let response = client
+                .post(&url)
+                .header("x-opencode-directory", &session.workspace_path)
+                .send()
+                .await?;
+
+            if !response.status().is_success() {
+                let status = response.status();
+                let body = response.text().await.unwrap_or_default();
+                anyhow::bail!("Failed to reject question: {} - {}", status, body);
+            }
+
+            Ok(())
+        }
+
         WsCommand::RefreshSession { session_id } => {
             // Verify user is subscribed
             if !hub.is_subscribed(user_id, &session_id) {

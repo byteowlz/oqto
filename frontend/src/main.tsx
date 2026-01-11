@@ -27,9 +27,4 @@ createRoot(container).render(
 	</React.StrictMode>,
 );
 
-requestAnimationFrame(() => {
-	requestAnimationFrame(() => {
-		document.getElementById("preload")?.remove();
-		document.documentElement.removeAttribute("data-preload");
-	});
-});
+// Preload removal is handled by AppShell after it's ready to ensure smooth transition

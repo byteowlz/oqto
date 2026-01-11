@@ -10,6 +10,7 @@ import {
 	getMainChatPiHistory,
 	getMainChatPiState,
 	newMainChatPiSession,
+	resetMainChatPiSession,
 	startMainChatPiSession,
 } from "@/lib/control-plane-client";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -85,6 +86,8 @@ export type UsePiChatReturn = {
 	abort: () => Promise<void>;
 	/** Start new session (clear history) */
 	newSession: () => Promise<void>;
+	/** Reset session - restarts Pi process to reload PERSONALITY.md and USER.md */
+	resetSession: () => Promise<void>;
 	/** Reload messages from server */
 	refresh: () => Promise<void>;
 	/** Connect to WebSocket */
@@ -100,6 +103,23 @@ export type PiSendOptions = {
 	queueIfStreaming?: boolean;
 };
 
+// Global cache for main chat messages - persists across component remounts
+const messageCache = {
+	messages: [] as PiDisplayMessage[],
+	timestamp: 0,
+};
+
+// Update cache from outside (used by the hook)
+function updateMessageCache(messages: PiDisplayMessage[]) {
+	messageCache.messages = messages;
+	messageCache.timestamp = Date.now();
+}
+
+// Get cached messages
+function getCachedMessages(): PiDisplayMessage[] {
+	return messageCache.messages;
+}
+
 /**
  * Hook for managing Pi chat in Main Chat mode.
  * Handles WebSocket connection, message streaming, and state.
@@ -108,7 +128,9 @@ export function usePiChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 	const { autoConnect = true, onMessageComplete, onError } = options;
 
 	const [state, setState] = useState<PiState | null>(null);
-	const [messages, setMessages] = useState<PiDisplayMessage[]>([]);
+	// Initialize with cached messages for instant display
+	const [messages, setMessages] =
+		useState<PiDisplayMessage[]>(getCachedMessages);
 	const [isConnected, setIsConnected] = useState(false);
 	const [isStreaming, setIsStreaming] = useState(false);
 	const [error, setError] = useState<Error | null>(null);
@@ -447,13 +469,22 @@ export function usePiChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 				getMainChatPiHistory(),
 			]);
 			setState(piState);
-			setMessages(convertDbToDisplayMessages(dbMessages));
+			const displayMessages = convertDbToDisplayMessages(dbMessages);
+			setMessages(displayMessages);
+			updateMessageCache(displayMessages);
 		} catch (e) {
 			const err = e instanceof Error ? e : new Error("Failed to refresh");
 			setError(err);
 			onError?.(err);
 		}
 	}, [convertDbToDisplayMessages, onError]);
+
+	// Keep cache in sync when messages change
+	useEffect(() => {
+		if (messages.length > 0) {
+			updateMessageCache(messages);
+		}
+	}, [messages]);
 
 	// Send a message via WebSocket (which persists user messages)
 	const send = useCallback(
@@ -468,7 +499,11 @@ export function usePiChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 
 			setError(null);
 			let mode: PiSendMode = options?.mode ?? "prompt";
-			if (isStreaming && mode === "prompt" && (options?.queueIfStreaming ?? true)) {
+			if (
+				isStreaming &&
+				mode === "prompt" &&
+				(options?.queueIfStreaming ?? true)
+			) {
 				mode = "follow_up";
 			}
 			if (!isStreaming && (mode === "follow_up" || mode === "steer")) {
@@ -555,23 +590,74 @@ export function usePiChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 		}
 	}, [onError]);
 
+	// Reset session - restarts Pi process to reload PERSONALITY.md and USER.md
+	const resetSession = useCallback(async () => {
+		try {
+			// Disconnect WebSocket first
+			disconnect();
+
+			// Add separator to mark reset
+			const separatorMsg = await addMainChatPiSeparator();
+
+			// Reset the session (this restarts the Pi process)
+			const newState = await resetMainChatPiSession();
+			setState(newState);
+
+			// Add separator to display
+			const separatorDisplay: PiDisplayMessage = {
+				id: `pi-db-${separatorMsg.id}`,
+				role: "system",
+				parts: [
+					{
+						type: "separator",
+						content: "Session reset - reloaded personality",
+					},
+				],
+				timestamp: separatorMsg.timestamp,
+			};
+			setMessages((prev) => [...prev, separatorDisplay]);
+			streamingMessageRef.current = null;
+
+			// Reconnect WebSocket
+			connect();
+		} catch (e) {
+			const err = e instanceof Error ? e : new Error("Failed to reset session");
+			setError(err);
+			onError?.(err);
+		}
+	}, [connect, disconnect, onError]);
+
 	// Initialize on mount
 	useEffect(() => {
 		let mounted = true;
 
-		const init = async () => {
+		// Only fetch history if cache is empty or stale (> 30 seconds)
+		const cacheAge = Date.now() - messageCache.timestamp;
+		const shouldFetch = messageCache.messages.length === 0 || cacheAge > 30000;
+
+		if (shouldFetch) {
+			// Load history - fire and forget, don't block session start
+			getMainChatPiHistory()
+				.then((dbMessages) => {
+					if (mounted) {
+						const displayMessages = convertDbToDisplayMessages(dbMessages);
+						setMessages(displayMessages);
+						updateMessageCache(displayMessages);
+					}
+				})
+				.catch(() => {
+					// History load failed silently
+				});
+		}
+
+		// Start session and connect - runs in parallel with history fetch
+		const initSession = async () => {
 			try {
-				// Start or get session
 				const piState = await startMainChatPiSession();
 				if (!mounted) return;
 				setState(piState);
 
-				// Load persistent history from database (survives Pi session restarts)
-				const dbMessages = await getMainChatPiHistory();
-				if (!mounted) return;
-				setMessages(convertDbToDisplayMessages(dbMessages));
-
-				// Connect WebSocket
+				// Connect WebSocket after session is ready
 				if (autoConnect) {
 					connect();
 				}
@@ -583,7 +669,7 @@ export function usePiChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 			}
 		};
 
-		init();
+		initSession();
 
 		return () => {
 			mounted = false;
@@ -600,6 +686,7 @@ export function usePiChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 		send,
 		abort,
 		newSession,
+		resetSession,
 		refresh,
 		connect,
 		disconnect,

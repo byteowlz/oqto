@@ -1,11 +1,634 @@
-import{y as B,r,j as e,c as _,z as I,L as b,A as O,l as V,B as f,X as J,R as X,G as W,H as Z,S as P,x as U,P as ee,T as te,J as se}from"./index-RFMA0cqP.js";/**
+import {
+	y as B,
+	z as I,
+	X as J,
+	A as O,
+	S as P,
+	x as U,
+	l as V,
+	G as W,
+	R as X,
+	H as Z,
+	c as _,
+	L as b,
+	j as e,
+	P as ee,
+	B as f,
+	r,
+	J as se,
+	T as te,
+} from "./index-RFMA0cqP.js"; /**
  * @license lucide-react v0.556.0 - ISC
  *
  * This source code is licensed under the ISC license.
  * See the LICENSE file in the root directory of this source tree.
- */const ae=[["path",{d:"M8 2v4",key:"1cmpym"}],["path",{d:"M16 2v4",key:"4m81vk"}],["rect",{width:"18",height:"18",x:"3",y:"4",rx:"2",key:"1hopcy"}],["path",{d:"M3 10h18",key:"8toen8"}]],ne=B("calendar",ae);/**
+ */
+const ae = [
+	["path", { d: "M8 2v4", key: "1cmpym" }],
+	["path", { d: "M16 2v4", key: "4m81vk" }],
+	[
+		"rect",
+		{ width: "18", height: "18", x: "3", y: "4", rx: "2", key: "1hopcy" },
+	],
+	["path", { d: "M3 10h18", key: "8toen8" }],
+];
+const ne = B("calendar", ae); /**
  * @license lucide-react v0.556.0 - ISC
  *
  * This source code is licensed under the ISC license.
  * See the LICENSE file in the root directory of this source tree.
- */const re=[["path",{d:"M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z",key:"vktsd0"}],["circle",{cx:"7.5",cy:"7.5",r:".5",fill:"currentColor",key:"kqv944"}]],ie=B("tag",re);function w(t){var s;return{id:t.id??"",memory_type:t.memory_type??"text",content:t.content??t.text??t.memory??((s=t.data)==null?void 0:s.content)??"",metadata:t.metadata??{},importance:t.importance??0,expires_at:t.expires_at,expired_at:t.expired_at,created_at:t.created_at??new Date().toISOString(),updated_at:t.updated_at??new Date().toISOString(),category:t.category??"general",tags:t.tags??[],parent_id:t.parent_id,chunk_index:t.chunk_index,total_chunks:t.total_chunks,chunk_method:t.chunk_method}}function S(t,s="",n){const l=se(`/api/workspace/memories${s}`),i=new URL(l,window.location.origin);return i.searchParams.set("workspace_path",t),n&&i.searchParams.set("store",n),i.toString()}async function ce(t,s=0,n=50,l){const i=new URL(S(t,"",l),window.location.origin);i.searchParams.set("limit",n.toString()),i.searchParams.set("offset",s.toString());const o=await fetch(i.toString(),{credentials:"include"});if(!o.ok){if(o.status===404)return{memories:[],total:0,offset:0,limit:50};throw new Error(`Failed to fetch memories: ${o.statusText}`)}const c=await o.json();return{memories:(c.memories??[]).map(w),total:c.total??0,offset:c.offset??0,limit:c.limit??n}}async function le(t,s,n=50,l){const i=await fetch(S(t,"/search",l),{method:"POST",credentials:"include",headers:{"Content-Type":"application/json"},body:JSON.stringify({query:s,limit:n,rerank:!0})});if(!i.ok)throw new Error(`Failed to search memories: ${i.statusText}`);return((await i.json()).memories??[]).map(c=>w(c))}async function oe(t,s,n,l,i,o){const c=await fetch(S(t,"",o),{method:"POST",credentials:"include",headers:{"Content-Type":"application/json"},body:JSON.stringify({content:s,text:s,memory:s,category:"general",tags:[],importance:5})});if(!c.ok){const x=await c.text();throw new Error(`Failed to add memory: ${x||c.statusText}`)}const m=await c.json();return w(m)}async function de(t,s,n){const l=await fetch(S(t,`/${s}`,n),{method:"DELETE",credentials:"include"});if(!l.ok)throw new Error(`Failed to delete memory: ${l.statusText}`)}async function me(t,s,n,l,i,o,c){const m=await fetch(S(t,`/${s}`,c),{method:"PUT",credentials:"include",headers:{"Content-Type":"application/json"},body:JSON.stringify({content:n,text:n,memory:n,...l,...i,...o})});if(!m.ok)throw new Error(`Failed to update memory: ${m.statusText}`);const x=await m.json();return w(x)}function ue({memory:t,onDelete:s,onEdit:n,isDeleting:l}){const[i,o]=r.useState(!1),[c,m]=r.useState(t.content??""),[x,j]=r.useState(!1),u=r.useRef(null);r.useEffect(()=>{if(i&&u.current){const h=u.current;c.length===0&&(h.style.height="auto"),h.style.height="auto",h.style.height=`${h.scrollHeight}px`,h.focus()}},[i,c]);const p=async()=>{j(!0);try{await n(c),o(!1)}finally{j(!1)}},C=()=>{m(t.content??""),o(!1)},v=new Date(t.created_at),k=v.toLocaleDateString(void 0,{month:"short",day:"numeric",year:v.getFullYear()!==new Date().getFullYear()?"numeric":void 0});return e.jsx("div",{className:"group border border-border rounded-lg p-3 hover:bg-muted/30 transition-colors",children:i?e.jsxs("div",{className:"space-y-2",children:[e.jsx("textarea",{ref:u,value:c,onChange:h=>m(h.target.value),className:"w-full min-h-[60px] p-2 text-sm bg-background border border-border rounded resize-none focus:outline-none focus:ring-1 focus:ring-primary overflow-hidden"}),e.jsxs("div",{className:"flex justify-end gap-1",children:[e.jsxs(f,{type:"button",variant:"ghost",size:"sm",onClick:C,disabled:x,className:"h-7 px-2 text-xs",children:[e.jsx(J,{className:"w-3 h-3 mr-1"}),"Cancel"]}),e.jsxs(f,{type:"button",variant:"default",size:"sm",onClick:p,disabled:x,className:"h-7 px-2 text-xs",children:[x?e.jsx(b,{className:"w-3 h-3 mr-1 animate-spin"}):e.jsx(P,{className:"w-3 h-3 mr-1"}),"Save"]})]})]}):e.jsxs(e.Fragment,{children:[e.jsx("p",{className:"text-sm whitespace-pre-wrap break-words",children:t.content}),e.jsxs("div",{className:"mt-2 flex items-center justify-between",children:[e.jsxs("div",{className:"flex items-center gap-2 text-xs text-muted-foreground flex-wrap",children:[e.jsxs("span",{className:"flex items-center gap-1",children:[e.jsx(ne,{className:"w-3 h-3"}),k]}),t.category&&t.category!=="general"&&e.jsx(U,{variant:"secondary",className:"text-[10px] px-1.5 py-0",children:t.category}),t.importance>5&&e.jsxs(U,{variant:"outline",className:"text-[10px] px-1.5 py-0",children:["importance: ",t.importance]}),t.tags&&t.tags.length>0&&e.jsxs("span",{className:"flex items-center gap-1",children:[e.jsx(ie,{className:"w-3 h-3"}),t.tags.slice(0,2).join(", "),t.tags.length>2&&`+${t.tags.length-2}`]})]}),e.jsxs("div",{className:"flex items-center gap-0.5 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity",children:[e.jsx(f,{type:"button",variant:"ghost",size:"sm",onClick:()=>o(!0),className:"h-6 w-6 p-0",title:"Edit",children:e.jsx(ee,{className:"w-3 h-3"})}),e.jsx(f,{type:"button",variant:"ghost",size:"sm",onClick:s,disabled:l,className:"h-6 w-6 p-0 text-destructive hover:text-destructive",title:"Delete",children:l?e.jsx(b,{className:"w-3 h-3 animate-spin"}):e.jsx(te,{className:"w-3 h-3"})})]})]})]})})}function xe({className:t,workspacePath:s,storeName:n}){const[l,i]=r.useState([]),[o,c]=r.useState(0),[m,x]=r.useState(!0),[j,u]=r.useState(""),[p,C]=r.useState(""),[v,k]=r.useState(!1),[h,z]=r.useState(!1),[E,M]=r.useState(!1),[N,T]=r.useState(""),[D,A]=r.useState(!1),[H,$]=r.useState(null),F=r.useRef(null),g=r.useCallback(async()=>{if(s){x(!0),u(""),z(!1);try{const a=await ce(s,0,50,n);i(a.memories),c(a.total)}catch(a){u(a instanceof Error?a.message:"Failed to load memories")}finally{x(!1)}}},[s,n]);r.useEffect(()=>{g()},[g]),r.useEffect(()=>{E&&F.current&&F.current.focus()},[E]);const R=r.useCallback(async()=>{if(s){if(!p.trim()){g();return}k(!0),u(""),z(!0);try{const a=await le(s,p,50,n);i(a),c(a.length)}catch(a){u(a instanceof Error?a.message:"Search failed")}finally{k(!1)}}},[s,p,g,n]),q=r.useCallback(()=>{C(""),g()},[g]),Q=r.useCallback(async()=>{if(!(!s||!N.trim())){A(!0),u("");try{const a=await oe(s,N,void 0,void 0,void 0,n);i(d=>[w(a),...d]),c(d=>d+1),T(""),M(!1)}catch(a){u(a instanceof Error?a.message:"Failed to add memory")}finally{A(!1)}}},[s,N,n]),Y=r.useCallback(async a=>{if(s){$(a);try{await de(s,a,n),i(d=>d.filter(y=>y.id!==a)),c(d=>d-1)}catch(d){u(d instanceof Error?d.message:"Failed to delete memory")}finally{$(null)}}},[s,n]),G=r.useCallback(async(a,d)=>{if(s)try{const y=await me(s,a,d,void 0,void 0,void 0,n);i(K=>K.map(L=>L.id===a?y:L))}catch(y){throw u(y instanceof Error?y.message:"Failed to update memory"),y}},[s,n]);return s?m?e.jsx("div",{className:_("h-full bg-muted/30 rounded flex items-center justify-center",t),children:e.jsxs("div",{className:"text-center text-muted-foreground",children:[e.jsx(b,{className:"w-8 h-8 mx-auto mb-2 animate-spin"}),e.jsx("p",{className:"text-sm",children:"Loading memories..."})]})}):e.jsxs("div",{className:_("h-full flex flex-col overflow-hidden",t),children:[e.jsxs("div",{className:"flex-shrink-0 p-2 border-b border-border space-y-2",children:[e.jsxs("div",{className:"flex items-center gap-2",children:[e.jsxs("div",{className:"relative flex-1",children:[e.jsx(O,{className:"absolute left-2 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground"}),e.jsx(V,{value:p,onChange:a=>C(a.target.value),onKeyDown:a=>a.key==="Enter"&&R(),placeholder:"Search memories...",className:"pl-8 h-8 text-sm"})]}),h?e.jsx(f,{type:"button",variant:"outline",size:"sm",onClick:q,className:"h-8",title:"Clear search",children:e.jsx(J,{className:"w-4 h-4"})}):e.jsx(f,{type:"button",variant:"outline",size:"sm",onClick:g,disabled:m,className:"h-8",title:"Refresh",children:e.jsx(X,{className:_("w-4 h-4",m&&"animate-spin")})}),e.jsx(f,{type:"button",variant:"outline",size:"sm",onClick:R,disabled:v||!p.trim(),className:"h-8",children:v?e.jsx(b,{className:"w-4 h-4 animate-spin"}):e.jsx(O,{className:"w-4 h-4"})}),e.jsx(f,{type:"button",variant:"default",size:"sm",onClick:()=>M(!E),className:"h-8",children:e.jsx(W,{className:"w-4 h-4"})})]}),E&&e.jsxs("div",{className:"space-y-2 p-2 bg-muted/30 rounded-lg",children:[e.jsx("textarea",{ref:F,value:N,onChange:a=>T(a.target.value),placeholder:"Enter a new memory...",className:"w-full min-h-[60px] p-2 text-sm bg-background border border-border rounded resize-none focus:outline-none focus:ring-1 focus:ring-primary"}),e.jsxs("div",{className:"flex justify-end gap-1",children:[e.jsx(f,{type:"button",variant:"ghost",size:"sm",onClick:()=>{M(!1),T("")},className:"h-7 px-2 text-xs",children:"Cancel"}),e.jsxs(f,{type:"button",variant:"default",size:"sm",onClick:Q,disabled:D||!N.trim(),className:"h-7 px-2 text-xs",children:[D?e.jsx(b,{className:"w-3 h-3 mr-1 animate-spin"}):e.jsx(Z,{className:"w-3 h-3 mr-1"}),"Add Memory"]})]})]}),!m&&e.jsx("div",{className:"text-xs text-muted-foreground",children:h?e.jsxs("span",{children:["Found ",l.length," result",l.length!==1?"s":""," ",'for "',p,'"']}):e.jsxs("span",{children:[o," memor",o!==1?"ies":"y"]})})]}),j&&e.jsx("div",{className:"flex-shrink-0 px-3 py-2 bg-destructive/10 text-destructive text-xs",children:j}),e.jsx("div",{className:"flex-1 overflow-auto p-2 space-y-2",children:l.length===0?e.jsx("div",{className:"h-full flex items-center justify-center",children:e.jsxs("div",{className:"text-center text-muted-foreground",children:[e.jsx(I,{className:"w-12 h-12 mx-auto mb-2 opacity-50"}),h?e.jsxs(e.Fragment,{children:[e.jsx("p",{className:"text-sm",children:"No memories found"}),e.jsx("p",{className:"text-xs mt-1",children:"Try a different search query"})]}):e.jsxs(e.Fragment,{children:[e.jsx("p",{className:"text-sm",children:"No memories yet"}),e.jsx("p",{className:"text-xs mt-1",children:"Add your first memory above"})]})]})}):l.map(a=>e.jsx(ue,{memory:a,onDelete:()=>Y(a.id),onEdit:d=>G(a.id,d),isDeleting:H===a.id},a.id))})]}):e.jsx("div",{className:_("h-full bg-muted/30 rounded flex items-center justify-center",t),children:e.jsxs("div",{className:"text-center text-muted-foreground",children:[e.jsx(I,{className:"w-12 h-12 mx-auto mb-2 opacity-50"}),e.jsx("p",{className:"text-sm",children:"Select a chat to view memories"})]})})}export{xe as MemoriesView};
+ */
+const re = [
+	[
+		"path",
+		{
+			d: "M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z",
+			key: "vktsd0",
+		},
+	],
+	[
+		"circle",
+		{ cx: "7.5", cy: "7.5", r: ".5", fill: "currentColor", key: "kqv944" },
+	],
+];
+const ie = B("tag", re);
+function w(t) {
+	let s;
+	return {
+		id: t.id ?? "",
+		memory_type: t.memory_type ?? "text",
+		content:
+			t.content ??
+			t.text ??
+			t.memory ??
+			((s = t.data) == null ? void 0 : s.content) ??
+			"",
+		metadata: t.metadata ?? {},
+		importance: t.importance ?? 0,
+		expires_at: t.expires_at,
+		expired_at: t.expired_at,
+		created_at: t.created_at ?? new Date().toISOString(),
+		updated_at: t.updated_at ?? new Date().toISOString(),
+		category: t.category ?? "general",
+		tags: t.tags ?? [],
+		parent_id: t.parent_id,
+		chunk_index: t.chunk_index,
+		total_chunks: t.total_chunks,
+		chunk_method: t.chunk_method,
+	};
+}
+function S(t, s, n) {
+	const l = se(`/api/workspace/memories${s}`);
+	const i = new URL(l, window.location.origin);
+	return (
+		i.searchParams.set("workspace_path", t),
+		n && i.searchParams.set("store", n),
+		i.toString()
+	);
+}
+async function ce(t, s, n, l) {
+	const i = new URL(S(t, "", l), window.location.origin);
+	i.searchParams.set("limit", n.toString()),
+		i.searchParams.set("offset", s.toString());
+	const o = await fetch(i.toString(), { credentials: "include" });
+	if (!o.ok) {
+		if (o.status === 404)
+			return { memories: [], total: 0, offset: 0, limit: 50 };
+		throw new Error(`Failed to fetch memories: ${o.statusText}`);
+	}
+	const c = await o.json();
+	return {
+		memories: (c.memories ?? []).map(w),
+		total: c.total ?? 0,
+		offset: c.offset ?? 0,
+		limit: c.limit ?? n,
+	};
+}
+async function le(t, s, n, l) {
+	const i = await fetch(S(t, "/search", l), {
+		method: "POST",
+		credentials: "include",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ query: s, limit: n, rerank: !0 }),
+	});
+	if (!i.ok) throw new Error(`Failed to search memories: ${i.statusText}`);
+	return ((await i.json()).memories ?? []).map((c) => w(c));
+}
+async function oe(t, s, n, l, i, o) {
+	const c = await fetch(S(t, "", o), {
+		method: "POST",
+		credentials: "include",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({
+			content: s,
+			text: s,
+			memory: s,
+			category: "general",
+			tags: [],
+			importance: 5,
+		}),
+	});
+	if (!c.ok) {
+		const x = await c.text();
+		throw new Error(`Failed to add memory: ${x || c.statusText}`);
+	}
+	const m = await c.json();
+	return w(m);
+}
+async function de(t, s, n) {
+	const l = await fetch(S(t, `/${s}`, n), {
+		method: "DELETE",
+		credentials: "include",
+	});
+	if (!l.ok) throw new Error(`Failed to delete memory: ${l.statusText}`);
+}
+async function me(t, s, n, l, i, o, c) {
+	const m = await fetch(S(t, `/${s}`, c), {
+		method: "PUT",
+		credentials: "include",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ content: n, text: n, memory: n, ...l, ...i, ...o }),
+	});
+	if (!m.ok) throw new Error(`Failed to update memory: ${m.statusText}`);
+	const x = await m.json();
+	return w(x);
+}
+function ue({ memory: t, onDelete: s, onEdit: n, isDeleting: l }) {
+	const [i, o] = r.useState(!1);
+	const [c, m] = r.useState(t.content ?? "");
+	const [x, j] = r.useState(!1);
+	const u = r.useRef(null);
+	r.useEffect(() => {
+		if (i && u.current) {
+			const h = u.current;
+			c.length === 0 && (h.style.height = "auto"),
+				(h.style.height = "auto"),
+				(h.style.height = `${h.scrollHeight}px`),
+				h.focus();
+		}
+	}, [i, c]);
+	const p = async () => {
+		j(!0);
+		try {
+			await n(c), o(!1);
+		} finally {
+			j(!1);
+		}
+	};
+	const C = () => {
+		m(t.content ?? ""), o(!1);
+	};
+	const v = new Date(t.created_at);
+	const k = v.toLocaleDateString(void 0, {
+		month: "short",
+		day: "numeric",
+		year: v.getFullYear() !== new Date().getFullYear() ? "numeric" : void 0,
+	});
+	return e.jsx("div", {
+		className:
+			"group border border-border rounded-lg p-3 hover:bg-muted/30 transition-colors",
+		children: i
+			? e.jsxs("div", {
+					className: "space-y-2",
+					children: [
+						e.jsx("textarea", {
+							ref: u,
+							value: c,
+							onChange: (h) => m(h.target.value),
+							className:
+								"w-full min-h-[60px] p-2 text-sm bg-background border border-border rounded resize-none focus:outline-none focus:ring-1 focus:ring-primary overflow-hidden",
+						}),
+						e.jsxs("div", {
+							className: "flex justify-end gap-1",
+							children: [
+								e.jsxs(f, {
+									type: "button",
+									variant: "ghost",
+									size: "sm",
+									onClick: C,
+									disabled: x,
+									className: "h-7 px-2 text-xs",
+									children: [e.jsx(J, { className: "w-3 h-3 mr-1" }), "Cancel"],
+								}),
+								e.jsxs(f, {
+									type: "button",
+									variant: "default",
+									size: "sm",
+									onClick: p,
+									disabled: x,
+									className: "h-7 px-2 text-xs",
+									children: [
+										x
+											? e.jsx(b, { className: "w-3 h-3 mr-1 animate-spin" })
+											: e.jsx(P, { className: "w-3 h-3 mr-1" }),
+										"Save",
+									],
+								}),
+							],
+						}),
+					],
+				})
+			: e.jsxs(e.Fragment, {
+					children: [
+						e.jsx("p", {
+							className: "text-sm whitespace-pre-wrap break-words",
+							children: t.content,
+						}),
+						e.jsxs("div", {
+							className: "mt-2 flex items-center justify-between",
+							children: [
+								e.jsxs("div", {
+									className:
+										"flex items-center gap-2 text-xs text-muted-foreground flex-wrap",
+									children: [
+										e.jsxs("span", {
+											className: "flex items-center gap-1",
+											children: [e.jsx(ne, { className: "w-3 h-3" }), k],
+										}),
+										t.category &&
+											t.category !== "general" &&
+											e.jsx(U, {
+												variant: "secondary",
+												className: "text-[10px] px-1.5 py-0",
+												children: t.category,
+											}),
+										t.importance > 5 &&
+											e.jsxs(U, {
+												variant: "outline",
+												className: "text-[10px] px-1.5 py-0",
+												children: ["importance: ", t.importance],
+											}),
+										t.tags &&
+											t.tags.length > 0 &&
+											e.jsxs("span", {
+												className: "flex items-center gap-1",
+												children: [
+													e.jsx(ie, { className: "w-3 h-3" }),
+													t.tags.slice(0, 2).join(", "),
+													t.tags.length > 2 && `+${t.tags.length - 2}`,
+												],
+											}),
+									],
+								}),
+								e.jsxs("div", {
+									className:
+										"flex items-center gap-0.5 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity",
+									children: [
+										e.jsx(f, {
+											type: "button",
+											variant: "ghost",
+											size: "sm",
+											onClick: () => o(!0),
+											className: "h-6 w-6 p-0",
+											title: "Edit",
+											children: e.jsx(ee, { className: "w-3 h-3" }),
+										}),
+										e.jsx(f, {
+											type: "button",
+											variant: "ghost",
+											size: "sm",
+											onClick: s,
+											disabled: l,
+											className:
+												"h-6 w-6 p-0 text-destructive hover:text-destructive",
+											title: "Delete",
+											children: l
+												? e.jsx(b, { className: "w-3 h-3 animate-spin" })
+												: e.jsx(te, { className: "w-3 h-3" }),
+										}),
+									],
+								}),
+							],
+						}),
+					],
+				}),
+	});
+}
+function xe({ className: t, workspacePath: s, storeName: n }) {
+	const [l, i] = r.useState([]);
+	const [o, c] = r.useState(0);
+	const [m, x] = r.useState(!0);
+	const [j, u] = r.useState("");
+	const [p, C] = r.useState("");
+	const [v, k] = r.useState(!1);
+	const [h, z] = r.useState(!1);
+	const [E, M] = r.useState(!1);
+	const [N, T] = r.useState("");
+	const [D, A] = r.useState(!1);
+	const [H, $] = r.useState(null);
+	const F = r.useRef(null);
+	const g = r.useCallback(async () => {
+		if (s) {
+			x(!0), u(""), z(!1);
+			try {
+				const a = await ce(s, 0, 50, n);
+				i(a.memories), c(a.total);
+			} catch (a) {
+				u(a instanceof Error ? a.message : "Failed to load memories");
+			} finally {
+				x(!1);
+			}
+		}
+	}, [s, n]);
+	r.useEffect(() => {
+		g();
+	}, [g]),
+		r.useEffect(() => {
+			E && F.current && F.current.focus();
+		}, [E]);
+	const R = r.useCallback(async () => {
+		if (s) {
+			if (!p.trim()) {
+				g();
+				return;
+			}
+			k(!0), u(""), z(!0);
+			try {
+				const a = await le(s, p, 50, n);
+				i(a), c(a.length);
+			} catch (a) {
+				u(a instanceof Error ? a.message : "Search failed");
+			} finally {
+				k(!1);
+			}
+		}
+	}, [s, p, g, n]);
+	const q = r.useCallback(() => {
+		C(""), g();
+	}, [g]);
+	const Q = r.useCallback(async () => {
+		if (!(!s || !N.trim())) {
+			A(!0), u("");
+			try {
+				const a = await oe(s, N, void 0, void 0, void 0, n);
+				i((d) => [w(a), ...d]), c((d) => d + 1), T(""), M(!1);
+			} catch (a) {
+				u(a instanceof Error ? a.message : "Failed to add memory");
+			} finally {
+				A(!1);
+			}
+		}
+	}, [s, N, n]);
+	const Y = r.useCallback(
+		async (a) => {
+			if (s) {
+				$(a);
+				try {
+					await de(s, a, n),
+						i((d) => d.filter((y) => y.id !== a)),
+						c((d) => d - 1);
+				} catch (d) {
+					u(d instanceof Error ? d.message : "Failed to delete memory");
+				} finally {
+					$(null);
+				}
+			}
+		},
+		[s, n],
+	);
+	const G = r.useCallback(
+		async (a, d) => {
+			if (s)
+				try {
+					const y = await me(s, a, d, void 0, void 0, void 0, n);
+					i((K) => K.map((L) => (L.id === a ? y : L)));
+				} catch (y) {
+					throw (
+						(u(y instanceof Error ? y.message : "Failed to update memory"), y)
+					);
+				}
+		},
+		[s, n],
+	);
+	return s
+		? m
+			? e.jsx("div", {
+					className: _(
+						"h-full bg-muted/30 rounded flex items-center justify-center",
+						t,
+					),
+					children: e.jsxs("div", {
+						className: "text-center text-muted-foreground",
+						children: [
+							e.jsx(b, { className: "w-8 h-8 mx-auto mb-2 animate-spin" }),
+							e.jsx("p", {
+								className: "text-sm",
+								children: "Loading memories...",
+							}),
+						],
+					}),
+				})
+			: e.jsxs("div", {
+					className: _("h-full flex flex-col overflow-hidden", t),
+					children: [
+						e.jsxs("div", {
+							className: "flex-shrink-0 p-2 border-b border-border space-y-2",
+							children: [
+								e.jsxs("div", {
+									className: "flex items-center gap-2",
+									children: [
+										e.jsxs("div", {
+											className: "relative flex-1",
+											children: [
+												e.jsx(O, {
+													className:
+														"absolute left-2 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground",
+												}),
+												e.jsx(V, {
+													value: p,
+													onChange: (a) => C(a.target.value),
+													onKeyDown: (a) => a.key === "Enter" && R(),
+													placeholder: "Search memories...",
+													className: "pl-8 h-8 text-sm",
+												}),
+											],
+										}),
+										h
+											? e.jsx(f, {
+													type: "button",
+													variant: "outline",
+													size: "sm",
+													onClick: q,
+													className: "h-8",
+													title: "Clear search",
+													children: e.jsx(J, { className: "w-4 h-4" }),
+												})
+											: e.jsx(f, {
+													type: "button",
+													variant: "outline",
+													size: "sm",
+													onClick: g,
+													disabled: m,
+													className: "h-8",
+													title: "Refresh",
+													children: e.jsx(X, {
+														className: _("w-4 h-4", m && "animate-spin"),
+													}),
+												}),
+										e.jsx(f, {
+											type: "button",
+											variant: "outline",
+											size: "sm",
+											onClick: R,
+											disabled: v || !p.trim(),
+											className: "h-8",
+											children: v
+												? e.jsx(b, { className: "w-4 h-4 animate-spin" })
+												: e.jsx(O, { className: "w-4 h-4" }),
+										}),
+										e.jsx(f, {
+											type: "button",
+											variant: "default",
+											size: "sm",
+											onClick: () => M(!E),
+											className: "h-8",
+											children: e.jsx(W, { className: "w-4 h-4" }),
+										}),
+									],
+								}),
+								E &&
+									e.jsxs("div", {
+										className: "space-y-2 p-2 bg-muted/30 rounded-lg",
+										children: [
+											e.jsx("textarea", {
+												ref: F,
+												value: N,
+												onChange: (a) => T(a.target.value),
+												placeholder: "Enter a new memory...",
+												className:
+													"w-full min-h-[60px] p-2 text-sm bg-background border border-border rounded resize-none focus:outline-none focus:ring-1 focus:ring-primary",
+											}),
+											e.jsxs("div", {
+												className: "flex justify-end gap-1",
+												children: [
+													e.jsx(f, {
+														type: "button",
+														variant: "ghost",
+														size: "sm",
+														onClick: () => {
+															M(!1), T("");
+														},
+														className: "h-7 px-2 text-xs",
+														children: "Cancel",
+													}),
+													e.jsxs(f, {
+														type: "button",
+														variant: "default",
+														size: "sm",
+														onClick: Q,
+														disabled: D || !N.trim(),
+														className: "h-7 px-2 text-xs",
+														children: [
+															D
+																? e.jsx(b, {
+																		className: "w-3 h-3 mr-1 animate-spin",
+																	})
+																: e.jsx(Z, { className: "w-3 h-3 mr-1" }),
+															"Add Memory",
+														],
+													}),
+												],
+											}),
+										],
+									}),
+								!m &&
+									e.jsx("div", {
+										className: "text-xs text-muted-foreground",
+										children: h
+											? e.jsxs("span", {
+													children: [
+														"Found ",
+														l.length,
+														" result",
+														l.length !== 1 ? "s" : "",
+														" ",
+														'for "',
+														p,
+														'"',
+													],
+												})
+											: e.jsxs("span", {
+													children: [o, " memor", o !== 1 ? "ies" : "y"],
+												}),
+									}),
+							],
+						}),
+						j &&
+							e.jsx("div", {
+								className:
+									"flex-shrink-0 px-3 py-2 bg-destructive/10 text-destructive text-xs",
+								children: j,
+							}),
+						e.jsx("div", {
+							className: "flex-1 overflow-auto p-2 space-y-2",
+							children:
+								l.length === 0
+									? e.jsx("div", {
+											className: "h-full flex items-center justify-center",
+											children: e.jsxs("div", {
+												className: "text-center text-muted-foreground",
+												children: [
+													e.jsx(I, {
+														className: "w-12 h-12 mx-auto mb-2 opacity-50",
+													}),
+													h
+														? e.jsxs(e.Fragment, {
+																children: [
+																	e.jsx("p", {
+																		className: "text-sm",
+																		children: "No memories found",
+																	}),
+																	e.jsx("p", {
+																		className: "text-xs mt-1",
+																		children: "Try a different search query",
+																	}),
+																],
+															})
+														: e.jsxs(e.Fragment, {
+																children: [
+																	e.jsx("p", {
+																		className: "text-sm",
+																		children: "No memories yet",
+																	}),
+																	e.jsx("p", {
+																		className: "text-xs mt-1",
+																		children: "Add your first memory above",
+																	}),
+																],
+															}),
+												],
+											}),
+										})
+									: l.map((a) =>
+											e.jsx(
+												ue,
+												{
+													memory: a,
+													onDelete: () => Y(a.id),
+													onEdit: (d) => G(a.id, d),
+													isDeleting: H === a.id,
+												},
+												a.id,
+											),
+										),
+						}),
+					],
+				})
+		: e.jsx("div", {
+				className: _(
+					"h-full bg-muted/30 rounded flex items-center justify-center",
+					t,
+				),
+				children: e.jsxs("div", {
+					className: "text-center text-muted-foreground",
+					children: [
+						e.jsx(I, { className: "w-12 h-12 mx-auto mb-2 opacity-50" }),
+						e.jsx("p", {
+							className: "text-sm",
+							children: "Select a chat to view memories",
+						}),
+					],
+				}),
+			});
+}
+export { xe as MemoriesView };

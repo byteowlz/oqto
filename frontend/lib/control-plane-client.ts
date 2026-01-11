@@ -1,5 +1,5 @@
-import { toAbsoluteWsUrl } from "@/lib/url";
 import { isTauri } from "@/lib/tauri-fetch-polyfill";
+import { toAbsoluteWsUrl } from "@/lib/url";
 
 // ============================================================================
 // Token Storage (for Tauri/mobile where cookies don't work)
@@ -22,7 +22,8 @@ export function setAuthToken(token: string | null): void {
 	} else {
 		localStorage.removeItem(AUTH_TOKEN_KEY);
 		// Clear the cookie
-		document.cookie = "auth_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+		document.cookie =
+			"auth_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
 	}
 }
 
@@ -1526,6 +1527,16 @@ export async function getMainChatPiCommands(): Promise<PiPromptCommandInfo[]> {
 /** Start new Pi session (clear history) */
 export async function newMainChatPiSession(): Promise<PiState> {
 	const res = await authFetch(controlPlaneApiUrl("/api/main/pi/new"), {
+		method: "POST",
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+	return res.json();
+}
+
+/** Reset Pi session - restarts the process to reload PERSONALITY.md and USER.md */
+export async function resetMainChatPiSession(): Promise<PiState> {
+	const res = await authFetch(controlPlaneApiUrl("/api/main/pi/reset"), {
 		method: "POST",
 		credentials: "include",
 	});

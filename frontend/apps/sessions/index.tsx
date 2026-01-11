@@ -9,7 +9,6 @@ import { MainChatPiView, MainChatSettingsView } from "@/components/main-chat";
 import { Badge } from "@/components/ui/badge";
 import { BrailleSpinner } from "@/components/ui/braille-spinner";
 import { Button } from "@/components/ui/button";
-import { ContextWindowGauge } from "@/components/ui/context-window-gauge";
 import {
 	ContextMenu,
 	ContextMenuContent,
@@ -17,6 +16,7 @@ import {
 	ContextMenuSeparator,
 	ContextMenuTrigger,
 } from "@/components/ui/context-menu";
+import { ContextWindowGauge } from "@/components/ui/context-window-gauge";
 import {
 	type FileAttachment,
 	FileAttachmentChip,
@@ -41,6 +41,10 @@ import {
 } from "@/components/ui/select";
 import { SlashCommandPopup } from "@/components/ui/slash-command-popup";
 import { ToolCallCard } from "@/components/ui/tool-call-card";
+import {
+	UserQuestionBanner,
+	UserQuestionDialog,
+} from "@/components/ui/user-question-dialog";
 import {
 	VoiceInputOverlay,
 	VoiceMenuButton,
@@ -75,6 +79,7 @@ import {
 	registerMainChatSession,
 } from "@/lib/control-plane-client";
 import { getFileTypeInfo } from "@/lib/file-types";
+import { type ModelOption, filterModelOptions } from "@/lib/model-filter";
 import {
 	type OpenCodeAssistantMessage,
 	type OpenCodeMessageWithParts,
@@ -82,6 +87,8 @@ import {
 	type OpenCodePartInput,
 	type Permission,
 	type PermissionResponse,
+	type QuestionAnswer,
+	type QuestionRequest,
 	abortSession,
 	createSession,
 	fetchAgents,
@@ -91,6 +98,8 @@ import {
 	fetchSessions,
 	forkSession,
 	invalidateMessageCache,
+	rejectQuestion,
+	replyToQuestion,
 	respondToPermission,
 	runShellCommandAsync,
 	sendCommandAsync,
@@ -98,7 +107,6 @@ import {
 	sendPartsAsync,
 } from "@/lib/opencode-client";
 import { formatSessionDate, generateReadableId } from "@/lib/session-utils";
-import { type ModelOption, filterModelOptions } from "@/lib/model-filter";
 import {
 	type SlashCommand,
 	builtInCommands,
@@ -114,6 +122,7 @@ import {
 	Check,
 	CheckSquare,
 	ChevronDown,
+	ChevronUp,
 	CircleDot,
 	Clock,
 	Copy,
@@ -127,6 +136,8 @@ import {
 	MessageSquare,
 	Mic,
 	PaintBucket,
+	PanelLeftClose,
+	PanelRightClose,
 	Paperclip,
 	RefreshCw,
 	Send,
@@ -174,11 +185,7 @@ const AgentSettingsView = lazy(() =>
 		default: mod.AgentSettingsView,
 	})),
 );
-const TrxView = lazy(() =>
-	import("@/apps/sessions/TrxView").then((mod) => ({
-		default: mod.TrxView,
-	})),
-);
+import { TrxView } from "@/apps/sessions/TrxView";
 const CanvasView = lazy(() =>
 	import("@/apps/sessions/CanvasView").then((mod) => ({
 		default: mod.CanvasView,
@@ -316,6 +323,44 @@ function TabButton({
 			{!hideLabel && (
 				<span className="hidden sm:inline ml-1 text-xs">{label}</span>
 			)}
+			{badge !== undefined && badge > 0 && (
+				<span className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-pink-500 text-white text-[9px] rounded-full flex items-center justify-center">
+					{badge}
+				</span>
+			)}
+		</button>
+	);
+}
+
+// Collapsed sidebar tab button - vertical stacked icon
+function CollapsedTabButton({
+	activeView,
+	onSelect,
+	view,
+	icon: Icon,
+	label,
+	badge,
+}: {
+	activeView: ActiveView;
+	onSelect: (view: ActiveView) => void;
+	view: ActiveView;
+	icon: React.ComponentType<{ className?: string }>;
+	label: string;
+	badge?: number;
+}) {
+	return (
+		<button
+			type="button"
+			onClick={() => onSelect(view)}
+			className={cn(
+				"w-8 h-8 flex items-center justify-center relative transition-colors rounded",
+				activeView === view
+					? "bg-primary/15 text-foreground border border-primary"
+					: "text-muted-foreground border border-transparent hover:border-border hover:bg-muted/50",
+			)}
+			title={label}
+		>
+			<Icon className="w-4 h-4" />
 			{badge !== undefined && badge > 0 && (
 				<span className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-pink-500 text-white text-[9px] rounded-full flex items-center justify-center">
 					{badge}
@@ -671,6 +716,7 @@ export function SessionsApp() {
 	const [isLoading, setIsLoading] = useState(true);
 	const [showTimeoutError, setShowTimeoutError] = useState(false);
 	const [activeView, setActiveView] = useState<ActiveView>("chat");
+	const [rightSidebarCollapsed, setRightSidebarCollapsed] = useState(false);
 	const [status, setStatus] = useState<string>("");
 	const [showScrollToBottom, setShowScrollToBottom] = useState(false);
 	const [previewFilePath, setPreviewFilePath] = useState<string | null>(null);
@@ -735,14 +781,24 @@ export function SessionsApp() {
 		null,
 	);
 
-	// Clear permission state when session changes
-	// Note: Permissions are received via SSE events (permission.updated), not fetched via REST
+	// Question state (for user question/multiple choice selection)
+	const [pendingQuestions, setPendingQuestions] = useState<QuestionRequest[]>(
+		[],
+	);
+	const [activeQuestion, setActiveQuestion] = useState<QuestionRequest | null>(
+		null,
+	);
+
+	// Clear permission and question state when session changes
+	// Note: Permissions/Questions are received via SSE events, not fetched via REST
 	const prevSessionRef = useRef(selectedChatSessionId);
 	useEffect(() => {
 		if (prevSessionRef.current !== selectedChatSessionId) {
 			prevSessionRef.current = selectedChatSessionId;
 			setPendingPermissions([]);
 			setActivePermission(null);
+			setPendingQuestions([]);
+			setActiveQuestion(null);
 		}
 	});
 
@@ -1185,6 +1241,56 @@ export function SessionsApp() {
 			setActivePermission(pendingPermissions[0]);
 		}
 	}, [pendingPermissions]);
+
+	// Question response handler
+	const handleQuestionReply = useCallback(
+		async (requestId: string, answers: QuestionAnswer[]) => {
+			if (!effectiveOpencodeBaseUrl) {
+				throw new Error("No opencode connection");
+			}
+			await replyToQuestion(
+				effectiveOpencodeBaseUrl,
+				requestId,
+				answers,
+				opencodeRequestOptions,
+			);
+			// Remove from pending list
+			setPendingQuestions((prev) => prev.filter((q) => q.id !== requestId));
+		},
+		[effectiveOpencodeBaseUrl, opencodeRequestOptions],
+	);
+
+	// Question reject handler
+	const handleQuestionReject = useCallback(
+		async (requestId: string) => {
+			if (!effectiveOpencodeBaseUrl) {
+				throw new Error("No opencode connection");
+			}
+			await rejectQuestion(
+				effectiveOpencodeBaseUrl,
+				requestId,
+				opencodeRequestOptions,
+			);
+			// Remove from pending list
+			setPendingQuestions((prev) => prev.filter((q) => q.id !== requestId));
+		},
+		[effectiveOpencodeBaseUrl, opencodeRequestOptions],
+	);
+
+	// Show next question when current one is dismissed
+	const handleQuestionDismiss = useCallback(() => {
+		setActiveQuestion((current) => {
+			const next = pendingQuestions.find((q) => q.id !== current?.id);
+			return next || null;
+		});
+	}, [pendingQuestions]);
+
+	// Open question dialog when clicking the banner
+	const handleQuestionBannerClick = useCallback(() => {
+		if (pendingQuestions.length > 0) {
+			setActiveQuestion(pendingQuestions[0]);
+		}
+	}, [pendingQuestions]);
 
 	const copy = useMemo(
 		() => ({
@@ -1845,6 +1951,35 @@ export function SessionsApp() {
 				);
 				setActivePermission((current) =>
 					current?.id === permissionID ? null : current,
+				);
+			}
+
+			// Handle question events (user question / multiple choice)
+			if (eventType === "question.asked") {
+				const props = event.properties as QuestionRequest | undefined;
+				if (!props?.id || !props?.questions) return;
+				console.log("[Question] Received question request:", props);
+				setPendingQuestions((prev) => {
+					// Avoid duplicates
+					if (prev.some((q) => q.id === props.id)) return prev;
+					return [...prev, props];
+				});
+				// Auto-show the first question dialog if none is active
+				setActiveQuestion((current) => current || props);
+			} else if (
+				eventType === "question.replied" ||
+				eventType === "question.rejected"
+			) {
+				const props = event.properties as Record<string, unknown> | undefined;
+				const requestID =
+					(typeof props?.requestID === "string" && props.requestID) ||
+					(typeof props?.id === "string" && props.id) ||
+					"";
+				if (!requestID) return;
+				console.log("[Question] Question resolved:", requestID);
+				setPendingQuestions((prev) => prev.filter((q) => q.id !== requestID));
+				setActiveQuestion((current) =>
+					current?.id === requestID ? null : current,
 				);
 			}
 
@@ -2888,6 +3023,12 @@ export function SessionsApp() {
 				onClick={handlePermissionBannerClick}
 			/>
 
+			{/* User question banner */}
+			<UserQuestionBanner
+				count={pendingQuestions.length}
+				onClick={handleQuestionBannerClick}
+			/>
+
 			{/* Working indicator with stop button */}
 			{chatState === "sending" && (
 				<div className="flex items-center gap-1.5 px-2 py-0.5 bg-primary/10 text-xs text-primary">
@@ -3500,9 +3641,19 @@ export function SessionsApp() {
 					</div>
 					{/* Mobile context window gauge - full width bar directly below tabs */}
 					<ContextWindowGauge
-						inputTokens={mainChatActive ? mainChatTokenUsage.inputTokens : tokenUsage.inputTokens}
-						outputTokens={mainChatActive ? mainChatTokenUsage.outputTokens : tokenUsage.outputTokens}
-						maxTokens={mainChatActive ? mainChatTokenUsage.maxTokens : contextLimit}
+						inputTokens={
+							mainChatActive
+								? mainChatTokenUsage.inputTokens
+								: tokenUsage.inputTokens
+						}
+						outputTokens={
+							mainChatActive
+								? mainChatTokenUsage.outputTokens
+								: tokenUsage.outputTokens
+						}
+						maxTokens={
+							mainChatActive ? mainChatTokenUsage.maxTokens : contextLimit
+						}
 						locale={locale}
 						compact
 					/>
@@ -3544,12 +3695,44 @@ export function SessionsApp() {
 					{activeView === "tasks" && (
 						<div className="flex flex-col h-full overflow-hidden">
 							<TodoListView todos={latestTodos} emptyMessage={t.noTasks} />
-							<Suspense fallback={viewLoadingFallback}>
-								<TrxView
-									workspacePath={resumeWorkspacePath}
-									className="flex-1 min-h-0 border-t border-border"
-								/>
-							</Suspense>
+
+							<TrxView
+								key={resumeWorkspacePath ?? "no-workspace"}
+								workspacePath={resumeWorkspacePath}
+								className="flex-1 min-h-0 border-t border-border"
+								onStartIssue={(issueId, title) => {
+									setMessageInput(`Working on #${issueId}: ${title}\n\n`);
+									// On mobile, switch to chat view
+									if (window.innerWidth < 768) {
+										setActiveView("chat");
+									}
+								}}
+								onStartIssueNewSession={async (issueId, title) => {
+									if (!resumeWorkspacePath) return;
+									try {
+										const url =
+											await ensureOpencodeRunning(resumeWorkspacePath);
+										if (!url) return;
+										const newSession = await createSession(
+											url,
+											`#${issueId}: ${title}`,
+											undefined,
+											{ directory: resumeWorkspacePath },
+										);
+										await refreshOpencodeSessions();
+										await refreshChatHistory();
+										if (newSession.id) {
+											setSelectedChatSessionId(newSession.id);
+											setMessageInput(`Working on #${issueId}: ${title}\n\n`);
+											if (window.innerWidth < 768) {
+												setActiveView("chat");
+											}
+										}
+									} catch (err) {
+										console.error("Failed to start issue in new session:", err);
+									}
+								}}
+							/>
 						</div>
 					)}
 					{features.mmry_enabled && activeView === "memories" && (
@@ -3597,7 +3780,22 @@ export function SessionsApp() {
 			{/* Desktop layout: side by side */}
 			<div className="hidden lg:flex flex-1 min-h-0 gap-4 items-start">
 				{/* Chat panel */}
-				<div className="flex-[3] min-w-0 bg-card border border-border p-4 xl:p-6 flex flex-col min-h-0 h-full">
+				<div className="flex-[3] min-w-0 bg-card border border-border p-4 xl:p-6 flex flex-col min-h-0 h-full relative">
+					{/* Sidebar collapse toggle button */}
+					<button
+						type="button"
+						onClick={() => setRightSidebarCollapsed((prev) => !prev)}
+						className="absolute top-2 right-2 p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted/50 rounded transition-colors z-10"
+						title={
+							rightSidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"
+						}
+					>
+						{rightSidebarCollapsed ? (
+							<PanelLeftClose className="w-4 h-4" />
+						) : (
+							<PanelRightClose className="w-4 h-4" />
+						)}
+					</button>
 					{!mainChatActive && SessionHeader}
 					{mainChatActive ? (
 						<MainChatPiView
@@ -3613,154 +3811,332 @@ export function SessionsApp() {
 					)}
 				</div>
 
-				{/* Sidebar panel */}
-				<div className="flex-[2] min-w-[320px] max-w-[420px] bg-card border border-border flex flex-col min-h-0 h-full">
-					<div className="flex gap-1 p-2 border-b border-border">
-						<TabButton
-							activeView={activeView}
-							onSelect={setActiveView}
-							view="tasks"
-							icon={ListTodo}
-							label={t.tasks}
-							badge={incompleteTasks}
-							hideLabel
-						/>
-						<TabButton
-							activeView={activeView}
-							onSelect={setActiveView}
-							view="files"
-							icon={FileText}
-							label={t.files}
-							hideLabel
-						/>
-						<TabButton
-							activeView={activeView}
-							onSelect={setActiveView}
-							view="preview"
-							icon={Eye}
-							label={t.preview}
-							hideLabel
-						/>
-						<TabButton
-							activeView={activeView}
-							onSelect={setActiveView}
-							view="canvas"
-							icon={PaintBucket}
-							label="Canvas"
-							hideLabel
-						/>
-						{features.mmry_enabled && (
-							<TabButton
+				{/* Sidebar panel - collapsible */}
+				<div
+					className={cn(
+						"bg-card border border-border flex flex-col min-h-0 h-full transition-all duration-200",
+						rightSidebarCollapsed
+							? "w-12 items-center"
+							: "flex-[2] min-w-[320px] max-w-[420px]",
+					)}
+				>
+					{rightSidebarCollapsed ? (
+						/* Collapsed sidebar - vertical icon strip */
+						<div className="flex flex-col gap-1 p-2 h-full overflow-y-auto">
+							<CollapsedTabButton
 								activeView={activeView}
-								onSelect={setActiveView}
-								view="memories"
-								icon={Brain}
-								label={t.memories}
-								hideLabel
+								onSelect={(view) => {
+									setActiveView(view);
+									setRightSidebarCollapsed(false);
+								}}
+								view="tasks"
+								icon={ListTodo}
+								label={t.tasks}
+								badge={incompleteTasks}
 							/>
-						)}
-						<TabButton
-							activeView={activeView}
-							onSelect={setActiveView}
-							view="terminal"
-							icon={Terminal}
-							label={t.terminal}
-							hideLabel
-						/>
-						{voiceMode.isActive && features.voice && (
-							<TabButton
+							<CollapsedTabButton
 								activeView={activeView}
-								onSelect={setActiveView}
-								view="voice"
-								icon={Mic}
-								label="Voice"
-								hideLabel
+								onSelect={(view) => {
+									setActiveView(view);
+									setRightSidebarCollapsed(false);
+								}}
+								view="files"
+								icon={FileText}
+								label={t.files}
 							/>
-						)}
-						<TabButton
-							activeView={activeView}
-							onSelect={setActiveView}
-							view="settings"
-							icon={Settings}
-							label={locale === "de" ? "Einstellungen" : "Settings"}
-							hideLabel
-						/>
-					</div>
-					<div className="flex-1 min-h-0 overflow-hidden">
-						{activeView === "files" && (
-							<FileTreeView
-								onPreviewFile={handlePreviewFile}
-								onOpenInCanvas={handleOpenInCanvas}
-								workspacePath={resumeWorkspacePath}
-								state={fileTreeState}
-								onStateChange={handleFileTreeStateChange}
+							<CollapsedTabButton
+								activeView={activeView}
+								onSelect={(view) => {
+									setActiveView(view);
+									setRightSidebarCollapsed(false);
+								}}
+								view="preview"
+								icon={Eye}
+								label={t.preview}
 							/>
-						)}
-						{activeView === "preview" && (
-							<Suspense fallback={viewLoadingFallback}>
-								<PreviewView
-									filePath={previewFilePath}
-									workspacePath={resumeWorkspacePath}
+							<CollapsedTabButton
+								activeView={activeView}
+								onSelect={(view) => {
+									setActiveView(view);
+									setRightSidebarCollapsed(false);
+								}}
+								view="canvas"
+								icon={PaintBucket}
+								label="Canvas"
+							/>
+							{features.mmry_enabled && (
+								<CollapsedTabButton
+									activeView={activeView}
+									onSelect={(view) => {
+										setActiveView(view);
+										setRightSidebarCollapsed(false);
+									}}
+									view="memories"
+									icon={Brain}
+									label={t.memories}
 								/>
-							</Suspense>
-						)}
-						{activeView === "tasks" && (
-							<div className="flex flex-col h-full overflow-hidden">
-								<TodoListView todos={latestTodos} emptyMessage={t.noTasks} />
-								<Suspense fallback={viewLoadingFallback}>
-									<TrxView
-										workspacePath={resumeWorkspacePath}
-										className="flex-1 min-h-0 border-t border-border"
-									/>
-								</Suspense>
-							</div>
-						)}
-						{activeView === "chat" && (
-							<TodoListView todos={latestTodos} emptyMessage={t.noTasks} />
-						)}
-						{features.mmry_enabled && activeView === "memories" && (
-							<Suspense fallback={viewLoadingFallback}>
-								<MemoriesView
-									workspacePath={resumeWorkspacePath}
-									storeName={mainChatActive ? mainChatAssistantName : null}
+							)}
+							<CollapsedTabButton
+								activeView={activeView}
+								onSelect={(view) => {
+									setActiveView(view);
+									setRightSidebarCollapsed(false);
+								}}
+								view="terminal"
+								icon={Terminal}
+								label={t.terminal}
+							/>
+							{voiceMode.isActive && features.voice && (
+								<CollapsedTabButton
+									activeView={activeView}
+									onSelect={(view) => {
+										setActiveView(view);
+										setRightSidebarCollapsed(false);
+									}}
+									view="voice"
+									icon={Mic}
+									label="Voice"
 								/>
-							</Suspense>
-						)}
-						{activeView === "voice" && voiceMode.isActive && (
-							<VoicePanel {...voicePanelProps} />
-						)}
-						{activeView === "settings" && (
-							<Suspense fallback={viewLoadingFallback}>
-								{mainChatActive ? (
-									<MainChatSettingsView locale={locale} />
-								) : (
-									<AgentSettingsView
-										modelOptions={opencodeModelOptions}
-										selectedModelRef={selectedModelRef}
-										onModelChange={setSelectedModelRef}
-										isModelLoading={isModelLoading}
+							)}
+							<CollapsedTabButton
+								activeView={activeView}
+								onSelect={(view) => {
+									setActiveView(view);
+									setRightSidebarCollapsed(false);
+								}}
+								view="settings"
+								icon={Settings}
+								label={locale === "de" ? "Einstellungen" : "Settings"}
+							/>
+						</div>
+					) : (
+						/* Expanded sidebar */
+						<>
+							<div className="flex gap-1 p-2 border-b border-border">
+								<TabButton
+									activeView={activeView}
+									onSelect={setActiveView}
+									view="tasks"
+									icon={ListTodo}
+									label={t.tasks}
+									badge={incompleteTasks}
+									hideLabel
+								/>
+								<TabButton
+									activeView={activeView}
+									onSelect={setActiveView}
+									view="files"
+									icon={FileText}
+									label={t.files}
+									hideLabel
+								/>
+								<TabButton
+									activeView={activeView}
+									onSelect={setActiveView}
+									view="preview"
+									icon={Eye}
+									label={t.preview}
+									hideLabel
+								/>
+								<TabButton
+									activeView={activeView}
+									onSelect={setActiveView}
+									view="canvas"
+									icon={PaintBucket}
+									label="Canvas"
+									hideLabel
+								/>
+								{features.mmry_enabled && (
+									<TabButton
+										activeView={activeView}
+										onSelect={setActiveView}
+										view="memories"
+										icon={Brain}
+										label={t.memories}
+										hideLabel
 									/>
 								)}
-							</Suspense>
-						)}
-						{activeView === "canvas" && (
-							<Suspense fallback={viewLoadingFallback}>
-								<CanvasView
-									workspacePath={resumeWorkspacePath}
-									initialImagePath={previewFilePath}
-									onSaveAndAddToChat={handleCanvasSaveAndAddToChat}
+								<TabButton
+									activeView={activeView}
+									onSelect={setActiveView}
+									view="terminal"
+									icon={Terminal}
+									label={t.terminal}
+									hideLabel
 								/>
-							</Suspense>
-						)}
-						{/* Terminal only rendered in desktop layout when isMobileLayout is false */}
-						{!isMobileLayout && (
-							<div className={activeView === "terminal" ? "h-full" : "hidden"}>
-								<Suspense fallback={viewLoadingFallback}>
-									<TerminalView workspacePath={resumeWorkspacePath} />
-								</Suspense>
+								{voiceMode.isActive && features.voice && (
+									<TabButton
+										activeView={activeView}
+										onSelect={setActiveView}
+										view="voice"
+										icon={Mic}
+										label="Voice"
+										hideLabel
+									/>
+								)}
+								<TabButton
+									activeView={activeView}
+									onSelect={setActiveView}
+									view="settings"
+									icon={Settings}
+									label={locale === "de" ? "Einstellungen" : "Settings"}
+									hideLabel
+								/>
 							</div>
-						)}
-					</div>
+							<div className="flex-1 min-h-0 overflow-hidden">
+								{activeView === "files" && (
+									<FileTreeView
+										onPreviewFile={handlePreviewFile}
+										onOpenInCanvas={handleOpenInCanvas}
+										workspacePath={resumeWorkspacePath}
+										state={fileTreeState}
+										onStateChange={handleFileTreeStateChange}
+									/>
+								)}
+								{activeView === "preview" && (
+									<Suspense fallback={viewLoadingFallback}>
+										<PreviewView
+											filePath={previewFilePath}
+											workspacePath={resumeWorkspacePath}
+										/>
+									</Suspense>
+								)}
+								{activeView === "tasks" && (
+									<div className="flex flex-col h-full overflow-hidden">
+										<TodoListView
+											todos={latestTodos}
+											emptyMessage={t.noTasks}
+										/>
+
+										<TrxView
+											key={resumeWorkspacePath ?? "no-workspace"}
+											workspacePath={resumeWorkspacePath}
+											className="flex-1 min-h-0 border-t border-border"
+											onStartIssue={(issueId, title) => {
+												setMessageInput(`Working on #${issueId}: ${title}\n\n`);
+												setActiveView("chat");
+											}}
+											onStartIssueNewSession={async (issueId, title) => {
+												if (!resumeWorkspacePath) return;
+												try {
+													const url =
+														await ensureOpencodeRunning(resumeWorkspacePath);
+													if (!url) return;
+													const newSession = await createSession(
+														url,
+														`#${issueId}: ${title}`,
+														undefined,
+														{ directory: resumeWorkspacePath },
+													);
+													await refreshOpencodeSessions();
+													await refreshChatHistory();
+													if (newSession.id) {
+														setSelectedChatSessionId(newSession.id);
+														setMessageInput(
+															`Working on #${issueId}: ${title}\n\n`,
+														);
+														setActiveView("chat");
+													}
+												} catch (err) {
+													console.error(
+														"Failed to start issue in new session:",
+														err,
+													);
+												}
+											}}
+										/>
+									</div>
+								)}
+								{activeView === "chat" && (
+									<div className="flex flex-col h-full overflow-hidden">
+										<TodoListView
+											todos={latestTodos}
+											emptyMessage={t.noTasks}
+										/>
+										<TrxView
+											key={resumeWorkspacePath ?? "no-workspace"}
+											workspacePath={resumeWorkspacePath}
+											className="flex-1 min-h-0 border-t border-border"
+											onStartIssue={(issueId, title) => {
+												setMessageInput(`Working on #${issueId}: ${title}\n\n`);
+											}}
+											onStartIssueNewSession={async (issueId, title) => {
+												if (!resumeWorkspacePath) return;
+												try {
+													const url =
+														await ensureOpencodeRunning(resumeWorkspacePath);
+													if (!url) return;
+													const newSession = await createSession(
+														url,
+														`#${issueId}: ${title}`,
+														undefined,
+														{ directory: resumeWorkspacePath },
+													);
+													await refreshOpencodeSessions();
+													await refreshChatHistory();
+													if (newSession.id) {
+														setSelectedChatSessionId(newSession.id);
+														setMessageInput(
+															`Working on #${issueId}: ${title}\n\n`,
+														);
+													}
+												} catch (err) {
+													console.error(
+														"Failed to start issue in new session:",
+														err,
+													);
+												}
+											}}
+										/>
+									</div>
+								)}
+								{features.mmry_enabled && activeView === "memories" && (
+									<Suspense fallback={viewLoadingFallback}>
+										<MemoriesView
+											workspacePath={resumeWorkspacePath}
+											storeName={mainChatActive ? mainChatAssistantName : null}
+										/>
+									</Suspense>
+								)}
+								{activeView === "voice" && voiceMode.isActive && (
+									<VoicePanel {...voicePanelProps} />
+								)}
+								{activeView === "settings" && (
+									<Suspense fallback={viewLoadingFallback}>
+										{mainChatActive ? (
+											<MainChatSettingsView locale={locale} />
+										) : (
+											<AgentSettingsView
+												modelOptions={opencodeModelOptions}
+												selectedModelRef={selectedModelRef}
+												onModelChange={setSelectedModelRef}
+												isModelLoading={isModelLoading}
+											/>
+										)}
+									</Suspense>
+								)}
+								{activeView === "canvas" && (
+									<Suspense fallback={viewLoadingFallback}>
+										<CanvasView
+											workspacePath={resumeWorkspacePath}
+											initialImagePath={previewFilePath}
+											onSaveAndAddToChat={handleCanvasSaveAndAddToChat}
+										/>
+									</Suspense>
+								)}
+								{/* Terminal only rendered in desktop layout when isMobileLayout is false */}
+								{!isMobileLayout && (
+									<div
+										className={activeView === "terminal" ? "h-full" : "hidden"}
+									>
+										<Suspense fallback={viewLoadingFallback}>
+											<TerminalView workspacePath={resumeWorkspacePath} />
+										</Suspense>
+									</div>
+								)}
+							</div>
+						</>
+					)}
 				</div>
 			</div>
 
@@ -3769,6 +4145,14 @@ export function SessionsApp() {
 				permission={activePermission}
 				onRespond={handlePermissionResponse}
 				onDismiss={handlePermissionDismiss}
+			/>
+
+			{/* User question dialog */}
+			<UserQuestionDialog
+				request={activeQuestion}
+				onReply={handleQuestionReply}
+				onReject={handleQuestionReject}
+				onDismiss={handleQuestionDismiss}
 			/>
 
 			{/* Voice mode overlay - mobile only */}
@@ -3827,7 +4211,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 			segments.push({
 				key,
 				type: "text",
-				content: currentTextBuffer.join("\n"),
+				content: currentTextBuffer.join("\n\n"),
 			});
 			currentTextBuffer = [];
 			currentTextKeys = [];
@@ -4305,6 +4689,8 @@ const TodoListView = memo(function TodoListView({
 	todos,
 	emptyMessage,
 }: { todos: TodoItem[]; emptyMessage: string }) {
+	const [isCollapsed, setIsCollapsed] = useState(false);
+
 	// Group todos by status for summary
 	const summary = useMemo(() => {
 		const pending = todos.filter((t) => t.status === "pending").length;
@@ -4315,18 +4701,42 @@ const TodoListView = memo(function TodoListView({
 	}, [todos]);
 
 	if (todos.length === 0) {
+		// Return null when empty to allow TrxView to take full space
+		return null;
+	}
+
+	// Collapsed view - just a status bar
+	if (isCollapsed) {
 		return (
-			<div className="flex items-center justify-center h-full p-4">
-				<div className="text-center">
-					<ListTodo className="w-12 h-12 text-muted-foreground/30 mx-auto mb-3" />
-					<p className="text-sm text-muted-foreground">{emptyMessage}</p>
+			<button
+				type="button"
+				onClick={() => setIsCollapsed(false)}
+				className="flex-shrink-0 w-full flex items-center justify-between px-3 py-2 border-b border-border bg-muted/30 hover:bg-muted/50 transition-colors"
+			>
+				<div className="flex items-center gap-3 text-[11px] text-muted-foreground">
+					<ListTodo className="w-3.5 h-3.5" />
+					<span className="font-medium">Tasks</span>
+					<span>{summary.total} total</span>
+					{summary.inProgress > 0 && (
+						<span className="flex items-center gap-1 text-primary">
+							<CircleDot className="w-3 h-3" />
+							{summary.inProgress}
+						</span>
+					)}
+					{summary.pending > 0 && (
+						<span className="flex items-center gap-1 text-muted-foreground">
+							<Square className="w-3 h-3" />
+							{summary.pending}
+						</span>
+					)}
 				</div>
-			</div>
+				<ChevronUp className="w-3.5 h-3.5 text-muted-foreground" />
+			</button>
 		);
 	}
 
 	return (
-		<div className="flex flex-col h-full">
+		<div className="flex flex-col flex-shrink-0 max-h-[40%] overflow-hidden">
 			{/* Summary header */}
 			<div className="p-3 border-b border-border bg-muted/30">
 				<div className="flex items-center justify-between text-xs">
@@ -4350,6 +4760,14 @@ const TodoListView = memo(function TodoListView({
 								{summary.completed}
 							</span>
 						)}
+						<button
+							type="button"
+							onClick={() => setIsCollapsed(true)}
+							className="p-1 hover:bg-muted rounded transition-colors"
+							title="Collapse"
+						>
+							<ChevronDown className="w-3 h-3 text-muted-foreground" />
+						</button>
 					</div>
 				</div>
 			</div>

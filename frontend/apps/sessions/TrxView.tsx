@@ -2,22 +2,53 @@
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+	ContextMenu,
+	ContextMenuContent,
+	ContextMenuItem,
+	ContextMenuSeparator,
+	ContextMenuTrigger,
+} from "@/components/ui/context-menu";
+import {
+	DropdownMenu,
+	DropdownMenuCheckboxItem,
+	DropdownMenuContent,
+	DropdownMenuItem,
+	DropdownMenuLabel,
+	DropdownMenuSeparator,
+	DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
-import { controlPlaneApiUrl } from "@/lib/control-plane-client";
+import {
+	Tooltip,
+	TooltipContent,
+	TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { controlPlaneApiUrl, getAuthHeaders } from "@/lib/control-plane-client";
 import { cn } from "@/lib/utils";
 import {
 	AlertCircle,
+	ArrowDownAZ,
+	ArrowUpDown,
 	Bug,
+	Check,
+	CheckCircle2,
 	ChevronDown,
 	ChevronRight,
+	ChevronUp,
 	CircleDot,
 	ClipboardList,
+	ExternalLink,
+	Filter,
 	Loader2,
+	Pause,
 	Pencil,
+	Play,
 	Plus,
 	RefreshCw,
 	Sparkles,
 	Target,
+	Trash2,
 	X,
 } from "lucide-react";
 import { memo, useCallback, useEffect, useMemo, useState } from "react";
@@ -41,6 +72,8 @@ interface TrxIssue {
 interface TrxViewProps {
 	workspacePath?: string;
 	className?: string;
+	onStartIssue?: (issueId: string, title: string) => void;
+	onStartIssueNewSession?: (issueId: string, title: string) => void;
 }
 
 // API functions
@@ -53,6 +86,7 @@ async function fetchTrxIssues(workspacePath: string): Promise<TrxIssue[]> {
 
 	const res = await fetch(url.toString(), {
 		credentials: "include",
+		headers: getAuthHeaders(),
 	});
 	if (!res.ok) {
 		if (res.status === 404) {
@@ -83,7 +117,7 @@ async function createTrxIssue(
 	const res = await fetch(url.toString(), {
 		method: "POST",
 		credentials: "include",
-		headers: { "Content-Type": "application/json" },
+		headers: { "Content-Type": "application/json", ...getAuthHeaders() },
 		body: JSON.stringify(data),
 	});
 	if (!res.ok) {
@@ -112,7 +146,7 @@ async function updateTrxIssue(
 	const res = await fetch(url.toString(), {
 		method: "PUT",
 		credentials: "include",
-		headers: { "Content-Type": "application/json" },
+		headers: { "Content-Type": "application/json", ...getAuthHeaders() },
 		body: JSON.stringify(data),
 	});
 	if (!res.ok) {
@@ -135,7 +169,7 @@ async function closeTrxIssue(
 	const res = await fetch(url.toString(), {
 		method: "POST",
 		credentials: "include",
-		headers: { "Content-Type": "application/json" },
+		headers: { "Content-Type": "application/json", ...getAuthHeaders() },
 		body: JSON.stringify({ reason }),
 	});
 	if (!res.ok) {
@@ -180,7 +214,15 @@ const IssueCard = memo(function IssueCard({
 	isExpanded,
 	onToggle,
 	onStatusChange,
+	onStartHere,
+	onStartNewSession,
+	onAddChild,
 	onEdit,
+	isEditing,
+	editTitle,
+	onEditTitleChange,
+	onEditSave,
+	onEditCancel,
 	depth = 0,
 }: {
 	issue: TrxIssue;
@@ -188,7 +230,15 @@ const IssueCard = memo(function IssueCard({
 	isExpanded: boolean;
 	onToggle: () => void;
 	onStatusChange: (status: string) => void;
+	onStartHere?: () => void;
+	onStartNewSession?: () => void;
+	onAddChild: () => void;
 	onEdit: () => void;
+	isEditing?: boolean;
+	editTitle?: string;
+	onEditTitleChange?: (title: string) => void;
+	onEditSave?: () => void;
+	onEditCancel?: () => void;
 	depth?: number;
 }) {
 	const typeConfig = issueTypeConfig[issue.issue_type] || issueTypeConfig.task;
@@ -203,118 +253,246 @@ const IssueCard = memo(function IssueCard({
 				depth > 0 && "ml-4 border-l border-border pl-2",
 			)}
 		>
-			<div
-				className={cn(
-					"group flex items-start gap-2 p-2 rounded transition-colors",
-					isClosed ? "opacity-50" : "hover:bg-muted/50",
-				)}
-			>
-				{/* Expand/collapse button for epics with children */}
-				{hasChildren ? (
-					<button
-						type="button"
-						onClick={onToggle}
-						className="flex-shrink-0 mt-0.5 p-0.5 hover:bg-muted rounded"
-					>
-						{isExpanded ? (
-							<ChevronDown className="w-3 h-3 text-muted-foreground" />
-						) : (
-							<ChevronRight className="w-3 h-3 text-muted-foreground" />
-						)}
-					</button>
-				) : (
-					<div className="w-4" />
-				)}
-
-				{/* Type icon */}
-				<TypeIcon
-					className={cn("w-4 h-4 flex-shrink-0 mt-0.5", typeConfig.color)}
-				/>
-
-				{/* Content */}
-				<div className="flex-1 min-w-0">
-					<div className="flex items-center gap-2">
-						<span
-							className={cn(
-								"text-sm font-medium truncate",
-								isClosed && "line-through text-muted-foreground",
-							)}
-						>
-							{issue.title}
-						</span>
-						<span className="text-[10px] font-mono text-muted-foreground">
-							{issue.id}
-						</span>
-					</div>
-					{issue.description && (
-						<p className="text-xs text-muted-foreground line-clamp-1 mt-0.5">
-							{issue.description}
-						</p>
-					)}
-				</div>
-
-				{/* Status/priority badges */}
-				<div className="flex items-center gap-1 flex-shrink-0">
-					<Badge
-						variant="outline"
+			<ContextMenu>
+				<ContextMenuTrigger asChild>
+					<div
 						className={cn(
-							"text-[9px] px-1 py-0 h-4",
-							statusColors[issue.status] || statusColors.open,
+							"group flex items-center gap-2 p-2 rounded transition-colors cursor-context-menu",
+							isClosed ? "opacity-50" : "hover:bg-muted/50",
+							isEditing && "bg-muted/50 ring-1 ring-primary/50",
 						)}
 					>
-						{issue.status.replace("_", " ")}
-					</Badge>
-					<Badge
-						variant="outline"
-						className={cn(
-							"text-[9px] px-1 py-0 h-4 border",
-							priorityColors[issue.priority] || priorityColors[2],
-						)}
-					>
-						P{issue.priority}
-					</Badge>
-				</div>
-
-				{/* Actions - visible on hover */}
-				<div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-					{!isClosed && (
-						<>
-							<Button
+						{/* Expand/collapse button for epics with children */}
+						{hasChildren ? (
+							<button
 								type="button"
-								variant="ghost"
-								size="sm"
-								onClick={onEdit}
-								className="h-5 w-5 p-0"
-								title="Edit"
+								onClick={onToggle}
+								className="flex-shrink-0 p-0.5 hover:bg-muted rounded"
 							>
-								<Pencil className="w-3 h-3" />
-							</Button>
-							{issue.status !== "in_progress" && (
+								{isExpanded ? (
+									<ChevronDown className="w-3 h-3 text-muted-foreground" />
+								) : (
+									<ChevronRight className="w-3 h-3 text-muted-foreground" />
+								)}
+							</button>
+						) : (
+							<div className="w-4" />
+						)}
+
+						{/* Type icon */}
+						<TypeIcon
+							className={cn("w-4 h-4 flex-shrink-0", typeConfig.color)}
+						/>
+
+						{/* Content */}
+						<div className="flex-1 min-w-0">
+							{isEditing ? (
+								<div className="flex items-center gap-1">
+									<Input
+										value={editTitle}
+										onChange={(e) => onEditTitleChange?.(e.target.value)}
+										onKeyDown={(e) => {
+											if (e.key === "Enter") onEditSave?.();
+											if (e.key === "Escape") onEditCancel?.();
+										}}
+										className="h-6 text-sm py-0"
+										autoFocus
+									/>
+									<Button
+										type="button"
+										variant="ghost"
+										size="sm"
+										onClick={onEditSave}
+										className="h-6 w-6 p-0"
+									>
+										<Check className="w-3 h-3 text-green-500" />
+									</Button>
+									<Button
+										type="button"
+										variant="ghost"
+										size="sm"
+										onClick={onEditCancel}
+										className="h-6 w-6 p-0"
+									>
+										<X className="w-3 h-3" />
+									</Button>
+								</div>
+							) : (
+								<div className="flex items-center gap-2">
+									<Tooltip>
+										<TooltipTrigger asChild>
+											<span
+												className={cn(
+													"text-sm font-medium truncate cursor-default",
+													isClosed && "line-through text-muted-foreground",
+												)}
+											>
+												{issue.title}
+											</span>
+										</TooltipTrigger>
+										<TooltipContent
+											side="top"
+											className="max-w-xs bg-popover text-popover-foreground border border-border shadow-md p-2"
+										>
+											<p className="font-medium text-sm">{issue.title}</p>
+											{issue.description && (
+												<p className="text-xs text-muted-foreground mt-1 line-clamp-3">
+													{issue.description}
+												</p>
+											)}
+										</TooltipContent>
+									</Tooltip>
+									<span className="text-[10px] font-mono text-muted-foreground">
+										{issue.id}
+									</span>
+								</div>
+							)}
+							{!isEditing && issue.description && (
+								<p className="text-xs text-muted-foreground line-clamp-1 mt-0.5">
+									{issue.description}
+								</p>
+							)}
+						</div>
+
+						{/* Status/priority badges */}
+						<div className="flex items-center gap-1 flex-shrink-0">
+							<Badge
+								variant="outline"
+								className={cn(
+									"text-[9px] px-1 py-0 h-4",
+									statusColors[issue.status] || statusColors.open,
+								)}
+							>
+								{issue.status.replace("_", " ")}
+							</Badge>
+							<Badge
+								variant="outline"
+								className={cn(
+									"text-[9px] px-1 py-0 h-4 border",
+									priorityColors[issue.priority] || priorityColors[2],
+								)}
+							>
+								P{issue.priority}
+							</Badge>
+						</div>
+
+						{/* Actions - always visible */}
+						{!isClosed && (
+							<div className="flex items-center gap-0.5">
+								{issue.status !== "in_progress" &&
+									(onStartHere || onStartNewSession) && (
+										<DropdownMenu>
+											<DropdownMenuTrigger asChild>
+												<Button
+													type="button"
+													variant="ghost"
+													size="sm"
+													onClick={(e) => e.stopPropagation()}
+													className="h-5 w-5 p-0"
+													title="Start working"
+												>
+													<Play className="w-3 h-3 text-muted-foreground" />
+												</Button>
+											</DropdownMenuTrigger>
+											<DropdownMenuContent align="end" className="w-40">
+												{onStartHere && (
+													<DropdownMenuItem
+														onClick={onStartHere}
+														className="text-xs"
+													>
+														<Play className="w-3 h-3 mr-2" />
+														Start here
+													</DropdownMenuItem>
+												)}
+												{onStartNewSession && (
+													<DropdownMenuItem
+														onClick={onStartNewSession}
+														className="text-xs"
+													>
+														<ExternalLink className="w-3 h-3 mr-2" />
+														Start in new session
+													</DropdownMenuItem>
+												)}
+											</DropdownMenuContent>
+										</DropdownMenu>
+									)}
+								{issue.status === "in_progress" && (
+									<Button
+										type="button"
+										variant="ghost"
+										size="sm"
+										onClick={(e) => {
+											e.stopPropagation();
+											onStatusChange("open");
+										}}
+										className="h-5 w-5 p-0"
+										title="Pause"
+									>
+										<Pause className="w-3 h-3 text-muted-foreground" />
+									</Button>
+								)}
 								<Button
 									type="button"
 									variant="ghost"
 									size="sm"
-									onClick={() => onStatusChange("in_progress")}
+									onClick={(e) => {
+										e.stopPropagation();
+										onStatusChange("closed");
+									}}
 									className="h-5 w-5 p-0"
-									title="Start"
+									title="Mark as done"
 								>
-									<CircleDot className="w-3 h-3 text-purple-400" />
+									<CheckCircle2 className="w-3 h-3 text-muted-foreground" />
 								</Button>
+							</div>
+						)}
+					</div>
+				</ContextMenuTrigger>
+				<ContextMenuContent>
+					{!isClosed && (
+						<>
+							<ContextMenuItem onClick={onAddChild}>
+								<Plus className="w-4 h-4" />
+								Add child issue
+							</ContextMenuItem>
+							<ContextMenuSeparator />
+							{issue.status !== "in_progress" && onStartHere && (
+								<ContextMenuItem onClick={onStartHere}>
+									<Play className="w-4 h-4" />
+									Start here
+								</ContextMenuItem>
 							)}
-							<Button
-								type="button"
-								variant="ghost"
-								size="sm"
-								onClick={() => onStatusChange("closed")}
-								className="h-5 w-5 p-0"
-								title="Close"
-							>
-								<X className="w-3 h-3 text-green-400" />
-							</Button>
+							{issue.status !== "in_progress" && onStartNewSession && (
+								<ContextMenuItem onClick={onStartNewSession}>
+									<ExternalLink className="w-4 h-4" />
+									Start in new session
+								</ContextMenuItem>
+							)}
+							{issue.status === "in_progress" && (
+								<ContextMenuItem onClick={() => onStatusChange("open")}>
+									<Pause className="w-4 h-4" />
+									Pause
+								</ContextMenuItem>
+							)}
+							<ContextMenuItem onClick={() => onStatusChange("closed")}>
+								<CheckCircle2 className="w-4 h-4" />
+								Mark as done
+							</ContextMenuItem>
+							<ContextMenuSeparator />
+							<ContextMenuItem onClick={onEdit}>
+								<Pencil className="w-4 h-4" />
+								Edit
+							</ContextMenuItem>
 						</>
 					)}
-				</div>
-			</div>
+					{isClosed && (
+						<ContextMenuItem onClick={() => onStatusChange("open")}>
+							<RefreshCw className="w-4 h-4" />
+							Reopen issue
+						</ContextMenuItem>
+					)}
+				</ContextMenuContent>
+			</ContextMenu>
 
 			{/* Children (for epics) */}
 			{hasChildren && isExpanded && (
@@ -326,6 +504,9 @@ const IssueCard = memo(function IssueCard({
 							isExpanded={false}
 							onToggle={() => {}}
 							onStatusChange={(status) => onStatusChange(status)}
+							onStartHere={onStartHere}
+							onStartNewSession={onStartNewSession}
+							onAddChild={onAddChild}
 							onEdit={onEdit}
 							depth={depth + 1}
 						/>
@@ -339,6 +520,8 @@ const IssueCard = memo(function IssueCard({
 export const TrxView = memo(function TrxView({
 	workspacePath,
 	className,
+	onStartIssue,
+	onStartIssueNewSession,
 }: TrxViewProps) {
 	const [issues, setIssues] = useState<TrxIssue[]>([]);
 	const [loading, setLoading] = useState(true);
@@ -347,10 +530,26 @@ export const TrxView = memo(function TrxView({
 	const [showAddForm, setShowAddForm] = useState(false);
 	const [newIssueTitle, setNewIssueTitle] = useState("");
 	const [newIssueType, setNewIssueType] = useState("task");
+	const [newIssueParentId, setNewIssueParentId] = useState<string | null>(null);
 	const [isCreating, setIsCreating] = useState(false);
+	const [isCollapsed, setIsCollapsed] = useState(false);
+
+	// Edit state
+	const [editingIssueId, setEditingIssueId] = useState<string | null>(null);
+	const [editTitle, setEditTitle] = useState("");
+
+	// Sort and filter state
+	type SortOption = "status" | "priority" | "created" | "updated";
+	type FilterStatus = "all" | "open" | "in_progress" | "closed";
+	const [sortBy, setSortBy] = useState<SortOption>("status");
+	const [filterStatus, setFilterStatus] = useState<FilterStatus>("all");
+	const [hideClosed, setHideClosed] = useState(false);
 
 	const loadIssues = useCallback(async () => {
-		if (!workspacePath) return;
+		if (!workspacePath) {
+			setLoading(false);
+			return;
+		}
 
 		setLoading(true);
 		setError("");
@@ -364,9 +563,64 @@ export const TrxView = memo(function TrxView({
 		}
 	}, [workspacePath]);
 
+	// Load issues when workspace path changes
 	useEffect(() => {
-		loadIssues();
-	}, [loadIssues]);
+		// Reset state and load when workspace changes
+		if (workspacePath) {
+			setIssues([]);
+			setError("");
+			loadIssues();
+		}
+	}, [workspacePath, loadIssues]);
+
+	// Sort function
+	const sortIssues = useCallback(
+		(issueList: TrxIssue[]): TrxIssue[] => {
+			return [...issueList].sort((a, b) => {
+				// Status priority: in_progress > open > blocked > closed
+				const statusOrder: Record<string, number> = {
+					in_progress: 0,
+					open: 1,
+					blocked: 2,
+					closed: 3,
+				};
+
+				switch (sortBy) {
+					case "status":
+						return (
+							(statusOrder[a.status] ?? 99) - (statusOrder[b.status] ?? 99)
+						);
+					case "priority":
+						return a.priority - b.priority;
+					case "created":
+						return (
+							new Date(b.created_at).getTime() -
+							new Date(a.created_at).getTime()
+						);
+					case "updated":
+						return (
+							new Date(b.updated_at).getTime() -
+							new Date(a.updated_at).getTime()
+						);
+					default:
+						return 0;
+				}
+			});
+		},
+		[sortBy],
+	);
+
+	// Filter function
+	const filterIssues = useCallback(
+		(issueList: TrxIssue[]): TrxIssue[] => {
+			return issueList.filter((issue) => {
+				if (hideClosed && issue.status === "closed") return false;
+				if (filterStatus === "all") return true;
+				return issue.status === filterStatus;
+			});
+		},
+		[filterStatus, hideClosed],
+	);
 
 	// Organize issues into hierarchy (epics with children)
 	const { epics, standaloneIssues, childrenByParent } = useMemo(() => {
@@ -374,8 +628,11 @@ export const TrxView = memo(function TrxView({
 		const standaloneIssues: TrxIssue[] = [];
 		const epics: TrxIssue[] = [];
 
+		// Apply filtering first
+		const filteredIssues = filterIssues(issues);
+
 		// First pass: identify epics and build parent-child map
-		for (const issue of issues) {
+		for (const issue of filteredIssues) {
 			if (issue.parent_id) {
 				const existing = childrenByParent.get(issue.parent_id) || [];
 				existing.push(issue);
@@ -387,8 +644,17 @@ export const TrxView = memo(function TrxView({
 			}
 		}
 
-		return { epics, standaloneIssues, childrenByParent };
-	}, [issues]);
+		// Sort children within each parent
+		for (const [parentId, children] of childrenByParent) {
+			childrenByParent.set(parentId, sortIssues(children));
+		}
+
+		return {
+			epics: sortIssues(epics),
+			standaloneIssues: sortIssues(standaloneIssues),
+			childrenByParent,
+		};
+	}, [issues, sortIssues, filterIssues]);
 
 	const handleToggleEpic = useCallback((epicId: string) => {
 		setExpandedEpics((prev) => {
@@ -420,6 +686,46 @@ export const TrxView = memo(function TrxView({
 		[workspacePath, loadIssues],
 	);
 
+	const handleStartIssue = useCallback(
+		async (issue: TrxIssue) => {
+			if (!workspacePath) return;
+
+			try {
+				// Set status to in_progress
+				await updateTrxIssue(workspacePath, issue.id, {
+					status: "in_progress",
+				});
+				await loadIssues();
+
+				// Call the callback to prefill input and switch view
+				onStartIssue?.(issue.id, issue.title);
+			} catch (err) {
+				setError(err instanceof Error ? err.message : "Failed to start issue");
+			}
+		},
+		[workspacePath, loadIssues, onStartIssue],
+	);
+
+	const handleStartIssueNewSession = useCallback(
+		async (issue: TrxIssue) => {
+			if (!workspacePath) return;
+
+			try {
+				// Set status to in_progress
+				await updateTrxIssue(workspacePath, issue.id, {
+					status: "in_progress",
+				});
+				await loadIssues();
+
+				// Call the callback to open new session with issue
+				onStartIssueNewSession?.(issue.id, issue.title);
+			} catch (err) {
+				setError(err instanceof Error ? err.message : "Failed to start issue");
+			}
+		},
+		[workspacePath, loadIssues, onStartIssueNewSession],
+	);
+
 	const handleCreate = useCallback(async () => {
 		if (!workspacePath || !newIssueTitle.trim()) return;
 
@@ -429,8 +735,10 @@ export const TrxView = memo(function TrxView({
 			await createTrxIssue(workspacePath, {
 				title: newIssueTitle,
 				issue_type: newIssueType,
+				parent_id: newIssueParentId ?? undefined,
 			});
 			setNewIssueTitle("");
+			setNewIssueParentId(null);
 			setShowAddForm(false);
 			await loadIssues();
 		} catch (err) {
@@ -438,7 +746,43 @@ export const TrxView = memo(function TrxView({
 		} finally {
 			setIsCreating(false);
 		}
-	}, [workspacePath, newIssueTitle, newIssueType, loadIssues]);
+	}, [
+		workspacePath,
+		newIssueTitle,
+		newIssueType,
+		newIssueParentId,
+		loadIssues,
+	]);
+
+	const handleAddChild = useCallback((parentId: string) => {
+		setNewIssueParentId(parentId);
+		setShowAddForm(true);
+	}, []);
+
+	const handleStartEdit = useCallback((issue: TrxIssue) => {
+		setEditingIssueId(issue.id);
+		setEditTitle(issue.title);
+	}, []);
+
+	const handleSaveEdit = useCallback(async () => {
+		if (!workspacePath || !editingIssueId || !editTitle.trim()) return;
+
+		try {
+			await updateTrxIssue(workspacePath, editingIssueId, {
+				title: editTitle.trim(),
+			});
+			setEditingIssueId(null);
+			setEditTitle("");
+			await loadIssues();
+		} catch (err) {
+			setError(err instanceof Error ? err.message : "Failed to update issue");
+		}
+	}, [workspacePath, editingIssueId, editTitle, loadIssues]);
+
+	const handleCancelEdit = useCallback(() => {
+		setEditingIssueId(null);
+		setEditTitle("");
+	}, []);
 
 	// Summary stats
 	const stats = useMemo(() => {
@@ -470,6 +814,38 @@ export const TrxView = memo(function TrxView({
 		);
 	}
 
+	// Collapsed view - just a status bar
+	if (isCollapsed) {
+		return (
+			<div className={cn("flex-shrink-0", className)}>
+				<button
+					type="button"
+					onClick={() => setIsCollapsed(false)}
+					className="w-full flex items-center justify-between px-3 py-2 bg-muted/30 hover:bg-muted/50 transition-colors"
+				>
+					<div className="flex items-center gap-3 text-[11px] text-muted-foreground">
+						<ClipboardList className="w-3.5 h-3.5" />
+						<span className="font-medium">Issues</span>
+						{stats.total > 0 && (
+							<>
+								<span>{stats.total} total</span>
+								{stats.inProgress > 0 && (
+									<span className="text-purple-400">
+										{stats.inProgress} active
+									</span>
+								)}
+								{stats.open > 0 && (
+									<span className="text-blue-400">{stats.open} open</span>
+								)}
+							</>
+						)}
+					</div>
+					<ChevronUp className="w-3.5 h-3.5 text-muted-foreground" />
+				</button>
+			</div>
+		);
+	}
+
 	return (
 		<div className={cn("flex flex-col h-full overflow-hidden", className)}>
 			{/* Header */}
@@ -479,6 +855,86 @@ export const TrxView = memo(function TrxView({
 						Issues
 					</span>
 					<div className="flex items-center gap-1">
+						{/* Sort/Filter dropdown */}
+						<DropdownMenu>
+							<DropdownMenuTrigger asChild>
+								<Button
+									type="button"
+									variant="ghost"
+									size="sm"
+									className="h-6 w-6 p-0"
+									title="Sort & Filter"
+								>
+									<ArrowUpDown className="w-3 h-3" />
+								</Button>
+							</DropdownMenuTrigger>
+							<DropdownMenuContent align="end" className="w-48">
+								<DropdownMenuLabel className="text-xs">
+									Sort by
+								</DropdownMenuLabel>
+								<DropdownMenuCheckboxItem
+									checked={sortBy === "status"}
+									onCheckedChange={() => setSortBy("status")}
+									className="text-xs"
+								>
+									Status (active first)
+								</DropdownMenuCheckboxItem>
+								<DropdownMenuCheckboxItem
+									checked={sortBy === "priority"}
+									onCheckedChange={() => setSortBy("priority")}
+									className="text-xs"
+								>
+									Priority
+								</DropdownMenuCheckboxItem>
+								<DropdownMenuCheckboxItem
+									checked={sortBy === "created"}
+									onCheckedChange={() => setSortBy("created")}
+									className="text-xs"
+								>
+									Recently created
+								</DropdownMenuCheckboxItem>
+								<DropdownMenuCheckboxItem
+									checked={sortBy === "updated"}
+									onCheckedChange={() => setSortBy("updated")}
+									className="text-xs"
+								>
+									Recently updated
+								</DropdownMenuCheckboxItem>
+								<DropdownMenuSeparator />
+								<DropdownMenuLabel className="text-xs">
+									Filter
+								</DropdownMenuLabel>
+								<DropdownMenuCheckboxItem
+									checked={filterStatus === "all"}
+									onCheckedChange={() => setFilterStatus("all")}
+									className="text-xs"
+								>
+									All statuses
+								</DropdownMenuCheckboxItem>
+								<DropdownMenuCheckboxItem
+									checked={filterStatus === "in_progress"}
+									onCheckedChange={() => setFilterStatus("in_progress")}
+									className="text-xs"
+								>
+									In progress only
+								</DropdownMenuCheckboxItem>
+								<DropdownMenuCheckboxItem
+									checked={filterStatus === "open"}
+									onCheckedChange={() => setFilterStatus("open")}
+									className="text-xs"
+								>
+									Open only
+								</DropdownMenuCheckboxItem>
+								<DropdownMenuSeparator />
+								<DropdownMenuCheckboxItem
+									checked={hideClosed}
+									onCheckedChange={setHideClosed}
+									className="text-xs"
+								>
+									Hide closed
+								</DropdownMenuCheckboxItem>
+							</DropdownMenuContent>
+						</DropdownMenu>
 						<Button
 							type="button"
 							variant="ghost"
@@ -494,11 +950,24 @@ export const TrxView = memo(function TrxView({
 							type="button"
 							variant="ghost"
 							size="sm"
-							onClick={() => setShowAddForm(!showAddForm)}
+							onClick={() => {
+								setNewIssueParentId(null);
+								setShowAddForm(!showAddForm);
+							}}
 							className="h-6 w-6 p-0"
 							title="Add issue"
 						>
 							<Plus className="w-3 h-3" />
+						</Button>
+						<Button
+							type="button"
+							variant="ghost"
+							size="sm"
+							onClick={() => setIsCollapsed(true)}
+							className="h-6 w-6 p-0"
+							title="Collapse"
+						>
+							<ChevronDown className="w-3 h-3" />
 						</Button>
 					</div>
 				</div>
@@ -522,12 +991,30 @@ export const TrxView = memo(function TrxView({
 				{/* Add form */}
 				{showAddForm && (
 					<div className="mt-2 p-2 bg-muted/30 rounded space-y-2">
+						{newIssueParentId && (
+							<div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+								<span>Adding child to:</span>
+								<span className="font-mono bg-muted px-1 rounded">
+									{newIssueParentId}
+								</span>
+								<button
+									type="button"
+									onClick={() => setNewIssueParentId(null)}
+									className="text-muted-foreground hover:text-foreground"
+								>
+									<X className="w-3 h-3" />
+								</button>
+							</div>
+						)}
 						<Input
 							value={newIssueTitle}
 							onChange={(e) => setNewIssueTitle(e.target.value)}
-							placeholder="Issue title..."
+							placeholder={
+								newIssueParentId ? "Child issue title..." : "Issue title..."
+							}
 							className="h-7 text-xs"
 							onKeyDown={(e) => e.key === "Enter" && handleCreate()}
+							autoFocus
 						/>
 						<div className="flex items-center gap-2">
 							<select
@@ -546,7 +1033,10 @@ export const TrxView = memo(function TrxView({
 								type="button"
 								variant="ghost"
 								size="sm"
-								onClick={() => setShowAddForm(false)}
+								onClick={() => {
+									setShowAddForm(false);
+									setNewIssueParentId(null);
+								}}
 								className="h-6 px-2 text-xs"
 							>
 								Cancel
@@ -602,7 +1092,21 @@ export const TrxView = memo(function TrxView({
 								isExpanded={expandedEpics.has(epic.id)}
 								onToggle={() => handleToggleEpic(epic.id)}
 								onStatusChange={(status) => handleStatusChange(epic.id, status)}
-								onEdit={() => {}}
+								onStartHere={
+									onStartIssue ? () => handleStartIssue(epic) : undefined
+								}
+								onStartNewSession={
+									onStartIssueNewSession
+										? () => handleStartIssueNewSession(epic)
+										: undefined
+								}
+								onAddChild={() => handleAddChild(epic.id)}
+								onEdit={() => handleStartEdit(epic)}
+								isEditing={editingIssueId === epic.id}
+								editTitle={editTitle}
+								onEditTitleChange={setEditTitle}
+								onEditSave={handleSaveEdit}
+								onEditCancel={handleCancelEdit}
 							/>
 						))}
 						{/* Then standalone issues */}
@@ -615,7 +1119,21 @@ export const TrxView = memo(function TrxView({
 								onStatusChange={(status) =>
 									handleStatusChange(issue.id, status)
 								}
-								onEdit={() => {}}
+								onStartHere={
+									onStartIssue ? () => handleStartIssue(issue) : undefined
+								}
+								onStartNewSession={
+									onStartIssueNewSession
+										? () => handleStartIssueNewSession(issue)
+										: undefined
+								}
+								onAddChild={() => handleAddChild(issue.id)}
+								onEdit={() => handleStartEdit(issue)}
+								isEditing={editingIssueId === issue.id}
+								editTitle={editTitle}
+								onEditTitleChange={setEditTitle}
+								onEditSave={handleSaveEdit}
+								onEditCancel={handleCancelEdit}
 							/>
 						))}
 					</>

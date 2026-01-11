@@ -13,8 +13,7 @@ export function filterModelOptions(
 	if (!trimmed) return options;
 	return options.filter((option) => {
 		return (
-			fuzzyMatch(trimmed, option.value) ||
-			fuzzyMatch(trimmed, option.label)
+			fuzzyMatch(trimmed, option.value) || fuzzyMatch(trimmed, option.label)
 		);
 	});
 }

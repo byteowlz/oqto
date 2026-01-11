@@ -31,9 +31,7 @@ interface TauriWebSocket {
 }
 
 // Dynamic import for Tauri WebSocket plugin (only loads in Tauri environment)
-let tauriWsConnect:
-	| ((url: string) => Promise<TauriWebSocket>)
-	| null = null;
+let tauriWsConnect: ((url: string) => Promise<TauriWebSocket>) | null = null;
 
 async function getTauriWebSocket() {
 	if (tauriWsConnect) return tauriWsConnect;
@@ -91,7 +89,9 @@ class TauriWebSocketPolyfill implements WebSocket {
 
 		// Store protocol if provided (we don't actually use it with Tauri plugin)
 		if (protocols) {
-			this._protocol = Array.isArray(protocols) ? protocols[0] ?? "" : protocols;
+			this._protocol = Array.isArray(protocols)
+				? (protocols[0] ?? "")
+				: protocols;
 		}
 
 		// Initialize connection asynchronously
@@ -205,10 +205,7 @@ class TauriWebSocketPolyfill implements WebSocket {
 
 	send(data: string | ArrayBufferLike | Blob | ArrayBufferView): void {
 		if (this._readyState !== TauriWebSocketPolyfill.OPEN) {
-			throw new DOMException(
-				"WebSocket is not open",
-				"InvalidStateError",
-			);
+			throw new DOMException("WebSocket is not open", "InvalidStateError");
 		}
 
 		if (!this._tauriWs) {
@@ -230,7 +227,11 @@ class TauriWebSocketPolyfill implements WebSocket {
 			});
 		} else if (ArrayBuffer.isView(data)) {
 			this._tauriWs
-				.send(Array.from(new Uint8Array(data.buffer, data.byteOffset, data.byteLength)))
+				.send(
+					Array.from(
+						new Uint8Array(data.buffer, data.byteOffset, data.byteLength),
+					),
+				)
 				.catch((e) => {
 					console.error("[TauriWS] Send failed:", e);
 				});
@@ -345,13 +346,22 @@ interface SmartWebSocketConstructor {
 }
 
 // Augment the constructor with static properties
-const SmartWebSocket = createSmartWebSocket as unknown as SmartWebSocketConstructor;
+const SmartWebSocket =
+	createSmartWebSocket as unknown as SmartWebSocketConstructor;
 Object.defineProperties(SmartWebSocket, {
-	CONNECTING: { value: 0, writable: false, enumerable: true, configurable: false },
+	CONNECTING: {
+		value: 0,
+		writable: false,
+		enumerable: true,
+		configurable: false,
+	},
 	OPEN: { value: 1, writable: false, enumerable: true, configurable: false },
 	CLOSING: { value: 2, writable: false, enumerable: true, configurable: false },
 	CLOSED: { value: 3, writable: false, enumerable: true, configurable: false },
-	prototype: { value: OriginalWebSocket?.prototype ?? TauriWebSocketPolyfill.prototype, writable: false },
+	prototype: {
+		value: OriginalWebSocket?.prototype ?? TauriWebSocketPolyfill.prototype,
+		writable: false,
+	},
 });
 
 /**

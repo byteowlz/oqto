@@ -23,6 +23,7 @@ import {
 	FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
+import { authKeys } from "@/hooks/use-auth";
 import {
 	getControlPlaneBaseUrl,
 	login,
@@ -30,7 +31,6 @@ import {
 } from "@/lib/control-plane-client";
 import { isTauri } from "@/lib/tauri-fetch-polyfill";
 import { useQueryClient } from "@tanstack/react-query";
-import { authKeys } from "@/hooks/use-auth";
 
 const loginSchema = z.object({
 	username: z.string().min(1, "Username is required"),

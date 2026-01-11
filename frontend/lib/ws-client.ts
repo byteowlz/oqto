@@ -107,6 +107,18 @@ export type WsEvent =
 			permission_id: string;
 			granted: boolean;
 	  }
+	| {
+			type: "question_request";
+			session_id: string;
+			request_id: string;
+			questions: unknown;
+			tool?: unknown;
+	  }
+	| {
+			type: "question_resolved";
+			session_id: string;
+			request_id: string;
+	  }
 	| { type: "compaction_start"; session_id: string; reason?: string }
 	| { type: "compaction_end"; session_id: string; success: boolean }
 	| {
@@ -138,6 +150,17 @@ export type WsCommand =
 			session_id: string;
 			permission_id: string;
 			granted: boolean;
+	  }
+	| {
+			type: "question_reply";
+			session_id: string;
+			request_id: string;
+			answers: unknown;
+	  }
+	| {
+			type: "question_reject";
+			session_id: string;
+			request_id: string;
 	  }
 	| { type: "refresh_session"; session_id: string }
 	| { type: "get_messages"; session_id: string; after_id?: string };
@@ -307,6 +330,25 @@ class OctoWsClient {
 			session_id: sessionId,
 			permission_id: permissionId,
 			granted,
+		});
+	}
+
+	/** Reply to a question request */
+	replyQuestion(sessionId: string, requestId: string, answers: unknown): void {
+		this.send({
+			type: "question_reply",
+			session_id: sessionId,
+			request_id: requestId,
+			answers,
+		});
+	}
+
+	/** Reject a question request */
+	rejectQuestion(sessionId: string, requestId: string): void {
+		this.send({
+			type: "question_reject",
+			session_id: sessionId,
+			request_id: requestId,
 		});
 	}
 

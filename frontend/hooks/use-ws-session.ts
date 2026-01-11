@@ -557,6 +557,32 @@ function mapWsEventToLegacyEvent(event: WsEvent): LegacyEvent | null {
 			}
 			return null;
 
+		case "question_request":
+			if ("request_id" in event && "questions" in event) {
+				return {
+					type: "question.asked",
+					properties: {
+						id: event.request_id,
+						sessionID: "session_id" in event ? event.session_id : undefined,
+						questions: event.questions,
+						tool: event.tool,
+					},
+				};
+			}
+			return null;
+
+		case "question_resolved":
+			if ("request_id" in event) {
+				return {
+					type: "question.replied",
+					properties: {
+						requestID: event.request_id,
+						sessionID: "session_id" in event ? event.session_id : undefined,
+					},
+				};
+			}
+			return null;
+
 		case "session_error":
 			if ("error_type" in event && "message" in event) {
 				return {

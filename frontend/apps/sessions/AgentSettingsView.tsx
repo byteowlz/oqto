@@ -355,7 +355,9 @@ export function AgentSettingsView({
 					<div className="p-3 bg-primary/5 border border-primary/20 rounded-lg space-y-2 overflow-hidden">
 						<div className="flex items-center gap-2">
 							<div className="w-2 h-2 rounded-full bg-green-500 animate-pulse flex-shrink-0" />
-							<Label className="text-xs font-medium">Live Model Selection</Label>
+							<Label className="text-xs font-medium">
+								Live Model Selection
+							</Label>
 						</div>
 						<Select
 							value={selectedModelRef ?? undefined}

@@ -3,7 +3,7 @@
  * Bypasses WebView restrictions and works reliably on iOS.
  */
 import { invoke } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { type UnlistenFn, listen } from "@tauri-apps/api/event";
 
 interface HttpResponse<T = unknown> {
 	status: number;

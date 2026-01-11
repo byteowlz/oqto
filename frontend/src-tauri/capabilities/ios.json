@@ -4,9 +4,5 @@
 	"description": "iOS-specific capabilities",
 	"platforms": ["iOS"],
 	"windows": ["main"],
-	"permissions": [
-		"core:default",
-		"cors-fetch:default",
-		"websocket:default"
-	]
+	"permissions": ["core:default", "cors-fetch:default", "websocket:default"]
 }

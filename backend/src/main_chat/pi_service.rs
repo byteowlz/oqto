@@ -325,6 +325,26 @@ impl MainChatPiService {
         let sessions = self.sessions.read().await;
         sessions.contains_key(user_id)
     }
+
+    /// Reset a user's Pi session - closes the current session and creates a fresh one.
+    /// This re-reads PERSONALITY.md and USER.md files.
+    pub async fn reset_session(&self, user_id: &str) -> Result<Arc<UserPiSession>> {
+        // Close existing session if any
+        self.close_session(user_id).await?;
+
+        // Create a fresh session (force_fresh=true ensures no --continue flag)
+        let session = self.create_session(user_id, true).await?;
+        let session = Arc::new(session);
+
+        // Store in cache
+        {
+            let mut sessions = self.sessions.write().await;
+            sessions.insert(user_id.to_string(), Arc::clone(&session));
+        }
+
+        info!("Reset Pi session for user {}", user_id);
+        Ok(session)
+    }
 }
 
 impl UserPiSession {
