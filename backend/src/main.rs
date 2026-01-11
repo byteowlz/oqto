@@ -28,6 +28,7 @@ mod main_chat;
 mod markdown;
 mod observability;
 mod pi;
+mod runner;
 mod session;
 mod session_ui;
 mod settings;
@@ -917,6 +918,16 @@ pub struct PiConfig {
     /// Maximum session file size before forcing fresh start (bytes).
     /// Default: 500KB.
     pub max_session_size_bytes: Option<u64>,
+    /// Runtime mode for Pi process isolation.
+    /// Options: "local" (default), "runner", "container"
+    #[serde(default)]
+    pub runtime_mode: main_chat::PiRuntimeMode,
+    /// Runner socket path pattern (for runner mode).
+    /// Use {user} placeholder for username, e.g., "/run/octo/runner-{user}.sock"
+    pub runner_socket_pattern: Option<String>,
+    /// Pi bridge URL (for container mode).
+    /// e.g., "http://localhost:41824"
+    pub bridge_url: Option<String>,
 }
 
 impl Default for PiConfig {
@@ -929,6 +940,9 @@ impl Default for PiConfig {
             extensions: Vec::new(),
             max_session_age_hours: None,
             max_session_size_bytes: None,
+            runtime_mode: main_chat::PiRuntimeMode::Local,
+            runner_socket_pattern: None,
+            bridge_url: None,
         }
     }
 }
@@ -1392,6 +1406,11 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
         max_concurrent_sessions: ctx.config.sessions.max_concurrent_sessions,
         idle_timeout_minutes: ctx.config.sessions.idle_timeout_minutes,
         idle_check_interval_seconds: ctx.config.sessions.idle_check_interval_seconds,
+        // Enable pi-bridge in containers when Pi is enabled and runtime mode is container
+        pi_bridge_enabled: ctx.config.pi.enabled
+            && ctx.config.pi.runtime_mode == main_chat::PiRuntimeMode::Container,
+        pi_provider: ctx.config.pi.default_provider.clone(),
+        pi_model: ctx.config.pi.default_model.clone(),
     };
 
     let session_repo = session::SessionRepository::new(database.pool().clone());
@@ -1761,6 +1780,9 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
             extensions,
             max_session_age_hours: ctx.config.pi.max_session_age_hours.unwrap_or(4),
             max_session_size_bytes: ctx.config.pi.max_session_size_bytes.unwrap_or(500 * 1024),
+            runtime_mode: ctx.config.pi.runtime_mode,
+            runner_socket_pattern: ctx.config.pi.runner_socket_pattern.clone(),
+            bridge_url: ctx.config.pi.bridge_url.clone(),
         };
         let main_chat_pi_service = main_chat::MainChatPiService::new(
             main_chat_workspace_dir,

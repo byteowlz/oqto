@@ -15,6 +15,7 @@ use super::protocol::*;
 pub const DEFAULT_SOCKET_PATTERN: &str = "/run/octo/runner-{user}.sock";
 
 /// Client for communicating with the runner daemon.
+#[derive(Clone)]
 pub struct RunnerClient {
     socket_path: PathBuf,
 }

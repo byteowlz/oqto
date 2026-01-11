@@ -157,6 +157,13 @@ pub struct SessionServiceConfig {
     pub idle_timeout_minutes: i64,
     /// Idle cleanup check interval in seconds.
     pub idle_check_interval_seconds: u64,
+    /// Whether Pi (Main Chat AI) is enabled in container mode.
+    /// When true, pi-bridge will be started inside containers.
+    pub pi_bridge_enabled: bool,
+    /// Default LLM provider for Pi (e.g., "anthropic").
+    pub pi_provider: Option<String>,
+    /// Default model for Pi (e.g., "claude-sonnet-4-20250514").
+    pub pi_model: Option<String>,
 }
 
 impl Default for SessionServiceConfig {
@@ -178,6 +185,9 @@ impl Default for SessionServiceConfig {
             max_concurrent_sessions: SessionService::DEFAULT_MAX_CONCURRENT_SESSIONS,
             idle_timeout_minutes: SessionService::DEFAULT_IDLE_TIMEOUT_MINUTES,
             idle_check_interval_seconds: 5 * 60,
+            pi_bridge_enabled: false,
+            pi_provider: None,
+            pi_model: None,
         }
     }
 }
@@ -880,6 +890,27 @@ impl SessionService {
                 config = config.port(mmry_port as u16, 41823);
                 info!("Mapped mmry port: external {} -> internal 41823", mmry_port);
             }
+        }
+
+        // Pass pi-bridge config to container if enabled
+        // pi-bridge runs inside the container and provides HTTP/WS access to Pi
+        if self.config.pi_bridge_enabled {
+            config = config
+                .env("PI_BRIDGE_ENABLED", "true")
+                .env("PI_BRIDGE_PORT", "41824");
+            // Map pi-bridge port (internal 41824 -> same external port for simplicity)
+            // The backend's ContainerPiRuntime will connect to localhost:41824 via the mapped port
+            config = config.port(41824, 41824);
+            if let Some(ref provider) = self.config.pi_provider {
+                config = config.env("PI_PROVIDER", provider);
+            }
+            if let Some(ref model) = self.config.pi_model {
+                config = config.env("PI_MODEL", model);
+            }
+            info!(
+                "Enabled pi-bridge for session {} on port 41824",
+                session.id
+            );
         }
 
         // Create and start the container
@@ -2645,6 +2676,9 @@ mod tests {
             max_concurrent_sessions: SessionService::DEFAULT_MAX_CONCURRENT_SESSIONS,
             idle_timeout_minutes: SessionService::DEFAULT_IDLE_TIMEOUT_MINUTES,
             idle_check_interval_seconds: 5 * 60,
+            pi_bridge_enabled: false,
+            pi_provider: None,
+            pi_model: None,
         };
 
         let mut service = SessionService::with_eavs(repo.clone(), runtime.clone(), eavs, config);

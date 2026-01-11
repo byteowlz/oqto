@@ -13,23 +13,55 @@
 //! On fresh start, context is injected from:
 //! 1. Last session's compaction summary (from main_chat.db)
 //! 2. Recent mmry entries (decisions, handoffs, insights)
+//!
+//! ## Runtime Modes
+//!
+//! Pi can run in different isolation modes:
+//! - **Local**: Direct subprocess on host (single-user mode)
+//! - **Runner**: Via octo-runner daemon (multi-user isolation)
+//! - **Container**: HTTP client to pi-bridge in container
 
 use anyhow::{Context, Result};
 use log::{debug, info};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
-use tokio::process::Command;
 use tokio::sync::{RwLock, broadcast};
 
 use crate::pi::{
-    AgentMessage, CompactionResult, PiClient, PiClientConfig, PiEvent, PiState, SessionStats,
+    AgentMessage, CompactionResult, ContainerPiRuntime, LocalPiRuntime, PiCommand, PiEvent,
+    PiProcess, PiRuntime, PiSpawnConfig, PiState, RunnerPiRuntime, SessionStats,
 };
+use crate::runner::RunnerClient;
 
 /// Session freshness thresholds
 const SESSION_MAX_AGE_HOURS: u64 = 4;
 const SESSION_MAX_SIZE_BYTES: u64 = 500 * 1024; // 500KB
+
+/// Pi runtime mode determines how Pi processes are spawned and isolated.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PiRuntimeMode {
+    /// Direct subprocess on host (single-user mode, no isolation).
+    #[default]
+    Local,
+    /// Via octo-runner daemon (multi-user isolation, processes run as separate Linux users).
+    Runner,
+    /// HTTP client to pi-bridge in container (container mode).
+    Container,
+}
+
+impl std::fmt::Display for PiRuntimeMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PiRuntimeMode::Local => write!(f, "local"),
+            PiRuntimeMode::Runner => write!(f, "runner"),
+            PiRuntimeMode::Container => write!(f, "container"),
+        }
+    }
+}
 
 /// Configuration for the Pi service.
 #[derive(Debug, Clone)]
@@ -46,6 +78,14 @@ pub struct MainChatPiServiceConfig {
     pub max_session_age_hours: u64,
     /// Maximum session file size before forcing fresh start (bytes)
     pub max_session_size_bytes: u64,
+    /// Runtime mode for Pi process isolation.
+    pub runtime_mode: PiRuntimeMode,
+    /// Runner socket path pattern (for Runner mode).
+    /// Use {user} placeholder for username, e.g., "/run/octo/runner-{user}.sock"
+    pub runner_socket_pattern: Option<String>,
+    /// Pi bridge URL (for Container mode).
+    /// e.g., "http://localhost:41824"
+    pub bridge_url: Option<String>,
 }
 
 impl Default for MainChatPiServiceConfig {
@@ -57,6 +97,9 @@ impl Default for MainChatPiServiceConfig {
             extensions: Vec::new(),
             max_session_age_hours: SESSION_MAX_AGE_HOURS,
             max_session_size_bytes: SESSION_MAX_SIZE_BYTES,
+            runtime_mode: PiRuntimeMode::Local,
+            runner_socket_pattern: None,
+            bridge_url: None,
         }
     }
 }
@@ -72,8 +115,8 @@ pub struct LastSessionInfo {
 
 /// Handle to a user's Pi session.
 pub struct UserPiSession {
-    /// The Pi client for this user.
-    pub client: Arc<PiClient>,
+    /// The Pi process for this user (trait object for runtime polymorphism).
+    process: Arc<tokio::sync::RwLock<Box<dyn PiProcess>>>,
 }
 
 /// Service for managing Pi sessions for Main Chat users.
@@ -91,11 +134,35 @@ pub struct MainChatPiService {
 impl MainChatPiService {
     /// Create a new Pi service.
     pub fn new(workspace_dir: PathBuf, single_user: bool, config: MainChatPiServiceConfig) -> Self {
+        info!(
+            "MainChatPiService initialized with runtime mode: {}",
+            config.runtime_mode
+        );
+
         Self {
             config,
             sessions: RwLock::new(HashMap::new()),
             workspace_dir,
             single_user,
+        }
+    }
+
+    /// Create a runtime for a specific user (needed for Runner mode).
+    fn create_runtime_for_user(&self, user_id: &str) -> Arc<dyn PiRuntime> {
+        match self.config.runtime_mode {
+            PiRuntimeMode::Local => Arc::new(LocalPiRuntime::new()),
+            PiRuntimeMode::Runner => {
+                // Create runner client for this user
+                let socket_pattern = self
+                    .config
+                    .runner_socket_pattern
+                    .as_deref()
+                    .unwrap_or("/run/octo/runner-{user}.sock");
+                let socket_path = socket_pattern.replace("{user}", user_id);
+                let client = RunnerClient::new(socket_path);
+                Arc::new(RunnerPiRuntime::new(client))
+            }
+            PiRuntimeMode::Container => Arc::new(ContainerPiRuntime::new()),
         }
     }
 
@@ -240,67 +307,57 @@ impl MainChatPiService {
                 .unwrap_or(false);
 
         info!(
-            "Starting Pi session for user {} in {:?}, continue={}, provider={:?}, model={:?}",
+            "Starting Pi session for user {} in {:?}, continue={}, provider={:?}, model={:?}, mode={}",
             user_id,
             work_dir,
             should_continue,
             self.config.default_provider,
-            self.config.default_model
+            self.config.default_model,
+            self.config.runtime_mode
         );
 
-        // Build the command
-        let mut cmd = Command::new(&self.config.pi_executable);
-        cmd.arg("--mode").arg("rpc");
-
-        // Continue or fresh start
-        if should_continue {
-            cmd.arg("--continue");
-        }
-        // Note: If not continuing, Pi will start a fresh session automatically
-
-        cmd.current_dir(&work_dir);
-
-        // Set up stdio
-        cmd.stdin(std::process::Stdio::piped());
-        cmd.stdout(std::process::Stdio::piped());
-        cmd.stderr(std::process::Stdio::piped());
-
-        // Add provider/model if configured
-        if let Some(ref provider) = self.config.default_provider {
-            cmd.arg("--provider").arg(provider);
-        }
-        if let Some(ref model) = self.config.default_model {
-            cmd.arg("--model").arg(model);
-        }
-
-        // Add extensions
-        for extension in &self.config.extensions {
-            cmd.arg("--extension").arg(extension);
-        }
-
-        // Append PERSONALITY.md and USER.md to system prompt if they exist
+        // Build system prompt files
+        let mut append_system_prompt = Vec::new();
         let personality_file = work_dir.join("PERSONALITY.md");
         if personality_file.exists() {
-            cmd.arg("--append-system-prompt").arg(&personality_file);
+            append_system_prompt.push(personality_file);
         }
         let user_file = work_dir.join("USER.md");
         if user_file.exists() {
-            cmd.arg("--append-system-prompt").arg(&user_file);
+            append_system_prompt.push(user_file);
         }
 
+        // Build environment for container mode
+        let mut env = HashMap::new();
+        if let Some(ref bridge_url) = self.config.bridge_url {
+            env.insert("PI_BRIDGE_URL".to_string(), bridge_url.clone());
+        }
+
+        // Build spawn config
+        let spawn_config = PiSpawnConfig {
+            work_dir: work_dir.clone(),
+            pi_executable: self.config.pi_executable.clone(),
+            continue_session: should_continue,
+            provider: self.config.default_provider.clone(),
+            model: self.config.default_model.clone(),
+            extensions: self.config.extensions.clone(),
+            append_system_prompt,
+            env,
+        };
+
+        // Get the appropriate runtime for this user
+        let runtime = self.create_runtime_for_user(user_id);
+
         // Spawn the process
-        let child = cmd.spawn().with_context(|| {
+        let process = runtime.spawn(spawn_config).await.with_context(|| {
             format!(
-                "Failed to spawn Pi process. Executable: {}, Working dir: {:?}",
-                self.config.pi_executable, work_dir
+                "Failed to spawn Pi process for user {} in {:?}",
+                user_id, work_dir
             )
         })?;
 
-        // Create the client
-        let client = PiClient::new(child, PiClientConfig::default())?;
-
         Ok(UserPiSession {
-            client: Arc::new(client),
+            process: Arc::new(tokio::sync::RwLock::new(process)),
         })
     }
 
@@ -350,68 +407,171 @@ impl MainChatPiService {
 impl UserPiSession {
     /// Send a prompt to the agent.
     pub async fn prompt(&self, message: &str) -> Result<()> {
-        self.client.prompt(message).await?;
+        let process = self.process.read().await;
+        process
+            .send_command(PiCommand::Prompt {
+                id: None,
+                message: message.to_string(),
+            })
+            .await?;
         Ok(())
     }
 
     /// Abort the current operation.
     pub async fn abort(&self) -> Result<()> {
-        self.client.abort().await?;
+        let process = self.process.read().await;
+        process.send_command(PiCommand::Abort { id: None }).await?;
         Ok(())
     }
 
     /// Queue a steering message to interrupt the agent mid-run.
     pub async fn steer(&self, message: &str) -> Result<()> {
-        self.client.steer(message).await?;
+        let process = self.process.read().await;
+        process
+            .send_command(PiCommand::Steer {
+                id: None,
+                message: message.to_string(),
+            })
+            .await?;
         Ok(())
     }
 
     /// Queue a follow-up message for after the agent finishes.
     pub async fn follow_up(&self, message: &str) -> Result<()> {
-        self.client.follow_up(message).await?;
+        let process = self.process.read().await;
+        process
+            .send_command(PiCommand::FollowUp {
+                id: None,
+                message: message.to_string(),
+            })
+            .await?;
         Ok(())
     }
 
     /// Get current state.
     pub async fn get_state(&self) -> Result<PiState> {
-        self.client.get_state().await
+        let process = self.process.read().await;
+        let response = process
+            .send_command(PiCommand::GetState { id: None })
+            .await?;
+        if !response.success {
+            anyhow::bail!("get_state failed: {:?}", response.error);
+        }
+        let data = response.data.context("get_state returned no data")?;
+        serde_json::from_value(data).context("failed to parse state")
     }
 
     /// Get all messages.
     pub async fn get_messages(&self) -> Result<Vec<AgentMessage>> {
-        self.client.get_messages().await
+        let process = self.process.read().await;
+        let response = process
+            .send_command(PiCommand::GetMessages { id: None })
+            .await?;
+        if !response.success {
+            anyhow::bail!("get_messages failed: {:?}", response.error);
+        }
+        let data = response.data.context("get_messages returned no data")?;
+        let messages_data = data
+            .get("messages")
+            .context("no messages field in response")?;
+        serde_json::from_value(messages_data.clone()).context("failed to parse messages")
     }
 
     /// Subscribe to events.
-    pub fn subscribe(&self) -> broadcast::Receiver<PiEvent> {
-        self.client.subscribe()
+    ///
+    /// Note: This requires awaiting to get the process lock, then returns
+    /// the receiver synchronously.
+    pub async fn subscribe(&self) -> broadcast::Receiver<PiEvent> {
+        let process = self.process.read().await;
+        process.subscribe()
+    }
+
+    /// Subscribe to events (blocking version for sync contexts).
+    /// Prefer the async version when possible.
+    pub fn subscribe_blocking(&self) -> broadcast::Receiver<PiEvent> {
+        // Use try_read to avoid blocking; if lock is held, create a new receiver
+        // from a temporary - this is a fallback for edge cases
+        if let Ok(process) = self.process.try_read() {
+            process.subscribe()
+        } else {
+            // Create a dummy receiver that will never receive
+            // The caller should use the async version
+            let (tx, rx) = broadcast::channel(1);
+            drop(tx);
+            rx
+        }
     }
 
     /// Compact the session context.
     pub async fn compact(&self, custom_instructions: Option<&str>) -> Result<CompactionResult> {
-        self.client.compact(custom_instructions).await
+        let process = self.process.read().await;
+        let response = process
+            .send_command(PiCommand::Compact {
+                id: None,
+                custom_instructions: custom_instructions.map(|s| s.to_string()),
+            })
+            .await?;
+        if !response.success {
+            anyhow::bail!("compact failed: {:?}", response.error);
+        }
+        let data = response.data.context("compact returned no data")?;
+        serde_json::from_value(data).context("failed to parse compaction result")
     }
 
     /// Start a new session (clear history).
     pub async fn new_session(&self) -> Result<()> {
-        self.client.new_session().await?;
+        let process = self.process.read().await;
+        process
+            .send_command(PiCommand::NewSession {
+                id: None,
+                parent_session: None,
+            })
+            .await?;
         Ok(())
     }
 
     /// Set the current model.
     pub async fn set_model(&self, provider: &str, model_id: &str) -> Result<()> {
-        self.client.set_model(provider, model_id).await?;
+        let process = self.process.read().await;
+        process
+            .send_command(PiCommand::SetModel {
+                id: None,
+                provider: provider.to_string(),
+                model_id: model_id.to_string(),
+            })
+            .await?;
         Ok(())
     }
 
     /// Get session statistics.
     pub async fn get_session_stats(&self) -> Result<SessionStats> {
-        self.client.get_session_stats().await
+        let process = self.process.read().await;
+        let response = process
+            .send_command(PiCommand::GetSessionStats { id: None })
+            .await?;
+        if !response.success {
+            anyhow::bail!("get_session_stats failed: {:?}", response.error);
+        }
+        let data = response
+            .data
+            .context("get_session_stats returned no data")?;
+        serde_json::from_value(data).context("failed to parse session stats")
     }
 
     /// Get available models.
     pub async fn get_available_models(&self) -> Result<Vec<crate::pi::PiModel>> {
-        self.client.get_available_models().await
+        let process = self.process.read().await;
+        let response = process
+            .send_command(PiCommand::GetAvailableModels { id: None })
+            .await?;
+        if !response.success {
+            anyhow::bail!("get_available_models failed: {:?}", response.error);
+        }
+        let data = response
+            .data
+            .context("get_available_models returned no data")?;
+        let models = data.get("models").context("no models field in response")?;
+        serde_json::from_value(models.clone()).context("failed to parse models")
     }
 }
 

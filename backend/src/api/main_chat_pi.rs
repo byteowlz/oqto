@@ -626,7 +626,7 @@ async fn handle_ws(
     let (mut sender, mut receiver) = socket.split();
 
     // Subscribe to Pi events
-    let mut event_rx = session.subscribe();
+    let mut event_rx = session.subscribe().await;
 
     // Send connected message
     let connected_msg = serde_json::json!({"type": "connected"});

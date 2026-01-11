@@ -15,6 +15,10 @@ path = "src/ctl/main.rs"
 name = "octo-runner"
 path = "src/bin/octo-runner.rs"
 
+[[bin]]
+name = "pi-bridge"
+path = "src/bin/pi-bridge.rs"
+
 [lib]
 name = "octo"
 path = "src/lib.rs"
