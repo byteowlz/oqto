@@ -764,7 +764,7 @@ build_octo() {
     
     cd "$SCRIPT_DIR"
     
-    # Build backend
+    # Build backend (includes octo, octo-runner, pi-bridge binaries)
     log_info "Building backend..."
     (cd backend && cargo build --release)
     log_success "Backend built"
@@ -785,6 +785,17 @@ build_octo() {
     log_info "Installing binaries to ~/.cargo/bin..."
     (cd backend && cargo install --path .)
     (cd fileserver && cargo install --path .)
+    
+    # Install additional binaries (octo-runner for multi-user, pi-bridge for container Pi)
+    if [[ -f "$SCRIPT_DIR/backend/target/release/octo-runner" ]]; then
+        cp "$SCRIPT_DIR/backend/target/release/octo-runner" "$HOME/.cargo/bin/"
+        log_success "octo-runner installed"
+    fi
+    if [[ -f "$SCRIPT_DIR/backend/target/release/pi-bridge" ]]; then
+        cp "$SCRIPT_DIR/backend/target/release/pi-bridge" "$HOME/.cargo/bin/"
+        log_success "pi-bridge installed"
+    fi
+    
     log_success "Binaries installed"
 }
 
@@ -1043,6 +1054,30 @@ role = "admin"
 EOF
     fi
 
+    # Pi (Main Chat) configuration
+    # Determine Pi runtime mode based on backend mode and user mode
+    local pi_runtime_mode="local"
+    if [[ "$SELECTED_BACKEND_MODE" == "container" ]]; then
+        pi_runtime_mode="container"
+    elif [[ "$SELECTED_USER_MODE" == "multi" && "$OS" == "linux" ]]; then
+        pi_runtime_mode="runner"
+    fi
+
+    cat >> "$config_file" << EOF
+
+[pi]
+enabled = true
+executable = "pi"
+default_provider = "anthropic"
+default_model = "claude-sonnet-4-20250514"
+runtime_mode = "$pi_runtime_mode"
+EOF
+
+    # Add runner socket pattern for multi-user Linux mode
+    if [[ "$pi_runtime_mode" == "runner" ]]; then
+        echo 'runner_socket_pattern = "/run/octo/runner-{user}.sock"' >> "$config_file"
+    fi
+
     cat >> "$config_file" << EOF
 
 [sessions]
@@ -1192,11 +1227,17 @@ AmbientCapabilities=CAP_NET_BIND_SERVICE
 WantedBy=multi-user.target
 EOF
         
-        # Copy binary to /usr/local/bin
+        # Copy binaries to /usr/local/bin
         sudo cp "$HOME/.cargo/bin/octo" /usr/local/bin/octo
         sudo cp "$HOME/.cargo/bin/fileserver" /usr/local/bin/fileserver
+        if [[ -f "$HOME/.cargo/bin/octo-runner" ]]; then
+            sudo cp "$HOME/.cargo/bin/octo-runner" /usr/local/bin/octo-runner
+        fi
         
         log_success "Service file created: $service_file"
+        
+        # Install octo-runner user service template for multi-user mode
+        install_runner_service
         
         if confirm "Enable and start the service now?"; then
             sudo systemctl daemon-reload
@@ -1207,6 +1248,55 @@ EOF
             log_info "View logs with: sudo journalctl -u octo -f"
         fi
     fi
+}
+
+install_runner_service() {
+    # Install octo-runner as a systemd user service template
+    # Each user runs their own instance of octo-runner for process isolation
+    log_info "Installing octo-runner user service template..."
+    
+    local runner_service="/etc/systemd/user/octo-runner.service"
+    local runner_socket="/etc/systemd/user/octo-runner.socket"
+    
+    # Service file
+    sudo tee "$runner_service" > /dev/null << 'EOF'
+# Octo Runner - Per-user process runner for multi-user isolation
+# This service runs as the logged-in user and manages their agent processes
+
+[Unit]
+Description=Octo Runner (User Process Manager)
+After=default.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/octo-runner
+ExecStop=/bin/kill -TERM $MAINPID
+TimeoutStopSec=30
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+EOF
+    
+    # Socket activation (optional, for on-demand startup)
+    sudo tee "$runner_socket" > /dev/null << 'EOF'
+# Socket activation for octo-runner
+# Starts octo-runner on first connection to the socket
+
+[Unit]
+Description=Octo Runner Socket
+
+[Socket]
+ListenStream=/run/user/%U/octo-runner.sock
+SocketMode=0600
+
+[Install]
+WantedBy=sockets.target
+EOF
+    
+    log_success "octo-runner service template installed"
+    log_info "Users can enable it with: systemctl --user enable --now octo-runner"
 }
 
 install_service_macos() {
@@ -1352,14 +1442,20 @@ print_summary() {
     echo "  Config file:  $OCTO_CONFIG_DIR/config.toml"
     echo
     
+    echo "Installed binaries:"
+    echo "  octo:         $(which octo 2>/dev/null || echo 'not in PATH')"
+    echo "  fileserver:   $(which fileserver 2>/dev/null || echo 'not in PATH')"
     if [[ "$SELECTED_BACKEND_MODE" == "local" ]]; then
-        echo "Installed binaries:"
-        echo "  octo:       $(which octo 2>/dev/null || echo 'not in PATH')"
-        echo "  fileserver: $(which fileserver 2>/dev/null || echo 'not in PATH')"
-        echo "  opencode:   $(which opencode 2>/dev/null || echo 'not in PATH')"
-        echo "  ttyd:       $(which ttyd 2>/dev/null || echo 'not in PATH')"
-        echo
+        echo "  opencode:     $(which opencode 2>/dev/null || echo 'not in PATH')"
+        echo "  ttyd:         $(which ttyd 2>/dev/null || echo 'not in PATH')"
     fi
+    if [[ "$SELECTED_USER_MODE" == "multi" && "$OS" == "linux" ]]; then
+        echo "  octo-runner:  $(which octo-runner 2>/dev/null || echo 'not in PATH')"
+    fi
+    if [[ "$SELECTED_BACKEND_MODE" == "container" ]]; then
+        echo "  pi-bridge:    $(which pi-bridge 2>/dev/null || echo 'not in PATH')"
+    fi
+    echo
     
     echo "Shell tools:"
     echo "  tmux:       $(which tmux 2>/dev/null || echo 'not installed')"
