@@ -23,7 +23,7 @@ use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::process::{Child, Command};
-use tokio::sync::{RwLock, broadcast};
+use tokio::sync::{broadcast, Mutex, RwLock};
 
 use octo::runner::*;
 
@@ -43,6 +43,24 @@ struct Args {
     verbose: bool,
 }
 
+/// Stdout buffer shared between the reader task and the main runner.
+#[derive(Debug)]
+struct StdoutBuffer {
+    /// Buffered lines from stdout.
+    lines: Vec<String>,
+    /// Whether the process has exited.
+    closed: bool,
+}
+
+impl StdoutBuffer {
+    fn new() -> Self {
+        Self {
+            lines: Vec::new(),
+            closed: false,
+        }
+    }
+}
+
 /// Managed process with optional RPC pipes.
 struct ManagedProcess {
     id: String,
@@ -51,8 +69,10 @@ struct ManagedProcess {
     cwd: PathBuf,
     child: Child,
     is_rpc: bool,
-    /// Buffered stdout for RPC processes.
-    stdout_buffer: Vec<String>,
+    /// Shared stdout buffer for RPC processes (populated by background reader task).
+    stdout_buffer: Option<Arc<Mutex<StdoutBuffer>>>,
+    /// Handle to the background stdout reader task.
+    _reader_handle: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl ManagedProcess {
@@ -159,12 +179,32 @@ impl Runner {
 
         // Spawn
         match cmd.spawn() {
-            Ok(child) => {
+            Ok(mut child) => {
                 let pid = child.id().unwrap_or(0);
                 info!(
                     "Spawned process '{}': {} {:?} (pid={}, rpc={})",
                     req.id, req.binary, req.args, pid, is_rpc
                 );
+
+                // For RPC processes, set up background stdout reader
+                let (stdout_buffer, reader_handle) = if is_rpc {
+                    let buffer = Arc::new(Mutex::new(StdoutBuffer::new()));
+
+                    // Take stdout from the child
+                    let stdout = child.stdout.take();
+                    let stderr = child.stderr.take();
+
+                    // Spawn background task to read stdout
+                    let buffer_clone = Arc::clone(&buffer);
+                    let process_id = req.id.clone();
+                    let handle = tokio::spawn(async move {
+                        Self::stdout_reader_task(process_id, stdout, stderr, buffer_clone).await;
+                    });
+
+                    (Some(buffer), Some(handle))
+                } else {
+                    (None, None)
+                };
 
                 let managed = ManagedProcess {
                     id: req.id.clone(),
@@ -173,7 +213,8 @@ impl Runner {
                     cwd: req.cwd,
                     child,
                     is_rpc,
-                    stdout_buffer: Vec::new(),
+                    stdout_buffer,
+                    _reader_handle: reader_handle,
                 };
 
                 state.processes.insert(req.id.clone(), managed);
@@ -185,6 +226,49 @@ impl Runner {
                 RunnerResponse::error(ErrorCode::SpawnFailed, e.to_string())
             }
         }
+    }
+
+    /// Background task that reads stdout/stderr and buffers the lines.
+    async fn stdout_reader_task(
+        process_id: String,
+        stdout: Option<tokio::process::ChildStdout>,
+        stderr: Option<tokio::process::ChildStderr>,
+        buffer: Arc<Mutex<StdoutBuffer>>,
+    ) {
+        // Read both stdout and stderr concurrently
+        let stdout_task = async {
+            if let Some(stdout) = stdout {
+                let mut reader = BufReader::new(stdout).lines();
+                while let Ok(Some(line)) = reader.next_line().await {
+                    let mut buf = buffer.lock().await;
+                    buf.lines.push(line);
+                    // Keep buffer size reasonable (max 10000 lines)
+                    if buf.lines.len() > 10000 {
+                        buf.lines.remove(0);
+                    }
+                }
+            }
+        };
+
+        let stderr_task = async {
+            if let Some(stderr) = stderr {
+                let mut reader = BufReader::new(stderr).lines();
+                while let Ok(Some(line)) = reader.next_line().await {
+                    // Log stderr but don't buffer it (it's for debugging)
+                    if !line.trim().is_empty() {
+                        debug!("Process '{}' stderr: {}", process_id, line);
+                    }
+                }
+            }
+        };
+
+        // Run both tasks concurrently
+        tokio::join!(stdout_task, stderr_task);
+
+        // Mark buffer as closed when process exits
+        let mut buf = buffer.lock().await;
+        buf.closed = true;
+        info!("Stdout reader for process '{}' finished", process_id);
     }
 
     async fn kill_process(&self, req: KillProcessRequest) -> RunnerResponse {
@@ -212,7 +296,7 @@ impl Runner {
             }
         }
 
-        // Remove from tracking
+        // Remove from tracking (this will drop the reader handle, cancelling the task)
         state.processes.remove(&req.id);
 
         info!("Killed process '{}' (was_running={})", req.id, was_running);
@@ -286,6 +370,13 @@ impl Runner {
 
         match stdin.write_all(req.data.as_bytes()).await {
             Ok(()) => {
+                // Flush to ensure data is sent immediately
+                if let Err(e) = stdin.flush().await {
+                    return RunnerResponse::error(
+                        ErrorCode::IoError,
+                        format!("flush failed: {}", e),
+                    );
+                }
                 let bytes_written = req.data.len();
                 debug!("Wrote {} bytes to stdin of '{}'", bytes_written, req.id);
                 RunnerResponse::StdinWritten(StdinWrittenResponse {
@@ -298,44 +389,66 @@ impl Runner {
     }
 
     async fn read_stdout(&self, req: ReadStdoutRequest) -> RunnerResponse {
-        let mut state = self.state.write().await;
+        // Get the buffer reference without holding the state lock
+        let buffer = {
+            let state = self.state.read().await;
 
-        let Some(proc) = state.processes.get_mut(&req.id) else {
-            return RunnerResponse::error(
-                ErrorCode::ProcessNotFound,
-                format!("Process '{}' not found", req.id),
-            );
+            let Some(proc) = state.processes.get(&req.id) else {
+                return RunnerResponse::error(
+                    ErrorCode::ProcessNotFound,
+                    format!("Process '{}' not found", req.id),
+                );
+            };
+
+            if !proc.is_rpc {
+                return RunnerResponse::error(
+                    ErrorCode::NotRpcProcess,
+                    format!("Process '{}' is not an RPC process", req.id),
+                );
+            }
+
+            let Some(ref buffer) = proc.stdout_buffer else {
+                return RunnerResponse::error(ErrorCode::IoError, "stdout buffer not available");
+            };
+
+            Arc::clone(buffer)
         };
 
-        if !proc.is_rpc {
-            return RunnerResponse::error(
-                ErrorCode::NotRpcProcess,
-                format!("Process '{}' is not an RPC process", req.id),
-            );
+        // If timeout is specified, wait for data
+        if req.timeout_ms > 0 {
+            let timeout = std::time::Duration::from_millis(req.timeout_ms);
+            let start = std::time::Instant::now();
+
+            while start.elapsed() < timeout {
+                let buf = buffer.lock().await;
+                if !buf.lines.is_empty() || buf.closed {
+                    break;
+                }
+                drop(buf);
+                // Small sleep to avoid busy loop
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            }
         }
 
-        // Return buffered data if available
-        if !proc.stdout_buffer.is_empty() {
-            let data = proc.stdout_buffer.join("");
-            proc.stdout_buffer.clear();
+        // Get buffered data
+        let mut buf = buffer.lock().await;
+        if buf.lines.is_empty() {
             return RunnerResponse::StdoutRead(StdoutReadResponse {
                 id: req.id,
-                data,
-                has_more: false, // We don't know without blocking
+                data: String::new(),
+                has_more: !buf.closed,
             });
         }
 
-        // Try to read without blocking (timeout=0) or with timeout
-        let Some(_stdout) = proc.child.stdout.as_mut() else {
-            return RunnerResponse::error(ErrorCode::IoError, "stdout not available");
-        };
+        // Return all buffered lines joined with newlines
+        let data = buf.lines.join("\n") + "\n";
+        let has_more = !buf.closed;
+        buf.lines.clear();
 
-        // For now, just return empty if nothing buffered
-        // A proper implementation would use non-blocking reads or select
         RunnerResponse::StdoutRead(StdoutReadResponse {
             id: req.id,
-            data: String::new(),
-            has_more: false,
+            data,
+            has_more,
         })
     }
 
