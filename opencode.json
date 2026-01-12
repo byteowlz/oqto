@@ -2,6 +2,7 @@
   "share": "disabled",
   "$schema": "https://opencode.ai/config.json",
   "permission": {
-    "external_directory": "allow"
+    "external_directory": "allow",
+    "question": "deny"
   }
 }

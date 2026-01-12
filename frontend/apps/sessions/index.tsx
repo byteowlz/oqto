@@ -6,6 +6,7 @@ import {
 	initialFileTreeState,
 } from "@/apps/sessions/FileTreeView";
 import { MainChatPiView, MainChatSettingsView } from "@/components/main-chat";
+import { A2UICallCard } from "@/components/ui/a2ui-call-card";
 import { Badge } from "@/components/ui/badge";
 import { BrailleSpinner } from "@/components/ui/braille-spinner";
 import { Button } from "@/components/ui/button";
@@ -51,6 +52,7 @@ import {
 	type VoiceMode,
 	VoicePanel,
 } from "@/components/voice";
+import { type A2UISurfaceState, useA2UI } from "@/hooks/use-a2ui";
 import { useApp } from "@/hooks/use-app";
 import { useDictation } from "@/hooks/use-dictation";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -61,6 +63,7 @@ import {
 	useVoiceShortcuts,
 } from "@/hooks/use-voice-commands";
 import { useVoiceMode } from "@/hooks/use-voice-mode";
+import type { A2UIUserAction } from "@/lib/a2ui/types";
 import {
 	type Features,
 	type MainChatSession,
@@ -486,7 +489,29 @@ export function SessionsApp() {
 		setMainChatWorkspacePath,
 	} = useApp();
 	const [messages, setMessages] = useState<OpenCodeMessageWithParts[]>([]);
+	// Ref to track messages for A2UI anchoring
+	const messagesRef = useRef(messages);
+	useEffect(() => {
+		messagesRef.current = messages;
+	}, [messages]);
 	const [messageInput, setMessageInput] = useState("");
+
+	// Helper to set message input and resize textarea
+	const setMessageInputWithResize = useCallback((value: string) => {
+		setMessageInput(value);
+		requestAnimationFrame(() => {
+			if (chatInputRef.current) {
+				const textarea = chatInputRef.current;
+				if (!value) {
+					textarea.style.height = "36px";
+				} else {
+					textarea.style.height = "36px";
+					textarea.style.height = `${Math.min(textarea.scrollHeight, 200)}px`;
+				}
+			}
+		});
+	}, []);
+
 	const [mainChatBaseUrl, setMainChatBaseUrl] = useState("");
 	const opencodeDirectory = useMemo(() => {
 		if (mainChatActive) return mainChatWorkspacePath ?? undefined;
@@ -652,6 +677,10 @@ export function SessionsApp() {
 
 	// Per-chat draft text cache (persists across session switches AND component remounts via localStorage)
 	const previousSessionIdRef = useRef<string | null>(null);
+	// Debounce timer for saving drafts to localStorage
+	const draftSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
+		null,
+	);
 
 	// Helper to get/set drafts from localStorage
 	const getDraft = useCallback((sessionId: string): string => {
@@ -692,28 +721,25 @@ export function SessionsApp() {
 		if (currId && currId !== prevId) {
 			const savedDraft = getDraft(currId);
 			setMessageInput(savedDraft);
+			// Auto-resize after draft restoration
+			requestAnimationFrame(() => {
+				if (chatInputRef.current) {
+					const textarea = chatInputRef.current;
+					if (!savedDraft) {
+						textarea.style.height = "36px";
+					} else {
+						textarea.style.height = "36px";
+						textarea.style.height = `${Math.min(textarea.scrollHeight, 200)}px`;
+					}
+				}
+			});
 		}
 
 		previousSessionIdRef.current = currId;
 	}, [selectedChatSessionId, getDraft]);
 
-	// Auto-resize textarea when messageInput changes programmatically (e.g., draft restoration)
-	useEffect(() => {
-		if (chatInputRef.current) {
-			const textarea = chatInputRef.current;
-			if (!messageInput) {
-				// No content - reset to minimum height
-				textarea.style.height = "36px";
-			} else {
-				// Has content - calculate needed height
-				textarea.style.height = "36px"; // Reset first to get accurate scrollHeight
-				const scrollHeight = textarea.scrollHeight;
-				textarea.style.height = `${Math.min(scrollHeight, 200)}px`;
-			}
-		}
-	}, [messageInput]);
-
 	const [isLoading, setIsLoading] = useState(true);
+	const [messagesLoading, setMessagesLoading] = useState(false);
 	const [showTimeoutError, setShowTimeoutError] = useState(false);
 	const [activeView, setActiveView] = useState<ActiveView>("chat");
 	const [rightSidebarCollapsed, setRightSidebarCollapsed] = useState(false);
@@ -732,6 +758,10 @@ export function SessionsApp() {
 	const lastScrollTopRef = useRef(0);
 	// Track if this is initial message load (for instant scroll) vs streaming (for smooth scroll)
 	const initialLoadRef = useRef(true);
+	// Cache scroll positions per session (sessionId -> scrollTop, null means bottom)
+	const scrollPositionCacheRef = useRef<Map<string, number | null>>(new Map());
+	// Track sessions that have had messages loaded (to show skeleton only for sessions with history)
+	const sessionsWithMessagesRef = useRef<Set<string>>(new Set());
 	const autoAttachAttemptRef = useRef<{
 		sessionId: string;
 		workspacePath: string;
@@ -762,7 +792,10 @@ export function SessionsApp() {
 	const [showSlashPopup, setShowSlashPopup] = useState(false);
 	const [slashCommands, setSlashCommands] =
 		useState<SlashCommand[]>(builtInCommands);
-	const slashQuery = parseSlashInput(messageInput);
+	const slashQuery = useMemo(
+		() => parseSlashInput(messageInput),
+		[messageInput],
+	);
 
 	// File mention popup state
 	const [showFileMentionPopup, setShowFileMentionPopup] = useState(false);
@@ -789,8 +822,28 @@ export function SessionsApp() {
 		null,
 	);
 
-	// Clear permission and question state when session changes
-	// Note: Permissions/Questions are received via SSE events, not fetched via REST
+	// A2UI surfaces using the modular hook
+	const {
+		surfaces: a2uiSurfaces,
+		handleAction: handleA2UIAction,
+		handleDismiss: handleA2UIDismiss,
+		clearSurfaces: clearA2UISurfaces,
+	} = useA2UI(messagesRef, {
+		onSurfaceReceived: () => {
+			// Auto-scroll to show new A2UI surface
+			setTimeout(() => {
+				const endEl = document.querySelector("[data-messages-end]");
+				if (endEl) {
+					endEl.scrollIntoView({ behavior: "smooth", block: "end" });
+				} else {
+					scrollToBottom("smooth");
+				}
+			}, 200);
+		},
+	});
+
+	// Clear permission, question, and A2UI state when session changes
+	// Note: Permissions/Questions/A2UI are received via WS events, not fetched via REST
 	const prevSessionRef = useRef(selectedChatSessionId);
 	useEffect(() => {
 		if (prevSessionRef.current !== selectedChatSessionId) {
@@ -799,6 +852,7 @@ export function SessionsApp() {
 			setActivePermission(null);
 			setPendingQuestions([]);
 			setActiveQuestion(null);
+			clearA2UISurfaces();
 		}
 	});
 
@@ -867,17 +921,20 @@ export function SessionsApp() {
 	}, [opencodeBaseUrl, opencodeRequestOptions]);
 
 	// Voice mode - handles STT/TTS when voice feature is enabled
-	const handleVoiceTranscript = useCallback((text: string) => {
-		// Set the transcript as message input and send it
-		setMessageInput(text);
-		// We'll trigger send after a small delay to allow state to update
-		setTimeout(() => {
-			const sendBtn = document.querySelector(
-				"[data-voice-send]",
-			) as HTMLButtonElement;
-			if (sendBtn) sendBtn.click();
-		}, 100);
-	}, []);
+	const handleVoiceTranscript = useCallback(
+		(text: string) => {
+			// Set the transcript as message input and send it
+			setMessageInputWithResize(text);
+			// We'll trigger send after a small delay to allow state to update
+			setTimeout(() => {
+				const sendBtn = document.querySelector(
+					"[data-voice-send]",
+				) as HTMLButtonElement;
+				if (sendBtn) sendBtn.click();
+			}, 100);
+		},
+		[setMessageInputWithResize],
+	);
 
 	const voiceMode = useVoiceMode({
 		config: features.voice ?? null,
@@ -892,11 +949,16 @@ export function SessionsApp() {
 		messageInputRef.current = messageInput;
 	}, [messageInput]);
 
-	const handleDictationTranscript = useCallback((text: string) => {
-		// Always append to the current value using the ref to avoid stale closures
-		const currentValue = messageInputRef.current;
-		setMessageInput(currentValue ? `${currentValue} ${text}` : text);
-	}, []);
+	const handleDictationTranscript = useCallback(
+		(text: string) => {
+			// Always append to the current value using the ref to avoid stale closures
+			const currentValue = messageInputRef.current;
+			setMessageInputWithResize(
+				currentValue ? `${currentValue} ${text}` : text,
+			);
+		},
+		[setMessageInputWithResize],
+	);
 
 	const dictation = useDictation({
 		config: features.voice ?? null,
@@ -1603,34 +1665,10 @@ export function SessionsApp() {
 	}, [mainChatAssistantName]);
 
 	const loadMessages = useCallback(async () => {
-		// Main Chat threaded view - shows all sessions combined
+		// Main Chat Pi view handles its own messages via usePiChat - skip loading here
 		if (mainChatActive) {
 			loadingSessionIdRef.current = "main-chat";
-			if (mainChatAssistantName) {
-				try {
-					const threadedMessages = await loadMainChatThreadedMessages();
-					// Check if we're still on main chat (session may have changed during async load)
-					if (loadingSessionIdRef.current !== "main-chat") return;
-					// Use merge to preserve optimistic messages (temp-* IDs)
-					startTransition(() => {
-						setMessages((prev) => {
-							// Keep any optimistic messages (temp-* IDs) that aren't in the loaded messages
-							const optimisticMessages = prev.filter((m) =>
-								m.info.id.startsWith("temp-"),
-							);
-							if (optimisticMessages.length === 0) {
-								return threadedMessages;
-							}
-							// Merge: loaded messages + optimistic messages at the end
-							return [...threadedMessages, ...optimisticMessages];
-						});
-					});
-				} catch (err) {
-					setStatus((err as Error).message);
-				}
-			} else {
-				setMessages([]);
-			}
+			// Don't load messages - MainChatPiView has its own cached message loading
 			return;
 		}
 
@@ -1639,6 +1677,7 @@ export function SessionsApp() {
 		// Capture session ID at start to detect stale responses
 		const targetSessionId = selectedChatSessionId;
 		loadingSessionIdRef.current = targetSessionId;
+		setMessagesLoading(true);
 
 		try {
 			let loadedMessages: OpenCodeMessageWithParts[] = [];
@@ -1681,12 +1720,19 @@ export function SessionsApp() {
 				return;
 			}
 
+			// Track that this session has messages (for skeleton display logic)
+			if (loadedMessages.length > 0) {
+				sessionsWithMessagesRef.current.add(targetSessionId);
+			}
+
 			// Use merge to prevent flickering when updating
 			startTransition(() => {
 				setMessages((prev) => mergeMessages(prev, loadedMessages));
 			});
 		} catch (err) {
 			setStatus((err as Error).message);
+		} finally {
+			setMessagesLoading(false);
 		}
 	}, [
 		opencodeBaseUrl,
@@ -1695,8 +1741,6 @@ export function SessionsApp() {
 		isHistoryOnlySession,
 		mergeMessages,
 		mainChatActive,
-		mainChatAssistantName,
-		loadMainChatThreadedMessages,
 	]);
 
 	const [eventsTransportMode, setEventsTransportMode] = useState<
@@ -1771,7 +1815,7 @@ export function SessionsApp() {
 		loadMessages();
 	}, [loadMessages]);
 
-	// Handle scroll events to show/hide scroll to bottom button
+	// Handle scroll events to show/hide scroll to bottom button and cache position
 	const handleScroll = useCallback(() => {
 		const container = messagesContainerRef.current;
 		if (!container) return;
@@ -1795,9 +1839,20 @@ export function SessionsApp() {
 			autoScrollEnabledRef.current = true;
 		}
 
+		// Cache scroll position for current session
+		if (selectedChatSessionId) {
+			if (isAtBottom) {
+				// At bottom - clear cached position so next load scrolls to bottom
+				scrollPositionCacheRef.current.set(selectedChatSessionId, null);
+			} else {
+				// Save scroll position
+				scrollPositionCacheRef.current.set(selectedChatSessionId, scrollTop);
+			}
+		}
+
 		// Show button when not at bottom (use small threshold for better UX)
 		setShowScrollToBottom(distanceFromBottom > 100);
-	}, []);
+	}, [selectedChatSessionId]);
 
 	const messageCount = messages.length;
 
@@ -1815,24 +1870,33 @@ export function SessionsApp() {
 
 		if (lastSessionIdRef.current !== selectedChatSessionId) {
 			lastSessionIdRef.current = selectedChatSessionId;
-			autoScrollEnabledRef.current = true;
+			// Check if we have a cached scroll position for this session
+			const cachedPosition = scrollPositionCacheRef.current.get(selectedChatSessionId);
+			// Enable auto-scroll only if no cached position (user was at bottom)
+			autoScrollEnabledRef.current = cachedPosition === null || cachedPosition === undefined;
 			initialLoadRef.current = true;
 		}
 	}, [selectedChatSessionId]);
 
-	// Position at bottom synchronously before paint (no visible jump)
+	// Position at cached position or bottom synchronously before paint (no visible jump)
 	useLayoutEffect(() => {
 		if (messages.length === 0) return;
 
 		const container = messagesContainerRef.current;
 		if (!container) return;
 
-		if (initialLoadRef.current) {
-			// Set scroll position directly - no animation, no visible jump
-			container.scrollTop = container.scrollHeight;
+		if (initialLoadRef.current && selectedChatSessionId) {
+			const cachedPosition = scrollPositionCacheRef.current.get(selectedChatSessionId);
+			if (cachedPosition !== null && cachedPosition !== undefined) {
+				// Restore user's scroll position instantly
+				container.scrollTop = cachedPosition;
+			} else {
+				// Scroll to bottom instantly (no animation)
+				container.scrollTop = container.scrollHeight;
+			}
 			initialLoadRef.current = false;
 		}
-	}, [messages]);
+	}, [messages, selectedChatSessionId]);
 
 	// Smooth scroll for new messages during conversation (after initial load)
 	useEffect(() => {
@@ -2023,6 +2087,52 @@ export function SessionsApp() {
 				// Coalesce refreshes to avoid hammering the server during streaming updates.
 				requestMessageRefresh(1000);
 			}
+
+			// Handle A2UI surface events
+			if (eventType === "a2ui.surface") {
+				const props = event.properties as {
+					sessionId?: string;
+					surfaceId?: string;
+					messages?: unknown[];
+					blocking?: boolean;
+					requestId?: string;
+				} | null;
+				if (props?.surfaceId && props?.messages) {
+					console.log("[A2UI] Surface received:", props.surfaceId, props);
+					setA2uiSurfaces((prev) => {
+						// Replace existing surface with same ID or add new
+						const existing = prev.findIndex(
+							(s) => s.surfaceId === props.surfaceId,
+						);
+						const newSurface: A2UISurface = {
+							surfaceId: props.surfaceId,
+							sessionId: props.sessionId ?? "",
+							messages: props.messages as A2UIMessage[],
+							blocking: props.blocking ?? false,
+							requestId: props.requestId,
+						};
+						if (existing >= 0) {
+							const updated = [...prev];
+							updated[existing] = newSurface;
+							return updated;
+						}
+						return [...prev, newSurface];
+					});
+				}
+			}
+
+			// Handle A2UI action resolved (remove blocking surface)
+			if (eventType === "a2ui.action_resolved") {
+				const props = event.properties as {
+					requestId?: string;
+				} | null;
+				if (props?.requestId) {
+					console.log("[A2UI] Action resolved:", props.requestId);
+					setA2uiSurfaces((prev) =>
+						prev.filter((s) => s.requestId !== props.requestId),
+					);
+				}
+			}
 		},
 		[
 			autoAttachMode,
@@ -2041,6 +2151,7 @@ export function SessionsApp() {
 	);
 
 	// Subscribe to session events (uses WebSocket when enabled, SSE otherwise)
+	// Disabled when Main Chat is active - MainChatPiView handles its own events
 	const { transportMode: sessionTransportMode } = useSessionEvents(
 		handleSessionEvent,
 		{
@@ -2049,7 +2160,8 @@ export function SessionsApp() {
 			opencodeBaseUrl: effectiveOpencodeBaseUrl,
 			opencodeDirectory,
 			activeSessionId,
-			enabled: !!effectiveOpencodeBaseUrl && !!activeSessionId,
+			enabled:
+				!mainChatActive && !!effectiveOpencodeBaseUrl && !!activeSessionId,
 		},
 	);
 
@@ -2058,10 +2170,14 @@ export function SessionsApp() {
 		setEventsTransportMode(sessionTransportMode);
 	}, [sessionTransportMode]);
 
+	// A2UI events are now handled by the useA2UI hook
+
 	// Poll for message updates while assistant is working.
 	// This runs regardless of SSE status since SSE is unreliable through the proxy.
+	// Disabled when Main Chat is active - MainChatPiView handles its own polling.
 	useEffect(() => {
 		if (
+			mainChatActive ||
 			chatState !== "sending" ||
 			!effectiveOpencodeBaseUrl ||
 			!activeSessionId
@@ -2124,6 +2240,7 @@ export function SessionsApp() {
 			if (timer) window.clearTimeout(timer);
 		};
 	}, [
+		mainChatActive,
 		chatState,
 		effectiveOpencodeBaseUrl,
 		opencodeDirectory,
@@ -2201,6 +2318,10 @@ export function SessionsApp() {
 		setMessages([]); // Clear messages immediately on session switch
 		// Invalidate any in-flight loadMessages requests for the old session
 		loadingSessionIdRef.current = selectedChatSessionId ?? null;
+		// Set loading state for sessions that have had messages before
+		if (selectedChatSessionId && sessionsWithMessagesRef.current.has(selectedChatSessionId)) {
+			setMessagesLoading(true);
+		}
 		if (!selectedChatSessionId) {
 			return;
 		}
@@ -2215,6 +2336,46 @@ export function SessionsApp() {
 	}, [messageGroups, visibleGroupCount]);
 
 	const hasHiddenMessages = messageGroups.length > visibleGroupCount;
+
+	// Map A2UI surfaces to their corresponding message group
+	// A2UI surfaces are attached to the message group containing their anchor message
+	const a2uiByGroupIndex = useMemo(() => {
+		const map = new Map<number, typeof a2uiSurfaces>();
+		for (const surface of a2uiSurfaces) {
+			// Find the group containing the anchor message ID
+			let targetGroupIndex = -1;
+			if (surface.anchorMessageId) {
+				for (let i = 0; i < visibleGroups.length; i++) {
+					const group = visibleGroups[i];
+					if (
+						group.messages.some((m) => m.info.id === surface.anchorMessageId)
+					) {
+						targetGroupIndex = i;
+						break;
+					}
+				}
+			}
+			// If no anchor or not found, attach to the last assistant group
+			if (targetGroupIndex === -1) {
+				for (let i = visibleGroups.length - 1; i >= 0; i--) {
+					if (visibleGroups[i].role === "assistant") {
+						targetGroupIndex = i;
+						break;
+					}
+				}
+			}
+			// Fallback to last group
+			if (targetGroupIndex === -1 && visibleGroups.length > 0) {
+				targetGroupIndex = visibleGroups.length - 1;
+			}
+			if (targetGroupIndex >= 0) {
+				const existing = map.get(targetGroupIndex) || [];
+				existing.push(surface);
+				map.set(targetGroupIndex, existing);
+			}
+		}
+		return map;
+	}, [visibleGroups, a2uiSurfaces]);
 
 	const loadMoreMessages = useCallback(() => {
 		setVisibleGroupCount((prev) => Math.min(prev + 20, messageGroups.length));
@@ -2769,6 +2930,88 @@ export function SessionsApp() {
 		// Don't set idle here - wait for SSE session.idle event
 	};
 
+	// Ref to hold latest handleSend for stable callback
+	const handleSendRef = useRef(handleSend);
+	handleSendRef.current = handleSend;
+
+	// Memoized input change handler to prevent re-renders
+	const handleInputChange = useCallback(
+		(e: React.ChangeEvent<HTMLTextAreaElement>) => {
+			const textarea = e.target;
+			const value = textarea.value;
+			setMessageInput(value);
+
+			// Auto-resize textarea immediately
+			textarea.style.height = "auto";
+			textarea.style.height = `${Math.min(textarea.scrollHeight, 200)}px`;
+
+			// Debounce draft persistence to localStorage (300ms)
+			if (draftSaveTimeoutRef.current) {
+				clearTimeout(draftSaveTimeoutRef.current);
+			}
+			draftSaveTimeoutRef.current = setTimeout(() => {
+				if (selectedChatSessionId) {
+					setDraft(selectedChatSessionId, value);
+				}
+			}, 300);
+
+			// Show slash popup when typing /
+			if (value.startsWith("/")) {
+				setShowSlashPopup(true);
+				setShowFileMentionPopup(false);
+			} else {
+				setShowSlashPopup(false);
+			}
+			// Show file mention popup when typing @
+			const atMatch = value.match(/@([^\s]*)$/);
+			if (atMatch && !value.startsWith("/")) {
+				setShowFileMentionPopup(true);
+				setFileMentionQuery(atMatch[1]);
+			} else {
+				setShowFileMentionPopup(false);
+				setFileMentionQuery("");
+			}
+		},
+		[selectedChatSessionId, setDraft],
+	);
+
+	// Memoized key down handler to prevent re-renders
+	const handleInputKeyDown = useCallback(
+		(e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+			// Let slash popup handle arrow keys, enter, tab when open
+			if (showSlashPopup && slashQuery.isSlash && !slashQuery.args) {
+				if (
+					["ArrowDown", "ArrowUp", "Enter", "Tab", "Escape"].includes(e.key)
+				) {
+					// Popup will handle these via its own event listener
+					return;
+				}
+			}
+			// Let file mention popup handle its keys
+			if (showFileMentionPopup) {
+				if (
+					["ArrowDown", "ArrowUp", "Enter", "Tab", "Escape"].includes(e.key)
+				) {
+					// Popup handles via its own event listener
+					return;
+				}
+			}
+			if (e.key === "Enter" && !e.shiftKey) {
+				e.preventDefault();
+				handleSendRef.current();
+				// Reset textarea height after sending
+				if (chatInputRef.current) {
+					chatInputRef.current.style.height = "auto";
+				}
+			}
+			if (e.key === "Escape") {
+				setShowSlashPopup(false);
+				setShowFileMentionPopup(false);
+			}
+		},
+		[showSlashPopup, slashQuery.isSlash, slashQuery.args, showFileMentionPopup],
+	);
+
 	const handleResume = async () => {
 		if (!selectedChatSessionId || !resumeWorkspacePath) return;
 
@@ -3054,7 +3297,51 @@ export function SessionsApp() {
 					onScroll={handleScroll}
 					className="h-full bg-muted/30 border border-border p-2 sm:p-4 overflow-y-auto space-y-4 sm:space-y-6 scrollbar-hide"
 				>
-					{messages.length === 0 && (
+					{messages.length === 0 && messagesLoading && selectedChatSessionId && sessionsWithMessagesRef.current.has(selectedChatSessionId) && (
+						<div className="space-y-4 sm:space-y-6 animate-pulse">
+							{/* User message skeleton */}
+							<div className="sm:ml-8 bg-primary/10 border border-primary/20">
+								<div className="flex items-center gap-2 px-2 sm:px-3 py-1.5 sm:py-2 border-b border-primary/20">
+									<div className="w-3 h-3 sm:w-4 sm:h-4 bg-primary/30" />
+									<div className="h-3 bg-primary/30 w-12" />
+									<div className="flex-1" />
+									<div className="h-2 bg-primary/20 w-10" />
+								</div>
+								<div className="px-2 sm:px-4 py-2 sm:py-3 space-y-2">
+									<div className="h-3 bg-primary/20 w-3/4" />
+									<div className="h-3 bg-primary/20 w-1/2" />
+								</div>
+							</div>
+							{/* Assistant message skeleton */}
+							<div className="sm:mr-8 bg-muted/50 border border-border">
+								<div className="flex items-center gap-2 px-2 sm:px-3 py-1.5 sm:py-2 border-b border-border">
+									<div className="w-3 h-3 sm:w-4 sm:h-4 bg-muted" />
+									<div className="h-3 bg-muted w-16" />
+									<div className="flex-1" />
+									<div className="h-2 bg-muted/70 w-10" />
+								</div>
+								<div className="px-2 sm:px-4 py-2 sm:py-3 space-y-2">
+									<div className="h-3 bg-muted w-full" />
+									<div className="h-3 bg-muted w-5/6" />
+									<div className="h-3 bg-muted w-4/5" />
+									<div className="h-3 bg-muted w-2/3" />
+								</div>
+							</div>
+							{/* Another user message skeleton */}
+							<div className="sm:ml-8 bg-primary/10 border border-primary/20">
+								<div className="flex items-center gap-2 px-2 sm:px-3 py-1.5 sm:py-2 border-b border-primary/20">
+									<div className="w-3 h-3 sm:w-4 sm:h-4 bg-primary/30" />
+									<div className="h-3 bg-primary/30 w-12" />
+									<div className="flex-1" />
+									<div className="h-2 bg-primary/20 w-10" />
+								</div>
+								<div className="px-2 sm:px-4 py-2 sm:py-3 space-y-2">
+									<div className="h-3 bg-primary/20 w-2/3" />
+								</div>
+							</div>
+						</div>
+					)}
+					{messages.length === 0 && !messagesLoading && !(selectedChatSessionId && sessionsWithMessagesRef.current.has(selectedChatSessionId)) && (
 						<div className="text-sm text-muted-foreground">{t.noMessages}</div>
 					)}
 					{hasHiddenMessages && (
@@ -3068,7 +3355,8 @@ export function SessionsApp() {
 								: `Load ${messageGroups.length - visibleGroupCount} older messages...`}
 						</button>
 					)}
-					{visibleGroups.map((group) => (
+					{/* Message groups with A2UI surfaces embedded */}
+					{visibleGroups.map((group, groupIndex) => (
 						<div
 							key={
 								group.messages[0]?.info.id ||
@@ -3087,10 +3375,13 @@ export function SessionsApp() {
 								workspaceDirectory={opencodeDirectory}
 								onFork={handleForkSession}
 								locale={locale}
+								a2uiSurfaces={a2uiByGroupIndex.get(groupIndex)}
+								onA2UIAction={handleA2UIAction}
 							/>
 						</div>
 					))}
-					<div ref={messagesEndRef} />
+
+					<div ref={messagesEndRef} data-messages-end />
 				</div>
 
 				{/* Jump to bottom button */}
@@ -3211,7 +3502,7 @@ export function SessionsApp() {
 							onSelect={(attachment) => {
 								// Remove @query from input, only show chip
 								const newInput = messageInput.replace(/@[^\s]*$/, "");
-								setMessageInput(newInput);
+								setMessageInputWithResize(newInput);
 								setFileAttachments((prev) => [...prev, attachment]);
 								setShowFileMentionPopup(false);
 								setFileMentionQuery("");
@@ -3240,6 +3531,12 @@ export function SessionsApp() {
 						)}
 						<textarea
 							ref={chatInputRef}
+							autoComplete="off"
+							autoCorrect="off"
+							autoCapitalize="sentences"
+							spellCheck={false}
+							enterKeyHint="send"
+							data-form-type="other"
 							placeholder={
 								dictation.isActive && dictation.liveTranscript
 									? dictation.liveTranscript
@@ -3254,74 +3551,32 @@ export function SessionsApp() {
 											: t.inputPlaceholder
 							}
 							value={messageInput}
-							onChange={(e) => {
-								const value = e.target.value;
-								setMessageInput(value);
-								// Show slash popup when typing /
-								if (value.startsWith("/")) {
-									setShowSlashPopup(true);
-									setShowFileMentionPopup(false);
-								} else {
-									setShowSlashPopup(false);
-								}
-								// Show file mention popup when typing @
-								const atMatch = value.match(/@([^\s]*)$/);
-								if (atMatch && !value.startsWith("/")) {
-									setShowFileMentionPopup(true);
-									setFileMentionQuery(atMatch[1]);
-								} else {
-									setShowFileMentionPopup(false);
-									setFileMentionQuery("");
-								}
-								// Auto-resize is handled by useEffect on messageInput change
-							}}
-							onKeyDown={(e) => {
-								// Let slash popup handle arrow keys, enter, tab when open
-								if (showSlashPopup && slashQuery.isSlash && !slashQuery.args) {
-									if (
-										["ArrowDown", "ArrowUp", "Enter", "Tab", "Escape"].includes(
-											e.key,
-										)
-									) {
-										// Popup will handle these via its own event listener
-										return;
-									}
-								}
-								// Let file mention popup handle its keys
-								if (showFileMentionPopup) {
-									if (
-										["ArrowDown", "ArrowUp", "Enter", "Tab", "Escape"].includes(
-											e.key,
-										)
-									) {
-										// Popup handles via its own event listener
-										return;
-									}
-								}
-								if (e.key === "Enter" && !e.shiftKey) {
-									e.preventDefault();
-									handleSend();
-									// Reset textarea height after sending
-									if (chatInputRef.current) {
-										chatInputRef.current.style.height = "auto";
-									}
-								}
-								if (e.key === "Escape") {
-									setShowSlashPopup(false);
-									setShowFileMentionPopup(false);
-								}
-							}}
+							onChange={handleInputChange}
+							onKeyDown={handleInputKeyDown}
 							onPaste={(e) => {
 								// Handle pasted files (images, etc.)
 								const items = e.clipboardData?.items;
 								if (!items) return;
 
 								const files: File[] = [];
+								let imageIndex = 0;
 								for (const item of Array.from(items)) {
 									if (item.kind === "file") {
 										const file = item.getAsFile();
 										if (file) {
-											files.push(file);
+											// Rename generic clipboard image names to be unique
+											const isGenericName =
+												/^image\.(png|gif|jpg|jpeg|webp)$/i.test(file.name);
+											if (isGenericName) {
+												const ext = file.name.split(".").pop() || "png";
+												const uniqueName = `pasted-image-${Date.now()}-${imageIndex++}.${ext}`;
+												const renamedFile = new File([file], uniqueName, {
+													type: file.type,
+												});
+												files.push(renamedFile);
+											} else {
+												files.push(file);
+											}
 										}
 									}
 								}
@@ -3671,6 +3926,7 @@ export function SessionsApp() {
 								assistantName={mainChatAssistantName}
 								hideHeader
 								onTokenUsageChange={setMainChatTokenUsage}
+								scrollToSessionId={mainChatCurrentSessionId}
 							/>
 						) : (
 							ChatContent
@@ -3701,7 +3957,9 @@ export function SessionsApp() {
 								workspacePath={resumeWorkspacePath}
 								className="flex-1 min-h-0 border-t border-border"
 								onStartIssue={(issueId, title) => {
-									setMessageInput(`Working on #${issueId}: ${title}\n\n`);
+									setMessageInputWithResize(
+										`Working on #${issueId}: ${title}\n\n`,
+									);
 									// On mobile, switch to chat view
 									if (window.innerWidth < 768) {
 										setActiveView("chat");
@@ -3723,7 +3981,9 @@ export function SessionsApp() {
 										await refreshChatHistory();
 										if (newSession.id) {
 											setSelectedChatSessionId(newSession.id);
-											setMessageInput(`Working on #${issueId}: ${title}\n\n`);
+											setMessageInputWithResize(
+												`Working on #${issueId}: ${title}\n\n`,
+											);
 											if (window.innerWidth < 768) {
 												setActiveView("chat");
 											}
@@ -3739,7 +3999,7 @@ export function SessionsApp() {
 						<Suspense fallback={viewLoadingFallback}>
 							<MemoriesView
 								workspacePath={resumeWorkspacePath}
-								storeName={mainChatActive ? mainChatAssistantName : null}
+								storeName={null}
 							/>
 						</Suspense>
 					)}
@@ -3785,7 +4045,7 @@ export function SessionsApp() {
 					<button
 						type="button"
 						onClick={() => setRightSidebarCollapsed((prev) => !prev)}
-						className="absolute top-2 right-2 p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted/50 rounded transition-colors z-10"
+						className="absolute top-4 right-4 xl:top-6 xl:right-6 p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted/50 rounded transition-colors z-10"
 						title={
 							rightSidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"
 						}
@@ -3805,6 +4065,7 @@ export function SessionsApp() {
 							workspacePath={mainChatWorkspacePath}
 							assistantName={mainChatAssistantName}
 							onTokenUsageChange={setMainChatTokenUsage}
+							scrollToSessionId={mainChatCurrentSessionId}
 						/>
 					) : (
 						ChatContent
@@ -4013,7 +4274,9 @@ export function SessionsApp() {
 											workspacePath={resumeWorkspacePath}
 											className="flex-1 min-h-0 border-t border-border"
 											onStartIssue={(issueId, title) => {
-												setMessageInput(`Working on #${issueId}: ${title}\n\n`);
+												setMessageInputWithResize(
+													`Working on #${issueId}: ${title}\n\n`,
+												);
 												setActiveView("chat");
 											}}
 											onStartIssueNewSession={async (issueId, title) => {
@@ -4032,7 +4295,7 @@ export function SessionsApp() {
 													await refreshChatHistory();
 													if (newSession.id) {
 														setSelectedChatSessionId(newSession.id);
-														setMessageInput(
+														setMessageInputWithResize(
 															`Working on #${issueId}: ${title}\n\n`,
 														);
 														setActiveView("chat");
@@ -4058,7 +4321,9 @@ export function SessionsApp() {
 											workspacePath={resumeWorkspacePath}
 											className="flex-1 min-h-0 border-t border-border"
 											onStartIssue={(issueId, title) => {
-												setMessageInput(`Working on #${issueId}: ${title}\n\n`);
+												setMessageInputWithResize(
+													`Working on #${issueId}: ${title}\n\n`,
+												);
 											}}
 											onStartIssueNewSession={async (issueId, title) => {
 												if (!resumeWorkspacePath) return;
@@ -4076,7 +4341,7 @@ export function SessionsApp() {
 													await refreshChatHistory();
 													if (newSession.id) {
 														setSelectedChatSessionId(newSession.id);
-														setMessageInput(
+														setMessageInputWithResize(
 															`Working on #${issueId}: ${title}\n\n`,
 														);
 													}
@@ -4094,7 +4359,7 @@ export function SessionsApp() {
 									<Suspense fallback={viewLoadingFallback}>
 										<MemoriesView
 											workspacePath={resumeWorkspacePath}
-											storeName={mainChatActive ? mainChatAssistantName : null}
+											storeName={null}
 										/>
 									</Suspense>
 								)}
@@ -4169,6 +4434,8 @@ const MessageGroupCard = memo(function MessageGroupCard({
 	workspaceDirectory,
 	onFork,
 	locale = "en",
+	a2uiSurfaces = [],
+	onA2UIAction,
 }: {
 	group: MessageGroup;
 	persona?: Persona | null;
@@ -4177,6 +4444,8 @@ const MessageGroupCard = memo(function MessageGroupCard({
 	workspaceDirectory?: string;
 	onFork?: (messageId: string) => void;
 	locale?: "de" | "en";
+	a2uiSurfaces?: A2UISurfaceState[];
+	onA2UIAction?: (action: A2UIUserAction) => void;
 }) {
 	const isUser = group.role === "user";
 
@@ -4193,17 +4462,24 @@ const MessageGroupCard = memo(function MessageGroupCard({
 	// Get all parts from all messages in order, preserving their sequence
 	const allParts = group.messages.flatMap((msg) => msg.parts);
 
-	// Group consecutive text parts together, but keep tool and other parts separate
+	// Group consecutive text parts together, but keep tool, file, and A2UI parts separate
 	// This creates "segments" that maintain the original order
 	type Segment =
-		| { key: string; type: "text"; content: string }
-		| { key: string; type: "tool"; part: OpenCodePart }
-		| { key: string; type: "file"; part: OpenCodePart }
-		| { key: string; type: "other"; part: OpenCodePart };
+		| { key: string; type: "text"; content: string; timestamp?: number }
+		| { key: string; type: "tool"; part: OpenCodePart; timestamp?: number }
+		| { key: string; type: "file"; part: OpenCodePart; timestamp?: number }
+		| {
+				key: string;
+				type: "a2ui";
+				surface: (typeof a2uiSurfaces)[0];
+				timestamp: number;
+		  }
+		| { key: string; type: "other"; part: OpenCodePart; timestamp?: number };
 
 	const segments: Segment[] = [];
 	let currentTextBuffer: string[] = [];
 	let currentTextKeys: string[] = [];
+	let lastTimestamp = 0;
 
 	const flushTextBuffer = () => {
 		if (currentTextBuffer.length > 0) {
@@ -4212,6 +4488,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 				key,
 				type: "text",
 				content: currentTextBuffer.join("\n\n"),
+				timestamp: lastTimestamp,
 			});
 			currentTextBuffer = [];
 			currentTextKeys = [];
@@ -4220,21 +4497,57 @@ const MessageGroupCard = memo(function MessageGroupCard({
 
 	for (const [index, part] of allParts.entries()) {
 		const partKey = part.id ?? `${part.type}-${index}`;
+		// Get timestamp from tool state if available
+		const partTimestamp =
+			part.type === "tool" && part.state?.time?.start
+				? part.state.time.start
+				: lastTimestamp + index;
+		lastTimestamp = partTimestamp;
+
 		if (part.type === "text" && typeof part.text === "string") {
 			currentTextBuffer.push(part.text);
 			currentTextKeys.push(partKey);
 		} else if (part.type === "tool") {
 			flushTextBuffer();
-			segments.push({ key: partKey, type: "tool", part });
+			segments.push({
+				key: partKey,
+				type: "tool",
+				part,
+				timestamp: partTimestamp,
+			});
 		} else if (part.type === "file") {
 			flushTextBuffer();
-			segments.push({ key: partKey, type: "file", part });
+			segments.push({
+				key: partKey,
+				type: "file",
+				part,
+				timestamp: partTimestamp,
+			});
 		} else {
 			flushTextBuffer();
-			segments.push({ key: partKey, type: "other", part });
+			segments.push({
+				key: partKey,
+				type: "other",
+				part,
+				timestamp: partTimestamp,
+			});
 		}
 	}
 	flushTextBuffer();
+
+	// Insert A2UI surfaces into segments based on their creation timestamp
+	for (const surface of a2uiSurfaces) {
+		const surfaceTimestamp = surface.createdAt.getTime();
+		segments.push({
+			key: `a2ui-${surface.surfaceId}`,
+			type: "a2ui",
+			surface,
+			timestamp: surfaceTimestamp,
+		});
+	}
+
+	// Sort segments by timestamp to interleave A2UI with tool calls
+	segments.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
 
 	// Get all text content for copy button
 	const allTextContent = allParts
@@ -4354,19 +4667,34 @@ const MessageGroupCard = memo(function MessageGroupCard({
 						const uniqueFileRefs = [...new Set(fileRefs)];
 
 						return (
-							<div key={segment.key} className="overflow-hidden space-y-2">
-								<MarkdownRenderer
-									content={segment.content}
-									className="text-sm text-foreground leading-relaxed overflow-hidden"
-								/>
-								{uniqueFileRefs.map((filePath) => (
-									<FileReferenceCard
-										key={filePath}
-										filePath={filePath}
-										workspacePath={workspaceDirectory}
-									/>
-								))}
-							</div>
+							<ContextMenu key={segment.key}>
+								<ContextMenuTrigger asChild>
+									<div className="overflow-hidden space-y-2 select-none sm:select-auto">
+										<MarkdownRenderer
+											content={segment.content}
+											className="text-sm text-foreground leading-relaxed overflow-hidden"
+										/>
+										{uniqueFileRefs.map((filePath) => (
+											<FileReferenceCard
+												key={filePath}
+												filePath={filePath}
+												workspacePath={workspaceDirectory}
+											/>
+										))}
+									</div>
+								</ContextMenuTrigger>
+								<ContextMenuContent>
+									<ContextMenuItem
+										onClick={() =>
+											navigator.clipboard?.writeText(segment.content)
+										}
+										className="gap-2"
+									>
+										<Copy className="w-4 h-4" />
+										{locale === "de" ? "Kopieren" : "Copy"}
+									</ContextMenuItem>
+								</ContextMenuContent>
+							</ContextMenu>
 						);
 					}
 
@@ -4395,41 +4723,55 @@ const MessageGroupCard = memo(function MessageGroupCard({
 						return <OtherPartCard key={segment.key} part={segment.part} />;
 					}
 
+					if (segment.type === "a2ui") {
+						return (
+							<A2UICallCard
+								key={segment.key}
+								surfaceId={segment.surface.surfaceId}
+								messages={segment.surface.messages}
+								blocking={segment.surface.blocking}
+								requestId={segment.surface.requestId}
+								answered={segment.surface.answered}
+								answeredAction={segment.surface.answeredAction}
+								answeredAt={segment.surface.answeredAt}
+								onAction={onA2UIAction}
+								defaultCollapsed={segment.surface.answered}
+							/>
+						);
+					}
+
 					return null;
 				})}
 			</div>
 		</div>
 	);
 
-	// If no fork handler, just render the card directly
-	if (!onFork || !lastMessageId) {
-		return messageCard;
-	}
-
-	// Wrap in context menu for fork functionality
+	// Always wrap in context menu for copy all (and fork if available)
 	return (
 		<ContextMenu>
 			<ContextMenuTrigger asChild>{messageCard}</ContextMenuTrigger>
 			<ContextMenuContent>
-				<ContextMenuItem
-					onClick={() => onFork(lastMessageId)}
-					className="gap-2"
-				>
-					<GitBranch className="w-4 h-4" />
-					{locale === "de" ? "Von hier verzweigen" : "Branch from here"}
-				</ContextMenuItem>
-				<ContextMenuSeparator />
-				<ContextMenuItem
-					onClick={() => {
-						if (allTextContent) {
-							navigator.clipboard?.writeText(allTextContent);
-						}
-					}}
-					className="gap-2"
-				>
-					<Copy className="w-4 h-4" />
-					{locale === "de" ? "Text kopieren" : "Copy text"}
-				</ContextMenuItem>
+				{allTextContent && (
+					<ContextMenuItem
+						onClick={() => navigator.clipboard?.writeText(allTextContent)}
+						className="gap-2"
+					>
+						<Copy className="w-4 h-4" />
+						{locale === "de" ? "Alles kopieren" : "Copy all"}
+					</ContextMenuItem>
+				)}
+				{onFork && lastMessageId && (
+					<>
+						{allTextContent && <ContextMenuSeparator />}
+						<ContextMenuItem
+							onClick={() => onFork(lastMessageId)}
+							className="gap-2"
+						>
+							<GitBranch className="w-4 h-4" />
+							{locale === "de" ? "Von hier verzweigen" : "Branch from here"}
+						</ContextMenuItem>
+					</>
+				)}
 			</ContextMenuContent>
 		</ContextMenu>
 	);
@@ -4738,7 +5080,7 @@ const TodoListView = memo(function TodoListView({
 	return (
 		<div className="flex flex-col flex-shrink-0 max-h-[40%] overflow-hidden">
 			{/* Summary header */}
-			<div className="p-3 border-b border-border bg-muted/30">
+			<div className="px-3 py-2 border-b border-border bg-muted/30">
 				<div className="flex items-center justify-between text-xs">
 					<span className="text-muted-foreground">{summary.total} tasks</span>
 					<div className="flex items-center gap-3">
@@ -4773,7 +5115,7 @@ const TodoListView = memo(function TodoListView({
 			</div>
 
 			{/* Todo list */}
-			<div className="flex-1 overflow-y-auto p-2 space-y-1">
+			<div className="flex-1 overflow-y-auto px-3 py-2 space-y-1">
 				{todos.map((todo, idx) => (
 					<div
 						key={todo.id || idx}

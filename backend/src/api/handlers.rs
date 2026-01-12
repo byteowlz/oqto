@@ -51,6 +51,19 @@ pub async fn health() -> Json<HealthResponse> {
     })
 }
 
+/// WebSocket debug info.
+#[derive(Debug, Serialize)]
+pub struct WsDebugResponse {
+    pub connected_users: usize,
+}
+
+/// Get WebSocket debug info (public, harmless).
+pub async fn ws_debug(State(state): State<AppState>) -> Json<WsDebugResponse> {
+    Json(WsDebugResponse {
+        connected_users: state.ws_hub.connected_user_count(),
+    })
+}
+
 /// Feature flags exposed to the frontend.
 #[derive(Debug, Serialize)]
 pub struct FeaturesResponse {
@@ -2443,15 +2456,11 @@ pub async fn update_trx_issue(
 
     let output = exec_trx_command(&query.workspace_path, &args).await?;
 
-    // Parse the updated issue (trx update --json returns array with single issue)
-    let raw_issues: Vec<TrxIssueRaw> = serde_json::from_str(&output)
+    // Parse the updated issue (trx update --json returns a single issue object)
+    let raw_issue: TrxIssueRaw = serde_json::from_str(&output)
         .map_err(|e| ApiError::internal(format!("Failed to parse trx output: {}", e)))?;
 
-    let issue = raw_issues
-        .into_iter()
-        .next()
-        .map(TrxIssue::from)
-        .ok_or_else(|| ApiError::internal("No issue returned from trx update"))?;
+    let issue = TrxIssue::from(raw_issue);
 
     info!(issue_id = %issue.id, "Updated TRX issue");
     Ok(Json(issue))
@@ -2476,15 +2485,11 @@ pub async fn close_trx_issue(
 
     let output = exec_trx_command(&query.workspace_path, &args).await?;
 
-    // Parse the closed issue
-    let raw_issues: Vec<TrxIssueRaw> = serde_json::from_str(&output)
+    // Parse the closed issue (trx close --json returns a single issue object)
+    let raw_issue: TrxIssueRaw = serde_json::from_str(&output)
         .map_err(|e| ApiError::internal(format!("Failed to parse trx output: {}", e)))?;
 
-    let issue = raw_issues
-        .into_iter()
-        .next()
-        .map(TrxIssue::from)
-        .ok_or_else(|| ApiError::internal("No issue returned from trx close"))?;
+    let issue = TrxIssue::from(raw_issue);
 
     info!(issue_id = %issue.id, "Closed TRX issue");
     Ok(Json(issue))

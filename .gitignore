@@ -25,9 +25,6 @@ Network Trash Folder
 Temporary Items
 .apdisk
 
-# bv (beads viewer) local config and caches
-.bv/
-
 # Local binaries / build artifacts
 backend/data/home/default/.opencode/bin/opencode
 fileserver/target/

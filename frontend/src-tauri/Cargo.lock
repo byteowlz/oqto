@@ -87,6 +87,7 @@ dependencies = [
  "tauri",
  "tauri-build",
  "tauri-plugin-cors-fetch",
+ "tauri-plugin-fs",
  "tauri-plugin-http",
  "tauri-plugin-log",
  "tauri-plugin-websocket",

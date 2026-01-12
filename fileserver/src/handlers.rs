@@ -989,6 +989,7 @@ pub async fn upload_file(
     Query(query): Query<UploadQuery>,
     mut multipart: Multipart,
 ) -> Result<Json<SuccessResponse>, FileServerError> {
+    warn!("Upload file request received for path: {}", query.path);
     let root_dir = resolve_request_root(&state.root_dir, query.directory.as_deref())?;
     // Use resolve_path for initial path building; deeper checks happen below.
     let dest_path = resolve_path(&root_dir, &query.path)?;
@@ -1006,8 +1007,11 @@ pub async fn upload_file(
     }
 
     let mut field = match multipart.next_field().await.map_err(|e| {
-        error!("Multipart error: {}", e);
-        FileServerError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+        error!("Multipart error parsing field: {:?}", e);
+        FileServerError::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("Error parsing `multipart/form-data` request: {}", e),
+        ))
     })? {
         Some(field) => field,
         None => {

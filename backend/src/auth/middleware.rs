@@ -275,23 +275,19 @@ pub async fn auth_middleware(
         .and_then(|cookie_header| token_from_cookie_header(cookie_header, "auth_token"));
 
     // Allow token in query parameter for WebSocket connections (browsers can't set headers on WS)
-    let query_token = req
-        .uri()
-        .query()
-        .and_then(|q| {
-            q.split('&')
-                .find_map(|pair| {
-                    let mut parts = pair.splitn(2, '=');
-                    let key = parts.next()?;
-                    let value = parts.next()?;
-                    if key == "token" {
-                        // URL decode the token value
-                        urlencoding::decode(value).ok().map(|s| s.into_owned())
-                    } else {
-                        None
-                    }
-                })
-        });
+    let query_token = req.uri().query().and_then(|q| {
+        q.split('&').find_map(|pair| {
+            let mut parts = pair.splitn(2, '=');
+            let key = parts.next()?;
+            let value = parts.next()?;
+            if key == "token" {
+                // URL decode the token value
+                urlencoding::decode(value).ok().map(|s| s.into_owned())
+            } else {
+                None
+            }
+        })
+    });
 
     let claims = if let Some(header) = auth_header {
         // Parse Bearer token

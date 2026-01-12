@@ -150,7 +150,28 @@ pub enum WsEvent {
         request_id: String,
     },
 
-    // ========== Compaction Events ==========
+    // ========== A2UI Events ==========
+    /// A2UI surface from agent.
+    /// Contains A2UI messages for rendering interactive UI.
+    A2uiSurface {
+        session_id: String,
+        surface_id: String,
+        /// A2UI messages (surfaceUpdate, dataModelUpdate, beginRendering, deleteSurface)
+        messages: Value,
+        /// Whether agent is waiting for user response
+        #[serde(default)]
+        blocking: bool,
+        /// Request ID for blocking surfaces
+        #[serde(skip_serializing_if = "Option::is_none")]
+        request_id: Option<String>,
+    },
+
+    /// A2UI user action response.
+    A2uiActionResolved {
+        session_id: String,
+        request_id: String,
+    },
+
     // ========== OpenCode-Specific Events ==========
     /// Raw OpenCode SSE event (for backwards compatibility).
     /// Contains the original event type and data.
@@ -221,6 +242,22 @@ pub enum WsCommand {
         request_id: String,
     },
 
+    // ========== A2UI Commands ==========
+    /// Send A2UI user action response.
+    A2uiAction {
+        session_id: String,
+        surface_id: String,
+        /// Request ID for blocking surfaces
+        #[serde(default)]
+        request_id: Option<String>,
+        /// Action name from the component
+        action_name: String,
+        /// Source component ID
+        source_component_id: String,
+        /// Resolved context from action
+        context: Value,
+    },
+
     // ========== Session Management ==========
     /// Request session state refresh.
     RefreshSession { session_id: String },
@@ -288,5 +325,27 @@ impl std::fmt::Display for ConnectionState {
             ConnectionState::Reconnecting => write!(f, "reconnecting"),
             ConnectionState::Failed => write!(f, "failed"),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests_a2ui {
+    use super::*;
+
+    #[test]
+    fn test_a2ui_surface_serialization() {
+        let event = WsEvent::A2uiSurface {
+            session_id: "test-session".to_string(),
+            surface_id: "surface-1".to_string(),
+            messages: serde_json::json!([{"test": "msg"}]),
+            blocking: true,
+            request_id: Some("req-123".to_string()),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        println!("A2UI Surface JSON: {}", json);
+        assert!(json.contains("\"type\":\"a2ui_surface\""));
+        assert!(json.contains("\"session_id\":\"test-session\""));
+        assert!(json.contains("\"surface_id\":\"surface-1\""));
+        assert!(json.contains("\"blocking\":true"));
     }
 }

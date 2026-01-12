@@ -349,6 +349,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_cors_fetch::init())
         .plugin(tauri_plugin_websocket::init())
+        .plugin(tauri_plugin_fs::init())
         .setup(|app| {
             // Always enable logging for debugging (including release builds)
             app.handle().plugin(

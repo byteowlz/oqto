@@ -111,27 +111,28 @@ const CodeBlockWithTheme = memo(function CodeBlockWithTheme({
 				</span>
 				<CopyButton text={codeString} />
 			</div>
-			<SyntaxHighlighter
-				style={
-					(isDarkMode ? oneDark : oneLight) as Record<
-						string,
-						React.CSSProperties
-					>
-				}
-				language={match ? match[1] : "text"}
-				PreTag="div"
-				wrapLongLines={true}
-				customStyle={{
-					margin: 0,
-					padding: "1rem",
-					backgroundColor: "var(--code-bg)",
-					fontSize: "0.75rem",
-					overflowX: "hidden",
-					wordBreak: "break-word",
-				}}
-			>
-				{codeString}
-			</SyntaxHighlighter>
+			<div className="overflow-x-auto">
+				<SyntaxHighlighter
+					style={
+						(isDarkMode ? oneDark : oneLight) as Record<
+							string,
+							React.CSSProperties
+						>
+					}
+					language={match ? match[1] : "text"}
+					PreTag="div"
+					wrapLongLines={false}
+					customStyle={{
+						margin: 0,
+						padding: "1rem",
+						backgroundColor: "var(--code-bg)",
+						fontSize: "0.75rem",
+						minWidth: "fit-content",
+					}}
+				>
+					{codeString}
+				</SyntaxHighlighter>
+			</div>
 		</div>
 	);
 });

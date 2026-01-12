@@ -451,6 +451,24 @@ struct AppConfig {
     scaffold: ScaffoldConfig,
     /// Pi agent configuration for Main Chat.
     pi: PiConfig,
+    /// Server configuration.
+    server: ServerConfig,
+}
+
+/// Server configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+struct ServerConfig {
+    /// Maximum file upload size in megabytes (default: 100).
+    max_upload_size_mb: usize,
+}
+
+impl Default for ServerConfig {
+    fn default() -> Self {
+        Self {
+            max_upload_size_mb: 100,
+        }
+    }
 }
 
 /// Backend mode selection.
@@ -511,6 +529,7 @@ impl Default for AppConfig {
             auth: auth::AuthConfig::default(),
             scaffold: ScaffoldConfig::default(),
             pi: PiConfig::default(),
+            server: ServerConfig::default(),
         }
     }
 }
@@ -1799,7 +1818,7 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     }
 
     // Create router
-    let app = api::create_router(state);
+    let app = api::create_router_with_config(state, ctx.config.server.max_upload_size_mb);
 
     // Bind and serve
     let addr: SocketAddr = format!("{}:{}", cmd.host, cmd.port)

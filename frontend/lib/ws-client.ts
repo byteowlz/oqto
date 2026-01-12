@@ -126,6 +126,19 @@ export type WsEvent =
 			session_id: string;
 			event_type: string;
 			data: unknown;
+	  }
+	| {
+			type: "a2ui_surface";
+			session_id: string;
+			surface_id: string;
+			messages: unknown[];
+			blocking?: boolean;
+			request_id?: string;
+	  }
+	| {
+			type: "a2ui_action_resolved";
+			session_id: string;
+			request_id: string;
 	  };
 
 // ============================================================================
@@ -163,7 +176,16 @@ export type WsCommand =
 			request_id: string;
 	  }
 	| { type: "refresh_session"; session_id: string }
-	| { type: "get_messages"; session_id: string; after_id?: string };
+	| { type: "get_messages"; session_id: string; after_id?: string }
+	| {
+			type: "a2ui_action";
+			session_id: string;
+			surface_id: string;
+			request_id?: string;
+			action_name: string;
+			source_component_id: string;
+			context: Record<string, unknown>;
+	  };
 
 export type Attachment = {
 	type: string;
@@ -366,6 +388,26 @@ class OctoWsClient {
 		});
 	}
 
+	/** Send A2UI user action */
+	sendA2UIAction(
+		sessionId: string,
+		surfaceId: string,
+		actionName: string,
+		sourceComponentId: string,
+		context: Record<string, unknown>,
+		requestId?: string,
+	): void {
+		this.send({
+			type: "a2ui_action",
+			session_id: sessionId,
+			surface_id: surfaceId,
+			request_id: requestId,
+			action_name: actionName,
+			source_component_id: sourceComponentId,
+			context,
+		});
+	}
+
 	/** Add an event handler for a specific session */
 	onSessionEvent(sessionId: string, handler: WsEventHandler): () => void {
 		let handlers = this.eventHandlers.get(sessionId);
@@ -446,6 +488,10 @@ class OctoWsClient {
 		this.ws.onmessage = (event) => {
 			try {
 				const data = JSON.parse(event.data) as WsEvent;
+				// Log all non-ping events for debugging
+				if (data.type !== "ping") {
+					console.log("[ws] Received event:", data.type, data);
+				}
 				this.handleEvent(data);
 			} catch (err) {
 				console.warn("[ws] Failed to parse message:", err, event.data);
@@ -493,6 +539,11 @@ class OctoWsClient {
 
 		// Reset ping timeout on any message
 		this.resetPingTimeout();
+
+		// Debug: log A2UI events
+		if (event.type === "a2ui_surface") {
+			console.log("[ws] A2UI surface received:", event);
+		}
 
 		// Get session ID from event
 		const sessionId =

@@ -3,5 +3,14 @@
 	"identifier": "default",
 	"description": "enables the default permissions",
 	"windows": ["main"],
-	"permissions": ["core:default"]
+	"permissions": [
+		"core:default",
+		"fs:default",
+		"fs:allow-read",
+		"fs:allow-write",
+		{
+			"identifier": "fs:scope",
+			"allow": ["$HOME/**", "$APPDATA/**", "$DOCUMENT/**", "$DOWNLOAD/**"]
+		}
+	]
 }

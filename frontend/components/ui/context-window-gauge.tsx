@@ -31,8 +31,6 @@ export function ContextWindowGauge({
 		return n.toString();
 	};
 
-	if (totalTokens === 0) return null;
-
 	if (compact) {
 		return (
 			<div

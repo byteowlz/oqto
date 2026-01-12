@@ -452,13 +452,13 @@ function AppShell() {
 			setActiveAppId("sessions");
 			// Close mobile menu
 			setMobileMenuOpen(false);
-			try {
-				const assistantInfo = await getMainChatAssistant(assistantName);
-				setMainChatWorkspacePath(assistantInfo.path);
-			} catch (err) {
-				console.error("Failed to load Main Chat assistant info:", err);
-				setMainChatWorkspacePath(null);
-			}
+			// Fetch workspace path in background - don't block navigation
+			getMainChatAssistant(assistantName)
+				.then((info) => setMainChatWorkspacePath(info.path))
+				.catch((err) => {
+					console.error("Failed to load Main Chat assistant info:", err);
+					setMainChatWorkspacePath(null);
+				});
 		},
 		[
 			setActiveAppId,
@@ -481,13 +481,13 @@ function AppShell() {
 			setActiveAppId("sessions");
 			// Close mobile menu
 			setMobileMenuOpen(false);
-			try {
-				const assistantInfo = await getMainChatAssistant(assistantName);
-				setMainChatWorkspacePath(assistantInfo.path);
-			} catch (err) {
-				console.error("Failed to load Main Chat assistant info:", err);
-				setMainChatWorkspacePath(null);
-			}
+			// Fetch workspace path in background - don't block navigation
+			getMainChatAssistant(assistantName)
+				.then((info) => setMainChatWorkspacePath(info.path))
+				.catch((err) => {
+					console.error("Failed to load Main Chat assistant info:", err);
+					setMainChatWorkspacePath(null);
+				});
 		},
 		[
 			setActiveAppId,
@@ -1229,8 +1229,36 @@ function AppShell() {
 		[apps, navigate, setActiveAppId],
 	);
 
+	// Toggle app - if already active, go back to sessions
+	const toggleApp = useCallback(
+		(appId: string) => {
+			if (activeAppId === appId) {
+				// Already active, go back to sessions
+				setActiveAppId("sessions");
+				const sessionsRoute = apps.find((app) => app.id === "sessions")?.routes?.[0];
+				if (sessionsRoute) {
+					navigate(sessionsRoute);
+				}
+			} else {
+				activateApp(appId);
+			}
+		},
+		[activeAppId, activateApp, apps, navigate, setActiveAppId],
+	);
+
 	const handleMobileNavClick = (appId: string) => {
 		activateApp(appId);
+		setMobileMenuOpen(false);
+	};
+
+	// Toggle version for mobile (for settings/admin)
+	const handleMobileToggleClick = (appId: string) => {
+		if (activeAppId === appId) {
+			// Already active, go back to sessions
+			activateApp("sessions");
+		} else {
+			activateApp(appId);
+		}
 		setMobileMenuOpen(false);
 	};
 
@@ -1912,7 +1940,7 @@ function AppShell() {
 								variant="ghost"
 								size="icon"
 								rounded="full"
-								onClick={() => handleMobileNavClick("settings")}
+								onClick={() => handleMobileToggleClick("settings")}
 								aria-label="Settings"
 								className={cn(
 									"hover:bg-sidebar-accent",
@@ -1928,7 +1956,7 @@ function AppShell() {
 								variant="ghost"
 								size="icon"
 								rounded="full"
-								onClick={() => handleMobileNavClick("admin")}
+								onClick={() => handleMobileToggleClick("admin")}
 								aria-label="Admin"
 								className={cn(
 									"hover:bg-sidebar-accent",
@@ -2711,7 +2739,7 @@ function AppShell() {
 							variant="ghost"
 							size="icon"
 							rounded="full"
-							onClick={() => activateApp("settings")}
+							onClick={() => toggleApp("settings")}
 							aria-label="Settings"
 							className="w-9 h-9 flex items-center justify-center transition-colors"
 							style={{
@@ -2743,7 +2771,7 @@ function AppShell() {
 							variant="ghost"
 							size="icon"
 							rounded="full"
-							onClick={() => activateApp("admin")}
+							onClick={() => toggleApp("admin")}
 							aria-label="Admin"
 							className="w-9 h-9 flex items-center justify-center transition-colors"
 							style={{

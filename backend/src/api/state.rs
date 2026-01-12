@@ -8,6 +8,7 @@ use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::rt::TokioExecutor;
 
 use super::super::agent::AgentService;
+use super::a2ui::PendingA2uiRequests;
 use crate::agent_rpc::AgentBackend;
 use crate::auth::AuthState;
 use crate::invite::InviteCodeRepository;
@@ -166,6 +167,8 @@ pub struct AppState {
     pub main_chat_pi: Option<Arc<MainChatPiService>>,
     /// WebSocket hub for real-time communication.
     pub ws_hub: Arc<WsHub>,
+    /// Pending A2UI blocking requests (request_id -> response channel).
+    pub pending_a2ui_requests: PendingA2uiRequests,
 }
 
 impl AppState {
@@ -199,6 +202,7 @@ impl AppState {
             main_chat: None,
             main_chat_pi: None,
             ws_hub: Arc::new(WsHub::new()),
+            pending_a2ui_requests: super::a2ui::new_pending_requests(),
         }
     }
 
@@ -233,6 +237,7 @@ impl AppState {
             main_chat: None,
             main_chat_pi: None,
             ws_hub: Arc::new(WsHub::new()),
+            pending_a2ui_requests: super::a2ui::new_pending_requests(),
         }
     }
 

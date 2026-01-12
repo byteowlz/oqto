@@ -1,4 +1,5 @@
 import { ThemeProvider } from "@/components/theme-provider";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import { i18n } from "@/lib/i18n";
 import { getQueryClient } from "@/lib/query-client";
 import { QueryClientProvider } from "@tanstack/react-query";
@@ -21,7 +22,7 @@ export function Providers({ children }: ProvidersProps) {
 					enableSystem
 					disableTransitionOnChange
 				>
-					{children}
+					<TooltipProvider delayDuration={0}>{children}</TooltipProvider>
 				</ThemeProvider>
 			</I18nextProvider>
 		</QueryClientProvider>

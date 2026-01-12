@@ -90,6 +90,19 @@ export type SessionEvent =
 			message: string;
 			details?: unknown;
 	  }
+	| {
+			type: "a2ui.surface";
+			sessionId: string;
+			surfaceId: string;
+			messages: unknown[];
+			blocking: boolean;
+			requestId?: string;
+	  }
+	| {
+			type: "a2ui.action_resolved";
+			sessionId: string;
+			requestId: string;
+	  }
 	| { type: "raw"; event: WsEvent };
 
 // Internal Permission type for WS events - matches backend WsEvent::PermissionRequest
@@ -333,6 +346,29 @@ function mapWsEventToSessionEvent(
 		case "opencode_event":
 			// Pass through raw OpenCode events for components that need them
 			return { type: "raw", event };
+
+		case "a2ui_surface":
+			if ("surface_id" in event && "messages" in event) {
+				return {
+					type: "a2ui.surface",
+					sessionId,
+					surfaceId: event.surface_id,
+					messages: event.messages as unknown[],
+					blocking: event.blocking ?? false,
+					requestId: event.request_id,
+				};
+			}
+			return null;
+
+		case "a2ui_action_resolved":
+			if ("request_id" in event) {
+				return {
+					type: "a2ui.action_resolved",
+					sessionId,
+					requestId: event.request_id,
+				};
+			}
+			return null;
 
 		default:
 			// Return raw event for unhandled types
@@ -604,6 +640,33 @@ function mapWsEventToLegacyEvent(event: WsEvent): LegacyEvent | null {
 				return {
 					type: event.event_type,
 					properties: event.data as Record<string, unknown>,
+				};
+			}
+			return null;
+
+		case "a2ui_surface":
+			if ("surface_id" in event && "messages" in event) {
+				return {
+					type: "a2ui.surface",
+					properties: {
+						sessionId: "session_id" in event ? event.session_id : undefined,
+						surfaceId: event.surface_id,
+						messages: event.messages,
+						blocking: event.blocking ?? false,
+						requestId: event.request_id,
+					},
+				};
+			}
+			return null;
+
+		case "a2ui_action_resolved":
+			if ("request_id" in event) {
+				return {
+					type: "a2ui.action_resolved",
+					properties: {
+						sessionId: "session_id" in event ? event.session_id : undefined,
+						requestId: event.request_id,
+					},
 				};
 			}
 			return null;

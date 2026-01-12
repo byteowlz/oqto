@@ -182,6 +182,35 @@ impl WsHub {
             })
             .collect()
     }
+
+    /// Get all users subscribed to a session.
+    pub fn session_subscribers(&self, session_id: &str) -> Vec<String> {
+        self.session_subscribers
+            .get(session_id)
+            .map(|s| s.iter().cloned().collect())
+            .unwrap_or_default()
+    }
+
+    /// Send an event to all users subscribed to a session.
+    pub async fn send_to_session(&self, session_id: &str, event: WsEvent) {
+        let subscribers = self.session_subscribers(session_id);
+        for user_id in subscribers {
+            self.send_to_user(&user_id, event.clone()).await;
+        }
+    }
+
+    /// Send an event to ALL connected users (for testing/broadcast).
+    pub async fn broadcast_to_all(&self, event: WsEvent) {
+        for entry in self.connections.iter() {
+            let user_id = entry.key();
+            self.send_to_user(user_id, event.clone()).await;
+        }
+    }
+
+    /// Get count of connected users (for debugging).
+    pub fn connected_user_count(&self) -> usize {
+        self.connections.len()
+    }
 }
 
 impl Default for WsHub {

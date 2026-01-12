@@ -39,6 +39,7 @@ import {
 	type ReactNode,
 	type SetStateAction,
 	createContext,
+	startTransition,
 	useCallback,
 	useEffect,
 	useMemo,
@@ -169,7 +170,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
 	// Track which chat sessions are currently busy (agent working)
 	const [busySessions, setBusySessions] = useState<Set<string>>(new Set());
 	// Main Chat state - when active, sessions app shows threaded view
-	const [mainChatActive, setMainChatActive] = useState(false);
+	const [mainChatActive, setMainChatActiveRaw] = useState(false);
+	// Wrap in startTransition to prevent blocking the main thread during view switch
+	const setMainChatActive = useCallback(
+		(value: boolean | ((prev: boolean) => boolean)) => {
+			startTransition(() => {
+				setMainChatActiveRaw(value);
+			});
+		},
+		[],
+	);
 	const [mainChatAssistantName, setMainChatAssistantName] = useState<
 		string | null
 	>(null);
@@ -277,28 +287,45 @@ export function AppProvider({ children }: { children: ReactNode }) {
 				listProjects().catch(() => [] as ProjectEntry[]),
 			]);
 
-			setWorkspaceSessions(sessionsData);
-			setProjects(projectsData);
+			// Use startTransition to make state updates non-blocking and interruptible
+			// This helps prevent Radix UI infinite loop bugs during rapid updates
+			startTransition(() => {
+				setWorkspaceSessions(sessionsData);
+				setProjects(projectsData);
 
-			if (sessionsData.length > 0) {
-				setSelectedWorkspaceSessionId((current) => {
-					// If no current selection, pick the first running session or first session
-					if (!current) {
-						const running = sessionsData.find((s) => s.status === "running");
-						return running?.id || sessionsData[0].id;
-					}
-					// Check if current session exists
-					const currentSession = sessionsData.find((s) => s.id === current);
-					if (!currentSession) {
-						return sessionsData[0].id;
-					}
-					return current;
-				});
-			}
+				if (sessionsData.length > 0) {
+					setSelectedWorkspaceSessionId((current) => {
+						// If no current selection, pick the first running session or first session
+						if (!current) {
+							const running = sessionsData.find((s) => s.status === "running");
+							return running?.id || sessionsData[0].id;
+						}
+						// Check if current session exists
+						const currentSession = sessionsData.find((s) => s.id === current);
+						if (!currentSession) {
+							return sessionsData[0].id;
+						}
+						return current;
+					});
+				}
+			});
 		} catch (err) {
 			console.error("Failed to load sessions:", err);
 		}
 	}, []);
+
+	// Debounced refresh to prevent rapid re-renders that cause Radix UI ContextMenu infinite loop
+	// See: https://github.com/radix-ui/primitives/issues/3385
+	const refreshTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const debouncedRefreshWorkspaceSessions = useCallback(() => {
+		if (refreshTimeoutRef.current) {
+			clearTimeout(refreshTimeoutRef.current);
+		}
+		refreshTimeoutRef.current = setTimeout(() => {
+			refreshTimeoutRef.current = null;
+			refreshWorkspaceSessions();
+		}, 100);
+	}, [refreshWorkspaceSessions]);
 
 	// Handle WebSocket events from all subscribed sessions
 	const handleWsEvent = useCallback(
@@ -312,17 +339,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
 				setSessionBusy(sessionId, false);
 			}
 
-			// Refresh workspace sessions on relevant events
+			// Refresh workspace sessions on relevant events (debounced to prevent Radix UI bugs)
 			if (
 				event.type === "session_updated" ||
 				event.type === "session_deleted" ||
 				event.type === "agent_connected" ||
 				event.type === "agent_disconnected"
 			) {
-				refreshWorkspaceSessions();
+				debouncedRefreshWorkspaceSessions();
 			}
 		},
-		[refreshWorkspaceSessions, setSessionBusy],
+		[debouncedRefreshWorkspaceSessions, setSessionBusy],
 	);
 
 	// Start a new session for a specific project
@@ -851,6 +878,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 			startProjectSession,
 			projectDefaultAgents,
 			mainChatActive,
+			setMainChatActive,
 			mainChatAssistantName,
 			mainChatCurrentSessionId,
 			mainChatWorkspacePath,

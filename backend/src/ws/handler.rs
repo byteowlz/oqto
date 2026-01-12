@@ -568,5 +568,57 @@ async fn handle_command(
 
             Ok(())
         }
+
+        WsCommand::A2uiAction {
+            session_id,
+            surface_id,
+            request_id,
+            action_name,
+            source_component_id,
+            context,
+        } => {
+            tracing::info!(
+                session_id = %session_id,
+                surface_id = %surface_id,
+                action_name = %action_name,
+                source_component_id = %source_component_id,
+                "Received A2UI action"
+            );
+
+            // Convert context from Value to HashMap<String, Value>
+            let context_map: std::collections::HashMap<String, serde_json::Value> = context
+                .as_object()
+                .map(|obj| obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+                .unwrap_or_default();
+
+            // If this is a blocking request, forward to the pending request handler
+            if let Some(ref req_id) = request_id {
+                let handled = crate::api::a2ui::handle_a2ui_action(
+                    &state.pending_a2ui_requests,
+                    req_id,
+                    action_name.clone(),
+                    source_component_id.clone(),
+                    context_map,
+                );
+
+                if handled {
+                    tracing::info!(request_id = %req_id, "A2UI blocking request resolved");
+                }
+
+                // Send resolved event to frontend
+                hub.send_to_user(
+                    user_id,
+                    WsEvent::A2uiActionResolved {
+                        session_id: session_id.clone(),
+                        request_id: req_id.clone(),
+                    },
+                )
+                .await;
+            }
+
+            let _ = surface_id; // Silence unused warning
+
+            Ok(())
+        }
     }
 }

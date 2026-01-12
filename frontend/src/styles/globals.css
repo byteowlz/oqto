@@ -247,7 +247,6 @@
 @layer base {
 	* {
 		@apply border-border outline-ring/50;
-		border-radius: 0 !important;
 	}
 	body {
 		@apply bg-background text-foreground;
@@ -380,6 +379,10 @@
 	.chat-input-container textarea {
 		min-height: unset;
 	}
+	/* Exclude switch component - has its own sizing */
+	[data-slot="switch"] {
+		min-height: unset;
+	}
 }
 
 /* Prevent pull-to-refresh on mobile */
@@ -412,6 +415,7 @@ body {
 	.chat-input-container {
 		position: sticky;
 		bottom: 0;
-		background: inherit;
+		/* Use explicit muted background instead of inherit to ensure correct color in Tauri */
+		background-color: oklch(from var(--muted) l c h / 0.3);
 	}
 }

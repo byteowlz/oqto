@@ -41,13 +41,14 @@ import {
 	ExternalLink,
 	Filter,
 	Loader2,
+	Mountain,
+	Package,
 	Pause,
 	Pencil,
 	Play,
 	Plus,
 	RefreshCw,
-	Sparkles,
-	Target,
+	Search,
 	Trash2,
 	X,
 } from "lucide-react";
@@ -184,9 +185,9 @@ const issueTypeConfig: Record<
 	{ icon: typeof Bug; color: string; label: string }
 > = {
 	bug: { icon: Bug, color: "text-red-400", label: "Bug" },
-	feature: { icon: Sparkles, color: "text-purple-400", label: "Feature" },
+	feature: { icon: Package, color: "text-purple-400", label: "Feature" },
 	task: { icon: ClipboardList, color: "text-blue-400", label: "Task" },
-	epic: { icon: Target, color: "text-amber-400", label: "Epic" },
+	epic: { icon: Mountain, color: "text-amber-400", label: "Epic" },
 	chore: { icon: CircleDot, color: "text-gray-400", label: "Chore" },
 };
 
@@ -247,45 +248,42 @@ const IssueCard = memo(function IssueCard({
 	const isClosed = issue.status === "closed";
 
 	return (
-		<div
-			className={cn(
-				"space-y-1",
-				depth > 0 && "ml-4 border-l border-border pl-2",
-			)}
-		>
+		<div className={cn("space-y-1", depth > 0 && "ml-6")}>
 			<ContextMenu>
 				<ContextMenuTrigger asChild>
 					<div
 						className={cn(
-							"group flex items-center gap-2 p-2 rounded transition-colors cursor-context-menu",
+							"group p-2 rounded transition-colors cursor-context-menu flex gap-2",
 							isClosed ? "opacity-50" : "hover:bg-muted/50",
 							isEditing && "bg-muted/50 ring-1 ring-primary/50",
 						)}
 					>
-						{/* Expand/collapse button for epics with children */}
-						{hasChildren ? (
-							<button
-								type="button"
-								onClick={onToggle}
-								className="flex-shrink-0 p-0.5 hover:bg-muted rounded"
-							>
-								{isExpanded ? (
-									<ChevronDown className="w-3 h-3 text-muted-foreground" />
-								) : (
-									<ChevronRight className="w-3 h-3 text-muted-foreground" />
-								)}
-							</button>
-						) : (
-							<div className="w-4" />
-						)}
+						{/* Left column: Type icon + Chevron below (aligned with row 2 or 3) */}
+						<div className="flex flex-col items-center flex-shrink-0 pt-0.5 w-4">
+							<TypeIcon
+								className={cn("w-4 h-4", typeConfig.color)}
+							/>
+							{hasChildren && (
+								<button
+									type="button"
+									onClick={onToggle}
+									className={cn(
+										"p-0.5 hover:bg-muted rounded",
+										issue.description ? "mt-1" : "mt-2.5"
+									)}
+								>
+									{isExpanded ? (
+										<ChevronDown className="w-3 h-3 text-muted-foreground" />
+									) : (
+										<ChevronRight className="w-3 h-3 text-muted-foreground" />
+									)}
+								</button>
+							)}
+						</div>
 
-						{/* Type icon */}
-						<TypeIcon
-							className={cn("w-4 h-4 flex-shrink-0", typeConfig.color)}
-						/>
-
-						{/* Content */}
+						{/* Right column: Content rows */}
 						<div className="flex-1 min-w-0">
+							{/* Row 1: Title + ID */}
 							{isEditing ? (
 								<div className="flex items-center gap-1">
 									<Input
@@ -323,7 +321,7 @@ const IssueCard = memo(function IssueCard({
 										<TooltipTrigger asChild>
 											<span
 												className={cn(
-													"text-sm font-medium truncate cursor-default",
+													"text-sm font-medium truncate cursor-default flex-1",
 													isClosed && "line-through text-muted-foreground",
 												)}
 											>
@@ -342,110 +340,114 @@ const IssueCard = memo(function IssueCard({
 											)}
 										</TooltipContent>
 									</Tooltip>
-									<span className="text-[10px] font-mono text-muted-foreground">
+									<span className="text-[10px] font-mono text-muted-foreground flex-shrink-0">
 										{issue.id}
 									</span>
 								</div>
 							)}
+
+							{/* Row 2: Description */}
 							{!isEditing && issue.description && (
-								<p className="text-xs text-muted-foreground line-clamp-1 mt-0.5">
+								<p className="text-[11px] text-muted-foreground truncate mt-0.5">
 									{issue.description}
 								</p>
 							)}
-						</div>
 
-						{/* Status/priority badges */}
-						<div className="flex items-center gap-1 flex-shrink-0">
-							<Badge
-								variant="outline"
-								className={cn(
-									"text-[9px] px-1 py-0 h-4",
-									statusColors[issue.status] || statusColors.open,
-								)}
-							>
-								{issue.status.replace("_", " ")}
-							</Badge>
-							<Badge
-								variant="outline"
-								className={cn(
-									"text-[9px] px-1 py-0 h-4 border",
-									priorityColors[issue.priority] || priorityColors[2],
-								)}
-							>
-								P{issue.priority}
-							</Badge>
-						</div>
-
-						{/* Actions - always visible */}
-						{!isClosed && (
-							<div className="flex items-center gap-0.5">
-								{issue.status !== "in_progress" &&
-									(onStartHere || onStartNewSession) && (
-										<DropdownMenu>
-											<DropdownMenuTrigger asChild>
-												<Button
-													type="button"
-													variant="ghost"
-													size="sm"
-													onClick={(e) => e.stopPropagation()}
-													className="h-5 w-5 p-0"
-													title="Start working"
-												>
-													<Play className="w-3 h-3 text-muted-foreground" />
-												</Button>
-											</DropdownMenuTrigger>
-											<DropdownMenuContent align="end" className="w-40">
-												{onStartHere && (
-													<DropdownMenuItem
-														onClick={onStartHere}
-														className="text-xs"
-													>
-														<Play className="w-3 h-3 mr-2" />
-														Start here
-													</DropdownMenuItem>
-												)}
-												{onStartNewSession && (
-													<DropdownMenuItem
-														onClick={onStartNewSession}
-														className="text-xs"
-													>
-														<ExternalLink className="w-3 h-3 mr-2" />
-														Start in new session
-													</DropdownMenuItem>
-												)}
-											</DropdownMenuContent>
-										</DropdownMenu>
+							{/* Row 3: Status, Priority, Actions */}
+							<div className="flex items-center gap-1 mt-1">
+								<Badge
+									variant="outline"
+									className={cn(
+										"text-[9px] px-1 py-0 h-4",
+										statusColors[issue.status] || statusColors.open,
 									)}
-								{issue.status === "in_progress" && (
-									<Button
-										type="button"
-										variant="ghost"
-										size="sm"
-										onClick={(e) => {
-											e.stopPropagation();
-											onStatusChange("open");
-										}}
-										className="h-5 w-5 p-0"
-										title="Pause"
-									>
-										<Pause className="w-3 h-3 text-muted-foreground" />
-									</Button>
-								)}
-								<Button
-									type="button"
-									variant="ghost"
-									size="sm"
-									onClick={(e) => {
-										e.stopPropagation();
-										onStatusChange("closed");
-									}}
-									className="h-5 w-5 p-0"
-									title="Mark as done"
 								>
-									<CheckCircle2 className="w-3 h-3 text-muted-foreground" />
-								</Button>
+									{issue.status.replace("_", " ")}
+								</Badge>
+								<Badge
+									variant="outline"
+									className={cn(
+										"text-[9px] px-1 py-0 h-4 border",
+										priorityColors[issue.priority] || priorityColors[2],
+									)}
+								>
+									P{issue.priority}
+								</Badge>
+
+								<div className="flex-1" />
+
+								{/* Actions */}
+								{!isClosed && (
+									<div className="flex items-center gap-0.5">
+										{issue.status !== "in_progress" &&
+											(onStartHere || onStartNewSession) && (
+												<DropdownMenu>
+													<DropdownMenuTrigger asChild>
+														<Button
+															type="button"
+															variant="ghost"
+															size="sm"
+															onClick={(e) => e.stopPropagation()}
+															className="h-5 w-5 p-0"
+															title="Start working"
+														>
+															<Play className="w-3 h-3 text-muted-foreground" />
+														</Button>
+													</DropdownMenuTrigger>
+													<DropdownMenuContent align="end" className="w-40">
+														{onStartHere && (
+															<DropdownMenuItem
+																onClick={onStartHere}
+																className="text-xs"
+															>
+																<Play className="w-3 h-3 mr-2" />
+																Start here
+															</DropdownMenuItem>
+														)}
+														{onStartNewSession && (
+															<DropdownMenuItem
+																onClick={onStartNewSession}
+																className="text-xs"
+															>
+																<ExternalLink className="w-3 h-3 mr-2" />
+																Start in new session
+															</DropdownMenuItem>
+														)}
+													</DropdownMenuContent>
+												</DropdownMenu>
+											)}
+										{issue.status === "in_progress" && (
+											<Button
+												type="button"
+												variant="ghost"
+												size="sm"
+												onClick={(e) => {
+													e.stopPropagation();
+													onStatusChange("open");
+												}}
+												className="h-5 w-5 p-0"
+												title="Pause"
+											>
+												<Pause className="w-3 h-3 text-muted-foreground" />
+											</Button>
+										)}
+										<Button
+											type="button"
+											variant="ghost"
+											size="sm"
+											onClick={(e) => {
+												e.stopPropagation();
+												onStatusChange("closed");
+											}}
+											className="h-5 w-5 p-0"
+											title="Mark as done"
+										>
+											<CheckCircle2 className="w-3 h-3 text-muted-foreground" />
+										</Button>
+									</div>
+								)}
 							</div>
-						)}
+						</div>
 					</div>
 				</ContextMenuTrigger>
 				<ContextMenuContent>
@@ -541,9 +543,13 @@ export const TrxView = memo(function TrxView({
 	// Sort and filter state
 	type SortOption = "status" | "priority" | "created" | "updated";
 	type FilterStatus = "all" | "open" | "in_progress" | "closed";
+	type FilterType = "all" | "bug" | "feature" | "task" | "epic" | "chore";
 	const [sortBy, setSortBy] = useState<SortOption>("status");
 	const [filterStatus, setFilterStatus] = useState<FilterStatus>("all");
+	const [filterType, setFilterType] = useState<FilterType>("all");
 	const [hideClosed, setHideClosed] = useState(false);
+	const [searchQuery, setSearchQuery] = useState("");
+	const [searchIncludeDescription, setSearchIncludeDescription] = useState(false);
 
 	const loadIssues = useCallback(async () => {
 		if (!workspacePath) {
@@ -610,16 +616,46 @@ export const TrxView = memo(function TrxView({
 		[sortBy],
 	);
 
+	// Fuzzy match function
+	const fuzzyMatch = useCallback((text: string, query: string): boolean => {
+		if (!query) return true;
+		const lowerText = text.toLowerCase();
+		const lowerQuery = query.toLowerCase();
+		
+		// Check for direct substring match first
+		if (lowerText.includes(lowerQuery)) return true;
+		
+		// Fuzzy match: all query chars must appear in order
+		let queryIndex = 0;
+		for (const char of lowerText) {
+			if (char === lowerQuery[queryIndex]) {
+				queryIndex++;
+				if (queryIndex === lowerQuery.length) return true;
+			}
+		}
+		return false;
+	}, []);
+
 	// Filter function
 	const filterIssues = useCallback(
 		(issueList: TrxIssue[]): TrxIssue[] => {
 			return issueList.filter((issue) => {
 				if (hideClosed && issue.status === "closed") return false;
-				if (filterStatus === "all") return true;
-				return issue.status === filterStatus;
+				if (filterStatus !== "all" && issue.status !== filterStatus)
+					return false;
+				if (filterType !== "all" && issue.issue_type !== filterType)
+					return false;
+				// Fuzzy search on title, optionally description, and id
+				if (searchQuery) {
+					const matchesTitle = fuzzyMatch(issue.title, searchQuery);
+					const matchesDescription = searchIncludeDescription && issue.description ? fuzzyMatch(issue.description, searchQuery) : false;
+					const matchesId = fuzzyMatch(issue.id, searchQuery);
+					if (!matchesTitle && !matchesDescription && !matchesId) return false;
+				}
+				return true;
 			});
 		},
-		[filterStatus, hideClosed],
+		[filterStatus, filterType, hideClosed, searchQuery, searchIncludeDescription, fuzzyMatch],
 	);
 
 	// Organize issues into hierarchy (epics with children)
@@ -849,7 +885,7 @@ export const TrxView = memo(function TrxView({
 	return (
 		<div className={cn("flex flex-col h-full overflow-hidden", className)}>
 			{/* Header */}
-			<div className="flex-shrink-0 p-2 border-b border-border">
+			<div className="flex-shrink-0 px-3 py-2 border-b border-border">
 				<div className="flex items-center justify-between mb-2">
 					<span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
 						Issues
@@ -926,12 +962,63 @@ export const TrxView = memo(function TrxView({
 									Open only
 								</DropdownMenuCheckboxItem>
 								<DropdownMenuSeparator />
+								<DropdownMenuLabel className="text-xs">Type</DropdownMenuLabel>
+								<DropdownMenuCheckboxItem
+									checked={filterType === "all"}
+									onCheckedChange={() => setFilterType("all")}
+									className="text-xs"
+								>
+									All types
+								</DropdownMenuCheckboxItem>
+								<DropdownMenuCheckboxItem
+									checked={filterType === "bug"}
+									onCheckedChange={() => setFilterType("bug")}
+									className="text-xs"
+								>
+									Bugs
+								</DropdownMenuCheckboxItem>
+								<DropdownMenuCheckboxItem
+									checked={filterType === "feature"}
+									onCheckedChange={() => setFilterType("feature")}
+									className="text-xs"
+								>
+									Features
+								</DropdownMenuCheckboxItem>
+								<DropdownMenuCheckboxItem
+									checked={filterType === "task"}
+									onCheckedChange={() => setFilterType("task")}
+									className="text-xs"
+								>
+									Tasks
+								</DropdownMenuCheckboxItem>
+								<DropdownMenuCheckboxItem
+									checked={filterType === "epic"}
+									onCheckedChange={() => setFilterType("epic")}
+									className="text-xs"
+								>
+									Epics
+								</DropdownMenuCheckboxItem>
+								<DropdownMenuCheckboxItem
+									checked={filterType === "chore"}
+									onCheckedChange={() => setFilterType("chore")}
+									className="text-xs"
+								>
+									Chores
+								</DropdownMenuCheckboxItem>
+								<DropdownMenuSeparator />
 								<DropdownMenuCheckboxItem
 									checked={hideClosed}
 									onCheckedChange={setHideClosed}
 									className="text-xs"
 								>
 									Hide closed
+								</DropdownMenuCheckboxItem>
+								<DropdownMenuCheckboxItem
+									checked={searchIncludeDescription}
+									onCheckedChange={setSearchIncludeDescription}
+									className="text-xs"
+								>
+									Search in description
 								</DropdownMenuCheckboxItem>
 							</DropdownMenuContent>
 						</DropdownMenu>
@@ -972,9 +1059,29 @@ export const TrxView = memo(function TrxView({
 					</div>
 				</div>
 
+				{/* Search bar */}
+				<div className="relative mt-2">
+					<Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-muted-foreground" />
+					<Input
+						value={searchQuery}
+						onChange={(e) => setSearchQuery(e.target.value)}
+						placeholder="Search issues..."
+						className="h-7 text-xs pl-7 pr-7 shadow-none border-none bg-muted/30 focus-visible:ring-1 focus-visible:ring-border"
+					/>
+					{searchQuery && (
+						<button
+							type="button"
+							onClick={() => setSearchQuery("")}
+							className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+						>
+							<X className="w-3 h-3" />
+						</button>
+					)}
+				</div>
+
 				{/* Stats bar */}
 				{stats.total > 0 && (
-					<div className="flex items-center gap-3 text-[10px] text-muted-foreground">
+					<div className="flex items-center gap-3 text-[10px] text-muted-foreground mt-2">
 						<span>{stats.total} total</span>
 						{stats.inProgress > 0 && (
 							<span className="text-purple-400">{stats.inProgress} active</span>
@@ -1069,7 +1176,7 @@ export const TrxView = memo(function TrxView({
 			)}
 
 			{/* Issues list */}
-			<div className="flex-1 overflow-auto p-2 space-y-1">
+			<div className="flex-1 overflow-auto px-3 py-2 space-y-1">
 				{issues.length === 0 ? (
 					<div className="flex items-center justify-center h-full">
 						<div className="text-center text-muted-foreground">

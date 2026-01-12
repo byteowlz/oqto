@@ -1,5 +1,6 @@
 //! API route definitions.
 
+use axum::extract::DefaultBodyLimit;
 use axum::http::{HeaderValue, Method, header};
 use axum::{
     Router, middleware,
@@ -11,6 +12,7 @@ use tracing::Level;
 
 use crate::auth::auth_middleware;
 
+use super::a2ui as a2ui_handlers;
 use super::delegate as delegate_handlers;
 use super::handlers;
 use super::main_chat as main_chat_handlers;
@@ -21,8 +23,14 @@ use crate::ws::ws_handler;
 
 /// Create the application router.
 pub fn create_router(state: AppState) -> Router {
+    create_router_with_config(state, 100)
+}
+
+/// Create the application router with configurable max upload size.
+pub fn create_router_with_config(state: AppState, max_upload_size_mb: usize) -> Router {
     // CORS configuration - use specific origins from config
     let cors = build_cors_layer(&state);
+    let max_body_size = max_upload_size_mb * 1024 * 1024;
 
     // Tracing layer with request IDs and timing
     let trace_layer = TraceLayer::new_for_http()
@@ -414,12 +422,36 @@ pub fn create_router(state: AppState) -> Router {
             post(delegate_handlers::stop_session),
         )
         .route("/delegate/sessions", get(delegate_handlers::list_sessions))
+        .with_state(state.clone());
+
+    // Test harness routes (dev mode only, no auth)
+    // These routes allow sending mock events to test frontend features
+    let test_routes = Router::new()
+        .route("/test/event", post(super::test_harness::send_mock_event))
+        .route("/test/a2ui", post(super::test_harness::send_mock_a2ui))
+        .route(
+            "/test/a2ui/sample",
+            post(super::test_harness::send_sample_a2ui),
+        )
+        .with_state(state.clone());
+
+    // A2UI routes (for agents to send UI surfaces)
+    // These routes allow agents to display interactive UI in the frontend
+    let a2ui_routes = Router::new()
+        .route("/a2ui/surface", post(a2ui_handlers::send_surface))
+        .route(
+            "/a2ui/surface/{session_id}/{surface_id}",
+            delete(a2ui_handlers::delete_surface),
+        )
         .with_state(state);
 
     Router::new()
         .merge(public_routes)
         .merge(protected_routes)
         .merge(delegate_routes)
+        .merge(test_routes)
+        .merge(a2ui_routes)
+        .layer(DefaultBodyLimit::max(max_body_size))
         .layer(cors)
         .layer(trace_layer)
 }
@@ -454,22 +486,16 @@ fn build_cors_layer(state: &AppState) -> CorsLayer {
 
     if allowed_origins.is_empty() {
         if dev_mode {
-            // In dev mode with no configured origins, allow common local origins
+            // In dev mode with no configured origins, allow any origin
             tracing::warn!(
-                "CORS: No origins configured, using default localhost origins for dev mode"
+                "CORS: No origins configured in dev mode, allowing any origin"
             );
             CorsLayer::new()
-                .allow_origin([
-                    "http://localhost:3000".parse::<HeaderValue>().unwrap(),
-                    "http://localhost:3001".parse::<HeaderValue>().unwrap(),
-                    "http://localhost:8080".parse::<HeaderValue>().unwrap(),
-                    "http://127.0.0.1:3000".parse::<HeaderValue>().unwrap(),
-                    "http://127.0.0.1:3001".parse::<HeaderValue>().unwrap(),
-                    "http://127.0.0.1:8080".parse::<HeaderValue>().unwrap(),
-                ])
+                .allow_origin(AllowOrigin::any())
                 .allow_methods(methods)
                 .allow_headers(headers)
-                .allow_credentials(true)
+                // Note: allow_credentials(true) is incompatible with allow_origin(any())
+                // For dev mode this is acceptable
         } else {
             // In production with no configured origins, deny all cross-origin requests
             tracing::warn!(

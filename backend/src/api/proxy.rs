@@ -329,10 +329,21 @@ async fn proxy_request_with_query(
     })?;
 
     let (parts, body) = req.into_parts();
+    
+    // Log content-type for debugging multipart issues
+    if let Some(ct) = parts.headers.get(axum::http::header::CONTENT_TYPE) {
+        warn!("Proxy request Content-Type: {:?}", ct);
+    }
+    if let Some(cl) = parts.headers.get(axum::http::header::CONTENT_LENGTH) {
+        warn!("Proxy request Content-Length header: {:?}", cl);
+    }
+    
     let body_bytes = axum::body::to_bytes(body, usize::MAX).await.map_err(|e| {
         error!("Failed to buffer proxy request body: {:?}", e);
         StatusCode::BAD_GATEWAY
     })?;
+    
+    warn!("Proxy request body size: {} bytes", body_bytes.len());
 
     let start = tokio::time::Instant::now();
     let timeout = tokio::time::Duration::from_secs(15);
@@ -351,6 +362,24 @@ async fn proxy_request_with_query(
             })?;
 
         *forwarded.headers_mut() = parts.headers.clone();
+
+        // Update Content-Length to match actual body size (important for multipart uploads
+        // where the original Content-Length may not match after buffering).
+        // Also remove Transfer-Encoding since we're sending a fixed-length body.
+        forwarded
+            .headers_mut()
+            .remove(axum::http::header::TRANSFER_ENCODING);
+        let new_content_length = body_bytes.len().to_string();
+        warn!(
+            "Setting Content-Length to {} (was: {:?})",
+            new_content_length,
+            parts.headers.get(axum::http::header::CONTENT_LENGTH)
+        );
+        forwarded.headers_mut().insert(
+            axum::http::header::CONTENT_LENGTH,
+            axum::http::HeaderValue::from_str(&new_content_length)
+                .expect("content-length is valid"),
+        );
 
         // Ensure Host header matches the target authority.
         if let Some(authority) = forwarded.uri().authority() {

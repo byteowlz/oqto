@@ -2,6 +2,7 @@
 //!
 //! Provides REST endpoints and proxy functionality for session management.
 
+pub mod a2ui;
 mod delegate;
 mod error;
 mod handlers;
@@ -10,9 +11,10 @@ mod main_chat_pi;
 mod proxy;
 mod routes;
 mod state;
+mod test_harness;
 
 // Re-export error types for external use
 #[allow(unused_imports)]
 pub use error::{ApiError, ApiResult, ErrorResponse};
-pub use routes::create_router;
+pub use routes::{create_router, create_router_with_config};
 pub use state::{AppState, MmryState, SessionUiState, VisualizerVoiceState, VoiceState};
