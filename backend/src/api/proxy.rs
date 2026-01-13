@@ -92,10 +92,7 @@ fn build_fileserver_query(workspace_path: &str, query: Option<&str>) -> String {
     pairs.join("&")
 }
 
-fn enforce_proxy_body_limit(
-    headers: &HeaderMap,
-    max_body_bytes: usize,
-) -> Result<(), StatusCode> {
+fn enforce_proxy_body_limit(headers: &HeaderMap, max_body_bytes: usize) -> Result<(), StatusCode> {
     if let Some(value) = headers.get(axum::http::header::CONTENT_LENGTH) {
         let length = value
             .to_str()
@@ -362,14 +359,19 @@ async fn proxy_request_with_query(
     }
 
     enforce_proxy_body_limit(&parts.headers, max_body_bytes)?;
-    let body_bytes = axum::body::to_bytes(body, max_body_bytes).await.map_err(|e| {
-        if e.to_string().contains("length limit") {
-            warn!("Proxy request body exceeded limit of {} bytes", max_body_bytes);
-            return StatusCode::PAYLOAD_TOO_LARGE;
-        }
-        error!("Failed to buffer proxy request body: {:?}", e);
-        StatusCode::BAD_GATEWAY
-    })?;
+    let body_bytes = axum::body::to_bytes(body, max_body_bytes)
+        .await
+        .map_err(|e| {
+            if e.to_string().contains("length limit") {
+                warn!(
+                    "Proxy request body exceeded limit of {} bytes",
+                    max_body_bytes
+                );
+                return StatusCode::PAYLOAD_TOO_LARGE;
+            }
+            error!("Failed to buffer proxy request body: {:?}", e);
+            StatusCode::BAD_GATEWAY
+        })?;
 
     warn!("Proxy request body size: {} bytes", body_bytes.len());
 

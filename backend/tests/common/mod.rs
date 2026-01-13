@@ -100,6 +100,7 @@ pub async fn test_app() -> Router {
         api::MmryState::default(),
         api::VoiceState::default(),
         api::SessionUiState::default(),
+        api::TemplatesState::default(),
         max_proxy_body_bytes,
     );
     api::create_router_with_config(state, 100)
@@ -267,6 +268,7 @@ pub async fn test_app_with_agent_backend() -> Router {
         api::MmryState::default(),
         api::VoiceState::default(),
         api::SessionUiState::default(),
+        api::TemplatesState::default(),
         max_proxy_body_bytes,
     );
     api::create_router_with_config(state, 100)
@@ -316,6 +318,7 @@ pub async fn test_app_with_token() -> (Router, String) {
         api::MmryState::default(),
         api::VoiceState::default(),
         api::SessionUiState::default(),
+        api::TemplatesState::default(),
         max_proxy_body_bytes,
     );
     (api::create_router_with_config(state, 100), token)
@@ -364,6 +367,7 @@ pub async fn test_app_with_user_token() -> (Router, String) {
         api::MmryState::default(),
         api::VoiceState::default(),
         api::SessionUiState::default(),
+        api::TemplatesState::default(),
         max_proxy_body_bytes,
     );
     (api::create_router_with_config(state, 100), token)

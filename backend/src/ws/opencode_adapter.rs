@@ -497,11 +497,7 @@ impl OpenCodeAdapter {
                     .get("error_type")
                     .and_then(|v| v.as_str())
                     .or_else(|| props.get("errorType").and_then(|v| v.as_str()))
-                    .or_else(|| {
-                        error
-                            .and_then(|e| e.get("name"))
-                            .and_then(|v| v.as_str())
-                    })
+                    .or_else(|| error.and_then(|e| e.get("name")).and_then(|v| v.as_str()))
                     .unwrap_or("UnknownError")
                     .to_string();
 
@@ -526,9 +522,7 @@ impl OpenCodeAdapter {
                     session_id,
                     error_type,
                     message,
-                    details: error
-                        .cloned()
-                        .or_else(|| props.get("details").cloned()),
+                    details: error.cloned().or_else(|| props.get("details").cloned()),
                 })
             }
 

@@ -60,10 +60,7 @@ async fn handle_ws_connection(
         }
     };
 
-    if let Err(e) = sender
-        .send(Message::Text(connected_json.into()))
-        .await
-    {
+    if let Err(e) = sender.send(Message::Text(connected_json.into())).await {
         error!(
             "Failed to send connected message to user {}: {}",
             user_id, e
