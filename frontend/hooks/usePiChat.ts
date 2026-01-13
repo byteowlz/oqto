@@ -690,6 +690,10 @@ export function usePiChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 
 	// Refresh messages and state from server (background, non-blocking)
 	const refresh = useCallback(async () => {
+		// Don't refresh while streaming - can cause race conditions with local messages
+		if (isStreaming) {
+			return;
+		}
 		try {
 			const [piState, dbMessages] = await Promise.all([
 				getMainChatPiState(),
@@ -703,7 +707,7 @@ export function usePiChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 			// Don't show errors for background refresh - we have cached data
 			console.warn("Background refresh failed:", e);
 		}
-	}, [convertDbToDisplayMessages]);
+	}, [convertDbToDisplayMessages, isStreaming]);
 
 	// Keep refreshRef in sync so handleWsMessage can call it
 	useEffect(() => {
