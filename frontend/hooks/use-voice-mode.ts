@@ -160,6 +160,7 @@ export function useVoiceMode(options: UseVoiceModeOptions): UseVoiceModeReturn {
 	// Track word count for interrupt-by-speaking
 	const interruptWordCountRef = useRef(0);
 	const interruptBackoffTimerRef = useRef<number | null>(null);
+	const ttsStartedAtRef = useRef<number | null>(null);
 
 	// Apply config defaults on mount
 	useEffect(() => {
@@ -342,6 +343,18 @@ export function useVoiceMode(options: UseVoiceModeOptions): UseVoiceModeReturn {
 					if (settingsRef.current.micMuted) {
 						return;
 					}
+					const tts = ttsRef.current;
+					if (tts?.getIsPlaying()) {
+						const outputLevel = tts.getOutputVolume();
+						const inputLevel = sttRef.current?.getInputVolume() ?? 0;
+						const startedAt = ttsStartedAtRef.current;
+						const ageMs = startedAt ? Date.now() - startedAt : 0;
+						const likelyEcho =
+							outputLevel > 0.02 && inputLevel <= outputLevel * 1.2;
+						if (likelyEcho && ageMs < 1500) {
+							return;
+						}
+					}
 					setLiveTranscript((prev) => `${prev ? `${prev} ` : ""}${word}`);
 
 					// Check for interrupt-by-speaking while TTS is playing
@@ -417,6 +430,7 @@ export function useVoiceMode(options: UseVoiceModeOptions): UseVoiceModeReturn {
 					setVoiceState("speaking");
 					// Reset interrupt word count when TTS starts
 					interruptWordCountRef.current = 0;
+					ttsStartedAtRef.current = Date.now();
 				},
 				onStopped: () => {
 					// Return to listening if continuous mode and still active
@@ -433,6 +447,7 @@ export function useVoiceMode(options: UseVoiceModeOptions): UseVoiceModeReturn {
 						setVoiceState("idle");
 					}
 					interruptWordCountRef.current = 0;
+					ttsStartedAtRef.current = null;
 				},
 				onVoicesLoaded: (voices, currentVoice) => {
 					setAvailableVoices(voices);
