@@ -466,7 +466,40 @@ export function usePiChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 						break;
 
 					case "message_start": {
-						if (!streamingMessageRef.current) {
+						// If there's an existing streaming message with content, finalize it
+						// (handles case where 'done' event was missed)
+						if (streamingMessageRef.current) {
+							const oldMessage = streamingMessageRef.current;
+							if (oldMessage.parts.length > 0) {
+								// Has content - finalize it and create new message
+								oldMessage.isStreaming = false;
+								setMessages((prev) => {
+									const idx = prev.findIndex((m) => m.id === oldMessage.id);
+									if (idx >= 0) {
+										const updated = [...prev];
+										updated[idx] = {
+											...oldMessage,
+											isStreaming: false,
+											parts: oldMessage.parts.map((p) => ({ ...p })),
+										};
+										return updated;
+									}
+									return prev;
+								});
+								// Create new streaming message
+								const assistantMessage: PiDisplayMessage = {
+									id: nextMessageId(),
+									role: "assistant",
+									parts: [],
+									timestamp: Date.now(),
+									isStreaming: true,
+								};
+								streamingMessageRef.current = assistantMessage;
+								setMessages((prev) => [...prev, assistantMessage]);
+							}
+							// If empty, reuse existing message container
+						} else {
+							// No existing message - create new one
 							const assistantMessage: PiDisplayMessage = {
 								id: nextMessageId(),
 								role: "assistant",
