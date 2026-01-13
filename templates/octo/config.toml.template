@@ -36,6 +36,8 @@ fileserver_binary = "fileserver"
 ttyd_binary = "ttyd"
 workspace_dir = "{{WORKSPACE_DIR}}"
 single_user = {{SINGLE_USER}}
+cleanup_on_startup = false
+stop_sessions_on_shutdown = false
 
 # Linux user isolation (multi-user only)
 [local.linux_users]
@@ -73,6 +75,11 @@ role = "admin"
 [sessions]
 auto_attach = "off"
 auto_attach_scan = true
+
+[templates]
+# repo_path = "/path/to/octo-templates"
+sync_on_list = true
+sync_interval_seconds = 120
 
 [scaffold]
 binary = "byt"

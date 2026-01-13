@@ -1,11 +1,14 @@
 //! Application state shared across handlers.
 
+use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use axum::body::Body;
 use hyper_util::client::legacy::Client;
 use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::rt::TokioExecutor;
+use tokio::sync::Mutex;
 
 use super::super::agent::AgentService;
 use super::a2ui::PendingA2uiRequests;
@@ -134,6 +137,32 @@ impl Default for SessionUiState {
     }
 }
 
+/// Project template repository configuration/state.
+#[derive(Clone, Debug)]
+pub struct TemplatesState {
+    pub repo_path: Option<PathBuf>,
+    pub sync_on_list: bool,
+    pub sync_interval: Duration,
+    pub last_sync: Arc<Mutex<Option<Instant>>>,
+}
+
+impl TemplatesState {
+    pub fn new(repo_path: Option<PathBuf>, sync_on_list: bool, sync_interval: Duration) -> Self {
+        Self {
+            repo_path,
+            sync_on_list,
+            sync_interval,
+            last_sync: Arc::new(Mutex::new(None)),
+        }
+    }
+}
+
+impl Default for TemplatesState {
+    fn default() -> Self {
+        Self::new(None, true, Duration::from_secs(120))
+    }
+}
+
 /// Application state shared across all handlers.
 #[derive(Clone)]
 pub struct AppState {
@@ -157,6 +186,8 @@ pub struct AppState {
     pub voice: VoiceState,
     /// Session UX configuration.
     pub session_ui: SessionUiState,
+    /// Project templates configuration.
+    pub templates: TemplatesState,
     /// Settings service for octo config.
     pub settings_octo: Option<Arc<SettingsService>>,
     /// Settings service for mmry config.
@@ -184,6 +215,7 @@ impl AppState {
         mmry: MmryState,
         voice: VoiceState,
         session_ui: SessionUiState,
+        templates: TemplatesState,
         max_proxy_body_bytes: usize,
     ) -> Self {
         let http_client: Client<HttpConnector, Body> =
@@ -200,6 +232,7 @@ impl AppState {
             mmry,
             voice,
             session_ui,
+            templates,
             settings_octo: None,
             settings_mmry: None,
             main_chat: None,
@@ -221,6 +254,7 @@ impl AppState {
         mmry: MmryState,
         voice: VoiceState,
         session_ui: SessionUiState,
+        templates: TemplatesState,
         max_proxy_body_bytes: usize,
     ) -> Self {
         let http_client: Client<HttpConnector, Body> =
@@ -237,6 +271,7 @@ impl AppState {
             mmry,
             voice,
             session_ui,
+            templates,
             settings_octo: None,
             settings_mmry: None,
             main_chat: None,

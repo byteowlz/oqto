@@ -88,6 +88,13 @@ workspace_dir = "$HOME/octo/{user_id}"
 #   - Multi-tenancy is supported
 single_user = false
 
+# Preserve running sessions across backend restarts.
+# When false, Octo will skip startup port cleanup to avoid killing running
+# opencode/fileserver/ttyd processes.
+cleanup_on_startup = false
+# When false, Octo will NOT stop local sessions on shutdown.
+stop_sessions_on_shutdown = false
+
 # Linux user isolation for multi-user deployments
 # Creates a dedicated Linux user per platform user for process isolation.
 # Requires root/sudo privileges for user creation.
@@ -107,6 +114,11 @@ shell = "/bin/bash"
 use_sudo = true
 # Create home directories for users (recommended)
 create_home = true
+
+# Note: Sandbox configuration is in a SEPARATE file: ~/.config/octo/sandbox.toml
+# This separation allows agents to modify config.toml (e.g., session preferences)
+# while preventing them from weakening their own security restrictions.
+# See examples/sandbox.toml for sandbox configuration options.
 
 [eavs]
 # EAVS (LLM proxy) configuration - runs on host, not in containers
@@ -167,6 +179,14 @@ max_concurrent_sessions = 6
 idle_timeout_minutes = 30
 # Idle cleanup check interval in seconds.
 idle_check_interval_seconds = 300
+
+[templates]
+# Project templates repository (local clone on host).
+# repo_path = "/path/to/octo-templates"
+# Sync templates repository before listing/creating.
+sync_on_list = true
+# Minimum seconds between sync attempts.
+sync_interval_seconds = 120
 
 [scaffold]
 # Agent scaffolding configuration - defines the tool used to create new agent directories

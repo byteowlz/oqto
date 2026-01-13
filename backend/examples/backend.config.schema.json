@@ -151,6 +151,16 @@
           "default": "$HOME/octo/{user_id}",
           "examples": ["$HOME/octo/{user_id}", "~/workspace/{user_id}", "/data/workspaces/{user_id}", "$HOME/octo"]
         },
+        "cleanup_on_startup": {
+          "type": "boolean",
+          "description": "Whether to clean up local session processes on startup. Disable to preserve running sessions across backend restarts.",
+          "default": false
+        },
+        "stop_sessions_on_shutdown": {
+          "type": "boolean",
+          "description": "Whether to stop local sessions when the backend shuts down. Disable to keep opencode/fileserver/ttyd running.",
+          "default": false
+        },
         "single_user": {
           "type": "boolean",
           "description": "Enable single-user mode. When true, the platform operates with a single user (no multi-tenancy), and the {user_id} placeholder in workspace_dir is ignored. Required on macOS/Windows.",
@@ -208,7 +218,8 @@
           "additionalProperties": false
         }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "x-note": "Sandbox configuration is in a separate file (~/.config/octo/sandbox.toml) for security. See sandbox.schema.json."
     },
     "eavs": {
       "type": "object",
@@ -536,6 +547,30 @@
           "minimum": 1024,
           "maximum": 65535,
           "default": 8769
+        }
+      },
+      "additionalProperties": false
+    },
+    "templates": {
+      "type": "object",
+      "description": "Project templates repository configuration",
+      "x-scope": "admin",
+      "x-category": "Infrastructure",
+      "properties": {
+        "repo_path": {
+          "type": ["string", "null"],
+          "description": "Path to a local clone of the templates repository on the host",
+          "default": null
+        },
+        "sync_on_list": {
+          "type": "boolean",
+          "description": "Sync the templates repository before listing or creating projects",
+          "default": true
+        },
+        "sync_interval_seconds": {
+          "type": "integer",
+          "description": "Minimum seconds between template repository sync attempts",
+          "default": 120
         }
       },
       "additionalProperties": false
