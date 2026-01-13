@@ -24,15 +24,16 @@
 use anyhow::{Context, Result};
 use log::{debug, info};
 use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
-use tokio::sync::{RwLock, broadcast};
+use tokio::sync::{Mutex, RwLock, broadcast};
 
 use crate::pi::{
-    AgentMessage, CompactionResult, ContainerPiRuntime, LocalPiRuntime, PiCommand, PiEvent,
-    PiProcess, PiRuntime, PiSpawnConfig, PiState, RunnerPiRuntime, SessionStats,
+    AgentMessage, AssistantMessageEvent, CompactionResult, ContainerPiRuntime, LocalPiRuntime,
+    PiCommand, PiEvent, PiProcess, PiRuntime, PiSpawnConfig, PiState, RunnerPiRuntime, SessionStats,
 };
 use crate::runner::client::RunnerClient;
 
@@ -113,10 +114,168 @@ pub struct LastSessionInfo {
     pub modified: SystemTime,
 }
 
+#[derive(Debug, Clone)]
+enum StreamPart {
+    Text(String),
+    Thinking(String),
+    ToolUse { id: String, name: String, input: Value },
+    ToolResult {
+        id: String,
+        name: Option<String>,
+        content: Value,
+        is_error: bool,
+    },
+}
+
+#[derive(Debug, Default, Clone)]
+struct StreamSnapshot {
+    is_streaming: bool,
+    has_message: bool,
+    parts: Vec<StreamPart>,
+}
+
+impl StreamSnapshot {
+    fn reset(&mut self) {
+        self.is_streaming = false;
+        self.has_message = false;
+        self.parts.clear();
+    }
+
+    fn push_text(&mut self, delta: &str) {
+        match self.parts.last_mut() {
+            Some(StreamPart::Text(existing)) => existing.push_str(delta),
+            _ => self.parts.push(StreamPart::Text(delta.to_string())),
+        }
+    }
+
+    fn push_thinking(&mut self, delta: &str) {
+        match self.parts.last_mut() {
+            Some(StreamPart::Thinking(existing)) => existing.push_str(delta),
+            _ => self
+                .parts
+                .push(StreamPart::Thinking(delta.to_string())),
+        }
+    }
+
+    fn apply_event(&mut self, event: &PiEvent) {
+        match event {
+            PiEvent::AgentStart => {
+                self.is_streaming = true;
+            }
+            PiEvent::AgentEnd { .. } => {
+                self.reset();
+            }
+            PiEvent::MessageStart { message } => {
+                if message.role == "assistant" {
+                    self.is_streaming = true;
+                    self.has_message = true;
+                    self.parts.clear();
+                }
+            }
+            PiEvent::MessageUpdate {
+                assistant_message_event,
+                message,
+            } => match assistant_message_event {
+                AssistantMessageEvent::TextDelta { delta, .. } => {
+                    if message.role == "assistant" {
+                        self.is_streaming = true;
+                        self.has_message = true;
+                    }
+                    self.push_text(delta);
+                }
+                AssistantMessageEvent::ThinkingDelta { delta, .. } => {
+                    if message.role == "assistant" {
+                        self.is_streaming = true;
+                        self.has_message = true;
+                    }
+                    self.push_thinking(delta);
+                }
+                AssistantMessageEvent::ToolcallEnd { tool_call, .. } => {
+                    if message.role == "assistant" {
+                        self.is_streaming = true;
+                        self.has_message = true;
+                    }
+                    self.parts.push(StreamPart::ToolUse {
+                        id: tool_call.id.clone(),
+                        name: tool_call.name.clone(),
+                        input: tool_call.arguments.clone(),
+                    });
+                }
+                _ => {}
+            },
+            PiEvent::ToolExecutionEnd {
+                tool_call_id,
+                tool_name,
+                result,
+                is_error,
+            } => {
+                let content = serde_json::to_value(result).unwrap_or(Value::Null);
+                self.parts.push(StreamPart::ToolResult {
+                    id: tool_call_id.clone(),
+                    name: Some(tool_name.clone()),
+                    content,
+                    is_error: *is_error,
+                });
+            }
+            _ => {}
+        }
+    }
+
+    fn to_ws_events(&self) -> Vec<Value> {
+        if !self.is_streaming || !self.has_message {
+            return Vec::new();
+        }
+
+        let mut events = Vec::with_capacity(self.parts.len() + 1);
+        events.push(json!({"type": "message_start", "role": "assistant"}));
+
+        for part in &self.parts {
+            match part {
+                StreamPart::Text(text) => {
+                    events.push(json!({"type": "text", "data": text}));
+                }
+                StreamPart::Thinking(text) => {
+                    events.push(json!({"type": "thinking", "data": text}));
+                }
+                StreamPart::ToolUse { id, name, input } => {
+                    events.push(json!({
+                        "type": "tool_use",
+                        "data": {
+                            "id": id,
+                            "name": name,
+                            "input": input
+                        }
+                    }));
+                }
+                StreamPart::ToolResult {
+                    id,
+                    name,
+                    content,
+                    is_error,
+                } => {
+                    events.push(json!({
+                        "type": "tool_result",
+                        "data": {
+                            "id": id,
+                            "name": name,
+                            "content": content,
+                            "isError": is_error
+                        }
+                    }));
+                }
+            }
+        }
+
+        events
+    }
+}
+
 /// Handle to a user's Pi session.
 pub struct UserPiSession {
     /// The Pi process for this user (trait object for runtime polymorphism).
     process: Arc<tokio::sync::RwLock<Box<dyn PiProcess>>>,
+    /// Snapshot of the currently streaming assistant message for WS replay.
+    stream_snapshot: Arc<Mutex<StreamSnapshot>>,
 }
 
 /// Service for managing Pi sessions for Main Chat users.
@@ -152,13 +311,17 @@ impl MainChatPiService {
         match self.config.runtime_mode {
             PiRuntimeMode::Local => Arc::new(LocalPiRuntime::new()),
             PiRuntimeMode::Runner => {
-                // Create runner client for this user
+                // Create runner client - uses XDG_RUNTIME_DIR by default
                 let client = if let Some(pattern) = self.config.runner_socket_pattern.as_deref() {
                     RunnerClient::new(pattern.replace("{user}", user_id))
                 } else {
-                    RunnerClient::for_user(user_id)
+                    RunnerClient::default()
                 };
-                debug!("Runner socket for user {}: {:?}", user_id, client.socket_path());
+                debug!(
+                    "Runner socket for user {}: {:?}",
+                    user_id,
+                    client.socket_path()
+                );
                 Arc::new(RunnerPiRuntime::new(client))
             }
             PiRuntimeMode::Container => Arc::new(ContainerPiRuntime::new()),
@@ -359,8 +522,28 @@ impl MainChatPiService {
             )
         })?;
 
+        let stream_snapshot = Arc::new(Mutex::new(StreamSnapshot::default()));
+        let stream_snapshot_task = Arc::clone(&stream_snapshot);
+        let mut event_rx = process.subscribe();
+        tokio::spawn(async move {
+            loop {
+                match event_rx.recv().await {
+                    Ok(event) => {
+                        let mut snapshot = stream_snapshot_task.lock().await;
+                        snapshot.apply_event(&event);
+                    }
+                    Err(broadcast::error::RecvError::Closed) => break,
+                    Err(broadcast::error::RecvError::Lagged(_)) => {
+                        let mut snapshot = stream_snapshot_task.lock().await;
+                        snapshot.reset();
+                    }
+                }
+            }
+        });
+
         Ok(UserPiSession {
             process: Arc::new(tokio::sync::RwLock::new(process)),
+            stream_snapshot,
         })
     }
 
@@ -489,6 +672,12 @@ impl UserPiSession {
         process.subscribe()
     }
 
+    /// Get the current streaming snapshot as WS events (for replay on reconnect).
+    pub async fn stream_snapshot_events(&self) -> Vec<Value> {
+        let snapshot = self.stream_snapshot.lock().await;
+        snapshot.to_ws_events()
+    }
+
     /// Compact the session context.
     pub async fn compact(&self, custom_instructions: Option<&str>) -> Result<CompactionResult> {
         let process = self.process.read().await;
@@ -566,6 +755,76 @@ impl UserPiSession {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    fn assistant_message() -> AgentMessage {
+        AgentMessage {
+            role: "assistant".to_string(),
+            content: Value::Null,
+            timestamp: None,
+            api: None,
+            provider: None,
+            model: None,
+            usage: None,
+            stop_reason: None,
+        }
+    }
+
+    #[test]
+    fn test_stream_snapshot_replay_events() {
+        let mut snapshot = StreamSnapshot::default();
+
+        snapshot.apply_event(&PiEvent::AgentStart);
+        snapshot.apply_event(&PiEvent::MessageStart {
+            message: assistant_message(),
+        });
+        snapshot.apply_event(&PiEvent::MessageUpdate {
+            message: assistant_message(),
+            assistant_message_event: AssistantMessageEvent::TextDelta {
+                content_index: 0,
+                delta: "Hello".to_string(),
+                partial: Value::Null,
+            },
+        });
+        snapshot.apply_event(&PiEvent::MessageUpdate {
+            message: assistant_message(),
+            assistant_message_event: AssistantMessageEvent::ThinkingDelta {
+                content_index: 0,
+                delta: "Hmm".to_string(),
+                partial: Value::Null,
+            },
+        });
+        snapshot.apply_event(&PiEvent::MessageUpdate {
+            message: assistant_message(),
+            assistant_message_event: AssistantMessageEvent::ToolcallEnd {
+                content_index: 0,
+                tool_call: crate::pi::ToolCall {
+                    id: "tool-1".to_string(),
+                    name: "echo".to_string(),
+                    arguments: json!({"value": 1}),
+                },
+                partial: Value::Null,
+            },
+        });
+        snapshot.apply_event(&PiEvent::ToolExecutionEnd {
+            tool_call_id: "tool-1".to_string(),
+            tool_name: "echo".to_string(),
+            result: crate::pi::ToolResult {
+                content: vec![crate::pi::ContentBlock::Text {
+                    text: "ok".to_string(),
+                }],
+                details: None,
+            },
+            is_error: false,
+        });
+
+        let events = snapshot.to_ws_events();
+        assert_eq!(events.len(), 5);
+        assert_eq!(events[0]["type"], "message_start");
+        assert_eq!(events[1]["type"], "text");
+        assert_eq!(events[2]["type"], "thinking");
+        assert_eq!(events[3]["type"], "tool_use");
+        assert_eq!(events[4]["type"], "tool_result");
+    }
 
     #[test]
     fn test_pi_sessions_dir_escaping() {

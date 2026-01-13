@@ -638,6 +638,18 @@ async fn handle_ws(
         return;
     }
 
+    // Replay any in-progress assistant message to avoid WS gaps
+    let snapshot_events = session.stream_snapshot_events().await;
+    for event in snapshot_events {
+        if sender
+            .send(Message::Text(event.to_string().into()))
+            .await
+            .is_err()
+        {
+            return;
+        }
+    }
+
     // Message accumulator for saving assistant messages
     let message_accumulator = Arc::new(tokio::sync::Mutex::new(MessageAccumulator::new()));
     let accumulator_for_events = Arc::clone(&message_accumulator);
