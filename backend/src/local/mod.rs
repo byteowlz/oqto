@@ -13,10 +13,20 @@
 //! - Processes run under the user's UID/GID
 //! - Home directories are owned by the respective user
 //! - Requires root/sudo privileges for user creation
+//!
+//! ## Sandboxing
+//!
+//! Optional bubblewrap-based sandboxing adds namespace isolation:
+//!
+//! - Mount namespace: only specified paths are visible
+//! - PID namespace: process can't see other processes
+//! - Network namespace: optionally isolated
+//! - Protects sensitive files (~/.ssh, ~/.aws, etc.)
 
 mod linux_users;
 mod process;
 mod runtime;
+mod sandbox;
 
 pub use linux_users::LinuxUsersConfig;
 #[allow(unused_imports)]
@@ -25,3 +35,4 @@ pub use process::{
     is_port_available, kill_process,
 };
 pub use runtime::{LocalRuntime, LocalRuntimeConfig};
+pub use sandbox::SandboxConfig;

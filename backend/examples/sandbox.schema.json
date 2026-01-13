@@ -1,0 +1,86 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "octo.sandbox.schema.json",
+  "title": "Octo Sandbox Configuration",
+  "description": "Configuration schema for Octo process sandboxing. This file is kept separate from config.toml so that agents cannot modify their own security restrictions.",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "Reference to the JSON schema for validation and LSP completions"
+    },
+    "enabled": {
+      "type": "boolean",
+      "description": "Enable process sandboxing. Requires bwrap (Linux) or sandbox-exec (macOS).",
+      "default": false
+    },
+    "profile": {
+      "type": "string",
+      "description": "Sandbox profile preset. 'minimal' protects secrets only; 'development' allows tool installation; 'strict' adds network/PID isolation.",
+      "enum": ["minimal", "development", "strict"],
+      "default": "development"
+    },
+    "deny_read": {
+      "type": "array",
+      "description": "Paths to deny read access. These paths are blocked completely. Supports ~ for home directory.",
+      "items": {
+        "type": "string"
+      },
+      "default": ["~/.ssh", "~/.gnupg", "~/.aws"],
+      "examples": [["~/.ssh", "~/.gnupg", "~/.aws", "~/.kube"]]
+    },
+    "allow_write": {
+      "type": "array",
+      "description": "Paths to allow write access in addition to the workspace directory. Supports ~ for home directory.",
+      "items": {
+        "type": "string"
+      },
+      "default": ["~/.cargo", "~/.rustup", "~/.local/bin", "~/.npm", "~/.bun", "~/.config/octo", "/tmp"],
+      "examples": [["~/.cargo", "~/.npm", "/tmp"]]
+    },
+    "deny_write": {
+      "type": "array",
+      "description": "Paths to explicitly deny write access. Takes precedence over allow_write. ~/.config/octo/sandbox.toml is always protected automatically.",
+      "items": {
+        "type": "string"
+      },
+      "default": ["~/.config/octo/sandbox.toml"]
+    },
+    "isolate_network": {
+      "type": "boolean",
+      "description": "Isolate network namespace (--unshare-net on Linux). Prevents network access from sandboxed processes.",
+      "default": false
+    },
+    "isolate_pid": {
+      "type": "boolean",
+      "description": "Isolate PID namespace (--unshare-pid on Linux). Hides other processes from sandboxed processes.",
+      "default": true
+    },
+    "extra_ro_bind": {
+      "type": "array",
+      "description": "Additional paths to bind read-only into the sandbox.",
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    },
+    "extra_rw_bind": {
+      "type": "array",
+      "description": "Additional paths to bind read-write into the sandbox.",
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    }
+  },
+  "additionalProperties": false,
+  "x-security-note": "This configuration file must be protected from agent modification. The sandbox system automatically denies writes to this file and to .octo/sandbox.toml in workspaces.",
+  "x-merge-behavior": {
+    "description": "When workspace .octo/sandbox.toml exists, it is merged with global config",
+    "deny_read": "Union - workspace can add paths, not remove",
+    "deny_write": "Union - workspace can add paths, not remove",
+    "allow_write": "Intersection - must be allowed by BOTH global and workspace",
+    "isolate_network": "OR - if either enables, it's enabled",
+    "isolate_pid": "OR - if either enables, it's enabled"
+  }
+}
