@@ -97,9 +97,11 @@ reload-stop:
 bump version:
     #!/usr/bin/env bash
     set -euo pipefail
+
+    ROOT="{{justfile_directory}}"
     
     # Get current version from backend/Cargo.toml
-    current=$(grep -m1 '^version = ' backend/Cargo.toml | sed 's/version = "\(.*\)"/\1/')
+    current=$(grep -m1 '^version = ' "$ROOT/backend/Cargo.toml" | sed 's/version = "\(.*\)"/\1/')
     
     # Parse current version
     IFS='.' read -r major minor patch <<< "$current"
@@ -124,17 +126,17 @@ bump version:
     echo "Bumping $current -> $new_version"
     
     # Update Rust Cargo.toml files (match the version line after [package])
-    sed -i '0,/^version = /s/^version = ".*"/version = "'"$new_version"'"/' backend/Cargo.toml
-    sed -i '0,/^version = /s/^version = ".*"/version = "'"$new_version"'"/' fileserver/Cargo.toml
-    sed -i '0,/^version = /s/^version = ".*"/version = "'"$new_version"'"/' frontend/src-tauri/Cargo.toml
+    sed -i '0,/^version = /s/^version = ".*"/version = "'"$new_version"'"/' "$ROOT/backend/Cargo.toml"
+    sed -i '0,/^version = /s/^version = ".*"/version = "'"$new_version"'"/' "$ROOT/fileserver/Cargo.toml"
+    sed -i '0,/^version = /s/^version = ".*"/version = "'"$new_version"'"/' "$ROOT/frontend/src-tauri/Cargo.toml"
     
     # Update package.json files
-    cd frontend && bun pkg set version="$new_version"
-    cd ../pi-extension && bun pkg set version="$new_version"
+    cd "$ROOT/frontend" && bun pm pkg set version="$new_version"
+    cd "$ROOT/pi-extension" && bun pm pkg set version="$new_version"
     
     # Update tauri.conf.json
-    jq --arg v "$new_version" '.version = $v' frontend/src-tauri/tauri.conf.json > frontend/src-tauri/tauri.conf.json.tmp \
-        && mv frontend/src-tauri/tauri.conf.json.tmp frontend/src-tauri/tauri.conf.json
+    jq --arg v "$new_version" '.version = $v' "$ROOT/frontend/src-tauri/tauri.conf.json" > "$ROOT/frontend/src-tauri/tauri.conf.json.tmp" \
+        && mv "$ROOT/frontend/src-tauri/tauri.conf.json.tmp" "$ROOT/frontend/src-tauri/tauri.conf.json"
     
     echo "Bumped all components to $new_version"
 
