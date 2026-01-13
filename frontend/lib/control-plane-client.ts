@@ -167,6 +167,18 @@ export type WorkspaceDirEntry = {
 	logo?: ProjectLogo;
 };
 
+export type ProjectTemplateEntry = {
+	name: string;
+	path: string;
+	description?: string;
+};
+
+export type CreateProjectFromTemplateRequest = {
+	template_path: string;
+	project_path: string;
+	shared?: boolean;
+};
+
 export type CreateWorkspaceSessionRequest = {
 	workspace_path?: string;
 	image?: string;
@@ -628,6 +640,36 @@ export async function listWorkspaceDirectories(
 	url.searchParams.set("path", path);
 	const res = await authFetch(url.toString(), {
 		cache: "no-store",
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+	return res.json();
+}
+
+export async function listProjectTemplates(): Promise<ProjectTemplateEntry[]> {
+	const url = new URL(
+		controlPlaneApiUrl("/api/projects/templates"),
+		window.location.origin,
+	);
+	const res = await authFetch(url.toString(), {
+		cache: "no-store",
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+	return res.json();
+}
+
+export async function createProjectFromTemplate(
+	payload: CreateProjectFromTemplateRequest,
+): Promise<WorkspaceDirEntry> {
+	const url = new URL(
+		controlPlaneApiUrl("/api/projects/templates"),
+		window.location.origin,
+	);
+	const res = await authFetch(url.toString(), {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(payload),
 		credentials: "include",
 	});
 	if (!res.ok) throw new Error(await readApiError(res));

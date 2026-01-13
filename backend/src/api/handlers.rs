@@ -1,8 +1,10 @@
 //! API request handlers.
 
 use std::convert::Infallible;
+use std::fs;
+use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::Context;
 use axum::{
@@ -13,12 +15,15 @@ use axum::{
     response::{AppendHeaders, IntoResponse},
 };
 use serde::{Deserialize, Serialize};
+use tokio::process::Command;
 use tokio::sync::Mutex;
 use tokio_stream::{StreamExt, wrappers::IntervalStream};
 use tracing::{info, instrument, warn};
+use uuid::Uuid;
 
 use crate::auth::{AuthError, CurrentUser, RequireAdmin};
 use crate::observability::{CpuTimes, HostMetrics, read_host_metrics};
+use crate::projects::{self, ProjectMetadata};
 use crate::session::{CreateSessionRequest, Session, SessionContainerStats};
 use crate::session_ui::SessionAutoAttachMode;
 use crate::user::{
@@ -432,6 +437,24 @@ pub struct ProjectLogo {
     pub variant: String,
 }
 
+/// Project template entry.
+#[derive(Debug, Serialize)]
+pub struct ProjectTemplateEntry {
+    pub name: String,
+    pub path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+/// Request to create a project from a template.
+#[derive(Debug, Deserialize)]
+pub struct CreateProjectFromTemplateRequest {
+    pub template_path: String,
+    pub project_path: String,
+    #[serde(default)]
+    pub shared: bool,
+}
+
 /// Find the best logo file for a project directory.
 /// Prefers SVG over PNG, and "white" variants for dark UI.
 fn find_project_logo(project_path: &std::path::Path, project_name: &str) -> Option<ProjectLogo> {
@@ -510,6 +533,105 @@ fn find_project_logo(project_path: &std::path::Path, project_name: &str) -> Opti
     })
 }
 
+fn sanitize_relative_path(raw: &str) -> Result<PathBuf, ApiError> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err(ApiError::bad_request("path is required"));
+    }
+    let normalized = trimmed.replace('\\', "/");
+    if std::path::Path::new(&normalized).is_absolute() {
+        return Err(ApiError::bad_request("invalid path"));
+    }
+    let normalized = normalized.trim_matches('/');
+    let rel_path = PathBuf::from(normalized);
+    if rel_path.is_absolute()
+        || rel_path
+            .components()
+            .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        return Err(ApiError::bad_request("invalid path"));
+    }
+    Ok(rel_path)
+}
+
+fn read_template_description(template_dir: &std::path::Path) -> Option<String> {
+    let metadata_path = template_dir.join("template.json");
+    let contents = fs::read_to_string(metadata_path).ok()?;
+    let value: serde_json::Value = serde_json::from_str(&contents).ok()?;
+    value
+        .get("description")
+        .and_then(|v| v.as_str())
+        .map(|v| v.to_string())
+}
+
+fn copy_template_dir(src: &std::path::Path, dest: &std::path::Path) -> Result<(), ApiError> {
+    fs::create_dir_all(dest)
+        .map_err(|e| ApiError::internal(format!("Failed to create project dir: {}", e)))?;
+    for entry in fs::read_dir(src)
+        .map_err(|e| ApiError::internal(format!("Failed to read template dir: {}", e)))?
+    {
+        let entry = entry
+            .map_err(|e| ApiError::internal(format!("Failed to read template entry: {}", e)))?;
+        let file_type = entry.file_type().map_err(|e| {
+            ApiError::internal(format!("Failed to read template entry type: {}", e))
+        })?;
+        let file_name = entry.file_name();
+        if file_name.to_string_lossy() == ".git" {
+            continue;
+        }
+        let src_path = entry.path();
+        let dest_path = dest.join(&file_name);
+        if file_type.is_dir() {
+            copy_template_dir(&src_path, &dest_path)?;
+        } else if file_type.is_file() {
+            fs::copy(&src_path, &dest_path)
+                .map_err(|e| ApiError::internal(format!("Failed to copy template file: {}", e)))?;
+        }
+    }
+    Ok(())
+}
+
+async fn maybe_sync_templates_repo(state: &AppState) -> Result<(), ApiError> {
+    let repo_path = match state.templates.repo_path.as_ref() {
+        Some(path) => path.clone(),
+        None => return Ok(()),
+    };
+    if !state.templates.sync_on_list {
+        return Ok(());
+    }
+    let should_sync = {
+        let last_sync = state.templates.last_sync.lock().await;
+        match *last_sync {
+            Some(instant) if instant.elapsed() < state.templates.sync_interval => false,
+            _ => true,
+        }
+    };
+    if !should_sync {
+        return Ok(());
+    }
+    if !repo_path.join(".git").exists() {
+        return Err(ApiError::internal("templates repo is not a git repository"));
+    }
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(&repo_path)
+        .arg("pull")
+        .arg("--ff-only")
+        .output()
+        .await
+        .map_err(|e| ApiError::internal(format!("Failed to run git pull: {}", e)))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(ApiError::internal(format!(
+            "Failed to sync templates repo: {}",
+            stderr.trim()
+        )));
+    }
+    let mut last_sync = state.templates.last_sync.lock().await;
+    *last_sync = Some(Instant::now());
+    Ok(())
+}
+
 /// List directories under the workspace root (projects view).
 #[instrument(skip(state))]
 pub async fn list_workspace_dirs(
@@ -557,6 +679,161 @@ pub async fn list_workspace_dirs(
 
     dirs.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(Json(dirs))
+}
+
+/// List available project templates from the templates repository.
+#[instrument(skip(state))]
+pub async fn list_project_templates(
+    State(state): State<AppState>,
+) -> ApiResult<Json<Vec<ProjectTemplateEntry>>> {
+    let repo_path = match state.templates.repo_path.as_ref() {
+        Some(path) => path.clone(),
+        None => return Ok(Json(Vec::new())),
+    };
+
+    maybe_sync_templates_repo(&state).await?;
+
+    let entries = fs::read_dir(&repo_path)
+        .with_context(|| format!("reading templates directory {:?}", repo_path))
+        .map_err(|e| ApiError::internal(format!("Failed to list templates: {}", e)))?;
+
+    let mut templates = Vec::new();
+    for entry in entries {
+        let entry =
+            entry.map_err(|e| ApiError::internal(format!("Failed to read template: {}", e)))?;
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name.starts_with('.') {
+            continue;
+        }
+        let rel = path
+            .strip_prefix(&repo_path)
+            .unwrap_or(&path)
+            .to_string_lossy()
+            .to_string();
+        let description = read_template_description(&path);
+        templates.push(ProjectTemplateEntry {
+            name,
+            path: rel,
+            description,
+        });
+    }
+    templates.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(Json(templates))
+}
+
+/// Create a new project from a template.
+#[instrument(skip(state, request))]
+pub async fn create_project_from_template(
+    State(state): State<AppState>,
+    Json(request): Json<CreateProjectFromTemplateRequest>,
+) -> ApiResult<Json<WorkspaceDirEntry>> {
+    let repo_path = state
+        .templates
+        .repo_path
+        .clone()
+        .ok_or_else(|| ApiError::bad_request("templates repo not configured"))?;
+
+    maybe_sync_templates_repo(&state).await?;
+
+    let template_rel = sanitize_relative_path(&request.template_path)?;
+    let template_dir = repo_path.join(&template_rel);
+    if !template_dir.is_dir() {
+        return Err(ApiError::bad_request("template not found"));
+    }
+
+    let project_rel = sanitize_relative_path(&request.project_path)?;
+    let is_current_dir = project_rel
+        .components()
+        .all(|c| matches!(c, std::path::Component::CurDir));
+    if is_current_dir {
+        return Err(ApiError::bad_request("project path is required"));
+    }
+
+    let workspace_root = state.sessions.workspace_root();
+    let target_dir = workspace_root.join(&project_rel);
+    if target_dir.exists() {
+        return Err(ApiError::bad_request("project path already exists"));
+    }
+
+    copy_template_dir(&template_dir, &target_dir)?;
+
+    let status = Command::new("git")
+        .arg("init")
+        .arg("--branch")
+        .arg("main")
+        .current_dir(&target_dir)
+        .status()
+        .await
+        .map_err(|e| ApiError::internal(format!("Failed to init git repo: {}", e)))?;
+    if !status.success() {
+        return Err(ApiError::internal("git init failed"));
+    }
+
+    if request.shared {
+        let metadata = ProjectMetadata {
+            project_id: format!("proj_{}", Uuid::new_v4().simple()),
+            shared: true,
+            template_path: Some(template_rel.to_string_lossy().to_string()),
+        };
+        projects::write_metadata(&target_dir, &metadata)
+            .context("writing project metadata")
+            .map_err(|e| ApiError::internal(format!("Failed to write project metadata: {}", e)))?;
+    }
+
+    let name = project_rel
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("project")
+        .to_string();
+    let rel_path = project_rel.to_string_lossy().to_string();
+    let logo = find_project_logo(&target_dir, &name);
+    Ok(Json(WorkspaceDirEntry {
+        name,
+        path: if rel_path.is_empty() {
+            ".".to_string()
+        } else {
+            rel_path
+        },
+        entry_type: "directory".to_string(),
+        logo,
+    }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{copy_template_dir, sanitize_relative_path};
+    use std::fs;
+
+    #[test]
+    fn sanitize_relative_path_rejects_invalid() {
+        assert!(sanitize_relative_path("../foo").is_err());
+        assert!(sanitize_relative_path("/absolute").is_err());
+    }
+
+    #[test]
+    fn sanitize_relative_path_accepts_nested() {
+        let path = sanitize_relative_path("projects/demo").unwrap();
+        assert_eq!(path.to_string_lossy(), "projects/demo");
+    }
+
+    #[test]
+    fn copy_template_dir_skips_git_dir() {
+        let temp = tempfile::tempdir().unwrap();
+        let src = temp.path().join("template");
+        let dest = temp.path().join("project");
+        fs::create_dir_all(src.join(".git")).unwrap();
+        fs::write(src.join("README.md"), "hello").unwrap();
+        fs::write(src.join(".git").join("HEAD"), "ref").unwrap();
+
+        copy_template_dir(&src, &dest).unwrap();
+
+        assert!(dest.join("README.md").exists());
+        assert!(!dest.join(".git").exists());
+    }
 }
 
 /// Serve a project logo file.
@@ -936,6 +1213,22 @@ pub async fn admin_force_stop_session(
 
     info!(session_id = %session_id, "Admin force stopped session");
     Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Debug, Serialize)]
+pub struct LocalCleanupResponse {
+    cleared: usize,
+}
+
+/// Clean up orphan local session processes (admin only).
+#[instrument(skip(state, _user))]
+pub async fn admin_cleanup_local_sessions(
+    State(state): State<AppState>,
+    RequireAdmin(_user): RequireAdmin,
+) -> ApiResult<Json<LocalCleanupResponse>> {
+    let cleared = state.sessions.cleanup_local_orphans().await?;
+    info!(cleared, "Admin cleaned up local sessions");
+    Ok(Json(LocalCleanupResponse { cleared }))
 }
 
 /// SSE metrics stream (admin only).
@@ -2696,7 +2989,11 @@ fn build_cass_args(query: &CassSearchQuery) -> Vec<String> {
 
     let agents = query.agents.trim();
     if !agents.is_empty() && agents != "all" {
-        for agent in agents.split(',').map(|agent| agent.trim()).filter(|a| !a.is_empty()) {
+        for agent in agents
+            .split(',')
+            .map(|agent| agent.trim())
+            .filter(|a| !a.is_empty())
+        {
             args.push("--agent".to_string());
             args.push(agent.to_string());
         }
@@ -2707,7 +3004,7 @@ fn build_cass_args(query: &CassSearchQuery) -> Vec<String> {
 
 #[cfg(test)]
 mod cass_search_tests {
-    use super::{build_cass_args, CassSearchQuery};
+    use super::{CassSearchQuery, build_cass_args};
 
     fn base_query() -> CassSearchQuery {
         CassSearchQuery {

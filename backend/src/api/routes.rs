@@ -43,6 +43,10 @@ pub fn create_router_with_config(state: AppState, max_upload_size_mb: usize) -> 
         // Project management
         .route("/projects", get(handlers::list_workspace_dirs))
         .route("/projects/logo/{*path}", get(handlers::get_project_logo))
+        .route(
+            "/projects/templates",
+            get(handlers::list_project_templates).post(handlers::create_project_from_template),
+        )
         // Session management
         .route("/sessions", get(handlers::list_sessions))
         .route("/sessions", post(handlers::create_session))
@@ -165,6 +169,10 @@ pub fn create_router_with_config(state: AppState, max_upload_size_mb: usize) -> 
         .route(
             "/admin/sessions/{session_id}",
             delete(handlers::admin_force_stop_session),
+        )
+        .route(
+            "/admin/local/cleanup",
+            post(handlers::admin_cleanup_local_sessions),
         )
         // Admin routes - user management
         .route("/admin/users", get(handlers::list_users))
