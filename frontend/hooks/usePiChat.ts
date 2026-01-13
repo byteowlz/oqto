@@ -2,6 +2,7 @@
 
 import {
 	type MainChatDbMessage,
+	type PiAgentMessage,
 	type PiState,
 	abortMainChatPi,
 	addMainChatPiSeparator,
@@ -219,9 +220,26 @@ function getCachedState(): PiState | null {
 // Check if cache is fresh enough to skip network fetch
 function isCacheFresh(): boolean {
 	// Cache is fresh for 5 minutes
-	return (
-		memoryCache.timestamp > 0 && Date.now() - memoryCache.timestamp < 300000
+	return memoryCache.timestamp > 0 && Date.now() - memoryCache.timestamp < 300000;
+}
+
+function shouldPreserveLocalMessage(message: PiDisplayMessage): boolean {
+	// Local optimistic messages (not yet persisted) use pi-msg-* IDs.
+	// Keep them when server refreshes history to avoid clobbering in-flight streaming.
+	if (PI_MESSAGE_ID_PATTERN.test(message.id)) return true;
+	if (message.id.startsWith("compaction-")) return true;
+	return false;
+}
+
+function mergeServerMessages(
+	previous: PiDisplayMessage[],
+	serverMessages: PiDisplayMessage[],
+): PiDisplayMessage[] {
+	const serverIds = new Set(serverMessages.map((m) => m.id));
+	const preserved = previous.filter(
+		(m) => shouldPreserveLocalMessage(m) && !serverIds.has(m.id),
 	);
+	return preserved.length > 0 ? [...serverMessages, ...preserved] : serverMessages;
 }
 
 // Get cached scroll position (null = bottom)
@@ -265,7 +283,9 @@ const wsCache: WsConnectionState = {
 // Subscribe to connection state changes
 function subscribeToConnectionState(listener: (connected: boolean) => void) {
 	wsCache.listeners.add(listener);
-	return () => wsCache.listeners.delete(listener);
+	return () => {
+		wsCache.listeners.delete(listener);
+	};
 }
 
 // Notify all listeners of connection state change
@@ -476,12 +496,15 @@ export function usePiChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 									content: text,
 								});
 							}
-							// Update messages state
+							// Update messages state - create new parts array for React to detect change
 							setMessages((prev) => {
 								const idx = prev.findIndex((m) => m.id === currentTextMsg.id);
 								if (idx >= 0) {
 									const updated = [...prev];
-									updated[idx] = { ...currentTextMsg };
+									updated[idx] = {
+										...currentTextMsg,
+										parts: currentTextMsg.parts.map(p => ({ ...p })),
+									};
 									return updated;
 								}
 								return prev;
@@ -508,7 +531,10 @@ export function usePiChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 								const idx = prev.findIndex((m) => m.id === currentToolMsg.id);
 								if (idx >= 0) {
 									const updated = [...prev];
-									updated[idx] = { ...currentToolMsg };
+									updated[idx] = {
+										...currentToolMsg,
+										parts: currentToolMsg.parts.map(p => ({ ...p })),
+									};
 									return updated;
 								}
 								return prev;
@@ -537,7 +563,10 @@ export function usePiChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 								const idx = prev.findIndex((m) => m.id === currentResultMsg.id);
 								if (idx >= 0) {
 									const updated = [...prev];
-									updated[idx] = { ...currentResultMsg };
+									updated[idx] = {
+										...currentResultMsg,
+										parts: currentResultMsg.parts.map(p => ({ ...p })),
+									};
 									return updated;
 								}
 								return prev;
@@ -550,7 +579,10 @@ export function usePiChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 						// Mark message as complete
 						if (streamingMessageRef.current) {
 							streamingMessageRef.current.isStreaming = false;
-							const completedMessage = { ...streamingMessageRef.current };
+							const completedMessage = {
+								...streamingMessageRef.current,
+								parts: streamingMessageRef.current.parts.map(p => ({ ...p })),
+							};
 							setMessages((prev) => {
 								const idx = prev.findIndex((m) => m.id === completedMessage.id);
 								if (idx >= 0) {
@@ -666,8 +698,7 @@ export function usePiChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 			setState(piState);
 			updateStateCache(piState);
 			const displayMessages = convertDbToDisplayMessages(dbMessages);
-			setMessages(displayMessages);
-			updateMessageCache(displayMessages);
+			setMessages((previous) => mergeServerMessages(previous, displayMessages));
 		} catch (e) {
 			// Don't show errors for background refresh - we have cached data
 			console.warn("Background refresh failed:", e);
@@ -868,6 +899,13 @@ export function usePiChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 		}
 	}, [connect, disconnect, onError]);
 
+	// Keep WebSocket handler in sync when callback changes
+	useEffect(() => {
+		if (isOwnerRef.current && wsCache.ws?.readyState === WebSocket.OPEN) {
+			wsCache.ws.onmessage = handleWsMessage;
+		}
+	}, [handleWsMessage]);
+
 	// Initialize on mount - INSTANT with cached data, background refresh
 	useEffect(() => {
 		// Prevent double initialization in strict mode
@@ -915,8 +953,9 @@ export function usePiChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 						const displayMessages = convertDbToDisplayMessages(dbMessages);
 						// Only update if we got data
 						if (displayMessages.length > 0) {
-							setMessages(displayMessages);
-							updateMessageCache(displayMessages);
+							setMessages((previous) =>
+								mergeServerMessages(previous, displayMessages),
+							);
 						}
 					})
 					.catch(() => {

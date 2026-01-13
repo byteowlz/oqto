@@ -51,6 +51,8 @@ struct StdoutBuffer {
     lines: Vec<String>,
     /// Whether the process has exited.
     closed: bool,
+    /// Exit code if process has exited.
+    exit_code: Option<i32>,
 }
 
 impl StdoutBuffer {
@@ -58,8 +60,18 @@ impl StdoutBuffer {
         Self {
             lines: Vec::new(),
             closed: false,
+            exit_code: None,
         }
     }
+}
+
+/// Message sent on the stdout broadcast channel.
+#[derive(Debug, Clone)]
+enum StdoutEvent {
+    /// A line was read from stdout.
+    Line(String),
+    /// The process has exited.
+    Closed { exit_code: Option<i32> },
 }
 
 /// Managed process with optional RPC pipes.
@@ -72,6 +84,8 @@ struct ManagedProcess {
     is_rpc: bool,
     /// Shared stdout buffer for RPC processes (populated by background reader task).
     stdout_buffer: Option<Arc<Mutex<StdoutBuffer>>>,
+    /// Broadcast channel for stdout lines (for subscriptions).
+    stdout_tx: Option<broadcast::Sender<StdoutEvent>>,
     /// Handle to the background stdout reader task.
     _reader_handle: Option<tokio::task::JoinHandle<()>>,
 }
@@ -148,7 +162,44 @@ impl Runner {
             RunnerRequest::ListProcesses => self.list_processes().await,
             RunnerRequest::WriteStdin(r) => self.write_stdin(r).await,
             RunnerRequest::ReadStdout(r) => self.read_stdout(r).await,
+            RunnerRequest::SubscribeStdout(_) => {
+                // Handled specially in handle_connection since it streams
+                error_response(ErrorCode::Internal, "SubscribeStdout must be handled via streaming")
+            }
         }
+    }
+
+    /// Get stdout broadcast receiver for a process.
+    async fn get_stdout_receiver(&self, process_id: &str) -> Result<(broadcast::Receiver<StdoutEvent>, Vec<String>), RunnerResponse> {
+        let state = self.state.read().await;
+        
+        let Some(proc) = state.processes.get(process_id) else {
+            return Err(error_response(
+                ErrorCode::ProcessNotFound,
+                format!("Process '{}' not found", process_id),
+            ));
+        };
+
+        if !proc.is_rpc {
+            return Err(error_response(
+                ErrorCode::NotRpcProcess,
+                format!("Process '{}' is not an RPC process", process_id),
+            ));
+        }
+
+        let Some(ref tx) = proc.stdout_tx else {
+            return Err(error_response(ErrorCode::IoError, "stdout channel not available"));
+        };
+
+        // Get any buffered lines first
+        let buffered_lines = if let Some(ref buffer) = proc.stdout_buffer {
+            let buf = buffer.lock().await;
+            buf.lines.clone()
+        } else {
+            Vec::new()
+        };
+
+        Ok((tx.subscribe(), buffered_lines))
     }
 
     async fn spawn_process(&self, req: SpawnProcessRequest, is_rpc: bool) -> RunnerResponse {
@@ -188,8 +239,9 @@ impl Runner {
                 );
 
                 // For RPC processes, set up background stdout reader
-                let (stdout_buffer, reader_handle) = if is_rpc {
+                let (stdout_buffer, stdout_tx, reader_handle) = if is_rpc {
                     let buffer = Arc::new(Mutex::new(StdoutBuffer::new()));
+                    let (tx, _) = broadcast::channel::<StdoutEvent>(256);
 
                     // Take stdout from the child
                     let stdout = child.stdout.take();
@@ -197,14 +249,15 @@ impl Runner {
 
                     // Spawn background task to read stdout
                     let buffer_clone = Arc::clone(&buffer);
+                    let tx_clone = tx.clone();
                     let process_id = req.id.clone();
                     let handle = tokio::spawn(async move {
-                        Self::stdout_reader_task(process_id, stdout, stderr, buffer_clone).await;
+                        Self::stdout_reader_task(process_id, stdout, stderr, buffer_clone, tx_clone).await;
                     });
 
-                    (Some(buffer), Some(handle))
+                    (Some(buffer), Some(tx), Some(handle))
                 } else {
-                    (None, None)
+                    (None, None, None)
                 };
 
                 let managed = ManagedProcess {
@@ -215,6 +268,7 @@ impl Runner {
                     child,
                     is_rpc,
                     stdout_buffer,
+                    stdout_tx,
                     _reader_handle: reader_handle,
                 };
 
@@ -235,18 +289,26 @@ impl Runner {
         stdout: Option<tokio::process::ChildStdout>,
         stderr: Option<tokio::process::ChildStderr>,
         buffer: Arc<Mutex<StdoutBuffer>>,
+        stdout_tx: broadcast::Sender<StdoutEvent>,
     ) {
         // Read both stdout and stderr concurrently
-        let stdout_task = async {
+        let buffer_clone = Arc::clone(&buffer);
+        let stdout_tx_clone = stdout_tx.clone();
+        let stdout_task = async move {
             if let Some(stdout) = stdout {
                 let mut reader = BufReader::new(stdout).lines();
                 while let Ok(Some(line)) = reader.next_line().await {
-                    let mut buf = buffer.lock().await;
-                    buf.lines.push(line);
-                    // Keep buffer size reasonable (max 10000 lines)
-                    if buf.lines.len() > 10000 {
-                        buf.lines.remove(0);
+                    // Buffer the line
+                    {
+                        let mut buf = buffer_clone.lock().await;
+                        buf.lines.push(line.clone());
+                        // Keep buffer size reasonable (max 10000 lines)
+                        if buf.lines.len() > 10000 {
+                            buf.lines.remove(0);
+                        }
                     }
+                    // Broadcast to subscribers (ignore errors if no subscribers)
+                    let _ = stdout_tx_clone.send(StdoutEvent::Line(line));
                 }
             }
         };
@@ -270,6 +332,9 @@ impl Runner {
         let mut buf = buffer.lock().await;
         buf.closed = true;
         info!("Stdout reader for process '{}' finished", process_id);
+
+        // Notify subscribers that stdout ended
+        let _ = stdout_tx.send(StdoutEvent::Closed { exit_code: buf.exit_code });
     }
 
     async fn kill_process(&self, req: KillProcessRequest) -> RunnerResponse {
@@ -373,10 +438,7 @@ impl Runner {
             Ok(()) => {
                 // Flush to ensure data is sent immediately
                 if let Err(e) = stdin.flush().await {
-                    return error_response(
-                        ErrorCode::IoError,
-                        format!("flush failed: {}", e),
-                    );
+                    return error_response(ErrorCode::IoError, format!("flush failed: {}", e));
                 }
                 let bytes_written = req.data.len();
                 debug!("Wrote {} bytes to stdin of '{}'", bytes_written, req.id);
@@ -482,6 +544,84 @@ impl Runner {
                     };
 
                     debug!("Received request: {:?}", req);
+
+                    // Handle SubscribeStdout specially since it streams
+                    if let RunnerRequest::SubscribeStdout(ref sub_req) = req {
+                        let process_id = sub_req.id.clone();
+                        match self.get_stdout_receiver(&process_id).await {
+                            Ok((mut rx, buffered_lines)) => {
+                                // Send subscription confirmation
+                                let resp = RunnerResponse::StdoutSubscribed(StdoutSubscribedResponse {
+                                    id: process_id.clone(),
+                                });
+                                let json = serde_json::to_string(&resp).unwrap();
+                                if writer.write_all(format!("{}\n", json).as_bytes()).await.is_err() {
+                                    break;
+                                }
+
+                                // Send any buffered lines first
+                                for buffered_line in buffered_lines {
+                                    let resp = RunnerResponse::StdoutLine(StdoutLineResponse {
+                                        id: process_id.clone(),
+                                        line: buffered_line,
+                                    });
+                                    let json = serde_json::to_string(&resp).unwrap();
+                                    if writer.write_all(format!("{}\n", json).as_bytes()).await.is_err() {
+                                        break;
+                                    }
+                                }
+
+                                // Stream new lines as they arrive
+                                loop {
+                                    match rx.recv().await {
+                                        Ok(StdoutEvent::Line(stdout_line)) => {
+                                            let resp = RunnerResponse::StdoutLine(StdoutLineResponse {
+                                                id: process_id.clone(),
+                                                line: stdout_line,
+                                            });
+                                            let json = serde_json::to_string(&resp).unwrap();
+                                            if writer.write_all(format!("{}\n", json).as_bytes()).await.is_err() {
+                                                break;
+                                            }
+                                        }
+                                        Ok(StdoutEvent::Closed { exit_code }) => {
+                                            let resp = RunnerResponse::StdoutEnd(StdoutEndResponse {
+                                                id: process_id.clone(),
+                                                exit_code,
+                                            });
+                                            let json = serde_json::to_string(&resp).unwrap();
+                                            let _ = writer.write_all(format!("{}\n", json).as_bytes()).await;
+                                            break;
+                                        }
+                                        Err(broadcast::error::RecvError::Lagged(n)) => {
+                                            warn!("Stdout subscription lagged, missed {} events", n);
+                                            // Continue receiving
+                                        }
+                                        Err(broadcast::error::RecvError::Closed) => {
+                                            let resp = RunnerResponse::StdoutEnd(StdoutEndResponse {
+                                                id: process_id.clone(),
+                                                exit_code: None,
+                                            });
+                                            let json = serde_json::to_string(&resp).unwrap();
+                                            let _ = writer.write_all(format!("{}\n", json).as_bytes()).await;
+                                            break;
+                                        }
+                                    }
+                                }
+                                // After subscription ends, continue the connection loop
+                                // (client can send more requests)
+                                continue;
+                            }
+                            Err(resp) => {
+                                let json = serde_json::to_string(&resp).unwrap();
+                                if writer.write_all(format!("{}\n", json).as_bytes()).await.is_err() {
+                                    break;
+                                }
+                                continue;
+                            }
+                        }
+                    }
+
                     let resp = self.handle_request(req).await;
                     let json = serde_json::to_string(&resp).unwrap();
                     if let Err(e) = writer.write_all(format!("{}\n", json).as_bytes()).await {
@@ -561,8 +701,10 @@ impl Runner {
 }
 
 fn get_default_socket_path() -> PathBuf {
-    let username = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
-    PathBuf::from(DEFAULT_SOCKET_PATTERN.replace("{user}", &username))
+    // Use XDG_RUNTIME_DIR if available (typically /run/user/<uid>), otherwise /tmp
+    let runtime_dir = std::env::var("XDG_RUNTIME_DIR")
+        .unwrap_or_else(|_| "/tmp".to_string());
+    PathBuf::from(DEFAULT_SOCKET_PATTERN.replace("{runtime_dir}", &runtime_dir))
 }
 
 fn error_response(code: ErrorCode, message: impl Into<String>) -> RunnerResponse {

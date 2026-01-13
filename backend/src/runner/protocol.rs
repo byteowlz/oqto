@@ -33,6 +33,11 @@ pub enum RunnerRequest {
     /// Read available data from a process's stdout (for RPC processes).
     ReadStdout(ReadStdoutRequest),
 
+    /// Subscribe to stdout stream (for RPC processes).
+    /// Lines are pushed as they arrive via StdoutLine responses.
+    /// The subscription ends when the process exits or client disconnects.
+    SubscribeStdout(SubscribeStdoutRequest),
+
     /// Health check.
     Ping,
 
@@ -61,6 +66,15 @@ pub enum RunnerResponse {
 
     /// Data read from stdout.
     StdoutRead(StdoutReadResponse),
+
+    /// Subscription to stdout started.
+    StdoutSubscribed(StdoutSubscribedResponse),
+
+    /// A line from stdout (pushed during subscription).
+    StdoutLine(StdoutLineResponse),
+
+    /// Stdout subscription ended (process exited).
+    StdoutEnd(StdoutEndResponse),
 
     /// Pong response to ping.
     Pong,
@@ -142,6 +156,13 @@ pub struct ReadStdoutRequest {
     pub timeout_ms: u64,
 }
 
+/// Request to subscribe to stdout stream.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubscribeStdoutRequest {
+    /// Process ID.
+    pub id: String,
+}
+
 // ============================================================================
 // Response types
 // ============================================================================
@@ -219,6 +240,31 @@ pub struct StdoutReadResponse {
     pub data: String,
     /// Whether there's more data available.
     pub has_more: bool,
+}
+
+/// Response confirming stdout subscription started.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StdoutSubscribedResponse {
+    /// Process ID.
+    pub id: String,
+}
+
+/// A line from stdout (pushed during subscription).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StdoutLineResponse {
+    /// Process ID.
+    pub id: String,
+    /// The line content.
+    pub line: String,
+}
+
+/// Stdout subscription ended.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StdoutEndResponse {
+    /// Process ID.
+    pub id: String,
+    /// Exit code if process exited.
+    pub exit_code: Option<i32>,
 }
 
 /// Error response.

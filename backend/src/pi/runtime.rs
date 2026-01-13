@@ -480,55 +480,37 @@ impl RunnerPiProcess {
             info!("Runner Pi writer task ended");
         });
 
-        // Spawn reader task that polls stdout via runner
+        // Spawn reader task that subscribes to stdout via runner (push-based, like local mode)
         let client_clone2 = client.clone();
         let process_id_clone2 = process_id.clone();
         let event_tx_clone = event_tx.clone();
         let pending_clone = Arc::clone(&pending_responses);
         let running_clone2 = Arc::clone(&running);
         let reader_handle = tokio::spawn(async move {
-            let mut buffer = String::new();
-
-            loop {
-                // Check if still running
-                if !*running_clone2.read().await {
-                    break;
-                }
-
-                // Poll for stdout data with a short timeout
-                match client_clone2.read_stdout(&process_id_clone2, 100).await {
-                    Ok(response) => {
-                        if !response.data.is_empty() {
-                            buffer.push_str(&response.data);
-
-                            // Process complete lines
-                            while let Some(newline_pos) = buffer.find('\n') {
-                                let line = buffer[..newline_pos].to_string();
-                                buffer = buffer[newline_pos + 1..].to_string();
-
+            // Subscribe to stdout stream
+            match client_clone2.subscribe_stdout(&process_id_clone2).await {
+                Ok(mut subscription) => {
+                    // Read lines as they arrive (push-based, no polling)
+                    while let Some(event) = subscription.next().await {
+                        match event {
+                            crate::runner::client::StdoutSubscriptionEvent::Line(line) => {
                                 if line.trim().is_empty() {
                                     continue;
                                 }
-
                                 Self::process_line(&line, &event_tx_clone, &pending_clone).await;
                             }
-                        }
-                    }
-                    Err(e) => {
-                        // Check if process exited
-                        if let Ok(status) = client_clone2.get_status(&process_id_clone2).await {
-                            if !status.running {
-                                info!("Pi process exited via runner");
+                            crate::runner::client::StdoutSubscriptionEvent::End { .. } => {
+                                info!("Pi process exited via runner subscription");
                                 *running_clone2.write().await = false;
                                 break;
                             }
                         }
-                        debug!("Error reading from Pi via runner: {:?}", e);
                     }
                 }
-
-                // Small delay to avoid busy-looping
-                tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+                Err(e) => {
+                    error!("Failed to subscribe to Pi stdout via runner: {:?}", e);
+                    *running_clone2.write().await = false;
+                }
             }
 
             info!("Runner Pi reader task ended");
