@@ -634,6 +634,24 @@ function mapWsEventToLegacyEvent(event: WsEvent): LegacyEvent | null {
 			}
 			return null;
 
+		case "compaction_start":
+			return {
+				type: "compaction.start",
+				properties: {
+					sessionID: "session_id" in event ? event.session_id : undefined,
+					reason: "reason" in event ? event.reason : undefined,
+				},
+			};
+
+		case "compaction_end":
+			return {
+				type: "compaction.end",
+				properties: {
+					sessionID: "session_id" in event ? event.session_id : undefined,
+					success: "success" in event ? event.success : undefined,
+				},
+			};
+
 		case "opencode_event":
 			// Pass through the inner event type if available
 			if ("event_type" in event && "data" in event) {

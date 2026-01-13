@@ -804,6 +804,7 @@ export function SessionsApp() {
 	const [activeQuestion, setActiveQuestion] = useState<QuestionRequest | null>(
 		null,
 	);
+	const [lastCompactionAt, setLastCompactionAt] = useState<number | null>(null);
 
 	// A2UI surfaces using the modular hook
 	const {
@@ -836,8 +837,13 @@ export function SessionsApp() {
 			setPendingQuestions([]);
 			setActiveQuestion(null);
 			clearA2UISurfaces();
+			setLastCompactionAt(null);
 		}
 	});
+
+	useEffect(() => {
+		setLastCompactionAt(null);
+	}, [mainChatActive]);
 
 	// Track if we're on mobile layout (below lg breakpoint = 1024px)
 	const isMobileLayout = useIsMobile();
@@ -1156,10 +1162,22 @@ export function SessionsApp() {
 		}
 	}, [previewFilePath, expandedView]);
 
+	const lastPreviewSessionKeyRef = useRef<string | null>(null);
 	useEffect(() => {
-		if (!previewFilePath) return;
-		setPreviewFilePath(null);
-	}, [selectedChatSessionId, mainChatActive, previewFilePath]);
+		const nextKey = mainChatActive
+			? "main"
+			: selectedChatSessionId || "none";
+		if (lastPreviewSessionKeyRef.current === null) {
+			lastPreviewSessionKeyRef.current = nextKey;
+			return;
+		}
+		if (lastPreviewSessionKeyRef.current !== nextKey) {
+			lastPreviewSessionKeyRef.current = nextKey;
+			if (previewFilePath) {
+				setPreviewFilePath(null);
+			}
+		}
+	}, [mainChatActive, previewFilePath, selectedChatSessionId]);
 
 	// Handler for opening a file in canvas from FileTreeView
 	const handleOpenInCanvas = useCallback((filePath: string) => {
@@ -2147,6 +2165,13 @@ export function SessionsApp() {
 				setChatState("idle");
 			}
 
+			if (eventType === "compaction.end" || eventType === "compaction_end") {
+				const props = event.properties as { success?: boolean } | null;
+				if (!props || props.success !== false) {
+					setLastCompactionAt(Date.now());
+				}
+			}
+
 			// Refresh messages on any message event
 			if (eventType?.startsWith("message")) {
 				// Invalidate cache when messages change
@@ -2476,7 +2501,21 @@ export function SessionsApp() {
 		}
 
 		// Only count tokens from messages after the last compaction
-		const startIndex = lastCompactionIndex >= 0 ? lastCompactionIndex + 1 : 0;
+		let startIndex = lastCompactionIndex >= 0 ? lastCompactionIndex + 1 : 0;
+		if (lastCompactionAt) {
+			const timeIndex = messages.findIndex((msg) => {
+				const created = msg.info.time?.created;
+				return typeof created === "number" && created >= lastCompactionAt;
+			});
+			if (timeIndex >= 0) {
+				startIndex = Math.max(startIndex, timeIndex);
+			} else if (messages.length > 0) {
+				const lastCreated = messages[messages.length - 1]?.info.time?.created;
+				if (typeof lastCreated === "number" && lastCreated < lastCompactionAt) {
+					startIndex = messages.length;
+				}
+			}
+		}
 
 		for (let i = startIndex; i < messages.length; i++) {
 			const msg = messages[i];
@@ -2495,7 +2534,7 @@ export function SessionsApp() {
 		}
 
 		return { inputTokens, outputTokens, providerID, modelID };
-	}, [messages]);
+	}, [lastCompactionAt, messages]);
 
 	// Get context limit from models.dev based on current model
 	const contextLimit = useModelContextLimit(
