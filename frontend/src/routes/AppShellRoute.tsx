@@ -41,16 +41,21 @@ import {
 	DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import { useApp } from "@/hooks/use-app";
 import { useCommandPalette } from "@/hooks/use-command-palette";
 import {
 	type CassSearchHit,
 	type ChatSession,
+	type CreateProjectFromTemplateRequest,
 	type Persona,
 	type ProjectLogo,
+	type ProjectTemplateEntry,
+	createProjectFromTemplate,
 	getMainChatAssistant,
 	getProjectLogoUrl,
 	getSettingsValues,
+	listProjectTemplates,
 	listWorkspaceDirectories,
 } from "@/lib/control-plane-client";
 import { type OpenCodeAgent, fetchAgents } from "@/lib/opencode-client";
@@ -258,6 +263,17 @@ function AppShell() {
 	const [targetProjectKey, setTargetProjectKey] = useState<string>("");
 	const [targetProjectName, setTargetProjectName] = useState<string>("");
 	const [renameProjectValue, setRenameProjectValue] = useState("");
+	const [newProjectDialogOpen, setNewProjectDialogOpen] = useState(false);
+	const [projectTemplates, setProjectTemplates] = useState<ProjectTemplateEntry[]>([]);
+	const [templatesLoading, setTemplatesLoading] = useState(false);
+	const [templatesError, setTemplatesError] = useState<string | null>(null);
+	const [selectedTemplatePath, setSelectedTemplatePath] = useState<string | null>(
+		null,
+	);
+	const [newProjectPath, setNewProjectPath] = useState("");
+	const [newProjectShared, setNewProjectShared] = useState(false);
+	const [newProjectSubmitting, setNewProjectSubmitting] = useState(false);
+	const [newProjectError, setNewProjectError] = useState<string | null>(null);
 
 	// Project sort state
 	const [projectSortBy, setProjectSortBy] = useState<
@@ -344,6 +360,44 @@ function AppShell() {
 	const [directoryPickerLoading, setDirectoryPickerLoading] = useState(false);
 	const [pendingPersona, setPendingPersona] = useState<Persona | null>(null);
 
+	const resetNewProjectForm = useCallback(() => {
+		setProjectTemplates([]);
+		setTemplatesLoading(false);
+		setTemplatesError(null);
+		setSelectedTemplatePath(null);
+		setNewProjectPath("");
+		setNewProjectShared(false);
+		setNewProjectSubmitting(false);
+		setNewProjectError(null);
+	}, []);
+
+	const handleNewProjectDialogChange = useCallback(
+		(open: boolean) => {
+			setNewProjectDialogOpen(open);
+			if (!open) {
+				resetNewProjectForm();
+			}
+		},
+		[resetNewProjectForm],
+	);
+
+	const refreshWorkspaceDirectories = useCallback(() => {
+		if (typeof window === "undefined") return Promise.resolve();
+		return listWorkspaceDirectories(".")
+			.then((entries) => {
+				const dirs = entries.map((entry) => ({
+					name: entry.name,
+					path: entry.path,
+					logo: entry.logo,
+				}));
+				setWorkspaceDirectories(dirs);
+			})
+			.catch((err) => {
+				console.error("Failed to load workspace directories:", err);
+				setWorkspaceDirectories([]);
+			});
+	}, []);
+
 	const handleProjectDefaultAgentChange = useCallback(
 		(projectKey: string, agentId: string) => {
 			setProjectDefaultAgents((prev) => {
@@ -357,6 +411,48 @@ function AppShell() {
 		},
 		[setProjectDefaultAgents],
 	);
+
+	const handleNewProjectPathChange = useCallback((value: string) => {
+		setNewProjectPath(value);
+	}, []);
+
+	const handleCreateProjectFromTemplate = useCallback(async () => {
+		setNewProjectError(null);
+		if (!selectedTemplatePath) {
+			setNewProjectError("Select a template to continue.");
+			return;
+		}
+		const trimmedPath = newProjectPath.trim();
+		if (!trimmedPath) {
+			setNewProjectError("Project directory is required.");
+			return;
+		}
+		const payload: CreateProjectFromTemplateRequest = {
+			template_path: selectedTemplatePath,
+			project_path: trimmedPath,
+		};
+		if (newProjectShared) {
+			payload.shared = true;
+		}
+		setNewProjectSubmitting(true);
+		try {
+			await createProjectFromTemplate(payload);
+			await refreshWorkspaceDirectories();
+			handleNewProjectDialogChange(false);
+		} catch (err) {
+			setNewProjectError(
+				err instanceof Error ? err.message : "Failed to create project.",
+			);
+		} finally {
+			setNewProjectSubmitting(false);
+		}
+	}, [
+		selectedTemplatePath,
+		newProjectPath,
+		newProjectShared,
+		refreshWorkspaceDirectories,
+		handleNewProjectDialogChange,
+	]);
 
 	useEffect(() => {
 		if (typeof window === "undefined") return;
@@ -411,21 +507,8 @@ function AppShell() {
 	}, [handleProjectDefaultAgentChange, setActiveAppId]);
 
 	useEffect(() => {
-		if (typeof window === "undefined") return;
-		listWorkspaceDirectories(".")
-			.then((entries) => {
-				const dirs = entries.map((entry) => ({
-					name: entry.name,
-					path: entry.path,
-					logo: entry.logo,
-				}));
-				setWorkspaceDirectories(dirs);
-			})
-			.catch((err) => {
-				console.error("Failed to load workspace directories:", err);
-				setWorkspaceDirectories([]);
-			});
-	}, []);
+		refreshWorkspaceDirectories();
+	}, [refreshWorkspaceDirectories]);
 
 	useEffect(() => {
 		if (!directoryPickerOpen || typeof window === "undefined") return;
@@ -444,6 +527,35 @@ function AppShell() {
 			})
 			.finally(() => setDirectoryPickerLoading(false));
 	}, [directoryPickerOpen, directoryPickerPath]);
+
+	useEffect(() => {
+		if (!newProjectDialogOpen || typeof window === "undefined") return;
+		let active = true;
+		setTemplatesLoading(true);
+		setTemplatesError(null);
+		listProjectTemplates()
+			.then((entries) => {
+				if (!active) return;
+				setProjectTemplates(entries);
+				if (entries.length > 0) {
+					setSelectedTemplatePath((prev) => prev ?? entries[0].path);
+				}
+			})
+			.catch((err) => {
+				if (!active) return;
+				console.error("Failed to load templates:", err);
+				setTemplatesError(
+					err instanceof Error ? err.message : "Failed to load templates",
+				);
+				setProjectTemplates([]);
+			})
+			.finally(() => {
+				if (active) setTemplatesLoading(false);
+			});
+		return () => {
+			active = false;
+		};
+	}, [newProjectDialogOpen]);
 
 	// Session search
 	const [sessionSearch, setSessionSearch] = useState("");
@@ -1606,10 +1718,18 @@ function AppShell() {
 												{deferredSearch ? `/${chatHistory.length}` : ""})
 											</span>
 										</div>
-										<div className="flex items-center gap-1">
-											{selectedProjectLabel && (
-												<button
-													type="button"
+								<div className="flex items-center gap-1">
+									<button
+										type="button"
+										onClick={() => setNewProjectDialogOpen(true)}
+										className="p-1 text-muted-foreground hover:text-foreground hover:bg-sidebar-accent rounded"
+										title={locale === "de" ? "Neues Projekt" : "New project"}
+									>
+										<Plus className="w-3 h-3" />
+									</button>
+									{selectedProjectLabel && (
+										<button
+											type="button"
 													onClick={handleProjectClear}
 													className="flex items-center gap-1 text-[10px] text-muted-foreground/70 hover:text-foreground"
 												>
@@ -2385,6 +2505,16 @@ function AppShell() {
 										</span>
 									</div>
 									<div className="flex items-center gap-1">
+										<button
+											type="button"
+											onClick={() => setNewProjectDialogOpen(true)}
+											className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-sidebar-accent rounded"
+											title={
+												locale === "de" ? "Neues Projekt" : "New project"
+											}
+										>
+											<Plus className="w-4 h-4" />
+										</button>
 										{selectedProjectLabel && (
 											<button
 												type="button"
@@ -3286,6 +3416,133 @@ function AppShell() {
 						</Button>
 						<Button type="button" onClick={handleConfirmRenameProject}>
 							{locale === "de" ? "Speichern" : "Save"}
+						</Button>
+					</DialogFooter>
+				</DialogContent>
+			</Dialog>
+
+			<Dialog
+				open={newProjectDialogOpen}
+				onOpenChange={handleNewProjectDialogChange}
+			>
+				<DialogContent className="sm:max-w-xl">
+					<DialogHeader>
+						<DialogTitle>
+							{locale === "de" ? "Neues Projekt" : "New project"}
+						</DialogTitle>
+						<DialogDescription>
+							{locale === "de"
+								? "Ein Template auswahlen und ein neues Projekt anlegen."
+								: "Pick a template and create a new project."}
+						</DialogDescription>
+					</DialogHeader>
+
+					<div className="space-y-4">
+						<div className="space-y-2">
+							<div className="text-xs uppercase text-muted-foreground">
+								{locale === "de" ? "Template" : "Template"}
+							</div>
+							{templatesLoading ? (
+								<div className="text-sm text-muted-foreground">
+									{locale === "de" ? "Lade Templates..." : "Loading templates..."}
+								</div>
+							) : templatesError ? (
+								<div className="text-sm text-destructive">{templatesError}</div>
+							) : projectTemplates.length === 0 ? (
+								<div className="text-sm text-muted-foreground">
+									{locale === "de"
+										? "Keine Templates gefunden."
+										: "No templates found."}
+								</div>
+							) : (
+								<div className="grid gap-2">
+									{projectTemplates.map((template) => {
+										const selected = template.path === selectedTemplatePath;
+										return (
+											<button
+												type="button"
+												key={template.path}
+												onClick={() => setSelectedTemplatePath(template.path)}
+												className={cn(
+													"flex flex-col gap-1 border rounded px-3 py-2 text-left transition-colors",
+													selected
+														? "border-primary/70 bg-primary/10"
+														: "border-border hover:bg-muted",
+												)}
+											>
+												<span className="text-sm font-medium">
+													{template.name}
+												</span>
+												{template.description && (
+													<span className="text-xs text-muted-foreground">
+														{template.description}
+													</span>
+												)}
+											</button>
+										);
+									})}
+								</div>
+							)}
+						</div>
+
+						<div className="space-y-2">
+							<div className="text-xs uppercase text-muted-foreground">
+								{locale === "de" ? "Projektpfad" : "Project path"}
+							</div>
+							<Input
+								value={newProjectPath}
+								onChange={(e) => handleNewProjectPathChange(e.target.value)}
+								placeholder={
+									locale === "de"
+										? "z.B. client-app"
+										: "e.g. client-app"
+								}
+							/>
+							<div className="text-xs text-muted-foreground">
+								{locale === "de"
+									? "Relativ zum Workspace-Ordner."
+									: "Relative to the workspace root."}
+							</div>
+						</div>
+
+						<div className="flex items-center justify-between border border-border rounded px-3 py-2">
+							<div className="text-sm">
+								{locale === "de" ? "Geteiltes Projekt" : "Shared project"}
+							</div>
+							<Switch
+								checked={newProjectShared}
+								onCheckedChange={setNewProjectShared}
+							/>
+						</div>
+
+						{newProjectError && (
+							<div className="text-sm text-destructive">{newProjectError}</div>
+						)}
+					</div>
+
+					<DialogFooter>
+						<Button
+							type="button"
+							variant="outline"
+							onClick={() => handleNewProjectDialogChange(false)}
+						>
+							{locale === "de" ? "Abbrechen" : "Cancel"}
+						</Button>
+						<Button
+							type="button"
+							onClick={handleCreateProjectFromTemplate}
+							disabled={newProjectSubmitting || templatesLoading}
+						>
+							{newProjectSubmitting ? (
+								<>
+									<Loader2 className="w-4 h-4 mr-2 animate-spin" />
+									{locale === "de" ? "Erstelle..." : "Creating..."}
+								</>
+							) : locale === "de" ? (
+								"Projekt erstellen"
+							) : (
+								"Create project"
+							)}
 						</Button>
 					</DialogFooter>
 				</DialogContent>
