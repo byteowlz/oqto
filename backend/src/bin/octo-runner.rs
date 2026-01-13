@@ -23,9 +23,10 @@ use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::process::{Child, Command};
-use tokio::sync::{broadcast, Mutex, RwLock};
+use tokio::sync::{Mutex, RwLock, broadcast};
 
-use octo::runner::*;
+use octo::runner::client::DEFAULT_SOCKET_PATTERN;
+use octo::runner::protocol::*;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -155,7 +156,7 @@ impl Runner {
 
         // Check if ID already exists
         if state.processes.contains_key(&req.id) {
-            return RunnerResponse::error(
+            return error_response(
                 ErrorCode::ProcessAlreadyExists,
                 format!("Process with ID '{}' already exists", req.id),
             );
@@ -223,7 +224,7 @@ impl Runner {
             }
             Err(e) => {
                 error!("Failed to spawn process '{}': {}", req.id, e);
-                RunnerResponse::error(ErrorCode::SpawnFailed, e.to_string())
+                error_response(ErrorCode::SpawnFailed, e.to_string())
             }
         }
     }
@@ -275,7 +276,7 @@ impl Runner {
         let mut state = self.state.write().await;
 
         let Some(proc) = state.processes.get_mut(&req.id) else {
-            return RunnerResponse::error(
+            return error_response(
                 ErrorCode::ProcessNotFound,
                 format!("Process '{}' not found", req.id),
             );
@@ -311,7 +312,7 @@ impl Runner {
         let mut state = self.state.write().await;
 
         let Some(proc) = state.processes.get_mut(&req.id) else {
-            return RunnerResponse::error(
+            return error_response(
                 ErrorCode::ProcessNotFound,
                 format!("Process '{}' not found", req.id),
             );
@@ -351,28 +352,28 @@ impl Runner {
         let mut state = self.state.write().await;
 
         let Some(proc) = state.processes.get_mut(&req.id) else {
-            return RunnerResponse::error(
+            return error_response(
                 ErrorCode::ProcessNotFound,
                 format!("Process '{}' not found", req.id),
             );
         };
 
         if !proc.is_rpc {
-            return RunnerResponse::error(
+            return error_response(
                 ErrorCode::NotRpcProcess,
                 format!("Process '{}' is not an RPC process", req.id),
             );
         }
 
         let Some(stdin) = proc.child.stdin.as_mut() else {
-            return RunnerResponse::error(ErrorCode::IoError, "stdin not available");
+            return error_response(ErrorCode::IoError, "stdin not available");
         };
 
         match stdin.write_all(req.data.as_bytes()).await {
             Ok(()) => {
                 // Flush to ensure data is sent immediately
                 if let Err(e) = stdin.flush().await {
-                    return RunnerResponse::error(
+                    return error_response(
                         ErrorCode::IoError,
                         format!("flush failed: {}", e),
                     );
@@ -384,7 +385,7 @@ impl Runner {
                     bytes_written,
                 })
             }
-            Err(e) => RunnerResponse::error(ErrorCode::IoError, e.to_string()),
+            Err(e) => error_response(ErrorCode::IoError, e.to_string()),
         }
     }
 
@@ -394,21 +395,21 @@ impl Runner {
             let state = self.state.read().await;
 
             let Some(proc) = state.processes.get(&req.id) else {
-                return RunnerResponse::error(
+                return error_response(
                     ErrorCode::ProcessNotFound,
                     format!("Process '{}' not found", req.id),
                 );
             };
 
             if !proc.is_rpc {
-                return RunnerResponse::error(
+                return error_response(
                     ErrorCode::NotRpcProcess,
                     format!("Process '{}' is not an RPC process", req.id),
                 );
             }
 
             let Some(ref buffer) = proc.stdout_buffer else {
-                return RunnerResponse::error(ErrorCode::IoError, "stdout buffer not available");
+                return error_response(ErrorCode::IoError, "stdout buffer not available");
             };
 
             Arc::clone(buffer)
@@ -470,7 +471,7 @@ impl Runner {
                     let req: RunnerRequest = match serde_json::from_str(&line) {
                         Ok(r) => r,
                         Err(e) => {
-                            let resp = RunnerResponse::error(
+                            let resp = error_response(
                                 ErrorCode::InvalidRequest,
                                 format!("Invalid JSON: {}", e),
                             );
@@ -562,6 +563,13 @@ impl Runner {
 fn get_default_socket_path() -> PathBuf {
     let username = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
     PathBuf::from(DEFAULT_SOCKET_PATTERN.replace("{user}", &username))
+}
+
+fn error_response(code: ErrorCode, message: impl Into<String>) -> RunnerResponse {
+    RunnerResponse::Error(ErrorResponse {
+        code,
+        message: message.into(),
+    })
 }
 
 #[tokio::main]

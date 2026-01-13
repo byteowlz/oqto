@@ -1,7 +1,7 @@
 "use client";
 
-import { Button } from "@/components/ui/button";
 import { SettingsEditor } from "@/components/settings";
+import { Button } from "@/components/ui/button";
 import { useApp } from "@/hooks/use-app";
 import { cn } from "@/lib/utils";
 import { Brain, HelpCircle, Info, Keyboard, Settings, X } from "lucide-react";

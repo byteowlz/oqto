@@ -169,6 +169,8 @@ pub struct AppState {
     pub ws_hub: Arc<WsHub>,
     /// Pending A2UI blocking requests (request_id -> response channel).
     pub pending_a2ui_requests: PendingA2uiRequests,
+    /// Max proxy body size (bytes) for buffered proxy requests.
+    pub max_proxy_body_bytes: usize,
 }
 
 impl AppState {
@@ -182,6 +184,7 @@ impl AppState {
         mmry: MmryState,
         voice: VoiceState,
         session_ui: SessionUiState,
+        max_proxy_body_bytes: usize,
     ) -> Self {
         let http_client: Client<HttpConnector, Body> =
             Client::builder(TokioExecutor::new()).build_http();
@@ -203,6 +206,7 @@ impl AppState {
             main_chat_pi: None,
             ws_hub: Arc::new(WsHub::new()),
             pending_a2ui_requests: super::a2ui::new_pending_requests(),
+            max_proxy_body_bytes,
         }
     }
 
@@ -217,6 +221,7 @@ impl AppState {
         mmry: MmryState,
         voice: VoiceState,
         session_ui: SessionUiState,
+        max_proxy_body_bytes: usize,
     ) -> Self {
         let http_client: Client<HttpConnector, Body> =
             Client::builder(TokioExecutor::new()).build_http();
@@ -238,6 +243,7 @@ impl AppState {
             main_chat_pi: None,
             ws_hub: Arc::new(WsHub::new()),
             pending_a2ui_requests: super::a2ui::new_pending_requests(),
+            max_proxy_body_bytes,
         }
     }
 

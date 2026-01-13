@@ -21,11 +21,6 @@ use super::proxy;
 use super::state::AppState;
 use crate::ws::ws_handler;
 
-/// Create the application router.
-pub fn create_router(state: AppState) -> Router {
-    create_router_with_config(state, 100)
-}
-
 /// Create the application router with configurable max upload size.
 pub fn create_router_with_config(state: AppState, max_upload_size_mb: usize) -> Router {
     // CORS configuration - use specific origins from config
@@ -339,6 +334,8 @@ pub fn create_router_with_config(state: AppState, max_upload_size_mb: usize) -> 
             "/main/pi/history/separator",
             post(main_chat_pi_handlers::add_separator),
         )
+        // CASS (Coding Agent Session Search) routes
+        .route("/search", get(handlers::search_sessions))
         // TRX (issue tracking) routes - workspace-based
         .route(
             "/workspace/trx/issues",
@@ -393,6 +390,7 @@ pub fn create_router_with_config(state: AppState, max_upload_size_mb: usize) -> 
     // Public routes (no authentication)
     let public_routes = Router::new()
         .route("/health", get(handlers::health))
+        .route("/ws/debug", get(handlers::ws_debug))
         .route("/features", get(handlers::features))
         .route("/auth/login", post(handlers::login))
         .route("/auth/register", post(handlers::register))
@@ -487,15 +485,13 @@ fn build_cors_layer(state: &AppState) -> CorsLayer {
     if allowed_origins.is_empty() {
         if dev_mode {
             // In dev mode with no configured origins, allow any origin
-            tracing::warn!(
-                "CORS: No origins configured in dev mode, allowing any origin"
-            );
+            tracing::warn!("CORS: No origins configured in dev mode, allowing any origin");
             CorsLayer::new()
                 .allow_origin(AllowOrigin::any())
                 .allow_methods(methods)
                 .allow_headers(headers)
-                // Note: allow_credentials(true) is incompatible with allow_origin(any())
-                // For dev mode this is acceptable
+            // Note: allow_credentials(true) is incompatible with allow_origin(any())
+            // For dev mode this is acceptable
         } else {
             // In production with no configured origins, deny all cross-origin requests
             tracing::warn!(

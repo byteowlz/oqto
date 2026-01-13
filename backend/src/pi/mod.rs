@@ -18,7 +18,7 @@ mod client;
 pub mod runtime;
 mod types;
 
-pub use client::{PiClient, PiClientConfig};
+pub use client::PiClientConfig;
 pub use runtime::{
     ContainerPiRuntime, LocalPiRuntime, PiProcess, PiRuntime, PiSpawnConfig, RunnerPiRuntime,
 };

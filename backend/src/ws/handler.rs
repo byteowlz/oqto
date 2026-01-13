@@ -51,10 +51,17 @@ async fn handle_ws_connection(
     let (mut event_rx, conn_id) = hub.register_connection(&user_id);
 
     // Send connected message
+    let connected_json = match serde_json::to_string(&WsEvent::Connected) {
+        Ok(json) => json,
+        Err(e) => {
+            error!("Failed to serialize connected event for {}: {}", user_id, e);
+            hub.unregister_connection(&user_id, conn_id);
+            return;
+        }
+    };
+
     if let Err(e) = sender
-        .send(Message::Text(
-            serde_json::to_string(&WsEvent::Connected).unwrap().into(),
-        ))
+        .send(Message::Text(connected_json.into()))
         .await
     {
         error!(
@@ -110,9 +117,16 @@ async fn handle_ws_connection(
 
                 // Periodic ping
                 _ = ping_interval.tick() => {
-                    let ping_json = serde_json::to_string(&WsEvent::Ping).unwrap();
-                    if sender.send(Message::Text(ping_json.into())).await.is_err() {
-                        break;
+                    match serde_json::to_string(&WsEvent::Ping) {
+                        Ok(ping_json) => {
+                            if sender.send(Message::Text(ping_json.into())).await.is_err() {
+                                break;
+                            }
+                        }
+                        Err(e) => {
+                            warn!("Failed to serialize ping event: {}", e);
+                            break;
+                        }
                     }
                 }
             }

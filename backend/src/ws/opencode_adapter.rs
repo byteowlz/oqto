@@ -383,6 +383,8 @@ impl OpenCodeAdapter {
                 let permission_id = props
                     .get("id")
                     .or_else(|| props.get("permissionID"))
+                    .or_else(|| props.get("permissionId"))
+                    .or_else(|| props.get("permission_id"))
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
@@ -421,6 +423,8 @@ impl OpenCodeAdapter {
                 let permission_id = props
                     .get("id")
                     .or_else(|| props.get("permissionID"))
+                    .or_else(|| props.get("permissionId"))
+                    .or_else(|| props.get("permission_id"))
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
@@ -489,16 +493,27 @@ impl OpenCodeAdapter {
                 let props = data.get("properties").unwrap_or(data);
                 let error = props.get("error");
 
-                let error_type = error
-                    .and_then(|e| e.get("name"))
+                let error_type = props
+                    .get("error_type")
                     .and_then(|v| v.as_str())
+                    .or_else(|| props.get("errorType").and_then(|v| v.as_str()))
+                    .or_else(|| {
+                        error
+                            .and_then(|e| e.get("name"))
+                            .and_then(|v| v.as_str())
+                    })
                     .unwrap_or("UnknownError")
                     .to_string();
 
-                let message = error
-                    .and_then(|e| e.get("data"))
-                    .and_then(|d| d.get("message"))
+                let message = props
+                    .get("message")
                     .and_then(|v| v.as_str())
+                    .or_else(|| {
+                        error
+                            .and_then(|e| e.get("data"))
+                            .and_then(|d| d.get("message"))
+                            .and_then(|v| v.as_str())
+                    })
                     .unwrap_or("An unknown error occurred")
                     .to_string();
 
@@ -511,7 +526,9 @@ impl OpenCodeAdapter {
                     session_id,
                     error_type,
                     message,
-                    details: error.cloned(),
+                    details: error
+                        .cloned()
+                        .or_else(|| props.get("details").cloned()),
                 })
             }
 
@@ -621,6 +638,36 @@ mod tests {
     }
 
     #[test]
+    fn test_permission_event_with_snake_case_fields() {
+        let adapter = adapter();
+        let data = json!({
+            "type": "permission.updated",
+            "properties": {
+                "permission_id": "perm-3",
+                "permission_type": "bash",
+                "title": "Run bash",
+                "pattern": "pwd"
+            }
+        });
+        let event = adapter.translate_message_event(&data);
+        match event {
+            Some(WsEvent::PermissionRequest {
+                permission_id,
+                permission_type,
+                title,
+                pattern,
+                ..
+            }) => {
+                assert_eq!(permission_id, "perm-3");
+                assert_eq!(permission_type, "bash");
+                assert_eq!(title, "Run bash");
+                assert_eq!(pattern, Some(json!("pwd")));
+            }
+            other => panic!("Expected permission request, got {:?}", other),
+        }
+    }
+
+    #[test]
     fn test_session_error_event_with_flat_payload() {
         let adapter = adapter();
         let data = json!({
@@ -639,6 +686,30 @@ mod tests {
             }) => {
                 assert_eq!(error_type, "BadRequest");
                 assert_eq!(message, "Nope");
+            }
+            other => panic!("Expected session error, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_session_error_event_with_flat_error_fields() {
+        let adapter = adapter();
+        let data = json!({
+            "type": "session.error",
+            "error_type": "BadRequest",
+            "message": "Nope"
+        });
+        let event = adapter.translate_message_event(&data);
+        match event {
+            Some(WsEvent::SessionError {
+                error_type,
+                message,
+                details,
+                ..
+            }) => {
+                assert_eq!(error_type, "BadRequest");
+                assert_eq!(message, "Nope");
+                assert!(details.is_none());
             }
             other => panic!("Expected session error, got {:?}", other),
         }

@@ -33,6 +33,7 @@ import {
 	fetchSessions,
 	updateSession,
 } from "@/lib/opencode-client";
+import { generateReadableId } from "@/lib/session-utils";
 import { type WsEvent, getWsClient } from "@/lib/ws-client";
 import {
 	type Dispatch,
@@ -77,6 +78,10 @@ interface AppContextValue {
 	refreshWorkspaceSessions: () => Promise<void>;
 	refreshChatHistory: () => Promise<void>;
 	refreshOpencodeSessions: () => Promise<void>;
+	/** Create a placeholder chat session for instant UI feedback. */
+	createOptimisticChatSession: (workspacePath?: string) => string;
+	/** Remove a placeholder chat session. */
+	clearOptimisticChatSession: (sessionId: string) => void;
 	/** Ensure opencode is running and return the base URL. Starts if needed.
 	 * If workspacePath is provided, ensures a session for that specific workspace.
 	 */
@@ -84,6 +89,7 @@ interface AppContextValue {
 	createNewChat: (
 		baseUrlOverride?: string,
 		directoryOverride?: string,
+		options?: { optimisticId?: string },
 	) => Promise<OpenCodeSession | null>;
 	createNewChatWithPersona: (
 		persona: Persona,
@@ -116,6 +122,9 @@ interface AppContextValue {
 	/** Workspace path for the Main Chat assistant */
 	mainChatWorkspacePath: string | null;
 	setMainChatWorkspacePath: (path: string | null) => void;
+	/** Target message ID to scroll to after navigation (from search) */
+	scrollToMessageId: string | null;
+	setScrollToMessageId: (id: string | null) => void;
 }
 
 export const AppContext = createContext<AppContextValue | null>(null);
@@ -134,6 +143,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
 	// Chat history from disk (no running opencode needed)
 	const [chatHistory, setChatHistory] = useState<ChatSession[]>([]);
 	const chatHistoryRef = useRef<ChatSession[]>([]);
+	const optimisticChatSessionsRef = useRef<Map<string, ChatSession>>(new Map());
+	const optimisticSelectionRef = useRef<Map<string, string>>(new Map());
 	// Keep ref in sync with state
 	chatHistoryRef.current = chatHistory;
 	// Live opencode sessions (requires running opencode instance)
@@ -190,6 +201,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
 	const [mainChatWorkspacePath, setMainChatWorkspacePath] = useState<
 		string | null
 	>(null);
+	// Target message ID to scroll to after navigation (from search results)
+	const [scrollToMessageId, setScrollToMessageId] = useState<string | null>(
+		null,
+	);
 
 	const setSessionBusy = useCallback((sessionId: string, busy: boolean) => {
 		setBusySessions((prev) => {
@@ -241,6 +256,66 @@ export function AppProvider({ children }: { children: ReactNode }) {
 		);
 	}, [selectedChatFromHistory, selectedWorkspaceSession]);
 
+	const resolveProjectName = useCallback(
+		(workspacePath: string) => {
+			const normalized = workspacePath.replace(/\\/g, "/").replace(/\/+$/, "");
+			const project = projects.find(
+				(entry) =>
+					entry.path === workspacePath || entry.path === normalized,
+			);
+			if (project?.name) return project.name;
+			const parts = normalized.split("/").filter(Boolean);
+			if (parts.length > 0) return parts[parts.length - 1];
+			return locale === "de" ? "Arbeitsbereich" : "Workspace";
+		},
+		[projects, locale],
+	);
+
+	const createOptimisticChatSession = useCallback(
+		(workspacePath?: string) => {
+			const resolvedPath =
+				workspacePath?.trim() || opencodeDirectory || "global";
+			const now = Date.now();
+			const optimisticId = `pending-${now}-${Math.random().toString(36).slice(2, 10)}`;
+			const session: ChatSession = {
+				id: optimisticId,
+				readable_id: generateReadableId(optimisticId),
+				title: locale === "de" ? "Neue Sitzung" : "New Session",
+				parent_id: null,
+				workspace_path: resolvedPath,
+				project_name: resolveProjectName(resolvedPath),
+				created_at: now,
+				updated_at: now,
+				version: null,
+				is_child: false,
+				source_path: null,
+			};
+			optimisticChatSessionsRef.current.set(optimisticId, session);
+			optimisticSelectionRef.current.set(
+				optimisticId,
+				selectedChatSessionId,
+			);
+			setChatHistory((prev) => [session, ...prev]);
+			setSelectedChatSessionId(optimisticId);
+			return optimisticId;
+		},
+		[locale, opencodeDirectory, resolveProjectName, selectedChatSessionId],
+	);
+
+	const clearOptimisticChatSession = useCallback(
+		(sessionId: string) => {
+			if (!optimisticChatSessionsRef.current.has(sessionId)) return;
+			optimisticChatSessionsRef.current.delete(sessionId);
+			const previousSelection = optimisticSelectionRef.current.get(sessionId);
+			optimisticSelectionRef.current.delete(sessionId);
+			setChatHistory((prev) => prev.filter((session) => session.id !== sessionId));
+			if (selectedChatSessionId === sessionId) {
+				setSelectedChatSessionId(previousSelection || "");
+			}
+		},
+		[selectedChatSessionId],
+	);
+
 	const sessionEventSubscriptions = useRef(new Map<string, () => void>());
 
 	useEffect(() => {
@@ -265,12 +340,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
 		try {
 			// No limit - load all sessions from disk
 			const history = await listChatHistory({ include_children: true });
-			setChatHistory(history);
+			const optimisticSessions = Array.from(
+				optimisticChatSessionsRef.current.values(),
+			).filter((session) => !history.some((item) => item.id === session.id));
+			setChatHistory(
+				optimisticSessions.length > 0
+					? [...optimisticSessions, ...history]
+					: history,
+			);
 
 			// If no chat is selected but we have history, select the most recent one
 			if (history.length > 0 && !mainChatActive) {
 				setSelectedChatSessionId((current) => {
 					if (current && history.some((s) => s.id === current)) return current;
+					if (current && optimisticChatSessionsRef.current.has(current)) {
+						return current;
+					}
 					return history[0].id;
 				});
 			}
@@ -567,6 +652,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 		async (
 			baseUrlOverride?: string,
 			directoryOverride?: string,
+			options?: { optimisticId?: string },
 		): Promise<OpenCodeSession | null> => {
 			const baseUrl = baseUrlOverride || opencodeBaseUrl;
 			if (!baseUrl) return null;
@@ -575,6 +661,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
 				const created = await createSession(baseUrl, undefined, undefined, {
 					directory,
 				});
+				if (options?.optimisticId) {
+					clearOptimisticChatSession(options.optimisticId);
+				}
 				setOpencodeSessions((prev) => [created, ...prev]);
 				setSelectedChatSessionId(created.id);
 				// Refresh chat history to include the new session in the sidebar
@@ -584,11 +673,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
 				}, 500);
 				return created;
 			} catch (err) {
+				if (options?.optimisticId) {
+					clearOptimisticChatSession(options.optimisticId);
+				}
 				console.error("Failed to create new chat session:", err);
 				return null;
 			}
 		},
-		[opencodeBaseUrl, opencodeDirectory, refreshChatHistory],
+		[
+			opencodeBaseUrl,
+			opencodeDirectory,
+			refreshChatHistory,
+			clearOptimisticChatSession,
+		],
 	);
 
 	const createNewChatWithPersona = useCallback(
@@ -823,6 +920,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
 			refreshWorkspaceSessions,
 			refreshChatHistory,
 			refreshOpencodeSessions,
+			createOptimisticChatSession,
+			clearOptimisticChatSession,
 			ensureOpencodeRunning,
 			createNewChat,
 			createNewChatWithPersona,
@@ -843,6 +942,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
 			setMainChatCurrentSessionId,
 			mainChatWorkspacePath,
 			setMainChatWorkspacePath,
+			scrollToMessageId,
+			setScrollToMessageId,
 		}),
 		[
 			apps,
@@ -866,6 +967,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
 			refreshWorkspaceSessions,
 			refreshChatHistory,
 			refreshOpencodeSessions,
+			createOptimisticChatSession,
+			clearOptimisticChatSession,
 			ensureOpencodeRunning,
 			createNewChat,
 			createNewChatWithPersona,
@@ -882,6 +985,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 			mainChatAssistantName,
 			mainChatCurrentSessionId,
 			mainChatWorkspacePath,
+			scrollToMessageId,
 		],
 	);
 

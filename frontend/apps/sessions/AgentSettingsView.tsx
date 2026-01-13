@@ -397,9 +397,9 @@ export function AgentSettingsView({
 										No matches
 									</SelectItem>
 								) : (
-									filteredModelOptions.map((option) => (
+									filteredModelOptions.map((option, index) => (
 										<SelectItem
-											key={option.value}
+											key={`${option.value}-${index}`}
 											value={option.value}
 											className="text-xs"
 										>
@@ -504,8 +504,11 @@ export function AgentSettingsView({
 							</SelectTrigger>
 							<SelectContent>
 								<SelectItem value="__none__">Default</SelectItem>
-								{agents.map((agent) => (
-									<SelectItem key={agent.id} value={agent.id}>
+								{agents.map((agent, index) => (
+									<SelectItem
+										key={`${agent.id}-${index}`}
+										value={agent.id}
+									>
 										{agent.name}
 									</SelectItem>
 								))}

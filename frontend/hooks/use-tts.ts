@@ -4,6 +4,10 @@
  */
 
 import { voiceProxyWsUrl } from "@/lib/control-plane-client";
+import {
+	createParagraphPlayer,
+	splitIntoParagraphs,
+} from "@/lib/voice/tts-queue";
 import { TTSService } from "@/lib/voice/tts-service";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -45,14 +49,6 @@ function saveTTSSettings(settings: TTSSettings) {
 	}
 }
 
-/** Split text into paragraphs */
-function splitIntoParagraphs(text: string): string[] {
-	return text
-		.split(/\n\n+/)
-		.map((p) => p.trim())
-		.filter((p) => p.length > 0);
-}
-
 export interface UseTTSResult {
 	/** Current state of the TTS service */
 	state: TTSState;
@@ -91,6 +87,8 @@ export interface UseTTSWithParagraphsResult extends UseTTSResult {
 	hasPrevious: boolean;
 	/** Whether there's a next paragraph */
 	hasNext: boolean;
+	/** Whether a paragraph sequence is currently playing */
+	isReading: boolean;
 }
 
 /**
@@ -293,7 +291,7 @@ export function useTTS(): UseTTSResult {
 export function useTTSWithParagraphs(text: string): UseTTSWithParagraphsResult {
 	const tts = useTTS();
 	const [currentIndex, setCurrentIndex] = useState(0);
-	const isPlayingRef = useRef(false);
+	const [isReading, setIsReading] = useState(false);
 	// Unique session ID to prevent race conditions when rapidly switching paragraphs
 	const sessionIdRef = useRef(0);
 
@@ -310,117 +308,75 @@ export function useTTSWithParagraphs(text: string): UseTTSWithParagraphsResult {
 		}
 	}, [text, tts]);
 
-	const speakParagraph = useCallback(
-		async (index: number, sessionId: number, continueToNext = true) => {
-			if (index < 0 || index >= paragraphs.length) return;
+	const player = useMemo(
+		() =>
+			createParagraphPlayer(
+				paragraphs,
+				tts.speak,
+				setCurrentIndex,
+				(sessionId) => sessionId === sessionIdRef.current,
+			),
+		[paragraphs, tts.speak],
+	);
 
-			// Check if this session is still valid
-			if (sessionId !== sessionIdRef.current) {
-				console.log(
-					"[TTS] Session invalidated, aborting speakParagraph",
-					sessionId,
-					"vs",
-					sessionIdRef.current,
-				);
-				return; // Session was invalidated, abort
-			}
-
-			isPlayingRef.current = true;
-			setCurrentIndex(index);
-
-			try {
-				// Check again before starting async operation
-				if (sessionId !== sessionIdRef.current) {
-					return;
-				}
-
-				await tts.speak(paragraphs[index]);
-
-				// Check session validity again after async operation
-				if (sessionId !== sessionIdRef.current) {
-					console.log(
-						"[TTS] Session invalidated after speak",
-						sessionId,
-						"vs",
-						sessionIdRef.current,
-					);
-					return; // Session was invalidated during playback
-				}
-
-				// If continueToNext, proceed to next paragraph
-				if (continueToNext && index < paragraphs.length - 1) {
-					// Small delay between paragraphs
-					await new Promise((resolve) => setTimeout(resolve, 300));
-
-					// Final check before recursing
-					if (sessionId === sessionIdRef.current) {
-						await speakParagraph(index + 1, sessionId, true);
+	const playFrom = useCallback(
+		(index: number) => {
+			const newSession = ++sessionIdRef.current;
+			setIsReading(true);
+			player
+				.playFrom(index, newSession)
+				.catch((err) => {
+					if (newSession !== sessionIdRef.current) {
+						return;
 					}
-				}
-			} catch (err) {
-				// Ignore errors from stopped playback
-				if (sessionId !== sessionIdRef.current) {
-					return;
-				}
-				console.error("[TTS] speakParagraph error:", err);
-			} finally {
-				// Only update playing state if this is still the active session
-				if (sessionId === sessionIdRef.current) {
-					isPlayingRef.current = false;
-				}
-			}
+					console.error("[TTS] speakParagraph error:", err);
+				})
+				.finally(() => {
+					if (newSession === sessionIdRef.current) {
+						setIsReading(false);
+					}
+				});
 		},
-		[paragraphs, tts],
+		[player],
 	);
 
 	const play = useCallback(() => {
-		if (tts.isSpeaking) {
+		if (isReading || tts.isSpeaking) {
 			sessionIdRef.current++; // Invalidate current session
 			tts.stop();
+			setIsReading(false);
 		} else {
-			const newSession = ++sessionIdRef.current;
-			speakParagraph(currentIndex, newSession, true);
+			playFrom(currentIndex);
 		}
-	}, [tts, currentIndex, speakParagraph]);
+	}, [isReading, tts, currentIndex, playFrom]);
 
 	const stop = useCallback(() => {
 		sessionIdRef.current++; // Invalidate current session
 		tts.stop();
+		setIsReading(false);
 	}, [tts]);
 
 	const previousParagraph = useCallback(() => {
 		if (currentIndex > 0) {
-			// Increment session first, then stop, then start new playback
-			const newSession = ++sessionIdRef.current;
+			sessionIdRef.current++;
 			tts.stop();
+			setIsReading(false);
 			const newIndex = currentIndex - 1;
 			setCurrentIndex(newIndex);
-			// Use requestAnimationFrame to ensure state updates are flushed
-			requestAnimationFrame(() => {
-				// Double-check session is still valid
-				if (newSession === sessionIdRef.current) {
-					speakParagraph(newIndex, newSession, true);
-				}
-			});
+			playFrom(newIndex);
 		}
-	}, [currentIndex, tts, speakParagraph]);
+	}, [currentIndex, playFrom, tts]);
 
 	const nextParagraph = useCallback(() => {
 		if (currentIndex < paragraphs.length - 1) {
-			// Increment session first, then stop, then start new playback
-			const newSession = ++sessionIdRef.current;
+			sessionIdRef.current++;
 			tts.stop();
+			setIsReading(false);
 			const newIndex = currentIndex + 1;
 			setCurrentIndex(newIndex);
-			// Use requestAnimationFrame to ensure state updates are flushed
-			requestAnimationFrame(() => {
-				// Double-check session is still valid
-				if (newSession === sessionIdRef.current) {
-					speakParagraph(newIndex, newSession, true);
-				}
-			});
+			playFrom(newIndex);
 		}
-	}, [currentIndex, paragraphs.length, tts, speakParagraph]);
+	}, [currentIndex, paragraphs.length, playFrom, tts]);
 
 	return {
 		...tts,
@@ -432,5 +388,6 @@ export function useTTSWithParagraphs(text: string): UseTTSWithParagraphsResult {
 		totalParagraphs: paragraphs.length,
 		hasPrevious: currentIndex > 0,
 		hasNext: currentIndex < paragraphs.length - 1,
+		isReading,
 	};
 }

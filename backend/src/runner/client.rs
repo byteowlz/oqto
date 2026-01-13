@@ -71,44 +71,6 @@ impl RunnerClient {
         Ok(resp)
     }
 
-    /// Ping the runner to check if it's alive.
-    pub async fn ping(&self) -> Result<()> {
-        let resp = self.request(&RunnerRequest::Ping).await?;
-        match resp {
-            RunnerResponse::Pong => Ok(()),
-            _ => anyhow::bail!("unexpected response to ping"),
-        }
-    }
-
-    /// Check if the runner is available (socket exists and responds to ping).
-    pub async fn is_available(&self) -> bool {
-        self.ping().await.is_ok()
-    }
-
-    /// Spawn a detached process.
-    pub async fn spawn_process(
-        &self,
-        id: impl Into<String>,
-        binary: impl Into<String>,
-        args: Vec<String>,
-        cwd: impl Into<PathBuf>,
-        env: HashMap<String, String>,
-    ) -> Result<u32> {
-        let req = RunnerRequest::SpawnProcess(SpawnProcessRequest {
-            id: id.into(),
-            binary: binary.into(),
-            args,
-            cwd: cwd.into(),
-            env,
-        });
-
-        let resp = self.request(&req).await?;
-        match resp {
-            RunnerResponse::ProcessSpawned(p) => Ok(p.pid),
-            _ => anyhow::bail!("unexpected response to spawn_process"),
-        }
-    }
-
     /// Spawn an RPC process with stdin/stdout pipes.
     pub async fn spawn_rpc_process(
         &self,
@@ -133,20 +95,6 @@ impl RunnerClient {
         }
     }
 
-    /// Kill a process.
-    pub async fn kill_process(&self, id: impl Into<String>, force: bool) -> Result<bool> {
-        let req = RunnerRequest::KillProcess(KillProcessRequest {
-            id: id.into(),
-            force,
-        });
-
-        let resp = self.request(&req).await?;
-        match resp {
-            RunnerResponse::ProcessKilled(p) => Ok(p.was_running),
-            _ => anyhow::bail!("unexpected response to kill_process"),
-        }
-    }
-
     /// Get process status.
     pub async fn get_status(&self, id: impl Into<String>) -> Result<ProcessStatusResponse> {
         let req = RunnerRequest::GetStatus(GetStatusRequest { id: id.into() });
@@ -155,15 +103,6 @@ impl RunnerClient {
         match resp {
             RunnerResponse::ProcessStatus(s) => Ok(s),
             _ => anyhow::bail!("unexpected response to get_status"),
-        }
-    }
-
-    /// List all managed processes.
-    pub async fn list_processes(&self) -> Result<Vec<ProcessInfo>> {
-        let resp = self.request(&RunnerRequest::ListProcesses).await?;
-        match resp {
-            RunnerResponse::ProcessList(p) => Ok(p.processes),
-            _ => anyhow::bail!("unexpected response to list_processes"),
         }
     }
 
@@ -203,14 +142,6 @@ impl RunnerClient {
         }
     }
 
-    /// Request graceful shutdown of the runner.
-    pub async fn shutdown(&self) -> Result<()> {
-        let resp = self.request(&RunnerRequest::Shutdown).await?;
-        match resp {
-            RunnerResponse::ShuttingDown => Ok(()),
-            _ => anyhow::bail!("unexpected response to shutdown"),
-        }
-    }
 }
 
 impl std::fmt::Debug for RunnerClient {

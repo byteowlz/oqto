@@ -417,5 +417,48 @@ body {
 		bottom: 0;
 		/* Use explicit muted background instead of inherit to ensure correct color in Tauri */
 		background-color: oklch(from var(--muted) l c h / 0.3);
+		width: calc(100% + 0.75rem);
+		margin-left: -0.375rem;
+		margin-right: -0.375rem;
+		margin-bottom: calc(-0.375rem - env(safe-area-inset-bottom));
+		padding-bottom: calc(0.25rem + env(safe-area-inset-bottom));
+		border-left: none;
+		border-right: none;
+		border-radius: 0;
 	}
+}
+
+* {
+	border-radius: 0 !important;
+}
+
+input[type="radio"] {
+	border-radius: 9999px !important;
+}
+
+/* Search result highlight animation */
+@keyframes search-highlight-pulse {
+	0% {
+		box-shadow: 0 0 0 0 oklch(from var(--primary) l c h / 0.7);
+	}
+	50% {
+		box-shadow: 0 0 0 4px oklch(from var(--primary) l c h / 0.3);
+	}
+	100% {
+		box-shadow: 0 0 0 0 oklch(from var(--primary) l c h / 0);
+	}
+}
+
+.search-highlight {
+	animation: search-highlight-pulse 0.6s ease-out 3;
+	outline: 2px solid oklch(from var(--primary) l c h / 0.5);
+	outline-offset: 2px;
+}
+
+.sidebar-chat .chat-input-container {
+	width: 100%;
+	margin-left: 0;
+	margin-right: 0;
+	margin-bottom: 0;
+	padding-bottom: 0;
 }

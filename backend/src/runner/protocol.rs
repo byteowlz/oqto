@@ -252,16 +252,6 @@ pub enum ErrorCode {
     Internal,
 }
 
-impl RunnerResponse {
-    /// Create an error response.
-    pub fn error(code: ErrorCode, message: impl Into<String>) -> Self {
-        RunnerResponse::Error(ErrorResponse {
-            code,
-            message: message.into(),
-        })
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -308,7 +298,10 @@ mod tests {
 
     #[test]
     fn test_error_response() {
-        let resp = RunnerResponse::error(ErrorCode::ProcessNotFound, "No such process: foo");
+        let resp = RunnerResponse::Error(ErrorResponse {
+            code: ErrorCode::ProcessNotFound,
+            message: "No such process: foo".to_string(),
+        });
 
         match resp {
             RunnerResponse::Error(e) => {

@@ -2,6 +2,8 @@
 
 Octo is a self-hosted platform for managing AI coding agents (opencode instances). Supports local mode (native processes) and container mode (Docker/Podman).
 
+**New to Octo?** Start with the [SETUP.md](./SETUP.md) guide for installation and prerequisites.
+
 ## Agent Tools
 
 Two CLI tools are available for agent workflows:

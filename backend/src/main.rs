@@ -1694,6 +1694,12 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
         auto_attach_scan: ctx.config.sessions.auto_attach_scan,
     };
 
+    let max_proxy_body_bytes = ctx
+        .config
+        .server
+        .max_upload_size_mb
+        .saturating_mul(1024 * 1024);
+
     // Create settings services
     let octo_schema: serde_json::Value =
         serde_json::from_str(include_str!("../examples/backend.config.schema.json"))
@@ -1741,6 +1747,7 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
             mmry_state,
             voice_state,
             session_ui_state,
+            max_proxy_body_bytes,
         )
     } else {
         api::AppState::new(
@@ -1752,6 +1759,7 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
             mmry_state,
             voice_state,
             session_ui_state,
+            max_proxy_body_bytes,
         )
     };
 

@@ -488,13 +488,11 @@ pub async fn watch_ws(
     }
 
     let ext_filter = parse_extension_filter(&query.ext);
-    let state = state.clone();
-    Ok(ws.on_upgrade(move |socket| watch_socket(socket, state, root_dir, path, ext_filter)))
+    Ok(ws.on_upgrade(move |socket| watch_socket(socket, root_dir, path, ext_filter)))
 }
 
 async fn watch_socket(
     mut socket: WebSocket,
-    state: AppState,
     root_dir: PathBuf,
     watch_path: PathBuf,
     ext_filter: Option<HashSet<String>>,
@@ -636,7 +634,19 @@ pub async fn get_tree(
     match query.mode {
         ViewMode::Simple => {
             // Flat list of office files only
-            let files = get_simple_file_list(&state, &root_dir, &path, max_depth)?;
+            let state = state.clone();
+            let root_dir = root_dir.clone();
+            let path = path.clone();
+            let files = tokio::task::spawn_blocking(move || {
+                get_simple_file_list(&state, &root_dir, &path, max_depth)
+            })
+            .await
+            .map_err(|err| {
+                FileServerError::Io(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    err.to_string(),
+                ))
+            })??;
             Ok(Json(files))
         }
         ViewMode::Full => {

@@ -50,6 +50,8 @@ export class TTSService {
 	private currentSource: AudioBufferSourceNode | null = null;
 	private analyserNode: AnalyserNode | null = null;
 	private isMuted = false;
+	private stopTimer: number | null = null;
+	private stopGraceMs = 150;
 
 	private callbacks: TTSCallbacks = {};
 
@@ -234,6 +236,10 @@ export class TTSService {
 
 			const audioBuffer = await this.audioContext.decodeAudioData(bytes.buffer);
 			this.audioQueue.push(audioBuffer);
+			if (this.stopTimer) {
+				window.clearTimeout(this.stopTimer);
+				this.stopTimer = null;
+			}
 
 			// Start playback if not already playing
 			if (!this.isPlaying) {
@@ -246,10 +252,7 @@ export class TTSService {
 
 	private playNextChunk() {
 		if (this.audioQueue.length === 0) {
-			console.log("[TTS] Audio queue empty, playback finished");
-			this.isPlaying = false;
-			this.currentSource = null;
-			this.callbacks.onStopped?.();
+			this.scheduleStopCheck();
 			return;
 		}
 
@@ -285,6 +288,29 @@ export class TTSService {
 		};
 
 		source.start(0);
+	}
+
+	private scheduleStopCheck() {
+		if (this.stopTimer) {
+			return;
+		}
+		this.stopTimer = window.setTimeout(() => {
+			this.stopTimer = null;
+			if (this.audioQueue.length > 0) {
+				if (!this.isPlaying) {
+					this.playNextChunk();
+				}
+				return;
+			}
+			if (this.isProcessing || this.synthesisQueue.length > 0) {
+				this.scheduleStopCheck();
+				return;
+			}
+			console.log("[TTS] Audio queue empty, playback finished");
+			this.isPlaying = false;
+			this.currentSource = null;
+			this.callbacks.onStopped?.();
+		}, this.stopGraceMs);
 	}
 
 	private processNextInQueue() {
@@ -445,6 +471,10 @@ export class TTSService {
 
 		// Set stopped flag to reject any audio chunks that arrive after this
 		this.isStopped = true;
+		if (this.stopTimer) {
+			window.clearTimeout(this.stopTimer);
+			this.stopTimer = null;
+		}
 
 		if (this.currentSource) {
 			try {
@@ -516,6 +546,10 @@ export class TTSService {
 		this.analyserNode = null;
 		this.synthesisQueue = [];
 		this.isProcessing = false;
+		if (this.stopTimer) {
+			window.clearTimeout(this.stopTimer);
+			this.stopTimer = null;
+		}
 
 		console.log("[TTS] Disconnected");
 	}

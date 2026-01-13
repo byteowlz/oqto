@@ -34,7 +34,7 @@ use crate::pi::{
     AgentMessage, CompactionResult, ContainerPiRuntime, LocalPiRuntime, PiCommand, PiEvent,
     PiProcess, PiRuntime, PiSpawnConfig, PiState, RunnerPiRuntime, SessionStats,
 };
-use crate::runner::RunnerClient;
+use crate::runner::client::RunnerClient;
 
 /// Session freshness thresholds
 const SESSION_MAX_AGE_HOURS: u64 = 4;
@@ -153,13 +153,12 @@ impl MainChatPiService {
             PiRuntimeMode::Local => Arc::new(LocalPiRuntime::new()),
             PiRuntimeMode::Runner => {
                 // Create runner client for this user
-                let socket_pattern = self
-                    .config
-                    .runner_socket_pattern
-                    .as_deref()
-                    .unwrap_or("/run/octo/runner-{user}.sock");
-                let socket_path = socket_pattern.replace("{user}", user_id);
-                let client = RunnerClient::new(socket_path);
+                let client = if let Some(pattern) = self.config.runner_socket_pattern.as_deref() {
+                    RunnerClient::new(pattern.replace("{user}", user_id))
+                } else {
+                    RunnerClient::for_user(user_id)
+                };
+                debug!("Runner socket for user {}: {:?}", user_id, client.socket_path());
                 Arc::new(RunnerPiRuntime::new(client))
             }
             PiRuntimeMode::Container => Arc::new(ContainerPiRuntime::new()),
@@ -318,6 +317,10 @@ impl MainChatPiService {
 
         // Build system prompt files
         let mut append_system_prompt = Vec::new();
+        let onboard_file = work_dir.join("ONBOARD.md");
+        if onboard_file.exists() {
+            append_system_prompt.push(onboard_file);
+        }
         let personality_file = work_dir.join("PERSONALITY.md");
         if personality_file.exists() {
             append_system_prompt.push(personality_file);
@@ -484,22 +487,6 @@ impl UserPiSession {
     pub async fn subscribe(&self) -> broadcast::Receiver<PiEvent> {
         let process = self.process.read().await;
         process.subscribe()
-    }
-
-    /// Subscribe to events (blocking version for sync contexts).
-    /// Prefer the async version when possible.
-    pub fn subscribe_blocking(&self) -> broadcast::Receiver<PiEvent> {
-        // Use try_read to avoid blocking; if lock is held, create a new receiver
-        // from a temporary - this is a fallback for edge cases
-        if let Ok(process) = self.process.try_read() {
-            process.subscribe()
-        } else {
-            // Create a dummy receiver that will never receive
-            // The caller should use the async version
-            let (tx, rx) = broadcast::channel(1);
-            drop(tx);
-            rx
-        }
     }
 
     /// Compact the session context.

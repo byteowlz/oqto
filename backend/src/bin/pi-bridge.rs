@@ -23,7 +23,10 @@
 use anyhow::{Context, Result};
 use axum::{
     Json, Router,
-    extract::{State, WebSocketUpgrade, ws::{Message, WebSocket}},
+    extract::{
+        State, WebSocketUpgrade,
+        ws::{Message, WebSocket},
+    },
     http::StatusCode,
     response::IntoResponse,
     routing::{get, post},
@@ -145,7 +148,13 @@ impl BridgeState {
 }
 
 /// Spawn Pi process and return the child along with stdin/stdout handles.
-async fn spawn_pi(args: &Args) -> Result<(Child, tokio::process::ChildStdin, tokio::process::ChildStdout)> {
+async fn spawn_pi(
+    args: &Args,
+) -> Result<(
+    Child,
+    tokio::process::ChildStdin,
+    tokio::process::ChildStdout,
+)> {
     let mut cmd = Command::new(&args.pi_executable);
     cmd.arg("--mode").arg("rpc");
 
@@ -189,10 +198,7 @@ async fn spawn_pi(args: &Args) -> Result<(Child, tokio::process::ChildStdin, tok
 }
 
 /// Start the stdin writer task.
-fn start_stdin_writer(
-    stdin: tokio::process::ChildStdin,
-    mut command_rx: mpsc::Receiver<String>,
-) {
+fn start_stdin_writer(stdin: tokio::process::ChildStdin, mut command_rx: mpsc::Receiver<String>) {
     tokio::spawn(async move {
         let mut stdin = stdin;
         while let Some(command) = command_rx.recv().await {
@@ -319,9 +325,15 @@ async fn handle_command(
     // Wait for response with timeout
     match tokio::time::timeout(std::time::Duration::from_secs(30), response_rx).await {
         Ok(Ok(response)) => {
-            let success = response.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
+            let success = response
+                .get("success")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
             let data = response.get("data").cloned();
-            let error = response.get("error").and_then(|v| v.as_str()).map(String::from);
+            let error = response
+                .get("error")
+                .and_then(|v| v.as_str())
+                .map(String::from);
 
             (
                 StatusCode::OK,

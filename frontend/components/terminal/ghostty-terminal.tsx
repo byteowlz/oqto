@@ -191,9 +191,12 @@ export const GhosttyTerminal = forwardRef<
 				const isSocketUsable =
 					socketState === WebSocket.CONNECTING ||
 					socketState === WebSocket.OPEN;
+				const hasAttachedTerminal =
+					Boolean(session.terminal?.element) &&
+					session.terminal?.element === containerRef.current;
 
-				// Skip if already have a usable socket
-				if (isSocketUsable) {
+				// Skip if already have a usable socket and attached terminal
+				if (isSocketUsable && hasAttachedTerminal) {
 					console.log(
 						`Terminal [${sessionId}]: socket already ${socketState === WebSocket.OPEN ? "open" : "connecting"}, skipping`,
 					);
@@ -297,6 +300,12 @@ export const GhosttyTerminal = forwardRef<
 								session.socket.send(resizeMsg);
 							}
 						});
+
+						if (session.socket?.readyState === WebSocket.OPEN) {
+							const { cols, rows } = terminal;
+							const resizeMsg = JSON.stringify({ columns: cols, rows });
+							session.socket.send(resizeMsg);
+						}
 					}
 
 					// Connect WebSocket if not connected

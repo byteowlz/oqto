@@ -260,16 +260,14 @@ const IssueCard = memo(function IssueCard({
 					>
 						{/* Left column: Type icon + Chevron below (aligned with row 2 or 3) */}
 						<div className="flex flex-col items-center flex-shrink-0 pt-0.5 w-4">
-							<TypeIcon
-								className={cn("w-4 h-4", typeConfig.color)}
-							/>
+							<TypeIcon className={cn("w-4 h-4", typeConfig.color)} />
 							{hasChildren && (
 								<button
 									type="button"
 									onClick={onToggle}
 									className={cn(
 										"p-0.5 hover:bg-muted rounded",
-										issue.description ? "mt-1" : "mt-2.5"
+										issue.description ? "mt-1" : "mt-2.5",
 									)}
 								>
 									{isExpanded ? (
@@ -549,7 +547,8 @@ export const TrxView = memo(function TrxView({
 	const [filterType, setFilterType] = useState<FilterType>("all");
 	const [hideClosed, setHideClosed] = useState(false);
 	const [searchQuery, setSearchQuery] = useState("");
-	const [searchIncludeDescription, setSearchIncludeDescription] = useState(false);
+	const [searchIncludeDescription, setSearchIncludeDescription] =
+		useState(false);
 
 	const loadIssues = useCallback(async () => {
 		if (!workspacePath) {
@@ -621,10 +620,10 @@ export const TrxView = memo(function TrxView({
 		if (!query) return true;
 		const lowerText = text.toLowerCase();
 		const lowerQuery = query.toLowerCase();
-		
+
 		// Check for direct substring match first
 		if (lowerText.includes(lowerQuery)) return true;
-		
+
 		// Fuzzy match: all query chars must appear in order
 		let queryIndex = 0;
 		for (const char of lowerText) {
@@ -648,14 +647,24 @@ export const TrxView = memo(function TrxView({
 				// Fuzzy search on title, optionally description, and id
 				if (searchQuery) {
 					const matchesTitle = fuzzyMatch(issue.title, searchQuery);
-					const matchesDescription = searchIncludeDescription && issue.description ? fuzzyMatch(issue.description, searchQuery) : false;
+					const matchesDescription =
+						searchIncludeDescription && issue.description
+							? fuzzyMatch(issue.description, searchQuery)
+							: false;
 					const matchesId = fuzzyMatch(issue.id, searchQuery);
 					if (!matchesTitle && !matchesDescription && !matchesId) return false;
 				}
 				return true;
 			});
 		},
-		[filterStatus, filterType, hideClosed, searchQuery, searchIncludeDescription, fuzzyMatch],
+		[
+			filterStatus,
+			filterType,
+			hideClosed,
+			searchQuery,
+			searchIncludeDescription,
+			fuzzyMatch,
+		],
 	);
 
 	// Organize issues into hierarchy (epics with children)

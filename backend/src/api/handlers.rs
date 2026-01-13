@@ -2519,3 +2519,242 @@ pub async fn sync_trx(
     info!("TRX synced");
     Ok(Json(serde_json::json!({ "synced": true })))
 }
+
+// ============================================================================
+// CASS (Coding Agent Session Search) handlers
+// ============================================================================
+
+/// Query parameters for cass search.
+#[derive(Debug, Deserialize)]
+pub struct CassSearchQuery {
+    /// Search query string.
+    pub q: String,
+    /// Agent filter: "all", "pi_agent", "opencode", or comma-separated list.
+    #[serde(default = "default_agent_filter")]
+    pub agents: String,
+    /// Maximum number of results.
+    #[serde(default = "default_search_limit")]
+    pub limit: usize,
+}
+
+fn default_agent_filter() -> String {
+    "all".to_string()
+}
+
+fn default_search_limit() -> usize {
+    50
+}
+
+/// A single search hit from cass.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CassSearchHit {
+    /// Agent type (pi_agent, opencode, etc.)
+    pub agent: String,
+    /// Path to the session file.
+    pub source_path: String,
+    /// Session identifier extracted from path.
+    #[serde(default)]
+    pub session_id: Option<String>,
+    /// Workspace/project directory.
+    #[serde(default)]
+    pub workspace: Option<String>,
+    /// Message ID if available.
+    #[serde(default)]
+    pub message_id: Option<String>,
+    /// Line number in the source file.
+    #[serde(default)]
+    pub line_number: Option<usize>,
+    /// Matched content snippet.
+    #[serde(default)]
+    pub snippet: Option<String>,
+    /// Search relevance score.
+    #[serde(default)]
+    pub score: Option<f64>,
+    /// Timestamp of the message (cass uses created_at).
+    #[serde(default, alias = "created_at")]
+    pub timestamp: Option<i64>,
+    /// Role (user, assistant, system).
+    #[serde(default)]
+    pub role: Option<String>,
+    /// Session/conversation title if available.
+    #[serde(default)]
+    pub title: Option<String>,
+    /// Full content (cass returns this)
+    #[serde(default)]
+    pub content: Option<String>,
+    /// Match type from cass
+    #[serde(default)]
+    pub match_type: Option<String>,
+    /// Origin kind from cass
+    #[serde(default)]
+    pub origin_kind: Option<String>,
+    /// Source ID from cass
+    #[serde(default)]
+    pub source_id: Option<String>,
+}
+
+/// Response from cass search.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CassSearchResponse {
+    pub hits: Vec<CassSearchHit>,
+    /// Total count from cass (field is "count" in cass output)
+    #[serde(default, alias = "count")]
+    pub total: Option<usize>,
+    #[serde(default)]
+    pub elapsed_ms: Option<u64>,
+    #[serde(default)]
+    pub cursor: Option<String>,
+}
+
+/// Search across coding agent sessions using cass.
+#[instrument(skip(_state))]
+pub async fn search_sessions(
+    State(_state): State<AppState>,
+    Query(query): Query<CassSearchQuery>,
+) -> ApiResult<Json<CassSearchResponse>> {
+    use tokio::process::Command;
+
+    // Don't search empty queries
+    if query.q.trim().is_empty() {
+        return Ok(Json(CassSearchResponse {
+            hits: vec![],
+            total: Some(0),
+            elapsed_ms: Some(0),
+            cursor: None,
+        }));
+    }
+
+    // Build cass command
+    let args = build_cass_args(&query);
+
+    // Try to find cass in common locations
+    let cass_path = std::env::var("CASS_PATH")
+        .ok()
+        .or_else(|| {
+            // Check common locations
+            let home = std::env::var("HOME").ok()?;
+            let local_bin = format!("{}/.local/bin/cass", home);
+            if std::path::Path::new(&local_bin).exists() {
+                return Some(local_bin);
+            }
+            None
+        })
+        .unwrap_or_else(|| "cass".to_string());
+
+    let output = Command::new(&cass_path)
+        .args(&args)
+        .env("HOME", std::env::var("HOME").unwrap_or_default())
+        .output()
+        .await
+        .map_err(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                ApiError::internal(format!(
+                    "cass not found at '{}'. Install from: https://github.com/Dicklesworthstone/coding_agent_session_search",
+                    cass_path
+                ))
+            } else {
+                ApiError::internal(format!("Failed to execute cass: {}", e))
+            }
+        })?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        // Check for common errors
+        if stderr.contains("index") && stderr.contains("not found") {
+            return Err(ApiError::internal(
+                "cass index not built. Run 'cass index --full' to build the search index.",
+            ));
+        }
+        return Err(ApiError::internal(format!(
+            "cass search failed: {}",
+            stderr
+        )));
+    }
+
+    // Parse cass JSON output
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let response: CassSearchResponse = serde_json::from_str(&stdout).map_err(|e| {
+        ApiError::internal(format!(
+            "Failed to parse cass output: {}. Output: {}",
+            e,
+            stdout.chars().take(500).collect::<String>()
+        ))
+    })?;
+
+    Ok(Json(response))
+}
+
+fn build_cass_args(query: &CassSearchQuery) -> Vec<String> {
+    let mut args = vec![
+        "search".to_string(),
+        query.q.clone(),
+        "--robot".to_string(),
+        "--robot-meta".to_string(),
+        "--limit".to_string(),
+        query.limit.to_string(),
+    ];
+
+    let agents = query.agents.trim();
+    if !agents.is_empty() && agents != "all" {
+        for agent in agents.split(',').map(|agent| agent.trim()).filter(|a| !a.is_empty()) {
+            args.push("--agent".to_string());
+            args.push(agent.to_string());
+        }
+    }
+
+    args
+}
+
+#[cfg(test)]
+mod cass_search_tests {
+    use super::{build_cass_args, CassSearchQuery};
+
+    fn base_query() -> CassSearchQuery {
+        CassSearchQuery {
+            q: "hello".to_string(),
+            agents: "all".to_string(),
+            limit: 50,
+        }
+    }
+
+    #[test]
+    fn cass_args_skip_all_agent_filter() {
+        let query = base_query();
+        let args = build_cass_args(&query);
+        assert!(!args.contains(&"--agent".to_string()));
+    }
+
+    #[test]
+    fn cass_args_supports_multiple_agents() {
+        let mut query = base_query();
+        query.agents = "opencode,pi_agent".to_string();
+        let args = build_cass_args(&query);
+        assert_eq!(
+            args,
+            vec![
+                "search",
+                "hello",
+                "--robot",
+                "--robot-meta",
+                "--limit",
+                "50",
+                "--agent",
+                "opencode",
+                "--agent",
+                "pi_agent",
+            ]
+            .into_iter()
+            .map(str::to_string)
+            .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn cass_args_trims_agent_tokens() {
+        let mut query = base_query();
+        query.agents = " opencode , pi_agent , ".to_string();
+        let args = build_cass_args(&query);
+        assert!(args.contains(&"opencode".to_string()));
+        assert!(args.contains(&"pi_agent".to_string()));
+    }
+}

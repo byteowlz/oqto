@@ -119,6 +119,21 @@ const memoryCache = {
 	initialized: false,
 };
 
+const PI_MESSAGE_ID_PATTERN = /^pi-msg-(\d+)$/;
+
+function getMaxPiMessageId(messages: PiDisplayMessage[]): number {
+	let maxId = 0;
+	for (const message of messages) {
+		const match = PI_MESSAGE_ID_PATTERN.exec(message.id);
+		if (!match) continue;
+		const value = Number.parseInt(match[1] ?? "0", 10);
+		if (!Number.isNaN(value) && value > maxId) {
+			maxId = value;
+		}
+	}
+	return maxId;
+}
+
 // Initialize cache from localStorage synchronously on module load
 function initializeCacheFromStorage() {
 	if (memoryCache.initialized || typeof window === "undefined") return;
@@ -282,7 +297,7 @@ export function usePiChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 	// Track if this hook instance owns the WebSocket
 	const isOwnerRef = useRef(false);
 	const streamingMessageRef = useRef<PiDisplayMessage | null>(null);
-	const messageIdRef = useRef(0);
+	const messageIdRef = useRef(getMaxPiMessageId(getCachedMessages()));
 	const refreshRef = useRef<(() => Promise<void>) | null>(null);
 	const initStartedRef = useRef(false);
 
@@ -668,6 +683,14 @@ export function usePiChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 	useEffect(() => {
 		if (messages.length > 0) {
 			updateMessageCache(messages);
+		}
+	}, [messages]);
+
+	// Ensure nextMessageId never collides with cached/loaded messages
+	useEffect(() => {
+		const maxId = getMaxPiMessageId(messages);
+		if (maxId > messageIdRef.current) {
+			messageIdRef.current = maxId;
 		}
 	}, [messages]);
 

@@ -3,6 +3,11 @@ import { AppProvider } from "@/components/app-context";
 import { CommandPalette } from "@/components/command-palette";
 import { MainChatEntry } from "@/components/main-chat";
 import {
+	type AgentFilter,
+	type SearchMode,
+	SearchResults,
+} from "@/components/search";
+import {
 	AlertDialog,
 	AlertDialogAction,
 	AlertDialogCancel,
@@ -39,6 +44,7 @@ import { Input } from "@/components/ui/input";
 import { useApp } from "@/hooks/use-app";
 import { useCommandPalette } from "@/hooks/use-command-palette";
 import {
+	type CassSearchHit,
 	type ChatSession,
 	type Persona,
 	type ProjectLogo,
@@ -107,6 +113,8 @@ function AppShell() {
 		opencodeBaseUrl,
 		opencodeDirectory,
 		ensureOpencodeRunning,
+		createOptimisticChatSession,
+		clearOptimisticChatSession,
 		createNewChat,
 		createNewChatWithPersona,
 		deleteChatSession,
@@ -122,6 +130,7 @@ function AppShell() {
 		mainChatCurrentSessionId,
 		setMainChatCurrentSessionId,
 		setMainChatWorkspacePath,
+		setScrollToMessageId,
 	} = useApp();
 	const location = useLocation();
 	const navigate = useNavigate();
@@ -439,6 +448,23 @@ function AppShell() {
 	// Session search
 	const [sessionSearch, setSessionSearch] = useState("");
 	const deferredSearch = useDeferredValue(sessionSearch);
+	// Search mode: "sessions" = filter by name, "messages" = deep search via cass
+	const [searchMode, setSearchMode] = useState<SearchMode>("sessions");
+	const [agentFilter, setAgentFilter] = useState<AgentFilter>("all");
+
+	// Keyboard shortcut: Ctrl+Shift+F to toggle search mode
+	useEffect(() => {
+		const handleKeyDown = (e: KeyboardEvent) => {
+			if (e.key === "f" && (e.metaKey || e.ctrlKey) && e.shiftKey) {
+				e.preventDefault();
+				setSearchMode((prev) =>
+					prev === "sessions" ? "messages" : "sessions",
+				);
+			}
+		};
+		document.addEventListener("keydown", handleKeyDown);
+		return () => document.removeEventListener("keydown", handleKeyDown);
+	}, []);
 
 	// Handle Main Chat selection
 	const handleMainChatSelect = useCallback(
@@ -905,6 +931,53 @@ function AppShell() {
 		setMainChatWorkspacePath(null);
 	};
 
+	// Handle search result click - navigate to the session and scroll to message
+	const handleSearchResultClick = useCallback(
+		(hit: CassSearchHit) => {
+			// Clear search and switch back to sessions mode
+			setSessionSearch("");
+			setSearchMode("sessions");
+
+			// Set scroll target - use message_id if available, otherwise construct from line_number
+			const targetMessageId =
+				hit.message_id || (hit.line_number ? `line-${hit.line_number}` : null);
+			if (targetMessageId) {
+				setScrollToMessageId(targetMessageId);
+			}
+
+			if (hit.agent === "pi_agent") {
+				// Navigate to Main Chat
+				setActiveAppId("sessions");
+				setMainChatActive(true);
+				// Extract workspace from hit if available
+				if (hit.workspace) {
+					setMainChatWorkspacePath(hit.workspace);
+				}
+			} else if (hit.agent === "opencode" || hit.agent === "claude_code") {
+				// Navigate to OpenCode session
+				// Extract session ID from source_path if not provided
+				const sessionId =
+					hit.session_id ||
+					hit.source_path.match(/ses_[a-zA-Z0-9]+/)?.[0] ||
+					"";
+				if (sessionId) {
+					setSelectedChatSessionId(sessionId);
+					setActiveAppId("sessions");
+					setMainChatActive(false);
+					setMainChatWorkspacePath(null);
+				}
+			}
+			setMobileMenuOpen(false);
+		},
+		[
+			setActiveAppId,
+			setMainChatActive,
+			setMainChatWorkspacePath,
+			setSelectedChatSessionId,
+			setScrollToMessageId,
+		],
+	);
+
 	// Context menu handlers
 	const handlePinSession = useCallback((sessionId: string) => {
 		setPinnedSessions((prev) => {
@@ -1079,12 +1152,14 @@ function AppShell() {
 					project.directory,
 				);
 				setActiveAppId("sessions");
+				const optimisticId = createOptimisticChatSession(project.directory);
 				const baseUrl = await ensureOpencodeRunning(project.directory);
 				console.log("[handleNewChat] Got baseUrl:", baseUrl);
 				if (baseUrl) {
-					await createNewChat(baseUrl);
+					await createNewChat(baseUrl, project.directory, { optimisticId });
 					return;
 				}
+				clearOptimisticChatSession(optimisticId);
 			}
 		}
 
@@ -1106,11 +1181,15 @@ function AppShell() {
 				currentWorkspacePath,
 			);
 			setActiveAppId("sessions");
+			const optimisticId = createOptimisticChatSession(currentWorkspacePath);
 			const baseUrl = await ensureOpencodeRunning(currentWorkspacePath);
 			if (baseUrl) {
-				await createNewChat(baseUrl);
+				await createNewChat(baseUrl, currentWorkspacePath, {
+					optimisticId,
+				});
 				return;
 			}
+			clearOptimisticChatSession(optimisticId);
 		}
 
 		// No workspace context - open persona picker to select one
@@ -1124,6 +1203,8 @@ function AppShell() {
 		projectSummaries,
 		ensureOpencodeRunning,
 		createNewChat,
+		createOptimisticChatSession,
+		clearOptimisticChatSession,
 		setActiveAppId,
 	]);
 
@@ -1132,12 +1213,21 @@ function AppShell() {
 		async (directory: string) => {
 			setActiveAppId("sessions");
 			setMobileMenuOpen(false);
+			const optimisticId = createOptimisticChatSession(directory);
 			const baseUrl = await ensureOpencodeRunning(directory);
 			if (baseUrl) {
-				await createNewChat(baseUrl, directory);
+				await createNewChat(baseUrl, directory, { optimisticId });
+				return;
 			}
+			clearOptimisticChatSession(optimisticId);
 		},
-		[ensureOpencodeRunning, createNewChat, setActiveAppId],
+		[
+			ensureOpencodeRunning,
+			createNewChat,
+			createOptimisticChatSession,
+			clearOptimisticChatSession,
+			setActiveAppId,
+		],
 	);
 
 	const handleAgentSelect = useCallback(
@@ -1235,7 +1325,8 @@ function AppShell() {
 			if (activeAppId === appId) {
 				// Already active, go back to sessions
 				setActiveAppId("sessions");
-				const sessionsRoute = apps.find((app) => app.id === "sessions")?.routes?.[0];
+				const sessionsRoute = apps.find((app) => app.id === "sessions")
+					?.routes?.[0];
 				if (sessionsRoute) {
 					navigate(sessionsRoute);
 				}
@@ -1396,18 +1487,108 @@ function AppShell() {
 									</div>
 									{/* Mobile search input - below Main Chat */}
 									<div className="relative px-1 mb-2">
-										<Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
+										<DropdownMenu>
+											<DropdownMenuTrigger asChild>
+												<button
+													type="button"
+													className={cn(
+														"absolute left-2 top-1/2 -translate-y-1/2 flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors",
+														searchMode === "messages"
+															? "bg-primary/20 text-primary"
+															: "text-muted-foreground hover:text-foreground hover:bg-sidebar-accent",
+													)}
+													title="Ctrl+Shift+F"
+												>
+													{searchMode === "messages" ? (
+														<MessageSquare className="w-3 h-3" />
+													) : (
+														<Search className="w-3 h-3" />
+													)}
+													<ChevronDown className="w-2.5 h-2.5" />
+												</button>
+											</DropdownMenuTrigger>
+											<DropdownMenuContent align="start" className="w-48">
+												<DropdownMenuItem
+													onClick={() => setSearchMode("sessions")}
+													className={cn(
+														searchMode === "sessions" && "bg-accent",
+													)}
+												>
+													<Search className="w-3.5 h-3.5 mr-2" />
+													{locale === "de"
+														? "Sitzungen filtern"
+														: "Filter sessions"}
+												</DropdownMenuItem>
+												<DropdownMenuItem
+													onClick={() => setSearchMode("messages")}
+													className={cn(
+														searchMode === "messages" && "bg-accent",
+													)}
+												>
+													<MessageSquare className="w-3.5 h-3.5 mr-2" />
+													{locale === "de"
+														? "Nachrichten suchen"
+														: "Search messages"}
+												</DropdownMenuItem>
+												{searchMode === "messages" && (
+													<>
+														<DropdownMenuSeparator />
+														<DropdownMenuItem
+															onClick={() => setAgentFilter("all")}
+															className={cn(
+																agentFilter === "all" && "bg-accent",
+															)}
+														>
+															{locale === "de"
+																? "Alle Agenten"
+																: "All agents"}
+														</DropdownMenuItem>
+														<DropdownMenuItem
+															onClick={() => setAgentFilter("opencode")}
+															className={cn(
+																agentFilter === "opencode" && "bg-accent",
+															)}
+														>
+															{locale === "de"
+																? "Nur OpenCode"
+																: "OpenCode only"}
+														</DropdownMenuItem>
+														<DropdownMenuItem
+															onClick={() => setAgentFilter("pi_agent")}
+															className={cn(
+																agentFilter === "pi_agent" && "bg-accent",
+															)}
+														>
+															{locale === "de"
+																? "Nur Main Chat"
+																: "Main Chat only"}
+														</DropdownMenuItem>
+													</>
+												)}
+											</DropdownMenuContent>
+										</DropdownMenu>
 										<input
 											type="text"
-											placeholder={locale === "de" ? "Suchen..." : "Search..."}
+											placeholder={
+												searchMode === "messages"
+													? locale === "de"
+														? "Nachrichten durchsuchen..."
+														: "Search messages..."
+													: locale === "de"
+														? "Suchen..."
+														: "Search..."
+											}
 											value={sessionSearch}
 											onChange={(e) => setSessionSearch(e.target.value)}
-											className="w-full pl-9 pr-10 py-2 text-sm bg-sidebar-accent/50 border border-sidebar-border rounded placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary/50"
+											className="w-full pl-12 pr-10 py-2 text-sm bg-sidebar-accent/50 border border-sidebar-border rounded placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary/50"
 										/>
 										{sessionSearch && (
 											<button
 												type="button"
-												onClick={() => setSessionSearch("")}
+												onClick={() => {
+													setSessionSearch("");
+													setSearchMode("sessions");
+												}}
 												className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-muted-foreground hover:text-foreground"
 											>
 												<X className="w-4 h-4" />
@@ -1502,23 +1683,33 @@ function AppShell() {
 								</div>
 								{/* Scrollable chat list - grouped by project */}
 								<div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden space-y-1 px-1">
-									{filteredSessions.length === 0 && deferredSearch && (
-										<div className="text-sm text-muted-foreground/50 text-center py-4">
-											{locale === "de" ? "Keine Ergebnisse" : "No results"}
-										</div>
-									)}
-									{sessionsByProject.map((project) => {
-										// Auto-expand all when searching
-										const isProjectExpanded =
-											deferredSearch || expandedProjects.has(project.key);
-										const isProjectPinned = pinnedProjects.includes(
-											project.key,
-										);
-										return (
-											<div
-												key={project.key}
-												className="border-b border-sidebar-border/50 last:border-b-0"
-											>
+									{searchMode === "messages" && sessionSearch.trim() ? (
+										<SearchResults
+											query={sessionSearch}
+											agentFilter={agentFilter}
+											locale={locale}
+											onResultClick={handleSearchResultClick}
+											className="mb-2"
+										/>
+									) : (
+										<>
+											{filteredSessions.length === 0 && deferredSearch && (
+												<div className="text-sm text-muted-foreground/50 text-center py-4">
+													{locale === "de" ? "Keine Ergebnisse" : "No results"}
+												</div>
+											)}
+											{sessionsByProject.map((project) => {
+												// Auto-expand all when searching
+												const isProjectExpanded =
+													deferredSearch || expandedProjects.has(project.key);
+												const isProjectPinned = pinnedProjects.includes(
+													project.key,
+												);
+												return (
+													<div
+														key={project.key}
+														className="border-b border-sidebar-border/50 last:border-b-0"
+													>
 												{/* Project header */}
 												<ContextMenu>
 													<ContextMenuTrigger asChild>
@@ -1794,6 +1985,8 @@ function AppShell() {
 											</div>
 										);
 									})}
+										</>
+									)}
 								</div>
 							</div>
 						)}
@@ -2074,75 +2267,110 @@ function AppShell() {
 										locale={locale}
 									/>
 								</div>
-								{/* Search input - below Main Chat */}
+								{/* Search input with mode dropdown - below Main Chat */}
 								<div className="relative mb-2 px-1">
-									<Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
+									{/* Search mode dropdown on left */}
+									<DropdownMenu>
+										<DropdownMenuTrigger asChild>
+											<button
+												type="button"
+												className={cn(
+													"absolute left-1 top-1/2 -translate-y-1/2 flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors",
+													searchMode === "messages"
+														? "bg-primary/20 text-primary"
+														: "text-muted-foreground hover:text-foreground hover:bg-sidebar-accent",
+												)}
+												title="Ctrl+Shift+F"
+											>
+												{searchMode === "messages" ? (
+													<MessageSquare className="w-3 h-3" />
+												) : (
+													<Search className="w-3 h-3" />
+												)}
+												<ChevronDown className="w-2.5 h-2.5" />
+											</button>
+										</DropdownMenuTrigger>
+										<DropdownMenuContent align="start" className="w-48">
+											<DropdownMenuItem
+												onClick={() => setSearchMode("sessions")}
+												className={cn(searchMode === "sessions" && "bg-accent")}
+											>
+												<Search className="w-3.5 h-3.5 mr-2" />
+												{locale === "de"
+													? "Sitzungen filtern"
+													: "Filter sessions"}
+											</DropdownMenuItem>
+											<DropdownMenuItem
+												onClick={() => setSearchMode("messages")}
+												className={cn(searchMode === "messages" && "bg-accent")}
+											>
+												<MessageSquare className="w-3.5 h-3.5 mr-2" />
+												{locale === "de"
+													? "Nachrichten suchen"
+													: "Search messages"}
+											</DropdownMenuItem>
+											{searchMode === "messages" && (
+												<>
+													<DropdownMenuSeparator />
+													<DropdownMenuItem
+														onClick={() => setAgentFilter("all")}
+														className={cn(agentFilter === "all" && "bg-accent")}
+													>
+														{locale === "de" ? "Alle Agenten" : "All agents"}
+													</DropdownMenuItem>
+													<DropdownMenuItem
+														onClick={() => setAgentFilter("opencode")}
+														className={cn(
+															agentFilter === "opencode" && "bg-accent",
+														)}
+													>
+														{locale === "de" ? "Nur OpenCode" : "OpenCode only"}
+													</DropdownMenuItem>
+													<DropdownMenuItem
+														onClick={() => setAgentFilter("pi_agent")}
+														className={cn(
+															agentFilter === "pi_agent" && "bg-accent",
+														)}
+													>
+														{locale === "de"
+															? "Nur Main Chat"
+															: "Main Chat only"}
+													</DropdownMenuItem>
+												</>
+											)}
+										</DropdownMenuContent>
+									</DropdownMenu>
 									<input
 										type="text"
-										placeholder={locale === "de" ? "Suchen..." : "Search..."}
+										placeholder={
+											searchMode === "messages"
+												? locale === "de"
+													? "Nachrichten durchsuchen..."
+													: "Search messages..."
+												: locale === "de"
+													? "Suchen..."
+													: "Search..."
+										}
 										value={sessionSearch}
 										onChange={(e) => setSessionSearch(e.target.value)}
-										className="w-full pl-7 pr-14 py-1.5 text-xs bg-sidebar-accent/50 border border-sidebar-border rounded placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary/50"
+										className="w-full pl-12 pr-8 py-1.5 text-xs bg-sidebar-accent/50 border border-sidebar-border rounded placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary/50"
 									/>
 									<div className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-0.5">
 										{sessionSearch && (
 											<button
 												type="button"
-												onClick={() => setSessionSearch("")}
+												onClick={() => {
+													setSessionSearch("");
+													setSearchMode("sessions");
+												}}
 												className="p-1 text-muted-foreground hover:text-foreground"
+												title={
+													locale === "de" ? "Suche beenden" : "Close search"
+												}
 											>
 												<X className="w-3 h-3" />
 											</button>
 										)}
-										<DropdownMenu>
-											<DropdownMenuTrigger asChild>
-												<button
-													type="button"
-													className={cn(
-														"p-1 transition-colors rounded",
-														selectedProjectKey
-															? "text-primary hover:text-primary/80"
-															: "text-muted-foreground hover:text-foreground",
-													)}
-													title={
-														locale === "de"
-															? "Nach Projekt filtern"
-															: "Filter by project"
-													}
-												>
-													<ChevronDown className="w-3.5 h-3.5" />
-												</button>
-											</DropdownMenuTrigger>
-											<DropdownMenuContent
-												align="end"
-												className="w-48 max-h-64 overflow-y-auto"
-											>
-												<DropdownMenuItem
-													onClick={handleProjectClear}
-													className={cn(!selectedProjectKey && "bg-accent")}
-												>
-													<span className="truncate">
-														{locale === "de" ? "Alle Projekte" : "All projects"}
-													</span>
-												</DropdownMenuItem>
-												<DropdownMenuSeparator />
-												{projectSummaries.map((project) => (
-													<DropdownMenuItem
-														key={project.key}
-														onClick={() => setSelectedProjectKey(project.key)}
-														className={cn(
-															selectedProjectKey === project.key && "bg-accent",
-														)}
-													>
-														<FolderKanban className="w-3.5 h-3.5 mr-2 flex-shrink-0 text-primary/70" />
-														<span className="truncate">{project.name}</span>
-														<span className="ml-auto text-[10px] text-muted-foreground">
-															{project.sessionCount}
-														</span>
-													</DropdownMenuItem>
-												))}
-											</DropdownMenuContent>
-										</DropdownMenu>
 									</div>
 								</div>
 								{/* Sessions header - between search and chat list */}
@@ -2231,351 +2459,389 @@ function AppShell() {
 									</div>
 								</div>
 							</div>
-							{/* Scrollable chat list - grouped by project */}
+							{/* Scrollable chat list - grouped by project OR search results */}
 							<div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden space-y-1">
-								{filteredSessions.length === 0 && deferredSearch && (
-									<div className="text-xs text-muted-foreground/50 text-center py-4">
-										{locale === "de" ? "Keine Ergebnisse" : "No results"}
-									</div>
-								)}
-								{sessionsByProject.map((project) => {
-									// Auto-expand all when searching
-									const isProjectExpanded =
-										deferredSearch || expandedProjects.has(project.key);
-									const isProjectPinned = pinnedProjects.includes(project.key);
-									return (
-										<div
-											key={project.key}
-											className="border-b border-sidebar-border/50 last:border-b-0"
-										>
-											{/* Project header */}
-											<ContextMenu>
-												<ContextMenuTrigger asChild>
-													<div className="flex items-center gap-1 px-1 py-1.5 group">
-														<button
-															type="button"
-															onClick={() => toggleProjectExpanded(project.key)}
-															className="flex-1 flex items-center gap-1.5 text-left hover:bg-sidebar-accent/50 px-1 py-0.5 -mx-1"
-														>
-															{isProjectExpanded ? (
-																<ChevronDown className="w-3 h-3 text-muted-foreground flex-shrink-0" />
-															) : (
-																<ChevronRight className="w-3 h-3 text-muted-foreground flex-shrink-0" />
+								{/* Message search results (when in messages mode with query) */}
+								{searchMode === "messages" && sessionSearch.trim() ? (
+									<SearchResults
+										query={sessionSearch}
+										agentFilter={agentFilter}
+										locale={locale}
+										onResultClick={handleSearchResultClick}
+									/>
+								) : (
+									<>
+										{filteredSessions.length === 0 && deferredSearch && (
+											<div className="text-xs text-muted-foreground/50 text-center py-4">
+												{locale === "de" ? "Keine Ergebnisse" : "No results"}
+											</div>
+										)}
+										{sessionsByProject.map((project) => {
+											// Auto-expand all when searching
+											const isProjectExpanded =
+												deferredSearch || expandedProjects.has(project.key);
+											const isProjectPinned = pinnedProjects.includes(
+												project.key,
+											);
+											return (
+												<div
+													key={project.key}
+													className="border-b border-sidebar-border/50 last:border-b-0"
+												>
+													{/* Project header */}
+													<ContextMenu>
+														<ContextMenuTrigger asChild>
+															<div className="flex items-center gap-1 px-1 py-1.5 group">
+																<button
+																	type="button"
+																	onClick={() =>
+																		toggleProjectExpanded(project.key)
+																	}
+																	className="flex-1 flex items-center gap-1.5 text-left hover:bg-sidebar-accent/50 px-1 py-0.5 -mx-1"
+																>
+																	{isProjectExpanded ? (
+																		<ChevronDown className="w-3 h-3 text-muted-foreground flex-shrink-0" />
+																	) : (
+																		<ChevronRight className="w-3 h-3 text-muted-foreground flex-shrink-0" />
+																	)}
+																	{isProjectPinned && (
+																		<Pin className="w-3 h-3 text-primary/70 flex-shrink-0" />
+																	)}
+																	<FolderKanban className="w-3.5 h-3.5 text-primary/70 flex-shrink-0" />
+																	<span className="text-xs font-medium text-foreground truncate">
+																		{project.name}
+																	</span>
+																	<span className="text-[10px] text-muted-foreground">
+																		({project.sessions.length})
+																	</span>
+																</button>
+																{project.directory ? (
+																	<button
+																		type="button"
+																		onClick={() =>
+																			handleNewChatInProject(project.directory)
+																		}
+																		className="p-1 text-muted-foreground hover:text-primary hover:bg-sidebar-accent opacity-0 group-hover:opacity-100 transition-opacity"
+																		title={
+																			locale === "de"
+																				? "Neuer Chat in diesem Projekt"
+																				: "New chat in this project"
+																		}
+																	>
+																		<Plus className="w-3 h-3" />
+																	</button>
+																) : null}
+															</div>
+														</ContextMenuTrigger>
+														<ContextMenuContent>
+															{project.directory && (
+																<>
+																	<ContextMenuItem
+																		onClick={() =>
+																			handleNewChatInProject(project.directory)
+																		}
+																	>
+																		<Plus className="w-4 h-4 mr-2" />
+																		{locale === "de"
+																			? "Neue Sitzung"
+																			: "New Session"}
+																	</ContextMenuItem>
+																	<ContextMenuSeparator />
+																</>
 															)}
-															{isProjectPinned && (
-																<Pin className="w-3 h-3 text-primary/70 flex-shrink-0" />
-															)}
-															<FolderKanban className="w-3.5 h-3.5 text-primary/70 flex-shrink-0" />
-															<span className="text-xs font-medium text-foreground truncate">
-																{project.name}
-															</span>
-															<span className="text-[10px] text-muted-foreground">
-																({project.sessions.length})
-															</span>
-														</button>
-														{project.directory ? (
-															<button
-																type="button"
-																onClick={() =>
-																	handleNewChatInProject(project.directory)
-																}
-																className="p-1 text-muted-foreground hover:text-primary hover:bg-sidebar-accent opacity-0 group-hover:opacity-100 transition-opacity"
-																title={
-																	locale === "de"
-																		? "Neuer Chat in diesem Projekt"
-																		: "New chat in this project"
-																}
+															<ContextMenuItem
+																onClick={() => handlePinProject(project.key)}
 															>
-																<Plus className="w-3 h-3" />
-															</button>
-														) : null}
-													</div>
-												</ContextMenuTrigger>
-												<ContextMenuContent>
-													{project.directory && (
-														<>
+																<Pin className="w-4 h-4 mr-2" />
+																{isProjectPinned
+																	? locale === "de"
+																		? "Lospinnen"
+																		: "Unpin"
+																	: locale === "de"
+																		? "Anpinnen"
+																		: "Pin"}
+															</ContextMenuItem>
 															<ContextMenuItem
 																onClick={() =>
-																	handleNewChatInProject(project.directory)
+																	handleRenameProject(project.key, project.name)
 																}
 															>
-																<Plus className="w-4 h-4 mr-2" />
-																{locale === "de"
-																	? "Neue Sitzung"
-																	: "New Session"}
+																<Pencil className="w-4 h-4 mr-2" />
+																{locale === "de" ? "Umbenennen" : "Rename"}
 															</ContextMenuItem>
 															<ContextMenuSeparator />
-														</>
-													)}
-													<ContextMenuItem
-														onClick={() => handlePinProject(project.key)}
-													>
-														<Pin className="w-4 h-4 mr-2" />
-														{isProjectPinned
-															? locale === "de"
-																? "Lospinnen"
-																: "Unpin"
-															: locale === "de"
-																? "Anpinnen"
-																: "Pin"}
-													</ContextMenuItem>
-													<ContextMenuItem
-														onClick={() =>
-															handleRenameProject(project.key, project.name)
-														}
-													>
-														<Pencil className="w-4 h-4 mr-2" />
-														{locale === "de" ? "Umbenennen" : "Rename"}
-													</ContextMenuItem>
-													<ContextMenuSeparator />
-													<ContextMenuItem
-														variant="destructive"
-														onClick={() =>
-															handleDeleteProject(project.key, project.name)
-														}
-													>
-														<Trash2 className="w-4 h-4 mr-2" />
-														{locale === "de" ? "Loschen" : "Delete"} (
-														{project.sessions.length}{" "}
-														{project.sessions.length === 1 ? "chat" : "chats"})
-													</ContextMenuItem>
-												</ContextMenuContent>
-											</ContextMenu>
-											{/* Project sessions */}
-											{isProjectExpanded && (
-												<div className="space-y-0.5 pb-1">
-													{project.sessions.map((session) => {
-														const isSelected =
-															selectedChatSessionId === session.id;
-														const children =
-															sessionHierarchy.childSessionsByParent.get(
-																session.id,
-															) || [];
-														const hasChildren = children.length > 0;
-														const isExpanded = expandedSessions.has(session.id);
-														const readableId = generateReadableId(session.id);
-														const formattedDate = session.updated_at
-															? formatSessionDate(session.updated_at)
-															: null;
-														return (
-															<div key={session.id} className="ml-3">
-																<ContextMenu>
-																	<ContextMenuTrigger asChild>
-																		<div
-																			className={cn(
-																				"w-full px-2 py-1 text-left transition-colors flex items-start gap-1.5 cursor-pointer",
-																				isSelected
-																					? "bg-primary/15 border border-primary text-foreground"
-																					: "text-muted-foreground hover:bg-sidebar-accent border border-transparent",
-																			)}
-																		>
-																			{hasChildren ? (
-																				<button
-																					type="button"
-																					onClick={() =>
-																						toggleSessionExpanded(session.id)
-																					}
-																					className="mt-0.5 p-0.5 hover:bg-muted flex-shrink-0 cursor-pointer"
+															<ContextMenuItem
+																variant="destructive"
+																onClick={() =>
+																	handleDeleteProject(project.key, project.name)
+																}
+															>
+																<Trash2 className="w-4 h-4 mr-2" />
+																{locale === "de" ? "Loschen" : "Delete"} (
+																{project.sessions.length}{" "}
+																{project.sessions.length === 1
+																	? "chat"
+																	: "chats"}
+																)
+															</ContextMenuItem>
+														</ContextMenuContent>
+													</ContextMenu>
+													{/* Project sessions */}
+													{isProjectExpanded && (
+														<div className="space-y-0.5 pb-1">
+															{project.sessions.map((session) => {
+																const isSelected =
+																	selectedChatSessionId === session.id;
+																const children =
+																	sessionHierarchy.childSessionsByParent.get(
+																		session.id,
+																	) || [];
+																const hasChildren = children.length > 0;
+																const isExpanded = expandedSessions.has(
+																	session.id,
+																);
+																const readableId = generateReadableId(
+																	session.id,
+																);
+																const formattedDate = session.updated_at
+																	? formatSessionDate(session.updated_at)
+																	: null;
+																return (
+																	<div key={session.id} className="ml-3">
+																		<ContextMenu>
+																			<ContextMenuTrigger asChild>
+																				<div
+																					className={cn(
+																						"w-full px-2 py-1 text-left transition-colors flex items-start gap-1.5 cursor-pointer",
+																						isSelected
+																							? "bg-primary/15 border border-primary text-foreground"
+																							: "text-muted-foreground hover:bg-sidebar-accent border border-transparent",
+																					)}
 																				>
-																					{isExpanded ? (
-																						<ChevronDown className="w-3 h-3" />
-																					) : (
-																						<ChevronRight className="w-3 h-3" />
-																					)}
-																				</button>
-																			) : (
-																				<MessageSquare className="w-3 h-3 mt-0.5 flex-shrink-0 text-primary/70" />
-																			)}
-																			<button
-																				type="button"
-																				onClick={() =>
-																					handleSessionClick(session.id)
-																				}
-																				className="flex-1 min-w-0 text-left"
-																			>
-																				<div className="flex items-center gap-1">
-																					{pinnedSessions.has(session.id) && (
-																						<Pin className="w-3 h-3 flex-shrink-0 text-primary/70" />
-																					)}
-																					<span className="text-xs truncate font-medium">
-																						{session.title || "Untitled"}
-																					</span>
-																					{hasChildren && (
-																						<span className="text-[10px] text-primary/70">
-																							({children.length})
-																						</span>
-																					)}
-																					{busySessions.has(session.id) && (
-																						<Loader2 className="w-3 h-3 flex-shrink-0 text-primary animate-spin" />
-																					)}
-																				</div>
-																				{formattedDate && (
-																					<div className="text-[9px] text-muted-foreground mt-0.5">
-																						{formattedDate}
-																					</div>
-																				)}
-																			</button>
-																		</div>
-																	</ContextMenuTrigger>
-																	<ContextMenuContent>
-																		<ContextMenuItem
-																			onClick={() => {
-																				navigator.clipboard.writeText(
-																					readableId,
-																				);
-																			}}
-																		>
-																			<Copy className="w-4 h-4 mr-2" />
-																			{readableId}
-																		</ContextMenuItem>
-																		<ContextMenuItem
-																			onClick={() => {
-																				navigator.clipboard.writeText(
-																					session.id,
-																				);
-																			}}
-																		>
-																			<Copy className="w-4 h-4 mr-2" />
-																			{session.id.slice(0, 16)}...
-																		</ContextMenuItem>
-																		<ContextMenuSeparator />
-																		<ContextMenuItem
-																			onClick={() =>
-																				handlePinSession(session.id)
-																			}
-																		>
-																			<Pin className="w-4 h-4 mr-2" />
-																			{pinnedSessions.has(session.id)
-																				? locale === "de"
-																					? "Lospinnen"
-																					: "Unpin"
-																				: locale === "de"
-																					? "Anpinnen"
-																					: "Pin"}
-																		</ContextMenuItem>
-																		<ContextMenuItem
-																			onClick={() =>
-																				handleRenameSession(session.id)
-																			}
-																		>
-																			<Pencil className="w-4 h-4 mr-2" />
-																			{locale === "de"
-																				? "Umbenennen"
-																				: "Rename"}
-																		</ContextMenuItem>
-																		<ContextMenuSeparator />
-																		<ContextMenuItem
-																			variant="destructive"
-																			onClick={() =>
-																				handleDeleteSession(session.id)
-																			}
-																		>
-																			<Trash2 className="w-4 h-4 mr-2" />
-																			{locale === "de" ? "Loschen" : "Delete"}
-																		</ContextMenuItem>
-																	</ContextMenuContent>
-																</ContextMenu>
-																{/* Child sessions (subagents) */}
-																{hasChildren && isExpanded && (
-																	<div className="ml-4 border-l border-muted pl-2 space-y-0.5 mt-0.5">
-																		{children.map((child) => {
-																			const isChildSelected =
-																				selectedChatSessionId === child.id;
-																			const childReadableId =
-																				generateReadableId(child.id);
-																			const childFormattedDate =
-																				child.updated_at
-																					? formatSessionDate(child.updated_at)
-																					: null;
-																			return (
-																				<ContextMenu key={child.id}>
-																					<ContextMenuTrigger asChild>
+																					{hasChildren ? (
 																						<button
 																							type="button"
 																							onClick={() =>
-																								handleSessionClick(child.id)
+																								toggleSessionExpanded(
+																									session.id,
+																								)
 																							}
-																							className={cn(
-																								"w-full px-2 py-1 text-left transition-colors text-xs",
-																								isChildSelected
-																									? "bg-primary/15 border border-primary text-foreground"
-																									: "text-muted-foreground hover:bg-sidebar-accent border border-transparent",
-																							)}
+																							className="mt-0.5 p-0.5 hover:bg-muted flex-shrink-0 cursor-pointer"
 																						>
-																							<div className="flex items-center gap-1">
-																								<Bot className="w-3 h-3 flex-shrink-0 text-primary/70" />
-																								<span className="truncate font-medium">
-																									{child.title || "Subagent"}
-																								</span>
-																								{busySessions.has(child.id) && (
-																									<Loader2 className="w-3 h-3 flex-shrink-0 text-primary animate-spin" />
-																								)}
-																							</div>
-																							{childFormattedDate && (
-																								<div className="text-[9px] text-muted-foreground mt-0.5 ml-4">
-																									{childFormattedDate}
-																								</div>
+																							{isExpanded ? (
+																								<ChevronDown className="w-3 h-3" />
+																							) : (
+																								<ChevronRight className="w-3 h-3" />
 																							)}
 																						</button>
-																					</ContextMenuTrigger>
-																					<ContextMenuContent>
-																						<ContextMenuItem
-																							onClick={() => {
-																								navigator.clipboard.writeText(
-																									childReadableId,
-																								);
-																							}}
-																						>
-																							<Copy className="w-4 h-4 mr-2" />
-																							{childReadableId}
-																						</ContextMenuItem>
-																						<ContextMenuItem
-																							onClick={() => {
-																								navigator.clipboard.writeText(
-																									child.id,
-																								);
-																							}}
-																						>
-																							<Copy className="w-4 h-4 mr-2" />
-																							{child.id.slice(0, 16)}...
-																						</ContextMenuItem>
-																						<ContextMenuSeparator />
-																						<ContextMenuItem
-																							onClick={() =>
-																								handleRenameSession(child.id)
-																							}
-																						>
-																							<Pencil className="w-4 h-4 mr-2" />
-																							{locale === "de"
-																								? "Umbenennen"
-																								: "Rename"}
-																						</ContextMenuItem>
-																						<ContextMenuSeparator />
-																						<ContextMenuItem
-																							variant="destructive"
-																							onClick={() =>
-																								handleDeleteSession(child.id)
-																							}
-																						>
-																							<Trash2 className="w-4 h-4 mr-2" />
-																							{locale === "de"
-																								? "Loschen"
-																								: "Delete"}
-																						</ContextMenuItem>
-																					</ContextMenuContent>
-																				</ContextMenu>
-																			);
-																		})}
+																					) : (
+																						<MessageSquare className="w-3 h-3 mt-0.5 flex-shrink-0 text-primary/70" />
+																					)}
+																					<button
+																						type="button"
+																						onClick={() =>
+																							handleSessionClick(session.id)
+																						}
+																						className="flex-1 min-w-0 text-left"
+																					>
+																						<div className="flex items-center gap-1">
+																							{pinnedSessions.has(
+																								session.id,
+																							) && (
+																								<Pin className="w-3 h-3 flex-shrink-0 text-primary/70" />
+																							)}
+																							<span className="text-xs truncate font-medium">
+																								{session.title || "Untitled"}
+																							</span>
+																							{hasChildren && (
+																								<span className="text-[10px] text-primary/70">
+																									({children.length})
+																								</span>
+																							)}
+																							{busySessions.has(session.id) && (
+																								<Loader2 className="w-3 h-3 flex-shrink-0 text-primary animate-spin" />
+																							)}
+																						</div>
+																						{formattedDate && (
+																							<div className="text-[9px] text-muted-foreground mt-0.5">
+																								{formattedDate}
+																							</div>
+																						)}
+																					</button>
+																				</div>
+																			</ContextMenuTrigger>
+																			<ContextMenuContent>
+																				<ContextMenuItem
+																					onClick={() => {
+																						navigator.clipboard.writeText(
+																							readableId,
+																						);
+																					}}
+																				>
+																					<Copy className="w-4 h-4 mr-2" />
+																					{readableId}
+																				</ContextMenuItem>
+																				<ContextMenuItem
+																					onClick={() => {
+																						navigator.clipboard.writeText(
+																							session.id,
+																						);
+																					}}
+																				>
+																					<Copy className="w-4 h-4 mr-2" />
+																					{session.id.slice(0, 16)}...
+																				</ContextMenuItem>
+																				<ContextMenuSeparator />
+																				<ContextMenuItem
+																					onClick={() =>
+																						handlePinSession(session.id)
+																					}
+																				>
+																					<Pin className="w-4 h-4 mr-2" />
+																					{pinnedSessions.has(session.id)
+																						? locale === "de"
+																							? "Lospinnen"
+																							: "Unpin"
+																						: locale === "de"
+																							? "Anpinnen"
+																							: "Pin"}
+																				</ContextMenuItem>
+																				<ContextMenuItem
+																					onClick={() =>
+																						handleRenameSession(session.id)
+																					}
+																				>
+																					<Pencil className="w-4 h-4 mr-2" />
+																					{locale === "de"
+																						? "Umbenennen"
+																						: "Rename"}
+																				</ContextMenuItem>
+																				<ContextMenuSeparator />
+																				<ContextMenuItem
+																					variant="destructive"
+																					onClick={() =>
+																						handleDeleteSession(session.id)
+																					}
+																				>
+																					<Trash2 className="w-4 h-4 mr-2" />
+																					{locale === "de"
+																						? "Loschen"
+																						: "Delete"}
+																				</ContextMenuItem>
+																			</ContextMenuContent>
+																		</ContextMenu>
+																		{/* Child sessions (subagents) */}
+																		{hasChildren && isExpanded && (
+																			<div className="ml-4 border-l border-muted pl-2 space-y-0.5 mt-0.5">
+																				{children.map((child) => {
+																					const isChildSelected =
+																						selectedChatSessionId === child.id;
+																					const childReadableId =
+																						generateReadableId(child.id);
+																					const childFormattedDate =
+																						child.updated_at
+																							? formatSessionDate(
+																									child.updated_at,
+																								)
+																							: null;
+																					return (
+																						<ContextMenu key={child.id}>
+																							<ContextMenuTrigger asChild>
+																								<button
+																									type="button"
+																									onClick={() =>
+																										handleSessionClick(child.id)
+																									}
+																									className={cn(
+																										"w-full px-2 py-1 text-left transition-colors text-xs",
+																										isChildSelected
+																											? "bg-primary/15 border border-primary text-foreground"
+																											: "text-muted-foreground hover:bg-sidebar-accent border border-transparent",
+																									)}
+																								>
+																									<div className="flex items-center gap-1">
+																										<Bot className="w-3 h-3 flex-shrink-0 text-primary/70" />
+																										<span className="truncate font-medium">
+																											{child.title ||
+																												"Subagent"}
+																										</span>
+																										{busySessions.has(
+																											child.id,
+																										) && (
+																											<Loader2 className="w-3 h-3 flex-shrink-0 text-primary animate-spin" />
+																										)}
+																									</div>
+																									{childFormattedDate && (
+																										<div className="text-[9px] text-muted-foreground mt-0.5 ml-4">
+																											{childFormattedDate}
+																										</div>
+																									)}
+																								</button>
+																							</ContextMenuTrigger>
+																							<ContextMenuContent>
+																								<ContextMenuItem
+																									onClick={() => {
+																										navigator.clipboard.writeText(
+																											childReadableId,
+																										);
+																									}}
+																								>
+																									<Copy className="w-4 h-4 mr-2" />
+																									{childReadableId}
+																								</ContextMenuItem>
+																								<ContextMenuItem
+																									onClick={() => {
+																										navigator.clipboard.writeText(
+																											child.id,
+																										);
+																									}}
+																								>
+																									<Copy className="w-4 h-4 mr-2" />
+																									{child.id.slice(0, 16)}...
+																								</ContextMenuItem>
+																								<ContextMenuSeparator />
+																								<ContextMenuItem
+																									onClick={() =>
+																										handleRenameSession(
+																											child.id,
+																										)
+																									}
+																								>
+																									<Pencil className="w-4 h-4 mr-2" />
+																									{locale === "de"
+																										? "Umbenennen"
+																										: "Rename"}
+																								</ContextMenuItem>
+																								<ContextMenuSeparator />
+																								<ContextMenuItem
+																									variant="destructive"
+																									onClick={() =>
+																										handleDeleteSession(
+																											child.id,
+																										)
+																									}
+																								>
+																									<Trash2 className="w-4 h-4 mr-2" />
+																									{locale === "de"
+																										? "Loschen"
+																										: "Delete"}
+																								</ContextMenuItem>
+																							</ContextMenuContent>
+																						</ContextMenu>
+																					);
+																				})}
+																			</div>
+																		)}
 																	</div>
-																)}
-															</div>
-														);
-													})}
+																);
+															})}
+														</div>
+													)}
 												</div>
-											)}
-										</div>
-									);
-								})}
+											);
+										})}
+									</>
+								)}
 							</div>
 						</div>
 					</>

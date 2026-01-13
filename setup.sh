@@ -28,7 +28,7 @@ TEMPLATES_DIR="${SCRIPT_DIR}/templates"
 : "${OCTO_CONTAINER_RUNTIME:=auto}"     # docker, podman, or auto
 : "${OCTO_INSTALL_DEPS:=yes}"           # yes or no
 : "${OCTO_INSTALL_SERVICE:=yes}"        # yes or no
-: "${OCTO_INSTALL_AGENT_TOOLS:=yes}"    # yes or no (mmry, trx, mailz via agntz)
+: "${OCTO_INSTALL_AGENT_TOOLS:=yes}"    # yes or no (agntz, mmry, trx)
 : "${OCTO_DEV_MODE:=true}"              # true or false (auth dev mode)
 : "${OCTO_LOG_LEVEL:=info}"             # error, warn, info, debug, trace
 
@@ -655,7 +655,7 @@ install_shell_tools_cargo() {
 }
 
 # ==============================================================================
-# Agent Tools Installation (agntz, mmry, trx, mailz)
+# Agent Tools Installation (agntz, mmry, trx)
 # ==============================================================================
 
 install_agntz() {
@@ -705,16 +705,11 @@ select_agent_tools() {
     echo "    - Track agent operations"
     echo "    - Audit trail for actions"
     echo
-    echo "  ${BOLD}mailz${NC} - Agent messaging system"
-    echo "    - Cross-agent communication"
-    echo "    - File reservation and coordination"
-    echo
-    
     if confirm "Install mmry (memory system)?"; then
         INSTALL_MMRY="true"
     fi
     
-    if confirm "Install trx (transaction tracking)?"; then
+    if confirm "Install trx (task tracking)?"; then
         INSTALL_TRX="true"
     fi
     
@@ -1539,11 +1534,18 @@ Environment Variables:
 Shell Tools Installed:
   tmux, fd, ripgrep, yazi, zsh, zoxide
 
-Agent Tools (via agntz):
-  agntz   - Agent operations CLI (always installed)
-  mmry    - Memory system (optional)
-  trx     - Transaction tracking (optional)
+Agent Tools:
+  agntz   - Agent operations CLI (memory, issues, mail, reservations)
+  mmry    - Memory system (optional, integrated with Octo)
+  trx     - Task tracking (optional, integrated with Octo)
   mailz   - Agent messaging (optional)
+
+Other Tools:
+  opencode - OpenCode AI agent CLI (local mode)
+  ttyd    - Web terminal
+  pi      - Main chat interface
+
+For detailed documentation on all prerequisites and components, see SETUP.md
 
 Examples:
   # Interactive setup (recommended)
@@ -1615,7 +1617,7 @@ main() {
             install_ttyd
         fi
         
-        # Agent tools (agntz and optional mmry, trx, mailz)
+        # Agent tools (agntz and optional mmry, trx)
         if [[ "$OCTO_INSTALL_AGENT_TOOLS" == "yes" ]]; then
             install_agntz
             

@@ -45,6 +45,7 @@ import {
 	getMainChatPiModels,
 	getMainChatPiStats,
 	setMainChatPiModel,
+	workspaceFileUrl,
 } from "@/lib/control-plane-client";
 import { getFileTypeInfo } from "@/lib/file-types";
 import {
@@ -98,6 +99,10 @@ export interface MainChatPiViewProps {
 	}) => void;
 	/** Session ID to scroll to (when clicking session in sidebar) */
 	scrollToSessionId?: string | null;
+	/** Message ID to scroll to (from search results) */
+	scrollToMessageId?: string | null;
+	/** Callback when scroll target is reached (to clear the target) */
+	onScrollToMessageComplete?: () => void;
 }
 
 /**
@@ -113,6 +118,8 @@ export function MainChatPiView({
 	hideHeader = false,
 	onTokenUsageChange,
 	scrollToSessionId,
+	scrollToMessageId,
+	onScrollToMessageComplete,
 }: MainChatPiViewProps) {
 	const {
 		messages,
@@ -418,6 +425,42 @@ export function MainChatPiView({
 			setIsUserScrolled(true); // Prevent auto-scroll from overriding
 		}
 	}, [scrollToSessionId]);
+
+	// Scroll to message when scrollToMessageId changes (from search results)
+	useEffect(() => {
+		if (!scrollToMessageId || !messagesContainerRef.current) return;
+
+		// Find the message element with this ID
+		const messageEl = messagesContainerRef.current.querySelector(
+			`[data-message-id="${scrollToMessageId}"]`,
+		);
+
+		if (messageEl) {
+			// Ensure we have enough messages visible
+			const messageIndex = messages.findIndex(
+				(m) => m.id === scrollToMessageId,
+			);
+			if (messageIndex !== -1) {
+				const messagesFromEnd = messages.length - messageIndex;
+				if (messagesFromEnd > visibleCount) {
+					setVisibleCount(messagesFromEnd + 10);
+				}
+			}
+
+			// Scroll to the message
+			requestAnimationFrame(() => {
+				messageEl.scrollIntoView({ behavior: "smooth", block: "center" });
+				// Add highlight animation
+				messageEl.classList.add("search-highlight");
+				setTimeout(() => {
+					messageEl.classList.remove("search-highlight");
+				}, 2000);
+			});
+
+			setIsUserScrolled(true);
+			onScrollToMessageComplete?.();
+		}
+	}, [scrollToMessageId, messages, visibleCount, onScrollToMessageComplete]);
 
 	// Initial scroll position - instant, no animation
 	useLayoutEffect(() => {
@@ -944,7 +987,7 @@ export function MainChatPiView({
 						type="button"
 						onClick={() => fileInputRef.current?.click()}
 						disabled={isUploading}
-						className="flex-shrink-0 size-8 flex items-center justify-center text-muted-foreground hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+						className="flex-shrink-0 h-8 px-2 flex items-center justify-center text-muted-foreground hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
 						title={t.uploadFile}
 					>
 						{isUploading ? (
@@ -1125,10 +1168,11 @@ export function MainChatPiView({
 						type="button"
 						onClick={() => handleSend("steer")}
 						disabled={!input.trim() && fileAttachments.length === 0}
-						className="bg-primary hover:bg-primary/90 text-primary-foreground"
+						className="flex-shrink-0 h-8 px-2 flex items-center justify-center text-muted-foreground hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed transition-colors p-0 bg-transparent hover:bg-transparent"
+						variant="ghost"
+						size="icon"
 					>
-						<Send className="w-4 h-4 sm:mr-2" />
-						<span className="hidden sm:inline">{t.send}</span>
+						<Send className="w-4 h-4" />
 					</Button>
 				</div>
 			</div>
@@ -1191,6 +1235,7 @@ const PiMessageCard = memo(function PiMessageCard({
 
 	const messageCard = (
 		<div
+			data-message-id={message.id}
 			className={cn(
 				"group transition-all duration-200 overflow-hidden",
 				isUser
@@ -1521,7 +1566,7 @@ function TextWithFileReferences({
 /**
  * Card for displaying a @file reference with preview.
  */
-const FileReferenceCard = memo(function FileReferenceCard({
+export const FileReferenceCard = memo(function FileReferenceCard({
 	filePath,
 	workspacePath,
 }: {
@@ -1534,8 +1579,7 @@ const FileReferenceCard = memo(function FileReferenceCard({
 	const fileInfo = useMemo(() => getFileTypeInfo(filePath), [filePath]);
 	const isImage = fileInfo.category === "image";
 
-	const baseUrl = fileserverWorkspaceBaseUrl();
-	const fileUrl = `${baseUrl}/read?path=${encodeURIComponent(filePath)}&workspace_path=${encodeURIComponent(workspacePath)}`;
+	const fileUrl = workspaceFileUrl(workspacePath, filePath);
 
 	if (isImage && !imageError) {
 		return (

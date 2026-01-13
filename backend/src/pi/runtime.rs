@@ -20,8 +20,8 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::{Mutex, RwLock, broadcast, mpsc};
 
-use super::types::*;
 use super::PiClientConfig;
+use super::types::*;
 
 /// Configuration for spawning a Pi process.
 #[derive(Debug, Clone)]
@@ -71,12 +71,6 @@ pub trait PiProcess: Send + Sync {
 
     /// Subscribe to events from Pi.
     fn subscribe(&self) -> broadcast::Receiver<PiEvent>;
-
-    /// Gracefully shut down the Pi process.
-    async fn shutdown(&self) -> Result<()>;
-
-    /// Check if the process is still running.
-    async fn is_running(&self) -> bool;
 }
 
 /// Runtime for spawning and managing Pi processes.
@@ -87,9 +81,6 @@ pub trait PiProcess: Send + Sync {
 pub trait PiRuntime: Send + Sync {
     /// Spawn a new Pi process with the given configuration.
     async fn spawn(&self, config: PiSpawnConfig) -> Result<Box<dyn PiProcess>>;
-
-    /// Get the runtime mode name for logging.
-    fn mode_name(&self) -> &'static str;
 }
 
 // ============================================================================
@@ -110,10 +101,6 @@ impl LocalPiRuntime {
         Self {
             config: PiClientConfig::default(),
         }
-    }
-
-    pub fn with_config(config: PiClientConfig) -> Self {
-        Self { config }
     }
 }
 
@@ -174,10 +161,6 @@ impl PiRuntime for LocalPiRuntime {
         let process = LocalPiProcess::new(child, self.config.clone())?;
         Ok(Box::new(process))
     }
-
-    fn mode_name(&self) -> &'static str {
-        "local"
-    }
 }
 
 /// A Pi process running as a local subprocess.
@@ -187,14 +170,11 @@ pub struct LocalPiProcess {
     /// Broadcast channel for events from pi.
     event_tx: broadcast::Sender<PiEvent>,
     /// Pending response receivers (keyed by request ID).
-    pending_responses:
-        Arc<RwLock<HashMap<String, tokio::sync::oneshot::Sender<PiResponse>>>>,
+    pending_responses: Arc<RwLock<HashMap<String, tokio::sync::oneshot::Sender<PiResponse>>>>,
     /// Counter for generating unique request IDs.
     request_counter: Arc<Mutex<u64>>,
     /// Handle to the background tasks (kept alive).
     _handles: Vec<tokio::task::JoinHandle<()>>,
-    /// Flag indicating if process is still running.
-    running: Arc<RwLock<bool>>,
 }
 
 impl LocalPiProcess {
@@ -205,18 +185,14 @@ impl LocalPiProcess {
         let (command_tx, command_rx) = mpsc::channel::<String>(config.command_buffer_size);
         let (event_tx, _) = broadcast::channel::<PiEvent>(config.event_buffer_size);
         let pending_responses = Arc::new(RwLock::new(HashMap::new()));
-        let running = Arc::new(RwLock::new(true));
-
         // Spawn stdin writer task
         let stdin_handle = tokio::spawn(Self::stdin_writer_task(stdin, command_rx));
 
         // Spawn stdout reader task
-        let running_clone = Arc::clone(&running);
         let stdout_handle = tokio::spawn(Self::stdout_reader_task(
             stdout,
             event_tx.clone(),
             Arc::clone(&pending_responses),
-            running_clone,
         ));
 
         // Spawn stderr reader task (just for logging)
@@ -224,21 +200,12 @@ impl LocalPiProcess {
             tokio::spawn(Self::stderr_reader_task(stderr));
         }
 
-        // Spawn process monitor task
-        let running_clone2 = Arc::clone(&running);
-        tokio::spawn(async move {
-            let _ = child.wait().await;
-            *running_clone2.write().await = false;
-            info!("Pi process exited");
-        });
-
         Ok(Self {
             command_tx,
             event_tx,
             pending_responses,
             request_counter: Arc::new(Mutex::new(0)),
             _handles: vec![stdin_handle, stdout_handle],
-            running,
         })
     }
 
@@ -281,7 +248,6 @@ impl LocalPiProcess {
         stdout: tokio::process::ChildStdout,
         event_tx: broadcast::Sender<PiEvent>,
         pending_responses: Arc<RwLock<HashMap<String, tokio::sync::oneshot::Sender<PiResponse>>>>,
-        running: Arc<RwLock<bool>>,
     ) {
         let reader = BufReader::new(stdout);
         let mut lines = reader.lines();
@@ -318,12 +284,14 @@ impl LocalPiProcess {
                 }
                 Err(e) => {
                     let display_line: String = line.chars().take(200).collect();
-                    warn!("Failed to parse pi message: {:?}, line: {}", e, display_line);
+                    warn!(
+                        "Failed to parse pi message: {:?}, line: {}",
+                        e, display_line
+                    );
                 }
             }
         }
 
-        *running.write().await = false;
         info!("Pi stdout reader task ended");
     }
 
@@ -371,25 +339,13 @@ impl PiProcess for LocalPiProcess {
     fn subscribe(&self) -> broadcast::Receiver<PiEvent> {
         self.event_tx.subscribe()
     }
-
-    async fn shutdown(&self) -> Result<()> {
-        // Closing the command channel will cause the stdin writer to exit,
-        // which will cause Pi to receive EOF and exit gracefully.
-        // The process monitor task will update the running flag.
-        info!("Shutting down local Pi process");
-        Ok(())
-    }
-
-    async fn is_running(&self) -> bool {
-        *self.running.read().await
-    }
 }
 
 // ============================================================================
 // Runner Runtime - Via octo-runner for multi-user isolation
 // ============================================================================
 
-use crate::runner::RunnerClient;
+use crate::runner::client::RunnerClient;
 
 /// Runtime that spawns Pi via the octo-runner daemon.
 ///
@@ -409,10 +365,6 @@ impl RunnerPiRuntime {
             client,
             config: PiClientConfig::default(),
         }
-    }
-
-    pub fn with_config(client: RunnerClient, config: PiClientConfig) -> Self {
-        Self { client, config }
     }
 }
 
@@ -469,19 +421,14 @@ impl PiRuntime for RunnerPiRuntime {
             .await
             .context("failed to spawn Pi via runner")?;
 
-        info!("Spawned Pi process via runner: id={}, pid={}", process_id, pid);
-
-        let process = RunnerPiProcess::new(
-            self.client.clone(),
-            process_id,
-            self.config.clone(),
+        info!(
+            "Spawned Pi process via runner: id={}, pid={}",
+            process_id, pid
         );
 
-        Ok(Box::new(process))
-    }
+        let process = RunnerPiProcess::new(self.client.clone(), process_id, self.config.clone());
 
-    fn mode_name(&self) -> &'static str {
-        "runner"
+        Ok(Box::new(process))
     }
 }
 
@@ -498,10 +445,6 @@ impl std::fmt::Debug for RunnerPiRuntime {
 /// Communication happens through WriteStdin/ReadStdout RPC calls
 /// to the runner, which forwards to the Pi process.
 pub struct RunnerPiProcess {
-    /// Runner client for communication.
-    client: RunnerClient,
-    /// Process ID assigned by the runner.
-    process_id: String,
     /// Channel to send commands to the writer task.
     command_tx: mpsc::Sender<String>,
     /// Broadcast channel for events from pi.
@@ -510,8 +453,6 @@ pub struct RunnerPiProcess {
     pending_responses: Arc<RwLock<HashMap<String, tokio::sync::oneshot::Sender<PiResponse>>>>,
     /// Counter for generating unique request IDs.
     request_counter: Arc<Mutex<u64>>,
-    /// Flag indicating if process is still running.
-    running: Arc<RwLock<bool>>,
     /// Handle to the background reader task.
     _reader_handle: tokio::task::JoinHandle<()>,
 }
@@ -594,13 +535,10 @@ impl RunnerPiProcess {
         });
 
         Self {
-            client,
-            process_id,
             command_tx,
             event_tx,
             pending_responses,
             request_counter: Arc::new(Mutex::new(0)),
-            running,
             _reader_handle: reader_handle,
         }
     }
@@ -628,7 +566,10 @@ impl RunnerPiProcess {
                 let _ = event_tx.send(event);
             }
             Err(e) => {
-                warn!("Failed to parse pi message: {:?}, line: {}", e, display_line);
+                warn!(
+                    "Failed to parse pi message: {:?}, line: {}",
+                    e, display_line
+                );
             }
         }
     }
@@ -679,20 +620,6 @@ impl PiProcess for RunnerPiProcess {
     fn subscribe(&self) -> broadcast::Receiver<PiEvent> {
         self.event_tx.subscribe()
     }
-
-    async fn shutdown(&self) -> Result<()> {
-        info!("Shutting down Pi process via runner: {}", self.process_id);
-        self.client
-            .kill_process(&self.process_id, false)
-            .await
-            .context("failed to kill Pi process via runner")?;
-        *self.running.write().await = false;
-        Ok(())
-    }
-
-    async fn is_running(&self) -> bool {
-        *self.running.read().await
-    }
 }
 
 // ============================================================================
@@ -718,26 +645,12 @@ impl ContainerPiRuntime {
             config: PiClientConfig::default(),
         }
     }
-
-    pub fn with_config(config: PiClientConfig) -> Self {
-        Self {
-            http_client: reqwest::Client::new(),
-            config,
-        }
-    }
 }
 
 impl Default for ContainerPiRuntime {
     fn default() -> Self {
         Self::new()
     }
-}
-
-/// Configuration for connecting to a container's pi-bridge.
-#[derive(Debug, Clone)]
-pub struct ContainerPiConfig {
-    /// Base URL for pi-bridge (e.g., "http://localhost:41824").
-    pub bridge_url: String,
 }
 
 #[async_trait]
@@ -753,10 +666,7 @@ impl PiRuntime for ContainerPiRuntime {
             .cloned()
             .unwrap_or_else(|| "http://localhost:41824".to_string());
 
-        info!(
-            "Connecting to pi-bridge at {} (container mode)",
-            bridge_url
-        );
+        info!("Connecting to pi-bridge at {} (container mode)", bridge_url);
 
         // Check if pi-bridge is healthy
         let health_url = format!("{}/health", bridge_url);
@@ -775,17 +685,10 @@ impl PiRuntime for ContainerPiRuntime {
             );
         }
 
-        let process = ContainerPiProcess::new(
-            self.http_client.clone(),
-            bridge_url,
-            self.config.clone(),
-        );
+        let process =
+            ContainerPiProcess::new(self.http_client.clone(), bridge_url, self.config.clone());
 
         Ok(Box::new(process))
-    }
-
-    fn mode_name(&self) -> &'static str {
-        "container"
     }
 }
 
@@ -805,8 +708,6 @@ pub struct ContainerPiProcess {
     event_tx: broadcast::Sender<PiEvent>,
     /// Counter for generating unique request IDs.
     request_counter: Arc<Mutex<u64>>,
-    /// Flag indicating if bridge is available.
-    running: Arc<RwLock<bool>>,
     /// WebSocket connection handle (if connected).
     _ws_handle: Option<tokio::task::JoinHandle<()>>,
 }
@@ -817,7 +718,9 @@ impl ContainerPiProcess {
         let running = Arc::new(RwLock::new(true));
 
         // Start WebSocket connection for events
-        let ws_url = bridge_url.replace("http://", "ws://").replace("https://", "wss://");
+        let ws_url = bridge_url
+            .replace("http://", "ws://")
+            .replace("https://", "wss://");
         let ws_url = format!("{}/ws", ws_url);
         let event_tx_clone = event_tx.clone();
         let running_clone = Arc::clone(&running);
@@ -846,7 +749,6 @@ impl ContainerPiProcess {
             bridge_url,
             event_tx,
             request_counter: Arc::new(Mutex::new(0)),
-            running,
             _ws_handle: Some(ws_handle),
         }
     }
@@ -859,7 +761,9 @@ impl ContainerPiProcess {
         use tokio_tungstenite::connect_async;
         use tokio_tungstenite::tungstenite::Message;
 
-        let (ws_stream, _) = connect_async(ws_url).await.context("WebSocket connect failed")?;
+        let (ws_stream, _) = connect_async(ws_url)
+            .await
+            .context("WebSocket connect failed")?;
         let (_, mut read) = ws_stream.split();
 
         use futures::StreamExt;
@@ -939,12 +843,12 @@ impl PiProcess for ContainerPiProcess {
         // Parse response
         let body: serde_json::Value = response.json().await.context("failed to parse response")?;
 
-        let success = body.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
+        let success = body
+            .get("success")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
         let data = body.get("data").cloned();
-        let error = body
-            .get("error")
-            .and_then(|v| v.as_str())
-            .map(String::from);
+        let error = body.get("error").and_then(|v| v.as_str()).map(String::from);
 
         Ok(PiResponse {
             success,
@@ -956,15 +860,5 @@ impl PiProcess for ContainerPiProcess {
 
     fn subscribe(&self) -> broadcast::Receiver<PiEvent> {
         self.event_tx.subscribe()
-    }
-
-    async fn shutdown(&self) -> Result<()> {
-        info!("Shutting down container Pi process connection");
-        *self.running.write().await = false;
-        Ok(())
-    }
-
-    async fn is_running(&self) -> bool {
-        *self.running.read().await
     }
 }

@@ -16,15 +16,15 @@ function Switch({
 				"peer data-[state=checked]:bg-primary data-[state=unchecked]:bg-input focus-visible:border-ring focus-visible:ring-ring/50 dark:data-[state=unchecked]:bg-input/80 inline-flex shrink-0 items-center border border-transparent shadow-xs transition-all outline-none focus-visible:ring-[3px] disabled:cursor-not-allowed disabled:opacity-50",
 				className,
 			)}
-			style={{ width: 44, height: 24, borderRadius: 9999 }}
+			style={{ width: 24, height: 12, borderRadius: 9999 }}
 			{...props}
 		>
 			<SwitchPrimitive.Thumb
 				data-slot="switch-thumb"
 				className={cn(
-					"bg-background dark:data-[state=unchecked]:bg-foreground dark:data-[state=checked]:bg-primary-foreground pointer-events-none block ring-0 transition-transform data-[state=checked]:translate-x-5 data-[state=unchecked]:translate-x-0.5",
+					"bg-background dark:data-[state=unchecked]:bg-foreground dark:data-[state=checked]:bg-primary-foreground pointer-events-none block ring-0 transition-transform data-[state=checked]:translate-x-3 data-[state=unchecked]:translate-x-0.5",
 				)}
-				style={{ width: 20, height: 20, borderRadius: 9999 }}
+				style={{ width: 10, height: 10, borderRadius: 9999 }}
 			/>
 		</SwitchPrimitive.Root>
 	);

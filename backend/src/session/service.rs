@@ -317,6 +317,46 @@ impl SessionService {
         std::path::PathBuf::from("/workspace")
     }
 
+    fn allowed_workspace_roots(&self) -> Vec<std::path::PathBuf> {
+        let mut roots = Vec::new();
+
+        let workspace_root = self.workspace_root();
+        roots.push(workspace_root.canonicalize().unwrap_or(workspace_root));
+
+        if self.config.runtime_mode == RuntimeMode::Container {
+            let data_root = std::path::PathBuf::from(&self.config.user_data_path);
+            roots.push(data_root.canonicalize().unwrap_or(data_root));
+        }
+
+        roots
+    }
+
+    fn resolve_workspace_path(&self, path: &str) -> Result<std::path::PathBuf> {
+        let requested = std::path::PathBuf::from(path);
+        let resolved = if requested.is_absolute() {
+            requested
+        } else {
+            self.workspace_root().join(&requested)
+        };
+
+        if !resolved.exists() {
+            anyhow::bail!("workspace path does not exist: {}", resolved.display());
+        }
+
+        let canonical = resolved
+            .canonicalize()
+            .with_context(|| format!("resolving workspace path {}", resolved.display()))?;
+        let allowed_roots = self.allowed_workspace_roots();
+        if !allowed_roots.iter().any(|root| canonical.starts_with(root)) {
+            anyhow::bail!(
+                "workspace path {} is outside allowed roots",
+                canonical.display()
+            );
+        }
+
+        Ok(canonical)
+    }
+
     /// Maximum number of retries for port allocation conflicts.
     const MAX_PORT_ALLOCATION_RETRIES: u32 = 5;
 
@@ -511,16 +551,9 @@ impl SessionService {
 
         // Determine user home path - either provided or create per-user home directory.
         let user_home_path = if let Some(path) = request.workspace_path {
-            // Resolve relative paths against the workspace root
-            let resolved_path = if std::path::Path::new(&path).is_absolute() {
-                std::path::PathBuf::from(&path)
-            } else {
-                self.workspace_root().join(&path)
-            };
-            if !resolved_path.exists() {
-                anyhow::bail!("workspace path does not exist: {}", resolved_path.display());
-            }
-            resolved_path.to_string_lossy().to_string()
+            self.resolve_workspace_path(&path)?
+                .to_string_lossy()
+                .to_string()
         } else {
             let user_id = &self.config.default_user_id;
 
@@ -907,10 +940,7 @@ impl SessionService {
             if let Some(ref model) = self.config.pi_model {
                 config = config.env("PI_MODEL", model);
             }
-            info!(
-                "Enabled pi-bridge for session {} on port 41824",
-                session.id
-            );
+            info!("Enabled pi-bridge for session {} on port 41824", session.id);
         }
 
         // Create and start the container
@@ -2658,11 +2688,12 @@ mod tests {
         let fake_runtime = Arc::new(FakeRuntime::default());
         let runtime: Arc<dyn ContainerRuntimeApi> = fake_runtime.clone();
         let eavs: Arc<dyn EavsApi> = Arc::new(FakeEavs::default());
+        let workspace_dir = tempfile::tempdir().unwrap();
 
         let config = SessionServiceConfig {
             default_image: "test-image:latest".to_string(),
             base_port: 41820,
-            user_data_path: "./data".to_string(),
+            user_data_path: workspace_dir.path().to_string_lossy().to_string(),
             skel_path: None,
             default_user_id: "default".to_string(),
             default_session_budget_usd: Some(10.0),
@@ -2684,7 +2715,6 @@ mod tests {
         let mut service = SessionService::with_eavs(repo.clone(), runtime.clone(), eavs, config);
         service.readiness = Arc::new(NoopReadiness::default());
 
-        let workspace_dir = tempfile::tempdir().unwrap();
         let session = service
             .create_session(CreateSessionRequest {
                 workspace_path: Some(workspace_dir.path().to_string_lossy().to_string()),
@@ -2754,6 +2784,49 @@ mod tests {
         assert_eq!(report.stats.len(), 1);
         assert_eq!(report.stats[0].session_id, "session-1");
         assert_eq!(report.stats[0].container_id, "container-1");
+    }
+
+    #[tokio::test]
+    async fn resolve_workspace_path_enforces_allowed_roots() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let workspace_root = temp_dir.path().join("workspaces");
+        std::fs::create_dir_all(&workspace_root).unwrap();
+
+        let allowed = workspace_root.join("project");
+        std::fs::create_dir_all(&allowed).unwrap();
+
+        let outside = temp_dir.path().join("outside");
+        std::fs::create_dir_all(&outside).unwrap();
+
+        let local_config = LocalRuntimeConfig {
+            workspace_dir: workspace_root.to_string_lossy().to_string(),
+            single_user: true,
+            ..Default::default()
+        };
+        let local_runtime = LocalRuntime::new(local_config.clone());
+        let config = SessionServiceConfig {
+            runtime_mode: RuntimeMode::Local,
+            local_config: Some(local_config),
+            single_user: true,
+            ..Default::default()
+        };
+
+        let db = Database::in_memory().await.unwrap();
+        let repo = SessionRepository::new(db.pool().clone());
+        let service = SessionService::with_local_runtime(repo, local_runtime, config);
+
+        let resolved = service
+            .resolve_workspace_path(allowed.to_string_lossy().as_ref())
+            .unwrap();
+        assert_eq!(resolved, allowed.canonicalize().unwrap());
+
+        let relative = service.resolve_workspace_path("project").unwrap();
+        assert_eq!(relative, allowed.canonicalize().unwrap());
+
+        let err = service
+            .resolve_workspace_path(outside.to_string_lossy().as_ref())
+            .unwrap_err();
+        assert!(err.to_string().contains("outside allowed roots"));
     }
 
     #[test]

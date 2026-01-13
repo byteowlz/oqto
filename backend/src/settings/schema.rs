@@ -96,9 +96,7 @@ fn resolve_refs(value: &Value, root: &Value) -> Value {
             }
             Value::Object(result)
         }
-        Value::Array(arr) => {
-            Value::Array(arr.iter().map(|v| resolve_refs(v, root)).collect())
-        }
+        Value::Array(arr) => Value::Array(arr.iter().map(|v| resolve_refs(v, root)).collect()),
         _ => value.clone(),
     }
 }
@@ -328,14 +326,12 @@ mod tests {
 
         let resolved = filter_schema_by_scope(&schema, SettingsScope::Admin);
         let integrations = resolved
-            .get("properties").unwrap()
-            .get("integrations").unwrap();
-        let lst = integrations
-            .get("properties").unwrap()
-            .get("lst").unwrap();
-        let enabled = lst
-            .get("properties").unwrap()
-            .get("enabled").unwrap();
+            .get("properties")
+            .unwrap()
+            .get("integrations")
+            .unwrap();
+        let lst = integrations.get("properties").unwrap().get("lst").unwrap();
+        let enabled = lst.get("properties").unwrap().get("enabled").unwrap();
 
         assert_eq!(enabled.get("type").unwrap(), "boolean");
         assert_eq!(enabled.get("default").unwrap(), true);

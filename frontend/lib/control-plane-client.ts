@@ -937,6 +937,19 @@ export function fileserverWorkspaceBaseUrl() {
 	return controlPlaneApiUrl("/api/workspace/files");
 }
 
+export function workspaceFileUrl(
+	workspacePath: string,
+	path: string,
+): string {
+	const baseUrl = fileserverWorkspaceBaseUrl();
+	const origin =
+		typeof window !== "undefined" ? window.location.origin : "http://localhost";
+	const url = new URL(`${baseUrl}/file`, origin);
+	url.searchParams.set("path", path);
+	url.searchParams.set("workspace_path", workspacePath);
+	return url.toString();
+}
+
 export function terminalWorkspaceProxyPath(workspacePath: string) {
 	return `/workspace/term?workspace_path=${encodeURIComponent(workspacePath)}`;
 }
@@ -1620,6 +1633,82 @@ export async function addMainChatPiSeparator(): Promise<MainChatDbMessage> {
 			credentials: "include",
 		},
 	);
+	if (!res.ok) throw new Error(await readApiError(res));
+	return res.json();
+}
+
+// ============================================================================
+// CASS (Coding Agent Session Search)
+// ============================================================================
+
+/** Agent filter for search */
+export type CassAgentFilter = "all" | "pi_agent" | "opencode" | string;
+
+/** Search query parameters */
+export type CassSearchQuery = {
+	/** Search query string */
+	q: string;
+	/** Agent filter: "all", "pi_agent", "opencode", or comma-separated */
+	agents?: CassAgentFilter;
+	/** Maximum results to return */
+	limit?: number;
+};
+
+/** A single search hit from cass */
+export type CassSearchHit = {
+	/** Agent type (pi_agent, opencode, etc.) */
+	agent: string;
+	/** Path to the session file */
+	source_path: string;
+	/** Session identifier extracted from path */
+	session_id?: string;
+	/** Workspace/project directory */
+	workspace?: string;
+	/** Message ID if available */
+	message_id?: string;
+	/** Line number in the source file */
+	line_number?: number;
+	/** Matched content snippet */
+	snippet?: string;
+	/** Search relevance score */
+	score?: number;
+	/** Timestamp of the message (milliseconds since epoch) */
+	timestamp?: number;
+	/** Role (user, assistant, system) */
+	role?: string;
+	/** Session/conversation title if available */
+	title?: string;
+	/** Full content from cass */
+	content?: string;
+	/** Match type */
+	match_type?: string;
+};
+
+/** Response from cass search */
+export type CassSearchResponse = {
+	hits: CassSearchHit[];
+	total?: number;
+	elapsed_ms?: number;
+};
+
+/**
+ * Search across coding agent sessions using cass.
+ * Searches both Main Chat (pi_agent) and OpenCode sessions.
+ */
+export async function searchSessions(
+	query: CassSearchQuery,
+): Promise<CassSearchResponse> {
+	const url = new URL(
+		controlPlaneApiUrl("/api/search"),
+		window.location.origin,
+	);
+	url.searchParams.set("q", query.q);
+	if (query.agents) url.searchParams.set("agents", query.agents);
+	if (query.limit) url.searchParams.set("limit", query.limit.toString());
+
+	const res = await authFetch(url.toString(), {
+		credentials: "include",
+	});
 	if (!res.ok) throw new Error(await readApiError(res));
 	return res.json();
 }

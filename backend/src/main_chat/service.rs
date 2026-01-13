@@ -154,6 +154,12 @@ impl MainChatService {
         std::fs::write(&personality_path, personality_content)
             .with_context(|| format!("writing PERSONALITY.md: {}", personality_path.display()))?;
 
+        // Create ONBOARD.md from template (bootstrap instructions)
+        let onboard_content = include_str!("templates/ONBOARD.md");
+        let onboard_path = main_chat_dir.join("ONBOARD.md");
+        std::fs::write(&onboard_path, onboard_content)
+            .with_context(|| format!("writing ONBOARD.md: {}", onboard_path.display()))?;
+
         // Create USER.md from template
         let user_content = include_str!("templates/USER.md");
         let user_path = main_chat_dir.join("USER.md");
@@ -335,6 +341,7 @@ mod tests {
         assert!(main_chat_dir.join("main_chat.db").exists());
         assert!(main_chat_dir.join("opencode.json").exists());
         assert!(main_chat_dir.join("AGENTS.md").exists());
+        assert!(main_chat_dir.join("ONBOARD.md").exists());
 
         // Check main chat exists
         assert!(service.main_chat_exists("user123"));

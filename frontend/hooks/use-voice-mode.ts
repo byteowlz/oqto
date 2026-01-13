@@ -107,6 +107,7 @@ export interface UseVoiceModeReturn {
 	settings: VoiceSettings;
 	setVisualizer: (type: VisualizerType) => void;
 	setMuted: (muted: boolean) => void;
+	setMicMuted: (muted: boolean) => void;
 	setContinuous: (continuous: boolean) => void;
 	setVoice: (voice: string) => void;
 	setSpeed: (speed: number) => void;
@@ -338,6 +339,9 @@ export function useVoiceMode(options: UseVoiceModeOptions): UseVoiceModeReturn {
 			);
 			sttRef.current.setCallbacks({
 				onWord: (word) => {
+					if (settingsRef.current.micMuted) {
+						return;
+					}
 					setLiveTranscript((prev) => `${prev ? `${prev} ` : ""}${word}`);
 
 					// Check for interrupt-by-speaking while TTS is playing
@@ -383,8 +387,18 @@ export function useVoiceMode(options: UseVoiceModeOptions): UseVoiceModeReturn {
 						}
 					}
 				},
-				onFinal: handleFinalTranscript,
-				onVadProgress: setVadProgress,
+				onFinal: (text) => {
+					if (settingsRef.current.micMuted) {
+						return;
+					}
+					handleFinalTranscript(text);
+				},
+				onVadProgress: (progress) => {
+					if (settingsRef.current.micMuted) {
+						return;
+					}
+					setVadProgress(progress);
+				},
 				onError: (err) => {
 					console.error("[Voice] STT error:", err);
 					setError(err);
@@ -406,9 +420,15 @@ export function useVoiceMode(options: UseVoiceModeOptions): UseVoiceModeReturn {
 				},
 				onStopped: () => {
 					// Return to listening if continuous mode and still active
-					if (settingsRef.current.continuous && isActiveRef.current) {
+					if (
+						settingsRef.current.continuous &&
+						isActiveRef.current &&
+						!settingsRef.current.micMuted
+					) {
 						setVoiceState("listening");
-						// STT should already be listening for interrupt, just update state
+						if (!sttRef.current?.getIsListening()) {
+							sttRef.current?.startListening().catch(console.error);
+						}
 					} else {
 						setVoiceState("idle");
 					}
@@ -444,6 +464,10 @@ export function useVoiceMode(options: UseVoiceModeOptions): UseVoiceModeReturn {
 		try {
 			await initServices();
 			setIsActive(true);
+			if (settingsRef.current.micMuted) {
+				setVoiceState("idle");
+				return;
+			}
 			setVoiceState("listening");
 			await sttRef.current?.startListening();
 		} catch (err) {
@@ -469,11 +493,11 @@ export function useVoiceMode(options: UseVoiceModeOptions): UseVoiceModeReturn {
 	// Interrupt TTS
 	const interrupt = useCallback(() => {
 		ttsRef.current?.stopPlayback();
-		if (isActive && settings.continuous) {
+		if (isActive && settings.continuous && !settings.micMuted) {
 			setVoiceState("listening");
 			sttRef.current?.startListening().catch(console.error);
 		}
-	}, [isActive, settings.continuous]);
+	}, [isActive, settings.continuous, settings.micMuted]);
 
 	// Speak text
 	const speak = useCallback(
@@ -492,7 +516,9 @@ export function useVoiceMode(options: UseVoiceModeOptions): UseVoiceModeReturn {
 
 			// Keep listening for interrupt-by-speaking (if enabled)
 			// Only stop listening if interrupt is disabled
-			if (settings.interruptWordCount <= 0) {
+			if (settings.micMuted) {
+				sttRef.current?.stopListening();
+			} else if (settings.interruptWordCount <= 0) {
 				sttRef.current?.stopListening();
 			} else {
 				// Make sure we're listening for potential interrupt
@@ -516,6 +542,27 @@ export function useVoiceMode(options: UseVoiceModeOptions): UseVoiceModeReturn {
 	const setMuted = useCallback((muted: boolean) => {
 		setSettings((prev) => ({ ...prev, muted }));
 		ttsRef.current?.setMuted(muted);
+	}, []);
+
+	const setMicMuted = useCallback((muted: boolean) => {
+		setSettings((prev) => ({ ...prev, micMuted: muted }));
+		if (muted) {
+			sttRef.current?.stopListening();
+			setLiveTranscript("");
+			setVadProgress(0);
+			if (
+				voiceStateRef.current === "listening" ||
+				voiceStateRef.current === "processing"
+			) {
+				setVoiceState("idle");
+			}
+			return;
+		}
+
+		if (isActiveRef.current) {
+			setVoiceState("listening");
+			sttRef.current?.startListening().catch(console.error);
+		}
 	}, []);
 
 	const setContinuous = useCallback((continuous: boolean) => {
@@ -590,6 +637,7 @@ export function useVoiceMode(options: UseVoiceModeOptions): UseVoiceModeReturn {
 		settings,
 		setVisualizer,
 		setMuted,
+		setMicMuted,
 		setContinuous,
 		setVoice,
 		setSpeed,
