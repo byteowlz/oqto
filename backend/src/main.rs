@@ -4,6 +4,7 @@ use std::fs;
 use std::io::{self, IsTerminal, Write};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow};
 use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
@@ -28,6 +29,7 @@ mod main_chat;
 mod markdown;
 mod observability;
 mod pi;
+mod projects;
 mod runner;
 mod session;
 mod session_ui;
@@ -70,6 +72,7 @@ fn try_main() -> Result<()> {
         Command::Init(cmd) => handle_init(&ctx, cmd),
         Command::Config { command } => handle_config(&ctx, command),
         Command::InviteCodes { command } => async_invite_codes(ctx, command),
+        Command::Runner { command } => handle_runner(command),
         Command::Completions { shell } => handle_completions(shell),
     }
 }
@@ -162,6 +165,11 @@ enum Command {
         #[command(subcommand)]
         command: InviteCodesCommand,
     },
+    /// Manage the octo-runner daemon
+    Runner {
+        #[command(subcommand)]
+        command: RunnerCommand,
+    },
     /// Generate shell completions
     Completions {
         #[arg(value_enum)]
@@ -229,6 +237,22 @@ enum InviteCodesCommand {
     List(InviteCodesListCommand),
     /// Revoke an invite code
     Revoke(InviteCodesRevokeCommand),
+}
+
+#[derive(Debug, Subcommand)]
+enum RunnerCommand {
+    /// Start the octo-runner daemon
+    Start,
+    /// Stop the octo-runner daemon
+    Stop,
+    /// Restart the octo-runner daemon
+    Restart,
+    /// Check if the runner is running
+    Status,
+    /// Enable the runner systemd service (auto-start on login)
+    Enable,
+    /// Disable the runner systemd service
+    Disable,
 }
 
 #[derive(Debug, Clone, Args)]
@@ -447,6 +471,8 @@ struct AppConfig {
     voice: VoiceConfig,
     sessions: SessionUiConfig,
     auth: auth::AuthConfig,
+    /// Project template repository configuration.
+    templates: TemplatesConfig,
     /// Agent scaffolding configuration.
     scaffold: ScaffoldConfig,
     /// Pi agent configuration for Main Chat.
@@ -527,6 +553,7 @@ impl Default for AppConfig {
             voice: VoiceConfig::default(),
             sessions: SessionUiConfig::default(),
             auth: auth::AuthConfig::default(),
+            templates: TemplatesConfig::default(),
             scaffold: ScaffoldConfig::default(),
             pi: PiConfig::default(),
             server: ServerConfig::default(),
@@ -841,6 +868,12 @@ struct LocalModeConfig {
     /// Linux user isolation configuration
     #[serde(default)]
     linux_users: LinuxUsersConfig,
+    /// Whether to clean up local session processes on startup.
+    cleanup_on_startup: bool,
+    /// Whether to stop sessions when the backend shuts down.
+    stop_sessions_on_shutdown: bool,
+    // Note: Sandbox config is loaded from separate ~/.config/octo/sandbox.toml
+    // for security reasons (agents can modify config.toml but not sandbox.toml)
 }
 
 /// Configuration for Linux user isolation.
@@ -912,6 +945,28 @@ impl Default for ScaffoldConfig {
     }
 }
 
+/// Project templates configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TemplatesConfig {
+    /// Path to the local templates repository on the host.
+    pub repo_path: Option<String>,
+    /// Sync repository before listing/creating templates.
+    pub sync_on_list: bool,
+    /// Minimum seconds between sync attempts.
+    pub sync_interval_seconds: u64,
+}
+
+impl Default for TemplatesConfig {
+    fn default() -> Self {
+        Self {
+            repo_path: None,
+            sync_on_list: true,
+            sync_interval_seconds: 120,
+        }
+    }
+}
+
 /// Pi agent configuration for Main Chat.
 ///
 /// Pi is used as the agent runtime for Main Chat, providing streaming
@@ -977,6 +1032,8 @@ impl Default for LocalModeConfig {
             default_agent: None,
             single_user: false,
             linux_users: LinuxUsersConfig::default(),
+            cleanup_on_startup: false,
+            stop_sessions_on_shutdown: false,
         }
     }
 }
@@ -1062,6 +1119,172 @@ fn handle_completions(shell: Shell) -> Result<()> {
     let mut cmd = Cli::command();
     clap_complete::generate(shell, &mut cmd, APP_NAME, &mut io::stdout());
     Ok(())
+}
+
+fn handle_runner(command: RunnerCommand) -> Result<()> {
+    use std::process::Command as StdCommand;
+
+    // Get the socket path
+    let runtime_dir = env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_string());
+    let socket_path = format!("{}/octo-runner.sock", runtime_dir);
+
+    // Helper to check if runner is running
+    let is_running = || std::path::Path::new(&socket_path).exists();
+
+    // Helper to find the runner binary
+    let find_runner = || -> Result<std::path::PathBuf> {
+        // Check if octo-runner is in PATH
+        if let Ok(output) = StdCommand::new("which").arg("octo-runner").output() {
+            if output.status.success() {
+                let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                return Ok(std::path::PathBuf::from(path));
+            }
+        }
+        // Check common locations
+        let home = env::var("HOME").unwrap_or_else(|_| ".".to_string());
+        let candidates = [
+            format!("{}/.cargo/bin/octo-runner", home),
+            "/usr/local/bin/octo-runner".to_string(),
+            "/usr/bin/octo-runner".to_string(),
+        ];
+        for candidate in &candidates {
+            if std::path::Path::new(candidate).exists() {
+                return Ok(std::path::PathBuf::from(candidate));
+            }
+        }
+        Err(anyhow::anyhow!("octo-runner not found. Run 'just install' first."))
+    };
+
+    match command {
+        RunnerCommand::Start => {
+            if is_running() {
+                println!("Runner is already running (socket: {})", socket_path);
+                return Ok(());
+            }
+            let runner_path = find_runner()?;
+            println!("Starting octo-runner...");
+            
+            // Spawn detached process
+            let child = StdCommand::new(&runner_path)
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .with_context(|| format!("Failed to start {}", runner_path.display()))?;
+            
+            // Wait a moment for socket to appear
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            
+            if is_running() {
+                println!("Runner started (pid: {}, socket: {})", child.id(), socket_path);
+            } else {
+                println!("Runner process started (pid: {}) but socket not yet available", child.id());
+            }
+            Ok(())
+        }
+        RunnerCommand::Stop => {
+            if !is_running() {
+                println!("Runner is not running");
+                return Ok(());
+            }
+            // Connect and send shutdown command
+            println!("Stopping octo-runner...");
+            let rt = tokio::runtime::Runtime::new()?;
+            let result = rt.block_on(async {
+                use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+                use tokio::net::UnixStream;
+                
+                let mut stream = UnixStream::connect(&socket_path).await
+                    .context("Failed to connect to runner")?;
+                
+                let req = r#"{"type":"shutdown"}"#;
+                stream.write_all(format!("{}\n", req).as_bytes()).await?;
+                
+                let mut reader = BufReader::new(stream);
+                let mut line = String::new();
+                reader.read_line(&mut line).await?;
+                
+                // Wait for socket to disappear
+                for _ in 0..20 {
+                    if !std::path::Path::new(&socket_path).exists() {
+                        break;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                }
+                
+                Ok::<_, anyhow::Error>(())
+            });
+            
+            // If connection failed, try to clean up stale socket
+            if result.is_err() {
+                // Socket exists but can't connect - stale socket
+                let _ = std::fs::remove_file(&socket_path);
+                println!("Removed stale socket");
+            } else {
+                println!("Runner stopped");
+            }
+            Ok(())
+        }
+        RunnerCommand::Restart => {
+            handle_runner(RunnerCommand::Stop)?;
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            handle_runner(RunnerCommand::Start)
+        }
+        RunnerCommand::Status => {
+            if is_running() {
+                println!("Runner is running (socket: {})", socket_path);
+            } else {
+                println!("Runner is not running");
+            }
+            Ok(())
+        }
+        RunnerCommand::Enable => {
+            // Create systemd user service
+            let home = env::var("HOME").context("HOME not set")?;
+            let service_dir = format!("{}/.config/systemd/user", home);
+            std::fs::create_dir_all(&service_dir)?;
+            
+            let runner_path = find_runner()?;
+            let service_content = format!(
+                r#"[Unit]
+Description=Octo Runner - Process isolation daemon
+After=default.target
+
+[Service]
+Type=simple
+ExecStart={}
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+"#,
+                runner_path.display()
+            );
+            
+            let service_path = format!("{}/octo-runner.service", service_dir);
+            std::fs::write(&service_path, service_content)?;
+            
+            // Reload systemd and enable
+            StdCommand::new("systemctl")
+                .args(["--user", "daemon-reload"])
+                .status()?;
+            StdCommand::new("systemctl")
+                .args(["--user", "enable", "octo-runner.service"])
+                .status()?;
+            
+            println!("Enabled octo-runner.service");
+            println!("Run 'octo runner start' or 'systemctl --user start octo-runner' to start");
+            Ok(())
+        }
+        RunnerCommand::Disable => {
+            StdCommand::new("systemctl")
+                .args(["--user", "disable", "octo-runner.service"])
+                .status()?;
+            println!("Disabled octo-runner.service");
+            Ok(())
+        }
+    }
 }
 
 async fn handle_invite_codes(ctx: &RuntimeContext, cmd: InviteCodesCommand) -> Result<()> {
@@ -1288,6 +1511,20 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
             create_home: ctx.config.local.linux_users.create_home,
         };
 
+        // Load sandbox config from separate file (~/.config/octo/sandbox.toml)
+        let sandbox_config = match local::SandboxConfig::load_global() {
+            Ok(config) => {
+                if config.enabled {
+                    info!("Sandbox enabled globally");
+                }
+                Some(config)
+            }
+            Err(e) => {
+                warn!("Failed to load sandbox config: {}", e);
+                None
+            }
+        };
+
         let mut local_config = local::LocalRuntimeConfig {
             opencode_binary: ctx.config.local.opencode_binary.clone(),
             fileserver_binary: ctx.config.local.fileserver_binary.clone(),
@@ -1296,6 +1533,9 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
             default_agent: ctx.config.local.default_agent.clone(),
             single_user: ctx.config.local.single_user,
             linux_users: linux_users_config,
+            sandbox: sandbox_config,
+            cleanup_on_startup: ctx.config.local.cleanup_on_startup,
+            stop_sessions_on_shutdown: ctx.config.local.stop_sessions_on_shutdown,
         };
         local_config.expand_paths();
 
@@ -1588,6 +1828,9 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
         if ctx.config.backend.use_agent_rpc {
             info!("AgentRPC backend enabled");
             if local_mode {
+                // Load sandbox config from separate file
+                let sandbox_config = local::SandboxConfig::load_global().ok();
+
                 // Use LocalBackend - convert LocalModeConfig to LocalRuntimeConfig
                 let runtime_config = local::LocalRuntimeConfig {
                     opencode_binary: ctx.config.local.opencode_binary.clone(),
@@ -1605,6 +1848,9 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
                         use_sudo: ctx.config.local.linux_users.use_sudo,
                         create_home: ctx.config.local.linux_users.create_home,
                     },
+                    sandbox: sandbox_config,
+                    cleanup_on_startup: ctx.config.local.cleanup_on_startup,
+                    stop_sessions_on_shutdown: ctx.config.local.stop_sessions_on_shutdown,
                 };
                 let local_config = agent_rpc::LocalBackendConfig {
                     runtime: runtime_config,
@@ -1693,6 +1939,11 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
         auto_attach: ctx.config.sessions.auto_attach,
         auto_attach_scan: ctx.config.sessions.auto_attach_scan,
     };
+    let templates_state = api::TemplatesState::new(
+        ctx.config.templates.repo_path.as_deref().map(PathBuf::from),
+        ctx.config.templates.sync_on_list,
+        Duration::from_secs(ctx.config.templates.sync_interval_seconds),
+    );
 
     let max_proxy_body_bytes = ctx
         .config
@@ -1747,6 +1998,7 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
             mmry_state,
             voice_state,
             session_ui_state,
+            templates_state.clone(),
             max_proxy_body_bytes,
         )
     } else {
@@ -1759,6 +2011,7 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
             mmry_state,
             voice_state,
             session_ui_state,
+            templates_state.clone(),
             max_proxy_body_bytes,
         )
     };
@@ -1839,6 +2092,9 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
         .await
         .context("binding to address")?;
 
+    let stop_sessions_on_shutdown =
+        !local_mode || ctx.config.local.stop_sessions_on_shutdown;
+
     // Set up graceful shutdown
     let shutdown_signal = async move {
         let ctrl_c = async {
@@ -1865,9 +2121,13 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
 
         info!("Shutdown signal received, stopping containers...");
 
-        // Stop all running containers gracefully
-        if let Err(e) = shutdown_all_sessions(&session_service_for_shutdown).await {
-            warn!("Error during shutdown: {:?}", e);
+        // Stop all running containers/sessions if enabled
+        if stop_sessions_on_shutdown {
+            if let Err(e) = shutdown_all_sessions(&session_service_for_shutdown).await {
+                warn!("Error during shutdown: {:?}", e);
+            }
+        } else {
+            info!("Skipping session shutdown (preserve running local sessions)");
         }
 
         info!("Shutdown complete");

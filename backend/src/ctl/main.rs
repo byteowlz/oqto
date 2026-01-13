@@ -30,6 +30,7 @@ async fn try_main() -> Result<()> {
         Command::Container { command } => handle_container(&client, command, cli.json).await,
         Command::Image { command } => handle_image(&client, command, cli.json).await,
         Command::A2ui { command } => handle_a2ui(&client, command, cli.json).await,
+        Command::Local { command } => handle_local(&client, command, cli.json).await,
     }
 }
 
@@ -74,6 +75,12 @@ enum Command {
     Image {
         #[command(subcommand)]
         command: ImageCommand,
+    },
+
+    /// Manage local mode processes
+    Local {
+        #[command(subcommand)]
+        command: LocalCommand,
     },
 
     /// Send A2UI surface to user (for agents)
@@ -153,6 +160,12 @@ enum ImageCommand {
         #[arg(long)]
         no_cache: bool,
     },
+}
+
+#[derive(Debug, Subcommand)]
+enum LocalCommand {
+    /// Clean up orphan local session processes
+    Cleanup,
 }
 
 #[derive(Debug, Subcommand)]
@@ -356,6 +369,8 @@ enum A2uiCommand {
 struct OctoClient {
     base_url: String,
     client: reqwest::Client,
+    dev_user: Option<String>,
+    auth_token: Option<String>,
 }
 
 impl OctoClient {
@@ -363,13 +378,27 @@ impl OctoClient {
         Self {
             base_url: base_url.trim_end_matches('/').to_string(),
             client: reqwest::Client::new(),
+            dev_user: std::env::var("OCTO_DEV_USER").ok(),
+            auth_token: std::env::var("OCTO_AUTH_TOKEN").ok(),
+        }
+    }
+
+    fn with_auth_headers(
+        &self,
+        req: reqwest::RequestBuilder,
+    ) -> reqwest::RequestBuilder {
+        if let Some(token) = self.auth_token.as_ref() {
+            req.bearer_auth(token)
+        } else if let Some(user) = self.dev_user.as_ref() {
+            req.header("X-Dev-User", user)
+        } else {
+            req
         }
     }
 
     async fn get(&self, path: &str) -> Result<reqwest::Response> {
         let url = format!("{}{}", self.base_url, path);
-        self.client
-            .get(&url)
+        self.with_auth_headers(self.client.get(&url))
             .send()
             .await
             .context("sending request to server")
@@ -377,8 +406,7 @@ impl OctoClient {
 
     async fn post(&self, path: &str) -> Result<reqwest::Response> {
         let url = format!("{}{}", self.base_url, path);
-        self.client
-            .post(&url)
+        self.with_auth_headers(self.client.post(&url))
             .send()
             .await
             .context("sending request to server")
@@ -386,8 +414,7 @@ impl OctoClient {
 
     async fn delete(&self, path: &str) -> Result<reqwest::Response> {
         let url = format!("{}{}", self.base_url, path);
-        self.client
-            .delete(&url)
+        self.with_auth_headers(self.client.delete(&url))
             .send()
             .await
             .context("sending request to server")
@@ -399,9 +426,7 @@ impl OctoClient {
         body: &T,
     ) -> Result<reqwest::Response> {
         let url = format!("{}{}", self.base_url, path);
-        self.client
-            .post(&url)
-            .json(body)
+        self.with_auth_headers(self.client.post(&url).json(body))
             .send()
             .await
             .context("sending request to server")
@@ -735,6 +760,28 @@ async fn handle_image(client: &OctoClient, command: ImageCommand, json: bool) ->
             } else {
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 anyhow::bail!("Failed to build image: {}", stderr);
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn handle_local(client: &OctoClient, command: LocalCommand, json: bool) -> Result<()> {
+    match command {
+        LocalCommand::Cleanup => {
+            let response = client.post("/admin/local/cleanup").await?;
+            let status = response.status();
+            let body = response.text().await?;
+            if status.is_success() {
+                if json {
+                    println!("{}", body);
+                } else {
+                    let payload: serde_json::Value = serde_json::from_str(&body)?;
+                    let cleared = payload["cleared"].as_u64().unwrap_or(0);
+                    println!("Cleared {} local process(es)", cleared);
+                }
+            } else {
+                anyhow::bail!("Failed to clean up local sessions: {}", body);
             }
         }
     }

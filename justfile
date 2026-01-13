@@ -70,6 +70,7 @@ dev:
 install:
     cd frontend && bun install
     cd backend && cargo install --path .
+    cd backend && cargo install --path . --bin octo-runner
     cd fileserver && cargo install --path .
 
 # Build container image
@@ -98,7 +99,7 @@ bump version:
     #!/usr/bin/env bash
     set -euo pipefail
 
-    ROOT="{{justfile_directory}}"
+    ROOT="$(git rev-parse --show-toplevel)"
     
     # Get current version from backend/Cargo.toml
     current=$(grep -m1 '^version = ' "$ROOT/backend/Cargo.toml" | sed 's/version = "\(.*\)"/\1/')
