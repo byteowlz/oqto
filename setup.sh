@@ -37,6 +37,11 @@ INSTALL_MMRY="false"
 INSTALL_TRX="false"
 INSTALL_MAILZ="false"
 
+# LLM provider configuration (set during generate_config)
+LLM_PROVIDER=""
+LLM_API_KEY_SET="false"
+EAVS_ENABLED="false"
+
 # Paths (XDG compliant)
 : "${XDG_CONFIG_HOME:=$HOME/.config}"
 : "${XDG_DATA_HOME:=$HOME/.local/share}"
@@ -759,7 +764,7 @@ build_octo() {
     
     cd "$SCRIPT_DIR"
     
-    # Build backend (includes octo, octo-runner, pi-bridge binaries)
+    # Build backend (includes octo, octo-runner, octo-sandbox, pi-bridge binaries)
     log_info "Building backend..."
     (cd backend && cargo build --release)
     log_success "Backend built"
@@ -781,7 +786,7 @@ build_octo() {
     (cd backend && cargo install --path .)
     (cd fileserver && cargo install --path .)
     
-    # Install additional binaries (octo-runner for multi-user, pi-bridge for container Pi)
+    # Install additional binaries (octo-runner for multi-user, pi-bridge for container Pi, octo-sandbox for sandboxing)
     if [[ -f "$SCRIPT_DIR/backend/target/release/octo-runner" ]]; then
         cp "$SCRIPT_DIR/backend/target/release/octo-runner" "$HOME/.cargo/bin/"
         log_success "octo-runner installed"
@@ -789,6 +794,10 @@ build_octo() {
     if [[ -f "$SCRIPT_DIR/backend/target/release/pi-bridge" ]]; then
         cp "$SCRIPT_DIR/backend/target/release/pi-bridge" "$HOME/.cargo/bin/"
         log_success "pi-bridge installed"
+    fi
+    if [[ -f "$SCRIPT_DIR/backend/target/release/octo-sandbox" ]]; then
+        cp "$SCRIPT_DIR/backend/target/release/octo-sandbox" "$HOME/.cargo/bin/"
+        log_success "octo-sandbox installed"
     fi
     
     log_success "Binaries installed"
@@ -952,13 +961,97 @@ generate_config() {
     # EAVS configuration
     local eavs_enabled="false"
     local eavs_base_url="http://localhost:41800"
-    local eavs_container_url="http://host.containers.internal:41800"
+    local eavs_container_url="http://host.docker.internal:41800"
     
-    if confirm "Enable EAVS LLM proxy integration?" "n"; then
+    # LLM Provider configuration
+    local llm_provider=""
+    local llm_api_key=""
+    
+    echo
+    echo "LLM Provider Configuration:"
+    echo
+    echo "  Octo needs access to an LLM provider for AI agents."
+    echo "  You can either:"
+    echo "    1) Use EAVS (LLM proxy) - manages API keys and usage limits"
+    echo "    2) Configure API keys directly for a provider"
+    echo
+    
+    if confirm "Use EAVS LLM proxy?" "n"; then
         eavs_enabled="true"
+        EAVS_ENABLED="true"
         eavs_base_url=$(prompt_input "EAVS base URL" "$eavs_base_url")
         if [[ "$SELECTED_BACKEND_MODE" == "container" ]]; then
             eavs_container_url=$(prompt_input "EAVS container URL" "$eavs_container_url")
+        fi
+    else
+        # Direct provider configuration
+        echo
+        echo "Select LLM provider:"
+        echo
+        local provider_choice
+        provider_choice=$(prompt_choice "Provider:" "anthropic" "openai" "openrouter" "google" "groq")
+        llm_provider="$provider_choice"
+        
+        case "$llm_provider" in
+            anthropic)
+                echo
+                echo "Get your Anthropic API key from: https://console.anthropic.com/"
+                if [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
+                    log_info "Found ANTHROPIC_API_KEY in environment"
+                    llm_api_key="$ANTHROPIC_API_KEY"
+                else
+                    llm_api_key=$(prompt_input "Anthropic API key (or press Enter to skip)")
+                fi
+                ;;
+            openai)
+                echo
+                echo "Get your OpenAI API key from: https://platform.openai.com/api-keys"
+                if [[ -n "${OPENAI_API_KEY:-}" ]]; then
+                    log_info "Found OPENAI_API_KEY in environment"
+                    llm_api_key="$OPENAI_API_KEY"
+                else
+                    llm_api_key=$(prompt_input "OpenAI API key (or press Enter to skip)")
+                fi
+                ;;
+            openrouter)
+                echo
+                echo "Get your OpenRouter API key from: https://openrouter.ai/keys"
+                if [[ -n "${OPENROUTER_API_KEY:-}" ]]; then
+                    log_info "Found OPENROUTER_API_KEY in environment"
+                    llm_api_key="$OPENROUTER_API_KEY"
+                else
+                    llm_api_key=$(prompt_input "OpenRouter API key (or press Enter to skip)")
+                fi
+                ;;
+            google)
+                echo
+                echo "Get your Google AI API key from: https://aistudio.google.com/app/apikey"
+                if [[ -n "${GOOGLE_API_KEY:-}" ]]; then
+                    log_info "Found GOOGLE_API_KEY in environment"
+                    llm_api_key="$GOOGLE_API_KEY"
+                else
+                    llm_api_key=$(prompt_input "Google AI API key (or press Enter to skip)")
+                fi
+                ;;
+            groq)
+                echo
+                echo "Get your Groq API key from: https://console.groq.com/keys"
+                if [[ -n "${GROQ_API_KEY:-}" ]]; then
+                    log_info "Found GROQ_API_KEY in environment"
+                    llm_api_key="$GROQ_API_KEY"
+                else
+                    llm_api_key=$(prompt_input "Groq API key (or press Enter to skip)")
+                fi
+                ;;
+        esac
+        
+        # Set global variables for summary
+        LLM_PROVIDER="$llm_provider"
+        if [[ -n "$llm_api_key" ]]; then
+            LLM_API_KEY_SET="true"
+        else
+            log_warn "No API key configured. You'll need to set the appropriate environment variable before running Octo."
+            log_info "Set one of: ANTHROPIC_API_KEY, OPENAI_API_KEY, OPENROUTER_API_KEY, GOOGLE_API_KEY, or GROQ_API_KEY"
         fi
     fi
     
@@ -1058,13 +1151,37 @@ EOF
         pi_runtime_mode="runner"
     fi
 
+    # Set default provider based on selection
+    local default_provider="anthropic"
+    local default_model="claude-sonnet-4-20250514"
+    if [[ -n "$llm_provider" ]]; then
+        default_provider="$llm_provider"
+        case "$llm_provider" in
+            anthropic)
+                default_model="claude-sonnet-4-20250514"
+                ;;
+            openai)
+                default_model="gpt-4o"
+                ;;
+            openrouter)
+                default_model="anthropic/claude-3.5-sonnet"
+                ;;
+            google)
+                default_model="gemini-1.5-pro"
+                ;;
+            groq)
+                default_model="llama-3.3-70b-versatile"
+                ;;
+        esac
+    fi
+
     cat >> "$config_file" << EOF
 
 [pi]
 enabled = true
 executable = "pi"
-default_provider = "anthropic"
-default_model = "claude-sonnet-4-20250514"
+default_provider = "$default_provider"
+default_model = "$default_model"
 runtime_mode = "$pi_runtime_mode"
 EOF
 
@@ -1090,6 +1207,34 @@ description_arg = "--description"
 EOF
 
     log_success "Configuration written to $config_file"
+    
+    # Create environment file for API keys (if not using EAVS)
+    if [[ "$eavs_enabled" == "false" && -n "$llm_api_key" ]]; then
+        local env_file="$OCTO_CONFIG_DIR/env"
+        log_info "Writing API key to $env_file"
+        
+        case "$llm_provider" in
+            anthropic)
+                echo "ANTHROPIC_API_KEY=$llm_api_key" > "$env_file"
+                ;;
+            openai)
+                echo "OPENAI_API_KEY=$llm_api_key" > "$env_file"
+                ;;
+            openrouter)
+                echo "OPENROUTER_API_KEY=$llm_api_key" > "$env_file"
+                ;;
+            google)
+                echo "GOOGLE_API_KEY=$llm_api_key" > "$env_file"
+                ;;
+            groq)
+                echo "GROQ_API_KEY=$llm_api_key" > "$env_file"
+                ;;
+        esac
+        
+        chmod 600 "$env_file"
+        log_success "API key saved to $env_file"
+        log_info "Source this file before running Octo: source $env_file"
+    fi
     
     # Copy opencode config
     if [[ ! -f "$OPENCODE_CONFIG_DIR/opencode.json" ]]; then
@@ -1137,6 +1282,7 @@ After=default.target
 Type=simple
 Environment=OCTO_CONFIG=$OCTO_CONFIG_DIR/config.toml
 Environment=RUST_LOG=$OCTO_LOG_LEVEL
+EnvironmentFile=-$OCTO_CONFIG_DIR/env
 ExecStart=$HOME/.cargo/bin/octo serve --local-mode
 ExecStop=/bin/kill -TERM \$MAINPID
 TimeoutStopSec=30
@@ -1437,6 +1583,21 @@ print_summary() {
     echo "  Config file:  $OCTO_CONFIG_DIR/config.toml"
     echo
     
+    echo "LLM Configuration:"
+    if [[ "$EAVS_ENABLED" == "true" ]]; then
+        echo "  Mode:         EAVS proxy"
+    elif [[ -n "$LLM_PROVIDER" ]]; then
+        echo "  Provider:     $LLM_PROVIDER"
+        if [[ "$LLM_API_KEY_SET" == "true" ]]; then
+            echo "  API key:      configured (saved to $OCTO_CONFIG_DIR/env)"
+        else
+            echo "  API key:      NOT SET - you need to configure this!"
+        fi
+    else
+        echo "  Provider:     not configured"
+    fi
+    echo
+    
     echo "Installed binaries:"
     echo "  octo:         $(which octo 2>/dev/null || echo 'not in PATH')"
     echo "  fileserver:   $(which fileserver 2>/dev/null || echo 'not in PATH')"
@@ -1501,9 +1662,41 @@ print_summary() {
         echo
     fi
     
+    # Show API key warning if not configured
+    if [[ "$EAVS_ENABLED" != "true" && "$LLM_API_KEY_SET" != "true" && -n "$LLM_PROVIDER" ]]; then
+        echo -e "  ${YELLOW}IMPORTANT:${NC} Set your API key before starting Octo:"
+        case "$LLM_PROVIDER" in
+            anthropic)
+                echo "     export ANTHROPIC_API_KEY=your-key-here"
+                ;;
+            openai)
+                echo "     export OPENAI_API_KEY=your-key-here"
+                ;;
+            openrouter)
+                echo "     export OPENROUTER_API_KEY=your-key-here"
+                ;;
+            google)
+                echo "     export GOOGLE_API_KEY=your-key-here"
+                ;;
+            groq)
+                echo "     export GROQ_API_KEY=your-key-here"
+                ;;
+        esac
+        echo
+    fi
+    
+    # macOS note about env file
+    if [[ "$OS" == "macos" && "$LLM_API_KEY_SET" == "true" ]]; then
+        echo "  Note: On macOS, source the env file before starting manually:"
+        echo "     source $OCTO_CONFIG_DIR/env"
+        echo
+    fi
+    
     echo "For more information, see:"
     echo "  - README.md"
+    echo "  - SETUP.md (detailed setup guide)"
     echo "  - deploy/systemd/README.md (Linux systemd setup)"
+    echo "  - deploy/ansible/README.md (Ansible deployment)"
     echo "  - backend/examples/config.toml (full config reference)"
 }
 
@@ -1530,6 +1723,13 @@ Environment Variables:
   OCTO_INSTALL_AGENT_TOOLS yes or no (default: yes)
   OCTO_DEV_MODE           true or false (default: true)
   OCTO_LOG_LEVEL          error, warn, info, debug, trace (default: info)
+
+LLM Provider API Keys (set one of these, or use EAVS):
+  ANTHROPIC_API_KEY       Anthropic Claude API key
+  OPENAI_API_KEY          OpenAI API key
+  OPENROUTER_API_KEY      OpenRouter API key
+  GOOGLE_API_KEY          Google AI API key
+  GROQ_API_KEY            Groq API key
 
 Shell Tools Installed:
   tmux, fd, ripgrep, yazi, zsh, zoxide

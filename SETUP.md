@@ -23,7 +23,9 @@ Octo is a self-hosted AI agent workspace platform. This guide covers all prerequ
 
 ## Quick Start
 
-The recommended way to set up Octo is using the interactive setup script:
+### Option 1: Interactive Setup Script (Development/Local)
+
+For development or single-machine setup:
 
 ```bash
 ./setup.sh
@@ -43,6 +45,27 @@ For non-interactive installation:
 ```bash
 OCTO_USER_MODE=single OCTO_BACKEND_MODE=local ./setup.sh --non-interactive
 ```
+
+### Option 2: Ansible Playbook (Production/Server)
+
+For production server deployment with hardening:
+
+```bash
+cd deploy/ansible
+cp inventory.yml.example inventory.yml
+# Edit inventory.yml with your server details
+ansible-playbook -i inventory.yml octo.yml
+```
+
+The Ansible playbook:
+- Hardens SSH (key-only auth, strong ciphers)
+- Configures fail2ban and UFW firewall
+- Enables automatic security updates
+- Installs all Octo dependencies including trash-cli
+- Sets up systemd services
+- Creates octo system user
+
+See [deploy/ansible/README.md](./deploy/ansible/README.md) for details.
 
 ## Prerequisites
 
@@ -513,5 +536,6 @@ apt install podman
 - [backend/README.md](./backend/README.md) - Backend documentation
 - [frontend/README.md](./frontend/README.md) - Frontend documentation
 - [deploy/systemd/README.md](./deploy/systemd/README.md) - Systemd service setup
+- [deploy/ansible/README.md](./deploy/ansible/README.md) - Ansible deployment playbook
 - [AGENTS.md](./AGENTS.md) - Agent development guidelines
 - [backend/examples/config.toml](./backend/examples/config.toml) - Full config reference
