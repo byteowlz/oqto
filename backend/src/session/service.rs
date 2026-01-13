@@ -20,6 +20,7 @@ use uuid::Uuid;
 use crate::container::{ContainerConfig, ContainerRuntimeApi, ContainerStats};
 use crate::eavs::{CreateKeyRequest, EavsApi, KeyPermissions};
 use crate::local::{LocalRuntime, LocalRuntimeConfig};
+use crate::projects;
 
 use super::models::{CreateSessionRequest, RuntimeMode, Session, SessionStatus};
 use super::repository::SessionRepository;
@@ -1047,16 +1048,16 @@ impl SessionService {
         }
 
         let workspace_path = PathBuf::from(&session.workspace_path);
+        let project_id = self.project_id_for_workspace(&workspace_path);
 
         // Start all services
-        // TODO: Add project_id support when shared projects are implemented
         let pids = local_runtime
             .start_session(
                 &session.id,
                 &session.user_id,
                 &workspace_path,
                 session.agent.as_deref(),
-                None, // project_id - will be added with shared projects feature
+                project_id.as_deref(),
                 opencode_port,
                 fileserver_port,
                 ttyd_port,
@@ -1480,16 +1481,16 @@ impl SessionService {
                 }
 
                 let workspace_path = PathBuf::from(&session.workspace_path);
+                let project_id = self.project_id_for_workspace(&workspace_path);
 
                 // Respawn the processes (local mode doesn't preserve process state)
-                // TODO: Add project_id support when shared projects are implemented
                 match local_runtime
                     .resume_session(
                         session_id,
                         &session.user_id,
                         &workspace_path,
                         session.agent.as_deref(),
-                        None, // project_id - will be added with shared projects feature
+                        project_id.as_deref(),
                         opencode_port,
                         fileserver_port,
                         ttyd_port,
@@ -2069,9 +2070,15 @@ impl SessionService {
 
         // 0. For local mode: clean up orphan processes on base ports
         if self.config.runtime_mode == RuntimeMode::Local {
-            if let Some(local_runtime) = self.local_runtime() {
-                let base_port = self.config.base_port as u16;
-                local_runtime.startup_cleanup(base_port);
+            if let (Some(local_runtime), Some(local_config)) =
+                (self.local_runtime(), self.config.local_config.as_ref())
+            {
+                if local_config.cleanup_on_startup {
+                    let base_port = self.config.base_port as u16;
+                    local_runtime.startup_cleanup(base_port);
+                } else {
+                    info!("Skipping local startup cleanup (preserve running sessions)");
+                }
             }
         }
 
@@ -2101,6 +2108,18 @@ impl SessionService {
 
         info!("Startup cleanup complete");
         Ok(())
+    }
+
+    /// Manually clean up orphan local session processes.
+    pub async fn cleanup_local_orphans(&self) -> Result<usize> {
+        if self.config.runtime_mode != RuntimeMode::Local {
+            anyhow::bail!("local cleanup is only available in local mode");
+        }
+        let local_runtime = self
+            .local_runtime()
+            .context("local runtime not available")?;
+        let base_port = self.config.base_port as u16;
+        Ok(local_runtime.startup_cleanup(base_port))
     }
 
     /// Clean up stopped containers that have been stopped for too long.
@@ -2366,6 +2385,20 @@ impl SessionService {
         };
 
         self.create_session(request).await
+    }
+
+    fn project_id_for_workspace(&self, workspace_path: &PathBuf) -> Option<String> {
+        match projects::read_metadata(workspace_path) {
+            Ok(Some(metadata)) if metadata.shared => Some(metadata.project_id),
+            Ok(_) => None,
+            Err(err) => {
+                warn!(
+                    "Failed to read project metadata for {:?}: {:?}",
+                    workspace_path, err
+                );
+                None
+            }
+        }
     }
 
     /// Get or create a session for IO (fileserver + ttyd) for a workspace path.
