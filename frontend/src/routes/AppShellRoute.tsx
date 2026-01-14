@@ -3264,8 +3264,8 @@ function AppShell() {
 				<div className="flex-1 min-h-0 w-full">
 					{ActiveComponent ? <ActiveComponent /> : <EmptyState />}
 				</div>
-				{/* Status bar - hidden on mobile */}
-				<div className="hidden md:block flex-shrink-0">
+				{/* Status bar */}
+				<div className="flex-shrink-0">
 					<StatusBar />
 				</div>
 			</div>

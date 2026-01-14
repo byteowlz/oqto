@@ -172,11 +172,15 @@ export function StatusBar() {
 	return (
 		<div
 			className={cn(
-				"h-6 flex items-center justify-between px-3",
+				"flex items-center justify-between px-3",
 				"bg-sidebar/80 border-t border-sidebar-border",
 				"text-[10px] text-muted-foreground",
 				"select-none",
 			)}
+			style={{
+				height: "calc(1.5rem + env(safe-area-inset-bottom, 0px))",
+				paddingBottom: "env(safe-area-inset-bottom, 0px)",
+			}}
 		>
 			{/* Left side - user metrics */}
 			<div className="flex items-center gap-3">

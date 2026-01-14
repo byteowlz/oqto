@@ -420,8 +420,8 @@ body {
 		width: calc(100% + 0.75rem);
 		margin-left: -0.375rem;
 		margin-right: -0.375rem;
-		margin-bottom: calc(-0.375rem - env(safe-area-inset-bottom));
-		padding-bottom: calc(0.25rem + env(safe-area-inset-bottom));
+		margin-bottom: -0.375rem;
+		padding-bottom: 0.25rem;
 		border-left: none;
 		border-right: none;
 		border-radius: 0;
