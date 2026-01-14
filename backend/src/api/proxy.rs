@@ -4,7 +4,7 @@ use axum::{
     body::Body,
     extract::{Path, Query, State, WebSocketUpgrade},
     http::{HeaderMap, Request, StatusCode, Uri},
-    response::{IntoResponse, Response, Sse},
+    response::{IntoResponse, Response},
 };
 use futures::{SinkExt, StreamExt};
 use hyper_util::client::legacy::Client;
@@ -896,28 +896,94 @@ mod tests {
     }
 }
 
-/// SSE events stream for opencode (legacy global endpoint - deprecated).
+/// SSE events stream for opencode global events.
+///
+/// Proxies to opencode's /global/event endpoint which provides events for all
+/// directories/sessions. The SDK expects this endpoint to receive real-time
+/// updates about sessions, messages, permissions, etc.
 pub async fn opencode_events(
-    State(_state): State<AppState>,
-) -> Result<
-    Sse<
-        impl tokio_stream::Stream<Item = Result<axum::response::sse::Event, std::convert::Infallible>>,
-    >,
-    StatusCode,
-> {
-    use axum::response::sse::Event;
-    use std::time::Duration;
-    use tokio::time;
-    use tokio_stream::{StreamExt, wrappers::IntervalStream};
+    State(state): State<AppState>,
+) -> Result<Response, StatusCode> {
+    let opencode_session = state
+        .sessions
+        .get_or_create_opencode_session()
+        .await
+        .map_err(|e| {
+            error!("Failed to get primary opencode session: {:?}", e);
+            StatusCode::SERVICE_UNAVAILABLE
+        })?;
 
-    // For now, send a keep-alive every 30 seconds
-    // This endpoint is deprecated - use /session/:id/code/event instead
-    let interval = time::interval(Duration::from_secs(30));
-    let stream = StreamExt::map(IntervalStream::new(interval), |_| {
-        Ok(Event::default().data("{\"type\":\"keepalive\"}"))
-    });
+    let opencode_session_id = opencode_session.id.clone();
+    let opencode_session =
+        ensure_session_active_for_proxy(&state, &opencode_session_id, opencode_session).await?;
 
-    Ok(Sse::new(stream))
+    let target_url = format!(
+        "http://localhost:{}/global/event",
+        opencode_session.opencode_port
+    );
+    debug!("Proxying global SSE events from {}", target_url);
+
+    // Create HTTP client for SSE
+    let client = reqwest::Client::new();
+
+    // During startup, opencode may not be ready yet. Retry the initial connect for a short period.
+    let start = tokio::time::Instant::now();
+    let timeout = tokio::time::Duration::from_secs(20);
+    let mut attempts: u32 = 0;
+
+    let response = loop {
+        attempts += 1;
+        match client
+            .get(&target_url)
+            .header("Accept", "text/event-stream")
+            .send()
+            .await
+        {
+            Ok(res) => break res,
+            Err(err) => {
+                // Only retry connection-level failures.
+                if !err.is_connect() || start.elapsed() >= timeout {
+                    error!(
+                        "Failed to connect to opencode global SSE after {} attempts over {:?}: {:?}",
+                        attempts, timeout, err
+                    );
+                    return Err(StatusCode::BAD_GATEWAY);
+                }
+
+                let backoff_ms = (attempts.min(20) as u64) * 100;
+                let backoff = tokio::time::Duration::from_millis(backoff_ms);
+                debug!(
+                    "opencode global SSE not ready yet (attempt {}): {}; retrying in {:?}",
+                    attempts, err, backoff
+                );
+                tokio::time::sleep(backoff).await;
+            }
+        }
+    };
+
+    if !response.status().is_success() {
+        error!("Opencode global SSE returned status: {}", response.status());
+        return Err(StatusCode::BAD_GATEWAY);
+    }
+
+    // Convert reqwest byte stream to axum body stream
+    let stream = response.bytes_stream();
+    let body = Body::from_stream(stream);
+
+    // Build SSE response with proper headers
+    let response = Response::builder()
+        .status(StatusCode::OK)
+        .header("Content-Type", "text/event-stream")
+        .header("Cache-Control", "no-cache")
+        .header("Connection", "keep-alive")
+        .header("X-Accel-Buffering", "no") // Disable nginx buffering if present
+        .body(body)
+        .map_err(|e| {
+            error!("Failed to build global SSE response: {:?}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+
+    Ok(response)
 }
 
 // ============================================================================
