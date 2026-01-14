@@ -212,6 +212,9 @@ const statusColors: Record<string, string> = {
 const IssueCard = memo(function IssueCard({
 	issue,
 	childIssues,
+	childrenByParent,
+	expandedIssues,
+	onToggleExpand,
 	isExpanded,
 	onToggle,
 	onStatusChange,
@@ -228,6 +231,9 @@ const IssueCard = memo(function IssueCard({
 }: {
 	issue: TrxIssue;
 	childIssues?: TrxIssue[];
+	childrenByParent?: Map<string, TrxIssue[]>;
+	expandedIssues?: Set<string>;
+	onToggleExpand?: (issueId: string) => void;
 	isExpanded: boolean;
 	onToggle: () => void;
 	onStatusChange: (status: string) => void;
@@ -494,23 +500,31 @@ const IssueCard = memo(function IssueCard({
 				</ContextMenuContent>
 			</ContextMenu>
 
-			{/* Children (for epics) */}
+			{/* Children (recursive for multi-level nesting) */}
 			{hasChildren && isExpanded && (
 				<div className="space-y-1">
-					{childIssues.map((child) => (
-						<IssueCard
-							key={child.id}
-							issue={child}
-							isExpanded={false}
-							onToggle={() => {}}
-							onStatusChange={(status) => onStatusChange(status)}
-							onStartHere={onStartHere}
-							onStartNewSession={onStartNewSession}
-							onAddChild={onAddChild}
-							onEdit={onEdit}
-							depth={depth + 1}
-						/>
-					))}
+					{childIssues.map((child) => {
+						const grandchildren = childrenByParent?.get(child.id);
+						const childIsExpanded = expandedIssues?.has(child.id) ?? false;
+						return (
+							<IssueCard
+								key={child.id}
+								issue={child}
+								childIssues={grandchildren}
+								childrenByParent={childrenByParent}
+								expandedIssues={expandedIssues}
+								onToggleExpand={onToggleExpand}
+								isExpanded={childIsExpanded}
+								onToggle={() => onToggleExpand?.(child.id)}
+								onStatusChange={(status) => onStatusChange(status)}
+								onStartHere={onStartHere}
+								onStartNewSession={onStartNewSession}
+								onAddChild={onAddChild}
+								onEdit={onEdit}
+								depth={depth + 1}
+							/>
+						);
+					})}
 				</div>
 			)}
 		</div>
@@ -667,23 +681,36 @@ export const TrxView = memo(function TrxView({
 		],
 	);
 
-	// Organize issues into hierarchy (epics with children)
-	const { epics, standaloneIssues, childrenByParent } = useMemo(() => {
+	// Organize issues into hierarchy (parents with children)
+	const { parentIssues, standaloneIssues, childrenByParent } = useMemo(() => {
 		const childrenByParent = new Map<string, TrxIssue[]>();
-		const standaloneIssues: TrxIssue[] = [];
-		const epics: TrxIssue[] = [];
+		const issueById = new Map<string, TrxIssue>();
 
 		// Apply filtering first
 		const filteredIssues = filterIssues(issues);
 
-		// First pass: identify epics and build parent-child map
+		// First pass: index all issues and build parent-child map
 		for (const issue of filteredIssues) {
+			issueById.set(issue.id, issue);
 			if (issue.parent_id) {
 				const existing = childrenByParent.get(issue.parent_id) || [];
 				existing.push(issue);
 				childrenByParent.set(issue.parent_id, existing);
-			} else if (issue.issue_type === "epic") {
-				epics.push(issue);
+			}
+		}
+
+		// Second pass: separate parents from standalone
+		const parentIssues: TrxIssue[] = [];
+		const standaloneIssues: TrxIssue[] = [];
+
+		for (const issue of filteredIssues) {
+			if (issue.parent_id) {
+				// This is a child, skip (will be shown under parent)
+				continue;
+			}
+			if (childrenByParent.has(issue.id)) {
+				// This issue has children, treat as parent
+				parentIssues.push(issue);
 			} else {
 				standaloneIssues.push(issue);
 			}
@@ -695,7 +722,7 @@ export const TrxView = memo(function TrxView({
 		}
 
 		return {
-			epics: sortIssues(epics),
+			parentIssues: sortIssues(parentIssues),
 			standaloneIssues: sortIssues(standaloneIssues),
 			childrenByParent,
 		};
@@ -1199,26 +1226,29 @@ export const TrxView = memo(function TrxView({
 					</div>
 				) : (
 					<>
-						{/* Epics first */}
-						{epics.map((epic) => (
+						{/* Parent issues (epics, features, etc. with children) first */}
+						{parentIssues.map((parent) => (
 							<IssueCard
-								key={epic.id}
-								issue={epic}
-								childIssues={childrenByParent.get(epic.id)}
-								isExpanded={expandedEpics.has(epic.id)}
-								onToggle={() => handleToggleEpic(epic.id)}
-								onStatusChange={(status) => handleStatusChange(epic.id, status)}
+								key={parent.id}
+								issue={parent}
+								childIssues={childrenByParent.get(parent.id)}
+								childrenByParent={childrenByParent}
+								expandedIssues={expandedEpics}
+								onToggleExpand={handleToggleEpic}
+								isExpanded={expandedEpics.has(parent.id)}
+								onToggle={() => handleToggleEpic(parent.id)}
+								onStatusChange={(status) => handleStatusChange(parent.id, status)}
 								onStartHere={
-									onStartIssue ? () => handleStartIssue(epic) : undefined
+									onStartIssue ? () => handleStartIssue(parent) : undefined
 								}
 								onStartNewSession={
 									onStartIssueNewSession
-										? () => handleStartIssueNewSession(epic)
+										? () => handleStartIssueNewSession(parent)
 										: undefined
 								}
-								onAddChild={() => handleAddChild(epic.id)}
-								onEdit={() => handleStartEdit(epic)}
-								isEditing={editingIssueId === epic.id}
+								onAddChild={() => handleAddChild(parent.id)}
+								onEdit={() => handleStartEdit(parent)}
+								isEditing={editingIssueId === parent.id}
 								editTitle={editTitle}
 								onEditTitleChange={setEditTitle}
 								onEditSave={handleSaveEdit}
@@ -1230,6 +1260,9 @@ export const TrxView = memo(function TrxView({
 							<IssueCard
 								key={issue.id}
 								issue={issue}
+								childrenByParent={childrenByParent}
+								expandedIssues={expandedEpics}
+								onToggleExpand={handleToggleEpic}
 								isExpanded={false}
 								onToggle={() => {}}
 								onStatusChange={(status) =>

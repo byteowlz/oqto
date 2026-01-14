@@ -2584,10 +2584,14 @@ pub struct TrxIssue {
 impl From<TrxIssueRaw> for TrxIssue {
     fn from(raw: TrxIssueRaw) -> Self {
         // Extract parent_id from dependencies with type "parent_child"
+        // Also check "blocks" type where depends_on_id is a prefix of issue_id (hierarchical IDs like octo-k8z1.1 -> octo-k8z1)
         let parent_id = raw
             .dependencies
             .iter()
-            .find(|d| d.dep_type == "parent_child")
+            .find(|d| {
+                d.dep_type == "parent_child"
+                    || (d.dep_type == "blocks" && raw.id.starts_with(&format!("{}.", d.depends_on_id)))
+            })
             .map(|d| d.depends_on_id.clone());
 
         // Extract blocked_by from dependencies with type "blocks"
