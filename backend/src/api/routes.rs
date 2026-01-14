@@ -174,6 +174,8 @@ pub fn create_router_with_config(state: AppState, max_upload_size_mb: usize) -> 
             "/admin/local/cleanup",
             post(handlers::admin_cleanup_local_sessions),
         )
+        // Admin routes - stats
+        .route("/admin/stats", get(handlers::get_admin_stats))
         // Admin routes - user management
         .route("/admin/users", get(handlers::list_users))
         .route("/admin/users", post(handlers::create_user))
