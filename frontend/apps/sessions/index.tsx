@@ -4180,7 +4180,13 @@ export const SessionsApp = memo(function SessionsApp() {
 							/>
 						) : (
 							<textarea
-								ref={chatInputRef}
+								ref={(el) => {
+									chatInputRef.current = el;
+									// Sync initial value from ref when textarea mounts
+									if (el && messageInputRef.current) {
+										el.value = messageInputRef.current;
+									}
+								}}
 								autoComplete="off"
 								autoCorrect="off"
 								autoCapitalize="sentences"
@@ -4614,42 +4620,44 @@ export const SessionsApp = memo(function SessionsApp() {
 								key={resumeWorkspacePath ?? "no-workspace"}
 								workspacePath={resumeWorkspacePath}
 								className="flex-1 min-h-0 border-t border-border"
-								onStartIssue={(issueId, title) => {
-									setMessageInputWithResize(
-										`Working on #${issueId}: ${title}\n\n`,
+							onStartIssue={(issueId, title, description) => {
+								const content = description
+									? `Working on #${issueId}: ${title}\n\n${description}\n\n`
+									: `Working on #${issueId}: ${title}\n\n`;
+								setMessageInputWithResize(content);
+								// On mobile, switch to chat view
+								if (window.innerWidth < 768) {
+									setActiveView("chat");
+								}
+							}}
+							onStartIssueNewSession={async (issueId, title, description) => {
+								if (!resumeWorkspacePath) return;
+								try {
+									const url =
+										await ensureOpencodeRunning(resumeWorkspacePath);
+									if (!url) return;
+									const newSession = await createSession(
+										url,
+										`#${issueId}: ${title}`,
+										undefined,
+										{ directory: resumeWorkspacePath },
 									);
-									// On mobile, switch to chat view
-									if (window.innerWidth < 768) {
-										setActiveView("chat");
-									}
-								}}
-								onStartIssueNewSession={async (issueId, title) => {
-									if (!resumeWorkspacePath) return;
-									try {
-										const url =
-											await ensureOpencodeRunning(resumeWorkspacePath);
-										if (!url) return;
-										const newSession = await createSession(
-											url,
-											`#${issueId}: ${title}`,
-											undefined,
-											{ directory: resumeWorkspacePath },
-										);
-										await refreshOpencodeSessions();
-										await refreshChatHistory();
-										if (newSession.id) {
-											setSelectedChatSessionId(newSession.id);
-											setMessageInputWithResize(
-												`Working on #${issueId}: ${title}\n\n`,
-											);
-											if (window.innerWidth < 768) {
-												setActiveView("chat");
-											}
+									await refreshOpencodeSessions();
+									await refreshChatHistory();
+									if (newSession.id) {
+										setSelectedChatSessionId(newSession.id);
+										const content = description
+											? `Working on #${issueId}: ${title}\n\n${description}\n\n`
+											: `Working on #${issueId}: ${title}\n\n`;
+										setMessageInputWithResize(content);
+										if (window.innerWidth < 768) {
+											setActiveView("chat");
 										}
-									} catch (err) {
-										console.error("Failed to start issue in new session:", err);
 									}
-								}}
+								} catch (err) {
+									console.error("Failed to start issue in new session:", err);
+								}
+							}}
 							/>
 						</div>
 					)}
@@ -4968,42 +4976,44 @@ export const SessionsApp = memo(function SessionsApp() {
 													key={resumeWorkspacePath ?? "no-workspace"}
 													workspacePath={resumeWorkspacePath}
 													className="flex-1 min-h-0 border-t border-border"
-													onStartIssue={(issueId, title) => {
-														setMessageInputWithResize(
-															`Working on #${issueId}: ${title}\n\n`,
+											onStartIssue={(issueId, title, description) => {
+													const content = description
+														? `Working on #${issueId}: ${title}\n\n${description}\n\n`
+														: `Working on #${issueId}: ${title}\n\n`;
+													setMessageInputWithResize(content);
+													setActiveView("chat");
+												}}
+												onStartIssueNewSession={async (issueId, title, description) => {
+													if (!resumeWorkspacePath) return;
+													try {
+														const url =
+															await ensureOpencodeRunning(
+																resumeWorkspacePath,
+															);
+														if (!url) return;
+														const newSession = await createSession(
+															url,
+															`#${issueId}: ${title}`,
+															undefined,
+															{ directory: resumeWorkspacePath },
 														);
-														setActiveView("chat");
-													}}
-													onStartIssueNewSession={async (issueId, title) => {
-														if (!resumeWorkspacePath) return;
-														try {
-															const url =
-																await ensureOpencodeRunning(
-																	resumeWorkspacePath,
-																);
-															if (!url) return;
-															const newSession = await createSession(
-																url,
-																`#${issueId}: ${title}`,
-																undefined,
-																{ directory: resumeWorkspacePath },
-															);
-															await refreshOpencodeSessions();
-															await refreshChatHistory();
-															if (newSession.id) {
-																setSelectedChatSessionId(newSession.id);
-																setMessageInputWithResize(
-																	`Working on #${issueId}: ${title}\n\n`,
-																);
-																setActiveView("chat");
-															}
-														} catch (err) {
-															console.error(
-																"Failed to start issue in new session:",
-																err,
-															);
+														await refreshOpencodeSessions();
+														await refreshChatHistory();
+														if (newSession.id) {
+															setSelectedChatSessionId(newSession.id);
+															const content = description
+																? `Working on #${issueId}: ${title}\n\n${description}\n\n`
+																: `Working on #${issueId}: ${title}\n\n`;
+															setMessageInputWithResize(content);
+															setActiveView("chat");
 														}
-													}}
+													} catch (err) {
+														console.error(
+															"Failed to start issue in new session:",
+															err,
+														);
+													}
+												}}
 												/>
 											</div>
 										)}
@@ -5017,40 +5027,42 @@ export const SessionsApp = memo(function SessionsApp() {
 													key={resumeWorkspacePath ?? "no-workspace"}
 													workspacePath={resumeWorkspacePath}
 													className="flex-1 min-h-0 border-t border-border"
-													onStartIssue={(issueId, title) => {
-														setMessageInputWithResize(
-															`Working on #${issueId}: ${title}\n\n`,
+											onStartIssue={(issueId, title, description) => {
+													const content = description
+														? `Working on #${issueId}: ${title}\n\n${description}\n\n`
+														: `Working on #${issueId}: ${title}\n\n`;
+													setMessageInputWithResize(content);
+												}}
+												onStartIssueNewSession={async (issueId, title, description) => {
+													if (!resumeWorkspacePath) return;
+													try {
+														const url =
+															await ensureOpencodeRunning(
+																resumeWorkspacePath,
+															);
+														if (!url) return;
+														const newSession = await createSession(
+															url,
+															`#${issueId}: ${title}`,
+															undefined,
+															{ directory: resumeWorkspacePath },
 														);
-													}}
-													onStartIssueNewSession={async (issueId, title) => {
-														if (!resumeWorkspacePath) return;
-														try {
-															const url =
-																await ensureOpencodeRunning(
-																	resumeWorkspacePath,
-																);
-															if (!url) return;
-															const newSession = await createSession(
-																url,
-																`#${issueId}: ${title}`,
-																undefined,
-																{ directory: resumeWorkspacePath },
-															);
-															await refreshOpencodeSessions();
-															await refreshChatHistory();
-															if (newSession.id) {
-																setSelectedChatSessionId(newSession.id);
-																setMessageInputWithResize(
-																	`Working on #${issueId}: ${title}\n\n`,
-																);
-															}
-														} catch (err) {
-															console.error(
-																"Failed to start issue in new session:",
-																err,
-															);
+														await refreshOpencodeSessions();
+														await refreshChatHistory();
+														if (newSession.id) {
+															setSelectedChatSessionId(newSession.id);
+															const content = description
+																? `Working on #${issueId}: ${title}\n\n${description}\n\n`
+																: `Working on #${issueId}: ${title}\n\n`;
+															setMessageInputWithResize(content);
 														}
-													}}
+													} catch (err) {
+														console.error(
+															"Failed to start issue in new session:",
+															err,
+														);
+													}
+												}}
 												/>
 											</div>
 										)}

@@ -73,8 +73,12 @@ interface TrxIssue {
 interface TrxViewProps {
 	workspacePath?: string;
 	className?: string;
-	onStartIssue?: (issueId: string, title: string) => void;
-	onStartIssueNewSession?: (issueId: string, title: string) => void;
+	onStartIssue?: (issueId: string, title: string, description?: string) => void;
+	onStartIssueNewSession?: (
+		issueId: string,
+		title: string,
+		description?: string,
+	) => void;
 }
 
 // API functions
@@ -770,7 +774,7 @@ export const TrxView = memo(function TrxView({
 				await loadIssues();
 
 				// Call the callback to prefill input and switch view
-				onStartIssue?.(issue.id, issue.title);
+				onStartIssue?.(issue.id, issue.title, issue.description);
 			} catch (err) {
 				setError(err instanceof Error ? err.message : "Failed to start issue");
 			}
@@ -790,7 +794,7 @@ export const TrxView = memo(function TrxView({
 				await loadIssues();
 
 				// Call the callback to open new session with issue
-				onStartIssueNewSession?.(issue.id, issue.title);
+				onStartIssueNewSession?.(issue.id, issue.title, issue.description);
 			} catch (err) {
 				setError(err instanceof Error ? err.message : "Failed to start issue");
 			}
