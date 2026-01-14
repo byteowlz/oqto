@@ -4,5 +4,8 @@
   "permission": {
     "external_directory": "allow",
     "question": "deny"
+  },
+  "compaction": {
+    "auto": true
   }
 }
