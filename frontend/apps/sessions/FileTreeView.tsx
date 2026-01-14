@@ -1017,7 +1017,7 @@ function FileContextMenu({
 
 	return (
 		<ContextMenu>
-			<ContextMenuTrigger asChild>{children}</ContextMenuTrigger>
+			<ContextMenuTrigger className="contents">{children}</ContextMenuTrigger>
 			<ContextMenuContent>
 				{isImage && onOpenInCanvas && (
 					<>

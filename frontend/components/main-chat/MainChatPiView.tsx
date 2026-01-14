@@ -1468,7 +1468,7 @@ const PiMessageCard = memo(function PiMessageCard({
 
 	return (
 		<ContextMenu>
-			<ContextMenuTrigger asChild>{messageCard}</ContextMenuTrigger>
+			<ContextMenuTrigger className="contents">{messageCard}</ContextMenuTrigger>
 			<ContextMenuContent>
 				<ContextMenuItem
 					onClick={() => navigator.clipboard?.writeText(textContent)}
@@ -1610,7 +1610,7 @@ function TextWithFileReferences({
 
 	return (
 		<ContextMenu>
-			<ContextMenuTrigger asChild>
+			<ContextMenuTrigger className="contents">
 				<div className="space-y-2 select-none sm:select-auto">
 					<MarkdownRenderer
 						content={content}

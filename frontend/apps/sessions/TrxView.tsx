@@ -256,7 +256,7 @@ const IssueCard = memo(function IssueCard({
 	return (
 		<div className={cn("space-y-1", depth > 0 && "ml-6")}>
 			<ContextMenu>
-				<ContextMenuTrigger asChild>
+				<ContextMenuTrigger className="contents">
 					<div
 						className={cn(
 							"group p-2 rounded transition-colors cursor-context-menu flex gap-2",

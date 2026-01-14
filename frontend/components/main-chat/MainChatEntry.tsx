@@ -256,7 +256,7 @@ export function MainChatEntry({
 	return (
 		<>
 			<ContextMenu>
-				<ContextMenuTrigger asChild>
+				<ContextMenuTrigger className="contents">
 					<div>
 						<div
 							className={cn(
