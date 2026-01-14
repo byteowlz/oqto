@@ -56,6 +56,48 @@ pub async fn health() -> Json<HealthResponse> {
     })
 }
 
+/// Admin stats response for status bar.
+#[derive(Debug, Serialize)]
+pub struct AdminStatsResponse {
+    pub total_users: i64,
+    pub active_users: i64,
+    pub total_sessions: i64,
+    pub running_sessions: i64,
+}
+
+/// Get admin stats for the status bar (admin only).
+#[instrument(skip(state, _user))]
+pub async fn get_admin_stats(
+    State(state): State<AppState>,
+    RequireAdmin(_user): RequireAdmin,
+) -> ApiResult<Json<AdminStatsResponse>> {
+    // Get user stats
+    let user_stats = state.users.get_stats().await?;
+
+    // Get session counts
+    let sessions = state.sessions.list_sessions().await?;
+    let total_sessions = sessions.len() as i64;
+    let running_sessions = sessions
+        .iter()
+        .filter(|s| s.status == crate::session::SessionStatus::Running)
+        .count() as i64;
+
+    // Count active users (users with running sessions)
+    let active_user_ids: std::collections::HashSet<_> = sessions
+        .iter()
+        .filter(|s| s.status == crate::session::SessionStatus::Running)
+        .map(|s| s.user_id.as_str())
+        .collect();
+    let active_users = active_user_ids.len() as i64;
+
+    Ok(Json(AdminStatsResponse {
+        total_users: user_stats.total,
+        active_users,
+        total_sessions,
+        running_sessions,
+    }))
+}
+
 /// WebSocket debug info.
 #[derive(Debug, Serialize)]
 pub struct WsDebugResponse {
