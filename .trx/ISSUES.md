@@ -35,12 +35,6 @@ Build and distribute pre-compiled binaries for Linux (x86_64, arm64) and macOS (
 ### [octo-af5j] Release & Update System (P1, epic)
 Comprehensive system for distributing Octo releases, managing updates in the field, and expanding runtime options including Proxmox LXC support.
 
-### [octo-7m6b] Validate workspace_path against allowed roots (P1, bug)
-backend/src/session/service.rs: create_session_with_readiness accepts absolute workspace_path and only checks exists, allowing users to bind sessions/fileserver/terminal to arbitrary host directories. This is a privilege boundary bypass in multi-user setups. Enforce workspace_root or a configurable allowlist, and reject paths outside the allowed roots.
-
-### [octo-wjaf] Cap proxy body buffering to avoid memory DoS (P1, bug)
-backend/src/api/proxy.rs: proxy_request_with_query buffers request bodies with to_bytes(..., usize::MAX) and re-clones for retries. Large uploads can exhaust memory and become a DoS vector. Add a configurable max size (return 413) or stream the body to the target, and avoid repeated clones for large payloads.
-
 ### [workspace-jux6.1] Lazy load main app components (P1, task)
 Convert synchronous imports in apps/index.ts to React.lazy() imports. Currently SessionsApp, AgentsApp, ProjectsApp, SettingsApp, AdminApp are all bundled together. This blocks initial render with unused code.
 
@@ -55,6 +49,29 @@ Optimize frontend startup times and eliminate unnecessary reloads. Current bottl
 
 ### [workspace-5pmk.11] Add backend URL configuration to login form (P1, task)
 Add a 'Server URL' field to the login form allowing users to specify the backend URL. Store in localStorage for persistence. Show connection status indicator. Default to current origin for web, require input for mobile apps.
+
+### [octo-8zxp] No gaps between messages in main chat on mobile  (P2, bug)
+
+### [octo-s4ez] Define context model and context sources (local + remote) (P2, task)
+## Goal
+Define what "context" means for agent interactions in Octo, and how it is represented, versioned, and sourced, so features like global agent invoke (`octo-skks`) and agent-driven UI control (`octo-wzvn`) can reliably inject context now and later.
+
+## Context Model (Proposed)
+A versioned envelope composed of multiple context "sources".
+...
+
+
+### [octo-wzvn] Agent-driven UI control (conversational navigation) (P2, feature)
+## Problem
+Users want to navigate and operate the Octo web UI conversationally. The agent should be able to trigger UI actions (e.g., expanding/collapsing panels/canvas, switching apps/routes, opening dialogs, selecting sessions, focusing inputs) so the user can say what they want and the UI responds.
+
+## Proposed Feature
+Introduce a controlled "agent actions" layer that exposes safe UI commands to the agent (via tool calls / structured messages), such as:
+...
+
+
+### [octo-skks] Global main agent invoke with context injection (P2, feature)
+## Problem\nUsers want to invoke the Main Agent from any page in the web app, and have the agent automatically receive UI/runtime context (current page/route, active app/view, selected agent/persona if applicable, selected workspace directory/project, current session IDs).\n\n## Proposed Feature\nAdd a globally-available Main Agent entrypoint (e.g., hotkey + floating button + command palette action) that opens the Main Chat/agent panel. When the user sends a message, inject a structured context block into the message/system prompt containing:\n- Current route/pathname\n- Active app/view (e.g. sessions/settings/admin)\n- Active agent/persona (if any)\n- Current workspace directory / project key\n- Current workspace session ID + current chat session ID (if available)\n\n## Acceptance Criteria\n- Main Agent can be opened from any page without navigation side effects.\n- Sent messages include the context injection reliably and deterministically.\n- Context injection is visible in logs/devtools (or can be toggled) for debugging.\n- Works when OpenCode is not running (falls back to disk/history context).\n- No regression to existing Main Chat / Sessions flows.\n\n## Notes\nImplementation likely touches: app shell routing, global UI overlay, and the message send pipeline (control-plane / opencode proxy headers).
 
 ### [octo-k8z1.8] Session management: Browser lifecycle (start/stop with session) (P2, task)
 
@@ -76,47 +93,11 @@ Add a 'Server URL' field to the login form allowing users to specify the backend
 
 ### [octo-9zek] changes to opencode settings in the sidbar are not getting saved (P2, bug)
 
-### [octo-jz9c] Scroll-to-bottom button doesn't always appear (P2, bug)
-The scroll-to-bottom button/indicator does not always appear when the user is scrolled up (away from bottom).
-
-Expected: When user is not near bottom, show a scroll-to-bottom affordance.
-Actual: Button sometimes missing even when scrolled away.
-
-...
-
-
-### [octo-qcqj] Auto-scroll to bottom is broken (P2, bug)
-Auto-scroll to bottom behavior is broken in chat: new messages do not reliably scroll the view to the bottom when expected.
-
-Expected: When user is at/near bottom, new messages (esp. streaming) keep view pinned to bottom.
-Actual: View does not scroll to bottom reliably.
-
-...
-
-
-### [octo-9900] Dictation overlay: live transcript not shown in main textarea (P2, bug)
-In the Dictation overlay/modal, spoken text appears redundantly: the main textarea shows the composed message input, while interim speech appears in a separate small line below (liveTranscript).
-
-Expected UX (confirmed): eliminate redundancy — dictated text should appear directly in the big top textarea in real time while speaking. The separate transcript line should not show duplicate content (can be removed or repurposed for a non-text status like "Listening…").
-
-Actual: Main textarea only updates on final transcript segments; interim words render separately in the small line.
-...
-
-
 ### [octo-9qkv] Improve opencode chat error notifications (top-right toast) (P2, feature)
 Request: Provide clearer, more visible notifications for errors like session disconnect/resume failures, instead of (or in addition to) inline red banners. Prefer a popup/toast in the top-right that matches the app style.
 
 Motivation:
 - Current inline messages (e.g., 'resuming session' red text) can be easy to miss and can overlap UI controls.
-
-...
-
-
-### [octo-2gvy] 'Resuming session' banner overlaps right sidebar collapse button (desktop) (P2, bug)
-On desktop, the red 'resuming session' text/banner collides/overlaps with the right sidebar collapse button.
-
-Expected: Banner and sidebar controls do not overlap; banner should wrap/truncate or reserve space.
-Actual: Red 'resuming session' UI overlaps/collides with the collapse control.
 
 ...
 
@@ -132,27 +113,6 @@ Confirmed behavior:
 ...
 
 
-### [octo-cewe] Suspended session banner persists after sending resume message (P2, bug)
-In a suspended chat/session, after sending a message (intended to resume the session), the banner/message 'Send a message to resume this session' remains visible.
-
-Expected: After sending the resume message (and/or once session resumes), the banner disappears and UI reflects active session.
-Actual: Banner still displayed after message send.
-
-...
-
-
-### [octo-sf9p] Sidebar collapse button overlaps long titles (P2, bug)
-The collapse button for the right sidebar visually clashes/overlaps with long titles and also with the collapse button shown when the sidebar is expanded.
-
-Expected: Title truncates/wraps and collapse controls do not overlap.
-Actual: Collapse button overlaps title and/or duplicates/clashes with another collapse button.
-
-...
-
-
-### [octo-4ye3] Radix UI ContextMenu infinite loop on session.updated events (P2, bug)
-Maximum update depth exceeded error occurs when session.updated WebSocket events trigger re-renders of session list items wrapped in ContextMenu. This is a known Radix UI bug (https://github.com/radix-ui/primitives/issues/3385). Current mitigations: debounced refresh (100ms) and startTransition for state updates. May need further fixes like memoizing session items or increasing debounce timeout.
-
 ### [octo-af5j.7.5] LXC template version tags (P2, task)
 Same as container images but for LXC templates. octo-agent-0.2.0.tar.zst with pinned components.
 
@@ -164,11 +124,6 @@ Release artifacts include or reference exact versions of opencode, pi, mmry, fil
 
 ### [octo-af5j.7.2] Component version checking at startup (P2, task)
 On startup, verify installed component versions match expected. Warn on mismatch, offer to update. Block startup on critical incompatibility.
-
-### [octo-843s] When sending a new message to a suspended chat, the page needs to be reloaded to surface the sent message and the response (P2, bug)
-
-### [octo-rhhp] Sessions fail to load with JSON parse error when API returns error response (P2, bug)
-When loading sessions, a JSON parse error occurs: 'SyntaxError: JSON Parse error: Unexpected identifier "Internal"'. This happens because the API returns an error message (likely 'Internal Server Error') instead of valid JSON, and the frontend attempts to parse it as JSON without proper error handling.
 
 ### [octo-4me3] Security/perf/idiomatic audit fixes (P2, epic)
 Bundle of findings from the comprehensive review; child issues are linked as blockers.
@@ -265,8 +220,6 @@ fileserver/src/handlers.rs: create_zip_from_paths reads entire files and builds 
 
 ### [octo-xdyc] Restrict trx commands to validated workspace paths (P2, bug)
 backend/src/api/handlers.rs: exec_trx_command runs  with current_dir set from TrxWorkspaceQuery.workspace_path without validation. This lets authenticated users run trx in arbitrary directories (creating/modifying .trx there). Resolve workspace_path via session metadata or enforce allowed roots before executing.
-
-### [octo-rd70] Light theme is too low contrast (P2, bug)
 
 ### [octo-1rb4.1] Make turn taking more robust (P2, task)
 
@@ -410,9 +363,6 @@ Enable multiple platform users to access the same project/workspace with proper 
 
 ### [octo-k8z1.9] Credential vault: UI for storing encrypted credentials (P3, task)
 
-### [octo-54m3] Text input field stays enlarged after sending long message (P3, bug)
-When entering a long text into the text input field and sending it, the field clears correctly but sometimes stays enlarged instead of resizing back to its default height.
-
 ### [octo-af5j.4.7.6] First-run wizard for Proxmox+Octo (P3, task)
 Interactive or config-file based wizard: set admin password, configure EAVS API keys, set resource limits, create first user/agent.
 
@@ -484,6 +434,23 @@ Desired behavior: Tool calls hidden by default, toggle to show
 
 ## Closed
 
+- [octo-zh73] Memoize AppShell and SessionsApp components to prevent unnecessary re-renders (closed 2026-01-14)
+- [octo-3kwr] Split monolithic AppContext into focused contexts (UIContext, SessionContext, ChatContext) (closed 2026-01-14)
+- [octo-51gz] Live model selection is broken (closed 2026-01-14)
+- [octo-rhhp] Sessions fail to load with JSON parse error when API returns error response (closed 2026-01-14)
+- [octo-qcqj] Auto-scroll to bottom is broken (closed 2026-01-14)
+- [octo-jz9c] Scroll-to-bottom button doesn't always appear (closed 2026-01-14)
+- [octo-843s] When sending a new message to a suspended chat, the page needs to be reloaded to surface the sent message and the response (closed 2026-01-14)
+- [octo-kgph] send messages dissapear and only reappear when agent responds (closed 2026-01-14)
+- [octo-4ye3] Radix UI ContextMenu infinite loop on session.updated events (closed 2026-01-14)
+- [octo-sf9p] Sidebar collapse button overlaps long titles (closed 2026-01-14)
+- [octo-2gvy] 'Resuming session' banner overlaps right sidebar collapse button (desktop) (closed 2026-01-14)
+- [octo-cewe] Suspended session banner persists after sending resume message (closed 2026-01-14)
+- [octo-54m3] Text input field stays enlarged after sending long message (closed 2026-01-14)
+- [octo-rd70] Light theme is too low contrast (closed 2026-01-14)
+- [octo-9900] Dictation overlay: live transcript not shown in main textarea (closed 2026-01-14)
+- [octo-7m6b] Validate workspace_path against allowed roots (closed 2026-01-14)
+- [octo-wjaf] Cap proxy body buffering to avoid memory DoS (closed 2026-01-14)
 - [octo-hew1] Add persistent bottom status bar (model, active sessions, version) (closed 2026-01-14)
 - [octo-mhdx] Upgrade OpenCode to 1.1.10+ to address CVE-2026-22813 (XSS/RCE vulnerability) (closed 2026-01-14)
 - [octo-maa6] Live model selector missing in right settings sidebar (opencode chats) (closed 2026-01-14)
