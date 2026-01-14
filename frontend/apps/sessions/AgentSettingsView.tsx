@@ -35,7 +35,7 @@ import {
 	RotateCcw,
 	Save,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 interface ModelOption {
 	value: string;
@@ -98,53 +98,68 @@ export function AgentSettingsView({
 	const isBusy = sessionId ? busySessions.has(sessionId) : false;
 
 	// Load config and agents
-	const loadData = useCallback(async () => {
-		if (!sessionId) return;
+	// clearPending: only clear pending changes on explicit reload, not on dependency changes
+	const loadData = useCallback(
+		async (clearPending = false) => {
+			if (!sessionId) return;
 
-		setLoading(true);
-		setError(null);
-		try {
-			// Fetch both global and local configs in parallel
-			const [globalData, localData] = await Promise.all([
-				getGlobalOpencodeConfig(),
-				getWorkspaceConfig(sessionId),
-			]);
+			setLoading(true);
+			setError(null);
+			try {
+				// Fetch both global and local configs in parallel
+				const [globalData, localData] = await Promise.all([
+					getGlobalOpencodeConfig(),
+					getWorkspaceConfig(sessionId),
+				]);
 
-			// Fetch agents from opencode API (requires running instance)
-			let agentsList: AgentInfo[] = [];
-			if (opencodeBaseUrl) {
-				try {
-					const agentsData = await fetchAgents(opencodeBaseUrl, {
-						directory: opencodeDirectory,
-					});
-					// fetchAgents returns an array of OpenCodeAgent objects
-					agentsList = (agentsData || []).map((agent) => ({
-						id: agent.id,
-						name: agent.name || agent.id,
-						description: agent.description,
-					}));
-				} catch {
-					// Agents API not available, continue without agents
+				// Fetch agents from opencode API (requires running instance)
+				let agentsList: AgentInfo[] = [];
+				if (opencodeBaseUrl) {
+					try {
+						const agentsData = await fetchAgents(opencodeBaseUrl, {
+							directory: opencodeDirectory,
+						});
+						// fetchAgents returns an array of OpenCodeAgent objects
+						agentsList = (agentsData || []).map((agent) => ({
+							id: agent.id,
+							name: agent.name || agent.id,
+							description: agent.description,
+						}));
+					} catch {
+						// Agents API not available, continue without agents
+					}
 				}
-			}
 
-			setGlobalConfig(globalData || {});
-			setLocalConfig(localData || {});
-			setAgents(agentsList);
-			setPendingChanges({});
-		} catch (err) {
-			setError(err instanceof Error ? err.message : "Failed to load settings");
-		} finally {
-			setLoading(false);
-		}
-	}, [sessionId, opencodeBaseUrl, opencodeDirectory]);
+				setGlobalConfig(globalData || {});
+				setLocalConfig(localData || {});
+				setAgents(agentsList);
+				// Only clear pending changes when explicitly requested (reload button)
+				if (clearPending) {
+					setPendingChanges({});
+				}
+			} catch (err) {
+				setError(
+					err instanceof Error ? err.message : "Failed to load settings",
+				);
+			} finally {
+				setLoading(false);
+			}
+		},
+		[sessionId, opencodeBaseUrl, opencodeDirectory],
+	);
 
 	// For save operations, we work with local config only
 	const config = localConfig;
 
+	// Track the previous sessionId to detect session changes
+	const prevSessionIdRef = useRef<string | undefined>(undefined);
+
 	useEffect(() => {
-		loadData();
-	}, [loadData]);
+		// Clear pending changes only when session changes, not on other dependency changes
+		const sessionChanged = prevSessionIdRef.current !== sessionId;
+		prevSessionIdRef.current = sessionId;
+		loadData(sessionChanged);
+	}, [loadData, sessionId]);
 
 	// Save changes
 	const handleSave = useCallback(async () => {
@@ -209,54 +224,39 @@ export function AgentSettingsView({
 	);
 
 	// Get effective value: pending changes > local config > global config
-	const getValue = useCallback(
-		<K extends keyof WorkspaceConfig>(
-			key: K,
-		): WorkspaceConfig[K] | undefined => {
-			if (key in pendingChanges)
-				return pendingChanges[key] as WorkspaceConfig[K];
-			if (localConfig?.[key] !== undefined) return localConfig[key];
-			return globalConfig?.[key];
-		},
-		[localConfig, globalConfig, pendingChanges],
-	);
+	const getValue = <K extends keyof WorkspaceConfig>(
+		key: K,
+	): WorkspaceConfig[K] | undefined => {
+		if (key in pendingChanges)
+			return pendingChanges[key] as WorkspaceConfig[K];
+		if (localConfig?.[key] !== undefined) return localConfig[key];
+		return globalConfig?.[key];
+	};
 
 	// Get the source of a value: "pending" | "local" | "global" | "default"
-	const getValueSource = useCallback(
-		(
-			key: keyof WorkspaceConfig,
-		): "pending" | "local" | "global" | "default" => {
-			if (key in pendingChanges) return "pending";
-			if (localConfig?.[key] !== undefined) return "local";
-			if (globalConfig?.[key] !== undefined) return "global";
-			return "default";
-		},
-		[localConfig, globalConfig, pendingChanges],
-	);
+	const getValueSource = (
+		key: keyof WorkspaceConfig,
+	): "pending" | "local" | "global" | "default" => {
+		if (key in pendingChanges) return "pending";
+		if (localConfig?.[key] !== undefined) return "local";
+		if (globalConfig?.[key] !== undefined) return "global";
+		return "default";
+	};
 
 	// Check if explicitly set in local config (not counting pending)
-	const isSetInLocal = useCallback(
-		(key: keyof WorkspaceConfig): boolean => {
-			return localConfig?.[key] !== undefined;
-		},
-		[localConfig],
-	);
+	const isSetInLocal = (key: keyof WorkspaceConfig): boolean => {
+		return localConfig?.[key] !== undefined;
+	};
 
 	// Check if explicitly set in global config
-	const isSetInGlobal = useCallback(
-		(key: keyof WorkspaceConfig): boolean => {
-			return globalConfig?.[key] !== undefined;
-		},
-		[globalConfig],
-	);
+	const isSetInGlobal = (key: keyof WorkspaceConfig): boolean => {
+		return globalConfig?.[key] !== undefined;
+	};
 
 	// Check if a field is modified (has pending changes)
-	const isModified = useCallback(
-		(key: keyof WorkspaceConfig): boolean => {
-			return key in pendingChanges;
-		},
-		[pendingChanges],
-	);
+	const isModified = (key: keyof WorkspaceConfig): boolean => {
+		return key in pendingChanges;
+	};
 
 	// Reset a field
 	const handleReset = useCallback((key: keyof WorkspaceConfig) => {
@@ -311,7 +311,7 @@ export function AgentSettingsView({
 						type="button"
 						variant="ghost"
 						size="sm"
-						onClick={loadData}
+						onClick={() => loadData(true)}
 						disabled={loading}
 						className="h-7 w-7 p-0"
 						title="Reload"
@@ -486,7 +486,7 @@ export function AgentSettingsView({
 					{/* Default Agent */}
 					<SettingField
 						label="Default Agent"
-						description="Agent to use for new sessions"
+						description={`Agent to use for new sessions (${agents.length} available)`}
 						modified={isModified("default_agent")}
 						source={getValueSource("default_agent")}
 						setInLocal={isSetInLocal("default_agent")}
@@ -510,14 +510,19 @@ export function AgentSettingsView({
 							</SelectTrigger>
 							<SelectContent>
 								<SelectItem value="__none__">Default</SelectItem>
-								{agents.map((agent, index) => (
-									<SelectItem
-										key={`${agent.id}-${index}`}
-										value={agent.id}
-									>
-										{agent.name}
+								{agents.length === 0 ? (
+									<SelectItem value="__no_agents__" disabled>
+										No custom agents configured
 									</SelectItem>
-								))}
+								) : (
+									agents
+										.filter((agent) => agent.id && agent.id !== "__none__")
+										.map((agent) => (
+											<SelectItem key={agent.id} value={agent.id}>
+												{agent.name}
+											</SelectItem>
+										))
+								)}
 							</SelectContent>
 						</Select>
 					</SettingField>
