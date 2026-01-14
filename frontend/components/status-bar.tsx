@@ -172,7 +172,8 @@ export function StatusBar() {
 	return (
 		<div
 			className={cn(
-				"flex items-center justify-between px-3",
+				"flex items-center justify-between",
+				"px-8 md:px-3",
 				"bg-sidebar/80 border-t border-sidebar-border",
 				"text-[10px] text-muted-foreground",
 				"select-none",
