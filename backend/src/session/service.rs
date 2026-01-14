@@ -1693,7 +1693,8 @@ impl SessionService {
                 }
                 RuntimeMode::Local => {
                     if let Some(local_runtime) = self.local_runtime() {
-                        local_runtime.is_session_running(&session.id).await
+                        self.is_local_session_running_best_effort(local_runtime.as_ref(), &session)
+                            .await
                     } else {
                         false
                     }
@@ -2034,6 +2035,56 @@ impl SessionService {
         }
     }
 
+    fn parse_local_session_pids(container_id: Option<&str>) -> Option<Vec<u32>> {
+        let container_id = container_id?;
+        let pids: Vec<u32> = container_id
+            .split(',')
+            .filter_map(|raw| raw.trim().parse::<u32>().ok())
+            .collect();
+        if pids.is_empty() {
+            return None;
+        }
+        Some(pids)
+    }
+
+    fn are_local_session_pids_running(pids: &[u32]) -> bool {
+        #[cfg(target_os = "linux")]
+        {
+            pids.iter()
+                .all(|pid| std::path::Path::new(&format!("/proc/{}", pid)).exists())
+        }
+
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = pids;
+            false
+        }
+    }
+
+    async fn is_local_session_running_best_effort(
+        &self,
+        local_runtime: &LocalRuntime,
+        session: &Session,
+    ) -> bool {
+        if local_runtime.is_session_running(&session.id).await {
+            return true;
+        }
+
+        if let Some(pids) = Self::parse_local_session_pids(session.container_id.as_deref()) {
+            if Self::are_local_session_pids_running(&pids) {
+                return true;
+            }
+        }
+
+        // Fallback: if expected ports are still bound, treat as running.
+        let ports = [
+            session.opencode_port as u16,
+            session.fileserver_port as u16,
+            session.ttyd_port as u16,
+        ];
+        ports.iter().any(|port| !crate::local::is_port_available(*port))
+    }
+
     /// Reconcile local mode session state.
     async fn reconcile_local_mode_state(&self, session: Session) -> Result<Session> {
         let local_runtime = match self.local_runtime() {
@@ -2041,10 +2092,12 @@ impl SessionService {
             None => return Ok(session),
         };
 
-        if local_runtime.is_session_running(&session.id).await {
+        if self
+            .is_local_session_running_best_effort(local_runtime.as_ref(), &session)
+            .await
+        {
             Ok(session)
         } else {
-            // Processes are not running - mark as stopped
             warn!(
                 "Local processes for session {} are not running, marking as stopped",
                 session.id
