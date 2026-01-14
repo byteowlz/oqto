@@ -964,7 +964,7 @@ export function MainChatPiView({
 				<div
 					ref={messagesContainerRef}
 					onScroll={handleScroll}
-					className="h-full bg-muted/30 border border-border p-2 sm:p-4 overflow-y-auto space-y-4 sm:space-y-6 scrollbar-hide"
+					className="h-full bg-muted/30 border border-border p-2 sm:p-4 overflow-y-auto scrollbar-hide"
 				>
 					{messages.length === 0 && (
 						<div className="text-sm text-muted-foreground">{t.noMessages}</div>
@@ -978,16 +978,17 @@ export function MainChatPiView({
 					)}
 
 					{/* Only render the last visibleCount messages for performance */}
-					{messages.slice(-visibleCount).map((message) => (
-						<PiMessageCard
-							key={message.id}
-							message={message}
-							locale={locale}
-							workspacePath={workspacePath}
-							assistantName={assistantName}
-							a2uiSurfaces={surfacesByMessageId.get(message.id)}
-							onA2UIAction={handleA2UIAction}
-						/>
+					{messages.slice(-visibleCount).map((message, index) => (
+						<div key={message.id} className={index > 0 ? "mt-4 sm:mt-6" : ""}>
+							<PiMessageCard
+								message={message}
+								locale={locale}
+								workspacePath={workspacePath}
+								assistantName={assistantName}
+								a2uiSurfaces={surfacesByMessageId.get(message.id)}
+								onA2UIAction={handleA2UIAction}
+							/>
+						</div>
 					))}
 
 					<div ref={messagesEndRef} />

@@ -318,28 +318,28 @@ const ChatMessagesPane = memo(function ChatMessagesPane({
 			<div
 				ref={messagesContainerRef}
 				onScroll={onScroll}
-				className="h-full bg-muted/30 border border-border p-2 sm:p-4 overflow-y-auto space-y-4 sm:space-y-6 scrollbar-hide"
+				className="h-full bg-muted/30 border border-border p-2 sm:p-4 overflow-y-auto scrollbar-hide"
 			>
 				{messages.length === 0 &&
 					messagesLoading &&
 					selectedChatSessionId &&
 					sessionHadMessages && (
-						<div className="space-y-4 sm:space-y-6 animate-pulse">
-							{/* User message skeleton */}
-							<div className="sm:ml-8 bg-primary/10 border border-primary/20">
-								<div className="flex items-center gap-2 px-2 sm:px-3 py-1.5 sm:py-2 border-b border-primary/20">
-									<div className="w-3 h-3 sm:w-4 sm:h-4 bg-primary/30" />
-									<div className="h-3 bg-primary/30 w-12" />
-									<div className="flex-1" />
-									<div className="h-2 bg-primary/20 w-10" />
-								</div>
-								<div className="px-2 sm:px-4 py-2 sm:py-3 space-y-2">
-									<div className="h-3 bg-primary/20 w-3/4" />
-									<div className="h-3 bg-primary/20 w-1/2" />
-								</div>
+					<div className="animate-pulse">
+						{/* User message skeleton */}
+						<div className="sm:ml-8 bg-primary/10 border border-primary/20">
+							<div className="flex items-center gap-2 px-2 sm:px-3 py-1.5 sm:py-2 border-b border-primary/20">
+								<div className="w-3 h-3 sm:w-4 sm:h-4 bg-primary/30" />
+								<div className="h-3 bg-primary/30 w-12" />
+								<div className="flex-1" />
+								<div className="h-2 bg-primary/20 w-10" />
 							</div>
-							{/* Assistant message skeleton */}
-							<div className="sm:mr-8 bg-muted/50 border border-border">
+							<div className="px-2 sm:px-4 py-2 sm:py-3 space-y-2">
+								<div className="h-3 bg-primary/20 w-3/4" />
+								<div className="h-3 bg-primary/20 w-1/2" />
+							</div>
+						</div>
+						{/* Assistant message skeleton */}
+						<div className="mt-4 sm:mt-6 sm:mr-8 bg-muted/50 border border-border">
 								<div className="flex items-center gap-2 px-2 sm:px-3 py-1.5 sm:py-2 border-b border-border">
 									<div className="w-3 h-3 sm:w-4 sm:h-4 bg-muted" />
 									<div className="h-3 bg-muted w-16" />
@@ -354,7 +354,7 @@ const ChatMessagesPane = memo(function ChatMessagesPane({
 								</div>
 							</div>
 							{/* Another user message skeleton */}
-							<div className="sm:ml-8 bg-primary/10 border border-primary/20">
+							<div className="mt-4 sm:mt-6 sm:ml-8 bg-primary/10 border border-primary/20">
 								<div className="flex items-center gap-2 px-2 sm:px-3 py-1.5 sm:py-2 border-b border-primary/20">
 									<div className="w-3 h-3 sm:w-4 sm:h-4 bg-primary/30" />
 									<div className="h-3 bg-primary/30 w-12" />
@@ -390,6 +390,7 @@ const ChatMessagesPane = memo(function ChatMessagesPane({
 						key={
 							group.messages[0]?.info.id || `${group.role}-${group.startIndex}`
 						}
+						className={groupIndex > 0 ? "mt-4 sm:mt-6" : ""}
 					>
 						{/* Session divider for Main Chat threaded view */}
 						{group.isNewSession && group.sessionTitle && (
@@ -2307,26 +2308,32 @@ export const SessionsApp = memo(function SessionsApp() {
 					mode?: "sse" | "polling" | "ws" | "reconnecting";
 				} | null;
 				if (props?.mode) setEventsTransportMode(props.mode);
-				if (effectiveOpencodeBaseUrl && activeSessionId) {
-					invalidateMessageCache(
-						effectiveOpencodeBaseUrl,
-						activeSessionId,
-						opencodeDirectory,
-					);
-					requestMessageRefresh(250);
-				}
+				// Defer refresh to avoid blocking message handler
+				startTransition(() => {
+					if (effectiveOpencodeBaseUrl && activeSessionId) {
+						invalidateMessageCache(
+							effectiveOpencodeBaseUrl,
+							activeSessionId,
+							opencodeDirectory,
+						);
+						requestMessageRefresh(250);
+					}
+				});
 				return;
 			}
 
 			if (eventType === "server.connected") {
-				if (effectiveOpencodeBaseUrl && activeSessionId) {
-					invalidateMessageCache(
-						effectiveOpencodeBaseUrl,
-						activeSessionId,
-						opencodeDirectory,
-					);
-					requestMessageRefresh(250);
-				}
+				// Defer refresh to avoid blocking message handler
+				startTransition(() => {
+					if (effectiveOpencodeBaseUrl && activeSessionId) {
+						invalidateMessageCache(
+							effectiveOpencodeBaseUrl,
+							activeSessionId,
+							opencodeDirectory,
+						);
+						requestMessageRefresh(250);
+					}
+				});
 			}
 
 			if (eventType === "session.unavailable") {
@@ -2352,18 +2359,20 @@ export const SessionsApp = memo(function SessionsApp() {
 
 			if (eventType === "session.idle") {
 				setChatState("idle");
-				// Invalidate cache and force refresh on idle
-				if (effectiveOpencodeBaseUrl && activeSessionId) {
-					invalidateMessageCache(
-						effectiveOpencodeBaseUrl,
-						activeSessionId,
-						opencodeDirectory,
-					);
-				}
-				loadMessages();
-				refreshOpencodeSessions();
-				// Refresh chat history to pick up auto-generated session titles
-				refreshChatHistory();
+				// Invalidate cache and force refresh on idle - defer to avoid blocking
+				startTransition(() => {
+					if (effectiveOpencodeBaseUrl && activeSessionId) {
+						invalidateMessageCache(
+							effectiveOpencodeBaseUrl,
+							activeSessionId,
+							opencodeDirectory,
+						);
+					}
+					loadMessages();
+					refreshOpencodeSessions();
+					// Refresh chat history to pick up auto-generated session titles
+					refreshChatHistory();
+				});
 			} else if (eventType === "session.busy") {
 				setChatState("sending");
 			}
@@ -2449,22 +2458,28 @@ export const SessionsApp = memo(function SessionsApp() {
 			if (eventType === "compaction.end" || eventType === "compaction_end") {
 				const props = event.properties as { success?: boolean } | null;
 				if (!props || props.success !== false) {
-					setLastCompactionAt(Date.now());
+					// Defer non-critical UI update
+					startTransition(() => {
+						setLastCompactionAt(Date.now());
+					});
 				}
 			}
 
 			// Refresh messages on any message event
 			if (eventType?.startsWith("message")) {
-				// Invalidate cache when messages change
-				if (effectiveOpencodeBaseUrl && activeSessionId) {
-					invalidateMessageCache(
-						effectiveOpencodeBaseUrl,
-						activeSessionId,
-						opencodeDirectory,
-					);
-				}
-				// Coalesce refreshes to avoid hammering the server during streaming updates.
-				requestMessageRefresh(1000);
+				// Defer cache invalidation and refresh to avoid blocking message handler
+				startTransition(() => {
+					// Invalidate cache when messages change
+					if (effectiveOpencodeBaseUrl && activeSessionId) {
+						invalidateMessageCache(
+							effectiveOpencodeBaseUrl,
+							activeSessionId,
+							opencodeDirectory,
+						);
+					}
+					// Coalesce refreshes to avoid hammering the server during streaming updates.
+					requestMessageRefresh(1000);
+				});
 			}
 
 			// Handle A2UI surface events
