@@ -3092,8 +3092,13 @@ export const SessionsApp = memo(function SessionsApp() {
 		// In Main Chat mode, we might need to create a session first
 		// In regular mode, we need a session ID
 		if (!mainChatActive && !selectedChatSessionId) return;
+
+		// Use the ref value directly to avoid race conditions with debounced state sync.
+		// The user may type and press Enter before the 100ms debounce fires.
+		const currentInput = messageInputRef.current.trim();
+
 		if (
-			!messageInput.trim() &&
+			!currentInput &&
 			pendingUploads.length === 0 &&
 			fileAttachments.length === 0
 		)
@@ -3112,7 +3117,7 @@ export const SessionsApp = memo(function SessionsApp() {
 		const currentFileAttachments = [...fileAttachments];
 
 		// Build message text with uploaded file paths
-		let messageText = messageInput.trim();
+		let messageText = currentInput;
 		if (pendingUploads.length > 0) {
 			const uploadPrefix =
 				pendingUploads.length === 1
