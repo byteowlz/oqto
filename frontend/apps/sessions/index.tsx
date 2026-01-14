@@ -161,6 +161,7 @@ import {
 	XCircle,
 } from "lucide-react";
 import {
+	Profiler,
 	Suspense,
 	lazy,
 	memo,
@@ -174,6 +175,15 @@ import {
 	useTransition,
 } from "react";
 import { toast } from "sonner";
+
+function isPerfDebugEnabled(): boolean {
+	if (!import.meta.env.DEV) return false;
+	try {
+		return localStorage.getItem("debug:perf") === "1";
+	} catch {
+		return false;
+	}
+}
 
 const PreviewView = lazy(() =>
 	import("@/apps/sessions/PreviewView").then((mod) => ({
@@ -246,7 +256,174 @@ type ActiveView =
 	| "voice"
 	| "settings"
 	| "canvas";
+
 type ExpandedView = "preview" | "canvas" | "memories" | "terminal" | null;
+
+type ChatMessagesPaneProps = {
+	messages: OpenCodeMessageWithParts[];
+	messagesLoading: boolean;
+	selectedChatSessionId: string | undefined;
+	sessionHadMessages: boolean;
+	hasHiddenMessages: boolean;
+	messageGroupsLength: number;
+	visibleGroups: MessageGroup[];
+	visibleGroupCount: number;
+	a2uiByGroupIndex: Map<number, A2UISurfaceState[]>;
+	locale: "de" | "en";
+	noMessagesText: string;
+	persona?: Persona | null;
+	workspaceName?: string | null;
+	readableId?: string | null;
+	workspaceDirectory?: string;
+	onFork?: (messageId: string) => void;
+	onScroll: () => void;
+	messagesContainerRef: { current: HTMLDivElement | null };
+	messagesEndRef: { current: HTMLDivElement | null };
+	showScrollToBottom: boolean;
+	scrollToBottom: (behavior?: ScrollBehavior) => void;
+	loadMoreMessages: () => void;
+	onA2UIAction?: (action: A2UIUserAction) => void;
+};
+
+const ChatMessagesPane = memo(function ChatMessagesPane({
+	messages,
+	messagesLoading,
+	selectedChatSessionId,
+	sessionHadMessages,
+	hasHiddenMessages,
+	messageGroupsLength,
+	visibleGroups,
+	visibleGroupCount,
+	a2uiByGroupIndex,
+	locale,
+	noMessagesText,
+	persona,
+	workspaceName,
+	readableId,
+	workspaceDirectory,
+	onFork,
+	onScroll,
+	messagesContainerRef,
+	messagesEndRef,
+	showScrollToBottom,
+	scrollToBottom,
+	loadMoreMessages,
+	onA2UIAction,
+}: ChatMessagesPaneProps) {
+	return (
+		<>
+			<div
+				ref={messagesContainerRef}
+				onScroll={onScroll}
+				className="h-full bg-muted/30 border border-border p-2 sm:p-4 overflow-y-auto space-y-4 sm:space-y-6 scrollbar-hide"
+			>
+				{messages.length === 0 &&
+					messagesLoading &&
+					selectedChatSessionId &&
+					sessionHadMessages && (
+						<div className="space-y-4 sm:space-y-6 animate-pulse">
+							{/* User message skeleton */}
+							<div className="sm:ml-8 bg-primary/10 border border-primary/20">
+								<div className="flex items-center gap-2 px-2 sm:px-3 py-1.5 sm:py-2 border-b border-primary/20">
+									<div className="w-3 h-3 sm:w-4 sm:h-4 bg-primary/30" />
+									<div className="h-3 bg-primary/30 w-12" />
+									<div className="flex-1" />
+									<div className="h-2 bg-primary/20 w-10" />
+								</div>
+								<div className="px-2 sm:px-4 py-2 sm:py-3 space-y-2">
+									<div className="h-3 bg-primary/20 w-3/4" />
+									<div className="h-3 bg-primary/20 w-1/2" />
+								</div>
+							</div>
+							{/* Assistant message skeleton */}
+							<div className="sm:mr-8 bg-muted/50 border border-border">
+								<div className="flex items-center gap-2 px-2 sm:px-3 py-1.5 sm:py-2 border-b border-border">
+									<div className="w-3 h-3 sm:w-4 sm:h-4 bg-muted" />
+									<div className="h-3 bg-muted w-16" />
+									<div className="flex-1" />
+									<div className="h-2 bg-muted/70 w-10" />
+								</div>
+								<div className="px-2 sm:px-4 py-2 sm:py-3 space-y-2">
+									<div className="h-3 bg-muted w-full" />
+									<div className="h-3 bg-muted w-5/6" />
+									<div className="h-3 bg-muted w-4/5" />
+									<div className="h-3 bg-muted w-2/3" />
+								</div>
+							</div>
+							{/* Another user message skeleton */}
+							<div className="sm:ml-8 bg-primary/10 border border-primary/20">
+								<div className="flex items-center gap-2 px-2 sm:px-3 py-1.5 sm:py-2 border-b border-primary/20">
+									<div className="w-3 h-3 sm:w-4 sm:h-4 bg-primary/30" />
+									<div className="h-3 bg-primary/30 w-12" />
+									<div className="flex-1" />
+									<div className="h-2 bg-primary/20 w-10" />
+								</div>
+								<div className="px-2 sm:px-4 py-2 sm:py-3 space-y-2">
+									<div className="h-3 bg-primary/20 w-2/3" />
+								</div>
+							</div>
+						</div>
+					)}
+
+				{messages.length === 0 && !messagesLoading && !sessionHadMessages && (
+					<div className="text-sm text-muted-foreground">{noMessagesText}</div>
+				)}
+
+				{hasHiddenMessages && (
+					<button
+						type="button"
+						onClick={loadMoreMessages}
+						className="w-full py-2 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 border border-dashed border-border transition-colors"
+					>
+						{locale === "de"
+							? `${messageGroupsLength - visibleGroupCount} altere Nachrichten laden...`
+							: `Load ${messageGroupsLength - visibleGroupCount} older messages...`}
+					</button>
+				)}
+
+				{/* Message groups with A2UI surfaces embedded */}
+				{visibleGroups.map((group, groupIndex) => (
+					<div
+						key={
+							group.messages[0]?.info.id || `${group.role}-${group.startIndex}`
+						}
+					>
+						{/* Session divider for Main Chat threaded view */}
+						{group.isNewSession && group.sessionTitle && (
+							<SessionDivider title={group.sessionTitle} />
+						)}
+						<MessageGroupCard
+							group={group}
+							persona={persona}
+							workspaceName={workspaceName}
+							readableId={readableId}
+							workspaceDirectory={workspaceDirectory}
+							onFork={onFork}
+							locale={locale}
+							a2uiSurfaces={a2uiByGroupIndex.get(groupIndex)}
+							onA2UIAction={onA2UIAction}
+							messageId={group.messages[0]?.info.id}
+						/>
+					</div>
+				))}
+
+				<div ref={messagesEndRef} data-messages-end />
+			</div>
+
+			{/* Jump to bottom button */}
+			{showScrollToBottom && (
+				<button
+					type="button"
+					onClick={() => scrollToBottom()}
+					className="absolute bottom-2 left-2 right-2 sm:left-1/2 sm:-translate-x-1/2 sm:right-auto sm:w-auto z-50 flex items-center justify-center gap-2 px-3 py-2 bg-primary hover:bg-primary/90 text-primary-foreground text-sm font-medium shadow-lg"
+				>
+					<ArrowDown className="w-4 h-4" />
+					<span className="sm:inline">Jump to bottom</span>
+				</button>
+			)}
+		</>
+	);
+});
 
 function groupMessages(messages: OpenCodeMessageWithParts[]): MessageGroup[] {
 	const groups: MessageGroup[] = [];
@@ -476,18 +653,56 @@ export function SessionsApp() {
 	}, [messages]);
 	const [messageInput, setMessageInput] = useState("");
 
-	// Helper to set message input and resize textarea
+	const perfEnabled = isPerfDebugEnabled();
+	const perfReasonRef = useRef<string>("");
+	const onProfilerRender = useCallback(
+		(
+			id: string,
+			phase: "mount" | "update" | "nested-update",
+			actualDuration: number,
+			baseDuration: number,
+			startTime: number,
+			commitTime: number,
+		) => {
+			if (!perfEnabled) return;
+			if (actualDuration < 16) return;
+			console.debug("[perf] render", {
+				id,
+				phase,
+				actualDuration: Math.round(actualDuration),
+				baseDuration: Math.round(baseDuration),
+				reason: perfReasonRef.current,
+				startTime: Math.round(startTime),
+				commitTime: Math.round(commitTime),
+			});
+			perfReasonRef.current = "";
+		},
+		[perfEnabled],
+	);
+
+	const chatInputResizeRef = useRef<{
+		raf: number | null;
+		value: string;
+	}>({ raf: null, value: "" });
+
+	// Helper to set message input and resize textarea.
+	// Coalesce resize work to a single RAF to avoid reflow storms while typing.
 	const setMessageInputWithResize = useCallback((value: string) => {
 		setMessageInput(value);
-		requestAnimationFrame(() => {
-			if (chatInputRef.current) {
-				const textarea = chatInputRef.current;
-				if (!value) {
-					textarea.style.height = "36px";
-				} else {
-					textarea.style.height = "36px";
-					textarea.style.height = `${Math.min(textarea.scrollHeight, 200)}px`;
-				}
+		chatInputResizeRef.current.value = value;
+
+		if (chatInputResizeRef.current.raf !== null) return;
+
+		chatInputResizeRef.current.raf = requestAnimationFrame(() => {
+			chatInputResizeRef.current.raf = null;
+			const textarea = chatInputRef.current;
+			if (!textarea) return;
+
+			const currentValue = chatInputResizeRef.current.value;
+			// Reset to base height first, then expand if needed.
+			textarea.style.height = "36px";
+			if (currentValue) {
+				textarea.style.height = `${Math.min(textarea.scrollHeight, 200)}px`;
 			}
 		});
 	}, []);
@@ -842,7 +1057,12 @@ export function SessionsApp() {
 	});
 
 	useEffect(() => {
-		setLastCompactionAt(null);
+		// Reset compaction marker when switching between Main Chat and session view.
+		if (mainChatActive) {
+			setLastCompactionAt(null);
+		} else {
+			setLastCompactionAt(null);
+		}
 	}, [mainChatActive]);
 
 	// Track if we're on mobile layout (below lg breakpoint = 1024px)
@@ -3059,6 +3279,7 @@ export function SessionsApp() {
 	// Memoized input change handler to prevent re-renders
 	const handleInputChange = useCallback(
 		(e: React.ChangeEvent<HTMLTextAreaElement>) => {
+			perfReasonRef.current = "input";
 			const value = e.target.value;
 			setMessageInputWithResize(value);
 
@@ -3604,122 +3825,34 @@ export function SessionsApp() {
 						</div>
 					</div>
 				) : (
-					<>
-						<div
-							ref={messagesContainerRef}
-							onScroll={handleScroll}
-							className="h-full bg-muted/30 border border-border p-2 sm:p-4 overflow-y-auto space-y-4 sm:space-y-6 scrollbar-hide"
-						>
-							{messages.length === 0 &&
-								messagesLoading &&
-								selectedChatSessionId &&
-								sessionsWithMessagesRef.current.has(selectedChatSessionId) && (
-									<div className="space-y-4 sm:space-y-6 animate-pulse">
-										{/* User message skeleton */}
-										<div className="sm:ml-8 bg-primary/10 border border-primary/20">
-											<div className="flex items-center gap-2 px-2 sm:px-3 py-1.5 sm:py-2 border-b border-primary/20">
-												<div className="w-3 h-3 sm:w-4 sm:h-4 bg-primary/30" />
-												<div className="h-3 bg-primary/30 w-12" />
-												<div className="flex-1" />
-												<div className="h-2 bg-primary/20 w-10" />
-											</div>
-											<div className="px-2 sm:px-4 py-2 sm:py-3 space-y-2">
-												<div className="h-3 bg-primary/20 w-3/4" />
-												<div className="h-3 bg-primary/20 w-1/2" />
-											</div>
-										</div>
-										{/* Assistant message skeleton */}
-										<div className="sm:mr-8 bg-muted/50 border border-border">
-											<div className="flex items-center gap-2 px-2 sm:px-3 py-1.5 sm:py-2 border-b border-border">
-												<div className="w-3 h-3 sm:w-4 sm:h-4 bg-muted" />
-												<div className="h-3 bg-muted w-16" />
-												<div className="flex-1" />
-												<div className="h-2 bg-muted/70 w-10" />
-											</div>
-											<div className="px-2 sm:px-4 py-2 sm:py-3 space-y-2">
-												<div className="h-3 bg-muted w-full" />
-												<div className="h-3 bg-muted w-5/6" />
-												<div className="h-3 bg-muted w-4/5" />
-												<div className="h-3 bg-muted w-2/3" />
-											</div>
-										</div>
-										{/* Another user message skeleton */}
-										<div className="sm:ml-8 bg-primary/10 border border-primary/20">
-											<div className="flex items-center gap-2 px-2 sm:px-3 py-1.5 sm:py-2 border-b border-primary/20">
-												<div className="w-3 h-3 sm:w-4 sm:h-4 bg-primary/30" />
-												<div className="h-3 bg-primary/30 w-12" />
-												<div className="flex-1" />
-												<div className="h-2 bg-primary/20 w-10" />
-											</div>
-											<div className="px-2 sm:px-4 py-2 sm:py-3 space-y-2">
-												<div className="h-3 bg-primary/20 w-2/3" />
-											</div>
-										</div>
-									</div>
-								)}
-							{messages.length === 0 &&
-								!messagesLoading &&
-								!(
-									selectedChatSessionId &&
-									sessionsWithMessagesRef.current.has(selectedChatSessionId)
-								) && (
-									<div className="text-sm text-muted-foreground">
-										{t.noMessages}
-									</div>
-								)}
-							{hasHiddenMessages && (
-								<button
-									type="button"
-									onClick={loadMoreMessages}
-									className="w-full py-2 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 border border-dashed border-border transition-colors"
-								>
-									{locale === "de"
-										? `${messageGroups.length - visibleGroupCount} altere Nachrichten laden...`
-										: `Load ${messageGroups.length - visibleGroupCount} older messages...`}
-								</button>
-							)}
-							{/* Message groups with A2UI surfaces embedded */}
-							{visibleGroups.map((group, groupIndex) => (
-								<div
-									key={
-										group.messages[0]?.info.id ||
-										`${group.role}-${group.startIndex}`
-									}
-								>
-									{/* Session divider for Main Chat threaded view */}
-									{group.isNewSession && group.sessionTitle && (
-										<SessionDivider title={group.sessionTitle} />
-									)}
-									<MessageGroupCard
-										group={group}
-										persona={selectedSession?.persona}
-										workspaceName={workspaceName}
-										readableId={readableId}
-										workspaceDirectory={opencodeDirectory}
-										onFork={handleForkSession}
-										locale={locale}
-										a2uiSurfaces={a2uiByGroupIndex.get(groupIndex)}
-										onA2UIAction={handleA2UIAction}
-										messageId={group.messages[0]?.info.id}
-									/>
-								</div>
-							))}
-
-							<div ref={messagesEndRef} data-messages-end />
-						</div>
-
-						{/* Jump to bottom button */}
-						{showScrollToBottom && (
-							<button
-								type="button"
-								onClick={() => scrollToBottom()}
-								className="absolute bottom-2 left-2 right-2 sm:left-1/2 sm:-translate-x-1/2 sm:right-auto sm:w-auto z-50 flex items-center justify-center gap-2 px-3 py-2 bg-primary hover:bg-primary/90 text-primary-foreground text-sm font-medium shadow-lg"
-							>
-								<ArrowDown className="w-4 h-4" />
-								<span className="sm:inline">Jump to bottom</span>
-							</button>
+					<ChatMessagesPane
+						messages={messages}
+						messagesLoading={messagesLoading}
+						selectedChatSessionId={selectedChatSessionId ?? undefined}
+						sessionHadMessages={Boolean(
+							selectedChatSessionId &&
+								sessionsWithMessagesRef.current.has(selectedChatSessionId),
 						)}
-					</>
+						hasHiddenMessages={hasHiddenMessages}
+						messageGroupsLength={messageGroups.length}
+						visibleGroups={visibleGroups}
+						visibleGroupCount={visibleGroupCount}
+						a2uiByGroupIndex={a2uiByGroupIndex}
+						locale={locale}
+						noMessagesText={t.noMessages}
+						persona={selectedSession?.persona}
+						workspaceName={workspaceName}
+						readableId={readableId}
+						workspaceDirectory={opencodeDirectory}
+						onFork={handleForkSession}
+						onScroll={handleScroll}
+						messagesContainerRef={messagesContainerRef}
+						messagesEndRef={messagesEndRef}
+						showScrollToBottom={showScrollToBottom}
+						scrollToBottom={scrollToBottom}
+						loadMoreMessages={loadMoreMessages}
+						onA2UIAction={handleA2UIAction}
+					/>
 				)}
 			</div>
 
@@ -4115,6 +4248,7 @@ export function SessionsApp() {
 		</Select>
 	) : null;
 	const persona = selectedSession?.persona;
+
 	const SessionHeader = (
 		<div className="pb-3 mb-3 border-b border-border">
 			<div className="flex items-center justify-between">
@@ -4175,7 +4309,7 @@ export function SessionsApp() {
 		</div>
 	);
 
-	return (
+	const app = (
 		<div className="flex flex-col h-full min-h-0 p-1 sm:p-4 md:p-6 gap-1 sm:gap-4">
 			{/* Mobile layout: single panel with tabs */}
 			<div className="flex-1 min-h-0 flex flex-col lg:hidden">
@@ -4385,9 +4519,9 @@ export function SessionsApp() {
 							</div>
 						</div>
 					)}
-					{/* Terminal only rendered in mobile layout when isMobileLayout is true */}
-					{isMobileLayout && (
-						<div className={activeView === "terminal" ? "h-full" : "hidden"}>
+					{/* Only mount the terminal when visible (terminal rendering is expensive). */}
+					{isMobileLayout && activeView === "terminal" && (
+						<div className="h-full">
 							<Suspense fallback={viewLoadingFallback}>
 								<TerminalView workspacePath={resumeWorkspacePath} />
 							</Suspense>
@@ -4820,13 +4954,9 @@ export function SessionsApp() {
 												</div>
 											</div>
 										)}
-										{/* Terminal only rendered in desktop layout when isMobileLayout is false */}
-										{!isMobileLayout && (
-											<div
-												className={
-													activeView === "terminal" ? "h-full" : "hidden"
-												}
-											>
+										{/* Only mount the terminal when visible (terminal rendering is expensive). */}
+										{!isMobileLayout && activeView === "terminal" && (
+											<div className="h-full">
 												<div className="flex flex-col h-full overflow-hidden">
 													<div className="flex items-center justify-between px-2 py-1 border-b border-border bg-muted/30">
 														<span className="text-xs text-muted-foreground">
@@ -4851,9 +4981,7 @@ export function SessionsApp() {
 													</div>
 													<div className="flex-1 min-h-0">
 														<Suspense fallback={viewLoadingFallback}>
-															<TerminalView
-																workspacePath={resumeWorkspacePath}
-															/>
+															<TerminalView workspacePath={resumeWorkspacePath} />
 														</Suspense>
 													</div>
 												</div>
@@ -4885,6 +5013,14 @@ export function SessionsApp() {
 			{/* Voice mode overlay - mobile only */}
 			{mobileVoiceOverlay}
 		</div>
+	);
+
+	return perfEnabled ? (
+		<Profiler id="SessionsApp" onRender={onProfilerRender}>
+			{app}
+		</Profiler>
+	) : (
+		app
 	);
 }
 

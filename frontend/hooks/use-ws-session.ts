@@ -165,8 +165,37 @@ export function useWsSession(
 		client.subscribeSession(sessionId);
 		setIsSubscribed(true);
 
+		let deltaTimer: ReturnType<typeof setTimeout> | null = null;
+		let deltaLastEmitAt = 0;
+		let deltaPending = false;
+
+		const emitMessageUpdated = () => {
+			onEventRef.current({ type: "message.updated", sessionId });
+		};
+
+		const scheduleMessageUpdated = (minIntervalMs: number) => {
+			deltaPending = true;
+			if (deltaTimer) return;
+
+			const elapsed = Date.now() - deltaLastEmitAt;
+			const wait = Math.max(0, minIntervalMs - elapsed);
+			deltaTimer = setTimeout(() => {
+				deltaTimer = null;
+				if (!deltaPending) return;
+				deltaPending = false;
+				deltaLastEmitAt = Date.now();
+				emitMessageUpdated();
+			}, wait);
+		};
+
 		// Handle events for this session
 		const unsubscribe = client.onSessionEvent(sessionId, (event: WsEvent) => {
+			// Deltas can come in extremely frequently; throttle them to keep typing responsive.
+			if (event.type === "text_delta" || event.type === "thinking_delta") {
+				scheduleMessageUpdated(250);
+				return;
+			}
+
 			const mapped = mapWsEventToSessionEvent(event, sessionId);
 			if (mapped) {
 				onEventRef.current(mapped);
@@ -197,6 +226,10 @@ export function useWsSession(
 			unsubscribe();
 			client.unsubscribeSession(sessionId);
 			setIsSubscribed(false);
+			if (deltaTimer) {
+				clearTimeout(deltaTimer);
+				deltaTimer = null;
+			}
 		};
 	}, [
 		sessionId,
@@ -477,10 +510,41 @@ export function useWsSessionEvents(
 			properties: { mode: "ws", reason: "websocket" },
 		});
 
+		let deltaTimer: ReturnType<typeof setTimeout> | null = null;
+		let deltaLastEmitAt = 0;
+		let deltaPending = false;
+
+		const scheduleLegacyMessageUpdated = (sessionId: string, minIntervalMs: number) => {
+			deltaPending = true;
+			if (deltaTimer) return;
+
+			const elapsed = Date.now() - deltaLastEmitAt;
+			const wait = Math.max(0, minIntervalMs - elapsed);
+			deltaTimer = setTimeout(() => {
+				deltaTimer = null;
+				if (!deltaPending) return;
+				deltaPending = false;
+				deltaLastEmitAt = Date.now();
+				onEventRef.current({
+					type: "message.updated",
+					properties: { sessionId },
+				});
+			}, wait);
+		};
+
 		// Handle events for this session
 		const unsubscribe = client.onSessionEvent(
 			workspaceSessionId,
 			(event: WsEvent) => {
+				if (event.type === "text_delta" || event.type === "thinking_delta") {
+					const sessionId =
+						"session_id" in event
+							? (event.session_id as string)
+							: workspaceSessionId;
+					scheduleLegacyMessageUpdated(sessionId, 250);
+					return;
+				}
+
 				const legacy = mapWsEventToLegacyEvent(event);
 				if (legacy) {
 					onEventRef.current(legacy);
@@ -492,6 +556,10 @@ export function useWsSessionEvents(
 			unsubscribe();
 			client.unsubscribeSession(workspaceSessionId);
 			setIsSubscribed(false);
+			if (deltaTimer) {
+				clearTimeout(deltaTimer);
+				deltaTimer = null;
+			}
 		};
 	}, [workspaceSessionId, enabled, client]);
 

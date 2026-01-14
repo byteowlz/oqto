@@ -162,6 +162,9 @@ export function useVoiceMode(options: UseVoiceModeOptions): UseVoiceModeReturn {
 	const interruptBackoffTimerRef = useRef<number | null>(null);
 	const ttsStartedAtRef = useRef<number | null>(null);
 
+	// Use word array instead of string concatenation for O(1) word accumulation
+	const liveWordsRef = useRef<string[]>([]);
+
 	// Apply config defaults on mount
 	useEffect(() => {
 		if (config) {
@@ -194,7 +197,19 @@ export function useVoiceMode(options: UseVoiceModeOptions): UseVoiceModeReturn {
 					// localStorage overrides are loaded via loadVisualizerVoices but we
 					// want config to be authoritative - user can change in UI which saves to localStorage
 					// For now, always use config values on load
-					console.log("[Voice] Applying config visualizer voices:", fromConfig);
+					try {
+						if (
+							import.meta.env.DEV &&
+							localStorage.getItem("debug:voice") === "1"
+						) {
+							console.debug(
+								"[Voice] Applying config visualizer voices:",
+								fromConfig,
+							);
+						}
+					} catch {
+						// ignore
+					}
 					return fromConfig;
 				});
 			}
@@ -216,11 +231,17 @@ export function useVoiceMode(options: UseVoiceModeOptions): UseVoiceModeReturn {
 		const vizVoice = visualizerVoices[settings.visualizer];
 		const tts = ttsRef.current;
 		if (vizVoice && tts?.isConnected()) {
-			console.log(
-				"[Voice] Switching to visualizer voice:",
-				settings.visualizer,
-				vizVoice,
-			);
+			try {
+				if (import.meta.env.DEV && localStorage.getItem("debug:voice") === "1") {
+					console.debug(
+						"[Voice] Switching to visualizer voice:",
+						settings.visualizer,
+						vizVoice,
+					);
+				}
+			} catch {
+				// ignore
+			}
 
 			// Stop current playback and capture any pending text
 			const pendingTexts = tts.stopPlayback();
@@ -298,6 +319,8 @@ export function useVoiceMode(options: UseVoiceModeOptions): UseVoiceModeReturn {
 			if (!text.trim()) return;
 
 			console.log("[Voice] Final transcript:", text);
+			// Clear word array and UI state
+			liveWordsRef.current = [];
 			setLiveTranscript("");
 			setVoiceState("processing");
 
@@ -355,7 +378,9 @@ export function useVoiceMode(options: UseVoiceModeOptions): UseVoiceModeReturn {
 							return;
 						}
 					}
-					setLiveTranscript((prev) => `${prev ? `${prev} ` : ""}${word}`);
+					// O(1) array push instead of O(n) string concatenation
+					liveWordsRef.current.push(word);
+					setLiveTranscript(liveWordsRef.current.join(" "));
 
 					// Check for interrupt-by-speaking while TTS is playing
 					if (
@@ -498,6 +523,7 @@ export function useVoiceMode(options: UseVoiceModeOptions): UseVoiceModeReturn {
 	const stop = useCallback(() => {
 		setIsActive(false);
 		setVoiceState("idle");
+		liveWordsRef.current = [];
 		setLiveTranscript("");
 		setVadProgress(0);
 
@@ -531,9 +557,10 @@ export function useVoiceMode(options: UseVoiceModeOptions): UseVoiceModeReturn {
 
 			// Keep listening for interrupt-by-speaking (if enabled)
 			// Only stop listening if interrupt is disabled
-			if (settings.micMuted) {
+			// Note: we use settingsRef here to avoid stale closure issues
+			if (settingsRef.current.micMuted) {
 				sttRef.current?.stopListening();
-			} else if (settings.interruptWordCount <= 0) {
+			} else if (settingsRef.current.interruptWordCount <= 0) {
 				sttRef.current?.stopListening();
 			} else {
 				// Make sure we're listening for potential interrupt
@@ -546,7 +573,7 @@ export function useVoiceMode(options: UseVoiceModeOptions): UseVoiceModeReturn {
 			interruptWordCountRef.current = 0;
 			await ttsRef.current.speak(text);
 		},
-		[isActive, settings.interruptWordCount],
+		[isActive],
 	);
 
 	// Settings setters

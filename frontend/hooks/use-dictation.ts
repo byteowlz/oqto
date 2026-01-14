@@ -3,6 +3,8 @@
  *
  * Unlike voice mode, dictation only does STT and appends to a text input.
  * It doesn't trigger TTS responses - it's just for typing by speaking.
+ *
+ * Performance: Uses word array instead of string concatenation to avoid O(n^2) growth.
  */
 
 import { voiceProxyWsUrl } from "@/lib/control-plane-client";
@@ -46,8 +48,9 @@ export function useDictation(options: UseDictationOptions): UseDictationReturn {
 
 	const sttRef = useRef<STTService | null>(null);
 	const smoothVolumeRef = useRef(0);
-	// Track the live transcript in a ref to avoid race conditions between VAD final and manual stop
-	const liveTranscriptRef = useRef("");
+
+	// Use word array instead of string concatenation (O(1) push vs O(n) concat)
+	const liveWordsRef = useRef<string[]>([]);
 
 	const [isActive, setIsActive] = useState(false);
 	const [liveTranscript, setLiveTranscript] = useState("");
@@ -94,7 +97,7 @@ export function useDictation(options: UseDictationOptions): UseDictationReturn {
 		if (!text.trim()) return;
 		console.log("[Dictation] Final transcript:", text);
 		// Clear both state and ref to prevent double-submission on stop
-		liveTranscriptRef.current = "";
+		liveWordsRef.current = [];
 		setLiveTranscript("");
 		onTranscriptRef.current(text);
 	}, []);
@@ -111,22 +114,22 @@ export function useDictation(options: UseDictationOptions): UseDictationReturn {
 			sttRef.current = new STTService(voiceProxyWsUrl("stt"), timeout);
 			sttRef.current.setCallbacks({
 				onWord: (word) => {
-					// Update ref immediately (always accurate)
-					const newTranscript = `${liveTranscriptRef.current ? `${liveTranscriptRef.current} ` : ""}${word}`;
-					liveTranscriptRef.current = newTranscript;
+					// O(1) array push instead of O(n) string concatenation
+					liveWordsRef.current.push(word);
 
 					// Throttle React state updates to max 10/sec to reduce re-renders
 					const now = Date.now();
 					if (now - lastTranscriptUpdateRef.current >= 100) {
 						lastTranscriptUpdateRef.current = now;
-						setLiveTranscript(newTranscript);
+						// Only join when updating UI (single allocation)
+						setLiveTranscript(liveWordsRef.current.join(" "));
 					} else if (!pendingTranscriptUpdateRef.current) {
 						// Schedule update for end of throttle window
 						pendingTranscriptUpdateRef.current = window.setTimeout(
 							() => {
 								pendingTranscriptUpdateRef.current = null;
 								lastTranscriptUpdateRef.current = Date.now();
-								setLiveTranscript(liveTranscriptRef.current);
+								setLiveTranscript(liveWordsRef.current.join(" "));
 							},
 							100 - (now - lastTranscriptUpdateRef.current),
 						);
@@ -172,16 +175,18 @@ export function useDictation(options: UseDictationOptions): UseDictationReturn {
 		console.log("[Dictation] Stopping");
 		// Use ref to check for pending transcript - avoids race condition with handleFinalTranscript
 		// which may have already cleared the transcript via VAD timeout
-		const pendingTranscript = liveTranscriptRef.current.trim();
-		if (pendingTranscript) {
-			console.log(
-				"[Dictation] Flushing pending transcript:",
-				pendingTranscript,
-			);
-			onTranscriptRef.current(pendingTranscript);
+		if (liveWordsRef.current.length > 0) {
+			const pendingTranscript = liveWordsRef.current.join(" ").trim();
+			if (pendingTranscript) {
+				console.log(
+					"[Dictation] Flushing pending transcript:",
+					pendingTranscript,
+				);
+				onTranscriptRef.current(pendingTranscript);
+			}
 		}
 		// Clear both ref and state
-		liveTranscriptRef.current = "";
+		liveWordsRef.current = [];
 		setLiveTranscript("");
 		setIsActive(false);
 		setVadProgress(0);
