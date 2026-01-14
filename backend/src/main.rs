@@ -1608,15 +1608,20 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
                 .to_string()
         });
 
-    // User data path: CLI overrides config, config overrides default
+    // User data path: CLI overrides config, config overrides default.
+    // In local mode, default to the standard data directory (~/.local/share/octo)
+    // so that Main Chat workspace paths are properly allowed.
     let user_data_path = if cmd.user_data_path != std::path::PathBuf::from("./data") {
         // CLI explicitly set
         cmd.user_data_path.clone()
     } else if let Some(ref config_path) = ctx.config.container.user_data_path {
         // Use config file value
         std::path::PathBuf::from(shellexpand::tilde(config_path).to_string())
+    } else if local_mode {
+        // In local mode, use the standard data directory so Main Chat paths are allowed
+        ctx.paths.data_dir.clone()
     } else {
-        // Use CLI default
+        // Use CLI default for container mode
         cmd.user_data_path.clone()
     };
     let user_data_path = user_data_path

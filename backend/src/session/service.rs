@@ -324,10 +324,11 @@ impl SessionService {
         let workspace_root = self.workspace_root();
         roots.push(workspace_root.canonicalize().unwrap_or(workspace_root));
 
-        if self.config.runtime_mode == RuntimeMode::Container {
-            let data_root = std::path::PathBuf::from(&self.config.user_data_path);
-            roots.push(data_root.canonicalize().unwrap_or(data_root));
-        }
+        // Always include the data directory (user_data_path) as an allowed root.
+        // This is needed because Main Chat stores its data in the data directory
+        // (e.g., ~/.local/share/octo/users/main) rather than the workspace directory.
+        let data_root = std::path::PathBuf::from(&self.config.user_data_path);
+        roots.push(data_root.canonicalize().unwrap_or(data_root));
 
         roots
     }
