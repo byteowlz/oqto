@@ -2,6 +2,7 @@ import { AgentPicker } from "@/components/agent-picker";
 import { AppProvider } from "@/components/app-context";
 import { CommandPalette } from "@/components/command-palette";
 import { MainChatEntry } from "@/components/main-chat";
+import { StatusBar } from "@/components/status-bar";
 import {
 	type AgentFilter,
 	type SearchMode,
@@ -3255,16 +3256,20 @@ function AppShell() {
 				className="flex-1 flex flex-col min-h-0 overflow-hidden"
 				style={{ backgroundColor: shellBg }}
 			>
-				<div
-					className={`flex-1 min-h-0 overflow-hidden pt-14 md:pt-0 transition-all duration-200 ${
-						sidebarCollapsed ? "md:pl-[4.5rem]" : "md:pl-[16.25rem]"
-					}`}
-				>
-					<div className="h-full w-full">
-						{ActiveComponent ? <ActiveComponent /> : <EmptyState />}
-					</div>
+			<div
+				className={`flex-1 min-h-0 overflow-hidden pt-14 md:pt-0 transition-all duration-200 flex flex-col ${
+					sidebarCollapsed ? "md:pl-[4.5rem]" : "md:pl-[16.25rem]"
+				}`}
+			>
+				<div className="flex-1 min-h-0 w-full">
+					{ActiveComponent ? <ActiveComponent /> : <EmptyState />}
+				</div>
+				{/* Status bar - hidden on mobile */}
+				<div className="hidden md:block flex-shrink-0">
+					<StatusBar />
 				</div>
 			</div>
+		</div>
 
 			{/* Loading bar */}
 			{barVisible && (
