@@ -18,6 +18,7 @@ import {
 	ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import { ContextWindowGauge } from "@/components/ui/context-window-gauge";
+import { ProviderIcon } from "@/components/ui/provider-icon";
 import {
 	type FileAttachment,
 	FileAttachmentChip,
@@ -4307,11 +4308,17 @@ export function SessionsApp() {
 						No matches
 					</SelectItem>
 				) : (
-					filteredModelOptions.map((option) => (
-						<SelectItem key={option.value} value={option.value}>
-							{option.label}
-						</SelectItem>
-					))
+					filteredModelOptions.map((option) => {
+						const provider = option.value.split("/")[0];
+						return (
+							<SelectItem key={option.value} value={option.value}>
+								<span className="flex items-center gap-2">
+									<ProviderIcon provider={provider} className="w-4 h-4 flex-shrink-0" />
+									<span>{option.label}</span>
+								</span>
+							</SelectItem>
+						);
+					})
 				)}
 			</SelectContent>
 		</Select>

@@ -4,6 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { ProviderIcon } from "@/components/ui/provider-icon";
 import {
 	Select,
 	SelectContent,
@@ -397,17 +398,21 @@ export function AgentSettingsView({
 										No matches
 									</SelectItem>
 								) : (
-									filteredModelOptions.map((option, index) => (
-										<SelectItem
-											key={`${option.value}-${index}`}
-											value={option.value}
-											className="text-xs"
-										>
-											<span className="truncate block max-w-[250px]">
-												{option.label}
-											</span>
-										</SelectItem>
-									))
+									filteredModelOptions.map((option, index) => {
+										const provider = option.value.split("/")[0];
+										return (
+											<SelectItem
+												key={`${option.value}-${index}`}
+												value={option.value}
+												className="text-xs"
+											>
+												<span className="flex items-center gap-2 max-w-[250px]">
+													<ProviderIcon provider={provider} className="w-4 h-4 flex-shrink-0" />
+													<span className="truncate">{option.label}</span>
+												</span>
+											</SelectItem>
+										);
+									})
 								)}
 							</SelectContent>
 						</Select>
