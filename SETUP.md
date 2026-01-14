@@ -510,6 +510,14 @@ Solution: Install opencode:
 curl -fsSL https://opencode.ai/install | bash
 ```
 
+### Permission prompts or errors not showing (UI)
+
+Symptoms: OpenCode requests permissions or hits errors, but the web UI shows nothing.
+
+Solution:
+- Update Octo to a recent build (the UI normalizes both `tool`/`input` and `permission_type`/`pattern` payload shapes).
+- Enable WebSocket debug logging: `localStorage.setItem("debug:ws", "1")`
+
 ### Permission denied (systemd)
 
 Error: `Failed to start service: Permission denied`

@@ -313,6 +313,18 @@ function mapWsEventToSessionEvent(
 		case "agent_connected":
 			return { type: "server.connected" };
 
+		case "error":
+			if ("message" in event) {
+				return {
+					type: "session.error",
+					sessionId,
+					errorType: "BackendError",
+					message: event.message,
+					details: event,
+				};
+			}
+			return null;
+
 		case "message_updated":
 		case "message_end":
 		case "text_delta":
@@ -598,6 +610,18 @@ function mapWsEventToLegacyEvent(event: WsEvent): LegacyEvent | null {
 
 		case "agent_connected":
 			return { type: "server.connected", properties: {} };
+
+		case "error":
+			return {
+				type: "session.error",
+				properties: {
+					sessionID: "session_id" in event ? event.session_id : undefined,
+					error: {
+						name: "BackendError",
+						data: { message: "message" in event ? event.message : "" },
+					},
+				},
+			};
 
 		case "message_updated":
 		case "message_end":

@@ -42,6 +42,34 @@ describe("session-events", () => {
 				}),
 			);
 		});
+
+		it("handles OpenCode Permission shape (tool/input)", () => {
+			const permission = normalizePermissionEvent({
+				properties: {
+					id: "perm-3",
+					sessionID: "ses-1",
+					tool: "bash",
+					title: "Run command",
+					input: { command: "ls -la" },
+					risk: "high",
+					time: { created: 123 },
+				},
+			});
+			expect(permission).toEqual(
+				expect.objectContaining({
+					id: "perm-3",
+					type: "bash",
+					title: "Run command",
+					pattern: "ls -la",
+				}),
+			);
+			expect(permission?.metadata).toEqual(
+				expect.objectContaining({
+					risk: "high",
+					input: { command: "ls -la" },
+				}),
+			);
+		});
 	});
 
 	describe("parseSessionErrorEvent", () => {
@@ -66,6 +94,17 @@ describe("session-events", () => {
 			expect(errorInfo).toEqual({
 				name: "UnknownError",
 				message: "Boom",
+			});
+		});
+
+		it("handles name/message fields", () => {
+			const errorInfo = parseSessionErrorEvent({
+				name: "BackendError",
+				message: "Something broke",
+			});
+			expect(errorInfo).toEqual({
+				name: "BackendError",
+				message: "Something broke",
 			});
 		});
 	});

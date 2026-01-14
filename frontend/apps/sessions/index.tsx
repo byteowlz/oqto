@@ -2442,8 +2442,11 @@ export const SessionsApp = memo(function SessionsApp() {
 			}
 
 			// Handle session errors
-			if (eventType === "session.error") {
-				const errorInfo = parseSessionErrorEvent(event.properties);
+			if (eventType === "session.error" || eventType === "error") {
+				const errorInfo =
+					typeof event.properties === "string"
+						? { name: "Error", message: event.properties }
+						: parseSessionErrorEvent(event.properties);
 				const errorName = errorInfo?.name ?? "Error";
 				const errorMessage = errorInfo?.message ?? "An unknown error occurred";
 				console.error("[Session Error]", errorName, errorMessage);
