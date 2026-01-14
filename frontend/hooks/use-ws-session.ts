@@ -10,7 +10,6 @@ import {
 	type WsEvent,
 	getWsClient,
 } from "@/lib/ws-client";
-import { useQueryClient } from "@tanstack/react-query";
 import {
 	useCallback,
 	useEffect,
@@ -18,7 +17,6 @@ import {
 	useState,
 	useSyncExternalStore,
 } from "react";
-import { openCodeKeys } from "./use-opencode";
 
 // ============================================================================
 // Connection State Hook
@@ -144,8 +142,7 @@ export function useWsSession(
 	},
 ) {
 	const client = getWsClient();
-	const queryClient = useQueryClient();
-	const { enabled = true, opencodeBaseUrl, activeSessionId } = options ?? {};
+	const { enabled = true } = options ?? {};
 
 	// Keep callback ref stable to avoid re-subscriptions
 	const onEventRef = useRef(onEvent);
@@ -201,18 +198,9 @@ export function useWsSession(
 				onEventRef.current(mapped);
 			}
 
-			// Invalidate query cache on message updates
-			if (opencodeBaseUrl && activeSessionId) {
-				if (
-					event.type === "message_updated" ||
-					event.type === "message_end" ||
-					event.type === "session_idle"
-				) {
-					queryClient.invalidateQueries({
-						queryKey: openCodeKeys.messages(opencodeBaseUrl, activeSessionId),
-					});
-				}
-			}
+			// Note: React Query cache invalidation removed - SessionsApp uses manual message loading
+			// via loadMessages() and requestMessageRefresh(), not useOpenCodeMessages hook.
+			// The event callback above handles notifying components of changes.
 		});
 
 		// Emit initial transport mode event
@@ -231,14 +219,7 @@ export function useWsSession(
 				deltaTimer = null;
 			}
 		};
-	}, [
-		sessionId,
-		enabled,
-		client,
-		queryClient,
-		opencodeBaseUrl,
-		activeSessionId,
-	]);
+	}, [sessionId, enabled, client]);
 
 	// Action methods
 	const sendMessage = useCallback(
