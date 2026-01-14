@@ -3256,20 +3256,20 @@ function AppShell() {
 				className="flex-1 flex flex-col min-h-0 overflow-hidden"
 				style={{ backgroundColor: shellBg }}
 			>
-			<div
-				className={`flex-1 min-h-0 overflow-hidden pt-14 md:pt-0 transition-all duration-200 flex flex-col ${
-					sidebarCollapsed ? "md:pl-[4.5rem]" : "md:pl-[16.25rem]"
-				}`}
-			>
-				<div className="flex-1 min-h-0 w-full">
-					{ActiveComponent ? <ActiveComponent /> : <EmptyState />}
-				</div>
-				{/* Status bar */}
-				<div className="flex-shrink-0">
-					<StatusBar />
+				<div
+					className={`flex-1 min-h-0 overflow-hidden pt-14 md:pt-0 transition-all duration-200 flex flex-col ${
+						sidebarCollapsed ? "md:pl-[4.5rem]" : "md:pl-[16.25rem]"
+					}`}
+				>
+					<div className="flex-1 min-h-0 w-full">
+						{ActiveComponent ? <ActiveComponent /> : <EmptyState />}
+					</div>
+					{/* Status bar */}
+					<div className="flex-shrink-0">
+						<StatusBar />
+					</div>
 				</div>
 			</div>
-		</div>
 
 			{/* Loading bar */}
 			{barVisible && (
