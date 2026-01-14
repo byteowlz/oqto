@@ -266,12 +266,12 @@ async fn handle_command(
             // Send message via HTTP to opencode
             let client = reqwest::Client::new();
             let url = format!(
-                "http://localhost:{}/session/message/async",
-                opencode_session.opencode_port
+                "http://localhost:{}/session/{}/prompt_async",
+                opencode_session.opencode_port, session_id
             );
 
             let request_body = serde_json::json!({
-                "message": message
+                "parts": [{"type": "text", "text": message}]
             });
 
             // Add directory header for workspace scoping
@@ -310,14 +310,30 @@ async fn handle_command(
             // Send parts via HTTP to opencode
             let client = reqwest::Client::new();
             let url = format!(
-                "http://localhost:{}/session/message/parts/async",
-                opencode_session.opencode_port
+                "http://localhost:{}/session/{}/prompt_async",
+                opencode_session.opencode_port, session_id
             );
+
+            // Convert WS parts to opencode prompt parts format
+            let opencode_parts: Vec<serde_json::Value> = parts
+                .iter()
+                .map(|p| match p {
+                    super::types::MessagePart::Text { text } => {
+                        serde_json::json!({"type": "text", "text": text})
+                    }
+                    super::types::MessagePart::Image { url } => {
+                        serde_json::json!({"type": "image", "url": url})
+                    }
+                    super::types::MessagePart::File { path } => {
+                        serde_json::json!({"type": "file", "path": path})
+                    }
+                })
+                .collect();
 
             let response = client
                 .post(&url)
                 .header("x-opencode-directory", &session.workspace_path)
-                .json(&serde_json::json!({ "parts": parts }))
+                .json(&serde_json::json!({ "parts": opencode_parts }))
                 .send()
                 .await?;
 
@@ -349,8 +365,8 @@ async fn handle_command(
             // Send abort via HTTP to opencode
             let client = reqwest::Client::new();
             let url = format!(
-                "http://localhost:{}/session/abort",
-                opencode_session.opencode_port
+                "http://localhost:{}/session/{}/abort",
+                opencode_session.opencode_port, session_id
             );
 
             let response = client
@@ -391,8 +407,8 @@ async fn handle_command(
             // Send permission reply via HTTP to opencode
             let client = reqwest::Client::new();
             let url = format!(
-                "http://localhost:{}/permission/{}",
-                opencode_session.opencode_port, permission_id
+                "http://localhost:{}/session/{}/permissions/{}",
+                opencode_session.opencode_port, session_id, permission_id
             );
 
             let result = if granted { "granted" } else { "denied" };
@@ -549,8 +565,8 @@ async fn handle_command(
             // Fetch messages from opencode
             let client = reqwest::Client::new();
             let url = format!(
-                "http://localhost:{}/session/messages",
-                opencode_session.opencode_port
+                "http://localhost:{}/session/{}/message",
+                opencode_session.opencode_port, session_id
             );
 
             let response = client
