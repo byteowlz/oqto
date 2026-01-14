@@ -47,6 +47,7 @@ import {
 	UserQuestionDialog,
 } from "@/components/ui/user-question-dialog";
 import {
+	DictationOverlay,
 	VoiceInputOverlay,
 	VoiceMenuButton,
 	type VoiceMode,
@@ -111,11 +112,11 @@ import {
 	sendMessageAsync,
 	sendPartsAsync,
 } from "@/lib/opencode-client";
-import { formatSessionDate, generateReadableId } from "@/lib/session-utils";
 import {
 	normalizePermissionEvent,
 	parseSessionErrorEvent,
 } from "@/lib/session-events";
+import { formatSessionDate, generateReadableId } from "@/lib/session-utils";
 import {
 	type SlashCommand,
 	builtInCommands,
@@ -1158,40 +1159,26 @@ export function SessionsApp() {
 		messageInputRef.current = messageInput;
 	}, [messageInput]);
 
-	const handleDictationTranscript = useCallback(
-		(text: string) => {
-			// Always append to the current value using the ref to avoid stale closures
-			const currentValue = messageInputRef.current;
-			setMessageInputWithResize(
-				currentValue ? `${currentValue} ${text}` : text,
-			);
-		},
-		[setMessageInputWithResize],
-	);
+	const handleDictationTranscript = useCallback((text: string) => {
+		// Always append to the current value using the ref to avoid stale closures.
+		// Keep the textarea stable during dictation; the dictation overlay is the input UI.
+		const currentValue = messageInputRef.current;
+		setMessageInput(currentValue ? `${currentValue} ${text}` : text);
+	}, []);
 
 	const dictation = useDictation({
 		config: features.voice ?? null,
 		onTranscript: handleDictationTranscript,
-		vadTimeoutMs: 3000, // Longer timeout for dictation (3s silence before auto-stop appending)
+		vadTimeoutMs: 3000,
+		autoSendOnFinal: true,
+		autoSendDelayMs: 50,
+		onAutoSend: () => {
+			const sendBtn = document.querySelector(
+				"[data-voice-send]",
+			) as HTMLButtonElement | null;
+			sendBtn?.click();
+		},
 	});
-
-	// Auto-resize textarea during dictation based on liveTranscript length
-	useEffect(() => {
-		if (!chatInputRef.current || !dictation.isActive) return;
-
-		const textarea = chatInputRef.current;
-		const transcript = dictation.liveTranscript;
-
-		if (!transcript) {
-			textarea.style.height = "36px";
-			return;
-		}
-
-		// Estimate height from transcript length (~50 chars per line at typical width)
-		const estimatedLines = Math.ceil(transcript.length / 50);
-		const estimatedHeight = Math.min(36 + (estimatedLines - 1) * 20, 200);
-		textarea.style.height = `${estimatedHeight}px`;
-	}, [dictation.isActive, dictation.liveTranscript]);
 
 	// Listen for voice commands from command palette and keyboard shortcuts
 	useVoiceCommandListener(
@@ -1384,9 +1371,7 @@ export function SessionsApp() {
 
 	const lastPreviewSessionKeyRef = useRef<string | null>(null);
 	useEffect(() => {
-		const nextKey = mainChatActive
-			? "main"
-			: selectedChatSessionId || "none";
+		const nextKey = mainChatActive ? "main" : selectedChatSessionId || "none";
 		if (lastPreviewSessionKeyRef.current === null) {
 			lastPreviewSessionKeyRef.current = nextKey;
 			return;
@@ -2374,8 +2359,7 @@ export function SessionsApp() {
 			if (eventType === "session.error") {
 				const errorInfo = parseSessionErrorEvent(event.properties);
 				const errorName = errorInfo?.name ?? "Error";
-				const errorMessage =
-					errorInfo?.message ?? "An unknown error occurred";
+				const errorMessage = errorInfo?.message ?? "An unknown error occurred";
 				console.error("[Session Error]", errorName, errorMessage);
 				toast.error(errorMessage, {
 					description: errorName !== "UnknownError" ? errorName : undefined,
@@ -3281,7 +3265,14 @@ export function SessionsApp() {
 		(e: React.ChangeEvent<HTMLTextAreaElement>) => {
 			perfReasonRef.current = "input";
 			const value = e.target.value;
-			setMessageInputWithResize(value);
+
+			// Keep textarea stable during dictation to avoid reflow storms.
+			if (dictation.isActive) {
+				setMessageInput(value);
+				e.target.style.height = "36px";
+			} else {
+				setMessageInputWithResize(value);
+			}
 
 			// Debounce draft persistence to localStorage (300ms)
 			if (draftSaveTimeoutRef.current) {
@@ -3312,7 +3303,12 @@ export function SessionsApp() {
 				setFileMentionQuery("");
 			}
 		},
-		[selectedChatSessionId, setDraft, setMessageInputWithResize],
+		[
+			selectedChatSessionId,
+			setDraft,
+			setMessageInputWithResize,
+			dictation.isActive,
+		],
 	);
 
 	// Memoized key down handler to prevent re-renders
@@ -3515,7 +3511,10 @@ export function SessionsApp() {
 					)}
 					<div className="flex-1 min-h-0">
 						<Suspense fallback={viewLoadingFallback}>
-							<MemoriesView workspacePath={resumeWorkspacePath} storeName={null} />
+							<MemoriesView
+								workspacePath={resumeWorkspacePath}
+								storeName={null}
+							/>
 						</Suspense>
 					</div>
 				</div>
@@ -3988,90 +3987,160 @@ export function SessionsApp() {
 								))}
 							</div>
 						)}
-						<textarea
-							ref={chatInputRef}
-							autoComplete="off"
-							autoCorrect="off"
-							autoCapitalize="sentences"
-							spellCheck={false}
-							enterKeyHint="send"
-							data-form-type="other"
-							placeholder={
-								dictation.isActive && dictation.liveTranscript
-									? dictation.liveTranscript
-									: isHistoryOnlySession
-										? locale === "de"
-											? "Nachricht zum Fortsetzen..."
-											: "Message to resume..."
-										: dictation.isActive
-											? locale === "de"
-												? "Sprechen Sie..."
-												: "Speak now..."
-											: t.inputPlaceholder
-							}
-							value={messageInput}
-							onChange={handleInputChange}
-							onKeyDown={handleInputKeyDown}
-							onPaste={(e) => {
-								// Handle pasted files (images, etc.)
-								const items = e.clipboardData?.items;
-								if (!items) return;
+						{features.voice && dictation.isActive ? (
+							<DictationOverlay
+								open
+								value={messageInput}
+								liveTranscript={dictation.liveTranscript}
+								placeholder={
+									locale === "de" ? "Sprechen Sie..." : "Speak now..."
+								}
+								vadProgress={dictation.vadProgress}
+								autoSend={dictation.autoSendEnabled}
+								onAutoSendChange={dictation.setAutoSendEnabled}
+								onStop={() => {
+									// Use cancel() to stop without auto-send - user clicked X
+									dictation.cancel();
+									requestAnimationFrame(() => {
+										setMessageInputWithResize(messageInputRef.current);
+									});
+								}}
+								onChange={handleInputChange}
+								onKeyDown={handleInputKeyDown}
+								onPaste={(e) => {
+									// Handle pasted files (images, etc.)
+									const items = e.clipboardData?.items;
+									if (!items) return;
 
-								const files: File[] = [];
-								let imageIndex = 0;
-								for (const item of Array.from(items)) {
-									if (item.kind === "file") {
-										const file = item.getAsFile();
-										if (file) {
-											// Rename generic clipboard image names to be unique
-											const isGenericName =
-												/^image\.(png|gif|jpg|jpeg|webp)$/i.test(file.name);
-											if (isGenericName) {
-												const ext = file.name.split(".").pop() || "png";
-												const uniqueName = `pasted-image-${Date.now()}-${imageIndex++}.${ext}`;
-												const renamedFile = new File([file], uniqueName, {
-													type: file.type,
-												});
-												files.push(renamedFile);
-											} else {
-												files.push(file);
+									const files: File[] = [];
+									let imageIndex = 0;
+									for (const item of Array.from(items)) {
+										if (item.kind === "file") {
+											const file = item.getAsFile();
+											if (file) {
+												// Rename generic clipboard image names to be unique
+												const isGenericName =
+													/^image\.(png|gif|jpg|jpeg|webp)$/i.test(file.name);
+												if (isGenericName) {
+													const ext = file.name.split(".").pop() || "png";
+													const uniqueName = `pasted-image-${Date.now()}-${imageIndex++}.${ext}`;
+													const renamedFile = new File([file], uniqueName, {
+														type: file.type,
+													});
+													files.push(renamedFile);
+												} else {
+													files.push(file);
+												}
 											}
 										}
 									}
-								}
 
-								if (files.length > 0) {
-									// Prevent default paste behavior for files
-									e.preventDefault();
-									// Create a FileList-like object and upload
-									const dataTransfer = new DataTransfer();
-									for (const file of files) {
-										dataTransfer.items.add(file);
+									if (files.length > 0) {
+										// Prevent default paste behavior for files
+										e.preventDefault();
+										// Create a FileList-like object and upload
+										const dataTransfer = new DataTransfer();
+										for (const file of files) {
+											dataTransfer.items.add(file);
+										}
+										handleFileUpload(dataTransfer.files);
 									}
-									handleFileUpload(dataTransfer.files);
+									// If no files, let the default paste behavior handle text
+								}}
+								onBlur={() => {
+									// Delay closing to allow click on popup items
+									setTimeout(() => setShowSlashPopup(false), 150);
+								}}
+								onFocus={(e) => {
+									// Scroll input into view on mobile when keyboard opens
+									setTimeout(() => {
+										e.target.scrollIntoView({
+											behavior: "smooth",
+											block: "nearest",
+										});
+									}, 300);
+								}}
+							/>
+						) : (
+							<textarea
+								ref={chatInputRef}
+								autoComplete="off"
+								autoCorrect="off"
+								autoCapitalize="sentences"
+								spellCheck={false}
+								enterKeyHint="send"
+								data-form-type="other"
+								placeholder={
+									isHistoryOnlySession
+										? locale === "de"
+											? "Nachricht zum Fortsetzen..."
+											: "Message to resume..."
+										: t.inputPlaceholder
 								}
-								// If no files, let the default paste behavior handle text
-							}}
-							onBlur={() => {
-								// Delay closing to allow click on popup items
-								setTimeout(() => setShowSlashPopup(false), 150);
-							}}
-							onFocus={(e) => {
-								// Show popup if input starts with /
-								if (messageInput.startsWith("/")) {
-									setShowSlashPopup(true);
-								}
-								// Scroll input into view on mobile when keyboard opens
-								setTimeout(() => {
-									e.target.scrollIntoView({
-										behavior: "smooth",
-										block: "nearest",
-									});
-								}, 300);
-							}}
-							rows={1}
-							className="w-full bg-transparent border-none outline-none text-foreground placeholder:text-muted-foreground text-sm resize-none py-1.5 leading-5 max-h-[200px] overflow-y-auto"
-						/>
+								value={messageInput}
+								onChange={handleInputChange}
+								onKeyDown={handleInputKeyDown}
+								onPaste={(e) => {
+									// Handle pasted files (images, etc.)
+									const items = e.clipboardData?.items;
+									if (!items) return;
+
+									const files: File[] = [];
+									let imageIndex = 0;
+									for (const item of Array.from(items)) {
+										if (item.kind === "file") {
+											const file = item.getAsFile();
+											if (file) {
+												// Rename generic clipboard image names to be unique
+												const isGenericName =
+													/^image\.(png|gif|jpg|jpeg|webp)$/i.test(file.name);
+												if (isGenericName) {
+													const ext = file.name.split(".").pop() || "png";
+													const uniqueName = `pasted-image-${Date.now()}-${imageIndex++}.${ext}`;
+													const renamedFile = new File([file], uniqueName, {
+														type: file.type,
+													});
+													files.push(renamedFile);
+												} else {
+													files.push(file);
+												}
+											}
+										}
+									}
+
+									if (files.length > 0) {
+										// Prevent default paste behavior for files
+										e.preventDefault();
+										// Create a FileList-like object and upload
+										const dataTransfer = new DataTransfer();
+										for (const file of files) {
+											dataTransfer.items.add(file);
+										}
+										handleFileUpload(dataTransfer.files);
+									}
+									// If no files, let the default paste behavior handle text
+								}}
+								onBlur={() => {
+									// Delay closing to allow click on popup items
+									setTimeout(() => setShowSlashPopup(false), 150);
+								}}
+								onFocus={(e) => {
+									// Show popup if input starts with /
+									if (messageInput.startsWith("/")) {
+										setShowSlashPopup(true);
+									}
+									// Scroll input into view on mobile when keyboard opens
+									setTimeout(() => {
+										e.target.scrollIntoView({
+											behavior: "smooth",
+											block: "nearest",
+										});
+									}, 300);
+								}}
+								rows={1}
+								className="w-full bg-transparent border-none outline-none text-foreground placeholder:text-muted-foreground text-sm resize-none py-1.5 leading-5 max-h-[200px] overflow-y-auto"
+							/>
+						)}
 					</div>
 					<Button
 						type="button"
@@ -4413,9 +4482,7 @@ export function SessionsApp() {
 						) : (
 							renderChatContent(true)
 						))}
-					{activeView === "files" && (
-						filesView
-					)}
+					{activeView === "files" && filesView}
 					{activeView === "tasks" && (
 						<div className="flex flex-col h-full overflow-hidden">
 							<TodoListView todos={latestTodos} emptyMessage={t.noTasks} />
@@ -4766,9 +4833,7 @@ export function SessionsApp() {
 										/>
 									</div>
 									<div className="flex-1 min-h-0 overflow-hidden">
-										{activeView === "files" && (
-											filesView
-										)}
+										{activeView === "files" && filesView}
 										{activeView === "tasks" && (
 											<div className="flex flex-col h-full overflow-hidden">
 												<TodoListView
@@ -4981,7 +5046,9 @@ export function SessionsApp() {
 													</div>
 													<div className="flex-1 min-h-0">
 														<Suspense fallback={viewLoadingFallback}>
-															<TerminalView workspacePath={resumeWorkspacePath} />
+															<TerminalView
+																workspacePath={resumeWorkspacePath}
+															/>
 														</Suspense>
 													</div>
 												</div>

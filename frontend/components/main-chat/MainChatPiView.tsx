@@ -23,6 +23,7 @@ import {
 import { ReadAloudButton } from "@/components/ui/read-aloud-button";
 import { SlashCommandPopup } from "@/components/ui/slash-command-popup";
 import { ToolCallCard } from "@/components/ui/tool-call-card";
+import { DictationOverlay } from "@/components/voice";
 import {
 	VoiceMenuButton,
 	type VoiceMode,
@@ -348,6 +349,14 @@ export function MainChatPiView({
 			setInput((prev) => (prev ? `${prev} ${text}` : text));
 		}, []),
 		vadTimeoutMs: features?.voice?.vad_timeout_ms,
+		autoSendOnFinal: true,
+		autoSendDelayMs: 50,
+		onAutoSend: () => {
+			const sendBtn = document.querySelector(
+				"[data-dictation-send]",
+			) as HTMLButtonElement | null;
+			sendBtn?.click();
+		},
 	});
 
 	useEffect(() => {
@@ -546,6 +555,15 @@ export function MainChatPiView({
 	// This effect is only needed for programmatic input changes (e.g., dictation, file select).
 	const lastInputLengthRef = useRef(input.length);
 	useEffect(() => {
+		// Keep the textarea stable during dictation; the DictationOverlay shows the transcript.
+		if (dictation.isActive) {
+			lastInputLengthRef.current = input.length;
+			if (inputRef.current) {
+				inputRef.current.style.height = "36px";
+			}
+			return;
+		}
+
 		// Only resize if the input changed programmatically (not via typing, which is handled inline)
 		const currentLength = input.length;
 		const lastLength = lastInputLengthRef.current;
@@ -560,7 +578,7 @@ export function MainChatPiView({
 			textarea.style.height = "auto";
 			textarea.style.height = `${Math.min(textarea.scrollHeight, 200)}px`;
 		}
-	}, [input]);
+	}, [dictation.isActive, input]);
 
 	// Handle file upload
 	const handleFileUpload = useCallback(
@@ -787,9 +805,14 @@ export function MainChatPiView({
 			setInput(value);
 			setCommandError(null);
 
-			// Auto-resize textarea immediately
-			textarea.style.height = "auto";
-			textarea.style.height = `${Math.min(textarea.scrollHeight, 200)}px`;
+			// Keep textarea stable during dictation to avoid reflow storms.
+			if (dictation.isActive) {
+				textarea.style.height = "36px";
+			} else {
+				// Auto-resize textarea immediately
+				textarea.style.height = "auto";
+				textarea.style.height = `${Math.min(textarea.scrollHeight, 200)}px`;
+			}
 
 			// Debounce draft persistence to localStorage (300ms)
 			if (draftSaveTimeoutRef.current) {
@@ -826,7 +849,7 @@ export function MainChatPiView({
 				setFileMentionQuery("");
 			}
 		},
-		[],
+		[dictation.isActive],
 	);
 
 	const handleFileSelect = useCallback((file: FileAttachment) => {
@@ -854,7 +877,8 @@ export function MainChatPiView({
 	}, [dictation]);
 
 	const handleVoiceStop = useCallback(() => {
-		dictation.stop();
+		// Use cancel() to stop without auto-send - user clicked X
+		dictation.cancel();
 		setVoiceMode(null);
 	}, [dictation]);
 
@@ -1094,78 +1118,134 @@ export function MainChatPiView({
 							</div>
 						)}
 
-						<textarea
-							ref={inputRef}
-							autoComplete="off"
-							autoCorrect="off"
-							autoCapitalize="sentences"
-							spellCheck={false}
-							enterKeyHint="send"
-							data-form-type="other"
-							placeholder={
-								dictation.isActive && dictation.liveTranscript
-									? dictation.liveTranscript
-									: dictation.isActive
-										? t.speakNow
-										: t.inputPlaceholder
-							}
-							value={input}
-							onChange={handleInputChange}
-							onKeyDown={handleKeyDown}
-							onPaste={(e) => {
-								// Handle pasted files
-								const items = e.clipboardData?.items;
-								if (!items) return;
+						{hasVoice && dictation.isActive ? (
+							<DictationOverlay
+								open
+								value={input}
+								liveTranscript={dictation.liveTranscript}
+								placeholder={t.speakNow}
+								vadProgress={dictation.vadProgress}
+								autoSend={dictation.autoSendEnabled}
+								onAutoSendChange={dictation.setAutoSendEnabled}
+								onStop={handleVoiceStop}
+								onChange={handleInputChange}
+								onKeyDown={handleKeyDown}
+								onPaste={(e) => {
+									// Handle pasted files
+									const items = e.clipboardData?.items;
+									if (!items) return;
 
-								const files: File[] = [];
-								let imageIndex = 0;
-								for (const item of Array.from(items)) {
-									if (item.kind === "file") {
-										const file = item.getAsFile();
-										if (file) {
-											// Rename generic clipboard image names to be unique
-											const isGenericName =
-												/^image\.(png|gif|jpg|jpeg|webp)$/i.test(file.name);
-											if (isGenericName) {
-												const ext = file.name.split(".").pop() || "png";
-												const uniqueName = `pasted-image-${Date.now()}-${imageIndex++}.${ext}`;
-												const renamedFile = new File([file], uniqueName, {
-													type: file.type,
-												});
-												files.push(renamedFile);
-											} else {
-												files.push(file);
+									const files: File[] = [];
+									let imageIndex = 0;
+									for (const item of Array.from(items)) {
+										if (item.kind === "file") {
+											const file = item.getAsFile();
+											if (file) {
+												// Rename generic clipboard image names to be unique
+												const isGenericName =
+													/^image\.(png|gif|jpg|jpeg|webp)$/i.test(file.name);
+												if (isGenericName) {
+													const ext = file.name.split(".").pop() || "png";
+													const uniqueName = `pasted-image-${Date.now()}-${imageIndex++}.${ext}`;
+													const renamedFile = new File([file], uniqueName, {
+														type: file.type,
+													});
+													files.push(renamedFile);
+												} else {
+													files.push(file);
+												}
 											}
 										}
 									}
-								}
 
-								if (files.length > 0) {
-									e.preventDefault();
-									const dataTransfer = new DataTransfer();
-									for (const file of files) {
-										dataTransfer.items.add(file);
+									if (files.length > 0) {
+										e.preventDefault();
+										const dataTransfer = new DataTransfer();
+										for (const file of files) {
+											dataTransfer.items.add(file);
+										}
+										handleFileUpload(dataTransfer.files);
 									}
-									handleFileUpload(dataTransfer.files);
-								}
-							}}
-							onFocus={(e) => {
-								// Scroll input into view on mobile when keyboard opens
-								setTimeout(() => {
-									e.target.scrollIntoView({
-										behavior: "smooth",
-										block: "nearest",
-									});
-								}, 300);
-							}}
-							rows={1}
-							className="w-full bg-transparent border-none outline-none text-foreground placeholder:text-muted-foreground text-sm resize-none py-1.5 leading-5 max-h-[200px] overflow-y-auto"
-						/>
+								}}
+								onFocus={(e) => {
+									// Scroll input into view on mobile when keyboard opens
+									setTimeout(() => {
+										e.target.scrollIntoView({
+											behavior: "smooth",
+											block: "nearest",
+										});
+									}, 300);
+								}}
+							/>
+						) : (
+							<textarea
+								ref={inputRef}
+								autoComplete="off"
+								autoCorrect="off"
+								autoCapitalize="sentences"
+								spellCheck={false}
+								enterKeyHint="send"
+								data-form-type="other"
+								placeholder={t.inputPlaceholder}
+								value={input}
+								onChange={handleInputChange}
+								onKeyDown={handleKeyDown}
+								onPaste={(e) => {
+									// Handle pasted files
+									const items = e.clipboardData?.items;
+									if (!items) return;
+
+									const files: File[] = [];
+									let imageIndex = 0;
+									for (const item of Array.from(items)) {
+										if (item.kind === "file") {
+											const file = item.getAsFile();
+											if (file) {
+												// Rename generic clipboard image names to be unique
+												const isGenericName =
+													/^image\.(png|gif|jpg|jpeg|webp)$/i.test(file.name);
+												if (isGenericName) {
+													const ext = file.name.split(".").pop() || "png";
+													const uniqueName = `pasted-image-${Date.now()}-${imageIndex++}.${ext}`;
+													const renamedFile = new File([file], uniqueName, {
+														type: file.type,
+													});
+													files.push(renamedFile);
+												} else {
+													files.push(file);
+												}
+											}
+										}
+									}
+
+									if (files.length > 0) {
+										e.preventDefault();
+										const dataTransfer = new DataTransfer();
+										for (const file of files) {
+											dataTransfer.items.add(file);
+										}
+										handleFileUpload(dataTransfer.files);
+									}
+								}}
+								onFocus={(e) => {
+									// Scroll input into view on mobile when keyboard opens
+									setTimeout(() => {
+										e.target.scrollIntoView({
+											behavior: "smooth",
+											block: "nearest",
+										});
+									}, 300);
+								}}
+								rows={1}
+								className="w-full bg-transparent border-none outline-none text-foreground placeholder:text-muted-foreground text-sm resize-none py-1.5 leading-5 max-h-[200px] overflow-y-auto"
+							/>
+						)}
 					</div>
 
 					{/* Send button */}
 					<Button
 						type="button"
+						data-dictation-send
 						onClick={() => handleSend("steer")}
 						disabled={!input.trim() && fileAttachments.length === 0}
 						className="flex-shrink-0 h-8 px-2 flex items-center justify-center text-muted-foreground hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed transition-colors p-0 bg-transparent hover:bg-transparent"

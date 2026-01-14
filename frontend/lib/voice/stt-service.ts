@@ -221,7 +221,7 @@ export class STTService {
 				break;
 
 			case "final":
-				this.clearVadTimeout();
+				this.clearVadTimeout(true);
 				if (message.text) {
 					this.callbacks.onFinal?.(message.text);
 				}
@@ -235,7 +235,7 @@ export class STTService {
 
 			case "error":
 				console.error("[STT] Server error:", message.message);
-				this.clearVadTimeout();
+				this.clearVadTimeout(true);
 				this.callbacks.onError?.(message.message || "Unknown error");
 				break;
 
@@ -250,7 +250,8 @@ export class STTService {
 	}
 
 	private resetVadTimeout() {
-		this.clearVadTimeout();
+		// Reset timers but don't emit a progress reset on every word.
+		this.clearVadTimeout(false);
 		this.vadStartTime = Date.now();
 
 		// Set timeout for silence detection
@@ -258,7 +259,7 @@ export class STTService {
 			console.log("[STT] VAD timeout - silence detected");
 			// Join words only when needed (single allocation)
 			const finalTranscript = this.transcriptWords.join(" ").trim();
-			this.clearVadTimeout();
+			this.clearVadTimeout(true);
 
 			if (finalTranscript) {
 				this.callbacks.onFinal?.(finalTranscript);
@@ -274,7 +275,7 @@ export class STTService {
 		}, 66);
 	}
 
-	private clearVadTimeout() {
+	private clearVadTimeout(resetProgress = true) {
 		if (this.vadTimeoutId !== null) {
 			clearTimeout(this.vadTimeoutId);
 			this.vadTimeoutId = null;
@@ -283,7 +284,9 @@ export class STTService {
 			clearInterval(this.vadProgressIntervalId);
 			this.vadProgressIntervalId = null;
 		}
-		this.callbacks.onVadProgress?.(0);
+		if (resetProgress) {
+			this.callbacks.onVadProgress?.(0);
+		}
 	}
 
 	/**

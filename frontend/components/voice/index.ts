@@ -20,6 +20,9 @@ export type { KittVisualizerProps } from "./KittVisualizer";
 export { VoiceInputOverlay } from "./VoiceInputOverlay";
 export type { VoiceInputOverlayProps } from "./VoiceInputOverlay";
 
+export { DictationOverlay } from "./DictationOverlay";
+export type { DictationOverlayProps } from "./DictationOverlay";
+
 export { VoicePanel } from "./VoicePanel";
 export type { VoicePanelProps } from "./VoicePanel";
 

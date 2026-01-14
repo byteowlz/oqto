@@ -15,10 +15,16 @@ import { useCallback, useEffect, useRef, useState } from "react";
 export interface UseDictationOptions {
 	/** Voice configuration from backend (for STT URL) */
 	config: VoiceConfig | null;
-	/** Callback when text is transcribed - appends to input */
+	/** Callback when text is transcribed (usually append to input) */
 	onTranscript: (text: string) => void;
 	/** VAD timeout in ms (default: use config or 2000ms) */
 	vadTimeoutMs?: number;
+	/** If true, call onAutoSend after each VAD final */
+	autoSendOnFinal?: boolean;
+	/** Optional delay before auto-sending (ms) */
+	autoSendDelayMs?: number;
+	/** Callback to trigger sending the current input */
+	onAutoSend?: () => void;
 }
 
 export interface UseDictationReturn {
@@ -34,17 +40,30 @@ export interface UseDictationReturn {
 	isConnected: boolean;
 	/** Error message if any */
 	error: string | null;
+	/** Whether auto-send on VAD final is enabled */
+	autoSendEnabled: boolean;
+	/** Toggle auto-send on/off */
+	setAutoSendEnabled: (enabled: boolean) => void;
 	/** Start dictation */
 	start: () => Promise<void>;
-	/** Stop dictation */
+	/** Stop dictation (flushes pending transcript, may trigger auto-send) */
 	stop: () => void;
+	/** Cancel dictation (flushes pending transcript, does NOT auto-send) */
+	cancel: () => void;
 }
 
 /**
  * Hook for dictation mode - speech to text input.
  */
 export function useDictation(options: UseDictationOptions): UseDictationReturn {
-	const { config, onTranscript, vadTimeoutMs } = options;
+	const {
+		config,
+		onTranscript,
+		vadTimeoutMs,
+		autoSendOnFinal = false,
+		autoSendDelayMs = 0,
+		onAutoSend,
+	} = options;
 
 	const sttRef = useRef<STTService | null>(null);
 	const smoothVolumeRef = useRef(0);
@@ -58,16 +77,33 @@ export function useDictation(options: UseDictationOptions): UseDictationReturn {
 	const [inputVolume, setInputVolume] = useState(0);
 	const [isConnected, setIsConnected] = useState(false);
 	const [error, setError] = useState<string | null>(null);
+	// Auto-send state - initialized from options, can be toggled by user
+	const [autoSendEnabled, setAutoSendEnabled] = useState(autoSendOnFinal);
 
 	// Keep refs in sync for callbacks
 	const onTranscriptRef = useRef(onTranscript);
+	const onAutoSendRef = useRef(onAutoSend);
+	const autoSendEnabledRef = useRef(autoSendEnabled);
+	const autoSendDelayRef = useRef(autoSendDelayMs);
+
 	useEffect(() => {
 		onTranscriptRef.current = onTranscript;
 	}, [onTranscript]);
+	useEffect(() => {
+		onAutoSendRef.current = onAutoSend;
+	}, [onAutoSend]);
+	useEffect(() => {
+		autoSendEnabledRef.current = autoSendEnabled;
+	}, [autoSendEnabled]);
+	useEffect(() => {
+		autoSendDelayRef.current = autoSendDelayMs;
+	}, [autoSendDelayMs]);
 
 	// Throttle transcript updates to reduce re-renders (update at most every 100ms)
 	const lastTranscriptUpdateRef = useRef(0);
 	const pendingTranscriptUpdateRef = useRef<number | null>(null);
+	// Track auto-send timeout so it can be canceled
+	const autoSendTimeoutRef = useRef<number | null>(null);
 
 	// Volume smoothing loop - throttled to ~15fps to reduce re-renders
 	useEffect(() => {
@@ -99,7 +135,20 @@ export function useDictation(options: UseDictationOptions): UseDictationReturn {
 		// Clear both state and ref to prevent double-submission on stop
 		liveWordsRef.current = [];
 		setLiveTranscript("");
+
 		onTranscriptRef.current(text);
+
+		if (autoSendEnabledRef.current && onAutoSendRef.current) {
+			// Clear any existing timeout before setting a new one
+			if (autoSendTimeoutRef.current !== null) {
+				window.clearTimeout(autoSendTimeoutRef.current);
+			}
+			const delay = autoSendDelayRef.current;
+			autoSendTimeoutRef.current = window.setTimeout(() => {
+				autoSendTimeoutRef.current = null;
+				onAutoSendRef.current?.();
+			}, delay);
+		}
 	}, []);
 
 	// Initialize STT service
@@ -170,7 +219,7 @@ export function useDictation(options: UseDictationOptions): UseDictationReturn {
 		}
 	}, [initService]);
 
-	// Stop dictation - flush any pending transcript first
+	// Stop dictation - flush any pending transcript first (may trigger auto-send)
 	const stop = useCallback(() => {
 		console.log("[Dictation] Stopping");
 		// Use ref to check for pending transcript - avoids race condition with handleFinalTranscript
@@ -193,6 +242,33 @@ export function useDictation(options: UseDictationOptions): UseDictationReturn {
 		sttRef.current?.stopListening();
 	}, []);
 
+	// Cancel dictation - flush pending transcript but do NOT auto-send
+	const cancel = useCallback(() => {
+		console.log("[Dictation] Canceling (no auto-send)");
+		// Cancel any pending auto-send timeout
+		if (autoSendTimeoutRef.current !== null) {
+			window.clearTimeout(autoSendTimeoutRef.current);
+			autoSendTimeoutRef.current = null;
+		}
+		// Flush pending transcript without triggering auto-send
+		if (liveWordsRef.current.length > 0) {
+			const pendingTranscript = liveWordsRef.current.join(" ").trim();
+			if (pendingTranscript) {
+				console.log(
+					"[Dictation] Flushing pending transcript (no auto-send):",
+					pendingTranscript,
+				);
+				onTranscriptRef.current(pendingTranscript);
+			}
+		}
+		// Clear both ref and state
+		liveWordsRef.current = [];
+		setLiveTranscript("");
+		setIsActive(false);
+		setVadProgress(0);
+		sttRef.current?.stopListening();
+	}, []);
+
 	// Cleanup on unmount
 	useEffect(() => {
 		return () => {
@@ -200,6 +276,10 @@ export function useDictation(options: UseDictationOptions): UseDictationReturn {
 			// Clear any pending transcript update timeout
 			if (pendingTranscriptUpdateRef.current) {
 				clearTimeout(pendingTranscriptUpdateRef.current);
+			}
+			// Clear any pending auto-send timeout
+			if (autoSendTimeoutRef.current !== null) {
+				clearTimeout(autoSendTimeoutRef.current);
 			}
 		};
 	}, []);
@@ -211,7 +291,10 @@ export function useDictation(options: UseDictationOptions): UseDictationReturn {
 		inputVolume,
 		isConnected,
 		error,
+		autoSendEnabled,
+		setAutoSendEnabled,
 		start,
 		stop,
+		cancel,
 	};
 }

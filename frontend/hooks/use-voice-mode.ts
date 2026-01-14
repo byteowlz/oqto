@@ -232,7 +232,10 @@ export function useVoiceMode(options: UseVoiceModeOptions): UseVoiceModeReturn {
 		const tts = ttsRef.current;
 		if (vizVoice && tts?.isConnected()) {
 			try {
-				if (import.meta.env.DEV && localStorage.getItem("debug:voice") === "1") {
+				if (
+					import.meta.env.DEV &&
+					localStorage.getItem("debug:voice") === "1"
+				) {
 					console.debug(
 						"[Voice] Switching to visualizer voice:",
 						settings.visualizer,
