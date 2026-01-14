@@ -177,9 +177,10 @@ export function StatusBar() {
 				"bg-sidebar/80 border-t border-sidebar-border",
 				"text-[10px] text-muted-foreground",
 				"select-none",
+				// Height: 2.5rem on mobile, 1.5rem on desktop
+				"h-10 md:h-6",
 			)}
 			style={{
-				height: "calc(1.5rem + env(safe-area-inset-bottom, 0px))",
 				paddingBottom: "env(safe-area-inset-bottom, 0px)",
 			}}
 		>
