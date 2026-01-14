@@ -91,6 +91,7 @@ import {
 } from "lucide-react";
 import { useTheme } from "next-themes";
 import {
+	memo,
 	useCallback,
 	useDeferredValue,
 	useEffect,
@@ -100,7 +101,7 @@ import {
 import { useLocation, useNavigate } from "react-router-dom";
 import "@/apps";
 
-function AppShell() {
+const AppShell = memo(function AppShell() {
 	const {
 		apps,
 		activeAppId,
@@ -1833,7 +1834,7 @@ function AppShell() {
 													>
 												{/* Project header */}
 												<ContextMenu>
-													<ContextMenuTrigger asChild>
+													<ContextMenuTrigger className="contents">
 														<div className="flex items-center gap-1 px-1 py-1.5 group">
 															<button
 																type="button"
@@ -1948,7 +1949,7 @@ function AppShell() {
 															return (
 																<div key={session.id} className="ml-4">
 																	<ContextMenu>
-																		<ContextMenuTrigger asChild>
+																		<ContextMenuTrigger className="contents">
 																			<div
 																				className={cn(
 																					"w-full px-2 py-2 text-left transition-colors flex items-start gap-1.5 cursor-pointer",
@@ -2621,7 +2622,7 @@ function AppShell() {
 												>
 													{/* Project header */}
 													<ContextMenu>
-														<ContextMenuTrigger asChild>
+														<ContextMenuTrigger className="contents">
 															<div className="flex items-center gap-1 px-1 py-1.5 group">
 																<button
 																	type="button"
@@ -2740,7 +2741,7 @@ function AppShell() {
 																return (
 																	<div key={session.id} className="ml-3">
 																		<ContextMenu>
-																			<ContextMenuTrigger asChild>
+																			<ContextMenuTrigger className="contents">
 																				<div
 																					className={cn(
 																						"w-full px-2 py-1 text-left transition-colors flex items-start gap-1.5 cursor-pointer",
@@ -2877,7 +2878,7 @@ function AppShell() {
 																							: null;
 																					return (
 																						<ContextMenu key={child.id}>
-																							<ContextMenuTrigger asChild>
+																							<ContextMenuTrigger className="contents">
 																								<button
 																									type="button"
 																									onClick={() =>
@@ -3688,7 +3689,7 @@ function AppShell() {
 			/>
 		</div>
 	);
-}
+});
 
 function EmptyState() {
 	return (

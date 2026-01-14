@@ -618,7 +618,7 @@ function parseModelRef(
 	};
 }
 
-export function SessionsApp() {
+export const SessionsApp = memo(function SessionsApp() {
 	const {
 		locale,
 		workspaceSessions,
@@ -762,7 +762,11 @@ export function SessionsApp() {
 
 	useEffect(() => {
 		if (!effectiveOpencodeBaseUrl || mainChatActive) {
+			if (!effectiveOpencodeBaseUrl) {
+				console.debug("[Models] No opencode URL, clearing model options");
+			}
 			setOpencodeModelOptions([]);
+			setIsModelLoading(false);
 			return;
 		}
 		let active = true;
@@ -787,7 +791,8 @@ export function SessionsApp() {
 				options.sort((a, b) => a.label.localeCompare(b.label));
 				setOpencodeModelOptions(options);
 			})
-			.catch(() => {
+			.catch((err) => {
+				console.error("Failed to fetch models:", err);
 				if (active) setOpencodeModelOptions([]);
 			})
 			.finally(() => {
@@ -1816,19 +1821,39 @@ export function SessionsApp() {
 	]);
 
 	// Merge messages to prevent flickering - preserves existing message references when unchanged
+	// Also preserves optimistic (temp-*) messages that haven't been confirmed yet
 	const mergeMessages = useCallback(
 		(
 			prev: OpenCodeMessageWithParts[],
 			next: OpenCodeMessageWithParts[],
 		): OpenCodeMessageWithParts[] => {
 			if (prev.length === 0) return next;
-			if (next.length === 0) return next;
+			if (next.length === 0) {
+				// Keep optimistic messages even if server returns empty
+				const optimistic = prev.filter((m) => m.info.id.startsWith("temp-"));
+				return optimistic.length > 0 ? optimistic : next;
+			}
 
 			// Build a map of existing messages by ID for quick lookup
 			const prevById = new Map(prev.map((m) => [m.info.id, m]));
 
+			// Preserve optimistic messages (temp-*) that don't have corresponding real messages yet
+			// Check if any next message has similar content to optimistic ones
+			const optimisticMessages = prev.filter((m) => m.info.id.startsWith("temp-"));
+			const nextIds = new Set(next.map((m) => m.info.id));
+			const pendingOptimistic = optimisticMessages.filter((optMsg) => {
+				// Keep optimistic message if there's no user message with the same text in next
+				const optText = optMsg.parts.find((p) => p.type === "text")?.text || "";
+				const hasMatchingRealMessage = next.some((m) => {
+					if (m.info.role !== "user") return false;
+					const realText = m.parts.find((p) => p.type === "text")?.text || "";
+					return realText === optText;
+				});
+				return !hasMatchingRealMessage;
+			});
+
 			// Merge: keep existing reference if message hasn't changed, otherwise use new one
-			return next.map((newMsg) => {
+			const merged = next.map((newMsg) => {
 				const existing = prevById.get(newMsg.info.id);
 				if (!existing) return newMsg;
 
@@ -1862,6 +1887,9 @@ export function SessionsApp() {
 				// No significant changes detected, keep existing reference
 				return existing;
 			});
+
+			// Add pending optimistic messages at the end
+			return pendingOptimistic.length > 0 ? [...merged, ...pendingOptimistic] : merged;
 		},
 		[],
 	);
@@ -2132,12 +2160,16 @@ export function SessionsApp() {
 
 	const messageCount = messages.length;
 
-	// Check scroll position when messages change
+	// Check scroll position when messages change or content might have resized
 	useEffect(() => {
 		if (messageCount === 0) {
 			setShowScrollToBottom(false);
+			return;
 		}
-		handleScroll();
+		// Use RAF to wait for DOM update before checking scroll position
+		requestAnimationFrame(() => {
+			handleScroll();
+		});
 	}, [messageCount, handleScroll]);
 
 	// Reset state when switching sessions
@@ -2185,7 +2217,12 @@ export function SessionsApp() {
 		if (!autoScrollEnabledRef.current) return;
 		if (initialLoadRef.current) return; // Skip - handled by useLayoutEffect
 
-		scrollToBottom("smooth");
+		// Use RAF to ensure DOM has updated before scrolling
+		requestAnimationFrame(() => {
+			if (autoScrollEnabledRef.current) {
+				scrollToBottom("smooth");
+			}
+		});
 	}, [messages, scrollToBottom]);
 
 	// Scroll to message when scrollToMessageId changes (from search results)
@@ -3039,11 +3076,8 @@ export function SessionsApp() {
 		}
 		draftWriteTokenRef.current++;
 
-		setMessageInput("");
-		// Reset textarea height to minimum
-		if (chatInputRef.current) {
-			chatInputRef.current.style.height = "36px";
-		}
+		// Clear input and reset textarea height via the resize handler
+		setMessageInputWithResize("");
 		setPendingUploads([]);
 		setFileAttachments([]);
 		setChatState("sending");
@@ -3247,7 +3281,20 @@ export function SessionsApp() {
 				targetSessionId,
 				effectiveDirectory,
 			);
-			loadMessages();
+			
+			// Fetch messages directly using the base URL we just used (not loadMessages which
+			// uses stale state values that haven't updated yet after resuming a session)
+			try {
+				const freshMessages = await fetchMessages(
+					effectiveBaseUrl,
+					targetSessionId,
+					{ skipCache: true, directory: effectiveDirectory },
+				);
+				setMessages((prev) => mergeMessages(prev, freshMessages));
+			} catch {
+				// Fallback to disk history if live fetch fails
+				loadMessages();
+			}
 		} catch (err) {
 			setStatus((err as Error).message);
 			setChatState("idle");
@@ -3889,8 +3936,8 @@ export function SessionsApp() {
 
 			{/* Chat input - works for both live and history sessions */}
 			<div className="chat-input-container flex flex-col gap-1 bg-muted/30 border border-border px-2 py-1">
-				{/* Show hint for history sessions that will be resumed */}
-				{isHistoryOnlySession && (
+				{/* Show hint for history sessions that will be resumed - hide when sending/resuming */}
+				{isHistoryOnlySession && chatState === "idle" && (
 					<div className="flex items-center gap-1.5 px-1 pt-1 text-xs text-muted-foreground">
 						<Clock className="w-3 h-3" />
 						<span>
@@ -4301,7 +4348,7 @@ export function SessionsApp() {
 				</div>
 				{opencodeModelOptions.length === 0 ? (
 					<SelectItem value="__none__" disabled>
-						No models available
+						{isModelLoading ? "Loading..." : "Start a session to select models"}
 					</SelectItem>
 				) : filteredModelOptions.length === 0 ? (
 					<SelectItem value="__no_results__" disabled>
@@ -4311,7 +4358,7 @@ export function SessionsApp() {
 					filteredModelOptions.map((option) => {
 						const provider = option.value.split("/")[0];
 						return (
-							<SelectItem key={option.value} value={option.value}>
+							<SelectItem key={option.value} value={option.value} textValue={option.label}>
 								<span className="flex items-center gap-2">
 									<ProviderIcon provider={provider} className="w-4 h-4 flex-shrink-0" />
 									<span>{option.label}</span>
@@ -4326,7 +4373,7 @@ export function SessionsApp() {
 	const persona = selectedSession?.persona;
 
 	const SessionHeader = (
-		<div className="pb-3 mb-3 border-b border-border">
+		<div className="pb-3 mb-3 border-b border-border pr-10">
 			<div className="flex items-center justify-between">
 				<div className="flex items-center gap-3 min-w-0 flex-1">
 					{/* Persona avatar/indicator */}
@@ -4354,7 +4401,7 @@ export function SessionsApp() {
 						</div>
 						<div className="flex items-center gap-2 text-xs text-foreground/60 dark:text-muted-foreground">
 							{(workspaceName || readableId) && (
-								<span className="font-mono">
+								<span className="font-mono truncate">
 									{workspaceName}
 									{readableId && ` [${readableId}]`}
 								</span>
@@ -4362,12 +4409,12 @@ export function SessionsApp() {
 							{(workspaceName || readableId) && formattedDate && (
 								<span className="opacity-50">|</span>
 							)}
-							{formattedDate && <span>{formattedDate}</span>}
+							{formattedDate && <span className="flex-shrink-0">{formattedDate}</span>}
 						</div>
 					</div>
 				</div>
 				{status && (
-					<span className="text-xs text-destructive flex-shrink-0 ml-2">
+					<span className="text-xs text-destructive flex-shrink-0 ml-2 max-w-[150px] truncate">
 						{status}
 					</span>
 				)}
@@ -5096,7 +5143,7 @@ export function SessionsApp() {
 	) : (
 		app
 	);
-}
+});
 
 const MessageGroupCard = memo(function MessageGroupCard({
 	group,
@@ -5343,7 +5390,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 
 						return (
 							<ContextMenu key={segment.key}>
-								<ContextMenuTrigger asChild>
+								<ContextMenuTrigger className="contents">
 									<div className="overflow-hidden space-y-2 select-none sm:select-auto">
 										<MarkdownRenderer
 											content={segment.content}
@@ -5424,7 +5471,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 	// Always wrap in context menu for copy all (and fork if available)
 	return (
 		<ContextMenu>
-			<ContextMenuTrigger asChild>{messageCard}</ContextMenuTrigger>
+			<ContextMenuTrigger className="contents">{messageCard}</ContextMenuTrigger>
 			<ContextMenuContent>
 				{allTextContent && (
 					<ContextMenuItem
