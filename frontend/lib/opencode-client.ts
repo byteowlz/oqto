@@ -1,3 +1,5 @@
+import { getAuthHeaders } from "./control-plane-client";
+
 // Message cache for client-side caching
 type MessageCache = {
 	messages: OpenCodeMessageWithParts[];
@@ -395,6 +397,7 @@ export async function fetchProviders(
 		const res = await fetch(providersUrl, {
 			cache: "no-store",
 			credentials: "include",
+			headers: getAuthHeaders(),
 		});
 		if (res.ok) {
 			return handleResponse<OpenCodeProvidersResponse>(res);
@@ -410,6 +413,7 @@ export async function fetchProviders(
 	const res = await fetch(fallbackUrl, {
 		cache: "no-store",
 		credentials: "include",
+		headers: getAuthHeaders(),
 	});
 	return handleResponse<OpenCodeProvidersResponse>(res);
 }
@@ -878,9 +882,14 @@ export function subscribeToEvents(
 				credentials: "include",
 			});
 			if (res.ok) {
-				const status = (await res.json()) as SessionStatusMap;
-				emitStatusTransitions(status);
-				pollDelayMs = minPollDelayMs;
+				try {
+					const status = (await res.json()) as SessionStatusMap;
+					emitStatusTransitions(status);
+					pollDelayMs = minPollDelayMs;
+				} catch {
+					// JSON parse error - treat as transient failure
+					pollDelayMs = Math.min(maxPollDelayMs, Math.round(pollDelayMs * 1.5));
+				}
 			} else {
 				if (res.status === 503) {
 					const sessionId =
