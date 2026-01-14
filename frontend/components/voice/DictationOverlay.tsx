@@ -118,7 +118,7 @@ export function DictationOverlay({
 					enterKeyHint="send"
 					data-form-type="other"
 					placeholder={placeholder}
-					value={value}
+					value={liveTranscript ? `${value}${value && liveTranscript ? " " : ""}${liveTranscript}` : value}
 					onChange={onChange}
 					onKeyDown={onKeyDown}
 					onPaste={onPaste}
@@ -133,7 +133,7 @@ export function DictationOverlay({
 				/>
 
 				<div className="min-h-[1.25rem] text-xs text-muted-foreground">
-					{liveTranscript || "Listening..."}
+					{liveTranscript ? "Listening..." : "Waiting for speech..."}
 				</div>
 
 				<div className="h-1">
