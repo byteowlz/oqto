@@ -352,7 +352,7 @@ export function AgentSettingsView({
 			{/* Settings form */}
 			<div className="flex-1 overflow-y-auto overflow-x-hidden p-3 space-y-4">
 				{/* Runtime Model Selector - Live section */}
-				{modelOptions.length > 0 && onModelChange && (
+				{onModelChange && (
 					<div className="p-3 bg-primary/5 border border-primary/20 rounded-lg space-y-2 overflow-hidden">
 						<div className="flex items-center gap-2">
 							<div className="w-2 h-2 rounded-full bg-green-500 animate-pulse flex-shrink-0" />
@@ -391,7 +391,7 @@ export function AgentSettingsView({
 								</div>
 								{modelOptions.length === 0 ? (
 									<SelectItem value="__none__" disabled>
-										No models available
+										{isModelLoading ? "Loading..." : "Start a session to select models"}
 									</SelectItem>
 								) : filteredModelOptions.length === 0 ? (
 									<SelectItem value="__no_results__" disabled>
@@ -404,6 +404,7 @@ export function AgentSettingsView({
 											<SelectItem
 												key={`${option.value}-${index}`}
 												value={option.value}
+												textValue={option.label}
 												className="text-xs"
 											>
 												<span className="flex items-center gap-2 max-w-[250px]">
