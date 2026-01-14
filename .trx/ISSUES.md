@@ -2,18 +2,6 @@
 
 ## Open
 
-### [octo-kh71] Chat history loads very slowly (P1, bug)
-Chat history list loading is extremely slow (likely scales poorly with many stored sessions); investigate backend /chat-history performance and frontend rendering.
-
-### [octo-g6a4] Opencode chats feel laggy (session navigation + text input) (P1, bug)
-Session navigation and text input in opencode chats are laggy; needs substantial performance optimization for responsiveness/snappiness.
-
-Observed console violations (dev mode):
-- [Violation] keydown handler took ~636ms
-- [Violation] input handler frequently ~180-245ms
-...
-
-
 ### [octo-af5j.7.6] Release manifest generator (byt release) (P1, task)
 byt release command that: 1) Reads component list from octo/release.toml, 2) Fetches current version from each repo (Cargo.toml, package.json, go.mod), 3) Generates versions.toml with all pinned versions, 4) Optionally tags all repos with octo-0.2.0 tag
 
@@ -49,8 +37,6 @@ Optimize frontend startup times and eliminate unnecessary reloads. Current bottl
 
 ### [workspace-5pmk.11] Add backend URL configuration to login form (P1, task)
 Add a 'Server URL' field to the login form allowing users to specify the backend URL. Store in localStorage for persistence. Show connection status indicator. Default to current origin for web, require input for mobile apps.
-
-### [octo-m0bn] issue content from trx doesn't get injected in text input when using "start here" or "start in new session" (P2, bug)
 
 ### [octo-s4ez] Define context model and context sources (local + remote) (P2, task)
 ## Goal
@@ -90,8 +76,6 @@ Introduce a controlled "agent actions" layer that exposes safe UI commands to th
 ### [octo-k8z1.1] Backend: Integrate agent-browser daemon per session (P2, task)
 
 ### [octo-k8z1] Add server-side browser feature (Option B) using agent-browser (P2, feature)
-
-### [octo-9zek] changes to opencode settings in the sidbar are not getting saved (P2, bug)
 
 ### [octo-9qkv] Improve opencode chat error notifications (top-right toast) (P2, feature)
 Request: Provide clearer, more visible notifications for errors like session disconnect/resume failures, instead of (or in addition to) inline red banners. Prefer a popup/toast in the top-right that matches the app style.
@@ -434,6 +418,10 @@ Desired behavior: Tool calls hidden by default, toggle to show
 
 ## Closed
 
+- [octo-9zek] changes to opencode settings in the sidbar are not getting saved (closed 2026-01-14)
+- [octo-g6a4] Opencode chats feel laggy (session navigation + text input) (closed 2026-01-14)
+- [octo-kh71] Chat history loads very slowly (closed 2026-01-14)
+- [octo-m0bn] issue content from trx doesn't get injected in text input when using "start here" or "start in new session" (closed 2026-01-14)
 - [octo-dbr4] text doesn't get removed from input box on send (closed 2026-01-14)
 - [octo-8zxp] No gaps between messages in main chat on mobile  (closed 2026-01-14)
 - [octo-zh73] Memoize AppShell and SessionsApp components to prevent unnecessary re-renders (closed 2026-01-14)
