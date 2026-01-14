@@ -22,28 +22,24 @@ profile = "development"
 
 # Paths to deny read access (blocks these completely)
 # Agents cannot read files in these directories
-deny_read = [
-    "~/.ssh",
-    "~/.gnupg",
-    "~/.aws",
-]
+deny_read = ["~/.ssh", "~/.gnupg", "~/.aws"]
 
 # Paths to allow write access (in addition to workspace directory)
 # Note: ~/.config/octo is allowed so agents can modify config.toml
 allow_write = [
-    "~/.cargo",
-    "~/.rustup",
-    "~/.local/bin",
-    "~/.npm",
-    "~/.bun",
-    "~/.config/octo",  # Allow config.toml edits
-    "/tmp",
+  "~/.cargo",
+  "~/.rustup",
+  "~/.local/bin",
+  "~/.npm",
+  "~/.bun",
+  "~/.config/octo", # Allow config.toml edits
+  "/tmp",
 ]
 
 # Paths to explicitly deny write access (takes precedence over allow_write)
 # This file is always protected automatically, but you can add more paths here
 deny_write = [
-    "~/.config/octo/sandbox.toml",  # Always protected (added automatically)
+  "~/.config/octo/sandbox.toml", # Always protected (added automatically)
 ]
 
 # Isolate network namespace (default: false)
