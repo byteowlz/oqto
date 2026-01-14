@@ -229,7 +229,7 @@ async fn handle_command(
                 user_id,
                 WsEvent::SessionUpdated {
                     session_id: session_id.clone(),
-                    status: format!("{:?}", opencode_session.status),
+                    status: opencode_session.status.to_string(),
                     workspace_path: opencode_session.workspace_path.clone(),
                 },
             )
@@ -531,7 +531,7 @@ async fn handle_command(
                 user_id,
                 WsEvent::SessionUpdated {
                     session_id,
-                    status: format!("{:?}", opencode_session.status),
+                    status: opencode_session.status.to_string(),
                     workspace_path: session.workspace_path,
                 },
             )

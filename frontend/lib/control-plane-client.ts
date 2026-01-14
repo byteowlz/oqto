@@ -203,6 +203,14 @@ function normalizeControlPlaneUrl(value: string | null | undefined): string {
 	return trimTrailingSlash(value.trim());
 }
 
+/** Normalize session status to lowercase (backend may return e.g. "Running" instead of "running") */
+function normalizeSession(session: WorkspaceSession): WorkspaceSession {
+	return {
+		...session,
+		status: session.status.toLowerCase() as WorkspaceSessionStatus,
+	};
+}
+
 export function getControlPlaneBaseUrl(): string {
 	if (typeof window !== "undefined") {
 		try {
@@ -386,7 +394,8 @@ export async function listWorkspaceSessions(): Promise<WorkspaceSession[]> {
 		credentials: "include",
 	});
 	if (!res.ok) throw new Error(await readApiError(res));
-	return res.json();
+	const sessions: WorkspaceSession[] = await res.json();
+	return sessions.map(normalizeSession);
 }
 
 /** Project/workspace directory entry */
@@ -421,8 +430,8 @@ export async function createWorkspaceSession(
 	const data = (await res.json()) as
 		| { session?: WorkspaceSession }
 		| WorkspaceSession;
-	if ("id" in data) return data;
-	if (data.session && "id" in data.session) return data.session;
+	if ("id" in data) return normalizeSession(data);
+	if (data.session && "id" in data.session) return normalizeSession(data.session);
 	throw new Error("Unexpected create session response");
 }
 
@@ -440,7 +449,8 @@ export async function getOrCreateWorkspaceSession(
 		},
 	);
 	if (!res.ok) throw new Error(await readApiError(res));
-	return res.json();
+	const session: WorkspaceSession = await res.json();
+	return normalizeSession(session);
 }
 
 /** Get or create a session for a specific workspace path.
@@ -461,7 +471,8 @@ export async function getOrCreateSessionForWorkspace(
 		},
 	);
 	if (!res.ok) throw new Error(await readApiError(res));
-	return res.json();
+	const session: WorkspaceSession = await res.json();
+	return normalizeSession(session);
 }
 
 /**
@@ -482,7 +493,8 @@ export async function getWorkspaceSession(
 	);
 	if (res.status === 404) return null;
 	if (!res.ok) throw new Error(await readApiError(res));
-	return res.json();
+	const session: WorkspaceSession = await res.json();
+	return normalizeSession(session);
 }
 
 /** Touch session activity to prevent idle timeout */
