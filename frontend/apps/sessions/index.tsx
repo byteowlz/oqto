@@ -169,6 +169,7 @@ import {
 	memo,
 	startTransition,
 	useCallback,
+	useDeferredValue,
 	useEffect,
 	useLayoutEffect,
 	useMemo,
@@ -653,7 +654,35 @@ export const SessionsApp = memo(function SessionsApp() {
 	useEffect(() => {
 		messagesRef.current = messages;
 	}, [messages]);
-	const [messageInput, setMessageInput] = useState("");
+	// Use ref for input value to avoid re-renders on every keystroke
+	// Only sync to state when needed for deferred computations
+	const messageInputRef = useRef("");
+	const [messageInputState, setMessageInputState] = useState("");
+	// Debounce state sync to avoid blocking
+	const inputSyncTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const syncInputToState = useCallback((value: string) => {
+		messageInputRef.current = value;
+		if (inputSyncTimeoutRef.current) {
+			clearTimeout(inputSyncTimeoutRef.current);
+		}
+		// Sync to state after 100ms for deferred computations
+		inputSyncTimeoutRef.current = setTimeout(() => {
+			startTransition(() => {
+				setMessageInputState(value);
+			});
+		}, 100);
+	}, []);
+	// For backward compatibility - direct access uses ref, deferred uses state
+	const messageInput = messageInputState;
+	const setMessageInput = useCallback((value: string) => {
+		messageInputRef.current = value;
+		// Update textarea directly
+		if (chatInputRef.current) {
+			chatInputRef.current.value = value;
+		}
+		// Sync to state for derived values
+		syncInputToState(value);
+	}, [syncInputToState]);
 
 	const perfEnabled = isPerfDebugEnabled();
 	const perfReasonRef = useRef<string>("");
@@ -690,7 +719,11 @@ export const SessionsApp = memo(function SessionsApp() {
 	// Helper to set message input and resize textarea.
 	// Coalesce resize work to a single RAF to avoid reflow storms while typing.
 	const setMessageInputWithResize = useCallback((value: string) => {
-		setMessageInput(value);
+		messageInputRef.current = value;
+		if (chatInputRef.current) {
+			chatInputRef.current.value = value;
+		}
+		syncInputToState(value);
 		chatInputResizeRef.current.value = value;
 
 		if (chatInputResizeRef.current.raf !== null) return;
@@ -707,7 +740,7 @@ export const SessionsApp = memo(function SessionsApp() {
 				textarea.style.height = `${Math.min(textarea.scrollHeight, 200)}px`;
 			}
 		});
-	}, []);
+	}, [syncInputToState]);
 
 	const [mainChatBaseUrl, setMainChatBaseUrl] = useState("");
 	const opencodeDirectory = useMemo(() => {
@@ -923,7 +956,11 @@ export const SessionsApp = memo(function SessionsApp() {
 		// Restore draft for current session when switching (or clear if none)
 		if (currId && currId !== prevId) {
 			const savedDraft = getDraft(currId);
-			setMessageInput(savedDraft);
+			messageInputRef.current = savedDraft;
+			if (chatInputRef.current) {
+				chatInputRef.current.value = savedDraft;
+			}
+			syncInputToState(savedDraft);
 			// Auto-resize after draft restoration
 			requestAnimationFrame(() => {
 				if (chatInputRef.current) {
@@ -939,7 +976,7 @@ export const SessionsApp = memo(function SessionsApp() {
 		}
 
 		previousSessionIdRef.current = currId;
-	}, [selectedChatSessionId, getDraft]);
+	}, [selectedChatSessionId, getDraft, syncInputToState]);
 
 	const [isLoading, setIsLoading] = useState(true);
 	const [messagesLoading, setMessagesLoading] = useState(false);
@@ -997,9 +1034,11 @@ export const SessionsApp = memo(function SessionsApp() {
 	const [showSlashPopup, setShowSlashPopup] = useState(false);
 	const [slashCommands, setSlashCommands] =
 		useState<SlashCommand[]>(builtInCommands);
+	// Use deferred value for slash parsing to avoid blocking input
+	const deferredMessageInput = useDeferredValue(messageInput);
 	const slashQuery = useMemo(
-		() => parseSlashInput(messageInput),
-		[messageInput],
+		() => parseSlashInput(deferredMessageInput),
+		[deferredMessageInput],
 	);
 
 	// File mention popup state
@@ -1158,19 +1197,19 @@ export const SessionsApp = memo(function SessionsApp() {
 	});
 
 	// Dictation mode - speech to text for the input field
-	// Use a ref to track the current message input for dictation appending
-	// This ensures dictation always appends to the latest value, even when user is typing
-	const messageInputRef = useRef(messageInput);
-	useEffect(() => {
-		messageInputRef.current = messageInput;
-	}, [messageInput]);
+	// messageInputRef is already defined above for uncontrolled input
 
 	const handleDictationTranscript = useCallback((text: string) => {
 		// Always append to the current value using the ref to avoid stale closures.
 		// Keep the textarea stable during dictation; the dictation overlay is the input UI.
 		const currentValue = messageInputRef.current;
-		setMessageInput(currentValue ? `${currentValue} ${text}` : text);
-	}, []);
+		const newValue = currentValue ? `${currentValue} ${text}` : text;
+		messageInputRef.current = newValue;
+		if (chatInputRef.current) {
+			chatInputRef.current.value = newValue;
+		}
+		syncInputToState(newValue);
+	}, [syncInputToState]);
 
 	const dictation = useDictation({
 		config: features.voice ?? null,
@@ -1667,11 +1706,11 @@ export const SessionsApp = memo(function SessionsApp() {
 	const canResumeWithoutMessage = useMemo(() => {
 		if (!selectedChatSessionId) return false;
 		if (!resumeWorkspacePath) return false;
-		if (messageInput.trim()) return false;
+		if (deferredMessageInput.trim()) return false;
 		if (pendingUploads.length > 0) return false;
 		return !opencodeBaseUrl;
 	}, [
-		messageInput,
+		deferredMessageInput,
 		opencodeBaseUrl,
 		pendingUploads.length,
 		resumeWorkspacePath,
@@ -2826,10 +2865,13 @@ export const SessionsApp = memo(function SessionsApp() {
 			// Send opencode command (e.g., /init, /undo, /redo, or custom commands)
 			if (!selectedChatSessionId || !opencodeBaseUrl) return;
 
-			setMessageInput("");
+			// Clear input
+			messageInputRef.current = "";
 			if (chatInputRef.current) {
+				chatInputRef.current.value = "";
 				chatInputRef.current.style.height = "36px";
 			}
+			syncInputToState("");
 
 			try {
 				// Command name without slash, args separately
@@ -2852,6 +2894,7 @@ export const SessionsApp = memo(function SessionsApp() {
 			opencodeBaseUrl,
 			opencodeRequestOptions,
 			slashQuery.args,
+			syncInputToState,
 		],
 	);
 
@@ -3311,13 +3354,15 @@ export const SessionsApp = memo(function SessionsApp() {
 	// Memoized input change handler to prevent re-renders
 	const handleInputChange = useCallback(
 		(e: React.ChangeEvent<HTMLTextAreaElement>) => {
-			perfReasonRef.current = "input";
 			const value = e.target.value;
+
+			// Update ref immediately for responsive feel
+			messageInputRef.current = value;
 
 			// Keep textarea stable during dictation to avoid reflow storms.
 			if (dictation.isActive) {
-				setMessageInput(value);
 				e.target.style.height = "36px";
+				syncInputToState(value);
 			} else {
 				setMessageInputWithResize(value);
 			}
@@ -3334,28 +3379,32 @@ export const SessionsApp = memo(function SessionsApp() {
 				}
 			}, 300);
 
-			// Show slash popup when typing /
-			if (value.startsWith("/")) {
-				setShowSlashPopup(true);
-				setShowFileMentionPopup(false);
-			} else {
-				setShowSlashPopup(false);
-			}
-			// Show file mention popup when typing @
-			const atMatch = value.match(/@([^\s]*)$/);
-			if (atMatch && !value.startsWith("/")) {
-				setShowFileMentionPopup(true);
-				setFileMentionQuery(atMatch[1]);
-			} else {
-				setShowFileMentionPopup(false);
-				setFileMentionQuery("");
-			}
+			// Defer popup state updates to avoid blocking input
+			startTransition(() => {
+				// Show slash popup when typing /
+				if (value.startsWith("/")) {
+					setShowSlashPopup(true);
+					setShowFileMentionPopup(false);
+				} else {
+					setShowSlashPopup(false);
+				}
+				// Show file mention popup when typing @
+				const atMatch = value.match(/@([^\s]*)$/);
+				if (atMatch && !value.startsWith("/")) {
+					setShowFileMentionPopup(true);
+					setFileMentionQuery(atMatch[1]);
+				} else {
+					setShowFileMentionPopup(false);
+					setFileMentionQuery("");
+				}
+			});
 		},
 		[
 			selectedChatSessionId,
 			setDraft,
 			setMessageInputWithResize,
 			dictation.isActive,
+			syncInputToState,
 		],
 	);
 
@@ -4038,7 +4087,7 @@ export const SessionsApp = memo(function SessionsApp() {
 						{features.voice && dictation.isActive ? (
 							<DictationOverlay
 								open
-								value={messageInput}
+								value={messageInputRef.current}
 								liveTranscript={dictation.liveTranscript}
 								placeholder={
 									locale === "de" ? "Sprechen Sie..." : "Speak now..."
@@ -4125,7 +4174,7 @@ export const SessionsApp = memo(function SessionsApp() {
 											: "Message to resume..."
 										: t.inputPlaceholder
 								}
-								value={messageInput}
+								defaultValue=""
 								onChange={handleInputChange}
 								onKeyDown={handleInputKeyDown}
 								onPaste={(e) => {
@@ -4174,7 +4223,7 @@ export const SessionsApp = memo(function SessionsApp() {
 								}}
 								onFocus={(e) => {
 									// Show popup if input starts with /
-									if (messageInput.startsWith("/")) {
+									if (deferredMessageInput.startsWith("/")) {
 										setShowSlashPopup(true);
 									}
 									// Scroll input into view on mobile when keyboard opens
@@ -4196,7 +4245,7 @@ export const SessionsApp = memo(function SessionsApp() {
 						onClick={canResumeWithoutMessage ? handleResume : handleSend}
 						disabled={
 							!canResumeWithoutMessage &&
-							!messageInput.trim() &&
+							!deferredMessageInput.trim() &&
 							pendingUploads.length === 0 &&
 							fileAttachments.length === 0
 						}
