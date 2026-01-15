@@ -430,6 +430,151 @@ launchctl load ~/Library/LaunchAgents/ai.octo.server.plist
 launchctl list | grep octo
 ```
 
+## Production Deployment
+
+For production deployments, run the setup script and select "Production" when prompted for deployment mode:
+
+```bash
+./setup.sh
+```
+
+The setup script will:
+1. Generate a secure 64-character JWT secret
+2. Create an admin user with a secure password
+3. Optionally configure Caddy as a reverse proxy with automatic HTTPS
+
+### Caddy Reverse Proxy
+
+Caddy provides automatic HTTPS via Let's Encrypt and serves as a reverse proxy for Octo.
+
+**Installation via setup.sh**:
+The setup script will install and configure Caddy automatically when you select "Production" mode and agree to set up Caddy.
+
+**Manual Installation**:
+```bash
+# Debian/Ubuntu
+sudo apt install -y debian-keyring debian-archive-keyring apt-transport-https curl
+curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | sudo gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | sudo tee /etc/apt/sources.list.d/caddy-stable.list
+sudo apt update && sudo apt install -y caddy
+
+# Arch Linux
+sudo pacman -S caddy
+
+# macOS
+brew install caddy
+```
+
+**Caddyfile Example** (`/etc/caddy/Caddyfile`):
+```caddyfile
+octo.example.com {
+    # Backend API
+    handle /api/* {
+        reverse_proxy localhost:8080
+    }
+    
+    # WebSocket connections
+    handle /ws/* {
+        reverse_proxy localhost:8080
+    }
+    
+    # WebSocket upgrade handling
+    @websockets {
+        header Connection *Upgrade*
+        header Upgrade websocket
+    }
+    handle @websockets {
+        reverse_proxy localhost:8080
+    }
+    
+    # Frontend
+    handle {
+        reverse_proxy localhost:3000
+    }
+    
+    # Security headers
+    header {
+        X-Content-Type-Options nosniff
+        X-Frame-Options DENY
+        Referrer-Policy strict-origin-when-cross-origin
+        -Server
+    }
+    
+    encode gzip zstd
+}
+```
+
+**Starting Caddy**:
+```bash
+# Linux (systemd)
+sudo systemctl enable --now caddy
+
+# Check status
+sudo systemctl status caddy
+
+# View logs
+sudo journalctl -u caddy -f
+
+# macOS
+sudo caddy start --config /etc/caddy/Caddyfile
+```
+
+### Authentication Setup
+
+**Development Mode** (dev_mode = true):
+- Uses pre-configured dev users from config file
+- No JWT secret required
+- Useful for local development
+
+**Production Mode** (dev_mode = false):
+- Requires JWT secret (minimum 32 characters)
+- Users stored in SQLite database
+- New users require invite codes
+
+**JWT Secret Generation**:
+```bash
+# Generate a secure 64-character secret
+openssl rand -base64 48
+
+# Or use the setup script which generates one automatically
+```
+
+**Creating the Admin User**:
+The setup script creates an admin user during production setup. To create additional admin users:
+
+```bash
+# Using the CLI
+octo user create --username admin --email admin@example.com --role admin
+
+# Generate password hash for config file
+htpasswd -nbBC 12 admin yourpassword | cut -d: -f2
+```
+
+**Invite Codes for New Users**:
+In production mode, new users need invite codes to register:
+
+```bash
+# Create a single-use invite code
+octo invites create --uses 1
+
+# Create a multi-use invite code (e.g., for a team)
+octo invites create --uses 10
+
+# List active invite codes
+octo invites list
+```
+
+### CORS Configuration
+
+For production deployments with a custom domain, configure allowed origins:
+
+```toml
+[auth]
+dev_mode = false
+jwt_secret = "your-secure-secret-at-least-32-characters"
+allowed_origins = ["https://octo.example.com"]
+```
+
 ## Configuration Reference
 
 Full configuration reference available at `backend/examples/config.toml`.

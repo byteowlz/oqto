@@ -5,6 +5,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAdminMetrics } from "@/hooks/use-admin";
 import { useApp } from "@/hooks/use-app";
 import { Activity, Shield, Ticket, Users, X } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import { InviteCodesPanel } from "./InviteCodesPanel";
 import { MetricsPanel } from "./MetricsPanel";
 import { SessionsPanel } from "./SessionsPanel";
@@ -12,21 +13,26 @@ import { UsersPanel } from "./UsersPanel";
 
 export function AdminApp() {
 	const { metrics } = useAdminMetrics();
-	const { setActiveAppId } = useApp();
+	const { setActiveAppId, locale } = useApp();
+	const navigate = useNavigate();
 
 	const handleClose = () => {
 		setActiveAppId("sessions");
+		navigate("/sessions");
 	};
 
 	return (
-		<div className="flex flex-col gap-4 h-full min-h-0 p-4 md:p-6 overflow-y-auto w-full">
-			<div className="flex items-start justify-between">
+		<div className="flex flex-col h-full min-h-0 p-1 sm:p-4 md:p-6 overflow-y-auto w-full">
+			{/* Header with title and close button */}
+			<div className="flex items-start justify-between mb-4">
 				<div>
 					<h1 className="text-xl md:text-2xl font-bold text-foreground tracking-wider">
-						ADMIN DASHBOARD
+						{locale === "de" ? "ADMIN DASHBOARD" : "ADMIN DASHBOARD"}
 					</h1>
 					<p className="text-sm text-muted-foreground">
-						Platform monitoring and management
+						{locale === "de"
+							? "Plattform-Monitoring und -Verwaltung"
+							: "Platform monitoring and management"}
 					</p>
 				</div>
 				{/* Close button - desktop only */}
@@ -36,10 +42,10 @@ export function AdminApp() {
 					size="sm"
 					onClick={handleClose}
 					className="hidden md:flex items-center gap-1.5 text-muted-foreground hover:text-foreground"
-					aria-label="Close"
+					aria-label={locale === "de" ? "Schliessen" : "Close"}
 				>
 					<X className="w-4 h-4" />
-					<span>Close</span>
+					<span>{locale === "de" ? "Schliessen" : "Close"}</span>
 				</Button>
 			</div>
 

@@ -8,6 +8,7 @@ import {
 	ExternalLink,
 	Eye,
 	FileText,
+	FileVideo,
 	Loader2,
 	Maximize2,
 	Minimize2,
@@ -118,6 +119,18 @@ const PDF_EXTENSIONS = new Set([".pdf"]);
 // Typst extension
 const TYPST_EXTENSIONS = new Set([".typ"]);
 
+// Video extensions
+const VIDEO_EXTENSIONS = new Set([
+	".mp4",
+	".webm",
+	".ogg",
+	".ogv",
+	".mov",
+	".avi",
+	".mkv",
+	".m4v",
+]);
+
 // Map file extensions to syntax highlighter language
 function getLanguage(filename: string): string {
 	const ext = filename.substring(filename.lastIndexOf(".")).toLowerCase();
@@ -200,6 +213,11 @@ function isPdf(filename: string): boolean {
 function isTypst(filename: string): boolean {
 	const ext = filename.substring(filename.lastIndexOf(".")).toLowerCase();
 	return TYPST_EXTENSIONS.has(ext);
+}
+
+function isVideo(filename: string): boolean {
+	const ext = filename.substring(filename.lastIndexOf(".")).toLowerCase();
+	return VIDEO_EXTENSIONS.has(ext);
 }
 
 function getFileUrl(
@@ -325,9 +343,9 @@ export function PreviewView({
 			return;
 		}
 
-		// Don't fetch content for PDF or image files - they render via URL
+		// Don't fetch content for PDF, image, or video files - they render via URL
 		const filename = filePath.split("/").pop() || filePath;
-		if (isPdf(filename) || isImage(filename)) {
+		if (isPdf(filename) || isImage(filename) || isVideo(filename)) {
 			setContent("");
 			setEditedContent("");
 			setIsEditing(false);
@@ -476,6 +494,7 @@ export function PreviewView({
 	const isImageFile = isImage(filename);
 	const isPdfFile = isPdf(filename);
 	const isTypstFile = isTypst(filename);
+	const isVideoFile = isVideo(filename);
 	const fileUrl =
 		fileserverBaseUrl && workspacePath
 			? getFileUrl(fileserverBaseUrl, workspacePath, filePath)
@@ -621,6 +640,92 @@ export function PreviewView({
 							style={{ imageRendering: "auto" }}
 						/>
 					)}
+				</div>
+			</div>
+		);
+	}
+
+	// For video files, render with video player
+	if (isVideoFile && fileUrl) {
+		return (
+			<div className={cn("h-full flex flex-col overflow-hidden", className)}>
+				{/* Header */}
+				{showHeader && (
+					<div className="flex-shrink-0 flex items-center justify-between px-2 py-1 border-b border-border bg-muted/30">
+						<div className="flex items-center gap-1.5 flex-1 min-w-0">
+							<FileVideo className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
+							<p
+								className="text-xs font-mono text-muted-foreground truncate"
+								title={filePath}
+							>
+								{filename}
+							</p>
+						</div>
+						<div className="flex items-center gap-0.5 ml-2">
+							<Button
+								type="button"
+								variant="ghost"
+								size="sm"
+								onClick={() => window.open(fileUrl, "_blank")}
+								className="h-6 px-1.5 text-xs"
+								title="Open in new tab"
+							>
+								<ExternalLink className="w-3 h-3" />
+							</Button>
+							<Button
+								type="button"
+								variant="ghost"
+								size="sm"
+								onClick={() => {
+									const link = document.createElement("a");
+									link.href = fileUrl;
+									link.download = filename;
+									link.click();
+								}}
+								className="h-6 px-1.5 text-xs"
+								title="Download"
+							>
+								<Download className="w-3 h-3" />
+							</Button>
+							{showExpand && onToggleExpand && (
+								<Button
+									type="button"
+									variant="ghost"
+									size="sm"
+									onClick={onToggleExpand}
+									className="h-6 px-1.5 text-xs"
+									title={expandLabel}
+								>
+									<ExpandIcon className="w-3 h-3" />
+								</Button>
+							)}
+							{onClose && (
+								<Button
+									type="button"
+									variant="ghost"
+									size="sm"
+									onClick={onClose}
+									className="h-6 px-1.5 text-xs"
+									title="Close preview"
+								>
+									<X className="w-3 h-3" />
+								</Button>
+							)}
+						</div>
+					</div>
+				)}
+
+				{/* Video content */}
+				<div className="flex-1 overflow-hidden bg-black flex items-center justify-center">
+					<video
+						src={fileUrl}
+						controls
+						playsInline
+						className="max-w-full max-h-full"
+					>
+						<track kind="captions" />
+						Your browser does not support the video tag.
+					</video>
 				</div>
 			</div>
 		);

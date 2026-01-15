@@ -836,6 +836,12 @@ export function ToolCallCard({
 		return null;
 	}
 
+	// Hide question tool - questions are shown in the UserQuestionDialog
+	// instead of inline in the message stream
+	if (toolName.toLowerCase() === "question") {
+		return null;
+	}
+
 	// Check if we have meaningful content to show
 	// For tool calls, input must have actual properties (not just an empty object)
 	// and output must be a non-empty string

@@ -61,6 +61,24 @@ describe("file-types", () => {
 			expect(svgInfo.mimeType).toBe("image/svg+xml");
 		});
 
+		it("detects video files", () => {
+			const mp4Info = getFileTypeInfo("video.mp4");
+			expect(mp4Info.category).toBe("video");
+			expect(mp4Info.mimeType).toBe("video/mp4");
+
+			const webmInfo = getFileTypeInfo("clip.webm");
+			expect(webmInfo.category).toBe("video");
+			expect(webmInfo.mimeType).toBe("video/webm");
+
+			const movInfo = getFileTypeInfo("recording.mov");
+			expect(movInfo.category).toBe("video");
+			expect(movInfo.mimeType).toBe("video/quicktime");
+
+			const mkvInfo = getFileTypeInfo("movie.mkv");
+			expect(mkvInfo.category).toBe("video");
+			expect(mkvInfo.mimeType).toBe("video/x-matroska");
+		});
+
 		it("detects CSV files", () => {
 			const info = getFileTypeInfo("data.csv");
 			expect(info.category).toBe("csv");
@@ -112,6 +130,12 @@ describe("file-types", () => {
 			expect(isTextFile("doc.pdf")).toBe(false);
 			expect(isTextFile("archive.zip")).toBe(false);
 		});
+
+		it("returns false for video files", () => {
+			expect(isTextFile("video.mp4")).toBe(false);
+			expect(isTextFile("clip.webm")).toBe(false);
+			expect(isTextFile("movie.mkv")).toBe(false);
+		});
 	});
 
 	describe("isBinaryFile", () => {
@@ -119,6 +143,12 @@ describe("file-types", () => {
 			expect(isBinaryFile("image.jpg")).toBe(true);
 			expect(isBinaryFile("doc.pdf")).toBe(true);
 			expect(isBinaryFile("archive.tar.gz")).toBe(true);
+		});
+
+		it("returns true for video files", () => {
+			expect(isBinaryFile("video.mp4")).toBe(true);
+			expect(isBinaryFile("clip.webm")).toBe(true);
+			expect(isBinaryFile("recording.mov")).toBe(true);
 		});
 
 		it("returns false for text files", () => {

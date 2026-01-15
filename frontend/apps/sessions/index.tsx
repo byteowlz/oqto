@@ -21,8 +21,10 @@ import { ContextWindowGauge } from "@/components/ui/context-window-gauge";
 import { ProviderIcon } from "@/components/ui/provider-icon";
 import {
 	type FileAttachment,
+	type IssueAttachment,
 	FileAttachmentChip,
 	FileMentionPopup,
+	IssueAttachmentChip,
 } from "@/components/ui/file-mention-popup";
 import { Input } from "@/components/ui/input";
 import {
@@ -84,7 +86,7 @@ import {
 	registerMainChatSession,
 	workspaceFileUrl,
 } from "@/lib/control-plane-client";
-import { getFileTypeInfo } from "@/lib/file-types";
+import { extractFileReferences, getFileTypeInfo } from "@/lib/file-types";
 import { getMessageText } from "@/lib/message-text";
 import { type ModelOption, filterModelOptions } from "@/lib/model-filter";
 import {
@@ -140,6 +142,7 @@ import {
 	FileCode,
 	FileImage,
 	FileText,
+	FileVideo,
 	GitBranch,
 	ListTodo,
 	Loader2,
@@ -1046,6 +1049,7 @@ export const SessionsApp = memo(function SessionsApp() {
 	const [showFileMentionPopup, setShowFileMentionPopup] = useState(false);
 	const [fileMentionQuery, setFileMentionQuery] = useState("");
 	const [fileAttachments, setFileAttachments] = useState<FileAttachment[]>([]);
+	const [issueAttachments, setIssueAttachments] = useState<IssueAttachment[]>([]);
 
 	// Default agent for shell commands - use "build" as the default primary agent
 	const [defaultAgent, setDefaultAgent] = useState<string>("build");
@@ -3116,8 +3120,9 @@ export const SessionsApp = memo(function SessionsApp() {
 		setShowSlashPopup(false);
 		setShowFileMentionPopup(false);
 
-		// Capture file attachments before clearing
+		// Capture file and issue attachments before clearing
 		const currentFileAttachments = [...fileAttachments];
+		const currentIssueAttachments = [...issueAttachments];
 
 		// Build message text with uploaded file paths
 		let messageText = currentInput;
@@ -3131,6 +3136,17 @@ export const SessionsApp = memo(function SessionsApp() {
 				: uploadPrefix;
 		}
 
+		// Build message text with issue attachments
+		if (currentIssueAttachments.length > 0) {
+			const issueText = currentIssueAttachments
+				.map(
+					(attachment) =>
+						`Working on #${attachment.issueId}: ${attachment.title}${attachment.description ? `\n\n${attachment.description}` : ""}`,
+				)
+				.join("\n\n---\n\n");
+			messageText = messageText ? `${issueText}\n\n${messageText}` : issueText;
+		}
+
 		// Check if this is a shell command (starts with "!")
 		const isShellCommand = messageText.startsWith("!");
 		const shellCommand = isShellCommand ? messageText.slice(1).trim() : "";
@@ -3142,10 +3158,19 @@ export const SessionsApp = memo(function SessionsApp() {
 		}
 		draftWriteTokenRef.current++;
 
+		// Cancel any pending input state sync to prevent race conditions
+		if (inputSyncTimeoutRef.current) {
+			clearTimeout(inputSyncTimeoutRef.current);
+			inputSyncTimeoutRef.current = null;
+		}
+
 		// Clear input and reset textarea height via the resize handler
 		setMessageInputWithResize("");
+		// Also immediately sync state to empty to prevent stale value restoration
+		setMessageInputState("");
 		setPendingUploads([]);
 		setFileAttachments([]);
+		setIssueAttachments([]);
 		setChatState("sending");
 		setStatus("");
 
@@ -3589,7 +3614,7 @@ export const SessionsApp = memo(function SessionsApp() {
 			{showExpandedCanvas && (
 				<div className="flex flex-col h-full overflow-hidden">
 					{!isMobileLayout && (
-						<div className="flex items-center justify-between px-2 py-1 border-b border-border bg-muted/30">
+						<div className="flex items-center justify-between px-2 py-1 pr-10 border-b border-border bg-muted/30">
 							<span className="text-xs text-muted-foreground">Canvas</span>
 							<button
 								type="button"
@@ -3615,7 +3640,7 @@ export const SessionsApp = memo(function SessionsApp() {
 			{showExpandedMemories && (
 				<div className="flex flex-col h-full overflow-hidden">
 					{!isMobileLayout && (
-						<div className="flex items-center justify-between px-2 py-1 border-b border-border bg-muted/30">
+						<div className="flex items-center justify-between px-2 py-1 pr-10 border-b border-border bg-muted/30">
 							<span className="text-xs text-muted-foreground">
 								{t.memories}
 							</span>
@@ -3642,7 +3667,7 @@ export const SessionsApp = memo(function SessionsApp() {
 			{showExpandedTerminal && (
 				<div className="flex flex-col h-full overflow-hidden">
 					{!isMobileLayout && (
-						<div className="flex items-center justify-between px-2 py-1 border-b border-border bg-muted/30">
+						<div className="flex items-center justify-between px-2 py-1 pr-10 border-b border-border bg-muted/30">
 							<span className="text-xs text-muted-foreground">
 								{t.terminal}
 							</span>
@@ -4107,6 +4132,22 @@ export const SessionsApp = memo(function SessionsApp() {
 								))}
 							</div>
 						)}
+						{/* Issue attachment chips */}
+						{issueAttachments.length > 0 && (
+							<div className="flex flex-wrap gap-1 mb-1">
+								{issueAttachments.map((attachment) => (
+									<IssueAttachmentChip
+										key={attachment.id}
+										attachment={attachment}
+										onRemove={() => {
+											setIssueAttachments((prev) =>
+												prev.filter((a) => a.id !== attachment.id),
+											);
+										}}
+									/>
+								))}
+							</div>
+						)}
 						{features.voice && dictation.isActive ? (
 							<DictationOverlay
 								open
@@ -4342,28 +4383,29 @@ export const SessionsApp = memo(function SessionsApp() {
 		},
 	};
 
-	const filesView = previewFilePath ? (
+	// Keep FileTreeView always mounted to preserve state across tab switches
+	const filesView = (
 		<div className="flex flex-col h-full overflow-hidden">
-			<Suspense fallback={viewLoadingFallback}>
-				<PreviewView
-					filePath={previewFilePath}
+			{previewFilePath ? (
+				<Suspense fallback={viewLoadingFallback}>
+					<PreviewView
+						filePath={previewFilePath}
+						workspacePath={resumeWorkspacePath}
+						onClose={closePreview}
+						onToggleExpand={() => toggleExpandedView("preview")}
+						isExpanded={expandedView === "preview"}
+						showExpand={!isMobileLayout}
+					/>
+				</Suspense>
+			) : (
+				<FileTreeView
+					onPreviewFile={handlePreviewFile}
+					onOpenInCanvas={handleOpenInCanvas}
 					workspacePath={resumeWorkspacePath}
-					onClose={closePreview}
-					onToggleExpand={() => toggleExpandedView("preview")}
-					isExpanded={expandedView === "preview"}
-					showExpand={!isMobileLayout}
+					state={fileTreeState}
+					onStateChange={handleFileTreeStateChange}
 				/>
-			</Suspense>
-		</div>
-	) : (
-		<div className="flex flex-col h-full overflow-hidden">
-			<FileTreeView
-				onPreviewFile={handlePreviewFile}
-				onOpenInCanvas={handleOpenInCanvas}
-				workspacePath={resumeWorkspacePath}
-				state={fileTreeState}
-				onStateChange={handleFileTreeStateChange}
-			/>
+			)}
 		</div>
 	);
 
@@ -4614,7 +4656,9 @@ export const SessionsApp = memo(function SessionsApp() {
 						) : (
 							renderChatContent(true)
 						))}
-					{activeView === "files" && filesView}
+					<div className={cn("h-full", activeView !== "files" && "hidden")}>
+						{filesView}
+					</div>
 					{activeView === "tasks" && (
 						<div className="flex flex-col h-full overflow-hidden">
 							<TodoListView todos={latestTodos} emptyMessage={t.noTasks} />
@@ -4633,7 +4677,7 @@ export const SessionsApp = memo(function SessionsApp() {
 									setActiveView("chat");
 								}
 							}}
-							onStartIssueNewSession={async (issueId, title, description) => {
+							onStartIssueNewSession={async (issueIds, title, attachments) => {
 								if (!resumeWorkspacePath) return;
 								try {
 									const url =
@@ -4641,7 +4685,7 @@ export const SessionsApp = memo(function SessionsApp() {
 									if (!url) return;
 									const newSession = await createSession(
 										url,
-										`#${issueId}: ${title}`,
+										`${title}`,
 										undefined,
 										{ directory: resumeWorkspacePath },
 									);
@@ -4649,17 +4693,16 @@ export const SessionsApp = memo(function SessionsApp() {
 									await refreshChatHistory();
 									if (newSession.id) {
 										setSelectedChatSessionId(newSession.id);
-										const content = description
-											? `Working on #${issueId}: ${title}\n\n${description}\n\n`
-											: `Working on #${issueId}: ${title}\n\n`;
-										setMessageInputWithResize(content);
-										if (window.innerWidth < 768) {
-											setActiveView("chat");
-										}
+										setIssueAttachments(attachments);
+										setActiveView("chat");
 									}
 								} catch (err) {
 									console.error("Failed to start issue in new session:", err);
 								}
+							}}
+							onAddIssueAttachments={(attachments) => {
+								setIssueAttachments((prev) => [...prev, ...attachments]);
+								setActiveView("chat");
 							}}
 							/>
 						</div>
@@ -4967,7 +5010,9 @@ export const SessionsApp = memo(function SessionsApp() {
 										/>
 									</div>
 									<div className="flex-1 min-h-0 overflow-hidden">
-										{activeView === "files" && filesView}
+										<div className={cn("h-full", activeView !== "files" && "hidden")}>
+											{filesView}
+										</div>
 										{activeView === "tasks" && (
 											<div className="flex flex-col h-full overflow-hidden">
 												<TodoListView
@@ -4986,7 +5031,7 @@ export const SessionsApp = memo(function SessionsApp() {
 													setMessageInputWithResize(content);
 													setActiveView("chat");
 												}}
-												onStartIssueNewSession={async (issueId, title, description) => {
+												onStartIssueNewSession={async (issueIds, title, attachments) => {
 													if (!resumeWorkspacePath) return;
 													try {
 														const url =
@@ -4996,7 +5041,7 @@ export const SessionsApp = memo(function SessionsApp() {
 														if (!url) return;
 														const newSession = await createSession(
 															url,
-															`#${issueId}: ${title}`,
+															`${title}`,
 															undefined,
 															{ directory: resumeWorkspacePath },
 														);
@@ -5004,10 +5049,7 @@ export const SessionsApp = memo(function SessionsApp() {
 														await refreshChatHistory();
 														if (newSession.id) {
 															setSelectedChatSessionId(newSession.id);
-															const content = description
-																? `Working on #${issueId}: ${title}\n\n${description}\n\n`
-																: `Working on #${issueId}: ${title}\n\n`;
-															setMessageInputWithResize(content);
+															setIssueAttachments(attachments);
 															setActiveView("chat");
 														}
 													} catch (err) {
@@ -5016,6 +5058,10 @@ export const SessionsApp = memo(function SessionsApp() {
 															err,
 														);
 													}
+												}}
+												onAddIssueAttachments={(attachments) => {
+													setIssueAttachments((prev) => [...prev, ...attachments]);
+													setActiveView("chat");
 												}}
 												/>
 											</div>
@@ -5036,7 +5082,7 @@ export const SessionsApp = memo(function SessionsApp() {
 														: `Working on #${issueId}: ${title}\n\n`;
 													setMessageInputWithResize(content);
 												}}
-												onStartIssueNewSession={async (issueId, title, description) => {
+												onStartIssueNewSession={async (issueIds, title, attachments) => {
 													if (!resumeWorkspacePath) return;
 													try {
 														const url =
@@ -5046,7 +5092,7 @@ export const SessionsApp = memo(function SessionsApp() {
 														if (!url) return;
 														const newSession = await createSession(
 															url,
-															`#${issueId}: ${title}`,
+															`${title}`,
 															undefined,
 															{ directory: resumeWorkspacePath },
 														);
@@ -5054,10 +5100,8 @@ export const SessionsApp = memo(function SessionsApp() {
 														await refreshChatHistory();
 														if (newSession.id) {
 															setSelectedChatSessionId(newSession.id);
-															const content = description
-																? `Working on #${issueId}: ${title}\n\n${description}\n\n`
-																: `Working on #${issueId}: ${title}\n\n`;
-															setMessageInputWithResize(content);
+															setIssueAttachments(attachments);
+															setActiveView("chat");
 														}
 													} catch (err) {
 														console.error(
@@ -5065,6 +5109,10 @@ export const SessionsApp = memo(function SessionsApp() {
 															err,
 														);
 													}
+												}}
+												onAddIssueAttachments={(attachments) => {
+													setIssueAttachments((prev) => [...prev, ...attachments]);
+													setActiveView("chat");
 												}}
 												/>
 											</div>
@@ -5465,12 +5513,8 @@ const MessageGroupCard = memo(function MessageGroupCard({
 
 				{segments.map((segment) => {
 					if (segment.type === "text") {
-						// Parse @file references from the text
-						const fileRefPattern = /@([^\s@]+\.[a-zA-Z0-9]+)/g;
-						const matches = segment.content.match(fileRefPattern) || [];
-						const fileRefs = matches.map((m) => m.slice(1)); // Remove @ prefix
-						// Remove duplicates
-						const uniqueFileRefs = [...new Set(fileRefs)];
+						// Parse @file references from the text, excluding code blocks
+						const uniqueFileRefs = extractFileReferences(segment.content);
 
 						return (
 							<ContextMenu key={segment.key}>
@@ -5737,7 +5781,9 @@ const FilePartCard = memo(function FilePartCard({
 	);
 });
 
-/** Renders a file reference card with preview for images */
+/** Renders a file reference card with preview for images.
+ * Only renders if the file exists on disk (verified via HEAD request).
+ */
 const FileReferenceCard = memo(function FileReferenceCard({
 	filePath,
 	workspacePath,
@@ -5752,9 +5798,11 @@ const FileReferenceCard = memo(function FileReferenceCard({
 	const [isLoading, setIsLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
 	const [imageLoaded, setImageLoaded] = useState(false);
+	const [fileExists, setFileExists] = useState<boolean | null>(null);
 
 	const fileInfo = useMemo(() => getFileTypeInfo(filePath), [filePath]);
 	const isImage = fileInfo.category === "image";
+	const isVideo = fileInfo.category === "video";
 	const fileName = label || filePath.split("/").pop() || filePath;
 
 	// Build the file URL
@@ -5764,13 +5812,38 @@ const FileReferenceCard = memo(function FileReferenceCard({
 		return workspaceFileUrl(workspacePath, filePath);
 	}, [directUrl, filePath, workspacePath]);
 
+	// Check if file exists using HEAD request
+	useEffect(() => {
+		if (!fileUrl) {
+			setFileExists(false);
+			return;
+		}
+		let cancelled = false;
+		fetch(fileUrl, { method: "HEAD" })
+			.then((res) => {
+				if (!cancelled) {
+					setFileExists(res.ok);
+					if (!res.ok) setIsLoading(false);
+				}
+			})
+			.catch(() => {
+				if (!cancelled) {
+					setFileExists(false);
+					setIsLoading(false);
+				}
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, [fileUrl]);
+
+	// Don't render if file doesn't exist or we're still checking
+	if (fileExists === null || fileExists === false) {
+		return null;
+	}
+
 	if (!fileUrl) {
-		return (
-			<div className="inline-flex items-center gap-2 px-3 py-1.5 border border-border bg-muted/20 rounded text-xs text-muted-foreground">
-				<FileText className="w-4 h-4" />
-				<span className="truncate max-w-[220px]">{fileName}</span>
-			</div>
-		);
+		return null;
 	}
 
 	// For images, render inline preview
@@ -5814,7 +5887,33 @@ const FileReferenceCard = memo(function FileReferenceCard({
 		);
 	}
 
-	// For non-images, render a compact file reference link
+	// For videos, render inline preview with player
+	if (isVideo) {
+		return (
+			<div className="border border-border bg-muted/20 rounded overflow-hidden max-w-md">
+				<div className="flex items-center gap-2 px-3 py-2 bg-muted/50 border-b border-border">
+					<FileVideo className="w-4 h-4 text-muted-foreground" />
+					<span className="text-xs font-medium truncate">{fileName}</span>
+				</div>
+				<video
+					src={fileUrl}
+					controls
+					playsInline
+					className="max-w-full h-auto"
+					onLoadedData={() => setIsLoading(false)}
+					onError={() => {
+						setError("Failed to load video");
+						setIsLoading(false);
+					}}
+				>
+					<track kind="captions" />
+					Your browser does not support the video tag.
+				</video>
+			</div>
+		);
+	}
+
+	// For non-images/videos, render a compact file reference link
 	const FileIcon = fileInfo.category === "code" ? FileCode : FileText;
 	return (
 		<a

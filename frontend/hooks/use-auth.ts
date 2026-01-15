@@ -17,22 +17,24 @@ export const authKeys = {
 async function fetchCurrentUser(): Promise<UserInfo | null> {
 	const headers = getAuthHeaders();
 	const url = controlPlaneApiUrl("/api/me");
-	console.log(
-		"[auth] fetchCurrentUser",
-		url,
-		"headers:",
-		JSON.stringify(headers),
-	);
+	// Only log in development - headers contain sensitive auth tokens
+	if (import.meta.env.DEV) {
+		console.log("[auth] fetchCurrentUser", url);
+	}
 
 	try {
 		const response = await fetch(url, {
 			headers: { ...headers },
 			credentials: "include",
 		});
-		console.log("[auth] /me response:", response.status);
+		if (import.meta.env.DEV) {
+			console.log("[auth] /me response:", response.status);
+		}
 		if (response.status === 401) {
 			// Clear any stale token
-			console.log("[auth] 401 - clearing token");
+			if (import.meta.env.DEV) {
+				console.log("[auth] 401 - clearing token");
+			}
 			setAuthToken(null);
 			return null;
 		}
@@ -43,7 +45,10 @@ async function fetchCurrentUser(): Promise<UserInfo | null> {
 			return null;
 		}
 		const data = await response.json();
-		console.log("[auth] /me user:", data);
+		// Only log user ID in dev, not full user object (contains PII)
+		if (import.meta.env.DEV) {
+			console.log("[auth] /me user id:", data?.id);
+		}
 		return data;
 	} catch (error) {
 		// If the API is not reachable, return null to show login screen

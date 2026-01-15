@@ -29,8 +29,10 @@ TEMPLATES_DIR="${SCRIPT_DIR}/templates"
 : "${OCTO_INSTALL_DEPS:=yes}"           # yes or no
 : "${OCTO_INSTALL_SERVICE:=yes}"        # yes or no
 : "${OCTO_INSTALL_AGENT_TOOLS:=yes}"    # yes or no (agntz, mmry, trx)
-: "${OCTO_DEV_MODE:=true}"              # true or false (auth dev mode)
+: "${OCTO_DEV_MODE:=}"                  # true or false (auth dev mode) - empty = prompt
 : "${OCTO_LOG_LEVEL:=info}"             # error, warn, info, debug, trace
+: "${OCTO_SETUP_CADDY:=}"               # yes or no - empty = prompt
+: "${OCTO_DOMAIN:=}"                    # domain for HTTPS (e.g., octo.example.com)
 
 # Agent tools installation tracking
 INSTALL_MMRY="false"
@@ -41,6 +43,15 @@ INSTALL_MAILZ="false"
 LLM_PROVIDER=""
 LLM_API_KEY_SET="false"
 EAVS_ENABLED="false"
+
+# Production configuration (set during setup)
+PRODUCTION_MODE="false"
+SETUP_CADDY="false"
+DOMAIN=""
+JWT_SECRET=""
+ADMIN_USERNAME=""
+ADMIN_PASSWORD=""
+ADMIN_EMAIL=""
 
 # Paths (XDG compliant)
 : "${XDG_CONFIG_HOME:=$HOME/.config}"
@@ -759,6 +770,394 @@ install_agent_tools_via_agntz() {
     fi
 }
 
+# ==============================================================================
+# Production Mode Setup
+# ==============================================================================
+
+select_deployment_mode() {
+    log_step "Deployment Mode Selection"
+    
+    echo
+    echo "Octo can be deployed in two modes:"
+    echo
+    echo "  ${BOLD}Development${NC} - For local development and testing"
+    echo "    - Uses dev_mode authentication (no JWT secret required)"
+    echo "    - Preconfigured dev users for easy login"
+    echo "    - HTTP only (no TLS)"
+    echo "    - Best for: local development, testing"
+    echo
+    echo "  ${BOLD}Production${NC} - For server deployments"
+    echo "    - Secure JWT-based authentication"
+    echo "    - Creates an admin user with secure credentials"
+    echo "    - Optional Caddy reverse proxy with automatic HTTPS"
+    echo "    - Best for: servers, multi-user deployments, remote access"
+    echo
+    
+    local choice
+    choice=$(prompt_choice "Select deployment mode:" "Development" "Production")
+    
+    case "$choice" in
+        "Development")
+            PRODUCTION_MODE="false"
+            OCTO_DEV_MODE="true"
+            log_info "Development mode selected"
+            ;;
+        "Production")
+            PRODUCTION_MODE="true"
+            OCTO_DEV_MODE="false"
+            log_info "Production mode selected"
+            setup_production_mode
+            ;;
+    esac
+}
+
+setup_production_mode() {
+    log_step "Production Mode Configuration"
+    
+    # Generate JWT secret
+    echo
+    log_info "Generating secure JWT secret..."
+    JWT_SECRET=$(generate_secure_secret 64)
+    log_success "JWT secret generated (64 characters)"
+    
+    # Admin user setup
+    setup_admin_user
+    
+    # Caddy setup
+    setup_caddy_prompt
+}
+
+generate_secure_secret() {
+    local length="${1:-64}"
+    # Use openssl for cryptographically secure random bytes
+    if command_exists openssl; then
+        openssl rand -base64 "$((length * 3 / 4))" | tr -d '/+=' | head -c "$length"
+    else
+        # Fallback to /dev/urandom
+        head -c "$((length * 2))" /dev/urandom | base64 | tr -d '/+=' | head -c "$length"
+    fi
+}
+
+setup_admin_user() {
+    log_step "Admin User Setup"
+    
+    echo
+    echo "Create an administrator account to manage Octo."
+    echo "This user will be able to:"
+    echo "  - Access the admin dashboard"
+    echo "  - Create invite codes for new users"
+    echo "  - Manage sessions and users"
+    echo
+    
+    # Username
+    ADMIN_USERNAME=$(prompt_input "Admin username" "admin")
+    
+    # Email
+    ADMIN_EMAIL=$(prompt_input "Admin email" "admin@localhost")
+    
+    # Password
+    echo
+    if [[ "$NONINTERACTIVE" == "true" ]]; then
+        ADMIN_PASSWORD=$(generate_secure_secret 16)
+        log_info "Generated admin password: $ADMIN_PASSWORD"
+        log_warn "SAVE THIS PASSWORD - it will not be shown again!"
+    else
+        while true; do
+            ADMIN_PASSWORD=$(prompt_password "Admin password (min 8 characters)")
+            if [[ ${#ADMIN_PASSWORD} -lt 8 ]]; then
+                log_error "Password must be at least 8 characters"
+                continue
+            fi
+            
+            local confirm_password
+            confirm_password=$(prompt_password "Confirm password")
+            
+            if [[ "$ADMIN_PASSWORD" != "$confirm_password" ]]; then
+                log_error "Passwords do not match"
+                continue
+            fi
+            
+            break
+        done
+    fi
+    
+    log_success "Admin user configured: $ADMIN_USERNAME"
+}
+
+setup_caddy_prompt() {
+    log_step "Reverse Proxy Setup (Caddy)"
+    
+    echo
+    echo "Caddy provides a reverse proxy with automatic HTTPS."
+    echo "This is recommended for production deployments."
+    echo
+    echo "Features:"
+    echo "  - Automatic TLS certificate from Let's Encrypt"
+    echo "  - HTTP/2 support"
+    echo "  - Simple configuration"
+    echo
+    
+    if [[ -n "$OCTO_SETUP_CADDY" ]]; then
+        SETUP_CADDY="$OCTO_SETUP_CADDY"
+    elif confirm "Set up Caddy reverse proxy?" "y"; then
+        SETUP_CADDY="yes"
+    else
+        SETUP_CADDY="no"
+    fi
+    
+    if [[ "$SETUP_CADDY" == "yes" ]]; then
+        setup_caddy_config
+    fi
+}
+
+setup_caddy_config() {
+    echo
+    echo "Caddy requires a domain name for HTTPS certificates."
+    echo "The domain must point to this server's IP address."
+    echo
+    echo "Examples:"
+    echo "  - octo.example.com"
+    echo "  - agents.mycompany.io"
+    echo "  - localhost (for local testing without TLS)"
+    echo
+    
+    if [[ -n "$OCTO_DOMAIN" ]]; then
+        DOMAIN="$OCTO_DOMAIN"
+    else
+        DOMAIN=$(prompt_input "Domain name" "localhost")
+    fi
+    
+    if [[ "$DOMAIN" == "localhost" ]]; then
+        log_warn "Using localhost - HTTPS will not be enabled"
+    else
+        log_info "Caddy will obtain TLS certificate for: $DOMAIN"
+    fi
+}
+
+install_caddy() {
+    if [[ "$SETUP_CADDY" != "yes" ]]; then
+        return 0
+    fi
+    
+    log_step "Installing Caddy"
+    
+    if command_exists caddy; then
+        log_success "Caddy already installed: $(caddy version 2>/dev/null | head -1)"
+        return 0
+    fi
+    
+    case "$OS" in
+        macos)
+            if command_exists brew; then
+                log_info "Installing Caddy via Homebrew..."
+                brew install caddy
+            else
+                log_warn "Homebrew not found. Please install Caddy manually:"
+                log_info "  brew install caddy"
+                log_info "  or download from: https://caddyserver.com/download"
+            fi
+            ;;
+        linux)
+            case "$OS_DISTRO" in
+                arch|manjaro|endeavouros)
+                    log_info "Installing Caddy via pacman..."
+                    sudo pacman -S --noconfirm caddy
+                    ;;
+                debian|ubuntu|pop|linuxmint)
+                    log_info "Installing Caddy via apt..."
+                    sudo apt-get install -y debian-keyring debian-archive-keyring apt-transport-https curl
+                    curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | sudo gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+                    curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | sudo tee /etc/apt/sources.list.d/caddy-stable.list
+                    sudo apt-get update
+                    sudo apt-get install -y caddy
+                    ;;
+                fedora)
+                    log_info "Installing Caddy via dnf..."
+                    sudo dnf install -y 'dnf-command(copr)'
+                    sudo dnf copr enable -y @caddy/caddy
+                    sudo dnf install -y caddy
+                    ;;
+                *)
+                    log_warn "Unknown distribution. Installing Caddy via GitHub release..."
+                    install_caddy_binary
+                    ;;
+            esac
+            ;;
+    esac
+    
+    if command_exists caddy; then
+        log_success "Caddy installed successfully"
+    else
+        log_warn "Caddy installation may have failed. Please install manually."
+    fi
+}
+
+install_caddy_binary() {
+    local caddy_version="2.9.1"
+    local arch="$ARCH"
+    
+    case "$arch" in
+        x86_64) arch="amd64" ;;
+        aarch64) arch="arm64" ;;
+    esac
+    
+    local caddy_url="https://github.com/caddyserver/caddy/releases/download/v${caddy_version}/caddy_${caddy_version}_linux_${arch}.tar.gz"
+    
+    log_info "Downloading Caddy ${caddy_version}..."
+    curl -sL "$caddy_url" | sudo tar -xzC /usr/local/bin caddy
+    sudo chmod +x /usr/local/bin/caddy
+}
+
+generate_caddyfile() {
+    if [[ "$SETUP_CADDY" != "yes" ]]; then
+        return 0
+    fi
+    
+    log_step "Generating Caddyfile"
+    
+    local caddy_config_dir="/etc/caddy"
+    local caddyfile="${caddy_config_dir}/Caddyfile"
+    
+    # Determine ports based on backend mode
+    local backend_port="8080"
+    local frontend_port="3000"
+    
+    # Create config directory
+    if [[ ! -d "$caddy_config_dir" ]]; then
+        sudo mkdir -p "$caddy_config_dir"
+    fi
+    
+    # Generate Caddyfile
+    if [[ "$DOMAIN" == "localhost" ]]; then
+        # Local development - no TLS
+        sudo tee "$caddyfile" > /dev/null << EOF
+# Octo Caddyfile - Local Development
+# Generated by setup.sh on $(date)
+
+:80 {
+    # Frontend (React app)
+    handle /api/* {
+        reverse_proxy localhost:${backend_port}
+    }
+    
+    handle /ws/* {
+        reverse_proxy localhost:${backend_port}
+    }
+    
+    # WebSocket upgrade for sessions
+    @websockets {
+        header Connection *Upgrade*
+        header Upgrade websocket
+    }
+    handle @websockets {
+        reverse_proxy localhost:${backend_port}
+    }
+    
+    # Default to frontend
+    handle {
+        reverse_proxy localhost:${frontend_port}
+    }
+    
+    log {
+        output file /var/log/caddy/octo.log
+    }
+}
+EOF
+    else
+        # Production - with TLS
+        sudo tee "$caddyfile" > /dev/null << EOF
+# Octo Caddyfile - Production
+# Generated by setup.sh on $(date)
+# Domain: ${DOMAIN}
+
+${DOMAIN} {
+    # Backend API
+    handle /api/* {
+        reverse_proxy localhost:${backend_port}
+    }
+    
+    # WebSocket connections
+    handle /ws/* {
+        reverse_proxy localhost:${backend_port}
+    }
+    
+    # WebSocket upgrade handling
+    @websockets {
+        header Connection *Upgrade*
+        header Upgrade websocket
+    }
+    handle @websockets {
+        reverse_proxy localhost:${backend_port}
+    }
+    
+    # Frontend (React app)
+    handle {
+        reverse_proxy localhost:${frontend_port}
+    }
+    
+    # Security headers
+    header {
+        X-Content-Type-Options nosniff
+        X-Frame-Options DENY
+        Referrer-Policy strict-origin-when-cross-origin
+        -Server
+    }
+    
+    log {
+        output file /var/log/caddy/octo.log
+        format json
+    }
+    
+    # Enable compression
+    encode gzip zstd
+}
+
+# Redirect HTTP to HTTPS
+http://${DOMAIN} {
+    redir https://${DOMAIN}{uri} permanent
+}
+EOF
+    fi
+    
+    # Create log directory
+    sudo mkdir -p /var/log/caddy
+    
+    log_success "Caddyfile generated: $caddyfile"
+}
+
+install_caddy_service() {
+    if [[ "$SETUP_CADDY" != "yes" ]]; then
+        return 0
+    fi
+    
+    log_step "Installing Caddy service"
+    
+    case "$OS" in
+        linux)
+            # Caddy usually comes with systemd service, but ensure it's enabled
+            if [[ -f /lib/systemd/system/caddy.service ]] || [[ -f /etc/systemd/system/caddy.service ]]; then
+                log_info "Enabling Caddy service..."
+                sudo systemctl daemon-reload
+                sudo systemctl enable caddy
+                
+                if confirm "Start Caddy now?"; then
+                    sudo systemctl start caddy
+                    log_success "Caddy service started"
+                    log_info "Check status with: sudo systemctl status caddy"
+                fi
+            else
+                log_warn "Caddy systemd service not found. You may need to configure it manually."
+            fi
+            ;;
+        macos)
+            log_info "On macOS, Caddy can be started with:"
+            log_info "  sudo caddy start --config /etc/caddy/Caddyfile"
+            log_info "Or use Homebrew services:"
+            log_info "  brew services start caddy"
+            ;;
+    esac
+}
+
 build_octo() {
     log_step "Building Octo components"
     
@@ -938,6 +1337,7 @@ generate_config() {
     
     # Auth configuration
     local dev_user_id dev_user_name dev_user_email dev_user_password dev_user_hash
+    local admin_user_hash=""
     
     if [[ "$OCTO_DEV_MODE" == "true" ]]; then
         log_info "Setting up development user..."
@@ -952,11 +1352,19 @@ generate_config() {
         else
             dev_user_hash=""
         fi
+    elif [[ "$PRODUCTION_MODE" == "true" ]]; then
+        # Production mode - use the admin user configured earlier
+        log_info "Generating admin user password hash..."
+        admin_user_hash=$(generate_password_hash "$ADMIN_PASSWORD")
     fi
     
-    # Generate JWT secret for non-dev mode
+    # Use JWT secret from production setup or generate new one
     local jwt_secret
-    jwt_secret=$(generate_jwt_secret)
+    if [[ -n "$JWT_SECRET" ]]; then
+        jwt_secret="$JWT_SECRET"
+    else
+        jwt_secret=$(generate_jwt_secret)
+    fi
     
     # EAVS configuration
     local eavs_enabled="false"
@@ -1123,12 +1531,33 @@ EOF
         echo "container_url = \"$eavs_container_url\"" >> "$config_file"
     fi
 
+    # Determine allowed origins for CORS
+    local allowed_origins=""
+    if [[ "$PRODUCTION_MODE" == "true" && -n "$DOMAIN" && "$DOMAIN" != "localhost" ]]; then
+        allowed_origins="allowed_origins = [\"https://${DOMAIN}\"]"
+    fi
+
     cat >> "$config_file" << EOF
 
 [auth]
 dev_mode = $OCTO_DEV_MODE
+EOF
+
+    # Add JWT secret for production mode (uncommented)
+    if [[ "$PRODUCTION_MODE" == "true" ]]; then
+        cat >> "$config_file" << EOF
+jwt_secret = "$jwt_secret"
+EOF
+    else
+        cat >> "$config_file" << EOF
 # jwt_secret = "$jwt_secret"
 EOF
+    fi
+    
+    # Add CORS origins if configured
+    if [[ -n "$allowed_origins" ]]; then
+        echo "$allowed_origins" >> "$config_file"
+    fi
 
     if [[ "$OCTO_DEV_MODE" == "true" && -n "${dev_user_hash:-}" ]]; then
         cat >> "$config_file" << EOF
@@ -1253,6 +1682,77 @@ EOF
             cp "$TEMPLATES_DIR/opencode/AGENTS.md" "$WORKSPACE_DIR/AGENTS.md"
             log_info "Created default AGENTS.md in workspace"
         fi
+    fi
+    
+    # Save admin credentials for post-setup user creation
+    if [[ "$PRODUCTION_MODE" == "true" && -n "$ADMIN_USERNAME" ]]; then
+        local creds_file="$OCTO_CONFIG_DIR/.admin_setup"
+        cat > "$creds_file" << EOF
+ADMIN_USERNAME="$ADMIN_USERNAME"
+ADMIN_EMAIL="$ADMIN_EMAIL"
+ADMIN_PASSWORD_HASH="$admin_user_hash"
+EOF
+        chmod 600 "$creds_file"
+        log_info "Admin credentials saved for database setup"
+    fi
+}
+
+# ==============================================================================
+# Admin User Database Setup
+# ==============================================================================
+
+create_admin_user_db() {
+    if [[ "$PRODUCTION_MODE" != "true" ]]; then
+        return 0
+    fi
+    
+    log_step "Creating admin user in database"
+    
+    local creds_file="$OCTO_CONFIG_DIR/.admin_setup"
+    if [[ ! -f "$creds_file" ]]; then
+        log_warn "Admin credentials file not found, skipping database setup"
+        return 0
+    fi
+    
+    # shellcheck source=/dev/null
+    source "$creds_file"
+    
+    # Check if octo CLI is available
+    if ! command_exists octo; then
+        log_warn "octo CLI not found. You'll need to create the admin user manually."
+        log_info "After starting the server, run:"
+        log_info "  octo user create --username \"$ADMIN_USERNAME\" --email \"$ADMIN_EMAIL\" --role admin"
+        return 0
+    fi
+    
+    echo
+    echo "The admin user will be created when you first start Octo."
+    echo "You can also create users manually with:"
+    echo "  octo user create --username \"$ADMIN_USERNAME\" --email \"$ADMIN_EMAIL\" --role admin"
+    echo
+    
+    # Generate an initial invite code for the admin
+    generate_initial_invite_code
+    
+    # Clean up the credentials file
+    rm -f "$creds_file"
+}
+
+generate_initial_invite_code() {
+    log_step "Generating initial invite code"
+    
+    echo
+    echo "To add additional users, you'll need invite codes."
+    echo "An initial invite code will be generated when you start Octo."
+    echo
+    echo "After starting the server, create invite codes with:"
+    echo "  octo invites create --uses 1"
+    echo
+    echo "Or use the web admin interface at:"
+    if [[ -n "$DOMAIN" && "$DOMAIN" != "localhost" ]]; then
+        echo "  https://${DOMAIN}/admin"
+    else
+        echo "  http://localhost:8080/admin"
     fi
 }
 
@@ -1578,10 +2078,34 @@ print_summary() {
     
     echo
     echo "Configuration:"
-    echo "  User mode:    $SELECTED_USER_MODE"
-    echo "  Backend mode: $SELECTED_BACKEND_MODE"
-    echo "  Config file:  $OCTO_CONFIG_DIR/config.toml"
+    echo "  User mode:       $SELECTED_USER_MODE"
+    echo "  Backend mode:    $SELECTED_BACKEND_MODE"
+    echo "  Deployment mode: $([[ "$PRODUCTION_MODE" == "true" ]] && echo "Production" || echo "Development")"
+    echo "  Config file:     $OCTO_CONFIG_DIR/config.toml"
     echo
+    
+    if [[ "$PRODUCTION_MODE" == "true" ]]; then
+        echo "Security:"
+        echo "  JWT secret:    configured (64 characters)"
+        echo "  Admin user:    $ADMIN_USERNAME"
+        echo "  Admin email:   $ADMIN_EMAIL"
+        if [[ "$NONINTERACTIVE" == "true" ]]; then
+            echo -e "  ${YELLOW}Admin password: $ADMIN_PASSWORD${NC}"
+            echo -e "  ${RED}SAVE THIS PASSWORD - it will not be shown again!${NC}"
+        fi
+        echo
+        
+        if [[ "$SETUP_CADDY" == "yes" ]]; then
+            echo "Reverse Proxy:"
+            echo "  Caddy:       installed"
+            echo "  Domain:      $DOMAIN"
+            if [[ "$DOMAIN" != "localhost" ]]; then
+                echo "  HTTPS:       enabled (automatic via Let's Encrypt)"
+            fi
+            echo "  Config:      /etc/caddy/Caddyfile"
+            echo
+        fi
+    fi
     
     echo "LLM Configuration:"
     if [[ "$EAVS_ENABLED" == "true" ]]; then
@@ -1637,29 +2161,88 @@ print_summary() {
     
     echo "Next steps:"
     echo
-    echo "  1. Start the server:"
-    if [[ "$OS" == "linux" && "$SELECTED_USER_MODE" == "single" ]]; then
-        echo "     systemctl --user start octo"
-        echo "     # or manually:"
-    fi
-    if [[ "$OS" == "macos" ]]; then
-        echo "     launchctl load ~/Library/LaunchAgents/ai.octo.server.plist"
-        echo "     # or manually:"
-    fi
-    echo "     octo serve $([[ "$SELECTED_BACKEND_MODE" == "local" ]] && echo '--local-mode')"
-    echo
-    echo "  2. Start the frontend dev server:"
-    echo "     cd $SCRIPT_DIR/frontend && bun dev"
-    echo
-    echo "  3. Open the web interface:"
-    echo "     http://localhost:3000"
-    echo
     
-    if [[ "$OCTO_DEV_MODE" == "true" && -n "${dev_user_id:-}" ]]; then
-        echo "  4. Login with your dev credentials:"
-        echo "     Username: $dev_user_id"
-        echo "     Password: (the password you entered)"
+    if [[ "$PRODUCTION_MODE" == "true" ]]; then
+        # Production mode instructions
+        local step=1
+        
+        if [[ "$SETUP_CADDY" == "yes" ]]; then
+            echo "  $step. Start Caddy reverse proxy:"
+            if [[ "$OS" == "linux" ]]; then
+                echo "     sudo systemctl start caddy"
+            else
+                echo "     sudo caddy start --config /etc/caddy/Caddyfile"
+            fi
+            echo
+            ((step++))
+        fi
+        
+        echo "  $step. Start the Octo server:"
+        if [[ "$OS" == "linux" ]]; then
+            if [[ "$SELECTED_USER_MODE" == "single" ]]; then
+                echo "     systemctl --user start octo"
+            else
+                echo "     sudo systemctl start octo"
+            fi
+        else
+            echo "     launchctl load ~/Library/LaunchAgents/ai.octo.server.plist"
+        fi
+        echo "     # or manually:"
+        echo "     octo serve $([[ "$SELECTED_BACKEND_MODE" == "local" ]] && echo '--local-mode')"
         echo
+        ((step++))
+        
+        echo "  $step. Start the frontend (production build):"
+        echo "     cd $SCRIPT_DIR/frontend && bun run preview"
+        echo "     # Or deploy the dist/ folder to your web server"
+        echo
+        ((step++))
+        
+        echo "  $step. Access the web interface:"
+        if [[ -n "$DOMAIN" && "$DOMAIN" != "localhost" ]]; then
+            echo "     https://${DOMAIN}"
+        else
+            echo "     http://localhost:3000"
+        fi
+        echo
+        ((step++))
+        
+        echo "  $step. Login with admin credentials:"
+        echo "     Username: $ADMIN_USERNAME"
+        echo "     Password: (the password you entered during setup)"
+        echo
+        ((step++))
+        
+        echo "  $step. Create invite codes for new users:"
+        echo "     octo invites create --uses 1"
+        echo "     # Or use the admin interface"
+        echo
+    else
+        # Development mode instructions
+        echo "  1. Start the server:"
+        if [[ "$OS" == "linux" && "$SELECTED_USER_MODE" == "single" ]]; then
+            echo "     systemctl --user start octo"
+            echo "     # or manually:"
+        fi
+        if [[ "$OS" == "macos" ]]; then
+            echo "     launchctl load ~/Library/LaunchAgents/ai.octo.server.plist"
+            echo "     # or manually:"
+        fi
+        echo "     octo serve $([[ "$SELECTED_BACKEND_MODE" == "local" ]] && echo '--local-mode')"
+        echo
+        echo "  2. Start the frontend dev server:"
+        echo "     cd $SCRIPT_DIR/frontend && bun dev"
+        echo
+        echo "  3. Open the web interface:"
+        echo "     http://localhost:3000"
+        echo
+        
+        if [[ "$OCTO_DEV_MODE" == "true" && -n "${dev_user_id:-}" ]]; then
+            echo "  4. Login with your dev credentials:"
+            echo "     Username: $dev_user_id"
+            echo "     Password: (the password you entered)"
+            echo
+        fi
     fi
     
     # Show API key warning if not configured
@@ -1721,8 +2304,10 @@ Environment Variables:
   OCTO_INSTALL_DEPS       yes or no (default: yes)
   OCTO_INSTALL_SERVICE    yes or no (default: yes)
   OCTO_INSTALL_AGENT_TOOLS yes or no (default: yes)
-  OCTO_DEV_MODE           true or false (default: true)
+  OCTO_DEV_MODE           true or false (default: prompt user)
   OCTO_LOG_LEVEL          error, warn, info, debug, trace (default: info)
+  OCTO_SETUP_CADDY        yes or no (default: prompt user in production mode)
+  OCTO_DOMAIN             domain for HTTPS (e.g., octo.example.com)
 
 LLM Provider API Keys (set one of these, or use EAVS):
   ANTHROPIC_API_KEY       Anthropic Claude API key
@@ -1802,6 +2387,13 @@ main() {
     if [[ "$NONINTERACTIVE" != "true" ]]; then
         select_user_mode
         select_backend_mode
+        select_deployment_mode
+    else
+        # Non-interactive: use env var or default to dev mode
+        if [[ -z "$OCTO_DEV_MODE" ]]; then
+            OCTO_DEV_MODE="true"
+        fi
+        PRODUCTION_MODE="$([[ "$OCTO_DEV_MODE" == "false" ]] && echo "true" || echo "false")"
     fi
     
     # Prerequisites
@@ -1842,8 +2434,18 @@ main() {
     # Build container image (if container mode)
     build_container_image
     
+    # Install Caddy (if production mode)
+    if [[ "$SETUP_CADDY" == "yes" ]]; then
+        install_caddy
+        generate_caddyfile
+        install_caddy_service
+    fi
+    
     # Install service
     install_service
+    
+    # Create admin user in database (production mode)
+    create_admin_user_db
     
     # Summary
     print_summary

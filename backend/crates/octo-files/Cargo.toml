@@ -1,0 +1,52 @@
+[package]
+name = "octo-files"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Lightweight file server for container workspace access"
+
+[[bin]]
+name = "octo-files"
+path = "src/main.rs"
+
+[dependencies]
+# Error handling
+thiserror.workspace = true
+
+# CLI
+clap.workspace = true
+
+# Configuration
+toml.workspace = true
+
+# Logging
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+# Serialization
+serde.workspace = true
+serde_json.workspace = true
+
+# Async runtime
+tokio.workspace = true
+tokio-util.workspace = true
+
+# Web framework
+axum.workspace = true
+tower.workspace = true
+tower-http.workspace = true
+
+# Utilities
+futures.workspace = true
+bytes.workspace = true
+
+# File operations
+mime_guess.workspace = true
+walkdir.workspace = true
+notify.workspace = true
+zip.workspace = true
+syntect.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

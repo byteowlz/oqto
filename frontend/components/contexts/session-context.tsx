@@ -6,6 +6,7 @@ import {
 	type WorkspaceSession,
 	createWorkspaceSession,
 	deleteWorkspaceSession,
+	getMainChatAssistant,
 	getOrCreateSessionForWorkspace,
 	getOrCreateWorkspaceSession,
 	listChatHistory,
@@ -136,7 +137,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 	const [opencodeSessions, setOpencodeSessions] = useState<OpenCodeSession[]>(
 		[],
 	);
-	const [selectedChatSessionId, setSelectedChatSessionId] = useState<string>(
+	const [selectedChatSessionId, setSelectedChatSessionIdRaw] = useState<string>(
 		() => {
 			if (typeof window !== "undefined") {
 				const params = new URLSearchParams(window.location.search);
@@ -145,9 +146,36 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 					console.log("[Dev] Using mock session ID:", mockSession);
 					return mockSession;
 				}
+				// Restore last used session
+				try {
+					return localStorage.getItem("octo:lastChatSessionId") || "";
+				} catch {
+					return "";
+				}
 			}
 			return "";
 		},
+	);
+	// Wrap setter to persist to localStorage
+	const setSelectedChatSessionId = useCallback(
+		(value: string | ((prev: string) => string)) => {
+			setSelectedChatSessionIdRaw((prev) => {
+				const newId = typeof value === "function" ? value(prev) : value;
+				if (typeof window !== "undefined") {
+					try {
+						if (newId) {
+							localStorage.setItem("octo:lastChatSessionId", newId);
+						} else {
+							localStorage.removeItem("octo:lastChatSessionId");
+						}
+					} catch {
+						// Ignore localStorage errors
+					}
+				}
+				return newId;
+			});
+		},
+		[],
 	);
 	// Available projects
 	const [projects, setProjects] = useState<ProjectEntry[]>([]);
@@ -164,12 +192,42 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 	});
 	// Track which chat sessions are currently busy (agent working)
 	const [busySessions, setBusySessions] = useState<Set<string>>(new Set());
-	// Main Chat state
-	const [mainChatActive, setMainChatActiveRaw] = useState(false);
+	// Main Chat state - restore from localStorage, default to main chat if no last session
+	const [mainChatActive, setMainChatActiveRaw] = useState(() => {
+		if (typeof window !== "undefined") {
+			try {
+				const lastSessionId = localStorage.getItem("octo:lastChatSessionId");
+				const lastMainChatActive = localStorage.getItem("octo:lastMainChatActive");
+				// If we have a stored preference, use it
+				if (lastMainChatActive !== null) {
+					return lastMainChatActive === "true";
+				}
+				// If we have a last session ID, default to opencode mode
+				if (lastSessionId) {
+					return false;
+				}
+			} catch {
+				// Ignore localStorage errors
+			}
+		}
+		// Default to main chat if nothing stored
+		return true;
+	});
 	const setMainChatActive = useCallback(
 		(value: boolean | ((prev: boolean) => boolean)) => {
 			startTransition(() => {
-				setMainChatActiveRaw(value);
+				setMainChatActiveRaw((prev) => {
+					const newValue = typeof value === "function" ? value(prev) : value;
+					// Persist to localStorage
+					if (typeof window !== "undefined") {
+						try {
+							localStorage.setItem("octo:lastMainChatActive", String(newValue));
+						} catch {
+							// Ignore localStorage errors
+						}
+					}
+					return newValue;
+				});
 			});
 		},
 		[],
@@ -180,12 +238,71 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 	const [mainChatCurrentSessionId, setMainChatCurrentSessionId] = useState<
 		string | null
 	>(null);
-	const [mainChatWorkspacePath, setMainChatWorkspacePath] = useState<
+	// Main chat workspace path - cached to localStorage for instant load
+	const [mainChatWorkspacePath, setMainChatWorkspacePathRaw] = useState<
 		string | null
 	>(null);
+	// Wrap setter to also cache to localStorage
+	const setMainChatWorkspacePath = useCallback((path: string | null) => {
+		setMainChatWorkspacePathRaw(path);
+		if (typeof window !== "undefined") {
+			try {
+				if (path) {
+					localStorage.setItem("mainChatWorkspacePath", path);
+				} else {
+					localStorage.removeItem("mainChatWorkspacePath");
+				}
+			} catch {
+				// Ignore localStorage errors
+			}
+		}
+	}, []);
+
 	const [scrollToMessageId, setScrollToMessageId] = useState<string | null>(
 		null,
 	);
+
+	// Initialize main chat workspace path when mainChatActive becomes true
+	// Use localStorage cache for instant load, then refresh from API
+	useEffect(() => {
+		if (!mainChatActive) {
+			// Clear workspace path when leaving main chat mode
+			setMainChatWorkspacePathRaw(null);
+			return;
+		}
+		
+		// Try to load from cache first for instant display
+		if (typeof window !== "undefined") {
+			try {
+				const cached = localStorage.getItem("mainChatWorkspacePath");
+				if (cached) {
+					setMainChatWorkspacePathRaw(cached);
+				}
+			} catch {
+				// Ignore localStorage errors
+			}
+		}
+		
+		// Then fetch fresh data from API
+		let cancelled = false;
+		getMainChatAssistant("default")
+			.then((info) => {
+				if (!cancelled) {
+					setMainChatWorkspacePath(info.path);
+					if (!mainChatAssistantName) {
+						setMainChatAssistantName(info.name);
+					}
+				}
+			})
+			.catch((err) => {
+				console.debug("[MainChat] No main chat configured:", err.message);
+				// Clear cached path if main chat is not configured
+				setMainChatWorkspacePath(null);
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, [mainChatActive, mainChatAssistantName, setMainChatWorkspacePath]);
 
 	const setSessionBusy = useCallback((sessionId: string, busy: boolean) => {
 		setBusySessions((prev) => {
@@ -275,7 +392,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 			setSelectedChatSessionId(optimisticId);
 			return optimisticId;
 		},
-		[locale, opencodeDirectory, resolveProjectName, selectedChatSessionId],
+		[locale, opencodeDirectory, resolveProjectName, selectedChatSessionId, setSelectedChatSessionId],
 	);
 
 	const clearOptimisticChatSession = useCallback(
@@ -291,7 +408,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 				setSelectedChatSessionId(previousSelection || "");
 			}
 		},
-		[selectedChatSessionId],
+		[selectedChatSessionId, setSelectedChatSessionId],
 	);
 
 	const sessionEventSubscriptions = useRef(new Map<string, () => void>());
@@ -338,7 +455,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 		} catch (err) {
 			console.error("Failed to load chat history:", err);
 		}
-	}, [mainChatActive]);
+	}, [mainChatActive, setSelectedChatSessionId]);
 
 	const refreshWorkspaceSessions = useCallback(async () => {
 		try {
@@ -635,7 +752,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 		} catch (err) {
 			console.error("Failed to load opencode sessions:", err);
 		}
-	}, [mainChatActive, opencodeBaseUrl, opencodeDirectory]);
+	}, [mainChatActive, opencodeBaseUrl, opencodeDirectory, setSelectedChatSessionId]);
 
 	const createNewChat = useCallback(
 		async (
@@ -672,6 +789,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 			opencodeDirectory,
 			refreshChatHistory,
 			clearOptimisticChatSession,
+			setSelectedChatSessionId,
 		],
 	);
 
@@ -734,6 +852,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 			refreshWorkspaceSessions,
 			refreshChatHistory,
 			selectedWorkspaceSession?.workspace_path,
+			setSelectedChatSessionId,
 		],
 	);
 
@@ -767,6 +886,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 			opencodeDirectory,
 			opencodeSessions,
 			refreshChatHistory,
+			setSelectedChatSessionId,
 		],
 	);
 
@@ -907,6 +1027,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 			chatHistory,
 			opencodeSessions,
 			selectedChatSessionId,
+			setSelectedChatSessionId,
 			selectedChatSession,
 			selectedChatFromHistory,
 			busySessions,
@@ -932,6 +1053,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 			mainChatAssistantName,
 			mainChatCurrentSessionId,
 			mainChatWorkspacePath,
+			setMainChatWorkspacePath,
 			scrollToMessageId,
 		],
 	);

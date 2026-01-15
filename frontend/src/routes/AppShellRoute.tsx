@@ -72,6 +72,7 @@ import {
 	Clock,
 	Copy,
 	FolderKanban,
+	FolderPlus,
 	Globe2,
 	Loader2,
 	Menu,
@@ -759,6 +760,11 @@ const AppShell = memo(function AppShell() {
 				if (session.updated_at) {
 					const dateStr = formatSessionDate(session.updated_at);
 					if (dateStr.toLowerCase().includes(searchLower)) return true;
+				}
+				// Search in directory name
+				if ("workspace_path" in session && session.workspace_path) {
+					const dirName = session.workspace_path.split("/").filter(Boolean).pop();
+					if (dirName?.toLowerCase().includes(searchLower)) return true;
 				}
 				return false;
 			});
@@ -1723,11 +1729,19 @@ const AppShell = memo(function AppShell() {
 								<div className="flex items-center gap-1">
 									<button
 										type="button"
+										onClick={handleNewChat}
+										className="p-1 text-muted-foreground hover:text-foreground hover:bg-sidebar-accent rounded"
+										title={locale === "de" ? "Neue Sitzung" : "New session"}
+									>
+										<Plus className="w-3 h-3" />
+									</button>
+									<button
+										type="button"
 										onClick={() => setNewProjectDialogOpen(true)}
 										className="p-1 text-muted-foreground hover:text-foreground hover:bg-sidebar-accent rounded"
 										title={locale === "de" ? "Neues Projekt" : "New project"}
 									>
-										<Plus className="w-3 h-3" />
+										<FolderPlus className="w-3 h-3" />
 									</button>
 									{selectedProjectLabel && (
 										<button
@@ -2509,13 +2523,23 @@ const AppShell = memo(function AppShell() {
 									<div className="flex items-center gap-1">
 										<button
 											type="button"
+											onClick={handleNewChat}
+											className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-sidebar-accent rounded"
+											title={
+												locale === "de" ? "Neue Sitzung" : "New session"
+											}
+										>
+											<Plus className="w-4 h-4" />
+										</button>
+										<button
+											type="button"
 											onClick={() => setNewProjectDialogOpen(true)}
 											className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-sidebar-accent rounded"
 											title={
 												locale === "de" ? "Neues Projekt" : "New project"
 											}
 										>
-											<Plus className="w-4 h-4" />
+											<FolderPlus className="w-4 h-4" />
 										</button>
 										{selectedProjectLabel && (
 											<button

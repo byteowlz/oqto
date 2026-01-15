@@ -951,8 +951,13 @@ export function subscribeToEvents(
 			setTransportMode("sse", "connected");
 		};
 
-		eventSource.onmessage = (event) => {
-			const parsed = tryParseJson(event.data);
+		const handleSseData = (
+			eventType: string,
+			rawData: unknown,
+			fallbackType: string,
+		) => {
+			const raw = typeof rawData === "string" ? rawData : String(rawData ?? "");
+			const parsed = tryParseJson(raw);
 
 			if (
 				parsed &&
@@ -976,14 +981,62 @@ export function subscribeToEvents(
 				return;
 			}
 
-			console.log("[SSE] Untyped message:", event.data?.substring?.(0, 100));
+			// For named SSE events (event: question.asked), we need to propagate the
+			// event name since EventSource.onmessage only receives "message".
+			if (eventType.startsWith("permission") || eventType.startsWith("question")) {
+				console.log("[SSE] Named event:", eventType, parsed ?? raw);
+			}
+
 			callback({
-				type: "message.updated",
-				properties: parsed ?? { raw: event.data },
+				type: fallbackType,
+				properties: parsed ?? { raw },
 			});
 		};
 
+		eventSource.onmessage = (event) => {
+			// Unnamed messages use the legacy fallback of message.updated.
+			handleSseData("message", event.data, "message.updated");
+		};
+
+		// OpenCode emits some events as named SSE events (event: question.asked)
+		// where the payload does NOT include an embedded {type} field.
+		// Those will not trigger onmessage, so we must subscribe explicitly.
+		const namedEvents = [
+			"permission.asked",
+			"permission.replied",
+			"question.asked",
+			"question.replied",
+			"question.rejected",
+			"session.busy",
+			"session.idle",
+			"session.unavailable",
+			"message.created",
+			"message.updated",
+			"part.created",
+			"part.updated",
+		];
+
+		const namedHandlers: Array<{
+			type: string;
+			handler: (event: MessageEvent) => void;
+		}> = [];
+
+		for (const type of namedEvents) {
+			const handler = (e: MessageEvent) => handleSseData(type, e.data, type);
+			namedHandlers.push({ type, handler });
+			eventSource.addEventListener(type, handler as EventListener);
+		}
+
+		// Ensure we detach listeners when the stream closes.
+		const cleanupNamedHandlers = () => {
+			if (!eventSource) return;
+			for (const { type, handler } of namedHandlers) {
+				eventSource.removeEventListener(type, handler as EventListener);
+			}
+		};
+
 		eventSource.onerror = (err) => {
+			cleanupNamedHandlers();
 			console.error("[SSE] Connection error:", err);
 			// If SSE isn't available (dev proxy/config), fall back to polling.
 			if (eventSource) {

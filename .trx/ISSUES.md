@@ -38,6 +38,18 @@ Optimize frontend startup times and eliminate unnecessary reloads. Current bottl
 ### [workspace-5pmk.11] Add backend URL configuration to login form (P1, task)
 Add a 'Server URL' field to the login form allowing users to specify the backend URL. Store in localStorage for persistence. Show connection status indicator. Default to current origin for web, require input for mobile apps.
 
+### [octo-ze9k] Dashboard with overview of scheduled tasks (skdlr), session information, trx issues etc. Similar to the admin panel but for all users (P2, feature)
+
+### [octo-rw4h] "Open in Canvas" doesnt work: No file is rendered to the canvas (P2, bug)
+
+### [octo-ke51] Canvas content is lost on expansions/collapse (P2, bug)
+
+### [octo-b7sb] When I filter issues, by type (e.g. only bugs) the + button should make this issue type the default in the type dropdown menu of the trx sidebar (P2, task)
+
+### [octo-r46b] When viewing one opencode chat I suddenly got the content from another chat rendered. the title was from the actual chat thoug. (P2, task)
+
+### [octo-sz55] input text does not get removed when sending message sometimes  (P2, bug)
+
 ### [octo-s4ez] Define context model and context sources (local + remote) (P2, task)
 ## Goal
 Define what "context" means for agent interactions in Octo, and how it is represented, versioned, and sourced, so features like global agent invoke (`octo-skks`) and agent-driven UI control (`octo-wzvn`) can reliably inject context now and later.
@@ -418,6 +430,7 @@ Desired behavior: Tool calls hidden by default, toggle to show
 
 ## Closed
 
+- [octo-9x62] Images don't render in main chat and in opencode sessions. placehoder is shown instead. we need to go through the fileserver (closed 2026-01-15)
 - [octo-9zek] changes to opencode settings in the sidbar are not getting saved (closed 2026-01-14)
 - [octo-g6a4] Opencode chats feel laggy (session navigation + text input) (closed 2026-01-14)
 - [octo-kh71] Chat history loads very slowly (closed 2026-01-14)

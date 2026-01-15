@@ -1,8 +1,95 @@
 # Octo - AI Agent Workspace Platform
 
-Octo is a self-hosted platform for managing AI coding agents (opencode instances). Supports local mode (native processes) and container mode (Docker/Podman).
+Octo is a self-hosted platform for managing AI coding agents. Supports local mode (native processes) and container mode (Docker/Podman).
 
 **New to Octo?** Start with the [SETUP.md](./SETUP.md) guide for installation and prerequisites.
+
+---
+
+## Architecture Overview
+
+Octo manages two types of AI agent sessions:
+
+| Session Type | Agent Runtime | Purpose |
+|--------------|---------------|---------|
+| **Main Chat** | `pi` | Primary chat interface, streaming responses, compaction |
+| **OpenCode Sessions** | `opencode` | Per-workspace coding agent sessions |
+
+### Agent Runtimes
+
+**pi** - Lightweight AI coding assistant CLI (`~/.bun/bin/pi`)
+- Source code: `../external-repos/pi-mono`
+- Used for Main Chat in the Octo UI
+- Supports multiple providers (anthropic, openai, google)
+- RPC mode for streaming via stdin/stdout JSON protocol
+- Tools: read, bash, edit, write, grep, find, ls
+- Extensions and skills system
+- Session management with compaction
+
+**opencode** - Full-featured coding agent
+- Source code: `../external-repos/opencode`
+- Used for workspace-specific sessions
+- HTTP server mode (`opencode serve`)
+- `x-opencode-directory` header switches working directory per request
+- Currently: one opencode server per user serves all workspaces
+
+### Runtime Modes
+
+Both `pi` and `opencode` can run in different isolation modes:
+
+| Mode | Description | Use Case |
+|------|-------------|----------|
+| `local` | Direct process spawn | Single-user, development |
+| `runner` | Via `octo-runner` daemon | Multi-user Linux isolation |
+| `container` | Inside Docker/Podman | Full container isolation |
+
+### Key Binaries
+
+| Binary | Purpose |
+|--------|---------|
+| `octo` | Main backend server |
+| `octoctl` | CLI for server management |
+| `octo-runner` | Multi-user process daemon (Linux only) |
+| `octo-sandbox` | Sandbox wrapper using bwrap/sandbox-exec |
+| `pi-bridge` | HTTP/WebSocket bridge for Pi in containers |
+| `fileserver` | File access server for workspaces |
+
+### Process Sandboxing
+
+Sandbox configuration in `~/.config/octo/sandbox.toml` (separate from main config for security):
+
+```toml
+enabled = true
+profile = "development"  # or "minimal", "strict"
+deny_read = ["~/.ssh", "~/.aws", "~/.gnupg"]
+allow_write = ["~/.cargo", "~/.npm", "/tmp"]
+isolate_network = false  # true in strict profile
+isolate_pid = true
+```
+
+Per-workspace overrides in `.octo/sandbox.toml` can only ADD restrictions, never remove them.
+
+---
+
+## Memory System (Critical)
+
+**ALWAYS search memories before starting work on unfamiliar areas.** Memories contain architecture decisions, API patterns, and debugging insights that save time.
+
+```bash
+# Search BEFORE implementing
+agntz memory search "sandbox"
+agntz memory search "pi runtime"
+agntz memory search "opencode session"
+```
+
+**Create memories when you discover reusable knowledge:**
+
+```bash
+agntz memory add "Pi uses RPC mode with JSON over stdin/stdout for Main Chat streaming" -c architecture -i 8
+agntz memory add "x-opencode-directory header switches workspace without restarting server" -c api -i 7
+```
+
+---
 
 ## Agent Tools
 
@@ -39,7 +126,9 @@ byt sync push                   # Sync memories to git
 
 ## Memory System (Critical)
 
-**Create memories whenever you learn something reusable.** Memories are for patterns, interfaces, and insights - not atomic implementation details.
+**ALWAYS search memories before starting work on unfamiliar areas.** Memories contain architecture decisions, API patterns, and debugging insights that save time.
+
+**Create memories when you discover reusable knowledge.** Memories are for patterns, interfaces, and insights - not atomic implementation details.
 
 ### When to Create Memories
 
@@ -125,3 +214,22 @@ trx sync               # Commit .trx/ changes
 
 Priorities: 0=critical, 1=high, 2=medium, 3=low, 4=backlog
 
+---
+
+## Displaying Files to the User
+
+To display files (images, documents, etc.) to the user in the chat interface, reference them with the `@` prefix followed by the file path:
+
+```
+Here's the generated image: @output/screenshot.png
+
+I've created these files:
+@src/components/Button.tsx
+@docs/architecture.md
+```
+
+The UI will automatically render:
+- **Images** (png, jpg, gif, webp, svg) as inline previews with thumbnails
+- **Other files** as clickable links that open in the file viewer
+
+Use workspace-relative paths (e.g., `@src/file.ts`) or absolute paths (e.g., `@/home/user/file.png`).

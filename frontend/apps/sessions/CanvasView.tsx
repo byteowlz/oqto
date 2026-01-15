@@ -136,6 +136,8 @@ interface CanvasStateCache {
 	fontSize: number;
 	backgroundImageSrc: string | null;
 	backgroundSize: { width: number; height: number };
+	// Track which image path this cache is for
+	initialImagePath: string | null;
 }
 
 const canvasCache: { state: CanvasStateCache | null } = { state: null };
@@ -144,8 +146,14 @@ function saveCanvasState(state: CanvasStateCache) {
 	canvasCache.state = state;
 }
 
-function loadCanvasState(): CanvasStateCache | null {
-	return canvasCache.state;
+function loadCanvasState(initialImagePath: string | null): CanvasStateCache | null {
+	const cached = canvasCache.state;
+	// Only return cache if it matches the current image path
+	// This ensures "Open in Canvas" with a new image gets a fresh canvas
+	if (cached && cached.initialImagePath === initialImagePath) {
+		return cached;
+	}
+	return null;
 }
 
 function clearCanvasCache() {
@@ -319,8 +327,8 @@ export const CanvasView = memo(function CanvasView({
 	className,
 	onSaveAndAddToChat,
 }: CanvasViewProps) {
-	// Load cached state on mount
-	const cached = loadCanvasState();
+	// Load cached state on mount - only if it matches the current initialImagePath
+	const cached = loadCanvasState(initialImagePath ?? null);
 
 	// Canvas state - initialize from cache if available
 	const [tool, setTool] = useState<Tool>(cached?.tool ?? "select");
@@ -394,6 +402,7 @@ export const CanvasView = memo(function CanvasView({
 				fontSize,
 				backgroundImageSrc,
 				backgroundSize,
+				initialImagePath: initialImagePath ?? null,
 			});
 		};
 	}, [
@@ -408,6 +417,7 @@ export const CanvasView = memo(function CanvasView({
 		fontSize,
 		backgroundImageSrc,
 		backgroundSize,
+		initialImagePath,
 	]);
 
 	// Drawing state
@@ -454,7 +464,7 @@ export const CanvasView = memo(function CanvasView({
 
 	const fileserverBaseUrl = workspacePath ? fileserverWorkspaceBaseUrl() : null;
 
-	// Load initial image if provided
+	// Load initial image if provided - this takes priority over cached state
 	useEffect(() => {
 		if (!initialImagePath || !fileserverBaseUrl || !workspacePath) return;
 
@@ -463,6 +473,10 @@ export const CanvasView = memo(function CanvasView({
 		url.searchParams.set("workspace_path", workspacePath);
 
 		const imgSrc = url.toString();
+		
+		// Skip if already showing this image
+		if (backgroundImageSrc === imgSrc) return;
+		
 		const img = new Image();
 		img.crossOrigin = "anonymous";
 		img.onload = () => {
@@ -471,7 +485,7 @@ export const CanvasView = memo(function CanvasView({
 			setBackgroundSize({ width: img.width, height: img.height });
 		};
 		img.src = imgSrc;
-	}, [initialImagePath, fileserverBaseUrl, workspacePath]);
+	}, [initialImagePath, fileserverBaseUrl, workspacePath, backgroundImageSrc]);
 
 	// Handle paste events for images
 	useEffect(() => {

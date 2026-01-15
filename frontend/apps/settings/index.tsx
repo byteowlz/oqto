@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 import { Brain, HelpCircle, Info, Keyboard, Settings, X } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 
 function SettingsHelpPanel({ locale }: { locale: "en" | "de" }) {
 	const t = {
@@ -147,6 +148,7 @@ function TabButton({ active, onClick, icon: Icon, label }: TabButtonProps) {
 
 export function SettingsApp() {
 	const { locale, setActiveAppId } = useApp();
+	const navigate = useNavigate();
 	const [activeTab, setActiveTab] = useState<
 		"octo" | "mmry" | "help" | "shortcuts"
 	>("octo");
@@ -156,6 +158,7 @@ export function SettingsApp() {
 
 	const handleClose = () => {
 		setActiveAppId("sessions");
+		navigate("/sessions");
 	};
 
 	const t = {
@@ -177,21 +180,34 @@ export function SettingsApp() {
 
 	return (
 		<div className="flex flex-col h-full min-h-0 p-1 sm:p-4 md:p-6">
-			{/* Unified tab bar */}
-			<div className="bg-card border border-border rounded-t-xl sm:rounded-xl sm:mb-4 px-2 py-1.5 flex items-center gap-1 overflow-x-auto scrollbar-hide">
+			{/* Header with title and close button */}
+			<div className="flex items-start justify-between mb-4">
+				<div>
+					<h1 className="text-xl md:text-2xl font-bold text-foreground tracking-wider">
+						{locale === "de" ? "EINSTELLUNGEN" : "SETTINGS"}
+					</h1>
+					<p className="text-sm text-muted-foreground">
+						{locale === "de"
+							? "Konfiguriere deine Arbeitsumgebung"
+							: "Configure your workspace"}
+					</p>
+				</div>
 				{/* Close button - desktop only */}
 				<Button
 					type="button"
 					variant="ghost"
 					size="sm"
 					onClick={handleClose}
-					className="hidden md:flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground mr-2"
+					className="hidden md:flex items-center gap-1.5 text-muted-foreground hover:text-foreground"
 					aria-label={t.close}
 				>
-					<X className="w-3.5 h-3.5" />
+					<X className="w-4 h-4" />
 					<span>{t.close}</span>
 				</Button>
-				<div className="hidden md:block w-px h-5 bg-border mr-1" />
+			</div>
+
+			{/* Tab bar */}
+			<div className="bg-card border border-border rounded-t-xl sm:rounded-xl sm:mb-4 px-2 py-1.5 flex items-center gap-1 overflow-x-auto scrollbar-hide">
 				<TabButton
 					active={activeTab === "octo"}
 					onClick={() => setActiveTab("octo")}

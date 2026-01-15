@@ -325,6 +325,33 @@ function mapWsEventToSessionEvent(
 			}
 			return null;
 
+		case "tool_end":
+			if ("is_error" in event && event.is_error) {
+				const result = "result" in event ? event.result : undefined;
+				const message = (() => {
+					if (typeof result === "string") return result;
+					if (result && typeof result === "object") {
+						const record = result as Record<string, unknown>;
+						if (typeof record.message === "string") return record.message;
+					}
+					return "Tool execution failed";
+				})();
+				const toolName = "tool_name" in event ? event.tool_name : "tool";
+				return {
+					type: "session.error",
+					sessionId,
+					errorType: `ToolError:${toolName}`,
+					message,
+					details: {
+						type: "tool_end",
+						toolName,
+						toolCallId: "tool_call_id" in event ? event.tool_call_id : undefined,
+						result,
+					},
+				};
+			}
+			return null;
+
 		case "message_updated":
 		case "message_end":
 		case "text_delta":
@@ -622,6 +649,35 @@ function mapWsEventToLegacyEvent(event: WsEvent): LegacyEvent | null {
 					},
 				},
 			};
+
+		case "tool_end":
+			if ("is_error" in event && event.is_error) {
+				const result = "result" in event ? event.result : undefined;
+				const message = (() => {
+					if (typeof result === "string") return result;
+					if (result && typeof result === "object") {
+						const record = result as Record<string, unknown>;
+						if (typeof record.message === "string") return record.message;
+					}
+					return "Tool execution failed";
+				})();
+				return {
+					type: "session.error",
+					properties: {
+						sessionID: "session_id" in event ? event.session_id : undefined,
+						error: {
+							name: "ToolError",
+							data: {
+								message,
+								tool: "tool_name" in event ? event.tool_name : undefined,
+								toolCallId: "tool_call_id" in event ? event.tool_call_id : undefined,
+								result,
+							},
+						},
+					},
+				};
+			}
+			return null;
 
 		case "message_updated":
 		case "message_end":
