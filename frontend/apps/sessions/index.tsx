@@ -4778,21 +4778,23 @@ export const SessionsApp = memo(function SessionsApp() {
 			<div className="hidden lg:flex flex-1 min-h-0 gap-4 items-start">
 				{/* Chat panel */}
 				<div className="flex-[3] min-w-0 bg-card border border-border p-4 xl:p-6 flex flex-col min-h-0 h-full relative">
-					{/* Sidebar collapse toggle button */}
-					<button
-						type="button"
-						onClick={() => setRightSidebarCollapsed((prev) => !prev)}
-						className="absolute top-4 right-4 xl:top-6 xl:right-6 p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted/50 rounded transition-colors z-10"
-						title={
-							rightSidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"
-						}
-					>
-						{rightSidebarCollapsed ? (
-							<PanelLeftClose className="w-4 h-4" />
-						) : (
-							<PanelRightClose className="w-4 h-4" />
-						)}
-					</button>
+					{/* Sidebar collapse toggle button - hide when expanded view is shown (it has its own controls) */}
+					{!expandedView && (
+						<button
+							type="button"
+							onClick={() => setRightSidebarCollapsed((prev) => !prev)}
+							className="absolute top-4 right-4 xl:top-6 xl:right-6 p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted/50 rounded transition-colors z-10"
+							title={
+								rightSidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"
+							}
+						>
+							{rightSidebarCollapsed ? (
+								<PanelLeftClose className="w-4 h-4" />
+							) : (
+								<PanelRightClose className="w-4 h-4" />
+							)}
+						</button>
+					)}
 					{!mainChatActive && SessionHeader}
 					{mainChatActive ? (
 						expandedView ? (
