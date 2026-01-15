@@ -48,7 +48,7 @@ import {
 	setMainChatPiModel,
 	workspaceFileUrl,
 } from "@/lib/control-plane-client";
-import { getFileTypeInfo } from "@/lib/file-types";
+import { extractFileReferences, getFileTypeInfo } from "@/lib/file-types";
 import {
 	type SlashCommand,
 	fuzzyMatch,
@@ -60,6 +60,7 @@ import {
 	Copy,
 	ExternalLink,
 	File,
+	FileVideo,
 	ImageIcon,
 	Loader2,
 	Paperclip,
@@ -187,7 +188,7 @@ export function MainChatPiView({
 		info: { id: m.id, role: m.role },
 	}));
 
-	const { surfaces: a2uiSurfaces, handleAction: handleA2UIAction } = useA2UI(
+	const { surfaces: a2uiSurfaces, handleAction: handleA2UIAction, getUnanchoredSurfaces } = useA2UI(
 		a2uiMessagesRef,
 		{
 			onSurfaceReceived: useCallback(() => {
@@ -200,17 +201,24 @@ export function MainChatPiView({
 	);
 
 	// Memoized map of message ID to surfaces to avoid creating new arrays on each render
-	const surfacesByMessageId = useMemo(() => {
+	// Also track "orphaned" surfaces whose anchor doesn't match any current message
+	const { surfacesByMessageId, orphanedSurfaces } = useMemo(() => {
 		const map = new Map<string, A2UISurfaceState[]>();
+		const messageIds = new Set(messages.map((m) => m.id));
+		const orphaned: A2UISurfaceState[] = [];
+		
 		for (const surface of a2uiSurfaces) {
-			if (surface.anchorMessageId) {
+			if (surface.anchorMessageId && messageIds.has(surface.anchorMessageId)) {
 				const existing = map.get(surface.anchorMessageId) || [];
 				existing.push(surface);
 				map.set(surface.anchorMessageId, existing);
+			} else {
+				// Surface has no anchor or anchor message doesn't exist
+				orphaned.push(surface);
 			}
 		}
-		return map;
-	}, [a2uiSurfaces]);
+		return { surfacesByMessageId: map, orphanedSurfaces: orphaned };
+	}, [a2uiSurfaces, messages]);
 
 	// Voice configuration
 	const voiceConfig = useMemo(
@@ -991,6 +999,25 @@ export function MainChatPiView({
 						</div>
 					))}
 
+					{/* Orphaned A2UI surfaces (no valid anchor) */}
+					{orphanedSurfaces.length > 0 && (
+						<div className="space-y-2 mt-4">
+							{orphanedSurfaces.map((surface) => (
+								<A2UICallCard
+									key={surface.surfaceId}
+									surfaceId={surface.surfaceId}
+									messages={surface.messages}
+									blocking={surface.blocking}
+									requestId={surface.requestId}
+									answered={surface.answered}
+									answeredAction={surface.answeredAction}
+									answeredAt={surface.answeredAt}
+									onAction={handleA2UIAction}
+								/>
+							))}
+						</div>
+					)}
+
 					<div ref={messagesEndRef} />
 				</div>
 			</div>
@@ -1604,10 +1631,11 @@ function TextWithFileReferences({
 	workspacePath?: string | null;
 	locale?: "en" | "de";
 }) {
-	// Parse @file references
-	const fileRefPattern = /@([^\s@]+\.[a-zA-Z0-9]+)/g;
-	const matches = content.match(fileRefPattern) || [];
-	const fileRefs = [...new Set(matches.map((m) => m.slice(1)))]; // Remove @ prefix
+	// Parse @file references, excluding code blocks
+	const fileRefs = useMemo(
+		() => extractFileReferences(content),
+		[content],
+	);
 
 	return (
 		<ContextMenu>
@@ -1646,6 +1674,7 @@ function TextWithFileReferences({
 
 /**
  * Card for displaying a @file reference with preview.
+ * Only renders if the file exists on disk.
  */
 export const FileReferenceCard = memo(function FileReferenceCard({
 	filePath,
@@ -1656,11 +1685,44 @@ export const FileReferenceCard = memo(function FileReferenceCard({
 }) {
 	const [imageError, setImageError] = useState(false);
 	const [isLoading, setIsLoading] = useState(true);
+	const [fileExists, setFileExists] = useState<boolean | null>(null);
 
 	const fileInfo = useMemo(() => getFileTypeInfo(filePath), [filePath]);
 	const isImage = fileInfo.category === "image";
+	const isVideo = fileInfo.category === "video";
 
 	const fileUrl = workspaceFileUrl(workspacePath, filePath);
+
+	// Check if file exists using HEAD request
+	useEffect(() => {
+		let cancelled = false;
+		fetch(fileUrl, { method: "HEAD" })
+			.then((res) => {
+				if (!cancelled) {
+					setFileExists(res.ok);
+					if (!res.ok) setIsLoading(false);
+				}
+			})
+			.catch(() => {
+				if (!cancelled) {
+					setFileExists(false);
+					setIsLoading(false);
+				}
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, [fileUrl]);
+
+	// Don't render anything if file doesn't exist
+	if (fileExists === false) {
+		return null;
+	}
+
+	// Show loading state while checking existence
+	if (fileExists === null) {
+		return null;
+	}
 
 	if (isImage && !imageError) {
 		return (
@@ -1687,7 +1749,32 @@ export const FileReferenceCard = memo(function FileReferenceCard({
 		);
 	}
 
-	// Non-image or image load error - show compact link
+	// Video preview
+	if (isVideo && !imageError) {
+		return (
+			<div className="relative inline-block rounded-lg overflow-hidden border border-border bg-muted/50 max-w-[200px]">
+				<video
+					src={fileUrl}
+					controls
+					playsInline
+					className="max-w-full h-auto max-h-[150px] object-contain"
+					onLoadedData={() => setIsLoading(false)}
+					onError={() => {
+						setImageError(true);
+						setIsLoading(false);
+					}}
+				>
+					<track kind="captions" />
+				</video>
+				<div className="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-xs px-2 py-1 truncate flex items-center gap-1">
+					<FileVideo className="w-3 h-3" />
+					{filePath.split("/").pop()}
+				</div>
+			</div>
+		);
+	}
+
+	// Non-image/video or load error - show compact link
 	const Icon = isImage ? ImageIcon : File;
 
 	return (
