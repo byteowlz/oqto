@@ -12,6 +12,14 @@ export interface FileAttachment {
 	type: "file";
 }
 
+export interface IssueAttachment {
+	id: string;
+	issueId: string;
+	title: string;
+	description?: string;
+	type: "issue";
+}
+
 interface FileNode {
 	name: string;
 	path: string;
@@ -298,6 +306,29 @@ export const FileAttachmentChip = memo(function FileAttachmentChip({
 		<span className="inline-flex items-center gap-1 px-2 py-0.5 bg-primary/10 text-primary rounded text-sm">
 			<File className="w-3 h-3" />
 			<span className="max-w-[150px] truncate">@{attachment.filename}</span>
+			<button
+				type="button"
+				onClick={onRemove}
+				className="ml-0.5 hover:text-destructive"
+				title="Remove"
+			>
+				×
+			</button>
+		</span>
+	);
+});
+
+export const IssueAttachmentChip = memo(function IssueAttachmentChip({
+	attachment,
+	onRemove,
+}: {
+	attachment: IssueAttachment;
+	onRemove: () => void;
+}) {
+	return (
+		<span className="inline-flex items-center gap-1 px-2 py-0.5 bg-purple-500/10 text-purple-500 rounded text-sm">
+			<span className="font-mono text-xs">#{attachment.issueId}</span>
+			<span className="max-w-[120px] truncate">{attachment.title}</span>
 			<button
 				type="button"
 				onClick={onRemove}
