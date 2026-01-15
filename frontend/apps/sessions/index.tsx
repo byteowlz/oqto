@@ -3614,7 +3614,7 @@ export const SessionsApp = memo(function SessionsApp() {
 			{showExpandedCanvas && (
 				<div className="flex flex-col h-full overflow-hidden">
 					{!isMobileLayout && (
-						<div className="flex items-center justify-between px-2 py-1 border-b border-border bg-muted/30">
+						<div className="flex items-center justify-between px-2 py-1 pr-10 border-b border-border bg-muted/30">
 							<span className="text-xs text-muted-foreground">Canvas</span>
 							<button
 								type="button"
@@ -3640,7 +3640,7 @@ export const SessionsApp = memo(function SessionsApp() {
 			{showExpandedMemories && (
 				<div className="flex flex-col h-full overflow-hidden">
 					{!isMobileLayout && (
-						<div className="flex items-center justify-between px-2 py-1 border-b border-border bg-muted/30">
+						<div className="flex items-center justify-between px-2 py-1 pr-10 border-b border-border bg-muted/30">
 							<span className="text-xs text-muted-foreground">
 								{t.memories}
 							</span>
@@ -3667,7 +3667,7 @@ export const SessionsApp = memo(function SessionsApp() {
 			{showExpandedTerminal && (
 				<div className="flex flex-col h-full overflow-hidden">
 					{!isMobileLayout && (
-						<div className="flex items-center justify-between px-2 py-1 border-b border-border bg-muted/30">
+						<div className="flex items-center justify-between px-2 py-1 pr-10 border-b border-border bg-muted/30">
 							<span className="text-xs text-muted-foreground">
 								{t.terminal}
 							</span>
