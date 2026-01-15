@@ -7,6 +7,7 @@ import { MarkdownRenderer } from "@/components/ui/markdown-renderer";
 import { PDFViewer } from "@/components/ui/pdf-viewer";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { TypstViewer } from "@/components/ui/typst-viewer";
+import { VideoViewer } from "@/components/ui/video-viewer";
 import { type FileCategory, getFileTypeInfo } from "@/lib/file-types";
 import { cn } from "@/lib/utils";
 import {
@@ -16,6 +17,7 @@ import {
 	FileQuestion,
 	FileSpreadsheet,
 	FileText,
+	FileVideo,
 	Loader2,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
@@ -36,6 +38,7 @@ const categoryIcons: Record<
 	code: FileCode,
 	markdown: FileText,
 	image: FileImage,
+	video: FileVideo,
 	pdf: FileText,
 	csv: FileSpreadsheet,
 	json: FileCode,
@@ -141,6 +144,12 @@ export function FilePreview({
 			return;
 		}
 
+		// Don't fetch videos as text - they use the URL directly
+		if (fileInfo.category === "video") {
+			setIsLoading(false);
+			return;
+		}
+
 		// Don't fetch PDFs as text - they use the URL directly
 		if (fileInfo.category === "pdf") {
 			setIsLoading(false);
@@ -205,6 +214,22 @@ export function FilePreview({
 		return (
 			<div className={cn("h-full", className)}>
 				<ImageViewer src={imageUrl} filename={filename} />
+			</div>
+		);
+	}
+
+	// Video files
+	if (fileInfo.category === "video") {
+		if (!contentUrl) {
+			return (
+				<div className={cn("h-full", className)}>
+					<ErrorState message="Video preview requires a URL" />
+				</div>
+			);
+		}
+		return (
+			<div className={cn("h-full", className)}>
+				<VideoViewer src={contentUrl} filename={filename} />
 			</div>
 		);
 	}

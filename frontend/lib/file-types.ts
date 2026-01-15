@@ -4,6 +4,7 @@ export type FileCategory =
 	| "code"
 	| "markdown"
 	| "image"
+	| "video"
 	| "pdf"
 	| "csv"
 	| "json"
@@ -159,6 +160,18 @@ const imageExtensions = new Set([
 	"heif",
 ]);
 
+// Video extensions
+const videoExtensions = new Set([
+	"mp4",
+	"webm",
+	"ogg",
+	"ogv",
+	"mov",
+	"avi",
+	"mkv",
+	"m4v",
+]);
+
 // Binary file extensions (not displayable as text)
 const binaryExtensions = new Set([
 	"doc",
@@ -183,13 +196,8 @@ const binaryExtensions = new Set([
 	"db",
 	"sqlite",
 	"mp3",
-	"mp4",
-	"avi",
-	"mov",
-	"mkv",
 	"wav",
 	"flac",
-	"ogg",
 	"ttf",
 	"otf",
 	"woff",
@@ -252,6 +260,25 @@ export function getFileTypeInfo(filename: string): FileTypeInfo {
 			extension: ext,
 			category: "image",
 			mimeType: `image/${lowerExt === "svg" ? "svg+xml" : lowerExt}`,
+		};
+	}
+
+	// Check for videos
+	if (videoExtensions.has(lowerExt)) {
+		const mimeTypes: Record<string, string> = {
+			mp4: "video/mp4",
+			webm: "video/webm",
+			ogg: "video/ogg",
+			ogv: "video/ogg",
+			mov: "video/quicktime",
+			avi: "video/x-msvideo",
+			mkv: "video/x-matroska",
+			m4v: "video/x-m4v",
+		};
+		return {
+			extension: ext,
+			category: "video",
+			mimeType: mimeTypes[lowerExt] || "video/mp4",
 		};
 	}
 
@@ -355,7 +382,7 @@ export function getFileTypeInfo(filename: string): FileTypeInfo {
 
 export function isTextFile(filename: string): boolean {
 	const info = getFileTypeInfo(filename);
-	return !["binary", "image", "pdf"].includes(info.category);
+	return !["binary", "image", "video", "pdf"].includes(info.category);
 }
 
 export function isBinaryFile(filename: string): boolean {
@@ -363,6 +390,7 @@ export function isBinaryFile(filename: string): boolean {
 	return (
 		info.category === "binary" ||
 		info.category === "image" ||
+		info.category === "video" ||
 		info.category === "pdf"
 	);
 }
@@ -370,4 +398,23 @@ export function isBinaryFile(filename: string): boolean {
 export function getSyntaxLanguage(filename: string): string {
 	const info = getFileTypeInfo(filename);
 	return info.language || "text";
+}
+
+/**
+ * Extract @file references from text content, excluding those inside code blocks.
+ * Returns unique file paths without the @ prefix.
+ */
+export function extractFileReferences(content: string): string[] {
+	// Remove code blocks (both fenced ``` and inline `)
+	// Fenced code blocks: ```...``` or ~~~...~~~
+	const withoutFencedBlocks = content.replace(/```[\s\S]*?```|~~~[\s\S]*?~~~/g, "");
+	// Inline code: `...`
+	const withoutInlineCode = withoutFencedBlocks.replace(/`[^`\n]+`/g, "");
+
+	// Match @file references - must have a file extension
+	const fileRefPattern = /@([^\s@`"'<>()[\]{}]+\.[a-zA-Z0-9]+)/g;
+	const matches = withoutInlineCode.match(fileRefPattern) || [];
+
+	// Remove @ prefix and deduplicate
+	return [...new Set(matches.map((m) => m.slice(1)))];
 }
