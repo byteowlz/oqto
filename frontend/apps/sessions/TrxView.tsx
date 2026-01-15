@@ -51,8 +51,20 @@ import {
 	Search,
 	Trash2,
 	X,
+	CheckSquare,
+	Square,
+	Send,
 } from "lucide-react";
 import { memo, useCallback, useEffect, useMemo, useState } from "react";
+
+// Issue attachment type
+interface IssueAttachment {
+	id: string;
+	issueId: string;
+	title: string;
+	description?: string;
+	type: "issue";
+}
 
 // TRX issue structure from backend
 interface TrxIssue {
@@ -75,10 +87,11 @@ interface TrxViewProps {
 	className?: string;
 	onStartIssue?: (issueId: string, title: string, description?: string) => void;
 	onStartIssueNewSession?: (
-		issueId: string,
+		issueIds: string,
 		title: string,
-		description?: string,
+		attachments: IssueAttachment[],
 	) => void;
+	onAddIssueAttachments?: (attachments: IssueAttachment[]) => void;
 }
 
 // API functions
@@ -232,6 +245,8 @@ const IssueCard = memo(function IssueCard({
 	onEditSave,
 	onEditCancel,
 	depth = 0,
+	isSelected,
+	onToggleSelection,
 }: {
 	issue: TrxIssue;
 	childIssues?: TrxIssue[];
@@ -251,6 +266,8 @@ const IssueCard = memo(function IssueCard({
 	onEditSave?: () => void;
 	onEditCancel?: () => void;
 	depth?: number;
+	isSelected?: boolean;
+	onToggleSelection?: () => void;
 }) {
 	const typeConfig = issueTypeConfig[issue.issue_type] || issueTypeConfig.task;
 	const TypeIcon = typeConfig.icon;
@@ -266,11 +283,27 @@ const IssueCard = memo(function IssueCard({
 							"group p-2 rounded transition-colors cursor-context-menu flex gap-2",
 							isClosed ? "opacity-50" : "hover:bg-muted/50",
 							isEditing && "bg-muted/50 ring-1 ring-primary/50",
+							isSelected && "bg-primary/10 ring-1 ring-primary/30",
 						)}
 					>
-						{/* Left column: Type icon + Chevron below (aligned with row 2 or 3) */}
-						<div className="flex flex-col items-center flex-shrink-0 pt-0.5 w-4">
-							<TypeIcon className={cn("w-4 h-4", typeConfig.color)} />
+						{/* Left column: Checkbox + Chevron below (aligned with row 2 or 3) */}
+						<div className="flex flex-col items-center flex-shrink-0 pt-0.5 w-6">
+							{onToggleSelection && (
+								<button
+									type="button"
+									onClick={(e) => {
+										e.stopPropagation();
+										onToggleSelection();
+									}}
+									className="hover:bg-muted rounded p-0.5"
+								>
+									{isSelected ? (
+										<CheckSquare className="w-3.5 h-3.5 text-primary" />
+									) : (
+										<Square className="w-3.5 h-3.5 text-muted-foreground" />
+									)}
+								</button>
+							)}
 							{hasChildren && (
 								<button
 									type="button"
@@ -363,6 +396,9 @@ const IssueCard = memo(function IssueCard({
 
 							{/* Row 3: Status, Priority, Actions */}
 							<div className="flex items-center gap-1 mt-1">
+								<TypeIcon
+									className={cn("w-3 h-3 flex-shrink-0", typeConfig.color)}
+								/>
 								<Badge
 									variant="outline"
 									className={cn(
@@ -526,6 +562,8 @@ const IssueCard = memo(function IssueCard({
 								onAddChild={onAddChild}
 								onEdit={onEdit}
 								depth={depth + 1}
+								isSelected={isSelected}
+								onToggleSelection={onToggleSelection}
 							/>
 						);
 					})}
@@ -540,6 +578,7 @@ export const TrxView = memo(function TrxView({
 	className,
 	onStartIssue,
 	onStartIssueNewSession,
+	onAddIssueAttachments,
 }: TrxViewProps) {
 	const [issues, setIssues] = useState<TrxIssue[]>([]);
 	const [loading, setLoading] = useState(true);
@@ -567,6 +606,9 @@ export const TrxView = memo(function TrxView({
 	const [searchQuery, setSearchQuery] = useState("");
 	const [searchIncludeDescription, setSearchIncludeDescription] =
 		useState(false);
+	const [selectedIssueIds, setSelectedIssueIds] = useState<Set<string>>(
+		new Set(),
+	);
 
 	const loadIssues = useCallback(async () => {
 		if (!workspacePath) {
@@ -860,6 +902,65 @@ export const TrxView = memo(function TrxView({
 		setEditTitle("");
 	}, []);
 
+	const handleToggleIssueSelection = useCallback((issueId: string) => {
+		setSelectedIssueIds((prev) => {
+			const next = new Set(prev);
+			if (next.has(issueId)) {
+				next.delete(issueId);
+			} else {
+				next.add(issueId);
+			}
+			return next;
+		});
+	}, []);
+
+	const handleSelectAll = useCallback(() => {
+		const visibleIssues = filterIssues(issues);
+		const visibleIssueIds = visibleIssues.map((i) => i.id);
+		setSelectedIssueIds(new Set(visibleIssueIds));
+	}, [issues, filterIssues]);
+
+	const handleDeselectAll = useCallback(() => {
+		setSelectedIssueIds(new Set());
+	}, []);
+
+	const handleSendToCurrentChat = useCallback(() => {
+		const selectedIssues = issues.filter((i) => selectedIssueIds.has(i.id));
+		if (selectedIssues.length === 0) return;
+
+		const attachments: IssueAttachment[] = selectedIssues.map((issue) => ({
+			id: `issue-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+			issueId: issue.id,
+			title: issue.title,
+			description: issue.description,
+			type: "issue",
+		}));
+
+		onAddIssueAttachments?.(attachments);
+
+		setSelectedIssueIds(new Set());
+	}, [issues, selectedIssueIds, onAddIssueAttachments]);
+
+	const handleSendToNewSession = useCallback(async () => {
+		const selectedIssues = issues.filter((i) => selectedIssueIds.has(i.id));
+		if (selectedIssues.length === 0) return;
+
+		const attachments: IssueAttachment[] = selectedIssues.map((issue) => ({
+			id: `issue-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+			issueId: issue.id,
+			title: issue.title,
+			description: issue.description,
+			type: "issue",
+		}));
+
+		const issueIds = selectedIssues.map((i) => i.id).join(",");
+		const title = `Multiple issues: ${selectedIssues.map((i) => `#${i.id}`).join(", ")}`;
+
+		onStartIssueNewSession?.(issueIds, title, attachments);
+
+		setSelectedIssueIds(new Set());
+	}, [issues, selectedIssueIds, onStartIssueNewSession]);
+
 	// Summary stats
 	const stats = useMemo(() => {
 		const open = issues.filter((i) => i.status === "open").length;
@@ -925,8 +1026,64 @@ export const TrxView = memo(function TrxView({
 	return (
 		<div className={cn("flex flex-col h-full overflow-hidden", className)}>
 			{/* Header */}
-			<div className="flex-shrink-0 px-3 py-2 border-b border-border">
+			<div className="flex-shrink-0 px-3 py-2 border-b border-border space-y-2">
+				{/* Selection action bar */}
+				{selectedIssueIds.size > 0 && (
+					<div className="flex items-center gap-2 bg-primary/10 border border-primary/20 rounded px-2 py-1.5">
+						<span className="text-xs font-medium text-primary">
+							{selectedIssueIds.size} issue{selectedIssueIds.size > 1 ? "s" : ""} selected
+						</span>
+						<div className="flex-1" />
+						<Button
+							type="button"
+							variant="ghost"
+							size="sm"
+							onClick={handleSendToCurrentChat}
+							className="h-6 px-2 text-xs"
+							disabled={selectedIssueIds.size === 0}
+						>
+							<Send className="w-3 h-3 mr-1" />
+							Current chat
+						</Button>
+						{onStartIssueNewSession && (
+							<Button
+								type="button"
+								variant="ghost"
+								size="sm"
+								onClick={handleSendToNewSession}
+								className="h-6 px-2 text-xs"
+								disabled={selectedIssueIds.size === 0}
+							>
+								<ExternalLink className="w-3 h-3 mr-1" />
+								New session
+							</Button>
+						)}
+						<Button
+							type="button"
+							variant="ghost"
+							size="sm"
+							onClick={handleDeselectAll}
+							className="h-6 w-6 p-0"
+							title="Clear selection"
+						>
+							<X className="w-3 h-3" />
+						</Button>
+					</div>
+				)}
 				<div className="flex items-center justify-between mb-2">
+					{selectedIssueIds.size === 0 && (
+						<Button
+							type="button"
+							variant="ghost"
+							size="sm"
+							onClick={handleSelectAll}
+							className="h-6 px-2 text-xs"
+							title="Select all issues"
+						>
+							<CheckSquare className="w-3 h-3 mr-1" />
+							Select all
+						</Button>
+					)}
 					<span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
 						Issues
 					</span>
@@ -1257,6 +1414,8 @@ export const TrxView = memo(function TrxView({
 								onEditTitleChange={setEditTitle}
 								onEditSave={handleSaveEdit}
 								onEditCancel={handleCancelEdit}
+								isSelected={selectedIssueIds.has(parent.id)}
+								onToggleSelection={() => handleToggleIssueSelection(parent.id)}
 							/>
 						))}
 						{/* Then standalone issues */}
@@ -1287,6 +1446,8 @@ export const TrxView = memo(function TrxView({
 								onEditTitleChange={setEditTitle}
 								onEditSave={handleSaveEdit}
 								onEditCancel={handleCancelEdit}
+								isSelected={selectedIssueIds.has(issue.id)}
+								onToggleSelection={() => handleToggleIssueSelection(issue.id)}
 							/>
 						))}
 					</>

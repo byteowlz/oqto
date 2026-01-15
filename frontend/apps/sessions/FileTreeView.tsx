@@ -26,7 +26,7 @@ import {
 	Trash2,
 	Upload,
 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 
 export type FileNode = {
 	name: string;
@@ -250,6 +250,15 @@ const PREVIEWABLE_EXTENSIONS = new Set([
 	".svg",
 	".bmp",
 	".ico",
+	// Videos
+	".mp4",
+	".webm",
+	".ogg",
+	".ogv",
+	".mov",
+	".avi",
+	".mkv",
+	".m4v",
 	// Documents
 	".pdf",
 	".typ",
@@ -334,9 +343,7 @@ export function FileTreeView({
 	const [uploading, setUploading] = useState(false);
 	const [newFolderName, setNewFolderName] = useState<string | null>(null);
 	const [renamingPath, setRenamingPath] = useState<string | null>(null);
-	const [renameValue, setRenameValue] = useState<string>("");
 	const fileInputRef = useRef<HTMLInputElement>(null);
-	const newFolderInputRef = useRef<HTMLInputElement>(null);
 
 	// Use external state if provided, otherwise use internal state
 	const [internalExpanded, setInternalExpanded] = useState<
@@ -432,12 +439,7 @@ export function FileTreeView({
 		loadTree(currentPath, true);
 	}, [currentPath, loadTree, workspacePath]);
 
-	// Focus new folder input when it appears
-	useEffect(() => {
-		if (newFolderName !== null && newFolderInputRef.current) {
-			newFolderInputRef.current.focus();
-		}
-	}, [newFolderName]);
+
 
 	const toggle = (path: string) => {
 		updateState({ expanded: { ...expanded, [path]: !expanded[path] } });
@@ -581,70 +583,66 @@ export function FileTreeView({
 		setNewFolderName("");
 	};
 
-	const handleCreateFolder = async () => {
-		if (!fileserverBaseUrl || !workspacePath || !newFolderName?.trim()) {
-			setNewFolderName(null);
-			return;
-		}
+	const handleCreateFolderWithName = useCallback(
+		async (name: string) => {
+			if (!fileserverBaseUrl || !workspacePath || !name) {
+				setNewFolderName(null);
+				return;
+			}
 
-		try {
-			const folderPath =
-				currentPath === "."
-					? newFolderName.trim()
-					: `${currentPath}/${newFolderName.trim()}`;
-			await createDirectory(fileserverBaseUrl, workspacePath, folderPath);
-			await refreshTree();
-		} catch (err) {
-			setError(err instanceof Error ? err.message : "Create folder failed");
-		} finally {
-			setNewFolderName(null);
-		}
-	};
+			try {
+				const folderPath =
+					currentPath === "." ? name : `${currentPath}/${name}`;
+				await createDirectory(fileserverBaseUrl, workspacePath, folderPath);
+				await refreshTree();
+			} catch (err) {
+				setError(err instanceof Error ? err.message : "Create folder failed");
+			} finally {
+				setNewFolderName(null);
+			}
+		},
+		[fileserverBaseUrl, workspacePath, currentPath, refreshTree],
+	);
 
-	const handleStartRename = (path: string, currentName: string) => {
+	const handleStartRename = (path: string, _currentName: string) => {
 		setRenamingPath(path);
-		setRenameValue(currentName);
 	};
 
-	const handleCancelRename = () => {
+	const handleCancelRename = useCallback(() => {
 		setRenamingPath(null);
-		setRenameValue("");
-	};
+	}, []);
 
-	const handleConfirmRename = async () => {
-		if (
-			!fileserverBaseUrl ||
-			!workspacePath ||
-			!renamingPath ||
-			!renameValue.trim()
-		) {
-			handleCancelRename();
-			return;
-		}
+	const handleConfirmRename = useCallback(
+		async (newName: string) => {
+			if (!fileserverBaseUrl || !workspacePath || !renamingPath || !newName) {
+				setRenamingPath(null);
+				return;
+			}
 
-		const newName = renameValue.trim();
-		const oldName = renamingPath.split("/").pop();
+			const oldName = renamingPath.split("/").pop();
 
-		// Skip if name unchanged
-		if (newName === oldName) {
-			handleCancelRename();
-			return;
-		}
+			// Skip if name unchanged
+			if (newName === oldName) {
+				setRenamingPath(null);
+				return;
+			}
 
-		try {
-			// Build new path by replacing the last segment
-			const pathParts = renamingPath.split("/");
-			pathParts[pathParts.length - 1] = newName;
-			const newPath = pathParts.join("/");
+			try {
+				// Build new path by replacing the last segment
+				const pathParts = renamingPath.split("/");
+				pathParts[pathParts.length - 1] = newName;
+				const newPath = pathParts.join("/");
 
-			await renameFile(fileserverBaseUrl, workspacePath, renamingPath, newPath);
-			await refreshTree();
-		} catch (err) {
-			setError(err instanceof Error ? err.message : "Rename failed");
-		} finally {
-			handleCancelRename();
-		}
-	};
+				await renameFile(fileserverBaseUrl, workspacePath, renamingPath, newPath);
+				await refreshTree();
+			} catch (err) {
+				setError(err instanceof Error ? err.message : "Rename failed");
+			} finally {
+				setRenamingPath(null);
+			}
+		},
+		[fileserverBaseUrl, workspacePath, renamingPath, refreshTree],
+	);
 
 	const clearSelection = () => {
 		updateState({ selectedFiles: new Set(), selectedFile: null });
@@ -866,22 +864,10 @@ export function FileTreeView({
 
 			{/* New folder input */}
 			{newFolderName !== null && (
-				<div className="flex-shrink-0 flex items-center gap-2 px-3 py-2 border-b border-border bg-muted/30">
-					<FolderPlus className="w-4 h-4 text-muted-foreground" />
-					<input
-						ref={newFolderInputRef}
-						type="text"
-						value={newFolderName}
-						onChange={(e) => setNewFolderName(e.target.value)}
-						onKeyDown={(e) => {
-							if (e.key === "Enter") handleCreateFolder();
-							if (e.key === "Escape") setNewFolderName(null);
-						}}
-						onBlur={handleCreateFolder}
-						placeholder="New folder name..."
-						className="flex-1 bg-transparent border-none outline-none text-sm"
-					/>
-				</div>
+				<NewFolderInput
+					onConfirm={handleCreateFolderWithName}
+					onCancel={() => setNewFolderName(null)}
+				/>
 			)}
 
 			{/* File content */}
@@ -910,8 +896,6 @@ export function FileTreeView({
 						onDelete={handleDelete}
 						onRename={handleStartRename}
 						renamingPath={renamingPath}
-						renameValue={renameValue}
-						onRenameValueChange={setRenameValue}
 						onRenameConfirm={handleConfirmRename}
 						onRenameCancel={handleCancelRename}
 						onOpenInCanvas={onOpenInCanvas}
@@ -927,8 +911,6 @@ export function FileTreeView({
 						onDelete={handleDelete}
 						onRename={handleStartRename}
 						renamingPath={renamingPath}
-						renameValue={renameValue}
-						onRenameValueChange={setRenameValue}
 						onRenameConfirm={handleConfirmRename}
 						onRenameCancel={handleCancelRename}
 						onOpenInCanvas={onOpenInCanvas}
@@ -944,8 +926,6 @@ export function FileTreeView({
 						onDelete={handleDelete}
 						onRename={handleStartRename}
 						renamingPath={renamingPath}
-						renameValue={renameValue}
-						onRenameValueChange={setRenameValue}
 						onRenameConfirm={handleConfirmRename}
 						onRenameCancel={handleCancelRename}
 						onOpenInCanvas={onOpenInCanvas}
@@ -957,18 +937,17 @@ export function FileTreeView({
 	);
 }
 
-// Rename input component with proper focus handling
-function RenameInput({
-	value,
-	onChange,
+// Isolated rename input component - manages its own state to avoid parent re-renders
+const RenameInput = memo(function RenameInput({
+	initialValue,
 	onConfirm,
 	onCancel,
 }: {
-	value: string;
-	onChange: (value: string) => void;
-	onConfirm: () => void;
+	initialValue: string;
+	onConfirm: (newValue: string) => void;
 	onCancel: () => void;
 }) {
+	const [value, setValue] = useState(initialValue);
 	const inputRef = useRef<HTMLInputElement>(null);
 
 	useEffect(() => {
@@ -979,23 +958,72 @@ function RenameInput({
 		}
 	}, []);
 
+	const handleConfirm = useCallback(() => {
+		onConfirm(value);
+	}, [value, onConfirm]);
+
 	return (
 		<input
 			ref={inputRef}
 			type="text"
 			value={value}
-			onChange={(e) => onChange(e.target.value)}
+			onChange={(e) => setValue(e.target.value)}
 			onKeyDown={(e) => {
 				e.stopPropagation();
-				if (e.key === "Enter") onConfirm();
+				if (e.key === "Enter") handleConfirm();
 				if (e.key === "Escape") onCancel();
 			}}
-			onBlur={onConfirm}
+			onBlur={handleConfirm}
 			className="flex-1 min-w-0 bg-background border border-input rounded px-1 text-sm text-foreground"
 			onClick={(e) => e.stopPropagation()}
 		/>
 	);
-}
+});
+
+// Isolated new folder input component - manages its own state to avoid parent re-renders
+const NewFolderInput = memo(function NewFolderInput({
+	onConfirm,
+	onCancel,
+}: {
+	onConfirm: (name: string) => void;
+	onCancel: () => void;
+}) {
+	const [value, setValue] = useState("");
+	const inputRef = useRef<HTMLInputElement>(null);
+
+	useEffect(() => {
+		if (inputRef.current) {
+			inputRef.current.focus();
+		}
+	}, []);
+
+	const handleConfirm = useCallback(() => {
+		if (value.trim()) {
+			onConfirm(value.trim());
+		} else {
+			onCancel();
+		}
+	}, [value, onConfirm, onCancel]);
+
+	return (
+		<div className="flex-shrink-0 flex items-center gap-2 px-3 py-2 border-b border-border bg-muted/30">
+			<FolderPlus className="w-4 h-4 text-muted-foreground" />
+			<input
+				ref={inputRef}
+				type="text"
+				value={value}
+				onChange={(e) => setValue(e.target.value)}
+				onKeyDown={(e) => {
+					if (e.key === "Enter") handleConfirm();
+					if (e.key === "Escape") onCancel();
+				}}
+				onBlur={handleConfirm}
+				placeholder="New folder name..."
+				className="flex-1 bg-transparent border-none outline-none text-sm"
+			/>
+		</div>
+	);
+});
 
 // Context menu wrapper for file items
 function FileContextMenu({
@@ -1063,8 +1091,6 @@ function TreeView({
 	onDelete,
 	onRename,
 	renamingPath,
-	renameValue,
-	onRenameValueChange,
 	onRenameConfirm,
 	onRenameCancel,
 	onOpenInCanvas,
@@ -1085,9 +1111,7 @@ function TreeView({
 	onDelete: (path: string) => void;
 	onRename: (path: string, currentName: string) => void;
 	renamingPath: string | null;
-	renameValue: string;
-	onRenameValueChange: (value: string) => void;
-	onRenameConfirm: () => void;
+	onRenameConfirm: (newName: string) => void;
 	onRenameCancel: () => void;
 	onOpenInCanvas?: (path: string) => void;
 	fileserverBaseUrl: string | null;
@@ -1115,8 +1139,6 @@ function TreeView({
 					onDelete={onDelete}
 					onRename={onRename}
 					renamingPath={renamingPath}
-					renameValue={renameValue}
-					onRenameValueChange={onRenameValueChange}
 					onRenameConfirm={onRenameConfirm}
 					onRenameCancel={onRenameCancel}
 					onOpenInCanvas={onOpenInCanvas}
@@ -1139,8 +1161,6 @@ function TreeRow({
 	onDelete,
 	onRename,
 	renamingPath,
-	renameValue,
-	onRenameValueChange,
 	onRenameConfirm,
 	onRenameCancel,
 	onOpenInCanvas,
@@ -1161,9 +1181,7 @@ function TreeRow({
 	onDelete: (path: string) => void;
 	onRename: (path: string, currentName: string) => void;
 	renamingPath: string | null;
-	renameValue: string;
-	onRenameValueChange: (value: string) => void;
-	onRenameConfirm: () => void;
+	onRenameConfirm: (newName: string) => void;
 	onRenameCancel: () => void;
 	onOpenInCanvas?: (path: string) => void;
 }) {
@@ -1241,8 +1259,7 @@ function TreeRow({
 					/>
 					{isRenaming ? (
 						<RenameInput
-							value={renameValue}
-							onChange={onRenameValueChange}
+							initialValue={node.name}
 							onConfirm={onRenameConfirm}
 							onCancel={onRenameCancel}
 						/>
@@ -1272,8 +1289,6 @@ function TreeRow({
 							onDelete={onDelete}
 							onRename={onRename}
 							renamingPath={renamingPath}
-							renameValue={renameValue}
-							onRenameValueChange={onRenameValueChange}
 							onRenameConfirm={onRenameConfirm}
 							onRenameCancel={onRenameCancel}
 							onOpenInCanvas={onOpenInCanvas}
@@ -1295,8 +1310,6 @@ function ListView({
 	onDelete,
 	onRename,
 	renamingPath,
-	renameValue,
-	onRenameValueChange,
 	onRenameConfirm,
 	onRenameCancel,
 	onOpenInCanvas,
@@ -1315,9 +1328,7 @@ function ListView({
 	onDelete: (path: string) => void;
 	onRename: (path: string, currentName: string) => void;
 	renamingPath: string | null;
-	renameValue: string;
-	onRenameValueChange: (value: string) => void;
-	onRenameConfirm: () => void;
+	onRenameConfirm: (newName: string) => void;
 	onRenameCancel: () => void;
 	onOpenInCanvas?: (path: string) => void;
 	fileserverBaseUrl: string | null;
@@ -1384,8 +1395,7 @@ function ListView({
 									/>
 									{isRenaming ? (
 										<RenameInput
-											value={renameValue}
-											onChange={onRenameValueChange}
+											initialValue={file.name}
 											onConfirm={onRenameConfirm}
 											onCancel={onRenameCancel}
 										/>
@@ -1425,8 +1435,6 @@ function GridView({
 	onDelete,
 	onRename,
 	renamingPath,
-	renameValue,
-	onRenameValueChange,
 	onRenameConfirm,
 	onRenameCancel,
 	onOpenInCanvas,
@@ -1445,9 +1453,7 @@ function GridView({
 	onDelete: (path: string) => void;
 	onRename: (path: string, currentName: string) => void;
 	renamingPath: string | null;
-	renameValue: string;
-	onRenameValueChange: (value: string) => void;
-	onRenameConfirm: () => void;
+	onRenameConfirm: (newName: string) => void;
 	onRenameCancel: () => void;
 	onOpenInCanvas?: (path: string) => void;
 	fileserverBaseUrl: string | null;
@@ -1504,8 +1510,7 @@ function GridView({
 							/>
 							{isRenaming ? (
 								<RenameInput
-									value={renameValue}
-									onChange={onRenameValueChange}
+									initialValue={file.name}
 									onConfirm={onRenameConfirm}
 									onCancel={onRenameCancel}
 								/>

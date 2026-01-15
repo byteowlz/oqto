@@ -269,6 +269,22 @@ export const GhosttyTerminal = forwardRef<
 						containerRef.current &&
 						session.terminal.element !== containerRef.current
 					) {
+						if (isTerminalDebugEnabled()) {
+							console.debug(`Terminal [${sessionId}]: detected new container, disposing old terminal and socket`);
+						}
+						// Close old socket so we create a fresh connection
+						if (session.socket) {
+							try {
+								session.socket.onopen = null;
+								session.socket.onmessage = null;
+								session.socket.onerror = null;
+								session.socket.onclose = null;
+								session.socket.close();
+							} catch {
+								// ignore close errors
+							}
+							session.socket = null;
+						}
 						try {
 							session.terminal.dispose();
 						} catch {
@@ -421,18 +437,32 @@ export const GhosttyTerminal = forwardRef<
 		// Use delayed cleanup to handle React Strict Mode double-mounting.
 		useEffect(() => {
 			const currentSessionId = sessionId;
-			let cleanupTimeout: ReturnType<typeof setTimeout> | null = null;
+			// Capture the container element at mount time to detect if a new instance took over
+			const myContainer = containerRef.current;
 
 			return () => {
 				mountedRef.current = false;
 
 				// Delay cleanup to allow for React Strict Mode remount
-				cleanupTimeout = setTimeout(() => {
+				setTimeout(() => {
 					const session = sessionConnections.get(currentSessionId);
 					if (!session) return;
 
+					// If terminal is now attached to a DIFFERENT container, a new instance took over
+					// Don't clean up - the new instance is using this session
+					if (session.terminal?.element && session.terminal.element !== myContainer) {
+						if (isTerminalDebugEnabled()) {
+							console.debug(`Terminal [${currentSessionId}]: skipping cleanup, new instance took over`);
+						}
+						return;
+					}
+
 					// Only cleanup if not remounted (mountedRef would be true if remounted)
 					if (mountedRef.current) return;
+
+					if (isTerminalDebugEnabled()) {
+						console.debug(`Terminal [${currentSessionId}]: cleaning up resources`);
+					}
 
 					if (session.reconnectTimeout) {
 						clearTimeout(session.reconnectTimeout);

@@ -1,67 +1,51 @@
-[package]
-name = "octo"
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+
+[workspace.package]
 version = "0.3.1"
 edition = "2024"
+license = "MIT"
+authors = ["Octo Team"]
 
-[[bin]]
-name = "octo"
-path = "src/main.rs"
-
-[[bin]]
-name = "octoctl"
-path = "src/ctl/main.rs"
-
-[[bin]]
-name = "octo-runner"
-path = "src/bin/octo-runner.rs"
-
-[[bin]]
-name = "octo-sandbox"
-path = "src/bin/octo-sandbox.rs"
-
-[[bin]]
-name = "pi-bridge"
-path = "src/bin/pi-bridge.rs"
-
-[lib]
-name = "octo"
-path = "src/lib.rs"
-
-[dependencies]
+[workspace.dependencies]
 # Error handling
-anyhow = "1.0.95"
+anyhow = "1.0"
 thiserror = "2.0"
 
 # CLI
-clap = { version = "4.5.49", features = ["derive", "env"] }
-clap_complete = "4.5.23"
+clap = { version = "4.5", features = ["derive", "env"] }
+clap_complete = "4.5"
 
 # Configuration
-config = { version = "0.15.18", features = ["toml"] }
-dirs = "5.0.1"
-shellexpand = "3.1.0"
-toml = "0.8.19"
+config = { version = "0.15", features = ["toml"] }
+dirs = "5.0"
+shellexpand = "3.1"
+toml = "0.8"
 
 # Logging
-env_logger = "0.11.5"
-log = "0.4.22"
+env_logger = "0.11"
+log = "0.4"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 
 # Serialization
-serde = { version = "1.0.228", features = ["derive"] }
-serde_json = "1.0.145"
-serde_yaml = "0.9.34"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_yaml = "0.9"
 
 # Async runtime
-tokio = { version = "1.42", features = ["full"] }
+tokio = { version = "1.49", features = ["full"] }
+tokio-stream = "0.1"
+tokio-tungstenite = "0.26"
+tokio-util = { version = "0.7", features = ["io"] }
 
 # Web framework
-axum = { version = "0.8", features = ["ws", "macros"] }
+axum = { version = "0.8", features = ["ws", "macros", "multipart"] }
 axum-extra = { version = "0.10", features = ["typed-header"] }
 tower = { version = "0.5", features = ["util", "timeout"] }
 tower-http = { version = "0.6", features = ["cors", "trace", "fs"] }
-hyper = { version = "1.5", features = ["full"] }
+hyper = { version = "1.8", features = ["full"] }
 hyper-util = { version = "0.1", features = ["client", "client-legacy", "http1", "http2", "tokio"] }
 http-body-util = "0.1"
 
@@ -69,18 +53,17 @@ http-body-util = "0.1"
 sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite", "migrate"] }
 
 # Utilities
-uuid = { version = "1.11", features = ["v4", "serde"] }
+uuid = { version = "1.19", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 async-trait = "0.1"
 futures = "0.3"
-tokio-tungstenite = "0.26"
-tokio-stream = "0.1"
+bytes = "1"
 
 # Markdown rendering with syntax highlighting
-comrak = { version = "0.34", default-features = false, features = ["syntect"] }
-syntect = { version = "5", default-features = false, features = ["default-syntaxes", "default-themes", "html", "regex-fancy"] }
+comrak = { version = "0.49", default-features = false, features = ["syntect"] }
+syntect = { version = "5.3", default-features = false, features = ["default-syntaxes", "default-themes", "html", "regex-fancy"] }
 
-# HTTP client (for EAVS communication and SSE proxying)
+# HTTP client
 reqwest = { version = "0.12", features = ["json", "stream"] }
 reqwest-eventsource = "0.6"
 
@@ -90,14 +73,24 @@ dashmap = "6"
 # Authentication
 jsonwebtoken = "9"
 base64 = "0.22"
-bcrypt = "0.16"
+bcrypt = "0.17"
 nanoid = "0.4"
 rand = { version = "0.9", features = ["std", "std_rng"] }
-once_cell = "1.21.3"
+once_cell = "1.21"
 urlencoding = "2"
-libc = "0.2.178"
+libc = "0.2"
 
-[dev-dependencies]
-tower = { version = "0.5", features = ["util"] }
-axum-test = "17"
+# File operations
+mime_guess = "2"
+walkdir = "2.5"
+notify = "8.2"
+zip = { version = "2.4", default-features = false, features = ["deflate"] }
+
+# Dev dependencies
 tempfile = "3"
+axum-test = "17"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true

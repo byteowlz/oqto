@@ -4,45 +4,33 @@ default:
     @just --list
 
 # Build all components
-build: build-backend build-fileserver build-frontend
+build: build-backend build-frontend
 
-# Build backend
+# Build backend (all workspace crates)
 build-backend:
     cd backend && cargo build
-
-# Build fileserver
-build-fileserver:
-    cd fileserver && cargo build
 
 # Build frontend
 build-frontend:
     cd frontend && bun run build
 
 # Run all linters
-lint: lint-backend lint-fileserver lint-frontend
+lint: lint-backend lint-frontend
 
 # Lint backend
 lint-backend:
     cd backend && cargo clippy && cargo fmt --check
-
-# Lint fileserver
-lint-fileserver:
-    cd fileserver && cargo clippy && cargo fmt --check
 
 # Lint frontend
 lint-frontend:
     cd frontend && bun run lint
 
 # Run all tests
-test: test-backend test-fileserver test-frontend
+test: test-backend test-frontend
 
 # Test backend
 test-backend:
     cd backend && cargo test
-
-# Test fileserver
-test-fileserver:
-    cd fileserver && cargo test
 
 # Test frontend
 test-frontend:
@@ -51,12 +39,10 @@ test-frontend:
 # Format all Rust code
 fmt:
     cd backend && cargo fmt
-    cd fileserver && cargo fmt
 
 # Check all Rust code compiles
 check:
     cd backend && cargo check
-    cd fileserver && cargo check
 
 # Start backend server
 serve:
@@ -69,9 +55,9 @@ dev:
 # Install all dependencies and binaries
 install:
     cd frontend && bun install
-    cd backend && cargo install --path .
-    cd backend && cargo install --path . --bin octo-runner
-    cd fileserver && cargo install --path .
+    cd backend && cargo install --path crates/octo
+    cd backend && cargo install --path crates/octo --bin octo-runner
+    cd backend && cargo install --path crates/octo-files
 
 # Build container image
 container-build:
@@ -126,9 +112,10 @@ bump version:
     
     echo "Bumping $current -> $new_version"
     
-    # Update Rust Cargo.toml files (match the version line after [package])
-    sed -i '0,/^version = /s/^version = ".*"/version = "'"$new_version"'"/' "$ROOT/backend/Cargo.toml"
-    sed -i '0,/^version = /s/^version = ".*"/version = "'"$new_version"'"/' "$ROOT/fileserver/Cargo.toml"
+    # Update workspace version in backend/Cargo.toml
+    sed -i 's/^version = ".*"/version = "'"$new_version"'"/' "$ROOT/backend/Cargo.toml"
+    
+    # Update frontend/src-tauri/Cargo.toml
     sed -i '0,/^version = /s/^version = ".*"/version = "'"$new_version"'"/' "$ROOT/frontend/src-tauri/Cargo.toml"
     
     # Update package.json files
