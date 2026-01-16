@@ -1,6 +1,5 @@
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::sync::Arc;
 
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
@@ -10,21 +9,7 @@ use tower_http::trace::TraceLayer;
 use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-mod config;
-mod error;
-mod handlers;
-mod routes;
-
-use config::Config;
-
-/// Application state shared across handlers
-#[derive(Clone)]
-pub struct AppState {
-    /// Root directory to serve files from
-    pub root_dir: PathBuf,
-    /// Configuration
-    pub config: Arc<Config>,
-}
+use octo_files::{AppState, Config, routes};
 
 #[derive(Parser, Debug)]
 #[command(name = "octo-files")]
@@ -97,10 +82,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         max_upload_size / 1024 / 1024
     );
 
-    let state = AppState {
-        root_dir,
-        config: Arc::new(config),
-    };
+    let state = AppState::with_config(root_dir, config);
 
     // Build CORS layer
     let cors = CorsLayer::new()

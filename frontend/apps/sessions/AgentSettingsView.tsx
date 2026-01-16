@@ -767,6 +767,7 @@ const KNOWN_TOOLS = [
 	{ id: "grep", label: "Grep", description: "Search file contents" },
 	{ id: "list", label: "List", description: "List directory contents" },
 	{ id: "task", label: "Task", description: "Create sub-agents" },
+	{ id: "question", label: "Question", description: "Ask user questions" },
 	{ id: "webfetch", label: "Web Fetch", description: "Fetch URLs" },
 	{ id: "websearch", label: "Web Search", description: "Search the web" },
 	{ id: "codesearch", label: "Code Search", description: "Search code" },

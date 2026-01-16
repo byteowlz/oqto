@@ -1,5 +1,5 @@
 use std::collections::{HashMap, HashSet};
-use std::io::{Cursor, Write};
+use std::io::{Seek, SeekFrom, Write};
 use std::path::{Component, Path, PathBuf};
 use std::sync::LazyLock;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -28,6 +28,8 @@ use tokio::time::{Instant, sleep_until};
 use tokio_util::io::ReaderStream;
 use tracing::{debug, error, info, warn};
 use walkdir::WalkDir;
+
+use tempfile::tempfile;
 use zip::ZipWriter;
 use zip::write::SimpleFileOptions;
 
@@ -382,12 +384,22 @@ fn resolve_request_root(root: &Path, directory: Option<&str>) -> Result<PathBuf,
     Ok(resolved)
 }
 
-/// Get relative path from root
+/// Get relative path from root.
+///
+/// Always uses `/` as separator (zip + HTTP-friendly).
 fn get_relative_path(root: &Path, full_path: &Path) -> String {
-    full_path
-        .strip_prefix(root)
-        .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_default()
+    let Ok(relative) = full_path.strip_prefix(root) else {
+        return String::new();
+    };
+
+    let mut parts = Vec::new();
+    for component in relative.components() {
+        if let Component::Normal(part) = component {
+            parts.push(part.to_string_lossy().to_string());
+        }
+    }
+
+    parts.join("/")
 }
 
 fn normalize_extension(ext: &str) -> Option<String> {
@@ -1417,20 +1429,21 @@ pub async fn download(
         let zip_name = format!("{}.zip", file_name);
         let safe_zip_name = zip_name.replace('"', "'");
 
-        // Create zip in memory
-        let zip_data = create_zip_from_paths(&root_dir, &[path.clone()])?;
+        let (zip_file, zip_size) =
+            create_zip_file_from_paths(root_dir.clone(), vec![path.clone()]).await?;
+        let body = Body::from_stream(ReaderStream::new(zip_file));
 
         Ok((
             StatusCode::OK,
             [
                 (header::CONTENT_TYPE, "application/zip".to_string()),
-                (header::CONTENT_LENGTH, zip_data.len().to_string()),
+                (header::CONTENT_LENGTH, zip_size.to_string()),
                 (
                     header::CONTENT_DISPOSITION,
                     format!("attachment; filename=\"{}\"", safe_zip_name),
                 ),
             ],
-            zip_data,
+            body,
         )
             .into_response())
     }
@@ -1463,8 +1476,8 @@ pub async fn download_zip(
 
     debug!("Downloading {} items as zip", resolved_paths.len());
 
-    // Create zip
-    let zip_data = create_zip_from_paths(&root_dir, &resolved_paths)?;
+    let (zip_file, zip_size) = create_zip_file_from_paths(root_dir, resolved_paths).await?;
+    let body = Body::from_stream(ReaderStream::new(zip_file));
 
     let zip_name = query.name.unwrap_or_else(|| "download.zip".to_string());
     let safe_zip_name = zip_name.replace('"', "'");
@@ -1473,28 +1486,50 @@ pub async fn download_zip(
         StatusCode::OK,
         [
             (header::CONTENT_TYPE, "application/zip".to_string()),
-            (header::CONTENT_LENGTH, zip_data.len().to_string()),
+            (header::CONTENT_LENGTH, zip_size.to_string()),
             (
                 header::CONTENT_DISPOSITION,
                 format!("attachment; filename=\"{}\"", safe_zip_name),
             ),
         ],
-        zip_data,
+        body,
     )
         .into_response())
 }
 
-/// Create a zip archive from a list of paths (files or directories)
-fn create_zip_from_paths(root: &Path, paths: &[PathBuf]) -> Result<Vec<u8>, FileServerError> {
-    let buffer = Cursor::new(Vec::new());
-    let mut zip = ZipWriter::new(buffer);
+/// Create a zip archive from a list of paths (files or directories).
+///
+/// Uses a temporary file on disk so large downloads don't require buffering
+/// the full archive in memory.
+async fn create_zip_file_from_paths(
+    root: PathBuf,
+    paths: Vec<PathBuf>,
+) -> Result<(fs::File, u64), FileServerError> {
+    let (file, size) =
+        tokio::task::spawn_blocking(move || create_zip_tempfile_blocking(&root, &paths))
+            .await
+            .map_err(|err| {
+                FileServerError::Io(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    err.to_string(),
+                ))
+            })??;
+
+    Ok((fs::File::from_std(file), size))
+}
+
+fn create_zip_tempfile_blocking(
+    root: &Path,
+    paths: &[PathBuf],
+) -> Result<(std::fs::File, u64), FileServerError> {
+    let file = tempfile()?;
+    let mut zip = ZipWriter::new(file);
     let options = SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated)
         .unix_permissions(0o644);
 
     for path in paths {
         if path.is_file() {
-            // Add single file
             let relative = get_relative_path(root, path);
             let file_name = if relative.is_empty() {
                 path.file_name()
@@ -1504,33 +1539,34 @@ fn create_zip_from_paths(root: &Path, paths: &[PathBuf]) -> Result<Vec<u8>, File
                 relative
             };
 
-            let data = std::fs::read(path).map_err(FileServerError::Io)?;
-            zip.start_file(&file_name, options).map_err(|e| {
-                FileServerError::Io(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    e.to_string(),
-                ))
-            })?;
-            zip.write_all(&data).map_err(FileServerError::Io)?;
+            zip.start_file(&file_name, options)
+                .map_err(zip_error_to_fileserver_error)?;
+            let mut input = std::fs::File::open(path)?;
+            std::io::copy(&mut input, &mut zip)?;
         } else if path.is_dir() {
-            // Add directory recursively
             add_directory_to_zip(&mut zip, root, path, options)?;
         }
     }
 
-    let result = zip.finish().map_err(|e| {
-        FileServerError::Io(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            e.to_string(),
-        ))
-    })?;
+    let mut file = zip.finish().map_err(zip_error_to_fileserver_error)?;
+    file.flush()?;
 
-    Ok(result.into_inner())
+    let size = file.seek(SeekFrom::End(0))?;
+    file.seek(SeekFrom::Start(0))?;
+
+    Ok((file, size))
 }
 
-/// Recursively add a directory to a zip archive
-fn add_directory_to_zip(
-    zip: &mut ZipWriter<Cursor<Vec<u8>>>,
+fn zip_error_to_fileserver_error(error: zip::result::ZipError) -> FileServerError {
+    FileServerError::Io(std::io::Error::new(
+        std::io::ErrorKind::Other,
+        error.to_string(),
+    ))
+}
+
+/// Recursively add a directory to a zip archive.
+fn add_directory_to_zip<W: Write + Seek>(
+    zip: &mut ZipWriter<W>,
     root: &Path,
     dir: &Path,
     options: SimpleFileOptions,
@@ -1539,24 +1575,15 @@ fn add_directory_to_zip(
         let entry_path = entry.path();
         let relative = get_relative_path(root, entry_path);
 
-        if entry_path.is_file() {
-            let data = std::fs::read(entry_path).map_err(FileServerError::Io)?;
-            zip.start_file(&relative, options).map_err(|e| {
-                FileServerError::Io(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    e.to_string(),
-                ))
-            })?;
-            zip.write_all(&data).map_err(FileServerError::Io)?;
-        } else if entry_path.is_dir() && entry_path != dir {
-            // Add directory entry (trailing slash)
+        if entry.file_type().is_file() {
+            zip.start_file(&relative, options)
+                .map_err(zip_error_to_fileserver_error)?;
+            let mut input = std::fs::File::open(entry_path)?;
+            std::io::copy(&mut input, zip)?;
+        } else if entry.file_type().is_dir() && entry_path != dir {
             let dir_name = format!("{}/", relative);
-            zip.add_directory(&dir_name, options).map_err(|e| {
-                FileServerError::Io(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    e.to_string(),
-                ))
-            })?;
+            zip.add_directory(&dir_name, options)
+                .map_err(zip_error_to_fileserver_error)?;
         }
     }
 
@@ -1567,8 +1594,10 @@ fn add_directory_to_zip(
 mod tests {
     use super::*;
     use notify::event::ModifyKind;
+    use std::io::Read;
     use std::path::PathBuf;
     use tempfile::TempDir;
+    use zip::ZipArchive;
 
     // ========================================================================
     // Filename Sanitization Tests
@@ -1687,6 +1716,42 @@ mod tests {
         let result = sanitize_filename(&long_name);
         assert!(result.is_some());
         assert_eq!(result.unwrap().len(), 255);
+    }
+
+    // ========================================================================
+    // Zip Download Tests
+    // ========================================================================
+
+    #[test]
+    fn test_create_zip_tempfile_blocking_writes_entries() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+
+        std::fs::write(root.join("root.txt"), "root").unwrap();
+
+        std::fs::create_dir_all(root.join("nested")).unwrap();
+        std::fs::write(root.join("nested").join("child.txt"), "child").unwrap();
+
+        let (file, size) =
+            create_zip_tempfile_blocking(root, &[root.join("nested"), root.join("root.txt")])
+                .unwrap();
+        assert!(size > 0);
+
+        let mut archive = ZipArchive::new(file).unwrap();
+
+        {
+            let mut root_entry = archive.by_name("root.txt").unwrap();
+            let mut root_content = String::new();
+            root_entry.read_to_string(&mut root_content).unwrap();
+            assert_eq!(root_content, "root");
+        }
+
+        {
+            let mut child_entry = archive.by_name("nested/child.txt").unwrap();
+            let mut child_content = String::new();
+            child_entry.read_to_string(&mut child_content).unwrap();
+            assert_eq!(child_content, "child");
+        }
     }
 
     // ========================================================================

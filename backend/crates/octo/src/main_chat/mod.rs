@@ -30,5 +30,8 @@ pub use models::{
     AssistantInfo, ChatMessage, CreateChatMessage, CreateHistoryEntry, CreateSession, HistoryEntry,
     HistoryEntryType, MainChatSession, MessageRole,
 };
-pub use pi_service::{MainChatPiService, MainChatPiServiceConfig, PiRuntimeMode, UserPiSession};
+pub use pi_service::{
+    MainChatPiService, MainChatPiServiceConfig, PiRuntimeMode, PiSessionFile, PiSessionMessage,
+    UserPiSession,
+};
 pub use service::MainChatService;

@@ -90,6 +90,9 @@ reqwest-eventsource.workspace = true
 # Concurrent data structures
 dashmap.workspace = true
 
+# File server (for Main Chat file access)
+octo-files = { path = "../octo-files" }
+
 # Authentication
 jsonwebtoken.workspace = true
 base64.workspace = true

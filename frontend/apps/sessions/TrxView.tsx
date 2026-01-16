@@ -872,10 +872,16 @@ export const TrxView = memo(function TrxView({
 		loadIssues,
 	]);
 
-	const handleAddChild = useCallback((parentId: string) => {
-		setNewIssueParentId(parentId);
-		setShowAddForm(true);
-	}, []);
+	const handleAddChild = useCallback(
+		(parentId: string) => {
+			setNewIssueParentId(parentId);
+			setShowAddForm(true);
+			if (filterType !== "all") {
+				setNewIssueType(filterType);
+			}
+		},
+		[filterType],
+	);
 
 	const handleStartEdit = useCallback((issue: TrxIssue) => {
 		setEditingIssueId(issue.id);
@@ -1234,10 +1240,17 @@ export const TrxView = memo(function TrxView({
 							type="button"
 							variant="ghost"
 							size="sm"
-							onClick={() => {
-								setNewIssueParentId(null);
-								setShowAddForm(!showAddForm);
-							}}
+												onClick={() => {
+													setNewIssueParentId(null);
+													setShowAddForm((prev) => {
+														const next = !prev;
+														if (next && filterType !== "all") {
+															setNewIssueType(filterType);
+														}
+														return next;
+													});
+												}}
+
 							className="h-6 w-6 p-0"
 							title="Add issue"
 						>

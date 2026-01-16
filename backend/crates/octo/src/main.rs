@@ -4,6 +4,7 @@ use std::fs;
 use std::io::{self, IsTerminal, Write};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow};
@@ -1917,6 +1918,8 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
         enabled: ctx.config.mmry.enabled,
         single_user,
         local_service_url: ctx.config.mmry.local_service_url.clone(),
+        host_service_url: ctx.config.mmry.host_service_url.clone(),
+        host_api_key: ctx.config.mmry.host_api_key.clone(),
     };
 
     // Build voice state based on configuration
@@ -2079,16 +2082,23 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
             runner_socket_pattern: ctx.config.pi.runner_socket_pattern.clone(),
             bridge_url: ctx.config.pi.bridge_url.clone(),
         };
-        let main_chat_pi_service = main_chat::MainChatPiService::new(
+        let main_chat_pi_service = Arc::new(main_chat::MainChatPiService::new(
             main_chat_workspace_dir,
             ctx.config.local.single_user,
             main_chat_pi_config,
-        );
+            state
+                .main_chat
+                .as_ref()
+                .expect("MainChatService must be initialized")
+                .clone(),
+        ));
+        // Start background cleanup task for idle sessions
+        main_chat_pi_service.start_cleanup_task();
         info!(
             "Main Chat Pi service initialized (executable: {})",
             ctx.config.pi.executable
         );
-        state = state.with_main_chat_pi(main_chat_pi_service);
+        state = state.with_main_chat_pi_arc(Arc::clone(&main_chat_pi_service));
     } else {
         info!("Main Chat Pi service disabled");
     }

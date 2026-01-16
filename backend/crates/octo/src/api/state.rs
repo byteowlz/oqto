@@ -31,6 +31,10 @@ pub struct MmryState {
     pub single_user: bool,
     /// URL of the local mmry service (for single-user mode).
     pub local_service_url: String,
+    /// URL of the central mmry service (for multi-user mode).
+    pub host_service_url: String,
+    /// API key for authenticating with host mmry (optional).
+    pub host_api_key: Option<String>,
 }
 
 impl Default for MmryState {
@@ -39,6 +43,8 @@ impl Default for MmryState {
             enabled: false,
             single_user: true,
             local_service_url: "http://localhost:8081".to_string(),
+            host_service_url: "http://localhost:8081".to_string(),
+            host_api_key: None,
         }
     }
 }
@@ -303,6 +309,12 @@ impl AppState {
     /// Set the main chat Pi service.
     pub fn with_main_chat_pi(mut self, service: MainChatPiService) -> Self {
         self.main_chat_pi = Some(Arc::new(service));
+        self
+    }
+
+    /// Set the main chat Pi service from an existing Arc.
+    pub fn with_main_chat_pi_arc(mut self, service: Arc<MainChatPiService>) -> Self {
+        self.main_chat_pi = Some(service);
         self
     }
 }

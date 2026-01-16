@@ -7,6 +7,7 @@ mod delegate;
 mod error;
 mod handlers;
 mod main_chat;
+mod main_chat_files;
 mod main_chat_pi;
 mod proxy;
 mod routes;

@@ -49,6 +49,7 @@ import {
 	type CassSearchHit,
 	type ChatSession,
 	type CreateProjectFromTemplateRequest,
+	type ListProjectTemplatesResponse,
 	type Persona,
 	type ProjectLogo,
 	type ProjectTemplateEntry,
@@ -139,6 +140,7 @@ const AppShell = memo(function AppShell() {
 		setMainChatCurrentSessionId,
 		setMainChatWorkspacePath,
 		setScrollToMessageId,
+		requestNewMainChatSession,
 	} = useApp();
 	const location = useLocation();
 	const navigate = useNavigate();
@@ -268,6 +270,7 @@ const AppShell = memo(function AppShell() {
 	const [renameProjectValue, setRenameProjectValue] = useState("");
 	const [newProjectDialogOpen, setNewProjectDialogOpen] = useState(false);
 	const [projectTemplates, setProjectTemplates] = useState<ProjectTemplateEntry[]>([]);
+	const [templatesConfigured, setTemplatesConfigured] = useState(true);
 	const [templatesLoading, setTemplatesLoading] = useState(false);
 	const [templatesError, setTemplatesError] = useState<string | null>(null);
 	const [selectedTemplatePath, setSelectedTemplatePath] = useState<string | null>(
@@ -537,11 +540,12 @@ const AppShell = memo(function AppShell() {
 		setTemplatesLoading(true);
 		setTemplatesError(null);
 		listProjectTemplates()
-			.then((entries) => {
+			.then((response) => {
 				if (!active) return;
-				setProjectTemplates(entries);
-				if (entries.length > 0) {
-					setSelectedTemplatePath((prev) => prev ?? entries[0].path);
+				setTemplatesConfigured(response.configured);
+				setProjectTemplates(response.templates);
+				if (response.templates.length > 0) {
+					setSelectedTemplatePath((prev) => prev ?? response.templates[0].path);
 				}
 			})
 			.catch((err) => {
@@ -1248,6 +1252,7 @@ const AppShell = memo(function AppShell() {
 
 	const handleNewChat = useCallback(async () => {
 		console.log("[handleNewChat] called", {
+			mainChatActive,
 			selectedWorkspaceSession: !!selectedWorkspaceSession,
 			opencodeBaseUrl,
 			selectedProjectKey,
@@ -1256,6 +1261,14 @@ const AppShell = memo(function AppShell() {
 				directory: p.directory,
 			})),
 		});
+
+		// If Main Chat is active, create a new Main Chat session
+		if (mainChatActive) {
+			console.log("[handleNewChat] Creating new Main Chat session");
+			setActiveAppId("sessions");
+			requestNewMainChatSession();
+			return;
+		}
 
 		// Check if we have a project filter selected - prioritize this over active session
 		if (selectedProjectKey) {
@@ -1316,6 +1329,8 @@ const AppShell = memo(function AppShell() {
 		console.log("[handleNewChat] Opening agent picker");
 		setAgentPickerOpen(true);
 	}, [
+		mainChatActive,
+		requestNewMainChatSession,
 		selectedWorkspaceSession,
 		opencodeBaseUrl,
 		selectedChatFromHistory,
@@ -3478,6 +3493,12 @@ const AppShell = memo(function AppShell() {
 								</div>
 							) : templatesError ? (
 								<div className="text-sm text-destructive">{templatesError}</div>
+							) : !templatesConfigured ? (
+								<div className="text-sm text-muted-foreground">
+									{locale === "de"
+										? "Templates nicht konfiguriert. Setze [templates].repo_path in config.toml."
+										: "Templates not configured. Set [templates].repo_path in config.toml."}
+								</div>
 							) : projectTemplates.length === 0 ? (
 								<div className="text-sm text-muted-foreground">
 									{locale === "de"

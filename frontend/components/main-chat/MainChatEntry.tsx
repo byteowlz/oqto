@@ -19,20 +19,20 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
 	type MainChatAssistantInfo,
-	type MainChatSession,
+	type PiSessionFile,
 	createMainChatAssistant,
 	deleteMainChatAssistant,
-	getLatestMainChatSession,
 	getMainChatAssistant,
 	listMainChatAssistants,
-	listMainChatSessions,
+	listMainChatPiSessions,
 	updateMainChatAssistant,
 } from "@/lib/control-plane-client";
-import { formatSessionDate } from "@/lib/session-utils";
+import { formatSessionDate, generateReadableId } from "@/lib/session-utils";
 import { cn } from "@/lib/utils";
 import {
 	ChevronDown,
 	ChevronRight,
+	Copy,
 	Loader2,
 	MessageCircle,
 	Plus,
@@ -69,10 +69,17 @@ export function MainChatEntry({
 	const [assistantName, setAssistantName] = useState<string | null>(null);
 	const [assistantInfo, setAssistantInfo] =
 		useState<MainChatAssistantInfo | null>(null);
-	const [sessions, setSessions] = useState<MainChatSession[]>([]);
+	const [sessions, setSessions] = useState<PiSessionFile[]>([]);
 	const [latestSessionId, setLatestSessionId] = useState<string | null>(null);
 	const [loading, setLoading] = useState(true);
 	const [expanded, setExpanded] = useState(false);
+
+	// Auto-expand when Main Chat is selected so sessions are visible.
+	useEffect(() => {
+		if (isSelected && sessions.length > 0) {
+			setExpanded(true);
+		}
+	}, [isSelected, sessions.length]);
 	const [showCreateDialog, setShowCreateDialog] = useState(false);
 	const [newName, setNewName] = useState("");
 	const [creating, setCreating] = useState(false);
@@ -90,6 +97,50 @@ export function MainChatEntry({
 		loadAssistant();
 	}, []);
 
+	// When selection changes (e.g. /new), refresh sessions list.
+	useEffect(() => {
+		if (!assistantName) return;
+		// Only do this while visible/selected to keep it cheap.
+		if (!isSelected) return;
+		listMainChatPiSessions()
+			.then((sessionList) => {
+				const sorted = [...sessionList].sort(
+					(a, b) => b.modified_at - a.modified_at,
+				);
+				setSessions(sorted);
+				setLatestSessionId(sorted[0]?.id ?? null);
+				writeCachedSessions(assistantName, sorted);
+			})
+			.catch(() => {
+				// ignore
+			});
+	}, [assistantName, isSelected]);
+
+	function cacheKeySessions(name: string) {
+		return `octo:mainChatPi:${name}:sessions:v1`;
+	}
+
+	function readCachedSessions(name: string): PiSessionFile[] {
+		if (typeof window === "undefined") return [];
+		try {
+			const raw = localStorage.getItem(cacheKeySessions(name));
+			if (!raw) return [];
+			const parsed = JSON.parse(raw) as PiSessionFile[];
+			return Array.isArray(parsed) ? parsed : [];
+		} catch {
+			return [];
+		}
+	}
+
+	function writeCachedSessions(name: string, sessions: PiSessionFile[]) {
+		if (typeof window === "undefined") return;
+		try {
+			localStorage.setItem(cacheKeySessions(name), JSON.stringify(sessions));
+		} catch {
+			// ignore
+		}
+	}
+
 	async function loadAssistant() {
 		try {
 			setLoading(true);
@@ -100,23 +151,26 @@ export function MainChatEntry({
 				const name = assistants[0];
 				setAssistantName(name);
 
-				// Load info, sessions, and latest session
-				const [info, sessionList, latestSession] = await Promise.all([
+				// Use cached sessions instantly, then refresh in background
+				const cached = readCachedSessions(name);
+				if (cached.length > 0) {
+					setSessions(cached);
+					setLatestSessionId(cached[0]?.id ?? null);
+				}
+
+				const [info, sessionList] = await Promise.all([
 					getMainChatAssistant(name),
-					listMainChatSessions(name),
-					getLatestMainChatSession(name),
+					listMainChatPiSessions(),
 				]);
 
-				setAssistantInfo(info);
-				// Sort sessions newest first for the timeline
-				setSessions(
-					sessionList.sort(
-						(a, b) =>
-							new Date(b.started_at).getTime() -
-							new Date(a.started_at).getTime(),
-					),
-				);
-				setLatestSessionId(latestSession?.session_id ?? null);
+			setAssistantInfo(info);
+			// Sort sessions by most recently active first
+			const sorted = [...sessionList].sort(
+				(a, b) => b.modified_at - a.modified_at,
+			);
+			setSessions(sorted);
+				setLatestSessionId(sorted[0]?.id ?? null);
+				writeCachedSessions(name, sorted);
 			}
 		} catch (err) {
 			console.error("Failed to load main chat assistant:", err);
@@ -304,15 +358,55 @@ export function MainChatEntry({
 							</button>
 						</div>
 
-						{/* Timeline - shown when expanded */}
+						{/* Session history list - shown when expanded */}
 						{expanded && hasSessions && (
-							<div className="ml-4 mt-1 mb-2">
-								<SessionTimeline
-									sessions={sessions}
-									activeSessionId={activeSessionId ?? latestSessionId}
-									onSessionClick={handleTimelineSessionClick}
-									locale={locale}
-								/>
+							<div className="ml-4 mt-1 mb-2 space-y-1">
+								{sessions.map((session) => {
+									const isActive = session.id === (activeSessionId ?? latestSessionId);
+									const readableId = generateReadableId(session.id);
+									const formattedDate = formatSessionDate(
+										new Date(session.started_at).getTime(),
+									);
+
+									return (
+										<ContextMenu key={session.id}>
+											<ContextMenuTrigger className="contents">
+												<div
+													className={cn(
+														"w-full px-2 py-2 text-left transition-colors flex items-start gap-1.5 cursor-pointer",
+														isActive
+															? "bg-primary/15 border border-primary text-foreground"
+															: "text-muted-foreground hover:bg-sidebar-accent border border-transparent",
+													)}
+												>
+													<MessageCircle className="w-4 h-4 mt-0.5 flex-shrink-0 text-primary/70" />
+													<button
+														type="button"
+														onClick={() => handleTimelineSessionClick(session.id)}
+														className="flex-1 min-w-0 text-left"
+													>
+														<div className="flex items-center gap-1">
+															<span className="text-sm truncate font-medium">
+																{session.title || "Untitled"}
+															</span>
+														</div>
+														<div className="text-[11px] text-muted-foreground/50 mt-0.5">
+															{formattedDate} <span className="opacity-60">[{readableId}]</span>
+														</div>
+													</button>
+												</div>
+											</ContextMenuTrigger>
+											<ContextMenuContent>
+												<ContextMenuItem
+													onClick={() => navigator.clipboard.writeText(readableId)}
+												>
+													<Copy className="w-4 h-4 mr-2" />
+													{readableId}
+												</ContextMenuItem>
+											</ContextMenuContent>
+										</ContextMenu>
+									);
+								})}
 							</div>
 						)}
 					</div>
@@ -367,6 +461,8 @@ export function MainChatEntry({
 
 /**
  * Vertical timeline showing sessions as connected dots.
+ *
+ * Legacy: replaced by OpenCode-style list above.
  */
 function SessionTimeline({
 	sessions,
@@ -374,7 +470,7 @@ function SessionTimeline({
 	onSessionClick,
 	locale,
 }: {
-	sessions: MainChatSession[];
+	sessions: PiSessionFile[];
 	activeSessionId: string | null;
 	onSessionClick: (sessionId: string) => void;
 	locale: "en" | "de";
@@ -384,16 +480,18 @@ function SessionTimeline({
 			{/* Session items */}
 			<div className="flex flex-col gap-0.5">
 				{sessions.map((session) => {
-					const isActive = session.session_id === activeSessionId;
+					const isActive = session.id === activeSessionId;
 					const formattedDate = formatSessionDate(
 						new Date(session.started_at).getTime(),
 					);
 
-					return (
-						<button
-							key={session.session_id}
+						const readableId = generateReadableId(session.id);
+
+						return (
+							<button
+							key={session.id}
 							type="button"
-							onClick={() => onSessionClick(session.session_id)}
+							onClick={() => onSessionClick(session.id)}
 							className={cn(
 								"relative flex items-center gap-2 py-1 text-left group",
 								"hover:bg-muted/50 rounded-sm transition-colors",
@@ -420,6 +518,7 @@ function SessionTimeline({
 									)}
 								>
 									{session.title || formattedDate}
+									<span className="ml-1 opacity-60">[{readableId}]</span>
 								</span>
 							</div>
 						</button>
