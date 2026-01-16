@@ -249,6 +249,18 @@ impl MainChatService {
         repo.get_recent_history(limit).await
     }
 
+    /// Get recent history entries filtered by type.
+    pub async fn get_recent_history_filtered(
+        &self,
+        user_id: &str,
+        entry_types: &[&str],
+        limit: i64,
+    ) -> Result<Vec<HistoryEntry>> {
+        let db = self.get_db(user_id).await?;
+        let repo = MainChatRepository::new(&db);
+        repo.get_recent_history_filtered(entry_types, limit).await
+    }
+
     /// Export history as JSONL.
     pub async fn export_history_jsonl(&self, user_id: &str) -> Result<String> {
         let db = self.get_db(user_id).await?;

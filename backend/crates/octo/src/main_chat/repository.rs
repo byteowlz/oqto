@@ -74,6 +74,33 @@ impl<'a> MainChatRepository<'a> {
         .context("fetching recent history")
     }
 
+    /// Get recent history entries filtered by type.
+    pub async fn get_recent_history_filtered(
+        &self,
+        entry_types: &[&str],
+        limit: i64,
+    ) -> Result<Vec<HistoryEntry>> {
+        if entry_types.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut qb: sqlx::QueryBuilder<sqlx::Sqlite> = sqlx::QueryBuilder::new(
+            "SELECT id, ts, type, content, session_id, meta, created_at FROM history WHERE type IN (",
+        );
+
+        let mut separated = qb.separated(",");
+        for t in entry_types {
+            separated.push_bind(*t);
+        }
+        separated.push_unseparated(") ORDER BY ts DESC LIMIT ");
+        qb.push_bind(limit);
+
+        qb.build_query_as::<HistoryEntry>()
+            .fetch_all(self.db.pool())
+            .await
+            .context("fetching filtered history")
+    }
+
     /// Count total history entries.
     pub async fn count_history(&self) -> Result<i64> {
         sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM history")
