@@ -1917,6 +1917,8 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
         enabled: ctx.config.mmry.enabled,
         single_user,
         local_service_url: ctx.config.mmry.local_service_url.clone(),
+        host_service_url: ctx.config.mmry.host_service_url.clone(),
+        host_api_key: ctx.config.mmry.host_api_key.clone(),
     };
 
     // Build voice state based on configuration
@@ -2083,6 +2085,11 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
             main_chat_workspace_dir,
             ctx.config.local.single_user,
             main_chat_pi_config,
+            state
+                .main_chat
+                .as_ref()
+                .expect("MainChatService must be initialized")
+                .clone(),
         );
         info!(
             "Main Chat Pi service initialized (executable: {})",
