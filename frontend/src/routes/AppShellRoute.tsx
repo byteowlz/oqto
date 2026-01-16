@@ -49,6 +49,7 @@ import {
 	type CassSearchHit,
 	type ChatSession,
 	type CreateProjectFromTemplateRequest,
+	type ListProjectTemplatesResponse,
 	type Persona,
 	type ProjectLogo,
 	type ProjectTemplateEntry,
@@ -268,6 +269,7 @@ const AppShell = memo(function AppShell() {
 	const [renameProjectValue, setRenameProjectValue] = useState("");
 	const [newProjectDialogOpen, setNewProjectDialogOpen] = useState(false);
 	const [projectTemplates, setProjectTemplates] = useState<ProjectTemplateEntry[]>([]);
+	const [templatesConfigured, setTemplatesConfigured] = useState(true);
 	const [templatesLoading, setTemplatesLoading] = useState(false);
 	const [templatesError, setTemplatesError] = useState<string | null>(null);
 	const [selectedTemplatePath, setSelectedTemplatePath] = useState<string | null>(
@@ -537,11 +539,12 @@ const AppShell = memo(function AppShell() {
 		setTemplatesLoading(true);
 		setTemplatesError(null);
 		listProjectTemplates()
-			.then((entries) => {
+			.then((response) => {
 				if (!active) return;
-				setProjectTemplates(entries);
-				if (entries.length > 0) {
-					setSelectedTemplatePath((prev) => prev ?? entries[0].path);
+				setTemplatesConfigured(response.configured);
+				setProjectTemplates(response.templates);
+				if (response.templates.length > 0) {
+					setSelectedTemplatePath((prev) => prev ?? response.templates[0].path);
 				}
 			})
 			.catch((err) => {
@@ -3478,6 +3481,12 @@ const AppShell = memo(function AppShell() {
 								</div>
 							) : templatesError ? (
 								<div className="text-sm text-destructive">{templatesError}</div>
+							) : !templatesConfigured ? (
+								<div className="text-sm text-muted-foreground">
+									{locale === "de"
+										? "Templates nicht konfiguriert. Setze [templates].repo_path in config.toml."
+										: "Templates not configured. Set [templates].repo_path in config.toml."}
+								</div>
 							) : projectTemplates.length === 0 ? (
 								<div className="text-sm text-muted-foreground">
 									{locale === "de"
