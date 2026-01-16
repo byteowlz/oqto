@@ -30,6 +30,7 @@ import {
 	X,
 } from "lucide-react";
 import {
+	forwardRef,
 	memo,
 	startTransition,
 	useCallback,
@@ -39,7 +40,6 @@ import {
 	useMemo,
 	useRef,
 	useState,
-	forwardRef,
 } from "react";
 
 export interface PendingUpload {
@@ -228,6 +228,39 @@ export const ChatInputArea = memo(
 			[dictation.isActive, setMessageInputWithResize],
 		);
 
+		// Handle send
+		const handleSend = useCallback(() => {
+			const text = messageInput.trim();
+			if (
+				!text &&
+				pendingUploads.length === 0 &&
+				fileAttachments.length === 0
+			) {
+				return;
+			}
+
+			if (dictation.isActive) {
+				dictation.stop();
+			}
+
+			setShowSlashPopup(false);
+			setShowFileMentionPopup(false);
+
+			onSend(text, [...fileAttachments], [...pendingUploads]);
+
+			// Clear input after send
+			setMessageInputWithResize("");
+			setFileAttachments([]);
+			setPendingUploads([]);
+		}, [
+			messageInput,
+			pendingUploads,
+			fileAttachments,
+			dictation,
+			onSend,
+			setMessageInputWithResize,
+		]);
+
 		// Handle key down
 		const handleInputKeyDown = useCallback(
 			(e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -254,37 +287,14 @@ export const ChatInputArea = memo(
 					}
 				}
 			},
-			[showSlashPopup, slashQuery.isSlash, slashQuery.args, showFileMentionPopup],
+			[
+				showSlashPopup,
+				slashQuery.isSlash,
+				slashQuery.args,
+				showFileMentionPopup,
+				handleSend,
+			],
 		);
-
-		// Handle send
-		const handleSend = useCallback(() => {
-			const text = messageInput.trim();
-			if (!text && pendingUploads.length === 0 && fileAttachments.length === 0) {
-				return;
-			}
-
-			if (dictation.isActive) {
-				dictation.stop();
-			}
-
-			setShowSlashPopup(false);
-			setShowFileMentionPopup(false);
-
-			onSend(text, [...fileAttachments], [...pendingUploads]);
-
-			// Clear input after send
-			setMessageInputWithResize("");
-			setFileAttachments([]);
-			setPendingUploads([]);
-		}, [
-			messageInput,
-			pendingUploads,
-			fileAttachments,
-			dictation,
-			onSend,
-			setMessageInputWithResize,
-		]);
 
 		// Handle file upload
 		const handleFileUpload = useCallback(
@@ -394,7 +404,9 @@ export const ChatInputArea = memo(
 										className="w-6 h-6 object-cover"
 									/>
 								)}
-								<span className="max-w-[150px] truncate">{upload.file.name}</span>
+								<span className="max-w-[150px] truncate">
+									{upload.file.name}
+								</span>
 								<button
 									type="button"
 									onClick={() =>

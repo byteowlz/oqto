@@ -18,12 +18,11 @@ import {
 	ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import { ContextWindowGauge } from "@/components/ui/context-window-gauge";
-import { ProviderIcon } from "@/components/ui/provider-icon";
 import {
 	type FileAttachment,
-	type IssueAttachment,
 	FileAttachmentChip,
 	FileMentionPopup,
+	type IssueAttachment,
 	IssueAttachmentChip,
 } from "@/components/ui/file-mention-popup";
 import { Input } from "@/components/ui/input";
@@ -35,6 +34,7 @@ import {
 	PermissionBanner,
 	PermissionDialog,
 } from "@/components/ui/permission-dialog";
+import { ProviderIcon } from "@/components/ui/provider-icon";
 import { ReadAloudButton } from "@/components/ui/read-aloud-button";
 import {
 	Select,
@@ -327,22 +327,22 @@ const ChatMessagesPane = memo(function ChatMessagesPane({
 					messagesLoading &&
 					selectedChatSessionId &&
 					sessionHadMessages && (
-					<div className="animate-pulse">
-						{/* User message skeleton */}
-						<div className="sm:ml-8 bg-primary/10 border border-primary/20">
-							<div className="flex items-center gap-2 px-2 sm:px-3 py-1.5 sm:py-2 border-b border-primary/20">
-								<div className="w-3 h-3 sm:w-4 sm:h-4 bg-primary/30" />
-								<div className="h-3 bg-primary/30 w-12" />
-								<div className="flex-1" />
-								<div className="h-2 bg-primary/20 w-10" />
+						<div className="animate-pulse">
+							{/* User message skeleton */}
+							<div className="sm:ml-8 bg-primary/10 border border-primary/20">
+								<div className="flex items-center gap-2 px-2 sm:px-3 py-1.5 sm:py-2 border-b border-primary/20">
+									<div className="w-3 h-3 sm:w-4 sm:h-4 bg-primary/30" />
+									<div className="h-3 bg-primary/30 w-12" />
+									<div className="flex-1" />
+									<div className="h-2 bg-primary/20 w-10" />
+								</div>
+								<div className="px-2 sm:px-4 py-2 sm:py-3 space-y-2">
+									<div className="h-3 bg-primary/20 w-3/4" />
+									<div className="h-3 bg-primary/20 w-1/2" />
+								</div>
 							</div>
-							<div className="px-2 sm:px-4 py-2 sm:py-3 space-y-2">
-								<div className="h-3 bg-primary/20 w-3/4" />
-								<div className="h-3 bg-primary/20 w-1/2" />
-							</div>
-						</div>
-						{/* Assistant message skeleton */}
-						<div className="mt-4 sm:mt-6 sm:mr-8 bg-muted/50 border border-border">
+							{/* Assistant message skeleton */}
+							<div className="mt-4 sm:mt-6 sm:mr-8 bg-muted/50 border border-border">
 								<div className="flex items-center gap-2 px-2 sm:px-3 py-1.5 sm:py-2 border-b border-border">
 									<div className="w-3 h-3 sm:w-4 sm:h-4 bg-muted" />
 									<div className="h-3 bg-muted w-16" />
@@ -653,6 +653,7 @@ export const SessionsApp = memo(function SessionsApp() {
 		setScrollToMessageId,
 	} = useApp();
 	const [messages, setMessages] = useState<OpenCodeMessageWithParts[]>([]);
+	const [chatInputMountKey, setChatInputMountKey] = useState(0);
 	// Ref to track messages for A2UI anchoring
 	const messagesRef = useRef(messages);
 	useEffect(() => {
@@ -663,7 +664,9 @@ export const SessionsApp = memo(function SessionsApp() {
 	const messageInputRef = useRef("");
 	const [messageInputState, setMessageInputState] = useState("");
 	// Debounce state sync to avoid blocking
-	const inputSyncTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const inputSyncTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
+		null,
+	);
 	const syncInputToState = useCallback((value: string) => {
 		messageInputRef.current = value;
 		if (inputSyncTimeoutRef.current) {
@@ -678,15 +681,18 @@ export const SessionsApp = memo(function SessionsApp() {
 	}, []);
 	// For backward compatibility - direct access uses ref, deferred uses state
 	const messageInput = messageInputState;
-	const setMessageInput = useCallback((value: string) => {
-		messageInputRef.current = value;
-		// Update textarea directly
-		if (chatInputRef.current) {
-			chatInputRef.current.value = value;
-		}
-		// Sync to state for derived values
-		syncInputToState(value);
-	}, [syncInputToState]);
+	const setMessageInput = useCallback(
+		(value: string) => {
+			messageInputRef.current = value;
+			// Update textarea directly
+			if (chatInputRef.current) {
+				chatInputRef.current.value = value;
+			}
+			// Sync to state for derived values
+			syncInputToState(value);
+		},
+		[syncInputToState],
+	);
 
 	const perfEnabled = isPerfDebugEnabled();
 	const perfReasonRef = useRef<string>("");
@@ -722,29 +728,32 @@ export const SessionsApp = memo(function SessionsApp() {
 
 	// Helper to set message input and resize textarea.
 	// Coalesce resize work to a single RAF to avoid reflow storms while typing.
-	const setMessageInputWithResize = useCallback((value: string) => {
-		messageInputRef.current = value;
-		if (chatInputRef.current) {
-			chatInputRef.current.value = value;
-		}
-		syncInputToState(value);
-		chatInputResizeRef.current.value = value;
-
-		if (chatInputResizeRef.current.raf !== null) return;
-
-		chatInputResizeRef.current.raf = requestAnimationFrame(() => {
-			chatInputResizeRef.current.raf = null;
-			const textarea = chatInputRef.current;
-			if (!textarea) return;
-
-			const currentValue = chatInputResizeRef.current.value;
-			// Reset to base height first, then expand if needed.
-			textarea.style.height = "36px";
-			if (currentValue) {
-				textarea.style.height = `${Math.min(textarea.scrollHeight, 200)}px`;
+	const setMessageInputWithResize = useCallback(
+		(value: string) => {
+			messageInputRef.current = value;
+			if (chatInputRef.current) {
+				chatInputRef.current.value = value;
 			}
-		});
-	}, [syncInputToState]);
+			syncInputToState(value);
+			chatInputResizeRef.current.value = value;
+
+			if (chatInputResizeRef.current.raf !== null) return;
+
+			chatInputResizeRef.current.raf = requestAnimationFrame(() => {
+				chatInputResizeRef.current.raf = null;
+				const textarea = chatInputRef.current;
+				if (!textarea) return;
+
+				const currentValue = chatInputResizeRef.current.value;
+				// Reset to base height first, then expand if needed.
+				textarea.style.height = "36px";
+				if (currentValue) {
+					textarea.style.height = `${Math.min(textarea.scrollHeight, 200)}px`;
+				}
+			});
+		},
+		[syncInputToState],
+	);
 
 	const [mainChatBaseUrl, setMainChatBaseUrl] = useState("");
 	const opencodeDirectory = useMemo(() => {
@@ -795,7 +804,8 @@ export const SessionsApp = memo(function SessionsApp() {
 
 	useEffect(() => {
 		// Only save if the storage key hasn't changed (avoid saving old model to new session)
-		if (!modelStorageKey || prevModelStorageKeyRef.current !== modelStorageKey) return;
+		if (!modelStorageKey || prevModelStorageKeyRef.current !== modelStorageKey)
+			return;
 		if (selectedModelRef) {
 			localStorage.setItem(modelStorageKey, selectedModelRef);
 		} else {
@@ -1037,6 +1047,19 @@ export const SessionsApp = memo(function SessionsApp() {
 	// Flag to ignore onChange events immediately after sending (prevents stale event restoration)
 	const ignoringInputRef = useRef(false);
 
+	// Stable ref callback to avoid resetting refs every render.
+	// Always sync DOM value from `messageInputRef` (including empty string).
+	const setChatInputEl = useCallback((el: HTMLTextAreaElement | null) => {
+		chatInputRef.current = el;
+		if (!el) return;
+
+		if (ignoringInputRef.current) {
+			el.value = "";
+			return;
+		}
+
+		el.value = messageInputRef.current;
+	}, []);
 
 	// File upload state
 	const [pendingUploads, setPendingUploads] = useState<
@@ -1058,7 +1081,9 @@ export const SessionsApp = memo(function SessionsApp() {
 	const [showFileMentionPopup, setShowFileMentionPopup] = useState(false);
 	const [fileMentionQuery, setFileMentionQuery] = useState("");
 	const [fileAttachments, setFileAttachments] = useState<FileAttachment[]>([]);
-	const [issueAttachments, setIssueAttachments] = useState<IssueAttachment[]>([]);
+	const [issueAttachments, setIssueAttachments] = useState<IssueAttachment[]>(
+		[],
+	);
 
 	// Default agent for shell commands - use "build" as the default primary agent
 	const [defaultAgent, setDefaultAgent] = useState<string>("build");
@@ -1213,17 +1238,20 @@ export const SessionsApp = memo(function SessionsApp() {
 	// Dictation mode - speech to text for the input field
 	// messageInputRef is already defined above for uncontrolled input
 
-	const handleDictationTranscript = useCallback((text: string) => {
-		// Always append to the current value using the ref to avoid stale closures.
-		// Keep the textarea stable during dictation; the dictation overlay is the input UI.
-		const currentValue = messageInputRef.current;
-		const newValue = currentValue ? `${currentValue} ${text}` : text;
-		messageInputRef.current = newValue;
-		if (chatInputRef.current) {
-			chatInputRef.current.value = newValue;
-		}
-		syncInputToState(newValue);
-	}, [syncInputToState]);
+	const handleDictationTranscript = useCallback(
+		(text: string) => {
+			// Always append to the current value using the ref to avoid stale closures.
+			// Keep the textarea stable during dictation; the dictation overlay is the input UI.
+			const currentValue = messageInputRef.current;
+			const newValue = currentValue ? `${currentValue} ${text}` : text;
+			messageInputRef.current = newValue;
+			if (chatInputRef.current) {
+				chatInputRef.current.value = newValue;
+			}
+			syncInputToState(newValue);
+		},
+		[syncInputToState],
+	);
 
 	const dictation = useDictation({
 		config: features.voice ?? null,
@@ -1892,7 +1920,9 @@ export const SessionsApp = memo(function SessionsApp() {
 
 			// Preserve optimistic messages (temp-*) that don't have corresponding real messages yet
 			// Check if any next message has similar content to optimistic ones
-			const optimisticMessages = prev.filter((m) => m.info.id.startsWith("temp-"));
+			const optimisticMessages = prev.filter((m) =>
+				m.info.id.startsWith("temp-"),
+			);
 			const nextIds = new Set(next.map((m) => m.info.id));
 			const pendingOptimistic = optimisticMessages.filter((optMsg) => {
 				// Keep optimistic message if there's no user message with the same text in next
@@ -1942,7 +1972,9 @@ export const SessionsApp = memo(function SessionsApp() {
 			});
 
 			// Add pending optimistic messages at the end
-			return pendingOptimistic.length > 0 ? [...merged, ...pendingOptimistic] : merged;
+			return pendingOptimistic.length > 0
+				? [...merged, ...pendingOptimistic]
+				: merged;
 		},
 		[],
 	);
@@ -2366,21 +2398,24 @@ export const SessionsApp = memo(function SessionsApp() {
 				const resumePath =
 					selectedChatFromHistory?.workspace_path ?? resumeWorkspacePath;
 
-				toast.error(locale === "de" ? "Sitzung getrennt" : "Session disconnected", {
-					description:
-						locale === "de"
-							? "Verbindung zum Agenten verloren."
-							: "Lost connection to the agent.",
-					action: resumePath
-						? {
-								label: locale === "de" ? "Neu verbinden" : "Reconnect",
-								onClick: () => {
-									void ensureOpencodeRunning(resumePath);
-								},
-							}
-						: undefined,
-					duration: 10_000,
-				});
+				toast.error(
+					locale === "de" ? "Sitzung getrennt" : "Session disconnected",
+					{
+						description:
+							locale === "de"
+								? "Verbindung zum Agenten verloren."
+								: "Lost connection to the agent.",
+						action: resumePath
+							? {
+									label: locale === "de" ? "Neu verbinden" : "Reconnect",
+									onClick: () => {
+										void ensureOpencodeRunning(resumePath);
+									},
+								}
+							: undefined,
+						duration: 10_000,
+					},
+				);
 
 				if (autoAttachMode === "resume" && resumePath) {
 					void ensureOpencodeRunning(resumePath).then((url) => {
@@ -2933,7 +2968,7 @@ export const SessionsApp = memo(function SessionsApp() {
 				chatInputRef.current.style.height = "36px";
 			}
 			syncInputToState("");
-			
+
 			// Reset flag after a microtask
 			queueMicrotask(() => {
 				ignoringInputRef.current = false;
@@ -3213,13 +3248,18 @@ export const SessionsApp = memo(function SessionsApp() {
 
 		// Clear input immediately - update DOM directly first to prevent any visual lag
 		messageInputRef.current = "";
+		if (selectedChatSessionId) {
+			setDraft(selectedChatSessionId, "");
+		}
 		if (chatInputRef.current) {
 			chatInputRef.current.value = "";
 			chatInputRef.current.style.height = "36px";
 		}
 		// Then sync state (this will also trigger resize via RAF but DOM is already correct)
 		setMessageInputState("");
-		
+		// Ensure any stubborn uncontrolled DOM state resets
+		setChatInputMountKey((k) => k + 1);
+
 		// Reset flag after a microtask to allow React to process any pending events
 		queueMicrotask(() => {
 			ignoringInputRef.current = false;
@@ -3428,7 +3468,7 @@ export const SessionsApp = memo(function SessionsApp() {
 				targetSessionId,
 				effectiveDirectory,
 			);
-			
+
 			// Fetch messages directly using the base URL we just used (not loadMessages which
 			// uses stale state values that haven't updated yet after resuming a session)
 			try {
@@ -3464,7 +3504,7 @@ export const SessionsApp = memo(function SessionsApp() {
 				e.target.value = "";
 				return;
 			}
-			
+
 			const value = e.target.value;
 
 			// Update ref immediately for responsive feel
@@ -4283,14 +4323,8 @@ export const SessionsApp = memo(function SessionsApp() {
 							/>
 						) : (
 							<textarea
-								ref={(el) => {
-									chatInputRef.current = el;
-									// Sync initial value from ref when textarea mounts
-									// Skip if we just sent a message (ignoringInputRef prevents restoring cleared input)
-									if (el && messageInputRef.current && !ignoringInputRef.current) {
-										el.value = messageInputRef.current;
-									}
-								}}
+								key={chatInputMountKey}
+								ref={setChatInputEl}
 								autoComplete="off"
 								autoCorrect="off"
 								autoCapitalize="sentences"
@@ -4538,9 +4572,16 @@ export const SessionsApp = memo(function SessionsApp() {
 					filteredModelOptions.map((option) => {
 						const provider = option.value.split("/")[0];
 						return (
-							<SelectItem key={option.value} value={option.value} textValue={option.label}>
+							<SelectItem
+								key={option.value}
+								value={option.value}
+								textValue={option.label}
+							>
 								<span className="flex items-center gap-2">
-									<ProviderIcon provider={provider} className="w-4 h-4 flex-shrink-0" />
+									<ProviderIcon
+										provider={provider}
+										className="w-4 h-4 flex-shrink-0"
+									/>
 									<span>{option.label}</span>
 								</span>
 							</SelectItem>
@@ -4589,7 +4630,9 @@ export const SessionsApp = memo(function SessionsApp() {
 							{(workspaceName || readableId) && formattedDate && (
 								<span className="opacity-50">|</span>
 							)}
-							{formattedDate && <span className="flex-shrink-0">{formattedDate}</span>}
+							{formattedDate && (
+								<span className="flex-shrink-0">{formattedDate}</span>
+							)}
 						</div>
 					</div>
 				</div>
@@ -4727,43 +4770,47 @@ export const SessionsApp = memo(function SessionsApp() {
 								key={resumeWorkspacePath ?? "no-workspace"}
 								workspacePath={resumeWorkspacePath}
 								className="flex-1 min-h-0 border-t border-border"
-							onStartIssue={(issueId, title, description) => {
-								const content = description
-									? `Working on #${issueId}: ${title}\n\n${description}\n\n`
-									: `Working on #${issueId}: ${title}\n\n`;
-								setMessageInputWithResize(content);
-								// On mobile, switch to chat view
-								if (window.innerWidth < 768) {
-									setActiveView("chat");
-								}
-							}}
-							onStartIssueNewSession={async (issueIds, title, attachments) => {
-								if (!resumeWorkspacePath) return;
-								try {
-									const url =
-										await ensureOpencodeRunning(resumeWorkspacePath);
-									if (!url) return;
-									const newSession = await createSession(
-										url,
-										`${title}`,
-										undefined,
-										{ directory: resumeWorkspacePath },
-									);
-									await refreshOpencodeSessions();
-									await refreshChatHistory();
-									if (newSession.id) {
-										setSelectedChatSessionId(newSession.id);
-										setIssueAttachments(attachments);
+								onStartIssue={(issueId, title, description) => {
+									const content = description
+										? `Working on #${issueId}: ${title}\n\n${description}\n\n`
+										: `Working on #${issueId}: ${title}\n\n`;
+									setMessageInputWithResize(content);
+									// On mobile, switch to chat view
+									if (window.innerWidth < 768) {
 										setActiveView("chat");
 									}
-								} catch (err) {
-									console.error("Failed to start issue in new session:", err);
-								}
-							}}
-							onAddIssueAttachments={(attachments) => {
-								setIssueAttachments((prev) => [...prev, ...attachments]);
-								setActiveView("chat");
-							}}
+								}}
+								onStartIssueNewSession={async (
+									issueIds,
+									title,
+									attachments,
+								) => {
+									if (!resumeWorkspacePath) return;
+									try {
+										const url =
+											await ensureOpencodeRunning(resumeWorkspacePath);
+										if (!url) return;
+										const newSession = await createSession(
+											url,
+											`${title}`,
+											undefined,
+											{ directory: resumeWorkspacePath },
+										);
+										await refreshOpencodeSessions();
+										await refreshChatHistory();
+										if (newSession.id) {
+											setSelectedChatSessionId(newSession.id);
+											setIssueAttachments(attachments);
+											setActiveView("chat");
+										}
+									} catch (err) {
+										console.error("Failed to start issue in new session:", err);
+									}
+								}}
+								onAddIssueAttachments={(attachments) => {
+									setIssueAttachments((prev) => [...prev, ...attachments]);
+									setActiveView("chat");
+								}}
 							/>
 						</div>
 					)}
@@ -5070,7 +5117,12 @@ export const SessionsApp = memo(function SessionsApp() {
 										/>
 									</div>
 									<div className="flex-1 min-h-0 overflow-hidden">
-										<div className={cn("h-full", activeView !== "files" && "hidden")}>
+										<div
+											className={cn(
+												"h-full",
+												activeView !== "files" && "hidden",
+											)}
+										>
 											{filesView}
 										</div>
 										{activeView === "tasks" && (
@@ -5084,45 +5136,52 @@ export const SessionsApp = memo(function SessionsApp() {
 													key={resumeWorkspacePath ?? "no-workspace"}
 													workspacePath={resumeWorkspacePath}
 													className="flex-1 min-h-0 border-t border-border"
-											onStartIssue={(issueId, title, description) => {
-													const content = description
-														? `Working on #${issueId}: ${title}\n\n${description}\n\n`
-														: `Working on #${issueId}: ${title}\n\n`;
-													setMessageInputWithResize(content);
-													setActiveView("chat");
-												}}
-												onStartIssueNewSession={async (issueIds, title, attachments) => {
-													if (!resumeWorkspacePath) return;
-													try {
-														const url =
-															await ensureOpencodeRunning(
-																resumeWorkspacePath,
+													onStartIssue={(issueId, title, description) => {
+														const content = description
+															? `Working on #${issueId}: ${title}\n\n${description}\n\n`
+															: `Working on #${issueId}: ${title}\n\n`;
+														setMessageInputWithResize(content);
+														setActiveView("chat");
+													}}
+													onStartIssueNewSession={async (
+														issueIds,
+														title,
+														attachments,
+													) => {
+														if (!resumeWorkspacePath) return;
+														try {
+															const url =
+																await ensureOpencodeRunning(
+																	resumeWorkspacePath,
+																);
+															if (!url) return;
+															const newSession = await createSession(
+																url,
+																`${title}`,
+																undefined,
+																{ directory: resumeWorkspacePath },
 															);
-														if (!url) return;
-														const newSession = await createSession(
-															url,
-															`${title}`,
-															undefined,
-															{ directory: resumeWorkspacePath },
-														);
-														await refreshOpencodeSessions();
-														await refreshChatHistory();
-														if (newSession.id) {
-															setSelectedChatSessionId(newSession.id);
-															setIssueAttachments(attachments);
-															setActiveView("chat");
+															await refreshOpencodeSessions();
+															await refreshChatHistory();
+															if (newSession.id) {
+																setSelectedChatSessionId(newSession.id);
+																setIssueAttachments(attachments);
+																setActiveView("chat");
+															}
+														} catch (err) {
+															console.error(
+																"Failed to start issue in new session:",
+																err,
+															);
 														}
-													} catch (err) {
-														console.error(
-															"Failed to start issue in new session:",
-															err,
-														);
-													}
-												}}
-												onAddIssueAttachments={(attachments) => {
-													setIssueAttachments((prev) => [...prev, ...attachments]);
-													setActiveView("chat");
-												}}
+													}}
+													onAddIssueAttachments={(attachments) => {
+														setIssueAttachments((prev) => [
+															...prev,
+															...attachments,
+														]);
+														setActiveView("chat");
+													}}
 												/>
 											</div>
 										)}
@@ -5136,44 +5195,51 @@ export const SessionsApp = memo(function SessionsApp() {
 													key={resumeWorkspacePath ?? "no-workspace"}
 													workspacePath={resumeWorkspacePath}
 													className="flex-1 min-h-0 border-t border-border"
-											onStartIssue={(issueId, title, description) => {
-													const content = description
-														? `Working on #${issueId}: ${title}\n\n${description}\n\n`
-														: `Working on #${issueId}: ${title}\n\n`;
-													setMessageInputWithResize(content);
-												}}
-												onStartIssueNewSession={async (issueIds, title, attachments) => {
-													if (!resumeWorkspacePath) return;
-													try {
-														const url =
-															await ensureOpencodeRunning(
-																resumeWorkspacePath,
+													onStartIssue={(issueId, title, description) => {
+														const content = description
+															? `Working on #${issueId}: ${title}\n\n${description}\n\n`
+															: `Working on #${issueId}: ${title}\n\n`;
+														setMessageInputWithResize(content);
+													}}
+													onStartIssueNewSession={async (
+														issueIds,
+														title,
+														attachments,
+													) => {
+														if (!resumeWorkspacePath) return;
+														try {
+															const url =
+																await ensureOpencodeRunning(
+																	resumeWorkspacePath,
+																);
+															if (!url) return;
+															const newSession = await createSession(
+																url,
+																`${title}`,
+																undefined,
+																{ directory: resumeWorkspacePath },
 															);
-														if (!url) return;
-														const newSession = await createSession(
-															url,
-															`${title}`,
-															undefined,
-															{ directory: resumeWorkspacePath },
-														);
-														await refreshOpencodeSessions();
-														await refreshChatHistory();
-														if (newSession.id) {
-															setSelectedChatSessionId(newSession.id);
-															setIssueAttachments(attachments);
-															setActiveView("chat");
+															await refreshOpencodeSessions();
+															await refreshChatHistory();
+															if (newSession.id) {
+																setSelectedChatSessionId(newSession.id);
+																setIssueAttachments(attachments);
+																setActiveView("chat");
+															}
+														} catch (err) {
+															console.error(
+																"Failed to start issue in new session:",
+																err,
+															);
 														}
-													} catch (err) {
-														console.error(
-															"Failed to start issue in new session:",
-															err,
-														);
-													}
-												}}
-												onAddIssueAttachments={(attachments) => {
-													setIssueAttachments((prev) => [...prev, ...attachments]);
-													setActiveView("chat");
-												}}
+													}}
+													onAddIssueAttachments={(attachments) => {
+														setIssueAttachments((prev) => [
+															...prev,
+															...attachments,
+														]);
+														setActiveView("chat");
+													}}
 												/>
 											</div>
 										)}
@@ -5669,7 +5735,9 @@ const MessageGroupCard = memo(function MessageGroupCard({
 	// Always wrap in context menu for copy all (and fork if available)
 	return (
 		<ContextMenu>
-			<ContextMenuTrigger className="contents">{messageCard}</ContextMenuTrigger>
+			<ContextMenuTrigger className="contents">
+				{messageCard}
+			</ContextMenuTrigger>
 			<ContextMenuContent>
 				{allTextContent && (
 					<ContextMenuItem
