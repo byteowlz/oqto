@@ -775,21 +775,27 @@ export const SessionsApp = memo(function SessionsApp() {
 	const [isModelLoading, setIsModelLoading] = useState(false);
 	const [modelQuery, setModelQuery] = useState("");
 	const modelStorageKey = useMemo(() => {
-		if (!selectedWorkspaceSessionId || mainChatActive) return null;
-		return `octo:opencodeModel:${selectedWorkspaceSessionId}`;
-	}, [selectedWorkspaceSessionId, mainChatActive]);
+		if (!selectedChatSessionId || mainChatActive) return null;
+		return `octo:chatModel:${selectedChatSessionId}`;
+	}, [selectedChatSessionId, mainChatActive]);
+
+	// Track previous storage key to avoid saving stale model to new session
+	const prevModelStorageKeyRef = useRef<string | null>(null);
 
 	useEffect(() => {
 		if (!modelStorageKey) {
 			setSelectedModelRef(null);
+			prevModelStorageKeyRef.current = null;
 			return;
 		}
 		const stored = localStorage.getItem(modelStorageKey);
 		setSelectedModelRef(stored || null);
+		prevModelStorageKeyRef.current = modelStorageKey;
 	}, [modelStorageKey]);
 
 	useEffect(() => {
-		if (!modelStorageKey) return;
+		// Only save if the storage key hasn't changed (avoid saving old model to new session)
+		if (!modelStorageKey || prevModelStorageKeyRef.current !== modelStorageKey) return;
 		if (selectedModelRef) {
 			localStorage.setItem(modelStorageKey, selectedModelRef);
 		} else {
@@ -1028,6 +1034,9 @@ export const SessionsApp = memo(function SessionsApp() {
 	const chatInputRef = useRef<HTMLTextAreaElement>(null);
 	const chatContainerRef = useRef<HTMLDivElement>(null);
 	const prevVoiceActiveRef = useRef(false);
+	// Flag to ignore onChange events immediately after sending (prevents stale event restoration)
+	const ignoringInputRef = useRef(false);
+
 
 	// File upload state
 	const [pendingUploads, setPendingUploads] = useState<
@@ -2341,23 +2350,48 @@ export const SessionsApp = memo(function SessionsApp() {
 			}
 
 			if (eventType === "session.unavailable") {
+				const now = Date.now();
+				const lastAttempt = sessionUnavailableRef.current;
 				if (
-					autoAttachMode === "resume" &&
-					selectedChatFromHistory?.workspace_path
+					lastAttempt?.sessionId === selectedChatSessionId &&
+					now - lastAttempt.attemptedAt < 15_000
 				) {
-					const now = Date.now();
-					const lastAttempt = sessionUnavailableRef.current;
-					if (
-						lastAttempt?.sessionId === selectedChatSessionId &&
-						now - lastAttempt.attemptedAt < 15_000
-					) {
-						return;
-					}
-					sessionUnavailableRef.current = {
-						sessionId: selectedChatSessionId ?? "",
-						attemptedAt: now,
-					};
-					void ensureOpencodeRunning(selectedChatFromHistory.workspace_path);
+					return;
+				}
+				sessionUnavailableRef.current = {
+					sessionId: selectedChatSessionId ?? "",
+					attemptedAt: now,
+				};
+
+				const resumePath =
+					selectedChatFromHistory?.workspace_path ?? resumeWorkspacePath;
+
+				toast.error(locale === "de" ? "Sitzung getrennt" : "Session disconnected", {
+					description:
+						locale === "de"
+							? "Verbindung zum Agenten verloren."
+							: "Lost connection to the agent.",
+					action: resumePath
+						? {
+								label: locale === "de" ? "Neu verbinden" : "Reconnect",
+								onClick: () => {
+									void ensureOpencodeRunning(resumePath);
+								},
+							}
+						: undefined,
+					duration: 10_000,
+				});
+
+				if (autoAttachMode === "resume" && resumePath) {
+					void ensureOpencodeRunning(resumePath).then((url) => {
+						if (!url) {
+							toast.error(
+								locale === "de"
+									? "Wiederherstellen fehlgeschlagen"
+									: "Failed to resume session",
+							);
+						}
+					});
 				}
 			}
 
@@ -2543,6 +2577,8 @@ export const SessionsApp = memo(function SessionsApp() {
 			activeSessionId,
 			selectedChatSessionId,
 			selectedChatFromHistory,
+			resumeWorkspacePath,
+			locale,
 			loadMessages,
 			refreshOpencodeSessions,
 			refreshChatHistory,
@@ -2887,6 +2923,9 @@ export const SessionsApp = memo(function SessionsApp() {
 			// Send opencode command (e.g., /init, /undo, /redo, or custom commands)
 			if (!selectedChatSessionId || !opencodeBaseUrl) return;
 
+			// Set flag to ignore stale onChange events
+			ignoringInputRef.current = true;
+
 			// Clear input
 			messageInputRef.current = "";
 			if (chatInputRef.current) {
@@ -2894,6 +2933,11 @@ export const SessionsApp = memo(function SessionsApp() {
 				chatInputRef.current.style.height = "36px";
 			}
 			syncInputToState("");
+			
+			// Reset flag after a microtask
+			queueMicrotask(() => {
+				ignoringInputRef.current = false;
+			});
 
 			try {
 				// Command name without slash, args separately
@@ -3164,10 +3208,22 @@ export const SessionsApp = memo(function SessionsApp() {
 			inputSyncTimeoutRef.current = null;
 		}
 
-		// Clear input and reset textarea height via the resize handler
-		setMessageInputWithResize("");
-		// Also immediately sync state to empty to prevent stale value restoration
+		// Set flag to ignore stale onChange events that may fire after clearing
+		ignoringInputRef.current = true;
+
+		// Clear input immediately - update DOM directly first to prevent any visual lag
+		messageInputRef.current = "";
+		if (chatInputRef.current) {
+			chatInputRef.current.value = "";
+			chatInputRef.current.style.height = "36px";
+		}
+		// Then sync state (this will also trigger resize via RAF but DOM is already correct)
 		setMessageInputState("");
+		
+		// Reset flag after a microtask to allow React to process any pending events
+		queueMicrotask(() => {
+			ignoringInputRef.current = false;
+		});
 		setPendingUploads([]);
 		setFileAttachments([]);
 		setIssueAttachments([]);
@@ -3402,6 +3458,13 @@ export const SessionsApp = memo(function SessionsApp() {
 	// Memoized input change handler to prevent re-renders
 	const handleInputChange = useCallback(
 		(e: React.ChangeEvent<HTMLTextAreaElement>) => {
+			// Ignore stale onChange events that fire after send cleared the input
+			if (ignoringInputRef.current) {
+				// Force textarea to stay empty
+				e.target.value = "";
+				return;
+			}
+			
 			const value = e.target.value;
 
 			// Update ref immediately for responsive feel
@@ -3480,10 +3543,6 @@ export const SessionsApp = memo(function SessionsApp() {
 			if (e.key === "Enter" && !e.shiftKey) {
 				e.preventDefault();
 				handleSendRef.current();
-				// Reset textarea height after sending
-				if (chatInputRef.current) {
-					chatInputRef.current.style.height = "auto";
-				}
 			}
 			if (e.key === "Escape") {
 				setShowSlashPopup(false);
@@ -4227,7 +4286,8 @@ export const SessionsApp = memo(function SessionsApp() {
 								ref={(el) => {
 									chatInputRef.current = el;
 									// Sync initial value from ref when textarea mounts
-									if (el && messageInputRef.current) {
+									// Skip if we just sent a message (ignoringInputRef prevents restoring cleared input)
+									if (el && messageInputRef.current && !ignoringInputRef.current) {
 										el.value = messageInputRef.current;
 									}
 								}}
@@ -5358,8 +5418,18 @@ const MessageGroupCard = memo(function MessageGroupCard({
 		lastTimestamp = partTimestamp;
 
 		if (part.type === "text" && typeof part.text === "string") {
-			currentTextBuffer.push(part.text);
-			currentTextKeys.push(partKey);
+			// Skip text that looks like raw question tool JSON output
+			// (questions array with header/options structure)
+			const trimmedText = part.text.trim();
+			const looksLikeQuestionJson =
+				trimmedText.startsWith("{") &&
+				trimmedText.includes('"questions"') &&
+				trimmedText.includes('"header"') &&
+				trimmedText.includes('"options"');
+			if (!looksLikeQuestionJson) {
+				currentTextBuffer.push(part.text);
+				currentTextKeys.push(partKey);
+			}
 		} else if (part.type === "tool") {
 			flushTextBuffer();
 			segments.push({
