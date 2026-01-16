@@ -31,6 +31,10 @@ pub struct MmryState {
     pub single_user: bool,
     /// URL of the local mmry service (for single-user mode).
     pub local_service_url: String,
+    /// URL of the central mmry service (for multi-user mode).
+    pub host_service_url: String,
+    /// API key for authenticating with host mmry (optional).
+    pub host_api_key: Option<String>,
 }
 
 impl Default for MmryState {
@@ -39,6 +43,8 @@ impl Default for MmryState {
             enabled: false,
             single_user: true,
             local_service_url: "http://localhost:8081".to_string(),
+            host_service_url: "http://localhost:8081".to_string(),
+            host_api_key: None,
         }
     }
 }
