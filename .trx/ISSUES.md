@@ -2,6 +2,15 @@
 
 ## Open
 
+### [octo-2tcd] Main Chat Architecture Overhaul: Session-Based Conversations (P1, epic)
+# Main Chat Architecture Overhaul: Session-Based Conversations
+
+Replace the current one-long-chat model with discrete session-based conversations that have explicit boundaries, proper context handoff, and multi-stage context management.
+
+## Problem Statement
+...
+
+
 ### [octo-af5j.7.6] Release manifest generator (byt release) (P1, task)
 byt release command that: 1) Reads component list from octo/release.toml, 2) Fetches current version from each repo (Cargo.toml, package.json, go.mod), 3) Generates versions.toml with all pinned versions, 4) Optionally tags all repos with octo-0.2.0 tag
 
@@ -37,6 +46,8 @@ Optimize frontend startup times and eliminate unnecessary reloads. Current bottl
 
 ### [workspace-5pmk.11] Add backend URL configuration to login form (P1, task)
 Add a 'Server URL' field to the login form allowing users to specify the backend URL. Store in localStorage for persistence. Show connection status indicator. Default to current origin for web, require input for mobile apps.
+
+### [octo-smwr] Add drag an drop capabilities to the file tree, both for dragging in external files and for moving files between dirs  (P2, feature)
 
 ### [octo-ze9k] Dashboard with overview of scheduled tasks (skdlr), session information, trx issues etc. Similar to the admin panel but for all users (P2, feature)
 
