@@ -488,6 +488,15 @@ pub struct ProjectTemplateEntry {
     pub description: Option<String>,
 }
 
+/// Response for listing project templates.
+#[derive(Debug, Serialize)]
+pub struct ListProjectTemplatesResponse {
+    /// Whether templates are configured (repo_path is set).
+    pub configured: bool,
+    /// List of available templates.
+    pub templates: Vec<ProjectTemplateEntry>,
+}
+
 /// Request to create a project from a template.
 #[derive(Debug, Deserialize)]
 pub struct CreateProjectFromTemplateRequest {
@@ -727,10 +736,15 @@ pub async fn list_workspace_dirs(
 #[instrument(skip(state))]
 pub async fn list_project_templates(
     State(state): State<AppState>,
-) -> ApiResult<Json<Vec<ProjectTemplateEntry>>> {
+) -> ApiResult<Json<ListProjectTemplatesResponse>> {
     let repo_path = match state.templates.repo_path.as_ref() {
         Some(path) => path.clone(),
-        None => return Ok(Json(Vec::new())),
+        None => {
+            return Ok(Json(ListProjectTemplatesResponse {
+                configured: false,
+                templates: Vec::new(),
+            }))
+        }
     };
 
     maybe_sync_templates_repo(&state).await?;
@@ -764,7 +778,10 @@ pub async fn list_project_templates(
         });
     }
     templates.sort_by(|a, b| a.name.cmp(&b.name));
-    Ok(Json(templates))
+    Ok(Json(ListProjectTemplatesResponse {
+        configured: true,
+        templates,
+    }))
 }
 
 /// Create a new project from a template.
@@ -2668,7 +2685,8 @@ pub struct TrxWorkspaceQuery {
     pub workspace_path: String,
 }
 
-/// Validate and resolve a workspace path, ensuring it's within the allowed workspace root.
+/// Validate and resolve a workspace path, ensuring it's within the allowed workspace root
+/// or is a valid Main Chat workspace path.
 fn validate_workspace_path(state: &AppState, workspace_path: &str) -> Result<PathBuf, ApiError> {
     let workspace_root = state.sessions.workspace_root();
     let canonical_root = workspace_root
@@ -2697,19 +2715,22 @@ fn validate_workspace_path(state: &AppState, workspace_path: &str) -> Result<Pat
                     ApiError::bad_request(format!("Invalid workspace path: {}", e))
                 })?;
                 if !canonical_parent.starts_with(&canonical_root) {
-                    warn!(
-                        "Workspace path parent outside root: {:?} (root: {:?})",
-                        parent, canonical_root
-                    );
-                    return Err(ApiError::bad_request("Workspace path outside allowed root"));
+                    // Check if it's a Main Chat path before rejecting
+                    if !is_main_chat_path(state, &canonical_parent) {
+                        warn!(
+                            "Workspace path parent outside root: {:?} (root: {:?})",
+                            parent, canonical_root
+                        );
+                        return Err(ApiError::bad_request("Workspace path outside allowed root"));
+                    }
                 }
             }
         }
         resolved
     };
 
-    // Verify the path is under the workspace root
-    if !canonical.starts_with(&canonical_root) {
+    // Verify the path is under the workspace root or is a Main Chat path
+    if !canonical.starts_with(&canonical_root) && !is_main_chat_path(state, &canonical) {
         warn!(
             "Workspace path outside root: {:?} (root: {:?})",
             canonical, canonical_root
@@ -2718,6 +2739,23 @@ fn validate_workspace_path(state: &AppState, workspace_path: &str) -> Result<Pat
     }
 
     Ok(canonical)
+}
+
+/// Check if a path is within a Main Chat workspace directory.
+fn is_main_chat_path(state: &AppState, path: &std::path::Path) -> bool {
+    let Some(main_chat) = state.main_chat.as_ref() else {
+        return false;
+    };
+
+    // Get the Main Chat workspace root (parent of individual user directories)
+    // Main Chat paths are like: data_dir/users/{user_id}/...
+    // The service's workspace_dir is data_dir/users
+    let main_chat_root = main_chat.workspace_dir();
+    let canonical_main_chat_root = main_chat_root
+        .canonicalize()
+        .unwrap_or_else(|_| main_chat_root.to_path_buf());
+
+    path.starts_with(&canonical_main_chat_root)
 }
 
 /// Execute trx command in a validated workspace directory.

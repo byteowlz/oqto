@@ -173,6 +173,13 @@ export type ProjectTemplateEntry = {
 	description?: string;
 };
 
+export type ListProjectTemplatesResponse = {
+	/** Whether templates are configured (repo_path is set). */
+	configured: boolean;
+	/** List of available templates. */
+	templates: ProjectTemplateEntry[];
+};
+
 export type CreateProjectFromTemplateRequest = {
 	template_path: string;
 	project_path: string;
@@ -658,7 +665,7 @@ export async function listWorkspaceDirectories(
 	return res.json();
 }
 
-export async function listProjectTemplates(): Promise<ProjectTemplateEntry[]> {
+export async function listProjectTemplates(): Promise<ListProjectTemplatesResponse> {
 	const url = new URL(
 		controlPlaneApiUrl("/api/projects/templates"),
 		window.location.origin,

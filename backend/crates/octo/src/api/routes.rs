@@ -16,6 +16,7 @@ use super::a2ui as a2ui_handlers;
 use super::delegate as delegate_handlers;
 use super::handlers;
 use super::main_chat as main_chat_handlers;
+use super::main_chat_files;
 use super::main_chat_pi as main_chat_pi_handlers;
 use super::proxy;
 use super::state::AppState;
@@ -344,6 +345,8 @@ pub fn create_router_with_config(state: AppState, max_upload_size_mb: usize) -> 
             "/main/pi/history/separator",
             post(main_chat_pi_handlers::add_separator),
         )
+        // Main Chat file access routes
+        .nest("/main/files", main_chat_files::main_chat_file_routes())
         // CASS (Coding Agent Session Search) routes
         .route("/search", get(handlers::search_sessions))
         // TRX (issue tracking) routes - workspace-based
