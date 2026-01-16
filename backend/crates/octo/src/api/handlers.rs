@@ -743,7 +743,7 @@ pub async fn list_project_templates(
             return Ok(Json(ListProjectTemplatesResponse {
                 configured: false,
                 templates: Vec::new(),
-            }))
+            }));
         }
     };
 
@@ -2711,9 +2711,9 @@ fn validate_workspace_path(state: &AppState, workspace_path: &str) -> Result<Pat
         // Path doesn't exist yet - verify parent is valid
         if let Some(parent) = resolved.parent() {
             if parent.exists() {
-                let canonical_parent = parent.canonicalize().map_err(|e| {
-                    ApiError::bad_request(format!("Invalid workspace path: {}", e))
-                })?;
+                let canonical_parent = parent
+                    .canonicalize()
+                    .map_err(|e| ApiError::bad_request(format!("Invalid workspace path: {}", e)))?;
                 if !canonical_parent.starts_with(&canonical_root) {
                     // Check if it's a Main Chat path before rejecting
                     if !is_main_chat_path(state, &canonical_parent) {

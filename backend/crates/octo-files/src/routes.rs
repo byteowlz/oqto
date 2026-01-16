@@ -3,7 +3,7 @@ use axum::{
     routing::{delete, get, post, put},
 };
 
-use crate::{handlers, AppState};
+use crate::{AppState, handlers};
 
 /// Create file server routes
 pub fn file_routes() -> Router<AppState> {

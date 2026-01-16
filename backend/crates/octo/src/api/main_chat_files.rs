@@ -181,7 +181,13 @@ pub async fn download_zip(
 pub fn main_chat_file_routes() -> Router<AppState> {
     Router::new()
         .route("/tree", get(get_tree))
-        .route("/file", get(get_file).post(upload_file).put(write_file).delete(delete_file))
+        .route(
+            "/file",
+            get(get_file)
+                .post(upload_file)
+                .put(write_file)
+                .delete(delete_file),
+        )
         .route("/mkdir", put(create_dir))
         .route("/rename", post(rename_file))
         .route("/download", get(download))
