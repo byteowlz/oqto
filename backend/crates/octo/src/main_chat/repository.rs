@@ -74,6 +74,33 @@ impl<'a> MainChatRepository<'a> {
         .context("fetching recent history")
     }
 
+    /// Get recent history entries filtered by type.
+    pub async fn get_recent_history_filtered(
+        &self,
+        entry_types: &[&str],
+        limit: i64,
+    ) -> Result<Vec<HistoryEntry>> {
+        if entry_types.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut qb: sqlx::QueryBuilder<sqlx::Sqlite> = sqlx::QueryBuilder::new(
+            "SELECT id, ts, type, content, session_id, meta, created_at FROM history WHERE type IN (",
+        );
+
+        let mut separated = qb.separated(",");
+        for t in entry_types {
+            separated.push_bind(*t);
+        }
+        separated.push_unseparated(") ORDER BY ts DESC LIMIT ");
+        qb.push_bind(limit);
+
+        qb.build_query_as::<HistoryEntry>()
+            .fetch_all(self.db.pool())
+            .await
+            .context("fetching filtered history")
+    }
+
     /// Count total history entries.
     pub async fn count_history(&self) -> Result<i64> {
         sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM history")
@@ -219,6 +246,88 @@ impl<'a> MainChatRepository<'a> {
         .fetch_all(self.db.pool())
         .await
         .context("fetching all messages")
+    }
+
+    /// Get messages for a specific session.
+    pub async fn get_messages_by_session(&self, session_id: &str) -> Result<Vec<ChatMessage>> {
+        sqlx::query_as::<_, ChatMessage>(
+            r#"
+            SELECT id, role, content, pi_session_id, timestamp, created_at
+            FROM messages
+            WHERE pi_session_id = ?
+            ORDER BY timestamp ASC
+            "#,
+        )
+        .bind(session_id)
+        .fetch_all(self.db.pool())
+        .await
+        .context("fetching messages by session")
+    }
+
+    /// Get messages for a session range (from session start to end/next session).
+    /// This finds all messages from the given session_id until the next separator or end.
+    pub async fn get_messages_for_session_range(&self, session_id: &str) -> Result<Vec<ChatMessage>> {
+        // First find the timestamp of any separator or first message with this session_id
+        let session_start = sqlx::query_scalar::<_, i64>(
+            r#"
+            SELECT MIN(timestamp) FROM messages 
+            WHERE pi_session_id = ? OR (role = 'system' AND content LIKE '%"sessionId":"' || ? || '"%')
+            "#,
+        )
+        .bind(session_id)
+        .bind(session_id)
+        .fetch_optional(self.db.pool())
+        .await
+        .context("finding session start")?;
+
+        let Some(start_ts) = session_start else {
+            return Ok(Vec::new());
+        };
+
+        // Find the next separator after this session (if any)
+        let next_separator_ts = sqlx::query_scalar::<_, i64>(
+            r#"
+            SELECT MIN(timestamp) FROM messages 
+            WHERE role = 'system' 
+              AND content LIKE '%separator%'
+              AND timestamp > ?
+            "#,
+        )
+        .bind(start_ts)
+        .fetch_optional(self.db.pool())
+        .await
+        .context("finding next separator")?;
+
+        // Get all messages in this range
+        if let Some(end_ts) = next_separator_ts {
+            sqlx::query_as::<_, ChatMessage>(
+                r#"
+                SELECT id, role, content, pi_session_id, timestamp, created_at
+                FROM messages
+                WHERE timestamp >= ? AND timestamp < ?
+                ORDER BY timestamp ASC
+                "#,
+            )
+            .bind(start_ts)
+            .bind(end_ts)
+            .fetch_all(self.db.pool())
+            .await
+            .context("fetching messages in range")
+        } else {
+            // No next separator - get all messages from start to end
+            sqlx::query_as::<_, ChatMessage>(
+                r#"
+                SELECT id, role, content, pi_session_id, timestamp, created_at
+                FROM messages
+                WHERE timestamp >= ?
+                ORDER BY timestamp ASC
+                "#,
+            )
+            .bind(start_ts)
+            .fetch_all(self.db.pool())
+            .await
+            .context("fetching messages from start")
+        }
     }
 
     /// Delete all messages (for new session with fresh history).

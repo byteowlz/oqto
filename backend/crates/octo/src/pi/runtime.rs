@@ -32,6 +32,8 @@ pub struct PiSpawnConfig {
     pub pi_executable: String,
     /// Whether to continue the previous session.
     pub continue_session: bool,
+    /// Specific session file to use (--session <path>).
+    pub session_file: Option<PathBuf>,
     /// Provider to use (e.g., "anthropic", "openai").
     pub provider: Option<String>,
     /// Model to use.
@@ -50,6 +52,7 @@ impl Default for PiSpawnConfig {
             work_dir: PathBuf::from("."),
             pi_executable: "pi".to_string(),
             continue_session: false,
+            session_file: None,
             provider: None,
             model: None,
             extensions: Vec::new(),
@@ -116,7 +119,10 @@ impl PiRuntime for LocalPiRuntime {
         let mut cmd = Command::new(&config.pi_executable);
         cmd.arg("--mode").arg("rpc");
 
-        if config.continue_session {
+        // Session handling: specific file takes precedence over continue
+        if let Some(ref session_file) = config.session_file {
+            cmd.arg("--session").arg(session_file);
+        } else if config.continue_session {
             cmd.arg("--continue");
         }
 
@@ -379,7 +385,11 @@ impl PiRuntime for RunnerPiRuntime {
         // Build arguments for pi command
         let mut args = vec!["--mode".to_string(), "rpc".to_string()];
 
-        if config.continue_session {
+        // Session handling: specific file takes precedence over continue
+        if let Some(ref session_file) = config.session_file {
+            args.push("--session".to_string());
+            args.push(session_file.to_string_lossy().to_string());
+        } else if config.continue_session {
             args.push("--continue".to_string());
         }
 

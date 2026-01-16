@@ -460,7 +460,7 @@ mod tests {
     fn test_local_runtime_config_default() {
         let config = LocalRuntimeConfig::default();
         assert_eq!(config.opencode_binary, "opencode");
-        assert_eq!(config.fileserver_binary, "fileserver");
+        assert_eq!(config.fileserver_binary, "octo-files");
         assert_eq!(config.ttyd_binary, "ttyd");
         assert_eq!(config.workspace_dir, "$HOME/octo/{user_id}");
         assert!(!config.single_user);
@@ -769,7 +769,7 @@ mod tests {
         let parsed: LocalRuntimeConfig = serde_json::from_str(&json).unwrap();
 
         assert_eq!(parsed.opencode_binary, "opencode");
-        assert_eq!(parsed.fileserver_binary, "fileserver");
+        assert_eq!(parsed.fileserver_binary, "octo-files");
         assert_eq!(parsed.ttyd_binary, "ttyd");
         assert_eq!(parsed.workspace_dir, "$HOME/octo/{user_id}");
         assert!(!parsed.single_user);

@@ -173,6 +173,13 @@ export type ProjectTemplateEntry = {
 	description?: string;
 };
 
+export type ListProjectTemplatesResponse = {
+	/** Whether templates are configured (repo_path is set). */
+	configured: boolean;
+	/** List of available templates. */
+	templates: ProjectTemplateEntry[];
+};
+
 export type CreateProjectFromTemplateRequest = {
 	template_path: string;
 	project_path: string;
@@ -325,37 +332,93 @@ export async function getFeatures(): Promise<Features> {
 // ============================================================================
 
 export async function login(request: LoginRequest): Promise<LoginResponse> {
-	const res = await fetch(controlPlaneApiUrl("/api/auth/login"), {
+	const url = controlPlaneApiUrl("/api/auth/login");
+	const options: RequestInit = {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify(request),
 		credentials: "include",
-	});
-	if (!res.ok) throw new Error(await readApiError(res));
-	const data: LoginResponse = await res.json();
-	// Store token for Tauri/mobile
-	if (data.token) {
-		setAuthToken(data.token);
+	};
+
+	// Retry logic for transient network errors (e.g., ERR_CONNECTION_REFUSED on first attempt)
+	const maxRetries = 2;
+	let lastError: Error | undefined;
+
+	for (let attempt = 0; attempt <= maxRetries; attempt++) {
+		try {
+			const res = await fetch(url, options);
+			if (!res.ok) throw new Error(await readApiError(res));
+			const data: LoginResponse = await res.json();
+			// Store token for Tauri/mobile
+			if (data.token) {
+				setAuthToken(data.token);
+			}
+			return data;
+		} catch (error) {
+			lastError = error instanceof Error ? error : new Error(String(error));
+			// Only retry on network errors, not HTTP errors
+			const isNetworkError =
+				lastError.message.includes("Failed to fetch") ||
+				lastError.message.includes("NetworkError") ||
+				lastError.message.includes("network") ||
+				lastError.name === "TypeError"; // fetch throws TypeError on network failure
+
+			if (!isNetworkError || attempt === maxRetries) {
+				throw lastError;
+			}
+
+			// Wait before retrying (50ms, then 100ms)
+			await new Promise((resolve) => setTimeout(resolve, 50 * (attempt + 1)));
+		}
 	}
-	return data;
+
+	throw lastError ?? new Error("Login failed");
 }
 
 export async function register(
 	request: RegisterRequest,
 ): Promise<RegisterResponse> {
-	const res = await fetch(controlPlaneApiUrl("/api/auth/register"), {
+	const url = controlPlaneApiUrl("/api/auth/register");
+	const options: RequestInit = {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify(request),
 		credentials: "include",
-	});
-	if (!res.ok) throw new Error(await readApiError(res));
-	const data: RegisterResponse = await res.json();
-	// Store token for Tauri/mobile
-	if (data.token) {
-		setAuthToken(data.token);
+	};
+
+	// Retry logic for transient network errors
+	const maxRetries = 2;
+	let lastError: Error | undefined;
+
+	for (let attempt = 0; attempt <= maxRetries; attempt++) {
+		try {
+			const res = await fetch(url, options);
+			if (!res.ok) throw new Error(await readApiError(res));
+			const data: RegisterResponse = await res.json();
+			// Store token for Tauri/mobile
+			if (data.token) {
+				setAuthToken(data.token);
+			}
+			return data;
+		} catch (error) {
+			lastError = error instanceof Error ? error : new Error(String(error));
+			// Only retry on network errors, not HTTP errors
+			const isNetworkError =
+				lastError.message.includes("Failed to fetch") ||
+				lastError.message.includes("NetworkError") ||
+				lastError.message.includes("network") ||
+				lastError.name === "TypeError";
+
+			if (!isNetworkError || attempt === maxRetries) {
+				throw lastError;
+			}
+
+			// Wait before retrying
+			await new Promise((resolve) => setTimeout(resolve, 50 * (attempt + 1)));
+		}
 	}
-	return data;
+
+	throw lastError ?? new Error("Registration failed");
 }
 
 export async function logout(): Promise<void> {
@@ -658,7 +721,7 @@ export async function listWorkspaceDirectories(
 	return res.json();
 }
 
-export async function listProjectTemplates(): Promise<ProjectTemplateEntry[]> {
+export async function listProjectTemplates(): Promise<ListProjectTemplatesResponse> {
 	const url = new URL(
 		controlPlaneApiUrl("/api/projects/templates"),
 		window.location.origin,
@@ -1235,7 +1298,7 @@ export type MainChatHistoryEntry = {
 	created_at: string;
 };
 
-/** Main Chat session */
+/** Main Chat session (legacy DB-backed, kept for history/exports) */
 export type MainChatSession = {
 	id: number;
 	session_id: string;
@@ -1243,6 +1306,25 @@ export type MainChatSession = {
 	started_at: string;
 	ended_at?: string;
 	message_count: number;
+};
+
+/** Pi session file entry (disk-backed; used for Main Chat sessions list) */
+export type PiSessionFile = {
+	id: string;
+	started_at: string;
+	size: number;
+	modified_at: number;
+	title?: string;
+	message_count: number;
+};
+
+/** Message loaded from a Pi session JSONL file */
+export type PiSessionMessage = {
+	id: string;
+	role: "user" | "assistant" | "system";
+	content: unknown;
+	timestamp: number;
+	usage?: unknown;
 };
 
 /** Main Chat assistant info */
@@ -1354,11 +1436,88 @@ export async function addMainChatHistory(
 	return res.json();
 }
 
-/** List sessions for an assistant */
+/** List sessions for an assistant (legacy DB-backed sessions table) */
 export async function listMainChatSessions(
 	name: string,
 ): Promise<MainChatSession[]> {
 	const res = await authFetch(controlPlaneApiUrl("/api/main/sessions"), {
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+	return res.json();
+}
+
+/** List Pi sessions from disk (used for Main Chat sessions list) */
+export async function listMainChatPiSessions(): Promise<PiSessionFile[]> {
+	const res = await authFetch(controlPlaneApiUrl("/api/main/pi/sessions"), {
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+	return res.json();
+}
+
+/** Start a brand new Pi session (creates new session file) */
+export async function newMainChatPiSessionFile(): Promise<PiState> {
+	const res = await authFetch(controlPlaneApiUrl("/api/main/pi/sessions"), {
+		method: "POST",
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+	return res.json();
+}
+
+/** Load messages from a specific Pi session file */
+export async function getMainChatPiSessionMessages(
+	sessionId: string,
+): Promise<PiSessionMessage[]> {
+	const res = await authFetch(
+		controlPlaneApiUrl(`/api/main/pi/sessions/${encodeURIComponent(sessionId)}`),
+		{ credentials: "include" },
+	);
+	if (!res.ok) throw new Error(await readApiError(res));
+	return res.json();
+}
+
+/** Resume/switch the active Pi session */
+export async function resumeMainChatPiSession(sessionId: string): Promise<PiState> {
+	const res = await authFetch(
+		controlPlaneApiUrl(`/api/main/pi/sessions/${encodeURIComponent(sessionId)}`),
+		{ method: "POST", credentials: "include" },
+	);
+	if (!res.ok) throw new Error(await readApiError(res));
+	return res.json();
+}
+
+/** In-session search result from CASS */
+export type InSessionSearchResult = {
+	/** Line number in the source file */
+	line_number: number;
+	/** Match score */
+	score: number;
+	/** Short snippet around the match */
+	snippet?: string;
+	/** Session title */
+	title?: string;
+	/** Match type (exact, fuzzy) */
+	match_type?: string;
+	/** Timestamp when the message was created */
+	created_at?: number;
+};
+
+/** Search within a specific Pi session using CASS */
+export async function searchInPiSession(
+	sessionId: string,
+	query: string,
+	limit = 20,
+): Promise<InSessionSearchResult[]> {
+	const url = new URL(
+		controlPlaneApiUrl(`/api/agents/sessions/${encodeURIComponent(sessionId)}/search`),
+		window.location.origin,
+	);
+	url.searchParams.set("q", query);
+	url.searchParams.set("limit", limit.toString());
+	
+	const res = await authFetch(url.toString(), {
 		credentials: "include",
 	});
 	if (!res.ok) throw new Error(await readApiError(res));
@@ -1660,8 +1819,13 @@ export type MainChatDbMessage = {
 };
 
 /** Get persistent chat history from database (survives Pi session restarts) */
-export async function getMainChatPiHistory(): Promise<MainChatDbMessage[]> {
-	const res = await authFetch(controlPlaneApiUrl("/api/main/pi/history"), {
+export async function getMainChatPiHistory(
+	sessionId?: string,
+): Promise<MainChatDbMessage[]> {
+	const url = sessionId
+		? controlPlaneApiUrl(`/api/main/pi/history?session_id=${encodeURIComponent(sessionId)}`)
+		: controlPlaneApiUrl("/api/main/pi/history");
+	const res = await authFetch(url, {
 		credentials: "include",
 	});
 	if (!res.ok) throw new Error(await readApiError(res));
@@ -1765,4 +1929,83 @@ export async function searchSessions(
 	});
 	if (!res.ok) throw new Error(await readApiError(res));
 	return res.json();
+}
+
+// ============================================================================
+// Agent Ask API (Cross-agent communication via @@mentions)
+// ============================================================================
+
+/** Request to ask another agent a question */
+export type AgentAskRequest = {
+	/** Target: "main-chat", "session:<id>", or assistant name */
+	target: string;
+	/** The question to ask */
+	question: string;
+	/** Timeout in seconds (default 300) */
+	timeout_secs?: number;
+	/** Whether to stream the response */
+	stream?: boolean;
+};
+
+/** Response from asking an agent (non-streaming) */
+export type AgentAskResponse = {
+	response: string;
+	session_id?: string;
+};
+
+/** Error when multiple sessions match */
+export type AgentAskAmbiguousError = {
+	error: string;
+	matches: Array<{
+		id: string;
+		title?: string;
+		modified_at: number;
+	}>;
+};
+
+/**
+ * Ask another agent a question.
+ * Returns the agent's response after it finishes processing.
+ *
+ * Target formats:
+ * - "main-chat" or "pi" - Main chat assistant
+ * - "session:<id>" - Specific session by ID
+ * - Custom assistant name (e.g., "jarvis")
+ */
+export async function askAgent(
+	request: AgentAskRequest,
+): Promise<AgentAskResponse> {
+	const res = await authFetch(controlPlaneApiUrl("/api/agents/ask"), {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(request),
+		credentials: "include",
+	});
+
+	if (!res.ok) {
+		const errorText = await res.text();
+		// Check if it's an ambiguous response
+		try {
+			const errorJson = JSON.parse(errorText);
+			if (errorJson.matches) {
+				throw new AgentAskAmbiguousException(errorJson);
+			}
+		} catch (e) {
+			if (e instanceof AgentAskAmbiguousException) throw e;
+		}
+		throw new Error(errorText || `Agent ask failed: ${res.status}`);
+	}
+
+	return res.json();
+}
+
+/** Exception thrown when multiple sessions match the target */
+export class AgentAskAmbiguousException extends Error {
+	public matches: AgentAskAmbiguousError["matches"];
+
+	constructor(data: AgentAskAmbiguousError) {
+		super(data.error);
+		this.name = "AgentAskAmbiguousException";
+		this.matches = data.matches;
+	}
 }

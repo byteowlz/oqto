@@ -6,6 +6,10 @@ license.workspace = true
 authors.workspace = true
 description = "Lightweight file server for container workspace access"
 
+[lib]
+name = "octo_files"
+path = "src/lib.rs"
+
 [[bin]]
 name = "octo-files"
 path = "src/main.rs"
@@ -48,5 +52,5 @@ notify.workspace = true
 zip.workspace = true
 syntect.workspace = true
 
-[dev-dependencies]
+# Temp files (disk-backed zip creation)
 tempfile.workspace = true

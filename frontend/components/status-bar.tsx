@@ -85,7 +85,7 @@ export function StatusBar() {
 	const { data: user } = useCurrentUser();
 	const {
 		workspaceSessions,
-		selectedWorkspaceSessionId,
+		selectedChatSessionId,
 		mainChatActive,
 	} = useApp();
 
@@ -94,11 +94,11 @@ export function StatusBar() {
 	// Track selected model from localStorage (same key used by sessions app)
 	const [selectedModelRef, setSelectedModelRef] = useState<string | null>(null);
 
-	// Storage key matches sessions app: octo:opencodeModel:${workspaceSessionId}
+	// Storage key matches sessions app: octo:chatModel:${chatSessionId}
 	const modelStorageKey = useMemo(() => {
-		if (!selectedWorkspaceSessionId || mainChatActive) return null;
-		return `octo:opencodeModel:${selectedWorkspaceSessionId}`;
-	}, [selectedWorkspaceSessionId, mainChatActive]);
+		if (!selectedChatSessionId || mainChatActive) return null;
+		return `octo:chatModel:${selectedChatSessionId}`;
+	}, [selectedChatSessionId, mainChatActive]);
 
 	// Read model from localStorage and listen for changes
 	useEffect(() => {

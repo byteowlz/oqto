@@ -16,6 +16,7 @@ use super::a2ui as a2ui_handlers;
 use super::delegate as delegate_handlers;
 use super::handlers;
 use super::main_chat as main_chat_handlers;
+use super::main_chat_files;
 use super::main_chat_pi as main_chat_pi_handlers;
 use super::proxy;
 use super::state::AppState;
@@ -344,6 +345,18 @@ pub fn create_router_with_config(state: AppState, max_upload_size_mb: usize) -> 
             "/main/pi/history/separator",
             post(main_chat_pi_handlers::add_separator),
         )
+        .route(
+            "/main/pi/sessions",
+            get(main_chat_pi_handlers::list_pi_sessions)
+                .post(main_chat_pi_handlers::new_pi_session),
+        )
+        .route(
+            "/main/pi/sessions/{session_id}",
+            get(main_chat_pi_handlers::get_pi_session_messages)
+                .post(main_chat_pi_handlers::resume_pi_session),
+        )
+        // Main Chat file access routes
+        .nest("/main/files", main_chat_files::main_chat_file_routes())
         // CASS (Coding Agent Session Search) routes
         .route("/search", get(handlers::search_sessions))
         // TRX (issue tracking) routes - workspace-based
@@ -390,6 +403,15 @@ pub fn create_router_with_config(state: AppState, max_upload_size_mb: usize) -> 
         .route(
             "/agent/sessions/{session_id}/events",
             get(handlers::agent_attach),
+        )
+        // Agent ask endpoint - ask any agent a question and get response
+        .route("/agents/ask", post(handlers::agents_ask))
+        // Agent sessions search endpoint - find sessions by query
+        .route("/agents/sessions", get(handlers::agents_search_sessions))
+        // In-session search - search within a specific session using CASS
+        .route(
+            "/agents/sessions/{session_id}/search",
+            get(handlers::agents_session_search),
         )
         .layer(middleware::from_fn_with_state(
             auth_state.clone(),

@@ -146,7 +146,9 @@ function saveCanvasState(state: CanvasStateCache) {
 	canvasCache.state = state;
 }
 
-function loadCanvasState(initialImagePath: string | null): CanvasStateCache | null {
+function loadCanvasState(
+	initialImagePath: string | null,
+): CanvasStateCache | null {
 	const cached = canvasCache.state;
 	// Only return cache if it matches the current image path
 	// This ensures "Open in Canvas" with a new image gets a fresh canvas
@@ -327,8 +329,24 @@ export const CanvasView = memo(function CanvasView({
 	className,
 	onSaveAndAddToChat,
 }: CanvasViewProps) {
-	// Load cached state on mount - only if it matches the current initialImagePath
-	const cached = loadCanvasState(initialImagePath ?? null);
+	// Track current initialImagePath to detect changes
+	const prevInitialImagePathRef = useRef<string | null>(initialImagePath ?? null);
+
+	// Load cached state on mount - restore cache if it exists (regardless of initialImagePath match)
+	// This ensures canvas content survives expand/collapse
+	const getCachedState = () => {
+		// First try to load cache matching current initialImagePath
+		const matchingCache = loadCanvasState(initialImagePath ?? null);
+		if (matchingCache) return matchingCache;
+		
+		// If no matching cache but we have a generic cache, use it for expand/collapse persistence
+		// Only do this if initialImagePath is null/undefined (canvas view without specific file)
+		if (!initialImagePath && canvasCache.state) {
+			return canvasCache.state;
+		}
+		return null;
+	};
+	const cached = getCachedState();
 
 	// Canvas state - initialize from cache if available
 	const [tool, setTool] = useState<Tool>(cached?.tool ?? "select");
@@ -365,7 +383,6 @@ export const CanvasView = memo(function CanvasView({
 	useEffect(() => {
 		if (backgroundImageSrc && !backgroundImage) {
 			const img = new Image();
-			img.crossOrigin = "anonymous";
 			img.onload = () => setBackgroundImage(img);
 			img.src = backgroundImageSrc;
 		}
@@ -387,24 +404,22 @@ export const CanvasView = memo(function CanvasView({
 		}
 	}, [initialAnnotations]);
 
-	// Save state to cache on unmount
+	// Persist state to cache so it survives remounts (expand/collapse).
 	useEffect(() => {
-		return () => {
-			saveCanvasState({
-				annotations,
-				history,
-				historyIndex,
-				scale,
-				position,
-				tool,
-				color,
-				strokeWidth,
-				fontSize,
-				backgroundImageSrc,
-				backgroundSize,
-				initialImagePath: initialImagePath ?? null,
-			});
-		};
+		saveCanvasState({
+			annotations,
+			history,
+			historyIndex,
+			scale,
+			position,
+			tool,
+			color,
+			strokeWidth,
+			fontSize,
+			backgroundImageSrc,
+			backgroundSize,
+			initialImagePath: initialImagePath ?? null,
+		});
 	}, [
 		annotations,
 		history,
@@ -464,6 +479,29 @@ export const CanvasView = memo(function CanvasView({
 
 	const fileserverBaseUrl = workspacePath ? fileserverWorkspaceBaseUrl() : null;
 
+	// Detect when initialImagePath changes (e.g., "Open in Canvas" with a new file)
+	// and reset canvas state to load the new image
+	useEffect(() => {
+		const prevPath = prevInitialImagePathRef.current;
+		const currentPath = initialImagePath ?? null;
+		
+		// If path changed and we have a new image to load
+		if (prevPath !== currentPath && currentPath) {
+			// Clear current background to force reload
+			setBackgroundImage(null);
+			setBackgroundImageSrc(null);
+			// Clear annotations for fresh canvas with new image
+			setAnnotations([]);
+			setHistory([[]]);
+			setHistoryIndex(0);
+			setScale(1);
+			setPosition({ x: 0, y: 0 });
+			setImageCache(new Map());
+		}
+		
+		prevInitialImagePathRef.current = currentPath;
+	}, [initialImagePath]);
+
 	// Load initial image if provided - this takes priority over cached state
 	useEffect(() => {
 		if (!initialImagePath || !fileserverBaseUrl || !workspacePath) return;
@@ -473,12 +511,11 @@ export const CanvasView = memo(function CanvasView({
 		url.searchParams.set("workspace_path", workspacePath);
 
 		const imgSrc = url.toString();
-		
+
 		// Skip if already showing this image
 		if (backgroundImageSrc === imgSrc) return;
-		
+
 		const img = new Image();
-		img.crossOrigin = "anonymous";
 		img.onload = () => {
 			setBackgroundImage(img);
 			setBackgroundImageSrc(imgSrc);

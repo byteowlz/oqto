@@ -40,11 +40,13 @@ import {
 import {
 	type Features,
 	type PiModelInfo,
+	type PiSessionFile,
 	compactMainChatPi,
 	fileserverWorkspaceBaseUrl,
 	getMainChatPiCommands,
 	getMainChatPiModels,
 	getMainChatPiStats,
+	listMainChatPiSessions,
 	setMainChatPiModel,
 	workspaceFileUrl,
 } from "@/lib/control-plane-client";
@@ -54,12 +56,13 @@ import {
 	fuzzyMatch,
 	parseSlashInput,
 } from "@/lib/slash-commands";
+import { formatSessionDate, generateReadableId } from "@/lib/session-utils";
 import { cn } from "@/lib/utils";
 import {
 	Bot,
 	Copy,
 	ExternalLink,
-	File,
+	File as FileIcon,
 	FileVideo,
 	ImageIcon,
 	Loader2,
@@ -99,12 +102,16 @@ export interface MainChatPiViewProps {
 		outputTokens: number;
 		maxTokens: number;
 	}) => void;
-	/** Session ID to scroll to (when clicking session in sidebar) */
-	scrollToSessionId?: string | null;
+	/** Selected session ID (from sidebar) */
+	selectedSessionId?: string | null;
+	/** Callback when selection should change (e.g. /new created a session) */
+	onSelectedSessionIdChange?: (id: string | null) => void;
 	/** Message ID to scroll to (from search results) */
 	scrollToMessageId?: string | null;
 	/** Callback when scroll target is reached (to clear the target) */
 	onScrollToMessageComplete?: () => void;
+	/** Trigger to create a new session - increment to trigger */
+	newSessionTrigger?: number;
 }
 
 /**
@@ -119,9 +126,11 @@ export function MainChatPiView({
 	assistantName,
 	hideHeader = false,
 	onTokenUsageChange,
-	scrollToSessionId,
+	selectedSessionId,
+	onSelectedSessionIdChange,
 	scrollToMessageId,
 	onScrollToMessageComplete,
+	newSessionTrigger,
 }: MainChatPiViewProps) {
 	const {
 		messages,
@@ -134,7 +143,26 @@ export function MainChatPiView({
 		resetSession,
 		state: piState,
 		refresh,
-	} = usePiChat();
+	} = usePiChat({
+		selectedSessionId,
+		onSelectedSessionIdChange,
+	});
+
+	// Track the last trigger value to detect changes
+	const lastNewSessionTriggerRef = useRef(newSessionTrigger);
+
+	// Create new session when trigger changes (external request)
+	useEffect(() => {
+		// Skip initial render and only react to actual changes
+		if (
+			newSessionTrigger !== undefined &&
+			newSessionTrigger !== lastNewSessionTriggerRef.current &&
+			lastNewSessionTriggerRef.current !== undefined
+		) {
+			newSession();
+		}
+		lastNewSessionTriggerRef.current = newSessionTrigger;
+	}, [newSessionTrigger, newSession]);
 
 	// Draft persistence - restore from localStorage on mount
 	const [input, setInput] = useState(() => {
@@ -222,16 +250,7 @@ export function MainChatPiView({
 
 	// Voice configuration
 	const voiceConfig = useMemo(
-		() =>
-			features?.voice
-				? {
-						stt_url: features.voice.stt_url,
-						tts_url: features.voice.tts_url,
-						vad_timeout_ms: features.voice.vad_timeout_ms,
-						default_voice: features.voice.default_voice,
-						default_speed: features.voice.default_speed,
-					}
-				: null,
+		() => (features?.voice as unknown as import("@/lib/voice/types").VoiceConfig) ?? null,
 		[features?.voice],
 	);
 
@@ -373,7 +392,8 @@ export function MainChatPiView({
 	}, [currentModelRef, selectedModelRef]);
 
 	useEffect(() => {
-		if (!isConnected) return;
+		// Only fetch models once session is active (piState available)
+		if (!isConnected || !piState) return;
 		let active = true;
 		getMainChatPiModels()
 			.then((models) => {
@@ -385,10 +405,11 @@ export function MainChatPiView({
 		return () => {
 			active = false;
 		};
-	}, [isConnected]);
+	}, [isConnected, piState]);
 
 	useEffect(() => {
-		if (!isConnected) return;
+		// Only fetch commands once session is active (piState available)
+		if (!isConnected || !piState) return;
 		let active = true;
 		getMainChatPiCommands()
 			.then((commands) => {
@@ -406,7 +427,7 @@ export function MainChatPiView({
 		return () => {
 			active = false;
 		};
-	}, [isConnected]);
+	}, [isConnected, piState]);
 
 	const refreshStats = useCallback(async () => {
 		try {
@@ -428,20 +449,12 @@ export function MainChatPiView({
 		refreshStats();
 	}, [isConnected, isStreaming, messages.length, refreshStats]);
 
-	// Scroll to session when scrollToSessionId changes
+	// Discrete sessions: selection switches message dataset (no scrolling needed)
 	useEffect(() => {
-		if (!scrollToSessionId || !messagesContainerRef.current) return;
-
-		// Find the separator element with this session ID
-		const separator = messagesContainerRef.current.querySelector(
-			`[data-session-id="${scrollToSessionId}"]`,
-		);
-
-		if (separator) {
-			separator.scrollIntoView({ behavior: "smooth", block: "start" });
-			setIsUserScrolled(true); // Prevent auto-scroll from overriding
-		}
-	}, [scrollToSessionId]);
+		if (!selectedSessionId) return;
+		// Ensure we don't auto-scroll to bottom when user is navigating sessions
+		setIsUserScrolled(false);
+	}, [selectedSessionId]);
 
 	// Scroll to message when scrollToMessageId changes (from search results)
 	useEffect(() => {
@@ -916,33 +929,85 @@ export function MainChatPiView({
 		[locale],
 	);
 
-	return (
-		<div className={cn("flex flex-col h-full min-h-0", className)}>
-			{!hideHeader && (
-				<div className="pb-3 mb-3 border-b border-border">
+	const [sessionMeta, setSessionMeta] = useState<PiSessionFile | null>(null);
+
+	useEffect(() => {
+		if (!selectedSessionId) {
+			setSessionMeta(null);
+			return;
+		}
+
+		let cancelled = false;
+		listMainChatPiSessions()
+			.then((sessions) => {
+				if (cancelled) return;
+				setSessionMeta(sessions.find((s) => s.id === selectedSessionId) ?? null);
+			})
+			.catch(() => {
+				// ignore
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, [selectedSessionId]);
+
+	const readableId = selectedSessionId ? generateReadableId(selectedSessionId) : null;
+	const formattedDate = sessionMeta?.started_at
+		? formatSessionDate(new Date(sessionMeta.started_at).getTime())
+		: null;
+
+	const sessionTitle =
+		sessionMeta?.title?.trim() ||
+		assistantName?.trim() ||
+		(locale === "de" ? "Hauptchat" : "Main Chat");
+
+	const SessionHeader = (
+		<div className="pb-3 mb-3 border-b border-border pr-10">
+			<div className="flex items-center justify-between">
+				<div className="flex items-center gap-3 min-w-0 flex-1">
 					<div className="min-w-0 flex-1">
-						<h1 className="text-base sm:text-lg font-semibold text-foreground tracking-wider truncate">
-							{assistantName || (locale === "de" ? "Hauptchat" : "Main Chat")}
-						</h1>
-						{workspacePath && (
-							<div className="flex items-center gap-2 text-xs text-foreground/60 dark:text-muted-foreground">
-								<span className="font-mono">
-									{workspacePath.split("/").pop()}
+						<div className="flex items-center gap-2">
+							<h1 className="text-base sm:text-lg font-semibold text-foreground tracking-wider truncate">
+								{sessionTitle}
+							</h1>
+							{assistantName && assistantName !== sessionTitle && (
+								<span className="text-xs px-1.5 py-0.5 rounded-full text-white flex-shrink-0 bg-primary/70">
+									{assistantName}
 								</span>
-							</div>
-						)}
-					</div>
-					<div className="mt-2">
-						<ContextWindowGauge
-							inputTokens={gaugeTokens.inputTokens}
-							outputTokens={gaugeTokens.outputTokens}
-							maxTokens={contextWindowLimit}
-							locale={locale}
-							compact
-						/>
+							)}
+						</div>
+						<div className="flex items-center gap-2 text-xs text-foreground/60 dark:text-muted-foreground">
+							{(workspacePath || readableId) && (
+								<span className="font-mono truncate">
+									{workspacePath?.split("/").pop()}
+									{readableId && ` [${readableId}]`}
+								</span>
+							)}
+							{(workspacePath || readableId) && formattedDate && (
+								<span className="opacity-50">|</span>
+							)}
+							{formattedDate && (
+								<span className="flex-shrink-0">{formattedDate}</span>
+							)}
+						</div>
 					</div>
 				</div>
-			)}
+			</div>
+			<div className="mt-2">
+				<ContextWindowGauge
+					inputTokens={gaugeTokens.inputTokens}
+					outputTokens={gaugeTokens.outputTokens}
+					maxTokens={contextWindowLimit}
+					locale={locale}
+					compact
+				/>
+			</div>
+		</div>
+	);
+
+	return (
+		<div className={cn("flex flex-col h-full min-h-0", className)}>
+			{!hideHeader && SessionHeader}
 
 			{/* Error banner - only show if no cached messages available */}
 			{displayError && messages.length === 0 && (
@@ -986,18 +1051,33 @@ export function MainChatPiView({
 					)}
 
 					{/* Only render the last visibleCount messages for performance */}
-					{messages.slice(-visibleCount).map((message, index) => (
-						<div key={message.id} className={index > 0 ? "mt-4 sm:mt-6" : ""}>
-							<PiMessageCard
-								message={message}
-								locale={locale}
-								workspacePath={workspacePath}
-								assistantName={assistantName}
-								a2uiSurfaces={surfacesByMessageId.get(message.id)}
-								onA2UIAction={handleA2UIAction}
-							/>
-						</div>
-					))}
+					{(() => {
+						const visibleMessages = messages.slice(-visibleCount);
+						const grouped = groupPiMessages(visibleMessages);
+						return grouped.map((group, groupIndex) => {
+							const groupSurfaces = group.messages.flatMap(
+								(m) => surfacesByMessageId.get(m.id) ?? [],
+							);
+							const groupMessageId = group.messages[0]?.id;
+							return (
+								<div
+									key={groupMessageId ?? `${group.role}-${groupIndex}`}
+									className={groupIndex > 0 ? "mt-4 sm:mt-6" : ""}
+								>
+									<PiMessageGroupCard
+										group={group}
+										assistantName={assistantName}
+										readableId={readableId}
+										workspacePath={workspacePath}
+										locale={locale}
+										a2uiSurfaces={groupSurfaces}
+										onA2UIAction={handleA2UIAction}
+										messageId={groupMessageId}
+									/>
+								</div>
+							);
+						});
+					})()}
 
 					{/* Orphaned A2UI surfaces (no valid anchor) */}
 					{orphanedSurfaces.length > 0 && (
@@ -1288,8 +1368,331 @@ export function MainChatPiView({
 	);
 }
 
+type PiMessageGroup = {
+	role: PiDisplayMessage["role"];
+	messages: PiDisplayMessage[];
+};
+
+function groupPiMessages(messages: PiDisplayMessage[]): PiMessageGroup[] {
+	const groups: PiMessageGroup[] = [];
+	let current: PiMessageGroup | null = null;
+
+	for (const message of messages) {
+		if (!current || current.role !== message.role) {
+			current = { role: message.role, messages: [message] };
+			groups.push(current);
+			continue;
+		}
+		current.messages.push(message);
+	}
+
+	return groups;
+}
+
+type PiSegment =
+	| { key: string; type: "text"; content: string; timestamp: number }
+	| {
+			key: string;
+			type: "tool_use";
+			part: Extract<PiMessagePart, { type: "tool_use" }>;
+			toolResult?: Extract<PiMessagePart, { type: "tool_result" }>;
+			timestamp: number;
+	  }
+	| { key: string; type: "thinking"; content: string; timestamp: number }
+	| { key: string; type: "compaction"; content: string; timestamp: number };
+
+const PiMessageGroupCard = memo(function PiMessageGroupCard({
+	group,
+	assistantName,
+	readableId,
+	workspacePath,
+	locale = "en",
+	a2uiSurfaces = [],
+	onA2UIAction,
+	messageId,
+}: {
+	group: PiMessageGroup;
+	assistantName?: string | null;
+	readableId?: string | null;
+	workspacePath?: string | null;
+	locale?: "de" | "en";
+	a2uiSurfaces?: A2UISurfaceState[];
+	onA2UIAction?: (action: import("@/lib/a2ui/types").A2UIUserAction) => void;
+	messageId?: string;
+}) {
+	const isUser = group.role === "user";
+	const isStreamingGroup = group.messages.some((m) => Boolean(m.isStreaming));
+	const createdAt = group.messages[0]?.timestamp
+		? new Date(group.messages[0].timestamp)
+		: null;
+
+	// Flatten parts in order, preserve timestamps by message
+	type TimedPart = {
+		key: string;
+		part: PiMessagePart;
+		timestamp: number;
+	};
+
+	const timedParts: TimedPart[] = [];
+	for (const [msgIndex, message] of group.messages.entries()) {
+		const base = message.timestamp || Date.now();
+		for (const [partIndex, part] of message.parts.entries()) {
+			timedParts.push({
+				key: `${message.id}-${part.type}-${partIndex}`,
+				part,
+				timestamp: base + msgIndex * 100 + partIndex,
+			});
+		}
+	}
+
+	const toolResults = new Map<string, Extract<PiMessagePart, { type: "tool_result" }>>();
+	const toolUseIds = new Set<string>();
+	for (const { part } of timedParts) {
+		if (part.type === "tool_result") {
+			toolResults.set(part.id, part);
+		}
+		if (part.type === "tool_use") {
+			toolUseIds.add(part.id);
+		}
+	}
+
+	const segments: PiSegment[] = [];
+	let textBuf: string[] = [];
+	let textKey: string | null = null;
+	let lastTs = 0;
+	const flushText = () => {
+		if (textBuf.length === 0) return;
+		segments.push({
+			key: textKey ?? `text-${segments.length}`,
+			type: "text",
+			content: textBuf.join("\n\n"),
+			timestamp: lastTs,
+		});
+		textBuf = [];
+		textKey = null;
+	};
+
+	for (const { key, part, timestamp } of timedParts) {
+		lastTs = timestamp;
+		if (part.type === "text") {
+			// Skip empty chunks to match OpenCode feel
+			if (!part.content.trim()) continue;
+			if (!textKey) textKey = key;
+			textBuf.push(part.content);
+			continue;
+		}
+
+		flushText();
+
+		if (part.type === "tool_use") {
+			segments.push({
+				key,
+				type: "tool_use",
+				part,
+				toolResult: toolResults.get(part.id),
+				timestamp,
+			});
+		} else if (part.type === "tool_result") {
+			// Render only if we don't have a corresponding tool_use
+			if (!toolUseIds.has(part.id)) {
+				segments.push({
+					key,
+					type: "tool_use",
+					part: {
+						type: "tool_use",
+						id: part.id,
+						name: part.name ?? "tool",
+						input: {},
+					},
+					toolResult: part,
+					timestamp,
+				});
+			}
+		} else if (part.type === "thinking") {
+			segments.push({ key, type: "thinking", content: part.content, timestamp });
+		} else if (part.type === "compaction") {
+			segments.push({
+				key,
+				type: "compaction",
+				content: part.content,
+				timestamp,
+			});
+		}
+	}
+	flushText();
+
+	segments.sort((a, b) => a.timestamp - b.timestamp);
+
+	const allTextContent = segments
+		.filter((s): s is Extract<PiSegment, { type: "text" }> => s.type === "text")
+		.map((s) => s.content)
+		.join("\n\n");
+
+	const assistantDisplayName = assistantName || "Assistant";
+
+	const messageCard = (
+		<div
+			data-message-id={messageId}
+			className={cn(
+				"group transition-all duration-200 overflow-hidden",
+				isUser
+					? "sm:ml-8 bg-primary/20 dark:bg-primary/10 border border-primary/40 dark:border-primary/30"
+					: "sm:mr-8 bg-muted/50 border border-border",
+			)}
+		>
+			<div
+				className={cn(
+					"compact-header flex items-center gap-1 sm:gap-2 px-2 sm:px-3 py-1.5 sm:py-2 border-b",
+					isUser ? "border-primary/30 dark:border-primary/20" : "border-border",
+				)}
+			>
+				{isUser ? (
+					<User className="w-3 h-3 sm:w-4 sm:h-4 text-primary flex-shrink-0" />
+				) : (
+					<Bot className="w-3 h-3 sm:w-4 sm:h-4 text-primary flex-shrink-0" />
+				)}
+				{isUser ? (
+					<span className="text-sm font-medium text-foreground">You</span>
+				) : (
+					<span className="text-sm font-medium text-foreground">
+						{assistantDisplayName}
+						{readableId && (
+							<span className="text-[9px] text-muted-foreground/70 ml-1">
+								[{readableId}]
+							</span>
+						)}
+					</span>
+				)}
+				{group.messages.length > 1 && (
+					<span
+						className={cn(
+							"text-[9px] sm:text-[10px] px-1 border leading-none",
+							isUser
+								? "border-primary/30 text-primary"
+								: "border-border text-muted-foreground",
+						)}
+					>
+						{group.messages.length}
+					</span>
+				)}
+				<div className="flex-1" />
+				{!isUser && allTextContent && !isStreamingGroup && (
+					<ReadAloudButton text={allTextContent} className="ml-1" />
+				)}
+				{createdAt && !Number.isNaN(createdAt.getTime()) && (
+					<span className="text-[9px] sm:text-[10px] text-foreground/50 dark:text-muted-foreground leading-none sm:leading-normal ml-2">
+						{createdAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+					</span>
+				)}
+				{allTextContent && !isStreamingGroup && (
+					<CopyButton
+						text={allTextContent}
+						className="ml-1 [&_svg]:w-3 [&_svg]:h-3"
+					/>
+				)}
+			</div>
+
+			<div className="px-2 sm:px-4 py-2 sm:py-3 group space-y-3 overflow-hidden">
+				{segments.length === 0 && !isUser && (
+					<div className="flex items-center gap-3 text-muted-foreground text-sm">
+						<BrailleSpinner />
+						<span>{locale === "de" ? "Arbeitet..." : "Working..."}</span>
+					</div>
+				)}
+
+				{segments.map((segment) => {
+					if (segment.type === "text") {
+						return (
+							<TextWithFileReferences
+								key={segment.key}
+								content={segment.content}
+								workspacePath={workspacePath}
+								locale={locale}
+							/>
+						);
+					}
+					if (segment.type === "tool_use") {
+						return (
+							<PiPartRenderer
+								key={segment.key}
+								part={segment.part}
+								toolResult={segment.toolResult}
+								locale={locale}
+								workspacePath={workspacePath}
+							/>
+						);
+					}
+					if (segment.type === "thinking") {
+						return (
+							<PiPartRenderer
+								key={segment.key}
+								part={{ type: "thinking", content: segment.content }}
+								locale={locale}
+								workspacePath={workspacePath}
+							/>
+						);
+					}
+					if (segment.type === "compaction") {
+						return (
+							<div key={segment.key} className="text-xs text-muted-foreground">
+								{segment.content}
+							</div>
+						);
+					}
+					return null;
+				})}
+
+				{a2uiSurfaces.length > 0 && (
+					<div className="space-y-2 mt-2">
+						{a2uiSurfaces.map((surface) => (
+							<A2UICallCard
+								key={surface.surfaceId}
+								surfaceId={surface.surfaceId}
+								messages={surface.messages}
+								blocking={surface.blocking}
+								requestId={surface.requestId}
+								answered={surface.answered}
+								answeredAction={surface.answeredAction}
+								answeredAt={surface.answeredAt}
+								onAction={onA2UIAction}
+								defaultCollapsed={surface.answered}
+							/>
+						))}
+					</div>
+				)}
+
+				{isStreamingGroup && segments.length > 0 && (
+					<div className="flex items-center gap-3 text-muted-foreground text-sm">
+						<BrailleSpinner />
+						<span>{locale === "de" ? "Arbeitet..." : "Working..."}</span>
+					</div>
+				)}
+			</div>
+		</div>
+	);
+
+	if (!allTextContent || isStreamingGroup) {
+		return messageCard;
+	}
+
+	return (
+		<ContextMenu>
+			<ContextMenuTrigger className="contents">{messageCard}</ContextMenuTrigger>
+			<ContextMenuContent>
+				<ContextMenuItem
+					onClick={() => navigator.clipboard?.writeText(allTextContent)}
+					className="gap-2"
+				>
+					<Copy className="w-4 h-4" />
+					{locale === "de" ? "Alles kopieren" : "Copy all"}
+				</ContextMenuItem>
+			</ContextMenuContent>
+		</ContextMenu>
+	);
+});
+
 /**
- * Renders a single Pi message - styled to match OpenCode MessageGroupCard exactly.
+ * Renders a single Pi message - legacy path (unused now).
  */
 const PiMessageCard = memo(function PiMessageCard({
 	message,
@@ -1309,25 +1712,8 @@ const PiMessageCard = memo(function PiMessageCard({
 	const isUser = message.role === "user";
 	const isSystem = message.role === "system";
 
-	// Handle system messages (separators) differently
-	if (isSystem) {
-		const separatorPart = message.parts[0];
-		const sessionId =
-			separatorPart?.type === "separator" ? separatorPart.sessionId : undefined;
-		return (
-			<div className="flex items-center gap-4 py-2" data-session-id={sessionId}>
-				<div className="flex-1 h-px bg-border" />
-				<span className="text-xs text-muted-foreground px-2">
-					{separatorPart?.type === "separator"
-						? separatorPart.content
-						: locale === "de"
-							? "Neue Unterhaltung"
-							: "New conversation"}
-				</span>
-				<div className="flex-1 h-px bg-border" />
-			</div>
-		);
-	}
+	// Discrete sessions: system messages are rendered like normal messages
+	// (we don't use separators for session boundaries anymore).
 
 	const textContent = message.parts
 		.filter(
@@ -1604,12 +1990,6 @@ function PiPartRenderer({
 				/>
 			);
 
-		case "separator":
-			return (
-				<div className="text-xs text-muted-foreground italic">
-					{part.content}
-				</div>
-			);
 
 		default: {
 			console.warn("Unknown Pi message part type:", part);
@@ -1775,7 +2155,7 @@ export const FileReferenceCard = memo(function FileReferenceCard({
 	}
 
 	// Non-image/video or load error - show compact link
-	const Icon = isImage ? ImageIcon : File;
+	const Icon = isImage ? ImageIcon : FileIcon;
 
 	return (
 		<a

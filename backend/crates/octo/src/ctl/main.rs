@@ -26,6 +26,15 @@ async fn try_main() -> Result<()> {
 
     match cli.command {
         Command::Status => handle_status(&client, cli.json).await,
+        Command::Ask {
+            target,
+            question,
+            timeout,
+            stream,
+        } => handle_ask(&client, &target, &question, timeout, stream, cli.json).await,
+        Command::Sessions { query, limit } => {
+            handle_sessions(&client, query.as_deref(), limit, cli.json).await
+        }
         Command::Session { command } => handle_session(&client, command, cli.json).await,
         Command::Container { command } => handle_container(&client, command, cli.json).await,
         Command::Image { command } => handle_image(&client, command, cli.json).await,
@@ -58,6 +67,40 @@ struct Cli {
 enum Command {
     /// Check server status
     Status,
+
+    /// Ask an agent a question and get the response
+    /// 
+    /// Target formats:
+    ///   @@main, @@pi          - Main chat (most recent session)
+    ///   @@main:query          - Main chat, search for session
+    ///   @@<name>              - Main chat by assistant name
+    ///   @@session:id          - Specific session by ID
+    ///   main, pi, session:id  - Same without @@ prefix
+    Ask {
+        /// Target agent (e.g., "@@main", "@@pi:my-session", "session:abc123")
+        target: String,
+
+        /// The question/prompt to send
+        question: String,
+
+        /// Timeout in seconds (default: 300)
+        #[arg(long, short = 't', default_value = "300")]
+        timeout: u64,
+
+        /// Stream output as it arrives
+        #[arg(long)]
+        stream: bool,
+    },
+
+    /// List or search main chat sessions
+    Sessions {
+        /// Search query (fuzzy matches on ID and title)
+        query: Option<String>,
+
+        /// Maximum number of results
+        #[arg(long, short = 'n', default_value = "20")]
+        limit: usize,
+    },
 
     /// Manage sessions
     Session {
@@ -449,6 +492,209 @@ async fn handle_status(client: &OctoClient, json: bool) -> Result<()> {
             println!("Server returned error: {}", response.status());
         }
     }
+    Ok(())
+}
+
+async fn handle_ask(
+    client: &OctoClient,
+    target: &str,
+    question: &str,
+    timeout: u64,
+    stream: bool,
+    json_output: bool,
+) -> Result<()> {
+    // Strip @@ prefix if present
+    let target = target.strip_prefix("@@").unwrap_or(target);
+
+    let body = serde_json::json!({
+        "target": target,
+        "question": question,
+        "timeout_secs": timeout,
+        "stream": stream,
+    });
+
+    if stream {
+        // Use SSE streaming
+        use futures::StreamExt;
+        use reqwest_eventsource::{Event, EventSource};
+
+        let url = format!("{}/api/agents/ask", client.base_url);
+        let mut request = client.client.post(&url).json(&body);
+        request = client.with_auth_headers(request);
+
+        let mut es = EventSource::new(request)?;
+
+        while let Some(event) = es.next().await {
+            match event {
+                Ok(Event::Open) => {}
+                Ok(Event::Message(message)) => {
+                    if json_output {
+                        println!("{}", message.data);
+                    } else {
+                        // Parse and display streaming content
+                        if let Ok(data) = serde_json::from_str::<serde_json::Value>(&message.data) {
+                            match data["type"].as_str() {
+                                Some("text") => {
+                                    if let Some(text) = data["data"].as_str() {
+                                        print!("{}", text);
+                                        let _ = io::stdout().flush();
+                                    }
+                                }
+                                Some("thinking") => {
+                                    // Optionally show thinking in a different style
+                                    if let Some(text) = data["data"].as_str() {
+                                        print!("\x1b[2m{}\x1b[0m", text); // Dim text
+                                        let _ = io::stdout().flush();
+                                    }
+                                }
+                                Some("done") => {
+                                    println!(); // Final newline
+                                }
+                                Some("error") => {
+                                    if let Some(err) = data["error"].as_str() {
+                                        eprintln!("\nError: {}", err);
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+                Err(err) => {
+                    es.close();
+                    return Err(anyhow::anyhow!("SSE error: {}", err));
+                }
+            }
+        }
+    } else {
+        // Non-streaming: wait for complete response
+        let response = client.post_json("/api/agents/ask", &body).await?;
+
+        if response.status().is_success() {
+            let result: serde_json::Value = response.json().await?;
+
+            // Check if this is an ambiguous response with multiple matches
+            if result.get("matches").is_some() {
+                if json_output {
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                } else {
+                    eprintln!("{}", result["error"].as_str().unwrap_or("Multiple matches found"));
+                    eprintln!("\nMatching sessions:");
+                    if let Some(matches) = result["matches"].as_array() {
+                        for (i, m) in matches.iter().enumerate() {
+                            let id = m["id"].as_str().unwrap_or("?");
+                            let title = m["title"].as_str().unwrap_or("(untitled)");
+                            // Truncate title for display
+                            let title_display: String = title.chars().take(40).collect();
+                            let title_display = if title.len() > 40 {
+                                format!("{}...", title_display)
+                            } else {
+                                title_display
+                            };
+                            eprintln!("  {}. {} - {}", i + 1, id, title_display);
+                        }
+                    }
+                    eprintln!("\nUse a more specific target, e.g.: @@main:{}", 
+                        result["matches"]
+                            .as_array()
+                            .and_then(|a| a.first())
+                            .and_then(|m| m["id"].as_str())
+                            .unwrap_or("session_id"));
+                }
+                return Ok(());
+            }
+
+            if json_output {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                if let Some(response_text) = result["response"].as_str() {
+                    println!("{}", response_text);
+                } else {
+                    println!("{}", result);
+                }
+            }
+        } else {
+            let status = response.status();
+            let body = response.text().await?;
+            if json_output {
+                println!(
+                    r#"{{"error": true, "status": {}, "message": {}}}"#,
+                    status.as_u16(),
+                    serde_json::to_string(&body)?
+                );
+            } else {
+                anyhow::bail!("Request failed ({}): {}", status, body);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+async fn handle_sessions(
+    client: &OctoClient,
+    query: Option<&str>,
+    limit: usize,
+    json_output: bool,
+) -> Result<()> {
+    let path = match query {
+        Some(q) => format!(
+            "/api/agents/sessions?q={}&limit={}",
+            urlencoding::encode(q),
+            limit
+        ),
+        None => format!("/api/agents/sessions?limit={}", limit),
+    };
+
+    let response = client.get(&path).await?;
+
+    if response.status().is_success() {
+        let result: serde_json::Value = response.json().await?;
+
+        if json_output {
+            println!("{}", serde_json::to_string_pretty(&result)?);
+        } else {
+            if let Some(sessions) = result["sessions"].as_array() {
+                if sessions.is_empty() {
+                    println!("No sessions found");
+                } else {
+                    println!("{:<20} {:<40} {:<20}", "ID", "TITLE", "MODIFIED");
+                    println!("{}", "-".repeat(80));
+                    for session in sessions {
+                        let id = session["id"].as_str().unwrap_or("?");
+                        let title = session["title"].as_str().unwrap_or("(untitled)");
+                        let modified = session["modified_at"].as_str().unwrap_or("-");
+
+                        // Truncate title for display
+                        let title_display: String = title.chars().take(38).collect();
+                        let title_display = if title.len() > 38 {
+                            format!("{}...", title_display)
+                        } else {
+                            title_display
+                        };
+
+                        // Format modified time (just date part)
+                        let modified_short = modified.split('T').next().unwrap_or(modified);
+
+                        println!("{:<20} {:<40} {:<20}", id, title_display, modified_short);
+                    }
+                }
+            }
+        }
+    } else {
+        let status = response.status();
+        let body = response.text().await?;
+        if json_output {
+            println!(
+                r#"{{"error": true, "status": {}, "message": {}}}"#,
+                status.as_u16(),
+                serde_json::to_string(&body)?
+            );
+        } else {
+            anyhow::bail!("Request failed ({}): {}", status, body);
+        }
+    }
+
     Ok(())
 }
 

@@ -6,7 +6,7 @@
 use axum::{
     Json,
     extract::{
-        State, WebSocketUpgrade,
+        Query, State, WebSocketUpgrade,
         ws::{Message, WebSocket},
     },
     http::StatusCode,
@@ -20,12 +20,26 @@ use std::sync::Arc;
 
 use crate::auth::CurrentUser;
 use crate::main_chat::{
-    ChatMessage, CreateChatMessage, MainChatPiService, MainChatService, MessageRole,
+    ChatMessage, CreateChatMessage, MainChatPiService, MainChatService, MessageRole, PiSessionFile,
+    PiSessionMessage,
 };
 use crate::pi::{AgentMessage, AssistantMessageEvent, CompactionResult, PiEvent, PiState};
 
+use super::state::MmryState;
+
 use super::error::{ApiError, ApiResult};
 use super::state::AppState;
+
+#[derive(Debug, serde::Serialize)]
+struct MmryAgentMemoryCreateRequest {
+    content: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    category: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tags: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    importance: Option<i32>,
+}
 
 // ========== Request/Response Types ==========
 
@@ -424,15 +438,12 @@ pub async fn new_session(
 ) -> ApiResult<Json<PiStateResponse>> {
     let pi_service = get_pi_service(&state)?;
 
+    // Reset the Pi process so that context injection runs for the new session.
+    // This aligns "new chat" semantics with the session-boundary architecture.
     let session = pi_service
-        .get_session(user.id())
+        .reset_session(user.id(), false)
         .await
-        .ok_or_else(|| ApiError::not_found("Pi session not active"))?;
-
-    session
-        .new_session()
-        .await
-        .map_err(|e| ApiError::internal(format!("Failed to create new session: {}", e)))?;
+        .map_err(|e| ApiError::internal(format!("Failed to reset session: {}", e)))?;
 
     let pi_state = session
         .get_state()
@@ -453,7 +464,7 @@ pub async fn reset_session(
     let pi_service = get_pi_service(&state)?;
 
     let session = pi_service
-        .reset_session(user.id())
+        .reset_session(user.id(), false)
         .await
         .map_err(|e| ApiError::internal(format!("Failed to reset session: {}", e)))?;
 
@@ -511,26 +522,43 @@ pub async fn close_session(
     let pi_service = get_pi_service(&state)?;
 
     pi_service
-        .close_session(user.id())
+        .close_all_sessions(user.id(), false)
         .await
         .map_err(|e| ApiError::internal(format!("Failed to close session: {}", e)))?;
 
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// Query params for history endpoint.
+#[derive(Debug, Deserialize)]
+pub struct HistoryQuery {
+    /// Optional session ID to filter messages.
+    pub session_id: Option<String>,
+}
+
 /// Get chat history from database (persistent display history).
+/// If session_id is provided, returns only messages for that session.
 ///
 /// GET /api/main/pi/history
+/// GET /api/main/pi/history?session_id=<id>
 pub async fn get_history(
     State(state): State<AppState>,
     user: CurrentUser,
+    Query(query): Query<HistoryQuery>,
 ) -> ApiResult<Json<Vec<ChatMessage>>> {
     let main_chat_service = get_main_chat_service(&state)?;
 
-    let messages = main_chat_service
-        .get_all_messages(user.id())
-        .await
-        .map_err(|e| ApiError::internal(format!("Failed to get history: {}", e)))?;
+    let messages = if let Some(session_id) = query.session_id {
+        main_chat_service
+            .get_messages_by_session(user.id(), &session_id)
+            .await
+            .map_err(|e| ApiError::internal(format!("Failed to get session history: {}", e)))?
+    } else {
+        main_chat_service
+            .get_all_messages(user.id())
+            .await
+            .map_err(|e| ApiError::internal(format!("Failed to get history: {}", e)))?
+    };
 
     Ok(Json(messages))
 }
@@ -552,7 +580,7 @@ pub async fn clear_history(
     Ok(Json(serde_json::json!({ "deleted": deleted })))
 }
 
-/// Add a session separator to history (marks new conversation start).
+/// Add a session separator to history (legacy; used by older frontend).
 ///
 /// POST /api/main/pi/history/separator
 pub async fn add_separator(
@@ -579,6 +607,84 @@ pub async fn add_separator(
         .map_err(|e| ApiError::internal(format!("Failed to add separator: {}", e)))?;
 
     Ok(Json(message))
+}
+
+/// List Pi sessions for Main Chat from disk.
+///
+/// GET /api/main/pi/sessions
+pub async fn list_pi_sessions(
+    State(state): State<AppState>,
+    user: CurrentUser,
+) -> ApiResult<Json<Vec<PiSessionFile>>> {
+    let pi_service = get_pi_service(&state)?;
+
+    let sessions = pi_service
+        .list_sessions(user.id())
+        .map_err(|e| ApiError::internal(format!("Failed to list Pi sessions: {}", e)))?;
+
+    Ok(Json(sessions))
+}
+
+/// Start a fresh Pi session and return its state.
+///
+/// POST /api/main/pi/sessions
+pub async fn new_pi_session(
+    State(state): State<AppState>,
+    user: CurrentUser,
+) -> ApiResult<Json<PiStateResponse>> {
+    let pi_service = get_pi_service(&state)?;
+
+    let session = pi_service
+        .reset_session(user.id(), false)
+        .await
+        .map_err(|e| ApiError::internal(format!("Failed to start new session: {}", e)))?;
+
+    let pi_state = session
+        .get_state()
+        .await
+        .map_err(|e| ApiError::internal(format!("Failed to get Pi state: {}", e)))?;
+
+    Ok(Json(pi_state_to_response(pi_state)))
+}
+
+/// Load a specific Pi session's messages from disk.
+///
+/// GET /api/main/pi/sessions/{session_id}
+pub async fn get_pi_session_messages(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    axum::extract::Path(session_id): axum::extract::Path<String>,
+) -> ApiResult<Json<Vec<PiSessionMessage>>> {
+    let pi_service = get_pi_service(&state)?;
+
+    let messages = pi_service
+        .get_session_messages(user.id(), &session_id)
+        .map_err(|e| ApiError::internal(format!("Failed to load Pi session: {}", e)))?;
+
+    Ok(Json(messages))
+}
+
+/// Resume a specific Pi session (switch active session).
+///
+/// POST /api/main/pi/sessions/{session_id}
+pub async fn resume_pi_session(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    axum::extract::Path(session_id): axum::extract::Path<String>,
+) -> ApiResult<Json<PiStateResponse>> {
+    let pi_service = get_pi_service(&state)?;
+
+    let session = pi_service
+        .resume_session(user.id(), &session_id)
+        .await
+        .map_err(|e| ApiError::internal(format!("Failed to resume Pi session: {}", e)))?;
+
+    let pi_state = session
+        .get_state()
+        .await
+        .map_err(|e| ApiError::internal(format!("Failed to get Pi state: {}", e)))?;
+
+    Ok(Json(pi_state_to_response(pi_state)))
 }
 
 /// WebSocket endpoint for streaming Pi events.
@@ -611,9 +717,10 @@ pub async fn ws_handler(
 
     let user_id = user.id().to_string();
     let main_chat_svc = state.main_chat.clone();
+    let mmry_state = state.mmry.clone();
     info!("Upgrading to WebSocket for user {}", user_id);
 
-    Ok(ws.on_upgrade(move |socket| handle_ws(socket, session, user_id, main_chat_svc)))
+    Ok(ws.on_upgrade(move |socket| handle_ws(socket, session, user_id, main_chat_svc, mmry_state)))
 }
 
 /// Handle WebSocket connection for Pi events.
@@ -622,11 +729,15 @@ async fn handle_ws(
     session: Arc<crate::main_chat::UserPiSession>,
     user_id: String,
     main_chat_svc: Option<Arc<MainChatService>>,
+    mmry_state: super::state::MmryState,
 ) {
     let (mut sender, mut receiver) = socket.split();
 
     // Subscribe to Pi events
     let mut event_rx = session.subscribe().await;
+
+    // Snapshot Pi session id for traceability (best-effort).
+    let pi_session_id = session.get_state().await.ok().and_then(|s| s.session_id);
 
     // Send connected message
     let connected_msg = serde_json::json!({"type": "connected"});
@@ -655,6 +766,12 @@ async fn handle_ws(
     let accumulator_for_events = Arc::clone(&message_accumulator);
     let main_chat_for_events = main_chat_svc.clone();
     let user_id_for_events = user_id.clone();
+    let pi_session_id_for_events = pi_session_id.clone();
+    let mmry_state_for_events = mmry_state.clone();
+
+    // Persist Pi auto-compaction summaries to main_chat.db so they can be injected
+    // even when the OpenCode-side plugin is not active.
+    let history_for_events = main_chat_svc.clone();
 
     // Spawn task to forward Pi events to WebSocket
     // Transform raw Pi events into simplified format for frontend
@@ -669,19 +786,66 @@ async fn handle_ws(
                 if matches!(event, PiEvent::AgentEnd { .. }) {
                     if let Some(svc) = &main_chat_for_events {
                         if let Some(content) = acc.take_message() {
-                            if let Err(e) = svc
+                            let persisted = svc
                                 .add_message(
                                     &user_id_for_events,
                                     CreateChatMessage {
                                         role: MessageRole::Assistant,
-                                        content,
-                                        pi_session_id: None, // TODO: get from session
+                                        content: content.clone(),
+                                        pi_session_id: pi_session_id_for_events.clone(),
                                     },
                                 )
-                                .await
-                            {
-                                warn!("Failed to save assistant message: {}", e);
+                                .await;
+
+                            match persisted {
+                                Ok(saved) => {
+                                    // Best-effort: index a compact turn chunk into mmry.
+                                    // This uses the existing mmry proxy surface so Octo doesn't need a dedicated client.
+                                    if let Err(e) = index_turn_to_mmry(
+                                        &mmry_state_for_events,
+                                        &user_id_for_events,
+                                        &pi_session_id_for_events,
+                                        &saved,
+                                    )
+                                    .await
+                                    {
+                                        warn!("Failed to index turn into mmry: {}", e);
+                                    }
+                                }
+                                Err(e) => {
+                                    warn!("Failed to save assistant message: {}", e);
+                                }
                             }
+                        }
+                    }
+                }
+
+                // Persist auto-compaction output for continuity
+                if let PiEvent::AutoCompactionEnd {
+                    result: Some(result),
+                    aborted: false,
+                    ..
+                } = &event
+                {
+                    if let Some(svc) = &history_for_events {
+                        if let Err(e) = svc
+                            .add_history(
+                                &user_id_for_events,
+                                crate::main_chat::CreateHistoryEntry {
+                                    entry_type: crate::main_chat::HistoryEntryType::Summary,
+                                    content: result.summary.clone(),
+                                    session_id: None,
+                                    meta: Some(serde_json::json!({
+                                        "source": "pi_auto_compaction",
+                                        "first_kept_entry_id": result.first_kept_entry_id,
+                                        "tokens_before": result.tokens_before,
+                                        "details": result.details,
+                                    })),
+                                },
+                            )
+                            .await
+                        {
+                            warn!("Failed to persist compaction summary: {}", e);
                         }
                     }
                 }
@@ -728,7 +892,7 @@ async fn handle_ws(
                                         CreateChatMessage {
                                             role: MessageRole::User,
                                             content,
-                                            pi_session_id: None,
+                                            pi_session_id: pi_session_id.clone(),
                                         },
                                     )
                                     .await
@@ -914,6 +1078,83 @@ fn get_main_chat_service(state: &AppState) -> ApiResult<&MainChatService> {
         .as_ref()
         .map(|arc| arc.as_ref())
         .ok_or_else(|| ApiError::internal("Main Chat service not configured"))
+}
+
+async fn index_turn_to_mmry(
+    mmry: &MmryState,
+    user_id: &str,
+    pi_session_id: &Option<String>,
+    assistant_message: &ChatMessage,
+) -> Result<(), String> {
+    if !mmry.enabled {
+        return Ok(());
+    }
+
+    let pi_session_id = match pi_session_id.as_deref() {
+        Some(id) if !id.trim().is_empty() => id,
+        _ => return Ok(()),
+    };
+
+    // Best-effort extraction: store assistant text for now.
+    // We can extend this to include the paired user message later.
+    let content = format!(
+        "source: octo_main_chat\nuser_id: {user_id}\npi_session_id: {pi_session_id}\n\n{body}",
+        body = assistant_message.content
+    );
+
+    let tags = vec![
+        "source:octo".to_string(),
+        "domain:main_chat".to_string(),
+        "kind:assistant_chunk".to_string(),
+        format!("pi_session_id:{pi_session_id}"),
+    ];
+
+    let req = MmryAgentMemoryCreateRequest {
+        content,
+        category: Some("octo_main_chat".to_string()),
+        tags: Some(tags),
+        importance: Some(4),
+    };
+
+    let client = reqwest::Client::new();
+
+    let (base_url, store) = if mmry.single_user {
+        // Single-user: write to local mmry service. Keep store default.
+        (mmry.local_service_url.as_str(), None)
+    } else {
+        // Multi-user: write to host mmry service using a per-user store.
+        (
+            mmry.host_service_url.as_str(),
+            Some(format!("octo-user-{user_id}")),
+        )
+    };
+
+    let url = format!("{}/v1/agents/memories", base_url.trim_end_matches('/'));
+
+    let mut req_builder = client.post(url).json(&req);
+
+    if let Some(store) = store.as_deref() {
+        req_builder = req_builder.query(&[("store", store)]);
+    }
+
+    if let Some(key) = mmry.host_api_key.as_deref() {
+        if !key.trim().is_empty() {
+            req_builder = req_builder.bearer_auth(key);
+        }
+    }
+
+    let resp = req_builder
+        .send()
+        .await
+        .map_err(|e| format!("mmry request failed: {e}"))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("mmry returned {status}: {body}"));
+    }
+
+    Ok(())
 }
 
 fn pi_state_to_response(state: PiState) -> PiStateResponse {
