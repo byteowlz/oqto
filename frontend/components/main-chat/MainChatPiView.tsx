@@ -373,7 +373,8 @@ export function MainChatPiView({
 	}, [currentModelRef, selectedModelRef]);
 
 	useEffect(() => {
-		if (!isConnected) return;
+		// Only fetch models once session is active (piState available)
+		if (!isConnected || !piState) return;
 		let active = true;
 		getMainChatPiModels()
 			.then((models) => {
@@ -385,10 +386,11 @@ export function MainChatPiView({
 		return () => {
 			active = false;
 		};
-	}, [isConnected]);
+	}, [isConnected, piState]);
 
 	useEffect(() => {
-		if (!isConnected) return;
+		// Only fetch commands once session is active (piState available)
+		if (!isConnected || !piState) return;
 		let active = true;
 		getMainChatPiCommands()
 			.then((commands) => {
@@ -406,7 +408,7 @@ export function MainChatPiView({
 		return () => {
 			active = false;
 		};
-	}, [isConnected]);
+	}, [isConnected, piState]);
 
 	const refreshStats = useCallback(async () => {
 		try {
