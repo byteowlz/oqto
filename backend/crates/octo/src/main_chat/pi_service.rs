@@ -291,11 +291,18 @@ pub struct MainChatPiService {
     workspace_dir: PathBuf,
     /// Single-user mode.
     single_user: bool,
+    /// Main Chat persistent store (for injecting session summaries).
+    main_chat: Arc<crate::main_chat::MainChatService>,
 }
 
 impl MainChatPiService {
     /// Create a new Pi service.
-    pub fn new(workspace_dir: PathBuf, single_user: bool, config: MainChatPiServiceConfig) -> Self {
+    pub fn new(
+        workspace_dir: PathBuf,
+        single_user: bool,
+        config: MainChatPiServiceConfig,
+        main_chat: Arc<crate::main_chat::MainChatService>,
+    ) -> Self {
         info!(
             "MainChatPiService initialized with runtime mode: {}",
             config.runtime_mode
@@ -306,6 +313,7 @@ impl MainChatPiService {
             sessions: RwLock::new(HashMap::new()),
             workspace_dir,
             single_user,
+            main_chat,
         }
     }
 
@@ -494,6 +502,33 @@ impl MainChatPiService {
         let user_file = work_dir.join("USER.md");
         if user_file.exists() {
             append_system_prompt.push(user_file);
+        }
+
+        // On a fresh start, inject the most recent persisted summary/handoff so Pi has context.
+        if !should_continue {
+            if let Ok(entries) = self
+                .main_chat
+                .get_recent_history_filtered(user_id, &["summary", "handoff", "decision"], 20)
+                .await
+            {
+                let mut injected = String::new();
+                for entry in entries.into_iter().rev() {
+                    injected.push_str(&format!(
+                        "## {}\n{}\n\n",
+                        entry.entry_type.to_uppercase(),
+                        entry.content.trim()
+                    ));
+                }
+
+                if !injected.trim().is_empty() {
+                    let inject_path = work_dir.join("CONTEXT_INJECT.md");
+                    if let Err(e) = std::fs::write(&inject_path, injected) {
+                        debug!("Failed to write CONTEXT_INJECT.md: {}", e);
+                    } else {
+                        append_system_prompt.push(inject_path);
+                    }
+                }
+            }
         }
 
         // Build environment for container mode
@@ -831,10 +866,15 @@ mod tests {
 
     #[test]
     fn test_pi_sessions_dir_escaping() {
+        let main_chat = Arc::new(crate::main_chat::MainChatService::new(
+            PathBuf::from("/tmp/test"),
+            true,
+        ));
         let service = MainChatPiService::new(
             PathBuf::from("/tmp/test"),
             true,
             MainChatPiServiceConfig::default(),
+            main_chat,
         );
 
         let work_dir = PathBuf::from("/home/user/.local/share/octo/users/main");
@@ -850,6 +890,10 @@ mod tests {
 
     #[test]
     fn test_session_freshness_by_age() {
+        let main_chat = Arc::new(crate::main_chat::MainChatService::new(
+            PathBuf::from("/tmp/test"),
+            true,
+        ));
         let service = MainChatPiService::new(
             PathBuf::from("/tmp/test"),
             true,
@@ -857,6 +901,7 @@ mod tests {
                 max_session_age_hours: 1, // 1 hour for testing
                 ..Default::default()
             },
+            main_chat,
         );
 
         // Fresh session (now)
@@ -876,6 +921,10 @@ mod tests {
 
     #[test]
     fn test_session_freshness_by_size() {
+        let main_chat = Arc::new(crate::main_chat::MainChatService::new(
+            PathBuf::from("/tmp/test"),
+            true,
+        ));
         let service = MainChatPiService::new(
             PathBuf::from("/tmp/test"),
             true,
@@ -883,6 +932,7 @@ mod tests {
                 max_session_size_bytes: 1000, // 1KB for testing
                 ..Default::default()
             },
+            main_chat,
         );
 
         // Small session
@@ -916,10 +966,15 @@ mod tests {
         )
         .unwrap();
 
+        let main_chat = Arc::new(crate::main_chat::MainChatService::new(
+            temp.path().to_path_buf(),
+            true,
+        ));
         let service = MainChatPiService::new(
             temp.path().to_path_buf(),
             true,
             MainChatPiServiceConfig::default(),
+            main_chat,
         );
 
         // This would fail without pi installed
