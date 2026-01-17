@@ -1488,6 +1488,42 @@ export async function resumeMainChatPiSession(sessionId: string): Promise<PiStat
 	return res.json();
 }
 
+/** In-session search result from CASS */
+export type InSessionSearchResult = {
+	/** Line number in the source file */
+	line_number: number;
+	/** Match score */
+	score: number;
+	/** Short snippet around the match */
+	snippet?: string;
+	/** Session title */
+	title?: string;
+	/** Match type (exact, fuzzy) */
+	match_type?: string;
+	/** Timestamp when the message was created */
+	created_at?: number;
+};
+
+/** Search within a specific Pi session using CASS */
+export async function searchInPiSession(
+	sessionId: string,
+	query: string,
+	limit = 20,
+): Promise<InSessionSearchResult[]> {
+	const url = new URL(
+		controlPlaneApiUrl(`/api/agents/sessions/${encodeURIComponent(sessionId)}/search`),
+		window.location.origin,
+	);
+	url.searchParams.set("q", query);
+	url.searchParams.set("limit", limit.toString());
+	
+	const res = await authFetch(url.toString(), {
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+	return res.json();
+}
+
 /** Register a new session with the assistant */
 export async function registerMainChatSession(
 	name: string,

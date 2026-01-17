@@ -67,10 +67,12 @@ import {
 	ImageIcon,
 	Loader2,
 	Paperclip,
+	Search,
 	Send,
 	StopCircle,
 	User,
 } from "lucide-react";
+import { ChatSearchBar } from "./ChatSearchBar";
 import {
 	type ChangeEvent,
 	type KeyboardEvent,
@@ -170,6 +172,7 @@ export function MainChatPiView({
 		input: number;
 		output: number;
 	} | null>(null);
+	const [isSearchOpen, setIsSearchOpen] = useState(false);
 
 	const messagesEndRef = useRef<HTMLDivElement>(null);
 	const messagesContainerRef = useRef<HTMLDivElement>(null);
@@ -506,6 +509,21 @@ export function MainChatPiView({
 			}
 		}
 	}, [messages.length, isUserScrolled]);
+
+	// Keyboard shortcut for search (Ctrl+F / Cmd+F)
+	useEffect(() => {
+		const handleKeyDown = (e: globalThis.KeyboardEvent) => {
+			if ((e.ctrlKey || e.metaKey) && e.key === "f") {
+				e.preventDefault();
+				setIsSearchOpen(true);
+			}
+			if (e.key === "Escape" && isSearchOpen) {
+				setIsSearchOpen(false);
+			}
+		};
+		window.addEventListener("keydown", handleKeyDown);
+		return () => window.removeEventListener("keydown", handleKeyDown);
+	}, [isSearchOpen]);
 
 	// Detect user scroll to disable auto-scroll, save position, and load more messages
 	const handleScroll = useCallback(() => {
@@ -867,6 +885,43 @@ export function MainChatPiView({
 		await abort();
 	}, [abort]);
 
+	// Search result handler - scroll to message by line number
+	const handleSearchResult = useCallback(
+		(result: { lineNumber: number; messageId?: string }) => {
+			// Line numbers in CASS roughly correspond to message indices
+			// Adjust for header line and 1-indexing
+			const messageIndex = Math.max(0, result.lineNumber - 2);
+			if (messageIndex < messages.length) {
+				const targetMessage = messages[messageIndex];
+				// Ensure message is visible
+				const messagesFromEnd = messages.length - messageIndex;
+				if (messagesFromEnd > visibleCount) {
+					setVisibleCount(messagesFromEnd + 10);
+				}
+				// Scroll to message after DOM update
+				requestAnimationFrame(() => {
+					const container = messagesContainerRef.current;
+					if (!container) return;
+					const messageEl = container.querySelector(
+						`[data-message-id="${targetMessage.id}"]`,
+					);
+					if (messageEl) {
+						messageEl.scrollIntoView({ behavior: "smooth", block: "center" });
+						messageEl.classList.add("search-highlight");
+						setTimeout(() => {
+							messageEl.classList.remove("search-highlight");
+						}, 2000);
+					}
+				});
+			}
+		},
+		[messages, visibleCount],
+	);
+
+	const toggleSearch = useCallback(() => {
+		setIsSearchOpen((prev) => !prev);
+	}, []);
+
 	// Voice mode handlers
 	const handleVoiceConversation = useCallback(() => {
 		setVoiceMode("conversation");
@@ -973,7 +1028,29 @@ export function MainChatPiView({
 						</div>
 					</div>
 				</div>
+				{/* Search button */}
+				<Button
+					variant="ghost"
+					size="icon"
+					onClick={toggleSearch}
+					className="h-8 w-8 flex-shrink-0"
+					title={locale === "de" ? "Suchen (Ctrl+F)" : "Search (Ctrl+F)"}
+				>
+					<Search className="h-4 w-4" />
+				</Button>
 			</div>
+			{/* Inline search bar */}
+			{isSearchOpen && (
+				<div className="mt-2">
+					<ChatSearchBar
+						sessionId={selectedSessionId || piState?.session_id || null}
+						onResultSelect={handleSearchResult}
+						isOpen={isSearchOpen}
+						onToggle={toggleSearch}
+						locale={locale}
+					/>
+				</div>
+			)}
 			<div className="mt-2">
 				<ContextWindowGauge
 					inputTokens={gaugeTokens.inputTokens}
