@@ -1139,6 +1139,8 @@ export const SessionsApp = memo(function SessionsApp() {
 	const [showAgentMentionPopup, setShowAgentMentionPopup] = useState(false);
 	const [agentMentionQuery, setAgentMentionQuery] = useState("");
 	const [agentTarget, setAgentTarget] = useState<AgentTarget | null>(null);
+	// When true, agent ask will only show response in toast, not inject into current chat
+	const agentAskNoReplyRef = useRef(false);
 
 	// Default agent for shell commands - use "build" as the default primary agent
 	const [defaultAgent, setDefaultAgent] = useState<string>("build");
@@ -3379,8 +3381,15 @@ export const SessionsApp = memo(function SessionsApp() {
 		setChatState("sending");
 		setStatus("");
 
-		// If an agent target is set, ask that agent instead of sending to current session
+		// Track if we're injecting an agent response
+		let effectiveMessageText = messageText;
+
+		// If an agent target is set, ask that agent and optionally inject the response
 		if (currentAgentTarget) {
+			// Check if we should skip injecting the reply (Ctrl/Cmd+Enter mode)
+			const noReply = agentAskNoReplyRef.current;
+			agentAskNoReplyRef.current = false; // Reset for next send
+
 			try {
 				setStatus(
 					locale === "de"
@@ -3403,15 +3412,23 @@ export const SessionsApp = memo(function SessionsApp() {
 					question: messageText,
 					timeout_secs: 300,
 				});
-				// Display the response as a system message or toast
 				setStatus("");
-				// For now, show as a toast/notification with the response
-				toast.success(`Response from ${currentAgentTarget.name}`, {
-					description: response.response.slice(0, 200) + (response.response.length > 200 ? "..." : ""),
-					duration: 10000,
-				});
-				setChatState("idle");
-				return;
+
+				if (noReply) {
+					// Just show the response in a toast, don't inject into current chat
+					toast.success(`Response from ${currentAgentTarget.name}`, {
+						description: response.response.slice(0, 300) + (response.response.length > 300 ? "..." : ""),
+						duration: 15000,
+					});
+					setChatState("idle");
+					return;
+				}
+
+				// Format the response as a message to inject into current chat
+				// This allows the current agent to see and respond to it
+				effectiveMessageText = `I asked @@${currentAgentTarget.name}:\n> ${messageText}\n\nTheir response:\n${response.response}`;
+
+				// Fall through to normal send flow below with the formatted message
 			} catch (err) {
 				const message = err instanceof Error ? err.message : "Agent ask failed";
 				setStatus(message);
@@ -3552,7 +3569,7 @@ export const SessionsApp = memo(function SessionsApp() {
 						sessionID: targetSessionId,
 						messageID: `temp-${Date.now()}`,
 						type: "text",
-						text: messageText,
+						text: effectiveMessageText,
 					},
 				],
 			};
@@ -3587,7 +3604,7 @@ export const SessionsApp = memo(function SessionsApp() {
 			} else if (currentFileAttachments.length > 0) {
 				// Send with file parts
 				const parts: OpenCodePartInput[] = [
-					{ type: "text", text: messageText },
+					{ type: "text", text: effectiveMessageText },
 				];
 				// Add file parts
 				for (const attachment of currentFileAttachments) {
@@ -3610,7 +3627,7 @@ export const SessionsApp = memo(function SessionsApp() {
 				await sendMessageAsync(
 					effectiveBaseUrl,
 					targetSessionId,
-					messageText,
+					effectiveMessageText,
 					selectedModelOverride,
 					{ directory: effectiveDirectory },
 				);
@@ -3756,6 +3773,10 @@ export const SessionsApp = memo(function SessionsApp() {
 			}
 			if (e.key === "Enter" && !e.shiftKey) {
 				e.preventDefault();
+				// Ctrl/Cmd+Enter with agent target = send without reply
+				if ((e.ctrlKey || e.metaKey) && agentTarget) {
+					agentAskNoReplyRef.current = true;
+				}
 				handleSendRef.current();
 			}
 			if (e.key === "Escape") {
@@ -3764,7 +3785,7 @@ export const SessionsApp = memo(function SessionsApp() {
 				setShowAgentMentionPopup(false);
 			}
 		},
-		[showSlashPopup, slashQuery.isSlash, slashQuery.args, showFileMentionPopup, showAgentMentionPopup],
+		[showSlashPopup, slashQuery.isSlash, slashQuery.args, showFileMentionPopup, showAgentMentionPopup, agentTarget],
 	);
 
 	const handleResume = async () => {

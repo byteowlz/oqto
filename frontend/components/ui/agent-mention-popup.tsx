@@ -310,8 +310,14 @@ export const AgentTargetChip = memo(function AgentTargetChip({
 	target: AgentTarget;
 	onRemove: () => void;
 }) {
+	const isMac = typeof navigator !== "undefined" && navigator.platform.toLowerCase().includes("mac");
+	const modKey = isMac ? "Cmd" : "Ctrl";
+
 	return (
-		<span className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-500/10 text-blue-500 rounded text-sm">
+		<span
+			className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-500/10 text-blue-500 rounded text-sm"
+			title={`Enter: ask and inject reply | ${modKey}+Enter: ask without reply`}
+		>
 			{target.type === "main-chat" ? (
 				<Bot className="w-3 h-3" />
 			) : (
