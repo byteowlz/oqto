@@ -108,6 +108,10 @@ interface SessionContextValue {
 	/** Workspace path for the Main Chat assistant */
 	mainChatWorkspacePath: string | null;
 	setMainChatWorkspacePath: (path: string | null) => void;
+	/** Trigger to create a new Main Chat session - increment to trigger */
+	mainChatNewSessionTrigger: number;
+	/** Request a new Main Chat session (increments trigger) */
+	requestNewMainChatSession: () => void;
 	/** Target message ID to scroll to after navigation (from search) */
 	scrollToMessageId: string | null;
 	setScrollToMessageId: (id: string | null) => void;
@@ -856,6 +860,14 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 		],
 	);
 
+	// Trigger for creating a new Main Chat session
+	const [mainChatNewSessionTrigger, setMainChatNewSessionTrigger] = useState(0);
+
+	// Request a new Main Chat session by incrementing the trigger
+	const requestNewMainChatSession = useCallback(() => {
+		setMainChatNewSessionTrigger((prev) => prev + 1);
+	}, []);
+
 	const deleteChatSession = useCallback(
 		async (sessionId: string, baseUrlOverride?: string): Promise<boolean> => {
 			const baseUrl = baseUrlOverride || opencodeBaseUrl;
@@ -1015,6 +1027,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 			setMainChatCurrentSessionId,
 			mainChatWorkspacePath,
 			setMainChatWorkspacePath,
+			mainChatNewSessionTrigger,
+			requestNewMainChatSession,
 			scrollToMessageId,
 			setScrollToMessageId,
 		}),
@@ -1053,6 +1067,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 			mainChatAssistantName,
 			mainChatCurrentSessionId,
 			mainChatWorkspacePath,
+			mainChatNewSessionTrigger,
+			requestNewMainChatSession,
 			setMainChatWorkspacePath,
 			scrollToMessageId,
 		],

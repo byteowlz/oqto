@@ -306,6 +306,8 @@ export function usePiChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 
 	const activeSessionId = selectedSessionId ?? null;
 	const resumeInFlightRef = useRef<string | null>(null);
+	// Track sessions created by newSession() to skip resume for them
+	const justCreatedSessionRef = useRef<string | null>(null);
 
 	// Initialize with cached data for INSTANT display
 	const [state, setState] = useState<PiState | null>(getCachedState);
@@ -335,6 +337,14 @@ export function usePiChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 	useEffect(() => {
 		if (!activeSessionId) {
 			setMessages([]);
+			return;
+		}
+
+		// If this session was just created by newSession(), skip resume
+		// (the session is already active and empty on the backend)
+		if (justCreatedSessionRef.current === activeSessionId) {
+			justCreatedSessionRef.current = null;
+			// WebSocket reconnection is handled by newSession() itself
 			return;
 		}
 
@@ -986,13 +996,21 @@ export function usePiChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 			setIsStreaming(false);
 			setMessages([]);
 
-			// Tell the UI to select the new session immediately.
-			onSelectedSessionIdChange?.(newState.session_id ?? null);
+			// Mark this session as just-created so the effect doesn't try to resume it
+			const newSessionId = newState.session_id ?? null;
+			if (newSessionId) {
+				justCreatedSessionRef.current = newSessionId;
+			}
 
-			// Best-effort: refresh messages in background
-			queueMicrotask(() => {
-				refreshRef.current?.();
-			});
+			// Tell the UI to select the new session immediately.
+			onSelectedSessionIdChange?.(newSessionId);
+
+			// Reconnect WebSocket to the new session after a brief delay
+			// to allow the backend to be ready
+			disconnectRef.current?.(true);
+			setTimeout(() => {
+				connectRef.current?.();
+			}, 100);
 		} catch (e) {
 			const err =
 				e instanceof Error ? e : new Error("Failed to start new session");

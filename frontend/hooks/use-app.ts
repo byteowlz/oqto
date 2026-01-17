@@ -74,6 +74,8 @@ export function useApp() {
 			setMainChatCurrentSessionId: session.setMainChatCurrentSessionId,
 			mainChatWorkspacePath: session.mainChatWorkspacePath,
 			setMainChatWorkspacePath: session.setMainChatWorkspacePath,
+			mainChatNewSessionTrigger: session.mainChatNewSessionTrigger,
+			requestNewMainChatSession: session.requestNewMainChatSession,
 			scrollToMessageId: session.scrollToMessageId,
 			setScrollToMessageId: session.setScrollToMessageId,
 		}),

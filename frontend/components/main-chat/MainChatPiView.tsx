@@ -110,6 +110,8 @@ export interface MainChatPiViewProps {
 	scrollToMessageId?: string | null;
 	/** Callback when scroll target is reached (to clear the target) */
 	onScrollToMessageComplete?: () => void;
+	/** Trigger to create a new session - increment to trigger */
+	newSessionTrigger?: number;
 }
 
 /**
@@ -128,6 +130,7 @@ export function MainChatPiView({
 	onSelectedSessionIdChange,
 	scrollToMessageId,
 	onScrollToMessageComplete,
+	newSessionTrigger,
 }: MainChatPiViewProps) {
 	const {
 		messages,
@@ -144,6 +147,22 @@ export function MainChatPiView({
 		selectedSessionId,
 		onSelectedSessionIdChange,
 	});
+
+	// Track the last trigger value to detect changes
+	const lastNewSessionTriggerRef = useRef(newSessionTrigger);
+
+	// Create new session when trigger changes (external request)
+	useEffect(() => {
+		// Skip initial render and only react to actual changes
+		if (
+			newSessionTrigger !== undefined &&
+			newSessionTrigger !== lastNewSessionTriggerRef.current &&
+			lastNewSessionTriggerRef.current !== undefined
+		) {
+			newSession();
+		}
+		lastNewSessionTriggerRef.current = newSessionTrigger;
+	}, [newSessionTrigger, newSession]);
 
 	// Draft persistence - restore from localStorage on mount
 	const [input, setInput] = useState(() => {

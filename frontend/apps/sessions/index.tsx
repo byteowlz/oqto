@@ -656,6 +656,7 @@ export const SessionsApp = memo(function SessionsApp() {
 		setMainChatCurrentSessionId,
 		mainChatWorkspacePath,
 		setMainChatWorkspacePath,
+		mainChatNewSessionTrigger,
 		scrollToMessageId,
 		setScrollToMessageId,
 	} = useApp();
@@ -5004,6 +5005,7 @@ export const SessionsApp = memo(function SessionsApp() {
 								onSelectedSessionIdChange={setMainChatCurrentSessionId}
 								scrollToMessageId={scrollToMessageId}
 								onScrollToMessageComplete={() => setScrollToMessageId(null)}
+								newSessionTrigger={mainChatNewSessionTrigger}
 							/>
 						) : (
 							renderChatContent(true)
@@ -5192,6 +5194,7 @@ export const SessionsApp = memo(function SessionsApp() {
 								onSelectedSessionIdChange={setMainChatCurrentSessionId}
 								scrollToMessageId={scrollToMessageId}
 								onScrollToMessageComplete={() => setScrollToMessageId(null)}
+								newSessionTrigger={mainChatNewSessionTrigger}
 							/>
 						)
 					) : chatInSidebar ? (
@@ -5317,13 +5320,13 @@ export const SessionsApp = memo(function SessionsApp() {
 												assistantName={mainChatAssistantName}
 												hideHeader
 												onTokenUsageChange={setMainChatTokenUsage}
-								selectedSessionId={mainChatCurrentSessionId}
-								onSelectedSessionIdChange={setMainChatCurrentSessionId}
-
+												selectedSessionId={mainChatCurrentSessionId}
+												onSelectedSessionIdChange={setMainChatCurrentSessionId}
 												scrollToMessageId={scrollToMessageId}
 												onScrollToMessageComplete={() =>
 													setScrollToMessageId(null)
 												}
+												newSessionTrigger={mainChatNewSessionTrigger}
 											/>
 										) : (
 											renderChatContent(false)

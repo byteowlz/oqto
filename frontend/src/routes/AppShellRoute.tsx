@@ -140,6 +140,7 @@ const AppShell = memo(function AppShell() {
 		setMainChatCurrentSessionId,
 		setMainChatWorkspacePath,
 		setScrollToMessageId,
+		requestNewMainChatSession,
 	} = useApp();
 	const location = useLocation();
 	const navigate = useNavigate();
@@ -1251,6 +1252,7 @@ const AppShell = memo(function AppShell() {
 
 	const handleNewChat = useCallback(async () => {
 		console.log("[handleNewChat] called", {
+			mainChatActive,
 			selectedWorkspaceSession: !!selectedWorkspaceSession,
 			opencodeBaseUrl,
 			selectedProjectKey,
@@ -1259,6 +1261,14 @@ const AppShell = memo(function AppShell() {
 				directory: p.directory,
 			})),
 		});
+
+		// If Main Chat is active, create a new Main Chat session
+		if (mainChatActive) {
+			console.log("[handleNewChat] Creating new Main Chat session");
+			setActiveAppId("sessions");
+			requestNewMainChatSession();
+			return;
+		}
 
 		// Check if we have a project filter selected - prioritize this over active session
 		if (selectedProjectKey) {
@@ -1319,6 +1329,8 @@ const AppShell = memo(function AppShell() {
 		console.log("[handleNewChat] Opening agent picker");
 		setAgentPickerOpen(true);
 	}, [
+		mainChatActive,
+		requestNewMainChatSession,
 		selectedWorkspaceSession,
 		opencodeBaseUrl,
 		selectedChatFromHistory,
