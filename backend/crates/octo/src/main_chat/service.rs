@@ -326,6 +326,17 @@ impl MainChatService {
         repo.get_all_messages().await
     }
 
+    /// Get messages for a specific session (by pi_session_id).
+    pub async fn get_messages_by_session(
+        &self,
+        user_id: &str,
+        session_id: &str,
+    ) -> Result<Vec<ChatMessage>> {
+        let db = self.get_db(user_id).await?;
+        let repo = MainChatRepository::new(&db);
+        repo.get_messages_for_session_range(session_id).await
+    }
+
     /// Clear all messages (for fresh start).
     pub async fn clear_messages(&self, user_id: &str) -> Result<i64> {
         let db = self.get_db(user_id).await?;

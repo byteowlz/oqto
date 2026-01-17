@@ -4752,7 +4752,8 @@ export const SessionsApp = memo(function SessionsApp() {
 								assistantName={mainChatAssistantName}
 								hideHeader
 								onTokenUsageChange={setMainChatTokenUsage}
-								scrollToSessionId={mainChatCurrentSessionId}
+								selectedSessionId={mainChatCurrentSessionId}
+								onSelectedSessionIdChange={setMainChatCurrentSessionId}
 								scrollToMessageId={scrollToMessageId}
 								onScrollToMessageComplete={() => setScrollToMessageId(null)}
 							/>
@@ -4912,7 +4913,8 @@ export const SessionsApp = memo(function SessionsApp() {
 								workspacePath={mainChatWorkspacePath}
 								assistantName={mainChatAssistantName}
 								onTokenUsageChange={setMainChatTokenUsage}
-								scrollToSessionId={mainChatCurrentSessionId}
+								selectedSessionId={mainChatCurrentSessionId}
+								onSelectedSessionIdChange={setMainChatCurrentSessionId}
 								scrollToMessageId={scrollToMessageId}
 								onScrollToMessageComplete={() => setScrollToMessageId(null)}
 							/>
@@ -5040,7 +5042,9 @@ export const SessionsApp = memo(function SessionsApp() {
 												assistantName={mainChatAssistantName}
 												hideHeader
 												onTokenUsageChange={setMainChatTokenUsage}
-												scrollToSessionId={mainChatCurrentSessionId}
+								selectedSessionId={mainChatCurrentSessionId}
+								onSelectedSessionIdChange={setMainChatCurrentSessionId}
+
 												scrollToMessageId={scrollToMessageId}
 												onScrollToMessageComplete={() =>
 													setScrollToMessageId(null)

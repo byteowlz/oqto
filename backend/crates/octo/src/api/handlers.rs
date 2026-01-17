@@ -2318,6 +2318,537 @@ pub async fn agent_attach(
 }
 
 // ============================================================================
+// Agent Ask Handler
+// ============================================================================
+
+/// Query parameters for session search.
+#[derive(Debug, Deserialize)]
+pub struct AgentSessionsQuery {
+    /// Search query (fuzzy matches on ID and title)
+    #[serde(default)]
+    pub q: Option<String>,
+    /// Maximum number of results
+    #[serde(default = "default_limit")]
+    pub limit: usize,
+}
+
+fn default_limit() -> usize {
+    20
+}
+
+/// Search for sessions matching a query.
+/// 
+/// GET /api/agents/sessions?q=query&limit=20
+#[instrument(skip(state, user))]
+pub async fn agents_search_sessions(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Query(query): Query<AgentSessionsQuery>,
+) -> ApiResult<Json<Vec<SessionMatch>>> {
+    let pi_service = state
+        .main_chat_pi
+        .as_ref()
+        .ok_or_else(|| ApiError::internal("Main Chat Pi service not enabled"))?;
+
+    let sessions = if let Some(q) = &query.q {
+        pi_service
+            .search_sessions(user.id(), q)
+            .map_err(|e| ApiError::internal(format!("Failed to search sessions: {}", e)))?
+    } else {
+        pi_service
+            .list_sessions(user.id())
+            .map_err(|e| ApiError::internal(format!("Failed to list sessions: {}", e)))?
+    };
+
+    let matches: Vec<SessionMatch> = sessions
+        .into_iter()
+        .take(query.limit)
+        .map(|s| SessionMatch {
+            id: s.id,
+            title: s.title,
+            modified_at: s.modified_at,
+        })
+        .collect();
+
+    Ok(Json(matches))
+}
+
+/// Request body for asking an agent a question.
+#[derive(Debug, Deserialize)]
+pub struct AgentAskRequest {
+    /// Target agent: "main-chat", "session:<id>", or workspace path
+    pub target: String,
+    /// The question/prompt to send
+    pub question: String,
+    /// Timeout in seconds (default: 300)
+    #[serde(default = "default_timeout")]
+    pub timeout_secs: u64,
+    /// Whether to stream the response
+    #[serde(default)]
+    pub stream: bool,
+}
+
+fn default_timeout() -> u64 {
+    300
+}
+
+/// Response for non-streaming agent ask.
+#[derive(Debug, Serialize)]
+pub struct AgentAskResponse {
+    pub response: String,
+    pub session_id: Option<String>,
+}
+
+/// Response when multiple sessions match a query.
+#[derive(Debug, Serialize)]
+pub struct AgentAskAmbiguousResponse {
+    pub error: String,
+    pub matches: Vec<SessionMatch>,
+}
+
+/// A matching session for disambiguation.
+#[derive(Debug, Serialize)]
+pub struct SessionMatch {
+    pub id: String,
+    pub title: Option<String>,
+    pub modified_at: i64,
+}
+
+/// Parsed target for agent ask.
+#[derive(Debug)]
+enum AskTarget {
+    /// Main chat, optionally with session query
+    MainChat { session_query: Option<String> },
+    /// Specific session by exact ID
+    Session { id: String },
+}
+
+/// Parse an ask target string into structured form.
+/// 
+/// Supported formats:
+/// - "main", "main-chat", "pi" -> MainChat
+/// - "main:query", "pi:query" -> MainChat with session search
+/// - "session:id" -> Specific session
+/// - Custom assistant name (checked against main chat config)
+fn parse_ask_target(target: &str, assistant_name: Option<&str>) -> Result<AskTarget, String> {
+    // Check for main chat aliases
+    let main_aliases = ["main", "main-chat", "pi"];
+    
+    // Split on ':' for session query
+    let (base, query) = if let Some(pos) = target.find(':') {
+        let (b, q) = target.split_at(pos);
+        (b, Some(&q[1..])) // Skip the ':'
+    } else {
+        (target, None)
+    };
+    
+    let base_lower = base.to_lowercase();
+    
+    // Check main chat aliases
+    if main_aliases.contains(&base_lower.as_str()) {
+        return Ok(AskTarget::MainChat {
+            session_query: query.map(|s| s.to_string()),
+        });
+    }
+    
+    // Check custom assistant name
+    if let Some(name) = assistant_name {
+        if base_lower == name.to_lowercase() {
+            return Ok(AskTarget::MainChat {
+                session_query: query.map(|s| s.to_string()),
+            });
+        }
+    }
+    
+    // Check for explicit session: prefix
+    if base_lower == "session" {
+        if let Some(id) = query {
+            return Ok(AskTarget::Session { id: id.to_string() });
+        } else {
+            return Err("session: requires a session ID".to_string());
+        }
+    }
+    
+    // Could be a direct session ID (for backwards compat)
+    if target.starts_with("ses_") || target.contains('-') {
+        return Ok(AskTarget::Session { id: target.to_string() });
+    }
+    
+    Err(format!(
+        "Unknown target: {}. Use 'main', 'pi', '@@main:query', or 'session:<id>'",
+        target
+    ))
+}
+
+/// Ask an agent a question and get the response.
+///
+/// Supports two modes:
+/// - Non-streaming: Returns complete response after agent finishes
+/// - Streaming: Returns SSE stream of events as they happen
+///
+/// Target formats:
+/// - "main", "main-chat", "pi" - Main chat, active session
+/// - "main:query", "pi:query" - Main chat, fuzzy search for session
+/// - "<assistant_name>" - Alias for main (e.g., "jarvis")
+/// - "session:<id>" - Specific Pi session by ID
+#[instrument(skip(state, user))]
+pub async fn agents_ask(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Json(req): Json<AgentAskRequest>,
+) -> Result<axum::response::Response, ApiError> {
+    use axum::response::IntoResponse;
+
+    info!(
+        user_id = %user.id(),
+        target = %req.target,
+        question_len = req.question.len(),
+        stream = req.stream,
+        "Agent ask request"
+    );
+
+    // Get the Pi service
+    let pi_service = state
+        .main_chat_pi
+        .as_ref()
+        .ok_or_else(|| ApiError::internal("Main Chat Pi service not enabled"))?;
+
+    // Get assistant name for alias matching
+    let assistant_name = if let Some(mc) = state.main_chat.as_ref() {
+        mc.get_main_chat_info(user.id())
+            .await
+            .ok()
+            .map(|info| info.name)
+    } else {
+        None
+    };
+
+    // Parse the target
+    let parsed_target = parse_ask_target(&req.target, assistant_name.as_deref())
+        .map_err(ApiError::bad_request)?;
+
+    // Resolve to a session
+    let session = match parsed_target {
+        AskTarget::MainChat { session_query: None } => {
+            // Get active session or create new
+            pi_service
+                .get_or_create_session(user.id())
+                .await
+                .map_err(|e| ApiError::internal(format!("Failed to get session: {}", e)))?
+        }
+        AskTarget::MainChat { session_query: Some(query) } => {
+            // Search for matching sessions
+            let matches = pi_service
+                .search_sessions(user.id(), &query)
+                .map_err(|e| ApiError::internal(format!("Failed to search sessions: {}", e)))?;
+
+            if matches.is_empty() {
+                return Err(ApiError::not_found(format!(
+                    "No sessions found matching '{}'",
+                    query
+                )));
+            }
+
+            if matches.len() > 1 {
+                // Check if first match is significantly better than second
+                // (We'd need scores for this - for now just check exact match)
+                let first = &matches[0];
+                let is_exact = first.id.to_lowercase() == query.to_lowercase()
+                    || first.title.as_ref().map(|t| t.to_lowercase()) == Some(query.to_lowercase());
+
+                if !is_exact {
+                    // Ambiguous - return matches for user to choose
+                    let response = AgentAskAmbiguousResponse {
+                        error: format!("Multiple sessions match '{}'. Please be more specific.", query),
+                        matches: matches
+                            .into_iter()
+                            .take(10)
+                            .map(|s| SessionMatch {
+                                id: s.id,
+                                title: s.title,
+                                modified_at: s.modified_at,
+                            })
+                            .collect(),
+                    };
+                    return Ok(Json(response).into_response());
+                }
+            }
+
+            // Use first (best) match
+            let session_id = &matches[0].id;
+            pi_service
+                .resume_session(user.id(), session_id)
+                .await
+                .map_err(|e| ApiError::internal(format!("Failed to resume session: {}", e)))?
+        }
+        AskTarget::Session { id } => {
+            // Try exact ID first, then fuzzy search
+            match pi_service.resume_session(user.id(), &id).await {
+                Ok(session) => session,
+                Err(_) => {
+                    // Try fuzzy search
+                    let matches = pi_service
+                        .search_sessions(user.id(), &id)
+                        .map_err(|e| ApiError::internal(format!("Failed to search sessions: {}", e)))?;
+
+                    if matches.is_empty() {
+                        return Err(ApiError::not_found(format!("Session not found: {}", id)));
+                    }
+
+                    if matches.len() > 1 {
+                        let response = AgentAskAmbiguousResponse {
+                            error: format!("Multiple sessions match '{}'. Please be more specific.", id),
+                            matches: matches
+                                .into_iter()
+                                .take(10)
+                                .map(|s| SessionMatch {
+                                    id: s.id,
+                                    title: s.title,
+                                    modified_at: s.modified_at,
+                                })
+                                .collect(),
+                        };
+                        return Ok(Json(response).into_response());
+                    }
+
+                    pi_service
+                        .resume_session(user.id(), &matches[0].id)
+                        .await
+                        .map_err(|e| ApiError::internal(format!("Failed to resume session: {}", e)))?
+                }
+            }
+        }
+    };
+
+    if req.stream {
+        // Streaming mode - return SSE
+        use crate::pi::{AssistantMessageEvent, PiEvent};
+        use tokio::sync::mpsc;
+
+        let mut event_rx = session.subscribe().await;
+        let session_for_prompt = session.clone();
+        let question = req.question.clone();
+        let timeout_secs = req.timeout_secs;
+
+        // Create a channel to produce SSE events
+        let (tx, rx) = mpsc::channel::<Result<Event, Infallible>>(32);
+
+        // Spawn task to handle Pi events and send SSE events
+        tokio::spawn(async move {
+            // Send the prompt
+            if let Err(e) = session_for_prompt.prompt(&question).await {
+                let json = serde_json::json!({
+                    "type": "error",
+                    "error": format!("Failed to send prompt: {}", e)
+                });
+                let _ = tx.send(Ok(Event::default().data(json.to_string()))).await;
+                return;
+            }
+
+            let mut text_buffer = String::new();
+
+            loop {
+                match tokio::time::timeout(
+                    Duration::from_secs(timeout_secs),
+                    event_rx.recv(),
+                )
+                .await
+                {
+                    Ok(Ok(event)) => {
+                        match &event {
+                            PiEvent::MessageUpdate {
+                                assistant_message_event,
+                                ..
+                            } => match assistant_message_event {
+                                AssistantMessageEvent::TextDelta { delta, .. } => {
+                                    text_buffer.push_str(delta);
+                                    let json = serde_json::json!({
+                                        "type": "text",
+                                        "data": delta
+                                    });
+                                    if tx.send(Ok(Event::default().data(json.to_string()))).await.is_err() {
+                                        return; // Client disconnected
+                                    }
+                                }
+                                AssistantMessageEvent::ThinkingDelta { delta, .. } => {
+                                    let json = serde_json::json!({
+                                        "type": "thinking",
+                                        "data": delta
+                                    });
+                                    if tx.send(Ok(Event::default().data(json.to_string()))).await.is_err() {
+                                        return;
+                                    }
+                                }
+                                _ => {}
+                            },
+                            PiEvent::AgentEnd { .. } => {
+                                let json = serde_json::json!({
+                                    "type": "done",
+                                    "response": text_buffer
+                                });
+                                let _ = tx.send(Ok(Event::default().data(json.to_string()))).await;
+                                return;
+                            }
+                            _ => {}
+                        }
+                    }
+                    Ok(Err(_)) => {
+                        // Channel closed
+                        return;
+                    }
+                    Err(_) => {
+                        // Timeout
+                        let json = serde_json::json!({
+                            "type": "error",
+                            "error": "Timeout waiting for response"
+                        });
+                        let _ = tx.send(Ok(Event::default().data(json.to_string()))).await;
+                        return;
+                    }
+                }
+            }
+        });
+
+        // Convert receiver to stream
+        let stream = tokio_stream::wrappers::ReceiverStream::new(rx);
+
+        Ok(Sse::new(stream)
+            .keep_alive(KeepAlive::default())
+            .into_response())
+    } else {
+        // Non-streaming mode - wait for complete response
+        use crate::pi::PiEvent;
+
+        let mut event_rx = session.subscribe().await;
+
+        // Send the prompt
+        session
+            .prompt(&req.question)
+            .await
+            .map_err(|e| ApiError::internal(format!("Failed to send prompt: {}", e)))?;
+
+        // Collect response
+        let mut response_text = String::new();
+        let timeout = Duration::from_secs(req.timeout_secs);
+        let start = Instant::now();
+
+        loop {
+            let remaining = timeout.saturating_sub(start.elapsed());
+            if remaining.is_zero() {
+                return Err(ApiError::internal("Timeout waiting for agent response"));
+            }
+
+            match tokio::time::timeout(remaining, event_rx.recv()).await {
+                Ok(Ok(event)) => {
+                    match event {
+                        PiEvent::MessageUpdate { assistant_message_event, .. } => {
+                            use crate::pi::AssistantMessageEvent;
+                            if let AssistantMessageEvent::TextDelta { delta, .. } = assistant_message_event {
+                                response_text.push_str(&delta);
+                            }
+                        }
+                        PiEvent::AgentEnd { .. } => {
+                            break;
+                        }
+                        _ => {}
+                    }
+                }
+                Ok(Err(_)) => {
+                    // Channel closed unexpectedly
+                    break;
+                }
+                Err(_) => {
+                    return Err(ApiError::internal("Timeout waiting for agent response"));
+                }
+            }
+        }
+
+        let pi_state = session.get_state().await.ok();
+        let session_id = pi_state.and_then(|s| s.session_id);
+
+        Ok(Json(AgentAskResponse {
+            response: response_text,
+            session_id,
+        })
+        .into_response())
+    }
+}
+
+// ============================================================================
+// In-Session Search Handler
+// ============================================================================
+
+/// Query parameters for in-session search.
+#[derive(Debug, Deserialize)]
+pub struct InSessionSearchQuery {
+    /// Search query
+    pub q: String,
+    /// Maximum number of results
+    #[serde(default = "default_cass_limit")]
+    pub limit: usize,
+}
+
+fn default_cass_limit() -> usize {
+    20
+}
+
+/// Search result from CASS.
+#[derive(Debug, Serialize)]
+pub struct InSessionSearchResult {
+    /// Line number in the source file
+    pub line_number: usize,
+    /// Match score
+    pub score: f64,
+    /// Short snippet around the match
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub snippet: Option<String>,
+    /// Session title
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// Match type (exact, fuzzy)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub match_type: Option<String>,
+    /// Timestamp when the message was created
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<i64>,
+}
+
+/// Search within a specific Pi session using CASS.
+/// 
+/// GET /api/agents/sessions/{session_id}/search?q=query&limit=20
+#[instrument(skip(state, user))]
+pub async fn agents_session_search(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(session_id): Path<String>,
+    Query(query): Query<InSessionSearchQuery>,
+) -> ApiResult<Json<Vec<InSessionSearchResult>>> {
+    let pi_service = state
+        .main_chat_pi
+        .as_ref()
+        .ok_or_else(|| ApiError::internal("Main Chat Pi service not enabled"))?;
+
+    let results = pi_service
+        .search_in_session(user.id(), &session_id, &query.q, query.limit)
+        .await
+        .map_err(|e| ApiError::internal(format!("Search failed: {}", e)))?;
+
+    let response: Vec<InSessionSearchResult> = results
+        .into_iter()
+        .map(|r| InSessionSearchResult {
+            line_number: r.line_number,
+            score: r.score,
+            snippet: r.snippet,
+            title: r.title,
+            match_type: r.match_type,
+            created_at: r.created_at,
+        })
+        .collect();
+
+    Ok(Json(response))
+}
+
+// ============================================================================
 // Settings Handlers
 // ============================================================================
 

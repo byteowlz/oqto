@@ -332,37 +332,93 @@ export async function getFeatures(): Promise<Features> {
 // ============================================================================
 
 export async function login(request: LoginRequest): Promise<LoginResponse> {
-	const res = await fetch(controlPlaneApiUrl("/api/auth/login"), {
+	const url = controlPlaneApiUrl("/api/auth/login");
+	const options: RequestInit = {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify(request),
 		credentials: "include",
-	});
-	if (!res.ok) throw new Error(await readApiError(res));
-	const data: LoginResponse = await res.json();
-	// Store token for Tauri/mobile
-	if (data.token) {
-		setAuthToken(data.token);
+	};
+
+	// Retry logic for transient network errors (e.g., ERR_CONNECTION_REFUSED on first attempt)
+	const maxRetries = 2;
+	let lastError: Error | undefined;
+
+	for (let attempt = 0; attempt <= maxRetries; attempt++) {
+		try {
+			const res = await fetch(url, options);
+			if (!res.ok) throw new Error(await readApiError(res));
+			const data: LoginResponse = await res.json();
+			// Store token for Tauri/mobile
+			if (data.token) {
+				setAuthToken(data.token);
+			}
+			return data;
+		} catch (error) {
+			lastError = error instanceof Error ? error : new Error(String(error));
+			// Only retry on network errors, not HTTP errors
+			const isNetworkError =
+				lastError.message.includes("Failed to fetch") ||
+				lastError.message.includes("NetworkError") ||
+				lastError.message.includes("network") ||
+				lastError.name === "TypeError"; // fetch throws TypeError on network failure
+
+			if (!isNetworkError || attempt === maxRetries) {
+				throw lastError;
+			}
+
+			// Wait before retrying (50ms, then 100ms)
+			await new Promise((resolve) => setTimeout(resolve, 50 * (attempt + 1)));
+		}
 	}
-	return data;
+
+	throw lastError ?? new Error("Login failed");
 }
 
 export async function register(
 	request: RegisterRequest,
 ): Promise<RegisterResponse> {
-	const res = await fetch(controlPlaneApiUrl("/api/auth/register"), {
+	const url = controlPlaneApiUrl("/api/auth/register");
+	const options: RequestInit = {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify(request),
 		credentials: "include",
-	});
-	if (!res.ok) throw new Error(await readApiError(res));
-	const data: RegisterResponse = await res.json();
-	// Store token for Tauri/mobile
-	if (data.token) {
-		setAuthToken(data.token);
+	};
+
+	// Retry logic for transient network errors
+	const maxRetries = 2;
+	let lastError: Error | undefined;
+
+	for (let attempt = 0; attempt <= maxRetries; attempt++) {
+		try {
+			const res = await fetch(url, options);
+			if (!res.ok) throw new Error(await readApiError(res));
+			const data: RegisterResponse = await res.json();
+			// Store token for Tauri/mobile
+			if (data.token) {
+				setAuthToken(data.token);
+			}
+			return data;
+		} catch (error) {
+			lastError = error instanceof Error ? error : new Error(String(error));
+			// Only retry on network errors, not HTTP errors
+			const isNetworkError =
+				lastError.message.includes("Failed to fetch") ||
+				lastError.message.includes("NetworkError") ||
+				lastError.message.includes("network") ||
+				lastError.name === "TypeError";
+
+			if (!isNetworkError || attempt === maxRetries) {
+				throw lastError;
+			}
+
+			// Wait before retrying
+			await new Promise((resolve) => setTimeout(resolve, 50 * (attempt + 1)));
+		}
 	}
-	return data;
+
+	throw lastError ?? new Error("Registration failed");
 }
 
 export async function logout(): Promise<void> {
@@ -1242,7 +1298,7 @@ export type MainChatHistoryEntry = {
 	created_at: string;
 };
 
-/** Main Chat session */
+/** Main Chat session (legacy DB-backed, kept for history/exports) */
 export type MainChatSession = {
 	id: number;
 	session_id: string;
@@ -1250,6 +1306,25 @@ export type MainChatSession = {
 	started_at: string;
 	ended_at?: string;
 	message_count: number;
+};
+
+/** Pi session file entry (disk-backed; used for Main Chat sessions list) */
+export type PiSessionFile = {
+	id: string;
+	started_at: string;
+	size: number;
+	modified_at: number;
+	title?: string;
+	message_count: number;
+};
+
+/** Message loaded from a Pi session JSONL file */
+export type PiSessionMessage = {
+	id: string;
+	role: "user" | "assistant" | "system";
+	content: unknown;
+	timestamp: number;
+	usage?: unknown;
 };
 
 /** Main Chat assistant info */
@@ -1361,13 +1436,54 @@ export async function addMainChatHistory(
 	return res.json();
 }
 
-/** List sessions for an assistant */
+/** List sessions for an assistant (legacy DB-backed sessions table) */
 export async function listMainChatSessions(
 	name: string,
 ): Promise<MainChatSession[]> {
 	const res = await authFetch(controlPlaneApiUrl("/api/main/sessions"), {
 		credentials: "include",
 	});
+	if (!res.ok) throw new Error(await readApiError(res));
+	return res.json();
+}
+
+/** List Pi sessions from disk (used for Main Chat sessions list) */
+export async function listMainChatPiSessions(): Promise<PiSessionFile[]> {
+	const res = await authFetch(controlPlaneApiUrl("/api/main/pi/sessions"), {
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+	return res.json();
+}
+
+/** Start a brand new Pi session (creates new session file) */
+export async function newMainChatPiSessionFile(): Promise<PiState> {
+	const res = await authFetch(controlPlaneApiUrl("/api/main/pi/sessions"), {
+		method: "POST",
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+	return res.json();
+}
+
+/** Load messages from a specific Pi session file */
+export async function getMainChatPiSessionMessages(
+	sessionId: string,
+): Promise<PiSessionMessage[]> {
+	const res = await authFetch(
+		controlPlaneApiUrl(`/api/main/pi/sessions/${encodeURIComponent(sessionId)}`),
+		{ credentials: "include" },
+	);
+	if (!res.ok) throw new Error(await readApiError(res));
+	return res.json();
+}
+
+/** Resume/switch the active Pi session */
+export async function resumeMainChatPiSession(sessionId: string): Promise<PiState> {
+	const res = await authFetch(
+		controlPlaneApiUrl(`/api/main/pi/sessions/${encodeURIComponent(sessionId)}`),
+		{ method: "POST", credentials: "include" },
+	);
 	if (!res.ok) throw new Error(await readApiError(res));
 	return res.json();
 }
@@ -1667,8 +1783,13 @@ export type MainChatDbMessage = {
 };
 
 /** Get persistent chat history from database (survives Pi session restarts) */
-export async function getMainChatPiHistory(): Promise<MainChatDbMessage[]> {
-	const res = await authFetch(controlPlaneApiUrl("/api/main/pi/history"), {
+export async function getMainChatPiHistory(
+	sessionId?: string,
+): Promise<MainChatDbMessage[]> {
+	const url = sessionId
+		? controlPlaneApiUrl(`/api/main/pi/history?session_id=${encodeURIComponent(sessionId)}`)
+		: controlPlaneApiUrl("/api/main/pi/history");
+	const res = await authFetch(url, {
 		credentials: "include",
 	});
 	if (!res.ok) throw new Error(await readApiError(res));

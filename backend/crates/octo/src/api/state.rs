@@ -311,4 +311,10 @@ impl AppState {
         self.main_chat_pi = Some(Arc::new(service));
         self
     }
+
+    /// Set the main chat Pi service from an existing Arc.
+    pub fn with_main_chat_pi_arc(mut self, service: Arc<MainChatPiService>) -> Self {
+        self.main_chat_pi = Some(service);
+        self
+    }
 }

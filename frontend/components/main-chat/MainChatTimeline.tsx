@@ -1,10 +1,10 @@
 "use client";
 
 import {
-	type MainChatSession,
-	listMainChatSessions,
+	type PiSessionFile,
+	listMainChatPiSessions,
 } from "@/lib/control-plane-client";
-import { formatSessionDate } from "@/lib/session-utils";
+import { formatSessionDate, generateReadableId } from "@/lib/session-utils";
 import { cn } from "@/lib/utils";
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -16,7 +16,7 @@ export interface MainChatTimelineProps {
 	/** Callback when a session dot is clicked */
 	onSessionClick: (sessionId: string) => void;
 	/** Callback when sessions are loaded */
-	onSessionsLoaded?: (sessions: MainChatSession[]) => void;
+	onSessionsLoaded?: (sessions: PiSessionFile[]) => void;
 }
 
 /**
@@ -29,7 +29,7 @@ export function MainChatTimeline({
 	onSessionClick,
 	onSessionsLoaded,
 }: MainChatTimelineProps) {
-	const [sessions, setSessions] = useState<MainChatSession[]>([]);
+	const [sessions, setSessions] = useState<PiSessionFile[]>([]);
 	const [loading, setLoading] = useState(true);
 
 	// Load sessions
@@ -37,7 +37,7 @@ export function MainChatTimeline({
 		if (!assistantName) return;
 
 		setLoading(true);
-		listMainChatSessions(assistantName)
+		listMainChatPiSessions()
 			.then((data) => {
 				// Sort by started_at ascending (oldest first, so timeline goes top to bottom)
 				const sorted = [...data].sort(
@@ -68,18 +68,18 @@ export function MainChatTimeline({
 				{/* Session dots */}
 				<div className="relative flex flex-col gap-1">
 					{sessions.map((session, index) => {
-						const isActive = session.session_id === activeSessionId;
+						const isActive = session.id === activeSessionId;
 						const isFirst = index === 0;
 						const isLast = index === sessions.length - 1;
 
 						return (
 							<TimelineDot
-								key={session.session_id}
+								key={session.id}
 								session={session}
 								isActive={isActive}
 								isFirst={isFirst}
 								isLast={isLast}
-								onClick={() => onSessionClick(session.session_id)}
+								onClick={() => onSessionClick(session.id)}
 							/>
 						);
 					})}
@@ -90,7 +90,7 @@ export function MainChatTimeline({
 }
 
 interface TimelineDotProps {
-	session: MainChatSession;
+	session: PiSessionFile;
 	isActive: boolean;
 	isFirst: boolean;
 	isLast: boolean;
@@ -137,7 +137,10 @@ function TimelineDot({
 						"whitespace-nowrap z-50 pointer-events-none",
 					)}
 				>
-					<div className="font-medium">{session.title || "Untitled"}</div>
+					<div className="font-medium">
+						{session.title || "Untitled"} 
+						<span className="opacity-60">[{generateReadableId(session.id)}]</span>
+					</div>
 					<div className="text-muted-foreground">{formattedDate}</div>
 					{session.message_count > 0 && (
 						<div className="text-muted-foreground">
@@ -155,7 +158,7 @@ function TimelineDot({
  * Returns the session ID that should be highlighted in the timeline.
  */
 export function useActiveSessionTracker(
-	sessions: MainChatSession[],
+	sessions: PiSessionFile[],
 	containerRef: React.RefObject<HTMLElement>,
 ): string | null {
 	const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
@@ -171,7 +174,7 @@ export function useActiveSessionTracker(
 			// For now, just use the first session as active
 			// In a full implementation, we'd track scroll position and map to sessions
 			if (sessions.length > 0 && !activeSessionId) {
-				setActiveSessionId(sessions[sessions.length - 1].session_id);
+				setActiveSessionId(sessions[sessions.length - 1].id);
 			}
 		};
 

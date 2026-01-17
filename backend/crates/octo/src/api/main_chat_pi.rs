@@ -6,7 +6,7 @@
 use axum::{
     Json,
     extract::{
-        State, WebSocketUpgrade,
+        Query, State, WebSocketUpgrade,
         ws::{Message, WebSocket},
     },
     http::StatusCode,
@@ -20,7 +20,8 @@ use std::sync::Arc;
 
 use crate::auth::CurrentUser;
 use crate::main_chat::{
-    ChatMessage, CreateChatMessage, MainChatPiService, MainChatService, MessageRole,
+    ChatMessage, CreateChatMessage, MainChatPiService, MainChatService, MessageRole, PiSessionFile,
+    PiSessionMessage,
 };
 use crate::pi::{AgentMessage, AssistantMessageEvent, CompactionResult, PiEvent, PiState};
 
@@ -440,7 +441,7 @@ pub async fn new_session(
     // Reset the Pi process so that context injection runs for the new session.
     // This aligns "new chat" semantics with the session-boundary architecture.
     let session = pi_service
-        .reset_session(user.id())
+        .reset_session(user.id(), false)
         .await
         .map_err(|e| ApiError::internal(format!("Failed to reset session: {}", e)))?;
 
@@ -463,7 +464,7 @@ pub async fn reset_session(
     let pi_service = get_pi_service(&state)?;
 
     let session = pi_service
-        .reset_session(user.id())
+        .reset_session(user.id(), false)
         .await
         .map_err(|e| ApiError::internal(format!("Failed to reset session: {}", e)))?;
 
@@ -521,26 +522,43 @@ pub async fn close_session(
     let pi_service = get_pi_service(&state)?;
 
     pi_service
-        .close_session(user.id())
+        .close_all_sessions(user.id(), false)
         .await
         .map_err(|e| ApiError::internal(format!("Failed to close session: {}", e)))?;
 
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// Query params for history endpoint.
+#[derive(Debug, Deserialize)]
+pub struct HistoryQuery {
+    /// Optional session ID to filter messages.
+    pub session_id: Option<String>,
+}
+
 /// Get chat history from database (persistent display history).
+/// If session_id is provided, returns only messages for that session.
 ///
 /// GET /api/main/pi/history
+/// GET /api/main/pi/history?session_id=<id>
 pub async fn get_history(
     State(state): State<AppState>,
     user: CurrentUser,
+    Query(query): Query<HistoryQuery>,
 ) -> ApiResult<Json<Vec<ChatMessage>>> {
     let main_chat_service = get_main_chat_service(&state)?;
 
-    let messages = main_chat_service
-        .get_all_messages(user.id())
-        .await
-        .map_err(|e| ApiError::internal(format!("Failed to get history: {}", e)))?;
+    let messages = if let Some(session_id) = query.session_id {
+        main_chat_service
+            .get_messages_by_session(user.id(), &session_id)
+            .await
+            .map_err(|e| ApiError::internal(format!("Failed to get session history: {}", e)))?
+    } else {
+        main_chat_service
+            .get_all_messages(user.id())
+            .await
+            .map_err(|e| ApiError::internal(format!("Failed to get history: {}", e)))?
+    };
 
     Ok(Json(messages))
 }
@@ -562,7 +580,7 @@ pub async fn clear_history(
     Ok(Json(serde_json::json!({ "deleted": deleted })))
 }
 
-/// Add a session separator to history (marks new conversation start).
+/// Add a session separator to history (legacy; used by older frontend).
 ///
 /// POST /api/main/pi/history/separator
 pub async fn add_separator(
@@ -589,6 +607,84 @@ pub async fn add_separator(
         .map_err(|e| ApiError::internal(format!("Failed to add separator: {}", e)))?;
 
     Ok(Json(message))
+}
+
+/// List Pi sessions for Main Chat from disk.
+///
+/// GET /api/main/pi/sessions
+pub async fn list_pi_sessions(
+    State(state): State<AppState>,
+    user: CurrentUser,
+) -> ApiResult<Json<Vec<PiSessionFile>>> {
+    let pi_service = get_pi_service(&state)?;
+
+    let sessions = pi_service
+        .list_sessions(user.id())
+        .map_err(|e| ApiError::internal(format!("Failed to list Pi sessions: {}", e)))?;
+
+    Ok(Json(sessions))
+}
+
+/// Start a fresh Pi session and return its state.
+///
+/// POST /api/main/pi/sessions
+pub async fn new_pi_session(
+    State(state): State<AppState>,
+    user: CurrentUser,
+) -> ApiResult<Json<PiStateResponse>> {
+    let pi_service = get_pi_service(&state)?;
+
+    let session = pi_service
+        .reset_session(user.id(), false)
+        .await
+        .map_err(|e| ApiError::internal(format!("Failed to start new session: {}", e)))?;
+
+    let pi_state = session
+        .get_state()
+        .await
+        .map_err(|e| ApiError::internal(format!("Failed to get Pi state: {}", e)))?;
+
+    Ok(Json(pi_state_to_response(pi_state)))
+}
+
+/// Load a specific Pi session's messages from disk.
+///
+/// GET /api/main/pi/sessions/{session_id}
+pub async fn get_pi_session_messages(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    axum::extract::Path(session_id): axum::extract::Path<String>,
+) -> ApiResult<Json<Vec<PiSessionMessage>>> {
+    let pi_service = get_pi_service(&state)?;
+
+    let messages = pi_service
+        .get_session_messages(user.id(), &session_id)
+        .map_err(|e| ApiError::internal(format!("Failed to load Pi session: {}", e)))?;
+
+    Ok(Json(messages))
+}
+
+/// Resume a specific Pi session (switch active session).
+///
+/// POST /api/main/pi/sessions/{session_id}
+pub async fn resume_pi_session(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    axum::extract::Path(session_id): axum::extract::Path<String>,
+) -> ApiResult<Json<PiStateResponse>> {
+    let pi_service = get_pi_service(&state)?;
+
+    let session = pi_service
+        .resume_session(user.id(), &session_id)
+        .await
+        .map_err(|e| ApiError::internal(format!("Failed to resume Pi session: {}", e)))?;
+
+    let pi_state = session
+        .get_state()
+        .await
+        .map_err(|e| ApiError::internal(format!("Failed to get Pi state: {}", e)))?;
+
+    Ok(Json(pi_state_to_response(pi_state)))
 }
 
 /// WebSocket endpoint for streaming Pi events.
