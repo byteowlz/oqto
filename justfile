@@ -128,6 +128,10 @@ bump version:
     
     echo "Bumped all components to $new_version"
 
+# Git add everything except uploads folder
+add:
+    git add --all -- ':!uploads/'
+
 # Release: bump version, commit, and tag
 # Usage: just release patch|minor|major|x.y.z
 release version:
