@@ -2,6 +2,30 @@
 
 ## Open
 
+### [octo-thhx.7] Add data-spotlight attributes to UI elements (P1, task)
+Add data-spotlight attributes to: sidebar, file-tree, todo-list, terminal, canvas, chat-input, chat-timeline, model-picker, command-palette, memory-view, trx-view, session-list
+
+### [octo-thhx.6] Spotlight overlay component (P1, task)
+React component with SVG mask cutout, tooltip positioning, pulse animation. Uses data-spotlight attributes to find target elements. Renders above all content with pointer-events passthrough for target.
+
+### [octo-thhx.5] octoctl ui CLI commands (P1, task)
+CLI subcommands: octoctl ui navigate, session, view, palette, spotlight, tour, sidebar, panel, theme. Calls backend API which broadcasts WebSocket events to frontend.
+
+### [octo-thhx.4] WebSocket ui.* events for agent UI control (P1, task)
+Backend routes and WebSocket event types: ui.navigate, ui.session, ui.view, ui.palette, ui.palette_exec, ui.spotlight, ui.tour, ui.sidebar, ui.panel, ui.theme
+
+### [octo-thhx.3] UIControlContext for agent-driven navigation (P1, task)
+React context providing programmatic UI control: navigate(), switchSession(), switchView(), openPalette(), toggleSidebar(), setPanel(). Consumed by WebSocket event handlers.
+
+### [octo-thhx.2] Onboarding API endpoints (P1, task)
+REST endpoints: GET/PUT /api/onboarding/state, POST /api/onboarding/unlock/{component}, POST /api/onboarding/godmode, POST /api/onboarding/complete
+
+### [octo-thhx.1] Onboarding state model and database schema (P1, task)
+Backend model for tracking onboarding progress, unlocked components, user level, and language preference. Store in user preferences table or dedicated onboarding_state table.
+
+### [octo-thhx] Onboarding & Agent UI Control (P1, epic)
+Progressive onboarding experience with agent-driven UI control, spotlight system, and i18n support
+
 ### [octo-70pz] Add session naming - auto-generate from first message, allow editing (P1, feature)
 Superseded: Session titles come from Pi session files (first user message) and are cached client-side.
 
@@ -37,6 +61,33 @@ Implementation:
 
 ### [workspace-5pmk.11] Add backend URL configuration to login form (P1, task)
 Add a 'Server URL' field to the login form allowing users to specify the backend URL. Store in localStorage for persistence. Show connection status indicator. Default to current origin for web, require input for mobile apps.
+
+### [octo-thhx.16] Tutorial script using spotlight and A2UI (P2, task)
+Agent script/prompts for guided tutorial: introduce chat, unlock sidebar, show file tree, demonstrate command palette, explain todos, create first workspace, delegate task to opencode session.
+
+### [octo-thhx.15] Profile and personality setup conversation (P2, task)
+Agent-driven A2UI conversation to fill USER.md (name, timezone, preferences) and PERSONALITY.md (assistant name, signature). Use TextField, MultipleChoice components.
+
+### [octo-thhx.14] Provider setup wizard via A2UI (P2, task)
+A2UI flow for connecting providers. If EAVS pre-configured by admin, skip. Otherwise: show provider options, collect API key via TextField, test connection, store in EAVS or user config.
+
+### [octo-thhx.13] i18n AGENTS.md translations (P2, task)
+Prepare AGENTS.md in multiple languages: en, de, es, fr, pl, etc. Either use symlinks (AGENTS.md -> AGENTS.{lang}.md) or dynamic injection based on user language preference.
+
+### [octo-thhx.12] Progressive UI unlock system (P2, task)
+Extend Features API with unlocked_components map. Components check unlock state before rendering. Unlock triggers: first message, tutorial progression, technical detection.
+
+### [octo-thhx.11] Godmode command to skip onboarding (P2, task)
+Implement /godmode slash command, Ctrl+Shift+G shortcut, and ?godmode=true URL param. Unlocks all UI components, marks onboarding complete, sets user level to technical.
+
+### [octo-thhx.10] Onboarding route and flow controller (P2, task)
+Dedicated /onboarding route that orchestrates: language selection -> provider setup -> profile conversation -> tutorial. Redirects new users here, remembers progress.
+
+### [octo-thhx.9] Language selection word cloud with CRT shader (P2, task)
+Three.js or CSS animated word cloud showing 'Click me' in multiple languages. CRT post-processing effect (scanlines, chromatic aberration, flicker). Click detection triggers language selection.
+
+### [octo-thhx.8] Tour mode for sequential spotlights (P2, task)
+Support multi-step tours with automatic progression. Agent sends array of steps, frontend advances on user click or timeout. Include progress indicator and skip button.
 
 ### [octo-1s4j] Text entered in one chat but not send stays visible when changing chats. this needs to be isolated for each chat and not global across all chats  (P2, bug)
 
@@ -335,6 +386,12 @@ Enable multiple platform users to access the same project/workspace with proper 
 ### Core Concept
 ...
 
+
+### [octo-thhx.18] Multi-lingual user support (P3, task)
+Support users who speak multiple languages. Store languages array in USER.md. Agent can switch language based on context or explicit request. UI for managing language preferences.
+
+### [octo-thhx.17] Technical user detection for terminal unlock (P3, task)
+Subtle detection: profile questions about work, A2UI choice between visual vs command options, detection of shell-like input in chat. Unlocks terminal for technical users.
 
 ### [octo-k8z1.12] Documentation: Browser feature usage guide (P3, chore)
 
