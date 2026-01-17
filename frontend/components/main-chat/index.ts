@@ -1,3 +1,5 @@
+export { ChatSearchBar } from "./ChatSearchBar";
+export type { ChatSearchBarProps } from "./ChatSearchBar";
 export { MainChatEntry } from "./MainChatEntry";
 export type { MainChatEntryProps } from "./MainChatEntry";
 export { MainChatPiView } from "./MainChatPiView";

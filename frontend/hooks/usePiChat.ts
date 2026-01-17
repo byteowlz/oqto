@@ -845,6 +845,51 @@ export function usePiChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 		}
 	}, [activeSessionId, messages]);
 
+	// Fallback: if streaming gets stuck, poll backend state to clear.
+	useEffect(() => {
+		if (!isStreaming) return;
+		let cancelled = false;
+
+		const checkStreamingState = async () => {
+			try {
+				const piState = await getMainChatPiState();
+				if (cancelled) return;
+				if (piState && piState.is_streaming === false) {
+					setState(piState);
+					setIsStreaming(false);
+					if (streamingMessageRef.current) {
+						streamingMessageRef.current.isStreaming = false;
+						const completedMessage = {
+							...streamingMessageRef.current,
+							parts: streamingMessageRef.current.parts.map((p) => ({ ...p })),
+						};
+						setMessages((prev) => {
+							const idx = prev.findIndex((m) => m.id === completedMessage.id);
+							if (idx >= 0) {
+								const updated = [...prev];
+								updated[idx] = completedMessage;
+								return updated;
+							}
+							return prev;
+						});
+						streamingMessageRef.current = null;
+					}
+				}
+			} catch {
+				// Ignore polling errors.
+			}
+		};
+
+		const interval = setInterval(checkStreamingState, 4000);
+		const timeout = setTimeout(checkStreamingState, 4000);
+
+		return () => {
+			cancelled = true;
+			clearInterval(interval);
+			clearTimeout(timeout);
+		};
+	}, [isStreaming]);
+
 	// Ensure nextMessageId never collides with cached/loaded messages
 	useEffect(() => {
 		const maxId = getMaxPiMessageId(messages);

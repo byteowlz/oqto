@@ -2,14 +2,8 @@
 
 ## Open
 
-### [octo-2tcd] Main Chat Architecture Overhaul: Session-Based Conversations (P1, epic)
-# Main Chat Architecture Overhaul: Session-Based Conversations
-
-Replace the current one-long-chat model with discrete session-based conversations that have explicit boundaries, proper context handoff, and multi-stage context management.
-
-## Problem Statement
-...
-
+### [octo-70pz] Add session naming - auto-generate from first message, allow editing (P1, feature)
+Superseded: Session titles come from Pi session files (first user message) and are cached client-side.
 
 ### [octo-af5j.7.6] Release manifest generator (byt release) (P1, task)
 byt release command that: 1) Reads component list from octo/release.toml, 2) Fetches current version from each repo (Cargo.toml, package.json, go.mod), 3) Generates versions.toml with all pinned versions, 4) Optionally tags all repos with octo-0.2.0 tag
@@ -41,25 +35,14 @@ Implementation:
 ...
 
 
-### [workspace-jux6] Improve web app startup performance and reduce reload friction (P1, epic)
-Optimize frontend startup times and eliminate unnecessary reloads. Current bottlenecks include synchronous i18n init, auth checks on every route, no code splitting for main apps, no service worker, and aggressive cache-busting.
-
 ### [workspace-5pmk.11] Add backend URL configuration to login form (P1, task)
 Add a 'Server URL' field to the login form allowing users to specify the backend URL. Store in localStorage for persistence. Show connection status indicator. Default to current origin for web, require input for mobile apps.
+
+### [octo-1s4j] Text entered in one chat but not send stays visible when changing chats. this needs to be isolated for each chat and not global across all chats  (P2, bug)
 
 ### [octo-smwr] Add drag an drop capabilities to the file tree, both for dragging in external files and for moving files between dirs  (P2, feature)
 
 ### [octo-ze9k] Dashboard with overview of scheduled tasks (skdlr), session information, trx issues etc. Similar to the admin panel but for all users (P2, feature)
-
-### [octo-rw4h] "Open in Canvas" doesnt work: No file is rendered to the canvas (P2, bug)
-
-### [octo-ke51] Canvas content is lost on expansions/collapse (P2, bug)
-
-### [octo-b7sb] When I filter issues, by type (e.g. only bugs) the + button should make this issue type the default in the type dropdown menu of the trx sidebar (P2, task)
-
-### [octo-r46b] When viewing one opencode chat I suddenly got the content from another chat rendered. the title was from the actual chat thoug. (P2, task)
-
-### [octo-sz55] input text does not get removed when sending message sometimes  (P2, bug)
 
 ### [octo-s4ez] Define context model and context sources (local + remote) (P2, task)
 ## Goal
@@ -216,17 +199,8 @@ CI workflow using cross-rs or native runners to build for linux-x86_64, linux-ar
 ### [octo-af5j.4] Proxmox LXC Runtime (P2, feature)
 New runtime backend using Proxmox API to provision LXC containers for agent sessions. Stronger isolation than Docker, native systemd support, persistent containers with snapshots.
 
-### [octo-jq8j] Remove/gate client logs that leak auth headers (P2, bug)
-frontend/hooks/use-auth.ts logs getAuthHeaders (including auth tokens) and full user objects to console. This risks leaking credentials/PII in production logs and shared devices. Gate logs behind a dev flag or strip sensitive fields before logging.
-
-### [octo-e22z] Enforce size limits in write_file (P2, bug)
-fileserver/src/handlers.rs: write_file accepts axum::body::Bytes with no max size enforcement, unlike upload_file which uses max_upload_size. This allows oversized writes and memory pressure. Apply the same size limit (and return 413) or stream to disk with backpressure.
-
 ### [octo-fxhc] Stream zip downloads to avoid large in-memory buffers (P2, task)
 fileserver/src/handlers.rs: create_zip_from_paths reads entire files and builds zip data in a Vec<u8>, which can exhaust memory for large files/directories. Consider streaming zip output or enforcing a size limit with early abort.
-
-### [octo-xdyc] Restrict trx commands to validated workspace paths (P2, bug)
-backend/src/api/handlers.rs: exec_trx_command runs  with current_dir set from TrxWorkspaceQuery.workspace_path without validation. This lets authenticated users run trx in arbitrary directories (creating/modifying .trx there). Resolve workspace_path via session metadata or enforce allowed roots before executing.
 
 ### [octo-1rb4.1] Make turn taking more robust (P2, task)
 
@@ -441,6 +415,20 @@ Desired behavior: Tool calls hidden by default, toggle to show
 
 ## Closed
 
+- [octo-r46b] When viewing one opencode chat I suddenly got the content from another chat rendered. the title was from the actual chat thoug. (closed 2026-01-17)
+- [octo-b7sb] When I filter issues, by type (e.g. only bugs) the + button should make this issue type the default in the type dropdown menu of the trx sidebar (closed 2026-01-17)
+- [octo-3qja] New agent messages in opencode sessions sometimes only appear after a page reload (closed 2026-01-17)
+- [octo-2tcd] Main Chat Architecture Overhaul: Session-Based Conversations (closed 2026-01-17)
+- [octo-r25t] login always fails the first time (closed 2026-01-17)
+- [workspace-jux6] Improve web app startup performance and reduce reload friction (closed 2026-01-17)
+- [octo-8rxq] Fix Main Chat session switching - clicking session in timeline doesn't load messages (closed 2026-01-17)
+- [octo-rw4h] "Open in Canvas" doesnt work: No file is rendered to the canvas (closed 2026-01-17)
+- [octo-32hw] Fix Main Chat /new button - doesn't clear UI or provide feedback (closed 2026-01-17)
+- [octo-sz55] input text does not get removed when sending message sometimes  (closed 2026-01-17)
+- [octo-jq8j] Remove/gate client logs that leak auth headers (closed 2026-01-17)
+- [octo-ke51] Canvas content is lost on expansions/collapse (closed 2026-01-17)
+- [octo-xdyc] Restrict trx commands to validated workspace paths (closed 2026-01-17)
+- [octo-e22z] Enforce size limits in write_file (closed 2026-01-17)
 - [octo-9x62] Images don't render in main chat and in opencode sessions. placehoder is shown instead. we need to go through the fileserver (closed 2026-01-15)
 - [octo-9zek] changes to opencode settings in the sidbar are not getting saved (closed 2026-01-14)
 - [octo-g6a4] Opencode chats feel laggy (session navigation + text input) (closed 2026-01-14)

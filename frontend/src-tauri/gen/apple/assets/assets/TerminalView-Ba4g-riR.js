@@ -1526,7 +1526,7 @@ const P = class p {
 	dispose() {}
 };
 P.URL_REGEX =
-	/(?:https?:\/\/|mailto:|ftp:\/\/|ssh:\/\/|git:\/\/|tel:|magnet:|gemini:\/\/|gopher:\/\/|news:)[\w\-.~:\/?#@!$&*+,;=%]+/gi;
+	/(?:https?:\/\/|mailto:|ftp:\/\/|ssh:\/\/|git:\/\/|tel:|magnet:|gemini:\/\/|gopher:\/\/|news:)[\w-.~:/?#@!$&*+,;=%]+/gi;
 P.TRAILING_PUNCTUATION = /[.,;!?)\]]+$/;
 const eA = P;
 const AA = {

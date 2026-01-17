@@ -5,7 +5,7 @@ import {
 	FileTreeView,
 	initialFileTreeState,
 } from "@/apps/sessions/FileTreeView";
-import { MainChatPiView, MainChatSettingsView } from "@/components/main-chat";
+import { ChatSearchBar, MainChatPiView, MainChatSettingsView } from "@/components/main-chat";
 import { A2UICallCard } from "@/components/ui/a2ui-call-card";
 import { Badge } from "@/components/ui/badge";
 import { BrailleSpinner } from "@/components/ui/braille-spinner";
@@ -18,6 +18,11 @@ import {
 	ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import { ContextWindowGauge } from "@/components/ui/context-window-gauge";
+import {
+	AgentMentionPopup,
+	type AgentTarget,
+	AgentTargetChip,
+} from "@/components/ui/agent-mention-popup";
 import {
 	type FileAttachment,
 	FileAttachmentChip,
@@ -73,6 +78,7 @@ import {
 	type MainChatSession,
 	type Persona,
 	type SessionAutoAttachMode,
+	askAgent,
 	controlPlaneDirectBaseUrl,
 	convertChatMessagesToOpenCode,
 	fileserverWorkspaceBaseUrl,
@@ -154,6 +160,7 @@ import {
 	PanelLeftClose,
 	PanelRightClose,
 	Paperclip,
+	Search,
 	RefreshCw,
 	Send,
 	Settings,
@@ -968,35 +975,77 @@ export const SessionsApp = memo(function SessionsApp() {
 		}
 	}, []);
 
-	// Restore draft only when switching to a new session
+	// Save and restore drafts when switching sessions
 	useEffect(() => {
 		const prevId = previousSessionIdRef.current;
 		const currId = selectedChatSessionId;
 
-		// Restore draft for current session when switching (or clear if none)
-		if (currId && currId !== prevId) {
-			const savedDraft = getDraft(currId);
-			messageInputRef.current = savedDraft;
-			if (chatInputRef.current) {
-				chatInputRef.current.value = savedDraft;
-			}
-			syncInputToState(savedDraft);
-			// Auto-resize after draft restoration
-			requestAnimationFrame(() => {
-				if (chatInputRef.current) {
-					const textarea = chatInputRef.current;
-					if (!savedDraft) {
-						textarea.style.height = "36px";
-					} else {
-						textarea.style.height = "36px";
-						textarea.style.height = `${Math.min(textarea.scrollHeight, 200)}px`;
-					}
+		// When switching sessions, save the outgoing draft and restore the incoming one
+		if (currId !== prevId) {
+			// Save current input as draft for the previous session (if any)
+			if (prevId && messageInputRef.current) {
+				// Cancel any pending debounced save
+				if (draftSaveTimeoutRef.current) {
+					clearTimeout(draftSaveTimeoutRef.current);
+					draftSaveTimeoutRef.current = null;
 				}
-			});
+				// Save immediately
+				setDraft(prevId, messageInputRef.current);
+			}
+
+			// Restore draft for current session (or clear if none)
+			if (currId) {
+				const savedDraft = getDraft(currId);
+				messageInputRef.current = savedDraft;
+				if (chatInputRef.current) {
+					chatInputRef.current.value = savedDraft;
+				}
+				syncInputToState(savedDraft);
+				// Auto-resize after draft restoration
+				requestAnimationFrame(() => {
+					if (chatInputRef.current) {
+						const textarea = chatInputRef.current;
+						if (!savedDraft) {
+							textarea.style.height = "36px";
+						} else {
+							textarea.style.height = "36px";
+							textarea.style.height = `${Math.min(textarea.scrollHeight, 200)}px`;
+						}
+					}
+				});
+			}
 		}
 
 		previousSessionIdRef.current = currId;
-	}, [selectedChatSessionId, getDraft, syncInputToState]);
+	}, [selectedChatSessionId, getDraft, setDraft, syncInputToState]);
+
+	// Save draft on unmount to prevent loss when navigating away
+	useEffect(() => {
+		return () => {
+			// Save any pending draft when component unmounts
+			if (draftSaveTimeoutRef.current) {
+				clearTimeout(draftSaveTimeoutRef.current);
+			}
+			const sessionId = previousSessionIdRef.current;
+			const currentInput = messageInputRef.current;
+			if (sessionId && currentInput) {
+				// Use sync localStorage write since we're unmounting
+				try {
+					const drafts = JSON.parse(
+						localStorage.getItem("octo:chatDrafts") || "{}",
+					);
+					if (currentInput.trim()) {
+						drafts[sessionId] = currentInput;
+					} else {
+						delete drafts[sessionId];
+					}
+					localStorage.setItem("octo:chatDrafts", JSON.stringify(drafts));
+				} catch {
+					// Ignore localStorage errors
+				}
+			}
+		};
+	}, []);
 
 	const [isLoading, setIsLoading] = useState(true);
 	const [messagesLoading, setMessagesLoading] = useState(false);
@@ -1004,6 +1053,7 @@ export const SessionsApp = memo(function SessionsApp() {
 	const [activeView, setActiveView] = useState<ActiveView>("chat");
 	const [expandedView, setExpandedView] = useState<ExpandedView>(null);
 	const [rightSidebarCollapsed, setRightSidebarCollapsed] = useState(false);
+	const [isSearchOpen, setIsSearchOpen] = useState(false);
 	const [status, setStatus] = useState<string>("");
 	const [showScrollToBottom, setShowScrollToBottom] = useState(false);
 	const [previewFilePath, setPreviewFilePath] = useState<string | null>(null);
@@ -1084,6 +1134,11 @@ export const SessionsApp = memo(function SessionsApp() {
 	const [issueAttachments, setIssueAttachments] = useState<IssueAttachment[]>(
 		[],
 	);
+
+	// Agent mention popup state (@@mentions)
+	const [showAgentMentionPopup, setShowAgentMentionPopup] = useState(false);
+	const [agentMentionQuery, setAgentMentionQuery] = useState("");
+	const [agentTarget, setAgentTarget] = useState<AgentTarget | null>(null);
 
 	// Default agent for shell commands - use "build" as the default primary agent
 	const [defaultAgent, setDefaultAgent] = useState<string>("build");
@@ -1750,11 +1805,15 @@ export const SessionsApp = memo(function SessionsApp() {
 		if (!resumeWorkspacePath) return false;
 		if (deferredMessageInput.trim()) return false;
 		if (pendingUploads.length > 0) return false;
+		if (fileAttachments.length > 0) return false;
+		if (issueAttachments.length > 0) return false;
 		return !opencodeBaseUrl;
 	}, [
 		deferredMessageInput,
 		opencodeBaseUrl,
 		pendingUploads.length,
+		fileAttachments.length,
+		issueAttachments.length,
 		resumeWorkspacePath,
 		selectedChatSessionId,
 	]);
@@ -2337,6 +2396,51 @@ export const SessionsApp = memo(function SessionsApp() {
 			setScrollToMessageId(null);
 		}
 	}, [scrollToMessageId, setScrollToMessageId]);
+
+	// Keyboard shortcut for search (Ctrl+F / Cmd+F)
+	useEffect(() => {
+		const handleKeyDown = (e: KeyboardEvent) => {
+			if ((e.ctrlKey || e.metaKey) && e.key === "f") {
+				e.preventDefault();
+				setIsSearchOpen(true);
+			}
+			if (e.key === "Escape" && isSearchOpen) {
+				setIsSearchOpen(false);
+			}
+		};
+		window.addEventListener("keydown", handleKeyDown);
+		return () => window.removeEventListener("keydown", handleKeyDown);
+	}, [isSearchOpen]);
+
+	// Handle search result selection - scroll to message by line number
+	const handleSearchResult = useCallback(
+		(result: { lineNumber: number; messageId?: string }) => {
+			// For OpenCode sessions, we use message index
+			// Line numbers roughly correspond to message entries in the session
+			const messageIndex = Math.max(0, result.lineNumber - 2);
+			if (messageIndex < messages.length) {
+				const targetMessage = messages[messageIndex];
+				const container = messagesContainerRef.current;
+				if (!container) return;
+				
+				// Scroll to message
+				requestAnimationFrame(() => {
+					const messageEl = container.querySelector(
+						`[data-message-id="${targetMessage.info.id}"]`,
+					);
+					if (messageEl) {
+						autoScrollEnabledRef.current = false;
+						messageEl.scrollIntoView({ behavior: "smooth", block: "center" });
+						messageEl.classList.add("search-highlight");
+						setTimeout(() => {
+							messageEl.classList.remove("search-highlight");
+						}, 2000);
+					}
+				});
+			}
+		},
+		[messages],
+	);
 
 	// Event handler for session events (shared between WebSocket and SSE)
 	const handleSessionEvent = useCallback(
@@ -3198,6 +3302,10 @@ export const SessionsApp = memo(function SessionsApp() {
 		// Close popups if open
 		setShowSlashPopup(false);
 		setShowFileMentionPopup(false);
+		setShowAgentMentionPopup(false);
+
+		// Capture agent target before clearing
+		const currentAgentTarget = agentTarget;
 
 		// Capture file and issue attachments before clearing
 		const currentFileAttachments = [...fileAttachments];
@@ -3267,8 +3375,53 @@ export const SessionsApp = memo(function SessionsApp() {
 		setPendingUploads([]);
 		setFileAttachments([]);
 		setIssueAttachments([]);
+		setAgentTarget(null);
 		setChatState("sending");
 		setStatus("");
+
+		// If an agent target is set, ask that agent instead of sending to current session
+		if (currentAgentTarget) {
+			try {
+				setStatus(
+					locale === "de"
+						? `Frage ${currentAgentTarget.name}...`
+						: `Asking ${currentAgentTarget.name}...`,
+				);
+				// Build target string based on type
+				// - main-chat: "main-chat"
+				// - session (OpenCode): "opencode:<id>:<workspace_path>" or "opencode:<id>"
+				let targetString: string;
+				if (currentAgentTarget.type === "main-chat") {
+					targetString = "main-chat";
+				} else if (currentAgentTarget.workspace_path) {
+					targetString = `opencode:${currentAgentTarget.id}:${currentAgentTarget.workspace_path}`;
+				} else {
+					targetString = `opencode:${currentAgentTarget.id}`;
+				}
+				const response = await askAgent({
+					target: targetString,
+					question: messageText,
+					timeout_secs: 300,
+				});
+				// Display the response as a system message or toast
+				setStatus("");
+				// For now, show as a toast/notification with the response
+				toast.success(`Response from ${currentAgentTarget.name}`, {
+					description: response.response.slice(0, 200) + (response.response.length > 200 ? "..." : ""),
+					duration: 10000,
+				});
+				setChatState("idle");
+				return;
+			} catch (err) {
+				const message = err instanceof Error ? err.message : "Agent ask failed";
+				setStatus(message);
+				toast.error(`Failed to ask ${currentAgentTarget.name}`, {
+					description: message,
+				});
+				setChatState("idle");
+				return;
+			}
+		}
 
 		try {
 			let effectiveBaseUrl = opencodeBaseUrl;
@@ -3536,17 +3689,29 @@ export const SessionsApp = memo(function SessionsApp() {
 				if (value.startsWith("/")) {
 					setShowSlashPopup(true);
 					setShowFileMentionPopup(false);
+					setShowAgentMentionPopup(false);
 				} else {
 					setShowSlashPopup(false);
 				}
-				// Show file mention popup when typing @
-				const atMatch = value.match(/@([^\s]*)$/);
-				if (atMatch && !value.startsWith("/")) {
-					setShowFileMentionPopup(true);
-					setFileMentionQuery(atMatch[1]);
-				} else {
+				// Show agent mention popup when typing @@ (check before single @)
+				const doubleAtMatch = value.match(/@@([^\s]*)$/);
+				if (doubleAtMatch && !value.startsWith("/")) {
+					setShowAgentMentionPopup(true);
+					setAgentMentionQuery(doubleAtMatch[1]);
 					setShowFileMentionPopup(false);
 					setFileMentionQuery("");
+				} else {
+					setShowAgentMentionPopup(false);
+					setAgentMentionQuery("");
+					// Show file mention popup when typing single @ (but not @@)
+					const atMatch = value.match(/(?<!@)@([^\s@]*)$/);
+					if (atMatch && !value.startsWith("/")) {
+						setShowFileMentionPopup(true);
+						setFileMentionQuery(atMatch[1]);
+					} else {
+						setShowFileMentionPopup(false);
+						setFileMentionQuery("");
+					}
 				}
 			});
 		},
@@ -3580,6 +3745,15 @@ export const SessionsApp = memo(function SessionsApp() {
 					return;
 				}
 			}
+			// Let agent mention popup handle its keys
+			if (showAgentMentionPopup) {
+				if (
+					["ArrowDown", "ArrowUp", "Enter", "Tab", "Escape"].includes(e.key)
+				) {
+					// Popup handles via its own event listener
+					return;
+				}
+			}
 			if (e.key === "Enter" && !e.shiftKey) {
 				e.preventDefault();
 				handleSendRef.current();
@@ -3587,9 +3761,10 @@ export const SessionsApp = memo(function SessionsApp() {
 			if (e.key === "Escape") {
 				setShowSlashPopup(false);
 				setShowFileMentionPopup(false);
+				setShowAgentMentionPopup(false);
 			}
 		},
-		[showSlashPopup, slashQuery.isSlash, slashQuery.args, showFileMentionPopup],
+		[showSlashPopup, slashQuery.isSlash, slashQuery.args, showFileMentionPopup, showAgentMentionPopup],
 	);
 
 	const handleResume = async () => {
@@ -3627,6 +3802,21 @@ export const SessionsApp = memo(function SessionsApp() {
 			setStatus("");
 		} catch (err) {
 			setStatus((err as Error).message);
+		}
+	};
+
+	const handleSendOrResume = () => {
+		const hasInput =
+			messageInputRef.current.trim().length > 0 ||
+			pendingUploads.length > 0 ||
+			fileAttachments.length > 0 ||
+			issueAttachments.length > 0;
+		if (hasInput) {
+			handleSend();
+			return;
+		}
+		if (canResumeWithoutMessage) {
+			handleResume();
 		}
 	};
 
@@ -4215,6 +4405,33 @@ export const SessionsApp = memo(function SessionsApp() {
 								setFileMentionQuery("");
 							}}
 						/>
+						<AgentMentionPopup
+							query={agentMentionQuery}
+							isOpen={showAgentMentionPopup}
+							mainChatName={mainChatAssistantName}
+							mainChatWorkspacePath={mainChatWorkspacePath}
+							sessions={chatHistory.map((s) => ({
+								id: s.id,
+								title: s.title,
+								workspace_path: s.workspace_path,
+								project_name: s.project_name,
+							}))}
+							onSelect={(target) => {
+								// Remove @@query from input, store target
+								// Use ref value directly since debounced state may be stale
+								const newInput = messageInputRef.current.replace(/@@[^\s]*$/, "");
+								setMessageInputWithResize(newInput);
+								messageInputRef.current = newInput;
+								setAgentTarget(target);
+								setShowAgentMentionPopup(false);
+								setAgentMentionQuery("");
+								chatInputRef.current?.focus();
+							}}
+							onClose={() => {
+								setShowAgentMentionPopup(false);
+								setAgentMentionQuery("");
+							}}
+						/>
 						{/* File attachment chips */}
 						{fileAttachments.length > 0 && (
 							<div className="flex flex-wrap gap-1 mb-1">
@@ -4245,6 +4462,15 @@ export const SessionsApp = memo(function SessionsApp() {
 										}}
 									/>
 								))}
+							</div>
+						)}
+						{/* Agent target chip (@@mention) */}
+						{agentTarget && (
+							<div className="flex flex-wrap gap-1 mb-1">
+								<AgentTargetChip
+									target={agentTarget}
+									onRemove={() => setAgentTarget(null)}
+								/>
 							</div>
 						)}
 						{features.voice && dictation.isActive ? (
@@ -4406,12 +4632,13 @@ export const SessionsApp = memo(function SessionsApp() {
 					<Button
 						type="button"
 						data-voice-send
-						onClick={canResumeWithoutMessage ? handleResume : handleSend}
+						onClick={handleSendOrResume}
 						disabled={
 							!canResumeWithoutMessage &&
 							!deferredMessageInput.trim() &&
 							pendingUploads.length === 0 &&
-							fileAttachments.length === 0
+							fileAttachments.length === 0 &&
+							issueAttachments.length === 0
 						}
 						className="flex-shrink-0 h-8 px-2 flex items-center justify-center text-muted-foreground hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed transition-colors p-0 bg-transparent hover:bg-transparent"
 						variant="ghost"
@@ -4886,21 +5113,48 @@ export const SessionsApp = memo(function SessionsApp() {
 			<div className="hidden lg:flex flex-1 min-h-0 gap-4 items-start">
 				{/* Chat panel */}
 				<div className="flex-[3] min-w-0 bg-card border border-border p-4 xl:p-6 flex flex-col min-h-0 h-full relative">
-					{/* Sidebar collapse toggle button */}
-					<button
-						type="button"
-						onClick={() => setRightSidebarCollapsed((prev) => !prev)}
-						className="absolute top-4 right-4 xl:top-6 xl:right-6 p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted/50 rounded transition-colors z-10"
-						title={
-							rightSidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"
-						}
-					>
-						{rightSidebarCollapsed ? (
-							<PanelLeftClose className="w-4 h-4" />
-						) : (
-							<PanelRightClose className="w-4 h-4" />
-						)}
-					</button>
+					{/* Top toolbar: search + sidebar collapse */}
+					<div className="absolute top-4 right-4 xl:top-6 xl:right-6 flex items-center gap-1 z-10">
+						<button
+							type="button"
+							onClick={() => setIsSearchOpen((prev) => !prev)}
+							className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted/50 rounded transition-colors"
+							title={isSearchOpen ? "Close search (Esc)" : "Search (Ctrl+F)"}
+						>
+							{isSearchOpen ? (
+								<X className="w-4 h-4" />
+							) : (
+								<Search className="w-4 h-4" />
+							)}
+						</button>
+						<button
+							type="button"
+							onClick={() => setRightSidebarCollapsed((prev) => !prev)}
+							className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted/50 rounded transition-colors"
+							title={
+								rightSidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"
+							}
+						>
+							{rightSidebarCollapsed ? (
+								<PanelLeftClose className="w-4 h-4" />
+							) : (
+								<PanelRightClose className="w-4 h-4" />
+							)}
+						</button>
+					</div>
+					{/* Search bar - shown when search is open */}
+					{isSearchOpen && (
+						<div className="mb-3">
+							<ChatSearchBar
+								sessionId={mainChatActive ? mainChatCurrentSessionId : selectedChatSessionId}
+								onResultSelect={handleSearchResult}
+								isOpen={isSearchOpen}
+								onToggle={() => setIsSearchOpen(false)}
+								locale={locale}
+								hideCloseButton
+							/>
+						</div>
+					)}
 					{!mainChatActive && SessionHeader}
 					{mainChatActive ? (
 						expandedView ? (

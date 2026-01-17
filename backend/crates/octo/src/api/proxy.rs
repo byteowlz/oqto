@@ -7,9 +7,12 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use futures::{SinkExt, StreamExt};
+use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::client::legacy::Client;
 use log::{debug, error, warn};
 use tokio_tungstenite::connect_async;
+
+use std::time::Duration;
 
 use crate::session::SessionStatus;
 
@@ -21,7 +24,28 @@ async fn ensure_session_active_for_proxy(
     session: crate::session::Session,
 ) -> Result<crate::session::Session, StatusCode> {
     match session.status {
-        SessionStatus::Running | SessionStatus::Starting | SessionStatus::Pending => Ok(session),
+        SessionStatus::Running => {
+            if !is_opencode_healthy(state.http_client.clone(), session.opencode_port as u16).await {
+                warn!(
+                    "Opencode for session {} is unreachable; attempting restart",
+                    session_id
+                );
+                if let Err(err) = state.sessions.stop_session(session_id).await {
+                    error!("Failed to stop session {}: {:?}", session_id, err);
+                    return Err(StatusCode::SERVICE_UNAVAILABLE);
+                }
+                match state.sessions.resume_session(session_id).await {
+                    Ok(resumed) => Ok(resumed),
+                    Err(err) => {
+                        error!("Failed to resume session {}: {:?}", session_id, err);
+                        Err(StatusCode::SERVICE_UNAVAILABLE)
+                    }
+                }
+            } else {
+                Ok(session)
+            }
+        }
+        SessionStatus::Starting | SessionStatus::Pending => Ok(session),
         SessionStatus::Stopped => {
             warn!(
                 "Session {} is stopped; attempting to resume for proxy request",
@@ -39,6 +63,26 @@ async fn ensure_session_active_for_proxy(
             warn!("Attempted to proxy to inactive session {}", session_id);
             Err(StatusCode::SERVICE_UNAVAILABLE)
         }
+    }
+}
+
+async fn is_opencode_healthy(client: Client<HttpConnector, Body>, port: u16) -> bool {
+    let uri = match format!("http://localhost:{}/session", port).parse::<Uri>() {
+        Ok(uri) => uri,
+        Err(_) => return false,
+    };
+    let req = match Request::builder()
+        .method("GET")
+        .uri(uri)
+        .body(Body::empty())
+    {
+        Ok(req) => req,
+        Err(_) => return false,
+    };
+
+    match tokio::time::timeout(Duration::from_secs(2), client.request(req)).await {
+        Ok(Ok(resp)) => resp.status().is_success(),
+        _ => false,
     }
 }
 

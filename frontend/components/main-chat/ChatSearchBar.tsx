@@ -20,6 +20,8 @@ export type ChatSearchBarProps = {
 	onToggle: () => void;
 	/** Locale for translations */
 	locale?: "en" | "de";
+	/** Hide the close button (when parent provides its own) */
+	hideCloseButton?: boolean;
 };
 
 const translations = {
@@ -52,6 +54,7 @@ export function ChatSearchBar({
 	isOpen,
 	onToggle,
 	locale = "en",
+	hideCloseButton = false,
 }: ChatSearchBarProps) {
 	const t = translations[locale];
 	const inputRef = useRef<HTMLInputElement>(null);
@@ -142,7 +145,7 @@ export function ChatSearchBar({
 	return (
 		<div
 			className={cn(
-				"flex items-center gap-2 p-2 bg-muted/50 rounded-lg border",
+				"flex items-center gap-2 p-2 bg-muted/30",
 				className,
 			)}
 		>
@@ -154,7 +157,7 @@ export function ChatSearchBar({
 				onChange={(e) => setQuery(e.target.value)}
 				onKeyDown={handleKeyDown}
 				placeholder={t.placeholder}
-				className="h-7 text-sm border-0 bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0"
+				className="h-7 text-sm border-0 bg-transparent shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"
 			/>
 
 			{/* Results indicator */}
@@ -197,15 +200,17 @@ export function ChatSearchBar({
 			)}
 
 			{/* Close button */}
-			<Button
-				variant="ghost"
-				size="icon"
-				onClick={handleClose}
-				className="h-6 w-6 flex-shrink-0"
-				title={t.close}
-			>
-				<X className="h-3 w-3" />
-			</Button>
+			{!hideCloseButton && (
+				<Button
+					variant="ghost"
+					size="icon"
+					onClick={handleClose}
+					className="h-6 w-6 flex-shrink-0"
+					title={t.close}
+				>
+					<X className="h-3 w-3" />
+				</Button>
+			)}
 		</div>
 	);
 }

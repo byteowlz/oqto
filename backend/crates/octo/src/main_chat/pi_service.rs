@@ -863,50 +863,56 @@ impl MainChatPiService {
         Ok(messages)
     }
 
-    /// Search within a specific session using CASS.
+    /// Search within a specific session using CASS, with fallback to direct text search.
     /// Returns search results from the session's content.
+    /// Supports both Pi sessions (.jsonl) and OpenCode sessions (.json).
     pub async fn search_in_session(
         &self,
-        user_id: &str,
+        _user_id: &str,
         session_id: &str,
         query: &str,
         limit: usize,
     ) -> Result<Vec<CassSearchResult>> {
-        let work_dir = self.get_main_chat_dir(user_id);
-        let sessions_dir = self.get_pi_sessions_dir(&work_dir);
-        let session_file = self.find_session_file(&sessions_dir, session_id)?;
+        // First try CASS search filtered by session ID
+        let cass_results = self.search_in_session_via_cass(session_id, query, limit).await;
+        
+        if let Ok(ref results) = cass_results {
+            if !results.is_empty() {
+                return cass_results;
+            }
+        }
 
-        // Call CASS with --sessions-from to filter to this specific session
-        let mut child = tokio::process::Command::new("cass")
+        // Fallback: direct text search in OpenCode message parts
+        self.search_in_opencode_session(session_id, query, limit).await
+    }
+
+    /// Search using CASS and filter by session ID.
+    async fn search_in_session_via_cass(
+        &self,
+        session_id: &str,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<CassSearchResult>> {
+        let search_limit = limit * 10;
+
+        let output = tokio::process::Command::new("cass")
             .arg("search")
             .arg(query)
-            .arg("--sessions-from")
-            .arg("-") // Read session path from stdin
+            .arg("--mode")
+            .arg("lexical")
             .arg("--limit")
-            .arg(limit.to_string())
+            .arg(search_limit.to_string())
             .arg("--json")
-            .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .spawn()
-            .context("Failed to spawn cass")?;
-
-        // Write session file path to stdin
-        if let Some(mut stdin) = child.stdin.take() {
-            use tokio::io::AsyncWriteExt;
-            stdin
-                .write_all(session_file.to_string_lossy().as_bytes())
-                .await
-                .context("Failed to write to cass stdin")?;
-            stdin.write_all(b"\n").await?;
-            // Drop stdin to close it
-        }
-
-        let output = child.wait_with_output().await.context("Failed to wait for cass")?;
+            .context("Failed to spawn cass")?
+            .wait_with_output()
+            .await
+            .context("Failed to wait for cass")?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            // If CASS returns no results, it might exit with error
             if stderr.contains("No results") || output.stdout.is_empty() {
                 return Ok(Vec::new());
             }
@@ -918,14 +924,140 @@ impl MainChatPiService {
             return Ok(Vec::new());
         }
 
-        // Parse CASS JSON output
         let cass_response: CassResponse =
             serde_json::from_str(&stdout).context("Failed to parse CASS output")?;
 
-        Ok(cass_response.hits)
+        let filtered: Vec<CassSearchResult> = cass_response
+            .hits
+            .into_iter()
+            .filter(|hit| hit.source_path.contains(session_id))
+            .take(limit)
+            .collect();
+
+        Ok(filtered)
     }
 
-    /// Find a session file by ID.
+    /// Direct text search in OpenCode session message parts.
+    /// Fallback when CASS hasn't indexed the session.
+    async fn search_in_opencode_session(
+        &self,
+        session_id: &str,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<CassSearchResult>> {
+        let home = std::env::var("HOME").context("HOME not set")?;
+        let messages_dir = PathBuf::from(&home)
+            .join(".local/share/opencode/storage/message")
+            .join(session_id);
+
+        if !messages_dir.exists() {
+            return Ok(Vec::new());
+        }
+
+        let parts_dir = PathBuf::from(&home)
+            .join(".local/share/opencode/storage/part");
+
+        let query_lower = query.to_lowercase();
+        let mut results = Vec::new();
+        let mut line_number = 0;
+
+        // Read message metadata to get message IDs
+        let mut message_ids: Vec<String> = Vec::new();
+        if let Ok(entries) = std::fs::read_dir(&messages_dir) {
+            for entry in entries.filter_map(|e| e.ok()) {
+                let path = entry.path();
+                if path.extension().map(|e| e == "json").unwrap_or(false) {
+                    if let Some(filename) = path.file_stem().and_then(|s| s.to_str()) {
+                        message_ids.push(filename.to_string());
+                    }
+                }
+            }
+        }
+
+        // Sort by message ID (they're roughly chronological)
+        message_ids.sort();
+
+        // Search through message parts
+        for msg_id in message_ids {
+            let msg_parts_dir = parts_dir.join(&msg_id);
+            if !msg_parts_dir.exists() {
+                continue;
+            }
+
+            if let Ok(part_entries) = std::fs::read_dir(&msg_parts_dir) {
+                for part_entry in part_entries.filter_map(|e| e.ok()) {
+                    let part_path = part_entry.path();
+                    if !part_path.extension().map(|e| e == "json").unwrap_or(false) {
+                        continue;
+                    }
+
+                    line_number += 1;
+
+                    // Read and search the part content
+                    if let Ok(content) = std::fs::read_to_string(&part_path) {
+                        // Parse JSON to extract text content
+                        if let Ok(part_json) = serde_json::from_str::<serde_json::Value>(&content) {
+                            let text = part_json.get("text")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("");
+                            
+                            if text.to_lowercase().contains(&query_lower) {
+                                // Create a snippet around the match
+                                let snippet = Self::create_snippet(text, &query_lower, 100);
+                                
+                                results.push(CassSearchResult {
+                                    source_path: part_path.to_string_lossy().to_string(),
+                                    line_number,
+                                    agent: "opencode".to_string(),
+                                    score: 1.0,
+                                    content: Some(text.to_string()),
+                                    snippet: Some(snippet),
+                                    title: None,
+                                    match_type: Some("keyword".to_string()),
+                                    created_at: part_json.get("time")
+                                        .and_then(|t| t.get("created"))
+                                        .and_then(|c| c.as_i64()),
+                                });
+
+                                if results.len() >= limit {
+                                    return Ok(results);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(results)
+    }
+
+    /// Create a snippet around the first match of query in text.
+    fn create_snippet(text: &str, query: &str, context_chars: usize) -> String {
+        let text_lower = text.to_lowercase();
+        if let Some(pos) = text_lower.find(query) {
+            let start = pos.saturating_sub(context_chars);
+            let end = (pos + query.len() + context_chars).min(text.len());
+            
+            // Find word boundaries
+            let snippet_start = text[..start].rfind(' ').map(|p| p + 1).unwrap_or(start);
+            let snippet_end = text[end..].find(' ').map(|p| end + p).unwrap_or(end);
+            
+            let mut snippet = String::new();
+            if snippet_start > 0 {
+                snippet.push_str("...");
+            }
+            snippet.push_str(&text[snippet_start..snippet_end]);
+            if snippet_end < text.len() {
+                snippet.push_str("...");
+            }
+            snippet
+        } else {
+            text.chars().take(200).collect()
+        }
+    }
+
+    /// Find a Pi session file by ID (.jsonl format).
     fn find_session_file(&self, sessions_dir: &std::path::Path, session_id: &str) -> Result<PathBuf> {
         if !sessions_dir.exists() {
             anyhow::bail!("Sessions directory not found");
