@@ -1,11 +1,15 @@
 "use client";
 
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { browserStreamWsUrl } from "@/lib/control-plane-client";
 import { cn } from "@/lib/utils";
+import { ArrowLeft, ArrowRight, RefreshCw } from "lucide-react";
 import {
 	type KeyboardEvent,
 	type PointerEvent,
 	type WheelEvent,
+	useCallback,
 	useEffect,
 	useMemo,
 	useRef,
@@ -90,11 +94,18 @@ export function BrowserView({ sessionId, className }: BrowserViewProps) {
 	const [canvasSize, setCanvasSize] = useState<{ width: number; height: number }>(
 		{ width: 0, height: 0 },
 	);
+	const [urlInput, setUrlInput] = useState("");
 
 	const wsUrl = useMemo(() => {
 		if (!sessionId) return "";
 		return browserStreamWsUrl(sessionId);
 	}, [sessionId]);
+	const isMac = useMemo(() => {
+		if (typeof navigator === "undefined") return false;
+		return /Mac|iPhone|iPad|iPod/.test(navigator.platform);
+	}, []);
+	const isConnected = connectionState === "connected";
+	const primaryModifier = isMac ? 4 : 2;
 
 	useEffect(() => {
 		const container = containerRef.current;
@@ -229,6 +240,93 @@ export function BrowserView({ sessionId, className }: BrowserViewProps) {
 		if (!socket || socket.readyState !== WebSocket.OPEN) return;
 		socket.send(JSON.stringify(payload));
 	}
+
+	function sendKey(key: string, code: string | undefined, modifiers = 0) {
+		sendMessage({
+			type: "input_keyboard",
+			eventType: "keyDown",
+			key,
+			code,
+			modifiers,
+		});
+		sendMessage({
+			type: "input_keyboard",
+			eventType: "keyUp",
+			key,
+			code,
+			modifiers,
+		});
+	}
+
+	function sendChar(text: string, modifiers = 0) {
+		sendMessage({
+			type: "input_keyboard",
+			eventType: "char",
+			text,
+			modifiers,
+		});
+	}
+
+	const sendShortcut = useCallback(
+		(key: string, code: string | undefined, modifiers: number) => {
+			sendMessage({
+				type: "input_keyboard",
+				eventType: "keyDown",
+				key,
+				code,
+				modifiers,
+			});
+			sendMessage({
+				type: "input_keyboard",
+				eventType: "keyUp",
+				key,
+				code,
+				modifiers,
+			});
+		},
+		[],
+	);
+
+	function normalizeUrl(value: string): string {
+		const trimmed = value.trim();
+		if (!trimmed) return "";
+		if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(trimmed)) return trimmed;
+		return `https://${trimmed}`;
+	}
+
+	const handleBack = useCallback(() => {
+		if (!isConnected) return;
+		if (isMac) {
+			sendShortcut("[", "BracketLeft", 4);
+		} else {
+			sendShortcut("ArrowLeft", "ArrowLeft", 1);
+		}
+	}, [isConnected, isMac, sendShortcut]);
+
+	const handleForward = useCallback(() => {
+		if (!isConnected) return;
+		if (isMac) {
+			sendShortcut("]", "BracketRight", 4);
+		} else {
+			sendShortcut("ArrowRight", "ArrowRight", 1);
+		}
+	}, [isConnected, isMac, sendShortcut]);
+
+	const handleReload = useCallback(() => {
+		if (!isConnected) return;
+		sendShortcut("r", "KeyR", primaryModifier);
+	}, [isConnected, primaryModifier, sendShortcut]);
+
+	const handleNavigate = useCallback(() => {
+		if (!isConnected) return;
+		const target = normalizeUrl(urlInput);
+		if (!target) return;
+		sendShortcut("l", "KeyL", primaryModifier);
+		for (const char of target) {
+			sendChar(char);
+		}
+		sendKey("Enter", "Enter");
+	}, [isConnected, primaryModifier, sendShortcut, urlInput]);
 
 	function mapClientToDevice(
 		clientX: number,
@@ -371,40 +469,94 @@ export function BrowserView({ sessionId, className }: BrowserViewProps) {
 	}
 
 	return (
-		<div
-			ref={containerRef}
-			className={cn(
-				"relative h-full w-full border border-border rounded bg-black/80 overflow-hidden",
-				className,
-			)}
-		>
-			<canvas
-				ref={canvasRef}
-				className="h-full w-full outline-none"
-				tabIndex={0}
-				onPointerDown={handlePointerDown}
-				onPointerMove={handlePointerMove}
-				onPointerUp={handlePointerUp}
-				onPointerCancel={handlePointerUp}
-				onWheel={handleWheel}
-				onKeyDown={handleKeyDown}
-				onKeyUp={handleKeyUp}
-				style={{ touchAction: "none" }}
-			/>
-			{connectionState !== "connected" && (
-				<div className="absolute inset-0 flex items-center justify-center text-xs text-muted-foreground bg-black/30">
-					{connectionState === "connecting"
-						? "Connecting to browser..."
-						: connectionState === "error"
-							? statusMessage || "Browser stream unavailable"
-							: "Browser stream idle"}
-				</div>
-			)}
-			{statusMessage && connectionState === "connected" && (
-				<div className="absolute top-2 left-2 px-2 py-1 text-[11px] text-muted-foreground bg-background/80 border border-border rounded">
-					{statusMessage}
-				</div>
-			)}
+		<div className={cn("flex flex-col h-full min-h-0", className)}>
+			<div className="flex items-center gap-2 px-2 py-1 border border-border rounded-t bg-muted/30">
+				<Button
+					type="button"
+					variant="ghost"
+					size="icon-sm"
+					onClick={handleBack}
+					disabled={!isConnected}
+					title="Back"
+				>
+					<ArrowLeft className="size-4" />
+				</Button>
+				<Button
+					type="button"
+					variant="ghost"
+					size="icon-sm"
+					onClick={handleForward}
+					disabled={!isConnected}
+					title="Forward"
+				>
+					<ArrowRight className="size-4" />
+				</Button>
+				<Button
+					type="button"
+					variant="ghost"
+					size="icon-sm"
+					onClick={handleReload}
+					disabled={!isConnected}
+					title="Reload"
+				>
+					<RefreshCw className="size-4" />
+				</Button>
+				<form
+					className="flex-1 flex items-center gap-2"
+					onSubmit={(event) => {
+						event.preventDefault();
+						handleNavigate();
+					}}
+				>
+					<Input
+						value={urlInput}
+						onChange={(event) => setUrlInput(event.target.value)}
+						placeholder="Enter URL"
+						disabled={!isConnected}
+						className="h-8 text-xs font-mono"
+					/>
+					<Button
+						type="submit"
+						variant="outline"
+						size="sm"
+						disabled={!isConnected || !urlInput.trim()}
+					>
+						Go
+					</Button>
+				</form>
+			</div>
+			<div
+				ref={containerRef}
+				className="relative flex-1 min-h-0 border border-t-0 border-border rounded-b bg-black/80 overflow-hidden"
+			>
+				<canvas
+					ref={canvasRef}
+					className="h-full w-full outline-none"
+					tabIndex={0}
+					onPointerDown={handlePointerDown}
+					onPointerMove={handlePointerMove}
+					onPointerUp={handlePointerUp}
+					onPointerCancel={handlePointerUp}
+					onWheel={handleWheel}
+					onKeyDown={handleKeyDown}
+					onKeyUp={handleKeyUp}
+					style={{ touchAction: "none" }}
+				/>
+				{connectionState !== "connected" && (
+					<div className="absolute inset-0 flex items-center justify-center text-xs text-muted-foreground bg-black/30">
+						{connectionState === "connecting"
+							? "Connecting to browser..."
+							: connectionState === "error"
+								? statusMessage || "Browser stream unavailable"
+								: "Browser stream idle"}
+					</div>
+				)}
+				{statusMessage && connectionState === "connected" && (
+					<div className="absolute top-2 left-2 px-2 py-1 text-[11px] text-muted-foreground bg-background/80 border border-border rounded">
+						{statusMessage}
+					</div>
+				)}
+			</div>
 		</div>
 	);
 }

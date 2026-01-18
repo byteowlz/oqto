@@ -38,3 +38,5 @@ stream_port_range = 10000
 
 - The Sessions UI exposes a Browser tab that renders the screencast stream on a
   canvas and forwards mouse/keyboard input over the WebSocket proxy.
+- The toolbar uses common keyboard shortcuts to navigate (back/forward/reload)
+  and focus the address bar for URL entry.
