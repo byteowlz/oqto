@@ -180,9 +180,6 @@ export function StatusBar() {
 				// Height: 2.5rem on mobile, 1.5rem on desktop
 				"h-10 md:h-6",
 			)}
-			style={{
-				paddingBottom: "env(safe-area-inset-bottom, 0px)",
-			}}
 		>
 			{/* Left side - user metrics */}
 			<div className="flex items-center gap-3">

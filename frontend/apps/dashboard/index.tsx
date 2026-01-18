@@ -1,5 +1,7 @@
 "use client";
 
+import { MarkdownRenderer } from "@/components/ui/markdown-renderer";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
 	Card,
@@ -9,16 +11,24 @@ import {
 	CardTitle,
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
+import { Textarea } from "@/components/ui/textarea";
+import {
+	Select,
+	SelectContent,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from "@/components/ui/select";
 import { useApp } from "@/hooks/use-app";
 import {
 	controlPlaneApiUrl,
-	getCodexBarUsage,
 	fetchFeed,
+	fileserverWorkspaceBaseUrl,
 	getAuthHeaders,
+	getCodexBarUsage,
 	getSchedulerOverview,
-	type SchedulerOverview,
 	type CodexBarUsagePayload,
+	type SchedulerOverview,
 } from "@/lib/control-plane-client";
 import { type OpenCodeAgent, fetchAgents } from "@/lib/opencode-client";
 import { formatSessionDate } from "@/lib/session-utils";
@@ -29,10 +39,14 @@ import {
 	CalendarClock,
 	CheckCircle2,
 	Flame,
+	GripVertical,
 	ListTodo,
+	PanelRightClose,
+	PanelRightOpen,
 	RefreshCw,
 	Rss,
 	Sparkles,
+	Trash2,
 	X,
 } from "lucide-react";
 import {
@@ -43,6 +57,11 @@ import {
 	useRef,
 	useState,
 } from "react";
+
+const DASHBOARD_CONFIG_PATH = ".octo/dashboard.json";
+const DASHBOARD_REGISTRY_PATH = ".octo/dashboard.registry.json";
+const LEGACY_FEED_STORAGE_KEY = "octo:dashboardFeeds";
+const GRID_ROW_HEIGHT_REM = 14;
 
 type TrxIssue = {
 	id: string;
@@ -74,7 +93,51 @@ type CodexBarState = {
 	payload: CodexBarUsagePayload[];
 };
 
-const FEED_STORAGE_KEY = "octo:dashboardFeeds";
+type DashboardCardSpan = 3 | 6 | 9 | 12;
+
+type DashboardLayoutCard = {
+	visible: boolean;
+	span: DashboardCardSpan;
+};
+
+type DashboardLayoutConfig = {
+	version: 1;
+	order: string[];
+	cards: Record<string, DashboardLayoutCard>;
+	feeds?: string[];
+};
+
+type DashboardRegistryCard = {
+	id: string;
+	title: string;
+	description?: string;
+	kind: "markdown" | "query";
+	config?: {
+		content?: string;
+		url?: string;
+		method?: string;
+		headers?: Record<string, string>;
+	};
+};
+
+type DashboardRegistryConfig = {
+	version: 1;
+	cards: DashboardRegistryCard[];
+};
+
+type BuiltinCardDefinition = {
+	id: string;
+	title: string;
+	description?: string;
+	defaultSpan: DashboardCardSpan;
+};
+
+const CARD_SPAN_OPTIONS: { value: DashboardCardSpan; label: string }[] = [
+	{ value: 3, label: "1x" },
+	{ value: 6, label: "2x" },
+	{ value: 9, label: "3x" },
+	{ value: 12, label: "Full" },
+];
 
 function createId(): string {
 	if (typeof crypto !== "undefined" && crypto.randomUUID) {
@@ -318,22 +381,153 @@ async function fetchTrxIssues(workspacePath: string): Promise<TrxIssue[]> {
 	return res.json();
 }
 
+async function readWorkspaceFile(
+	workspacePath: string,
+	path: string,
+): Promise<string | null> {
+	const origin =
+		typeof window !== "undefined" ? window.location.origin : "http://localhost";
+	const url = new URL(`${fileserverWorkspaceBaseUrl()}/file`, origin);
+	url.searchParams.set("workspace_path", workspacePath);
+	url.searchParams.set("path", path);
+	const res = await fetch(url.toString(), {
+		headers: {
+			...getAuthHeaders(),
+		},
+		credentials: "include",
+	});
+	if (res.status === 404 || res.status === 502 || res.status === 503) return null;
+	if (!res.ok) {
+		const text = await res.text();
+		throw new Error(text || `Failed to read ${path}`);
+	}
+	return res.text();
+}
+
+async function writeWorkspaceFile(
+	workspacePath: string,
+	path: string,
+	content: string,
+): Promise<void> {
+	const origin =
+		typeof window !== "undefined" ? window.location.origin : "http://localhost";
+	const url = new URL(`${fileserverWorkspaceBaseUrl()}/file`, origin);
+	url.searchParams.set("workspace_path", workspacePath);
+	url.searchParams.set("path", path);
+	url.searchParams.set("mkdir", "true");
+	const res = await fetch(url.toString(), {
+		method: "PUT",
+		body: content,
+		headers: {
+			"Content-Type": "application/json",
+			...getAuthHeaders(),
+		},
+		credentials: "include",
+	});
+	if (!res.ok) {
+		const text = await res.text();
+		throw new Error(text || `Failed to write ${path}`);
+	}
+}
+
+function spanToClass(span: DashboardCardSpan): string {
+	switch (span) {
+		case 3:
+			return "lg:col-span-3";
+		case 6:
+			return "lg:col-span-6";
+		case 9:
+			return "lg:col-span-9";
+		case 12:
+			return "lg:col-span-12";
+		default:
+			return "lg:col-span-6";
+	}
+}
+
+function clampSpan(value: number): DashboardCardSpan {
+	if (value <= 3) return 3;
+	if (value <= 6) return 6;
+	if (value <= 9) return 9;
+	return 12;
+}
+
+function buildDefaultLayout(
+	cardIds: string[],
+	defaultSpans: Record<string, DashboardCardSpan>,
+	feeds: string[],
+): DashboardLayoutConfig {
+	const cards: Record<string, DashboardLayoutCard> = {};
+	cardIds.forEach((id) => {
+		cards[id] = {
+			visible: true,
+			span: defaultSpans[id] ?? 6,
+		};
+	});
+	return {
+		version: 1,
+		order: [...cardIds],
+		cards,
+		feeds,
+	};
+}
+
+function normalizeLayout(
+	layout: DashboardLayoutConfig,
+	cardIds: string[],
+	defaultSpans: Record<string, DashboardCardSpan>,
+): DashboardLayoutConfig {
+	const nextOrder = layout.order.filter((id) => cardIds.includes(id));
+	const known = new Set(nextOrder);
+	cardIds.forEach((id) => {
+		if (!known.has(id)) {
+			nextOrder.push(id);
+			known.add(id);
+		}
+	});
+
+	const nextCards: Record<string, DashboardLayoutCard> = { ...layout.cards };
+	cardIds.forEach((id) => {
+		if (!nextCards[id]) {
+			nextCards[id] = { visible: true, span: defaultSpans[id] ?? 6 };
+		} else {
+			nextCards[id] = {
+				...nextCards[id],
+				span: clampSpan(nextCards[id].span),
+			};
+		}
+	});
+
+	return {
+		...layout,
+		order: nextOrder,
+		cards: nextCards,
+	};
+}
+
 const StatCard = memo(function StatCard({
 	label,
 	value,
 	subValue,
 	Icon,
 	accent,
+	className,
 }: {
 	label: string;
 	value: string | number;
 	subValue?: string;
 	Icon: React.ElementType;
 	accent?: string;
+	className?: string;
 }) {
 	return (
-		<Card className="border border-border/60 bg-card/80">
-			<CardContent className="p-4 flex items-center justify-between">
+		<Card
+			className={cn(
+				"border border-border bg-muted/30 shadow-none h-full",
+				className,
+			)}
+		>
+			<CardContent className="p-4 flex items-start justify-between h-full">
 				<div className="min-w-0">
 					<p className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
 						{label}
@@ -347,7 +541,7 @@ const StatCard = memo(function StatCard({
 				</div>
 				<div
 					className={cn(
-						"p-2 rounded-lg border",
+						"p-2 rounded-lg border self-start",
 						accent ?? "border-primary/20 text-primary",
 					)}
 				>
@@ -375,6 +569,120 @@ function StatusPill({ status }: { status: string }) {
 	);
 }
 
+function CollapsedSidebarButton({
+	active,
+	label,
+	icon: Icon,
+	onClick,
+}: {
+	active: boolean;
+	label: string;
+	icon: React.ElementType;
+	onClick: () => void;
+}) {
+	return (
+		<button
+			type="button"
+			onClick={onClick}
+			className={cn(
+				"flex items-center justify-center h-10 w-10 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors",
+				active && "bg-muted text-foreground",
+			)}
+			aria-label={label}
+			title={label}
+		>
+			<Icon className="h-4 w-4" />
+		</button>
+	);
+}
+
+function QueryCard({
+	title,
+	description,
+	url,
+	method,
+	headers,
+}: {
+	title: string;
+	description?: string;
+	url?: string;
+	method?: string;
+	headers?: Record<string, string>;
+}) {
+	const [data, setData] = useState<unknown>(null);
+	const [error, setError] = useState<string | null>(null);
+	const [loading, setLoading] = useState(false);
+
+	const handleLoad = useCallback(async () => {
+		if (!url) return;
+		setLoading(true);
+		setError(null);
+		try {
+			const res = await fetch(url, {
+				method: method ?? "GET",
+				headers,
+				credentials: "include",
+			});
+			const contentType = res.headers.get("content-type") ?? "";
+			if (!res.ok) {
+				const text = await res.text();
+				throw new Error(text || "Query failed");
+			}
+			if (contentType.includes("application/json")) {
+				setData(await res.json());
+			} else {
+				setData(await res.text());
+			}
+		} catch (err) {
+			setError(err instanceof Error ? err.message : "Query failed");
+		} finally {
+			setLoading(false);
+		}
+	}, [headers, method, url]);
+
+	useEffect(() => {
+		if (url) {
+			handleLoad();
+		}
+	}, [handleLoad, url]);
+
+		return (
+			<Card className="border-border bg-muted/30 shadow-none h-full flex flex-col">
+			<CardHeader className="flex flex-row items-center justify-between">
+				<div>
+					<CardTitle>{title}</CardTitle>
+					{description && <CardDescription>{description}</CardDescription>}
+				</div>
+				<Button
+					variant="outline"
+					size="sm"
+					onClick={handleLoad}
+					disabled={loading || !url}
+					className="gap-2"
+				>
+					<RefreshCw className="h-4 w-4" />
+					Refresh
+				</Button>
+			</CardHeader>
+			<CardContent className="flex-1 overflow-auto">
+				{!url ? (
+					<p className="text-sm text-muted-foreground">No URL configured.</p>
+				) : loading ? (
+					<p className="text-sm text-muted-foreground">Loading...</p>
+				) : error ? (
+					<p className="text-sm text-rose-400">{error}</p>
+				) : (
+					<pre className="text-xs whitespace-pre-wrap text-muted-foreground">
+						{typeof data === "string"
+							? data
+							: JSON.stringify(data, null, 2)}
+					</pre>
+				)}
+			</CardContent>
+		</Card>
+	);
+}
+
 export function DashboardApp() {
 	const {
 		locale,
@@ -384,6 +692,7 @@ export function DashboardApp() {
 		opencodeBaseUrl,
 		opencodeDirectory,
 		selectedWorkspaceSession,
+		mainChatWorkspacePath,
 	} = useApp();
 	const [scheduler, setScheduler] = useState<SchedulerOverview | null>(null);
 	const [schedulerError, setSchedulerError] = useState<string | null>(null);
@@ -392,16 +701,6 @@ export function DashboardApp() {
 	const [trxIssues, setTrxIssues] = useState<TrxIssue[]>([]);
 	const [trxError, setTrxError] = useState<string | null>(null);
 	const [trxLoading, setTrxLoading] = useState(false);
-	const [feedUrls, setFeedUrls] = useState<string[]>(() => {
-		if (typeof window === "undefined") return [];
-		try {
-			const stored = localStorage.getItem(FEED_STORAGE_KEY);
-			return stored ? (JSON.parse(stored) as string[]) : [];
-		} catch {
-			return [];
-		}
-	});
-	const [feedInput, setFeedInput] = useState("");
 	const [feeds, setFeeds] = useState<Record<string, FeedState>>({});
 	const mountedRef = useRef(true);
 	const [codexbar, setCodexbar] = useState<CodexBarState>({
@@ -409,9 +708,29 @@ export function DashboardApp() {
 		loading: false,
 		payload: [],
 	});
+	const [layoutConfig, setLayoutConfig] = useState<DashboardLayoutConfig | null>(null);
+	const layoutRef = useRef<DashboardLayoutConfig | null>(null);
+	const [registryCards, setRegistryCards] = useState<DashboardRegistryCard[]>([]);
+	const registryRef = useRef<DashboardRegistryCard[]>([]);
+	const [layoutError, setLayoutError] = useState<string | null>(null);
+	const [layoutLoading, setLayoutLoading] = useState(false);
+	const [draggedCardId, setDraggedCardId] = useState<string | null>(null);
+	const [feedInput, setFeedInput] = useState("");
+	const [customTitle, setCustomTitle] = useState("");
+	const [customDescription, setCustomDescription] = useState("");
+	const [customType, setCustomType] = useState<"markdown" | "query">("markdown");
+	const [customContent, setCustomContent] = useState("");
+	const [customUrl, setCustomUrl] = useState("");
+	const [customMethod, setCustomMethod] = useState("GET");
+	const [rightSidebarCollapsed, setRightSidebarCollapsed] = useState(false);
+	const [sidebarSection, setSidebarSection] = useState<"cards" | "custom">(
+		"cards",
+	);
+	const [layoutEditMode, setLayoutEditMode] = useState(false);
 
 	const workspacePath =
 		selectedWorkspaceSession?.workspace_path ?? opencodeDirectory ?? ".";
+	const configWorkspacePath = mainChatWorkspacePath ?? workspacePath;
 
 	const copy = useMemo(
 		() => ({
@@ -429,6 +748,10 @@ export function DashboardApp() {
 				noAgents: "Keine aktiven Agents.",
 				noTrx: "Keine TRX-Issues.",
 				noFeeds: "Noch keine Feeds.",
+				layout: "Layout",
+				registry: "Card Registry",
+				customCards: "Custom Cards",
+				notice: "Config in .octo/ for the Main Chat workspace.",
 			},
 			en: {
 				title: "Dashboard",
@@ -444,11 +767,88 @@ export function DashboardApp() {
 				noAgents: "No active agents.",
 				noTrx: "No TRX issues yet.",
 				noFeeds: "No feeds added yet.",
+				layout: "Layout",
+				registry: "Card Registry",
+				customCards: "Custom Cards",
+				notice: "Config lives in .octo/ for the Main Chat workspace.",
 			},
 		}),
 		[],
 	);
 	const t = copy[locale];
+
+	const builtinCards: BuiltinCardDefinition[] = useMemo(
+		() => [
+			{
+				id: "stat-sessions",
+				title: "Sessions",
+				defaultSpan: 3,
+			},
+			{
+				id: "stat-busy",
+				title: "Busy Chats",
+				defaultSpan: 3,
+			},
+			{
+				id: "stat-scheduler",
+				title: "Scheduler",
+				defaultSpan: 3,
+			},
+			{
+				id: "stat-trx",
+				title: "TRX",
+				defaultSpan: 3,
+			},
+			{
+				id: "scheduler",
+				title: t.scheduler,
+				defaultSpan: 6,
+			},
+			{
+				id: "agents",
+				title: t.workingAgents,
+				defaultSpan: 6,
+			},
+			{
+				id: "trx",
+				title: t.trx,
+				defaultSpan: 6,
+			},
+			{
+				id: "codexbar",
+				title: "AI Subscriptions",
+				defaultSpan: 6,
+			},
+			{
+				id: "feeds",
+				title: t.feeds,
+				defaultSpan: 6,
+			},
+		],
+		[t],
+	);
+
+	const builtinDefaultSpans = useMemo(() => {
+		return builtinCards.reduce<Record<string, DashboardCardSpan>>((acc, card) => {
+			acc[card.id] = card.defaultSpan;
+			return acc;
+		}, {});
+	}, [builtinCards]);
+
+	const customDefaultSpans = useMemo(() => {
+		return registryCards.reduce<Record<string, DashboardCardSpan>>((acc, card) => {
+			acc[card.id] = 6;
+			return acc;
+		}, {});
+	}, [registryCards]);
+
+	const cardIdList = useMemo(() => {
+		return [...builtinCards.map((card) => card.id), ...registryCards.map((card) => card.id)];
+	}, [builtinCards, registryCards]);
+
+	const defaultSpans = useMemo(() => {
+		return { ...builtinDefaultSpans, ...customDefaultSpans };
+	}, [builtinDefaultSpans, customDefaultSpans]);
 
 	const runningSessions = useMemo(
 		() => workspaceSessions.filter((session) => session.status === "running"),
@@ -522,31 +922,6 @@ export function DashboardApp() {
 		}
 	}, [workspacePath]);
 
-	const handleAddFeed = useCallback(() => {
-		const trimmed = feedInput.trim();
-		if (!trimmed) return;
-		if (feedUrls.includes(trimmed)) {
-			setFeedInput("");
-			return;
-		}
-		const next = [trimmed, ...feedUrls].slice(0, 8);
-		setFeedUrls(next);
-		setFeedInput("");
-	}, [feedInput, feedUrls]);
-
-	const handleRemoveFeed = useCallback(
-		(url: string) => {
-			const next = feedUrls.filter((entry) => entry !== url);
-			setFeedUrls(next);
-			setFeeds((prev) => {
-				const updated = { ...prev };
-				delete updated[url];
-				return updated;
-			});
-		},
-		[feedUrls],
-	);
-
 	const loadFeed = useCallback(async (url: string) => {
 		setFeeds((prev) => ({
 			...prev,
@@ -578,9 +953,12 @@ export function DashboardApp() {
 		}
 	}, []);
 
-	const handleRefreshFeeds = useCallback(() => {
-		feedUrls.forEach((url) => loadFeed(url));
-	}, [feedUrls, loadFeed]);
+	const handleRefreshFeeds = useCallback(
+		(feedUrls: string[]) => {
+			feedUrls.forEach((url) => loadFeed(url));
+		},
+		[loadFeed],
+	);
 
 	const handleLoadCodexbar = useCallback(async () => {
 		setCodexbar((prev) => ({ ...prev, loading: true, error: undefined }));
@@ -601,21 +979,59 @@ export function DashboardApp() {
 		}
 	}, []);
 
+	const persistLayout = useCallback(
+		async (next: DashboardLayoutConfig) => {
+			if (!configWorkspacePath) return;
+			try {
+				await writeWorkspaceFile(
+					configWorkspacePath,
+					DASHBOARD_CONFIG_PATH,
+					JSON.stringify(next, null, 2),
+				);
+			} catch (err) {
+				console.error("Failed to save dashboard layout:", err);
+			}
+		},
+		[configWorkspacePath],
+	);
+
+	const updateLayout = useCallback(
+		(updater: (layout: DashboardLayoutConfig) => DashboardLayoutConfig) => {
+			if (!layoutRef.current) return;
+			const next = updater(layoutRef.current);
+			layoutRef.current = next;
+			setLayoutConfig(next);
+			void persistLayout(next);
+		},
+		[persistLayout],
+	);
+
+	const persistRegistry = useCallback(
+		async (next: DashboardRegistryCard[]) => {
+			if (!configWorkspacePath) return;
+			const payload: DashboardRegistryConfig = {
+				version: 1,
+				cards: next,
+			};
+			try {
+				await writeWorkspaceFile(
+					configWorkspacePath,
+					DASHBOARD_REGISTRY_PATH,
+					JSON.stringify(payload, null, 2),
+				);
+			} catch (err) {
+				console.error("Failed to save dashboard registry:", err);
+			}
+		},
+		[configWorkspacePath],
+	);
+
 	useEffect(() => {
 		mountedRef.current = true;
 		return () => {
 			mountedRef.current = false;
 		};
 	}, []);
-
-	useEffect(() => {
-		if (typeof window === "undefined") return;
-		try {
-			localStorage.setItem(FEED_STORAGE_KEY, JSON.stringify(feedUrls));
-		} catch {
-			// Ignore storage failures
-		}
-	}, [feedUrls]);
 
 	useEffect(() => {
 		handleLoadScheduler();
@@ -630,16 +1046,153 @@ export function DashboardApp() {
 	}, [handleLoadTrx]);
 
 	useEffect(() => {
-		feedUrls.forEach((url) => {
+		handleLoadCodexbar();
+	}, [handleLoadCodexbar]);
+
+	useEffect(() => {
+		if (!configWorkspacePath) return;
+		let active = true;
+		setLayoutLoading(true);
+		setLayoutError(null);
+		(async () => {
+			try {
+				const [layoutRaw, registryRaw] = await Promise.all([
+					readWorkspaceFile(configWorkspacePath, DASHBOARD_CONFIG_PATH),
+					readWorkspaceFile(configWorkspacePath, DASHBOARD_REGISTRY_PATH),
+				]);
+
+				let registry: DashboardRegistryCard[] = [];
+				if (registryRaw) {
+					try {
+						const parsed = JSON.parse(registryRaw) as DashboardRegistryConfig;
+						registry = parsed.cards ?? [];
+					} catch (err) {
+						console.warn("Failed to parse dashboard registry:", err);
+					}
+				}
+
+				const registryIds = new Set(registry.map((card) => card.id));
+				const sanitizedRegistry = registry.filter((card) => card.id && card.title);
+				const customCards = sanitizedRegistry.filter((card) => registryIds.has(card.id));
+				const mergedRegistry = customCards;
+				const allCardIds = [
+					...builtinCards.map((card) => card.id),
+					...mergedRegistry.map((card) => card.id),
+				];
+
+				let feedsFromStorage: string[] = [];
+				if (typeof window !== "undefined") {
+					try {
+						const stored = localStorage.getItem(LEGACY_FEED_STORAGE_KEY);
+						feedsFromStorage = stored ? (JSON.parse(stored) as string[]) : [];
+					} catch {
+						feedsFromStorage = [];
+					}
+				}
+
+				let layout: DashboardLayoutConfig | null = null;
+				if (layoutRaw) {
+					try {
+						layout = JSON.parse(layoutRaw) as DashboardLayoutConfig;
+					} catch (err) {
+						console.warn("Failed to parse dashboard layout:", err);
+					}
+				}
+
+				const spanDefaults = {
+					...builtinDefaultSpans,
+					...mergedRegistry.reduce<Record<string, DashboardCardSpan>>((acc, card) => {
+						acc[card.id] = 6;
+						return acc;
+					}, {}),
+				};
+
+				let normalizedLayout = layout;
+				if (!normalizedLayout || normalizedLayout.version !== 1) {
+					normalizedLayout = buildDefaultLayout(
+						allCardIds,
+						spanDefaults,
+						feedsFromStorage,
+					);
+				} else {
+					normalizedLayout = normalizeLayout(
+						{
+							...normalizedLayout,
+							feeds: normalizedLayout.feeds ?? feedsFromStorage,
+						},
+						allCardIds,
+						spanDefaults,
+					);
+				}
+
+				if (!active) return;
+
+				registryRef.current = mergedRegistry;
+				setRegistryCards(mergedRegistry);
+				layoutRef.current = normalizedLayout;
+				setLayoutConfig(normalizedLayout);
+
+				if (!layoutRaw || !registryRaw) {
+					void persistLayout(normalizedLayout);
+					if (!registryRaw) {
+						void persistRegistry(mergedRegistry);
+					}
+				}
+			} catch (err) {
+				if (!active) return;
+				console.error("Failed to load dashboard config:", err);
+				setLayoutError(err instanceof Error ? err.message : "Failed to load layout");
+			} finally {
+				if (active) setLayoutLoading(false);
+			}
+		})();
+
+		return () => {
+			active = false;
+		};
+	}, [
+		builtinCards,
+		builtinDefaultSpans,
+		configWorkspacePath,
+		persistLayout,
+		persistRegistry,
+	]);
+
+	useEffect(() => {
+		if (!layoutConfig) return;
+		(layoutConfig.feeds ?? []).forEach((url) => {
 			if (!feeds[url]) {
 				loadFeed(url);
 			}
 		});
-	}, [feedUrls, feeds, loadFeed]);
+	}, [layoutConfig, feeds, loadFeed]);
 
-	useEffect(() => {
-		handleLoadCodexbar();
-	}, [handleLoadCodexbar]);
+	const handleAddFeed = useCallback(() => {
+		const trimmed = feedInput.trim();
+		if (!trimmed) return;
+		if (!layoutRef.current) return;
+		if (layoutRef.current.feeds?.includes(trimmed)) {
+			setFeedInput("");
+			return;
+		}
+		const next = [trimmed, ...(layoutRef.current.feeds ?? [])].slice(0, 8);
+		updateLayout((prev) => ({ ...prev, feeds: next }));
+		setFeedInput("");
+	}, [feedInput, updateLayout]);
+
+	const handleRemoveFeed = useCallback(
+		(url: string) => {
+			if (!layoutRef.current) return;
+			const next = (layoutRef.current.feeds ?? []).filter((entry) => entry !== url);
+			updateLayout((prev) => ({ ...prev, feeds: next }));
+			setFeeds((prev) => {
+				const updated = { ...prev };
+				delete updated[url];
+				return updated;
+			});
+		},
+		[updateLayout],
+	);
 
 	const topTrxIssues = useMemo(() => {
 		return [...trxIssues]
@@ -649,55 +1202,197 @@ export function DashboardApp() {
 
 	const scheduleList = scheduler?.schedules ?? [];
 	const codexbarEntries = codexbar.payload ?? [];
+	const feedUrls = layoutConfig?.feeds ?? [];
 
-	return (
-		<div className="flex flex-col h-full min-h-0 p-4 md:p-6 gap-4 overflow-y-auto w-full">
-			<div className="flex flex-col md:flex-row md:items-end md:justify-between gap-3">
-				<div>
-					<h1 className="text-2xl md:text-3xl font-semibold tracking-tight">
-						{t.title}
-					</h1>
-					<p className="text-sm text-muted-foreground">{t.subtitle}</p>
-				</div>
-				<div className="text-xs text-muted-foreground">
-					{new Date().toLocaleDateString()}
-				</div>
-			</div>
+	const cardMap = useMemo(() => {
+		const map = new Map<string, BuiltinCardDefinition | DashboardRegistryCard>();
+		builtinCards.forEach((card) => map.set(card.id, card));
+		registryCards.forEach((card) => map.set(card.id, card));
+		return map;
+	}, [builtinCards, registryCards]);
 
-			<div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
-				<StatCard
-					label={t.stats}
-					value={`${runningSessions.length} / ${workspaceSessions.length}`}
-					subValue="Sessions running"
-					Icon={Activity}
-					accent="border-cyan-500/30 text-cyan-300"
-				/>
-				<StatCard
-					label="Busy Chats"
-					value={busyChatSessions.length}
-					subValue={`${opencodeSessions.length} total chats`}
-					Icon={Flame}
-					accent="border-rose-500/30 text-rose-300"
-				/>
-				<StatCard
-					label="Scheduler"
-					value={scheduleStats.enabled}
-					subValue={`${scheduleStats.total} total schedules`}
-					Icon={CalendarClock}
-					accent="border-amber-500/30 text-amber-300"
-				/>
-				<StatCard
-					label="TRX"
-					value={trxStats.open}
-					subValue={`${trxStats.total} issues tracked`}
-					Icon={ListTodo}
-					accent="border-emerald-500/30 text-emerald-300"
-				/>
-			</div>
+	const orderedCards = useMemo(() => {
+		if (!layoutConfig) return [];
+		return layoutConfig.order
+			.map((id) => cardMap.get(id))
+			.filter(Boolean) as Array<BuiltinCardDefinition | DashboardRegistryCard>;
+	}, [cardMap, layoutConfig]);
 
-			<div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
-				<div className="xl:col-span-2 flex flex-col gap-4">
-					<Card className="border-border/60">
+	const visibleCards = useMemo(() => {
+		if (!layoutConfig) return [];
+		return orderedCards.filter((card) => layoutConfig.cards[card.id]?.visible !== false);
+	}, [layoutConfig, orderedCards]);
+
+	const handleToggleCard = useCallback(
+		(id: string) => {
+			updateLayout((prev) => ({
+				...prev,
+				cards: {
+					...prev.cards,
+					[id]: {
+						...prev.cards[id],
+						visible: !prev.cards[id]?.visible,
+						span: prev.cards[id]?.span ?? 6,
+					},
+				},
+			}));
+		},
+		[updateLayout],
+	);
+
+	const handleSpanChange = useCallback(
+		(id: string, span: DashboardCardSpan) => {
+			updateLayout((prev) => ({
+				...prev,
+				cards: {
+					...prev.cards,
+					[id]: {
+						...prev.cards[id],
+						span,
+					},
+				},
+			}));
+		},
+		[updateLayout],
+	);
+
+	const handleDragStart = useCallback((id: string) => {
+		setDraggedCardId(id);
+	}, []);
+
+	const handleDrop = useCallback(
+		(targetId: string) => {
+			if (!draggedCardId || !layoutRef.current) return;
+			if (draggedCardId === targetId) return;
+			updateLayout((prev) => {
+				const order = [...prev.order];
+				const fromIndex = order.indexOf(draggedCardId);
+				const toIndex = order.indexOf(targetId);
+				if (fromIndex === -1 || toIndex === -1) return prev;
+				order.splice(fromIndex, 1);
+				order.splice(toIndex, 0, draggedCardId);
+				return { ...prev, order };
+			});
+			setDraggedCardId(null);
+		},
+		[draggedCardId, updateLayout],
+	);
+
+	const handleDragEnd = useCallback(() => {
+		setDraggedCardId(null);
+	}, []);
+
+	const handleAddCustomCard = useCallback(() => {
+		const title = customTitle.trim();
+		if (!title) return;
+		const id = `custom-${createId()}`;
+		const newCard: DashboardRegistryCard = {
+			id,
+			title,
+			description: customDescription.trim() || undefined,
+			kind: customType,
+			config:
+				customType === "markdown"
+					? { content: customContent }
+					: { url: customUrl, method: customMethod },
+		};
+
+		const nextRegistry = [...registryRef.current, newCard];
+		registryRef.current = nextRegistry;
+		setRegistryCards(nextRegistry);
+		void persistRegistry(nextRegistry);
+
+		updateLayout((prev) => {
+			const nextCards = {
+				...prev.cards,
+				[newCard.id]: { visible: true, span: 6 },
+			};
+			return {
+				...prev,
+				order: [...prev.order, newCard.id],
+				cards: nextCards,
+			};
+		});
+
+		setCustomTitle("");
+		setCustomDescription("");
+		setCustomContent("");
+		setCustomUrl("");
+	}, [
+		customContent,
+		customDescription,
+		customMethod,
+		customTitle,
+		customType,
+		customUrl,
+		persistRegistry,
+		updateLayout,
+	]);
+
+	const handleRemoveCustomCard = useCallback(
+		(id: string) => {
+			const nextRegistry = registryRef.current.filter((card) => card.id !== id);
+			registryRef.current = nextRegistry;
+			setRegistryCards(nextRegistry);
+			void persistRegistry(nextRegistry);
+			updateLayout((prev) => {
+				const nextCards = { ...prev.cards };
+				delete nextCards[id];
+				return {
+					...prev,
+					order: prev.order.filter((entry) => entry !== id),
+					cards: nextCards,
+				};
+			});
+		},
+		[persistRegistry, updateLayout],
+	);
+
+	const renderBuiltinCard = (id: string) => {
+		switch (id) {
+			case "stat-sessions":
+				return (
+					<StatCard
+						label={t.stats}
+						value={`${runningSessions.length} / ${workspaceSessions.length}`}
+						subValue="Sessions running"
+						Icon={Activity}
+						accent="border-cyan-500/30 text-cyan-300"
+					/>
+				);
+			case "stat-busy":
+				return (
+					<StatCard
+						label="Busy Chats"
+						value={busyChatSessions.length}
+						subValue={`${opencodeSessions.length} total chats`}
+						Icon={Flame}
+						accent="border-rose-500/30 text-rose-300"
+					/>
+				);
+			case "stat-scheduler":
+				return (
+					<StatCard
+						label="Scheduler"
+						value={scheduleStats.enabled}
+						subValue={`${scheduleStats.total} total schedules`}
+						Icon={CalendarClock}
+						accent="border-amber-500/30 text-amber-300"
+					/>
+				);
+			case "stat-trx":
+				return (
+					<StatCard
+						label="TRX"
+						value={trxStats.open}
+						subValue={`${trxStats.total} issues tracked`}
+						Icon={ListTodo}
+						accent="border-emerald-500/30 text-emerald-300"
+					/>
+				);
+			case "scheduler":
+		return (
+			<Card className="border-border bg-muted/30 shadow-none h-full flex flex-col">
 						<CardHeader className="flex flex-row items-center justify-between">
 							<div>
 								<CardTitle>{t.scheduler}</CardTitle>
@@ -718,7 +1413,7 @@ export function DashboardApp() {
 								{t.reload}
 							</Button>
 						</CardHeader>
-						<CardContent>
+						<CardContent className="flex-1 min-h-0 overflow-auto">
 							{scheduleList.length === 0 ? (
 								<div className="text-sm text-muted-foreground">
 									{t.noTasks}
@@ -754,15 +1449,17 @@ export function DashboardApp() {
 							)}
 						</CardContent>
 					</Card>
-
-					<Card className="border-border/60">
+				);
+			case "agents":
+		return (
+			<Card className="border-border bg-muted/30 shadow-none h-full flex flex-col">
 						<CardHeader>
 							<CardTitle>{t.workingAgents}</CardTitle>
 							<CardDescription>
 								{runningSessions.length} running containers, {agents.length} agent profiles
 							</CardDescription>
 						</CardHeader>
-						<CardContent className="space-y-4">
+						<CardContent className="flex-1 min-h-0 overflow-auto space-y-4">
 							{runningSessions.length === 0 ? (
 								<div className="text-sm text-muted-foreground">
 									{t.noAgents}
@@ -820,104 +1517,10 @@ export function DashboardApp() {
 							</div>
 						</CardContent>
 					</Card>
-				</div>
-
-				<div className="flex flex-col gap-4">
-					{codexbar.available && (
-						<Card className="border-border/60">
-							<CardHeader className="flex flex-row items-center justify-between">
-								<div>
-									<CardTitle>AI Subscriptions</CardTitle>
-									<CardDescription>
-										CodexBar usage snapshots
-									</CardDescription>
-								</div>
-								<Button
-									variant="outline"
-									size="sm"
-									onClick={handleLoadCodexbar}
-									disabled={codexbar.loading}
-									className="gap-2"
-								>
-									<RefreshCw className="h-4 w-4" />
-									{t.reload}
-								</Button>
-							</CardHeader>
-							<CardContent className="space-y-3">
-								{codexbar.error && (
-									<p className="text-xs text-rose-400">{codexbar.error}</p>
-								)}
-								{codexbarEntries.length === 0 ? (
-									<p className="text-sm text-muted-foreground">
-										No CodexBar data yet.
-									</p>
-								) : (
-									<div className="space-y-3">
-										{codexbarEntries.slice(0, 6).map((entry) => {
-											const primary = entry.usage?.primary;
-											const secondary = entry.usage?.secondary;
-											const credits = entry.credits?.remaining;
-											return (
-												<div
-													key={`${entry.provider}-${entry.account ?? ""}`}
-													className="border-b border-border/40 pb-3 last:border-b-0 last:pb-0"
-												>
-													<div className="flex items-center justify-between gap-2">
-														<div className="min-w-0">
-															<p className="text-sm font-medium truncate">
-																{entry.provider}
-															</p>
-															<p className="text-xs text-muted-foreground truncate">
-																{entry.account ??
-																	entry.usage?.accountEmail ??
-																	entry.source}
-															</p>
-														</div>
-														{entry.status?.indicator && (
-															<Badge variant="secondary">
-																{entry.status.indicator}
-															</Badge>
-														)}
-													</div>
-													<div className="mt-2 grid grid-cols-2 gap-2 text-xs text-muted-foreground">
-														<div>
-															Session:{" "}
-															{primary?.usedPercent != null
-																? `${primary.usedPercent}% used`
-																: "n/a"}
-															{primary?.resetsAt && (
-																<span className="block">
-																	Resets {formatDateTime(primary.resetsAt)}
-																</span>
-															)}
-														</div>
-														<div>
-															Weekly:{" "}
-															{secondary?.usedPercent != null
-																? `${secondary.usedPercent}% used`
-																: "n/a"}
-															{secondary?.resetsAt && (
-																<span className="block">
-																	Resets {formatDateTime(secondary.resetsAt)}
-																</span>
-															)}
-														</div>
-													</div>
-													{credits != null && (
-														<p className="text-xs text-muted-foreground mt-2">
-															Credits: {credits}
-														</p>
-													)}
-												</div>
-											);
-										})}
-									</div>
-								)}
-							</CardContent>
-						</Card>
-					)}
-
-					<Card className="border-border/60">
+				);
+			case "trx":
+		return (
+			<Card className="border-border bg-muted/30 shadow-none h-full flex flex-col">
 						<CardHeader className="flex flex-row items-center justify-between">
 							<div>
 								<CardTitle>{t.trx}</CardTitle>
@@ -938,7 +1541,7 @@ export function DashboardApp() {
 								{t.reload}
 							</Button>
 						</CardHeader>
-						<CardContent className="space-y-3">
+						<CardContent className="flex-1 min-h-0 overflow-auto space-y-3">
 							{topTrxIssues.length === 0 ? (
 								<div className="text-sm text-muted-foreground">
 									{t.noTrx}
@@ -960,17 +1563,107 @@ export function DashboardApp() {
 													<span className="truncate">{issue.id}</span>
 												</div>
 											</div>
-											<div className="text-xs text-muted-foreground">
-												P{issue.priority}
-											</div>
+											<div className="text-xs text-muted-foreground">P{issue.priority}</div>
 										</div>
 									))}
 								</div>
 							)}
 						</CardContent>
 					</Card>
-
-					<Card className="border-border/60">
+				);
+			case "codexbar":
+		return (
+			<Card className="border-border bg-muted/30 shadow-none h-full flex flex-col">
+						<CardHeader className="flex flex-row items-center justify-between">
+							<div>
+								<CardTitle>AI Subscriptions</CardTitle>
+								<CardDescription>CodexBar usage snapshots</CardDescription>
+							</div>
+							<Button
+								variant="outline"
+								size="sm"
+								onClick={handleLoadCodexbar}
+								disabled={codexbar.loading}
+								className="gap-2"
+							>
+								<RefreshCw className="h-4 w-4" />
+								{t.reload}
+							</Button>
+						</CardHeader>
+						<CardContent className="flex-1 min-h-0 overflow-auto space-y-3">
+							{!codexbar.available ? (
+								<p className="text-sm text-muted-foreground">
+									CodexBar is not available on this host.
+								</p>
+							) : (
+								<>
+									{codexbar.error && (
+										<p className="text-xs text-rose-400">{codexbar.error}</p>
+									)}
+									{codexbarEntries.length === 0 ? (
+										<p className="text-sm text-muted-foreground">
+											No CodexBar data yet.
+										</p>
+									) : (
+										<div className="space-y-3">
+											{codexbarEntries.slice(0, 6).map((entry) => {
+												const primary = entry.usage?.primary;
+												const secondary = entry.usage?.secondary;
+												const credits = entry.credits?.remaining;
+												return (
+													<div
+														key={`${entry.provider}-${entry.account ?? ""}`}
+														className="border-b border-border/40 pb-3 last:border-b-0 last:pb-0"
+													>
+														<div className="flex items-center justify-between gap-2">
+															<div className="min-w-0">
+																<p className="text-sm font-medium truncate">
+																	{entry.provider}
+																</p>
+																<p className="text-xs text-muted-foreground truncate">
+																	{entry.account ?? entry.usage?.accountEmail ?? entry.source}
+																</p>
+															</div>
+															{entry.status?.indicator && (
+																<Badge variant="secondary">{entry.status.indicator}</Badge>
+															)}
+														</div>
+														<div className="mt-2 grid grid-cols-2 gap-2 text-xs text-muted-foreground">
+															<div>
+																Session:{" "}
+																{primary?.usedPercent != null
+																	? `${primary.usedPercent}% used`
+																	: "n/a"}
+																{primary?.resetsAt && (
+																	<span className="block">Resets {formatDateTime(primary.resetsAt)}</span>
+																)}
+															</div>
+															<div>
+																Weekly:{" "}
+																{secondary?.usedPercent != null
+																	? `${secondary.usedPercent}% used`
+																	: "n/a"}
+																{secondary?.resetsAt && (
+																	<span className="block">Resets {formatDateTime(secondary.resetsAt)}</span>
+																)}
+															</div>
+														</div>
+														{credits != null && (
+															<p className="text-xs text-muted-foreground mt-2">Credits: {credits}</p>
+														)}
+													</div>
+												);
+											})}
+										</div>
+									)}
+								</>
+							)}
+						</CardContent>
+					</Card>
+				);
+			case "feeds":
+		return (
+			<Card className="border-border bg-muted/30 shadow-none h-full flex flex-col">
 						<CardHeader>
 							<CardTitle className="flex items-center gap-2">
 								<Rss className="h-4 w-4" />
@@ -978,7 +1671,7 @@ export function DashboardApp() {
 							</CardTitle>
 							<CardDescription>RSS / Atom reader</CardDescription>
 						</CardHeader>
-						<CardContent className="space-y-4">
+						<CardContent className="flex-1 min-h-0 overflow-auto space-y-4">
 							<div className="flex gap-2">
 								<Input
 									placeholder="https://example.com/feed.xml"
@@ -1003,7 +1696,7 @@ export function DashboardApp() {
 								<Button
 									variant="ghost"
 									size="sm"
-									onClick={handleRefreshFeeds}
+									onClick={() => handleRefreshFeeds(feedUrls)}
 									className="gap-1"
 								>
 									<RefreshCw className="h-3.5 w-3.5" />
@@ -1020,7 +1713,7 @@ export function DashboardApp() {
 										return (
 											<div
 												key={url}
-												className="border border-border/50 rounded-lg p-3 space-y-2"
+												className="border border-border rounded-lg p-3 space-y-2"
 											>
 												<div className="flex items-start justify-between gap-2">
 													<div className="min-w-0">
@@ -1046,10 +1739,7 @@ export function DashboardApp() {
 												) : (
 													<ul className="space-y-1">
 														{(feed?.items ?? []).slice(0, 4).map((item) => (
-															<li
-																key={item.id}
-																className="text-xs text-muted-foreground"
-															>
+															<li key={item.id} className="text-xs text-muted-foreground">
 																{item.link ? (
 																	<a
 																		href={item.link}
@@ -1060,9 +1750,7 @@ export function DashboardApp() {
 																		{item.title}
 																	</a>
 																) : (
-																	<span className="text-foreground">
-																		{item.title}
-																	</span>
+																	<span className="text-foreground">{item.title}</span>
 																)}
 																{item.date && (
 																	<span className="ml-2">{formatDateTime(item.date)}</span>
@@ -1078,6 +1766,331 @@ export function DashboardApp() {
 							)}
 						</CardContent>
 					</Card>
+				);
+			default:
+				return null;
+		}
+	};
+
+	const renderCustomCard = (card: DashboardRegistryCard) => {
+		if (card.kind === "markdown") {
+		return (
+			<Card className="border-border bg-muted/30 shadow-none h-full flex flex-col">
+					<CardHeader>
+						<CardTitle>{card.title}</CardTitle>
+						{card.description && <CardDescription>{card.description}</CardDescription>}
+					</CardHeader>
+					<CardContent className="flex-1 min-h-0 overflow-auto">
+						<MarkdownRenderer content={card.config?.content || ""} />
+					</CardContent>
+				</Card>
+			);
+		}
+
+		return (
+			<QueryCard
+				title={card.title}
+				description={card.description}
+				url={card.config?.url}
+				method={card.config?.method}
+				headers={card.config?.headers}
+			/>
+		);
+	};
+
+	return (
+		<div className="flex flex-col h-full min-h-0 p-4 md:p-6 gap-4 overflow-hidden w-full">
+			<div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+				<div>
+					<h1 className="text-2xl md:text-3xl font-semibold tracking-tight">
+						{t.title}
+					</h1>
+					<p className="text-sm text-muted-foreground">{t.subtitle}</p>
+				</div>
+				<div className="flex items-center gap-2 text-xs text-muted-foreground">
+					{new Date().toLocaleDateString()}
+					<Button
+						variant={layoutEditMode ? "secondary" : "ghost"}
+						size="icon"
+						className="size-7"
+						onClick={() => setLayoutEditMode((prev) => !prev)}
+					>
+						<GripVertical className="size-4" />
+					</Button>
+					<Button
+						variant="ghost"
+						size="icon"
+						className="size-7"
+						onClick={() => setRightSidebarCollapsed((prev) => !prev)}
+					>
+						{rightSidebarCollapsed ? (
+							<PanelRightOpen className="size-4" />
+						) : (
+							<PanelRightClose className="size-4" />
+						)}
+					</Button>
+				</div>
+			</div>
+
+			{layoutError && (
+				<div className="text-sm text-rose-400">{layoutError}</div>
+			)}
+
+			<div className="flex flex-1 min-h-0 gap-4 items-start overflow-hidden">
+				<div className="flex-1 min-w-0 self-start">
+					<div className="bg-card border border-border p-4 xl:p-5 flex flex-col gap-4 max-h-[calc(100vh-12rem)] overflow-hidden">
+						{layoutLoading || !layoutConfig ? (
+							<div className="text-sm text-muted-foreground">
+								Loading dashboard...
+							</div>
+						) : (
+							<div
+								className="grid grid-cols-12 gap-4 auto-rows-fr overflow-y-auto pr-1"
+								style={{ gridAutoRows: `${GRID_ROW_HEIGHT_REM}rem` }}
+							>
+								{visibleCards.map((card) => {
+									const config = layoutConfig.cards[card.id];
+									const span = config?.span ?? 6;
+									return (
+										<div
+											key={card.id}
+											draggable={layoutEditMode}
+											onDragStart={() => handleDragStart(card.id)}
+											onDragOver={(event) => {
+												if (!layoutEditMode) return;
+												event.preventDefault();
+											}}
+											onDrop={() => {
+												if (!layoutEditMode) return;
+												handleDrop(card.id);
+											}}
+											onDragEnd={handleDragEnd}
+											className={cn("col-span-12", spanToClass(span))}
+										>
+											<div
+												className={cn(
+													"relative h-full",
+													layoutEditMode && "ring-1 ring-primary/40 rounded-lg",
+												)}
+											>
+												{layoutEditMode && (
+													<div className="absolute top-2 right-2 z-10 flex items-center gap-1">
+														<Button
+															variant="secondary"
+															size="icon"
+															className="h-7 w-7"
+														>
+															<GripVertical className="h-4 w-4" />
+														</Button>
+														{CARD_SPAN_OPTIONS.map((option) => (
+															<Button
+																key={option.value}
+																variant={
+																	span === option.value ? "default" : "ghost"
+																}
+																size="icon"
+																className="h-7 w-7 text-[10px]"
+																onClick={() =>
+																	handleSpanChange(card.id, option.value)
+																}
+															>
+																{option.label}
+															</Button>
+														))}
+													</div>
+												)}
+												{"defaultSpan" in card
+													? renderBuiltinCard(card.id)
+													: renderCustomCard(card)}
+											</div>
+										</div>
+									);
+								})}
+							</div>
+						)}
+					</div>
+				</div>
+
+				<div
+					className={cn(
+						"bg-card border border-border flex flex-col transition-all duration-200 self-start max-h-[calc(100vh-12rem)] overflow-hidden",
+						rightSidebarCollapsed
+							? "w-12 items-center"
+							: "w-[360px] max-w-[420px]",
+					)}
+				>
+					{rightSidebarCollapsed ? (
+						<div className="flex flex-col gap-1 p-2 h-full overflow-y-auto">
+							<CollapsedSidebarButton
+								active={sidebarSection === "cards"}
+								label="Cards"
+								icon={ListTodo}
+								onClick={() => {
+									setSidebarSection("cards");
+									setRightSidebarCollapsed(false);
+								}}
+							/>
+							<CollapsedSidebarButton
+								active={sidebarSection === "custom"}
+								label="Custom cards"
+								icon={Sparkles}
+								onClick={() => {
+									setSidebarSection("custom");
+									setRightSidebarCollapsed(false);
+								}}
+							/>
+						</div>
+					) : (
+						<div className="flex flex-col h-full min-h-0">
+							<div className="px-4 py-3 border-b border-border">
+								<div className="flex items-center justify-between">
+									<div>
+										<p className="text-sm font-semibold">{t.layout}</p>
+										<p className="text-xs text-muted-foreground">{t.notice}</p>
+									</div>
+								<div />
+							</div>
+						</div>
+							<div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-6">
+								<div className="space-y-2">
+									<div className="flex items-center justify-between">
+										<span className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+											Cards
+										</span>
+										<Button
+											variant="ghost"
+											size="sm"
+											onClick={() => setSidebarSection("cards")}
+										>
+											{sidebarSection === "cards" ? "Editing" : "Edit"}
+										</Button>
+									</div>
+									{orderedCards.length === 0 ? (
+										<p className="text-xs text-muted-foreground">
+											No cards available.
+										</p>
+									) : (
+										<div className="space-y-2">
+											{orderedCards.map((card) => {
+												const config = layoutConfig?.cards[card.id];
+												const visible = config?.visible !== false;
+												const isCustom = !("defaultSpan" in card);
+												return (
+													<div
+														key={card.id}
+														className={cn(
+															"flex flex-col gap-2 rounded-md border border-border bg-muted/30 px-3 py-2",
+														)}
+													>
+														<div className="flex items-center justify-between gap-2">
+															<div className="flex items-center gap-2 min-w-0">
+																<span className="text-sm font-medium truncate">
+																	{card.title}
+																</span>
+															</div>
+															<div className="flex items-center gap-2">
+																<Button
+																	variant="ghost"
+																	size="icon"
+																	onClick={() => handleToggleCard(card.id)}
+																>
+																	{visible ? "Hide" : "Show"}
+																</Button>
+																{isCustom && (
+																	<Button
+																		variant="ghost"
+																		size="icon"
+																		onClick={() => handleRemoveCustomCard(card.id)}
+																	>
+																		<Trash2 className="h-4 w-4" />
+																	</Button>
+																)}
+															</div>
+														</div>
+													</div>
+												);
+											})}
+										</div>
+									)}
+								</div>
+
+								<div className="space-y-3">
+									<div className="flex items-center justify-between">
+										<span className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+											{t.customCards}
+										</span>
+										<Button
+											variant="ghost"
+											size="sm"
+											onClick={() => setSidebarSection("custom")}
+										>
+											{sidebarSection === "custom" ? "Editing" : "Edit"}
+										</Button>
+									</div>
+									{sidebarSection === "custom" && (
+										<div className="space-y-3">
+											<Input
+												placeholder="Card title"
+												value={customTitle}
+												onChange={(event) => setCustomTitle(event.target.value)}
+											/>
+											<Input
+												placeholder="Description (optional)"
+												value={customDescription}
+												onChange={(event) =>
+													setCustomDescription(event.target.value)
+												}
+											/>
+											<Select
+												value={customType}
+												onValueChange={(value) =>
+													setCustomType(value as "markdown" | "query")
+												}
+											>
+												<SelectTrigger size="sm">
+													<SelectValue placeholder="Card type" />
+												</SelectTrigger>
+												<SelectContent>
+													<SelectItem value="markdown">Markdown</SelectItem>
+													<SelectItem value="query">Query</SelectItem>
+												</SelectContent>
+											</Select>
+											{customType === "markdown" ? (
+												<Textarea
+													placeholder="Markdown content"
+													value={customContent}
+													onChange={(event) =>
+														setCustomContent(event.target.value)
+													}
+													rows={4}
+												/>
+											) : (
+												<div className="space-y-2">
+													<Input
+														placeholder="https://api.example.com/status"
+														value={customUrl}
+														onChange={(event) =>
+															setCustomUrl(event.target.value)
+														}
+													/>
+													<Input
+														placeholder="GET"
+														value={customMethod}
+														onChange={(event) =>
+															setCustomMethod(event.target.value)
+														}
+													/>
+												</div>
+											)}
+											<Button onClick={handleAddCustomCard} className="w-full">
+												Add card
+											</Button>
+										</div>
+									)}
+								</div>
+							</div>
+						</div>
+					)}
 				</div>
 			</div>
 		</div>

@@ -75,6 +75,7 @@ import {
 	FolderKanban,
 	FolderPlus,
 	Globe2,
+	LayoutDashboard,
 	Loader2,
 	Menu,
 	MessageSquare,
@@ -159,17 +160,43 @@ const AppShell = memo(function AppShell() {
 		return matchedApp?.id;
 	}, [apps, location.pathname]);
 
+	const sessionsRoute = useMemo(
+		() => apps.find((app) => app.id === "sessions")?.routes?.[0],
+		[apps],
+	);
+
+	const virtualApps = useMemo(
+		() => new Set(["dashboard", "settings", "admin"]),
+		[],
+	);
+
 	useEffect(() => {
 		if (matchedAppId && matchedAppId !== activeAppId) {
+			if (matchedAppId === "sessions" && virtualApps.has(activeAppId)) {
+				return;
+			}
 			setActiveAppId(matchedAppId);
+			if (virtualApps.has(matchedAppId) && sessionsRoute) {
+				navigate(sessionsRoute, { replace: true });
+			}
 			return;
 		}
 		if (!matchedAppId && location.pathname === "/" && apps[0]?.id) {
 			setActiveAppId(apps[0].id);
 		}
-	}, [activeAppId, apps, location.pathname, matchedAppId, setActiveAppId]);
+	}, [
+		activeAppId,
+		apps,
+		location.pathname,
+		matchedAppId,
+		navigate,
+		sessionsRoute,
+		setActiveAppId,
+		virtualApps,
+	]);
 
 	useEffect(() => {
+		if (activeAppId !== "sessions") return;
 		const activeRoute = apps.find((app) => app.id === activeAppId)?.routes?.[0];
 		if (!activeRoute || matchedAppId) return;
 		const isMatch =
@@ -1002,9 +1029,12 @@ const AppShell = memo(function AppShell() {
 		(projectKey: string) => {
 			setSelectedProjectKey(projectKey);
 			setActiveAppId("sessions");
+			if (sessionsRoute) {
+				navigate(sessionsRoute);
+			}
 			setMobileMenuOpen(false);
 		},
-		[setActiveAppId],
+		[navigate, sessionsRoute, setActiveAppId],
 	);
 
 	const handleProjectClear = useCallback(() => {
@@ -1033,9 +1063,12 @@ const AppShell = memo(function AppShell() {
 			setDirectoryPickerOpen(false);
 			setPendingPersona(null);
 			setActiveAppId("sessions");
+			if (sessionsRoute) {
+				navigate(sessionsRoute);
+			}
 			await createNewChatWithPersona(pendingPersona, path);
 		},
-		[createNewChatWithPersona, pendingPersona, setActiveAppId],
+		[createNewChatWithPersona, navigate, pendingPersona, sessionsRoute, setActiveAppId],
 	);
 
 	const handleDirectoryPickerOpenChange = useCallback((open: boolean) => {
@@ -1049,6 +1082,9 @@ const AppShell = memo(function AppShell() {
 	const handleSessionClick = (sessionId: string) => {
 		setSelectedChatSessionId(sessionId);
 		setActiveAppId("sessions");
+		if (sessionsRoute) {
+			navigate(sessionsRoute);
+		}
 		setMobileMenuOpen(false);
 		// Clear main chat selection when clicking a regular session
 		setMainChatActive(false);
@@ -1072,6 +1108,9 @@ const AppShell = memo(function AppShell() {
 			if (hit.agent === "pi_agent") {
 				// Navigate to Main Chat
 				setActiveAppId("sessions");
+				if (sessionsRoute) {
+					navigate(sessionsRoute);
+				}
 				setMainChatActive(true);
 				// Extract workspace from hit if available
 				if (hit.workspace) {
@@ -1087,6 +1126,9 @@ const AppShell = memo(function AppShell() {
 				if (sessionId) {
 					setSelectedChatSessionId(sessionId);
 					setActiveAppId("sessions");
+					if (sessionsRoute) {
+						navigate(sessionsRoute);
+					}
 					setMainChatActive(false);
 					setMainChatWorkspacePath(null);
 				}
@@ -1099,6 +1141,8 @@ const AppShell = memo(function AppShell() {
 			setMainChatWorkspacePath,
 			setSelectedChatSessionId,
 			setScrollToMessageId,
+			navigate,
+			sessionsRoute,
 		],
 	);
 
@@ -1447,11 +1491,16 @@ const AppShell = memo(function AppShell() {
 		(appId: string) => {
 			setActiveAppId(appId);
 			const route = apps.find((app) => app.id === appId)?.routes?.[0];
-			if (route) {
-				navigate(route);
+			if (!route) return;
+			if (virtualApps.has(appId)) {
+				if (sessionsRoute) {
+					navigate(sessionsRoute);
+				}
+				return;
 			}
+			navigate(route);
 		},
-		[apps, navigate, setActiveAppId],
+		[apps, navigate, sessionsRoute, setActiveAppId, virtualApps],
 	);
 
 	// Toggle app - if already active, go back to sessions
@@ -1495,8 +1544,11 @@ const AppShell = memo(function AppShell() {
 		>
 			{/* Mobile header */}
 			<header
-				className="fixed top-0 left-0 right-0 h-14 flex items-center px-3 z-50 md:hidden"
-				style={{ backgroundColor: sidebarBg }}
+				className="fixed top-0 left-0 right-0 flex items-center px-3 z-50 md:hidden h-[calc(3.5rem+env(safe-area-inset-top))]"
+				style={{
+					backgroundColor: sidebarBg,
+					paddingTop: "env(safe-area-inset-top)",
+				}}
 			>
 				<Button
 					type="button"
@@ -1508,67 +1560,80 @@ const AppShell = memo(function AppShell() {
 				>
 					<Menu className="w-5 h-5" />
 				</Button>
-				{/* Session info in center */}
-				{selectedChatFromHistory ? (
-					<div className="flex-1 min-w-0 px-3 text-center">
-						<div className="text-sm font-medium text-foreground truncate">
-							{selectedChatFromHistory.title
-								?.replace(
-									/\s*-\s*\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z?$/,
-									"",
-								)
-								.trim() || "Chat"}
+				{/* Header title */}
+				{activeAppId === "sessions" ? (
+					selectedChatFromHistory ? (
+						<div className="flex-1 min-w-0 px-3 text-center">
+							<div className="text-sm font-medium text-foreground truncate">
+								{selectedChatFromHistory.title
+									?.replace(
+										/\s*-\s*\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z?$/,
+										"",
+									)
+									.trim() || "Chat"}
+							</div>
+							<div className="text-[10px] text-muted-foreground truncate">
+								{opencodeDirectory && (
+									<span className="font-medium">
+										{opencodeDirectory.split("/").filter(Boolean).pop()}
+										{" | "}
+									</span>
+								)}
+								{generateReadableId(selectedChatFromHistory.id)}
+								{selectedChatFromHistory.updated_at && (
+									<span className="opacity-60">
+										{" "}
+										| {formatSessionDate(selectedChatFromHistory.updated_at)}
+									</span>
+								)}
+							</div>
 						</div>
-						<div className="text-[10px] text-muted-foreground truncate">
-							{opencodeDirectory && (
-								<span className="font-medium">
-									{opencodeDirectory.split("/").filter(Boolean).pop()}
-									{" | "}
-								</span>
-							)}
-							{generateReadableId(selectedChatFromHistory.id)}
-							{selectedChatFromHistory.updated_at && (
-								<span className="opacity-60">
-									{" "}
-									| {formatSessionDate(selectedChatFromHistory.updated_at)}
-								</span>
-							)}
+					) : mainChatActive ? (
+						<div className="flex-1 min-w-0 px-3 text-center">
+							<div className="text-sm font-medium text-foreground truncate">
+								{mainChatAssistantName ||
+									(locale === "de" ? "Hauptchat" : "Main Chat")}
+							</div>
+							<div className="text-[10px] text-muted-foreground truncate">
+								{locale === "de" ? "Hauptchat" : "Main Chat"}
+							</div>
 						</div>
-					</div>
-				) : mainChatActive ? (
-					<div className="flex-1 min-w-0 px-3 text-center">
-						<div className="text-sm font-medium text-foreground truncate">
-							{mainChatAssistantName ||
-								(locale === "de" ? "Hauptchat" : "Main Chat")}
+					) : (
+						<div className="flex-1 flex justify-center">
+							<img
+								src={
+									isDark ? "/octo_logo_new_white.png" : "/octo_logo_new_black.png"
+								}
+								alt="OCTO"
+								width={80}
+								height={32}
+								className="h-8 w-auto object-contain"
+							/>
 						</div>
-						<div className="text-[10px] text-muted-foreground truncate">
-							{locale === "de" ? "Hauptchat" : "Main Chat"}
-						</div>
-					</div>
+					)
 				) : (
-					<div className="flex-1 flex justify-center">
-						<img
-							src={
-								isDark ? "/octo_logo_new_white.png" : "/octo_logo_new_black.png"
-							}
-							alt="OCTO"
-							width={80}
-							height={32}
-							className="h-8 w-auto object-contain"
-						/>
+					<div className="flex-1 min-w-0 px-3 text-center">
+						<div className="text-sm font-medium text-foreground truncate">
+							{activeApp?.label ? resolveText(activeApp.label) : "Octo"}
+						</div>
+						<div className="text-[10px] text-muted-foreground truncate">
+							{activeApp?.description || ""}
+						</div>
 					</div>
 				)}
 				{/* New chat button */}
-				<Button
-					type="button"
-					variant="ghost"
-					size="icon"
-					aria-label={locale === "de" ? "Neuer Chat" : "New Chat"}
-					onClick={handleNewChat}
-					className="text-muted-foreground hover:text-primary flex-shrink-0"
-				>
-					<Plus className="w-5 h-5" />
-				</Button>
+				{activeAppId === "sessions" && (
+					<Button
+						type="button"
+						variant="ghost"
+						size="icon"
+						aria-label={locale === "de" ? "Neuer Chat" : "New Chat"}
+						onClick={handleNewChat}
+						className="text-muted-foreground hover:text-primary flex-shrink-0"
+					>
+						<Plus className="w-5 h-5" />
+					</Button>
+				)}
 			</header>
 
 			{/* Mobile fullscreen menu */}
@@ -2279,6 +2344,22 @@ const AppShell = memo(function AppShell() {
 					<div className="w-full px-4 pb-2">
 						<div className="h-px w-full bg-primary/50 mb-2" />
 						<div className="flex items-center justify-center gap-3">
+							<Button
+								type="button"
+								variant="ghost"
+								size="icon"
+								rounded="full"
+								onClick={() => handleMobileToggleClick("dashboard")}
+								aria-label="Dashboard"
+								className={cn(
+									"hover:bg-sidebar-accent",
+									activeAppId === "dashboard"
+										? "text-primary"
+										: "text-muted-foreground hover:text-primary",
+								)}
+							>
+								<LayoutDashboard className="w-5 h-5" />
+							</Button>
 							<Button
 								type="button"
 								variant="ghost"
@@ -3176,6 +3257,38 @@ const AppShell = memo(function AppShell() {
 							variant="ghost"
 							size="icon"
 							rounded="full"
+							onClick={() => toggleApp("dashboard")}
+							aria-label="Dashboard"
+							className="w-9 h-9 flex items-center justify-center transition-colors"
+							style={{
+								backgroundColor:
+									activeAppId === "dashboard" ? navActiveBg : navIdle,
+								border:
+									activeAppId === "dashboard"
+										? `1px solid ${navActiveBorder}`
+										: "1px solid transparent",
+								color: activeAppId === "dashboard" ? navActiveText : navText,
+							}}
+							onMouseEnter={(e) => {
+								if (activeAppId !== "dashboard") {
+									e.currentTarget.style.backgroundColor = sidebarHover;
+									e.currentTarget.style.border = `1px solid ${sidebarHoverBorder}`;
+								}
+							}}
+							onMouseLeave={(e) => {
+								if (activeAppId !== "dashboard") {
+									e.currentTarget.style.backgroundColor = navIdle;
+									e.currentTarget.style.border = "1px solid transparent";
+								}
+							}}
+						>
+							<LayoutDashboard className="w-4 h-4" />
+						</Button>
+						<Button
+							type="button"
+							variant="ghost"
+							size="icon"
+							rounded="full"
 							onClick={() => toggleApp("settings")}
 							aria-label="Settings"
 							className="w-9 h-9 flex items-center justify-center transition-colors"
@@ -3297,11 +3410,11 @@ const AppShell = memo(function AppShell() {
 				style={{ backgroundColor: shellBg }}
 			>
 				<div
-					className={`flex-1 min-h-0 overflow-hidden pt-14 md:pt-0 transition-all duration-200 flex flex-col ${
+					className={`flex-1 min-h-0 overflow-hidden pt-[calc(3.5rem+env(safe-area-inset-top))] md:pt-0 transition-all duration-200 flex flex-col ${
 						sidebarCollapsed ? "md:pl-[4.5rem]" : "md:pl-[16.25rem]"
 					}`}
 				>
-					<div className="flex-1 min-h-0 w-full">
+					<div className="flex-1 min-h-0 w-full pb-0 md:pb-0">
 						{ActiveComponent ? <ActiveComponent /> : <EmptyState />}
 					</div>
 					{/* Status bar */}
