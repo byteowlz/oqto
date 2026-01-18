@@ -59,3 +59,16 @@ octo-browser --session <session_id> fill "input[name=email]" "user@example.com"
 # Close the daemon
 octo-browser --session <session_id> close
 ```
+
+For any action supported by agent-browser, use the generic command:
+
+```bash
+# Snapshot with extra options
+octo-browser --session <session_id> command snapshot --arg interactive=true --arg maxDepth=3
+
+# Navigate with custom waitUntil
+octo-browser --session <session_id> command navigate --arg url=https://example.com --arg waitUntil=\"domcontentloaded\"
+
+# Send a JSON payload file
+octo-browser --session <session_id> command click --file payload.json
+```

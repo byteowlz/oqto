@@ -94,6 +94,19 @@ enum Command {
 	Raw {
 		json: String,
 	},
+	/// Send any agent-browser action with JSON or key=value args
+	Command {
+		action: String,
+		/// JSON object to merge into the command payload
+		#[arg(long)]
+		json: Option<String>,
+		/// JSON file to merge into the command payload
+		#[arg(long)]
+		file: Option<PathBuf>,
+		/// Key=value pairs to merge into the payload (top-level)
+		#[arg(long)]
+		arg: Vec<String>,
+	},
 }
 
 #[derive(clap::ValueEnum, Clone, Copy, Debug, Serialize)]
@@ -313,6 +326,16 @@ fn main() -> Result<()> {
 			},
 		)?,
 		Command::Raw { json } => send_raw(&cli.session, timeout, &json)?,
+		Command::Command {
+			action,
+			json,
+			file,
+			arg,
+		} => {
+			let payload = build_generic_payload(&action, json, file, &arg)?;
+			let payload_str = serde_json::to_string(&payload)?;
+			send_raw(&cli.session, timeout, &payload_str)?
+		}
 	};
 
 	let output = serde_json::to_string_pretty(&response)?;
@@ -327,6 +350,59 @@ fn main() -> Result<()> {
 	}
 
 	Ok(())
+}
+
+fn build_generic_payload(
+	action: &str,
+	json: Option<String>,
+	file: Option<PathBuf>,
+	args: &[String],
+) -> Result<Value> {
+	let mut obj = serde_json::Map::new();
+
+	if let Some(file_path) = file {
+		let contents = std::fs::read_to_string(&file_path)
+			.with_context(|| format!("Failed to read {}", file_path.display()))?;
+		let value: Value = serde_json::from_str(&contents)
+			.with_context(|| format!("Failed to parse {}", file_path.display()))?;
+		merge_object(&mut obj, value)?;
+	}
+
+	if let Some(json_str) = json {
+		let value: Value = serde_json::from_str(&json_str)
+			.context("Failed to parse --json payload")?;
+		merge_object(&mut obj, value)?;
+	}
+
+	for pair in args {
+		let (key, value) = pair
+			.split_once('=')
+			.ok_or_else(|| anyhow!("Invalid --arg '{}', expected key=value", pair))?;
+		let parsed = parse_arg_value(value);
+		obj.insert(key.to_string(), parsed);
+	}
+
+	obj.insert("action".to_string(), Value::String(action.to_string()));
+	Ok(Value::Object(obj))
+}
+
+fn merge_object(target: &mut serde_json::Map<String, Value>, value: Value) -> Result<()> {
+	match value {
+		Value::Object(map) => {
+			for (key, val) in map {
+				target.insert(key, val);
+			}
+			Ok(())
+		}
+		_ => Err(anyhow!("Expected JSON object for payload")),
+	}
+}
+
+fn parse_arg_value(value: &str) -> Value {
+	if let Ok(parsed) = serde_json::from_str::<Value>(value) {
+		return parsed;
+	}
+	Value::String(value.to_string())
 }
 
 fn send_command<T: Serialize>(
