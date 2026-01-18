@@ -3650,7 +3650,17 @@ pub async fn codexbar_usage() -> ApiResult<Json<serde_json::Value>> {
     let output = match tokio::time::timeout(
         Duration::from_secs(20),
         Command::new("codexbar")
-            .args(["--format", "json", "--provider", "all", "--status"])
+            .args([
+                "usage",
+                "--json-only",
+                "--format",
+                "json",
+                "--provider",
+                "all",
+                "--source",
+                "cli",
+                "--status",
+            ])
             .output(),
     )
     .await
@@ -3669,17 +3679,17 @@ pub async fn codexbar_usage() -> ApiResult<Json<serde_json::Value>> {
         }
     };
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(ApiError::internal(format!(
-            "codexbar command failed: {}",
-            stderr
-        )));
-    }
-
     let payload: serde_json::Value = serde_json::from_slice(&output.stdout).map_err(|e| {
-        ApiError::internal(format!("Failed to parse codexbar JSON output: {}", e))
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        ApiError::internal(format!(
+            "Failed to parse codexbar JSON output: {} ({})",
+            e, stderr
+        ))
     })?;
+
+    if !output.status.success() {
+        warn!("codexbar returned non-zero exit status");
+    }
 
     Ok(Json(payload))
 }
