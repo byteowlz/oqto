@@ -119,20 +119,56 @@ Introduce a controlled "agent actions" layer that exposes safe UI commands to th
 ### [octo-k8z1.8] Session management: Browser lifecycle (start/stop with session) (P2, task)
 
 ### [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (P2, task)
+Add MCP tools that shell out to agent-browser CLI:
+- browser_open: agent-browser --session $id open $url
+- browser_snapshot: agent-browser --session $id snapshot -i --json
+- browser_click: agent-browser --session $id click $ref
+- browser_fill: agent-browser --session $id fill $ref "$text"
+...
+
 
 ### [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (P2, task)
 
 ### [octo-k8z1.5] Frontend: Add browser tab to central pane view switcher (P2, task)
 
 ### [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (P2, task)
+Create BrowserView React component:
+- Canvas element for rendering screencast frames
+- WebSocket connection to /api/session/{id}/browser/ws
+- Decode base64 JPEG frames and draw to canvas
+- Capture mouse/keyboard events and send to backend
+...
+
 
 ### [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (P2, task)
+Forward user input from frontend to agent-browser:
+- Mouse events: { type: 'input_mouse', eventType, x, y, button, clickCount }
+- Keyboard events: { type: 'input_keyboard', eventType, key, code }
+- Touch events for mobile: { type: 'input_touch', eventType, touchPoints }
+Use agent-browser's injectMouseEvent/injectKeyboardEvent APIs
 
 ### [octo-k8z1.2] Backend: WebSocket proxy for screencast stream (P2, task)
+Create WebSocket endpoint /api/session/{id}/browser/ws that:
+- Connects to agent-browser's screencast WebSocket (localhost:STREAM_PORT)
+- Forwards JPEG frames to frontend
+- Handles reconnection if browser restarts
+- Multiplexes input events from frontend to agent-browser
 
 ### [octo-k8z1.1] Backend: Integrate agent-browser daemon per session (P2, task)
+Install agent-browser as dependency. Create BrowserService in backend that:
+- Spawns agent-browser daemon per session (AGENT_BROWSER_SESSION=${sessionId})
+- Manages lifecycle (start on first browser request, stop on session end)
+- Configures AGENT_BROWSER_STREAM_PORT for screencast
+- Uses BrowserManager API for programmatic control
 
 ### [octo-k8z1] Add server-side browser feature (Option B) using agent-browser (P2, feature)
+Server-side browser for AI agent control, rendered in Octo frontend.
+
+## Research Findings
+
+### Recommended Stack
+...
+
 
 ### [octo-9qkv] Improve opencode chat error notifications (top-right toast) (P2, feature)
 Request: Provide clearer, more visible notifications for errors like session disconnect/resume failures, instead of (or in addition to) inline red banners. Prefer a popup/toast in the top-right that matches the app style.
@@ -384,6 +420,15 @@ Enable multiple platform users to access the same project/workspace with proper 
 ## Design
 
 ### Core Concept
+...
+
+
+### [octo-3trr] Add browser extension mode (Option A) - fork Playwriter (P3, feature)
+Browser extension mode for controlling user's existing browser.
+
+## Approach
+Fork remorses/playwriter and adapt for Octo:
+- Chrome extension connects to Octo backend via WebSocket
 ...
 
 
