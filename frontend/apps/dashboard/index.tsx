@@ -13,10 +13,12 @@ import { Badge } from "@/components/ui/badge";
 import { useApp } from "@/hooks/use-app";
 import {
 	controlPlaneApiUrl,
+	getCodexBarUsage,
 	fetchFeed,
 	getAuthHeaders,
 	getSchedulerOverview,
 	type SchedulerOverview,
+	type CodexBarUsagePayload,
 } from "@/lib/control-plane-client";
 import { type OpenCodeAgent, fetchAgents } from "@/lib/opencode-client";
 import { formatSessionDate } from "@/lib/session-utils";
@@ -63,6 +65,13 @@ type FeedState = {
 	items: FeedItem[];
 	loading: boolean;
 	error?: string;
+};
+
+type CodexBarState = {
+	available: boolean;
+	loading: boolean;
+	error?: string;
+	payload: CodexBarUsagePayload[];
 };
 
 const FEED_STORAGE_KEY = "octo:dashboardFeeds";
@@ -262,6 +271,11 @@ export function DashboardApp() {
 	const [feedInput, setFeedInput] = useState("");
 	const [feeds, setFeeds] = useState<Record<string, FeedState>>({});
 	const mountedRef = useRef(true);
+	const [codexbar, setCodexbar] = useState<CodexBarState>({
+		available: false,
+		loading: false,
+		payload: [],
+	});
 
 	const workspacePath =
 		selectedWorkspaceSession?.workspace_path ?? opencodeDirectory ?? ".";
@@ -435,6 +449,25 @@ export function DashboardApp() {
 		feedUrls.forEach((url) => loadFeed(url));
 	}, [feedUrls, loadFeed]);
 
+	const handleLoadCodexbar = useCallback(async () => {
+		setCodexbar((prev) => ({ ...prev, loading: true, error: undefined }));
+		try {
+			const payload = await getCodexBarUsage();
+			if (!payload) {
+				setCodexbar({ available: false, loading: false, payload: [] });
+				return;
+			}
+			setCodexbar({ available: true, loading: false, payload });
+		} catch (err) {
+			setCodexbar((prev) => ({
+				...prev,
+				available: true,
+				loading: false,
+				error: err instanceof Error ? err.message : "Failed to load",
+			}));
+		}
+	}, []);
+
 	useEffect(() => {
 		mountedRef.current = true;
 		return () => {
@@ -471,6 +504,10 @@ export function DashboardApp() {
 		});
 	}, [feedUrls, feeds, loadFeed]);
 
+	useEffect(() => {
+		handleLoadCodexbar();
+	}, [handleLoadCodexbar]);
+
 	const topTrxIssues = useMemo(() => {
 		return [...trxIssues]
 			.sort((a, b) => b.updated_at.localeCompare(a.updated_at))
@@ -478,6 +515,7 @@ export function DashboardApp() {
 	}, [trxIssues]);
 
 	const scheduleList = scheduler?.schedules ?? [];
+	const codexbarEntries = codexbar.payload ?? [];
 
 	return (
 		<div className="flex flex-col h-full min-h-0 p-4 md:p-6 gap-4 overflow-y-auto w-full">
@@ -651,6 +689,100 @@ export function DashboardApp() {
 				</div>
 
 				<div className="flex flex-col gap-4">
+					{codexbar.available && (
+						<Card className="border-border/60">
+							<CardHeader className="flex flex-row items-center justify-between">
+								<div>
+									<CardTitle>AI Subscriptions</CardTitle>
+									<CardDescription>
+										CodexBar usage snapshots
+									</CardDescription>
+								</div>
+								<Button
+									variant="outline"
+									size="sm"
+									onClick={handleLoadCodexbar}
+									disabled={codexbar.loading}
+									className="gap-2"
+								>
+									<RefreshCw className="h-4 w-4" />
+									{t.reload}
+								</Button>
+							</CardHeader>
+							<CardContent className="space-y-3">
+								{codexbar.error && (
+									<p className="text-xs text-rose-400">{codexbar.error}</p>
+								)}
+								{codexbarEntries.length === 0 ? (
+									<p className="text-sm text-muted-foreground">
+										No CodexBar data yet.
+									</p>
+								) : (
+									<div className="space-y-3">
+										{codexbarEntries.slice(0, 6).map((entry) => {
+											const primary = entry.usage?.primary;
+											const secondary = entry.usage?.secondary;
+											const credits = entry.credits?.remaining;
+											return (
+												<div
+													key={`${entry.provider}-${entry.account ?? ""}`}
+													className="border-b border-border/40 pb-3 last:border-b-0 last:pb-0"
+												>
+													<div className="flex items-center justify-between gap-2">
+														<div className="min-w-0">
+															<p className="text-sm font-medium truncate">
+																{entry.provider}
+															</p>
+															<p className="text-xs text-muted-foreground truncate">
+																{entry.account ??
+																	entry.usage?.accountEmail ??
+																	entry.source}
+															</p>
+														</div>
+														{entry.status?.indicator && (
+															<Badge variant="secondary">
+																{entry.status.indicator}
+															</Badge>
+														)}
+													</div>
+													<div className="mt-2 grid grid-cols-2 gap-2 text-xs text-muted-foreground">
+														<div>
+															Session:{" "}
+															{primary?.usedPercent != null
+																? `${primary.usedPercent}% used`
+																: "n/a"}
+															{primary?.resetsAt && (
+																<span className="block">
+																	Resets {formatDateTime(primary.resetsAt)}
+																</span>
+															)}
+														</div>
+														<div>
+															Weekly:{" "}
+															{secondary?.usedPercent != null
+																? `${secondary.usedPercent}% used`
+																: "n/a"}
+															{secondary?.resetsAt && (
+																<span className="block">
+																	Resets {formatDateTime(secondary.resetsAt)}
+																</span>
+															)}
+														</div>
+													</div>
+													{credits != null && (
+														<p className="text-xs text-muted-foreground mt-2">
+															Credits: {credits}
+														</p>
+													)}
+												</div>
+											);
+										})}
+									</div>
+								)}
+							</CardContent>
+						</Card>
+					)}
+
 					<Card className="border-border/60">
 						<CardHeader className="flex flex-row items-center justify-between">
 							<div>

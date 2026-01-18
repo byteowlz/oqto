@@ -377,6 +377,54 @@ export async function fetchFeed(url: string): Promise<FeedFetchResponse> {
 	return res.json();
 }
 
+export type CodexBarUsagePayload = {
+	provider: string;
+	account?: string | null;
+	version?: string | null;
+	source?: string | null;
+	status?: {
+		indicator?: string | null;
+		description?: string | null;
+		updatedAt?: string | null;
+		url?: string | null;
+	} | null;
+	usage?: {
+		primary?: {
+			usedPercent?: number | null;
+			windowMinutes?: number | null;
+			resetsAt?: string | null;
+		} | null;
+		secondary?: {
+			usedPercent?: number | null;
+			windowMinutes?: number | null;
+			resetsAt?: string | null;
+		} | null;
+		updatedAt?: string | null;
+		accountEmail?: string | null;
+		accountOrganization?: string | null;
+		loginMethod?: string | null;
+	} | null;
+	credits?: {
+		remaining?: number | null;
+		updatedAt?: string | null;
+	} | null;
+	error?: {
+		message?: string | null;
+	} | null;
+};
+
+export async function getCodexBarUsage(): Promise<CodexBarUsagePayload[] | null> {
+	const res = await authFetch(controlPlaneApiUrl("/api/codexbar/usage"), {
+		credentials: "include",
+	});
+	if (res.status === 404) return null;
+	if (!res.ok) {
+		const message = await readApiError(res);
+		throw new Error(message);
+	}
+	return res.json();
+}
+
 // ============================================================================
 // Auth API
 // ============================================================================

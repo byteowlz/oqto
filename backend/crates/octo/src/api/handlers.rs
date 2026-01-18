@@ -3641,6 +3641,50 @@ pub async fn fetch_feed(
 }
 
 // ============================================================================
+// CodexBar (AI subscription usage) handlers
+// ============================================================================
+
+/// Fetch CodexBar usage from the CLI (if available on PATH).
+#[instrument]
+pub async fn codexbar_usage() -> ApiResult<Json<serde_json::Value>> {
+    let output = match tokio::time::timeout(
+        Duration::from_secs(20),
+        Command::new("codexbar")
+            .args(["--format", "json", "--provider", "all", "--status"])
+            .output(),
+    )
+    .await
+    {
+        Ok(result) => result.map_err(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                ApiError::not_found("codexbar not available")
+            } else {
+                ApiError::internal(format!("Failed to execute codexbar: {}", e))
+            }
+        })?,
+        Err(_) => {
+            return Err(ApiError::internal(
+                "codexbar timed out while fetching usage",
+            ));
+        }
+    };
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(ApiError::internal(format!(
+            "codexbar command failed: {}",
+            stderr
+        )));
+    }
+
+    let payload: serde_json::Value = serde_json::from_slice(&output.stdout).map_err(|e| {
+        ApiError::internal(format!("Failed to parse codexbar JSON output: {}", e))
+    })?;
+
+    Ok(Json(payload))
+}
+
+// ============================================================================
 // TRX (Issue Tracking) Handlers
 // ============================================================================
 

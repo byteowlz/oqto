@@ -363,6 +363,8 @@ pub fn create_router_with_config(state: AppState, max_upload_size_mb: usize) -> 
         .route("/scheduler/overview", get(handlers::scheduler_overview))
         // RSS/Atom feed fetch proxy
         .route("/feeds/fetch", get(handlers::fetch_feed))
+        // CodexBar usage (optional, requires codexbar on PATH)
+        .route("/codexbar/usage", get(handlers::codexbar_usage))
         // TRX (issue tracking) routes - workspace-based
         .route(
             "/workspace/trx/issues",
