@@ -40,3 +40,22 @@ stream_port_range = 10000
   canvas and forwards mouse/keyboard input over the WebSocket proxy.
 - The toolbar uses common keyboard shortcuts to navigate (back/forward/reload)
   and focus the address bar for URL entry.
+
+## CLI
+
+`octo-browser` is a lightweight CLI for agents to talk to the browser daemon:
+
+```bash
+# Navigate (auto-launches browser)
+octo-browser --session <session_id> open https://example.com
+
+# Snapshot current page
+octo-browser --session <session_id> snapshot
+
+# Click or fill
+octo-browser --session <session_id> click "text=Sign in"
+octo-browser --session <session_id> fill "input[name=email]" "user@example.com"
+
+# Close the daemon
+octo-browser --session <session_id> close
+```

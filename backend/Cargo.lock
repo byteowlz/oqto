@@ -2002,6 +2002,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "octo-browser"
+version = "0.4.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "serde",
+ "serde_json",
+ "uuid",
+]
+
+[[package]]
 name = "octo-files"
 version = "0.4.0"
 dependencies = [
