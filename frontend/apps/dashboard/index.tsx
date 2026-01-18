@@ -90,6 +90,84 @@ function formatDateTime(value?: string | null): string {
 	return formatSessionDate(date.getTime());
 }
 
+function humanizeCron(cron: string, locale: "de" | "en"): string {
+	const parts = cron.trim().split(/\s+/);
+	if (parts.length !== 5) return cron;
+	const [min, hour, dom, month, dow] = parts;
+
+	const t = {
+		every: locale === "de" ? "Jede" : "Every",
+		at: locale === "de" ? "Um" : "At",
+		minute: locale === "de" ? "Minute" : "minute",
+		minutes: locale === "de" ? "Minuten" : "minutes",
+		hour: locale === "de" ? "Stunde" : "hour",
+		hours: locale === "de" ? "Stunden" : "hours",
+		daily: locale === "de" ? "taeglich" : "daily",
+		weekly: locale === "de" ? "woechentlich" : "weekly",
+		monthly: locale === "de" ? "monatlich" : "monthly",
+		on: locale === "de" ? "am" : "on",
+	};
+
+	const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+	const formatTime = (h: string, m: string) => {
+		const hh = h.padStart(2, "0");
+		const mm = m.padStart(2, "0");
+		return `${hh}:${mm}`;
+	};
+
+	const formatList = (value: string) =>
+		value
+			.split(",")
+			.map((item) => item.trim())
+			.filter(Boolean)
+			.join(", ");
+
+	if (min === "*" && hour === "*" && dom === "*" && month === "*" && dow === "*") {
+		return `${t.every} ${t.minute}`;
+	}
+
+	if (min.startsWith("*/") && hour === "*" && dom === "*" && month === "*" && dow === "*") {
+		const step = min.slice(2);
+		return `${t.every} ${step} ${t.minutes}`;
+	}
+
+	if (/^\d+$/.test(min) && hour === "*" && dom === "*" && month === "*" && dow === "*") {
+		return `${t.at} ${min} ${t.minutes} ${t.every} ${t.hour}`;
+	}
+
+	if (/^\d+$/.test(min) && /^\d+$/.test(hour) && dom === "*" && month === "*" && dow === "*") {
+		return `${t.at} ${formatTime(hour, min)} ${t.daily}`;
+	}
+
+	if (/^\d+$/.test(min) && /^\d+$/.test(hour) && dow !== "*") {
+		const days = dow
+			.split(",")
+			.map((value) => dayNames[Number.parseInt(value, 10)] ?? value)
+			.join(", ");
+		return `${t.at} ${formatTime(hour, min)} ${t.on} ${days}`;
+	}
+
+	if (/^\d+$/.test(min) && /^\d+$/.test(hour) && dom !== "*") {
+		return `${t.at} ${formatTime(hour, min)} ${t.on} ${dom} ${t.monthly}`;
+	}
+
+	if (hour.includes(",") && /^\d+$/.test(min)) {
+		const hours = formatList(hour)
+			.split(", ")
+			.map((h) => formatTime(h, min))
+			.join(", ");
+		return `${t.at} ${hours} ${t.daily}`;
+	}
+
+	if (min === "0" && hour.startsWith("*/") && dom === "*" && month === "*" && dow === "*") {
+		const step = hour.slice(2);
+		return `${t.every} ${step} ${t.hours}`;
+	}
+
+	return cron;
+}
+
 function parseFeedXml(xml: string): FeedState {
 	const parser = new DOMParser();
 	const doc = parser.parseFromString(xml, "application/xml");
@@ -609,7 +687,8 @@ export function DashboardApp() {
 												</p>
 											</div>
 											<div className="text-xs text-muted-foreground text-right">
-												<div>{schedule.schedule}</div>
+												<div>{humanizeCron(schedule.schedule, locale)}</div>
+												<div className="opacity-70">{schedule.schedule}</div>
 												{schedule.next_run && (
 													<div>Next: {schedule.next_run}</div>
 												)}
