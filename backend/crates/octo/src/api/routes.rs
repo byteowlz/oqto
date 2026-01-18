@@ -132,6 +132,14 @@ pub fn create_router_with_config(state: AppState, max_upload_size_mb: usize) -> 
         )
         .route("/session/{session_id}/term", get(proxy::proxy_terminal_ws))
         .route(
+            "/sessions/{session_id}/browser/stream",
+            get(proxy::proxy_browser_stream_ws),
+        )
+        .route(
+            "/session/{session_id}/browser/stream",
+            get(proxy::proxy_browser_stream_ws),
+        )
+        .route(
             "/workspace/term",
             get(proxy::proxy_terminal_ws_for_workspace),
         )

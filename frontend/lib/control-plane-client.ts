@@ -1186,6 +1186,18 @@ export function voiceProxyWsUrl(kind: "stt" | "tts"): string {
 	return wsUrl;
 }
 
+export function browserStreamWsUrl(sessionId: string): string {
+	let wsUrl = toAbsoluteWsUrl(
+		controlPlaneApiUrl(`/api/session/${sessionId}/browser/stream`),
+	);
+	const token = getAuthToken();
+	if (token) {
+		const separator = wsUrl.includes("?") ? "&" : "?";
+		wsUrl = `${wsUrl}${separator}token=${encodeURIComponent(token)}`;
+	}
+	return wsUrl;
+}
+
 // ============================================================================
 // Workspace Config (opencode.json)
 // ============================================================================
