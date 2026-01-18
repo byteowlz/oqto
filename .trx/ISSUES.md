@@ -62,6 +62,51 @@ Implementation:
 ### [workspace-5pmk.11] Add backend URL configuration to login form (P1, task)
 Add a 'Server URL' field to the login form allowing users to specify the backend URL. Store in localStorage for persistence. Show connection status indicator. Default to current origin for web, require input for mobile apps.
 
+### [octo-58xa.3] WebView: MCP tool for opening webviews (P2, task)
+Add MCP tool for agents to open webviews.
+
+## Tool: webview_open
+Parameters:
+  - url: string (required) - localhost:PORT or path
+...
+
+
+### [octo-58xa.2] WebView: Frontend iframe component (P2, task)
+Create WebView React component for displaying agent web apps.
+
+## Component: WebView
+Props:
+  - url: string
+...
+
+
+### [octo-58xa.1] WebView: Backend proxy for localhost servers (P2, task)
+Create proxy endpoint for agent-spawned web servers.
+
+## Endpoint
+GET/POST /api/session/{id}/webview/proxy
+Query params:
+...
+
+
+### [octo-58xa] Agent WebView: Iframe embed for agent-spawned web apps (P2, feature)
+Allow agents to spawn custom web apps and display them in Octo's UI with sidebars visible.
+
+## Use Cases
+- Agent creates a data visualization dashboard
+- Agent builds a custom form/wizard for user input
+...
+
+
+### [octo-k8z1.13] Browser: User interaction handoff mode (OAuth, captcha, 2FA) (P2, task)
+When agent encounters OAuth, captcha, or 2FA, it needs to hand control to user.
+
+## Flow
+1. Agent detects auth page or blocker
+2. Agent calls: browser_request_user_action({ reason: 'Please log in to GitHub' })
+...
+
+
 ### [octo-thhx.16] Tutorial script using spotlight and A2UI (P2, task)
 Agent script/prompts for guided tutorial: introduce chat, unlock sidebar, show file tree, demonstrate command palette, explain todos, create first workspace, delegate task to opencode session.
 
@@ -164,9 +209,9 @@ Install agent-browser as dependency. Create BrowserService in backend that:
 ### [octo-k8z1] Add server-side browser feature (Option B) using agent-browser (P2, feature)
 Server-side browser for AI agent control, rendered in Octo frontend.
 
-## Research Findings
-
-### Recommended Stack
+## Reference Implementations (cloned)
+- ../external-repos/agent-browser - Vercel's CLI browser automation (Apache-2.0)
+- ../external-repos/playwriter - MCP browser extension by remorses (Option A reference)
 ...
 
 
@@ -426,9 +471,9 @@ Enable multiple platform users to access the same project/workspace with proper 
 ### [octo-3trr] Add browser extension mode (Option A) - fork Playwriter (P3, feature)
 Browser extension mode for controlling user's existing browser.
 
-## Approach
-Fork remorses/playwriter and adapt for Octo:
-- Chrome extension connects to Octo backend via WebSocket
+## Reference Implementation
+- ../external-repos/playwriter - Fork this for Octo extension
+- ../external-repos/clawdbot/src/browser/extension-relay.ts - CDP relay pattern
 ...
 
 
