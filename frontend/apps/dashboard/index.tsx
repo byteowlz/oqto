@@ -96,19 +96,37 @@ function humanizeCron(cron: string, locale: "de" | "en"): string {
 	const [min, hour, dom, month, dow] = parts;
 
 	const t = {
-		every: locale === "de" ? "Jede" : "Every",
-		at: locale === "de" ? "Um" : "At",
+		runs: locale === "de" ? "Laeuft" : "Runs",
+		every: locale === "de" ? "jede" : "every",
+		at: locale === "de" ? "um" : "at",
 		minute: locale === "de" ? "Minute" : "minute",
 		minutes: locale === "de" ? "Minuten" : "minutes",
 		hour: locale === "de" ? "Stunde" : "hour",
 		hours: locale === "de" ? "Stunden" : "hours",
+		day: locale === "de" ? "Tag" : "day",
+		days: locale === "de" ? "Tage" : "days",
 		daily: locale === "de" ? "taeglich" : "daily",
 		weekly: locale === "de" ? "woechentlich" : "weekly",
 		monthly: locale === "de" ? "monatlich" : "monthly",
+		yearly: locale === "de" ? "jaehrlich" : "yearly",
 		on: locale === "de" ? "am" : "on",
 	};
 
 	const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+	const monthNames = [
+		"Jan",
+		"Feb",
+		"Mar",
+		"Apr",
+		"May",
+		"Jun",
+		"Jul",
+		"Aug",
+		"Sep",
+		"Oct",
+		"Nov",
+		"Dec",
+	];
 
 	const formatTime = (h: string, m: string) => {
 		const hh = h.padStart(2, "0");
@@ -124,20 +142,24 @@ function humanizeCron(cron: string, locale: "de" | "en"): string {
 			.join(", ");
 
 	if (min === "*" && hour === "*" && dom === "*" && month === "*" && dow === "*") {
-		return `${t.every} ${t.minute}`;
+		return `${t.runs} ${t.every} ${t.minute}`;
 	}
 
 	if (min.startsWith("*/") && hour === "*" && dom === "*" && month === "*" && dow === "*") {
 		const step = min.slice(2);
-		return `${t.every} ${step} ${t.minutes}`;
+		return `${t.runs} ${t.every} ${step} ${t.minutes}`;
 	}
 
 	if (/^\d+$/.test(min) && hour === "*" && dom === "*" && month === "*" && dow === "*") {
-		return `${t.at} ${min} ${t.minutes} ${t.every} ${t.hour}`;
+		return `${t.runs} ${t.at} ${min} ${t.minutes} ${t.every} ${t.hour}`;
+	}
+
+	if (min === "0" && hour === "*" && dom === "*" && month === "*" && dow === "*") {
+		return `${t.runs} ${t.every} ${t.hour}`;
 	}
 
 	if (/^\d+$/.test(min) && /^\d+$/.test(hour) && dom === "*" && month === "*" && dow === "*") {
-		return `${t.at} ${formatTime(hour, min)} ${t.daily}`;
+		return `${t.runs} ${t.daily} ${t.at} ${formatTime(hour, min)}`;
 	}
 
 	if (/^\d+$/.test(min) && /^\d+$/.test(hour) && dow !== "*") {
@@ -145,11 +167,19 @@ function humanizeCron(cron: string, locale: "de" | "en"): string {
 			.split(",")
 			.map((value) => dayNames[Number.parseInt(value, 10)] ?? value)
 			.join(", ");
-		return `${t.at} ${formatTime(hour, min)} ${t.on} ${days}`;
+		return `${t.runs} ${t.weekly} ${t.on} ${days} ${t.at} ${formatTime(hour, min)}`;
+	}
+
+	if (/^\d+$/.test(min) && /^\d+$/.test(hour) && dom !== "*" && month !== "*") {
+		const months = month
+			.split(",")
+			.map((value) => monthNames[Number.parseInt(value, 10) - 1] ?? value)
+			.join(", ");
+		return `${t.runs} ${t.yearly} ${t.on} ${months} ${dom} ${t.at} ${formatTime(hour, min)}`;
 	}
 
 	if (/^\d+$/.test(min) && /^\d+$/.test(hour) && dom !== "*") {
-		return `${t.at} ${formatTime(hour, min)} ${t.on} ${dom} ${t.monthly}`;
+		return `${t.runs} ${t.monthly} ${t.on} ${dom} ${t.at} ${formatTime(hour, min)}`;
 	}
 
 	if (hour.includes(",") && /^\d+$/.test(min)) {
@@ -157,12 +187,37 @@ function humanizeCron(cron: string, locale: "de" | "en"): string {
 			.split(", ")
 			.map((h) => formatTime(h, min))
 			.join(", ");
-		return `${t.at} ${hours} ${t.daily}`;
+		return `${t.runs} ${t.daily} ${t.at} ${hours}`;
 	}
 
 	if (min === "0" && hour.startsWith("*/") && dom === "*" && month === "*" && dow === "*") {
 		const step = hour.slice(2);
-		return `${t.every} ${step} ${t.hours}`;
+		return `${t.runs} ${t.every} ${step} ${t.hours}`;
+	}
+
+	if (min.startsWith("*/") && /^\d+$/.test(hour) && dom === "*" && month === "*" && dow === "*") {
+		const step = min.slice(2);
+		return `${t.runs} ${t.daily} ${t.at} ${formatTime(hour, "00")} ${t.every} ${step} ${t.minutes}`;
+	}
+
+	if (dom === "*" && month === "*" && dow !== "*" && min === "*" && hour === "*") {
+		const days = dow
+			.split(",")
+			.map((value) => dayNames[Number.parseInt(value, 10)] ?? value)
+			.join(", ");
+		return `${t.runs} ${t.weekly} ${t.on} ${days}`;
+	}
+
+	if (dom !== "*" && month === "*" && min === "0" && hour === "0") {
+		return `${t.runs} ${t.monthly} ${t.on} ${dom}`;
+	}
+
+	if (dom !== "*" && month !== "*" && min === "0" && hour === "0") {
+		const months = month
+			.split(",")
+			.map((value) => monthNames[Number.parseInt(value, 10) - 1] ?? value)
+			.join(", ");
+		return `${t.runs} ${t.yearly} ${t.on} ${months} ${dom}`;
 	}
 
 	return cron;
