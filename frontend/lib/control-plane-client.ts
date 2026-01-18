@@ -328,6 +328,56 @@ export async function getFeatures(): Promise<Features> {
 }
 
 // ============================================================================
+// Dashboard APIs
+// ============================================================================
+
+export type SchedulerEntry = {
+	name: string;
+	status: string;
+	schedule: string;
+	command: string;
+	next_run?: string | null;
+};
+
+export type SchedulerOverview = {
+	stats: {
+		total: number;
+		enabled: number;
+		disabled: number;
+	};
+	schedules: SchedulerEntry[];
+};
+
+export async function getSchedulerOverview(): Promise<SchedulerOverview> {
+	const res = await authFetch(controlPlaneApiUrl("/api/scheduler/overview"), {
+		credentials: "include",
+	});
+	if (!res.ok) {
+		const message = await readApiError(res);
+		throw new Error(message);
+	}
+	return res.json();
+}
+
+export type FeedFetchResponse = {
+	url: string;
+	content: string;
+	content_type?: string | null;
+};
+
+export async function fetchFeed(url: string): Promise<FeedFetchResponse> {
+	const endpoint = controlPlaneApiUrl(
+		`/api/feeds/fetch?url=${encodeURIComponent(url)}`,
+	);
+	const res = await authFetch(endpoint, { credentials: "include" });
+	if (!res.ok) {
+		const message = await readApiError(res);
+		throw new Error(message);
+	}
+	return res.json();
+}
+
+// ============================================================================
 // Auth API
 // ============================================================================
 

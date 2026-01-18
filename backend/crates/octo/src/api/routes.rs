@@ -359,6 +359,10 @@ pub fn create_router_with_config(state: AppState, max_upload_size_mb: usize) -> 
         .nest("/main/files", main_chat_files::main_chat_file_routes())
         // CASS (Coding Agent Session Search) routes
         .route("/search", get(handlers::search_sessions))
+        // Scheduler (skdlr) overview
+        .route("/scheduler/overview", get(handlers::scheduler_overview))
+        // RSS/Atom feed fetch proxy
+        .route("/feeds/fetch", get(handlers::fetch_feed))
         // TRX (issue tracking) routes - workspace-based
         .route(
             "/workspace/trx/issues",
