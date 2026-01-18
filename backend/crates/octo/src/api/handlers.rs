@@ -31,7 +31,7 @@ use crate::user::{
 };
 
 use super::error::{ApiError, ApiResult};
-use super::state::AppState;
+use super::state::{AppState, TemplatesRepoType};
 
 /// Health check response.
 #[derive(Debug, Serialize)]
@@ -647,6 +647,9 @@ async fn maybe_sync_templates_repo(state: &AppState) -> Result<(), ApiError> {
         Some(path) => path.clone(),
         None => return Ok(()),
     };
+    if state.templates.repo_type == TemplatesRepoType::Local {
+        return Ok(());
+    }
     if !state.templates.sync_on_list {
         return Ok(());
     }
@@ -2337,7 +2340,7 @@ fn default_limit() -> usize {
 }
 
 /// Search for sessions matching a query.
-/// 
+///
 /// GET /api/agents/sessions?q=query&limit=20
 #[instrument(skip(state, user))]
 pub async fn agents_search_sessions(
@@ -2429,7 +2432,7 @@ enum AskTarget {
 }
 
 /// Parse an ask target string into structured form.
-/// 
+///
 /// Supported formats:
 /// - "main", "main-chat", "pi" -> MainChat
 /// - "main:query", "pi:query" -> MainChat with session search
@@ -2439,19 +2442,19 @@ enum AskTarget {
 fn parse_ask_target(target: &str, assistant_name: Option<&str>) -> Result<AskTarget, String> {
     // Check for main chat aliases
     let main_aliases = ["main", "main-chat", "pi"];
-    
+
     // Split on ':' for arguments
     let parts: Vec<&str> = target.splitn(3, ':').collect();
     let base = parts.first().map(|s| *s).unwrap_or("");
     let base_lower = base.to_lowercase();
-    
+
     // Check main chat aliases
     if main_aliases.contains(&base_lower.as_str()) {
         return Ok(AskTarget::MainChat {
             session_query: parts.get(1).map(|s| s.to_string()),
         });
     }
-    
+
     // Check custom assistant name
     if let Some(name) = assistant_name {
         if base_lower == name.to_lowercase() {
@@ -2460,7 +2463,7 @@ fn parse_ask_target(target: &str, assistant_name: Option<&str>) -> Result<AskTar
             });
         }
     }
-    
+
     // Check for explicit session: prefix (Pi sessions)
     if base_lower == "session" {
         if let Some(id) = parts.get(1) {
@@ -2469,7 +2472,7 @@ fn parse_ask_target(target: &str, assistant_name: Option<&str>) -> Result<AskTar
             return Err("session: requires a session ID".to_string());
         }
     }
-    
+
     // Check for opencode: prefix (OpenCode/chat history sessions)
     if base_lower == "opencode" {
         if let Some(id) = parts.get(1) {
@@ -2482,7 +2485,7 @@ fn parse_ask_target(target: &str, assistant_name: Option<&str>) -> Result<AskTar
             return Err("opencode: requires a session ID".to_string());
         }
     }
-    
+
     // Could be a direct session ID (for backwards compat)
     // ses_ prefix indicates OpenCode session, others are Pi sessions
     if target.starts_with("ses_") {
@@ -2491,11 +2494,13 @@ fn parse_ask_target(target: &str, assistant_name: Option<&str>) -> Result<AskTar
             workspace_path: None,
         });
     }
-    
+
     if target.contains('-') {
-        return Ok(AskTarget::Session { id: target.to_string() });
+        return Ok(AskTarget::Session {
+            id: target.to_string(),
+        });
     }
-    
+
     Err(format!(
         "Unknown target: {}. Use 'main', 'pi', 'session:<id>', or 'opencode:<id>'",
         target
@@ -2541,8 +2546,8 @@ pub async fn agents_ask(
     };
 
     // Parse the target
-    let parsed_target = parse_ask_target(&req.target, assistant_name.as_deref())
-        .map_err(ApiError::bad_request)?;
+    let parsed_target =
+        parse_ask_target(&req.target, assistant_name.as_deref()).map_err(ApiError::bad_request)?;
 
     // Handle OpenCode sessions differently from Pi sessions
     if let AskTarget::OpenCodeSession { id, workspace_path } = parsed_target {
@@ -2557,14 +2562,18 @@ pub async fn agents_ask(
 
     // Resolve to a Pi session
     let session = match parsed_target {
-        AskTarget::MainChat { session_query: None } => {
+        AskTarget::MainChat {
+            session_query: None,
+        } => {
             // Get active session or create new
             pi_service
                 .get_or_create_session(user.id())
                 .await
                 .map_err(|e| ApiError::internal(format!("Failed to get session: {}", e)))?
         }
-        AskTarget::MainChat { session_query: Some(query) } => {
+        AskTarget::MainChat {
+            session_query: Some(query),
+        } => {
             // Search for matching sessions
             let matches = pi_service
                 .search_sessions(user.id(), &query)
@@ -2587,7 +2596,10 @@ pub async fn agents_ask(
                 if !is_exact {
                     // Ambiguous - return matches for user to choose
                     let response = AgentAskAmbiguousResponse {
-                        error: format!("Multiple sessions match '{}'. Please be more specific.", query),
+                        error: format!(
+                            "Multiple sessions match '{}'. Please be more specific.",
+                            query
+                        ),
                         matches: matches
                             .into_iter()
                             .take(10)
@@ -2615,9 +2627,9 @@ pub async fn agents_ask(
                 Ok(session) => session,
                 Err(_) => {
                     // Try fuzzy search
-                    let matches = pi_service
-                        .search_sessions(user.id(), &id)
-                        .map_err(|e| ApiError::internal(format!("Failed to search sessions: {}", e)))?;
+                    let matches = pi_service.search_sessions(user.id(), &id).map_err(|e| {
+                        ApiError::internal(format!("Failed to search sessions: {}", e))
+                    })?;
 
                     if matches.is_empty() {
                         return Err(ApiError::not_found(format!("Session not found: {}", id)));
@@ -2625,7 +2637,10 @@ pub async fn agents_ask(
 
                     if matches.len() > 1 {
                         let response = AgentAskAmbiguousResponse {
-                            error: format!("Multiple sessions match '{}'. Please be more specific.", id),
+                            error: format!(
+                                "Multiple sessions match '{}'. Please be more specific.",
+                                id
+                            ),
                             matches: matches
                                 .into_iter()
                                 .take(10)
@@ -2642,7 +2657,9 @@ pub async fn agents_ask(
                     pi_service
                         .resume_session(user.id(), &matches[0].id)
                         .await
-                        .map_err(|e| ApiError::internal(format!("Failed to resume session: {}", e)))?
+                        .map_err(|e| {
+                            ApiError::internal(format!("Failed to resume session: {}", e))
+                        })?
                 }
             }
         }
@@ -2680,11 +2697,7 @@ pub async fn agents_ask(
             let mut text_buffer = String::new();
 
             loop {
-                match tokio::time::timeout(
-                    Duration::from_secs(timeout_secs),
-                    event_rx.recv(),
-                )
-                .await
+                match tokio::time::timeout(Duration::from_secs(timeout_secs), event_rx.recv()).await
                 {
                     Ok(Ok(event)) => {
                         match &event {
@@ -2698,7 +2711,11 @@ pub async fn agents_ask(
                                         "type": "text",
                                         "data": delta
                                     });
-                                    if tx.send(Ok(Event::default().data(json.to_string()))).await.is_err() {
+                                    if tx
+                                        .send(Ok(Event::default().data(json.to_string())))
+                                        .await
+                                        .is_err()
+                                    {
                                         return; // Client disconnected
                                     }
                                 }
@@ -2707,7 +2724,11 @@ pub async fn agents_ask(
                                         "type": "thinking",
                                         "data": delta
                                     });
-                                    if tx.send(Ok(Event::default().data(json.to_string()))).await.is_err() {
+                                    if tx
+                                        .send(Ok(Event::default().data(json.to_string())))
+                                        .await
+                                        .is_err()
+                                    {
                                         return;
                                     }
                                 }
@@ -2771,20 +2792,23 @@ pub async fn agents_ask(
             }
 
             match tokio::time::timeout(remaining, event_rx.recv()).await {
-                Ok(Ok(event)) => {
-                    match event {
-                        PiEvent::MessageUpdate { assistant_message_event, .. } => {
-                            use crate::pi::AssistantMessageEvent;
-                            if let AssistantMessageEvent::TextDelta { delta, .. } = assistant_message_event {
-                                response_text.push_str(&delta);
-                            }
+                Ok(Ok(event)) => match event {
+                    PiEvent::MessageUpdate {
+                        assistant_message_event,
+                        ..
+                    } => {
+                        use crate::pi::AssistantMessageEvent;
+                        if let AssistantMessageEvent::TextDelta { delta, .. } =
+                            assistant_message_event
+                        {
+                            response_text.push_str(&delta);
                         }
-                        PiEvent::AgentEnd { .. } => {
-                            break;
-                        }
-                        _ => {}
                     }
-                }
+                    PiEvent::AgentEnd { .. } => {
+                        break;
+                    }
+                    _ => {}
+                },
                 Ok(Err(_)) => {
                     // Channel closed unexpectedly
                     break;
@@ -2863,10 +2887,8 @@ async fn handle_opencode_ask(
         tokio::spawn(async move {
             // First, connect to the event stream using EventSource
             let event_url = format!("http://localhost:{}/event", opencode_port);
-            let request_builder = client
-                .get(&event_url)
-                .header("Accept", "text/event-stream");
-            
+            let request_builder = client.get(&event_url).header("Accept", "text/event-stream");
+
             let mut es = match EventSource::new(request_builder) {
                 Ok(es) => es,
                 Err(e) => {
@@ -2914,7 +2936,8 @@ async fn handle_opencode_ask(
                     Ok(SseEvent::Open) => {}
                     Ok(SseEvent::Message(msg)) => {
                         // Parse the event data
-                        if let Ok(event_json) = serde_json::from_str::<serde_json::Value>(&msg.data) {
+                        if let Ok(event_json) = serde_json::from_str::<serde_json::Value>(&msg.data)
+                        {
                             let event_session = event_json
                                 .get("properties")
                                 .and_then(|p| p.get("sessionID"))
@@ -2938,7 +2961,11 @@ async fn handle_opencode_ask(
                                             "type": "text",
                                             "data": content
                                         });
-                                        if tx.send(Ok(Event::default().data(json.to_string()))).await.is_err() {
+                                        if tx
+                                            .send(Ok(Event::default().data(json.to_string())))
+                                            .await
+                                            .is_err()
+                                        {
                                             return; // Client disconnected
                                         }
                                     }
@@ -2948,7 +2975,8 @@ async fn handle_opencode_ask(
                                         "type": "done",
                                         "response": text_buffer
                                     });
-                                    let _ = tx.send(Ok(Event::default().data(json.to_string()))).await;
+                                    let _ =
+                                        tx.send(Ok(Event::default().data(json.to_string()))).await;
                                     return;
                                 }
                                 Some("message.error") | Some("session.error") => {
@@ -2961,7 +2989,8 @@ async fn handle_opencode_ask(
                                         "type": "error",
                                         "error": error_msg
                                     });
-                                    let _ = tx.send(Ok(Event::default().data(json.to_string()))).await;
+                                    let _ =
+                                        tx.send(Ok(Event::default().data(json.to_string()))).await;
                                     return;
                                 }
                                 _ => {}
@@ -2987,10 +3016,8 @@ async fn handle_opencode_ask(
     } else {
         // Non-streaming mode - send prompt and collect full response using EventSource
         let event_url = format!("http://localhost:{}/event", opencode_port);
-        let request_builder = client
-            .get(&event_url)
-            .header("Accept", "text/event-stream");
-        
+        let request_builder = client.get(&event_url).header("Accept", "text/event-stream");
+
         let mut es = EventSource::new(request_builder)
             .map_err(|e| ApiError::internal(format!("Failed to connect to event stream: {}", e)))?;
 
@@ -3119,10 +3146,13 @@ pub struct InSessionSearchResult {
     /// Timestamp when the message was created
     #[serde(skip_serializing_if = "Option::is_none")]
     pub created_at: Option<i64>,
+    /// Message ID for direct navigation
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message_id: Option<String>,
 }
 
 /// Search within a specific Pi session using CASS.
-/// 
+///
 /// GET /api/agents/sessions/{session_id}/search?q=query&limit=20
 #[instrument(skip(state, user))]
 pub async fn agents_session_search(
@@ -3150,6 +3180,7 @@ pub async fn agents_session_search(
             title: r.title,
             match_type: r.match_type,
             created_at: r.created_at,
+            message_id: r.message_id,
         })
         .collect();
 
@@ -3379,6 +3410,332 @@ fn get_settings_service<'a>(state: &'a AppState, app: &str) -> ApiResult<&'a Arc
         _ => None,
     }
     .ok_or_else(|| ApiError::not_found(format!("Settings for app '{}' not found", app)))
+}
+
+// ============================================================================
+// Scheduler + Feed handlers
+// ============================================================================
+
+#[derive(Debug, Serialize)]
+pub struct SchedulerEntry {
+    pub name: String,
+    pub status: String,
+    pub schedule: String,
+    pub command: String,
+    #[serde(default)]
+    pub next_run: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SchedulerStats {
+    pub total: usize,
+    pub enabled: usize,
+    pub disabled: usize,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SchedulerOverview {
+    pub stats: SchedulerStats,
+    pub schedules: Vec<SchedulerEntry>,
+}
+
+fn resolve_skdlr_bin(state: &AppState) -> std::path::PathBuf {
+    if let Ok(value) = std::env::var("SKDLR_BIN") {
+        if !value.is_empty() {
+            return std::path::PathBuf::from(value);
+        }
+    }
+
+    let workspace_root = state.sessions.workspace_root();
+    let release = workspace_root
+        .join("skdlr")
+        .join("target")
+        .join("release")
+        .join("skdlr");
+    if release.exists() {
+        return release;
+    }
+    let debug = workspace_root
+        .join("skdlr")
+        .join("target")
+        .join("debug")
+        .join("skdlr");
+    if debug.exists() {
+        return debug;
+    }
+
+    std::path::PathBuf::from("skdlr")
+}
+
+async fn exec_skdlr_command(state: &AppState, args: &[&str]) -> Result<String, ApiError> {
+    let bin = resolve_skdlr_bin(state);
+    let workspace_root = state.sessions.workspace_root();
+
+    let output = Command::new(bin)
+        .args(args)
+        .current_dir(&workspace_root)
+        .output()
+        .await
+        .map_err(|e| ApiError::internal(format!("Failed to execute skdlr: {}", e)))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(ApiError::internal(format!(
+            "skdlr command failed: {}",
+            stderr
+        )));
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+fn parse_skdlr_list(output: &str) -> Vec<SchedulerEntry> {
+    let mut schedules = Vec::new();
+
+    for line in output.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty()
+            || trimmed.starts_with("NAME")
+            || trimmed.starts_with('-')
+            || trimmed.starts_with("No schedules")
+        {
+            continue;
+        }
+
+        let parts: Vec<&str> = trimmed.split_whitespace().collect();
+        if parts.len() < 3 {
+            continue;
+        }
+
+        let (name, status, schedule, command) = if parts.len() >= 7 {
+            (
+                parts[0].to_string(),
+                parts[1].to_string(),
+                parts[2..7].join(" "),
+                if parts.len() > 7 {
+                    parts[7..].join(" ")
+                } else {
+                    String::new()
+                },
+            )
+        } else {
+            (
+                parts[0].to_string(),
+                parts[1].to_string(),
+                parts[2..].join(" "),
+                String::new(),
+            )
+        };
+
+        schedules.push(SchedulerEntry {
+            name,
+            status,
+            schedule,
+            command,
+            next_run: None,
+        });
+    }
+
+    schedules
+}
+
+fn parse_skdlr_next(output: &str) -> HashMap<String, String> {
+    let mut next_runs = HashMap::new();
+
+    for line in output.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty()
+            || trimmed.starts_with("NAME")
+            || trimmed.starts_with('-')
+            || trimmed.starts_with("No upcoming runs")
+        {
+            continue;
+        }
+
+        if line.len() >= 21 {
+            let name = line.get(0..20).unwrap_or("").trim();
+            let next_run = line.get(21..).unwrap_or("").trim();
+            if !name.is_empty() && !next_run.is_empty() {
+                next_runs.insert(name.to_string(), next_run.to_string());
+            }
+        }
+    }
+
+    next_runs
+}
+
+/// Scheduler overview (skdlr) for the dashboard.
+#[instrument(skip(state))]
+pub async fn scheduler_overview(
+    State(state): State<AppState>,
+) -> ApiResult<Json<SchedulerOverview>> {
+    let list_output = exec_skdlr_command(&state, &["list"]).await?;
+    let next_output = exec_skdlr_command(&state, &["next"])
+        .await
+        .unwrap_or_default();
+
+    let mut schedules = parse_skdlr_list(&list_output);
+    let next_runs = parse_skdlr_next(&next_output);
+
+    for schedule in &mut schedules {
+        if let Some(next) = next_runs.get(&schedule.name) {
+            schedule.next_run = Some(next.clone());
+        }
+    }
+
+    let enabled = schedules
+        .iter()
+        .filter(|s| s.status.eq_ignore_ascii_case("enabled"))
+        .count();
+    let disabled = schedules
+        .iter()
+        .filter(|s| s.status.eq_ignore_ascii_case("disabled"))
+        .count();
+    let stats = SchedulerStats {
+        total: schedules.len(),
+        enabled,
+        disabled,
+    };
+
+    Ok(Json(SchedulerOverview { stats, schedules }))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct FeedFetchQuery {
+    pub url: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct FeedFetchResponse {
+    pub url: String,
+    pub content: String,
+    #[serde(default)]
+    pub content_type: Option<String>,
+}
+
+/// Fetch an RSS/Atom feed and return raw XML for client-side parsing.
+#[instrument(skip(_state))]
+pub async fn fetch_feed(
+    State(_state): State<AppState>,
+    Query(query): Query<FeedFetchQuery>,
+) -> ApiResult<Json<FeedFetchResponse>> {
+    let url =
+        reqwest::Url::parse(&query.url).map_err(|_| ApiError::bad_request("Invalid feed URL"))?;
+    if url.scheme() != "http" && url.scheme() != "https" {
+        return Err(ApiError::bad_request("Feed URL must be http or https"));
+    }
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(12))
+        .build()
+        .map_err(|e| ApiError::internal(format!("Failed to build HTTP client: {}", e)))?;
+
+    let response = client
+        .get(url.clone())
+        .send()
+        .await
+        .map_err(|e| ApiError::internal(format!("Feed fetch failed: {}", e)))?;
+
+    if !response.status().is_success() {
+        return Err(ApiError::internal(format!(
+            "Feed request failed with status {}",
+            response.status()
+        )));
+    }
+
+    let content_type = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .map(|value| value.to_string());
+
+    let max_bytes = 1_000_000usize;
+    if let Some(length) = response.content_length() {
+        if length as usize > max_bytes {
+            return Err(ApiError::bad_request("Feed payload too large"));
+        }
+    }
+
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|e| ApiError::internal(format!("Feed read failed: {}", e)))?;
+
+    if bytes.len() > max_bytes {
+        return Err(ApiError::bad_request("Feed payload too large"));
+    }
+
+    let content = String::from_utf8_lossy(&bytes).to_string();
+    Ok(Json(FeedFetchResponse {
+        url: query.url,
+        content,
+        content_type,
+    }))
+}
+
+// ============================================================================
+// CodexBar (AI subscription usage) handlers
+// ============================================================================
+
+/// Fetch CodexBar usage from the CLI (if available on PATH).
+#[instrument]
+pub async fn codexbar_usage() -> ApiResult<Json<serde_json::Value>> {
+    let candidates: [&[&str]; 3] = [
+        &[
+            "usage",
+            "--provider",
+            "all",
+            "--source",
+            "cli",
+            "--format",
+            "json",
+        ],
+        &["usage", "--provider", "all", "--source", "cli", "--json"],
+        &["usage", "--provider", "all", "--source", "cli"],
+    ];
+
+    let mut last_error: Option<String> = None;
+
+    for args in candidates {
+        let output = match tokio::time::timeout(
+            Duration::from_secs(20),
+            Command::new("codexbar").args(args).output(),
+        )
+        .await
+        {
+            Ok(result) => result.map_err(|e| {
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    ApiError::not_found("codexbar not available")
+                } else {
+                    ApiError::internal(format!("Failed to execute codexbar: {}", e))
+                }
+            })?,
+            Err(_) => {
+                return Err(ApiError::internal(
+                    "codexbar timed out while fetching usage",
+                ));
+            }
+        };
+
+        if !output.status.success() {
+            warn!("codexbar returned non-zero exit status");
+        }
+
+        match serde_json::from_slice::<serde_json::Value>(&output.stdout) {
+            Ok(payload) => return Ok(Json(payload)),
+            Err(err) => {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                last_error = Some(format!(
+                    "Failed to parse codexbar JSON output: {} ({})",
+                    err, stderr
+                ));
+            }
+        }
+    }
+
+    Err(ApiError::internal(last_error.unwrap_or_else(|| {
+        "Failed to parse codexbar output".to_string()
+    })))
 }
 
 // ============================================================================

@@ -7,8 +7,8 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use futures::{SinkExt, StreamExt};
-use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::client::legacy::Client;
+use hyper_util::client::legacy::connect::HttpConnector;
 use log::{debug, error, warn};
 use tokio_tungstenite::connect_async;
 
@@ -549,6 +549,47 @@ pub async fn proxy_terminal_ws_for_workspace(
     }))
 }
 
+/// WebSocket upgrade handler for browser stream proxy.
+pub async fn proxy_browser_stream_ws(
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+    ws: WebSocketUpgrade,
+) -> Result<impl IntoResponse, StatusCode> {
+    if !state.sessions.agent_browser_enabled() {
+        return Err(StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    let session = state
+        .sessions
+        .get_session(&session_id)
+        .await
+        .map_err(|e| {
+            error!("Failed to get session {}: {:?}", session_id, e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    let _session = ensure_session_for_io_proxy(&state, &session_id, session).await?;
+
+    let stream_port = state
+        .sessions
+        .agent_browser_stream_port(&session_id)
+        .map_err(|e| {
+            error!(
+                "Failed to determine agent-browser stream port for session {}: {:?}",
+                session_id, e
+            );
+            StatusCode::SERVICE_UNAVAILABLE
+        })?
+        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+
+    Ok(ws.on_upgrade(move |socket| async move {
+        if let Err(e) = handle_browser_stream_proxy(socket, stream_port).await {
+            error!("Browser stream proxy error: {:?}", e);
+        }
+    }))
+}
+
 /// Handle WebSocket proxy between client and ttyd.
 ///
 /// ttyd uses a binary protocol with command prefixes:
@@ -791,6 +832,86 @@ async fn handle_terminal_proxy(
     tokio::select! {
         _ = client_to_ttyd => {}
         _ = ttyd_to_client => {}
+    }
+
+    Ok(())
+}
+
+async fn handle_browser_stream_proxy(
+    client_socket: axum::extract::ws::WebSocket,
+    stream_port: u16,
+) -> anyhow::Result<()> {
+    use axum::extract::ws::Message as AxumMessage;
+    use tokio_tungstenite::tungstenite::Message as TungsteniteMessage;
+
+    let target_url = format!("ws://127.0.0.1:{}", stream_port);
+    debug!("Proxying browser stream WebSocket to {}", target_url);
+
+    let start = tokio::time::Instant::now();
+    let timeout = tokio::time::Duration::from_secs(10);
+    let mut attempts: u32 = 0;
+
+    let (server_socket, _) = loop {
+        attempts += 1;
+        match connect_async(&target_url).await {
+            Ok(result) => break result,
+            Err(err) => {
+                if start.elapsed() >= timeout {
+                    return Err(anyhow::anyhow!(
+                        "agent-browser stream not available after {} attempts over {:?}: {}",
+                        attempts,
+                        timeout,
+                        err
+                    ));
+                }
+                let backoff_ms = (attempts.min(20) as u64) * 100;
+                let backoff = tokio::time::Duration::from_millis(backoff_ms);
+                debug!(
+                    "agent-browser stream not ready yet (attempt {}): {}; retrying in {:?}",
+                    attempts, err, backoff
+                );
+                tokio::time::sleep(backoff).await;
+            }
+        }
+    };
+
+    let (mut client_tx, mut client_rx) = client_socket.split();
+    let (mut server_tx, mut server_rx) = server_socket.split();
+
+    let client_to_server = async {
+        while let Some(msg) = client_rx.next().await {
+            let msg = msg?;
+            let forward = match msg {
+                AxumMessage::Text(text) => TungsteniteMessage::Text(text.to_string().into()),
+                AxumMessage::Binary(data) => TungsteniteMessage::Binary(data),
+                AxumMessage::Ping(data) => TungsteniteMessage::Ping(data),
+                AxumMessage::Pong(data) => TungsteniteMessage::Pong(data),
+                AxumMessage::Close(_) => TungsteniteMessage::Close(None),
+            };
+            server_tx.send(forward).await?;
+        }
+        Ok::<(), anyhow::Error>(())
+    };
+
+    let server_to_client = async {
+        while let Some(msg) = server_rx.next().await {
+            let msg = msg?;
+            let forward = match msg {
+                TungsteniteMessage::Text(text) => AxumMessage::Text(text.to_string().into()),
+                TungsteniteMessage::Binary(data) => AxumMessage::Binary(data),
+                TungsteniteMessage::Ping(data) => AxumMessage::Ping(data),
+                TungsteniteMessage::Pong(data) => AxumMessage::Pong(data),
+                TungsteniteMessage::Close(_) => AxumMessage::Close(None),
+                TungsteniteMessage::Frame(_) => continue,
+            };
+            client_tx.send(forward).await?;
+        }
+        Ok::<(), anyhow::Error>(())
+    };
+
+    tokio::select! {
+        result = client_to_server => result?,
+        result = server_to_client => result?,
     }
 
     Ok(())

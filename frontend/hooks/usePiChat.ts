@@ -1,7 +1,6 @@
 "use client";
 
 import {
-	type PiAgentMessage,
 	type PiSessionMessage,
 	type PiState,
 	abortMainChatPi,
@@ -12,7 +11,8 @@ import {
 	resetMainChatPiSession,
 	resumeMainChatPiSession,
 	startMainChatPiSession,
-} from "@/lib/control-plane-client";
+} from "@/features/main-chat/api";
+import type { PiAgentMessage } from "@/lib/control-plane-client";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 /** Pi streaming event types */
@@ -305,6 +305,8 @@ export function usePiChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 	} = options;
 
 	const activeSessionId = selectedSessionId ?? null;
+	const activeSessionIdRef = useRef(activeSessionId);
+	activeSessionIdRef.current = activeSessionId;
 	const resumeInFlightRef = useRef<string | null>(null);
 	// Track sessions created by newSession() to skip resume for them
 	const justCreatedSessionRef = useRef<string | null>(null);
@@ -806,14 +808,21 @@ export function usePiChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 		if (isStreaming) {
 			return;
 		}
-		if (!activeSessionId) {
+		const targetSessionId = activeSessionIdRef.current;
+		if (!targetSessionId) {
 			return;
 		}
 		try {
 			const [piState, sessionMessages] = await Promise.all([
 				getMainChatPiState(),
-				getMainChatPiSessionMessages(activeSessionId),
+				getMainChatPiSessionMessages(targetSessionId),
 			]);
+			
+			// Check if session changed during async fetch - discard stale response
+			if (activeSessionIdRef.current !== targetSessionId) {
+				return;
+			}
+			
 			setState(piState);
 
 			// If backend says it's not streaming, ensure local state is cleared
@@ -827,12 +836,12 @@ export function usePiChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 
 			const displayMessages = convertSessionMessagesToDisplay(sessionMessages);
 			setMessages((previous) => mergeServerMessages(previous, displayMessages));
-			writeCachedSessionMessages(activeSessionId, displayMessages);
+			writeCachedSessionMessages(targetSessionId, displayMessages);
 		} catch (e) {
 			// Don't show errors for background refresh - we have cached data
 			console.warn("Background refresh failed:", e);
 		}
-	}, [activeSessionId, convertSessionMessagesToDisplay, isStreaming]);
+	}, [convertSessionMessagesToDisplay, isStreaming]);
 
 	// Keep refs in sync so the session-change effect can use them
 	useEffect(() => {
@@ -899,6 +908,33 @@ export function usePiChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 			clearTimeout(timeout);
 		};
 	}, [isStreaming]);
+
+	// Periodic refresh when idle - catches missed WebSocket events and handles
+	// the case where messages appear empty until reload
+	useEffect(() => {
+		if (!activeSessionId || !isConnected || isStreaming) return;
+		
+		let cancelled = false;
+		const targetSessionId = activeSessionId;
+		
+		// Initial refresh after a short delay (handles page load with existing session)
+		const initialTimeout = setTimeout(() => {
+			if (cancelled || activeSessionIdRef.current !== targetSessionId) return;
+			refreshRef.current?.();
+		}, 500);
+		
+		// Periodic refresh every 15 seconds as a safety net
+		const interval = setInterval(() => {
+			if (cancelled || activeSessionIdRef.current !== targetSessionId) return;
+			refreshRef.current?.();
+		}, 15000);
+		
+		return () => {
+			cancelled = true;
+			clearTimeout(initialTimeout);
+			clearInterval(interval);
+		};
+	}, [activeSessionId, isConnected, isStreaming]);
 
 	// Ensure nextMessageId never collides with cached/loaded messages
 	useEffect(() => {

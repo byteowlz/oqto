@@ -1951,7 +1951,7 @@ dependencies = [
 
 [[package]]
 name = "octo"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2002,8 +2002,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "octo-browser"
+version = "0.4.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "serde",
+ "serde_json",
+ "uuid",
+]
+
+[[package]]
 name = "octo-files"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "axum",
  "bytes",

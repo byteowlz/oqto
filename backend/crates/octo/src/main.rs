@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
 
 mod agent;
+mod agent_browser;
 mod agent_rpc;
 mod api;
 mod auth;
@@ -478,6 +479,8 @@ struct AppConfig {
     scaffold: ScaffoldConfig,
     /// Pi agent configuration for Main Chat.
     pi: PiConfig,
+    /// Agent-browser daemon configuration.
+    agent_browser: agent_browser::AgentBrowserConfig,
     /// Server configuration.
     server: ServerConfig,
 }
@@ -557,6 +560,7 @@ impl Default for AppConfig {
             templates: TemplatesConfig::default(),
             scaffold: ScaffoldConfig::default(),
             pi: PiConfig::default(),
+            agent_browser: agent_browser::AgentBrowserConfig::default(),
             server: ServerConfig::default(),
         }
     }
@@ -952,6 +956,9 @@ impl Default for ScaffoldConfig {
 pub struct TemplatesConfig {
     /// Path to the local templates repository on the host.
     pub repo_path: Option<String>,
+    /// Repository type: "remote" (git) or "local" (filesystem).
+    #[serde(rename = "type")]
+    pub repo_type: api::TemplatesRepoType,
     /// Sync repository before listing/creating templates.
     pub sync_on_list: bool,
     /// Minimum seconds between sync attempts.
@@ -962,6 +969,7 @@ impl Default for TemplatesConfig {
     fn default() -> Self {
         Self {
             repo_path: None,
+            repo_type: api::TemplatesRepoType::Remote,
             sync_on_list: true,
             sync_interval_seconds: 120,
         }
@@ -1686,6 +1694,7 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
             && ctx.config.pi.runtime_mode == main_chat::PiRuntimeMode::Container,
         pi_provider: ctx.config.pi.default_provider.clone(),
         pi_model: ctx.config.pi.default_model.clone(),
+        agent_browser: ctx.config.agent_browser.clone(),
     };
 
     let session_repo = session::SessionRepository::new(database.pool().clone());
@@ -1959,6 +1968,7 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     };
     let templates_state = api::TemplatesState::new(
         ctx.config.templates.repo_path.as_deref().map(PathBuf::from),
+        ctx.config.templates.repo_type,
         ctx.config.templates.sync_on_list,
         Duration::from_secs(ctx.config.templates.sync_interval_seconds),
     );

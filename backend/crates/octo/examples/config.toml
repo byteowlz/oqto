@@ -120,6 +120,22 @@ create_home = true
 # while preventing them from weakening their own security restrictions.
 # See examples/sandbox.toml for sandbox configuration options.
 
+[agent_browser]
+# Enable per-session agent-browser daemon management.
+enabled = false
+# Path to the agent-browser CLI binary.
+binary = "agent-browser"
+# Launch headed browser windows instead of headless.
+headed = false
+# Base port for screencast WebSocket streams.
+stream_port_base = 30000
+# Port range size for per-session streams.
+stream_port_range = 10000
+# Optional Chromium executable path.
+# executable_path = "/usr/bin/chromium"
+# Optional extensions to load (absolute paths).
+# extensions = ["/path/to/extension"]
+
 [eavs]
 # EAVS (LLM proxy) configuration - runs on host, not in containers
 # Enable EAVS integration for session virtual keys
@@ -183,6 +199,8 @@ idle_check_interval_seconds = 300
 [templates]
 # Project templates repository (local clone on host).
 # repo_path = "/path/to/octo-templates"
+# Repository type: "remote" (git) or "local" (filesystem).
+type = "remote"
 # Sync templates repository before listing/creating.
 sync_on_list = true
 # Minimum seconds between sync attempts.

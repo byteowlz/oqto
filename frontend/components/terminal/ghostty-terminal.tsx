@@ -84,6 +84,8 @@ async function ensureGhosttyInit(): Promise<void> {
 export type GhosttyTerminalHandle = {
 	focus: () => void;
 	blur: () => void;
+	/** Send a key sequence to the terminal (e.g., for mobile keyboard toolbar) */
+	sendKey: (key: string) => void;
 };
 
 interface GhosttyTerminalProps {
@@ -141,6 +143,13 @@ export const GhosttyTerminal = forwardRef<
 		useImperativeHandle(ref, () => ({
 			focus: () => getSession().terminal?.focus(),
 			blur: () => getSession().terminal?.blur(),
+			sendKey: (key: string) => {
+				const session = getSession();
+				// Send to both terminal (for local echo if needed) and WebSocket
+				if (session.socket?.readyState === WebSocket.OPEN) {
+					session.socket.send(key);
+				}
+			},
 		}));
 
 		// Stable callback for handling messages

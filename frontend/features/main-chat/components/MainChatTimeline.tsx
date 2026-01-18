@@ -3,7 +3,7 @@
 import {
 	type PiSessionFile,
 	listMainChatPiSessions,
-} from "@/lib/control-plane-client";
+} from "@/features/main-chat/api";
 import { formatSessionDate, generateReadableId } from "@/lib/session-utils";
 import { cn } from "@/lib/utils";
 import { useCallback, useEffect, useRef, useState } from "react";

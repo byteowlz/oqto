@@ -142,6 +142,9 @@ export function LoginPage() {
 				`Login success! Token: ${result.token ? "yes" : "no"}, User: ${result.user?.name || "?"}`,
 			);
 
+			// Seed the auth cache to avoid a redirect loop while /me refreshes
+			queryClient.setQueryData(authKeys.me(), result.user);
+
 			// Invalidate auth cache so RequireAuth refetches /me with the new token
 			await queryClient.invalidateQueries({ queryKey: authKeys.all });
 

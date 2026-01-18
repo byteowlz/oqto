@@ -39,6 +39,9 @@ bun dev
 
 The app runs on [http://localhost:3000](http://localhost:3000) and immediately begins calling the configured services. Use `bun lint` to run the Biome + oxlint suite.
 
+The default route resolves to the sessions (chat) view so the most recent chat opens first.
+The app uses a fixed viewport-height shell to avoid iOS PWA bottom inset drift after reopening, and the status bar avoids bottom safe-area padding.
+
 ## Desktop (Tauri)
 
 The frontend remains a standard web app. For a desktop shell, run Tauri:
@@ -52,6 +55,16 @@ Build a desktop bundle with:
 ```bash
 bun run tauri:build
 ```
+
+## PWA Notes (iOS)
+
+The iOS PWA layout forces zero bottom safe-area padding to keep the status bar flush with the bottom edge during long sessions.
+
+## Sidebar Notes
+
+The session sidebar lists the search input above the Main Chat entry on both mobile and desktop layouts.
+The mobile sidebar adds top safe-area padding so the header stays below the Dynamic Island.
+Utility app headers (Dashboard, Settings, Admin) are centered on mobile.
 
 ## Testing with Podman
 
@@ -76,7 +89,8 @@ A ready-to-run container definition lives in `Dockerfile` with the companion lau
 - `apps/` – pluggable app modules (Workspaces, Sessions, Admin) registered through `lib/app-registry`.
 - `components/terminal/ghostty-terminal.tsx` – Ghostty + WebSocket terminal wrapper.
 - `lib/opencode-client.ts` – Thin client for opencode REST/SSE workflows.
-- `apps/sessions/*` – File tree browser, terminal view, and preview surface wired to live services.
+- `features/sessions/SessionScreen.tsx` – Sessions app screen composition and orchestration.
+- `features/sessions/components/*` – File tree browser, terminal view, and preview surface wired to live services (file tree stays mounted while previews are open).
 - `public/octo_logo_banner_white.svg` – App logo used by the shell navigation (SVG icon).
 
 Refer to the documents inside `history/` for deeper architecture notes on opencode and Ghostty integrations.

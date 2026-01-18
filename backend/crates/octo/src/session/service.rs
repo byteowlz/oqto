@@ -17,6 +17,7 @@ use log::{debug, error, info, warn};
 use serde::Serialize;
 use uuid::Uuid;
 
+use crate::agent_browser::{AgentBrowserConfig, AgentBrowserManager};
 use crate::container::{ContainerConfig, ContainerRuntimeApi, ContainerStats};
 use crate::eavs::{CreateKeyRequest, EavsApi, KeyPermissions};
 use crate::local::{LocalRuntime, LocalRuntimeConfig};
@@ -165,6 +166,8 @@ pub struct SessionServiceConfig {
     pub pi_provider: Option<String>,
     /// Default model for Pi (e.g., "claude-sonnet-4-20250514").
     pub pi_model: Option<String>,
+    /// Agent-browser daemon configuration.
+    pub agent_browser: AgentBrowserConfig,
 }
 
 impl Default for SessionServiceConfig {
@@ -189,6 +192,7 @@ impl Default for SessionServiceConfig {
             pi_bridge_enabled: false,
             pi_provider: None,
             pi_model: None,
+            agent_browser: AgentBrowserConfig::default(),
         }
     }
 }
@@ -217,6 +221,7 @@ pub struct SessionService {
     local_runtime: Option<Arc<LocalRuntime>>,
     eavs: Option<Arc<dyn EavsApi>>,
     readiness: Arc<dyn SessionReadiness>,
+    agent_browser: AgentBrowserManager,
     config: SessionServiceConfig,
 }
 
@@ -233,6 +238,7 @@ impl SessionService {
             local_runtime: None,
             eavs: None,
             readiness: Arc::new(HttpSessionReadiness::default()),
+            agent_browser: AgentBrowserManager::new(config.agent_browser.clone()),
             config,
         }
     }
@@ -250,6 +256,7 @@ impl SessionService {
             local_runtime: None,
             eavs: Some(eavs),
             readiness: Arc::new(HttpSessionReadiness::default()),
+            agent_browser: AgentBrowserManager::new(config.agent_browser.clone()),
             config,
         }
     }
@@ -266,6 +273,7 @@ impl SessionService {
             local_runtime: Some(Arc::new(local_runtime)),
             eavs: None,
             readiness: Arc::new(HttpSessionReadiness::default()),
+            agent_browser: AgentBrowserManager::new(config.agent_browser.clone()),
             config,
         }
     }
@@ -283,6 +291,7 @@ impl SessionService {
             local_runtime: Some(Arc::new(local_runtime)),
             eavs: Some(eavs),
             readiness: Arc::new(HttpSessionReadiness::default()),
+            agent_browser: AgentBrowserManager::new(config.agent_browser.clone()),
             config,
         }
     }
@@ -316,6 +325,21 @@ impl SessionService {
         }
         // Container mode - use /workspace
         std::path::PathBuf::from("/workspace")
+    }
+
+    /// Check if agent-browser integration is enabled.
+    pub fn agent_browser_enabled(&self) -> bool {
+        self.config.agent_browser.enabled
+    }
+
+    /// Get the agent-browser stream port for a session.
+    pub fn agent_browser_stream_port(&self, session_id: &str) -> Result<Option<u16>> {
+        if !self.config.agent_browser.enabled {
+            return Ok(None);
+        }
+        self.agent_browser
+            .stream_port_for_session(session_id)
+            .map(Some)
     }
 
     fn allowed_workspace_roots(&self) -> Vec<std::path::PathBuf> {
@@ -839,7 +863,7 @@ impl SessionService {
             session.id, session.runtime_mode
         );
 
-        match session.runtime_mode {
+        let result = match session.runtime_mode {
             RuntimeMode::Container => {
                 self.start_container_mode(session, eavs_virtual_key, require_opencode)
                     .await
@@ -848,6 +872,30 @@ impl SessionService {
                 self.start_local_mode(session, eavs_virtual_key, require_opencode)
                     .await
             }
+        };
+
+        if result.is_ok() {
+            self.start_agent_browser_daemon(session).await;
+        }
+
+        result
+    }
+
+    async fn start_agent_browser_daemon(&self, session: &Session) {
+        if let Err(err) = self.agent_browser.ensure_session(&session.id).await {
+            warn!(
+                "Failed to start agent-browser daemon for session {}: {}",
+                session.id, err
+            );
+        }
+    }
+
+    async fn stop_agent_browser_daemon(&self, session_id: &str) {
+        if let Err(err) = self.agent_browser.stop_session(session_id).await {
+            warn!(
+                "Failed to stop agent-browser daemon for session {}: {}",
+                session_id, err
+            );
         }
     }
 
@@ -1155,6 +1203,8 @@ impl SessionService {
                 }
             }
         }
+
+        self.stop_agent_browser_daemon(session_id).await;
 
         self.repo.mark_stopped(session_id).await?;
         info!("Session {} stopped (preserved for resume)", session_id);
@@ -1544,6 +1594,7 @@ impl SessionService {
 
         // Mark as running
         self.repo.mark_running(session_id).await?;
+        self.start_agent_browser_daemon(session).await;
         info!("Session {} resumed successfully", session_id);
 
         Ok(self.repo.get(session_id).await?.unwrap_or(session.clone()))
@@ -1668,6 +1719,8 @@ impl SessionService {
                 }
             }
         }
+
+        self.stop_agent_browser_daemon(session_id).await;
 
         self.repo.delete(session_id).await?;
         info!("Deleted session {}", session_id);
@@ -2804,6 +2857,7 @@ mod tests {
             pi_bridge_enabled: false,
             pi_provider: None,
             pi_model: None,
+            agent_browser: AgentBrowserConfig::default(),
         };
 
         let mut service = SessionService::with_eavs(repo.clone(), runtime.clone(), eavs, config);

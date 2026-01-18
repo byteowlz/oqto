@@ -26,7 +26,7 @@ import {
 	listMainChatAssistants,
 	listMainChatPiSessions,
 	updateMainChatAssistant,
-} from "@/lib/control-plane-client";
+} from "@/features/main-chat/api";
 import { formatSessionDate, generateReadableId } from "@/lib/session-utils";
 import { cn } from "@/lib/utils";
 import {
@@ -35,6 +35,7 @@ import {
 	Copy,
 	Loader2,
 	MessageCircle,
+	MessageSquare,
 	Plus,
 	Settings,
 	Trash2,
@@ -50,6 +51,8 @@ export interface MainChatEntryProps {
 	onSelect: (assistantName: string, sessionId: string | null) => void;
 	/** Callback when a specific session in the timeline is clicked */
 	onSessionSelect?: (assistantName: string, sessionId: string) => void;
+	/** Callback when the + button is clicked to create a new session */
+	onNewSession?: (assistantName: string) => void;
 	/** Locale for i18n */
 	locale?: "en" | "de";
 }
@@ -64,6 +67,7 @@ export function MainChatEntry({
 	activeSessionId,
 	onSelect,
 	onSessionSelect,
+	onNewSession,
 	locale = "en",
 }: MainChatEntryProps) {
 	const [assistantName, setAssistantName] = useState<string | null>(null);
@@ -261,6 +265,16 @@ export function MainChatEntry({
 		setExpanded((prev) => !prev);
 	}, []);
 
+	const handleNewSessionClick = useCallback(
+		(e: React.MouseEvent) => {
+			e.stopPropagation();
+			if (assistantName && onNewSession) {
+				onNewSession(assistantName);
+			}
+		},
+		[assistantName, onNewSession],
+	);
+
 	// Loading state - show placeholder
 	if (loading) {
 		return (
@@ -304,134 +318,142 @@ export function MainChatEntry({
 		);
 	}
 
-	// Assistant exists - show entry with timeline
+	// Assistant exists - show entry styled like workspace project entries
 	const hasSessions = sessions.length > 0;
 
 	return (
 		<>
-			<ContextMenu>
-				<ContextMenuTrigger className="contents">
-					<div>
-						<div
-							className={cn(
-								"w-full px-2 py-2 text-left transition-colors flex items-start gap-1.5 rounded-md",
-								isSelected
-									? "bg-primary/15 border border-primary text-foreground"
-									: "text-muted-foreground hover:bg-sidebar-accent border border-transparent",
-							)}
-						>
-							{hasSessions ? (
-								<button
-									type="button"
-									onClick={toggleExpanded}
-									className="mt-0.5 p-0.5 hover:bg-muted rounded flex-shrink-0 cursor-pointer"
-								>
-									{expanded ? (
-										<ChevronDown className="w-3 h-3" />
-									) : (
-										<ChevronRight className="w-3 h-3" />
-									)}
-								</button>
-							) : (
-								<MessageCircle className="w-4 h-4 mt-0.5 flex-shrink-0 text-primary" />
-							)}
+			<div className="border-b border-sidebar-border/50">
+				<ContextMenu>
+					<ContextMenuTrigger className="contents">
+						{/* Main Chat header - styled like workspace project headers */}
+						<div className="flex items-center gap-1 px-1 py-1.5 group">
 							<button
 								type="button"
-								onClick={handleClick}
-								className="flex-1 min-w-0 text-left"
+								onClick={hasSessions ? toggleExpanded : handleClick}
+								className="flex-1 flex items-center gap-1.5 text-left hover:bg-sidebar-accent/50 px-1 py-0.5 -mx-1"
 							>
-								<div className="flex items-center gap-1">
-									<span className="text-sm truncate font-medium">
-										{assistantName}
-									</span>
-								</div>
-								<div className="text-xs text-muted-foreground/50 mt-0.5">
-									{locale === "de" ? "Hauptchat" : "Main Chat"}
-									{sessions.length > 0 && (
-										<span className="opacity-60">
-											{" "}
-											{sessions.length}{" "}
-											{locale === "de" ? "Sitzungen" : "sessions"}
-										</span>
-									)}
-								</div>
+								{hasSessions ? (
+									expanded ? (
+										<ChevronDown className="w-3 h-3 text-muted-foreground flex-shrink-0" />
+									) : (
+										<ChevronRight className="w-3 h-3 text-muted-foreground flex-shrink-0" />
+									)
+								) : (
+									<ChevronRight className="w-3 h-3 text-muted-foreground/30 flex-shrink-0" />
+								)}
+								<MessageCircle className="w-3.5 h-3.5 text-primary/70 flex-shrink-0" />
+								<span className="text-xs font-medium text-foreground truncate">
+									{assistantName}
+								</span>
+								<span className="text-[10px] text-muted-foreground">
+									({sessions.length})
+								</span>
 							</button>
+							{onNewSession && (
+								<button
+									type="button"
+									onClick={handleNewSessionClick}
+									className="p-1 text-muted-foreground hover:text-primary hover:bg-sidebar-accent opacity-0 group-hover:opacity-100 transition-opacity"
+									title={
+										locale === "de"
+											? "Neue Sitzung"
+											: "New session"
+									}
+								>
+									<Plus className="w-3 h-3" />
+								</button>
+							)}
 						</div>
-
-						{/* Session history list - shown when expanded */}
-						{expanded && hasSessions && (
-							<div className="ml-4 mt-1 mb-2 space-y-1">
-								{sessions.map((session) => {
-									const isActive = session.id === (activeSessionId ?? latestSessionId);
-									const readableId = generateReadableId(session.id);
-									const formattedDate = formatSessionDate(
-										new Date(session.started_at).getTime(),
-									);
-
-									return (
-										<ContextMenu key={session.id}>
-											<ContextMenuTrigger className="contents">
-												<div
-													className={cn(
-														"w-full px-2 py-2 text-left transition-colors flex items-start gap-1.5 cursor-pointer",
-														isActive
-															? "bg-primary/15 border border-primary text-foreground"
-															: "text-muted-foreground hover:bg-sidebar-accent border border-transparent",
-													)}
-												>
-													<MessageCircle className="w-4 h-4 mt-0.5 flex-shrink-0 text-primary/70" />
-													<button
-														type="button"
-														onClick={() => handleTimelineSessionClick(session.id)}
-														className="flex-1 min-w-0 text-left"
-													>
-														<div className="flex items-center gap-1">
-															<span className="text-sm truncate font-medium">
-																{session.title || "Untitled"}
-															</span>
-														</div>
-														<div className="text-[11px] text-muted-foreground/50 mt-0.5">
-															{formattedDate} <span className="opacity-60">[{readableId}]</span>
-														</div>
-													</button>
-												</div>
-											</ContextMenuTrigger>
-											<ContextMenuContent>
-												<ContextMenuItem
-													onClick={() => navigator.clipboard.writeText(readableId)}
-												>
-													<Copy className="w-4 h-4 mr-2" />
-													{readableId}
-												</ContextMenuItem>
-											</ContextMenuContent>
-										</ContextMenu>
-									);
-								})}
-							</div>
+					</ContextMenuTrigger>
+					<ContextMenuContent>
+						{onNewSession && (
+							<>
+								<ContextMenuItem
+									onClick={() => {
+										if (assistantName) {
+											onNewSession(assistantName);
+										}
+									}}
+								>
+									<Plus className="w-4 h-4 mr-2" />
+									{locale === "de" ? "Neue Sitzung" : "New Session"}
+								</ContextMenuItem>
+								<div className="h-px bg-border my-1" />
+							</>
 						)}
+						<ContextMenuItem
+							onClick={() => {
+								setNewName(assistantName ?? "");
+								setShowCreateDialog(true);
+							}}
+						>
+							<Settings className="w-4 h-4 mr-2" />
+							{locale === "de" ? "Einstellungen" : "Settings"}
+						</ContextMenuItem>
+						<ContextMenuItem
+							onClick={() => {
+								setResetName(assistantName ?? "");
+								setShowResetDialog(true);
+							}}
+						>
+							<Trash2 className="w-4 h-4 mr-2" />
+							{locale === "de" ? "Zurucksetzen" : "Reset"}
+						</ContextMenuItem>
+					</ContextMenuContent>
+				</ContextMenu>
+
+				{/* Session history list - shown when expanded */}
+				{expanded && hasSessions && (
+					<div className="space-y-0.5 pb-1">
+						{sessions.map((session) => {
+							const isActive =
+								session.id === (activeSessionId ?? latestSessionId);
+							const readableId = generateReadableId(session.id);
+							const formattedDate = formatSessionDate(
+								new Date(session.started_at).getTime(),
+							);
+
+							return (
+								<ContextMenu key={session.id}>
+									<ContextMenuTrigger className="contents">
+										<div className="ml-3">
+											<button
+												type="button"
+												onClick={() => handleTimelineSessionClick(session.id)}
+												className={cn(
+													"w-full px-2 py-1.5 text-left transition-colors flex items-center gap-1.5 rounded-sm",
+													isActive
+														? "bg-primary/15 text-foreground"
+														: "text-muted-foreground hover:bg-sidebar-accent",
+												)}
+											>
+												<MessageSquare className="w-3.5 h-3.5 text-primary/70 flex-shrink-0" />
+												<div className="flex-1 min-w-0">
+													<div className="text-xs font-medium truncate">
+														{session.title || "Untitled"}
+													</div>
+													<div className="text-[10px] text-muted-foreground/50">
+														{formattedDate}
+													</div>
+												</div>
+											</button>
+										</div>
+									</ContextMenuTrigger>
+									<ContextMenuContent>
+										<ContextMenuItem
+											onClick={() => navigator.clipboard.writeText(readableId)}
+										>
+											<Copy className="w-4 h-4 mr-2" />
+											{readableId}
+										</ContextMenuItem>
+									</ContextMenuContent>
+								</ContextMenu>
+							);
+						})}
 					</div>
-				</ContextMenuTrigger>
-				<ContextMenuContent>
-					<ContextMenuItem
-						onClick={() => {
-							setNewName(assistantName ?? "");
-							setShowCreateDialog(true);
-						}}
-					>
-						<Settings className="w-4 h-4 mr-2" />
-						{locale === "de" ? "Einstellungen" : "Settings"}
-					</ContextMenuItem>
-					<ContextMenuItem
-						onClick={() => {
-							setResetName(assistantName ?? "");
-							setShowResetDialog(true);
-						}}
-					>
-						<Trash2 className="w-4 h-4 mr-2" />
-						{locale === "de" ? "Zurucksetzen" : "Reset"}
-					</ContextMenuItem>
-				</ContextMenuContent>
-			</ContextMenu>
+				)}
+			</div>
 
 			<CreateAssistantDialog
 				open={showCreateDialog}

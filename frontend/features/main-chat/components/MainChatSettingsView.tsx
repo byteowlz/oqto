@@ -13,7 +13,7 @@ import {
 	type PiModelInfo,
 	getMainChatPiModels,
 	setMainChatPiModel,
-} from "@/lib/control-plane-client";
+} from "@/features/main-chat/api";
 import { fuzzyMatch } from "@/lib/slash-commands";
 import { cn } from "@/lib/utils";
 import { Loader2 } from "lucide-react";

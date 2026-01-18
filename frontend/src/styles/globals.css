@@ -462,3 +462,43 @@ input[type="radio"] {
 	margin-bottom: 0;
 	padding-bottom: 0;
 }
+
+html,
+body,
+#root {
+	padding-bottom: 0 !important;
+}
+
+/* iOS Safari: Hide native input accessory bar for elements with this class */
+/* Apply to inputs that should use custom keyboard toolbar instead */
+.hide-ios-accessory {
+	/* Disable autocomplete features that trigger the bar */
+	-webkit-user-modify: read-write-plaintext-only;
+}
+
+/* When combined with autocomplete="off" and inputmode, this hides the iOS accessory bar */
+.hide-ios-accessory::-webkit-contacts-auto-fill-button,
+.hide-ios-accessory::-webkit-credentials-auto-fill-button {
+	display: none !important;
+	visibility: hidden !important;
+	pointer-events: none;
+	position: absolute;
+	right: 0;
+}
+
+/* Safe area padding for keyboard toolbar */
+.safe-area-inset-bottom {
+	padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* Mobile keyboard toolbar positioning */
+.keyboard-toolbar {
+	position: fixed;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	z-index: 9999;
+	/* Ensure it sits above the keyboard */
+	transform: translateZ(0);
+	-webkit-transform: translateZ(0);
+}
