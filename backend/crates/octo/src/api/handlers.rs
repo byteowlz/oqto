@@ -3471,28 +3471,28 @@ fn parse_skdlr_list(output: &str) -> Vec<SchedulerEntry> {
             continue;
         }
 
-        let (name, status, schedule, command) = if line.len() >= 53 {
-            (
-                line.get(0..20).unwrap_or("").trim().to_string(),
-                line.get(21..31).unwrap_or("").trim().to_string(),
-                line.get(32..52).unwrap_or("").trim().to_string(),
-                line.get(53..).unwrap_or("").trim().to_string(),
-            )
-        } else {
-            let parts: Vec<&str> = trimmed.split_whitespace().collect();
-            if parts.len() < 3 {
-                continue;
-            }
-            let command = if parts.len() > 3 {
-                parts[3..].join(" ")
-            } else {
-                String::new()
-            };
+        let parts: Vec<&str> = trimmed.split_whitespace().collect();
+        if parts.len() < 3 {
+            continue;
+        }
+
+        let (name, status, schedule, command) = if parts.len() >= 7 {
             (
                 parts[0].to_string(),
                 parts[1].to_string(),
-                parts[2].to_string(),
-                command,
+                parts[2..7].join(" "),
+                if parts.len() > 7 {
+                    parts[7..].join(" ")
+                } else {
+                    String::new()
+                },
+            )
+        } else {
+            (
+                parts[0].to_string(),
+                parts[1].to_string(),
+                parts[2..].join(" "),
+                String::new(),
             )
         };
 
