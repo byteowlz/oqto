@@ -3472,11 +3472,12 @@ fn parse_skdlr_list(output: &str) -> Vec<SchedulerEntry> {
         }
 
         let (name, status, schedule, command) = if line.len() >= 53 {
-            let name = line.get(0..20).unwrap_or("").trim();
-            let status = line.get(21..31).unwrap_or("").trim();
-            let schedule = line.get(32..52).unwrap_or("").trim();
-            let command = line.get(53..).unwrap_or("").trim();
-            (name, status, schedule, command)
+            (
+                line.get(0..20).unwrap_or("").trim().to_string(),
+                line.get(21..31).unwrap_or("").trim().to_string(),
+                line.get(32..52).unwrap_or("").trim().to_string(),
+                line.get(53..).unwrap_or("").trim().to_string(),
+            )
         } else {
             let parts: Vec<&str> = trimmed.split_whitespace().collect();
             if parts.len() < 3 {
@@ -3487,14 +3488,19 @@ fn parse_skdlr_list(output: &str) -> Vec<SchedulerEntry> {
             } else {
                 String::new()
             };
-            (parts[0], parts[1], parts[2], command.as_str())
+            (
+                parts[0].to_string(),
+                parts[1].to_string(),
+                parts[2].to_string(),
+                command,
+            )
         };
 
         schedules.push(SchedulerEntry {
-            name: name.to_string(),
-            status: status.to_string(),
-            schedule: schedule.to_string(),
-            command: command.to_string(),
+            name,
+            status,
+            schedule,
+            command,
             next_run: None,
         });
     }
@@ -3575,7 +3581,7 @@ pub struct FeedFetchResponse {
 }
 
 /// Fetch an RSS/Atom feed and return raw XML for client-side parsing.
-#[instrument(skip(state))]
+#[instrument(skip(_state))]
 pub async fn fetch_feed(
     State(_state): State<AppState>,
     Query(query): Query<FeedFetchQuery>,
