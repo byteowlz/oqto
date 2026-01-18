@@ -1,12 +1,16 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
-import { fileserverWorkspaceBaseUrl } from "@/lib/control-plane-client";
+import {
+	fileserverWorkspaceBaseUrl,
+	mainChatFilesBaseUrl,
+} from "@/lib/control-plane-client";
 import { cn } from "@/lib/utils";
 import {
 	Download,
 	ExternalLink,
 	Eye,
+	FileAudio,
 	FileText,
 	FileVideo,
 	Loader2,
@@ -25,6 +29,8 @@ import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 interface PreviewViewProps {
 	filePath?: string | null;
 	workspacePath?: string | null;
+	/** Whether this is the main chat preview (uses different API) */
+	isMainChat?: boolean;
 	className?: string;
 	onClose?: () => void;
 	onToggleExpand?: () => void;
@@ -131,6 +137,17 @@ const VIDEO_EXTENSIONS = new Set([
 	".m4v",
 ]);
 
+// Audio extensions
+const AUDIO_EXTENSIONS = new Set([
+	".mp3",
+	".wav",
+	".flac",
+	".aac",
+	".m4a",
+	".opus",
+	".ogg",
+]);
+
 // Map file extensions to syntax highlighter language
 function getLanguage(filename: string): string {
 	const ext = filename.substring(filename.lastIndexOf(".")).toLowerCase();
@@ -220,14 +237,21 @@ function isVideo(filename: string): boolean {
 	return VIDEO_EXTENSIONS.has(ext);
 }
 
+function isAudio(filename: string): boolean {
+	const ext = filename.substring(filename.lastIndexOf(".")).toLowerCase();
+	return AUDIO_EXTENSIONS.has(ext);
+}
+
 function getFileUrl(
 	baseUrl: string,
-	workspacePath: string,
+	workspacePath: string | null,
 	path: string,
 ): string {
 	const url = new URL(`${baseUrl}/file`, window.location.origin);
 	url.searchParams.set("path", path);
-	url.searchParams.set("workspace_path", workspacePath);
+	if (workspacePath) {
+		url.searchParams.set("workspace_path", workspacePath);
+	}
 	return url.toString();
 }
 
@@ -236,12 +260,14 @@ const getImageUrl = getFileUrl;
 
 async function fetchFileContent(
 	baseUrl: string,
-	workspacePath: string,
+	workspacePath: string | null,
 	path: string,
 ): Promise<string> {
 	const url = new URL(`${baseUrl}/file`, window.location.origin);
 	url.searchParams.set("path", path);
-	url.searchParams.set("workspace_path", workspacePath);
+	if (workspacePath) {
+		url.searchParams.set("workspace_path", workspacePath);
+	}
 	const res = await fetch(url.toString(), {
 		cache: "no-store",
 		credentials: "include",
@@ -255,13 +281,15 @@ async function fetchFileContent(
 
 async function saveFileContent(
 	baseUrl: string,
-	workspacePath: string,
+	workspacePath: string | null,
 	path: string,
 	content: string,
 ): Promise<void> {
 	const url = new URL(`${baseUrl}/file`, window.location.origin);
 	url.searchParams.set("path", path);
-	url.searchParams.set("workspace_path", workspacePath);
+	if (workspacePath) {
+		url.searchParams.set("workspace_path", workspacePath);
+	}
 
 	// Create form data with the file content
 	const formData = new FormData();
@@ -284,6 +312,7 @@ async function saveFileContent(
 export function PreviewView({
 	filePath,
 	workspacePath,
+	isMainChat = false,
 	className,
 	onClose,
 	onToggleExpand,
@@ -310,7 +339,19 @@ export function PreviewView({
 	const scrollContainerRef = useRef<HTMLDivElement>(null);
 	const savedScrollTopRef = useRef<number>(0);
 
-	const fileserverBaseUrl = workspacePath ? fileserverWorkspaceBaseUrl() : null;
+	// For main chat, use dedicated API that doesn't need workspace_path
+	const fileserverBaseUrl = isMainChat
+		? mainChatFilesBaseUrl()
+		: workspacePath
+			? fileserverWorkspaceBaseUrl()
+			: null;
+
+	// Cache key: main chat uses a fixed key, workspace uses the path
+	const cacheKeyPrefix = isMainChat ? "__main_chat__" : workspacePath;
+	// For API calls: main chat doesn't need workspace_path (null), workspace does
+	const apiWorkspacePath: string | null = isMainChat
+		? null
+		: workspacePath ?? null;
 
 	// Detect dark mode
 	useEffect(() => {
@@ -335,7 +376,7 @@ export function PreviewView({
 			loadingTimerRef.current = null;
 		}
 
-		if (!filePath || !fileserverBaseUrl || !workspacePath) {
+		if (!filePath || !fileserverBaseUrl || !cacheKeyPrefix) {
 			setContent("");
 			setEditedContent("");
 			setIsEditing(false);
@@ -343,9 +384,9 @@ export function PreviewView({
 			return;
 		}
 
-		// Don't fetch content for PDF, image, or video files - they render via URL
+		// Don't fetch content for PDF, image, video, or audio files - they render via URL
 		const filename = filePath.split("/").pop() || filePath;
-		if (isPdf(filename) || isImage(filename) || isVideo(filename)) {
+		if (isPdf(filename) || isImage(filename) || isVideo(filename) || isAudio(filename)) {
 			setContent("");
 			setEditedContent("");
 			setIsEditing(false);
@@ -354,7 +395,7 @@ export function PreviewView({
 		}
 
 		// Check cache first for instant preview
-		const cacheKey = `${workspacePath}:${filePath}`;
+		const cacheKey = `${cacheKeyPrefix}:${filePath}`;
 		const cached = getCachedContent(cacheKey);
 
 		if (cached !== null) {
@@ -375,7 +416,7 @@ export function PreviewView({
 		}, 150);
 
 		// Fetch raw content first (for editing)
-		fetchFileContent(fileserverBaseUrl, workspacePath, filePath)
+		fetchFileContent(fileserverBaseUrl, apiWorkspacePath, filePath)
 			.then((data) => {
 				// Cache and set raw content immediately
 				setCachedContent(cacheKey, data);
@@ -399,23 +440,23 @@ export function PreviewView({
 				loadingTimerRef.current = null;
 			}
 		};
-	}, [filePath, fileserverBaseUrl, workspacePath]);
+	}, [filePath, fileserverBaseUrl, cacheKeyPrefix, apiWorkspacePath]);
 
 	const handleSave = useCallback(async () => {
-		if (!fileserverBaseUrl || !filePath || !workspacePath) return;
+		if (!fileserverBaseUrl || !filePath || !cacheKeyPrefix) return;
 
 		setSaving(true);
 		setError("");
 		try {
 			await saveFileContent(
 				fileserverBaseUrl,
-				workspacePath,
+				apiWorkspacePath,
 				filePath,
 				editedContent,
 			);
 			setContent(editedContent);
 			// Update the cache with the new content
-			const cacheKey = `${workspacePath}:${filePath}`;
+			const cacheKey = `${cacheKeyPrefix}:${filePath}`;
 			setCachedContent(cacheKey, editedContent);
 			setIsEditing(false);
 		} catch (err) {
@@ -423,7 +464,7 @@ export function PreviewView({
 		} finally {
 			setSaving(false);
 		}
-	}, [fileserverBaseUrl, filePath, editedContent, workspacePath]);
+	}, [fileserverBaseUrl, filePath, editedContent, cacheKeyPrefix, apiWorkspacePath]);
 
 	const handleCancel = useCallback(() => {
 		setEditedContent(content);
@@ -495,13 +536,14 @@ export function PreviewView({
 	const isPdfFile = isPdf(filename);
 	const isTypstFile = isTypst(filename);
 	const isVideoFile = isVideo(filename);
+	const isAudioFile = isAudio(filename);
 	const fileUrl =
-		fileserverBaseUrl && workspacePath
-			? getFileUrl(fileserverBaseUrl, workspacePath, filePath)
+		fileserverBaseUrl && cacheKeyPrefix
+			? getFileUrl(fileserverBaseUrl, apiWorkspacePath, filePath)
 			: null;
 	const imageUrl =
-		isImageFile && fileserverBaseUrl && workspacePath
-			? getImageUrl(fileserverBaseUrl, workspacePath, filePath)
+		isImageFile && fileserverBaseUrl && cacheKeyPrefix
+			? getImageUrl(fileserverBaseUrl, apiWorkspacePath, filePath)
 			: null;
 	const ExpandIcon = isExpanded ? Minimize2 : Maximize2;
 	const expandLabel = isExpanded ? "Collapse preview" : "Expand preview";
@@ -731,11 +773,95 @@ export function PreviewView({
 		);
 	}
 
+	// For audio files, render with audio player
+	if (isAudioFile && fileUrl) {
+		return (
+			<div className={cn("h-full flex flex-col overflow-hidden", className)}>
+				{/* Header */}
+				{showHeader && (
+					<div className="flex-shrink-0 flex items-center justify-between px-2 py-1 border-b border-border bg-muted/30">
+						<div className="flex items-center gap-1.5 flex-1 min-w-0">
+							<FileAudio className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
+							<p
+								className="text-xs font-mono text-muted-foreground truncate"
+								title={filePath}
+							>
+								{filename}
+							</p>
+						</div>
+						<div className="flex items-center gap-0.5 ml-2">
+							<Button
+								type="button"
+								variant="ghost"
+								size="sm"
+								onClick={() => window.open(fileUrl, "_blank")}
+								className="h-6 px-1.5 text-xs"
+								title="Open in new tab"
+							>
+								<ExternalLink className="w-3 h-3" />
+							</Button>
+							<Button
+								type="button"
+								variant="ghost"
+								size="sm"
+								onClick={() => {
+									const link = document.createElement("a");
+									link.href = fileUrl;
+									link.download = filename;
+									link.click();
+								}}
+								className="h-6 px-1.5 text-xs"
+								title="Download"
+							>
+								<Download className="w-3 h-3" />
+							</Button>
+							{showExpand && onToggleExpand && (
+								<Button
+									type="button"
+									variant="ghost"
+									size="sm"
+									onClick={onToggleExpand}
+									className="h-6 px-1.5 text-xs"
+									title={expandLabel}
+								>
+									<ExpandIcon className="w-3 h-3" />
+								</Button>
+							)}
+							{onClose && (
+								<Button
+									type="button"
+									variant="ghost"
+									size="sm"
+									onClick={onClose}
+									className="h-6 px-1.5 text-xs"
+									title="Close preview"
+								>
+									<X className="w-3 h-3" />
+								</Button>
+							)}
+						</div>
+					</div>
+				)}
+
+				{/* Audio content */}
+				<div className="flex-1 overflow-hidden bg-muted/30 flex items-center justify-center p-4">
+					{/* biome-ignore lint/a11y/useMediaCaption: audio files may not have captions */}
+					<audio src={fileUrl} controls className="w-full">
+						Your browser does not support the audio element.
+					</audio>
+				</div>
+			</div>
+		);
+	}
+
 	return (
 		<div className={cn("h-full flex flex-col overflow-hidden", className)}>
 			{/* Header */}
 			{showHeader && (
-				<div className="flex-shrink-0 flex items-center justify-between px-2 py-1 border-b border-border bg-muted/30">
+				<div className={cn(
+					"flex-shrink-0 flex items-center justify-between px-2 py-1 border-b border-border bg-muted/30",
+					isExpanded && "pr-10"
+				)}>
 					<p
 						className="text-xs font-mono text-muted-foreground truncate flex-1"
 						title={filePath}

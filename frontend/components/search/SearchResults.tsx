@@ -18,6 +18,7 @@ interface SearchResultsProps {
 	agentFilter: AgentFilter;
 	locale: "en" | "de";
 	onResultClick: (hit: CassSearchHit) => void;
+	extraHits?: CassSearchHit[];
 	className?: string;
 }
 
@@ -86,6 +87,7 @@ export function SearchResults({
 	agentFilter,
 	locale,
 	onResultClick,
+	extraHits,
 	className,
 }: SearchResultsProps) {
 	const [results, setResults] = useState<CassSearchResponse | null>(null);
@@ -106,7 +108,7 @@ export function SearchResults({
 			try {
 				const response = await searchSessions({
 					q: query,
-					agents: agentFilter,
+					agents: agentFilter === "all" ? undefined : agentFilter,
 					limit: 50,
 				});
 				setResults(response);
@@ -140,7 +142,22 @@ export function SearchResults({
 		);
 	}
 
-	if (!results || results.hits.length === 0) {
+	const mergedHits = (() => {
+		const hits = results?.hits ?? [];
+		const extras = extraHits ?? [];
+		if (extras.length === 0) return hits;
+		const seen = new Set(hits.map((hit) => hit.session_id ?? hit.source_path));
+		const merged = [...hits];
+		for (const hit of extras) {
+			const key = hit.session_id ?? hit.source_path;
+			if (key && seen.has(key)) continue;
+			merged.push(hit);
+			if (key) seen.add(key);
+		}
+		return merged;
+	})();
+
+	if (mergedHits.length === 0) {
 		if (query.trim()) {
 			return (
 				<div
@@ -159,7 +176,7 @@ export function SearchResults({
 
 	return (
 		<div className={cn("flex flex-col", className)}>
-			{results.hits.map((hit, index) => (
+			{mergedHits.map((hit, index) => (
 				<button
 					key={`${hit.source_path}-${hit.line_number ?? index}`}
 					type="button"
@@ -205,10 +222,10 @@ export function SearchResults({
 						</div>
 					)}
 
-					{/* Snippet */}
-					{hit.snippet && (
+					{/* Snippet or title fallback */}
+					{(hit.snippet || hit.title) && (
 						<div className="text-xs text-muted-foreground line-clamp-2">
-							{hit.snippet.replace(/\*\*/g, "")}
+							{(hit.snippet || hit.title || "").replace(/\*\*/g, "")}
 						</div>
 					)}
 

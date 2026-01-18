@@ -221,6 +221,58 @@
       "additionalProperties": false,
       "x-note": "Sandbox configuration is in a separate file (~/.config/octo/sandbox.toml) for security. See sandbox.schema.json."
     },
+    "agent_browser": {
+      "type": "object",
+      "description": "Agent-browser daemon configuration for server-side browser sessions.",
+      "x-scope": "admin",
+      "x-category": "Infrastructure",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Enable per-session agent-browser daemon management.",
+          "default": false
+        },
+        "binary": {
+          "type": "string",
+          "description": "Path to the agent-browser CLI binary.",
+          "default": "agent-browser",
+          "examples": ["agent-browser", "/usr/local/bin/agent-browser"]
+        },
+        "headed": {
+          "type": "boolean",
+          "description": "Launch browser windows in headed mode instead of headless.",
+          "default": false
+        },
+        "stream_port_base": {
+          "type": "integer",
+          "description": "Base port for screencast WebSocket streams.",
+          "minimum": 1024,
+          "maximum": 65535,
+          "default": 30000
+        },
+        "stream_port_range": {
+          "type": "integer",
+          "description": "Port range size for per-session screencast streams.",
+          "minimum": 1,
+          "maximum": 65535,
+          "default": 10000
+        },
+        "executable_path": {
+          "type": "string",
+          "description": "Optional Chromium executable path (overrides Playwright default).",
+          "examples": ["/usr/bin/chromium", "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"]
+        },
+        "extensions": {
+          "type": "array",
+          "description": "Optional extensions to load (absolute paths).",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        }
+      },
+      "additionalProperties": false
+    },
     "eavs": {
       "type": "object",
       "description": "EAVS (LLM proxy) configuration. EAVS runs on host, not in containers.",
@@ -561,6 +613,12 @@
           "type": ["string", "null"],
           "description": "Path to a local clone of the templates repository on the host",
           "default": null
+        },
+        "type": {
+          "type": "string",
+          "enum": ["remote", "local"],
+          "description": "Repository type: remote (git) or local (filesystem)",
+          "default": "remote"
         },
         "sync_on_list": {
           "type": "boolean",

@@ -136,6 +136,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 		new Map(),
 	);
 	const optimisticSelectionRef = useRef<Map<string, string>>(new Map());
+	// Track sessions that were just explicitly created - prevents refresh from overriding selection
+	const recentlyCreatedSessionRef = useRef<string | null>(null);
 	chatHistoryRef.current = chatHistory;
 	// Live opencode sessions (requires running opencode instance)
 	const [opencodeSessions, setOpencodeSessions] = useState<OpenCodeSession[]>(
@@ -447,6 +449,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
 				if (history.length > 0 && !mainChatActive) {
 					setSelectedChatSessionId((current) => {
+						// Don't override selection for recently created sessions
+						if (current && current === recentlyCreatedSessionRef.current) {
+							return current;
+						}
 						if (current && history.some((s) => s.id === current))
 							return current;
 						if (current && optimisticChatSessionsRef.current.has(current)) {
@@ -728,6 +734,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 					(a, b) => b.time.updated - a.time.updated,
 				);
 				setSelectedChatSessionId((current) => {
+					// Don't override selection for recently created sessions
+					if (current && current === recentlyCreatedSessionRef.current) {
+						return current;
+					}
 					if (!current) return sorted[0].id;
 					if (sessions.some((s) => s.id === current)) return current;
 					if (history.some((s) => s.id === current)) return current;
@@ -775,9 +785,17 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 					clearOptimisticChatSession(options.optimisticId);
 				}
 				setOpencodeSessions((prev) => [created, ...prev]);
+				// Mark as recently created to prevent refresh from overriding selection
+				recentlyCreatedSessionRef.current = created.id;
 				setSelectedChatSessionId(created.id);
 				setTimeout(() => {
 					refreshChatHistory();
+					// Clear the recently created flag after refresh completes
+					setTimeout(() => {
+						if (recentlyCreatedSessionRef.current === created.id) {
+							recentlyCreatedSessionRef.current = null;
+						}
+					}, 100);
 				}, 500);
 				return created;
 			} catch (err) {
@@ -834,9 +852,17 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 							directory: resolvedPath,
 						});
 						setOpencodeSessions((prev) => [created, ...prev]);
+						// Mark as recently created to prevent refresh from overriding selection
+						recentlyCreatedSessionRef.current = created.id;
 						setSelectedChatSessionId(created.id);
 						setTimeout(() => {
 							refreshChatHistory();
+							// Clear the recently created flag after refresh completes
+							setTimeout(() => {
+								if (recentlyCreatedSessionRef.current === created.id) {
+									recentlyCreatedSessionRef.current = null;
+								}
+							}, 100);
 						}, 500);
 						return created;
 					} catch {

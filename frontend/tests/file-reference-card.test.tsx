@@ -1,4 +1,4 @@
-import { FileReferenceCard } from "@/components/main-chat/MainChatPiView";
+import { FileReferenceCard } from "@/features/main-chat/components/MainChatPiView";
 import { render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 

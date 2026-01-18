@@ -89,6 +89,7 @@ export function ChatSearchBar({
 		if (currentResult) {
 			onResultSelect({
 				lineNumber: currentResult.line_number,
+				messageId: currentResult.message_id,
 			});
 		}
 	}, [currentResult, onResultSelect]);

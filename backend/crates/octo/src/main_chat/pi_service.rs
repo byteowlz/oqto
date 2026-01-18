@@ -28,6 +28,7 @@ use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, SystemTime};
 use tokio::sync::{Mutex, RwLock, broadcast};
 
@@ -190,6 +191,9 @@ pub struct CassSearchResult {
     /// Timestamp when the message was created
     #[serde(default)]
     pub created_at: Option<i64>,
+    /// Message ID for direct navigation
+    #[serde(default)]
+    pub message_id: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -362,6 +366,19 @@ pub struct UserPiSession {
     last_activity: Arc<RwLock<std::time::Instant>>,
     /// Whether the agent is currently streaming/processing.
     is_streaming: Arc<RwLock<bool>>,
+    /// Single-writer guard for persistence (prevents duplicate saves across WS connections).
+    persistence_writer_claimed: Arc<AtomicBool>,
+}
+
+/// Guard that releases the persistence writer claim when dropped.
+pub struct PersistenceWriterGuard {
+    claimed: Arc<AtomicBool>,
+}
+
+impl Drop for PersistenceWriterGuard {
+    fn drop(&mut self) {
+        self.claimed.store(false, Ordering::Release);
+    }
 }
 
 /// Default idle timeout for sessions (5 minutes).
@@ -449,10 +466,7 @@ impl MainChatPiService {
 
                 let last_activity = *session.last_activity.read().await;
                 if now.duration_since(last_activity) > timeout {
-                    info!(
-                        "Session ({}, {}) is idle, will be cleaned up",
-                        key.0, key.1
-                    );
+                    info!("Session ({}, {}) is idle, will be cleaned up", key.0, key.1);
                     to_remove.push(key.clone());
                 }
             }
@@ -571,8 +585,7 @@ impl MainChatPiService {
 
         let mut sessions = Vec::new();
 
-        let entries = std::fs::read_dir(&sessions_dir)
-            .context("reading Pi sessions directory")?;
+        let entries = std::fs::read_dir(&sessions_dir).context("reading Pi sessions directory")?;
 
         for entry in entries.filter_map(|e| e.ok()) {
             let path = entry.path();
@@ -705,7 +718,11 @@ impl MainChatPiService {
 
         for i in 1..=a_len {
             for j in 1..=b_len {
-                let cost = if a_chars[i - 1] == b_chars[j - 1] { 0 } else { 1 };
+                let cost = if a_chars[i - 1] == b_chars[j - 1] {
+                    0
+                } else {
+                    1
+                };
                 matrix[i][j] = (matrix[i - 1][j] + 1)
                     .min(matrix[i][j - 1] + 1)
                     .min(matrix[i - 1][j - 1] + cost);
@@ -819,7 +836,11 @@ impl MainChatPiService {
     }
 
     /// Get messages from a specific Pi session file.
-    pub fn get_session_messages(&self, user_id: &str, session_id: &str) -> Result<Vec<PiSessionMessage>> {
+    pub fn get_session_messages(
+        &self,
+        user_id: &str,
+        session_id: &str,
+    ) -> Result<Vec<PiSessionMessage>> {
         use std::io::{BufRead, BufReader};
 
         let work_dir = self.get_main_chat_dir(user_id);
@@ -828,8 +849,7 @@ impl MainChatPiService {
         // Find the session file by ID
         let session_file = self.find_session_file(&sessions_dir, session_id)?;
 
-        let file = std::fs::File::open(&session_file)
-            .context("opening session file")?;
+        let file = std::fs::File::open(&session_file).context("opening session file")?;
         let reader = BufReader::new(file);
 
         let mut messages = Vec::new();
@@ -842,8 +862,16 @@ impl MainChatPiService {
             if let Ok(entry) = serde_json::from_str::<Value>(&line) {
                 if entry.get("type").and_then(|t| t.as_str()) == Some("message") {
                     if let Some(msg) = entry.get("message") {
-                        let id = entry.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                        let role = msg.get("role").and_then(|v| v.as_str()).unwrap_or("user").to_string();
+                        let id = entry
+                            .get("id")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let role = msg
+                            .get("role")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("user")
+                            .to_string();
                         let content = msg.get("content").cloned().unwrap_or(Value::Null);
                         let timestamp = msg.get("timestamp").and_then(|v| v.as_i64()).unwrap_or(0);
                         let usage = msg.get("usage").cloned();
@@ -874,8 +902,10 @@ impl MainChatPiService {
         limit: usize,
     ) -> Result<Vec<CassSearchResult>> {
         // First try CASS search filtered by session ID
-        let cass_results = self.search_in_session_via_cass(session_id, query, limit).await;
-        
+        let cass_results = self
+            .search_in_session_via_cass(session_id, query, limit)
+            .await;
+
         if let Ok(ref results) = cass_results {
             if !results.is_empty() {
                 return cass_results;
@@ -883,7 +913,8 @@ impl MainChatPiService {
         }
 
         // Fallback: direct text search in OpenCode message parts
-        self.search_in_opencode_session(session_id, query, limit).await
+        self.search_in_opencode_session(session_id, query, limit)
+            .await
     }
 
     /// Search using CASS and filter by session ID.
@@ -954,8 +985,7 @@ impl MainChatPiService {
             return Ok(Vec::new());
         }
 
-        let parts_dir = PathBuf::from(&home)
-            .join(".local/share/opencode/storage/part");
+        let parts_dir = PathBuf::from(&home).join(".local/share/opencode/storage/part");
 
         let query_lower = query.to_lowercase();
         let mut results = Vec::new();
@@ -997,14 +1027,12 @@ impl MainChatPiService {
                     if let Ok(content) = std::fs::read_to_string(&part_path) {
                         // Parse JSON to extract text content
                         if let Ok(part_json) = serde_json::from_str::<serde_json::Value>(&content) {
-                            let text = part_json.get("text")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("");
-                            
+                            let text = part_json.get("text").and_then(|v| v.as_str()).unwrap_or("");
+
                             if text.to_lowercase().contains(&query_lower) {
                                 // Create a snippet around the match
                                 let snippet = Self::create_snippet(text, &query_lower, 100);
-                                
+
                                 results.push(CassSearchResult {
                                     source_path: part_path.to_string_lossy().to_string(),
                                     line_number,
@@ -1014,9 +1042,11 @@ impl MainChatPiService {
                                     snippet: Some(snippet),
                                     title: None,
                                     match_type: Some("keyword".to_string()),
-                                    created_at: part_json.get("time")
+                                    created_at: part_json
+                                        .get("time")
                                         .and_then(|t| t.get("created"))
                                         .and_then(|c| c.as_i64()),
+                                    message_id: Some(msg_id.clone()),
                                 });
 
                                 if results.len() >= limit {
@@ -1038,11 +1068,11 @@ impl MainChatPiService {
         if let Some(pos) = text_lower.find(query) {
             let start = pos.saturating_sub(context_chars);
             let end = (pos + query.len() + context_chars).min(text.len());
-            
+
             // Find word boundaries
             let snippet_start = text[..start].rfind(' ').map(|p| p + 1).unwrap_or(start);
             let snippet_end = text[end..].find(' ').map(|p| end + p).unwrap_or(end);
-            
+
             let mut snippet = String::new();
             if snippet_start > 0 {
                 snippet.push_str("...");
@@ -1058,13 +1088,16 @@ impl MainChatPiService {
     }
 
     /// Find a Pi session file by ID (.jsonl format).
-    fn find_session_file(&self, sessions_dir: &std::path::Path, session_id: &str) -> Result<PathBuf> {
+    fn find_session_file(
+        &self,
+        sessions_dir: &std::path::Path,
+        session_id: &str,
+    ) -> Result<PathBuf> {
         if !sessions_dir.exists() {
             anyhow::bail!("Sessions directory not found");
         }
 
-        let entries = std::fs::read_dir(sessions_dir)
-            .context("reading sessions directory")?;
+        let entries = std::fs::read_dir(sessions_dir).context("reading sessions directory")?;
 
         for entry in entries.filter_map(|e| e.ok()) {
             let path = entry.path();
@@ -1084,7 +1117,11 @@ impl MainChatPiService {
     /// If a Pi process is already running for this session, returns it.
     /// Otherwise, spawns a new Pi process for the session.
     /// The previous active session is kept alive (not killed) for idle cleanup later.
-    pub async fn resume_session(&self, user_id: &str, session_id: &str) -> Result<Arc<UserPiSession>> {
+    pub async fn resume_session(
+        &self,
+        user_id: &str,
+        session_id: &str,
+    ) -> Result<Arc<UserPiSession>> {
         let work_dir = self.get_main_chat_dir(user_id);
         let sessions_dir = self.get_pi_sessions_dir(&work_dir);
 
@@ -1107,9 +1144,14 @@ impl MainChatPiService {
         }
 
         // Spawn a new process for this session
-        info!("Spawning new Pi process for session {} (user {})", session_id, user_id);
+        info!(
+            "Spawning new Pi process for session {} (user {})",
+            session_id, user_id
+        );
 
-        let session = self.create_session_with_resume(user_id, Some(session_id)).await?;
+        let session = self
+            .create_session_with_resume(user_id, Some(session_id))
+            .await?;
         let session = Arc::new(session);
 
         // Store in cache and set as active
@@ -1126,7 +1168,11 @@ impl MainChatPiService {
     }
 
     /// Create a Pi session, optionally resuming a specific session.
-    async fn create_session_with_resume(&self, user_id: &str, resume_session_id: Option<&str>) -> Result<UserPiSession> {
+    async fn create_session_with_resume(
+        &self,
+        user_id: &str,
+        resume_session_id: Option<&str>,
+    ) -> Result<UserPiSession> {
         let work_dir = self.get_main_chat_dir(user_id);
 
         if !work_dir.exists() {
@@ -1197,6 +1243,7 @@ impl MainChatPiService {
             session_id,
             last_activity: Arc::new(RwLock::new(std::time::Instant::now())),
             is_streaming: Arc::new(RwLock::new(false)),
+            persistence_writer_claimed: Arc::new(AtomicBool::new(false)),
         })
     }
 
@@ -1432,12 +1479,18 @@ impl MainChatPiService {
             session_id,
             last_activity,
             is_streaming,
+            persistence_writer_claimed: Arc::new(AtomicBool::new(false)),
         })
     }
 
     /// Close a specific session for a user.
     /// If `force` is false, will not close a streaming session.
-    pub async fn close_session(&self, user_id: &str, session_id: &str, force: bool) -> Result<bool> {
+    pub async fn close_session(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        force: bool,
+    ) -> Result<bool> {
         let key = (user_id.to_string(), session_id.to_string());
 
         // Check if session is streaming
@@ -1580,6 +1633,21 @@ impl UserPiSession {
     /// Get the session ID.
     pub fn session_id(&self) -> &str {
         &self.session_id
+    }
+
+    /// Claim exclusive persistence for this session (used to prevent duplicate WS saves).
+    pub fn claim_persistence_writer(&self) -> Option<PersistenceWriterGuard> {
+        if self
+            .persistence_writer_claimed
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+        {
+            Some(PersistenceWriterGuard {
+                claimed: Arc::clone(&self.persistence_writer_claimed),
+            })
+        } else {
+            None
+        }
     }
 
     /// Send a prompt to the agent.

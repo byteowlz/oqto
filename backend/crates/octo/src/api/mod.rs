@@ -19,5 +19,6 @@ mod test_harness;
 pub use error::{ApiError, ApiResult, ErrorResponse};
 pub use routes::create_router_with_config;
 pub use state::{
-    AppState, MmryState, SessionUiState, TemplatesState, VisualizerVoiceState, VoiceState,
+    AppState, MmryState, SessionUiState, TemplatesRepoType, TemplatesState, VisualizerVoiceState,
+    VoiceState,
 };

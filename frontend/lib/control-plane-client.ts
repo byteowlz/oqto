@@ -328,6 +328,104 @@ export async function getFeatures(): Promise<Features> {
 }
 
 // ============================================================================
+// Dashboard APIs
+// ============================================================================
+
+export type SchedulerEntry = {
+	name: string;
+	status: string;
+	schedule: string;
+	command: string;
+	next_run?: string | null;
+};
+
+export type SchedulerOverview = {
+	stats: {
+		total: number;
+		enabled: number;
+		disabled: number;
+	};
+	schedules: SchedulerEntry[];
+};
+
+export async function getSchedulerOverview(): Promise<SchedulerOverview> {
+	const res = await authFetch(controlPlaneApiUrl("/api/scheduler/overview"), {
+		credentials: "include",
+	});
+	if (!res.ok) {
+		const message = await readApiError(res);
+		throw new Error(message);
+	}
+	return res.json();
+}
+
+export type FeedFetchResponse = {
+	url: string;
+	content: string;
+	content_type?: string | null;
+};
+
+export async function fetchFeed(url: string): Promise<FeedFetchResponse> {
+	const endpoint = controlPlaneApiUrl(
+		`/api/feeds/fetch?url=${encodeURIComponent(url)}`,
+	);
+	const res = await authFetch(endpoint, { credentials: "include" });
+	if (!res.ok) {
+		const message = await readApiError(res);
+		throw new Error(message);
+	}
+	return res.json();
+}
+
+export type CodexBarUsagePayload = {
+	provider: string;
+	account?: string | null;
+	version?: string | null;
+	source?: string | null;
+	status?: {
+		indicator?: string | null;
+		description?: string | null;
+		updatedAt?: string | null;
+		url?: string | null;
+	} | null;
+	usage?: {
+		primary?: {
+			usedPercent?: number | null;
+			windowMinutes?: number | null;
+			resetsAt?: string | null;
+		} | null;
+		secondary?: {
+			usedPercent?: number | null;
+			windowMinutes?: number | null;
+			resetsAt?: string | null;
+		} | null;
+		updatedAt?: string | null;
+		accountEmail?: string | null;
+		accountOrganization?: string | null;
+		loginMethod?: string | null;
+	} | null;
+	credits?: {
+		remaining?: number | null;
+		updatedAt?: string | null;
+	} | null;
+	error?: {
+		message?: string | null;
+	} | null;
+};
+
+export async function getCodexBarUsage(): Promise<CodexBarUsagePayload[] | null> {
+	const res = await authFetch(controlPlaneApiUrl("/api/codexbar/usage"), {
+		credentials: "include",
+	});
+	if (res.status === 404) return null;
+	if (!res.ok) {
+		const message = await readApiError(res);
+		throw new Error(message);
+	}
+	return res.json();
+}
+
+// ============================================================================
 // Auth API
 // ============================================================================
 
@@ -1054,6 +1152,10 @@ export function fileserverWorkspaceBaseUrl() {
 	return controlPlaneApiUrl("/api/workspace/files");
 }
 
+export function mainChatFilesBaseUrl() {
+	return controlPlaneApiUrl("/api/main/files");
+}
+
 export function workspaceFileUrl(
 	workspacePath: string,
 	path: string,
@@ -1080,6 +1182,18 @@ export function memoriesWorkspaceBaseUrl(workspacePath: string) {
 export function voiceProxyWsUrl(kind: "stt" | "tts"): string {
 	let wsUrl = toAbsoluteWsUrl(controlPlaneApiUrl(`/api/voice/${kind}`));
 	// Add auth token for WebSocket authentication
+	const token = getAuthToken();
+	if (token) {
+		const separator = wsUrl.includes("?") ? "&" : "?";
+		wsUrl = `${wsUrl}${separator}token=${encodeURIComponent(token)}`;
+	}
+	return wsUrl;
+}
+
+export function browserStreamWsUrl(sessionId: string): string {
+	let wsUrl = toAbsoluteWsUrl(
+		controlPlaneApiUrl(`/api/session/${sessionId}/browser/stream`),
+	);
 	const token = getAuthToken();
 	if (token) {
 		const separator = wsUrl.includes("?") ? "&" : "?";
@@ -1502,6 +1616,8 @@ export type InSessionSearchResult = {
 	match_type?: string;
 	/** Timestamp when the message was created */
 	created_at?: number;
+	/** Message ID for direct navigation */
+	message_id?: string;
 };
 
 /** Search within a specific Pi session using CASS */

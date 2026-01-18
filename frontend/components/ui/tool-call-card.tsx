@@ -178,7 +178,7 @@ function getToolIcon(toolName: string, input?: Record<string, unknown>) {
 	}
 	if (name.includes("edit") || name === "edit") {
 		return (
-			<FileEdit className="w-3.5 h-3.5 text-yellow-600 dark:text-yellow-400" />
+			<FileEdit className="w-3.5 h-3.5 text-amber-500 dark:text-amber-400" />
 		);
 	}
 	if (name.includes("glob") || name === "glob") {
@@ -243,7 +243,7 @@ function getToolIcon(toolName: string, input?: Record<string, unknown>) {
 			);
 		if (isFileEdit(input))
 			return (
-				<FileEdit className="w-3.5 h-3.5 text-yellow-600 dark:text-yellow-400" />
+				<FileEdit className="w-3.5 h-3.5 text-amber-500 dark:text-amber-400" />
 			);
 		if (isFileWrite(input))
 			return (
@@ -433,7 +433,7 @@ function FileEditRenderer({
 					{input.filePath}
 				</span>
 				{input.replaceAll && (
-					<span className="text-[10px] uppercase tracking-wide text-yellow-600 dark:text-yellow-400 bg-yellow-500/10 px-1.5 py-0.5 rounded">
+					<span className="text-[10px] uppercase tracking-wide text-amber-600 dark:text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded">
 						Replace All
 					</span>
 				)}
@@ -765,6 +765,7 @@ function getStatusIcon(
 	status: string | undefined,
 	toolName?: string,
 	input?: Record<string, unknown>,
+	output?: string,
 ) {
 	// For running/pending, show spinner or clock
 	if (status === "pending") {
@@ -773,23 +774,44 @@ function getStatusIcon(
 	if (status === "running") {
 		return <Loader2 className="w-3.5 h-3.5 text-primary animate-spin" />;
 	}
+
+	// For completed status or tools with successful output, show tool-specific icon
+	// This handles cases where status might be "error" but the output indicates success
+	const hasSuccessOutput = output?.toLowerCase().includes("applied successfully") ||
+		output?.toLowerCase().includes("success") ||
+		output?.toLowerCase().includes("created") ||
+		output?.toLowerCase().includes("written");
+
+	if (status === "completed" || (toolName && hasSuccessOutput)) {
+		if (toolName) {
+			return getToolIcon(toolName, input);
+		}
+		return <CheckCircle2 className="w-3.5 h-3.5 text-primary" />;
+	}
+
 	if (status === "error") {
 		return <XCircle className="w-3.5 h-3.5 text-red-500 dark:text-red-400" />;
 	}
 
-	// For completed or unknown status, show tool-specific icon
+	// For unknown status, show tool-specific icon if available
 	if (toolName) {
 		return getToolIcon(toolName, input);
-	}
-
-	if (status === "completed") {
-		return <CheckCircle2 className="w-3.5 h-3.5 text-primary" />;
 	}
 
 	return <Wrench className="w-3.5 h-3.5 text-muted-foreground" />;
 }
 
-function getStatusClasses(status: string | undefined) {
+function getStatusClasses(status: string | undefined, output?: string) {
+	// Check if output indicates success even if status is error
+	const hasSuccessOutput = output?.toLowerCase().includes("applied successfully") ||
+		output?.toLowerCase().includes("success") ||
+		output?.toLowerCase().includes("created") ||
+		output?.toLowerCase().includes("written");
+
+	if (hasSuccessOutput) {
+		return "border-border bg-card";
+	}
+
 	switch (status) {
 		case "pending":
 			return "border-border bg-card";
@@ -853,7 +875,7 @@ export function ToolCallCard({
 		<div
 			className={cn(
 				"rounded-lg border transition-all duration-200",
-				getStatusClasses(status),
+				getStatusClasses(status, output),
 			)}
 		>
 			<button
@@ -876,7 +898,7 @@ export function ToolCallCard({
 				)}
 				{!hasContent && <div className="w-4" />}
 
-				{getStatusIcon(status, toolName, input)}
+				{getStatusIcon(status, toolName, input, output)}
 
 				<span className="flex-1 text-sm font-medium text-foreground truncate">
 					{title}

@@ -1,9 +1,12 @@
-export { ChatSearchBar } from "./ChatSearchBar";
-export type { ChatSearchBarProps } from "./ChatSearchBar";
-export { MainChatEntry } from "./MainChatEntry";
-export type { MainChatEntryProps } from "./MainChatEntry";
-export { MainChatPiView } from "./MainChatPiView";
-export type { MainChatPiViewProps } from "./MainChatPiView";
-export { MainChatSettingsView } from "./MainChatSettingsView";
-export { MainChatTimeline, useActiveSessionTracker } from "./MainChatTimeline";
-export type { MainChatTimelineProps } from "./MainChatTimeline";
+export { ChatSearchBar } from "@/features/main-chat/components/ChatSearchBar";
+export type { ChatSearchBarProps } from "@/features/main-chat/components/ChatSearchBar";
+export { MainChatEntry } from "@/features/main-chat/components/MainChatEntry";
+export type { MainChatEntryProps } from "@/features/main-chat/components/MainChatEntry";
+export { MainChatPiView } from "@/features/main-chat/components/MainChatPiView";
+export type { MainChatPiViewProps } from "@/features/main-chat/components/MainChatPiView";
+export { MainChatSettingsView } from "@/features/main-chat/components/MainChatSettingsView";
+export {
+	MainChatTimeline,
+	useActiveSessionTracker,
+} from "@/features/main-chat/components/MainChatTimeline";
+export type { MainChatTimelineProps } from "@/features/main-chat/components/MainChatTimeline";

@@ -62,6 +62,54 @@ Implementation:
 ### [workspace-5pmk.11] Add backend URL configuration to login form (P1, task)
 Add a 'Server URL' field to the login form allowing users to specify the backend URL. Store in localStorage for persistence. Show connection status indicator. Default to current origin for web, require input for mobile apps.
 
+### [octo-vbzq] Add Edit button to file viewer toolbar (P2, feature)
+Add an Edit button with pencil icon to the file viewer toolbar, alongside the existing expand/collapse, search, and close panel buttons. The Edit button should open the file for editing.
+
+### [octo-58xa.3] WebView: MCP tool for opening webviews (P2, task)
+Add MCP tool for agents to open webviews.
+
+## Tool: webview_open
+Parameters:
+  - url: string (required) - localhost:PORT or path
+...
+
+
+### [octo-58xa.2] WebView: Frontend iframe component (P2, task)
+Create WebView React component for displaying agent web apps.
+
+## Component: WebView
+Props:
+  - url: string
+...
+
+
+### [octo-58xa.1] WebView: Backend proxy for localhost servers (P2, task)
+Create proxy endpoint for agent-spawned web servers.
+
+## Endpoint
+GET/POST /api/session/{id}/webview/proxy
+Query params:
+...
+
+
+### [octo-58xa] Agent WebView: Iframe embed for agent-spawned web apps (P2, feature)
+Allow agents to spawn custom web apps and display them in Octo's UI with sidebars visible.
+
+## Use Cases
+- Agent creates a data visualization dashboard
+- Agent builds a custom form/wizard for user input
+...
+
+
+### [octo-k8z1.13] Browser: User interaction handoff mode (OAuth, captcha, 2FA) (P2, task)
+When agent encounters OAuth, captcha, or 2FA, it needs to hand control to user.
+
+## Flow
+1. Agent detects auth page or blocker
+2. Agent calls: browser_request_user_action({ reason: 'Please log in to GitHub' })
+...
+
+
 ### [octo-thhx.16] Tutorial script using spotlight and A2UI (P2, task)
 Agent script/prompts for guided tutorial: introduce chat, unlock sidebar, show file tree, demonstrate command palette, explain todos, create first workspace, delegate task to opencode session.
 
@@ -88,8 +136,6 @@ Three.js or CSS animated word cloud showing 'Click me' in multiple languages. CR
 
 ### [octo-thhx.8] Tour mode for sequential spotlights (P2, task)
 Support multi-step tours with automatic progression. Agent sends array of steps, frontend advances on user click or timeout. Include progress indicator and skip button.
-
-### [octo-1s4j] Text entered in one chat but not send stays visible when changing chats. this needs to be isolated for each chat and not global across all chats  (P2, bug)
 
 ### [octo-smwr] Add drag an drop capabilities to the file tree, both for dragging in external files and for moving files between dirs  (P2, feature)
 
@@ -119,20 +165,56 @@ Introduce a controlled "agent actions" layer that exposes safe UI commands to th
 ### [octo-k8z1.8] Session management: Browser lifecycle (start/stop with session) (P2, task)
 
 ### [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (P2, task)
+Add MCP tools that shell out to agent-browser CLI:
+- browser_open: agent-browser --session $id open $url
+- browser_snapshot: agent-browser --session $id snapshot -i --json
+- browser_click: agent-browser --session $id click $ref
+- browser_fill: agent-browser --session $id fill $ref "$text"
+...
+
 
 ### [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (P2, task)
 
 ### [octo-k8z1.5] Frontend: Add browser tab to central pane view switcher (P2, task)
 
 ### [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (P2, task)
+Create BrowserView React component:
+- Canvas element for rendering screencast frames
+- WebSocket connection to /api/session/{id}/browser/ws
+- Decode base64 JPEG frames and draw to canvas
+- Capture mouse/keyboard events and send to backend
+...
+
 
 ### [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (P2, task)
+Forward user input from frontend to agent-browser:
+- Mouse events: { type: 'input_mouse', eventType, x, y, button, clickCount }
+- Keyboard events: { type: 'input_keyboard', eventType, key, code }
+- Touch events for mobile: { type: 'input_touch', eventType, touchPoints }
+Use agent-browser's injectMouseEvent/injectKeyboardEvent APIs
 
 ### [octo-k8z1.2] Backend: WebSocket proxy for screencast stream (P2, task)
+Create WebSocket endpoint /api/session/{id}/browser/ws that:
+- Connects to agent-browser's screencast WebSocket (localhost:STREAM_PORT)
+- Forwards JPEG frames to frontend
+- Handles reconnection if browser restarts
+- Multiplexes input events from frontend to agent-browser
 
 ### [octo-k8z1.1] Backend: Integrate agent-browser daemon per session (P2, task)
+Install agent-browser as dependency. Create BrowserService in backend that:
+- Spawns agent-browser daemon per session (AGENT_BROWSER_SESSION=${sessionId})
+- Manages lifecycle (start on first browser request, stop on session end)
+- Configures AGENT_BROWSER_STREAM_PORT for screencast
+- Uses BrowserManager API for programmatic control
 
 ### [octo-k8z1] Add server-side browser feature (Option B) using agent-browser (P2, feature)
+Server-side browser for AI agent control, rendered in Octo frontend.
+
+## Reference Implementations (cloned)
+- ../external-repos/agent-browser - Vercel's CLI browser automation (Apache-2.0)
+- ../external-repos/playwriter - MCP browser extension by remorses (Option A reference)
+...
+
 
 ### [octo-9qkv] Improve opencode chat error notifications (top-right toast) (P2, feature)
 Request: Provide clearer, more visible notifications for errors like session disconnect/resume failures, instead of (or in addition to) inline red banners. Prefer a popup/toast in the top-right that matches the app style.
@@ -387,6 +469,15 @@ Enable multiple platform users to access the same project/workspace with proper 
 ...
 
 
+### [octo-3trr] Add browser extension mode (Option A) - fork Playwriter (P3, feature)
+Browser extension mode for controlling user's existing browser.
+
+## Reference Implementation
+- ../external-repos/playwriter - Fork this for Octo extension
+- ../external-repos/clawdbot/src/browser/extension-relay.ts - CDP relay pattern
+...
+
+
 ### [octo-thhx.18] Multi-lingual user support (P3, task)
 Support users who speak multiple languages. Store languages array in USER.md. Agent can switch language based on context or explicit request. UI for managing language preferences.
 
@@ -472,6 +563,8 @@ Desired behavior: Tool calls hidden by default, toggle to show
 
 ## Closed
 
+- [octo-ybx2] File viewer toolbar icons colliding/overlapping (closed 2026-01-20)
+- [octo-1s4j] Text entered in one chat but not send stays visible when changing chats. this needs to be isolated for each chat and not global across all chats  (closed 2026-01-19)
 - [octo-r46b] When viewing one opencode chat I suddenly got the content from another chat rendered. the title was from the actual chat thoug. (closed 2026-01-17)
 - [octo-b7sb] When I filter issues, by type (e.g. only bugs) the + button should make this issue type the default in the type dropdown menu of the trx sidebar (closed 2026-01-17)
 - [octo-3qja] New agent messages in opencode sessions sometimes only appear after a page reload (closed 2026-01-17)

@@ -8,7 +8,10 @@ import {
 	ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import { FileIcon } from "@/components/ui/file-icon";
-import { fileserverWorkspaceBaseUrl } from "@/lib/control-plane-client";
+import {
+	fileserverWorkspaceBaseUrl,
+	mainChatFilesBaseUrl,
+} from "@/lib/control-plane-client";
 import { cn } from "@/lib/utils";
 import {
 	ChevronDown,
@@ -72,12 +75,15 @@ function setCachedTree(
 
 async function fetchFileTree(
 	baseUrl: string,
-	workspacePath: string,
+	workspacePath: string | null,
 	path = ".",
 ): Promise<FileNode[]> {
 	const url = new URL(`${baseUrl}/tree`, window.location.origin);
 	url.searchParams.set("path", path);
-	url.searchParams.set("workspace_path", workspacePath);
+	// For main chat, workspace_path is determined by the backend from auth
+	if (workspacePath) {
+		url.searchParams.set("workspace_path", workspacePath);
+	}
 	const res = await fetch(url.toString(), {
 		cache: "no-store",
 		credentials: "include",
@@ -91,14 +97,16 @@ async function fetchFileTree(
 
 async function uploadFile(
 	baseUrl: string,
-	workspacePath: string,
+	workspacePath: string | null,
 	destPath: string,
 	file: File,
 ): Promise<void> {
 	const url = new URL(`${baseUrl}/file`, window.location.origin);
 	url.searchParams.set("path", destPath);
 	url.searchParams.set("mkdir", "true");
-	url.searchParams.set("workspace_path", workspacePath);
+	if (workspacePath) {
+		url.searchParams.set("workspace_path", workspacePath);
+	}
 
 	const formData = new FormData();
 	formData.append("file", file);
@@ -117,12 +125,14 @@ async function uploadFile(
 
 async function deleteFile(
 	baseUrl: string,
-	workspacePath: string,
+	workspacePath: string | null,
 	path: string,
 ): Promise<void> {
 	const url = new URL(`${baseUrl}/file`, window.location.origin);
 	url.searchParams.set("path", path);
-	url.searchParams.set("workspace_path", workspacePath);
+	if (workspacePath) {
+		url.searchParams.set("workspace_path", workspacePath);
+	}
 
 	const res = await fetch(url.toString(), {
 		method: "DELETE",
@@ -137,12 +147,14 @@ async function deleteFile(
 
 async function createDirectory(
 	baseUrl: string,
-	workspacePath: string,
+	workspacePath: string | null,
 	path: string,
 ): Promise<void> {
 	const url = new URL(`${baseUrl}/mkdir`, window.location.origin);
 	url.searchParams.set("path", path);
-	url.searchParams.set("workspace_path", workspacePath);
+	if (workspacePath) {
+		url.searchParams.set("workspace_path", workspacePath);
+	}
 
 	const res = await fetch(url.toString(), {
 		method: "PUT",
@@ -157,14 +169,16 @@ async function createDirectory(
 
 async function renameFile(
 	baseUrl: string,
-	workspacePath: string,
+	workspacePath: string | null,
 	oldPath: string,
 	newPath: string,
 ): Promise<void> {
 	const url = new URL(`${baseUrl}/rename`, window.location.origin);
 	url.searchParams.set("old_path", oldPath);
 	url.searchParams.set("new_path", newPath);
-	url.searchParams.set("workspace_path", workspacePath);
+	if (workspacePath) {
+		url.searchParams.set("workspace_path", workspacePath);
+	}
 
 	const res = await fetch(url.toString(), {
 		method: "POST",
@@ -179,24 +193,28 @@ async function renameFile(
 
 function getDownloadUrl(
 	baseUrl: string,
-	workspacePath: string,
+	workspacePath: string | null,
 	path: string,
 ): string {
 	const url = new URL(`${baseUrl}/download`, window.location.origin);
 	url.searchParams.set("path", path);
-	url.searchParams.set("workspace_path", workspacePath);
+	if (workspacePath) {
+		url.searchParams.set("workspace_path", workspacePath);
+	}
 	return url.toString();
 }
 
 function getDownloadZipUrl(
 	baseUrl: string,
-	workspacePath: string,
+	workspacePath: string | null,
 	paths: string[],
 	name?: string,
 ): string {
 	const url = new URL(`${baseUrl}/download-zip`, window.location.origin);
 	url.searchParams.set("paths", paths.join(","));
-	url.searchParams.set("workspace_path", workspacePath);
+	if (workspacePath) {
+		url.searchParams.set("workspace_path", workspacePath);
+	}
 	if (name) {
 		url.searchParams.set("name", name);
 	}
@@ -259,6 +277,13 @@ const PREVIEWABLE_EXTENSIONS = new Set([
 	".avi",
 	".mkv",
 	".m4v",
+	// Audio
+	".mp3",
+	".wav",
+	".flac",
+	".aac",
+	".m4a",
+	".opus",
 	// Documents
 	".pdf",
 	".typ",
@@ -324,6 +349,8 @@ interface FileTreeViewProps {
 	onPreviewFile?: (filePath: string) => void;
 	onOpenInCanvas?: (filePath: string) => void;
 	workspacePath?: string | null;
+	/** Whether this is the main chat file view (uses different API) */
+	isMainChat?: boolean;
 	/** External state for persistence across view switches */
 	state?: FileTreeState;
 	/** Callback to update external state */
@@ -334,6 +361,7 @@ export function FileTreeView({
 	onPreviewFile,
 	onOpenInCanvas,
 	workspacePath,
+	isMainChat = false,
 	state,
 	onStateChange,
 }: FileTreeViewProps) {
@@ -384,15 +412,28 @@ export function FileTreeView({
 		[onStateChange, state],
 	);
 
-	const fileserverBaseUrl = workspacePath ? fileserverWorkspaceBaseUrl() : null;
+	// For main chat, use dedicated API that doesn't need workspace_path
+	// For workspace sessions, use the workspace files API with workspace_path
+	const fileserverBaseUrl = isMainChat
+		? mainChatFilesBaseUrl()
+		: workspacePath
+			? fileserverWorkspaceBaseUrl()
+			: null;
+
+	// Cache key: main chat uses a fixed key, workspace uses the path
+	const cacheKey = isMainChat ? "__main_chat__" : workspacePath;
+	// For API calls: main chat doesn't need workspace_path (null), workspace does
+	const apiWorkspacePath: string | null = isMainChat
+		? null
+		: workspacePath ?? null;
 
 	const loadTree = useCallback(
 		async (path: string, preserveState = false, skipCache = false) => {
-			if (!fileserverBaseUrl || !workspacePath) return;
+			if (!fileserverBaseUrl || !cacheKey) return;
 
 			// Check cache first (unless explicitly skipping)
 			if (!skipCache) {
-				const cached = getCachedTree(workspacePath, path);
+				const cached = getCachedTree(cacheKey, path);
 				if (cached) {
 					setTree(cached);
 					if (!preserveState) {
@@ -408,11 +449,11 @@ export function FileTreeView({
 			try {
 				const data = await fetchFileTree(
 					fileserverBaseUrl,
-					workspacePath,
+					apiWorkspacePath,
 					path,
 				);
 				// Cache the result
-				setCachedTree(workspacePath, path, data);
+				setCachedTree(cacheKey, path, data);
 				setTree(data);
 				if (!preserveState) {
 					updateState({ currentPath: path });
@@ -425,7 +466,7 @@ export function FileTreeView({
 				setLoading(false);
 			}
 		},
-		[fileserverBaseUrl, updateState, workspacePath],
+		[fileserverBaseUrl, updateState, cacheKey, apiWorkspacePath],
 	);
 
 	const refreshTree = useCallback(() => {
@@ -434,10 +475,11 @@ export function FileTreeView({
 	}, [loadTree, currentPath]);
 
 	useEffect(() => {
-		if (!workspacePath) return;
+		// For main chat, always load; for workspace, need workspace path
+		if (!isMainChat && !workspacePath) return;
 		// Load tree for current path (uses cache if available)
 		loadTree(currentPath, true);
-	}, [currentPath, loadTree, workspacePath]);
+	}, [currentPath, loadTree, workspacePath, isMainChat]);
 
 
 
@@ -499,8 +541,7 @@ export function FileTreeView({
 		event: React.ChangeEvent<HTMLInputElement>,
 	) => {
 		const files = event.target.files;
-		if (!files || files.length === 0 || !fileserverBaseUrl || !workspacePath)
-			return;
+		if (!files || files.length === 0 || !fileserverBaseUrl || !cacheKey) return;
 
 		setUploading(true);
 		setError("");
@@ -509,7 +550,7 @@ export function FileTreeView({
 			for (const file of Array.from(files)) {
 				const destPath =
 					currentPath === "." ? file.name : `${currentPath}/${file.name}`;
-				await uploadFile(fileserverBaseUrl, workspacePath, destPath, file);
+				await uploadFile(fileserverBaseUrl, apiWorkspacePath, destPath, file);
 			}
 			await refreshTree();
 		} catch (err) {
@@ -524,14 +565,13 @@ export function FileTreeView({
 	};
 
 	const handleDownload = (path: string, isDirectory: boolean) => {
-		if (!fileserverBaseUrl || !workspacePath) return;
-		const url = getDownloadUrl(fileserverBaseUrl, workspacePath, path);
+		if (!fileserverBaseUrl || !cacheKey) return;
+		const url = getDownloadUrl(fileserverBaseUrl, apiWorkspacePath, path);
 		window.open(url, "_blank");
 	};
 
 	const handleDownloadSelected = () => {
-		if (!fileserverBaseUrl || !workspacePath || selectedFiles.size === 0)
-			return;
+		if (!fileserverBaseUrl || !cacheKey || selectedFiles.size === 0) return;
 
 		if (selectedFiles.size === 1) {
 			const path = Array.from(selectedFiles)[0];
@@ -539,7 +579,7 @@ export function FileTreeView({
 		} else {
 			const url = getDownloadZipUrl(
 				fileserverBaseUrl,
-				workspacePath,
+				apiWorkspacePath,
 				Array.from(selectedFiles),
 				"selected-files.zip",
 			);
@@ -548,10 +588,10 @@ export function FileTreeView({
 	};
 
 	const handleDelete = async (path: string) => {
-		if (!fileserverBaseUrl || !workspacePath) return;
+		if (!fileserverBaseUrl || !cacheKey) return;
 
 		try {
-			await deleteFile(fileserverBaseUrl, workspacePath, path);
+			await deleteFile(fileserverBaseUrl, apiWorkspacePath, path);
 			await refreshTree();
 			// Clear selection if deleted file was selected
 			if (selectedFiles.has(path)) {
@@ -565,12 +605,11 @@ export function FileTreeView({
 	};
 
 	const handleDeleteSelected = async () => {
-		if (!fileserverBaseUrl || !workspacePath || selectedFiles.size === 0)
-			return;
+		if (!fileserverBaseUrl || !cacheKey || selectedFiles.size === 0) return;
 
 		try {
 			for (const path of selectedFiles) {
-				await deleteFile(fileserverBaseUrl, workspacePath, path);
+				await deleteFile(fileserverBaseUrl, apiWorkspacePath, path);
 			}
 			await refreshTree();
 			updateState({ selectedFiles: new Set() });
@@ -585,7 +624,7 @@ export function FileTreeView({
 
 	const handleCreateFolderWithName = useCallback(
 		async (name: string) => {
-			if (!fileserverBaseUrl || !workspacePath || !name) {
+			if (!fileserverBaseUrl || !cacheKey || !name) {
 				setNewFolderName(null);
 				return;
 			}
@@ -593,7 +632,7 @@ export function FileTreeView({
 			try {
 				const folderPath =
 					currentPath === "." ? name : `${currentPath}/${name}`;
-				await createDirectory(fileserverBaseUrl, workspacePath, folderPath);
+				await createDirectory(fileserverBaseUrl, apiWorkspacePath, folderPath);
 				await refreshTree();
 			} catch (err) {
 				setError(err instanceof Error ? err.message : "Create folder failed");
@@ -601,7 +640,7 @@ export function FileTreeView({
 				setNewFolderName(null);
 			}
 		},
-		[fileserverBaseUrl, workspacePath, currentPath, refreshTree],
+		[fileserverBaseUrl, cacheKey, apiWorkspacePath, currentPath, refreshTree],
 	);
 
 	const handleStartRename = (path: string, _currentName: string) => {
@@ -614,7 +653,7 @@ export function FileTreeView({
 
 	const handleConfirmRename = useCallback(
 		async (newName: string) => {
-			if (!fileserverBaseUrl || !workspacePath || !renamingPath || !newName) {
+			if (!fileserverBaseUrl || !cacheKey || !renamingPath || !newName) {
 				setRenamingPath(null);
 				return;
 			}
@@ -633,7 +672,12 @@ export function FileTreeView({
 				pathParts[pathParts.length - 1] = newName;
 				const newPath = pathParts.join("/");
 
-				await renameFile(fileserverBaseUrl, workspacePath, renamingPath, newPath);
+				await renameFile(
+					fileserverBaseUrl,
+					apiWorkspacePath,
+					renamingPath,
+					newPath,
+				);
 				await refreshTree();
 			} catch (err) {
 				setError(err instanceof Error ? err.message : "Rename failed");
@@ -641,7 +685,7 @@ export function FileTreeView({
 				setRenamingPath(null);
 			}
 		},
-		[fileserverBaseUrl, workspacePath, renamingPath, refreshTree],
+		[fileserverBaseUrl, cacheKey, apiWorkspacePath, renamingPath, refreshTree],
 	);
 
 	const clearSelection = () => {
@@ -661,7 +705,8 @@ export function FileTreeView({
 		return breadcrumbs;
 	};
 
-	if (!workspacePath) {
+	// For main chat, we always have access; for workspace, need workspace path
+	if (!isMainChat && !workspacePath) {
 		return (
 			<div className="h-full flex items-center justify-center p-4 text-sm text-muted-foreground">
 				Select a chat to browse files.
