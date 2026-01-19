@@ -462,3 +462,9 @@ input[type="radio"] {
 	margin-bottom: 0;
 	padding-bottom: 0;
 }
+
+html,
+body,
+#root {
+	padding-bottom: 0 !important;
+}

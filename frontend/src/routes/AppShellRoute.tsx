@@ -671,6 +671,35 @@ const AppShell = memo(function AppShell() {
 		],
 	);
 
+	// Handle Main Chat new session - uses /new to create a fresh session
+	const handleMainChatNewSession = useCallback(
+		(assistantName: string) => {
+			setMainChatAssistantName(assistantName);
+			setMainChatActive(true);
+			// Set session to /new to trigger new session creation
+			setMainChatCurrentSessionId("/new");
+			setSelectedChatSessionId("");
+			setActiveAppId("sessions");
+			// Close mobile menu
+			setMobileMenuOpen(false);
+			// Fetch workspace path in background
+			getMainChatAssistant(assistantName)
+				.then((info) => setMainChatWorkspacePath(info.path))
+				.catch((err) => {
+					console.error("Failed to load Main Chat assistant info:", err);
+					setMainChatWorkspacePath(null);
+				});
+		},
+		[
+			setActiveAppId,
+			setMainChatActive,
+			setMainChatAssistantName,
+			setMainChatCurrentSessionId,
+			setMainChatWorkspacePath,
+			setSelectedChatSessionId,
+		],
+	);
+
 	// Build hierarchical session structure from chatHistory (disk-based, no opencode needed)
 	const sessionHierarchy = useMemo(() => {
 		// Separate parent and child sessions
@@ -1426,6 +1455,22 @@ const AppShell = memo(function AppShell() {
 	useEffect(() => {
 		if (typeof window === "undefined") return;
 
+		// iOS PWA: keep viewport height stable after app resume
+		const applyViewportHeight = () => {
+			const height = window.visualViewport?.height ?? window.innerHeight;
+			document.documentElement.style.setProperty(
+				"--app-viewport-height",
+				`${height}px`,
+			);
+		};
+
+		applyViewportHeight();
+		window.visualViewport?.addEventListener("resize", applyViewportHeight);
+		window.visualViewport?.addEventListener("scroll", applyViewportHeight);
+		window.addEventListener("orientationchange", applyViewportHeight);
+		window.addEventListener("pageshow", applyViewportHeight);
+		document.addEventListener("visibilitychange", applyViewportHeight);
+
 		// Top loading bar animation
 		setBarVisible(true);
 		setBarWidth(25);
@@ -1438,6 +1483,11 @@ const AppShell = memo(function AppShell() {
 		window.addEventListener("load", finish, { once: true });
 		const fallback = window.setTimeout(finish, 1600);
 		return () => {
+			window.visualViewport?.removeEventListener("resize", applyViewportHeight);
+			window.visualViewport?.removeEventListener("scroll", applyViewportHeight);
+			window.removeEventListener("orientationchange", applyViewportHeight);
+			window.removeEventListener("pageshow", applyViewportHeight);
+			document.removeEventListener("visibilitychange", applyViewportHeight);
 			window.clearTimeout(growTimer);
 			window.clearTimeout(fallback);
 			window.removeEventListener("load", finish);
@@ -1539,8 +1589,11 @@ const AppShell = memo(function AppShell() {
 
 	return (
 		<div
-			className="flex h-dvh bg-background text-foreground overflow-hidden transition-opacity duration-300 ease-out"
-			style={{ opacity: shellReady ? 1 : 0 }}
+			className="flex min-h-screen bg-background text-foreground overflow-hidden transition-opacity duration-300 ease-out"
+			style={{
+				opacity: shellReady ? 1 : 0,
+				height: "var(--app-viewport-height, 100vh)",
+			}}
 		>
 			{/* Mobile header */}
 			<header
@@ -1640,7 +1693,10 @@ const AppShell = memo(function AppShell() {
 			{mobileMenuOpen && (
 				<div
 					className="fixed inset-0 z-50 flex flex-col md:hidden"
-					style={{ backgroundColor: sidebarBg }}
+					style={{
+						backgroundColor: sidebarBg,
+						paddingTop: "env(safe-area-inset-top)",
+					}}
 				>
 					<div className="h-14 flex items-center justify-between px-3">
 						<img
@@ -1671,21 +1727,9 @@ const AppShell = memo(function AppShell() {
 					<nav className="flex-1 w-full px-3 pt-3 flex flex-col min-h-0 overflow-x-hidden">
 						{chatHistory.length > 0 && (
 							<div className="flex-1 min-h-0 flex flex-col">
-								{/* Sticky header section - Main Chat, Search, Sessions header */}
+								{/* Sticky header section - Search, Main Chat, Sessions header */}
 								<div className="flex-shrink-0 space-y-0.5 px-1">
-									{/* Main Chat - Always at top */}
-									<div className="mb-2 pb-2">
-										<MainChatEntry
-											isSelected={mainChatActive}
-											activeSessionId={
-												mainChatActive ? mainChatCurrentSessionId : null
-											}
-											onSelect={handleMainChatSelect}
-											onSessionSelect={handleMainChatSessionSelect}
-											locale={locale}
-										/>
-									</div>
-									{/* Mobile search input - below Main Chat */}
+									{/* Mobile search input */}
 									<div className="relative px-1 mb-2">
 										<DropdownMenu>
 											<DropdownMenuTrigger asChild>
@@ -1794,6 +1838,19 @@ const AppShell = memo(function AppShell() {
 												<X className="w-4 h-4" />
 											</button>
 										)}
+									</div>
+									{/* Main Chat */}
+									<div className="mb-2 pb-2">
+										<MainChatEntry
+											isSelected={mainChatActive}
+											activeSessionId={
+												mainChatActive ? mainChatCurrentSessionId : null
+											}
+											onSelect={handleMainChatSelect}
+											onSessionSelect={handleMainChatSessionSelect}
+											onNewSession={handleMainChatNewSession}
+											locale={locale}
+										/>
 									</div>
 									{/* Sessions header - between search and chat list */}
 									<div className="flex items-center justify-between gap-2 px-2 py-1.5">
@@ -2485,21 +2542,9 @@ const AppShell = memo(function AppShell() {
 							<div className="h-px w-full bg-primary/50" />
 						</div>
 						<div className="w-full px-1.5 mt-2 flex-1 min-h-0 flex flex-col overflow-x-hidden">
-							{/* Sticky header section - Main Chat, Search, Sessions header */}
+							{/* Sticky header section - Search, Main Chat, Sessions header */}
 							<div className="flex-shrink-0 space-y-0.5">
-								{/* Main Chat - Always at top */}
-								<div className="mb-2 pb-2 px-2 pt-2">
-									<MainChatEntry
-										isSelected={mainChatActive}
-										activeSessionId={
-											mainChatActive ? mainChatCurrentSessionId : null
-										}
-										onSelect={handleMainChatSelect}
-										onSessionSelect={handleMainChatSessionSelect}
-										locale={locale}
-									/>
-								</div>
-								{/* Search input with mode dropdown - below Main Chat */}
+								{/* Search input with mode dropdown */}
 								<div className="relative mb-2 px-1">
 									{/* Search mode dropdown on left */}
 									<DropdownMenu>
@@ -2604,6 +2649,19 @@ const AppShell = memo(function AppShell() {
 											</button>
 										)}
 									</div>
+								</div>
+								{/* Main Chat */}
+								<div className="mb-2 pb-2 px-2 pt-2">
+									<MainChatEntry
+										isSelected={mainChatActive}
+										activeSessionId={
+											mainChatActive ? mainChatCurrentSessionId : null
+										}
+										onSelect={handleMainChatSelect}
+										onSessionSelect={handleMainChatSessionSelect}
+										onNewSession={handleMainChatNewSession}
+										locale={locale}
+									/>
 								</div>
 								{/* Sessions header - between search and chat list */}
 								<div className="flex items-center justify-between gap-2 py-1.5 px-1">
