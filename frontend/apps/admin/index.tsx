@@ -134,7 +134,7 @@ export function AdminApp() {
 					</div>
 				</div>
 				<div className="flex-1 min-h-0 bg-card border border-t-0 border-border rounded-b-xl p-3 sm:p-4 overflow-hidden flex flex-col gap-4">
-					<div>
+					<div className="w-full text-center">
 						<h1 className="text-xl font-bold text-foreground tracking-wider">
 							{labels.title}
 						</h1>

@@ -235,8 +235,8 @@ export function SettingsApp() {
 					</div>
 				</div>
 				<div className="flex-1 min-h-0 bg-card border border-t-0 border-border rounded-b-xl p-3 sm:p-4 overflow-hidden flex flex-col gap-4">
-					<div className="flex items-start justify-between gap-3">
-						<div>
+					<div className="flex items-start justify-center gap-3 text-center">
+						<div className="w-full">
 							<h1 className="text-xl font-bold text-foreground tracking-wider">
 								{locale === "de" ? "EINSTELLUNGEN" : "SETTINGS"}
 							</h1>

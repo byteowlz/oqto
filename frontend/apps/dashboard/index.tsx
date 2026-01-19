@@ -2054,12 +2054,12 @@ export function DashboardApp() {
 					</div>
 				</div>
 				<div className="flex-1 min-h-0 bg-card border border-t-0 border-border rounded-b-xl p-3 sm:p-4 overflow-hidden flex flex-col gap-4">
-					<div className="flex items-start justify-between gap-3">
-						<div>
+					<div className="relative flex items-start justify-center gap-3">
+						<div className="text-center">
 							<h1 className="text-xl font-semibold tracking-tight">{t.title}</h1>
 							<p className="text-sm text-muted-foreground">{t.subtitle}</p>
 						</div>
-						<div className="flex items-center gap-2 text-xs text-muted-foreground">
+						<div className="absolute right-0 top-0 flex items-center gap-2 text-xs text-muted-foreground">
 							{new Date().toLocaleDateString()}
 							<Button
 								variant={layoutEditMode ? "secondary" : "ghost"}
