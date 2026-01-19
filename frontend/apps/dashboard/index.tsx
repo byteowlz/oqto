@@ -20,6 +20,7 @@ import {
 	SelectValue,
 } from "@/components/ui/select";
 import { useApp } from "@/hooks/use-app";
+import { useIsMobile } from "@/hooks/use-mobile";
 import {
 	controlPlaneApiUrl,
 	fetchFeed,
@@ -41,8 +42,8 @@ import {
 	Flame,
 	GripVertical,
 	ListTodo,
+	PanelLeftClose,
 	PanelRightClose,
-	PanelRightOpen,
 	RefreshCw,
 	Rss,
 	Sparkles,
@@ -585,10 +586,40 @@ function CollapsedSidebarButton({
 			type="button"
 			onClick={onClick}
 			className={cn(
-				"flex items-center justify-center h-10 w-10 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors",
-				active && "bg-muted text-foreground",
+				"w-8 h-8 flex items-center justify-center relative transition-colors rounded",
+				active
+					? "bg-primary/15 text-foreground border border-primary"
+					: "text-muted-foreground border border-transparent hover:border-border hover:bg-muted/50",
 			)}
 			aria-label={label}
+			title={label}
+		>
+			<Icon className="h-4 w-4" />
+		</button>
+	);
+}
+
+function MobileTabButton({
+	active,
+	label,
+	icon: Icon,
+	onClick,
+}: {
+	active: boolean;
+	label: string;
+	icon: React.ElementType;
+	onClick: () => void;
+}) {
+	return (
+		<button
+			type="button"
+			onClick={onClick}
+			className={cn(
+				"flex-1 flex items-center justify-center px-1.5 py-1 relative transition-colors",
+				active
+					? "bg-primary/15 text-foreground border border-primary"
+					: "text-muted-foreground border border-transparent hover:border-border hover:bg-muted/50",
+			)}
 			title={label}
 		>
 			<Icon className="h-4 w-4" />
@@ -727,6 +758,10 @@ export function DashboardApp() {
 		"cards",
 	);
 	const [layoutEditMode, setLayoutEditMode] = useState(false);
+	const isMobileLayout = useIsMobile();
+	const [mobileView, setMobileView] = useState<
+		"dashboard" | "cards" | "custom"
+	>("dashboard");
 
 	const workspacePath =
 		selectedWorkspaceSession?.workspace_path ?? opencodeDirectory ?? ".";
@@ -1774,11 +1809,13 @@ export function DashboardApp() {
 
 	const renderCustomCard = (card: DashboardRegistryCard) => {
 		if (card.kind === "markdown") {
-		return (
-			<Card className="border-border bg-muted/30 shadow-none h-full flex flex-col">
+			return (
+				<Card className="border-border bg-muted/30 shadow-none h-full flex flex-col">
 					<CardHeader>
 						<CardTitle>{card.title}</CardTitle>
-						{card.description && <CardDescription>{card.description}</CardDescription>}
+						{card.description && (
+							<CardDescription>{card.description}</CardDescription>
+						)}
 					</CardHeader>
 					<CardContent className="flex-1 min-h-0 overflow-auto">
 						<MarkdownRenderer content={card.config?.content || ""} />
@@ -1798,125 +1835,313 @@ export function DashboardApp() {
 		);
 	};
 
-	return (
-		<div className="flex flex-col h-full min-h-0 p-4 md:p-6 gap-4 overflow-hidden w-full">
-			<div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-				<div>
-					<h1 className="text-2xl md:text-3xl font-semibold tracking-tight">
-						{t.title}
-					</h1>
-					<p className="text-sm text-muted-foreground">{t.subtitle}</p>
+	const renderCardsManager = () => {
+		if (!layoutConfig) {
+			return (
+				<p className="text-xs text-muted-foreground">Loading dashboard...</p>
+			);
+		}
+
+		if (orderedCards.length === 0) {
+			return (
+				<p className="text-xs text-muted-foreground">No cards available.</p>
+			);
+		}
+
+		return (
+			<div className="space-y-2">
+				{orderedCards.map((card) => {
+					const config = layoutConfig.cards[card.id];
+					const visible = config?.visible !== false;
+					const isCustom = !("defaultSpan" in card);
+					return (
+						<div
+							key={card.id}
+							className="flex flex-col gap-2 rounded-md border border-border bg-muted/30 px-3 py-2"
+						>
+							<div className="flex items-center justify-between gap-2">
+								<div className="flex items-center gap-2 min-w-0">
+									<span className="text-sm font-medium truncate">
+										{card.title}
+									</span>
+								</div>
+								<div className="flex items-center gap-2">
+									<Button
+										variant="ghost"
+										size="icon"
+										onClick={() => handleToggleCard(card.id)}
+									>
+										{visible ? "Hide" : "Show"}
+									</Button>
+									{isCustom && (
+										<Button
+											variant="ghost"
+											size="icon"
+											onClick={() => handleRemoveCustomCard(card.id)}
+										>
+											<Trash2 className="h-4 w-4" />
+										</Button>
+									)}
+								</div>
+							</div>
+						</div>
+					);
+				})}
+			</div>
+		);
+	};
+
+	const renderCustomManager = () => (
+		<div className="space-y-3">
+			<Input
+				placeholder="Card title"
+				value={customTitle}
+				onChange={(event) => setCustomTitle(event.target.value)}
+			/>
+			<Input
+				placeholder="Description (optional)"
+				value={customDescription}
+				onChange={(event) => setCustomDescription(event.target.value)}
+			/>
+			<Select
+				value={customType}
+				onValueChange={(value) => setCustomType(value as "markdown" | "query")}
+			>
+				<SelectTrigger size="sm">
+					<SelectValue placeholder="Card type" />
+				</SelectTrigger>
+				<SelectContent>
+					<SelectItem value="markdown">Markdown</SelectItem>
+					<SelectItem value="query">Query</SelectItem>
+				</SelectContent>
+			</Select>
+			{customType === "markdown" ? (
+				<Textarea
+					placeholder="Markdown content"
+					value={customContent}
+					onChange={(event) => setCustomContent(event.target.value)}
+					rows={4}
+				/>
+			) : (
+				<div className="space-y-2">
+					<Input
+						placeholder="https://api.example.com/status"
+						value={customUrl}
+						onChange={(event) => setCustomUrl(event.target.value)}
+					/>
+					<Input
+						placeholder="GET"
+						value={customMethod}
+						onChange={(event) => setCustomMethod(event.target.value)}
+					/>
 				</div>
-				<div className="flex items-center gap-2 text-xs text-muted-foreground">
-					{new Date().toLocaleDateString()}
-					<Button
-						variant={layoutEditMode ? "secondary" : "ghost"}
-						size="icon"
-						className="size-7"
-						onClick={() => setLayoutEditMode((prev) => !prev)}
-					>
-						<GripVertical className="size-4" />
-					</Button>
-					<Button
-						variant="ghost"
-						size="icon"
-						className="size-7"
-						onClick={() => setRightSidebarCollapsed((prev) => !prev)}
-					>
-						{rightSidebarCollapsed ? (
-							<PanelRightOpen className="size-4" />
+			)}
+			<Button onClick={handleAddCustomCard} className="w-full">
+				Add card
+			</Button>
+		</div>
+	);
+
+	const renderDashboardGrid = () => {
+		if (layoutLoading || !layoutConfig) {
+			return (
+				<div className="text-sm text-muted-foreground">
+					Loading dashboard...
+				</div>
+			);
+		}
+
+		return (
+			<div
+				className="grid grid-cols-12 gap-4 auto-rows-fr overflow-y-auto pr-1"
+				style={{ gridAutoRows: `${GRID_ROW_HEIGHT_REM}rem` }}
+			>
+				{visibleCards.map((card) => {
+					const config = layoutConfig.cards[card.id];
+					const span = config?.span ?? 6;
+					return (
+						<div
+							key={card.id}
+							draggable={layoutEditMode}
+							onDragStart={() => handleDragStart(card.id)}
+							onDragOver={(event) => {
+								if (!layoutEditMode) return;
+								event.preventDefault();
+							}}
+							onDrop={() => {
+								if (!layoutEditMode) return;
+								handleDrop(card.id);
+							}}
+							onDragEnd={handleDragEnd}
+							className={cn("col-span-12", spanToClass(span))}
+						>
+							<div
+								className={cn(
+									"relative h-full",
+									layoutEditMode && "ring-1 ring-primary/40 rounded-lg",
+								)}
+							>
+								{layoutEditMode && (
+									<div className="absolute top-2 right-2 z-10 flex items-center gap-1">
+										<Button
+											variant="secondary"
+											size="icon"
+											className="h-7 w-7"
+										>
+											<GripVertical className="h-4 w-4" />
+										</Button>
+										{CARD_SPAN_OPTIONS.map((option) => (
+											<Button
+												key={option.value}
+												variant={span === option.value ? "default" : "ghost"}
+												size="icon"
+												className="h-7 w-7 text-[10px]"
+												onClick={() =>
+													handleSpanChange(card.id, option.value)
+												}
+											>
+												{option.label}
+											</Button>
+										))}
+									</div>
+								)}
+								{"defaultSpan" in card
+									? renderBuiltinCard(card.id)
+									: renderCustomCard(card)}
+							</div>
+						</div>
+					);
+				})}
+			</div>
+		);
+	};
+
+	const activeSidebarSection =
+		isMobileLayout && mobileView !== "dashboard"
+			? mobileView
+			: sidebarSection;
+
+	return (
+		<div className="flex flex-col h-full min-h-0 p-1 sm:p-4 md:p-6 gap-1 sm:gap-4 overflow-hidden w-full">
+			{/* Mobile layout */}
+			<div className="flex-1 min-h-0 flex flex-col lg:hidden">
+				<div className="sticky top-0 z-10 bg-card border border-border rounded-t-xl overflow-hidden">
+					<div className="flex gap-0.5 p-1 sm:p-2">
+						<MobileTabButton
+							active={mobileView === "dashboard"}
+							icon={Activity}
+							label={t.title}
+							onClick={() => setMobileView("dashboard")}
+						/>
+						<MobileTabButton
+							active={mobileView === "cards"}
+							icon={ListTodo}
+							label="Cards"
+							onClick={() => {
+								setMobileView("cards");
+								setSidebarSection("cards");
+							}}
+						/>
+						<MobileTabButton
+							active={mobileView === "custom"}
+							icon={Sparkles}
+							label={t.customCards}
+							onClick={() => {
+								setMobileView("custom");
+								setSidebarSection("custom");
+							}}
+						/>
+					</div>
+				</div>
+				<div className="flex-1 min-h-0 bg-card border border-t-0 border-border rounded-b-xl p-3 sm:p-4 overflow-hidden flex flex-col gap-4">
+					<div className="flex items-start justify-between gap-3">
+						<div>
+							<h1 className="text-xl font-semibold tracking-tight">{t.title}</h1>
+							<p className="text-sm text-muted-foreground">{t.subtitle}</p>
+						</div>
+						<div className="flex items-center gap-2 text-xs text-muted-foreground">
+							{new Date().toLocaleDateString()}
+							<Button
+								variant={layoutEditMode ? "secondary" : "ghost"}
+								size="icon"
+								className="size-7"
+								onClick={() => setLayoutEditMode((prev) => !prev)}
+							>
+								<GripVertical className="size-4" />
+							</Button>
+						</div>
+					</div>
+
+					{layoutError && (
+						<div className="text-sm text-rose-400">{layoutError}</div>
+					)}
+
+					<div className="flex-1 min-h-0 overflow-hidden">
+						{mobileView === "dashboard" ? (
+							renderDashboardGrid()
 						) : (
-							<PanelRightClose className="size-4" />
+							<div className="h-full overflow-y-auto">
+								{activeSidebarSection === "cards"
+									? renderCardsManager()
+									: renderCustomManager()}
+							</div>
 						)}
-					</Button>
+					</div>
 				</div>
 			</div>
 
-			{layoutError && (
-				<div className="text-sm text-rose-400">{layoutError}</div>
-			)}
-
-			<div className="flex flex-1 min-h-0 gap-4 items-start overflow-hidden">
-				<div className="flex-1 min-w-0 self-start">
-					<div className="bg-card border border-border p-4 xl:p-5 flex flex-col gap-4 max-h-[calc(100vh-12rem)] overflow-hidden">
-						{layoutLoading || !layoutConfig ? (
-							<div className="text-sm text-muted-foreground">
-								Loading dashboard...
-							</div>
-						) : (
-							<div
-								className="grid grid-cols-12 gap-4 auto-rows-fr overflow-y-auto pr-1"
-								style={{ gridAutoRows: `${GRID_ROW_HEIGHT_REM}rem` }}
+			{/* Desktop layout */}
+			<div className="hidden lg:flex flex-1 min-h-0 gap-4 items-start">
+				<div className="flex-[3] min-w-0 bg-card border border-border p-4 xl:p-5 flex flex-col min-h-0 h-full">
+					<div className="flex items-start justify-between gap-3">
+						<div>
+							<h1 className="text-2xl md:text-3xl font-semibold tracking-tight">
+								{t.title}
+							</h1>
+							<p className="text-sm text-muted-foreground">{t.subtitle}</p>
+						</div>
+						<div className="flex items-center gap-2 text-xs text-muted-foreground">
+							{new Date().toLocaleDateString()}
+							<Button
+								variant={layoutEditMode ? "secondary" : "ghost"}
+								size="icon"
+								className="size-7"
+								onClick={() => setLayoutEditMode((prev) => !prev)}
 							>
-								{visibleCards.map((card) => {
-									const config = layoutConfig.cards[card.id];
-									const span = config?.span ?? 6;
-									return (
-										<div
-											key={card.id}
-											draggable={layoutEditMode}
-											onDragStart={() => handleDragStart(card.id)}
-											onDragOver={(event) => {
-												if (!layoutEditMode) return;
-												event.preventDefault();
-											}}
-											onDrop={() => {
-												if (!layoutEditMode) return;
-												handleDrop(card.id);
-											}}
-											onDragEnd={handleDragEnd}
-											className={cn("col-span-12", spanToClass(span))}
-										>
-											<div
-												className={cn(
-													"relative h-full",
-													layoutEditMode && "ring-1 ring-primary/40 rounded-lg",
-												)}
-											>
-												{layoutEditMode && (
-													<div className="absolute top-2 right-2 z-10 flex items-center gap-1">
-														<Button
-															variant="secondary"
-															size="icon"
-															className="h-7 w-7"
-														>
-															<GripVertical className="h-4 w-4" />
-														</Button>
-														{CARD_SPAN_OPTIONS.map((option) => (
-															<Button
-																key={option.value}
-																variant={
-																	span === option.value ? "default" : "ghost"
-																}
-																size="icon"
-																className="h-7 w-7 text-[10px]"
-																onClick={() =>
-																	handleSpanChange(card.id, option.value)
-																}
-															>
-																{option.label}
-															</Button>
-														))}
-													</div>
-												)}
-												{"defaultSpan" in card
-													? renderBuiltinCard(card.id)
-													: renderCustomCard(card)}
-											</div>
-										</div>
-									);
-								})}
-							</div>
-						)}
+								<GripVertical className="size-4" />
+							</Button>
+							<button
+								type="button"
+								onClick={() => setRightSidebarCollapsed((prev) => !prev)}
+								className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted/50 rounded transition-colors"
+								title={
+									rightSidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"
+								}
+							>
+								{rightSidebarCollapsed ? (
+									<PanelLeftClose className="size-4" />
+								) : (
+									<PanelRightClose className="size-4" />
+								)}
+							</button>
+						</div>
+					</div>
+
+					{layoutError && (
+						<div className="text-sm text-rose-400 mt-2">{layoutError}</div>
+					)}
+
+					<div className="flex-1 min-h-0 overflow-hidden mt-4">
+						{renderDashboardGrid()}
 					</div>
 				</div>
 
 				<div
 					className={cn(
-						"bg-card border border-border flex flex-col transition-all duration-200 self-start max-h-[calc(100vh-12rem)] overflow-hidden",
+						"bg-card border border-border flex flex-col min-h-0 h-full transition-all duration-200",
 						rightSidebarCollapsed
 							? "w-12 items-center"
-							: "w-[360px] max-w-[420px]",
+							: "flex-[2] min-w-[320px] max-w-[420px]",
 					)}
 				>
 					{rightSidebarCollapsed ? (
@@ -1943,151 +2168,43 @@ export function DashboardApp() {
 					) : (
 						<div className="flex flex-col h-full min-h-0">
 							<div className="px-4 py-3 border-b border-border">
-								<div className="flex items-center justify-between">
-									<div>
-										<p className="text-sm font-semibold">{t.layout}</p>
-										<p className="text-xs text-muted-foreground">{t.notice}</p>
-									</div>
-								<div />
+								<div>
+									<p className="text-sm font-semibold">{t.layout}</p>
+									<p className="text-xs text-muted-foreground">{t.notice}</p>
+								</div>
+								<div className="mt-3 flex gap-1">
+									<button
+										type="button"
+										onClick={() => setSidebarSection("cards")}
+										className={cn(
+											"flex-1 flex items-center justify-center px-1.5 py-1 relative transition-colors",
+											sidebarSection === "cards"
+												? "bg-primary/15 text-foreground border border-primary"
+												: "text-muted-foreground border border-transparent hover:border-border hover:bg-muted/50",
+										)}
+										title="Cards"
+									>
+										<ListTodo className="h-4 w-4" />
+									</button>
+									<button
+										type="button"
+										onClick={() => setSidebarSection("custom")}
+										className={cn(
+											"flex-1 flex items-center justify-center px-1.5 py-1 relative transition-colors",
+											sidebarSection === "custom"
+												? "bg-primary/15 text-foreground border border-primary"
+												: "text-muted-foreground border border-transparent hover:border-border hover:bg-muted/50",
+										)}
+										title={t.customCards}
+									>
+										<Sparkles className="h-4 w-4" />
+									</button>
+								</div>
 							</div>
-						</div>
-							<div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-6">
-								<div className="space-y-2">
-									<div className="flex items-center justify-between">
-										<span className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
-											Cards
-										</span>
-										<Button
-											variant="ghost"
-											size="sm"
-											onClick={() => setSidebarSection("cards")}
-										>
-											{sidebarSection === "cards" ? "Editing" : "Edit"}
-										</Button>
-									</div>
-									{orderedCards.length === 0 ? (
-										<p className="text-xs text-muted-foreground">
-											No cards available.
-										</p>
-									) : (
-										<div className="space-y-2">
-											{orderedCards.map((card) => {
-												const config = layoutConfig?.cards[card.id];
-												const visible = config?.visible !== false;
-												const isCustom = !("defaultSpan" in card);
-												return (
-													<div
-														key={card.id}
-														className={cn(
-															"flex flex-col gap-2 rounded-md border border-border bg-muted/30 px-3 py-2",
-														)}
-													>
-														<div className="flex items-center justify-between gap-2">
-															<div className="flex items-center gap-2 min-w-0">
-																<span className="text-sm font-medium truncate">
-																	{card.title}
-																</span>
-															</div>
-															<div className="flex items-center gap-2">
-																<Button
-																	variant="ghost"
-																	size="icon"
-																	onClick={() => handleToggleCard(card.id)}
-																>
-																	{visible ? "Hide" : "Show"}
-																</Button>
-																{isCustom && (
-																	<Button
-																		variant="ghost"
-																		size="icon"
-																		onClick={() => handleRemoveCustomCard(card.id)}
-																	>
-																		<Trash2 className="h-4 w-4" />
-																	</Button>
-																)}
-															</div>
-														</div>
-													</div>
-												);
-											})}
-										</div>
-									)}
-								</div>
-
-								<div className="space-y-3">
-									<div className="flex items-center justify-between">
-										<span className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
-											{t.customCards}
-										</span>
-										<Button
-											variant="ghost"
-											size="sm"
-											onClick={() => setSidebarSection("custom")}
-										>
-											{sidebarSection === "custom" ? "Editing" : "Edit"}
-										</Button>
-									</div>
-									{sidebarSection === "custom" && (
-										<div className="space-y-3">
-											<Input
-												placeholder="Card title"
-												value={customTitle}
-												onChange={(event) => setCustomTitle(event.target.value)}
-											/>
-											<Input
-												placeholder="Description (optional)"
-												value={customDescription}
-												onChange={(event) =>
-													setCustomDescription(event.target.value)
-												}
-											/>
-											<Select
-												value={customType}
-												onValueChange={(value) =>
-													setCustomType(value as "markdown" | "query")
-												}
-											>
-												<SelectTrigger size="sm">
-													<SelectValue placeholder="Card type" />
-												</SelectTrigger>
-												<SelectContent>
-													<SelectItem value="markdown">Markdown</SelectItem>
-													<SelectItem value="query">Query</SelectItem>
-												</SelectContent>
-											</Select>
-											{customType === "markdown" ? (
-												<Textarea
-													placeholder="Markdown content"
-													value={customContent}
-													onChange={(event) =>
-														setCustomContent(event.target.value)
-													}
-													rows={4}
-												/>
-											) : (
-												<div className="space-y-2">
-													<Input
-														placeholder="https://api.example.com/status"
-														value={customUrl}
-														onChange={(event) =>
-															setCustomUrl(event.target.value)
-														}
-													/>
-													<Input
-														placeholder="GET"
-														value={customMethod}
-														onChange={(event) =>
-															setCustomMethod(event.target.value)
-														}
-													/>
-												</div>
-											)}
-											<Button onClick={handleAddCustomCard} className="w-full">
-												Add card
-											</Button>
-										</div>
-									)}
-								</div>
+							<div className="flex-1 min-h-0 overflow-y-auto p-4">
+								{activeSidebarSection === "cards"
+									? renderCardsManager()
+									: renderCustomManager()}
 							</div>
 						</div>
 					)}

@@ -82,6 +82,7 @@ import {
 	controlPlaneDirectBaseUrl,
 	convertChatMessagesToOpenCode,
 	fileserverWorkspaceBaseUrl,
+	getAuthHeaders,
 	getChatMessages,
 	getFeatures,
 	getMainChatAssistant,
@@ -4729,25 +4730,30 @@ export const SessionsApp = memo(function SessionsApp() {
 	// Keep FileTreeView always mounted to preserve state across tab switches
 	const filesView = (
 		<div className="flex flex-col h-full overflow-hidden">
-			{previewFilePath ? (
-				<Suspense fallback={viewLoadingFallback}>
-					<PreviewView
-						filePath={previewFilePath}
-						workspacePath={resumeWorkspacePath}
-						onClose={closePreview}
-						onToggleExpand={() => toggleExpandedView("preview")}
-						isExpanded={expandedView === "preview"}
-						showExpand={!isMobileLayout}
-					/>
-				</Suspense>
-			) : (
+			<div className={cn("flex-1 min-h-0", previewFilePath && "hidden")}>
 				<FileTreeView
 					onPreviewFile={handlePreviewFile}
 					onOpenInCanvas={handleOpenInCanvas}
 					workspacePath={resumeWorkspacePath}
+					isMainChat={mainChatActive}
 					state={fileTreeState}
 					onStateChange={handleFileTreeStateChange}
 				/>
+			</div>
+			{previewFilePath && (
+				<div className="flex-1 min-h-0">
+					<Suspense fallback={viewLoadingFallback}>
+						<PreviewView
+							filePath={previewFilePath}
+							workspacePath={resumeWorkspacePath}
+							isMainChat={mainChatActive}
+							onClose={closePreview}
+							onToggleExpand={() => toggleExpandedView("preview")}
+							isExpanded={expandedView === "preview"}
+							showExpand={!isMobileLayout}
+						/>
+					</Suspense>
+				</div>
 			)}
 		</div>
 	);
@@ -6239,7 +6245,11 @@ const FileReferenceCard = memo(function FileReferenceCard({
 			return;
 		}
 		let cancelled = false;
-		fetch(fileUrl, { method: "HEAD" })
+		fetch(fileUrl, {
+			method: "HEAD",
+			credentials: "include",
+			headers: getAuthHeaders(),
+		})
 			.then((res) => {
 				if (!cancelled) {
 					setFileExists(res.ok);

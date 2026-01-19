@@ -43,6 +43,7 @@ import {
 	type PiSessionFile,
 	compactMainChatPi,
 	fileserverWorkspaceBaseUrl,
+	getAuthHeaders,
 	getMainChatPiCommands,
 	getMainChatPiModels,
 	getMainChatPiStats,
@@ -2076,7 +2077,11 @@ export const FileReferenceCard = memo(function FileReferenceCard({
 	// Check if file exists using HEAD request
 	useEffect(() => {
 		let cancelled = false;
-		fetch(fileUrl, { method: "HEAD" })
+		fetch(fileUrl, {
+			method: "HEAD",
+			credentials: "include",
+			headers: getAuthHeaders(),
+		})
 			.then((res) => {
 				if (!cancelled) {
 					setFileExists(res.ok);

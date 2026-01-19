@@ -1152,6 +1152,10 @@ export function fileserverWorkspaceBaseUrl() {
 	return controlPlaneApiUrl("/api/workspace/files");
 }
 
+export function mainChatFilesBaseUrl() {
+	return controlPlaneApiUrl("/api/main/files");
+}
+
 export function workspaceFileUrl(
 	workspacePath: string,
 	path: string,

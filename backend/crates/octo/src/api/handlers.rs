@@ -3647,51 +3647,54 @@ pub async fn fetch_feed(
 /// Fetch CodexBar usage from the CLI (if available on PATH).
 #[instrument]
 pub async fn codexbar_usage() -> ApiResult<Json<serde_json::Value>> {
-    let output = match tokio::time::timeout(
-        Duration::from_secs(20),
-        Command::new("codexbar")
-            .args([
-                "usage",
-                "--json-only",
-                "--format",
-                "json",
-                "--provider",
-                "all",
-                "--source",
-                "cli",
-                "--status",
-            ])
-            .output(),
-    )
-    .await
-    {
-        Ok(result) => result.map_err(|e| {
-            if e.kind() == std::io::ErrorKind::NotFound {
-                ApiError::not_found("codexbar not available")
-            } else {
-                ApiError::internal(format!("Failed to execute codexbar: {}", e))
+    let candidates: [&[&str]; 3] = [
+        &["usage", "--provider", "all", "--source", "cli", "--format", "json"],
+        &["usage", "--provider", "all", "--source", "cli", "--json"],
+        &["usage", "--provider", "all", "--source", "cli"],
+    ];
+
+    let mut last_error: Option<String> = None;
+
+    for args in candidates {
+        let output = match tokio::time::timeout(
+            Duration::from_secs(20),
+            Command::new("codexbar").args(args).output(),
+        )
+        .await
+        {
+            Ok(result) => result.map_err(|e| {
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    ApiError::not_found("codexbar not available")
+                } else {
+                    ApiError::internal(format!("Failed to execute codexbar: {}", e))
+                }
+            })?,
+            Err(_) => {
+                return Err(ApiError::internal(
+                    "codexbar timed out while fetching usage",
+                ));
             }
-        })?,
-        Err(_) => {
-            return Err(ApiError::internal(
-                "codexbar timed out while fetching usage",
-            ));
+        };
+
+        if !output.status.success() {
+            warn!("codexbar returned non-zero exit status");
         }
-    };
 
-    let payload: serde_json::Value = serde_json::from_slice(&output.stdout).map_err(|e| {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        ApiError::internal(format!(
-            "Failed to parse codexbar JSON output: {} ({})",
-            e, stderr
-        ))
-    })?;
-
-    if !output.status.success() {
-        warn!("codexbar returned non-zero exit status");
+        match serde_json::from_slice::<serde_json::Value>(&output.stdout) {
+            Ok(payload) => return Ok(Json(payload)),
+            Err(err) => {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                last_error = Some(format!(
+                    "Failed to parse codexbar JSON output: {} ({})",
+                    err, stderr
+                ));
+            }
+        }
     }
 
-    Ok(Json(payload))
+    Err(ApiError::internal(
+        last_error.unwrap_or_else(|| "Failed to parse codexbar output".to_string()),
+    ))
 }
 
 // ============================================================================

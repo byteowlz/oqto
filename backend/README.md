@@ -59,6 +59,11 @@ cargo run --bin octo -- serve --port 8080 --workspace-root ~/projects
 - RESTful API for session management
 - Proxy endpoints for opencode, files, and terminal access
 - **Graceful shutdown**: Automatically stops all containers when server exits
+- Optional CodexBar usage endpoint (requires `codexbar` on PATH)
+
+## CodexBar Integration
+
+If `codexbar` is installed, the backend exposes `/api/codexbar/usage`. The handler tries common CLI flags and expects JSON output. If your local `codexbar` does not support JSON output flags, update the CLI or disable the dashboard card.
 
 ## CLI Overview
 

@@ -1,7 +1,10 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
-import { fileserverWorkspaceBaseUrl } from "@/lib/control-plane-client";
+import {
+	fileserverWorkspaceBaseUrl,
+	mainChatFilesBaseUrl,
+} from "@/lib/control-plane-client";
 import { cn } from "@/lib/utils";
 import {
 	Download,
@@ -25,6 +28,8 @@ import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 interface PreviewViewProps {
 	filePath?: string | null;
 	workspacePath?: string | null;
+	/** Whether this is the main chat preview (uses different API) */
+	isMainChat?: boolean;
 	className?: string;
 	onClose?: () => void;
 	onToggleExpand?: () => void;
@@ -222,12 +227,14 @@ function isVideo(filename: string): boolean {
 
 function getFileUrl(
 	baseUrl: string,
-	workspacePath: string,
+	workspacePath: string | null,
 	path: string,
 ): string {
 	const url = new URL(`${baseUrl}/file`, window.location.origin);
 	url.searchParams.set("path", path);
-	url.searchParams.set("workspace_path", workspacePath);
+	if (workspacePath) {
+		url.searchParams.set("workspace_path", workspacePath);
+	}
 	return url.toString();
 }
 
@@ -236,12 +243,14 @@ const getImageUrl = getFileUrl;
 
 async function fetchFileContent(
 	baseUrl: string,
-	workspacePath: string,
+	workspacePath: string | null,
 	path: string,
 ): Promise<string> {
 	const url = new URL(`${baseUrl}/file`, window.location.origin);
 	url.searchParams.set("path", path);
-	url.searchParams.set("workspace_path", workspacePath);
+	if (workspacePath) {
+		url.searchParams.set("workspace_path", workspacePath);
+	}
 	const res = await fetch(url.toString(), {
 		cache: "no-store",
 		credentials: "include",
@@ -255,13 +264,15 @@ async function fetchFileContent(
 
 async function saveFileContent(
 	baseUrl: string,
-	workspacePath: string,
+	workspacePath: string | null,
 	path: string,
 	content: string,
 ): Promise<void> {
 	const url = new URL(`${baseUrl}/file`, window.location.origin);
 	url.searchParams.set("path", path);
-	url.searchParams.set("workspace_path", workspacePath);
+	if (workspacePath) {
+		url.searchParams.set("workspace_path", workspacePath);
+	}
 
 	// Create form data with the file content
 	const formData = new FormData();
@@ -284,6 +295,7 @@ async function saveFileContent(
 export function PreviewView({
 	filePath,
 	workspacePath,
+	isMainChat = false,
 	className,
 	onClose,
 	onToggleExpand,
@@ -310,7 +322,19 @@ export function PreviewView({
 	const scrollContainerRef = useRef<HTMLDivElement>(null);
 	const savedScrollTopRef = useRef<number>(0);
 
-	const fileserverBaseUrl = workspacePath ? fileserverWorkspaceBaseUrl() : null;
+	// For main chat, use dedicated API that doesn't need workspace_path
+	const fileserverBaseUrl = isMainChat
+		? mainChatFilesBaseUrl()
+		: workspacePath
+			? fileserverWorkspaceBaseUrl()
+			: null;
+
+	// Cache key: main chat uses a fixed key, workspace uses the path
+	const cacheKeyPrefix = isMainChat ? "__main_chat__" : workspacePath;
+	// For API calls: main chat doesn't need workspace_path (null), workspace does
+	const apiWorkspacePath: string | null = isMainChat
+		? null
+		: workspacePath ?? null;
 
 	// Detect dark mode
 	useEffect(() => {
@@ -335,7 +359,7 @@ export function PreviewView({
 			loadingTimerRef.current = null;
 		}
 
-		if (!filePath || !fileserverBaseUrl || !workspacePath) {
+		if (!filePath || !fileserverBaseUrl || !cacheKeyPrefix) {
 			setContent("");
 			setEditedContent("");
 			setIsEditing(false);
@@ -354,7 +378,7 @@ export function PreviewView({
 		}
 
 		// Check cache first for instant preview
-		const cacheKey = `${workspacePath}:${filePath}`;
+		const cacheKey = `${cacheKeyPrefix}:${filePath}`;
 		const cached = getCachedContent(cacheKey);
 
 		if (cached !== null) {
@@ -375,7 +399,7 @@ export function PreviewView({
 		}, 150);
 
 		// Fetch raw content first (for editing)
-		fetchFileContent(fileserverBaseUrl, workspacePath, filePath)
+		fetchFileContent(fileserverBaseUrl, apiWorkspacePath, filePath)
 			.then((data) => {
 				// Cache and set raw content immediately
 				setCachedContent(cacheKey, data);
@@ -399,23 +423,23 @@ export function PreviewView({
 				loadingTimerRef.current = null;
 			}
 		};
-	}, [filePath, fileserverBaseUrl, workspacePath]);
+	}, [filePath, fileserverBaseUrl, cacheKeyPrefix, apiWorkspacePath]);
 
 	const handleSave = useCallback(async () => {
-		if (!fileserverBaseUrl || !filePath || !workspacePath) return;
+		if (!fileserverBaseUrl || !filePath || !cacheKeyPrefix) return;
 
 		setSaving(true);
 		setError("");
 		try {
 			await saveFileContent(
 				fileserverBaseUrl,
-				workspacePath,
+				apiWorkspacePath,
 				filePath,
 				editedContent,
 			);
 			setContent(editedContent);
 			// Update the cache with the new content
-			const cacheKey = `${workspacePath}:${filePath}`;
+			const cacheKey = `${cacheKeyPrefix}:${filePath}`;
 			setCachedContent(cacheKey, editedContent);
 			setIsEditing(false);
 		} catch (err) {
@@ -423,7 +447,7 @@ export function PreviewView({
 		} finally {
 			setSaving(false);
 		}
-	}, [fileserverBaseUrl, filePath, editedContent, workspacePath]);
+	}, [fileserverBaseUrl, filePath, editedContent, cacheKeyPrefix, apiWorkspacePath]);
 
 	const handleCancel = useCallback(() => {
 		setEditedContent(content);
@@ -496,12 +520,12 @@ export function PreviewView({
 	const isTypstFile = isTypst(filename);
 	const isVideoFile = isVideo(filename);
 	const fileUrl =
-		fileserverBaseUrl && workspacePath
-			? getFileUrl(fileserverBaseUrl, workspacePath, filePath)
+		fileserverBaseUrl && cacheKeyPrefix
+			? getFileUrl(fileserverBaseUrl, apiWorkspacePath, filePath)
 			: null;
 	const imageUrl =
-		isImageFile && fileserverBaseUrl && workspacePath
-			? getImageUrl(fileserverBaseUrl, workspacePath, filePath)
+		isImageFile && fileserverBaseUrl && cacheKeyPrefix
+			? getImageUrl(fileserverBaseUrl, apiWorkspacePath, filePath)
 			: null;
 	const ExpandIcon = isExpanded ? Minimize2 : Maximize2;
 	const expandLabel = isExpanded ? "Collapse preview" : "Expand preview";
