@@ -69,6 +69,9 @@ targets:
         LIBRARY_SEARCH_PATHS[arch=arm64]: $(inherited) $(PROJECT_DIR)/Externals/arm64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(TOOLCHAIN_DIR)/usr/lib/swift/$(PLATFORM_NAME) $(TOOLCHAIN_DIR)/usr/lib/swift-5.0/$(PLATFORM_NAME)
         ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES: true
         EXCLUDED_ARCHS[sdk=iphoneos*]: x86_64
+        SWIFT_OBJC_BRIDGING_HEADER: Sources/app/app-Bridging-Header.h
+        SWIFT_VERSION: 5.0
+        DEFINES_MODULE: YES
       groups: [app]
     dependencies:
       - framework: libapp.a
