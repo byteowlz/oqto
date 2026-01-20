@@ -277,6 +277,13 @@ const PREVIEWABLE_EXTENSIONS = new Set([
 	".avi",
 	".mkv",
 	".m4v",
+	// Audio
+	".mp3",
+	".wav",
+	".flac",
+	".aac",
+	".m4a",
+	".opus",
 	// Documents
 	".pdf",
 	".typ",

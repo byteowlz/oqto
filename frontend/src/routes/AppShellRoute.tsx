@@ -54,7 +54,6 @@ import {
 	type ProjectLogo,
 	type ProjectTemplateEntry,
 	createProjectFromTemplate,
-	getMainChatAssistant,
 	getProjectLogoUrl,
 	getSettingsValues,
 	listProjectTemplates,
@@ -103,6 +102,7 @@ import {
 } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import "@/apps";
+import { useMainChatNavigation } from "@/features/main-chat/hooks/useMainChatNavigation";
 
 const AppShell = memo(function AppShell() {
 	const {
@@ -612,93 +612,19 @@ const AppShell = memo(function AppShell() {
 		return () => document.removeEventListener("keydown", handleKeyDown);
 	}, []);
 
-	// Handle Main Chat selection
-	const handleMainChatSelect = useCallback(
-		async (assistantName: string, sessionId: string | null) => {
-			setMainChatAssistantName(assistantName);
-			setMainChatActive(true);
-			// Set the Main Chat current session ID (used for sending messages)
-			setMainChatCurrentSessionId(sessionId);
-			setSelectedChatSessionId("");
-			// Navigate to sessions view
-			setActiveAppId("sessions");
-			// Close mobile menu
-			setMobileMenuOpen(false);
-			// Fetch workspace path in background - don't block navigation
-			getMainChatAssistant(assistantName)
-				.then((info) => setMainChatWorkspacePath(info.path))
-				.catch((err) => {
-					console.error("Failed to load Main Chat assistant info:", err);
-					setMainChatWorkspacePath(null);
-				});
-		},
-		[
-			setActiveAppId,
-			setMainChatActive,
-			setMainChatAssistantName,
-			setMainChatCurrentSessionId,
-			setMainChatWorkspacePath,
-			setSelectedChatSessionId,
-		],
-	);
-
-	// Handle Main Chat timeline session selection
-	const handleMainChatSessionSelect = useCallback(
-		async (assistantName: string, sessionId: string) => {
-			setMainChatAssistantName(assistantName);
-			setMainChatActive(true);
-			// When clicking a specific session, use it as the current session for sending
-			setMainChatCurrentSessionId(sessionId);
-			setSelectedChatSessionId("");
-			setActiveAppId("sessions");
-			// Close mobile menu
-			setMobileMenuOpen(false);
-			// Fetch workspace path in background - don't block navigation
-			getMainChatAssistant(assistantName)
-				.then((info) => setMainChatWorkspacePath(info.path))
-				.catch((err) => {
-					console.error("Failed to load Main Chat assistant info:", err);
-					setMainChatWorkspacePath(null);
-				});
-		},
-		[
-			setActiveAppId,
-			setMainChatActive,
-			setMainChatAssistantName,
-			setMainChatCurrentSessionId,
-			setMainChatWorkspacePath,
-			setSelectedChatSessionId,
-		],
-	);
-
-	// Handle Main Chat new session - uses /new to create a fresh session
-	const handleMainChatNewSession = useCallback(
-		(assistantName: string) => {
-			setMainChatAssistantName(assistantName);
-			setMainChatActive(true);
-			// Set session to /new to trigger new session creation
-			setMainChatCurrentSessionId("/new");
-			setSelectedChatSessionId("");
-			setActiveAppId("sessions");
-			// Close mobile menu
-			setMobileMenuOpen(false);
-			// Fetch workspace path in background
-			getMainChatAssistant(assistantName)
-				.then((info) => setMainChatWorkspacePath(info.path))
-				.catch((err) => {
-					console.error("Failed to load Main Chat assistant info:", err);
-					setMainChatWorkspacePath(null);
-				});
-		},
-		[
-			setActiveAppId,
-			setMainChatActive,
-			setMainChatAssistantName,
-			setMainChatCurrentSessionId,
-			setMainChatWorkspacePath,
-			setSelectedChatSessionId,
-		],
-	);
+	const {
+		handleMainChatSelect,
+		handleMainChatSessionSelect,
+		handleMainChatNewSession,
+	} = useMainChatNavigation({
+		setMainChatAssistantName,
+		setMainChatActive,
+		setMainChatCurrentSessionId,
+		setSelectedChatSessionId,
+		setActiveAppId,
+		setMobileMenuOpen,
+		setMainChatWorkspacePath,
+	});
 
 	// Build hierarchical session structure from chatHistory (disk-based, no opencode needed)
 	const sessionHierarchy = useMemo(() => {

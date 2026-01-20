@@ -26,7 +26,7 @@ import {
 	listMainChatAssistants,
 	listMainChatPiSessions,
 	updateMainChatAssistant,
-} from "@/lib/control-plane-client";
+} from "@/features/main-chat/api";
 import { formatSessionDate, generateReadableId } from "@/lib/session-utils";
 import { cn } from "@/lib/utils";
 import {

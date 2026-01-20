@@ -739,6 +739,10 @@ async fn handle_ws(
     // Snapshot Pi session id for traceability (best-effort).
     let pi_session_id = session.get_state().await.ok().and_then(|s| s.session_id);
 
+    // Only one WS connection should persist assistant output for a session.
+    let persistence_guard = session.claim_persistence_writer();
+    let can_persist = persistence_guard.is_some();
+
     // Send connected message
     let connected_msg = serde_json::json!({"type": "connected"});
     if sender
@@ -777,8 +781,8 @@ async fn handle_ws(
     // Transform raw Pi events into simplified format for frontend
     let send_task = tokio::spawn(async move {
         while let Ok(event) = event_rx.recv().await {
-            // Accumulate message content for saving
-            {
+            // Accumulate message content for saving (only from the primary WS connection).
+            if can_persist {
                 let mut acc = accumulator_for_events.lock().await;
                 acc.process_event(&event);
 

@@ -10,6 +10,7 @@ import {
 	Download,
 	ExternalLink,
 	Eye,
+	FileAudio,
 	FileText,
 	FileVideo,
 	Loader2,
@@ -136,6 +137,17 @@ const VIDEO_EXTENSIONS = new Set([
 	".m4v",
 ]);
 
+// Audio extensions
+const AUDIO_EXTENSIONS = new Set([
+	".mp3",
+	".wav",
+	".flac",
+	".aac",
+	".m4a",
+	".opus",
+	".ogg",
+]);
+
 // Map file extensions to syntax highlighter language
 function getLanguage(filename: string): string {
 	const ext = filename.substring(filename.lastIndexOf(".")).toLowerCase();
@@ -223,6 +235,11 @@ function isTypst(filename: string): boolean {
 function isVideo(filename: string): boolean {
 	const ext = filename.substring(filename.lastIndexOf(".")).toLowerCase();
 	return VIDEO_EXTENSIONS.has(ext);
+}
+
+function isAudio(filename: string): boolean {
+	const ext = filename.substring(filename.lastIndexOf(".")).toLowerCase();
+	return AUDIO_EXTENSIONS.has(ext);
 }
 
 function getFileUrl(
@@ -367,9 +384,9 @@ export function PreviewView({
 			return;
 		}
 
-		// Don't fetch content for PDF, image, or video files - they render via URL
+		// Don't fetch content for PDF, image, video, or audio files - they render via URL
 		const filename = filePath.split("/").pop() || filePath;
-		if (isPdf(filename) || isImage(filename) || isVideo(filename)) {
+		if (isPdf(filename) || isImage(filename) || isVideo(filename) || isAudio(filename)) {
 			setContent("");
 			setEditedContent("");
 			setIsEditing(false);
@@ -519,6 +536,7 @@ export function PreviewView({
 	const isPdfFile = isPdf(filename);
 	const isTypstFile = isTypst(filename);
 	const isVideoFile = isVideo(filename);
+	const isAudioFile = isAudio(filename);
 	const fileUrl =
 		fileserverBaseUrl && cacheKeyPrefix
 			? getFileUrl(fileserverBaseUrl, apiWorkspacePath, filePath)
@@ -755,11 +773,95 @@ export function PreviewView({
 		);
 	}
 
+	// For audio files, render with audio player
+	if (isAudioFile && fileUrl) {
+		return (
+			<div className={cn("h-full flex flex-col overflow-hidden", className)}>
+				{/* Header */}
+				{showHeader && (
+					<div className="flex-shrink-0 flex items-center justify-between px-2 py-1 border-b border-border bg-muted/30">
+						<div className="flex items-center gap-1.5 flex-1 min-w-0">
+							<FileAudio className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
+							<p
+								className="text-xs font-mono text-muted-foreground truncate"
+								title={filePath}
+							>
+								{filename}
+							</p>
+						</div>
+						<div className="flex items-center gap-0.5 ml-2">
+							<Button
+								type="button"
+								variant="ghost"
+								size="sm"
+								onClick={() => window.open(fileUrl, "_blank")}
+								className="h-6 px-1.5 text-xs"
+								title="Open in new tab"
+							>
+								<ExternalLink className="w-3 h-3" />
+							</Button>
+							<Button
+								type="button"
+								variant="ghost"
+								size="sm"
+								onClick={() => {
+									const link = document.createElement("a");
+									link.href = fileUrl;
+									link.download = filename;
+									link.click();
+								}}
+								className="h-6 px-1.5 text-xs"
+								title="Download"
+							>
+								<Download className="w-3 h-3" />
+							</Button>
+							{showExpand && onToggleExpand && (
+								<Button
+									type="button"
+									variant="ghost"
+									size="sm"
+									onClick={onToggleExpand}
+									className="h-6 px-1.5 text-xs"
+									title={expandLabel}
+								>
+									<ExpandIcon className="w-3 h-3" />
+								</Button>
+							)}
+							{onClose && (
+								<Button
+									type="button"
+									variant="ghost"
+									size="sm"
+									onClick={onClose}
+									className="h-6 px-1.5 text-xs"
+									title="Close preview"
+								>
+									<X className="w-3 h-3" />
+								</Button>
+							)}
+						</div>
+					</div>
+				)}
+
+				{/* Audio content */}
+				<div className="flex-1 overflow-hidden bg-muted/30 flex items-center justify-center p-4">
+					{/* biome-ignore lint/a11y/useMediaCaption: audio files may not have captions */}
+					<audio src={fileUrl} controls className="w-full">
+						Your browser does not support the audio element.
+					</audio>
+				</div>
+			</div>
+		);
+	}
+
 	return (
 		<div className={cn("h-full flex flex-col overflow-hidden", className)}>
 			{/* Header */}
 			{showHeader && (
-				<div className="flex-shrink-0 flex items-center justify-between px-2 py-1 border-b border-border bg-muted/30">
+				<div className={cn(
+					"flex-shrink-0 flex items-center justify-between px-2 py-1 border-b border-border bg-muted/30",
+					isExpanded && "pr-10"
+				)}>
 					<p
 						className="text-xs font-mono text-muted-foreground truncate flex-1"
 						title={filePath}

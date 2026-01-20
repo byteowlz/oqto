@@ -50,7 +50,7 @@ function SectionTabButton({
 }
 
 const TerminalView = lazy(() =>
-	import("@/apps/sessions/TerminalView").then((mod) => ({
+	import("@/features/sessions/components/TerminalView").then((mod) => ({
 		default: mod.TerminalView,
 	})),
 );

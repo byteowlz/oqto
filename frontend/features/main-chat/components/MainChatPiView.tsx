@@ -50,7 +50,7 @@ import {
 	listMainChatPiSessions,
 	setMainChatPiModel,
 	workspaceFileUrl,
-} from "@/lib/control-plane-client";
+} from "@/features/main-chat/api";
 import { extractFileReferences, getFileTypeInfo } from "@/lib/file-types";
 import {
 	type SlashCommand,

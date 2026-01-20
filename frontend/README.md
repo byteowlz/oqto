@@ -89,7 +89,8 @@ A ready-to-run container definition lives in `Dockerfile` with the companion lau
 - `apps/` – pluggable app modules (Workspaces, Sessions, Admin) registered through `lib/app-registry`.
 - `components/terminal/ghostty-terminal.tsx` – Ghostty + WebSocket terminal wrapper.
 - `lib/opencode-client.ts` – Thin client for opencode REST/SSE workflows.
-- `apps/sessions/*` – File tree browser, terminal view, and preview surface wired to live services (file tree stays mounted while previews are open).
+- `features/sessions/SessionScreen.tsx` – Sessions app screen composition and orchestration.
+- `features/sessions/components/*` – File tree browser, terminal view, and preview surface wired to live services (file tree stays mounted while previews are open).
 - `public/octo_logo_banner_white.svg` – App logo used by the shell navigation (SVG icon).
 
 Refer to the documents inside `history/` for deeper architecture notes on opencode and Ghostty integrations.

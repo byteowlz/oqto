@@ -1,7 +1,6 @@
 "use client";
 
 import {
-	type PiAgentMessage,
 	type PiSessionMessage,
 	type PiState,
 	abortMainChatPi,
@@ -12,7 +11,8 @@ import {
 	resetMainChatPiSession,
 	resumeMainChatPiSession,
 	startMainChatPiSession,
-} from "@/lib/control-plane-client";
+} from "@/features/main-chat/api";
+import type { PiAgentMessage } from "@/lib/control-plane-client";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 /** Pi streaming event types */
