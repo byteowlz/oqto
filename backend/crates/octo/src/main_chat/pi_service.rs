@@ -191,6 +191,9 @@ pub struct CassSearchResult {
     /// Timestamp when the message was created
     #[serde(default)]
     pub created_at: Option<i64>,
+    /// Message ID for direct navigation
+    #[serde(default)]
+    pub message_id: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -1043,6 +1046,7 @@ impl MainChatPiService {
                                         .get("time")
                                         .and_then(|t| t.get("created"))
                                         .and_then(|c| c.as_i64()),
+                                    message_id: Some(msg_id.clone()),
                                 });
 
                                 if results.len() >= limit {

@@ -69,7 +69,7 @@ enum Command {
     Status,
 
     /// Ask an agent a question and get the response
-    /// 
+    ///
     /// Target formats:
     ///   @@main, @@pi          - Main chat (most recent session)
     ///   @@main:query          - Main chat, search for session
@@ -578,7 +578,10 @@ async fn handle_ask(
                 if json_output {
                     println!("{}", serde_json::to_string_pretty(&result)?);
                 } else {
-                    eprintln!("{}", result["error"].as_str().unwrap_or("Multiple matches found"));
+                    eprintln!(
+                        "{}",
+                        result["error"].as_str().unwrap_or("Multiple matches found")
+                    );
                     eprintln!("\nMatching sessions:");
                     if let Some(matches) = result["matches"].as_array() {
                         for (i, m) in matches.iter().enumerate() {
@@ -594,12 +597,14 @@ async fn handle_ask(
                             eprintln!("  {}. {} - {}", i + 1, id, title_display);
                         }
                     }
-                    eprintln!("\nUse a more specific target, e.g.: @@main:{}", 
+                    eprintln!(
+                        "\nUse a more specific target, e.g.: @@main:{}",
                         result["matches"]
                             .as_array()
                             .and_then(|a| a.first())
                             .and_then(|m| m["id"].as_str())
-                            .unwrap_or("session_id"));
+                            .unwrap_or("session_id")
+                    );
                 }
                 return Ok(());
             }

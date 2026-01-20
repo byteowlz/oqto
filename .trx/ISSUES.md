@@ -62,6 +62,9 @@ Implementation:
 ### [workspace-5pmk.11] Add backend URL configuration to login form (P1, task)
 Add a 'Server URL' field to the login form allowing users to specify the backend URL. Store in localStorage for persistence. Show connection status indicator. Default to current origin for web, require input for mobile apps.
 
+### [octo-vbzq] Add Edit button to file viewer toolbar (P2, feature)
+Add an Edit button with pencil icon to the file viewer toolbar, alongside the existing expand/collapse, search, and close panel buttons. The Edit button should open the file for editing.
+
 ### [octo-58xa.3] WebView: MCP tool for opening webviews (P2, task)
 Add MCP tool for agents to open webviews.
 
@@ -560,6 +563,7 @@ Desired behavior: Tool calls hidden by default, toggle to show
 
 ## Closed
 
+- [octo-ybx2] File viewer toolbar icons colliding/overlapping (closed 2026-01-20)
 - [octo-1s4j] Text entered in one chat but not send stays visible when changing chats. this needs to be isolated for each chat and not global across all chats  (closed 2026-01-19)
 - [octo-r46b] When viewing one opencode chat I suddenly got the content from another chat rendered. the title was from the actual chat thoug. (closed 2026-01-17)
 - [octo-b7sb] When I filter issues, by type (e.g. only bugs) the + button should make this issue type the default in the type dropdown menu of the trx sidebar (closed 2026-01-17)

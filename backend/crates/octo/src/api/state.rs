@@ -8,6 +8,7 @@ use axum::body::Body;
 use hyper_util::client::legacy::Client;
 use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::rt::TokioExecutor;
+use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
 use super::super::agent::AgentService;
@@ -144,18 +145,32 @@ impl Default for SessionUiState {
 }
 
 /// Project template repository configuration/state.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum TemplatesRepoType {
+    Remote,
+    Local,
+}
+
 #[derive(Clone, Debug)]
 pub struct TemplatesState {
     pub repo_path: Option<PathBuf>,
+    pub repo_type: TemplatesRepoType,
     pub sync_on_list: bool,
     pub sync_interval: Duration,
     pub last_sync: Arc<Mutex<Option<Instant>>>,
 }
 
 impl TemplatesState {
-    pub fn new(repo_path: Option<PathBuf>, sync_on_list: bool, sync_interval: Duration) -> Self {
+    pub fn new(
+        repo_path: Option<PathBuf>,
+        repo_type: TemplatesRepoType,
+        sync_on_list: bool,
+        sync_interval: Duration,
+    ) -> Self {
         Self {
             repo_path,
+            repo_type,
             sync_on_list,
             sync_interval,
             last_sync: Arc::new(Mutex::new(None)),
@@ -165,7 +180,7 @@ impl TemplatesState {
 
 impl Default for TemplatesState {
     fn default() -> Self {
-        Self::new(None, true, Duration::from_secs(120))
+        Self::new(None, TemplatesRepoType::Remote, true, Duration::from_secs(120))
     }
 }
 

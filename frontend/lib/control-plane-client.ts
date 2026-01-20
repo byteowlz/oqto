@@ -1616,6 +1616,8 @@ export type InSessionSearchResult = {
 	match_type?: string;
 	/** Timestamp when the message was created */
 	created_at?: number;
+	/** Message ID for direct navigation */
+	message_id?: string;
 };
 
 /** Search within a specific Pi session using CASS */

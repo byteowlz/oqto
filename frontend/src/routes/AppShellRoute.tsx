@@ -102,6 +102,9 @@ import {
 } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import "@/apps";
+import {
+	listMainChatPiSessions,
+} from "@/features/main-chat/api";
 import { useMainChatNavigation } from "@/features/main-chat/hooks/useMainChatNavigation";
 
 const AppShell = memo(function AppShell() {
@@ -597,6 +600,9 @@ const AppShell = memo(function AppShell() {
 	// Search mode: "sessions" = filter by name, "messages" = deep search via cass
 	const [searchMode, setSearchMode] = useState<SearchMode>("sessions");
 	const [agentFilter, setAgentFilter] = useState<AgentFilter>("all");
+	const [mainChatTitleHits, setMainChatTitleHits] = useState<CassSearchHit[]>(
+		[],
+	);
 
 	// Keyboard shortcut: Ctrl+Shift+F to toggle search mode
 	useEffect(() => {
@@ -611,6 +617,39 @@ const AppShell = memo(function AppShell() {
 		document.addEventListener("keydown", handleKeyDown);
 		return () => document.removeEventListener("keydown", handleKeyDown);
 	}, []);
+
+	useEffect(() => {
+		const query = deferredSearch.trim().toLowerCase();
+		if (searchMode !== "messages" || !query) {
+			setMainChatTitleHits([]);
+			return;
+		}
+		let active = true;
+		listMainChatPiSessions()
+			.then((sessions) => {
+				if (!active) return;
+				const hits = sessions
+					.filter((session) =>
+						(session.title ?? "").toLowerCase().includes(query),
+					)
+					.map((session) => ({
+						agent: "pi_agent",
+						source_path: `title:pi:${session.id}`,
+						session_id: session.id,
+						title: session.title ?? "Untitled",
+						timestamp: session.modified_at,
+						match_type: "title",
+						snippet: "Title match",
+					}));
+				setMainChatTitleHits(hits);
+			})
+			.catch(() => {
+				if (active) setMainChatTitleHits([]);
+			});
+		return () => {
+			active = false;
+		};
+	}, [deferredSearch, searchMode]);
 
 	const {
 		handleMainChatSelect,
@@ -771,6 +810,32 @@ const AppShell = memo(function AppShell() {
 		projectKeyForSession,
 		selectedProjectKey,
 	]);
+
+	const sessionTitleHits = useMemo(() => {
+		const query = deferredSearch.trim().toLowerCase();
+		if (searchMode !== "messages" || !query) return [];
+
+		return sessionHierarchy.parentSessions
+			.filter((session) => {
+				if (!session.title) return false;
+				return session.title.toLowerCase().includes(query);
+			})
+			.map((session) => ({
+				agent: "opencode",
+				source_path: `title:oc:${session.id}`,
+				session_id: session.id,
+				title: session.title ?? "Untitled",
+				timestamp: session.updated_at,
+				match_type: "title",
+				snippet: "Title match",
+				workspace: session.workspace_path ?? undefined,
+			}));
+	}, [deferredSearch, searchMode, sessionHierarchy.parentSessions]);
+
+	const messageSearchExtraHits = useMemo(
+		() => [...sessionTitleHits, ...mainChatTitleHits],
+		[mainChatTitleHits, sessionTitleHits],
+	);
 
 	const projectSummaries = useMemo(() => {
 		const entries = new Map<
@@ -1888,6 +1953,7 @@ const AppShell = memo(function AppShell() {
 											agentFilter={agentFilter}
 											locale={locale}
 											onResultClick={handleSearchResultClick}
+											extraHits={messageSearchExtraHits}
 											className="mb-2"
 										/>
 									) : (
@@ -2704,6 +2770,7 @@ const AppShell = memo(function AppShell() {
 										agentFilter={agentFilter}
 										locale={locale}
 										onResultClick={handleSearchResultClick}
+										extraHits={messageSearchExtraHits}
 									/>
 								) : (
 									<>

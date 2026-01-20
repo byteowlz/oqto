@@ -22,3 +22,8 @@ This refactor focuses on long-term maintainability by introducing feature-based 
 
 - Continue decomposing `frontend/features/sessions/SessionScreen.tsx` into smaller hooks and UI components.
 - Migrate remaining imports to feature APIs as new modules grow.
+
+## Notes
+
+- Sidebar message search now omits the agents filter when set to "All", allowing cass to return Main Chat results.
+- Sidebar message search now appends title matches for Main Chat and OpenCode sessions.

@@ -199,6 +199,8 @@ idle_check_interval_seconds = 300
 [templates]
 # Project templates repository (local clone on host).
 # repo_path = "/path/to/octo-templates"
+# Repository type: "remote" (git) or "local" (filesystem).
+type = "remote"
 # Sync templates repository before listing/creating.
 sync_on_list = true
 # Minimum seconds between sync attempts.

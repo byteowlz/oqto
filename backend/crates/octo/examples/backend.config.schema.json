@@ -614,6 +614,12 @@
           "description": "Path to a local clone of the templates repository on the host",
           "default": null
         },
+        "type": {
+          "type": "string",
+          "enum": ["remote", "local"],
+          "description": "Repository type: remote (git) or local (filesystem)",
+          "default": "remote"
+        },
         "sync_on_list": {
           "type": "boolean",
           "description": "Sync the templates repository before listing or creating projects",

@@ -31,7 +31,7 @@ use crate::user::{
 };
 
 use super::error::{ApiError, ApiResult};
-use super::state::AppState;
+use super::state::{AppState, TemplatesRepoType};
 
 /// Health check response.
 #[derive(Debug, Serialize)]
@@ -647,6 +647,9 @@ async fn maybe_sync_templates_repo(state: &AppState) -> Result<(), ApiError> {
         Some(path) => path.clone(),
         None => return Ok(()),
     };
+    if state.templates.repo_type == TemplatesRepoType::Local {
+        return Ok(());
+    }
     if !state.templates.sync_on_list {
         return Ok(());
     }
@@ -2337,7 +2340,7 @@ fn default_limit() -> usize {
 }
 
 /// Search for sessions matching a query.
-/// 
+///
 /// GET /api/agents/sessions?q=query&limit=20
 #[instrument(skip(state, user))]
 pub async fn agents_search_sessions(
@@ -2429,7 +2432,7 @@ enum AskTarget {
 }
 
 /// Parse an ask target string into structured form.
-/// 
+///
 /// Supported formats:
 /// - "main", "main-chat", "pi" -> MainChat
 /// - "main:query", "pi:query" -> MainChat with session search
@@ -2439,19 +2442,19 @@ enum AskTarget {
 fn parse_ask_target(target: &str, assistant_name: Option<&str>) -> Result<AskTarget, String> {
     // Check for main chat aliases
     let main_aliases = ["main", "main-chat", "pi"];
-    
+
     // Split on ':' for arguments
     let parts: Vec<&str> = target.splitn(3, ':').collect();
     let base = parts.first().map(|s| *s).unwrap_or("");
     let base_lower = base.to_lowercase();
-    
+
     // Check main chat aliases
     if main_aliases.contains(&base_lower.as_str()) {
         return Ok(AskTarget::MainChat {
             session_query: parts.get(1).map(|s| s.to_string()),
         });
     }
-    
+
     // Check custom assistant name
     if let Some(name) = assistant_name {
         if base_lower == name.to_lowercase() {
@@ -2460,7 +2463,7 @@ fn parse_ask_target(target: &str, assistant_name: Option<&str>) -> Result<AskTar
             });
         }
     }
-    
+
     // Check for explicit session: prefix (Pi sessions)
     if base_lower == "session" {
         if let Some(id) = parts.get(1) {
@@ -2469,7 +2472,7 @@ fn parse_ask_target(target: &str, assistant_name: Option<&str>) -> Result<AskTar
             return Err("session: requires a session ID".to_string());
         }
     }
-    
+
     // Check for opencode: prefix (OpenCode/chat history sessions)
     if base_lower == "opencode" {
         if let Some(id) = parts.get(1) {
@@ -2482,7 +2485,7 @@ fn parse_ask_target(target: &str, assistant_name: Option<&str>) -> Result<AskTar
             return Err("opencode: requires a session ID".to_string());
         }
     }
-    
+
     // Could be a direct session ID (for backwards compat)
     // ses_ prefix indicates OpenCode session, others are Pi sessions
     if target.starts_with("ses_") {
@@ -2491,11 +2494,13 @@ fn parse_ask_target(target: &str, assistant_name: Option<&str>) -> Result<AskTar
             workspace_path: None,
         });
     }
-    
+
     if target.contains('-') {
-        return Ok(AskTarget::Session { id: target.to_string() });
+        return Ok(AskTarget::Session {
+            id: target.to_string(),
+        });
     }
-    
+
     Err(format!(
         "Unknown target: {}. Use 'main', 'pi', 'session:<id>', or 'opencode:<id>'",
         target
@@ -2541,8 +2546,8 @@ pub async fn agents_ask(
     };
 
     // Parse the target
-    let parsed_target = parse_ask_target(&req.target, assistant_name.as_deref())
-        .map_err(ApiError::bad_request)?;
+    let parsed_target =
+        parse_ask_target(&req.target, assistant_name.as_deref()).map_err(ApiError::bad_request)?;
 
     // Handle OpenCode sessions differently from Pi sessions
     if let AskTarget::OpenCodeSession { id, workspace_path } = parsed_target {
@@ -2557,14 +2562,18 @@ pub async fn agents_ask(
 
     // Resolve to a Pi session
     let session = match parsed_target {
-        AskTarget::MainChat { session_query: None } => {
+        AskTarget::MainChat {
+            session_query: None,
+        } => {
             // Get active session or create new
             pi_service
                 .get_or_create_session(user.id())
                 .await
                 .map_err(|e| ApiError::internal(format!("Failed to get session: {}", e)))?
         }
-        AskTarget::MainChat { session_query: Some(query) } => {
+        AskTarget::MainChat {
+            session_query: Some(query),
+        } => {
             // Search for matching sessions
             let matches = pi_service
                 .search_sessions(user.id(), &query)
@@ -2587,7 +2596,10 @@ pub async fn agents_ask(
                 if !is_exact {
                     // Ambiguous - return matches for user to choose
                     let response = AgentAskAmbiguousResponse {
-                        error: format!("Multiple sessions match '{}'. Please be more specific.", query),
+                        error: format!(
+                            "Multiple sessions match '{}'. Please be more specific.",
+                            query
+                        ),
                         matches: matches
                             .into_iter()
                             .take(10)
@@ -2615,9 +2627,9 @@ pub async fn agents_ask(
                 Ok(session) => session,
                 Err(_) => {
                     // Try fuzzy search
-                    let matches = pi_service
-                        .search_sessions(user.id(), &id)
-                        .map_err(|e| ApiError::internal(format!("Failed to search sessions: {}", e)))?;
+                    let matches = pi_service.search_sessions(user.id(), &id).map_err(|e| {
+                        ApiError::internal(format!("Failed to search sessions: {}", e))
+                    })?;
 
                     if matches.is_empty() {
                         return Err(ApiError::not_found(format!("Session not found: {}", id)));
@@ -2625,7 +2637,10 @@ pub async fn agents_ask(
 
                     if matches.len() > 1 {
                         let response = AgentAskAmbiguousResponse {
-                            error: format!("Multiple sessions match '{}'. Please be more specific.", id),
+                            error: format!(
+                                "Multiple sessions match '{}'. Please be more specific.",
+                                id
+                            ),
                             matches: matches
                                 .into_iter()
                                 .take(10)
@@ -2642,7 +2657,9 @@ pub async fn agents_ask(
                     pi_service
                         .resume_session(user.id(), &matches[0].id)
                         .await
-                        .map_err(|e| ApiError::internal(format!("Failed to resume session: {}", e)))?
+                        .map_err(|e| {
+                            ApiError::internal(format!("Failed to resume session: {}", e))
+                        })?
                 }
             }
         }
@@ -2680,11 +2697,7 @@ pub async fn agents_ask(
             let mut text_buffer = String::new();
 
             loop {
-                match tokio::time::timeout(
-                    Duration::from_secs(timeout_secs),
-                    event_rx.recv(),
-                )
-                .await
+                match tokio::time::timeout(Duration::from_secs(timeout_secs), event_rx.recv()).await
                 {
                     Ok(Ok(event)) => {
                         match &event {
@@ -2698,7 +2711,11 @@ pub async fn agents_ask(
                                         "type": "text",
                                         "data": delta
                                     });
-                                    if tx.send(Ok(Event::default().data(json.to_string()))).await.is_err() {
+                                    if tx
+                                        .send(Ok(Event::default().data(json.to_string())))
+                                        .await
+                                        .is_err()
+                                    {
                                         return; // Client disconnected
                                     }
                                 }
@@ -2707,7 +2724,11 @@ pub async fn agents_ask(
                                         "type": "thinking",
                                         "data": delta
                                     });
-                                    if tx.send(Ok(Event::default().data(json.to_string()))).await.is_err() {
+                                    if tx
+                                        .send(Ok(Event::default().data(json.to_string())))
+                                        .await
+                                        .is_err()
+                                    {
                                         return;
                                     }
                                 }
@@ -2771,20 +2792,23 @@ pub async fn agents_ask(
             }
 
             match tokio::time::timeout(remaining, event_rx.recv()).await {
-                Ok(Ok(event)) => {
-                    match event {
-                        PiEvent::MessageUpdate { assistant_message_event, .. } => {
-                            use crate::pi::AssistantMessageEvent;
-                            if let AssistantMessageEvent::TextDelta { delta, .. } = assistant_message_event {
-                                response_text.push_str(&delta);
-                            }
+                Ok(Ok(event)) => match event {
+                    PiEvent::MessageUpdate {
+                        assistant_message_event,
+                        ..
+                    } => {
+                        use crate::pi::AssistantMessageEvent;
+                        if let AssistantMessageEvent::TextDelta { delta, .. } =
+                            assistant_message_event
+                        {
+                            response_text.push_str(&delta);
                         }
-                        PiEvent::AgentEnd { .. } => {
-                            break;
-                        }
-                        _ => {}
                     }
-                }
+                    PiEvent::AgentEnd { .. } => {
+                        break;
+                    }
+                    _ => {}
+                },
                 Ok(Err(_)) => {
                     // Channel closed unexpectedly
                     break;
@@ -2863,10 +2887,8 @@ async fn handle_opencode_ask(
         tokio::spawn(async move {
             // First, connect to the event stream using EventSource
             let event_url = format!("http://localhost:{}/event", opencode_port);
-            let request_builder = client
-                .get(&event_url)
-                .header("Accept", "text/event-stream");
-            
+            let request_builder = client.get(&event_url).header("Accept", "text/event-stream");
+
             let mut es = match EventSource::new(request_builder) {
                 Ok(es) => es,
                 Err(e) => {
@@ -2914,7 +2936,8 @@ async fn handle_opencode_ask(
                     Ok(SseEvent::Open) => {}
                     Ok(SseEvent::Message(msg)) => {
                         // Parse the event data
-                        if let Ok(event_json) = serde_json::from_str::<serde_json::Value>(&msg.data) {
+                        if let Ok(event_json) = serde_json::from_str::<serde_json::Value>(&msg.data)
+                        {
                             let event_session = event_json
                                 .get("properties")
                                 .and_then(|p| p.get("sessionID"))
@@ -2938,7 +2961,11 @@ async fn handle_opencode_ask(
                                             "type": "text",
                                             "data": content
                                         });
-                                        if tx.send(Ok(Event::default().data(json.to_string()))).await.is_err() {
+                                        if tx
+                                            .send(Ok(Event::default().data(json.to_string())))
+                                            .await
+                                            .is_err()
+                                        {
                                             return; // Client disconnected
                                         }
                                     }
@@ -2948,7 +2975,8 @@ async fn handle_opencode_ask(
                                         "type": "done",
                                         "response": text_buffer
                                     });
-                                    let _ = tx.send(Ok(Event::default().data(json.to_string()))).await;
+                                    let _ =
+                                        tx.send(Ok(Event::default().data(json.to_string()))).await;
                                     return;
                                 }
                                 Some("message.error") | Some("session.error") => {
@@ -2961,7 +2989,8 @@ async fn handle_opencode_ask(
                                         "type": "error",
                                         "error": error_msg
                                     });
-                                    let _ = tx.send(Ok(Event::default().data(json.to_string()))).await;
+                                    let _ =
+                                        tx.send(Ok(Event::default().data(json.to_string()))).await;
                                     return;
                                 }
                                 _ => {}
@@ -2987,10 +3016,8 @@ async fn handle_opencode_ask(
     } else {
         // Non-streaming mode - send prompt and collect full response using EventSource
         let event_url = format!("http://localhost:{}/event", opencode_port);
-        let request_builder = client
-            .get(&event_url)
-            .header("Accept", "text/event-stream");
-        
+        let request_builder = client.get(&event_url).header("Accept", "text/event-stream");
+
         let mut es = EventSource::new(request_builder)
             .map_err(|e| ApiError::internal(format!("Failed to connect to event stream: {}", e)))?;
 
@@ -3119,10 +3146,13 @@ pub struct InSessionSearchResult {
     /// Timestamp when the message was created
     #[serde(skip_serializing_if = "Option::is_none")]
     pub created_at: Option<i64>,
+    /// Message ID for direct navigation
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message_id: Option<String>,
 }
 
 /// Search within a specific Pi session using CASS.
-/// 
+///
 /// GET /api/agents/sessions/{session_id}/search?q=query&limit=20
 #[instrument(skip(state, user))]
 pub async fn agents_session_search(
@@ -3150,6 +3180,7 @@ pub async fn agents_session_search(
             title: r.title,
             match_type: r.match_type,
             created_at: r.created_at,
+            message_id: r.message_id,
         })
         .collect();
 
@@ -3539,7 +3570,9 @@ pub async fn scheduler_overview(
     State(state): State<AppState>,
 ) -> ApiResult<Json<SchedulerOverview>> {
     let list_output = exec_skdlr_command(&state, &["list"]).await?;
-    let next_output = exec_skdlr_command(&state, &["next"]).await.unwrap_or_default();
+    let next_output = exec_skdlr_command(&state, &["next"])
+        .await
+        .unwrap_or_default();
 
     let mut schedules = parse_skdlr_list(&list_output);
     let next_runs = parse_skdlr_next(&next_output);
@@ -3586,8 +3619,8 @@ pub async fn fetch_feed(
     State(_state): State<AppState>,
     Query(query): Query<FeedFetchQuery>,
 ) -> ApiResult<Json<FeedFetchResponse>> {
-    let url = reqwest::Url::parse(&query.url)
-        .map_err(|_| ApiError::bad_request("Invalid feed URL"))?;
+    let url =
+        reqwest::Url::parse(&query.url).map_err(|_| ApiError::bad_request("Invalid feed URL"))?;
     if url.scheme() != "http" && url.scheme() != "https" {
         return Err(ApiError::bad_request("Feed URL must be http or https"));
     }
@@ -3648,7 +3681,15 @@ pub async fn fetch_feed(
 #[instrument]
 pub async fn codexbar_usage() -> ApiResult<Json<serde_json::Value>> {
     let candidates: [&[&str]; 3] = [
-        &["usage", "--provider", "all", "--source", "cli", "--format", "json"],
+        &[
+            "usage",
+            "--provider",
+            "all",
+            "--source",
+            "cli",
+            "--format",
+            "json",
+        ],
         &["usage", "--provider", "all", "--source", "cli", "--json"],
         &["usage", "--provider", "all", "--source", "cli"],
     ];
@@ -3692,9 +3733,9 @@ pub async fn codexbar_usage() -> ApiResult<Json<serde_json::Value>> {
         }
     }
 
-    Err(ApiError::internal(
-        last_error.unwrap_or_else(|| "Failed to parse codexbar output".to_string()),
-    ))
+    Err(ApiError::internal(last_error.unwrap_or_else(|| {
+        "Failed to parse codexbar output".to_string()
+    })))
 }
 
 // ============================================================================

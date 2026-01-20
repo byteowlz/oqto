@@ -63,8 +63,7 @@ impl AgentBrowserManager {
             return Ok(());
         }
 
-        self.run_command(session_id, &["open", "about:blank"])
-            .await
+        self.run_command(session_id, &["open", "about:blank"]).await
     }
 
     /// Stop the daemon for the session.
@@ -107,9 +106,7 @@ impl AgentBrowserManager {
 
         debug!(
             "agent-browser command: {} {:?} (session={})",
-            self.config.binary,
-            args,
-            session_id
+            self.config.binary, args, session_id
         );
 
         let output = timeout(Duration::from_secs(15), cmd.output())

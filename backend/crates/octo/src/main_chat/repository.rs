@@ -266,7 +266,10 @@ impl<'a> MainChatRepository<'a> {
 
     /// Get messages for a session range (from session start to end/next session).
     /// This finds all messages from the given session_id until the next separator or end.
-    pub async fn get_messages_for_session_range(&self, session_id: &str) -> Result<Vec<ChatMessage>> {
+    pub async fn get_messages_for_session_range(
+        &self,
+        session_id: &str,
+    ) -> Result<Vec<ChatMessage>> {
         // First find the timestamp of any separator or first message with this session_id
         let session_start = sqlx::query_scalar::<_, i64>(
             r#"

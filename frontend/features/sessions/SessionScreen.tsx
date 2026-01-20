@@ -2247,32 +2247,41 @@ export const SessionScreen = memo(function SessionScreen() {
 		return () => window.removeEventListener("keydown", handleKeyDown);
 	}, [isSearchOpen]);
 
-	// Handle search result selection - scroll to message by line number
+	// Handle search result selection - scroll to message by messageId or line number
 	const handleSearchResult = useCallback(
 		(result: { lineNumber: number; messageId?: string }) => {
-			// For OpenCode sessions, we use message index
-			// Line numbers roughly correspond to message entries in the session
-			const messageIndex = Math.max(0, result.lineNumber - 2);
-			if (messageIndex < messages.length) {
-				const targetMessage = messages[messageIndex];
-				const container = messagesContainerRef.current;
-				if (!container) return;
-				
-				// Scroll to message
-				requestAnimationFrame(() => {
-					const messageEl = container.querySelector(
-						`[data-message-id="${targetMessage.info.id}"]`,
-					);
-					if (messageEl) {
-						autoScrollEnabledRef.current = false;
-						messageEl.scrollIntoView({ behavior: "smooth", block: "center" });
-						messageEl.classList.add("search-highlight");
-						setTimeout(() => {
-							messageEl.classList.remove("search-highlight");
-						}, 2000);
-					}
-				});
+			const container = messagesContainerRef.current;
+			if (!container) return;
+
+			// Try to find target message - prefer messageId if available
+			let targetMessageId: string | undefined;
+			if (result.messageId) {
+				// Direct message ID from search result
+				targetMessageId = result.messageId;
+			} else {
+				// Fallback: estimate from line number (legacy behavior)
+				const messageIndex = Math.max(0, result.lineNumber - 2);
+				if (messageIndex < messages.length) {
+					targetMessageId = messages[messageIndex].info.id;
+				}
 			}
+
+			if (!targetMessageId) return;
+
+			// Scroll to message
+			requestAnimationFrame(() => {
+				const messageEl = container.querySelector(
+					`[data-message-id="${targetMessageId}"]`,
+				);
+				if (messageEl) {
+					autoScrollEnabledRef.current = false;
+					messageEl.scrollIntoView({ behavior: "smooth", block: "center" });
+					messageEl.classList.add("search-highlight");
+					setTimeout(() => {
+						messageEl.classList.remove("search-highlight");
+					}, 2000);
+				}
+			});
 		},
 		[messages],
 	);
@@ -5004,7 +5013,7 @@ export const SessionScreen = memo(function SessionScreen() {
 					</div>
 					{/* Search bar - shown when search is open */}
 					{isSearchOpen && (
-						<div className="mb-3">
+						<div className="mb-3 pr-16">
 							<ChatSearchBar
 								sessionId={mainChatActive ? mainChatCurrentSessionId : selectedChatSessionId}
 								onResultSelect={handleSearchResult}
