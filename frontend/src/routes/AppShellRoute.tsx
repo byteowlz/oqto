@@ -106,6 +106,7 @@ import {
 	listMainChatPiSessions,
 } from "@/features/main-chat/api";
 import { useMainChatNavigation } from "@/features/main-chat/hooks/useMainChatNavigation";
+import { UIControlProvider } from "@/components/contexts/ui-control-context";
 
 const AppShell = memo(function AppShell() {
 	const {
@@ -1579,13 +1580,18 @@ const AppShell = memo(function AppShell() {
 	};
 
 	return (
-		<div
-			className="flex min-h-screen bg-background text-foreground overflow-hidden transition-opacity duration-300 ease-out"
-			style={{
-				opacity: shellReady ? 1 : 0,
-				height: "var(--app-viewport-height, 100vh)",
-			}}
+		<UIControlProvider
+			sidebarCollapsed={sidebarCollapsed}
+			setSidebarCollapsed={setSidebarCollapsed}
+			setCommandPaletteOpen={setCommandPaletteOpen}
 		>
+			<div
+				className="flex min-h-screen bg-background text-foreground overflow-hidden transition-opacity duration-300 ease-out"
+				style={{
+					opacity: shellReady ? 1 : 0,
+					height: "var(--app-viewport-height, 100vh)",
+				}}
+			>
 			{/* Mobile header */}
 			<header
 				className="fixed top-0 left-0 right-0 flex items-center px-3 z-50 md:hidden h-[calc(3.5rem+env(safe-area-inset-top))]"
@@ -2486,6 +2492,7 @@ const AppShell = memo(function AppShell() {
 						: "w-[16.25rem] items-center"
 				}`}
 				style={{ backgroundColor: sidebarBg }}
+				data-spotlight="sidebar"
 			>
 				<div
 					className={cn(
@@ -2533,7 +2540,10 @@ const AppShell = memo(function AppShell() {
 						<div className="w-full px-4">
 							<div className="h-px w-full bg-primary/50" />
 						</div>
-						<div className="w-full px-1.5 mt-2 flex-1 min-h-0 flex flex-col overflow-x-hidden">
+						<div
+							className="w-full px-1.5 mt-2 flex-1 min-h-0 flex flex-col overflow-x-hidden"
+							data-spotlight="session-list"
+						>
 							{/* Sticky header section - Search, Main Chat, Sessions header */}
 							<div className="flex-shrink-0 space-y-0.5">
 								{/* Search input with mode dropdown */}
@@ -3896,7 +3906,8 @@ const AppShell = memo(function AppShell() {
 				onSelect={handleAgentSelect}
 				locale={locale}
 			/>
-		</div>
+			</div>
+		</UIControlProvider>
 	);
 });
 

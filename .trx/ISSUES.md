@@ -2,21 +2,6 @@
 
 ## Open
 
-### [octo-thhx.7] Add data-spotlight attributes to UI elements (P1, task)
-Add data-spotlight attributes to: sidebar, file-tree, todo-list, terminal, canvas, chat-input, chat-timeline, model-picker, command-palette, memory-view, trx-view, session-list
-
-### [octo-thhx.6] Spotlight overlay component (P1, task)
-React component with SVG mask cutout, tooltip positioning, pulse animation. Uses data-spotlight attributes to find target elements. Renders above all content with pointer-events passthrough for target.
-
-### [octo-thhx.5] octoctl ui CLI commands (P1, task)
-CLI subcommands: octoctl ui navigate, session, view, palette, spotlight, tour, sidebar, panel, theme. Calls backend API which broadcasts WebSocket events to frontend.
-
-### [octo-thhx.4] WebSocket ui.* events for agent UI control (P1, task)
-Backend routes and WebSocket event types: ui.navigate, ui.session, ui.view, ui.palette, ui.palette_exec, ui.spotlight, ui.tour, ui.sidebar, ui.panel, ui.theme
-
-### [octo-thhx.3] UIControlContext for agent-driven navigation (P1, task)
-React context providing programmatic UI control: navigate(), switchSession(), switchView(), openPalette(), toggleSidebar(), setPanel(). Consumed by WebSocket event handlers.
-
 ### [octo-thhx.2] Onboarding API endpoints (P1, task)
 REST endpoints: GET/PUT /api/onboarding/state, POST /api/onboarding/unlock/{component}, POST /api/onboarding/godmode, POST /api/onboarding/complete
 
@@ -563,6 +548,11 @@ Desired behavior: Tool calls hidden by default, toggle to show
 
 ## Closed
 
+- [octo-thhx.7] Add data-spotlight attributes to UI elements (closed 2026-01-21)
+- [octo-thhx.6] Spotlight overlay component (closed 2026-01-21)
+- [octo-thhx.5] octoctl ui CLI commands (closed 2026-01-21)
+- [octo-thhx.4] WebSocket ui.* events for agent UI control (closed 2026-01-21)
+- [octo-thhx.3] UIControlContext for agent-driven navigation (closed 2026-01-21)
 - [octo-ybx2] File viewer toolbar icons colliding/overlapping (closed 2026-01-20)
 - [octo-1s4j] Text entered in one chat but not send stays visible when changing chats. this needs to be isolated for each chat and not global across all chats  (closed 2026-01-19)
 - [octo-r46b] When viewing one opencode chat I suddenly got the content from another chat rendered. the title was from the actual chat thoug. (closed 2026-01-17)

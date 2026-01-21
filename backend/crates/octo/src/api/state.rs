@@ -180,7 +180,12 @@ impl TemplatesState {
 
 impl Default for TemplatesState {
     fn default() -> Self {
-        Self::new(None, TemplatesRepoType::Remote, true, Duration::from_secs(120))
+        Self::new(
+            None,
+            TemplatesRepoType::Remote,
+            true,
+            Duration::from_secs(120),
+        )
     }
 }
 

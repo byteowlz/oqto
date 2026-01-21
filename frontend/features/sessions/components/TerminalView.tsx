@@ -48,7 +48,10 @@ export function TerminalView({ workspacePath }: TerminalViewProps) {
 	// Don't render terminal if no session selected
 	if (!workspacePath) {
 		return (
-			<div className="h-full bg-black/70 rounded p-4 text-sm font-mono text-red-300">
+			<div
+				className="h-full bg-black/70 rounded p-4 text-sm font-mono text-red-300"
+				data-spotlight="terminal"
+			>
 				Select a chat to attach to the terminal.
 			</div>
 		);
@@ -56,7 +59,7 @@ export function TerminalView({ workspacePath }: TerminalViewProps) {
 
 	// Pass theme to terminal so it can include it in its session key
 	return (
-		<div className="h-full flex flex-col">
+		<div className="h-full flex flex-col" data-spotlight="terminal">
 			{/* Terminal container - leaves room for toolbar on mobile */}
 			<div
 				className={`flex-1 min-h-0 ${isMobile ? "pb-[52px]" : ""}`}

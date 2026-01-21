@@ -137,6 +137,7 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
 					? "Suchen Sie nach einem Befehl..."
 					: "Search for a command..."
 			}
+			dataSpotlight="command-palette"
 		>
 			<CommandInput
 				placeholder={

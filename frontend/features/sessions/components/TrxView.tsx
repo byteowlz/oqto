@@ -975,10 +975,13 @@ export const TrxView = memo(function TrxView({
 		return { open, inProgress, closed, total: issues.length };
 	}, [issues]);
 
-	if (!workspacePath) {
-		return (
-			<div className={cn("flex items-center justify-center h-full", className)}>
-				<div className="text-center text-muted-foreground">
+		if (!workspacePath) {
+			return (
+				<div
+					className={cn("flex items-center justify-center h-full", className)}
+					data-spotlight="trx-view"
+				>
+					<div className="text-center text-muted-foreground">
 					<ClipboardList className="w-8 h-8 mx-auto mb-2 opacity-50" />
 					<p className="text-xs">No workspace selected</p>
 				</div>
@@ -986,10 +989,13 @@ export const TrxView = memo(function TrxView({
 		);
 	}
 
-	if (loading) {
-		return (
-			<div className={cn("flex items-center justify-center h-full", className)}>
-				<div className="text-center text-muted-foreground">
+		if (loading) {
+			return (
+				<div
+					className={cn("flex items-center justify-center h-full", className)}
+					data-spotlight="trx-view"
+				>
+					<div className="text-center text-muted-foreground">
 					<Loader2 className="w-6 h-6 mx-auto mb-2 animate-spin" />
 					<p className="text-xs">Loading issues...</p>
 				</div>
@@ -998,9 +1004,9 @@ export const TrxView = memo(function TrxView({
 	}
 
 	// Collapsed view - just a status bar
-	if (isCollapsed) {
-		return (
-			<div className={cn("flex-shrink-0", className)}>
+		if (isCollapsed) {
+			return (
+				<div className={cn("flex-shrink-0", className)} data-spotlight="trx-view">
 				<button
 					type="button"
 					onClick={() => setIsCollapsed(false)}
@@ -1030,7 +1036,10 @@ export const TrxView = memo(function TrxView({
 	}
 
 	return (
-		<div className={cn("flex flex-col h-full overflow-hidden", className)}>
+		<div
+			className={cn("flex flex-col h-full overflow-hidden", className)}
+			data-spotlight="trx-view"
+		>
 			{/* Header */}
 			<div className="flex-shrink-0 px-3 py-2 border-b border-border space-y-2">
 				{/* Selection action bar */}

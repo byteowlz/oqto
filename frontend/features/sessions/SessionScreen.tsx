@@ -67,6 +67,7 @@ import { useDictation } from "@/hooks/use-dictation";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useModelContextLimit } from "@/hooks/use-models-dev";
 import { useSessionEvents } from "@/hooks/use-session-events";
+import { useUIControl } from "@/components/contexts/ui-control-context";
 import {
 	useVoiceCommandListener,
 	useVoiceShortcuts,
@@ -313,6 +314,7 @@ const ChatMessagesPane = memo(function ChatMessagesPane({
 				ref={messagesContainerRef}
 				onScroll={onScroll}
 				className="h-full bg-muted/30 border border-border p-2 sm:p-4 overflow-y-auto scrollbar-hide"
+				data-spotlight="chat-timeline"
 			>
 				{messages.length === 0 &&
 					messagesLoading &&
@@ -604,6 +606,7 @@ export const SessionScreen = memo(function SessionScreen() {
 		scrollToMessageId,
 		setScrollToMessageId,
 	} = useApp();
+	const { registerSessionControls } = useUIControl();
 	const [messages, setMessages] = useState<OpenCodeMessageWithParts[]>([]);
 	const [chatInputMountKey, setChatInputMountKey] = useState(0);
 	// Ref to track messages for A2UI anchoring
@@ -1006,6 +1009,15 @@ export const SessionScreen = memo(function SessionScreen() {
 		useState<FileTreeState>(initialFileTreeState);
 	const messagesContainerRef = useRef<HTMLDivElement>(null);
 	const messagesEndRef = useRef<HTMLDivElement>(null);
+
+	useEffect(() => {
+		registerSessionControls({
+			setActiveView: (view) => setActiveView(view as ActiveView),
+			setExpandedView: (view) => setExpandedView(view as ExpandedView),
+			setRightSidebarCollapsed,
+		});
+		return () => registerSessionControls(null);
+	}, [registerSessionControls, setActiveView, setExpandedView, setRightSidebarCollapsed]);
 
 	// Track if auto-scroll is enabled (user hasn't scrolled away)
 	const autoScrollEnabledRef = useRef(true);
@@ -4242,7 +4254,10 @@ export const SessionScreen = memo(function SessionScreen() {
 						/>
 					)}
 					{/* Textarea wrapper with slash command popup */}
-					<div className="flex-1 relative flex flex-col min-h-[32px]">
+					<div
+						className="flex-1 relative flex flex-col min-h-[32px]"
+						data-spotlight="chat-input"
+					>
 						<SlashCommandPopup
 							commands={slashCommands}
 							query={slashQuery.command}
@@ -4570,7 +4585,10 @@ export const SessionScreen = memo(function SessionScreen() {
 	// Keep FileTreeView always mounted to preserve state across tab switches
 	const filesView = (
 		<div className="flex flex-col h-full overflow-hidden">
-			<div className={cn("flex-1 min-h-0", previewFilePath && "hidden")}>
+			<div
+				className={cn("flex-1 min-h-0", previewFilePath && "hidden")}
+				data-spotlight="file-tree"
+			>
 				<FileTreeView
 					onPreviewFile={handlePreviewFile}
 					onOpenInCanvas={handleOpenInCanvas}
@@ -4628,63 +4646,67 @@ export const SessionScreen = memo(function SessionScreen() {
 		modelQuery,
 	);
 	const modelSwitcher = showModelSwitcher ? (
-		<Select
-			value={selectedModelRef ?? undefined}
-			onValueChange={(value) => setSelectedModelRef(value)}
-			onOpenChange={(open) => {
-				if (open) setModelQuery("");
-			}}
-			disabled={isModelLoading || opencodeModelOptions.length === 0}
-		>
-			<SelectTrigger className="h-7 w-[220px] text-xs">
-				<SelectValue
-					placeholder={isModelLoading ? "Loading models..." : "Model"}
-				/>
-			</SelectTrigger>
-			<SelectContent>
-				<div
-					className="sticky top-0 z-10 bg-popover p-2 border-b border-border"
-					onPointerDown={(e) => e.stopPropagation()}
-					onKeyDown={(e) => e.stopPropagation()}
-				>
-					<Input
-						value={modelQuery}
-						onChange={(e) => setModelQuery(e.target.value)}
-						placeholder="Search models..."
-						aria-label="Search models"
-						className="h-8 text-xs"
+		<div data-spotlight="model-picker">
+			<Select
+				value={selectedModelRef ?? undefined}
+				onValueChange={(value) => setSelectedModelRef(value)}
+				onOpenChange={(open) => {
+					if (open) setModelQuery("");
+				}}
+				disabled={isModelLoading || opencodeModelOptions.length === 0}
+			>
+				<SelectTrigger className="h-7 w-[220px] text-xs">
+					<SelectValue
+						placeholder={isModelLoading ? "Loading models..." : "Model"}
 					/>
-				</div>
-				{opencodeModelOptions.length === 0 ? (
-					<SelectItem value="__none__" disabled>
-						{isModelLoading ? "Loading..." : "Start a session to select models"}
-					</SelectItem>
-				) : filteredModelOptions.length === 0 ? (
-					<SelectItem value="__no_results__" disabled>
-						No matches
-					</SelectItem>
-				) : (
-					filteredModelOptions.map((option) => {
-						const provider = option.value.split("/")[0];
-						return (
-							<SelectItem
-								key={option.value}
-								value={option.value}
-								textValue={option.label}
-							>
-								<span className="flex items-center gap-2">
-									<ProviderIcon
-										provider={provider}
-										className="w-4 h-4 flex-shrink-0"
-									/>
-									<span>{option.label}</span>
-								</span>
-							</SelectItem>
-						);
-					})
-				)}
-			</SelectContent>
-		</Select>
+				</SelectTrigger>
+				<SelectContent>
+					<div
+						className="sticky top-0 z-10 bg-popover p-2 border-b border-border"
+						onPointerDown={(e) => e.stopPropagation()}
+						onKeyDown={(e) => e.stopPropagation()}
+					>
+						<Input
+							value={modelQuery}
+							onChange={(e) => setModelQuery(e.target.value)}
+							placeholder="Search models..."
+							aria-label="Search models"
+							className="h-8 text-xs"
+						/>
+					</div>
+					{opencodeModelOptions.length === 0 ? (
+						<SelectItem value="__none__" disabled>
+							{isModelLoading
+								? "Loading..."
+								: "Start a session to select models"}
+						</SelectItem>
+					) : filteredModelOptions.length === 0 ? (
+						<SelectItem value="__no_results__" disabled>
+							No matches
+						</SelectItem>
+					) : (
+						filteredModelOptions.map((option) => {
+							const provider = option.value.split("/")[0];
+							return (
+								<SelectItem
+									key={option.value}
+									value={option.value}
+									textValue={option.label}
+								>
+									<span className="flex items-center gap-2">
+										<ProviderIcon
+											provider={provider}
+											className="w-4 h-4 flex-shrink-0"
+										/>
+										<span>{option.label}</span>
+									</span>
+								</SelectItem>
+							);
+						})
+					)}
+				</SelectContent>
+			</Select>
+		</div>
 	) : null;
 	const persona = selectedSession?.persona;
 
@@ -6226,6 +6248,7 @@ const TodoListView = memo(function TodoListView({
 				type="button"
 				onClick={() => setIsCollapsed(false)}
 				className="flex-shrink-0 w-full flex items-center justify-between px-3 py-2 border-b border-border bg-muted/30 hover:bg-muted/50 transition-colors"
+				data-spotlight="todo-list"
 			>
 				<div className="flex items-center gap-3 text-[11px] text-muted-foreground">
 					<ListTodo className="w-3.5 h-3.5" />
@@ -6250,7 +6273,10 @@ const TodoListView = memo(function TodoListView({
 	}
 
 	return (
-		<div className="flex flex-col flex-shrink-0 max-h-[40%] overflow-hidden">
+		<div
+			className="flex flex-col flex-shrink-0 max-h-[40%] overflow-hidden"
+			data-spotlight="todo-list"
+		>
 			{/* Summary header */}
 			<div className="px-3 py-2 border-b border-border bg-muted/30">
 				<div className="flex items-center justify-between text-xs">

@@ -559,14 +559,15 @@ export function MemoriesView({
 	);
 
 	// No workspace selected
-	if (!workspacePath) {
-		return (
-			<div
-				className={cn(
-					"h-full bg-muted/30 rounded flex items-center justify-center",
-					className,
-				)}
-			>
+		if (!workspacePath) {
+			return (
+				<div
+					className={cn(
+						"h-full bg-muted/30 rounded flex items-center justify-center",
+						className,
+					)}
+					data-spotlight="memory-view"
+				>
 				<div className="text-center text-muted-foreground">
 					<Brain className="w-12 h-12 mx-auto mb-2 opacity-50" />
 					<p className="text-sm">Select a chat to view memories</p>
@@ -576,14 +577,15 @@ export function MemoriesView({
 	}
 
 	// Loading state
-	if (loading) {
-		return (
-			<div
-				className={cn(
-					"h-full bg-muted/30 rounded flex items-center justify-center",
-					className,
-				)}
-			>
+		if (loading) {
+			return (
+				<div
+					className={cn(
+						"h-full bg-muted/30 rounded flex items-center justify-center",
+						className,
+					)}
+					data-spotlight="memory-view"
+				>
 				<div className="text-center text-muted-foreground">
 					<Loader2 className="w-8 h-8 mx-auto mb-2 animate-spin" />
 					<p className="text-sm">Loading memories...</p>
@@ -593,7 +595,10 @@ export function MemoriesView({
 	}
 
 	return (
-		<div className={cn("h-full flex flex-col overflow-hidden", className)}>
+		<div
+			className={cn("h-full flex flex-col overflow-hidden", className)}
+			data-spotlight="memory-view"
+		>
 			{/* Header with search and add */}
 			<div className="flex-shrink-0 p-2 border-b border-border space-y-2">
 				<div className="flex items-center gap-2">

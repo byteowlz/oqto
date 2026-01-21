@@ -1039,6 +1039,7 @@ export function MainChatPiView({
 					ref={messagesContainerRef}
 					onScroll={handleScroll}
 					className="h-full bg-muted/30 border border-border p-2 sm:p-4 overflow-y-auto scrollbar-hide"
+					data-spotlight="chat-timeline"
 				>
 					{messages.length === 0 && (
 						<div className="text-sm text-muted-foreground">{t.noMessages}</div>
@@ -1144,7 +1145,10 @@ export function MainChatPiView({
 					)}
 
 					{/* Textarea wrapper with slash command popup */}
-					<div className="flex-1 relative flex flex-col min-h-[32px]">
+					<div
+						className="flex-1 relative flex flex-col min-h-[32px]"
+						data-spotlight="chat-input"
+					>
 						<SlashCommandPopup
 							commands={slashCommands}
 							query={slashQuery.command}

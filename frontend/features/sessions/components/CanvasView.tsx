@@ -1068,7 +1068,10 @@ export const CanvasView = memo(function CanvasView({
 		: containerSize.height;
 
 	return (
-		<div className={cn("flex flex-col h-full overflow-hidden", className)}>
+		<div
+			className={cn("flex flex-col h-full overflow-hidden", className)}
+			data-spotlight="canvas"
+		>
 			{/* Toolbar */}
 			<div className="flex-shrink-0 flex items-center gap-1 p-2 border-b border-border bg-muted/30 flex-wrap">
 				{/* Tool buttons */}

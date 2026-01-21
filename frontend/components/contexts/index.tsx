@@ -6,6 +6,11 @@ export {
 } from "./ui-context";
 
 export {
+	UIControlProvider,
+	useUIControl,
+} from "./ui-control-context";
+
+export {
 	SessionProvider,
 	useSessionContext,
 	useBusySessions,

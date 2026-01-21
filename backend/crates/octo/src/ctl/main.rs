@@ -39,6 +39,7 @@ async fn try_main() -> Result<()> {
         Command::Container { command } => handle_container(&client, command, cli.json).await,
         Command::Image { command } => handle_image(&client, command, cli.json).await,
         Command::A2ui { command } => handle_a2ui(&client, command, cli.json).await,
+        Command::Ui { command } => handle_ui(&client, command, cli.json).await,
         Command::Local { command } => handle_local(&client, command, cli.json).await,
     }
 }
@@ -131,6 +132,13 @@ enum Command {
     A2ui {
         #[command(subcommand)]
         command: A2uiCommand,
+    },
+
+    /// UI control commands (agent-driven UI control)
+    #[command(name = "ui")]
+    Ui {
+        #[command(subcommand)]
+        command: UiCommand,
     },
 }
 
@@ -405,6 +413,97 @@ enum A2uiCommand {
         /// Timeout in seconds (default: 300)
         #[arg(long, short, default_value = "300")]
         timeout: u64,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum UiCommand {
+    /// Navigate to a route/path
+    Navigate {
+        /// Path to navigate to
+        path: String,
+        /// Replace history entry instead of pushing
+        #[arg(long)]
+        replace: bool,
+    },
+    /// Switch active session
+    Session {
+        /// Session ID
+        session_id: String,
+        /// Mode: main, opencode, or pi
+        #[arg(long)]
+        mode: Option<String>,
+    },
+    /// Switch active view within a session
+    View {
+        /// View name (chat, files, terminal, tasks, memories, settings, canvas, voice)
+        view: String,
+    },
+    /// Open or close the command palette
+    Palette {
+        /// Open state (true/false). Defaults to true if omitted.
+        #[arg(long)]
+        open: Option<bool>,
+    },
+    /// Execute a palette command
+    PaletteExec {
+        /// Command name (e.g. new_chat, toggle_theme, set_theme, toggle_locale, set_locale, open_app, select_session)
+        command: String,
+        /// JSON args (optional)
+        #[arg(long)]
+        args: Option<String>,
+    },
+    /// Spotlight a UI element
+    Spotlight {
+        /// Spotlight target id (data-spotlight value)
+        target: Option<String>,
+        /// Optional title
+        #[arg(long)]
+        title: Option<String>,
+        /// Optional description
+        #[arg(long)]
+        description: Option<String>,
+        /// Optional action hint
+        #[arg(long)]
+        action: Option<String>,
+        /// Optional position (auto|top|bottom|left|right)
+        #[arg(long)]
+        position: Option<String>,
+        /// Clear spotlight instead of showing it
+        #[arg(long)]
+        clear: bool,
+    },
+    /// Start a spotlight tour
+    Tour {
+        /// JSON array of steps (reads from stdin if omitted)
+        #[arg(long)]
+        steps: Option<String>,
+        /// Start index
+        #[arg(long)]
+        start_index: Option<usize>,
+        /// Stop the tour
+        #[arg(long)]
+        stop: bool,
+    },
+    /// Collapse or expand sidebar
+    Sidebar {
+        /// Collapsed state
+        #[arg(long)]
+        collapsed: Option<bool>,
+    },
+    /// Control right panel/expanded view
+    Panel {
+        /// Panel view (preview, canvas, terminal, memories) or null to clear
+        #[arg(long)]
+        view: Option<String>,
+        /// Collapse right sidebar
+        #[arg(long)]
+        collapsed: Option<bool>,
+    },
+    /// Switch theme
+    Theme {
+        /// Theme name (light, dark, system)
+        theme: String,
     },
 }
 
@@ -1729,6 +1828,132 @@ async fn handle_a2ui(client: &OctoClient, command: A2uiCommand, json: bool) -> R
             send_a2ui_surface(client, &session, parsed_messages, blocking, timeout, json).await
         }
     }
+}
+
+async fn handle_ui(client: &OctoClient, command: UiCommand, json: bool) -> Result<()> {
+    match command {
+        UiCommand::Navigate { path, replace } => {
+            let body = serde_json::json!({ "path": path, "replace": replace });
+            send_ui_event(client, "/ui/navigate", body, json).await
+        }
+        UiCommand::Session { session_id, mode } => {
+            let body = serde_json::json!({ "session_id": session_id, "mode": mode });
+            send_ui_event(client, "/ui/session", body, json).await
+        }
+        UiCommand::View { view } => {
+            let body = serde_json::json!({ "view": view });
+            send_ui_event(client, "/ui/view", body, json).await
+        }
+        UiCommand::Palette { open } => {
+            let body = serde_json::json!({ "open": open.unwrap_or(true) });
+            send_ui_event(client, "/ui/palette", body, json).await
+        }
+        UiCommand::PaletteExec { command, args } => {
+            let args_value = match args {
+                Some(raw) => Some(
+                    serde_json::from_str::<serde_json::Value>(&raw)
+                        .context("parsing palette exec args JSON")?,
+                ),
+                None => None,
+            };
+            let body = serde_json::json!({ "command": command, "args": args_value });
+            send_ui_event(client, "/ui/palette/exec", body, json).await
+        }
+        UiCommand::Spotlight {
+            target,
+            title,
+            description,
+            action,
+            position,
+            clear,
+        } => {
+            let body = serde_json::json!({
+                "target": if clear { None::<String> } else { target },
+                "title": title,
+                "description": description,
+                "action": action,
+                "position": position,
+                "active": !clear,
+            });
+            send_ui_event(client, "/ui/spotlight", body, json).await
+        }
+        UiCommand::Tour {
+            steps,
+            start_index,
+            stop,
+        } => {
+            let steps_value = if stop {
+                serde_json::Value::Array(vec![])
+            } else if let Some(raw) = steps {
+                serde_json::from_str::<serde_json::Value>(&raw)
+                    .context("parsing tour steps JSON")?
+            } else {
+                let mut input = String::new();
+                io::stdin()
+                    .read_to_string(&mut input)
+                    .context("reading tour steps from stdin")?;
+                serde_json::from_str::<serde_json::Value>(&input)
+                    .context("parsing tour steps from stdin")?
+            };
+
+            let steps_array = match steps_value {
+                serde_json::Value::Array(values) => values,
+                _ => anyhow::bail!("tour steps must be a JSON array"),
+            };
+
+            let body = serde_json::json!({
+                "steps": steps_array,
+                "start_index": start_index,
+                "active": !stop,
+            });
+            send_ui_event(client, "/ui/tour", body, json).await
+        }
+        UiCommand::Sidebar { collapsed } => {
+            let body = serde_json::json!({ "collapsed": collapsed });
+            send_ui_event(client, "/ui/sidebar", body, json).await
+        }
+        UiCommand::Panel { view, collapsed } => {
+            let body = serde_json::json!({ "view": view, "collapsed": collapsed });
+            send_ui_event(client, "/ui/panel", body, json).await
+        }
+        UiCommand::Theme { theme } => {
+            let body = serde_json::json!({ "theme": theme });
+            send_ui_event(client, "/ui/theme", body, json).await
+        }
+    }
+}
+
+async fn send_ui_event(
+    client: &OctoClient,
+    path: &str,
+    body: serde_json::Value,
+    json: bool,
+) -> Result<()> {
+    let response = client.post_json(path, &body).await?;
+    let status = response.status();
+    let text = response.text().await.context("reading response body")?;
+
+    if json {
+        if text.trim().is_empty() {
+            println!(
+                r#"{{"success": {}, "path": "{}"}}"#,
+                status.is_success(),
+                path
+            );
+        } else {
+            println!("{text}");
+        }
+        return Ok(());
+    }
+
+    if status.is_success() {
+        println!("UI event sent: {path}");
+    } else if text.trim().is_empty() {
+        println!("Server returned error: {}", status);
+    } else {
+        println!("Server returned error: {} - {}", status, text.trim());
+    }
+    Ok(())
 }
 
 fn gen_surface_id(prefix: &str) -> String {
