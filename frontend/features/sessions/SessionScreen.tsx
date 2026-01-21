@@ -1,12 +1,17 @@
 "use client";
 
+import { useUIControl } from "@/components/contexts/ui-control-context";
 import {
-	type FileTreeState,
-	FileTreeView,
-	initialFileTreeState,
-} from "@/features/sessions/components/FileTreeView";
-import { ChatSearchBar, MainChatPiView, MainChatSettingsView } from "@/components/main-chat";
+	ChatSearchBar,
+	MainChatPiView,
+	MainChatSettingsView,
+} from "@/components/main-chat";
 import { A2UICallCard } from "@/components/ui/a2ui-call-card";
+import {
+	AgentMentionPopup,
+	type AgentTarget,
+	AgentTargetChip,
+} from "@/components/ui/agent-mention-popup";
 import { Badge } from "@/components/ui/badge";
 import { BrailleSpinner } from "@/components/ui/braille-spinner";
 import { Button } from "@/components/ui/button";
@@ -18,11 +23,6 @@ import {
 	ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import { ContextWindowGauge } from "@/components/ui/context-window-gauge";
-import {
-	AgentMentionPopup,
-	type AgentTarget,
-	AgentTargetChip,
-} from "@/components/ui/agent-mention-popup";
 import {
 	type FileAttachment,
 	FileAttachmentChip,
@@ -61,19 +61,6 @@ import {
 	type VoiceMode,
 	VoicePanel,
 } from "@/components/voice";
-import { type A2UISurfaceState, useA2UI } from "@/hooks/use-a2ui";
-import { useApp } from "@/hooks/use-app";
-import { useDictation } from "@/hooks/use-dictation";
-import { useIsMobile } from "@/hooks/use-mobile";
-import { useModelContextLimit } from "@/hooks/use-models-dev";
-import { useSessionEvents } from "@/hooks/use-session-events";
-import { useUIControl } from "@/components/contexts/ui-control-context";
-import {
-	useVoiceCommandListener,
-	useVoiceShortcuts,
-} from "@/hooks/use-voice-commands";
-import { useVoiceMode } from "@/hooks/use-voice-mode";
-import type { A2UIUserAction } from "@/lib/a2ui/types";
 import {
 	type Features,
 	type MainChatSession,
@@ -94,13 +81,6 @@ import {
 	registerMainChatSession,
 	workspaceFileUrl,
 } from "@/features/sessions/api";
-import { extractFileReferences, getFileTypeInfo } from "@/lib/file-types";
-import { getMessageText } from "@/lib/message-text";
-import { type ModelOption, filterModelOptions } from "@/lib/model-filter";
-import { mergeSessionMessages } from "@/features/sessions/utils/mergeSessionMessages";
-import { groupMessages } from "@/features/sessions/utils/groupMessages";
-import { fetchMainChatThreadedMessages } from "@/features/sessions/utils/fetchMainChatThreadedMessages";
-import type { MessageGroup, ThreadedMessage } from "@/features/sessions/types";
 import {
 	type OpenCodeAssistantMessage,
 	type OpenCodeMessageWithParts,
@@ -127,6 +107,30 @@ import {
 	sendMessageAsync,
 	sendPartsAsync,
 } from "@/features/sessions/api";
+import {
+	type FileTreeState,
+	FileTreeView,
+	initialFileTreeState,
+} from "@/features/sessions/components/FileTreeView";
+import type { MessageGroup, ThreadedMessage } from "@/features/sessions/types";
+import { fetchMainChatThreadedMessages } from "@/features/sessions/utils/fetchMainChatThreadedMessages";
+import { groupMessages } from "@/features/sessions/utils/groupMessages";
+import { mergeSessionMessages } from "@/features/sessions/utils/mergeSessionMessages";
+import { type A2UISurfaceState, useA2UI } from "@/hooks/use-a2ui";
+import { useApp } from "@/hooks/use-app";
+import { useDictation } from "@/hooks/use-dictation";
+import { useIsMobile } from "@/hooks/use-mobile";
+import { useModelContextLimit } from "@/hooks/use-models-dev";
+import { useSessionEvents } from "@/hooks/use-session-events";
+import {
+	useVoiceCommandListener,
+	useVoiceShortcuts,
+} from "@/hooks/use-voice-commands";
+import { useVoiceMode } from "@/hooks/use-voice-mode";
+import type { A2UIUserAction } from "@/lib/a2ui/types";
+import { extractFileReferences, getFileTypeInfo } from "@/lib/file-types";
+import { getMessageText } from "@/lib/message-text";
+import { type ModelOption, filterModelOptions } from "@/lib/model-filter";
 import {
 	normalizePermissionEvent,
 	parseSessionErrorEvent,
@@ -166,8 +170,8 @@ import {
 	PanelLeftClose,
 	PanelRightClose,
 	Paperclip,
-	Search,
 	RefreshCw,
+	Search,
 	Send,
 	Settings,
 	Sparkles,
@@ -1017,7 +1021,7 @@ export const SessionScreen = memo(function SessionScreen() {
 			setRightSidebarCollapsed,
 		});
 		return () => registerSessionControls(null);
-	}, [registerSessionControls, setActiveView, setExpandedView, setRightSidebarCollapsed]);
+	}, [registerSessionControls]);
 
 	// Track if auto-scroll is enabled (user hasn't scrolled away)
 	const autoScrollEnabledRef = useRef(true);
@@ -3271,7 +3275,9 @@ export const SessionScreen = memo(function SessionScreen() {
 				if (noReply) {
 					// Just show the response in a toast, don't inject into current chat
 					toast.success(`Response from ${currentAgentTarget.name}`, {
-						description: response.response.slice(0, 300) + (response.response.length > 300 ? "..." : ""),
+						description:
+							response.response.slice(0, 300) +
+							(response.response.length > 300 ? "..." : ""),
 						duration: 15000,
 					});
 					setChatState("idle");
@@ -3639,7 +3645,14 @@ export const SessionScreen = memo(function SessionScreen() {
 				setShowAgentMentionPopup(false);
 			}
 		},
-		[showSlashPopup, slashQuery.isSlash, slashQuery.args, showFileMentionPopup, showAgentMentionPopup, agentTarget],
+		[
+			showSlashPopup,
+			slashQuery.isSlash,
+			slashQuery.args,
+			showFileMentionPopup,
+			showAgentMentionPopup,
+			agentTarget,
+		],
 	);
 
 	const handleResume = async () => {
@@ -4297,7 +4310,10 @@ export const SessionScreen = memo(function SessionScreen() {
 							onSelect={(target) => {
 								// Remove @@query from input, store target
 								// Use ref value directly since debounced state may be stale
-								const newInput = messageInputRef.current.replace(/@@[^\s]*$/, "");
+								const newInput = messageInputRef.current.replace(
+									/@@[^\s]*$/,
+									"",
+								);
 								setMessageInputWithResize(newInput);
 								messageInputRef.current = newInput;
 								setAgentTarget(target);
@@ -5037,7 +5053,11 @@ export const SessionScreen = memo(function SessionScreen() {
 					{isSearchOpen && (
 						<div className="mb-3 pr-16">
 							<ChatSearchBar
-								sessionId={mainChatActive ? mainChatCurrentSessionId : selectedChatSessionId}
+								sessionId={
+									mainChatActive
+										? mainChatCurrentSessionId
+										: selectedChatSessionId
+								}
 								onResultSelect={handleSearchResult}
 								isOpen={isSearchOpen}
 								onToggle={() => setIsSearchOpen(false)}

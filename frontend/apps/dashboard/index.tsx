@@ -1,6 +1,5 @@
 "use client";
 
-import { MarkdownRenderer } from "@/components/ui/markdown-renderer";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -11,7 +10,7 @@ import {
 	CardTitle,
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
+import { MarkdownRenderer } from "@/components/ui/markdown-renderer";
 import {
 	Select,
 	SelectContent,
@@ -19,17 +18,18 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
 import { useApp } from "@/hooks/use-app";
 import { useIsMobile } from "@/hooks/use-mobile";
 import {
+	type CodexBarUsagePayload,
+	type SchedulerOverview,
 	controlPlaneApiUrl,
 	fetchFeed,
 	fileserverWorkspaceBaseUrl,
 	getAuthHeaders,
 	getCodexBarUsage,
 	getSchedulerOverview,
-	type CodexBarUsagePayload,
-	type SchedulerOverview,
 } from "@/lib/control-plane-client";
 import { type OpenCodeAgent, fetchAgents } from "@/lib/opencode-client";
 import { formatSessionDate } from "@/lib/session-utils";
@@ -50,14 +50,7 @@ import {
 	Trash2,
 	X,
 } from "lucide-react";
-import {
-	memo,
-	useCallback,
-	useEffect,
-	useMemo,
-	useRef,
-	useState,
-} from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 const DASHBOARD_CONFIG_PATH = ".octo/dashboard.json";
 const DASHBOARD_REGISTRY_PATH = ".octo/dashboard.registry.json";
@@ -205,24 +198,54 @@ function humanizeCron(cron: string, locale: "de" | "en"): string {
 			.filter(Boolean)
 			.join(", ");
 
-	if (min === "*" && hour === "*" && dom === "*" && month === "*" && dow === "*") {
+	if (
+		min === "*" &&
+		hour === "*" &&
+		dom === "*" &&
+		month === "*" &&
+		dow === "*"
+	) {
 		return `${t.runs} ${t.every} ${t.minute}`;
 	}
 
-	if (min.startsWith("*/") && hour === "*" && dom === "*" && month === "*" && dow === "*") {
+	if (
+		min.startsWith("*/") &&
+		hour === "*" &&
+		dom === "*" &&
+		month === "*" &&
+		dow === "*"
+	) {
 		const step = min.slice(2);
 		return `${t.runs} ${t.every} ${step} ${t.minutes}`;
 	}
 
-	if (/^\d+$/.test(min) && hour === "*" && dom === "*" && month === "*" && dow === "*") {
+	if (
+		/^\d+$/.test(min) &&
+		hour === "*" &&
+		dom === "*" &&
+		month === "*" &&
+		dow === "*"
+	) {
 		return `${t.runs} ${t.at} ${min} ${t.minutes} ${t.every} ${t.hour}`;
 	}
 
-	if (min === "0" && hour === "*" && dom === "*" && month === "*" && dow === "*") {
+	if (
+		min === "0" &&
+		hour === "*" &&
+		dom === "*" &&
+		month === "*" &&
+		dow === "*"
+	) {
 		return `${t.runs} ${t.every} ${t.hour}`;
 	}
 
-	if (/^\d+$/.test(min) && /^\d+$/.test(hour) && dom === "*" && month === "*" && dow === "*") {
+	if (
+		/^\d+$/.test(min) &&
+		/^\d+$/.test(hour) &&
+		dom === "*" &&
+		month === "*" &&
+		dow === "*"
+	) {
 		return `${t.runs} ${t.daily} ${t.at} ${formatTime(hour, min)}`;
 	}
 
@@ -254,17 +277,35 @@ function humanizeCron(cron: string, locale: "de" | "en"): string {
 		return `${t.runs} ${t.daily} ${t.at} ${hours}`;
 	}
 
-	if (min === "0" && hour.startsWith("*/") && dom === "*" && month === "*" && dow === "*") {
+	if (
+		min === "0" &&
+		hour.startsWith("*/") &&
+		dom === "*" &&
+		month === "*" &&
+		dow === "*"
+	) {
 		const step = hour.slice(2);
 		return `${t.runs} ${t.every} ${step} ${t.hours}`;
 	}
 
-	if (min.startsWith("*/") && /^\d+$/.test(hour) && dom === "*" && month === "*" && dow === "*") {
+	if (
+		min.startsWith("*/") &&
+		/^\d+$/.test(hour) &&
+		dom === "*" &&
+		month === "*" &&
+		dow === "*"
+	) {
 		const step = min.slice(2);
 		return `${t.runs} ${t.daily} ${t.at} ${formatTime(hour, "00")} ${t.every} ${step} ${t.minutes}`;
 	}
 
-	if (dom === "*" && month === "*" && dow !== "*" && min === "*" && hour === "*") {
+	if (
+		dom === "*" &&
+		month === "*" &&
+		dow !== "*" &&
+		min === "*" &&
+		hour === "*"
+	) {
 		const days = dow
 			.split(",")
 			.map((value) => dayNames[Number.parseInt(value, 10)] ?? value)
@@ -295,17 +336,13 @@ function parseFeedXml(xml: string): FeedState {
 	const rssFeed = doc.querySelector("rss, RDF");
 
 	if (atomFeed) {
-		const title = atomFeed.querySelector("title")?.textContent?.trim() ??
-			"Atom Feed";
+		const title =
+			atomFeed.querySelector("title")?.textContent?.trim() ?? "Atom Feed";
 		const entries = Array.from(atomFeed.querySelectorAll("entry")).map(
 			(entry) => {
-				const id =
-					entry.querySelector("id")?.textContent?.trim() ??
-					createId();
+				const id = entry.querySelector("id")?.textContent?.trim() ?? createId();
 				const link =
-					entry
-						.querySelector("link[rel='alternate']")
-						?.getAttribute("href") ??
+					entry.querySelector("link[rel='alternate']")?.getAttribute("href") ??
 					entry.querySelector("link")?.getAttribute("href") ??
 					undefined;
 				const date =
@@ -397,7 +434,8 @@ async function readWorkspaceFile(
 		},
 		credentials: "include",
 	});
-	if (res.status === 404 || res.status === 502 || res.status === 503) return null;
+	if (res.status === 404 || res.status === 502 || res.status === 503)
+		return null;
 	if (!res.ok) {
 		const text = await res.text();
 		throw new Error(text || `Failed to read ${path}`);
@@ -459,12 +497,12 @@ function buildDefaultLayout(
 	feeds: string[],
 ): DashboardLayoutConfig {
 	const cards: Record<string, DashboardLayoutCard> = {};
-	cardIds.forEach((id) => {
+	for (const id of cardIds) {
 		cards[id] = {
 			visible: true,
 			span: defaultSpans[id] ?? 6,
 		};
-	});
+	}
 	return {
 		version: 1,
 		order: [...cardIds],
@@ -480,15 +518,15 @@ function normalizeLayout(
 ): DashboardLayoutConfig {
 	const nextOrder = layout.order.filter((id) => cardIds.includes(id));
 	const known = new Set(nextOrder);
-	cardIds.forEach((id) => {
+	for (const id of cardIds) {
 		if (!known.has(id)) {
 			nextOrder.push(id);
 			known.add(id);
 		}
-	});
+	}
 
 	const nextCards: Record<string, DashboardLayoutCard> = { ...layout.cards };
-	cardIds.forEach((id) => {
+	for (const id of cardIds) {
 		if (!nextCards[id]) {
 			nextCards[id] = { visible: true, span: defaultSpans[id] ?? 6 };
 		} else {
@@ -497,7 +535,7 @@ function normalizeLayout(
 				span: clampSpan(nextCards[id].span),
 			};
 		}
-	});
+	}
 
 	return {
 		...layout,
@@ -677,8 +715,8 @@ function QueryCard({
 		}
 	}, [handleLoad, url]);
 
-		return (
-			<Card className="border-border bg-muted/30 shadow-none h-full flex flex-col">
+	return (
+		<Card className="border-border bg-muted/30 shadow-none h-full flex flex-col">
 			<CardHeader className="flex flex-row items-center justify-between">
 				<div>
 					<CardTitle>{title}</CardTitle>
@@ -704,9 +742,7 @@ function QueryCard({
 					<p className="text-sm text-rose-400">{error}</p>
 				) : (
 					<pre className="text-xs whitespace-pre-wrap text-muted-foreground">
-						{typeof data === "string"
-							? data
-							: JSON.stringify(data, null, 2)}
+						{typeof data === "string" ? data : JSON.stringify(data, null, 2)}
 					</pre>
 				)}
 			</CardContent>
@@ -739,9 +775,12 @@ export function DashboardApp() {
 		loading: false,
 		payload: [],
 	});
-	const [layoutConfig, setLayoutConfig] = useState<DashboardLayoutConfig | null>(null);
+	const [layoutConfig, setLayoutConfig] =
+		useState<DashboardLayoutConfig | null>(null);
 	const layoutRef = useRef<DashboardLayoutConfig | null>(null);
-	const [registryCards, setRegistryCards] = useState<DashboardRegistryCard[]>([]);
+	const [registryCards, setRegistryCards] = useState<DashboardRegistryCard[]>(
+		[],
+	);
 	const registryRef = useRef<DashboardRegistryCard[]>([]);
 	const [layoutError, setLayoutError] = useState<string | null>(null);
 	const [layoutLoading, setLayoutLoading] = useState(false);
@@ -749,7 +788,9 @@ export function DashboardApp() {
 	const [feedInput, setFeedInput] = useState("");
 	const [customTitle, setCustomTitle] = useState("");
 	const [customDescription, setCustomDescription] = useState("");
-	const [customType, setCustomType] = useState<"markdown" | "query">("markdown");
+	const [customType, setCustomType] = useState<"markdown" | "query">(
+		"markdown",
+	);
 	const [customContent, setCustomContent] = useState("");
 	const [customUrl, setCustomUrl] = useState("");
 	const [customMethod, setCustomMethod] = useState("GET");
@@ -864,21 +905,30 @@ export function DashboardApp() {
 	);
 
 	const builtinDefaultSpans = useMemo(() => {
-		return builtinCards.reduce<Record<string, DashboardCardSpan>>((acc, card) => {
-			acc[card.id] = card.defaultSpan;
-			return acc;
-		}, {});
+		return builtinCards.reduce<Record<string, DashboardCardSpan>>(
+			(acc, card) => {
+				acc[card.id] = card.defaultSpan;
+				return acc;
+			},
+			{},
+		);
 	}, [builtinCards]);
 
 	const customDefaultSpans = useMemo(() => {
-		return registryCards.reduce<Record<string, DashboardCardSpan>>((acc, card) => {
-			acc[card.id] = 6;
-			return acc;
-		}, {});
+		return registryCards.reduce<Record<string, DashboardCardSpan>>(
+			(acc, card) => {
+				acc[card.id] = 6;
+				return acc;
+			},
+			{},
+		);
 	}, [registryCards]);
 
 	const cardIdList = useMemo(() => {
-		return [...builtinCards.map((card) => card.id), ...registryCards.map((card) => card.id)];
+		return [
+			...builtinCards.map((card) => card.id),
+			...registryCards.map((card) => card.id),
+		];
 	}, [builtinCards, registryCards]);
 
 	const defaultSpans = useMemo(() => {
@@ -990,7 +1040,9 @@ export function DashboardApp() {
 
 	const handleRefreshFeeds = useCallback(
 		(feedUrls: string[]) => {
-			feedUrls.forEach((url) => loadFeed(url));
+			for (const url of feedUrls) {
+				loadFeed(url);
+			}
 		},
 		[loadFeed],
 	);
@@ -1107,8 +1159,12 @@ export function DashboardApp() {
 				}
 
 				const registryIds = new Set(registry.map((card) => card.id));
-				const sanitizedRegistry = registry.filter((card) => card.id && card.title);
-				const customCards = sanitizedRegistry.filter((card) => registryIds.has(card.id));
+				const sanitizedRegistry = registry.filter(
+					(card) => card.id && card.title,
+				);
+				const customCards = sanitizedRegistry.filter((card) =>
+					registryIds.has(card.id),
+				);
 				const mergedRegistry = customCards;
 				const allCardIds = [
 					...builtinCards.map((card) => card.id),
@@ -1136,10 +1192,13 @@ export function DashboardApp() {
 
 				const spanDefaults = {
 					...builtinDefaultSpans,
-					...mergedRegistry.reduce<Record<string, DashboardCardSpan>>((acc, card) => {
-						acc[card.id] = 6;
-						return acc;
-					}, {}),
+					...mergedRegistry.reduce<Record<string, DashboardCardSpan>>(
+						(acc, card) => {
+							acc[card.id] = 6;
+							return acc;
+						},
+						{},
+					),
 				};
 
 				let normalizedLayout = layout;
@@ -1176,7 +1235,9 @@ export function DashboardApp() {
 			} catch (err) {
 				if (!active) return;
 				console.error("Failed to load dashboard config:", err);
-				setLayoutError(err instanceof Error ? err.message : "Failed to load layout");
+				setLayoutError(
+					err instanceof Error ? err.message : "Failed to load layout",
+				);
 			} finally {
 				if (active) setLayoutLoading(false);
 			}
@@ -1195,11 +1256,11 @@ export function DashboardApp() {
 
 	useEffect(() => {
 		if (!layoutConfig) return;
-		(layoutConfig.feeds ?? []).forEach((url) => {
+		for (const url of layoutConfig.feeds ?? []) {
 			if (!feeds[url]) {
 				loadFeed(url);
 			}
-		});
+		}
 	}, [layoutConfig, feeds, loadFeed]);
 
 	const handleAddFeed = useCallback(() => {
@@ -1218,7 +1279,9 @@ export function DashboardApp() {
 	const handleRemoveFeed = useCallback(
 		(url: string) => {
 			if (!layoutRef.current) return;
-			const next = (layoutRef.current.feeds ?? []).filter((entry) => entry !== url);
+			const next = (layoutRef.current.feeds ?? []).filter(
+				(entry) => entry !== url,
+			);
 			updateLayout((prev) => ({ ...prev, feeds: next }));
 			setFeeds((prev) => {
 				const updated = { ...prev };
@@ -1240,9 +1303,16 @@ export function DashboardApp() {
 	const feedUrls = layoutConfig?.feeds ?? [];
 
 	const cardMap = useMemo(() => {
-		const map = new Map<string, BuiltinCardDefinition | DashboardRegistryCard>();
-		builtinCards.forEach((card) => map.set(card.id, card));
-		registryCards.forEach((card) => map.set(card.id, card));
+		const map = new Map<
+			string,
+			BuiltinCardDefinition | DashboardRegistryCard
+		>();
+		for (const card of builtinCards) {
+			map.set(card.id, card);
+		}
+		for (const card of registryCards) {
+			map.set(card.id, card);
+		}
 		return map;
 	}, [builtinCards, registryCards]);
 
@@ -1255,7 +1325,9 @@ export function DashboardApp() {
 
 	const visibleCards = useMemo(() => {
 		if (!layoutConfig) return [];
-		return orderedCards.filter((card) => layoutConfig.cards[card.id]?.visible !== false);
+		return orderedCards.filter(
+			(card) => layoutConfig.cards[card.id]?.visible !== false,
+		);
 	}, [layoutConfig, orderedCards]);
 
 	const handleToggleCard = useCallback(
@@ -1426,8 +1498,8 @@ export function DashboardApp() {
 					/>
 				);
 			case "scheduler":
-		return (
-			<Card className="border-border bg-muted/30 shadow-none h-full flex flex-col">
+				return (
+					<Card className="border-border bg-muted/30 shadow-none h-full flex flex-col">
 						<CardHeader className="flex flex-row items-center justify-between">
 							<div>
 								<CardTitle>{t.scheduler}</CardTitle>
@@ -1450,9 +1522,7 @@ export function DashboardApp() {
 						</CardHeader>
 						<CardContent className="flex-1 min-h-0 overflow-auto">
 							{scheduleList.length === 0 ? (
-								<div className="text-sm text-muted-foreground">
-									{t.noTasks}
-								</div>
+								<div className="text-sm text-muted-foreground">{t.noTasks}</div>
 							) : (
 								<div className="space-y-3">
 									{scheduleList.slice(0, 6).map((schedule) => (
@@ -1486,12 +1556,13 @@ export function DashboardApp() {
 					</Card>
 				);
 			case "agents":
-		return (
-			<Card className="border-border bg-muted/30 shadow-none h-full flex flex-col">
+				return (
+					<Card className="border-border bg-muted/30 shadow-none h-full flex flex-col">
 						<CardHeader>
 							<CardTitle>{t.workingAgents}</CardTitle>
 							<CardDescription>
-								{runningSessions.length} running containers, {agents.length} agent profiles
+								{runningSessions.length} running containers, {agents.length}{" "}
+								agent profiles
 							</CardDescription>
 						</CardHeader>
 						<CardContent className="flex-1 min-h-0 overflow-auto space-y-4">
@@ -1531,12 +1602,12 @@ export function DashboardApp() {
 									<p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
 										Busy chats
 									</p>
-									<Badge variant="secondary">
-										{busyChatSessions.length}
-									</Badge>
+									<Badge variant="secondary">{busyChatSessions.length}</Badge>
 								</div>
 								{busyChatSessions.length === 0 ? (
-									<p className="text-sm text-muted-foreground">No chats busy.</p>
+									<p className="text-sm text-muted-foreground">
+										No chats busy.
+									</p>
 								) : (
 									<div className="flex flex-wrap gap-2">
 										{busyChatSessions.map((session) => (
@@ -1554,8 +1625,8 @@ export function DashboardApp() {
 					</Card>
 				);
 			case "trx":
-		return (
-			<Card className="border-border bg-muted/30 shadow-none h-full flex flex-col">
+				return (
+					<Card className="border-border bg-muted/30 shadow-none h-full flex flex-col">
 						<CardHeader className="flex flex-row items-center justify-between">
 							<div>
 								<CardTitle>{t.trx}</CardTitle>
@@ -1578,9 +1649,7 @@ export function DashboardApp() {
 						</CardHeader>
 						<CardContent className="flex-1 min-h-0 overflow-auto space-y-3">
 							{topTrxIssues.length === 0 ? (
-								<div className="text-sm text-muted-foreground">
-									{t.noTrx}
-								</div>
+								<div className="text-sm text-muted-foreground">{t.noTrx}</div>
 							) : (
 								<div className="space-y-2">
 									{topTrxIssues.map((issue) => (
@@ -1598,7 +1667,9 @@ export function DashboardApp() {
 													<span className="truncate">{issue.id}</span>
 												</div>
 											</div>
-											<div className="text-xs text-muted-foreground">P{issue.priority}</div>
+											<div className="text-xs text-muted-foreground">
+												P{issue.priority}
+											</div>
 										</div>
 									))}
 								</div>
@@ -1607,8 +1678,8 @@ export function DashboardApp() {
 					</Card>
 				);
 			case "codexbar":
-		return (
-			<Card className="border-border bg-muted/30 shadow-none h-full flex flex-col">
+				return (
+					<Card className="border-border bg-muted/30 shadow-none h-full flex flex-col">
 						<CardHeader className="flex flex-row items-center justify-between">
 							<div>
 								<CardTitle>AI Subscriptions</CardTitle>
@@ -1656,11 +1727,15 @@ export function DashboardApp() {
 																	{entry.provider}
 																</p>
 																<p className="text-xs text-muted-foreground truncate">
-																	{entry.account ?? entry.usage?.accountEmail ?? entry.source}
+																	{entry.account ??
+																		entry.usage?.accountEmail ??
+																		entry.source}
 																</p>
 															</div>
 															{entry.status?.indicator && (
-																<Badge variant="secondary">{entry.status.indicator}</Badge>
+																<Badge variant="secondary">
+																	{entry.status.indicator}
+																</Badge>
 															)}
 														</div>
 														<div className="mt-2 grid grid-cols-2 gap-2 text-xs text-muted-foreground">
@@ -1670,7 +1745,9 @@ export function DashboardApp() {
 																	? `${primary.usedPercent}% used`
 																	: "n/a"}
 																{primary?.resetsAt && (
-																	<span className="block">Resets {formatDateTime(primary.resetsAt)}</span>
+																	<span className="block">
+																		Resets {formatDateTime(primary.resetsAt)}
+																	</span>
 																)}
 															</div>
 															<div>
@@ -1679,12 +1756,16 @@ export function DashboardApp() {
 																	? `${secondary.usedPercent}% used`
 																	: "n/a"}
 																{secondary?.resetsAt && (
-																	<span className="block">Resets {formatDateTime(secondary.resetsAt)}</span>
+																	<span className="block">
+																		Resets {formatDateTime(secondary.resetsAt)}
+																	</span>
 																)}
 															</div>
 														</div>
 														{credits != null && (
-															<p className="text-xs text-muted-foreground mt-2">Credits: {credits}</p>
+															<p className="text-xs text-muted-foreground mt-2">
+																Credits: {credits}
+															</p>
 														)}
 													</div>
 												);
@@ -1697,8 +1778,8 @@ export function DashboardApp() {
 					</Card>
 				);
 			case "feeds":
-		return (
-			<Card className="border-border bg-muted/30 shadow-none h-full flex flex-col">
+				return (
+					<Card className="border-border bg-muted/30 shadow-none h-full flex flex-col">
 						<CardHeader>
 							<CardTitle className="flex items-center gap-2">
 								<Rss className="h-4 w-4" />
@@ -1768,13 +1849,18 @@ export function DashboardApp() {
 													</Button>
 												</div>
 												{feed?.loading ? (
-													<p className="text-xs text-muted-foreground">Loading...</p>
+													<p className="text-xs text-muted-foreground">
+														Loading...
+													</p>
 												) : feed?.error ? (
 													<p className="text-xs text-rose-400">{feed.error}</p>
 												) : (
 													<ul className="space-y-1">
 														{(feed?.items ?? []).slice(0, 4).map((item) => (
-															<li key={item.id} className="text-xs text-muted-foreground">
+															<li
+																key={item.id}
+																className="text-xs text-muted-foreground"
+															>
 																{item.link ? (
 																	<a
 																		href={item.link}
@@ -1785,10 +1871,14 @@ export function DashboardApp() {
 																		{item.title}
 																	</a>
 																) : (
-																	<span className="text-foreground">{item.title}</span>
+																	<span className="text-foreground">
+																		{item.title}
+																	</span>
 																)}
 																{item.date && (
-																	<span className="ml-2">{formatDateTime(item.date)}</span>
+																	<span className="ml-2">
+																		{formatDateTime(item.date)}
+																	</span>
 																)}
 															</li>
 														))}
@@ -1983,11 +2073,7 @@ export function DashboardApp() {
 							>
 								{layoutEditMode && (
 									<div className="absolute top-2 right-2 z-10 flex items-center gap-1">
-										<Button
-											variant="secondary"
-											size="icon"
-											className="h-7 w-7"
-										>
+										<Button variant="secondary" size="icon" className="h-7 w-7">
 											<GripVertical className="h-4 w-4" />
 										</Button>
 										{CARD_SPAN_OPTIONS.map((option) => (
@@ -1996,9 +2082,7 @@ export function DashboardApp() {
 												variant={span === option.value ? "default" : "ghost"}
 												size="icon"
 												className="h-7 w-7 text-[10px]"
-												onClick={() =>
-													handleSpanChange(card.id, option.value)
-												}
+												onClick={() => handleSpanChange(card.id, option.value)}
 											>
 												{option.label}
 											</Button>
@@ -2017,9 +2101,7 @@ export function DashboardApp() {
 	};
 
 	const activeSidebarSection =
-		isMobileLayout && mobileView !== "dashboard"
-			? mobileView
-			: sidebarSection;
+		isMobileLayout && mobileView !== "dashboard" ? mobileView : sidebarSection;
 
 	return (
 		<div className="flex flex-col h-full min-h-0 p-1 sm:p-4 md:p-6 gap-1 sm:gap-4 overflow-hidden w-full">
@@ -2056,7 +2138,9 @@ export function DashboardApp() {
 				<div className="flex-1 min-h-0 bg-card border border-t-0 border-border rounded-b-xl p-3 sm:p-4 overflow-hidden flex flex-col gap-4">
 					<div className="relative flex items-start justify-center gap-3">
 						<div className="text-center">
-							<h1 className="text-xl font-semibold tracking-tight">{t.title}</h1>
+							<h1 className="text-xl font-semibold tracking-tight">
+								{t.title}
+							</h1>
 							<p className="text-sm text-muted-foreground">{t.subtitle}</p>
 						</div>
 						<div className="absolute right-0 top-0 flex items-center gap-2 text-xs text-muted-foreground">

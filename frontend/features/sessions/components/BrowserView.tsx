@@ -91,9 +91,10 @@ export function BrowserView({ sessionId, className }: BrowserViewProps) {
 	const [connectionState, setConnectionState] =
 		useState<ConnectionState>("idle");
 	const [statusMessage, setStatusMessage] = useState<string>("");
-	const [canvasSize, setCanvasSize] = useState<{ width: number; height: number }>(
-		{ width: 0, height: 0 },
-	);
+	const [canvasSize, setCanvasSize] = useState<{
+		width: number;
+		height: number;
+	}>({ width: 0, height: 0 });
 	const [urlInput, setUrlInput] = useState("");
 
 	const wsUrl = useMemo(() => {
@@ -128,7 +129,8 @@ export function BrowserView({ sessionId, className }: BrowserViewProps) {
 	useEffect(() => {
 		const canvas = canvasRef.current;
 		if (!canvas) return;
-		const dpr = typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1;
+		const dpr =
+			typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1;
 		const targetWidth = Math.max(1, Math.floor(canvasSize.width * dpr));
 		const targetHeight = Math.max(1, Math.floor(canvasSize.height * dpr));
 		if (canvas.width !== targetWidth || canvas.height !== targetHeight) {
@@ -235,37 +237,43 @@ export function BrowserView({ sessionId, className }: BrowserViewProps) {
 		};
 	}
 
-	function sendMessage(payload: object) {
+	const sendMessage = useCallback((payload: object) => {
 		const socket = socketRef.current;
 		if (!socket || socket.readyState !== WebSocket.OPEN) return;
 		socket.send(JSON.stringify(payload));
-	}
+	}, []);
 
-	function sendKey(key: string, code: string | undefined, modifiers = 0) {
-		sendMessage({
-			type: "input_keyboard",
-			eventType: "keyDown",
-			key,
-			code,
-			modifiers,
-		});
-		sendMessage({
-			type: "input_keyboard",
-			eventType: "keyUp",
-			key,
-			code,
-			modifiers,
-		});
-	}
+	const sendKey = useCallback(
+		(key: string, code: string | undefined, modifiers = 0) => {
+			sendMessage({
+				type: "input_keyboard",
+				eventType: "keyDown",
+				key,
+				code,
+				modifiers,
+			});
+			sendMessage({
+				type: "input_keyboard",
+				eventType: "keyUp",
+				key,
+				code,
+				modifiers,
+			});
+		},
+		[sendMessage],
+	);
 
-	function sendChar(text: string, modifiers = 0) {
-		sendMessage({
-			type: "input_keyboard",
-			eventType: "char",
-			text,
-			modifiers,
-		});
-	}
+	const sendChar = useCallback(
+		(text: string, modifiers = 0) => {
+			sendMessage({
+				type: "input_keyboard",
+				eventType: "char",
+				text,
+				modifiers,
+			});
+		},
+		[sendMessage],
+	);
 
 	const sendShortcut = useCallback(
 		(key: string, code: string | undefined, modifiers: number) => {
@@ -284,15 +292,15 @@ export function BrowserView({ sessionId, className }: BrowserViewProps) {
 				modifiers,
 			});
 		},
-		[],
+		[sendMessage],
 	);
 
-	function normalizeUrl(value: string): string {
+	const normalizeUrl = useCallback((value: string): string => {
 		const trimmed = value.trim();
 		if (!trimmed) return "";
 		if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(trimmed)) return trimmed;
 		return `https://${trimmed}`;
-	}
+	}, []);
 
 	const handleBack = useCallback(() => {
 		if (!isConnected) return;
@@ -326,7 +334,15 @@ export function BrowserView({ sessionId, className }: BrowserViewProps) {
 			sendChar(char);
 		}
 		sendKey("Enter", "Enter");
-	}, [isConnected, primaryModifier, sendShortcut, urlInput]);
+	}, [
+		isConnected,
+		normalizeUrl,
+		primaryModifier,
+		sendChar,
+		sendKey,
+		sendShortcut,
+		urlInput,
+	]);
 
 	function mapClientToDevice(
 		clientX: number,

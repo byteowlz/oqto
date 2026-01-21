@@ -104,55 +104,69 @@ export function SpotlightOverlay({
 		const viewportW = window.innerWidth;
 		const viewportH = window.innerHeight;
 
-		const positions: Array<{ position: SpotlightPosition; style: CSSProperties }> =
-			[
-				{
-					position: "top",
-					style: {
-						left: Math.min(
-							viewportW - tooltip.width - margin,
-							Math.max(margin, targetRect.x + targetRect.width / 2 - tooltip.width / 2),
+		const positions: Array<{
+			position: SpotlightPosition;
+			style: CSSProperties;
+		}> = [
+			{
+				position: "top",
+				style: {
+					left: Math.min(
+						viewportW - tooltip.width - margin,
+						Math.max(
+							margin,
+							targetRect.x + targetRect.width / 2 - tooltip.width / 2,
 						),
-						top: Math.max(margin, targetRect.y - tooltip.height - margin),
-					},
+					),
+					top: Math.max(margin, targetRect.y - tooltip.height - margin),
 				},
-				{
-					position: "bottom",
-					style: {
-						left: Math.min(
-							viewportW - tooltip.width - margin,
-							Math.max(margin, targetRect.x + targetRect.width / 2 - tooltip.width / 2),
+			},
+			{
+				position: "bottom",
+				style: {
+					left: Math.min(
+						viewportW - tooltip.width - margin,
+						Math.max(
+							margin,
+							targetRect.x + targetRect.width / 2 - tooltip.width / 2,
 						),
-						top: Math.min(
-							viewportH - tooltip.height - margin,
-							targetRect.y + targetRect.height + margin,
-						),
-					},
+					),
+					top: Math.min(
+						viewportH - tooltip.height - margin,
+						targetRect.y + targetRect.height + margin,
+					),
 				},
-				{
-					position: "right",
-					style: {
-						left: Math.min(
-							viewportW - tooltip.width - margin,
-							targetRect.x + targetRect.width + margin,
+			},
+			{
+				position: "right",
+				style: {
+					left: Math.min(
+						viewportW - tooltip.width - margin,
+						targetRect.x + targetRect.width + margin,
+					),
+					top: Math.min(
+						viewportH - tooltip.height - margin,
+						Math.max(
+							margin,
+							targetRect.y + targetRect.height / 2 - tooltip.height / 2,
 						),
-						top: Math.min(
-							viewportH - tooltip.height - margin,
-							Math.max(margin, targetRect.y + targetRect.height / 2 - tooltip.height / 2),
-						),
-					},
+					),
 				},
-				{
-					position: "left",
-					style: {
-						left: Math.max(margin, targetRect.x - tooltip.width - margin),
-						top: Math.min(
-							viewportH - tooltip.height - margin,
-							Math.max(margin, targetRect.y + targetRect.height / 2 - tooltip.height / 2),
+			},
+			{
+				position: "left",
+				style: {
+					left: Math.max(margin, targetRect.x - tooltip.width - margin),
+					top: Math.min(
+						viewportH - tooltip.height - margin,
+						Math.max(
+							margin,
+							targetRect.y + targetRect.height / 2 - tooltip.height / 2,
 						),
-					},
+					),
 				},
-			];
+			},
+		];
 
 		const desired = activeSpotlight?.position ?? "auto";
 		let chosen = positions[0];
@@ -196,6 +210,7 @@ export function SpotlightOverlay({
 	return (
 		<div className="fixed inset-0 z-[9999] pointer-events-none">
 			<svg className="absolute inset-0 h-full w-full pointer-events-none">
+				<title>Spotlight overlay</title>
 				<defs>
 					<mask id={maskId}>
 						<rect width="100%" height="100%" fill="white" />
