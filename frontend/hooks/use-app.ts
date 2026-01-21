@@ -1,9 +1,6 @@
 "use client";
 
-import {
-	useSessionContext,
-	useUIContext,
-} from "@/components/contexts";
+import { useSessionContext, useUIContext } from "@/components/contexts";
 import { useMemo } from "react";
 
 /**
@@ -56,7 +53,6 @@ export function useApp() {
 			clearOptimisticChatSession: session.clearOptimisticChatSession,
 			ensureOpencodeRunning: session.ensureOpencodeRunning,
 			createNewChat: session.createNewChat,
-			createNewChatWithPersona: session.createNewChatWithPersona,
 			deleteChatSession: session.deleteChatSession,
 			renameChatSession: session.renameChatSession,
 			stopWorkspaceSession: session.stopWorkspaceSession,

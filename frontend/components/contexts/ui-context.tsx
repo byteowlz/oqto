@@ -27,7 +27,22 @@ interface UIContextValue {
 	resolveText: (value: LocalizedText) => string;
 }
 
-const UIContext = createContext<UIContextValue | null>(null);
+// Default no-op functions for HMR resilience
+const noop = () => {};
+
+// During HMR, components may briefly render without the provider.
+// This default value prevents crashes while React Fast Refresh retries.
+const defaultUIContext: UIContextValue = {
+	apps: [],
+	activeAppId: "",
+	setActiveAppId: noop,
+	activeApp: undefined,
+	locale: "en",
+	setLocale: noop,
+	resolveText: (value) => (typeof value === "string" ? value : value.en),
+};
+
+const UIContext = createContext<UIContextValue>(defaultUIContext);
 
 const LAST_APP_KEY = "octo:lastActiveApp";
 
@@ -99,18 +114,22 @@ export function UIProvider({ children }: { children: ReactNode }) {
 			setLocale,
 			resolveText,
 		}),
-		[apps, activeAppId, setActiveAppId, activeApp, locale, setLocale, resolveText],
+		[
+			apps,
+			activeAppId,
+			setActiveAppId,
+			activeApp,
+			locale,
+			setLocale,
+			resolveText,
+		],
 	);
 
 	return <UIContext.Provider value={value}>{children}</UIContext.Provider>;
 }
 
 export function useUIContext() {
-	const context = useContext(UIContext);
-	if (!context) {
-		throw new Error("useUIContext must be used within a UIProvider");
-	}
-	return context;
+	return useContext(UIContext);
 }
 
 // Selective hooks for performance - only re-render when specific values change

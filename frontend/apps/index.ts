@@ -1,7 +1,6 @@
 import { AdminApp } from "@/apps/admin";
 import { AgentsApp } from "@/apps/agents";
 import { DashboardApp } from "@/apps/dashboard";
-import { ProjectsApp } from "@/apps/projects";
 import { SessionsApp } from "@/apps/sessions";
 import { SettingsApp } from "@/apps/settings";
 import { appRegistry } from "@/lib/app-registry";
@@ -33,15 +32,6 @@ appRegistry
 		routes: ["/agents"],
 		permissions: ["user"],
 		priority: 5,
-	})
-	.register({
-		id: "projects",
-		label: { de: "Projekte", en: "Projects" },
-		description: "Collaborate with others in a joined space",
-		component: ProjectsApp,
-		routes: ["/projects"],
-		permissions: ["user"],
-		priority: 20,
 	})
 	.register({
 		id: "settings",
