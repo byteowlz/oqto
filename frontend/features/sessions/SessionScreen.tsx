@@ -1232,18 +1232,19 @@ export const SessionScreen = memo(function SessionScreen() {
 			});
 	}, [opencodeBaseUrl, opencodeRequestOptions]);
 
+	// Ref for voice transcript send - will be set after handleSend is defined
+	const voiceSendRef = useRef<() => void>(() => {});
+
 	// Voice mode - handles STT/TTS when voice feature is enabled
 	const handleVoiceTranscript = useCallback(
 		(text: string) => {
-			// Set the transcript as message input and send it
+			// Set the transcript as message input
 			setMessageInputWithResize(text);
-			// We'll trigger send after a small delay to allow state to update
+			// Call send via ref to avoid stale closure issues
+			// Small delay to ensure ref value is set in textarea
 			setTimeout(() => {
-				const sendBtn = document.querySelector(
-					"[data-voice-send]",
-				) as HTMLButtonElement;
-				if (sendBtn) sendBtn.click();
-			}, 100);
+				voiceSendRef.current();
+			}, 50);
 		},
 		[setMessageInputWithResize],
 	);
@@ -3524,6 +3525,9 @@ export const SessionScreen = memo(function SessionScreen() {
 	// Ref to hold latest handleSend for stable callback
 	const handleSendRef = useRef(handleSend);
 	handleSendRef.current = handleSend;
+
+	// Update voiceSendRef to point to current handleSend
+	voiceSendRef.current = handleSend;
 
 	// Memoized input change handler to prevent re-renders
 	const handleInputChange = useCallback(

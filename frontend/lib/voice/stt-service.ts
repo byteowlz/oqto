@@ -212,6 +212,8 @@ export class STTService {
 	private handleMessage(message: STTMessage) {
 		switch (message.type) {
 			case "word":
+				// Ignore words when not listening - server may still send after stopListening
+				if (!this.isListening) return;
 				if (message.word) {
 					// Use array push instead of string concat (O(1) vs O(n))
 					this.transcriptWords.push(message.word);
@@ -221,6 +223,8 @@ export class STTService {
 				break;
 
 			case "final":
+				// Ignore final messages when not listening
+				if (!this.isListening) return;
 				this.clearVadTimeout(true);
 				if (message.text) {
 					this.callbacks.onFinal?.(message.text);
@@ -506,6 +510,9 @@ export class STTService {
 		this.audioSetupToken++;
 		this.isListening = false;
 		this.clearVadTimeout();
+
+		// Clear accumulated transcript words to avoid stale data
+		this.transcriptWords = [];
 
 		// Flush any remaining batched audio
 		this.flushAudioBatch();

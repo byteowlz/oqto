@@ -366,7 +366,8 @@ export function useVoiceMode(options: UseVoiceModeOptions): UseVoiceModeReturn {
 			);
 			sttRef.current.setCallbacks({
 				onWord: (word) => {
-					if (settingsRef.current.micMuted) {
+					// Ignore if voice mode is not active or mic is muted
+					if (!isActiveRef.current || settingsRef.current.micMuted) {
 						return;
 					}
 					const tts = ttsRef.current;
@@ -429,13 +430,15 @@ export function useVoiceMode(options: UseVoiceModeOptions): UseVoiceModeReturn {
 					}
 				},
 				onFinal: (text) => {
-					if (settingsRef.current.micMuted) {
+					// Ignore if voice mode is not active or mic is muted
+					if (!isActiveRef.current || settingsRef.current.micMuted) {
 						return;
 					}
 					handleFinalTranscript(text);
 				},
 				onVadProgress: (progress) => {
-					if (settingsRef.current.micMuted) {
+					// Ignore if voice mode is not active or mic is muted
+					if (!isActiveRef.current || settingsRef.current.micMuted) {
 						return;
 					}
 					setVadProgress(progress);
