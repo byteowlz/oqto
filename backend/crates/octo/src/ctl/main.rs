@@ -39,7 +39,9 @@ async fn try_main() -> Result<()> {
         Command::Container { command } => handle_container(&client, command, cli.json).await,
         Command::Image { command } => handle_image(&client, command, cli.json).await,
         Command::A2ui { command } => handle_a2ui(&client, command, cli.json).await,
+        Command::Ui { command } => handle_ui(&client, command, cli.json).await,
         Command::Local { command } => handle_local(&client, command, cli.json).await,
+        Command::Sandbox { command } => handle_sandbox(command, cli.json).await,
     }
 }
 
@@ -126,11 +128,24 @@ enum Command {
         command: LocalCommand,
     },
 
+    /// Manage sandbox configuration
+    Sandbox {
+        #[command(subcommand)]
+        command: SandboxCommand,
+    },
+
     /// Send A2UI surface to user (for agents)
     #[command(name = "a2ui")]
     A2ui {
         #[command(subcommand)]
         command: A2uiCommand,
+    },
+
+    /// UI control commands (agent-driven UI control)
+    #[command(name = "ui")]
+    Ui {
+        #[command(subcommand)]
+        command: UiCommand,
     },
 }
 
@@ -209,6 +224,22 @@ enum ImageCommand {
 enum LocalCommand {
     /// Clean up orphan local session processes
     Cleanup,
+}
+
+#[derive(Debug, Subcommand)]
+enum SandboxCommand {
+    /// Show current sandbox configuration
+    Show,
+    /// Edit sandbox configuration (requires sudo)
+    Edit,
+    /// Validate sandbox configuration
+    Validate,
+    /// Reset sandbox configuration to defaults
+    Reset {
+        /// Skip confirmation prompt
+        #[arg(long, short)]
+        yes: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -405,6 +436,97 @@ enum A2uiCommand {
         /// Timeout in seconds (default: 300)
         #[arg(long, short, default_value = "300")]
         timeout: u64,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum UiCommand {
+    /// Navigate to a route/path
+    Navigate {
+        /// Path to navigate to
+        path: String,
+        /// Replace history entry instead of pushing
+        #[arg(long)]
+        replace: bool,
+    },
+    /// Switch active session
+    Session {
+        /// Session ID
+        session_id: String,
+        /// Mode: main, opencode, or pi
+        #[arg(long)]
+        mode: Option<String>,
+    },
+    /// Switch active view within a session
+    View {
+        /// View name (chat, files, terminal, tasks, memories, settings, canvas, voice)
+        view: String,
+    },
+    /// Open or close the command palette
+    Palette {
+        /// Open state (true/false). Defaults to true if omitted.
+        #[arg(long)]
+        open: Option<bool>,
+    },
+    /// Execute a palette command
+    PaletteExec {
+        /// Command name (e.g. new_chat, toggle_theme, set_theme, toggle_locale, set_locale, open_app, select_session)
+        command: String,
+        /// JSON args (optional)
+        #[arg(long)]
+        args: Option<String>,
+    },
+    /// Spotlight a UI element
+    Spotlight {
+        /// Spotlight target id (data-spotlight value)
+        target: Option<String>,
+        /// Optional title
+        #[arg(long)]
+        title: Option<String>,
+        /// Optional description
+        #[arg(long)]
+        description: Option<String>,
+        /// Optional action hint
+        #[arg(long)]
+        action: Option<String>,
+        /// Optional position (auto|top|bottom|left|right)
+        #[arg(long)]
+        position: Option<String>,
+        /// Clear spotlight instead of showing it
+        #[arg(long)]
+        clear: bool,
+    },
+    /// Start a spotlight tour
+    Tour {
+        /// JSON array of steps (reads from stdin if omitted)
+        #[arg(long)]
+        steps: Option<String>,
+        /// Start index
+        #[arg(long)]
+        start_index: Option<usize>,
+        /// Stop the tour
+        #[arg(long)]
+        stop: bool,
+    },
+    /// Collapse or expand sidebar
+    Sidebar {
+        /// Collapsed state
+        #[arg(long)]
+        collapsed: Option<bool>,
+    },
+    /// Control right panel/expanded view
+    Panel {
+        /// Panel view (preview, canvas, terminal, memories) or null to clear
+        #[arg(long)]
+        view: Option<String>,
+        /// Collapse right sidebar
+        #[arg(long)]
+        collapsed: Option<bool>,
+    },
+    /// Switch theme
+    Theme {
+        /// Theme name (light, dark, system)
+        theme: String,
     },
 }
 
@@ -1030,6 +1152,340 @@ async fn handle_local(client: &OctoClient, command: LocalCommand, json: bool) ->
                 }
             } else {
                 anyhow::bail!("Failed to clean up local sessions: {}", body);
+            }
+        }
+    }
+    Ok(())
+}
+
+const SYSTEM_SANDBOX_CONFIG: &str = "/etc/octo/sandbox.toml";
+
+/// Default sandbox configuration content
+const DEFAULT_SANDBOX_CONFIG: &str = r#"# Octo Sandbox Configuration (System-wide)
+# This file is owned by root and trusted by octo-runner.
+# It cannot be modified by regular users or compromised agents.
+
+enabled = true
+profile = "development"
+
+# Paths to deny read access (sensitive files)
+deny_read = [
+    "~/.ssh",
+    "~/.gnupg",
+    "~/.aws",
+    "~/.config/gcloud",
+    "~/.kube",
+]
+
+# Paths to allow write access (in addition to workspace)
+allow_write = [
+    # Package managers / toolchains
+    "~/.cargo",
+    "~/.rustup",
+    "~/.npm",
+    "~/.bun",
+    "~/.local/bin",
+    # Agent tools - data directories
+    "~/.local/share/skdlr",
+    "~/.local/share/mmry",
+    "~/.local/share/mailz",
+    # Agent tools - config directories
+    "~/.config/skdlr",
+    "~/.config/mmry",
+    "~/.config/mailz",
+    "~/.config/byt",
+    "/tmp",
+]
+
+# Paths to deny write access (takes precedence)
+deny_write = [
+    "/etc/octo/sandbox.toml",
+]
+
+# Namespace isolation
+isolate_network = false
+isolate_pid = true
+"#;
+
+async fn handle_sandbox(command: SandboxCommand, json: bool) -> Result<()> {
+    match command {
+        SandboxCommand::Show => {
+            let config_path = std::path::Path::new(SYSTEM_SANDBOX_CONFIG);
+            
+            if !config_path.exists() {
+                if json {
+                    println!(r#"{{"exists": false, "path": "{}"}}"#, SYSTEM_SANDBOX_CONFIG);
+                } else {
+                    println!("Sandbox config not found at {}", SYSTEM_SANDBOX_CONFIG);
+                    println!("\nTo create default config, run:");
+                    println!("  octoctl sandbox reset");
+                }
+                return Ok(());
+            }
+            
+            let content = std::fs::read_to_string(config_path)
+                .context("Failed to read sandbox config")?;
+            
+            if json {
+                // Parse and output as JSON
+                match toml::from_str::<toml::Value>(&content) {
+                    Ok(config) => {
+                        let json_val = serde_json::json!({
+                            "exists": true,
+                            "path": SYSTEM_SANDBOX_CONFIG,
+                            "config": config
+                        });
+                        println!("{}", serde_json::to_string_pretty(&json_val)?);
+                    }
+                    Err(e) => {
+                        let json_val = serde_json::json!({
+                            "exists": true,
+                            "path": SYSTEM_SANDBOX_CONFIG,
+                            "error": format!("Invalid TOML: {}", e),
+                            "raw": content
+                        });
+                        println!("{}", serde_json::to_string_pretty(&json_val)?);
+                    }
+                }
+            } else {
+                println!("# Sandbox config: {}\n", SYSTEM_SANDBOX_CONFIG);
+                println!("{}", content);
+            }
+        }
+        
+        SandboxCommand::Edit => {
+            let config_path = std::path::Path::new(SYSTEM_SANDBOX_CONFIG);
+            
+            // Create parent directory if needed
+            if let Some(parent) = config_path.parent() {
+                if !parent.exists() {
+                    println!("Creating directory {}...", parent.display());
+                    let status = std::process::Command::new("sudo")
+                        .args(["mkdir", "-p", &parent.to_string_lossy()])
+                        .status()
+                        .context("Failed to create config directory")?;
+                    if !status.success() {
+                        anyhow::bail!("Failed to create config directory");
+                    }
+                }
+            }
+            
+            // If config doesn't exist, create it with defaults first
+            if !config_path.exists() {
+                println!("Config not found, creating with defaults...");
+                let mut child = std::process::Command::new("sudo")
+                    .args(["tee", SYSTEM_SANDBOX_CONFIG])
+                    .stdin(std::process::Stdio::piped())
+                    .stdout(std::process::Stdio::null())
+                    .spawn()
+                    .context("Failed to spawn sudo tee")?;
+                
+                if let Some(mut stdin) = child.stdin.take() {
+                    use std::io::Write;
+                    stdin.write_all(DEFAULT_SANDBOX_CONFIG.as_bytes())?;
+                }
+                
+                let status = child.wait()?;
+                if !status.success() {
+                    anyhow::bail!("Failed to write default config");
+                }
+            }
+            
+            // Get editor from environment
+            let editor = std::env::var("EDITOR")
+                .or_else(|_| std::env::var("VISUAL"))
+                .unwrap_or_else(|_| "nano".to_string());
+            
+            // Copy to temp file for editing
+            let temp_dir = std::env::temp_dir();
+            let temp_path = temp_dir.join("sandbox.toml.edit");
+            
+            // Try to copy directly, fallback to sudo cat
+            if std::fs::copy(config_path, &temp_path).is_err() {
+                // If can't read directly, try with sudo
+                let output = std::process::Command::new("sudo")
+                    .args(["cat", SYSTEM_SANDBOX_CONFIG])
+                    .output()
+                    .context("Failed to read config with sudo")?;
+                std::fs::write(&temp_path, &output.stdout)
+                    .context("Failed to write temp file")?;
+            }
+            
+            // Open editor
+            println!("Opening {} with {}...", temp_path.display(), editor);
+            let status = std::process::Command::new(&editor)
+                .arg(&temp_path)
+                .status()
+                .context("Failed to open editor")?;
+            
+            if !status.success() {
+                anyhow::bail!("Editor exited with error");
+            }
+            
+            // Validate the edited config
+            let edited_content = std::fs::read_to_string(&temp_path)
+                .context("Failed to read edited config")?;
+            
+            if let Err(e) = toml::from_str::<toml::Value>(&edited_content) {
+                eprintln!("Error: Invalid TOML syntax: {}", e);
+                eprintln!("\nConfig was NOT saved. Fix the errors and try again.");
+                eprintln!("Edited file is at: {}", temp_path.display());
+                anyhow::bail!("Invalid config");
+            }
+            
+            // Write back with sudo
+            let mut child = std::process::Command::new("sudo")
+                .args(["tee", SYSTEM_SANDBOX_CONFIG])
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::null())
+                .spawn()
+                .context("Failed to spawn sudo tee")?;
+            
+            if let Some(mut stdin) = child.stdin.take() {
+                use std::io::Write;
+                stdin.write_all(edited_content.as_bytes())?;
+            }
+            
+            let status = child.wait()?;
+            if !status.success() {
+                anyhow::bail!("Failed to save config");
+            }
+            
+            // Clean up temp file
+            let _ = std::fs::remove_file(&temp_path);
+            
+            println!("Sandbox config saved to {}", SYSTEM_SANDBOX_CONFIG);
+        }
+        
+        SandboxCommand::Validate => {
+            let config_path = std::path::Path::new(SYSTEM_SANDBOX_CONFIG);
+            
+            if !config_path.exists() {
+                if json {
+                    println!(r#"{{"valid": false, "error": "Config file not found"}}"#);
+                } else {
+                    println!("Config file not found at {}", SYSTEM_SANDBOX_CONFIG);
+                }
+                return Ok(());
+            }
+            
+            // Try to read (may need sudo)
+            let content = match std::fs::read_to_string(config_path) {
+                Ok(c) => c,
+                Err(_) => {
+                    let output = std::process::Command::new("sudo")
+                        .args(["cat", SYSTEM_SANDBOX_CONFIG])
+                        .output()
+                        .context("Failed to read config")?;
+                    String::from_utf8_lossy(&output.stdout).to_string()
+                }
+            };
+            
+            match toml::from_str::<toml::Value>(&content) {
+                Ok(config) => {
+                    // Check required fields
+                    let mut warnings = vec![];
+                    
+                    if config.get("enabled").is_none() {
+                        warnings.push("Missing 'enabled' field (defaults to false)");
+                    }
+                    
+                    if config.get("deny_read").is_none() {
+                        warnings.push("Missing 'deny_read' field (sensitive files won't be protected)");
+                    }
+                    
+                    if json {
+                        let json_val = serde_json::json!({
+                            "valid": true,
+                            "warnings": warnings,
+                            "enabled": config.get("enabled").and_then(|v| v.as_bool()).unwrap_or(false),
+                            "profile": config.get("profile").and_then(|v| v.as_str()).unwrap_or("default")
+                        });
+                        println!("{}", serde_json::to_string_pretty(&json_val)?);
+                    } else {
+                        println!("Config is valid!");
+                        if !warnings.is_empty() {
+                            println!("\nWarnings:");
+                            for w in &warnings {
+                                println!("  - {}", w);
+                            }
+                        }
+                        
+                        let enabled = config.get("enabled").and_then(|v| v.as_bool()).unwrap_or(false);
+                        let profile = config.get("profile").and_then(|v| v.as_str()).unwrap_or("default");
+                        println!("\nStatus:");
+                        println!("  Enabled: {}", enabled);
+                        println!("  Profile: {}", profile);
+                    }
+                }
+                Err(e) => {
+                    if json {
+                        println!(r#"{{"valid": false, "error": "{}"}}"#, e);
+                    } else {
+                        eprintln!("Config is INVALID: {}", e);
+                    }
+                }
+            }
+        }
+        
+        SandboxCommand::Reset { yes } => {
+            if !yes {
+                print!("This will reset sandbox config to defaults. Continue? [y/N] ");
+                let _ = io::stdout().flush();
+                
+                let mut input = String::new();
+                io::stdin().read_line(&mut input)?;
+                
+                if !input.trim().eq_ignore_ascii_case("y") {
+                    println!("Aborted.");
+                    return Ok(());
+                }
+            }
+            
+            // Create parent directory if needed
+            let config_path = std::path::Path::new(SYSTEM_SANDBOX_CONFIG);
+            if let Some(parent) = config_path.parent() {
+                if !parent.exists() {
+                    let status = std::process::Command::new("sudo")
+                        .args(["mkdir", "-p", &parent.to_string_lossy()])
+                        .status()
+                        .context("Failed to create config directory")?;
+                    if !status.success() {
+                        anyhow::bail!("Failed to create config directory");
+                    }
+                }
+            }
+            
+            // Write default config
+            let mut child = std::process::Command::new("sudo")
+                .args(["tee", SYSTEM_SANDBOX_CONFIG])
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::null())
+                .spawn()
+                .context("Failed to spawn sudo tee")?;
+            
+            if let Some(mut stdin) = child.stdin.take() {
+                use std::io::Write;
+                stdin.write_all(DEFAULT_SANDBOX_CONFIG.as_bytes())?;
+            }
+            
+            let status = child.wait()?;
+            if !status.success() {
+                anyhow::bail!("Failed to write config");
+            }
+            
+            // Set permissions
+            let _ = std::process::Command::new("sudo")
+                .args(["chmod", "644", SYSTEM_SANDBOX_CONFIG])
+                .status();
+            let _ = std::process::Command::new("sudo")
+                .args(["chown", "root:root", SYSTEM_SANDBOX_CONFIG])
+                .status();
+            
+            if json {
+                println!(r#"{{"status": "reset", "path": "{}"}}"#, SYSTEM_SANDBOX_CONFIG);
+            } else {
+                println!("Sandbox config reset to defaults at {}", SYSTEM_SANDBOX_CONFIG);
             }
         }
     }
@@ -1729,6 +2185,132 @@ async fn handle_a2ui(client: &OctoClient, command: A2uiCommand, json: bool) -> R
             send_a2ui_surface(client, &session, parsed_messages, blocking, timeout, json).await
         }
     }
+}
+
+async fn handle_ui(client: &OctoClient, command: UiCommand, json: bool) -> Result<()> {
+    match command {
+        UiCommand::Navigate { path, replace } => {
+            let body = serde_json::json!({ "path": path, "replace": replace });
+            send_ui_event(client, "/ui/navigate", body, json).await
+        }
+        UiCommand::Session { session_id, mode } => {
+            let body = serde_json::json!({ "session_id": session_id, "mode": mode });
+            send_ui_event(client, "/ui/session", body, json).await
+        }
+        UiCommand::View { view } => {
+            let body = serde_json::json!({ "view": view });
+            send_ui_event(client, "/ui/view", body, json).await
+        }
+        UiCommand::Palette { open } => {
+            let body = serde_json::json!({ "open": open.unwrap_or(true) });
+            send_ui_event(client, "/ui/palette", body, json).await
+        }
+        UiCommand::PaletteExec { command, args } => {
+            let args_value = match args {
+                Some(raw) => Some(
+                    serde_json::from_str::<serde_json::Value>(&raw)
+                        .context("parsing palette exec args JSON")?,
+                ),
+                None => None,
+            };
+            let body = serde_json::json!({ "command": command, "args": args_value });
+            send_ui_event(client, "/ui/palette/exec", body, json).await
+        }
+        UiCommand::Spotlight {
+            target,
+            title,
+            description,
+            action,
+            position,
+            clear,
+        } => {
+            let body = serde_json::json!({
+                "target": if clear { None::<String> } else { target },
+                "title": title,
+                "description": description,
+                "action": action,
+                "position": position,
+                "active": !clear,
+            });
+            send_ui_event(client, "/ui/spotlight", body, json).await
+        }
+        UiCommand::Tour {
+            steps,
+            start_index,
+            stop,
+        } => {
+            let steps_value = if stop {
+                serde_json::Value::Array(vec![])
+            } else if let Some(raw) = steps {
+                serde_json::from_str::<serde_json::Value>(&raw)
+                    .context("parsing tour steps JSON")?
+            } else {
+                let mut input = String::new();
+                io::stdin()
+                    .read_to_string(&mut input)
+                    .context("reading tour steps from stdin")?;
+                serde_json::from_str::<serde_json::Value>(&input)
+                    .context("parsing tour steps from stdin")?
+            };
+
+            let steps_array = match steps_value {
+                serde_json::Value::Array(values) => values,
+                _ => anyhow::bail!("tour steps must be a JSON array"),
+            };
+
+            let body = serde_json::json!({
+                "steps": steps_array,
+                "start_index": start_index,
+                "active": !stop,
+            });
+            send_ui_event(client, "/ui/tour", body, json).await
+        }
+        UiCommand::Sidebar { collapsed } => {
+            let body = serde_json::json!({ "collapsed": collapsed });
+            send_ui_event(client, "/ui/sidebar", body, json).await
+        }
+        UiCommand::Panel { view, collapsed } => {
+            let body = serde_json::json!({ "view": view, "collapsed": collapsed });
+            send_ui_event(client, "/ui/panel", body, json).await
+        }
+        UiCommand::Theme { theme } => {
+            let body = serde_json::json!({ "theme": theme });
+            send_ui_event(client, "/ui/theme", body, json).await
+        }
+    }
+}
+
+async fn send_ui_event(
+    client: &OctoClient,
+    path: &str,
+    body: serde_json::Value,
+    json: bool,
+) -> Result<()> {
+    let response = client.post_json(path, &body).await?;
+    let status = response.status();
+    let text = response.text().await.context("reading response body")?;
+
+    if json {
+        if text.trim().is_empty() {
+            println!(
+                r#"{{"success": {}, "path": "{}"}}"#,
+                status.is_success(),
+                path
+            );
+        } else {
+            println!("{text}");
+        }
+        return Ok(());
+    }
+
+    if status.is_success() {
+        println!("UI event sent: {path}");
+    } else if text.trim().is_empty() {
+        println!("Server returned error: {}", status);
+    } else {
+        println!("Server returned error: {} - {}", status, text.trim());
+    }
+    Ok(())
 }
 
 fn gen_surface_id(prefix: &str) -> String {

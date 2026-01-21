@@ -87,6 +87,19 @@ impl LocalRuntimeConfig {
             );
         }
 
+        // In local multi-user mode, workspaces must be physically separated.
+        // Require a per-user placeholder to avoid accidentally sharing the same
+        // directory across all users.
+        if self.linux_users.enabled && !self.single_user {
+            if !self.workspace_dir.contains("{user_id}") && !self.workspace_dir.contains("{linux_username}") {
+                anyhow::bail!(
+                    "local.workspace_dir must include '{{user_id}}' or '{{linux_username}}' in multi-user mode (got: {}). \
+                     This is required to prevent cross-user filesystem access.",
+                    self.workspace_dir
+                );
+            }
+        }
+
         Ok(())
     }
 
@@ -122,8 +135,11 @@ impl LocalRuntimeConfig {
         // First expand environment variables
         let expanded = shellexpand::env(&self.workspace_dir)
             .unwrap_or_else(|_| std::borrow::Cow::Borrowed(&self.workspace_dir));
-        // Then replace {user_id} placeholder
-        let path_str = expanded.replace("{user_id}", user_id);
+        // Replace placeholders.
+        // NOTE: by default linux_username == user_id (recommended), but the config supports both.
+        let path_str = expanded
+            .replace("{linux_username}", user_id)
+            .replace("{user_id}", user_id);
         std::path::PathBuf::from(path_str)
     }
 
@@ -135,6 +151,9 @@ impl LocalRuntimeConfig {
             .unwrap_or_else(|_| std::borrow::Cow::Borrowed(&self.workspace_dir));
         // Remove {user_id} placeholder and any trailing slash
         let path_str = expanded
+            .replace("/{linux_username}", "")
+            .replace("{linux_username}/", "")
+            .replace("{linux_username}", "")
             .replace("/{user_id}", "")
             .replace("{user_id}/", "")
             .replace("{user_id}", "");

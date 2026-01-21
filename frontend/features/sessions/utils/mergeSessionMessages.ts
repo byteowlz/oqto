@@ -20,10 +20,16 @@ export function mergeSessionMessages(
 	const optimisticMessages = prev.filter((m) => m.info.id.startsWith("temp-"));
 	const pendingOptimistic = optimisticMessages.filter((optMsg) => {
 		const optText = optMsg.parts.find((p) => p.type === "text")?.text || "";
+		const optCreated = optMsg.info.time?.created;
 		const hasMatchingRealMessage = next.some((m) => {
 			if (m.info.role !== "user") return false;
 			const realText = m.parts.find((p) => p.type === "text")?.text || "";
-			return realText === optText;
+			if (realText !== optText) return false;
+			const realCreated = m.info.time?.created;
+			if (optCreated && realCreated) {
+				return Math.abs(realCreated - optCreated) < 15000;
+			}
+			return false;
 		});
 		return !hasMatchingRealMessage;
 	});
@@ -62,7 +68,15 @@ export function mergeSessionMessages(
 		return existing;
 	});
 
-	return pendingOptimistic.length > 0
-		? [...merged, ...pendingOptimistic]
-		: merged;
+	const combined =
+		pendingOptimistic.length > 0 ? [...merged, ...pendingOptimistic] : merged;
+
+	return combined
+		.map((message, index) => ({
+			message,
+			index,
+			created: message.info.time?.created ?? 0,
+		}))
+		.sort((a, b) => a.created - b.created || a.index - b.index)
+		.map(({ message }) => message);
 }

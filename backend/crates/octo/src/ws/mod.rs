@@ -36,4 +36,4 @@ mod types;
 
 pub use handler::ws_handler;
 pub use hub::WsHub;
-pub use types::WsEvent;
+pub use types::{UiSpotlightStep, WsEvent};

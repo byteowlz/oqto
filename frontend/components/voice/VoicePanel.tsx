@@ -126,8 +126,7 @@ export function VoicePanel({
 					{voiceState === "listening" && "Listening..."}
 					{voiceState === "processing" && "Processing..."}
 					{voiceState === "speaking" && "Speaking..."}
-					{voiceState === "idle" &&
-						(settings.micMuted ? "Mic muted" : "Ready")}
+					{voiceState === "idle" && (settings.micMuted ? "Mic muted" : "Ready")}
 				</span>
 			</div>
 

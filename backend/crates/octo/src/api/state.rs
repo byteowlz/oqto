@@ -5,8 +5,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use axum::body::Body;
-use hyper_util::client::legacy::Client;
 use hyper_util::client::legacy::connect::HttpConnector;
+use hyper_util::client::legacy::Client;
 use hyper_util::rt::TokioExecutor;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
@@ -16,6 +16,7 @@ use super::a2ui::PendingA2uiRequests;
 use crate::agent_rpc::AgentBackend;
 use crate::auth::AuthState;
 use crate::invite::InviteCodeRepository;
+use crate::local::LinuxUsersConfig;
 use crate::main_chat::{MainChatPiService, MainChatService};
 use crate::session::SessionService;
 use crate::session_ui::SessionAutoAttachMode;
@@ -36,6 +37,11 @@ pub struct MmryState {
     pub host_service_url: String,
     /// API key for authenticating with host mmry (optional).
     pub host_api_key: Option<String>,
+
+    /// Dedicated base port for per-user mmry instances (local multi-user mode).
+    pub user_base_port: u16,
+    /// Size of the per-user mmry port range (local multi-user mode).
+    pub user_port_range: u16,
 }
 
 impl Default for MmryState {
@@ -46,6 +52,9 @@ impl Default for MmryState {
             local_service_url: "http://localhost:8081".to_string(),
             host_service_url: "http://localhost:8081".to_string(),
             host_api_key: None,
+
+            user_base_port: 48_000,
+            user_port_range: 1_000,
         }
     }
 }
@@ -180,7 +189,12 @@ impl TemplatesState {
 
 impl Default for TemplatesState {
     fn default() -> Self {
-        Self::new(None, TemplatesRepoType::Remote, true, Duration::from_secs(120))
+        Self::new(
+            None,
+            TemplatesRepoType::Remote,
+            true,
+            Duration::from_secs(120),
+        )
     }
 }
 
@@ -223,6 +237,8 @@ pub struct AppState {
     pub pending_a2ui_requests: PendingA2uiRequests,
     /// Max proxy body size (bytes) for buffered proxy requests.
     pub max_proxy_body_bytes: usize,
+    /// Linux user isolation configuration (for multi-user mode).
+    pub linux_users: Option<LinuxUsersConfig>,
 }
 
 impl AppState {
@@ -261,6 +277,7 @@ impl AppState {
             ws_hub: Arc::new(WsHub::new()),
             pending_a2ui_requests: super::a2ui::new_pending_requests(),
             max_proxy_body_bytes,
+            linux_users: None,
         }
     }
 
@@ -300,6 +317,7 @@ impl AppState {
             ws_hub: Arc::new(WsHub::new()),
             pending_a2ui_requests: super::a2ui::new_pending_requests(),
             max_proxy_body_bytes,
+            linux_users: None,
         }
     }
 
@@ -315,6 +333,14 @@ impl AppState {
         self
     }
 
+    /// Set the Linux users config for multi-user isolation.
+    pub fn with_linux_users(mut self, config: LinuxUsersConfig) -> Self {
+        if config.enabled {
+            self.linux_users = Some(config);
+        }
+        self
+    }
+
     /// Set the main chat service.
     pub fn with_main_chat(mut self, service: MainChatService) -> Self {
         self.main_chat = Some(Arc::new(service));
@@ -322,10 +348,6 @@ impl AppState {
     }
 
     /// Set the main chat Pi service.
-    pub fn with_main_chat_pi(mut self, service: MainChatPiService) -> Self {
-        self.main_chat_pi = Some(Arc::new(service));
-        self
-    }
 
     /// Set the main chat Pi service from an existing Arc.
     pub fn with_main_chat_pi_arc(mut self, service: Arc<MainChatPiService>) -> Self {

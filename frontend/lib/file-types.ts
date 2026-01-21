@@ -233,7 +233,7 @@ export function getFileExtension(filename: string): string {
 		".eslintrc": "json",
 		".babelrc": "json",
 		".stylelintrc": "json",
-		"justfile": "makefile",
+		justfile: "makefile",
 		"justfile.js": "javascript",
 	};
 
@@ -407,7 +407,10 @@ export function getSyntaxLanguage(filename: string): string {
 export function extractFileReferences(content: string): string[] {
 	// Remove code blocks (both fenced ``` and inline `)
 	// Fenced code blocks: ```...``` or ~~~...~~~
-	const withoutFencedBlocks = content.replace(/```[\s\S]*?```|~~~[\s\S]*?~~~/g, "");
+	const withoutFencedBlocks = content.replace(
+		/```[\s\S]*?```|~~~[\s\S]*?~~~/g,
+		"",
+	);
 	// Inline code: `...`
 	const withoutInlineCode = withoutFencedBlocks.replace(/`[^`\n]+`/g, "");
 

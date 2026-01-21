@@ -99,10 +99,14 @@ pub struct SpawnProcessRequest {
     pub binary: String,
     /// Command line arguments.
     pub args: Vec<String>,
-    /// Working directory.
+    /// Working directory (also used as sandbox workspace).
     pub cwd: PathBuf,
     /// Environment variables (merged with runner's environment).
     pub env: HashMap<String, String>,
+    /// Whether to run this process in a sandbox.
+    /// The runner controls sandbox configuration from its own trusted config.
+    #[serde(default)]
+    pub sandboxed: bool,
 }
 
 /// Request to spawn a process with RPC pipes.
@@ -114,10 +118,14 @@ pub struct SpawnRpcProcessRequest {
     pub binary: String,
     /// Command line arguments.
     pub args: Vec<String>,
-    /// Working directory.
+    /// Working directory (also used as sandbox workspace).
     pub cwd: PathBuf,
     /// Environment variables (merged with runner's environment).
     pub env: HashMap<String, String>,
+    /// Whether to run this process in a sandbox.
+    /// The runner controls sandbox configuration from its own trusted config.
+    #[serde(default)]
+    pub sandboxed: bool,
 }
 
 /// Request to kill a process.

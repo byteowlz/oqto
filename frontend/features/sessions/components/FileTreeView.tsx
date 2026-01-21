@@ -425,7 +425,7 @@ export function FileTreeView({
 	// For API calls: main chat doesn't need workspace_path (null), workspace does
 	const apiWorkspacePath: string | null = isMainChat
 		? null
-		: workspacePath ?? null;
+		: (workspacePath ?? null);
 
 	const loadTree = useCallback(
 		async (path: string, preserveState = false, skipCache = false) => {
@@ -480,8 +480,6 @@ export function FileTreeView({
 		// Load tree for current path (uses cache if available)
 		loadTree(currentPath, true);
 	}, [currentPath, loadTree, workspacePath, isMainChat]);
-
-
 
 	const toggle = (path: string) => {
 		updateState({ expanded: { ...expanded, [path]: !expanded[path] } });

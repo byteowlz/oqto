@@ -18,10 +18,12 @@ export function setAuthToken(token: string | null): void {
 		localStorage.setItem(AUTH_TOKEN_KEY, token);
 		// Also set as cookie for WebSocket auth (browsers can't set headers on WS)
 		// Use SameSite=Lax to allow cross-origin requests from same site
+		// eslint-disable-next-line unicorn/no-document-cookie -- CookieStore is not widely supported.
 		document.cookie = `auth_token=${encodeURIComponent(token)}; path=/; SameSite=Lax`;
 	} else {
 		localStorage.removeItem(AUTH_TOKEN_KEY);
 		// Clear the cookie
+		// eslint-disable-next-line unicorn/no-document-cookie -- CookieStore is not widely supported.
 		document.cookie =
 			"auth_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
 	}
@@ -413,7 +415,9 @@ export type CodexBarUsagePayload = {
 	} | null;
 };
 
-export async function getCodexBarUsage(): Promise<CodexBarUsagePayload[] | null> {
+export async function getCodexBarUsage(): Promise<
+	CodexBarUsagePayload[] | null
+> {
 	const res = await authFetch(controlPlaneApiUrl("/api/codexbar/usage"), {
 		credentials: "include",
 	});
@@ -592,7 +596,8 @@ export async function createWorkspaceSession(
 		| { session?: WorkspaceSession }
 		| WorkspaceSession;
 	if ("id" in data) return normalizeSession(data);
-	if (data.session && "id" in data.session) return normalizeSession(data.session);
+	if (data.session && "id" in data.session)
+		return normalizeSession(data.session);
 	throw new Error("Unexpected create session response");
 }
 
@@ -1156,10 +1161,7 @@ export function mainChatFilesBaseUrl() {
 	return controlPlaneApiUrl("/api/main/files");
 }
 
-export function workspaceFileUrl(
-	workspacePath: string,
-	path: string,
-): string {
+export function workspaceFileUrl(workspacePath: string, path: string): string {
 	const baseUrl = fileserverWorkspaceBaseUrl();
 	const origin =
 		typeof window !== "undefined" ? window.location.origin : "http://localhost";
@@ -1570,6 +1572,44 @@ export async function listMainChatPiSessions(): Promise<PiSessionFile[]> {
 	return res.json();
 }
 
+/** Search result from Pi session search */
+export type PiSearchHit = {
+	agent: string;
+	source_path: string;
+	session_id: string;
+	message_id?: string;
+	line_number: number;
+	snippet?: string;
+	score: number;
+	timestamp?: number;
+	role?: string;
+	title?: string;
+};
+
+/** Search response from Pi session search */
+export type PiSearchResponse = {
+	hits: PiSearchHit[];
+	total: number;
+};
+
+/** Search Main Chat Pi sessions for message content */
+export async function searchMainChatPiSessions(
+	query: string,
+	limit = 50,
+): Promise<PiSearchResponse> {
+	const url = new URL(
+		controlPlaneApiUrl("/api/main/pi/sessions/search"),
+		window.location.origin,
+	);
+	url.searchParams.set("q", query);
+	url.searchParams.set("limit", limit.toString());
+	const res = await authFetch(url.toString(), {
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+	return res.json();
+}
+
 /** Start a brand new Pi session (creates new session file) */
 export async function newMainChatPiSessionFile(): Promise<PiState> {
 	const res = await authFetch(controlPlaneApiUrl("/api/main/pi/sessions"), {
@@ -1585,7 +1625,9 @@ export async function getMainChatPiSessionMessages(
 	sessionId: string,
 ): Promise<PiSessionMessage[]> {
 	const res = await authFetch(
-		controlPlaneApiUrl(`/api/main/pi/sessions/${encodeURIComponent(sessionId)}`),
+		controlPlaneApiUrl(
+			`/api/main/pi/sessions/${encodeURIComponent(sessionId)}`,
+		),
 		{ credentials: "include" },
 	);
 	if (!res.ok) throw new Error(await readApiError(res));
@@ -1593,9 +1635,13 @@ export async function getMainChatPiSessionMessages(
 }
 
 /** Resume/switch the active Pi session */
-export async function resumeMainChatPiSession(sessionId: string): Promise<PiState> {
+export async function resumeMainChatPiSession(
+	sessionId: string,
+): Promise<PiState> {
 	const res = await authFetch(
-		controlPlaneApiUrl(`/api/main/pi/sessions/${encodeURIComponent(sessionId)}`),
+		controlPlaneApiUrl(
+			`/api/main/pi/sessions/${encodeURIComponent(sessionId)}`,
+		),
 		{ method: "POST", credentials: "include" },
 	);
 	if (!res.ok) throw new Error(await readApiError(res));
@@ -1627,12 +1673,14 @@ export async function searchInPiSession(
 	limit = 20,
 ): Promise<InSessionSearchResult[]> {
 	const url = new URL(
-		controlPlaneApiUrl(`/api/agents/sessions/${encodeURIComponent(sessionId)}/search`),
+		controlPlaneApiUrl(
+			`/api/agents/sessions/${encodeURIComponent(sessionId)}/search`,
+		),
 		window.location.origin,
 	);
 	url.searchParams.set("q", query);
 	url.searchParams.set("limit", limit.toString());
-	
+
 	const res = await authFetch(url.toString(), {
 		credentials: "include",
 	});
@@ -1939,7 +1987,9 @@ export async function getMainChatPiHistory(
 	sessionId?: string,
 ): Promise<MainChatDbMessage[]> {
 	const url = sessionId
-		? controlPlaneApiUrl(`/api/main/pi/history?session_id=${encodeURIComponent(sessionId)}`)
+		? controlPlaneApiUrl(
+				`/api/main/pi/history?session_id=${encodeURIComponent(sessionId)}`,
+			)
 		: controlPlaneApiUrl("/api/main/pi/history");
 	const res = await authFetch(url, {
 		credentials: "include",

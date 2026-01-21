@@ -88,12 +88,22 @@ workspace_dir = "$HOME/octo/{user_id}"
 #   - Multi-tenancy is supported
 single_user = false
 
+# Use shared runner sockets so the backend can connect as non-root.
+runner_socket_pattern = "/run/octo/runner-sockets/{user}/octo-runner.sock"
+
 # Preserve running sessions across backend restarts.
 # When false, Octo will skip startup port cleanup to avoid killing running
 # opencode/fileserver/ttyd processes.
 cleanup_on_startup = false
 # When false, Octo will NOT stop local sessions on shutdown.
 stop_sessions_on_shutdown = false
+
+# Runner socket path pattern for per-user `octo-runner` daemons.
+# Supports `{user}` (Linux username) and `{uid}`.
+#
+# This is required for features that spawn per-user processes via the runner
+# (e.g. per-user mmry in local multi-user mode).
+# runner_socket_pattern = "/run/octo/runner-sockets/{user}/octo-runner.sock"
 
 # Linux user isolation for multi-user deployments
 # Creates a dedicated Linux user per platform user for process isolation.

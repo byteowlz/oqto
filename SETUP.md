@@ -412,8 +412,18 @@ chown octo:octo /var/lib/octo /run/octo
 # Enable and start
 systemctl enable --now octo
 
-# Users enable their own runner
-systemctl --user enable --now octo-runner
+# Octo will attempt to enable lingering and start `octo-runner` automatically
+# when creating Linux users (when `local.linux_users.enabled=true`).
+# If needed, you can enable it manually for a specific Linux user:
+sudo loginctl enable-linger <username>
+sudo -u <username> systemctl --user enable --now octo-runner
+
+For non-root Octo backends in local multi-user mode, we recommend using shared
+runner sockets:
+
+- Runner socket base: `/run/octo/runner-sockets/<user>/octo-runner.sock`
+- Ensure `/run/octo/runner-sockets` exists via tmpfiles (see `systemd/octo-runner.tmpfiles.conf`)
+- Ensure the Octo backend user is in the shared `octo` group
 ```
 
 ### macOS (launchd)

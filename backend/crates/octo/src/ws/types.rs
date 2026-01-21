@@ -9,6 +9,20 @@ use serde_json::Value;
 // Events (Server -> Client)
 // ============================================================================
 
+/// Spotlight step definition for UI tours.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiSpotlightStep {
+    pub target: String,
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub action: Option<String>,
+    #[serde(default)]
+    pub position: Option<String>,
+}
+
 /// Events sent from backend to frontend over WebSocket.
 ///
 /// All events are tagged with a session_id to allow multiplexing multiple
@@ -171,6 +185,80 @@ pub enum WsEvent {
         session_id: String,
         request_id: String,
     },
+
+    // ========== UI Control Events ==========
+    /// Navigate to a route/path.
+    #[serde(rename = "ui.navigate")]
+    UiNavigate { path: String, replace: bool },
+
+    /// Switch active session.
+    #[serde(rename = "ui.session")]
+    UiSession {
+        session_id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        mode: Option<String>,
+    },
+
+    /// Switch active view inside the session UI.
+    #[serde(rename = "ui.view")]
+    UiView { view: String },
+
+    /// Open or close the command palette.
+    #[serde(rename = "ui.palette")]
+    UiPalette { open: bool },
+
+    /// Execute a command palette action directly.
+    #[serde(rename = "ui.palette_exec")]
+    UiPaletteExec {
+        command: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        args: Option<Value>,
+    },
+
+    /// Spotlight a specific UI element.
+    #[serde(rename = "ui.spotlight")]
+    UiSpotlight {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        target: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        title: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        description: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        action: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        position: Option<String>,
+        active: bool,
+    },
+
+    /// Tour mode for sequential spotlights.
+    #[serde(rename = "ui.tour")]
+    UiTour {
+        steps: Vec<UiSpotlightStep>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        start_index: Option<u32>,
+        active: bool,
+    },
+
+    /// Collapse/expand the left sidebar.
+    #[serde(rename = "ui.sidebar")]
+    UiSidebar {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        collapsed: Option<bool>,
+    },
+
+    /// Control right panel or expanded panel state.
+    #[serde(rename = "ui.panel")]
+    UiPanel {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        view: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        collapsed: Option<bool>,
+    },
+
+    /// Switch theme.
+    #[serde(rename = "ui.theme")]
+    UiTheme { theme: String },
 
     // ========== OpenCode-Specific Events ==========
     /// Raw OpenCode SSE event (for backwards compatibility).

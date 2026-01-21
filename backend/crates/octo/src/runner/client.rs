@@ -83,6 +83,10 @@ impl RunnerClient {
     }
 
     /// Spawn an RPC process with stdin/stdout pipes.
+    /// Spawn an RPC process (with stdin/stdout pipes).
+    ///
+    /// If `sandboxed` is true, the runner will wrap the process in a sandbox
+    /// using its trusted configuration from `/etc/octo/sandbox.toml`.
     pub async fn spawn_rpc_process(
         &self,
         id: impl Into<String>,
@@ -90,6 +94,7 @@ impl RunnerClient {
         args: Vec<String>,
         cwd: impl Into<PathBuf>,
         env: HashMap<String, String>,
+        sandboxed: bool,
     ) -> Result<u32> {
         let req = RunnerRequest::SpawnRpcProcess(SpawnRpcProcessRequest {
             id: id.into(),
@@ -97,6 +102,7 @@ impl RunnerClient {
             args,
             cwd: cwd.into(),
             env,
+            sandboxed,
         });
 
         let resp = self.request(&req).await?;
@@ -189,7 +195,6 @@ impl RunnerClient {
 
         match resp {
             RunnerResponse::StdoutSubscribed(_) => Ok(StdoutSubscription {
-                process_id,
                 lines,
                 _writer: writer,
             }),
@@ -199,22 +204,30 @@ impl RunnerClient {
             _ => anyhow::bail!("unexpected response to subscribe_stdout"),
         }
     }
+
+    /// Kill a managed process by runner process ID.
+    pub async fn kill_process(&self, id: impl Into<String>, force: bool) -> Result<bool> {
+        let req = RunnerRequest::KillProcess(KillProcessRequest {
+            id: id.into(),
+            force,
+        });
+
+        let resp = self.request(&req).await?;
+        match resp {
+            RunnerResponse::ProcessKilled(k) => Ok(k.was_running),
+            _ => anyhow::bail!("unexpected response to kill_process"),
+        }
+    }
 }
 
 /// An active stdout subscription that yields lines as they arrive.
 pub struct StdoutSubscription {
-    process_id: String,
     lines: tokio::io::Lines<BufReader<tokio::net::unix::OwnedReadHalf>>,
     // Keep writer alive to maintain connection
     _writer: tokio::net::unix::OwnedWriteHalf,
 }
 
 impl StdoutSubscription {
-    /// Get the process ID this subscription is for.
-    pub fn process_id(&self) -> &str {
-        &self.process_id
-    }
-
     /// Read the next event from the subscription.
     /// Returns None when the subscription ends (process exited or connection closed).
     pub async fn next(&mut self) -> Option<StdoutSubscriptionEvent> {
@@ -224,9 +237,7 @@ impl StdoutSubscription {
                     Ok(RunnerResponse::StdoutLine(l)) => {
                         Some(StdoutSubscriptionEvent::Line(l.line))
                     }
-                    Ok(RunnerResponse::StdoutEnd(e)) => Some(StdoutSubscriptionEvent::End {
-                        exit_code: e.exit_code,
-                    }),
+                    Ok(RunnerResponse::StdoutEnd(_e)) => Some(StdoutSubscriptionEvent::End),
                     Ok(_) => {
                         // Unexpected response, skip
                         None
@@ -248,7 +259,7 @@ pub enum StdoutSubscriptionEvent {
     /// A line from stdout.
     Line(String),
     /// The subscription ended (process exited).
-    End { exit_code: Option<i32> },
+    End,
 }
 
 impl std::fmt::Debug for RunnerClient {

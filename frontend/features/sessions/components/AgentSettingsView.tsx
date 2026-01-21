@@ -227,8 +227,7 @@ export function AgentSettingsView({
 	const getValue = <K extends keyof WorkspaceConfig>(
 		key: K,
 	): WorkspaceConfig[K] | undefined => {
-		if (key in pendingChanges)
-			return pendingChanges[key] as WorkspaceConfig[K];
+		if (key in pendingChanges) return pendingChanges[key] as WorkspaceConfig[K];
 		if (localConfig?.[key] !== undefined) return localConfig[key];
 		return globalConfig?.[key];
 	};
@@ -391,7 +390,9 @@ export function AgentSettingsView({
 								</div>
 								{modelOptions.length === 0 ? (
 									<SelectItem value="__none__" disabled>
-										{isModelLoading ? "Loading..." : "Start a session to select models"}
+										{isModelLoading
+											? "Loading..."
+											: "Start a session to select models"}
 									</SelectItem>
 								) : filteredModelOptions.length === 0 ? (
 									<SelectItem value="__no_results__" disabled>
@@ -408,7 +409,10 @@ export function AgentSettingsView({
 												className="text-xs"
 											>
 												<span className="flex items-center gap-2 max-w-[250px]">
-													<ProviderIcon provider={provider} className="w-4 h-4 flex-shrink-0" />
+													<ProviderIcon
+														provider={provider}
+														className="w-4 h-4 flex-shrink-0"
+													/>
 													<span className="truncate">{option.label}</span>
 												</span>
 											</SelectItem>

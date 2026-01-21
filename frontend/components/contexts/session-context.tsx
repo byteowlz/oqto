@@ -20,7 +20,6 @@ import {
 } from "@/lib/control-plane-client";
 import {
 	type OpenCodeSession,
-	type Persona,
 	createSession,
 	deleteSession,
 	fetchSessions,
@@ -77,10 +76,6 @@ interface SessionContextValue {
 		directoryOverride?: string,
 		options?: { optimisticId?: string },
 	) => Promise<OpenCodeSession | null>;
-	createNewChatWithPersona: (
-		persona: Persona,
-		workspacePath?: string,
-	) => Promise<OpenCodeSession | null>;
 	deleteChatSession: (
 		sessionId: string,
 		baseUrlOverride?: string,
@@ -112,12 +107,73 @@ interface SessionContextValue {
 	mainChatNewSessionTrigger: number;
 	/** Request a new Main Chat session (increments trigger) */
 	requestNewMainChatSession: () => void;
+	/** Trigger that increments when Main Chat session has activity (message sent) */
+	mainChatSessionActivityTrigger: number;
+	/** Notify that Main Chat session has activity (increments trigger) */
+	notifyMainChatSessionActivity: () => void;
 	/** Target message ID to scroll to after navigation (from search) */
 	scrollToMessageId: string | null;
 	setScrollToMessageId: (id: string | null) => void;
 }
 
-const SessionContext = createContext<SessionContextValue | null>(null);
+// Default no-op functions for HMR resilience - these are replaced by the real provider
+const noop = () => {};
+const asyncNoop = async () => null;
+const asyncNoopVoid = async () => {};
+const asyncNoopBool = async () => false;
+
+// During HMR, components may briefly render without the provider.
+// This default value prevents crashes while React Fast Refresh retries.
+const defaultSessionContext: SessionContextValue = {
+	workspaceSessions: [],
+	selectedWorkspaceSessionId: "",
+	setSelectedWorkspaceSessionId: noop,
+	selectedWorkspaceSession: undefined,
+	opencodeBaseUrl: "",
+	opencodeDirectory: undefined,
+	chatHistory: [],
+	opencodeSessions: [],
+	selectedChatSessionId: "",
+	setSelectedChatSessionId: noop,
+	selectedChatSession: undefined,
+	selectedChatFromHistory: undefined,
+	busySessions: new Set(),
+	setSessionBusy: noop,
+	refreshWorkspaceSessions: asyncNoopVoid,
+	refreshChatHistory: asyncNoopVoid,
+	refreshOpencodeSessions: asyncNoopVoid,
+	createOptimisticChatSession: () => "",
+	clearOptimisticChatSession: noop,
+	ensureOpencodeRunning: asyncNoop,
+	createNewChat: asyncNoop,
+	deleteChatSession: asyncNoopBool,
+	renameChatSession: asyncNoopBool,
+	stopWorkspaceSession: asyncNoopBool,
+	deleteWorkspaceSession: asyncNoopBool,
+	upgradeWorkspaceSession: asyncNoopBool,
+	projects: [],
+	startProjectSession: asyncNoop,
+	projectDefaultAgents: {},
+	setProjectDefaultAgents: noop,
+	mainChatActive: false,
+	setMainChatActive: noop,
+	mainChatAssistantName: null,
+	setMainChatAssistantName: noop,
+	mainChatCurrentSessionId: null,
+	setMainChatCurrentSessionId: noop,
+	mainChatWorkspacePath: null,
+	setMainChatWorkspacePath: noop,
+	mainChatNewSessionTrigger: 0,
+	requestNewMainChatSession: noop,
+	mainChatSessionActivityTrigger: 0,
+	notifyMainChatSessionActivity: noop,
+	scrollToMessageId: null,
+	setScrollToMessageId: noop,
+};
+
+const SessionContext = createContext<SessionContextValue>(
+	defaultSessionContext,
+);
 
 export function SessionProvider({ children }: { children: ReactNode }) {
 	const { locale } = useLocale();
@@ -132,9 +188,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 	// Chat history from disk (no running opencode needed)
 	const [chatHistory, setChatHistory] = useState<ChatSession[]>([]);
 	const chatHistoryRef = useRef<ChatSession[]>([]);
-	const optimisticChatSessionsRef = useRef<Map<string, ChatSession>>(
-		new Map(),
-	);
+	const optimisticChatSessionsRef = useRef<Map<string, ChatSession>>(new Map());
 	const optimisticSelectionRef = useRef<Map<string, string>>(new Map());
 	// Track sessions that were just explicitly created - prevents refresh from overriding selection
 	const recentlyCreatedSessionRef = useRef<string | null>(null);
@@ -203,7 +257,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 		if (typeof window !== "undefined") {
 			try {
 				const lastSessionId = localStorage.getItem("octo:lastChatSessionId");
-				const lastMainChatActive = localStorage.getItem("octo:lastMainChatActive");
+				const lastMainChatActive = localStorage.getItem(
+					"octo:lastMainChatActive",
+				);
 				// If we have a stored preference, use it
 				if (lastMainChatActive !== null) {
 					return lastMainChatActive === "true";
@@ -276,7 +332,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 			setMainChatWorkspacePathRaw(null);
 			return;
 		}
-		
+
 		// Try to load from cache first for instant display
 		if (typeof window !== "undefined") {
 			try {
@@ -288,7 +344,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 				// Ignore localStorage errors
 			}
 		}
-		
+
 		// Then fetch fresh data from API
 		let cancelled = false;
 		getMainChatAssistant("default")
@@ -362,8 +418,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 		(workspacePath: string) => {
 			const normalized = workspacePath.replace(/\\/g, "/").replace(/\/+$/, "");
 			const project = projects.find(
-				(entry) =>
-					entry.path === workspacePath || entry.path === normalized,
+				(entry) => entry.path === workspacePath || entry.path === normalized,
 			);
 			if (project?.name) return project.name;
 			const parts = normalized.split("/").filter(Boolean);
@@ -398,7 +453,13 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 			setSelectedChatSessionId(optimisticId);
 			return optimisticId;
 		},
-		[locale, opencodeDirectory, resolveProjectName, selectedChatSessionId, setSelectedChatSessionId],
+		[
+			locale,
+			opencodeDirectory,
+			resolveProjectName,
+			selectedChatSessionId,
+			setSelectedChatSessionId,
+		],
 	);
 
 	const clearOptimisticChatSession = useCallback(
@@ -438,9 +499,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 			startTransition(() => {
 				const optimisticSessions = Array.from(
 					optimisticChatSessionsRef.current.values(),
-				).filter(
-					(session) => !history.some((item) => item.id === session.id),
-				);
+				).filter((session) => !history.some((item) => item.id === session.id));
 				setChatHistory(
 					optimisticSessions.length > 0
 						? [...optimisticSessions, ...history]
@@ -451,6 +510,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 					setSelectedChatSessionId((current) => {
 						// Don't override selection for recently created sessions
 						if (current && current === recentlyCreatedSessionRef.current) {
+							return current;
+						}
+						if (current && opencodeSessions.some((s) => s.id === current)) {
 							return current;
 						}
 						if (current && history.some((s) => s.id === current))
@@ -465,7 +527,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 		} catch (err) {
 			console.error("Failed to load chat history:", err);
 		}
-	}, [mainChatActive, setSelectedChatSessionId]);
+	}, [mainChatActive, opencodeSessions, setSelectedChatSessionId]);
 
 	const refreshWorkspaceSessions = useCallback(async () => {
 		try {
@@ -481,14 +543,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 				if (sessionsData.length > 0) {
 					setSelectedWorkspaceSessionId((current) => {
 						if (!current) {
-							const running = sessionsData.find(
-								(s) => s.status === "running",
-							);
+							const running = sessionsData.find((s) => s.status === "running");
 							return running?.id || sessionsData[0].id;
 						}
-						const currentSession = sessionsData.find(
-							(s) => s.id === current,
-						);
+						const currentSession = sessionsData.find((s) => s.id === current);
 						if (!currentSession) {
 							return sessionsData[0].id;
 						}
@@ -502,9 +560,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 	}, []);
 
 	// Debounced refresh
-	const refreshTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
-		null,
-	);
+	const refreshTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const debouncedRefreshWorkspaceSessions = useCallback(() => {
 		if (refreshTimeoutRef.current) {
 			clearTimeout(refreshTimeoutRef.current);
@@ -766,7 +822,12 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 		} catch (err) {
 			console.error("Failed to load opencode sessions:", err);
 		}
-	}, [mainChatActive, opencodeBaseUrl, opencodeDirectory, setSelectedChatSessionId]);
+	}, [
+		mainChatActive,
+		opencodeBaseUrl,
+		opencodeDirectory,
+		setSelectedChatSessionId,
+	]);
 
 	const createNewChat = useCallback(
 		async (
@@ -815,83 +876,21 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 		],
 	);
 
-	const createNewChatWithPersona = useCallback(
-		async (
-			persona: Persona,
-			workspacePath?: string,
-		): Promise<OpenCodeSession | null> => {
-			try {
-				const basePath = selectedWorkspaceSession?.workspace_path;
-				const resolvePath = (path?: string) => {
-					if (!path) return undefined;
-					if (path.startsWith("/")) return path;
-					if (!basePath) return path;
-					if (path === "." || path.trim() === "") return basePath;
-					const joined = `${basePath}/${path}`;
-					const normalized = joined.split("/").filter(Boolean).join("/");
-					return basePath.startsWith("/") ? `/${normalized}` : normalized;
-				};
-				const resolvedPath =
-					workspacePath ?? resolvePath(persona.default_workdir || undefined);
-
-				const workspaceSession = await createWorkspaceSession({
-					persona_id: persona.id,
-					workspace_path: resolvedPath,
-				});
-
-				await refreshWorkspaceSessions();
-				setSelectedWorkspaceSessionId(workspaceSession.id);
-
-				const baseUrl = opencodeProxyBaseUrl(workspaceSession.id);
-
-				let attempts = 0;
-				const maxAttempts = 30;
-				while (attempts < maxAttempts) {
-					try {
-						const created = await createSession(baseUrl, undefined, undefined, {
-							directory: resolvedPath,
-						});
-						setOpencodeSessions((prev) => [created, ...prev]);
-						// Mark as recently created to prevent refresh from overriding selection
-						recentlyCreatedSessionRef.current = created.id;
-						setSelectedChatSessionId(created.id);
-						setTimeout(() => {
-							refreshChatHistory();
-							// Clear the recently created flag after refresh completes
-							setTimeout(() => {
-								if (recentlyCreatedSessionRef.current === created.id) {
-									recentlyCreatedSessionRef.current = null;
-								}
-							}, 100);
-						}, 500);
-						return created;
-					} catch {
-						attempts++;
-						await new Promise((resolve) => setTimeout(resolve, 1000));
-					}
-				}
-
-				console.error("Timeout waiting for workspace session to be ready");
-				return null;
-			} catch (err) {
-				console.error("Failed to create new chat with persona:", err);
-				return null;
-			}
-		},
-		[
-			refreshWorkspaceSessions,
-			refreshChatHistory,
-			selectedWorkspaceSession?.workspace_path,
-			setSelectedChatSessionId,
-		],
-	);
-
 	// Trigger for creating a new Main Chat session
 	const [mainChatNewSessionTrigger, setMainChatNewSessionTrigger] = useState(0);
 
 	// Request a new Main Chat session by incrementing the trigger
 	const requestNewMainChatSession = useCallback(() => {
 		setMainChatNewSessionTrigger((prev) => prev + 1);
+	}, []);
+
+	// Trigger for Main Chat session activity (message sent)
+	const [mainChatSessionActivityTrigger, setMainChatSessionActivityTrigger] =
+		useState(0);
+
+	// Notify that Main Chat session has activity
+	const notifyMainChatSessionActivity = useCallback(() => {
+		setMainChatSessionActivityTrigger((prev) => prev + 1);
 	}, []);
 
 	const deleteChatSession = useCallback(
@@ -905,9 +904,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 				setOpencodeSessions((prev) => prev.filter((s) => s.id !== sessionId));
 				setSelectedChatSessionId((current) => {
 					if (current !== sessionId) return current;
-					const remaining = opencodeSessions.filter(
-						(s) => s.id !== sessionId,
-					);
+					const remaining = opencodeSessions.filter((s) => s.id !== sessionId);
 					return remaining.length > 0 ? remaining[0].id : "";
 				});
 				setTimeout(() => {
@@ -1035,7 +1032,6 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 			clearOptimisticChatSession,
 			ensureOpencodeRunning,
 			createNewChat,
-			createNewChatWithPersona,
 			deleteChatSession,
 			renameChatSession,
 			stopWorkspaceSession: handleStopWorkspaceSession,
@@ -1055,6 +1051,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 			setMainChatWorkspacePath,
 			mainChatNewSessionTrigger,
 			requestNewMainChatSession,
+			mainChatSessionActivityTrigger,
+			notifyMainChatSessionActivity,
 			scrollToMessageId,
 			setScrollToMessageId,
 		}),
@@ -1079,7 +1077,6 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 			clearOptimisticChatSession,
 			ensureOpencodeRunning,
 			createNewChat,
-			createNewChatWithPersona,
 			deleteChatSession,
 			renameChatSession,
 			handleStopWorkspaceSession,
@@ -1095,24 +1092,20 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 			mainChatWorkspacePath,
 			mainChatNewSessionTrigger,
 			requestNewMainChatSession,
+			mainChatSessionActivityTrigger,
+			notifyMainChatSessionActivity,
 			setMainChatWorkspacePath,
 			scrollToMessageId,
 		],
 	);
 
 	return (
-		<SessionContext.Provider value={value}>
-			{children}
-		</SessionContext.Provider>
+		<SessionContext.Provider value={value}>{children}</SessionContext.Provider>
 	);
 }
 
 export function useSessionContext() {
-	const context = useContext(SessionContext);
-	if (!context) {
-		throw new Error("useSessionContext must be used within a SessionProvider");
-	}
-	return context;
+	return useContext(SessionContext);
 }
 
 // Selective hooks for performance - only subscribe to what you need

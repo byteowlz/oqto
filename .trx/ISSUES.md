@@ -2,20 +2,14 @@
 
 ## Open
 
-### [octo-thhx.7] Add data-spotlight attributes to UI elements (P1, task)
-Add data-spotlight attributes to: sidebar, file-tree, todo-list, terminal, canvas, chat-input, chat-timeline, model-picker, command-palette, memory-view, trx-view, session-list
+### [octo-y1nq] Opencode agent connection cycling - rapid disconnect/reconnect loop (P1, bug)
+The opencode agent repeatedly disconnects and reconnects in rapid succession (observed 15+ cycles in logs). Pattern observed:
 
-### [octo-thhx.6] Spotlight overlay component (P1, task)
-React component with SVG mask cutout, tooltip positioning, pulse animation. Uses data-spotlight attributes to find target elements. Renders above all content with pointer-events passthrough for target.
+[Event] agent_disconnected
+[Event] agent_reconnecting  
+[Event] agent_connected
+...
 
-### [octo-thhx.5] octoctl ui CLI commands (P1, task)
-CLI subcommands: octoctl ui navigate, session, view, palette, spotlight, tour, sidebar, panel, theme. Calls backend API which broadcasts WebSocket events to frontend.
-
-### [octo-thhx.4] WebSocket ui.* events for agent UI control (P1, task)
-Backend routes and WebSocket event types: ui.navigate, ui.session, ui.view, ui.palette, ui.palette_exec, ui.spotlight, ui.tour, ui.sidebar, ui.panel, ui.theme
-
-### [octo-thhx.3] UIControlContext for agent-driven navigation (P1, task)
-React context providing programmatic UI control: navigate(), switchSession(), switchView(), openPalette(), toggleSidebar(), setPanel(). Consumed by WebSocket event handlers.
 
 ### [octo-thhx.2] Onboarding API endpoints (P1, task)
 REST endpoints: GET/PUT /api/onboarding/state, POST /api/onboarding/unlock/{component}, POST /api/onboarding/godmode, POST /api/onboarding/complete
@@ -61,6 +55,36 @@ Implementation:
 
 ### [workspace-5pmk.11] Add backend URL configuration to login form (P1, task)
 Add a 'Server URL' field to the login form allowing users to specify the backend URL. Store in localStorage for persistence. Show connection status indicator. Default to current origin for web, require input for mobile apps.
+
+### [octo-h0by] add user self-service section in settings (change password etc) (P2, task)
+
+### [octo-f50n] redirect to login for unauthenticated users (P2, task)
+
+### [octo-eb0b] Per-user mmry instances in local multi-user mode (P2, feature)
+## Overview
+
+In local multi-user mode, each platform user should get their own mmry service instance for memory isolation. Currently mmry_port is allocated per-session but mmry is never spawned.
+
+## Architecture
+...
+
+
+### [octo-85f4] the stop button doesnt seem to stop a running agent response (P2, bug)
+
+### [octo-8pfr] 503 Service Unavailable on /code/ endpoints during agent reconnection (P2, bug)
+Multiple requests to opencode proxy endpoints return 503 Service Unavailable:
+
+- /code/session/{id}/message - fetching messages
+- /code/config/providers - getting provider config  
+- /code/session/{id}/prompt_async - sending prompts
+...
+
+
+### [octo-aexm] message order gets mixed up in opencode session: earlier message shows up as latest message. (P2, bug)
+
+### [octo-e8q8] There is no way to display closed trx issues (P2, bug)
+
+### [octo-w85q] When adding an image to the canvas, we need to automatically fit the canvas to the image size. And the default canvas size should be 1280x1280 with a properly sized default font size (P2, bug)
 
 ### [octo-vbzq] Add Edit button to file viewer toolbar (P2, feature)
 Add an Edit button with pencil icon to the file viewer toolbar, alongside the existing expand/collapse, search, and close panel buttons. The Edit button should open the file for editing.
@@ -147,15 +171,6 @@ Define what "context" means for agent interactions in Octo, and how it is repres
 
 ## Context Model (Proposed)
 A versioned envelope composed of multiple context "sources".
-...
-
-
-### [octo-wzvn] Agent-driven UI control (conversational navigation) (P2, feature)
-## Problem
-Users want to navigate and operate the Octo web UI conversationally. The agent should be able to trigger UI actions (e.g., expanding/collapsing panels/canvas, switching apps/routes, opening dialogs, selecting sessions, focusing inputs) so the user can say what they want and the UI responds.
-
-## Proposed Feature
-Introduce a controlled "agent actions" layer that exposes safe UI commands to the agent (via tool calls / structured messages), such as:
 ...
 
 
@@ -563,6 +578,13 @@ Desired behavior: Tool calls hidden by default, toggle to show
 
 ## Closed
 
+- [octo-wzvn] Agent-driven UI control (conversational navigation) (closed 2026-01-21)
+- [octo-q9dx] Transcription continuing after stopping Conversation mode (closed 2026-01-21)
+- [octo-thhx.7] Add data-spotlight attributes to UI elements (closed 2026-01-21)
+- [octo-thhx.6] Spotlight overlay component (closed 2026-01-21)
+- [octo-thhx.5] octoctl ui CLI commands (closed 2026-01-21)
+- [octo-thhx.4] WebSocket ui.* events for agent UI control (closed 2026-01-21)
+- [octo-thhx.3] UIControlContext for agent-driven navigation (closed 2026-01-21)
 - [octo-ybx2] File viewer toolbar icons colliding/overlapping (closed 2026-01-20)
 - [octo-1s4j] Text entered in one chat but not send stays visible when changing chats. this needs to be isolated for each chat and not global across all chats  (closed 2026-01-19)
 - [octo-r46b] When viewing one opencode chat I suddenly got the content from another chat rendered. the title was from the actual chat thoug. (closed 2026-01-17)

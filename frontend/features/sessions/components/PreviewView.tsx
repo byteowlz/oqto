@@ -351,7 +351,7 @@ export function PreviewView({
 	// For API calls: main chat doesn't need workspace_path (null), workspace does
 	const apiWorkspacePath: string | null = isMainChat
 		? null
-		: workspacePath ?? null;
+		: (workspacePath ?? null);
 
 	// Detect dark mode
 	useEffect(() => {
@@ -386,7 +386,12 @@ export function PreviewView({
 
 		// Don't fetch content for PDF, image, video, or audio files - they render via URL
 		const filename = filePath.split("/").pop() || filePath;
-		if (isPdf(filename) || isImage(filename) || isVideo(filename) || isAudio(filename)) {
+		if (
+			isPdf(filename) ||
+			isImage(filename) ||
+			isVideo(filename) ||
+			isAudio(filename)
+		) {
 			setContent("");
 			setEditedContent("");
 			setIsEditing(false);
@@ -464,7 +469,13 @@ export function PreviewView({
 		} finally {
 			setSaving(false);
 		}
-	}, [fileserverBaseUrl, filePath, editedContent, cacheKeyPrefix, apiWorkspacePath]);
+	}, [
+		fileserverBaseUrl,
+		filePath,
+		editedContent,
+		cacheKeyPrefix,
+		apiWorkspacePath,
+	]);
 
 	const handleCancel = useCallback(() => {
 		setEditedContent(content);
@@ -858,18 +869,18 @@ export function PreviewView({
 		<div className={cn("h-full flex flex-col overflow-hidden", className)}>
 			{/* Header */}
 			{showHeader && (
-				<div className={cn(
-					"flex-shrink-0 flex items-center justify-between px-2 py-1 border-b border-border bg-muted/30",
-					isExpanded && "pr-10"
-				)}>
+				<div
+					className={cn(
+						"flex-shrink-0 flex items-center justify-between px-2 py-1 border-b border-border bg-muted/30",
+						isExpanded && "pr-10",
+					)}
+				>
 					<p
 						className="text-xs font-mono text-muted-foreground truncate flex-1"
 						title={filePath}
 					>
 						{filename}
-						{isEditing && (
-							<span className="ml-2 text-primary">(editing)</span>
-						)}
+						{isEditing && <span className="ml-2 text-primary">(editing)</span>}
 					</p>
 					<div className="flex items-center gap-0.5 ml-2">
 						{isEditing ? (

@@ -3,6 +3,15 @@
 //! This daemon runs as a specific Linux user (via systemd user service) and
 //! accepts commands over a Unix socket to spawn and manage processes.
 //!
+//! ## Security Model
+//!
+//! The runner loads its sandbox configuration from a **trusted location**
+//! (`/etc/octo/sandbox.toml`) that is owned by root. This ensures that even
+//! if the main octo server is compromised, it cannot weaken sandbox restrictions.
+//!
+//! The server can request that a process be sandboxed (via `sandboxed: true`),
+//! but the runner controls *how* the sandbox is configured.
+//!
 //! ## Usage
 //!
 //! ```bash
@@ -11,6 +20,9 @@
 //!
 //! # Run with custom socket path
 //! octo-runner --socket /tmp/my-runner.sock
+//!
+//! # With custom sandbox config
+//! octo-runner --sandbox-config /path/to/sandbox.toml
 //! ```
 
 use anyhow::{Context, Result};
@@ -25,6 +37,7 @@ use tokio::net::{UnixListener, UnixStream};
 use tokio::process::{Child, Command};
 use tokio::sync::{Mutex, RwLock, broadcast};
 
+use octo::local::SandboxConfig;
 use octo::runner::client::DEFAULT_SOCKET_PATTERN;
 use octo::runner::protocol::*;
 
@@ -38,6 +51,15 @@ struct Args {
     /// Defaults to /run/octo/runner-{username}.sock
     #[arg(short, long)]
     socket: Option<PathBuf>,
+
+    /// Path to sandbox config file.
+    /// Defaults to /etc/octo/sandbox.toml (system-wide, trusted).
+    #[arg(long)]
+    sandbox_config: Option<PathBuf>,
+
+    /// Disable sandboxing entirely.
+    #[arg(long)]
+    no_sandbox: bool,
 
     /// Enable verbose logging.
     #[arg(short, long)]
@@ -120,14 +142,17 @@ impl RunnerState {
 struct Runner {
     state: Arc<RwLock<RunnerState>>,
     shutdown_tx: broadcast::Sender<()>,
+    /// Sandbox configuration (loaded from trusted system config).
+    sandbox_config: Option<SandboxConfig>,
 }
 
 impl Runner {
-    fn new() -> Self {
+    fn new(sandbox_config: Option<SandboxConfig>) -> Self {
         let (shutdown_tx, _) = broadcast::channel(1);
         Self {
             state: Arc::new(RwLock::new(RunnerState::new())),
             shutdown_tx,
+            sandbox_config,
         }
     }
 
@@ -151,6 +176,7 @@ impl Runner {
                         args: r.args,
                         cwd: r.cwd,
                         env: r.env,
+                        sandboxed: r.sandboxed,
                     },
                     true,
                 )
@@ -222,10 +248,58 @@ impl Runner {
             );
         }
 
-        // Build command
-        let mut cmd = Command::new(&req.binary);
-        cmd.args(&req.args);
-        cmd.current_dir(&req.cwd);
+        // Determine if we should sandbox this process
+        let use_sandbox = req.sandboxed && self.sandbox_config.is_some();
+
+        // Build command - either direct or via octo-sandbox
+        let (program, args, effective_binary) = if use_sandbox {
+            let sandbox_config = self.sandbox_config.as_ref().unwrap();
+
+            // Build bwrap args using the trusted config
+            // Note: We use the current user (runner's user) for path expansion
+            match sandbox_config.build_bwrap_args_for_user(&req.cwd, None) {
+                Some(bwrap_args) => {
+                    // Command: bwrap [bwrap_args] -- binary [args]
+                    let mut full_args = bwrap_args;
+                    full_args.push(req.binary.clone());
+                    full_args.extend(req.args.iter().cloned());
+
+                    info!(
+                        "Sandboxing process '{}' with {} bwrap args",
+                        req.id,
+                        full_args.len()
+                    );
+                    debug!("bwrap command: bwrap {}", full_args.join(" "));
+
+                    ("bwrap".to_string(), full_args, req.binary.clone())
+                }
+                None => {
+                    // bwrap not available, fall back to direct execution
+                    warn!(
+                        "Sandbox requested but bwrap not available, running '{}' unsandboxed",
+                        req.id
+                    );
+                    (req.binary.clone(), req.args.clone(), req.binary.clone())
+                }
+            }
+        } else {
+            if req.sandboxed {
+                warn!(
+                    "Sandbox requested for '{}' but no sandbox config loaded, running unsandboxed",
+                    req.id
+                );
+            }
+            (req.binary.clone(), req.args.clone(), req.binary.clone())
+        };
+
+        // Build the command
+        let mut cmd = Command::new(&program);
+        cmd.args(&args);
+        // Note: For sandboxed processes, cwd is handled by bwrap's workspace bind
+        // For non-sandboxed, we set it directly
+        if !use_sandbox {
+            cmd.current_dir(&req.cwd);
+        }
         cmd.envs(&req.env);
 
         if is_rpc {
@@ -243,8 +317,8 @@ impl Runner {
             Ok(mut child) => {
                 let pid = child.id().unwrap_or(0);
                 info!(
-                    "Spawned process '{}': {} {:?} (pid={}, rpc={})",
-                    req.id, req.binary, req.args, pid, is_rpc
+                    "Spawned process '{}': {} {:?} (pid={}, rpc={}, sandboxed={})",
+                    req.id, effective_binary, req.args, pid, is_rpc, use_sandbox
                 );
 
                 // For RPC processes, set up background stdout reader
@@ -279,7 +353,7 @@ impl Runner {
                 let managed = ManagedProcess {
                     id: req.id.clone(),
                     pid,
-                    binary: req.binary,
+                    binary: effective_binary,
                     cwd: req.cwd,
                     child,
                     is_rpc,
@@ -711,6 +785,7 @@ impl Runner {
                             let runner = Runner {
                                 state: Arc::clone(&self.state),
                                 shutdown_tx: self.shutdown_tx.clone(),
+                                sandbox_config: self.sandbox_config.clone(),
                             };
                             tokio::spawn(async move {
                                 runner.handle_connection(stream).await;
@@ -774,6 +849,77 @@ async fn main() -> Result<()> {
         socket_path
     );
 
-    let runner = Runner::new();
+    // Load sandbox configuration from trusted location
+    let sandbox_config = if args.no_sandbox {
+        info!("Sandboxing disabled via --no-sandbox flag");
+        None
+    } else if let Some(ref config_path) = args.sandbox_config {
+        // Load from specified path
+        match std::fs::read_to_string(config_path) {
+            Ok(contents) => match toml::from_str::<SandboxConfig>(&contents) {
+                Ok(mut config) => {
+                    config.enabled = true;
+                    info!("Loaded sandbox config from {:?}", config_path);
+                    Some(config)
+                }
+                Err(e) => {
+                    error!("Failed to parse sandbox config {:?}: {}", config_path, e);
+                    return Err(e.into());
+                }
+            },
+            Err(e) => {
+                error!("Failed to read sandbox config {:?}: {}", config_path, e);
+                return Err(e.into());
+            }
+        }
+    } else {
+        // Load from system config (trusted, root-owned)
+        let config_path = std::path::Path::new("/etc/octo/sandbox.toml");
+        if !config_path.exists() {
+            None
+        } else {
+            match std::fs::read_to_string(config_path) {
+                Ok(contents) => match toml::from_str::<SandboxConfig>(&contents) {
+                    Ok(config) => {
+                        if config.enabled {
+                            info!(
+                                "Loaded system sandbox config from {}, profile='{}'",
+                                "/etc/octo/sandbox.toml",
+                                config.profile
+                            );
+                            Some(config)
+                        } else {
+                            info!(
+                                "System sandbox config exists but is disabled (enabled=false)"
+                            );
+                            None
+                        }
+                    }
+                    Err(e) => {
+                        warn!(
+                            "Failed to parse system sandbox config: {}. Sandboxing disabled.",
+                            e
+                        );
+                        None
+                    }
+                },
+                Err(e) => {
+                    warn!(
+                        "Failed to read system sandbox config: {}. Sandboxing disabled.",
+                        e
+                    );
+                    None
+                }
+            }
+        }
+    };
+
+    if sandbox_config.is_some() {
+        info!("Sandbox enabled - processes will be wrapped with bwrap");
+    } else {
+        warn!("Sandbox disabled - processes will run without isolation");
+    }
+
+    let runner = Runner::new(sandbox_config);
     runner.run(&socket_path).await
 }

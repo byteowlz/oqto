@@ -66,10 +66,16 @@ export function normalizePermissionEvent(value: unknown): Permission | null {
 		typeof props.metadata === "object" && props.metadata !== null
 			? (props.metadata as Record<string, unknown>)
 			: {};
-	if ((props as { risk?: unknown }).risk !== undefined && metadata.risk === undefined) {
+	if (
+		(props as { risk?: unknown }).risk !== undefined &&
+		metadata.risk === undefined
+	) {
 		metadata.risk = (props as { risk?: unknown }).risk;
 	}
-	if ((props as { input?: unknown }).input !== undefined && metadata.input === undefined) {
+	if (
+		(props as { input?: unknown }).input !== undefined &&
+		metadata.input === undefined
+	) {
 		metadata.input = (props as { input?: unknown }).input;
 	}
 	if (
@@ -93,7 +99,9 @@ export function normalizePermissionEvent(value: unknown): Permission | null {
 	};
 }
 
-export function parseSessionErrorEvent(value: unknown): SessionErrorInfo | null {
+export function parseSessionErrorEvent(
+	value: unknown,
+): SessionErrorInfo | null {
 	const props = extractRecord(value);
 	if (!props) return null;
 	const error =

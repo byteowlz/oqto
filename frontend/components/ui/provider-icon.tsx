@@ -10,7 +10,8 @@ type ProviderIconProps = {
 };
 
 // Base URL for provider logos from models.dev repo
-const LOGO_BASE_URL = "https://raw.githubusercontent.com/anomalyco/models.dev/dev/providers";
+const LOGO_BASE_URL =
+	"https://raw.githubusercontent.com/anomalyco/models.dev/dev/providers";
 
 // Known providers in models.dev (use folder name as key)
 const PROVIDER_FOLDER_MAP: Record<string, string> = {

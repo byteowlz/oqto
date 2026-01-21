@@ -62,6 +62,8 @@ pub struct User {
     pub updated_at: String,
     pub last_login_at: Option<String>,
     pub settings: Option<String>,
+    pub mmry_port: Option<i64>,
+    pub linux_username: Option<String>,
 }
 
 impl sqlx::Type<sqlx::Sqlite> for UserRole {
@@ -188,6 +190,8 @@ mod tests {
             updated_at: "2024-01-01".to_string(),
             last_login_at: None,
             settings: None,
+            mmry_port: None,
+            linux_username: None,
         };
 
         let info: UserInfo = user.into();

@@ -161,6 +161,12 @@
           "description": "Whether to stop local sessions when the backend shuts down. Disable to keep opencode/fileserver/ttyd running.",
           "default": false
         },
+        "runner_socket_pattern": {
+          "type": ["string", "null"],
+          "description": "Runner socket path pattern for per-user octo-runner daemons. Supports {user} (Linux username) and {uid}. Example: /run/user/{uid}/octo-runner.sock. Required for spawning per-user services (e.g. per-user mmry) via the runner.",
+          "default": null,
+          "examples": ["/run/octo/runner-sockets/{user}/octo-runner.sock", "/run/user/{uid}/octo-runner.sock"]
+        },
         "single_user": {
           "type": "boolean",
           "description": "Enable single-user mode. When true, the platform operates with a single user (no multi-tenancy), and the {user_id} placeholder in workspace_dir is ignored. Required on macOS/Windows.",

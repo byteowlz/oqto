@@ -20,7 +20,7 @@ use uuid::Uuid;
 use crate::agent_browser::{AgentBrowserConfig, AgentBrowserManager};
 use crate::container::{ContainerConfig, ContainerRuntimeApi, ContainerStats};
 use crate::eavs::{CreateKeyRequest, EavsApi, KeyPermissions};
-use crate::local::{LocalRuntime, LocalRuntimeConfig};
+use crate::local::{LocalRuntime, LocalRuntimeConfig, UserMmryManager};
 use crate::projects;
 
 use super::models::{CreateSessionRequest, RuntimeMode, Session, SessionStatus};
@@ -133,8 +133,6 @@ pub struct SessionServiceConfig {
     pub user_data_path: String,
     /// Path to skeleton directory to copy into new user homes. If None, empty dirs are created.
     pub skel_path: Option<String>,
-    /// Default user ID for sessions.
-    pub default_user_id: String,
     /// Default budget limit per session in USD.
     pub default_session_budget_usd: Option<f64>,
     /// Default rate limit per session (requests per minute).
@@ -177,7 +175,6 @@ impl Default for SessionServiceConfig {
             base_port: DEFAULT_BASE_PORT,
             user_data_path: "./data".to_string(),
             skel_path: None,
-            default_user_id: "default".to_string(),
             default_session_budget_usd: Some(10.0),
             default_session_rpm: Some(60),
             eavs_container_url: None,
@@ -194,6 +191,95 @@ impl Default for SessionServiceConfig {
             pi_model: None,
             agent_browser: AgentBrowserConfig::default(),
         }
+    }
+}
+
+/// A view of `SessionService` scoped to a single user.
+#[derive(Clone, Copy)]
+pub struct UserSessionService<'a> {
+    svc: &'a SessionService,
+    user_id: &'a str,
+}
+
+impl<'a> UserSessionService<'a> {
+    pub fn workspace_root(&self) -> std::path::PathBuf {
+        self.svc.workspace_root_for_user(self.user_id)
+    }
+
+    pub async fn list_sessions(&self) -> Result<Vec<Session>> {
+        self.svc.list_sessions_for_user(self.user_id).await
+    }
+
+    pub async fn get_session(&self, session_id: &str) -> Result<Option<Session>> {
+        self.svc.get_session_for_user(self.user_id, session_id).await
+    }
+
+    pub async fn create_session(&self, request: CreateSessionRequest) -> Result<Session> {
+        self.svc.create_session_for_user(self.user_id, request).await
+    }
+
+    pub async fn get_or_create_session(&self, request: CreateSessionRequest) -> Result<Session> {
+        self.svc.get_or_create_session_for_user(self.user_id, request).await
+    }
+
+    pub async fn get_or_create_session_for_workspace(&self, workspace_path: &str) -> Result<Session> {
+        self.svc
+            .get_or_create_session_for_workspace_for_user(self.user_id, workspace_path)
+            .await
+    }
+
+    pub async fn get_or_create_io_session_for_workspace(&self, workspace_path: &str) -> Result<Session> {
+        self.svc
+            .get_or_create_io_session_for_workspace_for_user(self.user_id, workspace_path)
+            .await
+    }
+
+    pub async fn get_or_create_opencode_session(&self) -> Result<Session> {
+        self.svc.get_or_create_opencode_session_for_user(self.user_id).await
+    }
+
+    pub async fn stop_session(&self, session_id: &str) -> Result<()> {
+        self.svc.stop_session_for_user(self.user_id, session_id).await
+    }
+
+    pub async fn delete_session(&self, session_id: &str) -> Result<()> {
+        self.svc.delete_session_for_user(self.user_id, session_id).await
+    }
+
+    pub async fn resume_session(&self, session_id: &str) -> Result<Session> {
+        self.svc.resume_session_for_user(self.user_id, session_id).await
+    }
+
+    pub async fn resume_session_for_io(&self, session_id: &str) -> Result<Session> {
+        self.svc
+            .resume_session_for_io_for_user(self.user_id, session_id)
+            .await
+    }
+
+    pub async fn touch_session_activity(&self, session_id: &str) -> Result<()> {
+        self.svc.touch_session_activity_for_user(self.user_id, session_id).await
+    }
+
+    pub async fn check_for_image_update(&self, session_id: &str) -> Result<Option<String>> {
+        self.svc
+            .check_for_image_update_for_user(self.user_id, session_id)
+            .await
+    }
+
+    pub async fn upgrade_session(&self, session_id: &str) -> Result<Session> {
+        self.svc.upgrade_session_for_user(self.user_id, session_id).await
+    }
+
+    pub async fn check_all_for_updates(&self) -> Result<Vec<(String, String)>> {
+        self.svc.check_all_for_updates_for_user(self.user_id).await
+    }
+
+    pub async fn ensure_user_mmry_pinned(&self) -> Result<u16> {
+        self.svc.ensure_user_mmry_pinned(self.user_id).await
+    }
+
+    pub fn validate_workspace_path(&self, path: &str) -> Result<std::path::PathBuf> {
+        self.svc.resolve_workspace_path(self.user_id, path)
     }
 }
 
@@ -223,9 +309,15 @@ pub struct SessionService {
     readiness: Arc<dyn SessionReadiness>,
     agent_browser: AgentBrowserManager,
     config: SessionServiceConfig,
+    user_mmry: Option<Arc<UserMmryManager>>,
 }
 
 impl SessionService {
+    /// Create a view of this service scoped to a specific user.
+    pub fn for_user<'a>(&'a self, user_id: &'a str) -> UserSessionService<'a> {
+        UserSessionService { svc: self, user_id }
+    }
+
     /// Create a new session service with container runtime.
     pub fn new(
         repo: SessionRepository,
@@ -240,6 +332,7 @@ impl SessionService {
             readiness: Arc::new(HttpSessionReadiness::default()),
             agent_browser: AgentBrowserManager::new(config.agent_browser.clone()),
             config,
+            user_mmry: None,
         }
     }
 
@@ -258,6 +351,7 @@ impl SessionService {
             readiness: Arc::new(HttpSessionReadiness::default()),
             agent_browser: AgentBrowserManager::new(config.agent_browser.clone()),
             config,
+            user_mmry: None,
         }
     }
 
@@ -275,6 +369,7 @@ impl SessionService {
             readiness: Arc::new(HttpSessionReadiness::default()),
             agent_browser: AgentBrowserManager::new(config.agent_browser.clone()),
             config,
+            user_mmry: None,
         }
     }
 
@@ -293,7 +388,78 @@ impl SessionService {
             readiness: Arc::new(HttpSessionReadiness::default()),
             agent_browser: AgentBrowserManager::new(config.agent_browser.clone()),
             config,
+            user_mmry: None,
         }
+    }
+
+    /// Enable per-user mmry instances (local multi-user mode).
+    pub fn with_user_mmry(mut self, manager: UserMmryManager) -> Self {
+        self.user_mmry = Some(Arc::new(manager));
+        self
+    }
+
+    async fn ensure_user_mmry_pinned(&self, user_id: &str) -> Result<u16> {
+        let Some(ref user_mmry) = self.user_mmry else {
+            anyhow::bail!("UserMmryManager not configured");
+        };
+        user_mmry.pin_user_mmry(user_id).await
+    }
+
+    async fn stop_session_for_user(&self, user_id: &str, session_id: &str) -> Result<()> {
+        if self.get_session_for_user(user_id, session_id).await?.is_none() {
+            anyhow::bail!("Session not found");
+        }
+        self.stop_session(session_id).await
+    }
+
+    async fn delete_session_for_user(&self, user_id: &str, session_id: &str) -> Result<()> {
+        if self.get_session_for_user(user_id, session_id).await?.is_none() {
+            anyhow::bail!("Session not found");
+        }
+        self.delete_session(session_id).await
+    }
+
+    async fn resume_session_for_user(&self, user_id: &str, session_id: &str) -> Result<Session> {
+        if self.get_session_for_user(user_id, session_id).await?.is_none() {
+            anyhow::bail!("Session not found");
+        }
+        self.resume_session(session_id).await
+    }
+
+    async fn resume_session_for_io_for_user(&self, user_id: &str, session_id: &str) -> Result<Session> {
+        if self.get_session_for_user(user_id, session_id).await?.is_none() {
+            anyhow::bail!("Session not found");
+        }
+        self.resume_session_for_io(session_id).await
+    }
+
+    async fn check_for_image_update_for_user(
+        &self,
+        user_id: &str,
+        session_id: &str,
+    ) -> Result<Option<String>> {
+        if self.get_session_for_user(user_id, session_id).await?.is_none() {
+            anyhow::bail!("Session not found");
+        }
+        self.check_for_image_update(session_id).await
+    }
+
+    async fn upgrade_session_for_user(&self, user_id: &str, session_id: &str) -> Result<Session> {
+        if self.get_session_for_user(user_id, session_id).await?.is_none() {
+            anyhow::bail!("Session not found");
+        }
+        self.upgrade_session(session_id).await
+    }
+
+    async fn check_all_for_updates_for_user(&self, user_id: &str) -> Result<Vec<(String, String)>> {
+        let sessions = self.repo.list_for_user(user_id).await?;
+        let mut updates = Vec::new();
+        for session in sessions {
+            if let Ok(Some(new_digest)) = self.check_for_image_update(&session.id).await {
+                updates.push((session.id, new_digest));
+            }
+        }
+        Ok(updates)
     }
 
     /// Get the container runtime (if available).
@@ -306,14 +472,13 @@ impl SessionService {
         self.local_runtime.as_ref()
     }
 
-    /// Get the base workspace directory for listing projects.
-    pub fn workspace_root(&self) -> std::path::PathBuf {
+    fn workspace_root_for_user(&self, user_id: &str) -> std::path::PathBuf {
         if self.config.runtime_mode == RuntimeMode::Local {
             if let Some(ref local_config) = self.config.local_config {
                 if local_config.single_user {
                     return local_config.workspace_base();
                 }
-                return local_config.workspace_for_user(&self.config.default_user_id);
+                return local_config.workspace_for_user(user_id);
             }
             let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
             if self.config.single_user {
@@ -321,7 +486,7 @@ impl SessionService {
             }
             return std::path::PathBuf::from(home)
                 .join("octo")
-                .join(&self.config.default_user_id);
+                .join(user_id);
         }
         // Container mode - use /workspace
         std::path::PathBuf::from("/workspace")
@@ -342,27 +507,56 @@ impl SessionService {
             .map(Some)
     }
 
-    fn allowed_workspace_roots(&self) -> Vec<std::path::PathBuf> {
+    pub async fn list_sessions_for_user(&self, user_id: &str) -> Result<Vec<Session>> {
+        let sessions = self.repo.list_for_user(user_id).await?;
+        let mut reconciled = Vec::with_capacity(sessions.len());
+        for session in sessions {
+            reconciled.push(self.reconcile_session_container_state(session).await?);
+        }
+        Ok(reconciled)
+    }
+
+    pub async fn get_session_for_user(
+        &self,
+        user_id: &str,
+        session_id: &str,
+    ) -> Result<Option<Session>> {
+        let session = self.repo.get(session_id).await?;
+        match session {
+            Some(session) if session.user_id == user_id => {
+                Ok(Some(self.reconcile_session_container_state(session).await?))
+            }
+            _ => Ok(None),
+        }
+    }
+
+    fn allowed_workspace_roots(&self, user_id: &str) -> Vec<std::path::PathBuf> {
         let mut roots = Vec::new();
 
-        let workspace_root = self.workspace_root();
+        let workspace_root = self.workspace_root_for_user(user_id);
         roots.push(workspace_root.canonicalize().unwrap_or(workspace_root));
 
-        // Always include the data directory (user_data_path) as an allowed root.
-        // This is needed because Main Chat stores its data in the data directory
-        // (e.g., ~/.local/share/octo/users/main) rather than the workspace directory.
-        let data_root = std::path::PathBuf::from(&self.config.user_data_path);
-        roots.push(data_root.canonicalize().unwrap_or(data_root));
+        // Include this user's Main Chat data directory.
+        //
+        // IMPORTANT: do NOT allow the entire data directory; that would let users
+        // reference other users' data by path. We only allow the per-user subtree.
+        let main_chat_users_root = std::path::PathBuf::from(&self.config.user_data_path).join("users");
+        let main_chat_root = if self.config.single_user {
+            main_chat_users_root.join("main")
+        } else {
+            main_chat_users_root.join(user_id)
+        };
+        roots.push(main_chat_root.canonicalize().unwrap_or(main_chat_root));
 
         roots
     }
 
-    fn resolve_workspace_path(&self, path: &str) -> Result<std::path::PathBuf> {
+    fn resolve_workspace_path(&self, user_id: &str, path: &str) -> Result<std::path::PathBuf> {
         let requested = std::path::PathBuf::from(path);
         let resolved = if requested.is_absolute() {
             requested
         } else {
-            self.workspace_root().join(&requested)
+            self.workspace_root_for_user(user_id).join(&requested)
         };
 
         if !resolved.exists() {
@@ -372,7 +566,7 @@ impl SessionService {
         let canonical = resolved
             .canonicalize()
             .with_context(|| format!("resolving workspace path {}", resolved.display()))?;
-        let allowed_roots = self.allowed_workspace_roots();
+        let allowed_roots = self.allowed_workspace_roots(user_id);
         if !allowed_roots.iter().any(|root| canonical.starts_with(root)) {
             anyhow::bail!(
                 "workspace path {} is outside allowed roots",
@@ -395,8 +589,11 @@ impl SessionService {
     ///
     /// This provides the best user experience: auto-upgrades when image changes,
     /// fast restarts when possible, new sessions when needed.
-    pub async fn get_or_create_session(&self, request: CreateSessionRequest) -> Result<Session> {
-        let user_id = &self.config.default_user_id;
+    async fn get_or_create_session_for_user(
+        &self,
+        user_id: &str,
+        request: CreateSessionRequest,
+    ) -> Result<Session> {
 
         // Check for running sessions that need upgrading
         let running_sessions = self.repo.list_running_for_user(user_id).await?;
@@ -468,16 +665,15 @@ impl SessionService {
         }
 
         // No resumable session found, create a new one
-        self.create_session(request).await
+        self.create_session_for_user(user_id, request).await
     }
 
     /// Get or create the primary opencode session for the user.
     ///
     /// This uses the workspace root as the canonical opencode session target and
     /// avoids tying opencode to per-workspace IO sessions.
-    pub async fn get_or_create_opencode_session(&self) -> Result<Session> {
-        let user_id = &self.config.default_user_id;
-        let workspace_root = self.workspace_root();
+    async fn get_or_create_opencode_session_for_user(&self, user_id: &str) -> Result<Session> {
+        let workspace_root = self.workspace_root_for_user(user_id);
         let workspace_root_str = workspace_root.to_string_lossy().to_string();
 
         if let Some(session) = self
@@ -533,7 +729,7 @@ impl SessionService {
             env: Default::default(),
         };
 
-        self.create_session(request).await
+        self.create_session_for_user(user_id, request).await
     }
 
     /// Create and start a new session.
@@ -545,12 +741,13 @@ impl SessionService {
     ///
     /// Security: the EAVS virtual key is never persisted to the database; it is passed
     /// directly into container env and then dropped.
-    pub async fn create_session(&self, request: CreateSessionRequest) -> Result<Session> {
-        self.create_session_with_readiness(request, true).await
+    async fn create_session_for_user(&self, user_id: &str, request: CreateSessionRequest) -> Result<Session> {
+        self.create_session_with_readiness(user_id, request, true).await
     }
 
     async fn create_session_with_readiness(
         &self,
+        user_id: &str,
         request: CreateSessionRequest,
         require_opencode: bool,
     ) -> Result<Session> {
@@ -577,12 +774,10 @@ impl SessionService {
 
         // Determine user home path - either provided or create per-user home directory.
         let user_home_path = if let Some(path) = request.workspace_path {
-            self.resolve_workspace_path(&path)?
+            self.resolve_workspace_path(user_id, &path)?
                 .to_string_lossy()
                 .to_string()
         } else {
-            let user_id = &self.config.default_user_id;
-
             // Determine workspace path based on runtime mode and single_user setting
             let user_home = if self.config.runtime_mode == RuntimeMode::Local {
                 if let Some(ref local_config) = self.config.local_config {
@@ -642,16 +837,17 @@ impl SessionService {
 
         let mut last_error = None;
         for attempt in 0..Self::MAX_PORT_ALLOCATION_RETRIES {
-            match self
-                .try_create_session(
-                    &user_home_path,
-                    &image,
-                    image_digest.as_deref(),
-                    agent.as_deref(),
-                    attempt,
-                    require_opencode,
-                )
-                .await
+                match self
+                    .try_create_session(
+                        &user_home_path,
+                        &image,
+                        image_digest.as_deref(),
+                        agent.as_deref(),
+                        user_id,
+                        attempt,
+                        require_opencode,
+                    )
+                    .await
             {
                 Ok(session) => return Ok(session),
                 Err(e) => {
@@ -709,21 +905,30 @@ impl SessionService {
         image: &str,
         image_digest: Option<&str>,
         agent: Option<&str>,
+        user_id: &str,
         attempt: u32,
         require_opencode: bool,
     ) -> Result<Session> {
         let session_id = Uuid::new_v4().to_string();
         let container_name = format!("{}{}", CONTAINER_NAME_PREFIX, &session_id[..8]);
 
-        // Find available ports (opencode, fileserver, ttyd, mmry, + agent ports). On retry, offset the search window.
+        // Find available ports (opencode, fileserver, ttyd, + agent ports). On retry, offset the search window.
+        // Container mode may also reserve a per-session mmry port when enabled.
         // Port layout:
         //   base+0: opencode
         //   base+1: fileserver
         //   base+2: ttyd
-        //   base+3: mmry (if enabled and multi-user)
-        //   base+4+: sub-agents
+        //   base+3+: sub-agents (local mode)
+        //   base+3: mmry, base+4+: sub-agents (container mode, if mmry enabled)
         let max_agents = Self::DEFAULT_MAX_AGENTS;
-        let ports_per_session = 4 + max_agents; // opencode, fileserver, ttyd, mmry + agent ports
+        let include_mmry_port = self.config.runtime_mode == RuntimeMode::Container
+            && self.config.mmry_enabled
+            && !self.config.single_user;
+        let ports_per_session = if include_mmry_port {
+            4 + max_agents
+        } else {
+            3 + max_agents
+        };
         let search_start = self.config.base_port + (attempt as i64 * ports_per_session);
         let base_port = self
             .repo
@@ -732,13 +937,13 @@ impl SessionService {
         let opencode_port = base_port;
         let fileserver_port = base_port + 1;
         let ttyd_port = base_port + 2;
-        // mmry port is only allocated for multi-user mode
-        let mmry_port = if self.config.mmry_enabled && !self.config.single_user {
-            Some(base_port + 3)
+        // mmry port is only allocated per-session for container mode.
+        // For local multi-user mode, mmry_port is assigned at session start from the per-user manager.
+        let (mmry_port, agent_base_port) = if include_mmry_port {
+            (Some(base_port + 3), Some(base_port + 4))
         } else {
-            None
+            (None, Some(base_port + 3))
         };
-        let agent_base_port = base_port + 4; // Sub-agents start at base+4
 
         let (eavs_key_id, eavs_key_hash, eavs_virtual_key) = if self.eavs.is_some() {
             match self.create_eavs_key(&session_id).await {
@@ -763,7 +968,7 @@ impl SessionService {
             id: session_id.clone(),
             container_id: None,
             container_name: container_name.clone(),
-            user_id: self.config.default_user_id.clone(),
+            user_id: user_id.to_string(),
             workspace_path: user_home_path.to_string(),
             agent: agent.map(ToString::to_string),
             image: image.to_string(),
@@ -772,7 +977,7 @@ impl SessionService {
             fileserver_port,
             ttyd_port,
             eavs_port: None,
-            agent_base_port: Some(agent_base_port),
+            agent_base_port,
             max_agents: Some(max_agents),
             eavs_key_id,
             eavs_key_hash,
@@ -1058,6 +1263,32 @@ impl SessionService {
         let fileserver_port = session.fileserver_port as u16;
         let ttyd_port = session.ttyd_port as u16;
 
+        // Ensure per-user mmry is running (local multi-user mode).
+        //
+        // This is best-effort: if mmry fails to start, we still want opencode/fileserver/ttyd
+        // to be usable. The mmry proxy will return 503 for memory endpoints until mmry is up.
+        if self.config.mmry_enabled && !self.config.single_user {
+            if let Some(ref user_mmry) = self.user_mmry {
+                match user_mmry.ensure_user_mmry(&session.user_id).await {
+                    Ok(mmry_port) => {
+                        let _ = self
+                            .repo
+                            .set_mmry_port(&session.id, Some(mmry_port as i64))
+                            .await;
+                    }
+                    Err(err) => {
+                        warn!(
+                            "Failed to ensure per-user mmry for user {}: {:?}",
+                            session.user_id, err
+                        );
+                        let _ = self.repo.set_mmry_port(&session.id, None).await;
+                    }
+                }
+            } else {
+                warn!("mmry enabled in local multi-user mode but UserMmryManager is not configured");
+            }
+        }
+
         // Check if ports are available before attempting to start
         if !local_runtime.check_ports_available(opencode_port, fileserver_port, ttyd_port) {
             // Ports are in use - try to clear them first
@@ -1201,6 +1432,18 @@ impl SessionService {
                         warn!("Failed to stop local processes for {}: {:?}", session_id, e);
                     }
                 }
+
+                // Release per-user mmry after stopping session processes.
+                if self.config.mmry_enabled && !self.config.single_user {
+                    if let Some(ref user_mmry) = self.user_mmry {
+                        if let Err(e) = user_mmry.release_user_mmry(&session.user_id).await {
+                            warn!(
+                                "Failed to release per-user mmry for user {}: {:?}",
+                                session.user_id, e
+                            );
+                        }
+                    }
+                }
             }
         }
 
@@ -1299,8 +1542,22 @@ impl SessionService {
             .repo
             .find_free_port_range_with_agents(self.config.base_port, max_agents)
             .await?;
-        let new_mmry_port = session.mmry_port.map(|_| base_port + 3);
-        let new_agent_base_port = session.agent_base_port.map(|_| base_port + 4);
+
+        // Container mode uses a per-session mmry port (base+3) when enabled.
+        // Local mode uses a per-user mmry port that must NOT be reassigned here.
+        let include_mmry_port = session.runtime_mode == RuntimeMode::Container
+            && self.config.mmry_enabled
+            && !self.config.single_user
+            && session.mmry_port.is_some();
+
+        let new_mmry_port = if include_mmry_port {
+            Some(base_port + 3)
+        } else {
+            session.mmry_port
+        };
+        let new_agent_base_port = session.agent_base_port.map(|_| {
+            base_port + if include_mmry_port { 4 } else { 3 }
+        });
 
         self.repo
             .update_ports(
@@ -1936,22 +2193,6 @@ impl SessionService {
         Ok(updated_session)
     }
 
-    /// Check all active sessions for available image updates.
-    ///
-    /// Returns a list of (session_id, new_digest) pairs for sessions that have updates available.
-    pub async fn check_all_for_updates(&self) -> Result<Vec<(String, String)>> {
-        let sessions = self.repo.list_active().await?;
-        let mut updates = Vec::new();
-
-        for session in sessions {
-            if let Ok(Some(new_digest)) = self.check_for_image_update(&session.id).await {
-                updates.push((session.id, new_digest));
-            }
-        }
-
-        Ok(updates)
-    }
-
     async fn reconcile_session_container_state(&self, session: Session) -> Result<Session> {
         if !session.is_active() {
             return Ok(session);
@@ -2421,12 +2662,11 @@ impl SessionService {
     /// Default maximum concurrent sessions per user.
     pub const DEFAULT_MAX_CONCURRENT_SESSIONS: i64 = 3;
 
-    /// Update the last activity timestamp for a session.
-    ///
-    /// This should be called when the user interacts with the session
-    /// (e.g., sends a message, runs a command).
-    pub async fn touch_session_activity(&self, session_id: &str) -> Result<()> {
-        self.repo.touch_activity(session_id).await
+    async fn touch_session_activity_for_user(&self, user_id: &str, session_id: &str) -> Result<()> {
+        let Some(session) = self.get_session_for_user(user_id, session_id).await? else {
+            anyhow::bail!("Session not found");
+        };
+        self.repo.touch_activity(&session.id).await
     }
 
     /// Get or create a session for a specific workspace path.
@@ -2436,11 +2676,11 @@ impl SessionService {
     /// 1. Find an existing running session for the workspace (if any)
     /// 2. Start a new session for that workspace (if none running)
     /// 3. Enforce LRU cap by stopping oldest idle session if needed
-    pub async fn get_or_create_session_for_workspace(
+    async fn get_or_create_session_for_workspace_for_user(
         &self,
+        user_id: &str,
         workspace_path: &str,
     ) -> Result<Session> {
-        let user_id = &self.config.default_user_id;
 
         // Check if we already have a running session for this workspace
         if let Some(session) = self
@@ -2498,7 +2738,7 @@ impl SessionService {
             env: Default::default(),
         };
 
-        self.create_session(request).await
+        self.create_session_for_user(user_id, request).await
     }
 
     fn project_id_for_workspace(&self, workspace_path: &PathBuf) -> Option<String> {
@@ -2518,11 +2758,11 @@ impl SessionService {
     /// Get or create a session for IO (fileserver + ttyd) for a workspace path.
     ///
     /// This does NOT require opencode to be ready before returning.
-    pub async fn get_or_create_io_session_for_workspace(
+    async fn get_or_create_io_session_for_workspace_for_user(
         &self,
+        user_id: &str,
         workspace_path: &str,
     ) -> Result<Session> {
-        let user_id = &self.config.default_user_id;
 
         if let Some(session) = self
             .repo
@@ -2555,7 +2795,7 @@ impl SessionService {
             env: Default::default(),
         };
 
-        self.create_session_with_readiness(request, false).await
+        self.create_session_with_readiness(user_id, request, false).await
     }
 
     /// Enforce the maximum concurrent sessions cap using LRU policy.
@@ -2842,7 +3082,6 @@ mod tests {
             base_port: 41820,
             user_data_path: workspace_dir.path().to_string_lossy().to_string(),
             skel_path: None,
-            default_user_id: "default".to_string(),
             default_session_budget_usd: Some(10.0),
             default_session_rpm: Some(60),
             eavs_container_url: Some("http://eavs".to_string()),
@@ -2864,6 +3103,7 @@ mod tests {
         service.readiness = Arc::new(NoopReadiness::default());
 
         let session = service
+            .for_user("test")
             .create_session(CreateSessionRequest {
                 workspace_path: Some(workspace_dir.path().to_string_lossy().to_string()),
                 image: None,

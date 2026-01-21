@@ -90,7 +90,41 @@ fn load_config(args: &Args) -> Result<SandboxConfig> {
         Ok(config)
     } else {
         // Use built-in profile
-        let mut config = SandboxConfig::from_profile(&args.profile);
+        let mut config = match args.profile.as_str() {
+            "minimal" => SandboxConfig {
+                enabled: true,
+                profile: "minimal".to_string(),
+                deny_read: vec![
+                    "~/.ssh".to_string(),
+                    "~/.gnupg".to_string(),
+                    "~/.aws".to_string(),
+                ],
+                allow_write: vec!["/tmp".to_string()],
+                deny_write: vec![],
+                isolate_network: false,
+                isolate_pid: false,
+                extra_ro_bind: vec![],
+                extra_rw_bind: vec![],
+            },
+            "strict" => SandboxConfig {
+                enabled: true,
+                profile: "strict".to_string(),
+                deny_read: vec![
+                    "~/.ssh".to_string(),
+                    "~/.gnupg".to_string(),
+                    "~/.aws".to_string(),
+                    "~/.config/octo".to_string(),
+                    "~/.kube".to_string(),
+                ],
+                allow_write: vec!["/tmp".to_string()],
+                deny_write: vec![],
+                isolate_network: true,
+                isolate_pid: true,
+                extra_ro_bind: vec![],
+                extra_rw_bind: vec![],
+            },
+            _ => SandboxConfig::default(),
+        };
         config.enabled = !args.no_sandbox;
         Ok(config)
     }
@@ -115,7 +149,7 @@ fn exec_sandboxed(
     workspace: &PathBuf,
     dry_run: bool,
 ) -> Result<()> {
-    let bwrap_args = match config.build_bwrap_args(workspace) {
+    let bwrap_args = match config.build_bwrap_args_for_user(workspace, None) {
         Some(args) => args,
         None => {
             error!("bubblewrap (bwrap) not available, cannot sandbox");
@@ -152,7 +186,55 @@ fn exec_sandboxed(
     workspace: &PathBuf,
     dry_run: bool,
 ) -> Result<()> {
-    let (sandbox_args, _temp_file) = match config.build_sandbox_exec_args(workspace) {
+    fn build_seatbelt_profile(config: &SandboxConfig, workspace: &PathBuf) -> String {
+        let mut profile = String::new();
+        profile.push_str("(version 1)\n");
+        profile.push_str("(deny default)\n");
+        profile.push_str("(allow process-fork)\n");
+        profile.push_str("(allow process-exec)\n");
+        profile.push_str("(allow signal)\n");
+        profile.push_str("(allow file-read*)\n");
+
+        let w = workspace.to_string_lossy();
+        profile.push_str(&format!("(allow file-read* (subpath \"{}\"))\n", w));
+        profile.push_str(&format!("(allow file-write* (subpath \"{}\"))\n", w));
+
+        for path in &config.allow_write {
+            profile.push_str(&format!("(allow file-write* (subpath \"{}\"))\n", path));
+        }
+        for path in &config.deny_read {
+            profile.push_str(&format!("(deny file-read* (subpath \"{}\"))\n", path));
+            profile.push_str(&format!("(deny file-write* (subpath \"{}\"))\n", path));
+        }
+        for path in &config.deny_write {
+            profile.push_str(&format!("(deny file-write* (subpath \"{}\"))\n", path));
+        }
+
+        if config.isolate_network {
+            profile.push_str("(deny network*)\n");
+        } else {
+            profile.push_str("(allow network*)\n");
+        }
+
+        profile
+    }
+
+    fn build_sandbox_exec_args(
+        config: &SandboxConfig,
+        workspace: &PathBuf,
+    ) -> Option<(Vec<String>, tempfile::NamedTempFile)> {
+        if which::which("sandbox-exec").is_err() {
+            return None;
+        }
+        let profile_text = build_seatbelt_profile(config, workspace);
+        let mut tmp = tempfile::NamedTempFile::new().ok()?;
+        use std::io::Write;
+        tmp.write_all(profile_text.as_bytes()).ok()?;
+        let args = vec!["-f".to_string(), tmp.path().to_string_lossy().to_string()];
+        Some((args, tmp))
+    }
+
+    let (sandbox_args, _temp_file) = match build_sandbox_exec_args(config, workspace) {
         Some(result) => result,
         None => {
             error!("sandbox-exec not available, cannot sandbox");
@@ -171,7 +253,7 @@ fn exec_sandboxed(
     if dry_run {
         println!("sandbox-exec {}", full_args.join(" \\\n  "));
         println!("\n# Seatbelt profile:");
-        println!("{}", config.build_seatbelt_profile(workspace));
+        println!("{}", build_seatbelt_profile(config, workspace));
         return Ok(());
     }
 

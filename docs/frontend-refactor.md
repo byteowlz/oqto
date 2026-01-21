@@ -27,3 +27,5 @@ This refactor focuses on long-term maintainability by introducing feature-based 
 
 - Sidebar message search now omits the agents filter when set to "All", allowing cass to return Main Chat results.
 - Sidebar message search now appends title matches for Main Chat and OpenCode sessions.
+- Biome now ignores generated Tauri assets under `frontend/src-tauri/gen` to reduce lint noise.
+- Oxlint now ignores generated Tauri assets via `frontend/.eslintignore`.

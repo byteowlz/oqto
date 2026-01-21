@@ -5,6 +5,7 @@ use sqlx::SqlitePool;
 use tracing::{debug, instrument};
 
 use super::models::{CreateUserRequest, UpdateUserRequest, User, UserListQuery, UserRole};
+use crate::local::is_port_available;
 
 /// Repository for user database operations.
 #[derive(Debug, Clone)]
@@ -18,15 +19,49 @@ impl UserRepository {
         Self { pool }
     }
 
-    /// Generate a new user ID.
-    fn generate_id() -> String {
-        format!("usr_{}", nanoid::nanoid!(12))
+    fn normalize_linux_username(input: &str) -> String {
+        let mut s = input.trim().to_lowercase();
+        s = s
+            .chars()
+            .map(|c| match c {
+                'a'..='z' | '0'..='9' | '_' | '-' => c,
+                ' ' | '.' => '-',
+                _ => '-',
+            })
+            .collect();
+        s = s.trim_matches('-').to_string();
+        if s.is_empty() {
+            s = "user".to_string();
+        }
+        if !s.chars().next().unwrap_or('u').is_ascii_alphabetic() && !s.starts_with('_') {
+            s = format!("u-{}", s);
+        }
+        if s.len() > 31 {
+            s.truncate(31);
+        }
+        s
     }
 
     /// Create a new user.
     #[instrument(skip(self, request), fields(username = %request.username))]
     pub async fn create(&self, request: CreateUserRequest) -> Result<User> {
-        let id = Self::generate_id();
+        // Use a stable, human-readable id so it can be used for workspace dir names
+        // and Linux user provisioning.
+        let base = Self::normalize_linux_username(&request.username);
+        let mut id = base.clone();
+        for _ in 0..10 {
+            let exists: Option<(i64,)> = sqlx::query_as("SELECT 1 FROM users WHERE id = ? LIMIT 1")
+                .bind(&id)
+                .fetch_optional(&self.pool)
+                .await
+                .context("checking user id availability")?;
+            if exists.is_none() {
+                break;
+            }
+            id = format!("{}-{}", base, nanoid::nanoid!(4));
+        }
+
+        let linux_username = id.clone();
         let display_name = request
             .display_name
             .unwrap_or_else(|| request.username.clone());
@@ -36,8 +71,8 @@ impl UserRepository {
 
         sqlx::query(
             r#"
-            INSERT INTO users (id, external_id, username, email, password_hash, display_name, role)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO users (id, external_id, username, email, password_hash, display_name, role, linux_username)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&id)
@@ -47,6 +82,7 @@ impl UserRepository {
         .bind(&request.password)
         .bind(&display_name)
         .bind(role.to_string())
+        .bind(&linux_username)
         .execute(&self.pool)
         .await
         .context("Failed to insert user")?;
@@ -62,7 +98,7 @@ impl UserRepository {
         let user = sqlx::query_as::<_, User>(
             r#"
             SELECT id, external_id, username, email, password_hash, display_name, 
-                   avatar_url, role, is_active, created_at, updated_at, last_login_at, settings
+                   avatar_url, role, is_active, created_at, updated_at, last_login_at, settings, mmry_port, linux_username
             FROM users
             WHERE id = ?
             "#,
@@ -81,7 +117,7 @@ impl UserRepository {
         let user = sqlx::query_as::<_, User>(
             r#"
             SELECT id, external_id, username, email, password_hash, display_name,
-                   avatar_url, role, is_active, created_at, updated_at, last_login_at, settings
+                   avatar_url, role, is_active, created_at, updated_at, last_login_at, settings, mmry_port, linux_username
             FROM users
             WHERE username = ?
             "#,
@@ -100,7 +136,7 @@ impl UserRepository {
         let user = sqlx::query_as::<_, User>(
             r#"
             SELECT id, external_id, username, email, password_hash, display_name,
-                   avatar_url, role, is_active, created_at, updated_at, last_login_at, settings
+                   avatar_url, role, is_active, created_at, updated_at, last_login_at, settings, mmry_port, linux_username
             FROM users
             WHERE email = ?
             "#,
@@ -119,7 +155,7 @@ impl UserRepository {
         let user = sqlx::query_as::<_, User>(
             r#"
             SELECT id, external_id, username, email, password_hash, display_name,
-                   avatar_url, role, is_active, created_at, updated_at, last_login_at, settings
+                   avatar_url, role, is_active, created_at, updated_at, last_login_at, settings, mmry_port, linux_username
             FROM users
             WHERE external_id = ?
             "#,
@@ -142,7 +178,7 @@ impl UserRepository {
         let mut sql = String::from(
             r#"
             SELECT id, external_id, username, email, password_hash, display_name,
-                   avatar_url, role, is_active, created_at, updated_at, last_login_at, settings
+                   avatar_url, role, is_active, created_at, updated_at, last_login_at, settings, mmry_port, linux_username
             FROM users
             WHERE 1=1
             "#,
@@ -290,6 +326,111 @@ impl UserRepository {
             .context("Failed to update last login")?;
 
         Ok(())
+    }
+
+    pub async fn get_mmry_port(&self, user_id: &str) -> Result<Option<i64>> {
+        let row: Option<(Option<i64>,)> = sqlx::query_as("SELECT mmry_port FROM users WHERE id = ?")
+            .bind(user_id)
+            .fetch_optional(&self.pool)
+            .await
+            .context("Failed to fetch user mmry_port")?;
+        Ok(row.and_then(|r| r.0))
+    }
+
+    pub async fn ensure_mmry_port(&self, user_id: &str, base_port: u16, range: u16) -> Result<i64> {
+        // In dev/local setups, we may see authenticated users before they've been explicitly
+        // provisioned in the DB. Ensure the user row exists so we can persist mmry_port.
+        //
+        // This uses conservative defaults; auth/role decisions come from the auth layer.
+        let exists: Option<(i64,)> = sqlx::query_as("SELECT 1 FROM users WHERE id = ? LIMIT 1")
+            .bind(user_id)
+            .fetch_optional(&self.pool)
+            .await
+            .context("checking if user exists")?;
+        if exists.is_none() {
+            let email = format!("{}@localhost", user_id);
+            sqlx::query(
+                "INSERT OR IGNORE INTO users (id, username, email, display_name, role) VALUES (?, ?, ?, ?, 'user')",
+            )
+            .bind(user_id)
+            .bind(user_id)
+            .bind(&email)
+            .bind(user_id)
+            .execute(&self.pool)
+            .await
+            .context("creating placeholder user")?;
+        }
+
+        if let Some(p) = self.get_mmry_port(user_id).await? {
+            return Ok(p);
+        }
+
+        if range == 0 {
+            anyhow::bail!("invalid mmry port range: 0");
+        }
+
+        // Try a few times in case of concurrent allocations.
+        for _ in 0..10 {
+            // Fetch current allocations.
+            let used_rows: Vec<(i64,)> =
+                sqlx::query_as("SELECT mmry_port FROM users WHERE mmry_port IS NOT NULL")
+                    .fetch_all(&self.pool)
+                    .await
+                    .context("Failed to list allocated mmry ports")?;
+            let used: std::collections::HashSet<i64> =
+                used_rows.into_iter().map(|r| r.0).collect();
+
+            // Pick first free port in range that is also bindable.
+            let mut candidate: Option<i64> = None;
+            for offset in 0..range {
+                let p = base_port as i64 + offset as i64;
+                if used.contains(&p) {
+                    continue;
+                }
+                if is_port_available(p as u16) {
+                    candidate = Some(p);
+                    break;
+                }
+            }
+
+            let Some(port) = candidate else {
+                anyhow::bail!(
+                    "no free mmry port available in range {}..{}",
+                    base_port,
+                    base_port.saturating_add(range)
+                );
+            };
+
+            let res = sqlx::query(
+                "UPDATE users SET mmry_port = ?, updated_at = datetime('now') WHERE id = ? AND mmry_port IS NULL",
+            )
+            .bind(port)
+            .bind(user_id)
+            .execute(&self.pool)
+            .await;
+
+            match res {
+                Ok(r) => {
+                    if r.rows_affected() == 0 {
+                        // Someone else set it.
+                        if let Some(p) = self.get_mmry_port(user_id).await? {
+                            return Ok(p);
+                        }
+                    } else {
+                        return Ok(port);
+                    }
+                }
+                Err(e) => {
+                    // Likely unique constraint race; retry.
+                    if e.to_string().contains("UNIQUE") {
+                        continue;
+                    }
+                    return Err(e).context("allocating user mmry port");
+                }
+            }
+        }
+
+        anyhow::bail!("failed to allocate mmry port after retries")
     }
 
     /// Check if a username is available.

@@ -1,10 +1,10 @@
 "use client";
 
-import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { useSessionSearch } from "@/hooks/use-session-search";
 import { cn } from "@/lib/utils";
-import { Search, X, Loader2, ChevronUp, ChevronDown } from "lucide-react";
+import { ChevronDown, ChevronUp, Loader2, Search, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 export type ChatSearchBarProps = {
@@ -60,12 +60,19 @@ export function ChatSearchBar({
 	const inputRef = useRef<HTMLInputElement>(null);
 	const [currentResultIndex, setCurrentResultIndex] = useState(0);
 
-	const { query, setQuery, results, isSearching, error, clearSearch, isActive } =
-		useSessionSearch({
-			sessionId,
-			debounceMs: 300,
-			limit: 50,
-		});
+	const {
+		query,
+		setQuery,
+		results,
+		isSearching,
+		error,
+		clearSearch,
+		isActive,
+	} = useSessionSearch({
+		sessionId,
+		debounceMs: 300,
+		limit: 50,
+	});
 
 	// Focus input when opened
 	useEffect(() => {
@@ -101,16 +108,12 @@ export function ChatSearchBar({
 
 	const handlePrev = useCallback(() => {
 		if (results.length === 0) return;
-		setCurrentResultIndex((prev) =>
-			prev > 0 ? prev - 1 : results.length - 1,
-		);
+		setCurrentResultIndex((prev) => (prev > 0 ? prev - 1 : results.length - 1));
 	}, [results.length]);
 
 	const handleNext = useCallback(() => {
 		if (results.length === 0) return;
-		setCurrentResultIndex((prev) =>
-			prev < results.length - 1 ? prev + 1 : 0,
-		);
+		setCurrentResultIndex((prev) => (prev < results.length - 1 ? prev + 1 : 0));
 	}, [results.length]);
 
 	const handleKeyDown = useCallback(
@@ -144,12 +147,7 @@ export function ChatSearchBar({
 	}
 
 	return (
-		<div
-			className={cn(
-				"flex items-center gap-2 p-2 bg-muted/30",
-				className,
-			)}
-		>
+		<div className={cn("flex items-center gap-2 p-2 bg-muted/30", className)}>
 			<Search className="h-4 w-4 text-muted-foreground flex-shrink-0" />
 			<Input
 				ref={inputRef}
