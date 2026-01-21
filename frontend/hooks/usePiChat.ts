@@ -149,7 +149,10 @@ function readCachedSessionMessages(sessionId: string): PiDisplayMessage[] {
 			}
 			return m;
 		});
-		const cleanedEntry = { messages: cleanedMessages, timestamp: parsed.timestamp };
+		const cleanedEntry = {
+			messages: cleanedMessages,
+			timestamp: parsed.timestamp,
+		};
 		sessionMessageCache.messagesBySession.set(sessionId, cleanedEntry);
 		return cleanedMessages;
 	} catch {
@@ -157,7 +160,10 @@ function readCachedSessionMessages(sessionId: string): PiDisplayMessage[] {
 	}
 }
 
-function writeCachedSessionMessages(sessionId: string, messages: PiDisplayMessage[]) {
+function writeCachedSessionMessages(
+	sessionId: string,
+	messages: PiDisplayMessage[],
+) {
 	// Strip isStreaming flag when caching - it's transient state that shouldn't persist
 	const cleanedMessages = messages.map((m) => {
 		if (m.isStreaming) {
@@ -166,7 +172,10 @@ function writeCachedSessionMessages(sessionId: string, messages: PiDisplayMessag
 		}
 		return m;
 	});
-	const entry: SessionMessageCacheEntry = { messages: cleanedMessages, timestamp: Date.now() };
+	const entry: SessionMessageCacheEntry = {
+		messages: cleanedMessages,
+		timestamp: Date.now(),
+	};
 	sessionMessageCache.messagesBySession.set(sessionId, entry);
 	if (typeof window === "undefined") return;
 	queueMicrotask(() => {
@@ -214,7 +223,9 @@ function mergeServerMessages(
 	const preserved = previous.filter(
 		(m) => shouldPreserveLocalMessage(m) && !serverIds.has(m.id),
 	);
-	return preserved.length > 0 ? [...serverMessages, ...preserved] : serverMessages;
+	return preserved.length > 0
+		? [...serverMessages, ...preserved]
+		: serverMessages;
 }
 
 const scrollCache = {
@@ -562,7 +573,7 @@ export function usePiChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 									const updated = [...prev];
 									updated[idx] = {
 										...currentTextMsg,
-										parts: currentTextMsg.parts.map(p => ({ ...p })),
+										parts: currentTextMsg.parts.map((p) => ({ ...p })),
 									};
 									return updated;
 								}
@@ -592,7 +603,7 @@ export function usePiChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 									const updated = [...prev];
 									updated[idx] = {
 										...currentToolMsg,
-										parts: currentToolMsg.parts.map(p => ({ ...p })),
+										parts: currentToolMsg.parts.map((p) => ({ ...p })),
 									};
 									return updated;
 								}
@@ -624,7 +635,7 @@ export function usePiChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 									const updated = [...prev];
 									updated[idx] = {
 										...currentResultMsg,
-										parts: currentResultMsg.parts.map(p => ({ ...p })),
+										parts: currentResultMsg.parts.map((p) => ({ ...p })),
 									};
 									return updated;
 								}
@@ -640,7 +651,7 @@ export function usePiChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 							streamingMessageRef.current.isStreaming = false;
 							const completedMessage = {
 								...streamingMessageRef.current,
-								parts: streamingMessageRef.current.parts.map(p => ({ ...p })),
+								parts: streamingMessageRef.current.parts.map((p) => ({ ...p })),
 							};
 							setMessages((prev) => {
 								const idx = prev.findIndex((m) => m.id === completedMessage.id);
@@ -817,12 +828,12 @@ export function usePiChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 				getMainChatPiState(),
 				getMainChatPiSessionMessages(targetSessionId),
 			]);
-			
+
 			// Check if session changed during async fetch - discard stale response
 			if (activeSessionIdRef.current !== targetSessionId) {
 				return;
 			}
-			
+
 			setState(piState);
 
 			// If backend says it's not streaming, ensure local state is cleared
@@ -913,22 +924,22 @@ export function usePiChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 	// the case where messages appear empty until reload
 	useEffect(() => {
 		if (!activeSessionId || !isConnected || isStreaming) return;
-		
+
 		let cancelled = false;
 		const targetSessionId = activeSessionId;
-		
+
 		// Initial refresh after a short delay (handles page load with existing session)
 		const initialTimeout = setTimeout(() => {
 			if (cancelled || activeSessionIdRef.current !== targetSessionId) return;
 			refreshRef.current?.();
 		}, 500);
-		
+
 		// Periodic refresh every 15 seconds as a safety net
 		const interval = setInterval(() => {
 			if (cancelled || activeSessionIdRef.current !== targetSessionId) return;
 			refreshRef.current?.();
 		}, 15000);
-		
+
 		return () => {
 			cancelled = true;
 			clearTimeout(initialTimeout);
@@ -1146,7 +1157,10 @@ export function usePiChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 			} catch (e) {
 				if (!mounted) return;
 				// Only show error if we have no cached data for this session
-				if (!activeSessionId || readCachedSessionMessages(activeSessionId).length === 0) {
+				if (
+					!activeSessionId ||
+					readCachedSessionMessages(activeSessionId).length === 0
+				) {
 					const err =
 						e instanceof Error ? e : new Error("Failed to initialize");
 					setError(err);

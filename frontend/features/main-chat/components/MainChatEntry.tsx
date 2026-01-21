@@ -167,12 +167,12 @@ export function MainChatEntry({
 					listMainChatPiSessions(),
 				]);
 
-			setAssistantInfo(info);
-			// Sort sessions by most recently active first
-			const sorted = [...sessionList].sort(
-				(a, b) => b.modified_at - a.modified_at,
-			);
-			setSessions(sorted);
+				setAssistantInfo(info);
+				// Sort sessions by most recently active first
+				const sorted = [...sessionList].sort(
+					(a, b) => b.modified_at - a.modified_at,
+				);
+				setSessions(sorted);
 				setLatestSessionId(sorted[0]?.id ?? null);
 				writeCachedSessions(name, sorted);
 			}
@@ -354,12 +354,8 @@ export function MainChatEntry({
 								<button
 									type="button"
 									onClick={handleNewSessionClick}
-									className="p-1 text-muted-foreground hover:text-primary hover:bg-sidebar-accent opacity-0 group-hover:opacity-100 transition-opacity"
-									title={
-										locale === "de"
-											? "Neue Sitzung"
-											: "New session"
-									}
+									className="p-1 text-muted-foreground/60 hover:text-primary hover:bg-sidebar-accent transition-colors"
+									title={locale === "de" ? "Neue Sitzung" : "New session"}
 								>
 									<Plus className="w-3 h-3" />
 								</button>
@@ -507,10 +503,10 @@ function SessionTimeline({
 						new Date(session.started_at).getTime(),
 					);
 
-						const readableId = generateReadableId(session.id);
+					const readableId = generateReadableId(session.id);
 
-						return (
-							<button
+					return (
+						<button
 							key={session.id}
 							type="button"
 							onClick={() => onSessionClick(session.id)}

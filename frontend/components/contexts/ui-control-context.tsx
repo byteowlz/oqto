@@ -1,5 +1,10 @@
 "use client";
 
+import {
+	SpotlightOverlay,
+	type SpotlightState,
+	type SpotlightTour,
+} from "@/components/spotlight/SpotlightOverlay";
 import { useApp } from "@/hooks/use-app";
 import type { WsEvent } from "@/lib/ws-client";
 import { useTheme } from "next-themes";
@@ -13,7 +18,6 @@ import {
 	useRef,
 	useState,
 } from "react";
-import { SpotlightOverlay, type SpotlightState, type SpotlightTour } from "@/components/spotlight/SpotlightOverlay";
 import { useNavigate } from "react-router-dom";
 
 export type SessionView =
@@ -26,7 +30,12 @@ export type SessionView =
 	| "canvas"
 	| "voice";
 
-export type ExpandedView = "preview" | "canvas" | "terminal" | "memories" | null;
+export type ExpandedView =
+	| "preview"
+	| "canvas"
+	| "terminal"
+	| "memories"
+	| null;
 
 export interface SessionUiControls {
 	setActiveView: (view: SessionView) => void;
@@ -74,29 +83,33 @@ export function UIControlProvider({
 	} = useApp();
 	const sessionControlsRef = useRef<SessionUiControls | null>(null);
 	const pendingViewRef = useRef<SessionView | null>(null);
-	const pendingPanelRef = useRef<{ view?: ExpandedView; collapsed?: boolean } | null>(
-		null,
-	);
+	const pendingPanelRef = useRef<{
+		view?: ExpandedView;
+		collapsed?: boolean;
+	} | null>(null);
 	const [spotlight, setSpotlight] = useState<SpotlightState | null>(null);
 	const [tour, setTour] = useState<SpotlightTour | null>(null);
 
-	const registerSessionControls = useCallback((controls: SessionUiControls | null) => {
-		sessionControlsRef.current = controls;
-		if (controls && pendingViewRef.current) {
-			controls.setActiveView(pendingViewRef.current);
-			pendingViewRef.current = null;
-		}
-		if (controls && pendingPanelRef.current) {
-			const { view, collapsed } = pendingPanelRef.current;
-			if (view !== undefined) {
-				controls.setExpandedView(view ?? null);
+	const registerSessionControls = useCallback(
+		(controls: SessionUiControls | null) => {
+			sessionControlsRef.current = controls;
+			if (controls && pendingViewRef.current) {
+				controls.setActiveView(pendingViewRef.current);
+				pendingViewRef.current = null;
 			}
-			if (collapsed !== undefined) {
-				controls.setRightSidebarCollapsed(collapsed);
+			if (controls && pendingPanelRef.current) {
+				const { view, collapsed } = pendingPanelRef.current;
+				if (view !== undefined) {
+					controls.setExpandedView(view ?? null);
+				}
+				if (collapsed !== undefined) {
+					controls.setRightSidebarCollapsed(collapsed);
+				}
+				pendingPanelRef.current = null;
 			}
-			pendingPanelRef.current = null;
-		}
-	}, []);
+		},
+		[],
+	);
 
 	const navigate = useCallback(
 		(path: string, replace = false) => {
@@ -155,21 +168,18 @@ export function UIControlProvider({
 		[setSidebarCollapsed, sidebarCollapsed],
 	);
 
-	const setPanel = useCallback(
-		(view?: ExpandedView, collapsed?: boolean) => {
-			if (sessionControlsRef.current) {
-				if (view !== undefined) {
-					sessionControlsRef.current.setExpandedView(view ?? null);
-				}
-				if (collapsed !== undefined) {
-					sessionControlsRef.current.setRightSidebarCollapsed(collapsed);
-				}
-				return;
+	const setPanel = useCallback((view?: ExpandedView, collapsed?: boolean) => {
+		if (sessionControlsRef.current) {
+			if (view !== undefined) {
+				sessionControlsRef.current.setExpandedView(view ?? null);
 			}
-			pendingPanelRef.current = { view, collapsed };
-		},
-		[],
-	);
+			if (collapsed !== undefined) {
+				sessionControlsRef.current.setRightSidebarCollapsed(collapsed);
+			}
+			return;
+		}
+		pendingPanelRef.current = { view, collapsed };
+	}, []);
 
 	const executePaletteCommand = useCallback(
 		async (command: string, args?: Record<string, unknown>) => {
@@ -237,7 +247,10 @@ export function UIControlProvider({
 						navigate(event.path, event.replace);
 						break;
 					case "ui.session":
-						switchSession(event.session_id, event.mode as "main" | "opencode" | "pi");
+						switchSession(
+							event.session_id,
+							event.mode as "main" | "opencode" | "pi",
+						);
 						break;
 					case "ui.view":
 						switchView(event.view as SessionView);
@@ -262,7 +275,8 @@ export function UIControlProvider({
 							title: event.title ?? undefined,
 							description: event.description ?? undefined,
 							action: event.action ?? undefined,
-							position: (event.position as SpotlightState["position"]) ?? "auto",
+							position:
+								(event.position as SpotlightState["position"]) ?? "auto",
 						});
 						break;
 					case "ui.tour":

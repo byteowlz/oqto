@@ -138,8 +138,10 @@ function TimelineDot({
 					)}
 				>
 					<div className="font-medium">
-						{session.title || "Untitled"} 
-						<span className="opacity-60">[{generateReadableId(session.id)}]</span>
+						{session.title || "Untitled"}
+						<span className="opacity-60">
+							[{generateReadableId(session.id)}]
+						</span>
 					</div>
 					<div className="text-muted-foreground">{formattedDate}</div>
 					{session.message_count > 0 && (

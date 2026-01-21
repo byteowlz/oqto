@@ -92,10 +92,7 @@ export function A2UISurfaceCard({
 	const handleDataChange = useCallback((path: string, value: unknown) => {
 		// Avoid logging on every keystroke; enable with localStorage.setItem("debug:a2ui", "1").
 		try {
-			if (
-				import.meta.env.DEV &&
-				localStorage.getItem("debug:a2ui") === "1"
-			) {
+			if (import.meta.env.DEV && localStorage.getItem("debug:a2ui") === "1") {
 				console.debug("[A2UI] Data change:", path, value);
 			}
 		} catch {

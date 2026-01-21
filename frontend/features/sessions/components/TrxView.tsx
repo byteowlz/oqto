@@ -33,6 +33,7 @@ import {
 	Bug,
 	Check,
 	CheckCircle2,
+	CheckSquare,
 	ChevronDown,
 	ChevronRight,
 	ChevronUp,
@@ -49,11 +50,10 @@ import {
 	Plus,
 	RefreshCw,
 	Search,
+	Send,
+	Square,
 	Trash2,
 	X,
-	CheckSquare,
-	Square,
-	Send,
 } from "lucide-react";
 import { memo, useCallback, useEffect, useMemo, useState } from "react";
 
@@ -975,13 +975,13 @@ export const TrxView = memo(function TrxView({
 		return { open, inProgress, closed, total: issues.length };
 	}, [issues]);
 
-		if (!workspacePath) {
-			return (
-				<div
-					className={cn("flex items-center justify-center h-full", className)}
-					data-spotlight="trx-view"
-				>
-					<div className="text-center text-muted-foreground">
+	if (!workspacePath) {
+		return (
+			<div
+				className={cn("flex items-center justify-center h-full", className)}
+				data-spotlight="trx-view"
+			>
+				<div className="text-center text-muted-foreground">
 					<ClipboardList className="w-8 h-8 mx-auto mb-2 opacity-50" />
 					<p className="text-xs">No workspace selected</p>
 				</div>
@@ -989,13 +989,13 @@ export const TrxView = memo(function TrxView({
 		);
 	}
 
-		if (loading) {
-			return (
-				<div
-					className={cn("flex items-center justify-center h-full", className)}
-					data-spotlight="trx-view"
-				>
-					<div className="text-center text-muted-foreground">
+	if (loading) {
+		return (
+			<div
+				className={cn("flex items-center justify-center h-full", className)}
+				data-spotlight="trx-view"
+			>
+				<div className="text-center text-muted-foreground">
 					<Loader2 className="w-6 h-6 mx-auto mb-2 animate-spin" />
 					<p className="text-xs">Loading issues...</p>
 				</div>
@@ -1004,9 +1004,9 @@ export const TrxView = memo(function TrxView({
 	}
 
 	// Collapsed view - just a status bar
-		if (isCollapsed) {
-			return (
-				<div className={cn("flex-shrink-0", className)} data-spotlight="trx-view">
+	if (isCollapsed) {
+		return (
+			<div className={cn("flex-shrink-0", className)} data-spotlight="trx-view">
 				<button
 					type="button"
 					onClick={() => setIsCollapsed(false)}
@@ -1046,7 +1046,8 @@ export const TrxView = memo(function TrxView({
 				{selectedIssueIds.size > 0 && (
 					<div className="flex items-center gap-2 bg-primary/10 border border-primary/20 rounded px-2 py-1.5">
 						<span className="text-xs font-medium text-primary">
-							{selectedIssueIds.size} issue{selectedIssueIds.size > 1 ? "s" : ""} selected
+							{selectedIssueIds.size} issue
+							{selectedIssueIds.size > 1 ? "s" : ""} selected
 						</span>
 						<div className="flex-1" />
 						<Button
@@ -1249,17 +1250,16 @@ export const TrxView = memo(function TrxView({
 							type="button"
 							variant="ghost"
 							size="sm"
-												onClick={() => {
-													setNewIssueParentId(null);
-													setShowAddForm((prev) => {
-														const next = !prev;
-														if (next && filterType !== "all") {
-															setNewIssueType(filterType);
-														}
-														return next;
-													});
-												}}
-
+							onClick={() => {
+								setNewIssueParentId(null);
+								setShowAddForm((prev) => {
+									const next = !prev;
+									if (next && filterType !== "all") {
+										setNewIssueType(filterType);
+									}
+									return next;
+								});
+							}}
 							className="h-6 w-6 p-0"
 							title="Add issue"
 						>
@@ -1420,7 +1420,9 @@ export const TrxView = memo(function TrxView({
 								onToggleExpand={handleToggleEpic}
 								isExpanded={expandedEpics.has(parent.id)}
 								onToggle={() => handleToggleEpic(parent.id)}
-								onStatusChange={(status) => handleStatusChange(parent.id, status)}
+								onStatusChange={(status) =>
+									handleStatusChange(parent.id, status)
+								}
 								onStartHere={
 									onStartIssue ? () => handleStartIssue(parent) : undefined
 								}

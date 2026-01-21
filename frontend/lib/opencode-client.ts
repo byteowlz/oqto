@@ -983,7 +983,10 @@ export function subscribeToEvents(
 
 			// For named SSE events (event: question.asked), we need to propagate the
 			// event name since EventSource.onmessage only receives "message".
-			if (eventType.startsWith("permission") || eventType.startsWith("question")) {
+			if (
+				eventType.startsWith("permission") ||
+				eventType.startsWith("question")
+			) {
 				console.log("[SSE] Named event:", eventType, parsed ?? raw);
 			}
 

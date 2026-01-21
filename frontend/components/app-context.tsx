@@ -16,10 +16,7 @@
  */
 
 import type { ReactNode } from "react";
-import {
-	SessionProvider,
-	UIProvider,
-} from "./contexts";
+import { SessionProvider, UIProvider } from "./contexts";
 
 /**
  * AppProvider - Composes UIProvider and SessionProvider

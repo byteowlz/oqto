@@ -1,7 +1,7 @@
 "use client";
 
 import { cn } from "@/lib/utils";
-import { Bot, MessageSquare, Loader2 } from "lucide-react";
+import { Bot, Loader2, MessageSquare } from "lucide-react";
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 
 export interface AgentTarget {
@@ -78,7 +78,11 @@ export const AgentMentionPopup = memo(function AgentMentionPopup({
 	// Each session becomes a target, showing session title and project info
 	const sessionTargets: AgentTarget[] = sessions.map((session) => ({
 		id: session.id,
-		name: session.title || session.project_name || session.workspace_path?.split("/").pop() || session.id.slice(0, 12),
+		name:
+			session.title ||
+			session.project_name ||
+			session.workspace_path?.split("/").pop() ||
+			session.id.slice(0, 12),
 		type: "session" as const,
 		title: session.title || undefined,
 		description: session.workspace_path,
@@ -99,7 +103,9 @@ export const AgentMentionPopup = memo(function AgentMentionPopup({
 				name: mainChatName,
 				type: "main-chat",
 				title: "Main Chat",
-				description: mainChatWorkspacePath?.split("/").pop() || "Ask the main chat assistant",
+				description:
+					mainChatWorkspacePath?.split("/").pop() ||
+					"Ask the main chat assistant",
 				workspace_path: mainChatWorkspacePath,
 			};
 
@@ -288,7 +294,9 @@ export const AgentMentionPopup = memo(function AgentMentionPopup({
 							<div className="text-sm font-medium truncate">{target.name}</div>
 							{target.type === "session" && (
 								<div className="text-xs text-muted-foreground truncate">
-									{target.project_name || target.workspace_path?.split("/").pop() || "Session"}
+									{target.project_name ||
+										target.workspace_path?.split("/").pop() ||
+										"Session"}
 								</div>
 							)}
 						</div>
@@ -310,7 +318,9 @@ export const AgentTargetChip = memo(function AgentTargetChip({
 	target: AgentTarget;
 	onRemove: () => void;
 }) {
-	const isMac = typeof navigator !== "undefined" && navigator.platform.toLowerCase().includes("mac");
+	const isMac =
+		typeof navigator !== "undefined" &&
+		navigator.platform.toLowerCase().includes("mac");
 	const modKey = isMac ? "Cmd" : "Ctrl";
 
 	return (

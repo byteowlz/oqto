@@ -249,15 +249,14 @@ export const GhosttyTerminal = forwardRef<
 				if (mountedRef.current) setStatus("connecting");
 
 				// Double-check we're not already setting up
-					if (session.isConnecting) {
-						if (isTerminalDebugEnabled()) {
-							console.debug(
-								`Terminal [${sessionId}]: setup already in progress, skipping`,
-							);
-						}
-						return;
+				if (session.isConnecting) {
+					if (isTerminalDebugEnabled()) {
+						console.debug(
+							`Terminal [${sessionId}]: setup already in progress, skipping`,
+						);
 					}
-
+					return;
+				}
 
 				session.isConnecting = true;
 				if (isTerminalDebugEnabled()) {
@@ -279,7 +278,9 @@ export const GhosttyTerminal = forwardRef<
 						session.terminal.element !== containerRef.current
 					) {
 						if (isTerminalDebugEnabled()) {
-							console.debug(`Terminal [${sessionId}]: detected new container, disposing old terminal and socket`);
+							console.debug(
+								`Terminal [${sessionId}]: detected new container, disposing old terminal and socket`,
+							);
 						}
 						// Close old socket so we create a fresh connection
 						if (session.socket) {
@@ -370,22 +371,21 @@ export const GhosttyTerminal = forwardRef<
 							wsUrlWithAuth = `${currentWsUrl}${separator}token=${encodeURIComponent(token)}`;
 						}
 
-					if (isTerminalDebugEnabled()) {
-						console.debug(
-							`Terminal [${sessionId}]: connecting WebSocket to ${currentWsUrl.substring(0, 60)}...`,
-						);
-					}
-
+						if (isTerminalDebugEnabled()) {
+							console.debug(
+								`Terminal [${sessionId}]: connecting WebSocket to ${currentWsUrl.substring(0, 60)}...`,
+							);
+						}
 
 						const socket = new WebSocket(wsUrlWithAuth);
 						socket.binaryType = "arraybuffer";
 						session.socket = socket;
 						setStatus("connecting");
 
-					socket.onopen = () => {
-						if (isTerminalDebugEnabled()) {
-							console.debug(`Terminal [${sessionId}]: connected!`);
-						}
+						socket.onopen = () => {
+							if (isTerminalDebugEnabled()) {
+								console.debug(`Terminal [${sessionId}]: connected!`);
+							}
 
 							session.isConnecting = false;
 							session.reconnectAttempts = 0;
@@ -413,12 +413,12 @@ export const GhosttyTerminal = forwardRef<
 							scheduleReconnect("error");
 						};
 
-					socket.onclose = (event) => {
-						if (isTerminalDebugEnabled()) {
-							console.debug(
-								`Terminal [${sessionId}]: connection closed (code=${event.code} clean=${event.wasClean})`,
-							);
-						}
+						socket.onclose = (event) => {
+							if (isTerminalDebugEnabled()) {
+								console.debug(
+									`Terminal [${sessionId}]: connection closed (code=${event.code} clean=${event.wasClean})`,
+								);
+							}
 
 							session.isConnecting = false;
 							session.socket = null;
@@ -459,9 +459,14 @@ export const GhosttyTerminal = forwardRef<
 
 					// If terminal is now attached to a DIFFERENT container, a new instance took over
 					// Don't clean up - the new instance is using this session
-					if (session.terminal?.element && session.terminal.element !== myContainer) {
+					if (
+						session.terminal?.element &&
+						session.terminal.element !== myContainer
+					) {
 						if (isTerminalDebugEnabled()) {
-							console.debug(`Terminal [${currentSessionId}]: skipping cleanup, new instance took over`);
+							console.debug(
+								`Terminal [${currentSessionId}]: skipping cleanup, new instance took over`,
+							);
 						}
 						return;
 					}
@@ -470,7 +475,9 @@ export const GhosttyTerminal = forwardRef<
 					if (mountedRef.current) return;
 
 					if (isTerminalDebugEnabled()) {
-						console.debug(`Terminal [${currentSessionId}]: cleaning up resources`);
+						console.debug(
+							`Terminal [${currentSessionId}]: cleaning up resources`,
+						);
 					}
 
 					if (session.reconnectTimeout) {

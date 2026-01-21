@@ -1,7 +1,5 @@
 export { SessionScreen } from "./SessionScreen";
-export type {
-	ChatInputAreaHandle,
-} from "./components/ChatInputArea";
+export type { ChatInputAreaHandle } from "./components/ChatInputArea";
 export { ChatInputArea } from "./components/ChatInputArea";
 export { AgentSettingsView } from "./components/AgentSettingsView";
 export { BrowserView } from "./components/BrowserView";

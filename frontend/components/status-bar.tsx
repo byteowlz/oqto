@@ -1,14 +1,11 @@
 "use client";
 
+import { ProviderIcon } from "@/components/ui/provider-icon";
 import { useApp } from "@/hooks/use-app";
 import { useCurrentUser } from "@/hooks/use-auth";
-import { useQuery } from "@tanstack/react-query";
-import {
-	controlPlaneApiUrl,
-	getAuthHeaders,
-} from "@/lib/control-plane-client";
-import { ProviderIcon } from "@/components/ui/provider-icon";
+import { controlPlaneApiUrl, getAuthHeaders } from "@/lib/control-plane-client";
 import { cn } from "@/lib/utils";
+import { useQuery } from "@tanstack/react-query";
 import { Activity, Users } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
@@ -52,10 +49,10 @@ async function fetchAdminStats(): Promise<AdminStats> {
 // Shorten model string for display (format: "provider/model")
 function shortenModelRef(modelRef: string): string {
 	if (!modelRef) return "";
-	
+
 	const parts = modelRef.split("/");
 	if (parts.length < 2) return modelRef;
-	
+
 	const provider = parts[0];
 	const model = parts.slice(1).join("/");
 
@@ -83,11 +80,7 @@ function shortenModelRef(modelRef: string): string {
 
 export function StatusBar() {
 	const { data: user } = useCurrentUser();
-	const {
-		workspaceSessions,
-		selectedChatSessionId,
-		mainChatActive,
-	} = useApp();
+	const { workspaceSessions, selectedChatSessionId, mainChatActive } = useApp();
 
 	const isAdmin = user?.role === "admin";
 
@@ -159,9 +152,15 @@ export function StatusBar() {
 
 	// Extract provider and model name from ref (format: "provider/model")
 	const { provider, modelName, shortModel } = useMemo(() => {
-		if (!selectedModelRef) return { provider: null, modelName: null, shortModel: null };
+		if (!selectedModelRef)
+			return { provider: null, modelName: null, shortModel: null };
 		const parts = selectedModelRef.split("/");
-		if (parts.length < 2) return { provider: null, modelName: selectedModelRef, shortModel: selectedModelRef };
+		if (parts.length < 2)
+			return {
+				provider: null,
+				modelName: selectedModelRef,
+				shortModel: selectedModelRef,
+			};
 		return {
 			provider: parts[0],
 			modelName: parts.slice(1).join("/"),
@@ -183,10 +182,7 @@ export function StatusBar() {
 			{/* Left side - user metrics */}
 			<div className="flex items-center gap-3">
 				{/* Running sessions for current user */}
-				<span
-					className="flex items-center gap-1"
-					title="Your running sessions"
-				>
+				<span className="flex items-center gap-1" title="Your running sessions">
 					<Activity className="w-3 h-3" />
 					<span className="font-mono">{runningSessionCount}</span>
 				</span>
@@ -194,9 +190,14 @@ export function StatusBar() {
 				{/* Current model */}
 				{selectedModelRef && provider && (
 					<span className="flex items-center gap-1" title={selectedModelRef}>
-						<ProviderIcon provider={provider} className="w-3 h-3 flex-shrink-0" />
+						<ProviderIcon
+							provider={provider}
+							className="w-3 h-3 flex-shrink-0"
+						/>
 						{/* Full model on wide screens, shortened on narrow */}
-						<span className="font-mono hidden lg:inline">{selectedModelRef}</span>
+						<span className="font-mono hidden lg:inline">
+							{selectedModelRef}
+						</span>
 						<span className="font-mono lg:hidden">{shortModel}</span>
 					</span>
 				)}

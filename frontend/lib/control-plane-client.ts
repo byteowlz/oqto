@@ -1572,6 +1572,44 @@ export async function listMainChatPiSessions(): Promise<PiSessionFile[]> {
 	return res.json();
 }
 
+/** Search result from Pi session search */
+export type PiSearchHit = {
+	agent: string;
+	source_path: string;
+	session_id: string;
+	message_id?: string;
+	line_number: number;
+	snippet?: string;
+	score: number;
+	timestamp?: number;
+	role?: string;
+	title?: string;
+};
+
+/** Search response from Pi session search */
+export type PiSearchResponse = {
+	hits: PiSearchHit[];
+	total: number;
+};
+
+/** Search Main Chat Pi sessions for message content */
+export async function searchMainChatPiSessions(
+	query: string,
+	limit = 50,
+): Promise<PiSearchResponse> {
+	const url = new URL(
+		controlPlaneApiUrl("/api/main/pi/sessions/search"),
+		window.location.origin,
+	);
+	url.searchParams.set("q", query);
+	url.searchParams.set("limit", limit.toString());
+	const res = await authFetch(url.toString(), {
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+	return res.json();
+}
+
 /** Start a brand new Pi session (creates new session file) */
 export async function newMainChatPiSessionFile(): Promise<PiState> {
 	const res = await authFetch(controlPlaneApiUrl("/api/main/pi/sessions"), {

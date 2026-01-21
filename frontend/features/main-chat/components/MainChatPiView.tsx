@@ -28,15 +28,6 @@ import {
 	VoiceMenuButton,
 	type VoiceMode,
 } from "@/components/voice/VoiceMenuButton";
-import { type A2UISurfaceState, useA2UI } from "@/hooks/use-a2ui";
-import { useDictation } from "@/hooks/use-dictation";
-import {
-	type PiDisplayMessage,
-	type PiMessagePart,
-	getCachedScrollPosition,
-	setCachedScrollPosition,
-	usePiChat,
-} from "@/hooks/usePiChat";
 import {
 	type Features,
 	type PiModelInfo,
@@ -51,13 +42,22 @@ import {
 	setMainChatPiModel,
 	workspaceFileUrl,
 } from "@/features/main-chat/api";
+import { type A2UISurfaceState, useA2UI } from "@/hooks/use-a2ui";
+import { useDictation } from "@/hooks/use-dictation";
+import {
+	type PiDisplayMessage,
+	type PiMessagePart,
+	getCachedScrollPosition,
+	setCachedScrollPosition,
+	usePiChat,
+} from "@/hooks/usePiChat";
 import { extractFileReferences, getFileTypeInfo } from "@/lib/file-types";
+import { formatSessionDate, generateReadableId } from "@/lib/session-utils";
 import {
 	type SlashCommand,
 	fuzzyMatch,
 	parseSlashInput,
 } from "@/lib/slash-commands";
-import { formatSessionDate, generateReadableId } from "@/lib/session-utils";
 import { cn } from "@/lib/utils";
 import {
 	Bot,
@@ -217,17 +217,18 @@ export function MainChatPiView({
 		info: { id: m.id, role: m.role },
 	}));
 
-	const { surfaces: a2uiSurfaces, handleAction: handleA2UIAction, getUnanchoredSurfaces } = useA2UI(
-		a2uiMessagesRef,
-		{
-			onSurfaceReceived: useCallback(() => {
-				// Auto-scroll when A2UI surface arrives
-				if (!isUserScrolled) {
-					messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-				}
-			}, [isUserScrolled]),
-		},
-	);
+	const {
+		surfaces: a2uiSurfaces,
+		handleAction: handleA2UIAction,
+		getUnanchoredSurfaces,
+	} = useA2UI(a2uiMessagesRef, {
+		onSurfaceReceived: useCallback(() => {
+			// Auto-scroll when A2UI surface arrives
+			if (!isUserScrolled) {
+				messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+			}
+		}, [isUserScrolled]),
+	});
 
 	// Memoized map of message ID to surfaces to avoid creating new arrays on each render
 	// Also track "orphaned" surfaces whose anchor doesn't match any current message
@@ -235,7 +236,7 @@ export function MainChatPiView({
 		const map = new Map<string, A2UISurfaceState[]>();
 		const messageIds = new Set(messages.map((m) => m.id));
 		const orphaned: A2UISurfaceState[] = [];
-		
+
 		for (const surface of a2uiSurfaces) {
 			if (surface.anchorMessageId && messageIds.has(surface.anchorMessageId)) {
 				const existing = map.get(surface.anchorMessageId) || [];
@@ -251,7 +252,9 @@ export function MainChatPiView({
 
 	// Voice configuration
 	const voiceConfig = useMemo(
-		() => (features?.voice as unknown as import("@/lib/voice/types").VoiceConfig) ?? null,
+		() =>
+			(features?.voice as unknown as import("@/lib/voice/types").VoiceConfig) ??
+			null,
 		[features?.voice],
 	);
 
@@ -942,7 +945,9 @@ export function MainChatPiView({
 		listMainChatPiSessions()
 			.then((sessions) => {
 				if (cancelled) return;
-				setSessionMeta(sessions.find((s) => s.id === selectedSessionId) ?? null);
+				setSessionMeta(
+					sessions.find((s) => s.id === selectedSessionId) ?? null,
+				);
 			})
 			.catch(() => {
 				// ignore
@@ -952,7 +957,9 @@ export function MainChatPiView({
 		};
 	}, [selectedSessionId]);
 
-	const readableId = selectedSessionId ? generateReadableId(selectedSessionId) : null;
+	const readableId = selectedSessionId
+		? generateReadableId(selectedSessionId)
+		: null;
 	const formattedDate = sessionMeta?.started_at
 		? formatSessionDate(new Date(sessionMeta.started_at).getTime())
 		: null;
@@ -1450,7 +1457,10 @@ const PiMessageGroupCard = memo(function PiMessageGroupCard({
 		}
 	}
 
-	const toolResults = new Map<string, Extract<PiMessagePart, { type: "tool_result" }>>();
+	const toolResults = new Map<
+		string,
+		Extract<PiMessagePart, { type: "tool_result" }>
+	>();
 	const toolUseIds = new Set<string>();
 	for (const { part } of timedParts) {
 		if (part.type === "tool_result") {
@@ -1514,7 +1524,12 @@ const PiMessageGroupCard = memo(function PiMessageGroupCard({
 				});
 			}
 		} else if (part.type === "thinking") {
-			segments.push({ key, type: "thinking", content: part.content, timestamp });
+			segments.push({
+				key,
+				type: "thinking",
+				content: part.content,
+				timestamp,
+			});
 		} else if (part.type === "compaction") {
 			segments.push({
 				key,
@@ -1586,7 +1601,10 @@ const PiMessageGroupCard = memo(function PiMessageGroupCard({
 				)}
 				{createdAt && !Number.isNaN(createdAt.getTime()) && (
 					<span className="text-[9px] sm:text-[10px] text-foreground/50 dark:text-muted-foreground leading-none sm:leading-normal ml-2">
-						{createdAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+						{createdAt.toLocaleTimeString([], {
+							hour: "2-digit",
+							minute: "2-digit",
+						})}
 					</span>
 				)}
 				{allTextContent && !isStreamingGroup && (
@@ -1682,7 +1700,9 @@ const PiMessageGroupCard = memo(function PiMessageGroupCard({
 
 	return (
 		<ContextMenu>
-			<ContextMenuTrigger className="contents">{messageCard}</ContextMenuTrigger>
+			<ContextMenuTrigger className="contents">
+				{messageCard}
+			</ContextMenuTrigger>
 			<ContextMenuContent>
 				<ContextMenuItem
 					onClick={() => navigator.clipboard?.writeText(allTextContent)}
@@ -1887,7 +1907,9 @@ const PiMessageCard = memo(function PiMessageCard({
 
 	return (
 		<ContextMenu>
-			<ContextMenuTrigger className="contents">{messageCard}</ContextMenuTrigger>
+			<ContextMenuTrigger className="contents">
+				{messageCard}
+			</ContextMenuTrigger>
 			<ContextMenuContent>
 				<ContextMenuItem
 					onClick={() => navigator.clipboard?.writeText(textContent)}
@@ -1995,7 +2017,6 @@ function PiPartRenderer({
 				/>
 			);
 
-
 		default: {
 			console.warn("Unknown Pi message part type:", part);
 			return null;
@@ -2017,10 +2038,7 @@ function TextWithFileReferences({
 	locale?: "en" | "de";
 }) {
 	// Parse @file references, excluding code blocks
-	const fileRefs = useMemo(
-		() => extractFileReferences(content),
-		[content],
-	);
+	const fileRefs = useMemo(() => extractFileReferences(content), [content]);
 
 	return (
 		<ContextMenu>

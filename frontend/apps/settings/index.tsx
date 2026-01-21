@@ -259,9 +259,7 @@ export function SettingsApp() {
 							</div>
 						)}
 						{mobileView === "help" && <SettingsHelpPanel locale={locale} />}
-						{mobileView === "shortcuts" && (
-							<ShortcutsPanel locale={locale} />
-						)}
+						{mobileView === "shortcuts" && <ShortcutsPanel locale={locale} />}
 					</div>
 				</div>
 			</div>
@@ -414,9 +412,7 @@ export function SettingsApp() {
 								</div>
 							</div>
 							<div className="flex-1 min-h-0 overflow-y-auto">
-								{sidebarTab === "help" && (
-									<SettingsHelpPanel locale={locale} />
-								)}
+								{sidebarTab === "help" && <SettingsHelpPanel locale={locale} />}
 								{sidebarTab === "shortcuts" && (
 									<ShortcutsPanel locale={locale} />
 								)}

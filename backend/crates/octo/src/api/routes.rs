@@ -1,10 +1,11 @@
 //! API route definitions.
 
 use axum::extract::DefaultBodyLimit;
-use axum::http::{HeaderValue, Method, header};
+use axum::http::{header, HeaderValue, Method};
 use axum::{
-    Router, middleware,
+    middleware,
     routing::{delete, get, post, put},
+    Router,
 };
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::trace::{DefaultMakeSpan, DefaultOnRequest, DefaultOnResponse, TraceLayer};
@@ -369,6 +370,10 @@ pub fn create_router_with_config(state: AppState, max_upload_size_mb: usize) -> 
             "/main/pi/sessions",
             get(main_chat_pi_handlers::list_pi_sessions)
                 .post(main_chat_pi_handlers::new_pi_session),
+        )
+        .route(
+            "/main/pi/sessions/search",
+            get(main_chat_pi_handlers::search_pi_sessions),
         )
         .route(
             "/main/pi/sessions/{session_id}",

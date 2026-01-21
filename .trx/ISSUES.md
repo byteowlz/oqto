@@ -548,6 +548,7 @@ Desired behavior: Tool calls hidden by default, toggle to show
 
 ## Closed
 
+- [octo-q9dx] Transcription continuing after stopping Conversation mode (closed 2026-01-21)
 - [octo-thhx.7] Add data-spotlight attributes to UI elements (closed 2026-01-21)
 - [octo-thhx.6] Spotlight overlay component (closed 2026-01-21)
 - [octo-thhx.5] octoctl ui CLI commands (closed 2026-01-21)

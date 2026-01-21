@@ -118,7 +118,11 @@ export function DictationOverlay({
 					enterKeyHint="send"
 					data-form-type="other"
 					placeholder={placeholder}
-					value={liveTranscript ? `${value}${value && liveTranscript ? " " : ""}${liveTranscript}` : value}
+					value={
+						liveTranscript
+							? `${value}${value && liveTranscript ? " " : ""}${liveTranscript}`
+							: value
+					}
 					onChange={onChange}
 					onKeyDown={onKeyDown}
 					onPaste={onPaste}

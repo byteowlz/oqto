@@ -11,6 +11,7 @@ type MainChatNavigationOptions = {
 	setActiveAppId: (appId: string) => void;
 	setMobileMenuOpen: (open: boolean) => void;
 	setMainChatWorkspacePath: (path: string | null) => void;
+	requestNewMainChatSession?: () => void;
 };
 
 export function useMainChatNavigation({
@@ -21,6 +22,7 @@ export function useMainChatNavigation({
 	setActiveAppId,
 	setMobileMenuOpen,
 	setMainChatWorkspacePath,
+	requestNewMainChatSession,
 }: MainChatNavigationOptions) {
 	const hydrateWorkspacePath = useCallback(
 		(assistantName: string) => {
@@ -80,14 +82,18 @@ export function useMainChatNavigation({
 		(assistantName: string) => {
 			setMainChatAssistantName(assistantName);
 			setMainChatActive(true);
-			setMainChatCurrentSessionId("/new");
+			// Clear current session to indicate new session is being created
+			setMainChatCurrentSessionId(null);
 			setSelectedChatSessionId("");
 			setActiveAppId("sessions");
 			setMobileMenuOpen(false);
 			hydrateWorkspacePath(assistantName);
+			// Trigger new session creation
+			requestNewMainChatSession?.();
 		},
 		[
 			hydrateWorkspacePath,
+			requestNewMainChatSession,
 			setActiveAppId,
 			setMainChatActive,
 			setMainChatAssistantName,

@@ -191,7 +191,6 @@ export type UiControlEvent =
 	| { type: "ui.panel"; view?: string | null; collapsed?: boolean }
 	| { type: "ui.theme"; theme: string };
 
-
 // ============================================================================
 // Command Types (to backend)
 // ============================================================================

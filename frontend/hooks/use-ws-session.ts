@@ -345,7 +345,8 @@ function mapWsEventToSessionEvent(
 					details: {
 						type: "tool_end",
 						toolName,
-						toolCallId: "tool_call_id" in event ? event.tool_call_id : undefined,
+						toolCallId:
+							"tool_call_id" in event ? event.tool_call_id : undefined,
 						result,
 					},
 				};
@@ -534,7 +535,10 @@ export function useWsSessionEvents(
 		let deltaLastEmitAt = 0;
 		let deltaPending = false;
 
-		const scheduleLegacyMessageUpdated = (sessionId: string, minIntervalMs: number) => {
+		const scheduleLegacyMessageUpdated = (
+			sessionId: string,
+			minIntervalMs: number,
+		) => {
 			deltaPending = true;
 			if (deltaTimer) return;
 
@@ -670,7 +674,8 @@ function mapWsEventToLegacyEvent(event: WsEvent): LegacyEvent | null {
 							data: {
 								message,
 								tool: "tool_name" in event ? event.tool_name : undefined,
-								toolCallId: "tool_call_id" in event ? event.tool_call_id : undefined,
+								toolCallId:
+									"tool_call_id" in event ? event.tool_call_id : undefined,
 								result,
 							},
 						},

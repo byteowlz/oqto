@@ -3,7 +3,7 @@
  * Used by both sidebar session search and in-chat search.
  */
 
-import { useCallback, useRef, useEffect } from "react";
+import { useCallback, useEffect, useRef } from "react";
 
 export type MessageNavigationTarget = {
 	/** Message ID to scroll to */

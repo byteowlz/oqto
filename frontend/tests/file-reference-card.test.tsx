@@ -1,6 +1,6 @@
 import { FileReferenceCard } from "@/features/main-chat/components/MainChatPiView";
 import { render, screen } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, type vi } from "vitest";
 
 type LocalStorageMock = {
 	getItem: ReturnType<typeof vi.fn>;

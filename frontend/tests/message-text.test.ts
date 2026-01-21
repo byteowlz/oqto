@@ -13,7 +13,9 @@ describe("getMessageText", () => {
 	});
 
 	it("returns empty string when no text parts exist", () => {
-		const parts = [{ type: "tool", tool: "read", state: { status: "running" } }];
+		const parts = [
+			{ type: "tool", tool: "read", state: { status: "running" } },
+		];
 		expect(getMessageText(parts as never)).toBe("");
 	});
 });

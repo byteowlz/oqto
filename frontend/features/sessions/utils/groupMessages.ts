@@ -18,7 +18,9 @@ export function groupMessages(
 		if (
 			!currentGroup ||
 			currentGroup.role !== role ||
-			(currentGroup.sessionId && sessionId && currentGroup.sessionId !== sessionId)
+			(currentGroup.sessionId &&
+				sessionId &&
+				currentGroup.sessionId !== sessionId)
 		) {
 			currentGroup = {
 				role,
