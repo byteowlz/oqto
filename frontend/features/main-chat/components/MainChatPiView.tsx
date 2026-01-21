@@ -1024,22 +1024,6 @@ export function MainChatPiView({
 				</div>
 			)}
 
-			{/* Working indicator with stop button */}
-			{isStreaming && (
-				<div className="flex items-center gap-1.5 px-2 py-0.5 bg-primary/10 text-xs text-primary">
-					<BrailleSpinner />
-					<span className="font-medium flex-1">{t.agentWorking}</span>
-					<button
-						type="button"
-						onClick={handleStop}
-						className="mr-1 text-destructive hover:text-destructive/80 transition-colors"
-						title={t.stopAgent}
-					>
-						<StopCircle className="w-5 h-5" />
-					</button>
-				</div>
-			)}
-
 			{/* Messages area */}
 			<div className="relative flex-1 min-h-0">
 				<div
@@ -1361,6 +1345,20 @@ export function MainChatPiView({
 							/>
 						)}
 					</div>
+
+					{/* Stop button - only shown when streaming */}
+					{isStreaming && (
+						<Button
+							type="button"
+							onClick={handleStop}
+							className="stop-button-animated flex-shrink-0 h-8 px-2 flex items-center justify-center text-destructive hover:text-destructive/80 transition-colors p-0 bg-transparent hover:bg-transparent"
+							variant="ghost"
+							size="icon"
+							title={t.stopAgent}
+						>
+							<StopCircle className="w-4 h-4" />
+						</Button>
+					)}
 
 					{/* Send button */}
 					<Button

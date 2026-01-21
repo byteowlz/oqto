@@ -1492,6 +1492,7 @@ export const SessionScreen = memo(function SessionScreen() {
 
 	// Handler for opening a file in canvas from FileTreeView
 	const handleOpenInCanvas = useCallback((filePath: string) => {
+		console.log("[DEBUG] handleOpenInCanvas called with:", filePath);
 		setPreviewFilePath(filePath);
 		setActiveView("canvas");
 	}, []);
@@ -4042,25 +4043,6 @@ export const SessionScreen = memo(function SessionScreen() {
 				onClick={handleQuestionBannerClick}
 			/>
 
-			{/* Working indicator with stop button */}
-			{chatState === "sending" && (
-				<div className="flex items-center gap-1.5 px-2 py-0.5 bg-primary/10 text-xs text-primary">
-					<BrailleSpinner />
-					<span className="font-medium flex-1">
-						{locale === "de" ? "Agent arbeitet..." : "Agent working..."}
-					</span>
-					<button
-						type="button"
-						onClick={handleStop}
-						className="mr-1 text-destructive hover:text-destructive/80 transition-colors"
-						title={
-							locale === "de" ? "Agent stoppen (2x Esc)" : "Stop agent (2x Esc)"
-						}
-					>
-						<StopCircle className="w-5 h-5" />
-					</button>
-				</div>
-			)}
 			<div className="relative flex-1 min-h-0">
 				{allowExpanded && showExpandedPreview ? (
 					<div className="h-full bg-muted/30 border border-border overflow-hidden">
@@ -4527,6 +4509,20 @@ export const SessionScreen = memo(function SessionScreen() {
 							/>
 						)}
 					</div>
+					{chatState === "sending" && (
+						<Button
+							type="button"
+							onClick={handleStop}
+							className="stop-button-animated flex-shrink-0 h-8 px-2 flex items-center justify-center text-destructive hover:text-destructive/80 transition-colors p-0 bg-transparent hover:bg-transparent"
+							variant="ghost"
+							size="icon"
+							title={
+								locale === "de" ? "Agent stoppen (2x Esc)" : "Stop agent (2x Esc)"
+							}
+						>
+							<StopCircle className="w-4 h-4" />
+						</Button>
+					)}
 					<Button
 						type="button"
 						data-voice-send

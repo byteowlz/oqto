@@ -135,15 +135,6 @@ A versioned envelope composed of multiple context "sources".
 ...
 
 
-### [octo-wzvn] Agent-driven UI control (conversational navigation) (P2, feature)
-## Problem
-Users want to navigate and operate the Octo web UI conversationally. The agent should be able to trigger UI actions (e.g., expanding/collapsing panels/canvas, switching apps/routes, opening dialogs, selecting sessions, focusing inputs) so the user can say what they want and the UI responds.
-
-## Proposed Feature
-Introduce a controlled "agent actions" layer that exposes safe UI commands to the agent (via tool calls / structured messages), such as:
-...
-
-
 ### [octo-skks] Global main agent invoke with context injection (P2, feature)
 ## Problem\nUsers want to invoke the Main Agent from any page in the web app, and have the agent automatically receive UI/runtime context (current page/route, active app/view, selected agent/persona if applicable, selected workspace directory/project, current session IDs).\n\n## Proposed Feature\nAdd a globally-available Main Agent entrypoint (e.g., hotkey + floating button + command palette action) that opens the Main Chat/agent panel. When the user sends a message, inject a structured context block into the message/system prompt containing:\n- Current route/pathname\n- Active app/view (e.g. sessions/settings/admin)\n- Active agent/persona (if any)\n- Current workspace directory / project key\n- Current workspace session ID + current chat session ID (if available)\n\n## Acceptance Criteria\n- Main Agent can be opened from any page without navigation side effects.\n- Sent messages include the context injection reliably and deterministically.\n- Context injection is visible in logs/devtools (or can be toggled) for debugging.\n- Works when OpenCode is not running (falls back to disk/history context).\n- No regression to existing Main Chat / Sessions flows.\n\n## Notes\nImplementation likely touches: app shell routing, global UI overlay, and the message send pipeline (control-plane / opencode proxy headers).
 
@@ -548,6 +539,7 @@ Desired behavior: Tool calls hidden by default, toggle to show
 
 ## Closed
 
+- [octo-wzvn] Agent-driven UI control (conversational navigation) (closed 2026-01-21)
 - [octo-q9dx] Transcription continuing after stopping Conversation mode (closed 2026-01-21)
 - [octo-thhx.7] Add data-spotlight attributes to UI elements (closed 2026-01-21)
 - [octo-thhx.6] Spotlight overlay component (closed 2026-01-21)

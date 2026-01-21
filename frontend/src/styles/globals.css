@@ -455,6 +455,42 @@ input[type="radio"] {
 	outline-offset: 2px;
 }
 
+/* Stop button animated border - spinning segment around outline */
+@keyframes spin-border {
+	0% {
+		transform: rotate(0deg);
+	}
+	100% {
+		transform: rotate(360deg);
+	}
+}
+
+.stop-button-animated {
+	position: relative;
+}
+
+.stop-button-animated::before {
+	content: "";
+	position: absolute;
+	inset: -2px;
+	background: conic-gradient(
+		from 0deg,
+		transparent 0deg,
+		var(--destructive) 60deg,
+		transparent 120deg
+	);
+	animation: spin-border 1s linear infinite;
+	z-index: -1;
+}
+
+.stop-button-animated::after {
+	content: "";
+	position: absolute;
+	inset: 0;
+	background: var(--background);
+	z-index: -1;
+}
+
 .sidebar-chat .chat-input-container {
 	width: 100%;
 	margin-left: 0;
