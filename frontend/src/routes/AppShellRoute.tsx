@@ -574,6 +574,10 @@ const AppShell = memo(function AppShell() {
 	const [mainChatTitleHits, setMainChatTitleHits] = useState<CassSearchHit[]>(
 		[],
 	);
+	const [mainChatFilterCount, setMainChatFilterCount] = useState(0);
+	const [mainChatTotalCount, setMainChatTotalCount] = useState(0);
+	const isFilteringSessions =
+		searchMode === "sessions" && deferredSearch.trim().length > 0;
 
 	// Keyboard shortcut: Ctrl+Shift+F to toggle search mode
 	useEffect(() => {
@@ -1768,8 +1772,14 @@ const AppShell = memo(function AppShell() {
 													{locale === "de" ? "Sitzungen" : "Sessions"}
 												</span>
 												<span className="text-xs text-muted-foreground/50">
-													({filteredSessions.length}
-													{deferredSearch ? `/${chatHistory.length}` : ""})
+													(
+													{isFilteringSessions
+														? filteredSessions.length + mainChatFilterCount
+														: filteredSessions.length}
+													{deferredSearch
+														? `/${chatHistory.length + mainChatTotalCount}`
+														: ""}
+													)
 												</span>
 											</div>
 											<div className="flex items-center gap-1">
@@ -1894,8 +1904,15 @@ const AppShell = memo(function AppShell() {
 													onSessionSelect={handleMainChatSessionSelect}
 													onNewSession={handleMainChatNewSession}
 													locale={locale}
+													filterQuery={
+														searchMode === "sessions" ? deferredSearch : ""
+													}
+													onFilterCountChange={setMainChatFilterCount}
+													onTotalCountChange={setMainChatTotalCount}
 												/>
-												{filteredSessions.length === 0 && deferredSearch && (
+												{filteredSessions.length === 0 &&
+													deferredSearch &&
+													mainChatFilterCount === 0 && (
 													<div className="text-sm text-muted-foreground/50 text-center py-4">
 														{locale === "de"
 															? "Keine Ergebnisse"
@@ -2751,6 +2768,11 @@ const AppShell = memo(function AppShell() {
 												onSessionSelect={handleMainChatSessionSelect}
 												onNewSession={handleMainChatNewSession}
 												locale={locale}
+												filterQuery={
+													searchMode === "sessions" ? deferredSearch : ""
+												}
+												onFilterCountChange={setMainChatFilterCount}
+												onTotalCountChange={setMainChatTotalCount}
 											/>
 											{filteredSessions.length === 0 && deferredSearch && (
 												<div className="text-xs text-muted-foreground/50 text-center py-4">

@@ -55,6 +55,12 @@ export interface MainChatEntryProps {
 	onNewSession?: (assistantName: string) => void;
 	/** Locale for i18n */
 	locale?: "en" | "de";
+	/** Optional filter query from sidebar search */
+	filterQuery?: string;
+	/** Optional callback when filtered session count changes */
+	onFilterCountChange?: (count: number) => void;
+	/** Optional callback when total session count changes */
+	onTotalCountChange?: (count: number) => void;
 }
 
 /**
@@ -69,6 +75,9 @@ export function MainChatEntry({
 	onSessionSelect,
 	onNewSession,
 	locale = "en",
+	filterQuery,
+	onFilterCountChange,
+	onTotalCountChange,
 }: MainChatEntryProps) {
 	const [assistantName, setAssistantName] = useState<string | null>(null);
 	const [assistantInfo, setAssistantInfo] =
@@ -77,6 +86,20 @@ export function MainChatEntry({
 	const [latestSessionId, setLatestSessionId] = useState<string | null>(null);
 	const [loading, setLoading] = useState(true);
 	const [expanded, setExpanded] = useState(false);
+	const filterLower = filterQuery?.toLowerCase().trim() ?? "";
+	const filteredSessions = useMemo(() => {
+		if (!filterLower) return sessions;
+		return sessions.filter((session) => {
+			if ((session.title ?? "").toLowerCase().includes(filterLower)) return true;
+			const readableId = generateReadableId(session.id);
+			if (readableId.toLowerCase().includes(filterLower)) return true;
+			const dateStr = formatSessionDate(session.modified_at);
+			if (dateStr.toLowerCase().includes(filterLower)) return true;
+			return false;
+		});
+	}, [filterLower, sessions]);
+	const visibleSessions = filterLower ? filteredSessions : sessions;
+	const hasVisibleSessions = visibleSessions.length > 0;
 
 	// Auto-expand when Main Chat is selected so sessions are visible.
 	useEffect(() => {
@@ -84,6 +107,23 @@ export function MainChatEntry({
 			setExpanded(true);
 		}
 	}, [isSelected, sessions.length]);
+	useEffect(() => {
+		if (!filterLower) return;
+		setExpanded(filteredSessions.length > 0);
+	}, [filterLower, filteredSessions.length]);
+	useEffect(() => {
+		if (!onFilterCountChange && !onTotalCountChange) return;
+		const totalCount = sessions.length;
+		const filteredCount = filterLower ? filteredSessions.length : totalCount;
+		onFilterCountChange?.(filteredCount);
+		onTotalCountChange?.(totalCount);
+	}, [
+		filterLower,
+		filteredSessions.length,
+		onFilterCountChange,
+		onTotalCountChange,
+		sessions.length,
+	]);
 	const [showCreateDialog, setShowCreateDialog] = useState(false);
 	const [newName, setNewName] = useState("");
 	const [creating, setCreating] = useState(false);
@@ -287,6 +327,9 @@ export function MainChatEntry({
 
 	// No assistant yet - show setup prompt
 	if (!assistantName) {
+		if (filterLower) {
+			return null;
+		}
 		return (
 			<>
 				<button
@@ -319,7 +362,11 @@ export function MainChatEntry({
 	}
 
 	// Assistant exists - show entry styled like workspace project entries
-	const hasSessions = sessions.length > 0;
+	if (filterLower && filteredSessions.length === 0) {
+		return null;
+	}
+	const hasSessions = hasVisibleSessions;
+	const displayCount = filterLower ? filteredSessions.length : sessions.length;
 
 	return (
 		<>
@@ -330,25 +377,25 @@ export function MainChatEntry({
 						<div className="flex items-center gap-1 px-1 py-1.5 group">
 							<button
 								type="button"
-								onClick={hasSessions ? toggleExpanded : handleClick}
-								className="flex-1 flex items-center gap-1.5 text-left hover:bg-sidebar-accent/50 px-1 py-0.5 -mx-1"
-							>
-								{hasSessions ? (
-									expanded ? (
-										<ChevronDown className="w-3 h-3 text-muted-foreground flex-shrink-0" />
-									) : (
-										<ChevronRight className="w-3 h-3 text-muted-foreground flex-shrink-0" />
-									)
+							onClick={hasSessions ? toggleExpanded : handleClick}
+							className="flex-1 flex items-center gap-1.5 text-left hover:bg-sidebar-accent/50 px-1 py-0.5 -mx-1"
+						>
+						{hasSessions ? (
+								expanded ? (
+									<ChevronDown className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
 								) : (
-									<ChevronRight className="w-3 h-3 text-muted-foreground/30 flex-shrink-0" />
-								)}
-								<MessageCircle className="w-3.5 h-3.5 text-primary/70 flex-shrink-0" />
-								<span className="text-xs font-medium text-foreground truncate">
-									{assistantName}
-								</span>
-								<span className="text-[10px] text-muted-foreground">
-									({sessions.length})
-								</span>
+									<ChevronRight className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
+								)
+							) : (
+								<ChevronRight className="w-3.5 h-3.5 text-muted-foreground/30 flex-shrink-0" />
+							)}
+							<MessageCircle className="w-4 h-4 text-primary/70 flex-shrink-0" />
+							<span className="text-sm font-medium text-foreground truncate">
+								{assistantName}
+							</span>
+							<span className="text-xs text-muted-foreground">
+								({displayCount})
+							</span>
 							</button>
 							{onNewSession && (
 								<button
@@ -402,7 +449,7 @@ export function MainChatEntry({
 				{/* Session history list - shown when expanded */}
 				{expanded && hasSessions && (
 					<div className="space-y-0.5 pb-1">
-						{sessions.map((session) => {
+						{visibleSessions.map((session) => {
 							const isActive =
 								session.id === (activeSessionId ?? latestSessionId);
 							const readableId = generateReadableId(session.id);
@@ -413,23 +460,23 @@ export function MainChatEntry({
 							return (
 								<ContextMenu key={session.id}>
 									<ContextMenuTrigger className="contents">
-										<div className="ml-3">
+										<div className="ml-4">
 											<button
 												type="button"
 												onClick={() => handleTimelineSessionClick(session.id)}
 												className={cn(
-													"w-full px-2 py-1.5 text-left transition-colors flex items-center gap-1.5 rounded-sm",
+													"w-full px-2 py-2 text-left transition-colors flex items-center gap-1.5 rounded-sm",
 													isActive
 														? "bg-primary/15 text-foreground"
 														: "text-muted-foreground hover:bg-sidebar-accent",
 												)}
 											>
-												<MessageSquare className="w-3.5 h-3.5 text-primary/70 flex-shrink-0" />
+												<MessageSquare className="w-4 h-4 text-primary/70 flex-shrink-0" />
 												<div className="flex-1 min-w-0">
-													<div className="text-xs font-medium truncate">
+													<div className="text-sm font-medium truncate">
 														{session.title || "Untitled"}
 													</div>
-													<div className="text-[10px] text-muted-foreground/50">
+													<div className="text-[11px] text-muted-foreground/50">
 														{formattedDate}
 													</div>
 												</div>
