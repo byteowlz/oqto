@@ -455,6 +455,46 @@ input[type="radio"] {
 	outline-offset: 2px;
 }
 
+.stop-button-animated {
+	position: relative;
+	border-radius: 50%;
+	background: transparent !important;
+}
+
+.stop-button-animated:hover {
+	background: transparent !important;
+}
+
+.stop-button-animated:hover > *:not(.stop-button-ring) {
+	filter: drop-shadow(0 0 4px currentColor);
+}
+
+/* Stop button animated border - smooth rotating arc */
+@keyframes stop-ring-rotate {
+	to {
+		transform: rotate(360deg);
+	}
+}
+
+.stop-button-ring {
+	position: absolute;
+	inset: 0;
+	pointer-events: none;
+	z-index: 0;
+	animation: stop-ring-rotate 1.2s linear infinite;
+}
+
+.stop-button-ring svg {
+	width: 100%;
+	height: 100%;
+}
+
+.stop-button-animated > *:not(.stop-button-ring) {
+	position: relative;
+	z-index: 1;
+	transition: filter 0.15s ease;
+}
+
 .sidebar-chat .chat-input-container {
 	width: 100%;
 	margin-left: 0;

@@ -78,13 +78,6 @@ pub enum PiCommand {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
     },
-    /// Switch to a different session file.
-    SwitchSession {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        id: Option<String>,
-        #[serde(rename = "sessionPath")]
-        session_path: String,
-    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

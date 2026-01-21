@@ -1,5 +1,5 @@
 import { workspaceFileUrl } from "@/lib/control-plane-client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, type vi } from "vitest";
 
 type LocalStorageMock = {
 	getItem: ReturnType<typeof vi.fn>;

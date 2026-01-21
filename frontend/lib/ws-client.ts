@@ -152,7 +152,44 @@ export type WsEvent =
 			type: "a2ui_action_resolved";
 			session_id: string;
 			request_id: string;
-	  };
+	  }
+	| UiControlEvent;
+
+export type UiSpotlightStep = {
+	target: string;
+	title?: string;
+	description?: string;
+	action?: string;
+	position?: string;
+};
+
+export type UiTourPayload = {
+	steps: UiSpotlightStep[];
+	start_index?: number;
+	active: boolean;
+};
+
+export type UiSpotlightPayload = {
+	target?: string;
+	title?: string;
+	description?: string;
+	action?: string;
+	position?: string;
+	active: boolean;
+};
+
+/** UI control events sent from backend */
+export type UiControlEvent =
+	| { type: "ui.navigate"; path: string; replace: boolean }
+	| { type: "ui.session"; session_id: string; mode?: string }
+	| { type: "ui.view"; view: string }
+	| { type: "ui.palette"; open: boolean }
+	| { type: "ui.palette_exec"; command: string; args?: unknown }
+	| ({ type: "ui.spotlight" } & UiSpotlightPayload)
+	| ({ type: "ui.tour" } & UiTourPayload)
+	| { type: "ui.sidebar"; collapsed?: boolean }
+	| { type: "ui.panel"; view?: string | null; collapsed?: boolean }
+	| { type: "ui.theme"; theme: string };
 
 // ============================================================================
 // Command Types (to backend)

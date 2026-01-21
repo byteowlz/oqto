@@ -777,7 +777,8 @@ function getStatusIcon(
 
 	// For completed status or tools with successful output, show tool-specific icon
 	// This handles cases where status might be "error" but the output indicates success
-	const hasSuccessOutput = output?.toLowerCase().includes("applied successfully") ||
+	const hasSuccessOutput =
+		output?.toLowerCase().includes("applied successfully") ||
 		output?.toLowerCase().includes("success") ||
 		output?.toLowerCase().includes("created") ||
 		output?.toLowerCase().includes("written");
@@ -803,7 +804,8 @@ function getStatusIcon(
 
 function getStatusClasses(status: string | undefined, output?: string) {
 	// Check if output indicates success even if status is error
-	const hasSuccessOutput = output?.toLowerCase().includes("applied successfully") ||
+	const hasSuccessOutput =
+		output?.toLowerCase().includes("applied successfully") ||
 		output?.toLowerCase().includes("success") ||
 		output?.toLowerCase().includes("created") ||
 		output?.toLowerCase().includes("written");

@@ -1,12 +1,17 @@
 "use client";
 
+import { useUIControl } from "@/components/contexts/ui-control-context";
 import {
-	type FileTreeState,
-	FileTreeView,
-	initialFileTreeState,
-} from "@/features/sessions/components/FileTreeView";
-import { ChatSearchBar, MainChatPiView, MainChatSettingsView } from "@/components/main-chat";
+	ChatSearchBar,
+	MainChatPiView,
+	MainChatSettingsView,
+} from "@/components/main-chat";
 import { A2UICallCard } from "@/components/ui/a2ui-call-card";
+import {
+	AgentMentionPopup,
+	type AgentTarget,
+	AgentTargetChip,
+} from "@/components/ui/agent-mention-popup";
 import { Badge } from "@/components/ui/badge";
 import { BrailleSpinner } from "@/components/ui/braille-spinner";
 import { Button } from "@/components/ui/button";
@@ -18,11 +23,6 @@ import {
 	ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import { ContextWindowGauge } from "@/components/ui/context-window-gauge";
-import {
-	AgentMentionPopup,
-	type AgentTarget,
-	AgentTargetChip,
-} from "@/components/ui/agent-mention-popup";
 import {
 	type FileAttachment,
 	FileAttachmentChip,
@@ -61,18 +61,6 @@ import {
 	type VoiceMode,
 	VoicePanel,
 } from "@/components/voice";
-import { type A2UISurfaceState, useA2UI } from "@/hooks/use-a2ui";
-import { useApp } from "@/hooks/use-app";
-import { useDictation } from "@/hooks/use-dictation";
-import { useIsMobile } from "@/hooks/use-mobile";
-import { useModelContextLimit } from "@/hooks/use-models-dev";
-import { useSessionEvents } from "@/hooks/use-session-events";
-import {
-	useVoiceCommandListener,
-	useVoiceShortcuts,
-} from "@/hooks/use-voice-commands";
-import { useVoiceMode } from "@/hooks/use-voice-mode";
-import type { A2UIUserAction } from "@/lib/a2ui/types";
 import {
 	type Features,
 	type MainChatSession,
@@ -93,13 +81,6 @@ import {
 	registerMainChatSession,
 	workspaceFileUrl,
 } from "@/features/sessions/api";
-import { extractFileReferences, getFileTypeInfo } from "@/lib/file-types";
-import { getMessageText } from "@/lib/message-text";
-import { type ModelOption, filterModelOptions } from "@/lib/model-filter";
-import { mergeSessionMessages } from "@/features/sessions/utils/mergeSessionMessages";
-import { groupMessages } from "@/features/sessions/utils/groupMessages";
-import { fetchMainChatThreadedMessages } from "@/features/sessions/utils/fetchMainChatThreadedMessages";
-import type { MessageGroup, ThreadedMessage } from "@/features/sessions/types";
 import {
 	type OpenCodeAssistantMessage,
 	type OpenCodeMessageWithParts,
@@ -127,9 +108,30 @@ import {
 	sendPartsAsync,
 } from "@/features/sessions/api";
 import {
-	normalizePermissionEvent,
-	parseSessionErrorEvent,
-} from "@/lib/session-events";
+	type FileTreeState,
+	FileTreeView,
+	initialFileTreeState,
+} from "@/features/sessions/components/FileTreeView";
+import type { MessageGroup, ThreadedMessage } from "@/features/sessions/types";
+import { fetchMainChatThreadedMessages } from "@/features/sessions/utils/fetchMainChatThreadedMessages";
+import { groupMessages } from "@/features/sessions/utils/groupMessages";
+import { mergeSessionMessages } from "@/features/sessions/utils/mergeSessionMessages";
+import { type A2UISurfaceState, useA2UI } from "@/hooks/use-a2ui";
+import { useApp } from "@/hooks/use-app";
+import { useDictation } from "@/hooks/use-dictation";
+import { useIsMobile } from "@/hooks/use-mobile";
+import { useModelContextLimit } from "@/hooks/use-models-dev";
+import { useSessionEvents } from "@/hooks/use-session-events";
+import {
+	useVoiceCommandListener,
+	useVoiceShortcuts,
+} from "@/hooks/use-voice-commands";
+import { useVoiceMode } from "@/hooks/use-voice-mode";
+import type { A2UIUserAction } from "@/lib/a2ui/types";
+import { extractFileReferences, getFileTypeInfo } from "@/lib/file-types";
+import { getMessageText } from "@/lib/message-text";
+import { type ModelOption, filterModelOptions } from "@/lib/model-filter";
+import { normalizePermissionEvent } from "@/lib/session-events";
 import { formatSessionDate, generateReadableId } from "@/lib/session-utils";
 import {
 	type SlashCommand,
@@ -138,6 +140,7 @@ import {
 	parseSlashInput,
 } from "@/lib/slash-commands";
 import { cn } from "@/lib/utils";
+import type { WsEvent } from "@/lib/ws-client";
 import {
 	ArrowDown,
 	AudioLines,
@@ -165,8 +168,8 @@ import {
 	PanelLeftClose,
 	PanelRightClose,
 	Paperclip,
-	Search,
 	RefreshCw,
+	Search,
 	Send,
 	Settings,
 	Sparkles,
@@ -280,6 +283,7 @@ type ChatMessagesPaneProps = {
 	scrollToBottom: (behavior?: ScrollBehavior) => void;
 	loadMoreMessages: () => void;
 	onA2UIAction?: (action: A2UIUserAction) => void;
+	isStreaming?: boolean;
 };
 
 const ChatMessagesPane = memo(function ChatMessagesPane({
@@ -306,6 +310,7 @@ const ChatMessagesPane = memo(function ChatMessagesPane({
 	scrollToBottom,
 	loadMoreMessages,
 	onA2UIAction,
+	isStreaming,
 }: ChatMessagesPaneProps) {
 	return (
 		<>
@@ -313,6 +318,7 @@ const ChatMessagesPane = memo(function ChatMessagesPane({
 				ref={messagesContainerRef}
 				onScroll={onScroll}
 				className="h-full bg-muted/30 border border-border p-2 sm:p-4 overflow-y-auto scrollbar-hide"
+				data-spotlight="chat-timeline"
 			>
 				{messages.length === 0 &&
 					messagesLoading &&
@@ -379,31 +385,38 @@ const ChatMessagesPane = memo(function ChatMessagesPane({
 				)}
 
 				{/* Message groups with A2UI surfaces embedded */}
-				{visibleGroups.map((group, groupIndex) => (
-					<div
-						key={
-							group.messages[0]?.info.id || `${group.role}-${group.startIndex}`
-						}
-						className={groupIndex > 0 ? "mt-4 sm:mt-6" : ""}
-					>
-						{/* Session divider for Main Chat threaded view */}
-						{group.isNewSession && group.sessionTitle && (
-							<SessionDivider title={group.sessionTitle} />
-						)}
-						<MessageGroupCard
-							group={group}
-							persona={persona}
-							workspaceName={workspaceName}
-							readableId={readableId}
-							workspaceDirectory={workspaceDirectory}
-							onFork={onFork}
-							locale={locale}
-							a2uiSurfaces={a2uiByGroupIndex.get(groupIndex)}
-							onA2UIAction={onA2UIAction}
-							messageId={group.messages[0]?.info.id}
-						/>
-					</div>
-				))}
+				{visibleGroups.map((group, groupIndex) => {
+					// Check if this is the last assistant group (for showing working indicator)
+					const isLastAssistantGroup =
+						group.role === "assistant" &&
+						!visibleGroups.slice(groupIndex + 1).some((g) => g.role === "assistant");
+					return (
+						<div
+							key={
+								group.messages[0]?.info.id || `${group.role}-${group.startIndex}`
+							}
+							className={groupIndex > 0 ? "mt-4 sm:mt-6" : ""}
+						>
+							{/* Session divider for Main Chat threaded view */}
+							{group.isNewSession && group.sessionTitle && (
+								<SessionDivider title={group.sessionTitle} />
+							)}
+							<MessageGroupCard
+								group={group}
+								persona={persona}
+								workspaceName={workspaceName}
+								readableId={readableId}
+								workspaceDirectory={workspaceDirectory}
+								onFork={onFork}
+								locale={locale}
+								a2uiSurfaces={a2uiByGroupIndex.get(groupIndex)}
+								onA2UIAction={onA2UIAction}
+								messageId={group.messages[0]?.info.id}
+								showWorkingIndicator={isStreaming && isLastAssistantGroup}
+							/>
+						</div>
+					);
+				})}
 
 				<div ref={messagesEndRef} data-messages-end />
 			</div>
@@ -601,11 +614,16 @@ export const SessionScreen = memo(function SessionScreen() {
 		mainChatWorkspacePath,
 		setMainChatWorkspacePath,
 		mainChatNewSessionTrigger,
+		mainChatSessionActivityTrigger,
+		notifyMainChatSessionActivity,
 		scrollToMessageId,
 		setScrollToMessageId,
 	} = useApp();
+	const { registerSessionControls } = useUIControl();
 	const [messages, setMessages] = useState<OpenCodeMessageWithParts[]>([]);
 	const [chatInputMountKey, setChatInputMountKey] = useState(0);
+	const lastActiveChatSessionRef = useRef<string | null>(null);
+	const lastActiveOpencodeBaseUrlRef = useRef<string>("");
 	// Ref to track messages for A2UI anchoring
 	const messagesRef = useRef(messages);
 	useEffect(() => {
@@ -728,6 +746,11 @@ export const SessionScreen = memo(function SessionScreen() {
 		if (mainChatActive && mainChatBaseUrl) return mainChatBaseUrl;
 		return opencodeBaseUrl;
 	}, [mainChatActive, mainChatBaseUrl, opencodeBaseUrl]);
+	useEffect(() => {
+		if (effectiveOpencodeBaseUrl) {
+			lastActiveOpencodeBaseUrlRef.current = effectiveOpencodeBaseUrl;
+		}
+	}, [effectiveOpencodeBaseUrl]);
 
 	const [opencodeModelOptions, setOpencodeModelOptions] = useState<
 		ModelOption[]
@@ -1007,6 +1030,15 @@ export const SessionScreen = memo(function SessionScreen() {
 	const messagesContainerRef = useRef<HTMLDivElement>(null);
 	const messagesEndRef = useRef<HTMLDivElement>(null);
 
+	useEffect(() => {
+		registerSessionControls({
+			setActiveView: (view) => setActiveView(view as ActiveView),
+			setExpandedView: (view) => setExpandedView(view as ExpandedView),
+			setRightSidebarCollapsed,
+		});
+		return () => registerSessionControls(null);
+	}, [registerSessionControls]);
+
 	// Track if auto-scroll is enabled (user hasn't scrolled away)
 	const autoScrollEnabledRef = useRef(true);
 	const lastSessionIdRef = useRef<string | null>(null);
@@ -1216,18 +1248,19 @@ export const SessionScreen = memo(function SessionScreen() {
 			});
 	}, [opencodeBaseUrl, opencodeRequestOptions]);
 
+	// Ref for voice transcript send - will be set after handleSend is defined
+	const voiceSendRef = useRef<() => void>(() => {});
+
 	// Voice mode - handles STT/TTS when voice feature is enabled
 	const handleVoiceTranscript = useCallback(
 		(text: string) => {
-			// Set the transcript as message input and send it
+			// Set the transcript as message input
 			setMessageInputWithResize(text);
-			// We'll trigger send after a small delay to allow state to update
+			// Call send via ref to avoid stale closure issues
+			// Small delay to ensure ref value is set in textarea
 			setTimeout(() => {
-				const sendBtn = document.querySelector(
-					"[data-voice-send]",
-				) as HTMLButtonElement;
-				if (sendBtn) sendBtn.click();
-			}, 100);
+				voiceSendRef.current();
+			}, 50);
 		},
 		[setMessageInputWithResize],
 	);
@@ -1475,6 +1508,7 @@ export const SessionScreen = memo(function SessionScreen() {
 
 	// Handler for opening a file in canvas from FileTreeView
 	const handleOpenInCanvas = useCallback((filePath: string) => {
+		console.log("[DEBUG] handleOpenInCanvas called with:", filePath);
 		setPreviewFilePath(filePath);
 		setActiveView("canvas");
 	}, []);
@@ -1555,39 +1589,63 @@ export const SessionScreen = memo(function SessionScreen() {
 			const workspacePath =
 				selectedChatFromHistory?.workspace_path ??
 				selectedWorkspaceSession?.workspace_path;
-			if (!workspacePath) return;
+			if (!workspacePath) {
+				setStatus(
+					locale === "de"
+						? "Upload fehlgeschlagen: Kein Workspace gefunden"
+						: "Upload failed: no workspace found",
+				);
+				return;
+			}
 
 			setIsUploading(true);
 			const uploadedFiles: { name: string; path: string }[] = [];
+			const failedFiles: string[] = [];
 
 			try {
 				const baseUrl = fileserverWorkspaceBaseUrl();
 
 				for (const file of Array.from(files)) {
-					const destPath = `uploads/${file.name}`;
-					const url = new URL(`${baseUrl}/file`, window.location.origin);
-					url.searchParams.set("path", destPath);
-					url.searchParams.set("mkdir", "true");
-					url.searchParams.set("workspace_path", workspacePath);
+					try {
+						const destPath = `uploads/${file.name}`;
+						const url = new URL(`${baseUrl}/file`, window.location.origin);
+						url.searchParams.set("path", destPath);
+						url.searchParams.set("mkdir", "true");
+						url.searchParams.set("workspace_path", workspacePath);
 
-					const formData = new FormData();
-					formData.append("file", file);
+						const formData = new FormData();
+						formData.append("file", file);
 
-					const res = await fetch(url.toString(), {
-						method: "POST",
-						credentials: "include",
-						body: formData,
-					});
+						const res = await fetch(url.toString(), {
+							method: "POST",
+							credentials: "include",
+							body: formData,
+						});
 
-					if (!res.ok) {
-						const text = await res.text().catch(() => res.statusText);
-						throw new Error(text || `Upload failed (${res.status})`);
+						if (!res.ok) {
+							const text = await res.text().catch(() => res.statusText);
+							throw new Error(text || `Upload failed (${res.status})`);
+						}
+
+						uploadedFiles.push({ name: file.name, path: destPath });
+					} catch (err) {
+						const message =
+							err instanceof Error ? err.message : "Upload failed";
+						console.warn("Upload failed:", file.name, message);
+						failedFiles.push(file.name);
 					}
-
-					uploadedFiles.push({ name: file.name, path: destPath });
 				}
 
-				setPendingUploads((prev) => [...prev, ...uploadedFiles]);
+				if (uploadedFiles.length > 0) {
+					setPendingUploads((prev) => [...prev, ...uploadedFiles]);
+				}
+				if (failedFiles.length > 0) {
+					setStatus(
+						locale === "de"
+							? `Upload fehlgeschlagen: ${failedFiles.join(", ")}`
+							: `Upload failed: ${failedFiles.join(", ")}`,
+					);
+				}
 			} catch (err) {
 				setStatus(err instanceof Error ? err.message : "Upload failed");
 			} finally {
@@ -1598,7 +1656,7 @@ export const SessionScreen = memo(function SessionScreen() {
 				}
 			}
 		},
-		[selectedChatFromHistory, selectedWorkspaceSession],
+		[locale, selectedChatFromHistory, selectedWorkspaceSession],
 	);
 
 	const removePendingUpload = useCallback((path: string) => {
@@ -1921,84 +1979,82 @@ export const SessionScreen = memo(function SessionScreen() {
 		}
 	}, [mainChatAssistantName]);
 
-	const loadMessages = useCallback(async () => {
-		// Main Chat Pi view handles its own messages via usePiChat - skip loading here
-		if (mainChatActive) {
-			loadingSessionIdRef.current = "main-chat";
-			// Don't load messages - MainChatPiView has its own cached message loading
-			return;
-		}
-
-		if (!selectedChatSessionId) return;
-
-		// Capture session ID at start to detect stale responses
-		const targetSessionId = selectedChatSessionId;
-		loadingSessionIdRef.current = targetSessionId;
-		setMessagesLoading(true);
-
-		try {
-			let loadedMessages: OpenCodeMessageWithParts[] = [];
-
-			if (opencodeBaseUrl && !isHistoryOnlySession) {
-				// Live opencode is authoritative for streaming updates.
-				loadedMessages = await fetchMessages(opencodeBaseUrl, targetSessionId, {
-					directory: opencodeDirectory,
-				});
-			} else {
-				// History-only view (or no live session): use disk history cache.
-				try {
-					const historyMessages = await getChatMessages(targetSessionId);
-					if (historyMessages.length > 0) {
-						loadedMessages = convertChatMessagesToOpenCode(historyMessages);
-					}
-				} catch {
-					// Ignore history failures; we don't have a live fallback here.
-				}
-			}
-
-			if (
-				loadedMessages.length === 0 &&
-				opencodeBaseUrl &&
-				!isHistoryOnlySession
-			) {
-				// If live returned nothing, fall back to disk history for older sessions.
-				try {
-					const historyMessages = await getChatMessages(targetSessionId);
-					if (historyMessages.length > 0) {
-						loadedMessages = convertChatMessagesToOpenCode(historyMessages);
-					}
-				} catch {
-					// Ignore history failures on fallback.
-				}
-			}
-
-			// Check if session changed during async load - discard stale response
-			if (loadingSessionIdRef.current !== targetSessionId) {
+	const loadMessages = useCallback(
+		async (options?: { forceFresh?: boolean }) => {
+			// Main Chat Pi view handles its own messages via usePiChat - skip loading here
+			if (mainChatActive) {
+				loadingSessionIdRef.current = "main-chat";
+				// Don't load messages - MainChatPiView has its own cached message loading
 				return;
 			}
 
-			// Track that this session has messages (for skeleton display logic)
-			if (loadedMessages.length > 0) {
-				sessionsWithMessagesRef.current.add(targetSessionId);
-			}
+			if (!selectedChatSessionId) return;
 
-			// Use merge to prevent flickering when updating
-			startTransition(() => {
-				setMessages((prev) => mergeMessages(prev, loadedMessages));
-			});
-		} catch (err) {
-			setStatus((err as Error).message);
-		} finally {
-			setMessagesLoading(false);
-		}
-	}, [
-		opencodeBaseUrl,
-		opencodeDirectory,
-		selectedChatSessionId,
-		isHistoryOnlySession,
-		mergeMessages,
-		mainChatActive,
-	]);
+			// Capture session ID at start to detect stale responses
+			const targetSessionId = selectedChatSessionId;
+			loadingSessionIdRef.current = targetSessionId;
+			setMessagesLoading(true);
+
+			try {
+				let loadedMessages: OpenCodeMessageWithParts[] = [];
+
+				if (opencodeBaseUrl && !isHistoryOnlySession) {
+					// Live opencode is authoritative for streaming updates.
+					try {
+						loadedMessages = await fetchMessages(
+							opencodeBaseUrl,
+							targetSessionId,
+							{
+								directory: opencodeDirectory,
+								skipCache: options?.forceFresh,
+							},
+						);
+					} catch (err) {
+						console.warn("Failed to load live messages, falling back:", err);
+					}
+				}
+
+				if (loadedMessages.length === 0) {
+					// History-only view (or no live session): use disk history cache.
+					try {
+						const historyMessages = await getChatMessages(targetSessionId);
+						if (historyMessages.length > 0) {
+							loadedMessages = convertChatMessagesToOpenCode(historyMessages);
+						}
+					} catch {
+						// Ignore history failures; we don't have a live fallback here.
+					}
+				}
+
+				// Check if session changed during async load - discard stale response
+				if (loadingSessionIdRef.current !== targetSessionId) {
+					return;
+				}
+
+				// Track that this session has messages (for skeleton display logic)
+				if (loadedMessages.length > 0) {
+					sessionsWithMessagesRef.current.add(targetSessionId);
+				}
+
+				// Use merge to prevent flickering when updating
+				startTransition(() => {
+					setMessages((prev) => mergeMessages(prev, loadedMessages));
+				});
+			} catch (err) {
+				setStatus((err as Error).message);
+			} finally {
+				setMessagesLoading(false);
+			}
+		},
+		[
+			mainChatActive,
+			opencodeBaseUrl,
+			opencodeDirectory,
+			selectedChatSessionId,
+			isHistoryOnlySession,
+			mergeMessages,
+		],
+	);
 
 	const [eventsTransportMode, setEventsTransportMode] = useState<
 		"sse" | "polling" | "ws" | "reconnecting"
@@ -2034,7 +2090,7 @@ export const SessionScreen = memo(function SessionScreen() {
 				current.inFlight = true;
 				current.lastStartAt = Date.now();
 				try {
-					await loadMessages();
+					await loadMessages({ forceFresh: true });
 				} finally {
 					current.inFlight = false;
 					if (current.pending) requestMessageRefresh(maxFrequencyMs);
@@ -2286,37 +2342,21 @@ export const SessionScreen = memo(function SessionScreen() {
 		[messages],
 	);
 
-	// Event handler for session events (shared between WebSocket and SSE)
+	// Event handler for session events (WebSocket-only)
 	const handleSessionEvent = useCallback(
-		(event: { type: string; properties?: Record<string, unknown> | null }) => {
+		(event: WsEvent) => {
 			const eventType = event.type as string;
 
 			// Debug: log all events to help diagnose permission issues
-			if (eventType !== "message.updated") {
-				console.log("[Event]", eventType, event.properties);
+			if (
+				eventType !== "message_updated" &&
+				eventType !== "text_delta" &&
+				eventType !== "thinking_delta"
+			) {
+				console.log("[Event]", eventType, event);
 			}
 
-			if (eventType === "transport.mode") {
-				const props = event.properties as {
-					mode?: "sse" | "polling" | "ws" | "reconnecting";
-				} | null;
-				if (props?.mode) setEventsTransportMode(props.mode);
-				// Defer refresh to avoid blocking message handler
-				startTransition(() => {
-					if (effectiveOpencodeBaseUrl && activeSessionId) {
-						invalidateMessageCache(
-							effectiveOpencodeBaseUrl,
-							activeSessionId,
-							opencodeDirectory,
-						);
-						requestMessageRefresh(250);
-					}
-				});
-				return;
-			}
-
-			if (eventType === "server.connected") {
-				// Defer refresh to avoid blocking message handler
+			if (eventType === "connected" || eventType === "agent_connected") {
 				startTransition(() => {
 					if (effectiveOpencodeBaseUrl && activeSessionId) {
 						invalidateMessageCache(
@@ -2329,7 +2369,7 @@ export const SessionScreen = memo(function SessionScreen() {
 				});
 			}
 
-			if (eventType === "session.unavailable") {
+			if (eventType === "agent_disconnected") {
 				const now = Date.now();
 				const lastAttempt = sessionUnavailableRef.current;
 				if (
@@ -2378,9 +2418,8 @@ export const SessionScreen = memo(function SessionScreen() {
 				}
 			}
 
-			if (eventType === "session.idle") {
+			if (eventType === "session_idle") {
 				setChatState("idle");
-				// Invalidate cache and force refresh on idle - defer to avoid blocking
 				startTransition(() => {
 					if (effectiveOpencodeBaseUrl && activeSessionId) {
 						invalidateMessageCache(
@@ -2391,38 +2430,30 @@ export const SessionScreen = memo(function SessionScreen() {
 					}
 					loadMessages();
 					refreshOpencodeSessions();
-					// Refresh chat history to pick up auto-generated session titles
 					refreshChatHistory();
 				});
-			} else if (eventType === "session.busy") {
+			} else if (eventType === "session_busy") {
 				setChatState("sending");
+				if (
+					event.session_id === selectedChatSessionId ||
+					event.session_id === mainChatCurrentSessionId
+				) {
+					lastActiveChatSessionRef.current = event.session_id;
+				}
 			}
 
-			// Handle permission events
-			if (
-				eventType === "permission.updated" ||
-				eventType === "permission.created"
-			) {
-				const permission = normalizePermissionEvent(event.properties);
+			if (eventType === "permission_request") {
+				const permission = normalizePermissionEvent(event);
 				if (!permission) return;
 				console.log("[Permission] Received permission request:", permission);
 				setPendingPermissions((prev) => {
-					// Avoid duplicates
 					if (prev.some((p) => p.id === permission.id)) return prev;
 					return [...prev, permission];
 				});
-				// Auto-show the first permission dialog if none is active
 				setActivePermission((current) => current || permission);
-			} else if (
-				eventType === "permission.replied" ||
-				eventType === "permission.resolved"
-			) {
-				const props = event.properties as Record<string, unknown> | undefined;
+			} else if (eventType === "permission_resolved") {
 				const permissionID =
-					(typeof props?.permissionID === "string" && props.permissionID) ||
-					(typeof props?.id === "string" && props.id) ||
-					(typeof props?.permission_id === "string" && props.permission_id) ||
-					"";
+					"permission_id" in event ? event.permission_id : "";
 				if (!permissionID) return;
 				console.log("[Permission] Permission replied:", permissionID);
 				setPendingPermissions((prev) =>
@@ -2433,27 +2464,30 @@ export const SessionScreen = memo(function SessionScreen() {
 				);
 			}
 
-			// Handle question events (user question / multiple choice)
-			if (eventType === "question.asked") {
-				const props = event.properties as QuestionRequest | undefined;
-				if (!props?.id || !props?.questions) return;
-				console.log("[Question] Received question request:", props);
+			if (eventType === "question_request") {
+				if (!("request_id" in event) || !("questions" in event)) return;
+				console.log("[Question] Received question request:", event);
 				setPendingQuestions((prev) => {
-					// Avoid duplicates
-					if (prev.some((q) => q.id === props.id)) return prev;
-					return [...prev, props];
+					if (prev.some((q) => q.id === event.request_id)) return prev;
+					return [
+						...prev,
+						{
+							id: event.request_id,
+							questions: event.questions as QuestionRequest["questions"],
+							tool: event.tool,
+						},
+					];
 				});
-				// Auto-show the first question dialog if none is active
-				setActiveQuestion((current) => current || props);
-			} else if (
-				eventType === "question.replied" ||
-				eventType === "question.rejected"
-			) {
-				const props = event.properties as Record<string, unknown> | undefined;
-				const requestID =
-					(typeof props?.requestID === "string" && props.requestID) ||
-					(typeof props?.id === "string" && props.id) ||
-					"";
+				setActiveQuestion(
+					(current) =>
+						current || {
+							id: event.request_id,
+							questions: event.questions as QuestionRequest["questions"],
+							tool: event.tool,
+						},
+				);
+			} else if (eventType === "question_resolved") {
+				const requestID = "request_id" in event ? event.request_id : "";
 				if (!requestID) return;
 				console.log("[Question] Question resolved:", requestID);
 				setPendingQuestions((prev) => prev.filter((q) => q.id !== requestID));
@@ -2462,38 +2496,52 @@ export const SessionScreen = memo(function SessionScreen() {
 				);
 			}
 
-			// Handle session errors
-			if (eventType === "session.error" || eventType === "error") {
-				const errorInfo =
-					typeof event.properties === "string"
-						? { name: "Error", message: event.properties }
-						: parseSessionErrorEvent(event.properties);
-				const errorName = errorInfo?.name ?? "Error";
-				const errorMessage = errorInfo?.message ?? "An unknown error occurred";
+			if (eventType === "session_error" || eventType === "error") {
+				const errorName =
+					eventType === "session_error" && "error_type" in event
+						? event.error_type
+						: "Error";
+				const errorMessage =
+					eventType === "session_error" && "message" in event
+						? event.message
+						: "message" in event
+							? event.message
+							: "An unknown error occurred";
 				console.error("[Session Error]", errorName, errorMessage);
 				toast.error(errorMessage, {
 					description: errorName !== "UnknownError" ? errorName : undefined,
 					duration: 8000,
 				});
-				// Reset chat state on error
 				setChatState("idle");
 			}
 
-			if (eventType === "compaction.end" || eventType === "compaction_end") {
-				const props = event.properties as { success?: boolean } | null;
-				if (!props || props.success !== false) {
-					// Defer non-critical UI update
+			if (eventType === "tool_end" && "is_error" in event && event.is_error) {
+				const message =
+					typeof event.result === "string"
+						? event.result
+						: "Tool execution failed";
+				toast.error(message, { duration: 8000 });
+				setChatState("idle");
+			}
+
+			if (eventType === "compaction_end") {
+				if (!("success" in event) || event.success !== false) {
 					startTransition(() => {
 						setLastCompactionAt(Date.now());
 					});
 				}
 			}
 
-			// Refresh messages on any message event
-			if (eventType?.startsWith("message")) {
-				// Defer cache invalidation and refresh to avoid blocking message handler
+			if (
+				eventType === "message_updated" ||
+				eventType === "message_start" ||
+				eventType === "message_end" ||
+				eventType === "text_delta" ||
+				eventType === "thinking_delta" ||
+				eventType === "tool_start" ||
+				eventType === "tool_end"
+			) {
 				startTransition(() => {
-					// Invalidate cache when messages change
 					if (effectiveOpencodeBaseUrl && activeSessionId) {
 						invalidateMessageCache(
 							effectiveOpencodeBaseUrl,
@@ -2501,53 +2549,42 @@ export const SessionScreen = memo(function SessionScreen() {
 							opencodeDirectory,
 						);
 					}
-					// Coalesce refreshes to avoid hammering the server during streaming updates.
-					requestMessageRefresh(1000);
+					requestMessageRefresh(
+						eventType === "text_delta" || eventType === "thinking_delta"
+							? 400
+							: 1000,
+					);
 				});
 			}
 
-			// Handle A2UI surface events
-			if (eventType === "a2ui.surface") {
-				const props = event.properties as {
-					sessionId?: string;
-					surfaceId?: string;
-					messages?: unknown[];
-					blocking?: boolean;
-					requestId?: string;
-				} | null;
-				if (props?.surfaceId && props?.messages) {
-					console.log("[A2UI] Surface received:", props.surfaceId, props);
-					setA2uiSurfaces((prev) => {
-						// Replace existing surface with same ID or add new
-						const existing = prev.findIndex(
-							(s) => s.surfaceId === props.surfaceId,
-						);
-						const newSurface: A2UISurface = {
-							surfaceId: props.surfaceId,
-							sessionId: props.sessionId ?? "",
-							messages: props.messages as A2UIMessage[],
-							blocking: props.blocking ?? false,
-							requestId: props.requestId,
-						};
-						if (existing >= 0) {
-							const updated = [...prev];
-							updated[existing] = newSurface;
-							return updated;
-						}
-						return [...prev, newSurface];
-					});
-				}
+			if (eventType === "a2ui_surface") {
+				if (!("surface_id" in event) || !("messages" in event)) return;
+				console.log("[A2UI] Surface received:", event.surface_id, event);
+				setA2uiSurfaces((prev) => {
+					const existing = prev.findIndex(
+						(s) => s.surfaceId === event.surface_id,
+					);
+					const newSurface: A2UISurface = {
+						surfaceId: event.surface_id,
+						sessionId: event.session_id,
+						messages: event.messages as A2UIMessage[],
+						blocking: event.blocking ?? false,
+						requestId: event.request_id,
+					};
+					if (existing >= 0) {
+						const updated = [...prev];
+						updated[existing] = newSurface;
+						return updated;
+					}
+					return [...prev, newSurface];
+				});
 			}
 
-			// Handle A2UI action resolved (remove blocking surface)
-			if (eventType === "a2ui.action_resolved") {
-				const props = event.properties as {
-					requestId?: string;
-				} | null;
-				if (props?.requestId) {
-					console.log("[A2UI] Action resolved:", props.requestId);
+			if (eventType === "a2ui_action_resolved") {
+				if ("request_id" in event) {
+					console.log("[A2UI] Action resolved:", event.request_id);
 					setA2uiSurfaces((prev) =>
-						prev.filter((s) => s.requestId !== props.requestId),
+						prev.filter((s) => s.requestId !== event.request_id),
 					);
 				}
 			}
@@ -2575,11 +2612,8 @@ export const SessionScreen = memo(function SessionScreen() {
 	const { transportMode: sessionTransportMode } = useSessionEvents(
 		handleSessionEvent,
 		{
-			useWebSocket: features.websocket_events ?? false,
+			useWebSocket: true,
 			workspaceSessionId: selectedWorkspaceSessionId,
-			opencodeBaseUrl: effectiveOpencodeBaseUrl,
-			opencodeDirectory,
-			activeSessionId,
 			enabled:
 				!mainChatActive && !!effectiveOpencodeBaseUrl && !!activeSessionId,
 		},
@@ -3259,7 +3293,9 @@ export const SessionScreen = memo(function SessionScreen() {
 				if (noReply) {
 					// Just show the response in a toast, don't inject into current chat
 					toast.success(`Response from ${currentAgentTarget.name}`, {
-						description: response.response.slice(0, 300) + (response.response.length > 300 ? "..." : ""),
+						description:
+							response.response.slice(0, 300) +
+							(response.response.length > 300 ? "..." : ""),
 						duration: 15000,
 					});
 					setChatState("idle");
@@ -3397,6 +3433,11 @@ export const SessionScreen = memo(function SessionScreen() {
 				targetSessionId = selectedChatSessionId;
 			}
 
+			lastActiveChatSessionRef.current = targetSessionId;
+			if (effectiveBaseUrl) {
+				lastActiveOpencodeBaseUrlRef.current = effectiveBaseUrl;
+			}
+
 			// Optimistic update - show user message immediately (now that we have the session ID)
 			const optimisticMessage: OpenCodeMessageWithParts = {
 				info: {
@@ -3506,6 +3547,9 @@ export const SessionScreen = memo(function SessionScreen() {
 	// Ref to hold latest handleSend for stable callback
 	const handleSendRef = useRef(handleSend);
 	handleSendRef.current = handleSend;
+
+	// Update voiceSendRef to point to current handleSend
+	voiceSendRef.current = handleSend;
 
 	// Memoized input change handler to prevent re-renders
 	const handleInputChange = useCallback(
@@ -3627,7 +3671,14 @@ export const SessionScreen = memo(function SessionScreen() {
 				setShowAgentMentionPopup(false);
 			}
 		},
-		[showSlashPopup, slashQuery.isSlash, slashQuery.args, showFileMentionPopup, showAgentMentionPopup, agentTarget],
+		[
+			showSlashPopup,
+			slashQuery.isSlash,
+			slashQuery.args,
+			showFileMentionPopup,
+			showAgentMentionPopup,
+			agentTarget,
+		],
 	);
 
 	const handleResume = async () => {
@@ -3684,11 +3735,18 @@ export const SessionScreen = memo(function SessionScreen() {
 	};
 
 	const handleStop = async () => {
-		if (!opencodeBaseUrl || !selectedChatSessionId) return;
 		if (chatState !== "sending") return;
+		const sessionId =
+			lastActiveChatSessionRef.current ??
+			(mainChatActive ? mainChatCurrentSessionId : selectedChatSessionId);
+		const baseUrl =
+			lastActiveOpencodeBaseUrlRef.current ||
+			effectiveOpencodeBaseUrl ||
+			opencodeBaseUrl;
+		if (!baseUrl || !sessionId) return;
 
 		try {
-			await abortSession(opencodeBaseUrl, selectedChatSessionId, {
+			await abortSession(baseUrl, sessionId, {
 				directory: opencodeDirectory,
 			});
 			// The SSE event will set the state to idle
@@ -4013,25 +4071,6 @@ export const SessionScreen = memo(function SessionScreen() {
 				onClick={handleQuestionBannerClick}
 			/>
 
-			{/* Working indicator with stop button */}
-			{chatState === "sending" && (
-				<div className="flex items-center gap-1.5 px-2 py-0.5 bg-primary/10 text-xs text-primary">
-					<BrailleSpinner />
-					<span className="font-medium flex-1">
-						{locale === "de" ? "Agent arbeitet..." : "Agent working..."}
-					</span>
-					<button
-						type="button"
-						onClick={handleStop}
-						className="mr-1 text-destructive hover:text-destructive/80 transition-colors"
-						title={
-							locale === "de" ? "Agent stoppen (2x Esc)" : "Stop agent (2x Esc)"
-						}
-					>
-						<StopCircle className="w-5 h-5" />
-					</button>
-				</div>
-			)}
 			<div className="relative flex-1 min-h-0">
 				{allowExpanded && showExpandedPreview ? (
 					<div className="h-full bg-muted/30 border border-border overflow-hidden">
@@ -4148,6 +4187,7 @@ export const SessionScreen = memo(function SessionScreen() {
 						scrollToBottom={scrollToBottom}
 						loadMoreMessages={loadMoreMessages}
 						onA2UIAction={handleA2UIAction}
+						isStreaming={chatState === "sending"}
 					/>
 				)}
 			</div>
@@ -4242,7 +4282,10 @@ export const SessionScreen = memo(function SessionScreen() {
 						/>
 					)}
 					{/* Textarea wrapper with slash command popup */}
-					<div className="flex-1 relative flex flex-col min-h-[32px]">
+					<div
+						className="flex-1 relative flex flex-col min-h-[32px]"
+						data-spotlight="chat-input"
+					>
 						<SlashCommandPopup
 							commands={slashCommands}
 							query={slashQuery.command}
@@ -4282,7 +4325,10 @@ export const SessionScreen = memo(function SessionScreen() {
 							onSelect={(target) => {
 								// Remove @@query from input, store target
 								// Use ref value directly since debounced state may be stale
-								const newInput = messageInputRef.current.replace(/@@[^\s]*$/, "");
+								const newInput = messageInputRef.current.replace(
+									/@@[^\s]*$/,
+									"",
+								);
 								setMessageInputWithResize(newInput);
 								messageInputRef.current = newInput;
 								setAgentTarget(target);
@@ -4492,6 +4538,37 @@ export const SessionScreen = memo(function SessionScreen() {
 							/>
 						)}
 					</div>
+					{chatState === "sending" && (
+						<Button
+							type="button"
+							onClick={handleStop}
+							className="stop-button-animated flex-shrink-0 h-8 px-2 flex items-center justify-center text-destructive hover:text-destructive/80 transition-colors bg-transparent hover:bg-transparent"
+							variant="ghost"
+							size="icon"
+							title={
+								locale === "de"
+									? "Agent stoppen (2x Esc)"
+									: "Stop agent (2x Esc)"
+							}
+						>
+							<span className="stop-button-ring" aria-hidden>
+								<svg viewBox="0 0 100 100" role="presentation">
+									<circle
+										cx="50"
+										cy="50"
+										r="46"
+										fill="none"
+										stroke="currentColor"
+										strokeWidth="3"
+										strokeLinecap="round"
+										strokeDasharray="72 216"
+										opacity="0.8"
+									/>
+								</svg>
+							</span>
+							<StopCircle className="w-4 h-4" />
+						</Button>
+					)}
 					<Button
 						type="button"
 						data-voice-send
@@ -4503,7 +4580,7 @@ export const SessionScreen = memo(function SessionScreen() {
 							fileAttachments.length === 0 &&
 							issueAttachments.length === 0
 						}
-						className="flex-shrink-0 h-8 px-2 flex items-center justify-center text-muted-foreground hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed transition-colors p-0 bg-transparent hover:bg-transparent"
+						className="flex-shrink-0 h-8 px-2 flex items-center justify-center text-muted-foreground hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed transition-colors bg-transparent hover:bg-transparent"
 						variant="ghost"
 						size="icon"
 					>
@@ -4570,7 +4647,10 @@ export const SessionScreen = memo(function SessionScreen() {
 	// Keep FileTreeView always mounted to preserve state across tab switches
 	const filesView = (
 		<div className="flex flex-col h-full overflow-hidden">
-			<div className={cn("flex-1 min-h-0", previewFilePath && "hidden")}>
+			<div
+				className={cn("flex-1 min-h-0", previewFilePath && "hidden")}
+				data-spotlight="file-tree"
+			>
 				<FileTreeView
 					onPreviewFile={handlePreviewFile}
 					onOpenInCanvas={handleOpenInCanvas}
@@ -4628,63 +4708,67 @@ export const SessionScreen = memo(function SessionScreen() {
 		modelQuery,
 	);
 	const modelSwitcher = showModelSwitcher ? (
-		<Select
-			value={selectedModelRef ?? undefined}
-			onValueChange={(value) => setSelectedModelRef(value)}
-			onOpenChange={(open) => {
-				if (open) setModelQuery("");
-			}}
-			disabled={isModelLoading || opencodeModelOptions.length === 0}
-		>
-			<SelectTrigger className="h-7 w-[220px] text-xs">
-				<SelectValue
-					placeholder={isModelLoading ? "Loading models..." : "Model"}
-				/>
-			</SelectTrigger>
-			<SelectContent>
-				<div
-					className="sticky top-0 z-10 bg-popover p-2 border-b border-border"
-					onPointerDown={(e) => e.stopPropagation()}
-					onKeyDown={(e) => e.stopPropagation()}
-				>
-					<Input
-						value={modelQuery}
-						onChange={(e) => setModelQuery(e.target.value)}
-						placeholder="Search models..."
-						aria-label="Search models"
-						className="h-8 text-xs"
+		<div data-spotlight="model-picker">
+			<Select
+				value={selectedModelRef ?? undefined}
+				onValueChange={(value) => setSelectedModelRef(value)}
+				onOpenChange={(open) => {
+					if (open) setModelQuery("");
+				}}
+				disabled={isModelLoading || opencodeModelOptions.length === 0}
+			>
+				<SelectTrigger className="h-7 w-[220px] text-xs">
+					<SelectValue
+						placeholder={isModelLoading ? "Loading models..." : "Model"}
 					/>
-				</div>
-				{opencodeModelOptions.length === 0 ? (
-					<SelectItem value="__none__" disabled>
-						{isModelLoading ? "Loading..." : "Start a session to select models"}
-					</SelectItem>
-				) : filteredModelOptions.length === 0 ? (
-					<SelectItem value="__no_results__" disabled>
-						No matches
-					</SelectItem>
-				) : (
-					filteredModelOptions.map((option) => {
-						const provider = option.value.split("/")[0];
-						return (
-							<SelectItem
-								key={option.value}
-								value={option.value}
-								textValue={option.label}
-							>
-								<span className="flex items-center gap-2">
-									<ProviderIcon
-										provider={provider}
-										className="w-4 h-4 flex-shrink-0"
-									/>
-									<span>{option.label}</span>
-								</span>
-							</SelectItem>
-						);
-					})
-				)}
-			</SelectContent>
-		</Select>
+				</SelectTrigger>
+				<SelectContent>
+					<div
+						className="sticky top-0 z-10 bg-popover p-2 border-b border-border"
+						onPointerDown={(e) => e.stopPropagation()}
+						onKeyDown={(e) => e.stopPropagation()}
+					>
+						<Input
+							value={modelQuery}
+							onChange={(e) => setModelQuery(e.target.value)}
+							placeholder="Search models..."
+							aria-label="Search models"
+							className="h-8 text-xs"
+						/>
+					</div>
+					{opencodeModelOptions.length === 0 ? (
+						<SelectItem value="__none__" disabled>
+							{isModelLoading
+								? "Loading..."
+								: "Start a session to select models"}
+						</SelectItem>
+					) : filteredModelOptions.length === 0 ? (
+						<SelectItem value="__no_results__" disabled>
+							No matches
+						</SelectItem>
+					) : (
+						filteredModelOptions.map((option) => {
+							const provider = option.value.split("/")[0];
+							return (
+								<SelectItem
+									key={option.value}
+									value={option.value}
+									textValue={option.label}
+								>
+									<span className="flex items-center gap-2">
+										<ProviderIcon
+											provider={provider}
+											className="w-4 h-4 flex-shrink-0"
+										/>
+										<span>{option.label}</span>
+									</span>
+								</SelectItem>
+							);
+						})
+					)}
+				</SelectContent>
+			</Select>
+		</div>
 	) : null;
 	const persona = selectedSession?.persona;
 
@@ -4852,6 +4936,7 @@ export const SessionScreen = memo(function SessionScreen() {
 								scrollToMessageId={scrollToMessageId}
 								onScrollToMessageComplete={() => setScrollToMessageId(null)}
 								newSessionTrigger={mainChatNewSessionTrigger}
+								onMessageSent={notifyMainChatSessionActivity}
 							/>
 						) : (
 							renderChatContent(true)
@@ -5015,7 +5100,11 @@ export const SessionScreen = memo(function SessionScreen() {
 					{isSearchOpen && (
 						<div className="mb-3 pr-16">
 							<ChatSearchBar
-								sessionId={mainChatActive ? mainChatCurrentSessionId : selectedChatSessionId}
+								sessionId={
+									mainChatActive
+										? mainChatCurrentSessionId
+										: selectedChatSessionId
+								}
 								onResultSelect={handleSearchResult}
 								isOpen={isSearchOpen}
 								onToggle={() => setIsSearchOpen(false)}
@@ -5041,6 +5130,7 @@ export const SessionScreen = memo(function SessionScreen() {
 								scrollToMessageId={scrollToMessageId}
 								onScrollToMessageComplete={() => setScrollToMessageId(null)}
 								newSessionTrigger={mainChatNewSessionTrigger}
+								onMessageSent={notifyMainChatSessionActivity}
 							/>
 						)
 					) : chatInSidebar ? (
@@ -5173,6 +5263,7 @@ export const SessionScreen = memo(function SessionScreen() {
 													setScrollToMessageId(null)
 												}
 												newSessionTrigger={mainChatNewSessionTrigger}
+												onMessageSent={notifyMainChatSessionActivity}
 											/>
 										) : (
 											renderChatContent(false)
@@ -5542,6 +5633,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 	a2uiSurfaces = [],
 	onA2UIAction,
 	messageId,
+	showWorkingIndicator = false,
 }: {
 	group: MessageGroup;
 	persona?: Persona | null;
@@ -5553,6 +5645,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 	a2uiSurfaces?: A2UISurfaceState[];
 	onA2UIAction?: (action: A2UIUserAction) => void;
 	messageId?: string;
+	showWorkingIndicator?: boolean;
 }) {
 	const isUser = group.role === "user";
 
@@ -5763,7 +5856,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 
 			{/* Content - render segments in order */}
 			<div className="px-2 sm:px-4 py-2 sm:py-3 group space-y-3 overflow-hidden">
-				{segments.length === 0 && !isUser && (
+				{segments.length === 0 && !isUser && showWorkingIndicator && (
 					<div className="flex items-center gap-3 text-muted-foreground text-sm">
 						<BrailleSpinner />
 						<span>Working...</span>
@@ -6226,6 +6319,7 @@ const TodoListView = memo(function TodoListView({
 				type="button"
 				onClick={() => setIsCollapsed(false)}
 				className="flex-shrink-0 w-full flex items-center justify-between px-3 py-2 border-b border-border bg-muted/30 hover:bg-muted/50 transition-colors"
+				data-spotlight="todo-list"
 			>
 				<div className="flex items-center gap-3 text-[11px] text-muted-foreground">
 					<ListTodo className="w-3.5 h-3.5" />
@@ -6250,7 +6344,10 @@ const TodoListView = memo(function TodoListView({
 	}
 
 	return (
-		<div className="flex flex-col flex-shrink-0 max-h-[40%] overflow-hidden">
+		<div
+			className="flex flex-col flex-shrink-0 max-h-[40%] overflow-hidden"
+			data-spotlight="todo-list"
+		>
 			{/* Summary header */}
 			<div className="px-3 py-2 border-b border-border bg-muted/30">
 				<div className="flex items-center justify-between text-xs">

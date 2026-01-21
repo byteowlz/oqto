@@ -40,13 +40,17 @@ import {
 	Settings,
 	Trash2,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 export interface MainChatEntryProps {
 	/** Whether this entry is currently selected */
 	isSelected: boolean;
 	/** Currently active session ID (for timeline highlighting) */
 	activeSessionId?: string | null;
+	/** Trigger value that changes when a new session is requested */
+	newSessionTrigger?: number;
+	/** Trigger value that changes when session has activity (message sent) */
+	sessionActivityTrigger?: number;
 	/** Callback when the entry is clicked */
 	onSelect: (assistantName: string, sessionId: string | null) => void;
 	/** Callback when a specific session in the timeline is clicked */
@@ -55,6 +59,12 @@ export interface MainChatEntryProps {
 	onNewSession?: (assistantName: string) => void;
 	/** Locale for i18n */
 	locale?: "en" | "de";
+	/** Optional filter query from sidebar search */
+	filterQuery?: string;
+	/** Optional callback when filtered session count changes */
+	onFilterCountChange?: (count: number) => void;
+	/** Optional callback when total session count changes */
+	onTotalCountChange?: (count: number) => void;
 }
 
 /**
@@ -65,10 +75,15 @@ export interface MainChatEntryProps {
 export function MainChatEntry({
 	isSelected,
 	activeSessionId,
+	newSessionTrigger,
+	sessionActivityTrigger,
 	onSelect,
 	onSessionSelect,
 	onNewSession,
 	locale = "en",
+	filterQuery,
+	onFilterCountChange,
+	onTotalCountChange,
 }: MainChatEntryProps) {
 	const [assistantName, setAssistantName] = useState<string | null>(null);
 	const [assistantInfo, setAssistantInfo] =
@@ -77,6 +92,21 @@ export function MainChatEntry({
 	const [latestSessionId, setLatestSessionId] = useState<string | null>(null);
 	const [loading, setLoading] = useState(true);
 	const [expanded, setExpanded] = useState(false);
+	const filterLower = filterQuery?.toLowerCase().trim() ?? "";
+	const filteredSessions = useMemo(() => {
+		if (!filterLower) return sessions;
+		return sessions.filter((session) => {
+			if ((session.title ?? "").toLowerCase().includes(filterLower))
+				return true;
+			const readableId = generateReadableId(session.id);
+			if (readableId.toLowerCase().includes(filterLower)) return true;
+			const dateStr = formatSessionDate(session.modified_at);
+			if (dateStr.toLowerCase().includes(filterLower)) return true;
+			return false;
+		});
+	}, [filterLower, sessions]);
+	const visibleSessions = filterLower ? filteredSessions : sessions;
+	const hasVisibleSessions = visibleSessions.length > 0;
 
 	// Auto-expand when Main Chat is selected so sessions are visible.
 	useEffect(() => {
@@ -84,6 +114,23 @@ export function MainChatEntry({
 			setExpanded(true);
 		}
 	}, [isSelected, sessions.length]);
+	useEffect(() => {
+		if (!filterLower) return;
+		setExpanded(filteredSessions.length > 0);
+	}, [filterLower, filteredSessions.length]);
+	useEffect(() => {
+		if (!onFilterCountChange && !onTotalCountChange) return;
+		const totalCount = sessions.length;
+		const filteredCount = filterLower ? filteredSessions.length : totalCount;
+		onFilterCountChange?.(filteredCount);
+		onTotalCountChange?.(totalCount);
+	}, [
+		filterLower,
+		filteredSessions.length,
+		onFilterCountChange,
+		onTotalCountChange,
+		sessions.length,
+	]);
 	const [showCreateDialog, setShowCreateDialog] = useState(false);
 	const [newName, setNewName] = useState("");
 	const [creating, setCreating] = useState(false);
@@ -95,17 +142,13 @@ export function MainChatEntry({
 	const resetNameIsValid = useMemo(() => {
 		return Boolean(resetName.trim().match(/^[A-Za-z0-9_-]+$/));
 	}, [resetName]);
+	const lastNewSessionTriggerRef = useRef(newSessionTrigger);
+	const lastActiveSessionIdRef = useRef(activeSessionId);
+	const lastSessionActivityTriggerRef = useRef(sessionActivityTrigger);
 
-	// Load assistant on mount
-	useEffect(() => {
-		loadAssistant();
-	}, []);
-
-	// When selection changes (e.g. /new), refresh sessions list.
-	useEffect(() => {
+	// Unconditional refresh - always fetches sessions regardless of selection state
+	const refreshSessionsUnconditional = useCallback(() => {
 		if (!assistantName) return;
-		// Only do this while visible/selected to keep it cheap.
-		if (!isSelected) return;
 		listMainChatPiSessions()
 			.then((sessionList) => {
 				const sorted = [...sessionList].sort(
@@ -118,7 +161,56 @@ export function MainChatEntry({
 			.catch(() => {
 				// ignore
 			});
-	}, [assistantName, isSelected]);
+	}, [assistantName]);
+
+	const refreshSessions = useCallback(() => {
+		if (!isSelected) return;
+		refreshSessionsUnconditional();
+	}, [isSelected, refreshSessionsUnconditional]);
+
+	// Load assistant on mount
+	useEffect(() => {
+		loadAssistant();
+	}, []);
+
+	// When selection changes (e.g. /new), refresh sessions list.
+	useEffect(() => {
+		refreshSessions();
+	}, [refreshSessions]);
+
+	useEffect(() => {
+		if (!assistantName || !isSelected) return;
+		if (lastActiveSessionIdRef.current === activeSessionId) return;
+		lastActiveSessionIdRef.current = activeSessionId;
+		refreshSessions();
+	}, [activeSessionId, assistantName, isSelected, refreshSessions]);
+
+	useEffect(() => {
+		if (!assistantName || !isSelected) return;
+		if (newSessionTrigger === undefined) return;
+		if (lastNewSessionTriggerRef.current === undefined) {
+			lastNewSessionTriggerRef.current = newSessionTrigger;
+			return;
+		}
+		if (newSessionTrigger !== lastNewSessionTriggerRef.current) {
+			lastNewSessionTriggerRef.current = newSessionTrigger;
+			refreshSessions();
+		}
+	}, [assistantName, isSelected, newSessionTrigger, refreshSessions]);
+
+	// Refresh when session activity trigger changes (message sent) - always refresh
+	useEffect(() => {
+		if (!assistantName) return;
+		if (sessionActivityTrigger === undefined) return;
+		if (lastSessionActivityTriggerRef.current === undefined) {
+			lastSessionActivityTriggerRef.current = sessionActivityTrigger;
+			return;
+		}
+		if (sessionActivityTrigger !== lastSessionActivityTriggerRef.current) {
+			lastSessionActivityTriggerRef.current = sessionActivityTrigger;
+			refreshSessionsUnconditional();
+		}
+	}, [assistantName, sessionActivityTrigger, refreshSessionsUnconditional]);
 
 	function cacheKeySessions(name: string) {
 		return `octo:mainChatPi:${name}:sessions:v1`;
@@ -167,12 +259,12 @@ export function MainChatEntry({
 					listMainChatPiSessions(),
 				]);
 
-			setAssistantInfo(info);
-			// Sort sessions by most recently active first
-			const sorted = [...sessionList].sort(
-				(a, b) => b.modified_at - a.modified_at,
-			);
-			setSessions(sorted);
+				setAssistantInfo(info);
+				// Sort sessions by most recently active first
+				const sorted = [...sessionList].sort(
+					(a, b) => b.modified_at - a.modified_at,
+				);
+				setSessions(sorted);
 				setLatestSessionId(sorted[0]?.id ?? null);
 				writeCachedSessions(name, sorted);
 			}
@@ -287,6 +379,9 @@ export function MainChatEntry({
 
 	// No assistant yet - show setup prompt
 	if (!assistantName) {
+		if (filterLower) {
+			return null;
+		}
 		return (
 			<>
 				<button
@@ -319,7 +414,11 @@ export function MainChatEntry({
 	}
 
 	// Assistant exists - show entry styled like workspace project entries
-	const hasSessions = sessions.length > 0;
+	if (filterLower && filteredSessions.length === 0) {
+		return null;
+	}
+	const hasSessions = hasVisibleSessions;
+	const displayCount = filterLower ? filteredSessions.length : sessions.length;
 
 	return (
 		<>
@@ -347,19 +446,15 @@ export function MainChatEntry({
 									{assistantName}
 								</span>
 								<span className="text-[10px] text-muted-foreground">
-									({sessions.length})
+									({displayCount})
 								</span>
 							</button>
 							{onNewSession && (
 								<button
 									type="button"
 									onClick={handleNewSessionClick}
-									className="p-1 text-muted-foreground hover:text-primary hover:bg-sidebar-accent opacity-0 group-hover:opacity-100 transition-opacity"
-									title={
-										locale === "de"
-											? "Neue Sitzung"
-											: "New session"
-									}
+									className="p-1 text-muted-foreground/60 hover:text-primary hover:bg-sidebar-accent transition-colors"
+									title={locale === "de" ? "Neue Sitzung" : "New session"}
 								>
 									<Plus className="w-3 h-3" />
 								</button>
@@ -406,7 +501,7 @@ export function MainChatEntry({
 				{/* Session history list - shown when expanded */}
 				{expanded && hasSessions && (
 					<div className="space-y-0.5 pb-1">
-						{sessions.map((session) => {
+						{visibleSessions.map((session) => {
 							const isActive =
 								session.id === (activeSessionId ?? latestSessionId);
 							const readableId = generateReadableId(session.id);
@@ -422,18 +517,18 @@ export function MainChatEntry({
 												type="button"
 												onClick={() => handleTimelineSessionClick(session.id)}
 												className={cn(
-													"w-full px-2 py-1.5 text-left transition-colors flex items-center gap-1.5 rounded-sm",
+													"w-full px-2 py-1 text-left transition-colors flex items-start gap-1.5 rounded-sm border",
 													isActive
-														? "bg-primary/15 text-foreground"
-														: "text-muted-foreground hover:bg-sidebar-accent",
+														? "bg-primary/15 border-primary text-foreground"
+														: "text-muted-foreground hover:bg-sidebar-accent border-transparent",
 												)}
 											>
-												<MessageSquare className="w-3.5 h-3.5 text-primary/70 flex-shrink-0" />
+												<MessageSquare className="w-3 h-3 mt-0.5 text-primary/70 flex-shrink-0" />
 												<div className="flex-1 min-w-0">
 													<div className="text-xs font-medium truncate">
 														{session.title || "Untitled"}
 													</div>
-													<div className="text-[10px] text-muted-foreground/50">
+													<div className="text-[9px] text-muted-foreground/50 mt-0.5">
 														{formattedDate}
 													</div>
 												</div>
@@ -507,10 +602,10 @@ function SessionTimeline({
 						new Date(session.started_at).getTime(),
 					);
 
-						const readableId = generateReadableId(session.id);
+					const readableId = generateReadableId(session.id);
 
-						return (
-							<button
+					return (
+						<button
 							key={session.id}
 							type="button"
 							onClick={() => onSessionClick(session.id)}

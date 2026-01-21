@@ -11,6 +11,7 @@ use serde_json::Value;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
+use tokio_util::sync::CancellationToken;
 
 use super::types::{ConnectionState, WsEvent};
 
@@ -32,6 +33,7 @@ pub struct OpenCodeAdapter {
     workspace_path: String,
     opencode_port: u16,
     state: Arc<RwLock<ConnectionState>>,
+    shutdown: CancellationToken,
 }
 
 impl OpenCodeAdapter {
@@ -42,7 +44,18 @@ impl OpenCodeAdapter {
             workspace_path,
             opencode_port,
             state: Arc::new(RwLock::new(ConnectionState::Disconnected)),
+            shutdown: CancellationToken::new(),
         }
+    }
+
+    /// Stop the adapter and any reconnect attempts.
+    pub fn stop(&self) {
+        self.shutdown.cancel();
+    }
+
+    /// Check if this adapter matches the latest session connection info.
+    pub fn matches(&self, workspace_path: &str, opencode_port: u16) -> bool {
+        self.workspace_path == workspace_path && self.opencode_port == opencode_port
     }
 
     /// Run the adapter, calling the callback for each event.
@@ -55,6 +68,9 @@ impl OpenCodeAdapter {
         let mut attempt = 0u32;
 
         loop {
+            if self.shutdown.is_cancelled() {
+                break;
+            }
             // Update state
             if attempt > 0 {
                 *self.state.write().await = ConnectionState::Reconnecting;
@@ -64,7 +80,10 @@ impl OpenCodeAdapter {
                     attempt,
                     delay_ms: delay,
                 });
-                tokio::time::sleep(Duration::from_millis(delay)).await;
+                tokio::select! {
+                    _ = self.shutdown.cancelled() => break,
+                    _ = tokio::time::sleep(Duration::from_millis(delay)) => {}
+                }
             } else {
                 *self.state.write().await = ConnectionState::Connecting;
             }
@@ -144,7 +163,19 @@ impl OpenCodeAdapter {
         info!("Connected to OpenCode SSE for session {}", self.session_id);
 
         // Process events
-        while let Some(event_result) = es.next().await {
+        loop {
+            let event_result = tokio::select! {
+                _ = self.shutdown.cancelled() => {
+                    info!("Shutting down OpenCode adapter for session {}", self.session_id);
+                    return Ok(());
+                }
+                event_result = es.next() => event_result,
+            };
+
+            let Some(event_result) = event_result else {
+                break;
+            };
+
             match event_result {
                 Ok(Event::Open) => {
                     debug!("SSE connection opened for session {}", self.session_id);

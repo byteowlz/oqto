@@ -330,7 +330,9 @@ export const CanvasView = memo(function CanvasView({
 	onSaveAndAddToChat,
 }: CanvasViewProps) {
 	// Track current initialImagePath to detect changes
-	const prevInitialImagePathRef = useRef<string | null>(initialImagePath ?? null);
+	const prevInitialImagePathRef = useRef<string | null>(
+		initialImagePath ?? null,
+	);
 
 	// Load cached state on mount - restore cache if it exists (regardless of initialImagePath match)
 	// This ensures canvas content survives expand/collapse
@@ -338,7 +340,7 @@ export const CanvasView = memo(function CanvasView({
 		// First try to load cache matching current initialImagePath
 		const matchingCache = loadCanvasState(initialImagePath ?? null);
 		if (matchingCache) return matchingCache;
-		
+
 		// If no matching cache but we have a generic cache, use it for expand/collapse persistence
 		// Only do this if initialImagePath is null/undefined (canvas view without specific file)
 		if (!initialImagePath && canvasCache.state) {
@@ -484,7 +486,7 @@ export const CanvasView = memo(function CanvasView({
 	useEffect(() => {
 		const prevPath = prevInitialImagePathRef.current;
 		const currentPath = initialImagePath ?? null;
-		
+
 		// If path changed and we have a new image to load
 		if (prevPath !== currentPath && currentPath) {
 			// Clear current background to force reload
@@ -498,7 +500,7 @@ export const CanvasView = memo(function CanvasView({
 			setPosition({ x: 0, y: 0 });
 			setImageCache(new Map());
 		}
-		
+
 		prevInitialImagePathRef.current = currentPath;
 	}, [initialImagePath]);
 
@@ -1068,7 +1070,10 @@ export const CanvasView = memo(function CanvasView({
 		: containerSize.height;
 
 	return (
-		<div className={cn("flex flex-col h-full overflow-hidden", className)}>
+		<div
+			className={cn("flex flex-col h-full overflow-hidden", className)}
+			data-spotlight="canvas"
+		>
 			{/* Toolbar */}
 			<div className="flex-shrink-0 flex items-center gap-1 p-2 border-b border-border bg-muted/30 flex-wrap">
 				{/* Tool buttons */}

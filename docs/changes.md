@@ -1,0 +1,26 @@
+# Changes
+
+- 2026-01-21: Sidebar session search now filters Main Chat entries and counts Main Chat matches in results.
+- 2026-01-21: Improved chat session selection stability, Main Chat sidebar refresh, and file upload handling.
+- 2026-01-21: Added a rotating segment ring around stop buttons in Main Chat and OpenCode sessions.
+- 2026-01-21: Refresh OpenCode chat messages on part.* SSE events to reduce missing updates.
+- 2026-01-22: Fix idle session cleanup by normalizing activity timestamps in idle queries.
+- 2026-01-22: Add a longer gradient-glow segment that moves along the stop button outline.
+- 2026-01-22: Force fresh message fetches on event-driven refreshes to avoid stale cache.
+- 2026-01-22: Remove legacy session event mapping and use WsEvent directly in chat UI.
+- 2026-01-22: Normalize stop/send button padding so icon spacing matches other controls.
+- 2026-01-22: Allow resuming active Main Chat sessions before a session file exists on disk.
+- 2026-01-22: Drop optimistic Main Chat messages once matching server history arrives to avoid duplicates.
+- 2026-01-22: Return closed TRX issues in the API and add a closed-only filter in the TRX view.
+- 2026-01-22: Sort OpenCode session messages by creation time to prevent out-of-order display.
+- 2026-01-22: Use the last active OpenCode base URL and session when aborting so stop works after resume.
+- 2026-01-22: Avoid mmry port collisions by including mmry in session port allocation and conflict checks.
+- 2026-01-22: Stop and replace stale OpenCode SSE adapters to prevent rapid reconnect loops.
+- 2026-01-22: Serialize session port allocation to avoid mmry port unique constraint conflicts.
+- 2026-01-22: Allow setup.sh sudoers generation to support linux user creation with useradd flags, group creation, and workspace ownership updates.
+- 2026-01-22: Sanitize linux user GECOS comments to avoid useradd failures on colon characters.
+- 2026-01-22: Use the first dev user as the default session user in dev mode for local sessions.
+- 2026-01-22: Resolve local runtime binaries to absolute paths before spawning under sudo.
+- 2026-01-22: Prefer sudo over su when spawning ttyd shells to avoid su option errors.
+- 2026-01-22: Fix ttyd shell args to pass each argument separately instead of as a joined string.
+- 2026-01-22: Spawn per-user mmry instances in multi-user mode for isolated memory stores.

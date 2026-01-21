@@ -149,7 +149,10 @@ function readCachedSessionMessages(sessionId: string): PiDisplayMessage[] {
 			}
 			return m;
 		});
-		const cleanedEntry = { messages: cleanedMessages, timestamp: parsed.timestamp };
+		const cleanedEntry = {
+			messages: cleanedMessages,
+			timestamp: parsed.timestamp,
+		};
 		sessionMessageCache.messagesBySession.set(sessionId, cleanedEntry);
 		return cleanedMessages;
 	} catch {
@@ -157,7 +160,10 @@ function readCachedSessionMessages(sessionId: string): PiDisplayMessage[] {
 	}
 }
 
-function writeCachedSessionMessages(sessionId: string, messages: PiDisplayMessage[]) {
+function writeCachedSessionMessages(
+	sessionId: string,
+	messages: PiDisplayMessage[],
+) {
 	// Strip isStreaming flag when caching - it's transient state that shouldn't persist
 	const cleanedMessages = messages.map((m) => {
 		if (m.isStreaming) {
@@ -166,7 +172,10 @@ function writeCachedSessionMessages(sessionId: string, messages: PiDisplayMessag
 		}
 		return m;
 	});
-	const entry: SessionMessageCacheEntry = { messages: cleanedMessages, timestamp: Date.now() };
+	const entry: SessionMessageCacheEntry = {
+		messages: cleanedMessages,
+		timestamp: Date.now(),
+	};
 	sessionMessageCache.messagesBySession.set(sessionId, entry);
 	if (typeof window === "undefined") return;
 	queueMicrotask(() => {
@@ -206,15 +215,68 @@ function shouldPreserveLocalMessage(message: PiDisplayMessage): boolean {
 	return false;
 }
 
+const MESSAGE_MATCH_WINDOW_MS = 120_000;
+
+function safeStringify(value: unknown): string {
+	if (value === null || value === undefined) return "";
+	if (typeof value === "string") return value;
+	try {
+		return JSON.stringify(value);
+	} catch {
+		return String(value);
+	}
+}
+
+function messageFingerprint(message: PiDisplayMessage): string {
+	const parts = message.parts.map((part) => {
+		switch (part.type) {
+			case "text":
+				return `text:${part.content}`;
+			case "thinking":
+				return `thinking:${part.content}`;
+			case "tool_use":
+				return `tool_use:${part.name}:${safeStringify(part.input)}`;
+			case "tool_result":
+				return `tool_result:${part.name ?? ""}:${safeStringify(part.content)}:${
+					part.isError ? "1" : "0"
+				}`;
+			case "compaction":
+				return "compaction";
+			default:
+				return part.type;
+		}
+	});
+	return `${message.role}|${parts.join("|")}`;
+}
+
 function mergeServerMessages(
 	previous: PiDisplayMessage[],
 	serverMessages: PiDisplayMessage[],
 ): PiDisplayMessage[] {
 	const serverIds = new Set(serverMessages.map((m) => m.id));
-	const preserved = previous.filter(
-		(m) => shouldPreserveLocalMessage(m) && !serverIds.has(m.id),
-	);
-	return preserved.length > 0 ? [...serverMessages, ...preserved] : serverMessages;
+	const serverEntries = serverMessages.map((message) => ({
+		fingerprint: messageFingerprint(message),
+		timestamp: message.timestamp ?? 0,
+	}));
+	const preserved = previous.filter((message) => {
+		if (!shouldPreserveLocalMessage(message)) return false;
+		if (serverIds.has(message.id)) return false;
+		const localFingerprint = messageFingerprint(message);
+		for (const server of serverEntries) {
+			if (server.fingerprint !== localFingerprint) continue;
+			if (!server.timestamp || !message.timestamp) {
+				return false;
+			}
+			const diff = Math.abs(server.timestamp - message.timestamp);
+			if (diff <= MESSAGE_MATCH_WINDOW_MS) {
+				return false;
+			}
+		}
+		return true;
+	});
+	return preserved.length > 0
+		? [...serverMessages, ...preserved]
+		: serverMessages;
 }
 
 const scrollCache = {
@@ -562,7 +624,7 @@ export function usePiChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 									const updated = [...prev];
 									updated[idx] = {
 										...currentTextMsg,
-										parts: currentTextMsg.parts.map(p => ({ ...p })),
+										parts: currentTextMsg.parts.map((p) => ({ ...p })),
 									};
 									return updated;
 								}
@@ -592,7 +654,7 @@ export function usePiChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 									const updated = [...prev];
 									updated[idx] = {
 										...currentToolMsg,
-										parts: currentToolMsg.parts.map(p => ({ ...p })),
+										parts: currentToolMsg.parts.map((p) => ({ ...p })),
 									};
 									return updated;
 								}
@@ -624,7 +686,7 @@ export function usePiChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 									const updated = [...prev];
 									updated[idx] = {
 										...currentResultMsg,
-										parts: currentResultMsg.parts.map(p => ({ ...p })),
+										parts: currentResultMsg.parts.map((p) => ({ ...p })),
 									};
 									return updated;
 								}
@@ -640,7 +702,7 @@ export function usePiChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 							streamingMessageRef.current.isStreaming = false;
 							const completedMessage = {
 								...streamingMessageRef.current,
-								parts: streamingMessageRef.current.parts.map(p => ({ ...p })),
+								parts: streamingMessageRef.current.parts.map((p) => ({ ...p })),
 							};
 							setMessages((prev) => {
 								const idx = prev.findIndex((m) => m.id === completedMessage.id);
@@ -817,12 +879,12 @@ export function usePiChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 				getMainChatPiState(),
 				getMainChatPiSessionMessages(targetSessionId),
 			]);
-			
+
 			// Check if session changed during async fetch - discard stale response
 			if (activeSessionIdRef.current !== targetSessionId) {
 				return;
 			}
-			
+
 			setState(piState);
 
 			// If backend says it's not streaming, ensure local state is cleared
@@ -913,22 +975,22 @@ export function usePiChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 	// the case where messages appear empty until reload
 	useEffect(() => {
 		if (!activeSessionId || !isConnected || isStreaming) return;
-		
+
 		let cancelled = false;
 		const targetSessionId = activeSessionId;
-		
+
 		// Initial refresh after a short delay (handles page load with existing session)
 		const initialTimeout = setTimeout(() => {
 			if (cancelled || activeSessionIdRef.current !== targetSessionId) return;
 			refreshRef.current?.();
 		}, 500);
-		
+
 		// Periodic refresh every 15 seconds as a safety net
 		const interval = setInterval(() => {
 			if (cancelled || activeSessionIdRef.current !== targetSessionId) return;
 			refreshRef.current?.();
 		}, 15000);
-		
+
 		return () => {
 			cancelled = true;
 			clearTimeout(initialTimeout);
@@ -1146,7 +1208,10 @@ export function usePiChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 			} catch (e) {
 				if (!mounted) return;
 				// Only show error if we have no cached data for this session
-				if (!activeSessionId || readCachedSessionMessages(activeSessionId).length === 0) {
+				if (
+					!activeSessionId ||
+					readCachedSessionMessages(activeSessionId).length === 0
+				) {
 					const err =
 						e instanceof Error ? e : new Error("Failed to initialize");
 					setError(err);

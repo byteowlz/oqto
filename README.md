@@ -18,13 +18,13 @@ Self-hosted platform for AI coding agents. Run OpenCode instances in isolated co
 ```
                     ┌─────────────────────────────────────┐
                     │            Octo Backend             │
-                    │  (octo, octoctl, octo-runner, pi)  │
+                    │  (octo, octoctl, octo-runner, pi)   │
                     ├─────────────────────────────────────┤
-  Browser/App ───►  │  REST API · WebSocket · SSE Proxy  │
+  Browser/App ───►  │  REST API · WebSocket · SSE Proxy   │
                     └──────────────┬──────────────────────┘
                                    │
-           ┌───────────────────────┼───────────────────────┐
-           ▼                       ▼                       ▼
+           ┌───────────────────────┼────────────────────┐
+           ▼                       ▼                    ▼
    ┌──────────────┐       ┌──────────────┐       ┌──────────────┐
    │   Session    │       │   Session    │       │   Session    │
    │  Container   │       │  Container   │       │   (Local)    │
@@ -53,6 +53,7 @@ For a complete setup experience with all prerequisites handled automatically:
 ```
 
 The interactive script will guide you through:
+
 - User mode selection (single-user or multi-user)
 - Backend mode selection (local processes or containers)
 - Installing all dependencies (Rust, Bun, agent tools, shell tools)
@@ -68,17 +69,22 @@ If you prefer to install components manually:
 
 1. Install core dependencies (Rust, Bun, Docker/Podman)
 2. Build the backend and fileserver:
+
    ```bash
    cargo install --path backend
    cargo install --path fileserver
    ```
+
 3. Build the frontend:
+
    ```bash
    cd frontend && bun install && bun run build
    ```
+
 4. Install agent tools (opencode, ttyd, agntz, byt)
 5. Configure `~/.config/octo/config.toml`
 6. Start services:
+
    ```bash
    # Backend
    octo serve

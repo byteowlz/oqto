@@ -13,6 +13,7 @@ mod proxy;
 mod routes;
 mod state;
 mod test_harness;
+pub mod ui_control;
 
 // Re-export error types for external use
 #[allow(unused_imports)]

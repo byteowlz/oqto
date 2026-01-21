@@ -1,10 +1,11 @@
 //! API route definitions.
 
 use axum::extract::DefaultBodyLimit;
-use axum::http::{HeaderValue, Method, header};
+use axum::http::{header, HeaderValue, Method};
 use axum::{
-    Router, middleware,
+    middleware,
     routing::{delete, get, post, put},
+    Router,
 };
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::trace::{DefaultMakeSpan, DefaultOnRequest, DefaultOnResponse, TraceLayer};
@@ -20,6 +21,7 @@ use super::main_chat_files;
 use super::main_chat_pi as main_chat_pi_handlers;
 use super::proxy;
 use super::state::AppState;
+use super::ui_control as ui_control_handlers;
 use crate::ws::ws_handler;
 
 /// Create the application router with configurable max upload size.
@@ -173,6 +175,17 @@ pub fn create_router_with_config(state: AppState, max_upload_size_mb: usize) -> 
         // User profile routes (authenticated users)
         .route("/me", get(handlers::get_me))
         .route("/me", put(handlers::update_me))
+        // UI control routes (agent-driven UI control)
+        .route("/ui/navigate", post(ui_control_handlers::navigate))
+        .route("/ui/session", post(ui_control_handlers::session))
+        .route("/ui/view", post(ui_control_handlers::view))
+        .route("/ui/palette", post(ui_control_handlers::palette))
+        .route("/ui/palette/exec", post(ui_control_handlers::palette_exec))
+        .route("/ui/spotlight", post(ui_control_handlers::spotlight))
+        .route("/ui/tour", post(ui_control_handlers::tour))
+        .route("/ui/sidebar", post(ui_control_handlers::sidebar))
+        .route("/ui/panel", post(ui_control_handlers::panel))
+        .route("/ui/theme", post(ui_control_handlers::theme))
         // Admin routes - sessions
         .route("/admin/sessions", get(handlers::admin_list_sessions))
         .route(
@@ -357,6 +370,10 @@ pub fn create_router_with_config(state: AppState, max_upload_size_mb: usize) -> 
             "/main/pi/sessions",
             get(main_chat_pi_handlers::list_pi_sessions)
                 .post(main_chat_pi_handlers::new_pi_session),
+        )
+        .route(
+            "/main/pi/sessions/search",
+            get(main_chat_pi_handlers::search_pi_sessions),
         )
         .route(
             "/main/pi/sessions/{session_id}",

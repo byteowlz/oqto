@@ -345,7 +345,8 @@ function mapWsEventToSessionEvent(
 					details: {
 						type: "tool_end",
 						toolName,
-						toolCallId: "tool_call_id" in event ? event.tool_call_id : undefined,
+						toolCallId:
+							"tool_call_id" in event ? event.tool_call_id : undefined,
 						result,
 					},
 				};
@@ -458,36 +459,9 @@ export function useWsSessionWithConnection(
 	};
 }
 
-// ============================================================================
-// SSE-Compatible Event Type (matches opencode-client's EventCallback)
-// ============================================================================
-
-/**
- * Event type that matches the opencode-client SSE event format.
- * This allows useWsSessionEvents to be a drop-in replacement for subscribeToEvents.
- */
-export type LegacyEvent = {
-	type: string;
-	properties?: Record<string, unknown> | null;
-};
-
-export type LegacyEventCallback = (event: LegacyEvent) => void;
-
-// ============================================================================
-// SSE-Compatible Hook
-// ============================================================================
-
-/**
- * Hook that provides the same event interface as subscribeToEvents() from opencode-client.
- * Use this as a drop-in replacement when features.websocket_events is true.
- *
- * @param workspaceSessionId - The workspace session ID (container/process)
- * @param onEvent - Callback matching the SSE subscribeToEvents format
- * @param options - Configuration options
- */
 export function useWsSessionEvents(
 	workspaceSessionId: string | undefined,
-	onEvent: LegacyEventCallback,
+	onEvent: (event: WsEvent) => void,
 	options?: {
 		/** Whether subscription is enabled (default: true) */
 		enabled?: boolean;
@@ -498,7 +472,7 @@ export function useWsSessionEvents(
 	},
 ) {
 	const client = getWsClient();
-	const { enabled = true, opencodeBaseUrl, activeSessionId } = options ?? {};
+	const { enabled = true } = options ?? {};
 
 	// Keep callback ref stable to avoid re-subscriptions
 	const onEventRef = useRef(onEvent);
@@ -524,51 +498,11 @@ export function useWsSessionEvents(
 		client.subscribeSession(workspaceSessionId);
 		setIsSubscribed(true);
 
-		// Emit initial transport mode event
-		onEventRef.current({
-			type: "transport.mode",
-			properties: { mode: "ws", reason: "websocket" },
-		});
-
-		let deltaTimer: ReturnType<typeof setTimeout> | null = null;
-		let deltaLastEmitAt = 0;
-		let deltaPending = false;
-
-		const scheduleLegacyMessageUpdated = (sessionId: string, minIntervalMs: number) => {
-			deltaPending = true;
-			if (deltaTimer) return;
-
-			const elapsed = Date.now() - deltaLastEmitAt;
-			const wait = Math.max(0, minIntervalMs - elapsed);
-			deltaTimer = setTimeout(() => {
-				deltaTimer = null;
-				if (!deltaPending) return;
-				deltaPending = false;
-				deltaLastEmitAt = Date.now();
-				onEventRef.current({
-					type: "message.updated",
-					properties: { sessionId },
-				});
-			}, wait);
-		};
-
 		// Handle events for this session
 		const unsubscribe = client.onSessionEvent(
 			workspaceSessionId,
 			(event: WsEvent) => {
-				if (event.type === "text_delta" || event.type === "thinking_delta") {
-					const sessionId =
-						"session_id" in event
-							? (event.session_id as string)
-							: workspaceSessionId;
-					scheduleLegacyMessageUpdated(sessionId, 250);
-					return;
-				}
-
-				const legacy = mapWsEventToLegacyEvent(event);
-				if (legacy) {
-					onEventRef.current(legacy);
-				}
+				onEventRef.current(event);
 			},
 		);
 
@@ -576,10 +510,6 @@ export function useWsSessionEvents(
 			unsubscribe();
 			client.unsubscribeSession(workspaceSessionId);
 			setIsSubscribed(false);
-			if (deltaTimer) {
-				clearTimeout(deltaTimer);
-				deltaTimer = null;
-			}
 		};
 	}, [workspaceSessionId, enabled, client]);
 
@@ -587,14 +517,8 @@ export function useWsSessionEvents(
 	useEffect(() => {
 		if (connection.isReconnecting) {
 			setTransportMode("reconnecting");
-			onEventRef.current({
-				type: "transport.mode",
-				properties: { mode: "reconnecting", reason: "websocket reconnecting" },
-			});
 		} else if (connection.isConnected) {
 			setTransportMode("ws");
-			// Emit server connected when we reconnect
-			onEventRef.current({ type: "server.connected", properties: {} });
 		}
 	}, [connection.isConnected, connection.isReconnecting]);
 
@@ -604,222 +528,4 @@ export function useWsSessionEvents(
 		connectionState: connection.connectionState,
 		isConnected: connection.isConnected,
 	};
-}
-
-/**
- * Maps WebSocket events to the legacy SSE event format used by opencode-client.
- */
-function mapWsEventToLegacyEvent(event: WsEvent): LegacyEvent | null {
-	switch (event.type) {
-		case "session_idle":
-			return {
-				type: "session.idle",
-				properties: {
-					sessionId: "session_id" in event ? event.session_id : undefined,
-				},
-			};
-
-		case "session_busy":
-			return {
-				type: "session.busy",
-				properties: {
-					sessionId: "session_id" in event ? event.session_id : undefined,
-				},
-			};
-
-		case "agent_disconnected":
-			return {
-				type: "session.unavailable",
-				properties: {
-					sessionId: "session_id" in event ? event.session_id : undefined,
-				},
-			};
-
-		case "agent_connected":
-			return { type: "server.connected", properties: {} };
-
-		case "error":
-			return {
-				type: "session.error",
-				properties: {
-					sessionID: "session_id" in event ? event.session_id : undefined,
-					error: {
-						name: "BackendError",
-						data: { message: "message" in event ? event.message : "" },
-					},
-				},
-			};
-
-		case "tool_end":
-			if ("is_error" in event && event.is_error) {
-				const result = "result" in event ? event.result : undefined;
-				const message = (() => {
-					if (typeof result === "string") return result;
-					if (result && typeof result === "object") {
-						const record = result as Record<string, unknown>;
-						if (typeof record.message === "string") return record.message;
-					}
-					return "Tool execution failed";
-				})();
-				return {
-					type: "session.error",
-					properties: {
-						sessionID: "session_id" in event ? event.session_id : undefined,
-						error: {
-							name: "ToolError",
-							data: {
-								message,
-								tool: "tool_name" in event ? event.tool_name : undefined,
-								toolCallId: "tool_call_id" in event ? event.tool_call_id : undefined,
-								result,
-							},
-						},
-					},
-				};
-			}
-			return null;
-
-		case "message_updated":
-		case "message_end":
-		case "text_delta":
-		case "thinking_delta":
-		case "message_start":
-			return {
-				type: "message.updated",
-				properties: {
-					sessionId: "session_id" in event ? event.session_id : undefined,
-				},
-			};
-
-		case "permission_request":
-			if ("permission_id" in event && "permission_type" in event) {
-				return {
-					type: "permission.updated",
-					properties: {
-						id: event.permission_id,
-						sessionID: "session_id" in event ? event.session_id : undefined,
-						type: event.permission_type,
-						title: event.title ?? "",
-						pattern: event.pattern,
-						metadata: event.metadata ?? {},
-						// Include time for SDK compatibility
-						time: { created: Date.now() },
-					},
-				};
-			}
-			return null;
-
-		case "permission_resolved":
-			if ("permission_id" in event) {
-				return {
-					type: "permission.replied",
-					properties: {
-						permissionID: event.permission_id,
-						sessionID: "session_id" in event ? event.session_id : undefined,
-						response: "granted" in event && event.granted ? "allow" : "deny",
-					},
-				};
-			}
-			return null;
-
-		case "question_request":
-			if ("request_id" in event && "questions" in event) {
-				return {
-					type: "question.asked",
-					properties: {
-						id: event.request_id,
-						sessionID: "session_id" in event ? event.session_id : undefined,
-						questions: event.questions,
-						tool: event.tool,
-					},
-				};
-			}
-			return null;
-
-		case "question_resolved":
-			if ("request_id" in event) {
-				return {
-					type: "question.replied",
-					properties: {
-						requestID: event.request_id,
-						sessionID: "session_id" in event ? event.session_id : undefined,
-					},
-				};
-			}
-			return null;
-
-		case "session_error":
-			if ("error_type" in event && "message" in event) {
-				return {
-					type: "session.error",
-					properties: {
-						sessionID: "session_id" in event ? event.session_id : undefined,
-						error: {
-							name: event.error_type,
-							data: { message: event.message },
-						},
-					},
-				};
-			}
-			return null;
-
-		case "compaction_start":
-			return {
-				type: "compaction.start",
-				properties: {
-					sessionID: "session_id" in event ? event.session_id : undefined,
-					reason: "reason" in event ? event.reason : undefined,
-				},
-			};
-
-		case "compaction_end":
-			return {
-				type: "compaction.end",
-				properties: {
-					sessionID: "session_id" in event ? event.session_id : undefined,
-					success: "success" in event ? event.success : undefined,
-				},
-			};
-
-		case "opencode_event":
-			// Pass through the inner event type if available
-			if ("event_type" in event && "data" in event) {
-				return {
-					type: event.event_type,
-					properties: event.data as Record<string, unknown>,
-				};
-			}
-			return null;
-
-		case "a2ui_surface":
-			if ("surface_id" in event && "messages" in event) {
-				return {
-					type: "a2ui.surface",
-					properties: {
-						sessionId: "session_id" in event ? event.session_id : undefined,
-						surfaceId: event.surface_id,
-						messages: event.messages,
-						blocking: event.blocking ?? false,
-						requestId: event.request_id,
-					},
-				};
-			}
-			return null;
-
-		case "a2ui_action_resolved":
-			if ("request_id" in event) {
-				return {
-					type: "a2ui.action_resolved",
-					properties: {
-						sessionId: "session_id" in event ? event.session_id : undefined,
-						requestId: event.request_id,
-					},
-				};
-			}
-			return null;
-
-		default:
-			// Pass through unknown events
-			return null;
-	}
 }

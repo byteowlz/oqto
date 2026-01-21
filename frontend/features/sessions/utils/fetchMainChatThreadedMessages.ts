@@ -3,8 +3,8 @@ import {
 	getChatMessages,
 	listMainChatSessions,
 } from "@/features/sessions/api";
-import { formatSessionDate } from "@/lib/session-utils";
 import type { ThreadedMessage } from "@/features/sessions/types";
+import { formatSessionDate } from "@/lib/session-utils";
 
 export async function fetchMainChatThreadedMessages(
 	mainChatAssistantName: string,

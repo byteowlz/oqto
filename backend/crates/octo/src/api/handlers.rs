@@ -235,10 +235,13 @@ impl SessionWithUrls {
     }
 }
 
-/// List all sessions.
-#[instrument(skip(state))]
-pub async fn list_sessions(State(state): State<AppState>) -> ApiResult<Json<Vec<Session>>> {
-    let sessions = state.sessions.list_sessions().await?;
+/// List all sessions for the authenticated user.
+#[instrument(skip(state, user))]
+pub async fn list_sessions(
+    State(state): State<AppState>,
+    user: CurrentUser,
+) -> ApiResult<Json<Vec<Session>>> {
+    let sessions = state.sessions.for_user(user.id()).list_sessions().await?;
     info!(count = sessions.len(), "Listed sessions");
     Ok(Json(sessions))
 }
@@ -251,9 +254,10 @@ pub async fn list_sessions(State(state): State<AppState>) -> ApiResult<Json<Vec<
 #[instrument(skip(state))]
 pub async fn get_session(
     State(state): State<AppState>,
+    user: CurrentUser,
     Path(session_id): Path<String>,
 ) -> ApiResult<Json<Session>> {
-    if let Some(session) = state.sessions.get_session(&session_id).await? {
+    if let Some(session) = state.sessions.for_user(user.id()).get_session(&session_id).await? {
         return Ok(Json(session));
     }
 
@@ -267,9 +271,10 @@ pub async fn get_session(
 #[instrument(skip(state, request), fields(workspace_path = ?request.workspace_path))]
 pub async fn create_session(
     State(state): State<AppState>,
+    user: CurrentUser,
     Json(request): Json<CreateSessionRequest>,
 ) -> ApiResult<(StatusCode, Json<SessionWithUrls>)> {
-    let session = state.sessions.create_session(request).await?;
+    let session = state.sessions.for_user(user.id()).create_session(request).await?;
     info!(session_id = %session.id, "Created new session");
 
     // TODO: Get actual host from request headers
@@ -281,10 +286,11 @@ pub async fn create_session(
 #[instrument(skip(state))]
 pub async fn stop_session(
     State(state): State<AppState>,
+    user: CurrentUser,
     Path(session_id): Path<String>,
 ) -> ApiResult<StatusCode> {
     // First check if session exists
-    let session = state.sessions.get_session(&session_id).await?;
+    let session = state.sessions.for_user(user.id()).get_session(&session_id).await?;
 
     if session.is_none() {
         return Err(ApiError::not_found(format!(
@@ -293,7 +299,7 @@ pub async fn stop_session(
         )));
     }
 
-    state.sessions.stop_session(&session_id).await?;
+    state.sessions.for_user(user.id()).stop_session(&session_id).await?;
     info!(session_id = %session_id, "Stopped session");
 
     Ok(StatusCode::NO_CONTENT)
@@ -303,10 +309,11 @@ pub async fn stop_session(
 #[instrument(skip(state))]
 pub async fn delete_session(
     State(state): State<AppState>,
+    user: CurrentUser,
     Path(session_id): Path<String>,
 ) -> ApiResult<StatusCode> {
     // Uses centralized From<anyhow::Error> conversion
-    state.sessions.delete_session(&session_id).await?;
+    state.sessions.for_user(user.id()).delete_session(&session_id).await?;
 
     info!(session_id = %session_id, "Deleted session");
     Ok(StatusCode::NO_CONTENT)
@@ -319,9 +326,10 @@ pub async fn delete_session(
 #[instrument(skip(state))]
 pub async fn resume_session(
     State(state): State<AppState>,
+    user: CurrentUser,
     Path(session_id): Path<String>,
 ) -> ApiResult<Json<SessionWithUrls>> {
-    let session = state.sessions.resume_session(&session_id).await?;
+    let session = state.sessions.for_user(user.id()).resume_session(&session_id).await?;
     info!(session_id = %session_id, "Resumed session");
 
     let response = SessionWithUrls::from_session(session, "localhost");
@@ -336,9 +344,14 @@ pub async fn resume_session(
 #[instrument(skip(state, request), fields(workspace_path = ?request.workspace_path))]
 pub async fn get_or_create_session(
     State(state): State<AppState>,
+    user: CurrentUser,
     Json(request): Json<CreateSessionRequest>,
 ) -> ApiResult<Json<SessionWithUrls>> {
-    let session = state.sessions.get_or_create_session(request).await?;
+    let session = state
+        .sessions
+        .for_user(user.id())
+        .get_or_create_session(request)
+        .await?;
     info!(session_id = %session.id, status = ?session.status, "Got or created session");
 
     let response = SessionWithUrls::from_session(session, "localhost");
@@ -362,10 +375,12 @@ pub struct GetOrCreateForWorkspaceRequest {
 #[instrument(skip(state, request), fields(workspace_path = %request.workspace_path))]
 pub async fn get_or_create_session_for_workspace(
     State(state): State<AppState>,
+    user: CurrentUser,
     Json(request): Json<GetOrCreateForWorkspaceRequest>,
 ) -> ApiResult<Json<SessionWithUrls>> {
     let session = state
         .sessions
+        .for_user(user.id())
         .get_or_create_session_for_workspace(&request.workspace_path)
         .await?;
     info!(
@@ -383,22 +398,32 @@ pub async fn get_or_create_session_for_workspace(
 ///
 /// This should be called when the user interacts with the session
 /// (e.g., sends a message, runs a command).
-#[instrument(skip(state))]
+#[instrument(skip(state, user))]
 pub async fn touch_session_activity(
     State(state): State<AppState>,
+    user: CurrentUser,
     Path(session_id): Path<String>,
 ) -> ApiResult<StatusCode> {
-    state.sessions.touch_session_activity(&session_id).await?;
+    state
+        .sessions
+        .for_user(user.id())
+        .touch_session_activity(&session_id)
+        .await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
 /// Check if a session has an available image update.
-#[instrument(skip(state))]
+#[instrument(skip(state, user))]
 pub async fn check_session_update(
     State(state): State<AppState>,
+    user: CurrentUser,
     Path(session_id): Path<String>,
 ) -> ApiResult<Json<SessionUpdateStatus>> {
-    let update_available = state.sessions.check_for_image_update(&session_id).await?;
+    let update_available = state
+        .sessions
+        .for_user(user.id())
+        .check_for_image_update(&session_id)
+        .await?;
 
     Ok(Json(SessionUpdateStatus {
         session_id,
@@ -408,12 +433,13 @@ pub async fn check_session_update(
 }
 
 /// Upgrade a session to the latest image version.
-#[instrument(skip(state))]
+#[instrument(skip(state, user))]
 pub async fn upgrade_session(
     State(state): State<AppState>,
+    user: CurrentUser,
     Path(session_id): Path<String>,
 ) -> ApiResult<Json<SessionWithUrls>> {
-    let session = state.sessions.upgrade_session(&session_id).await?;
+    let session = state.sessions.for_user(user.id()).upgrade_session(&session_id).await?;
     info!(session_id = %session_id, "Upgraded session");
 
     let response = SessionWithUrls::from_session(session, "localhost");
@@ -429,11 +455,16 @@ pub struct SessionUpdateStatus {
 }
 
 /// Check all sessions for available updates.
-#[instrument(skip(state))]
+#[instrument(skip(state, user))]
 pub async fn check_all_updates(
     State(state): State<AppState>,
+    user: CurrentUser,
 ) -> ApiResult<Json<Vec<SessionUpdateStatus>>> {
-    let updates = state.sessions.check_all_for_updates().await?;
+    let updates: Vec<(String, String)> = state
+        .sessions
+        .for_user(user.id())
+        .check_all_for_updates()
+        .await?;
 
     let statuses: Vec<SessionUpdateStatus> = updates
         .into_iter()
@@ -690,9 +721,10 @@ async fn maybe_sync_templates_repo(state: &AppState) -> Result<(), ApiError> {
 #[instrument(skip(state))]
 pub async fn list_workspace_dirs(
     State(state): State<AppState>,
+    user: CurrentUser,
     Query(query): Query<WorkspaceDirQuery>,
 ) -> ApiResult<Json<Vec<WorkspaceDirEntry>>> {
-    let root = state.sessions.workspace_root();
+    let root = state.sessions.for_user(user.id()).workspace_root();
     let relative = query.path.unwrap_or_else(|| ".".to_string());
     let rel_path = std::path::PathBuf::from(&relative);
 
@@ -791,6 +823,7 @@ pub async fn list_project_templates(
 #[instrument(skip(state, request))]
 pub async fn create_project_from_template(
     State(state): State<AppState>,
+    user: CurrentUser,
     Json(request): Json<CreateProjectFromTemplateRequest>,
 ) -> ApiResult<Json<WorkspaceDirEntry>> {
     let repo_path = state
@@ -815,7 +848,7 @@ pub async fn create_project_from_template(
         return Err(ApiError::bad_request("project path is required"));
     }
 
-    let workspace_root = state.sessions.workspace_root();
+    let workspace_root = state.sessions.for_user(user.id()).workspace_root();
     let target_dir = workspace_root.join(&project_rel);
     if target_dir.exists() {
         return Err(ApiError::bad_request("project path already exists"));
@@ -903,11 +936,12 @@ mod tests {
 #[instrument(skip(state))]
 pub async fn get_project_logo(
     State(state): State<AppState>,
+    user: CurrentUser,
     axum::extract::Path(path): axum::extract::Path<String>,
 ) -> Result<impl IntoResponse, ApiError> {
     use axum::http::header;
 
-    let root = state.sessions.workspace_root();
+    let root = state.sessions.for_user(user.id()).workspace_root();
     let file_path = std::path::PathBuf::from(&path);
 
     // Security: prevent path traversal
@@ -1122,6 +1156,40 @@ pub async fn register(
         .await
     {
         warn!("Failed to update invite code used_by: {:?}", e);
+    }
+
+    // Create Linux user if multi-user isolation is enabled
+    if let Some(ref linux_users) = state.linux_users {
+        match linux_users.ensure_user(&user.id) {
+            Ok(uid) => {
+                info!(
+                    user_id = %user.id,
+                    linux_user = %linux_users.linux_username(&user.id),
+                    uid = uid,
+                    "Created Linux user for registered user"
+                );
+            }
+            Err(e) => {
+                // Log warning but don't fail - user can still register
+                // Linux user will be created on first session start
+                warn!(
+                    user_id = %user.id,
+                    error = %e,
+                    "Failed to create Linux user (will retry on session start)"
+                );
+            }
+        }
+    }
+
+    // Allocate a stable per-user mmry port in local multi-user mode.
+    if state.mmry.enabled && !state.mmry.single_user {
+        if let Err(e) = state
+            .users
+            .ensure_mmry_port(&user.id, state.mmry.user_base_port, state.mmry.user_port_range)
+            .await
+        {
+            warn!(user_id = %user.id, error = %e, "Failed to allocate user mmry port");
+        }
     }
 
     // Generate JWT token for the new user
@@ -1419,6 +1487,40 @@ pub async fn create_user(
     // Uses centralized From<anyhow::Error> conversion
     let user = state.users.create_user(request).await?;
 
+    // Create Linux user if multi-user isolation is enabled
+    if let Some(ref linux_users) = state.linux_users {
+        match linux_users.ensure_user(&user.id) {
+            Ok(uid) => {
+                info!(
+                    user_id = %user.id,
+                    linux_user = %linux_users.linux_username(&user.id),
+                    uid = uid,
+                    "Created Linux user for platform user"
+                );
+            }
+            Err(e) => {
+                // Log warning but don't fail - user can still be created
+                // Linux user will be created on first session start
+                warn!(
+                    user_id = %user.id,
+                    error = %e,
+                    "Failed to create Linux user (will retry on session start)"
+                );
+            }
+        }
+    }
+
+    // Allocate a stable per-user mmry port in local multi-user mode.
+    if state.mmry.enabled && !state.mmry.single_user {
+        if let Err(e) = state
+            .users
+            .ensure_mmry_port(&user.id, state.mmry.user_base_port, state.mmry.user_port_range)
+            .await
+        {
+            warn!(user_id = %user.id, error = %e, "Failed to allocate user mmry port");
+        }
+    }
+
     info!(user_id = %user.id, "Created new user");
     Ok((StatusCode::CREATED, Json(user.into())))
 }
@@ -1697,10 +1799,19 @@ pub struct AgentListQuery {
 #[instrument(skip(state))]
 pub async fn list_agents(
     State(state): State<AppState>,
+    user: CurrentUser,
     Path(session_id): Path<String>,
     Query(query): Query<AgentListQuery>,
 ) -> ApiResult<Json<Vec<AgentInfo>>> {
-    let opencode_session = state.sessions.get_or_create_opencode_session().await?;
+    // Ensure the requested session belongs to this user.
+    let _ = state
+        .sessions
+        .for_user(user.id())
+        .get_session(&session_id)
+        .await?
+        .ok_or_else(|| ApiError::not_found(format!("Session {} not found", session_id)))?;
+
+    let opencode_session = state.sessions.for_user(user.id()).get_or_create_opencode_session().await?;
     let agents = state
         .agents
         .list_agents(&opencode_session.id, query.include_context)
@@ -1718,10 +1829,18 @@ pub async fn list_agents(
 #[instrument(skip(state))]
 pub async fn get_agent(
     State(state): State<AppState>,
+    user: CurrentUser,
     Path((session_id, agent_id)): Path<(String, String)>,
     Query(query): Query<AgentListQuery>,
 ) -> ApiResult<Json<AgentInfo>> {
-    let opencode_session = state.sessions.get_or_create_opencode_session().await?;
+    let _ = state
+        .sessions
+        .for_user(user.id())
+        .get_session(&session_id)
+        .await?
+        .ok_or_else(|| ApiError::not_found(format!("Session {} not found", session_id)))?;
+
+    let opencode_session = state.sessions.for_user(user.id()).get_or_create_opencode_session().await?;
     state
         .agents
         .get_agent(&opencode_session.id, &agent_id, query.include_context)
@@ -1734,10 +1853,18 @@ pub async fn get_agent(
 #[instrument(skip(state, request), fields(directory = ?request.directory))]
 pub async fn start_agent(
     State(state): State<AppState>,
+    user: CurrentUser,
     Path(session_id): Path<String>,
     Json(request): Json<StartAgentRequest>,
 ) -> ApiResult<(StatusCode, Json<StartAgentResponse>)> {
-    let opencode_session = state.sessions.get_or_create_opencode_session().await?;
+    let _ = state
+        .sessions
+        .for_user(user.id())
+        .get_session(&session_id)
+        .await?
+        .ok_or_else(|| ApiError::not_found(format!("Session {} not found", session_id)))?;
+
+    let opencode_session = state.sessions.for_user(user.id()).get_or_create_opencode_session().await?;
     let response = state
         .agents
         .start_agent(&opencode_session.id, &request.directory)
@@ -1756,9 +1883,17 @@ pub async fn start_agent(
 #[instrument(skip(state))]
 pub async fn stop_agent(
     State(state): State<AppState>,
+    user: CurrentUser,
     Path((session_id, agent_id)): Path<(String, String)>,
 ) -> ApiResult<Json<StopAgentResponse>> {
-    let opencode_session = state.sessions.get_or_create_opencode_session().await?;
+    let _ = state
+        .sessions
+        .for_user(user.id())
+        .get_session(&session_id)
+        .await?
+        .ok_or_else(|| ApiError::not_found(format!("Session {} not found", session_id)))?;
+
+    let opencode_session = state.sessions.for_user(user.id()).get_or_create_opencode_session().await?;
     let response = state
         .agents
         .stop_agent(&opencode_session.id, &agent_id)
@@ -1777,9 +1912,17 @@ pub async fn stop_agent(
 #[instrument(skip(state))]
 pub async fn rediscover_agents(
     State(state): State<AppState>,
+    user: CurrentUser,
     Path(session_id): Path<String>,
 ) -> ApiResult<StatusCode> {
-    let opencode_session = state.sessions.get_or_create_opencode_session().await?;
+    let _ = state
+        .sessions
+        .for_user(user.id())
+        .get_session(&session_id)
+        .await?
+        .ok_or_else(|| ApiError::not_found(format!("Session {} not found", session_id)))?;
+
+    let opencode_session = state.sessions.for_user(user.id()).get_or_create_opencode_session().await?;
     state.agents.rediscover_agents(&opencode_session.id).await?;
     info!(
         requested_session_id = %session_id,
@@ -1793,10 +1936,18 @@ pub async fn rediscover_agents(
 #[instrument(skip(state, request), fields(name = ?request.name))]
 pub async fn create_agent(
     State(state): State<AppState>,
+    user: CurrentUser,
     Path(session_id): Path<String>,
     Json(request): Json<CreateAgentRequest>,
 ) -> ApiResult<(StatusCode, Json<CreateAgentResponse>)> {
-    let opencode_session = state.sessions.get_or_create_opencode_session().await?;
+    let _ = state
+        .sessions
+        .for_user(user.id())
+        .get_session(&session_id)
+        .await?
+        .ok_or_else(|| ApiError::not_found(format!("Session {} not found", session_id)))?;
+
+    let opencode_session = state.sessions.for_user(user.id()).get_or_create_opencode_session().await?;
     let response = state
         .agents
         .create_agent(
@@ -1820,10 +1971,18 @@ pub async fn create_agent(
 #[instrument(skip(state, request), fields(command = %request.command))]
 pub async fn exec_agent_command(
     State(state): State<AppState>,
+    user: CurrentUser,
     Path(session_id): Path<String>,
     Json(request): Json<AgentExecRequest>,
 ) -> ApiResult<Json<AgentExecResponse>> {
-    let opencode_session = state.sessions.get_or_create_opencode_session().await?;
+    let _ = state
+        .sessions
+        .for_user(user.id())
+        .get_session(&session_id)
+        .await?
+        .ok_or_else(|| ApiError::not_found(format!("Session {} not found", session_id)))?;
+
+    let opencode_session = state.sessions.for_user(user.id()).get_or_create_opencode_session().await?;
     let response = state
         .agents
         .exec_command(&opencode_session.id, request)
@@ -2551,7 +2710,7 @@ pub async fn agents_ask(
 
     // Handle OpenCode sessions differently from Pi sessions
     if let AskTarget::OpenCodeSession { id, workspace_path } = parsed_target {
-        return handle_opencode_ask(&state, &req, &id, workspace_path.as_deref()).await;
+        return handle_opencode_ask(&state, &user, &req, &id, workspace_path.as_deref()).await;
     }
 
     // Get the Pi service for Pi-based targets
@@ -2836,6 +2995,7 @@ pub async fn agents_ask(
 /// by subscribing to the SSE event stream.
 async fn handle_opencode_ask(
     state: &AppState,
+    user: &CurrentUser,
     req: &AgentAskRequest,
     session_id: &str,
     provided_workspace_path: Option<&str>,
@@ -2845,18 +3005,32 @@ async fn handle_opencode_ask(
 
     // Get workspace path from provided value or look up from chat history
     let workspace_path = if let Some(path) = provided_workspace_path {
-        path.to_string()
+        // Ensure this workspace path is valid for the authenticated user.
+        state
+            .sessions
+            .for_user(user.id())
+            .validate_workspace_path(path)
+            .map_err(|e| ApiError::bad_request(format!("Invalid workspace path: {}", e)))?
+            .to_string_lossy()
+            .to_string()
     } else {
         // Look up session in chat history to get workspace path
         let chat_session = crate::history::get_session(session_id)
             .map_err(|e| ApiError::internal(format!("Failed to lookup session: {}", e)))?
             .ok_or_else(|| ApiError::not_found(format!("Session not found: {}", session_id)))?;
-        chat_session.workspace_path
+        state
+            .sessions
+            .for_user(user.id())
+            .validate_workspace_path(&chat_session.workspace_path)
+            .map_err(|e| ApiError::bad_request(format!("Invalid workspace path: {}", e)))?
+            .to_string_lossy()
+            .to_string()
     };
 
     // Get or create the OpenCode runtime session
     let opencode_session = state
         .sessions
+        .for_user(user.id())
         .get_or_create_opencode_session()
         .await
         .map_err(|e| ApiError::internal(format!("Failed to get OpenCode session: {}", e)))?;
@@ -3439,14 +3613,13 @@ pub struct SchedulerOverview {
     pub schedules: Vec<SchedulerEntry>,
 }
 
-fn resolve_skdlr_bin(state: &AppState) -> std::path::PathBuf {
+fn resolve_skdlr_bin(workspace_root: &PathBuf) -> std::path::PathBuf {
     if let Ok(value) = std::env::var("SKDLR_BIN") {
         if !value.is_empty() {
             return std::path::PathBuf::from(value);
         }
     }
 
-    let workspace_root = state.sessions.workspace_root();
     let release = workspace_root
         .join("skdlr")
         .join("target")
@@ -3467,9 +3640,8 @@ fn resolve_skdlr_bin(state: &AppState) -> std::path::PathBuf {
     std::path::PathBuf::from("skdlr")
 }
 
-async fn exec_skdlr_command(state: &AppState, args: &[&str]) -> Result<String, ApiError> {
-    let bin = resolve_skdlr_bin(state);
-    let workspace_root = state.sessions.workspace_root();
+async fn exec_skdlr_command(workspace_root: &PathBuf, args: &[&str]) -> Result<String, ApiError> {
+    let bin = resolve_skdlr_bin(workspace_root);
 
     let output = Command::new(bin)
         .args(args)
@@ -3565,12 +3737,14 @@ fn parse_skdlr_next(output: &str) -> HashMap<String, String> {
 }
 
 /// Scheduler overview (skdlr) for the dashboard.
-#[instrument(skip(state))]
+#[instrument(skip(state, user))]
 pub async fn scheduler_overview(
     State(state): State<AppState>,
+    user: CurrentUser,
 ) -> ApiResult<Json<SchedulerOverview>> {
-    let list_output = exec_skdlr_command(&state, &["list"]).await?;
-    let next_output = exec_skdlr_command(&state, &["next"])
+    let workspace_root = state.sessions.for_user(user.id()).workspace_root();
+    let list_output = exec_skdlr_command(&workspace_root, &["list"]).await?;
+    let next_output = exec_skdlr_command(&workspace_root, &["next"])
         .await
         .unwrap_or_default();
 
@@ -3883,8 +4057,12 @@ pub struct TrxWorkspaceQuery {
 
 /// Validate and resolve a workspace path, ensuring it's within the allowed workspace root
 /// or is a valid Main Chat workspace path.
-fn validate_workspace_path(state: &AppState, workspace_path: &str) -> Result<PathBuf, ApiError> {
-    let workspace_root = state.sessions.workspace_root();
+fn validate_workspace_path(
+    state: &AppState,
+    user_id: &str,
+    workspace_path: &str,
+) -> Result<PathBuf, ApiError> {
+    let workspace_root = state.sessions.for_user(user_id).workspace_root();
     let canonical_root = workspace_root
         .canonicalize()
         .unwrap_or_else(|_| workspace_root.clone());
@@ -3957,13 +4135,14 @@ fn is_main_chat_path(state: &AppState, path: &std::path::Path) -> bool {
 /// Execute trx command in a validated workspace directory.
 async fn exec_trx_command(
     state: &AppState,
+    user_id: &str,
     workspace_path: &str,
     args: &[&str],
 ) -> Result<String, ApiError> {
     use tokio::process::Command;
 
     // Validate workspace path before executing command
-    let validated_path = validate_workspace_path(state, workspace_path)?;
+    let validated_path = validate_workspace_path(state, user_id, workspace_path)?;
 
     let output = Command::new("trx")
         .args(args)
@@ -3985,12 +4164,14 @@ async fn exec_trx_command(
 }
 
 /// List TRX issues for a workspace.
-#[instrument(skip(state))]
+#[instrument(skip(state, user))]
 pub async fn list_trx_issues(
     State(state): State<AppState>,
+    user: CurrentUser,
     Query(query): Query<TrxWorkspaceQuery>,
 ) -> ApiResult<Json<Vec<TrxIssue>>> {
-    let output = exec_trx_command(&state, &query.workspace_path, &["list"]).await?;
+    let output =
+        exec_trx_command(&state, user.id(), &query.workspace_path, &["list", "--all"]).await?;
 
     // Parse the raw JSON output and transform to API format
     let raw_issues: Vec<TrxIssueRaw> = serde_json::from_str(&output)
@@ -4002,13 +4183,15 @@ pub async fn list_trx_issues(
 }
 
 /// Get a specific TRX issue.
-#[instrument(skip(state))]
+#[instrument(skip(state, user))]
 pub async fn get_trx_issue(
     State(state): State<AppState>,
+    user: CurrentUser,
     Path(issue_id): Path<String>,
     Query(query): Query<TrxWorkspaceQuery>,
 ) -> ApiResult<Json<TrxIssue>> {
-    let output = exec_trx_command(&state, &query.workspace_path, &["show", &issue_id]).await?;
+    let output =
+        exec_trx_command(&state, user.id(), &query.workspace_path, &["show", &issue_id]).await?;
 
     let raw_issue: TrxIssueRaw = serde_json::from_str(&output)
         .map_err(|e| ApiError::internal(format!("Failed to parse trx output: {}", e)))?;
@@ -4017,9 +4200,10 @@ pub async fn get_trx_issue(
 }
 
 /// Create a new TRX issue.
-#[instrument(skip(state, request))]
+#[instrument(skip(state, user, request))]
 pub async fn create_trx_issue(
     State(state): State<AppState>,
+    user: CurrentUser,
     Query(query): Query<TrxWorkspaceQuery>,
     Json(request): Json<CreateTrxIssueRequest>,
 ) -> ApiResult<Json<TrxIssue>> {
@@ -4037,7 +4221,7 @@ pub async fn create_trx_issue(
         args.push(parent);
     }
 
-    let output = exec_trx_command(&state, &query.workspace_path, &args).await?;
+    let output = exec_trx_command(&state, user.id(), &query.workspace_path, &args).await?;
 
     // trx create --json returns the created issue
     let raw_issue: TrxIssueRaw = serde_json::from_str(&output)
@@ -4049,9 +4233,10 @@ pub async fn create_trx_issue(
 }
 
 /// Update a TRX issue.
-#[instrument(skip(state, request))]
+#[instrument(skip(state, user, request))]
 pub async fn update_trx_issue(
     State(state): State<AppState>,
+    user: CurrentUser,
     Path(issue_id): Path<String>,
     Query(query): Query<TrxWorkspaceQuery>,
     Json(request): Json<UpdateTrxIssueRequest>,
@@ -4087,7 +4272,7 @@ pub async fn update_trx_issue(
         args.push(&priority_arg);
     }
 
-    let output = exec_trx_command(&state, &query.workspace_path, &args).await?;
+    let output = exec_trx_command(&state, user.id(), &query.workspace_path, &args).await?;
 
     // Parse the updated issue (trx update --json returns a single issue object)
     let raw_issue: TrxIssueRaw = serde_json::from_str(&output)
@@ -4100,9 +4285,10 @@ pub async fn update_trx_issue(
 }
 
 /// Close a TRX issue.
-#[instrument(skip(state, request))]
+#[instrument(skip(state, user, request))]
 pub async fn close_trx_issue(
     State(state): State<AppState>,
+    user: CurrentUser,
     Path(issue_id): Path<String>,
     Query(query): Query<TrxWorkspaceQuery>,
     Json(request): Json<CloseTrxIssueRequest>,
@@ -4116,7 +4302,7 @@ pub async fn close_trx_issue(
         args.push(&reason_arg);
     }
 
-    let output = exec_trx_command(&state, &query.workspace_path, &args).await?;
+    let output = exec_trx_command(&state, user.id(), &query.workspace_path, &args).await?;
 
     // Parse the closed issue (trx close --json returns a single issue object)
     let raw_issue: TrxIssueRaw = serde_json::from_str(&output)
@@ -4132,10 +4318,11 @@ pub async fn close_trx_issue(
 #[instrument(skip(state))]
 pub async fn sync_trx(
     State(state): State<AppState>,
+    user: CurrentUser,
     Query(query): Query<TrxWorkspaceQuery>,
 ) -> ApiResult<Json<serde_json::Value>> {
     // Validate workspace path before executing command
-    let validated_path = validate_workspace_path(&state, &query.workspace_path)?;
+    let validated_path = validate_workspace_path(&state, user.id(), &query.workspace_path)?;
 
     // Note: trx sync doesn't have JSON output, so we just check for success
     use tokio::process::Command;

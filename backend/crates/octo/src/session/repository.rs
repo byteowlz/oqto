@@ -165,6 +165,22 @@ impl SessionRepository {
         Ok(sessions)
     }
 
+    pub async fn list_for_user(&self, user_id: &str) -> Result<Vec<Session>> {
+        let sessions = sqlx::query_as::<_, Session>(
+            r#"
+            SELECT * FROM sessions
+            WHERE user_id = ?
+            ORDER BY created_at DESC
+            "#,
+        )
+        .bind(user_id)
+        .fetch_all(&self.pool)
+        .await
+        .context("listing sessions for user")?;
+
+        Ok(sessions)
+    }
+
     /// List sessions by user.
     #[allow(dead_code)]
     pub async fn list_by_user(&self, user_id: &str) -> Result<Vec<Session>> {
@@ -229,6 +245,18 @@ impl SessionRepository {
         .execute(&self.pool)
         .await
         .context("updating session ports")?;
+
+        Ok(())
+    }
+
+    /// Set the mmry port for a session.
+    pub async fn set_mmry_port(&self, id: &str, mmry_port: Option<i64>) -> Result<()> {
+        sqlx::query("UPDATE sessions SET mmry_port = ? WHERE id = ?")
+            .bind(mmry_port)
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .context("setting mmry port")?;
 
         Ok(())
     }
@@ -371,7 +399,7 @@ impl SessionRepository {
     /// List running sessions that have been idle for longer than the given duration.
     pub async fn list_idle_sessions(&self, idle_minutes: i64) -> Result<Vec<Session>> {
         let query = format!(
-            "SELECT {} FROM sessions WHERE status = 'running' AND (last_activity_at IS NULL OR last_activity_at < datetime('now', ? || ' minutes')) ORDER BY last_activity_at ASC",
+            "SELECT {} FROM sessions WHERE status = 'running' AND (last_activity_at IS NULL OR datetime(last_activity_at) < datetime('now', ? || ' minutes')) ORDER BY datetime(last_activity_at) ASC",
             SESSION_COLUMNS
         );
         let sessions = sqlx::query_as::<_, Session>(&query)

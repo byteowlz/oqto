@@ -59,6 +59,64 @@ install:
     cd backend && cargo install --path crates/octo --bin octo-runner
     cd backend && cargo install --path crates/octo-files
 
+# Install binaries + systemd unit system-wide (Linux).
+#
+# - Installs `octo-runner.service` into /usr/lib/systemd/user/
+# - Copies local cargo-installed tools into /usr/local/bin
+# - Enables lingering for the current user (so user services can run headless)
+install-system:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    # Prompt for sudo once up-front
+    sudo -v
+
+    just install
+
+    if [[ "$(uname -s)" != "Linux" ]]; then
+      echo "install-system is Linux-only"
+      exit 1
+    fi
+
+    # Ensure shared group exists and current user is a member
+    sudo groupadd -f octo || true
+    sudo usermod -a -G octo "$(id -un)" || true
+
+    sudo install -Dm644 systemd/octo-runner.service /usr/lib/systemd/user/octo-runner.service
+    sudo install -Dm644 systemd/octo-runner.tmpfiles.conf /usr/lib/tmpfiles.d/octo-runner.conf
+    sudo systemd-tmpfiles --create /usr/lib/tmpfiles.d/octo-runner.conf || true
+    sudo systemctl daemon-reload || true
+
+    # Ensure shared runner socket dir exists for current user
+    sudo install -d -m 2770 -o "$(id -un)" -g octo "/run/octo/runner-sockets/$(id -un)" || true
+
+    # System-wide CLI tools.
+    #
+    # Prefer copying from ~/.cargo/bin (freshly updated by `just install`) so updates
+    # are not blocked by PATH precedence.
+    for bin in trx mmry mmry-service agntz hstry skdlr octo octo-runner octo-files; do
+      src="$HOME/.cargo/bin/$bin"
+      if [[ ! -x "$src" ]]; then
+        src="$(command -v "$bin" || true)"
+      fi
+      if [[ -z "${src:-}" ]] || [[ ! -x "$src" ]]; then
+        echo "warning: $bin not found"
+        continue
+      fi
+
+      dst="/usr/local/bin/$bin"
+
+      # If destination exists and is identical, skip.
+      if [[ -e "$dst" ]] && cmp -s "$src" "$dst"; then
+        continue
+      fi
+
+      sudo install -m 0755 "$src" "$dst"
+    done
+
+    # Enable lingering for current user so `systemctl --user` services can run without login
+    sudo loginctl enable-linger "$(id -un)" || true
+
 # Build container image
 container-build:
     docker build -t octo-dev:latest -f container/Dockerfile .

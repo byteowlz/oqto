@@ -28,15 +28,6 @@ import {
 	VoiceMenuButton,
 	type VoiceMode,
 } from "@/components/voice/VoiceMenuButton";
-import { type A2UISurfaceState, useA2UI } from "@/hooks/use-a2ui";
-import { useDictation } from "@/hooks/use-dictation";
-import {
-	type PiDisplayMessage,
-	type PiMessagePart,
-	getCachedScrollPosition,
-	setCachedScrollPosition,
-	usePiChat,
-} from "@/hooks/usePiChat";
 import {
 	type Features,
 	type PiModelInfo,
@@ -51,13 +42,22 @@ import {
 	setMainChatPiModel,
 	workspaceFileUrl,
 } from "@/features/main-chat/api";
+import { type A2UISurfaceState, useA2UI } from "@/hooks/use-a2ui";
+import { useDictation } from "@/hooks/use-dictation";
+import {
+	type PiDisplayMessage,
+	type PiMessagePart,
+	getCachedScrollPosition,
+	setCachedScrollPosition,
+	usePiChat,
+} from "@/hooks/usePiChat";
 import { extractFileReferences, getFileTypeInfo } from "@/lib/file-types";
+import { formatSessionDate, generateReadableId } from "@/lib/session-utils";
 import {
 	type SlashCommand,
 	fuzzyMatch,
 	parseSlashInput,
 } from "@/lib/slash-commands";
-import { formatSessionDate, generateReadableId } from "@/lib/session-utils";
 import { cn } from "@/lib/utils";
 import {
 	Bot,
@@ -113,6 +113,8 @@ export interface MainChatPiViewProps {
 	onScrollToMessageComplete?: () => void;
 	/** Trigger to create a new session - increment to trigger */
 	newSessionTrigger?: number;
+	/** Callback when a message is sent (for sidebar refresh) */
+	onMessageSent?: () => void;
 }
 
 /**
@@ -132,6 +134,7 @@ export function MainChatPiView({
 	scrollToMessageId,
 	onScrollToMessageComplete,
 	newSessionTrigger,
+	onMessageSent,
 }: MainChatPiViewProps) {
 	const {
 		messages,
@@ -217,17 +220,18 @@ export function MainChatPiView({
 		info: { id: m.id, role: m.role },
 	}));
 
-	const { surfaces: a2uiSurfaces, handleAction: handleA2UIAction, getUnanchoredSurfaces } = useA2UI(
-		a2uiMessagesRef,
-		{
-			onSurfaceReceived: useCallback(() => {
-				// Auto-scroll when A2UI surface arrives
-				if (!isUserScrolled) {
-					messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-				}
-			}, [isUserScrolled]),
-		},
-	);
+	const {
+		surfaces: a2uiSurfaces,
+		handleAction: handleA2UIAction,
+		getUnanchoredSurfaces,
+	} = useA2UI(a2uiMessagesRef, {
+		onSurfaceReceived: useCallback(() => {
+			// Auto-scroll when A2UI surface arrives
+			if (!isUserScrolled) {
+				messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+			}
+		}, [isUserScrolled]),
+	});
 
 	// Memoized map of message ID to surfaces to avoid creating new arrays on each render
 	// Also track "orphaned" surfaces whose anchor doesn't match any current message
@@ -235,7 +239,7 @@ export function MainChatPiView({
 		const map = new Map<string, A2UISurfaceState[]>();
 		const messageIds = new Set(messages.map((m) => m.id));
 		const orphaned: A2UISurfaceState[] = [];
-		
+
 		for (const surface of a2uiSurfaces) {
 			if (surface.anchorMessageId && messageIds.has(surface.anchorMessageId)) {
 				const existing = map.get(surface.anchorMessageId) || [];
@@ -251,7 +255,9 @@ export function MainChatPiView({
 
 	// Voice configuration
 	const voiceConfig = useMemo(
-		() => (features?.voice as unknown as import("@/lib/voice/types").VoiceConfig) ?? null,
+		() =>
+			(features?.voice as unknown as import("@/lib/voice/types").VoiceConfig) ??
+			null,
 		[features?.voice],
 	);
 
@@ -610,38 +616,47 @@ export function MainChatPiView({
 			setIsUploading(true);
 			const baseUrl = fileserverWorkspaceBaseUrl();
 
-			for (const file of Array.from(files)) {
-				try {
-					const formData = new FormData();
-					formData.append("file", file);
+			try {
+				for (const file of Array.from(files)) {
+					try {
+						const formData = new FormData();
+						formData.append("file", file);
 
-					const uploadUrl = new URL(`${baseUrl}/file`, window.location.origin);
-					uploadUrl.searchParams.set("path", file.name);
-					uploadUrl.searchParams.set("workspace_path", workspacePath);
+						const uploadUrl = new URL(
+							`${baseUrl}/file`,
+							window.location.origin,
+						);
+						uploadUrl.searchParams.set("path", file.name);
+						uploadUrl.searchParams.set("workspace_path", workspacePath);
 
-					const res = await fetch(uploadUrl.toString(), {
-						method: "POST",
-						body: formData,
-						credentials: "include",
-					});
+						const res = await fetch(uploadUrl.toString(), {
+							method: "POST",
+							body: formData,
+							credentials: "include",
+						});
 
-					if (!res.ok) {
-						console.error("Failed to upload file:", file.name);
-						continue;
+						if (!res.ok) {
+							console.error("Failed to upload file:", file.name);
+							continue;
+						}
+
+						const attachment: FileAttachment = {
+							id: `file-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+							path: file.name,
+							filename: file.name,
+							type: "file",
+						};
+						setFileAttachments((prev) => [...prev, attachment]);
+					} catch (err) {
+						console.error("Failed to upload file:", err);
 					}
-
-					const attachment: FileAttachment = {
-						id: `file-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-						path: file.name,
-						filename: file.name,
-						type: "file",
-					};
-					setFileAttachments((prev) => [...prev, attachment]);
-				} catch (err) {
-					console.error("Failed to upload file:", err);
+				}
+			} finally {
+				setIsUploading(false);
+				if (fileInputRef.current) {
+					fileInputRef.current.value = "";
 				}
 			}
-			setIsUploading(false);
 		},
 		[workspacePath],
 	);
@@ -778,11 +793,14 @@ export function MainChatPiView({
 				inputRef.current.style.height = "auto";
 			}
 			await send(message, { mode });
+			// Notify that a message was sent (for sidebar refresh)
+			onMessageSent?.();
 		},
 		[
 			builtInCommandNames,
 			fileAttachments,
 			input,
+			onMessageSent,
 			runSlashCommand,
 			send,
 			slashQuery.command,
@@ -942,7 +960,9 @@ export function MainChatPiView({
 		listMainChatPiSessions()
 			.then((sessions) => {
 				if (cancelled) return;
-				setSessionMeta(sessions.find((s) => s.id === selectedSessionId) ?? null);
+				setSessionMeta(
+					sessions.find((s) => s.id === selectedSessionId) ?? null,
+				);
 			})
 			.catch(() => {
 				// ignore
@@ -952,7 +972,9 @@ export function MainChatPiView({
 		};
 	}, [selectedSessionId]);
 
-	const readableId = selectedSessionId ? generateReadableId(selectedSessionId) : null;
+	const readableId = selectedSessionId
+		? generateReadableId(selectedSessionId)
+		: null;
 	const formattedDate = sessionMeta?.started_at
 		? formatSessionDate(new Date(sessionMeta.started_at).getTime())
 		: null;
@@ -1017,28 +1039,13 @@ export function MainChatPiView({
 				</div>
 			)}
 
-			{/* Working indicator with stop button */}
-			{isStreaming && (
-				<div className="flex items-center gap-1.5 px-2 py-0.5 bg-primary/10 text-xs text-primary">
-					<BrailleSpinner />
-					<span className="font-medium flex-1">{t.agentWorking}</span>
-					<button
-						type="button"
-						onClick={handleStop}
-						className="mr-1 text-destructive hover:text-destructive/80 transition-colors"
-						title={t.stopAgent}
-					>
-						<StopCircle className="w-5 h-5" />
-					</button>
-				</div>
-			)}
-
 			{/* Messages area */}
 			<div className="relative flex-1 min-h-0">
 				<div
 					ref={messagesContainerRef}
 					onScroll={handleScroll}
 					className="h-full bg-muted/30 border border-border p-2 sm:p-4 overflow-y-auto scrollbar-hide"
+					data-spotlight="chat-timeline"
 				>
 					{messages.length === 0 && (
 						<div className="text-sm text-muted-foreground">{t.noMessages}</div>
@@ -1060,6 +1067,10 @@ export function MainChatPiView({
 								(m) => surfacesByMessageId.get(m.id) ?? [],
 							);
 							const groupMessageId = group.messages[0]?.id;
+							// Check if this is the last assistant group
+							const isLastAssistantGroup =
+								group.role === "assistant" &&
+								!grouped.slice(groupIndex + 1).some((g) => g.role === "assistant");
 							return (
 								<div
 									key={groupMessageId ?? `${group.role}-${groupIndex}`}
@@ -1074,6 +1085,7 @@ export function MainChatPiView({
 										a2uiSurfaces={groupSurfaces}
 										onA2UIAction={handleA2UIAction}
 										messageId={groupMessageId}
+										showWorkingIndicator={isStreaming && isLastAssistantGroup}
 									/>
 								</div>
 							);
@@ -1144,7 +1156,10 @@ export function MainChatPiView({
 					)}
 
 					{/* Textarea wrapper with slash command popup */}
-					<div className="flex-1 relative flex flex-col min-h-[32px]">
+					<div
+						className="flex-1 relative flex flex-col min-h-[32px]"
+						data-spotlight="chat-input"
+					>
 						<SlashCommandPopup
 							commands={slashCommands}
 							query={slashQuery.command}
@@ -1351,13 +1366,42 @@ export function MainChatPiView({
 						)}
 					</div>
 
+					{/* Stop button - only shown when streaming */}
+					{isStreaming && (
+						<Button
+							type="button"
+							onClick={handleStop}
+							className="stop-button-animated flex-shrink-0 h-8 px-2 flex items-center justify-center text-destructive hover:text-destructive/80 transition-colors bg-transparent hover:bg-transparent"
+							variant="ghost"
+							size="icon"
+							title={t.stopAgent}
+						>
+							<span className="stop-button-ring" aria-hidden>
+								<svg viewBox="0 0 100 100" role="presentation">
+									<circle
+										cx="50"
+										cy="50"
+										r="46"
+										fill="none"
+										stroke="currentColor"
+										strokeWidth="3"
+										strokeLinecap="round"
+										strokeDasharray="72 216"
+										opacity="0.8"
+									/>
+								</svg>
+							</span>
+							<StopCircle className="w-4 h-4" />
+						</Button>
+					)}
+
 					{/* Send button */}
 					<Button
 						type="button"
 						data-dictation-send
 						onClick={() => handleSend("steer")}
 						disabled={!input.trim() && fileAttachments.length === 0}
-						className="flex-shrink-0 h-8 px-2 flex items-center justify-center text-muted-foreground hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed transition-colors p-0 bg-transparent hover:bg-transparent"
+						className="flex-shrink-0 h-8 px-2 flex items-center justify-center text-muted-foreground hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed transition-colors bg-transparent hover:bg-transparent"
 						variant="ghost"
 						size="icon"
 					>
@@ -1411,6 +1455,7 @@ const PiMessageGroupCard = memo(function PiMessageGroupCard({
 	a2uiSurfaces = [],
 	onA2UIAction,
 	messageId,
+	showWorkingIndicator = false,
 }: {
 	group: PiMessageGroup;
 	assistantName?: string | null;
@@ -1420,6 +1465,7 @@ const PiMessageGroupCard = memo(function PiMessageGroupCard({
 	a2uiSurfaces?: A2UISurfaceState[];
 	onA2UIAction?: (action: import("@/lib/a2ui/types").A2UIUserAction) => void;
 	messageId?: string;
+	showWorkingIndicator?: boolean;
 }) {
 	const isUser = group.role === "user";
 	const isStreamingGroup = group.messages.some((m) => Boolean(m.isStreaming));
@@ -1446,7 +1492,10 @@ const PiMessageGroupCard = memo(function PiMessageGroupCard({
 		}
 	}
 
-	const toolResults = new Map<string, Extract<PiMessagePart, { type: "tool_result" }>>();
+	const toolResults = new Map<
+		string,
+		Extract<PiMessagePart, { type: "tool_result" }>
+	>();
 	const toolUseIds = new Set<string>();
 	for (const { part } of timedParts) {
 		if (part.type === "tool_result") {
@@ -1510,7 +1559,12 @@ const PiMessageGroupCard = memo(function PiMessageGroupCard({
 				});
 			}
 		} else if (part.type === "thinking") {
-			segments.push({ key, type: "thinking", content: part.content, timestamp });
+			segments.push({
+				key,
+				type: "thinking",
+				content: part.content,
+				timestamp,
+			});
 		} else if (part.type === "compaction") {
 			segments.push({
 				key,
@@ -1582,7 +1636,10 @@ const PiMessageGroupCard = memo(function PiMessageGroupCard({
 				)}
 				{createdAt && !Number.isNaN(createdAt.getTime()) && (
 					<span className="text-[9px] sm:text-[10px] text-foreground/50 dark:text-muted-foreground leading-none sm:leading-normal ml-2">
-						{createdAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+						{createdAt.toLocaleTimeString([], {
+							hour: "2-digit",
+							minute: "2-digit",
+						})}
 					</span>
 				)}
 				{allTextContent && !isStreamingGroup && (
@@ -1594,7 +1651,7 @@ const PiMessageGroupCard = memo(function PiMessageGroupCard({
 			</div>
 
 			<div className="px-2 sm:px-4 py-2 sm:py-3 group space-y-3 overflow-hidden">
-				{segments.length === 0 && !isUser && (
+				{segments.length === 0 && !isUser && showWorkingIndicator && (
 					<div className="flex items-center gap-3 text-muted-foreground text-sm">
 						<BrailleSpinner />
 						<span>{locale === "de" ? "Arbeitet..." : "Working..."}</span>
@@ -1678,7 +1735,9 @@ const PiMessageGroupCard = memo(function PiMessageGroupCard({
 
 	return (
 		<ContextMenu>
-			<ContextMenuTrigger className="contents">{messageCard}</ContextMenuTrigger>
+			<ContextMenuTrigger className="contents">
+				{messageCard}
+			</ContextMenuTrigger>
 			<ContextMenuContent>
 				<ContextMenuItem
 					onClick={() => navigator.clipboard?.writeText(allTextContent)}
@@ -1883,7 +1942,9 @@ const PiMessageCard = memo(function PiMessageCard({
 
 	return (
 		<ContextMenu>
-			<ContextMenuTrigger className="contents">{messageCard}</ContextMenuTrigger>
+			<ContextMenuTrigger className="contents">
+				{messageCard}
+			</ContextMenuTrigger>
 			<ContextMenuContent>
 				<ContextMenuItem
 					onClick={() => navigator.clipboard?.writeText(textContent)}
@@ -1991,7 +2052,6 @@ function PiPartRenderer({
 				/>
 			);
 
-
 		default: {
 			console.warn("Unknown Pi message part type:", part);
 			return null;
@@ -2013,10 +2073,7 @@ function TextWithFileReferences({
 	locale?: "en" | "de";
 }) {
 	// Parse @file references, excluding code blocks
-	const fileRefs = useMemo(
-		() => extractFileReferences(content),
-		[content],
-	);
+	const fileRefs = useMemo(() => extractFileReferences(content), [content]);
 
 	return (
 		<ContextMenu>

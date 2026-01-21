@@ -566,6 +566,7 @@ export function MemoriesView({
 					"h-full bg-muted/30 rounded flex items-center justify-center",
 					className,
 				)}
+				data-spotlight="memory-view"
 			>
 				<div className="text-center text-muted-foreground">
 					<Brain className="w-12 h-12 mx-auto mb-2 opacity-50" />
@@ -583,6 +584,7 @@ export function MemoriesView({
 					"h-full bg-muted/30 rounded flex items-center justify-center",
 					className,
 				)}
+				data-spotlight="memory-view"
 			>
 				<div className="text-center text-muted-foreground">
 					<Loader2 className="w-8 h-8 mx-auto mb-2 animate-spin" />
@@ -593,7 +595,10 @@ export function MemoriesView({
 	}
 
 	return (
-		<div className={cn("h-full flex flex-col overflow-hidden", className)}>
+		<div
+			className={cn("h-full flex flex-col overflow-hidden", className)}
+			data-spotlight="memory-view"
+		>
 			{/* Header with search and add */}
 			<div className="flex-shrink-0 p-2 border-b border-border space-y-2">
 				<div className="flex items-center gap-2">

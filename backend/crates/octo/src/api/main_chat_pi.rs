@@ -536,6 +536,42 @@ pub struct HistoryQuery {
     pub session_id: Option<String>,
 }
 
+/// Query params for search endpoint.
+#[derive(Debug, Deserialize)]
+pub struct SearchQuery {
+    /// Search query string.
+    pub q: String,
+    /// Maximum number of results.
+    #[serde(default = "default_search_limit")]
+    pub limit: usize,
+}
+
+fn default_search_limit() -> usize {
+    50
+}
+
+/// Search result hit.
+#[derive(Debug, Serialize)]
+pub struct SearchHit {
+    pub agent: String,
+    pub source_path: String,
+    pub session_id: String,
+    pub message_id: Option<String>,
+    pub line_number: usize,
+    pub snippet: Option<String>,
+    pub score: f64,
+    pub timestamp: Option<i64>,
+    pub role: Option<String>,
+    pub title: Option<String>,
+}
+
+/// Search response.
+#[derive(Debug, Serialize)]
+pub struct SearchResponse {
+    pub hits: Vec<SearchHit>,
+    pub total: usize,
+}
+
 /// Get chat history from database (persistent display history).
 /// If session_id is provided, returns only messages for that session.
 ///
@@ -625,6 +661,129 @@ pub async fn list_pi_sessions(
     Ok(Json(sessions))
 }
 
+/// Search Main Chat Pi sessions for message content.
+/// This provides a direct search fallback when cass doesn't index Pi sessions.
+///
+/// GET /api/main/pi/sessions/search?q=query&limit=50
+pub async fn search_pi_sessions(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Query(query): Query<SearchQuery>,
+) -> ApiResult<Json<SearchResponse>> {
+    let pi_service = get_pi_service(&state)?;
+    
+    let query_str = query.q.trim();
+    if query_str.is_empty() {
+        return Ok(Json(SearchResponse { hits: vec![], total: 0 }));
+    }
+
+    let sessions = pi_service
+        .list_sessions(user.id())
+        .map_err(|e| ApiError::internal(format!("Failed to list sessions: {}", e)))?;
+
+    let query_lower = query_str.to_lowercase();
+    let mut all_hits = Vec::new();
+
+    for session in sessions {
+        // Load session messages
+        let messages = match pi_service.get_session_messages(user.id(), &session.id) {
+            Ok(msgs) => msgs,
+            Err(_) => continue,
+        };
+
+        // Search through messages
+        for (line_idx, msg) in messages.iter().enumerate() {
+            // Extract text content from the message
+            let text_content = extract_message_text(&msg.content);
+            
+            if text_content.to_lowercase().contains(&query_lower) {
+                let snippet = create_snippet(&text_content, &query_lower, 100);
+                
+                all_hits.push(SearchHit {
+                    agent: "pi_agent".to_string(),
+                    source_path: format!("pi:{}:{}", session.id, msg.id),
+                    session_id: session.id.clone(),
+                    message_id: Some(msg.id.clone()),
+                    line_number: line_idx + 1,
+                    snippet: Some(snippet),
+                    score: 1.0,
+                    timestamp: Some(msg.timestamp),
+                    role: Some(msg.role.to_string()),
+                    title: session.title.clone(),
+                });
+
+                // Stop if we have enough hits for this session
+                if all_hits.len() >= query.limit {
+                    break;
+                }
+            }
+        }
+
+        if all_hits.len() >= query.limit {
+            break;
+        }
+    }
+
+    let total = all_hits.len();
+    Ok(Json(SearchResponse { hits: all_hits, total }))
+}
+
+/// Extract text content from a Pi message content field.
+fn extract_message_text(content: &serde_json::Value) -> String {
+    match content {
+        Value::String(s) => s.clone(),
+        Value::Array(arr) => {
+            arr.iter()
+                .filter_map(|part| {
+                    if let Some(text) = part.get("text").and_then(|t| t.as_str()) {
+                        Some(text.to_string())
+                    } else if let Some(content) = part.get("content").and_then(|c| c.as_str()) {
+                        Some(content.to_string())
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(" ")
+        }
+        Value::Object(obj) => {
+            if let Some(text) = obj.get("text").and_then(|t| t.as_str()) {
+                text.to_string()
+            } else if let Some(content) = obj.get("content").and_then(|c| c.as_str()) {
+                content.to_string()
+            } else {
+                String::new()
+            }
+        }
+        _ => String::new(),
+    }
+}
+
+/// Create a snippet around the first match of query in text.
+fn create_snippet(text: &str, query: &str, context_chars: usize) -> String {
+    let text_lower = text.to_lowercase();
+    if let Some(pos) = text_lower.find(query) {
+        let start = pos.saturating_sub(context_chars);
+        let end = (pos + query.len() + context_chars).min(text.len());
+
+        // Find word boundaries
+        let snippet_start = text[..start].rfind(' ').map(|p| p + 1).unwrap_or(start);
+        let snippet_end = text[end..].find(' ').map(|p| end + p).unwrap_or(end);
+
+        let mut snippet = String::new();
+        if snippet_start > 0 {
+            snippet.push_str("...");
+        }
+        snippet.push_str(&text[snippet_start..snippet_end]);
+        if snippet_end < text.len() {
+            snippet.push_str("...");
+        }
+        snippet
+    } else {
+        text.chars().take(200).collect()
+    }
+}
+
 /// Start a fresh Pi session and return its state.
 ///
 /// POST /api/main/pi/sessions
@@ -657,9 +816,23 @@ pub async fn get_pi_session_messages(
 ) -> ApiResult<Json<Vec<PiSessionMessage>>> {
     let pi_service = get_pi_service(&state)?;
 
-    let messages = pi_service
-        .get_session_messages(user.id(), &session_id)
-        .map_err(|e| ApiError::internal(format!("Failed to load Pi session: {}", e)))?;
+    let messages = match pi_service.get_session_messages(user.id(), &session_id) {
+        Ok(messages) => messages,
+        Err(err) => {
+            if pi_service
+                .is_active_session(user.id(), &session_id)
+                .await
+                && err.to_string().contains("Session not found")
+            {
+                Vec::new()
+            } else {
+                return Err(ApiError::internal(format!(
+                    "Failed to load Pi session: {}",
+                    err
+                )));
+            }
+        }
+    };
 
     Ok(Json(messages))
 }

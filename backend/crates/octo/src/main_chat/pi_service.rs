@@ -89,6 +89,9 @@ pub struct MainChatPiServiceConfig {
     /// Pi bridge URL (for Container mode).
     /// e.g., "http://localhost:41824"
     pub bridge_url: Option<String>,
+    /// Whether to sandbox Pi processes (only applies to Runner mode).
+    /// The runner loads sandbox config from /etc/octo/sandbox.toml.
+    pub sandboxed: bool,
 }
 
 impl Default for MainChatPiServiceConfig {
@@ -103,6 +106,7 @@ impl Default for MainChatPiServiceConfig {
             runtime_mode: PiRuntimeMode::Local,
             runner_socket_pattern: None,
             bridge_url: None,
+            sandboxed: false,
         }
     }
 }
@@ -361,7 +365,7 @@ pub struct UserPiSession {
     /// Snapshot of the currently streaming assistant message for WS replay.
     stream_snapshot: Arc<Mutex<StreamSnapshot>>,
     /// Session ID (Pi session file ID, not user ID).
-    session_id: String,
+    _session_id: String,
     /// Last activity timestamp (updated on every command).
     last_activity: Arc<RwLock<std::time::Instant>>,
     /// Whether the agent is currently streaming/processing.
@@ -1122,13 +1126,6 @@ impl MainChatPiService {
         user_id: &str,
         session_id: &str,
     ) -> Result<Arc<UserPiSession>> {
-        let work_dir = self.get_main_chat_dir(user_id);
-        let sessions_dir = self.get_pi_sessions_dir(&work_dir);
-
-        // Verify session exists
-        let session_file = self.find_session_file(&sessions_dir, session_id)?;
-        info!("Resuming Pi session {} from {:?}", session_id, session_file);
-
         let key = (user_id.to_string(), session_id.to_string());
 
         // Check if we already have a process for this session
@@ -1142,6 +1139,13 @@ impl MainChatPiService {
                 return Ok(Arc::clone(existing));
             }
         }
+
+        let work_dir = self.get_main_chat_dir(user_id);
+        let sessions_dir = self.get_pi_sessions_dir(&work_dir);
+
+        // Verify session exists on disk for cold resume.
+        let session_file = self.find_session_file(&sessions_dir, session_id)?;
+        info!("Resuming Pi session {} from {:?}", session_id, session_file);
 
         // Spawn a new process for this session
         info!(
@@ -1226,6 +1230,7 @@ impl MainChatPiService {
             append_system_prompt,
             extensions: self.config.extensions.clone(),
             env: std::collections::HashMap::new(),
+            sandboxed: self.config.sandboxed,
         };
 
         // Create runtime and spawn
@@ -1240,7 +1245,7 @@ impl MainChatPiService {
         Ok(UserPiSession {
             process: Arc::new(tokio::sync::RwLock::new(process)),
             stream_snapshot: Arc::new(Mutex::new(StreamSnapshot::default())),
-            session_id,
+            _session_id: session_id,
             last_activity: Arc::new(RwLock::new(std::time::Instant::now())),
             is_streaming: Arc::new(RwLock::new(false)),
             persistence_writer_claimed: Arc::new(AtomicBool::new(false)),
@@ -1419,6 +1424,7 @@ impl MainChatPiService {
             extensions: self.config.extensions.clone(),
             append_system_prompt,
             env,
+            sandboxed: self.config.sandboxed,
         };
 
         // Get the appropriate runtime for this user
@@ -1476,7 +1482,7 @@ impl MainChatPiService {
         Ok(UserPiSession {
             process: Arc::new(tokio::sync::RwLock::new(process)),
             stream_snapshot,
-            session_id,
+            _session_id: session_id,
             last_activity,
             is_streaming,
             persistence_writer_claimed: Arc::new(AtomicBool::new(false)),
@@ -1527,7 +1533,7 @@ impl MainChatPiService {
             let sessions = self.sessions.read().await;
             sessions
                 .iter()
-                .filter(|((uid, _), session)| {
+                .filter(|((uid, _), _session)| {
                     if uid != user_id {
                         return false;
                     }
@@ -1562,6 +1568,15 @@ impl MainChatPiService {
 
         info!("Closed all sessions for user {}", user_id);
         Ok(())
+    }
+
+    /// Check if a session ID is currently active for a user.
+    pub async fn is_active_session(&self, user_id: &str, session_id: &str) -> bool {
+        let active = self.active_session.read().await;
+        active
+            .get(user_id)
+            .map(|active_id| active_id == session_id)
+            .unwrap_or(false)
     }
 
     /// Get the active session for a user (without creating).
@@ -1630,10 +1645,7 @@ impl MainChatPiService {
 }
 
 impl UserPiSession {
-    /// Get the session ID.
-    pub fn session_id(&self) -> &str {
-        &self.session_id
-    }
+    // session_id is currently stored for future session switching features.
 
     /// Claim exclusive persistence for this session (used to prevent duplicate WS saves).
     pub fn claim_persistence_writer(&self) -> Option<PersistenceWriterGuard> {
@@ -1763,27 +1775,6 @@ impl UserPiSession {
             })
             .await?;
         Ok(())
-    }
-
-    /// Switch to a different session file.
-    /// Returns true if the switch completed, false if cancelled.
-    pub async fn switch_session(&self, session_path: &str) -> Result<bool> {
-        let process = self.process.read().await;
-        let response = process
-            .send_command(PiCommand::SwitchSession {
-                id: None,
-                session_path: session_path.to_string(),
-            })
-            .await?;
-        if !response.success {
-            anyhow::bail!("switch_session failed: {:?}", response.error);
-        }
-        // Response contains { cancelled: boolean }
-        let cancelled = response
-            .data
-            .and_then(|d| d.get("cancelled").and_then(|v| v.as_bool()))
-            .unwrap_or(false);
-        Ok(!cancelled)
     }
 
     /// Set the current model.

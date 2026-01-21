@@ -2,11 +2,11 @@
  * Hook for searching within a specific Pi session using CASS.
  */
 
-import { useState, useCallback, useMemo } from "react";
 import {
 	type InSessionSearchResult,
 	searchInPiSession,
 } from "@/lib/control-plane-client";
+import { useCallback, useMemo, useState } from "react";
 
 export type UseSessionSearchOptions = {
 	/** Session ID to search within */
@@ -70,8 +70,7 @@ export function useSessionSearch(
 				);
 				setResults(searchResults);
 			} catch (err) {
-				const message =
-					err instanceof Error ? err.message : "Search failed";
+				const message = err instanceof Error ? err.message : "Search failed";
 				setError(message);
 				setResults([]);
 			} finally {

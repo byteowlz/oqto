@@ -27,6 +27,7 @@ mod linux_users;
 mod process;
 mod runtime;
 mod sandbox;
+mod user_mmry;
 
 pub use linux_users::LinuxUsersConfig;
 #[allow(unused_imports)]
@@ -36,3 +37,4 @@ pub use process::{
 };
 pub use runtime::{LocalRuntime, LocalRuntimeConfig};
 pub use sandbox::SandboxConfig;
+pub use user_mmry::{UserMmryConfig, UserMmryManager};
