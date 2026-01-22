@@ -1573,39 +1573,63 @@ export const SessionScreen = memo(function SessionScreen() {
 			const workspacePath =
 				selectedChatFromHistory?.workspace_path ??
 				selectedWorkspaceSession?.workspace_path;
-			if (!workspacePath) return;
+			if (!workspacePath) {
+				setStatus(
+					locale === "de"
+						? "Upload fehlgeschlagen: Kein Workspace gefunden"
+						: "Upload failed: no workspace found",
+				);
+				return;
+			}
 
 			setIsUploading(true);
 			const uploadedFiles: { name: string; path: string }[] = [];
+			const failedFiles: string[] = [];
 
 			try {
 				const baseUrl = fileserverWorkspaceBaseUrl();
 
 				for (const file of Array.from(files)) {
-					const destPath = `uploads/${file.name}`;
-					const url = new URL(`${baseUrl}/file`, window.location.origin);
-					url.searchParams.set("path", destPath);
-					url.searchParams.set("mkdir", "true");
-					url.searchParams.set("workspace_path", workspacePath);
+					try {
+						const destPath = `uploads/${file.name}`;
+						const url = new URL(`${baseUrl}/file`, window.location.origin);
+						url.searchParams.set("path", destPath);
+						url.searchParams.set("mkdir", "true");
+						url.searchParams.set("workspace_path", workspacePath);
 
-					const formData = new FormData();
-					formData.append("file", file);
+						const formData = new FormData();
+						formData.append("file", file);
 
-					const res = await fetch(url.toString(), {
-						method: "POST",
-						credentials: "include",
-						body: formData,
-					});
+						const res = await fetch(url.toString(), {
+							method: "POST",
+							credentials: "include",
+							body: formData,
+						});
 
-					if (!res.ok) {
-						const text = await res.text().catch(() => res.statusText);
-						throw new Error(text || `Upload failed (${res.status})`);
+						if (!res.ok) {
+							const text = await res.text().catch(() => res.statusText);
+							throw new Error(text || `Upload failed (${res.status})`);
+						}
+
+						uploadedFiles.push({ name: file.name, path: destPath });
+					} catch (err) {
+						const message =
+							err instanceof Error ? err.message : "Upload failed";
+						console.warn("Upload failed:", file.name, message);
+						failedFiles.push(file.name);
 					}
-
-					uploadedFiles.push({ name: file.name, path: destPath });
 				}
 
-				setPendingUploads((prev) => [...prev, ...uploadedFiles]);
+				if (uploadedFiles.length > 0) {
+					setPendingUploads((prev) => [...prev, ...uploadedFiles]);
+				}
+				if (failedFiles.length > 0) {
+					setStatus(
+						locale === "de"
+							? `Upload fehlgeschlagen: ${failedFiles.join(", ")}`
+							: `Upload failed: ${failedFiles.join(", ")}`,
+					);
+				}
 			} catch (err) {
 				setStatus(err instanceof Error ? err.message : "Upload failed");
 			} finally {
@@ -1616,7 +1640,7 @@ export const SessionScreen = memo(function SessionScreen() {
 				}
 			}
 		},
-		[selectedChatFromHistory, selectedWorkspaceSession],
+		[locale, selectedChatFromHistory, selectedWorkspaceSession],
 	);
 
 	const removePendingUpload = useCallback((path: string) => {
@@ -1959,10 +1983,20 @@ export const SessionScreen = memo(function SessionScreen() {
 
 			if (opencodeBaseUrl && !isHistoryOnlySession) {
 				// Live opencode is authoritative for streaming updates.
-				loadedMessages = await fetchMessages(opencodeBaseUrl, targetSessionId, {
-					directory: opencodeDirectory,
-				});
-			} else {
+				try {
+					loadedMessages = await fetchMessages(
+						opencodeBaseUrl,
+						targetSessionId,
+						{
+							directory: opencodeDirectory,
+						},
+					);
+				} catch (err) {
+					console.warn("Failed to load live messages, falling back:", err);
+				}
+			}
+
+			if (loadedMessages.length === 0) {
 				// History-only view (or no live session): use disk history cache.
 				try {
 					const historyMessages = await getChatMessages(targetSessionId);
@@ -1971,22 +2005,6 @@ export const SessionScreen = memo(function SessionScreen() {
 					}
 				} catch {
 					// Ignore history failures; we don't have a live fallback here.
-				}
-			}
-
-			if (
-				loadedMessages.length === 0 &&
-				opencodeBaseUrl &&
-				!isHistoryOnlySession
-			) {
-				// If live returned nothing, fall back to disk history for older sessions.
-				try {
-					const historyMessages = await getChatMessages(targetSessionId);
-					if (historyMessages.length > 0) {
-						loadedMessages = convertChatMessagesToOpenCode(historyMessages);
-					}
-				} catch {
-					// Ignore history failures on fallback.
 				}
 			}
 
@@ -4517,7 +4535,9 @@ export const SessionScreen = memo(function SessionScreen() {
 							variant="ghost"
 							size="icon"
 							title={
-								locale === "de" ? "Agent stoppen (2x Esc)" : "Stop agent (2x Esc)"
+								locale === "de"
+									? "Agent stoppen (2x Esc)"
+									: "Stop agent (2x Esc)"
 							}
 						>
 							<StopCircle className="w-4 h-4" />

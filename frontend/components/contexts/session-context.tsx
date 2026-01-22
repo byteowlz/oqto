@@ -165,7 +165,9 @@ const defaultSessionContext: SessionContextValue = {
 	setScrollToMessageId: noop,
 };
 
-const SessionContext = createContext<SessionContextValue>(defaultSessionContext);
+const SessionContext = createContext<SessionContextValue>(
+	defaultSessionContext,
+);
 
 export function SessionProvider({ children }: { children: ReactNode }) {
 	const { locale } = useLocale();
@@ -504,6 +506,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 						if (current && current === recentlyCreatedSessionRef.current) {
 							return current;
 						}
+						if (current && opencodeSessions.some((s) => s.id === current)) {
+							return current;
+						}
 						if (current && history.some((s) => s.id === current))
 							return current;
 						if (current && optimisticChatSessionsRef.current.has(current)) {
@@ -516,7 +521,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 		} catch (err) {
 			console.error("Failed to load chat history:", err);
 		}
-	}, [mainChatActive, setSelectedChatSessionId]);
+	}, [mainChatActive, opencodeSessions, setSelectedChatSessionId]);
 
 	const refreshWorkspaceSessions = useCallback(async () => {
 		try {

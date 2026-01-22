@@ -613,38 +613,47 @@ export function MainChatPiView({
 			setIsUploading(true);
 			const baseUrl = fileserverWorkspaceBaseUrl();
 
-			for (const file of Array.from(files)) {
-				try {
-					const formData = new FormData();
-					formData.append("file", file);
+			try {
+				for (const file of Array.from(files)) {
+					try {
+						const formData = new FormData();
+						formData.append("file", file);
 
-					const uploadUrl = new URL(`${baseUrl}/file`, window.location.origin);
-					uploadUrl.searchParams.set("path", file.name);
-					uploadUrl.searchParams.set("workspace_path", workspacePath);
+						const uploadUrl = new URL(
+							`${baseUrl}/file`,
+							window.location.origin,
+						);
+						uploadUrl.searchParams.set("path", file.name);
+						uploadUrl.searchParams.set("workspace_path", workspacePath);
 
-					const res = await fetch(uploadUrl.toString(), {
-						method: "POST",
-						body: formData,
-						credentials: "include",
-					});
+						const res = await fetch(uploadUrl.toString(), {
+							method: "POST",
+							body: formData,
+							credentials: "include",
+						});
 
-					if (!res.ok) {
-						console.error("Failed to upload file:", file.name);
-						continue;
+						if (!res.ok) {
+							console.error("Failed to upload file:", file.name);
+							continue;
+						}
+
+						const attachment: FileAttachment = {
+							id: `file-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+							path: file.name,
+							filename: file.name,
+							type: "file",
+						};
+						setFileAttachments((prev) => [...prev, attachment]);
+					} catch (err) {
+						console.error("Failed to upload file:", err);
 					}
-
-					const attachment: FileAttachment = {
-						id: `file-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-						path: file.name,
-						filename: file.name,
-						type: "file",
-					};
-					setFileAttachments((prev) => [...prev, attachment]);
-				} catch (err) {
-					console.error("Failed to upload file:", err);
+				}
+			} finally {
+				setIsUploading(false);
+				if (fileInputRef.current) {
+					fileInputRef.current.value = "";
 				}
 			}
-			setIsUploading(false);
 		},
 		[workspacePath],
 	);

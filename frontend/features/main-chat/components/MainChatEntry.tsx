@@ -40,13 +40,15 @@ import {
 	Settings,
 	Trash2,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 export interface MainChatEntryProps {
 	/** Whether this entry is currently selected */
 	isSelected: boolean;
 	/** Currently active session ID (for timeline highlighting) */
 	activeSessionId?: string | null;
+	/** Trigger value that changes when a new session is requested */
+	newSessionTrigger?: number;
 	/** Callback when the entry is clicked */
 	onSelect: (assistantName: string, sessionId: string | null) => void;
 	/** Callback when a specific session in the timeline is clicked */
@@ -71,6 +73,7 @@ export interface MainChatEntryProps {
 export function MainChatEntry({
 	isSelected,
 	activeSessionId,
+	newSessionTrigger,
 	onSelect,
 	onSessionSelect,
 	onNewSession,
@@ -90,7 +93,8 @@ export function MainChatEntry({
 	const filteredSessions = useMemo(() => {
 		if (!filterLower) return sessions;
 		return sessions.filter((session) => {
-			if ((session.title ?? "").toLowerCase().includes(filterLower)) return true;
+			if ((session.title ?? "").toLowerCase().includes(filterLower))
+				return true;
 			const readableId = generateReadableId(session.id);
 			if (readableId.toLowerCase().includes(filterLower)) return true;
 			const dateStr = formatSessionDate(session.modified_at);
@@ -135,17 +139,11 @@ export function MainChatEntry({
 	const resetNameIsValid = useMemo(() => {
 		return Boolean(resetName.trim().match(/^[A-Za-z0-9_-]+$/));
 	}, [resetName]);
+	const lastNewSessionTriggerRef = useRef(newSessionTrigger);
+	const lastActiveSessionIdRef = useRef(activeSessionId);
 
-	// Load assistant on mount
-	useEffect(() => {
-		loadAssistant();
-	}, []);
-
-	// When selection changes (e.g. /new), refresh sessions list.
-	useEffect(() => {
-		if (!assistantName) return;
-		// Only do this while visible/selected to keep it cheap.
-		if (!isSelected) return;
+	const refreshSessions = useCallback(() => {
+		if (!assistantName || !isSelected) return;
 		listMainChatPiSessions()
 			.then((sessionList) => {
 				const sorted = [...sessionList].sort(
@@ -159,6 +157,36 @@ export function MainChatEntry({
 				// ignore
 			});
 	}, [assistantName, isSelected]);
+
+	// Load assistant on mount
+	useEffect(() => {
+		loadAssistant();
+	}, []);
+
+	// When selection changes (e.g. /new), refresh sessions list.
+	useEffect(() => {
+		refreshSessions();
+	}, [refreshSessions]);
+
+	useEffect(() => {
+		if (!assistantName || !isSelected) return;
+		if (lastActiveSessionIdRef.current === activeSessionId) return;
+		lastActiveSessionIdRef.current = activeSessionId;
+		refreshSessions();
+	}, [activeSessionId, assistantName, isSelected, refreshSessions]);
+
+	useEffect(() => {
+		if (!assistantName || !isSelected) return;
+		if (newSessionTrigger === undefined) return;
+		if (lastNewSessionTriggerRef.current === undefined) {
+			lastNewSessionTriggerRef.current = newSessionTrigger;
+			return;
+		}
+		if (newSessionTrigger !== lastNewSessionTriggerRef.current) {
+			lastNewSessionTriggerRef.current = newSessionTrigger;
+			refreshSessions();
+		}
+	}, [assistantName, isSelected, newSessionTrigger, refreshSessions]);
 
 	function cacheKeySessions(name: string) {
 		return `octo:mainChatPi:${name}:sessions:v1`;
@@ -377,25 +405,25 @@ export function MainChatEntry({
 						<div className="flex items-center gap-1 px-1 py-1.5 group">
 							<button
 								type="button"
-							onClick={hasSessions ? toggleExpanded : handleClick}
-							className="flex-1 flex items-center gap-1.5 text-left hover:bg-sidebar-accent/50 px-1 py-0.5 -mx-1"
-						>
-						{hasSessions ? (
-								expanded ? (
-									<ChevronDown className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
+								onClick={hasSessions ? toggleExpanded : handleClick}
+								className="flex-1 flex items-center gap-1.5 text-left hover:bg-sidebar-accent/50 px-1 py-0.5 -mx-1"
+							>
+								{hasSessions ? (
+									expanded ? (
+										<ChevronDown className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
+									) : (
+										<ChevronRight className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
+									)
 								) : (
-									<ChevronRight className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
-								)
-							) : (
-								<ChevronRight className="w-3.5 h-3.5 text-muted-foreground/30 flex-shrink-0" />
-							)}
-							<MessageCircle className="w-4 h-4 text-primary/70 flex-shrink-0" />
-							<span className="text-sm font-medium text-foreground truncate">
-								{assistantName}
-							</span>
-							<span className="text-xs text-muted-foreground">
-								({displayCount})
-							</span>
+									<ChevronRight className="w-3.5 h-3.5 text-muted-foreground/30 flex-shrink-0" />
+								)}
+								<MessageCircle className="w-4 h-4 text-primary/70 flex-shrink-0" />
+								<span className="text-sm font-medium text-foreground truncate">
+									{assistantName}
+								</span>
+								<span className="text-xs text-muted-foreground">
+									({displayCount})
+								</span>
 							</button>
 							{onNewSession && (
 								<button

@@ -467,6 +467,7 @@ input[type="radio"] {
 
 .stop-button-animated {
 	position: relative;
+	border-radius: 6px;
 }
 
 .stop-button-animated::before {
@@ -480,15 +481,13 @@ input[type="radio"] {
 		transparent 120deg
 	);
 	animation: spin-border 1s linear infinite;
+	padding: 2px;
+	border-radius: 8px;
+	pointer-events: none;
 	z-index: -1;
-}
-
-.stop-button-animated::after {
-	content: "";
-	position: absolute;
-	inset: 0;
-	background: var(--background);
-	z-index: -1;
+	-webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+	-webkit-mask-composite: xor;
+	mask-composite: exclude;
 }
 
 .sidebar-chat .chat-input-container {

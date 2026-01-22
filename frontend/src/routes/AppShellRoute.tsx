@@ -139,6 +139,7 @@ const AppShell = memo(function AppShell() {
 		setMainChatCurrentSessionId,
 		setMainChatWorkspacePath,
 		setScrollToMessageId,
+		mainChatNewSessionTrigger,
 		requestNewMainChatSession,
 	} = useApp();
 	const location = useLocation();
@@ -1900,6 +1901,7 @@ const AppShell = memo(function AppShell() {
 													activeSessionId={
 														mainChatActive ? mainChatCurrentSessionId : null
 													}
+													newSessionTrigger={mainChatNewSessionTrigger}
 													onSelect={handleMainChatSelect}
 													onSessionSelect={handleMainChatSessionSelect}
 													onNewSession={handleMainChatNewSession}
@@ -1913,12 +1915,12 @@ const AppShell = memo(function AppShell() {
 												{filteredSessions.length === 0 &&
 													deferredSearch &&
 													mainChatFilterCount === 0 && (
-													<div className="text-sm text-muted-foreground/50 text-center py-4">
-														{locale === "de"
-															? "Keine Ergebnisse"
-															: "No results"}
-													</div>
-												)}
+														<div className="text-sm text-muted-foreground/50 text-center py-4">
+															{locale === "de"
+																? "Keine Ergebnisse"
+																: "No results"}
+														</div>
+													)}
 												{sessionsByProject.map((project) => {
 													// Auto-expand all when searching
 													const isProjectExpanded =
@@ -2764,6 +2766,7 @@ const AppShell = memo(function AppShell() {
 												activeSessionId={
 													mainChatActive ? mainChatCurrentSessionId : null
 												}
+												newSessionTrigger={mainChatNewSessionTrigger}
 												onSelect={handleMainChatSelect}
 												onSessionSelect={handleMainChatSessionSelect}
 												onNewSession={handleMainChatNewSession}
@@ -3787,7 +3790,6 @@ const AppShell = memo(function AppShell() {
 						</DialogFooter>
 					</DialogContent>
 				</Dialog>
-
 			</div>
 		</UIControlProvider>
 	);
