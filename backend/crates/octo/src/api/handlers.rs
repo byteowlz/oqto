@@ -1124,6 +1124,29 @@ pub async fn register(
         warn!("Failed to update invite code used_by: {:?}", e);
     }
 
+    // Create Linux user if multi-user isolation is enabled
+    if let Some(ref linux_users) = state.linux_users {
+        match linux_users.ensure_user(&user.id) {
+            Ok(uid) => {
+                info!(
+                    user_id = %user.id,
+                    linux_user = %linux_users.linux_username(&user.id),
+                    uid = uid,
+                    "Created Linux user for registered user"
+                );
+            }
+            Err(e) => {
+                // Log warning but don't fail - user can still register
+                // Linux user will be created on first session start
+                warn!(
+                    user_id = %user.id,
+                    error = %e,
+                    "Failed to create Linux user (will retry on session start)"
+                );
+            }
+        }
+    }
+
     // Generate JWT token for the new user
     let token = state.auth.generate_token(
         &user.id,
@@ -1418,6 +1441,29 @@ pub async fn create_user(
 ) -> ApiResult<(StatusCode, Json<DbUserInfo>)> {
     // Uses centralized From<anyhow::Error> conversion
     let user = state.users.create_user(request).await?;
+
+    // Create Linux user if multi-user isolation is enabled
+    if let Some(ref linux_users) = state.linux_users {
+        match linux_users.ensure_user(&user.id) {
+            Ok(uid) => {
+                info!(
+                    user_id = %user.id,
+                    linux_user = %linux_users.linux_username(&user.id),
+                    uid = uid,
+                    "Created Linux user for platform user"
+                );
+            }
+            Err(e) => {
+                // Log warning but don't fail - user can still be created
+                // Linux user will be created on first session start
+                warn!(
+                    user_id = %user.id,
+                    error = %e,
+                    "Failed to create Linux user (will retry on session start)"
+                );
+            }
+        }
+    }
 
     info!(user_id = %user.id, "Created new user");
     Ok((StatusCode::CREATED, Json(user.into())))
@@ -3990,7 +4036,8 @@ pub async fn list_trx_issues(
     State(state): State<AppState>,
     Query(query): Query<TrxWorkspaceQuery>,
 ) -> ApiResult<Json<Vec<TrxIssue>>> {
-    let output = exec_trx_command(&state, &query.workspace_path, &["list"]).await?;
+    let output =
+        exec_trx_command(&state, &query.workspace_path, &["list", "--all"]).await?;
 
     // Parse the raw JSON output and transform to API format
     let raw_issues: Vec<TrxIssueRaw> = serde_json::from_str(&output)

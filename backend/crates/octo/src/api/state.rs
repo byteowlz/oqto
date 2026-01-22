@@ -5,8 +5,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use axum::body::Body;
-use hyper_util::client::legacy::Client;
 use hyper_util::client::legacy::connect::HttpConnector;
+use hyper_util::client::legacy::Client;
 use hyper_util::rt::TokioExecutor;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
@@ -16,6 +16,7 @@ use super::a2ui::PendingA2uiRequests;
 use crate::agent_rpc::AgentBackend;
 use crate::auth::AuthState;
 use crate::invite::InviteCodeRepository;
+use crate::local::LinuxUsersConfig;
 use crate::main_chat::{MainChatPiService, MainChatService};
 use crate::session::SessionService;
 use crate::session_ui::SessionAutoAttachMode;
@@ -228,6 +229,8 @@ pub struct AppState {
     pub pending_a2ui_requests: PendingA2uiRequests,
     /// Max proxy body size (bytes) for buffered proxy requests.
     pub max_proxy_body_bytes: usize,
+    /// Linux user isolation configuration (for multi-user mode).
+    pub linux_users: Option<LinuxUsersConfig>,
 }
 
 impl AppState {
@@ -266,6 +269,7 @@ impl AppState {
             ws_hub: Arc::new(WsHub::new()),
             pending_a2ui_requests: super::a2ui::new_pending_requests(),
             max_proxy_body_bytes,
+            linux_users: None,
         }
     }
 
@@ -305,6 +309,7 @@ impl AppState {
             ws_hub: Arc::new(WsHub::new()),
             pending_a2ui_requests: super::a2ui::new_pending_requests(),
             max_proxy_body_bytes,
+            linux_users: None,
         }
     }
 
@@ -317,6 +322,14 @@ impl AppState {
     /// Set the mmry settings service.
     pub fn with_settings_mmry(mut self, service: SettingsService) -> Self {
         self.settings_mmry = Some(Arc::new(service));
+        self
+    }
+
+    /// Set the Linux users config for multi-user isolation.
+    pub fn with_linux_users(mut self, config: LinuxUsersConfig) -> Self {
+        if config.enabled {
+            self.linux_users = Some(config);
+        }
         self
     }
 

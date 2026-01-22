@@ -2054,6 +2054,20 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
         state = state.with_settings_mmry(mmry_settings);
     }
 
+    // Add Linux users config for multi-user isolation
+    if ctx.config.local.linux_users.enabled {
+        let linux_users_config = local::LinuxUsersConfig {
+            enabled: ctx.config.local.linux_users.enabled,
+            prefix: ctx.config.local.linux_users.prefix.clone(),
+            uid_start: ctx.config.local.linux_users.uid_start,
+            group: ctx.config.local.linux_users.group.clone(),
+            shell: ctx.config.local.linux_users.shell.clone(),
+            use_sudo: ctx.config.local.linux_users.use_sudo,
+            create_home: ctx.config.local.linux_users.create_home,
+        };
+        state = state.with_linux_users(linux_users_config);
+    }
+
     // Initialize Main Chat service
     // Uses the user data path as the workspace dir for per-user Main Chat data
     let main_chat_workspace_dir = ctx.paths.data_dir.join("users");
