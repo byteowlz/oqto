@@ -82,8 +82,12 @@ pub struct SandboxConfig {
     pub extra_rw_bind: Vec<String>,
 }
 
-/// Path to global sandbox config file.
-pub const GLOBAL_SANDBOX_CONFIG: &str = "~/.config/octo/sandbox.toml";
+/// Path to user-level sandbox config file (for single-user mode).
+pub const USER_SANDBOX_CONFIG: &str = "~/.config/octo/sandbox.toml";
+
+/// Path to system-wide sandbox config file (for multi-user mode).
+/// This is owned by root and trusted by octo-runner.
+pub const SYSTEM_SANDBOX_CONFIG: &str = "/etc/octo/sandbox.toml";
 
 impl Default for SandboxConfig {
     fn default() -> Self {
@@ -96,12 +100,22 @@ impl Default for SandboxConfig {
                 "~/.aws".to_string(),
             ],
             allow_write: vec![
+                // Package managers / toolchains
                 "~/.cargo".to_string(),
                 "~/.rustup".to_string(),
-                "~/.local/bin".to_string(),
                 "~/.npm".to_string(),
                 "~/.bun".to_string(),
-                "~/.config/octo".to_string(), // Allow config.toml edits
+                "~/.local/bin".to_string(),
+                // Agent tools - data directories
+                "~/.local/share/skdlr".to_string(), // skdlr scheduler database
+                "~/.local/share/mmry".to_string(),  // mmry memory stores
+                "~/.local/share/mailz".to_string(), // mailz message database
+                // Agent tools - config directories
+                "~/.config/skdlr".to_string(), // skdlr config
+                "~/.config/mmry".to_string(),  // mmry config
+                "~/.config/mailz".to_string(), // mailz config
+                "~/.config/byt".to_string(),   // byt catalog config
+                "~/.config/octo".to_string(),  // octo config
                 "/tmp".to_string(),
             ],
             // Always deny writes to sandbox configs - these are protected
@@ -169,16 +183,24 @@ impl SandboxConfig {
         }
     }
 
-    /// Load global sandbox config from `~/.config/octo/sandbox.toml`.
+    /// Load user-level sandbox config from `~/.config/octo/sandbox.toml`.
     ///
     /// Returns default config if file doesn't exist.
     /// Returns error only if file exists but can't be parsed.
     pub fn load_global() -> Result<Self> {
-        let config_path = Self::expand_home(GLOBAL_SANDBOX_CONFIG);
+        Self::load_user_config()
+    }
+
+    /// Load user-level sandbox config from `~/.config/octo/sandbox.toml`.
+    ///
+    /// Returns default config if file doesn't exist.
+    /// Returns error only if file exists but can't be parsed.
+    pub fn load_user_config() -> Result<Self> {
+        let config_path = Self::expand_home(USER_SANDBOX_CONFIG);
 
         if !config_path.exists() {
             debug!(
-                "No global sandbox config at {:?}, using defaults",
+                "No user sandbox config at {:?}, using defaults",
                 config_path
             );
             return Ok(Self::default());
@@ -196,7 +218,43 @@ impl SandboxConfig {
             config.deny_write.push(sandbox_toml);
         }
 
-        info!("Loaded global sandbox config from {:?}", config_path);
+        info!("Loaded user sandbox config from {:?}", config_path);
+        Ok(config)
+    }
+
+    /// Load system-wide sandbox config from `/etc/octo/sandbox.toml`.
+    ///
+    /// This is used by octo-runner in multi-user mode. The system config
+    /// is trusted (owned by root) and cannot be modified by regular users.
+    ///
+    /// Returns default config if file doesn't exist.
+    /// Returns error only if file exists but can't be parsed.
+    pub fn load_system_config() -> Result<Self> {
+        let config_path = PathBuf::from(SYSTEM_SANDBOX_CONFIG);
+
+        if !config_path.exists() {
+            debug!(
+                "No system sandbox config at {:?}, using defaults",
+                config_path
+            );
+            return Ok(Self::default());
+        }
+
+        let contents = std::fs::read_to_string(&config_path)
+            .with_context(|| format!("Failed to read sandbox config from {:?}", config_path))?;
+
+        let mut config: Self = toml::from_str(&contents)
+            .with_context(|| format!("Failed to parse sandbox config from {:?}", config_path))?;
+
+        // Always ensure system sandbox.toml itself is protected
+        if !config
+            .deny_write
+            .contains(&SYSTEM_SANDBOX_CONFIG.to_string())
+        {
+            config.deny_write.push(SYSTEM_SANDBOX_CONFIG.to_string());
+        }
+
+        info!("Loaded system sandbox config from {:?}", config_path);
         Ok(config)
     }
 
@@ -324,19 +382,87 @@ impl SandboxConfig {
     }
 
     /// Expand ~ to home directory in a path.
+    /// Uses the current user's home directory.
     fn expand_home(path: &str) -> PathBuf {
+        Self::expand_home_for_user(path, None)
+    }
+
+    /// Expand ~ to home directory for a specific user.
+    /// If username is None, uses the current user's home directory.
+    fn expand_home_for_user(path: &str, username: Option<&str>) -> PathBuf {
         if path.starts_with("~/") {
-            if let Some(home) = dirs::home_dir() {
-                return home.join(&path[2..]);
+            let home = if let Some(user) = username {
+                Self::get_user_home(user)
+            } else {
+                dirs::home_dir()
+            };
+
+            if let Some(home) = home {
+                let expanded = home.join(&path[2..]);
+                debug!(
+                    "Expanded path '{}' to '{}' for user {:?}",
+                    path,
+                    expanded.display(),
+                    username.unwrap_or("(current)")
+                );
+                return expanded;
+            } else {
+                warn!(
+                    "Could not determine home directory for user {:?}, using path as-is: {}",
+                    username, path
+                );
             }
         }
         PathBuf::from(path)
     }
 
-    /// Build bwrap arguments for sandboxing a command.
+    /// Get home directory for a specific user by looking up passwd.
+    fn get_user_home(username: &str) -> Option<PathBuf> {
+        use std::ffi::CString;
+
+        let c_username = CString::new(username).ok()?;
+
+        // SAFETY: getpwnam is thread-safe for reading, we only read the pw_dir field
+        let passwd = unsafe { libc::getpwnam(c_username.as_ptr()) };
+
+        if passwd.is_null() {
+            warn!("User '{}' not found in passwd database", username);
+            return None;
+        }
+
+        // SAFETY: passwd is valid and pw_dir is a valid C string
+        let home_cstr = unsafe { std::ffi::CStr::from_ptr((*passwd).pw_dir) };
+        let home_str = home_cstr.to_str().ok()?;
+
+        debug!("Resolved home directory for '{}': {}", username, home_str);
+        Some(PathBuf::from(home_str))
+    }
+
+    /// Build bwrap arguments for sandboxing a command (current user).
     ///
     /// Returns None if bwrap is not available.
     pub fn build_bwrap_args(&self, workspace: &Path) -> Option<Vec<String>> {
+        self.build_bwrap_args_for_user(workspace, None)
+    }
+
+    /// Build bwrap arguments for sandboxing a command for a specific user.
+    ///
+    /// If `username` is Some, paths like `~/.config` will be expanded to
+    /// that user's home directory instead of the current user's.
+    ///
+    /// Returns None if bwrap is not available.
+    pub fn build_bwrap_args_for_user(
+        &self,
+        workspace: &Path,
+        username: Option<&str>,
+    ) -> Option<Vec<String>> {
+        info!(
+            "Building bwrap args: workspace={}, target_user={:?}, profile={}",
+            workspace.display(),
+            username.unwrap_or("(current)"),
+            self.profile
+        );
+
         // Check if bwrap is available
         if !Self::is_bwrap_available() {
             warn!("bubblewrap (bwrap) not found, sandboxing disabled");
@@ -353,6 +479,7 @@ impl SandboxConfig {
                 args.push(dir.to_string());
             }
         }
+        debug!("Added system directories as read-only binds");
 
         // /proc (needed for many tools)
         args.push("--proc".to_string());
@@ -362,49 +489,88 @@ impl SandboxConfig {
         args.push("--dev".to_string());
         args.push("/dev".to_string());
 
+        // Determine target user's home directory
+        let target_home = if let Some(user) = username {
+            Self::get_user_home(user)
+        } else {
+            dirs::home_dir()
+        };
+
         // Home directory base (for tool directories)
         // Bind home read-only FIRST, then overlay writable paths on top
-        if let Some(home) = dirs::home_dir() {
+        if let Some(home) = target_home {
             let home_str = home.to_string_lossy().to_string();
+            info!(
+                "Using home directory '{}' for user {:?}",
+                home_str,
+                username.unwrap_or("(current)")
+            );
 
             // Bind home read-only first
             args.push("--ro-bind".to_string());
             args.push(home_str.clone());
             args.push(home_str.clone());
+            debug!("Bound home directory '{}' as read-only", home_str);
 
             // Then bind writable directories on top
             for path in &self.allow_write {
-                let expanded = Self::expand_home(path);
-                if expanded.exists() || path.starts_with("~/") {
-                    let expanded_str = expanded.to_string_lossy().to_string();
+                let expanded = Self::expand_home_for_user(path, username);
+                let expanded_str = expanded.to_string_lossy().to_string();
+
+                // For paths under home, always add them (bwrap will create if needed)
+                // For absolute paths like /tmp, check existence
+                if path.starts_with("~/") || expanded.exists() {
                     args.push("--bind".to_string());
                     args.push(expanded_str.clone());
-                    args.push(expanded_str);
+                    args.push(expanded_str.clone());
+                    debug!(
+                        "Allow-write: '{}' -> '{}' (exists: {})",
+                        path,
+                        expanded_str,
+                        expanded.exists()
+                    );
+                } else {
+                    debug!(
+                        "Skipping allow-write '{}' -> '{}' (path does not exist)",
+                        path, expanded_str
+                    );
                 }
             }
 
             // Block denied read paths by mounting empty tmpfs
             for path in &self.deny_read {
-                let expanded = Self::expand_home(path);
+                let expanded = Self::expand_home_for_user(path, username);
                 if expanded.exists() {
                     let expanded_str = expanded.to_string_lossy().to_string();
                     args.push("--tmpfs".to_string());
-                    args.push(expanded_str);
+                    args.push(expanded_str.clone());
+                    debug!("Deny-read (tmpfs): '{}' -> '{}'", path, expanded_str);
+                } else {
+                    debug!(
+                        "Skipping deny-read '{}' (path does not exist for user {:?})",
+                        path,
+                        username.unwrap_or("(current)")
+                    );
                 }
             }
 
             // Block denied write paths by binding read-only
             // Applied AFTER allow_write, so these take precedence
             for path in &self.deny_write {
-                let expanded = Self::expand_home(path);
+                let expanded = Self::expand_home_for_user(path, username);
                 if expanded.exists() {
                     let expanded_str = expanded.to_string_lossy().to_string();
                     args.push("--ro-bind".to_string());
                     args.push(expanded_str.clone());
-                    args.push(expanded_str);
-                    debug!("Deny-write path bound read-only: {}", path);
+                    args.push(expanded_str.clone());
+                    debug!("Deny-write (ro-bind): '{}' -> '{}'", path, expanded_str);
                 }
             }
+        } else {
+            warn!(
+                "Could not determine home directory for user {:?}, home-based paths will not be bound",
+                username
+            );
         }
 
         // Workspace directory (read-write) - MUST come after home ro-bind
@@ -413,6 +579,7 @@ impl SandboxConfig {
         args.push("--bind".to_string());
         args.push(workspace_str.clone());
         args.push(workspace_str.clone());
+        debug!("Bound workspace '{}' as read-write", workspace_str);
 
         // SECURITY: Always bind .octo/ as read-only to prevent agents from
         // modifying their own sandbox configuration. This is applied AFTER
@@ -438,33 +605,37 @@ impl SandboxConfig {
 
         // Extra read-only binds
         for path in &self.extra_ro_bind {
-            let expanded = Self::expand_home(path);
+            let expanded = Self::expand_home_for_user(path, username);
             if expanded.exists() {
                 let expanded_str = expanded.to_string_lossy().to_string();
                 args.push("--ro-bind".to_string());
                 args.push(expanded_str.clone());
-                args.push(expanded_str);
+                args.push(expanded_str.clone());
+                debug!("Extra ro-bind: '{}' -> '{}'", path, expanded_str);
             }
         }
 
         // Extra read-write binds
         for path in &self.extra_rw_bind {
-            let expanded = Self::expand_home(path);
+            let expanded = Self::expand_home_for_user(path, username);
             if expanded.exists() {
                 let expanded_str = expanded.to_string_lossy().to_string();
                 args.push("--bind".to_string());
                 args.push(expanded_str.clone());
-                args.push(expanded_str);
+                args.push(expanded_str.clone());
+                debug!("Extra rw-bind: '{}' -> '{}'", path, expanded_str);
             }
         }
 
         // Namespace isolation
         if self.isolate_pid {
             args.push("--unshare-pid".to_string());
+            debug!("PID namespace isolation enabled");
         }
 
         if self.isolate_network {
             args.push("--unshare-net".to_string());
+            debug!("Network namespace isolation enabled");
         }
 
         // Die with parent (important for cleanup)
@@ -474,11 +645,13 @@ impl SandboxConfig {
         args.push("--".to_string());
 
         info!(
-            "Sandbox enabled with profile '{}': {} args",
+            "Sandbox configured: profile='{}', user={:?}, workspace='{}', {} bwrap args",
             self.profile,
+            username.unwrap_or("(current)"),
+            workspace.display(),
             args.len()
         );
-        debug!("bwrap args: {:?}", args);
+        debug!("Full bwrap args: {:?}", args);
 
         Some(args)
     }
@@ -509,12 +682,30 @@ impl SandboxConfig {
         false
     }
 
-    /// Generate a Seatbelt profile for macOS sandbox-exec.
+    /// Generate a Seatbelt profile for macOS sandbox-exec (current user).
     ///
     /// Returns the profile as a string in Seatbelt format.
     #[cfg(target_os = "macos")]
     pub fn build_seatbelt_profile(&self, workspace: &Path) -> String {
+        self.build_seatbelt_profile_for_user(workspace, None)
+    }
+
+    /// Generate a Seatbelt profile for macOS sandbox-exec for a specific user.
+    ///
+    /// Returns the profile as a string in Seatbelt format.
+    #[cfg(target_os = "macos")]
+    pub fn build_seatbelt_profile_for_user(
+        &self,
+        workspace: &Path,
+        username: Option<&str>,
+    ) -> String {
         let mut profile = String::new();
+
+        info!(
+            "Building Seatbelt profile: workspace={}, target_user={:?}",
+            workspace.display(),
+            username.unwrap_or("(current)")
+        );
 
         // Header
         profile.push_str("(version 1)\n");
@@ -570,24 +761,37 @@ impl SandboxConfig {
             octo_dir_str
         ));
 
+        // Determine target user's home directory
+        let target_home = if let Some(user) = username {
+            Self::get_user_home(user)
+        } else {
+            dirs::home_dir()
+        };
+
         // Home directory (read-only by default)
-        if let Some(home) = dirs::home_dir() {
+        if let Some(home) = target_home {
             let home_str = home.to_string_lossy();
+            info!(
+                "Using home directory '{}' for user {:?}",
+                home_str,
+                username.unwrap_or("(current)")
+            );
             profile.push_str(&format!("(allow file-read* (subpath \"{}\"))\n", home_str));
 
             // Writable directories
             for path in &self.allow_write {
-                let expanded = Self::expand_home(path);
+                let expanded = Self::expand_home_for_user(path, username);
                 let expanded_str = expanded.to_string_lossy();
                 profile.push_str(&format!(
                     "(allow file-write* (subpath \"{}\"))\n",
                     expanded_str
                 ));
+                debug!("Allow-write: '{}' -> '{}'", path, expanded_str);
             }
 
             // Denied directories (block even reads)
             for path in &self.deny_read {
-                let expanded = Self::expand_home(path);
+                let expanded = Self::expand_home_for_user(path, username);
                 let expanded_str = expanded.to_string_lossy();
                 profile.push_str(&format!(
                     "(deny file-read* (subpath \"{}\"))\n",
@@ -597,11 +801,12 @@ impl SandboxConfig {
                     "(deny file-write* (subpath \"{}\"))\n",
                     expanded_str
                 ));
+                debug!("Deny-read: '{}' -> '{}'", path, expanded_str);
             }
 
             // Deny-write paths (allow read, deny write)
             for path in &self.deny_write {
-                let expanded = Self::expand_home(path);
+                let expanded = Self::expand_home_for_user(path, username);
                 let expanded_str = expanded.to_string_lossy();
                 profile.push_str(&format!(
                     "(deny file-write* (subpath \"{}\"))\n",
@@ -621,7 +826,7 @@ impl SandboxConfig {
         profile
     }
 
-    /// Build sandbox-exec arguments for macOS.
+    /// Build sandbox-exec arguments for macOS (current user).
     ///
     /// Creates a temporary file with the Seatbelt profile and returns
     /// the sandbox-exec arguments.
@@ -630,12 +835,25 @@ impl SandboxConfig {
         &self,
         workspace: &Path,
     ) -> Option<(Vec<String>, tempfile::NamedTempFile)> {
+        self.build_sandbox_exec_args_for_user(workspace, None)
+    }
+
+    /// Build sandbox-exec arguments for macOS for a specific user.
+    ///
+    /// Creates a temporary file with the Seatbelt profile and returns
+    /// the sandbox-exec arguments.
+    #[cfg(target_os = "macos")]
+    pub fn build_sandbox_exec_args_for_user(
+        &self,
+        workspace: &Path,
+        username: Option<&str>,
+    ) -> Option<(Vec<String>, tempfile::NamedTempFile)> {
         if !Self::is_sandbox_exec_available() {
             warn!("sandbox-exec not available");
             return None;
         }
 
-        let profile = self.build_seatbelt_profile(workspace);
+        let profile = self.build_seatbelt_profile_for_user(workspace, username);
 
         // Write profile to temp file
         let mut temp_file = match tempfile::NamedTempFile::new() {
@@ -656,12 +874,25 @@ impl SandboxConfig {
             temp_file.path().to_string_lossy().to_string(),
         ];
 
-        info!("macOS sandbox enabled with profile '{}'", self.profile);
+        info!(
+            "macOS sandbox enabled with profile '{}' for user {:?}",
+            self.profile,
+            username.unwrap_or("(current)")
+        );
         Some((args, temp_file))
     }
 
     #[cfg(not(target_os = "macos"))]
     pub fn build_sandbox_exec_args(&self, _workspace: &Path) -> Option<(Vec<String>, ())> {
+        None
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    pub fn build_sandbox_exec_args_for_user(
+        &self,
+        _workspace: &Path,
+        _username: Option<&str>,
+    ) -> Option<(Vec<String>, ())> {
         None
     }
 

@@ -83,6 +83,10 @@ impl RunnerClient {
     }
 
     /// Spawn an RPC process with stdin/stdout pipes.
+    /// Spawn an RPC process (with stdin/stdout pipes).
+    ///
+    /// If `sandboxed` is true, the runner will wrap the process in a sandbox
+    /// using its trusted configuration from `/etc/octo/sandbox.toml`.
     pub async fn spawn_rpc_process(
         &self,
         id: impl Into<String>,
@@ -90,6 +94,7 @@ impl RunnerClient {
         args: Vec<String>,
         cwd: impl Into<PathBuf>,
         env: HashMap<String, String>,
+        sandboxed: bool,
     ) -> Result<u32> {
         let req = RunnerRequest::SpawnRpcProcess(SpawnRpcProcessRequest {
             id: id.into(),
@@ -97,6 +102,7 @@ impl RunnerClient {
             args,
             cwd: cwd.into(),
             env,
+            sandboxed,
         });
 
         let resp = self.request(&req).await?;

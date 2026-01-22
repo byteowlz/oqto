@@ -1011,6 +1011,9 @@ pub struct PiConfig {
     /// Pi bridge URL (for container mode).
     /// e.g., "http://localhost:41824"
     pub bridge_url: Option<String>,
+    /// Whether to sandbox Pi processes (only applies to runner mode).
+    /// The runner loads sandbox config from /etc/octo/sandbox.toml.
+    pub sandboxed: Option<bool>,
 }
 
 impl Default for PiConfig {
@@ -1026,6 +1029,7 @@ impl Default for PiConfig {
             runtime_mode: main_chat::PiRuntimeMode::Local,
             runner_socket_pattern: None,
             bridge_url: None,
+            sandboxed: None,
         }
     }
 }
@@ -2091,6 +2095,7 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
             runtime_mode: ctx.config.pi.runtime_mode,
             runner_socket_pattern: ctx.config.pi.runner_socket_pattern.clone(),
             bridge_url: ctx.config.pi.bridge_url.clone(),
+            sandboxed: ctx.config.pi.sandboxed.unwrap_or(false),
         };
         let main_chat_pi_service = Arc::new(main_chat::MainChatPiService::new(
             main_chat_workspace_dir,

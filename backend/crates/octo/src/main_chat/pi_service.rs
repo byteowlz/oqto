@@ -89,6 +89,9 @@ pub struct MainChatPiServiceConfig {
     /// Pi bridge URL (for Container mode).
     /// e.g., "http://localhost:41824"
     pub bridge_url: Option<String>,
+    /// Whether to sandbox Pi processes (only applies to Runner mode).
+    /// The runner loads sandbox config from /etc/octo/sandbox.toml.
+    pub sandboxed: bool,
 }
 
 impl Default for MainChatPiServiceConfig {
@@ -103,6 +106,7 @@ impl Default for MainChatPiServiceConfig {
             runtime_mode: PiRuntimeMode::Local,
             runner_socket_pattern: None,
             bridge_url: None,
+            sandboxed: false,
         }
     }
 }
@@ -1226,6 +1230,7 @@ impl MainChatPiService {
             append_system_prompt,
             extensions: self.config.extensions.clone(),
             env: std::collections::HashMap::new(),
+            sandboxed: self.config.sandboxed,
         };
 
         // Create runtime and spawn
@@ -1419,6 +1424,7 @@ impl MainChatPiService {
             extensions: self.config.extensions.clone(),
             append_system_prompt,
             env,
+            sandboxed: self.config.sandboxed,
         };
 
         // Get the appropriate runtime for this user

@@ -44,6 +44,9 @@ pub struct PiSpawnConfig {
     pub append_system_prompt: Vec<PathBuf>,
     /// Environment variables to set.
     pub env: HashMap<String, String>,
+    /// Whether to run the process in a sandbox.
+    /// Only applies when using the runner runtime mode.
+    pub sandboxed: bool,
 }
 
 impl Default for PiSpawnConfig {
@@ -58,6 +61,7 @@ impl Default for PiSpawnConfig {
             extensions: Vec::new(),
             append_system_prompt: Vec::new(),
             env: HashMap::new(),
+            sandboxed: false,
         }
     }
 }
@@ -427,6 +431,7 @@ impl PiRuntime for RunnerPiRuntime {
                 args,
                 &config.work_dir,
                 config.env.clone(),
+                config.sandboxed,
             )
             .await
             .context("failed to spawn Pi via runner")?;

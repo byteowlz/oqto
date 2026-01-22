@@ -401,6 +401,10 @@ impl ProcessManager {
     ///
     /// If sandbox config is provided and enabled, wraps the command with bubblewrap.
     /// Falls back to direct spawn if bwrap is not available.
+    ///
+    /// When running as a different user (`run_as.username` is Some), the sandbox
+    /// will expand paths like `~/.config` to that user's home directory, not
+    /// the current user's.
     pub async fn spawn_sandboxed(
         &self,
         run_as: &RunAsUser,
@@ -412,20 +416,35 @@ impl ProcessManager {
     ) -> Result<Child> {
         // Check if sandboxing should be applied
         let workspace = cwd.unwrap_or(Path::new("."));
+        let target_user = run_as.username.as_deref();
+
+        info!(
+            "spawn_sandboxed: binary={}, workspace={}, target_user={:?}, sandbox_enabled={}",
+            binary,
+            workspace.display(),
+            target_user.unwrap_or("(current)"),
+            sandbox.map(|s| s.enabled).unwrap_or(false)
+        );
 
         // Merge global sandbox config with workspace-specific config
         let effective_sandbox = sandbox
             .filter(|s| s.enabled)
             .map(|global| global.with_workspace_config(workspace));
 
+        // Build bwrap args for the target user (important for multi-user mode)
         let sandbox_args = effective_sandbox
             .as_ref()
             .filter(|s| s.enabled)
-            .and_then(|s| s.build_bwrap_args(workspace));
+            .and_then(|s| s.build_bwrap_args_for_user(workspace, target_user));
 
         if let Some(bwrap_args) = sandbox_args {
             // Spawn with bwrap wrapper
-            info!("Spawning {} with sandbox (bwrap)", binary);
+            info!(
+                "Spawning {} with sandbox (bwrap) for user {:?}",
+                binary,
+                target_user.unwrap_or("(current)")
+            );
+            debug!("bwrap args count: {}", bwrap_args.len());
 
             // Build the full command: bwrap [bwrap_args] -- binary [args]
             let mut full_args: Vec<String> = bwrap_args;
@@ -434,12 +453,29 @@ impl ProcessManager {
 
             let full_args_refs: Vec<&str> = full_args.iter().map(|s| s.as_str()).collect();
 
+            debug!(
+                "Full sandboxed command: bwrap {} {}",
+                full_args_refs[..full_args_refs.len().saturating_sub(args.len() + 1)]
+                    .iter()
+                    .take(10)
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(" "),
+                if full_args_refs.len() > 10 { "..." } else { "" }
+            );
+
             // For sandboxed execution, we run bwrap as the target user
             // bwrap handles the actual command execution inside the sandbox
             self.spawn_as_user(run_as, "bwrap", &full_args_refs, None, env)
                 .await
         } else {
             // Direct spawn without sandbox
+            if sandbox.map(|s| s.enabled).unwrap_or(false) {
+                warn!(
+                    "Sandbox enabled but bwrap not available, spawning {} without sandbox",
+                    binary
+                );
+            }
             self.spawn_as_user(run_as, binary, args, cwd, env).await
         }
     }
