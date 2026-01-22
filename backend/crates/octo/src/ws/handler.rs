@@ -213,13 +213,10 @@ async fn handle_command(
                 .await?
                 .ok_or_else(|| anyhow::anyhow!("Session not found"))?;
 
-            // Get or create the opencode session
-            let opencode_session = state.sessions.get_or_create_opencode_session().await?;
-
             let subscription = SessionSubscription {
                 session_id: session_id.clone(),
-                workspace_path: session.workspace_path,
-                opencode_port: opencode_session.opencode_port as u16,
+                workspace_path: session.workspace_path.clone(),
+                opencode_port: session.opencode_port as u16,
             };
 
             hub.subscribe_session(user_id, subscription).await?;
@@ -229,8 +226,8 @@ async fn handle_command(
                 user_id,
                 WsEvent::SessionUpdated {
                     session_id: session_id.clone(),
-                    status: opencode_session.status.to_string(),
-                    workspace_path: opencode_session.workspace_path.clone(),
+                    status: session.status.to_string(),
+                    workspace_path: session.workspace_path.clone(),
                 },
             )
             .await;

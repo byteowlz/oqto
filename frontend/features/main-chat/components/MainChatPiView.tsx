@@ -1360,11 +1360,37 @@ export function MainChatPiView({
 						<Button
 							type="button"
 							onClick={handleStop}
-							className="stop-button-animated flex-shrink-0 h-8 px-2 flex items-center justify-center text-destructive hover:text-destructive/80 transition-colors p-0 bg-transparent hover:bg-transparent"
+							className="stop-button-animated flex-shrink-0 h-8 px-2 flex items-center justify-center text-destructive hover:text-destructive/80 transition-colors bg-transparent hover:bg-transparent"
 							variant="ghost"
 							size="icon"
 							title={t.stopAgent}
 						>
+							<span className="stop-button-ring" aria-hidden>
+								<svg viewBox="0 0 100 100" role="presentation">
+									<defs>
+										<linearGradient
+											id="stop-ring-gradient"
+											x1="0"
+											y1="0"
+											x2="100"
+											y2="100"
+											gradientUnits="userSpaceOnUse"
+										>
+											<stop offset="0" stopColor="transparent" />
+											<stop offset="0.2" stopColor="currentColor" />
+											<stop offset="0.8" stopColor="currentColor" />
+											<stop offset="1" stopColor="transparent" />
+										</linearGradient>
+									</defs>
+									<rect
+										x="2"
+										y="2"
+										width="96"
+										height="96"
+										stroke="url(#stop-ring-gradient)"
+									/>
+								</svg>
+							</span>
 							<StopCircle className="w-4 h-4" />
 						</Button>
 					)}
@@ -1375,7 +1401,7 @@ export function MainChatPiView({
 						data-dictation-send
 						onClick={() => handleSend("steer")}
 						disabled={!input.trim() && fileAttachments.length === 0}
-						className="flex-shrink-0 h-8 px-2 flex items-center justify-center text-muted-foreground hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed transition-colors p-0 bg-transparent hover:bg-transparent"
+						className="flex-shrink-0 h-8 px-2 flex items-center justify-center text-muted-foreground hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed transition-colors bg-transparent hover:bg-transparent"
 						variant="ghost"
 						size="icon"
 					>

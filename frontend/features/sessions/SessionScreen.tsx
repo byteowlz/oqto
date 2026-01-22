@@ -131,10 +131,7 @@ import type { A2UIUserAction } from "@/lib/a2ui/types";
 import { extractFileReferences, getFileTypeInfo } from "@/lib/file-types";
 import { getMessageText } from "@/lib/message-text";
 import { type ModelOption, filterModelOptions } from "@/lib/model-filter";
-import {
-	normalizePermissionEvent,
-	parseSessionErrorEvent,
-} from "@/lib/session-events";
+import { normalizePermissionEvent } from "@/lib/session-events";
 import { formatSessionDate, generateReadableId } from "@/lib/session-utils";
 import {
 	type SlashCommand,
@@ -143,6 +140,7 @@ import {
 	parseSlashInput,
 } from "@/lib/slash-commands";
 import { cn } from "@/lib/utils";
+import type { WsEvent } from "@/lib/ws-client";
 import {
 	ArrowDown,
 	AudioLines,
@@ -1963,78 +1961,82 @@ export const SessionScreen = memo(function SessionScreen() {
 		}
 	}, [mainChatAssistantName]);
 
-	const loadMessages = useCallback(async () => {
-		// Main Chat Pi view handles its own messages via usePiChat - skip loading here
-		if (mainChatActive) {
-			loadingSessionIdRef.current = "main-chat";
-			// Don't load messages - MainChatPiView has its own cached message loading
-			return;
-		}
-
-		if (!selectedChatSessionId) return;
-
-		// Capture session ID at start to detect stale responses
-		const targetSessionId = selectedChatSessionId;
-		loadingSessionIdRef.current = targetSessionId;
-		setMessagesLoading(true);
-
-		try {
-			let loadedMessages: OpenCodeMessageWithParts[] = [];
-
-			if (opencodeBaseUrl && !isHistoryOnlySession) {
-				// Live opencode is authoritative for streaming updates.
-				try {
-					loadedMessages = await fetchMessages(
-						opencodeBaseUrl,
-						targetSessionId,
-						{
-							directory: opencodeDirectory,
-						},
-					);
-				} catch (err) {
-					console.warn("Failed to load live messages, falling back:", err);
-				}
-			}
-
-			if (loadedMessages.length === 0) {
-				// History-only view (or no live session): use disk history cache.
-				try {
-					const historyMessages = await getChatMessages(targetSessionId);
-					if (historyMessages.length > 0) {
-						loadedMessages = convertChatMessagesToOpenCode(historyMessages);
-					}
-				} catch {
-					// Ignore history failures; we don't have a live fallback here.
-				}
-			}
-
-			// Check if session changed during async load - discard stale response
-			if (loadingSessionIdRef.current !== targetSessionId) {
+	const loadMessages = useCallback(
+		async (options?: { forceFresh?: boolean }) => {
+			// Main Chat Pi view handles its own messages via usePiChat - skip loading here
+			if (mainChatActive) {
+				loadingSessionIdRef.current = "main-chat";
+				// Don't load messages - MainChatPiView has its own cached message loading
 				return;
 			}
 
-			// Track that this session has messages (for skeleton display logic)
-			if (loadedMessages.length > 0) {
-				sessionsWithMessagesRef.current.add(targetSessionId);
-			}
+			if (!selectedChatSessionId) return;
 
-			// Use merge to prevent flickering when updating
-			startTransition(() => {
-				setMessages((prev) => mergeMessages(prev, loadedMessages));
-			});
-		} catch (err) {
-			setStatus((err as Error).message);
-		} finally {
-			setMessagesLoading(false);
-		}
-	}, [
-		opencodeBaseUrl,
-		opencodeDirectory,
-		selectedChatSessionId,
-		isHistoryOnlySession,
-		mergeMessages,
-		mainChatActive,
-	]);
+			// Capture session ID at start to detect stale responses
+			const targetSessionId = selectedChatSessionId;
+			loadingSessionIdRef.current = targetSessionId;
+			setMessagesLoading(true);
+
+			try {
+				let loadedMessages: OpenCodeMessageWithParts[] = [];
+
+				if (opencodeBaseUrl && !isHistoryOnlySession) {
+					// Live opencode is authoritative for streaming updates.
+					try {
+						loadedMessages = await fetchMessages(
+							opencodeBaseUrl,
+							targetSessionId,
+							{
+								directory: opencodeDirectory,
+								skipCache: options?.forceFresh,
+							},
+						);
+					} catch (err) {
+						console.warn("Failed to load live messages, falling back:", err);
+					}
+				}
+
+				if (loadedMessages.length === 0) {
+					// History-only view (or no live session): use disk history cache.
+					try {
+						const historyMessages = await getChatMessages(targetSessionId);
+						if (historyMessages.length > 0) {
+							loadedMessages = convertChatMessagesToOpenCode(historyMessages);
+						}
+					} catch {
+						// Ignore history failures; we don't have a live fallback here.
+					}
+				}
+
+				// Check if session changed during async load - discard stale response
+				if (loadingSessionIdRef.current !== targetSessionId) {
+					return;
+				}
+
+				// Track that this session has messages (for skeleton display logic)
+				if (loadedMessages.length > 0) {
+					sessionsWithMessagesRef.current.add(targetSessionId);
+				}
+
+				// Use merge to prevent flickering when updating
+				startTransition(() => {
+					setMessages((prev) => mergeMessages(prev, loadedMessages));
+				});
+			} catch (err) {
+				setStatus((err as Error).message);
+			} finally {
+				setMessagesLoading(false);
+			}
+		},
+		[
+			mainChatActive,
+			opencodeBaseUrl,
+			opencodeDirectory,
+			selectedChatSessionId,
+			isHistoryOnlySession,
+			mergeMessages,
+		],
+	);
 
 	const [eventsTransportMode, setEventsTransportMode] = useState<
 		"sse" | "polling" | "ws" | "reconnecting"
@@ -2070,7 +2072,7 @@ export const SessionScreen = memo(function SessionScreen() {
 				current.inFlight = true;
 				current.lastStartAt = Date.now();
 				try {
-					await loadMessages();
+					await loadMessages({ forceFresh: true });
 				} finally {
 					current.inFlight = false;
 					if (current.pending) requestMessageRefresh(maxFrequencyMs);
@@ -2322,37 +2324,21 @@ export const SessionScreen = memo(function SessionScreen() {
 		[messages],
 	);
 
-	// Event handler for session events (shared between WebSocket and SSE)
+	// Event handler for session events (WebSocket-only)
 	const handleSessionEvent = useCallback(
-		(event: { type: string; properties?: Record<string, unknown> | null }) => {
+		(event: WsEvent) => {
 			const eventType = event.type as string;
 
 			// Debug: log all events to help diagnose permission issues
-			if (eventType !== "message.updated") {
-				console.log("[Event]", eventType, event.properties);
+			if (
+				eventType !== "message_updated" &&
+				eventType !== "text_delta" &&
+				eventType !== "thinking_delta"
+			) {
+				console.log("[Event]", eventType, event);
 			}
 
-			if (eventType === "transport.mode") {
-				const props = event.properties as {
-					mode?: "sse" | "polling" | "ws" | "reconnecting";
-				} | null;
-				if (props?.mode) setEventsTransportMode(props.mode);
-				// Defer refresh to avoid blocking message handler
-				startTransition(() => {
-					if (effectiveOpencodeBaseUrl && activeSessionId) {
-						invalidateMessageCache(
-							effectiveOpencodeBaseUrl,
-							activeSessionId,
-							opencodeDirectory,
-						);
-						requestMessageRefresh(250);
-					}
-				});
-				return;
-			}
-
-			if (eventType === "server.connected") {
-				// Defer refresh to avoid blocking message handler
+			if (eventType === "connected" || eventType === "agent_connected") {
 				startTransition(() => {
 					if (effectiveOpencodeBaseUrl && activeSessionId) {
 						invalidateMessageCache(
@@ -2365,7 +2351,7 @@ export const SessionScreen = memo(function SessionScreen() {
 				});
 			}
 
-			if (eventType === "session.unavailable") {
+			if (eventType === "agent_disconnected") {
 				const now = Date.now();
 				const lastAttempt = sessionUnavailableRef.current;
 				if (
@@ -2414,9 +2400,8 @@ export const SessionScreen = memo(function SessionScreen() {
 				}
 			}
 
-			if (eventType === "session.idle") {
+			if (eventType === "session_idle") {
 				setChatState("idle");
-				// Invalidate cache and force refresh on idle - defer to avoid blocking
 				startTransition(() => {
 					if (effectiveOpencodeBaseUrl && activeSessionId) {
 						invalidateMessageCache(
@@ -2427,38 +2412,24 @@ export const SessionScreen = memo(function SessionScreen() {
 					}
 					loadMessages();
 					refreshOpencodeSessions();
-					// Refresh chat history to pick up auto-generated session titles
 					refreshChatHistory();
 				});
-			} else if (eventType === "session.busy") {
+			} else if (eventType === "session_busy") {
 				setChatState("sending");
 			}
 
-			// Handle permission events
-			if (
-				eventType === "permission.updated" ||
-				eventType === "permission.created"
-			) {
-				const permission = normalizePermissionEvent(event.properties);
+			if (eventType === "permission_request") {
+				const permission = normalizePermissionEvent(event);
 				if (!permission) return;
 				console.log("[Permission] Received permission request:", permission);
 				setPendingPermissions((prev) => {
-					// Avoid duplicates
 					if (prev.some((p) => p.id === permission.id)) return prev;
 					return [...prev, permission];
 				});
-				// Auto-show the first permission dialog if none is active
 				setActivePermission((current) => current || permission);
-			} else if (
-				eventType === "permission.replied" ||
-				eventType === "permission.resolved"
-			) {
-				const props = event.properties as Record<string, unknown> | undefined;
+			} else if (eventType === "permission_resolved") {
 				const permissionID =
-					(typeof props?.permissionID === "string" && props.permissionID) ||
-					(typeof props?.id === "string" && props.id) ||
-					(typeof props?.permission_id === "string" && props.permission_id) ||
-					"";
+					"permission_id" in event ? event.permission_id : "";
 				if (!permissionID) return;
 				console.log("[Permission] Permission replied:", permissionID);
 				setPendingPermissions((prev) =>
@@ -2469,27 +2440,30 @@ export const SessionScreen = memo(function SessionScreen() {
 				);
 			}
 
-			// Handle question events (user question / multiple choice)
-			if (eventType === "question.asked") {
-				const props = event.properties as QuestionRequest | undefined;
-				if (!props?.id || !props?.questions) return;
-				console.log("[Question] Received question request:", props);
+			if (eventType === "question_request") {
+				if (!("request_id" in event) || !("questions" in event)) return;
+				console.log("[Question] Received question request:", event);
 				setPendingQuestions((prev) => {
-					// Avoid duplicates
-					if (prev.some((q) => q.id === props.id)) return prev;
-					return [...prev, props];
+					if (prev.some((q) => q.id === event.request_id)) return prev;
+					return [
+						...prev,
+						{
+							id: event.request_id,
+							questions: event.questions as QuestionRequest["questions"],
+							tool: event.tool,
+						},
+					];
 				});
-				// Auto-show the first question dialog if none is active
-				setActiveQuestion((current) => current || props);
-			} else if (
-				eventType === "question.replied" ||
-				eventType === "question.rejected"
-			) {
-				const props = event.properties as Record<string, unknown> | undefined;
-				const requestID =
-					(typeof props?.requestID === "string" && props.requestID) ||
-					(typeof props?.id === "string" && props.id) ||
-					"";
+				setActiveQuestion(
+					(current) =>
+						current || {
+							id: event.request_id,
+							questions: event.questions as QuestionRequest["questions"],
+							tool: event.tool,
+						},
+				);
+			} else if (eventType === "question_resolved") {
+				const requestID = "request_id" in event ? event.request_id : "";
 				if (!requestID) return;
 				console.log("[Question] Question resolved:", requestID);
 				setPendingQuestions((prev) => prev.filter((q) => q.id !== requestID));
@@ -2498,38 +2472,52 @@ export const SessionScreen = memo(function SessionScreen() {
 				);
 			}
 
-			// Handle session errors
-			if (eventType === "session.error" || eventType === "error") {
-				const errorInfo =
-					typeof event.properties === "string"
-						? { name: "Error", message: event.properties }
-						: parseSessionErrorEvent(event.properties);
-				const errorName = errorInfo?.name ?? "Error";
-				const errorMessage = errorInfo?.message ?? "An unknown error occurred";
+			if (eventType === "session_error" || eventType === "error") {
+				const errorName =
+					eventType === "session_error" && "error_type" in event
+						? event.error_type
+						: "Error";
+				const errorMessage =
+					eventType === "session_error" && "message" in event
+						? event.message
+						: "message" in event
+							? event.message
+							: "An unknown error occurred";
 				console.error("[Session Error]", errorName, errorMessage);
 				toast.error(errorMessage, {
 					description: errorName !== "UnknownError" ? errorName : undefined,
 					duration: 8000,
 				});
-				// Reset chat state on error
 				setChatState("idle");
 			}
 
-			if (eventType === "compaction.end" || eventType === "compaction_end") {
-				const props = event.properties as { success?: boolean } | null;
-				if (!props || props.success !== false) {
-					// Defer non-critical UI update
+			if (eventType === "tool_end" && "is_error" in event && event.is_error) {
+				const message =
+					typeof event.result === "string"
+						? event.result
+						: "Tool execution failed";
+				toast.error(message, { duration: 8000 });
+				setChatState("idle");
+			}
+
+			if (eventType === "compaction_end") {
+				if (!("success" in event) || event.success !== false) {
 					startTransition(() => {
 						setLastCompactionAt(Date.now());
 					});
 				}
 			}
 
-			// Refresh messages on any message event
-			if (eventType?.startsWith("message")) {
-				// Defer cache invalidation and refresh to avoid blocking message handler
+			if (
+				eventType === "message_updated" ||
+				eventType === "message_start" ||
+				eventType === "message_end" ||
+				eventType === "text_delta" ||
+				eventType === "thinking_delta" ||
+				eventType === "tool_start" ||
+				eventType === "tool_end"
+			) {
 				startTransition(() => {
-					// Invalidate cache when messages change
 					if (effectiveOpencodeBaseUrl && activeSessionId) {
 						invalidateMessageCache(
 							effectiveOpencodeBaseUrl,
@@ -2537,53 +2525,42 @@ export const SessionScreen = memo(function SessionScreen() {
 							opencodeDirectory,
 						);
 					}
-					// Coalesce refreshes to avoid hammering the server during streaming updates.
-					requestMessageRefresh(1000);
+					requestMessageRefresh(
+						eventType === "text_delta" || eventType === "thinking_delta"
+							? 400
+							: 1000,
+					);
 				});
 			}
 
-			// Handle A2UI surface events
-			if (eventType === "a2ui.surface") {
-				const props = event.properties as {
-					sessionId?: string;
-					surfaceId?: string;
-					messages?: unknown[];
-					blocking?: boolean;
-					requestId?: string;
-				} | null;
-				if (props?.surfaceId && props?.messages) {
-					console.log("[A2UI] Surface received:", props.surfaceId, props);
-					setA2uiSurfaces((prev) => {
-						// Replace existing surface with same ID or add new
-						const existing = prev.findIndex(
-							(s) => s.surfaceId === props.surfaceId,
-						);
-						const newSurface: A2UISurface = {
-							surfaceId: props.surfaceId,
-							sessionId: props.sessionId ?? "",
-							messages: props.messages as A2UIMessage[],
-							blocking: props.blocking ?? false,
-							requestId: props.requestId,
-						};
-						if (existing >= 0) {
-							const updated = [...prev];
-							updated[existing] = newSurface;
-							return updated;
-						}
-						return [...prev, newSurface];
-					});
-				}
+			if (eventType === "a2ui_surface") {
+				if (!("surface_id" in event) || !("messages" in event)) return;
+				console.log("[A2UI] Surface received:", event.surface_id, event);
+				setA2uiSurfaces((prev) => {
+					const existing = prev.findIndex(
+						(s) => s.surfaceId === event.surface_id,
+					);
+					const newSurface: A2UISurface = {
+						surfaceId: event.surface_id,
+						sessionId: event.session_id,
+						messages: event.messages as A2UIMessage[],
+						blocking: event.blocking ?? false,
+						requestId: event.request_id,
+					};
+					if (existing >= 0) {
+						const updated = [...prev];
+						updated[existing] = newSurface;
+						return updated;
+					}
+					return [...prev, newSurface];
+				});
 			}
 
-			// Handle A2UI action resolved (remove blocking surface)
-			if (eventType === "a2ui.action_resolved") {
-				const props = event.properties as {
-					requestId?: string;
-				} | null;
-				if (props?.requestId) {
-					console.log("[A2UI] Action resolved:", props.requestId);
+			if (eventType === "a2ui_action_resolved") {
+				if ("request_id" in event) {
+					console.log("[A2UI] Action resolved:", event.request_id);
 					setA2uiSurfaces((prev) =>
-						prev.filter((s) => s.requestId !== props.requestId),
+						prev.filter((s) => s.requestId !== event.request_id),
 					);
 				}
 			}
@@ -2611,11 +2588,8 @@ export const SessionScreen = memo(function SessionScreen() {
 	const { transportMode: sessionTransportMode } = useSessionEvents(
 		handleSessionEvent,
 		{
-			useWebSocket: features.websocket_events ?? false,
+			useWebSocket: true,
 			workspaceSessionId: selectedWorkspaceSessionId,
-			opencodeBaseUrl: effectiveOpencodeBaseUrl,
-			opencodeDirectory,
-			activeSessionId,
 			enabled:
 				!mainChatActive && !!effectiveOpencodeBaseUrl && !!activeSessionId,
 		},
@@ -4531,7 +4505,7 @@ export const SessionScreen = memo(function SessionScreen() {
 						<Button
 							type="button"
 							onClick={handleStop}
-							className="stop-button-animated flex-shrink-0 h-8 px-2 flex items-center justify-center text-destructive hover:text-destructive/80 transition-colors p-0 bg-transparent hover:bg-transparent"
+							className="stop-button-animated flex-shrink-0 h-8 px-2 flex items-center justify-center text-destructive hover:text-destructive/80 transition-colors bg-transparent hover:bg-transparent"
 							variant="ghost"
 							size="icon"
 							title={
@@ -4540,6 +4514,32 @@ export const SessionScreen = memo(function SessionScreen() {
 									: "Stop agent (2x Esc)"
 							}
 						>
+							<span className="stop-button-ring" aria-hidden>
+								<svg viewBox="0 0 100 100" role="presentation">
+									<defs>
+										<linearGradient
+											id="stop-ring-gradient"
+											x1="0"
+											y1="0"
+											x2="100"
+											y2="100"
+											gradientUnits="userSpaceOnUse"
+										>
+											<stop offset="0" stopColor="transparent" />
+											<stop offset="0.2" stopColor="currentColor" />
+											<stop offset="0.8" stopColor="currentColor" />
+											<stop offset="1" stopColor="transparent" />
+										</linearGradient>
+									</defs>
+									<rect
+										x="2"
+										y="2"
+										width="96"
+										height="96"
+										stroke="url(#stop-ring-gradient)"
+									/>
+								</svg>
+							</span>
 							<StopCircle className="w-4 h-4" />
 						</Button>
 					)}
@@ -4554,7 +4554,7 @@ export const SessionScreen = memo(function SessionScreen() {
 							fileAttachments.length === 0 &&
 							issueAttachments.length === 0
 						}
-						className="flex-shrink-0 h-8 px-2 flex items-center justify-center text-muted-foreground hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed transition-colors p-0 bg-transparent hover:bg-transparent"
+						className="flex-shrink-0 h-8 px-2 flex items-center justify-center text-muted-foreground hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed transition-colors bg-transparent hover:bg-transparent"
 						variant="ghost"
 						size="icon"
 					>

@@ -816,9 +816,23 @@ pub async fn get_pi_session_messages(
 ) -> ApiResult<Json<Vec<PiSessionMessage>>> {
     let pi_service = get_pi_service(&state)?;
 
-    let messages = pi_service
-        .get_session_messages(user.id(), &session_id)
-        .map_err(|e| ApiError::internal(format!("Failed to load Pi session: {}", e)))?;
+    let messages = match pi_service.get_session_messages(user.id(), &session_id) {
+        Ok(messages) => messages,
+        Err(err) => {
+            if pi_service
+                .is_active_session(user.id(), &session_id)
+                .await
+                && err.to_string().contains("Session not found")
+            {
+                Vec::new()
+            } else {
+                return Err(ApiError::internal(format!(
+                    "Failed to load Pi session: {}",
+                    err
+                )));
+            }
+        }
+    };
 
     Ok(Json(messages))
 }

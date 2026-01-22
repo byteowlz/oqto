@@ -371,7 +371,7 @@ impl SessionRepository {
     /// List running sessions that have been idle for longer than the given duration.
     pub async fn list_idle_sessions(&self, idle_minutes: i64) -> Result<Vec<Session>> {
         let query = format!(
-            "SELECT {} FROM sessions WHERE status = 'running' AND (last_activity_at IS NULL OR last_activity_at < datetime('now', ? || ' minutes')) ORDER BY last_activity_at ASC",
+            "SELECT {} FROM sessions WHERE status = 'running' AND (last_activity_at IS NULL OR datetime(last_activity_at) < datetime('now', ? || ' minutes')) ORDER BY datetime(last_activity_at) ASC",
             SESSION_COLUMNS
         );
         let sessions = sqlx::query_as::<_, Session>(&query)

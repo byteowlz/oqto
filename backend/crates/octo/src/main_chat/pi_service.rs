@@ -1122,13 +1122,6 @@ impl MainChatPiService {
         user_id: &str,
         session_id: &str,
     ) -> Result<Arc<UserPiSession>> {
-        let work_dir = self.get_main_chat_dir(user_id);
-        let sessions_dir = self.get_pi_sessions_dir(&work_dir);
-
-        // Verify session exists
-        let session_file = self.find_session_file(&sessions_dir, session_id)?;
-        info!("Resuming Pi session {} from {:?}", session_id, session_file);
-
         let key = (user_id.to_string(), session_id.to_string());
 
         // Check if we already have a process for this session
@@ -1142,6 +1135,13 @@ impl MainChatPiService {
                 return Ok(Arc::clone(existing));
             }
         }
+
+        let work_dir = self.get_main_chat_dir(user_id);
+        let sessions_dir = self.get_pi_sessions_dir(&work_dir);
+
+        // Verify session exists on disk for cold resume.
+        let session_file = self.find_session_file(&sessions_dir, session_id)?;
+        info!("Resuming Pi session {} from {:?}", session_id, session_file);
 
         // Spawn a new process for this session
         info!(
@@ -1527,7 +1527,7 @@ impl MainChatPiService {
             let sessions = self.sessions.read().await;
             sessions
                 .iter()
-                .filter(|((uid, _), session)| {
+                .filter(|((uid, _), _session)| {
                     if uid != user_id {
                         return false;
                     }
@@ -1562,6 +1562,15 @@ impl MainChatPiService {
 
         info!("Closed all sessions for user {}", user_id);
         Ok(())
+    }
+
+    /// Check if a session ID is currently active for a user.
+    pub async fn is_active_session(&self, user_id: &str, session_id: &str) -> bool {
+        let active = self.active_session.read().await;
+        active
+            .get(user_id)
+            .map(|active_id| active_id == session_id)
+            .unwrap_or(false)
     }
 
     /// Get the active session for a user (without creating).

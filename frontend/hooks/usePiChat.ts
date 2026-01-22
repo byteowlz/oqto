@@ -215,14 +215,65 @@ function shouldPreserveLocalMessage(message: PiDisplayMessage): boolean {
 	return false;
 }
 
+const MESSAGE_MATCH_WINDOW_MS = 120_000;
+
+function safeStringify(value: unknown): string {
+	if (value === null || value === undefined) return "";
+	if (typeof value === "string") return value;
+	try {
+		return JSON.stringify(value);
+	} catch {
+		return String(value);
+	}
+}
+
+function messageFingerprint(message: PiDisplayMessage): string {
+	const parts = message.parts.map((part) => {
+		switch (part.type) {
+			case "text":
+				return `text:${part.content}`;
+			case "thinking":
+				return `thinking:${part.content}`;
+			case "tool_use":
+				return `tool_use:${part.name}:${safeStringify(part.input)}`;
+			case "tool_result":
+				return `tool_result:${part.name ?? ""}:${safeStringify(part.content)}:${
+					part.isError ? "1" : "0"
+				}`;
+			case "compaction":
+				return "compaction";
+			default:
+				return part.type;
+		}
+	});
+	return `${message.role}|${parts.join("|")}`;
+}
+
 function mergeServerMessages(
 	previous: PiDisplayMessage[],
 	serverMessages: PiDisplayMessage[],
 ): PiDisplayMessage[] {
 	const serverIds = new Set(serverMessages.map((m) => m.id));
-	const preserved = previous.filter(
-		(m) => shouldPreserveLocalMessage(m) && !serverIds.has(m.id),
-	);
+	const serverEntries = serverMessages.map((message) => ({
+		fingerprint: messageFingerprint(message),
+		timestamp: message.timestamp ?? 0,
+	}));
+	const preserved = previous.filter((message) => {
+		if (!shouldPreserveLocalMessage(message)) return false;
+		if (serverIds.has(message.id)) return false;
+		const localFingerprint = messageFingerprint(message);
+		for (const server of serverEntries) {
+			if (server.fingerprint !== localFingerprint) continue;
+			if (!server.timestamp || !message.timestamp) {
+				return false;
+			}
+			const diff = Math.abs(server.timestamp - message.timestamp);
+			if (diff <= MESSAGE_MATCH_WINDOW_MS) {
+				return false;
+			}
+		}
+		return true;
+	});
 	return preserved.length > 0
 		? [...serverMessages, ...preserved]
 		: serverMessages;
