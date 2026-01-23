@@ -369,6 +369,13 @@ impl LinuxUsersConfig {
             );
         }
 
+        // Fast path: if the runner socket already exists, we're good.
+        // This avoids expensive privilege checks on every session creation.
+        let expected_socket = base_dir.join(username).join("octo-runner.sock");
+        if expected_socket.exists() {
+            return Ok(());
+        }
+
         // Ensure per-user socket directory exists.
         // If we're provisioning as root/sudo, we can set correct ownership. Otherwise,
         // we only create it when username==current user.
@@ -399,8 +406,11 @@ impl LinuxUsersConfig {
 
         // Enable lingering so the user's systemd instance can run without login.
         // This is required for headless multi-user deployments.
-        run_privileged_command(self.use_sudo, "loginctl", &["enable-linger", username])
-            .context("enabling systemd linger")?;
+        // Check if already enabled to avoid requiring sudo on every session.
+        if !self.is_linger_enabled(username) {
+            run_privileged_command(self.use_sudo, "loginctl", &["enable-linger", username])
+                .context("enabling systemd linger")?;
+        }
 
         // Ensure the user's systemd instance is running.
         // This is best-effort; if it fails, systemctl --user may still work depending on distro.
@@ -432,7 +442,6 @@ impl LinuxUsersConfig {
         }
 
         // If the runner socket exists, we consider it good enough.
-        let expected_socket = base_dir.join(username).join("octo-runner.sock");
         if !expected_socket.exists() {
             anyhow::bail!(
                 "octo-runner socket not found at {}",
@@ -441,6 +450,22 @@ impl LinuxUsersConfig {
         }
 
         Ok(())
+    }
+
+    /// Check if systemd linger is already enabled for a user.
+    fn is_linger_enabled(&self, username: &str) -> bool {
+        // Check via loginctl show-user --value -p Linger
+        // This doesn't require privileges.
+        std::process::Command::new("loginctl")
+            .args(["show-user", username, "-p", "Linger", "--value"])
+            .output()
+            .map(|out| {
+                out.status.success()
+                    && String::from_utf8_lossy(&out.stdout)
+                        .trim()
+                        .eq_ignore_ascii_case("yes")
+            })
+            .unwrap_or(false)
     }
 
     /// Find the next available UID starting from uid_start.
