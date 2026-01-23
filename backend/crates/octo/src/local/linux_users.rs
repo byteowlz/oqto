@@ -6,6 +6,7 @@
 use anyhow::{Context, Result};
 use log::{debug, info, warn};
 use serde::{Deserialize, Serialize};
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -355,32 +356,46 @@ impl LinuxUsersConfig {
 
     /// Ensure the per-user octo-runner daemon is enabled and started.
     fn ensure_octo_runner_running(&self, username: &str, uid: u32) -> Result<()> {
-        // Ensure shared runner socket directory exists for this user.
-        // Octo (backend) must be able to connect to this socket without root.
-        let base_dir = "/run/octo/runner-sockets";
-        run_privileged_command(self.use_sudo, "mkdir", &["-p", base_dir])
-            .context("creating runner socket base dir")?;
-        run_privileged_command(
-            self.use_sudo,
-            "chown",
-            &[&format!("root:{}", self.group), base_dir],
-        )
-        .ok();
-        // Setgid so per-user sockets inherit group.
-        run_privileged_command(self.use_sudo, "chmod", &["2770", base_dir]).ok();
+        // NOTE: do not attempt to create /run/octo/... via sudo here.
+        // It must be provisioned at boot (tmpfiles) or during install.
+        // Request-time privilege prompts would hang the backend.
+        let base_dir = Path::new("/run/octo/runner-sockets");
+        if !base_dir.exists() {
+            anyhow::bail!(
+                "runner socket base dir missing at {}. Install tmpfiles config (systemd/octo-runner.tmpfiles.conf) \
+                 and run `sudo systemd-tmpfiles --create`, or create the directory as root with mode 2770 and group '{}'.",
+                base_dir.display(),
+                self.group
+            );
+        }
 
-        let user_dir = format!("{}/{}", base_dir, username);
-        run_privileged_command(self.use_sudo, "mkdir", &["-p", &user_dir])
-            .context("creating runner socket user dir")?;
-        run_privileged_command(
-            self.use_sudo,
-            "chown",
-            &[&format!("{}:{}", username, self.group), &user_dir],
-        )
-        .context("chown runner socket user dir")?;
-        // Setgid so socket inherits group.
-        run_privileged_command(self.use_sudo, "chmod", &["2770", &user_dir])
-            .context("chmod runner socket user dir")?;
+        // Ensure per-user socket directory exists.
+        // If we're provisioning as root/sudo, we can set correct ownership. Otherwise,
+        // we only create it when username==current user.
+        let user_dir = base_dir.join(username);
+        if !user_dir.exists() {
+            let is_current_user = std::env::var("USER").ok().as_deref() == Some(username);
+            if is_current_user {
+                std::fs::create_dir_all(&user_dir)
+                    .with_context(|| format!("creating {}", user_dir.display()))?;
+                let _ =
+                    std::fs::set_permissions(&user_dir, std::fs::Permissions::from_mode(0o2770));
+            } else {
+                let user_dir_str = user_dir
+                    .to_str()
+                    .ok_or_else(|| anyhow::anyhow!("invalid user_dir path"))?;
+                run_privileged_command(self.use_sudo, "mkdir", &["-p", user_dir_str])
+                    .context("creating runner socket user dir")?;
+                run_privileged_command(
+                    self.use_sudo,
+                    "chown",
+                    &[&format!("{}:{}", username, self.group), user_dir_str],
+                )
+                .context("chown runner socket user dir")?;
+                run_privileged_command(self.use_sudo, "chmod", &["2770", user_dir_str])
+                    .context("chmod runner socket user dir")?;
+            }
+        }
 
         // Enable lingering so the user's systemd instance can run without login.
         // This is required for headless multi-user deployments.
@@ -417,7 +432,7 @@ impl LinuxUsersConfig {
         }
 
         // If the runner socket exists, we consider it good enough.
-        let expected_socket = Path::new(base_dir).join(username).join("octo-runner.sock");
+        let expected_socket = base_dir.join(username).join("octo-runner.sock");
         if !expected_socket.exists() {
             anyhow::bail!(
                 "octo-runner socket not found at {}",
