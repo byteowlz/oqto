@@ -209,6 +209,7 @@ async fn handle_command(
             // Get session info
             let session = state
                 .sessions
+                .for_user(user_id)
                 .get_session(&session_id)
                 .await?
                 .ok_or_else(|| anyhow::anyhow!("Session not found"))?;
@@ -258,7 +259,11 @@ async fn handle_command(
                 .ok_or_else(|| anyhow::anyhow!("Session not found"))?;
 
             // Get opencode session
-            let opencode_session = state.sessions.get_or_create_opencode_session().await?;
+            let opencode_session = state
+                .sessions
+                .for_user(user_id)
+                .get_or_create_opencode_session()
+                .await?;
 
             // Send message via HTTP to opencode
             let client = reqwest::Client::new();
@@ -297,12 +302,17 @@ async fn handle_command(
             // Get session
             let session = state
                 .sessions
+                .for_user(user_id)
                 .get_session(&session_id)
                 .await?
                 .ok_or_else(|| anyhow::anyhow!("Session not found"))?;
 
             // Get opencode session
-            let opencode_session = state.sessions.get_or_create_opencode_session().await?;
+            let opencode_session = state
+                .sessions
+                .for_user(user_id)
+                .get_or_create_opencode_session()
+                .await?;
 
             // Send parts via HTTP to opencode
             let client = reqwest::Client::new();
@@ -352,12 +362,17 @@ async fn handle_command(
             // Get session
             let session = state
                 .sessions
+                .for_user(user_id)
                 .get_session(&session_id)
                 .await?
                 .ok_or_else(|| anyhow::anyhow!("Session not found"))?;
 
             // Get opencode session
-            let opencode_session = state.sessions.get_or_create_opencode_session().await?;
+            let opencode_session = state
+                .sessions
+                .for_user(user_id)
+                .get_or_create_opencode_session()
+                .await?;
 
             // Send abort via HTTP to opencode
             let client = reqwest::Client::new();
@@ -394,12 +409,17 @@ async fn handle_command(
             // Get session
             let session = state
                 .sessions
+                .for_user(user_id)
                 .get_session(&session_id)
                 .await?
                 .ok_or_else(|| anyhow::anyhow!("Session not found"))?;
 
             // Get opencode session
-            let opencode_session = state.sessions.get_or_create_opencode_session().await?;
+            let opencode_session = state
+                .sessions
+                .for_user(user_id)
+                .get_or_create_opencode_session()
+                .await?;
 
             // Send permission reply via HTTP to opencode
             let client = reqwest::Client::new();
@@ -438,12 +458,17 @@ async fn handle_command(
             // Get session
             let session = state
                 .sessions
+                .for_user(user_id)
                 .get_session(&session_id)
                 .await?
                 .ok_or_else(|| anyhow::anyhow!("Session not found"))?;
 
             // Get opencode session
-            let opencode_session = state.sessions.get_or_create_opencode_session().await?;
+            let opencode_session = state
+                .sessions
+                .for_user(user_id)
+                .get_or_create_opencode_session()
+                .await?;
 
             // Send question reply via HTTP to opencode
             let client = reqwest::Client::new();
@@ -480,12 +505,17 @@ async fn handle_command(
             // Get session
             let session = state
                 .sessions
+                .for_user(user_id)
                 .get_session(&session_id)
                 .await?
                 .ok_or_else(|| anyhow::anyhow!("Session not found"))?;
 
             // Get opencode session
-            let opencode_session = state.sessions.get_or_create_opencode_session().await?;
+            let opencode_session = state
+                .sessions
+                .for_user(user_id)
+                .get_or_create_opencode_session()
+                .await?;
 
             // Send question reject via HTTP to opencode
             let client = reqwest::Client::new();
@@ -518,11 +548,16 @@ async fn handle_command(
             // Get session info and send update
             let session = state
                 .sessions
+                .for_user(user_id)
                 .get_session(&session_id)
                 .await?
                 .ok_or_else(|| anyhow::anyhow!("Session not found"))?;
 
-            let opencode_session = state.sessions.get_or_create_opencode_session().await?;
+            let opencode_session = state
+                .sessions
+                .for_user(user_id)
+                .get_or_create_opencode_session()
+                .await?;
 
             hub.send_to_user(
                 user_id,
@@ -552,12 +587,17 @@ async fn handle_command(
             // Get session
             let session = state
                 .sessions
+                .for_user(user_id)
                 .get_session(&session_id)
                 .await?
                 .ok_or_else(|| anyhow::anyhow!("Session not found"))?;
 
             // Get opencode session
-            let opencode_session = state.sessions.get_or_create_opencode_session().await?;
+            let opencode_session = state
+                .sessions
+                .for_user(user_id)
+                .get_or_create_opencode_session()
+                .await?;
 
             // Fetch messages from opencode
             let client = reqwest::Client::new();

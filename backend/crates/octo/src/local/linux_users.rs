@@ -218,12 +218,10 @@ impl LinuxUsersConfig {
                 return Ok(());
             }
 
-            warn!(
-                "sudo requires password. Linux user creation may prompt for password or fail. \
-                 Consider adding NOPASSWD for user management commands in sudoers."
+            anyhow::bail!(
+                "sudo is enabled but requires a password (non-interactive sudo -n failed). \
+                 Configure NOPASSWD sudoers for Octo multi-user commands (run setup.sh) or run octo as root."
             );
-            // Don't fail - we'll try anyway and fail gracefully if needed
-            return Ok(());
         }
 
         anyhow::bail!(
@@ -574,6 +572,7 @@ fn run_privileged_command(use_sudo: bool, cmd: &str, args: &[&str]) -> Result<()
     let output = if use_sudo && !is_root {
         debug!("Running: sudo {} {:?}", cmd, args);
         Command::new("sudo")
+            .arg("-n")
             .arg(cmd)
             .args(args)
             .output()
@@ -616,7 +615,7 @@ fn run_as_user(
         c
     } else if use_sudo {
         let mut c = Command::new("sudo");
-        c.args(["-u", username, cmd]);
+        c.args(["-n", "-u", username, cmd]);
         c
     } else {
         anyhow::bail!("must be root or have sudo enabled to run as another user");

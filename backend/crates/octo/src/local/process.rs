@@ -244,30 +244,57 @@ impl ProcessManager {
     ) -> Result<u32> {
         info!("Spawning ttyd on port {} for session {}", port, session_id);
 
-        // For ttyd, we need to spawn a shell as the target user
-        // Use zsh as the default shell for a better experience
-        let (shell_cmd, shell_args) = if let Some(ref username) = run_as.username {
-            // Use su - to get a proper login shell as the target user
-            ("su", vec!["-", username, "-c", "exec zsh -l"])
+        // For ttyd, we need to spawn a shell as the target user.
+        // ttyd takes: <command> [<arguments...>] as separate positional args.
+        // Use zsh as the default shell for a better experience.
+        let shell_args: Vec<String> = if let Some(ref username) = run_as.username {
+            if run_as.use_sudo {
+                // Prefer sudo to avoid su variants that reject -c or -l options.
+                vec![
+                    "sudo".to_string(),
+                    "-u".to_string(),
+                    username.clone(),
+                    "-H".to_string(),
+                    "--".to_string(),
+                    "zsh".to_string(),
+                    "-l".to_string(),
+                ]
+            } else {
+                // Use su -l <user> runs a login shell; we then exec zsh.
+                vec![
+                    "su".to_string(),
+                    "-l".to_string(),
+                    username.clone(),
+                    "-c".to_string(),
+                    "exec zsh -l".to_string(),
+                ]
+            }
         } else {
-            ("zsh", vec!["-l"])
+            vec!["zsh".to_string(), "-l".to_string()]
         };
+
+        // Build ttyd args: options first, then shell command + args
+        let port_str = port.to_string();
+        let cwd_str = cwd.to_str().unwrap_or(".");
+        let mut ttyd_args: Vec<&str> = vec![
+            "--port",
+            &port_str,
+            "--interface",
+            "0.0.0.0",
+            "--writable",
+            "--cwd",
+            cwd_str,
+        ];
+        // Append shell command and its arguments as separate positional args
+        for arg in &shell_args {
+            ttyd_args.push(arg);
+        }
 
         let child = self
             .spawn_as_user(
                 &RunAsUser::current(), // ttyd itself runs as current user
                 ttyd_binary,
-                &[
-                    "--port",
-                    &port.to_string(),
-                    "--interface",
-                    "0.0.0.0",
-                    "--writable",
-                    "--cwd",
-                    cwd.to_str().unwrap_or("."),
-                    shell_cmd,
-                    &shell_args.join(" "),
-                ],
+                &ttyd_args,
                 None,
                 HashMap::new(),
             )
@@ -309,7 +336,8 @@ impl ProcessManager {
                 );
 
                 let mut cmd = Command::new("sudo");
-                cmd.arg("-u")
+                cmd.arg("-n")
+                    .arg("-u")
                     .arg(username)
                     .arg("--preserve-env")
                     .arg("--")

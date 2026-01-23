@@ -1792,10 +1792,19 @@ pub struct AgentListQuery {
 #[instrument(skip(state))]
 pub async fn list_agents(
     State(state): State<AppState>,
+    user: CurrentUser,
     Path(session_id): Path<String>,
     Query(query): Query<AgentListQuery>,
 ) -> ApiResult<Json<Vec<AgentInfo>>> {
-    let opencode_session = state.sessions.get_or_create_opencode_session().await?;
+    // Ensure the requested session belongs to this user.
+    let _ = state
+        .sessions
+        .for_user(user.id())
+        .get_session(&session_id)
+        .await?
+        .ok_or_else(|| ApiError::not_found(format!("Session {} not found", session_id)))?;
+
+    let opencode_session = state.sessions.for_user(user.id()).get_or_create_opencode_session().await?;
     let agents = state
         .agents
         .list_agents(&opencode_session.id, query.include_context)
@@ -1813,10 +1822,18 @@ pub async fn list_agents(
 #[instrument(skip(state))]
 pub async fn get_agent(
     State(state): State<AppState>,
+    user: CurrentUser,
     Path((session_id, agent_id)): Path<(String, String)>,
     Query(query): Query<AgentListQuery>,
 ) -> ApiResult<Json<AgentInfo>> {
-    let opencode_session = state.sessions.get_or_create_opencode_session().await?;
+    let _ = state
+        .sessions
+        .for_user(user.id())
+        .get_session(&session_id)
+        .await?
+        .ok_or_else(|| ApiError::not_found(format!("Session {} not found", session_id)))?;
+
+    let opencode_session = state.sessions.for_user(user.id()).get_or_create_opencode_session().await?;
     state
         .agents
         .get_agent(&opencode_session.id, &agent_id, query.include_context)
@@ -1829,10 +1846,18 @@ pub async fn get_agent(
 #[instrument(skip(state, request), fields(directory = ?request.directory))]
 pub async fn start_agent(
     State(state): State<AppState>,
+    user: CurrentUser,
     Path(session_id): Path<String>,
     Json(request): Json<StartAgentRequest>,
 ) -> ApiResult<(StatusCode, Json<StartAgentResponse>)> {
-    let opencode_session = state.sessions.get_or_create_opencode_session().await?;
+    let _ = state
+        .sessions
+        .for_user(user.id())
+        .get_session(&session_id)
+        .await?
+        .ok_or_else(|| ApiError::not_found(format!("Session {} not found", session_id)))?;
+
+    let opencode_session = state.sessions.for_user(user.id()).get_or_create_opencode_session().await?;
     let response = state
         .agents
         .start_agent(&opencode_session.id, &request.directory)
@@ -1851,9 +1876,17 @@ pub async fn start_agent(
 #[instrument(skip(state))]
 pub async fn stop_agent(
     State(state): State<AppState>,
+    user: CurrentUser,
     Path((session_id, agent_id)): Path<(String, String)>,
 ) -> ApiResult<Json<StopAgentResponse>> {
-    let opencode_session = state.sessions.get_or_create_opencode_session().await?;
+    let _ = state
+        .sessions
+        .for_user(user.id())
+        .get_session(&session_id)
+        .await?
+        .ok_or_else(|| ApiError::not_found(format!("Session {} not found", session_id)))?;
+
+    let opencode_session = state.sessions.for_user(user.id()).get_or_create_opencode_session().await?;
     let response = state
         .agents
         .stop_agent(&opencode_session.id, &agent_id)
@@ -1872,9 +1905,17 @@ pub async fn stop_agent(
 #[instrument(skip(state))]
 pub async fn rediscover_agents(
     State(state): State<AppState>,
+    user: CurrentUser,
     Path(session_id): Path<String>,
 ) -> ApiResult<StatusCode> {
-    let opencode_session = state.sessions.get_or_create_opencode_session().await?;
+    let _ = state
+        .sessions
+        .for_user(user.id())
+        .get_session(&session_id)
+        .await?
+        .ok_or_else(|| ApiError::not_found(format!("Session {} not found", session_id)))?;
+
+    let opencode_session = state.sessions.for_user(user.id()).get_or_create_opencode_session().await?;
     state.agents.rediscover_agents(&opencode_session.id).await?;
     info!(
         requested_session_id = %session_id,
@@ -1888,10 +1929,18 @@ pub async fn rediscover_agents(
 #[instrument(skip(state, request), fields(name = ?request.name))]
 pub async fn create_agent(
     State(state): State<AppState>,
+    user: CurrentUser,
     Path(session_id): Path<String>,
     Json(request): Json<CreateAgentRequest>,
 ) -> ApiResult<(StatusCode, Json<CreateAgentResponse>)> {
-    let opencode_session = state.sessions.get_or_create_opencode_session().await?;
+    let _ = state
+        .sessions
+        .for_user(user.id())
+        .get_session(&session_id)
+        .await?
+        .ok_or_else(|| ApiError::not_found(format!("Session {} not found", session_id)))?;
+
+    let opencode_session = state.sessions.for_user(user.id()).get_or_create_opencode_session().await?;
     let response = state
         .agents
         .create_agent(
@@ -1915,10 +1964,18 @@ pub async fn create_agent(
 #[instrument(skip(state, request), fields(command = %request.command))]
 pub async fn exec_agent_command(
     State(state): State<AppState>,
+    user: CurrentUser,
     Path(session_id): Path<String>,
     Json(request): Json<AgentExecRequest>,
 ) -> ApiResult<Json<AgentExecResponse>> {
-    let opencode_session = state.sessions.get_or_create_opencode_session().await?;
+    let _ = state
+        .sessions
+        .for_user(user.id())
+        .get_session(&session_id)
+        .await?
+        .ok_or_else(|| ApiError::not_found(format!("Session {} not found", session_id)))?;
+
+    let opencode_session = state.sessions.for_user(user.id()).get_or_create_opencode_session().await?;
     let response = state
         .agents
         .exec_command(&opencode_session.id, request)
