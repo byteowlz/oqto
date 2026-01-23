@@ -20,7 +20,7 @@ use uuid::Uuid;
 use crate::agent_browser::{AgentBrowserConfig, AgentBrowserManager};
 use crate::container::{ContainerConfig, ContainerRuntimeApi, ContainerStats};
 use crate::eavs::{CreateKeyRequest, EavsApi, KeyPermissions};
-use crate::local::{LocalRuntime, LocalRuntimeConfig};
+use crate::local::{LocalRuntime, LocalRuntimeConfig, UserMmryManager};
 use crate::projects;
 
 use super::models::{CreateSessionRequest, RuntimeMode, Session, SessionStatus};
@@ -223,9 +223,19 @@ pub struct SessionService {
     readiness: Arc<dyn SessionReadiness>,
     agent_browser: AgentBrowserManager,
     config: SessionServiceConfig,
+    user_mmry: Option<Arc<UserMmryManager>>,
 }
 
 impl SessionService {
+    /// Create a view of this service scoped to a specific user.
+    ///
+    /// This is how multi-user mode is implemented throughout the API layer.
+    pub fn for_user(&self, user_id: &str) -> Self {
+        let mut cloned = self.clone();
+        cloned.config.default_user_id = user_id.to_string();
+        cloned
+    }
+
     /// Create a new session service with container runtime.
     pub fn new(
         repo: SessionRepository,
@@ -240,6 +250,7 @@ impl SessionService {
             readiness: Arc::new(HttpSessionReadiness::default()),
             agent_browser: AgentBrowserManager::new(config.agent_browser.clone()),
             config,
+            user_mmry: None,
         }
     }
 
@@ -258,6 +269,7 @@ impl SessionService {
             readiness: Arc::new(HttpSessionReadiness::default()),
             agent_browser: AgentBrowserManager::new(config.agent_browser.clone()),
             config,
+            user_mmry: None,
         }
     }
 
@@ -275,6 +287,7 @@ impl SessionService {
             readiness: Arc::new(HttpSessionReadiness::default()),
             agent_browser: AgentBrowserManager::new(config.agent_browser.clone()),
             config,
+            user_mmry: None,
         }
     }
 
@@ -293,7 +306,22 @@ impl SessionService {
             readiness: Arc::new(HttpSessionReadiness::default()),
             agent_browser: AgentBrowserManager::new(config.agent_browser.clone()),
             config,
+            user_mmry: None,
         }
+    }
+
+    /// Enable per-user mmry instances (local multi-user mode).
+    pub fn with_user_mmry(mut self, manager: UserMmryManager) -> Self {
+        self.user_mmry = Some(Arc::new(manager));
+        self
+    }
+
+    /// Ensure a per-user mmry instance exists and is pinned (non-session lifecycle).
+    pub async fn ensure_user_mmry_pinned(&self, user_id: &str) -> Result<u16> {
+        let Some(ref user_mmry) = self.user_mmry else {
+            anyhow::bail!("UserMmryManager not configured");
+        };
+        user_mmry.pin_user_mmry(user_id).await
     }
 
     /// Get the container runtime (if available).
@@ -715,15 +743,23 @@ impl SessionService {
         let session_id = Uuid::new_v4().to_string();
         let container_name = format!("{}{}", CONTAINER_NAME_PREFIX, &session_id[..8]);
 
-        // Find available ports (opencode, fileserver, ttyd, mmry, + agent ports). On retry, offset the search window.
+        // Find available ports (opencode, fileserver, ttyd, + agent ports). On retry, offset the search window.
+        // Container mode may also reserve a per-session mmry port when enabled.
         // Port layout:
         //   base+0: opencode
         //   base+1: fileserver
         //   base+2: ttyd
-        //   base+3: mmry (if enabled and multi-user)
-        //   base+4+: sub-agents
+        //   base+3+: sub-agents (local mode)
+        //   base+3: mmry, base+4+: sub-agents (container mode, if mmry enabled)
         let max_agents = Self::DEFAULT_MAX_AGENTS;
-        let ports_per_session = 4 + max_agents; // opencode, fileserver, ttyd, mmry + agent ports
+        let include_mmry_port = self.config.runtime_mode == RuntimeMode::Container
+            && self.config.mmry_enabled
+            && !self.config.single_user;
+        let ports_per_session = if include_mmry_port {
+            4 + max_agents
+        } else {
+            3 + max_agents
+        };
         let search_start = self.config.base_port + (attempt as i64 * ports_per_session);
         let base_port = self
             .repo
@@ -732,13 +768,13 @@ impl SessionService {
         let opencode_port = base_port;
         let fileserver_port = base_port + 1;
         let ttyd_port = base_port + 2;
-        // mmry port is only allocated for multi-user mode
-        let mmry_port = if self.config.mmry_enabled && !self.config.single_user {
-            Some(base_port + 3)
+        // mmry port is only allocated per-session for container mode.
+        // For local multi-user mode, mmry_port is assigned at session start from the per-user manager.
+        let (mmry_port, agent_base_port) = if include_mmry_port {
+            (Some(base_port + 3), Some(base_port + 4))
         } else {
-            None
+            (None, Some(base_port + 3))
         };
-        let agent_base_port = base_port + 4; // Sub-agents start at base+4
 
         let (eavs_key_id, eavs_key_hash, eavs_virtual_key) = if self.eavs.is_some() {
             match self.create_eavs_key(&session_id).await {
@@ -772,7 +808,7 @@ impl SessionService {
             fileserver_port,
             ttyd_port,
             eavs_port: None,
-            agent_base_port: Some(agent_base_port),
+            agent_base_port,
             max_agents: Some(max_agents),
             eavs_key_id,
             eavs_key_hash,
@@ -1058,6 +1094,32 @@ impl SessionService {
         let fileserver_port = session.fileserver_port as u16;
         let ttyd_port = session.ttyd_port as u16;
 
+        // Ensure per-user mmry is running (local multi-user mode).
+        //
+        // This is best-effort: if mmry fails to start, we still want opencode/fileserver/ttyd
+        // to be usable. The mmry proxy will return 503 for memory endpoints until mmry is up.
+        if self.config.mmry_enabled && !self.config.single_user {
+            if let Some(ref user_mmry) = self.user_mmry {
+                match user_mmry.ensure_user_mmry(&session.user_id).await {
+                    Ok(mmry_port) => {
+                        let _ = self
+                            .repo
+                            .set_mmry_port(&session.id, Some(mmry_port as i64))
+                            .await;
+                    }
+                    Err(err) => {
+                        warn!(
+                            "Failed to ensure per-user mmry for user {}: {:?}",
+                            session.user_id, err
+                        );
+                        let _ = self.repo.set_mmry_port(&session.id, None).await;
+                    }
+                }
+            } else {
+                warn!("mmry enabled in local multi-user mode but UserMmryManager is not configured");
+            }
+        }
+
         // Check if ports are available before attempting to start
         if !local_runtime.check_ports_available(opencode_port, fileserver_port, ttyd_port) {
             // Ports are in use - try to clear them first
@@ -1201,6 +1263,18 @@ impl SessionService {
                         warn!("Failed to stop local processes for {}: {:?}", session_id, e);
                     }
                 }
+
+                // Release per-user mmry after stopping session processes.
+                if self.config.mmry_enabled && !self.config.single_user {
+                    if let Some(ref user_mmry) = self.user_mmry {
+                        if let Err(e) = user_mmry.release_user_mmry(&session.user_id).await {
+                            warn!(
+                                "Failed to release per-user mmry for user {}: {:?}",
+                                session.user_id, e
+                            );
+                        }
+                    }
+                }
             }
         }
 
@@ -1299,8 +1373,22 @@ impl SessionService {
             .repo
             .find_free_port_range_with_agents(self.config.base_port, max_agents)
             .await?;
-        let new_mmry_port = session.mmry_port.map(|_| base_port + 3);
-        let new_agent_base_port = session.agent_base_port.map(|_| base_port + 4);
+
+        // Container mode uses a per-session mmry port (base+3) when enabled.
+        // Local mode uses a per-user mmry port that must NOT be reassigned here.
+        let include_mmry_port = session.runtime_mode == RuntimeMode::Container
+            && self.config.mmry_enabled
+            && !self.config.single_user
+            && session.mmry_port.is_some();
+
+        let new_mmry_port = if include_mmry_port {
+            Some(base_port + 3)
+        } else {
+            session.mmry_port
+        };
+        let new_agent_base_port = session.agent_base_port.map(|_| {
+            base_port + if include_mmry_port { 4 } else { 3 }
+        });
 
         self.repo
             .update_ports(

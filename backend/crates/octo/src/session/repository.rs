@@ -233,6 +233,18 @@ impl SessionRepository {
         Ok(())
     }
 
+    /// Set the mmry port for a session.
+    pub async fn set_mmry_port(&self, id: &str, mmry_port: Option<i64>) -> Result<()> {
+        sqlx::query("UPDATE sessions SET mmry_port = ? WHERE id = ?")
+            .bind(mmry_port)
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .context("setting mmry port")?;
+
+        Ok(())
+    }
+
     /// Mark session as running.
     pub async fn mark_running(&self, id: &str) -> Result<()> {
         sqlx::query("UPDATE sessions SET status = 'running' WHERE id = ?")

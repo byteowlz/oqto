@@ -751,6 +751,11 @@ pub struct MmryConfig {
     /// URL for containers to reach the host mmry service.
     /// e.g., "http://host.docker.internal:8081" or "http://host.containers.internal:8081"
     pub container_url: Option<String>,
+
+    /// Dedicated base port for per-user mmry instances (local multi-user mode).
+    pub user_base_port: u16,
+    /// Size of the per-user mmry port range (local multi-user mode).
+    pub user_port_range: u16,
 }
 
 impl Default for MmryConfig {
@@ -764,6 +769,9 @@ impl Default for MmryConfig {
             dimension: 768,
             binary: "mmry".to_string(),
             container_url: None,
+
+            user_base_port: 48_000,
+            user_port_range: 1_000,
         }
     }
 }
@@ -877,6 +885,10 @@ struct LocalModeConfig {
     cleanup_on_startup: bool,
     /// Whether to stop sessions when the backend shuts down.
     stop_sessions_on_shutdown: bool,
+    /// Runner socket path pattern for per-user runner daemons.
+    /// Supports `{user}` (Linux username) and `{uid}`.
+    /// Examples: "/run/user/{uid}/octo-runner.sock", "/run/octo/runner-{user}.sock".
+    runner_socket_pattern: Option<String>,
     // Note: Sandbox config is loaded from separate ~/.config/octo/sandbox.toml
     // for security reasons (agents can modify config.toml but not sandbox.toml)
 }
@@ -1047,6 +1059,7 @@ impl Default for LocalModeConfig {
             linux_users: LinuxUsersConfig::default(),
             cleanup_on_startup: false,
             stop_sessions_on_shutdown: false,
+            runner_socket_pattern: Some("/run/octo/runner-sockets/{user}/octo-runner.sock".to_string()),
         }
     }
 }
@@ -1470,6 +1483,9 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     );
     let auth_state = auth::AuthState::new(auth_config);
 
+    // Repositories that need to be available during early service construction.
+    let user_repo_for_services = user::UserRepository::new(database.pool().clone());
+
     // Determine runtime mode: CLI --local-mode overrides config
     let runtime_mode = match ctx.config.backend.mode {
         BackendMode::Local => session::RuntimeMode::Local,
@@ -1770,7 +1786,7 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     }
 
     // Create session service based on runtime mode
-    let session_service = if local_mode {
+    let mut session_service = if local_mode {
         let local_rt = local_runtime.expect("local runtime should be set in local mode");
         if let Some(eavs) = eavs_client.clone() {
             session::SessionService::with_local_runtime_and_eavs(
@@ -1801,6 +1817,30 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
             session::SessionService::new(session_repo, container_rt, session_config.clone())
         }
     };
+
+    // Enable per-user mmry instances in local multi-user mode.
+    if local_mode && !single_user && ctx.config.mmry.enabled {
+        if let Some(ref local_cfg) = session_config.local_config {
+            if !local_cfg.linux_users.enabled {
+                warn!(
+                    "mmry per-user instances require local.linux_users.enabled=true (skipping)"
+                );
+            } else {
+                let linux_users = local_cfg.linux_users.clone();
+                let user_mmry = local::UserMmryManager::new(
+                    local::UserMmryConfig {
+                        mmry_binary: ctx.config.mmry.binary.clone(),
+                        base_port: ctx.config.mmry.user_base_port,
+                        port_range: ctx.config.mmry.user_port_range,
+                        runner_socket_pattern: ctx.config.local.runner_socket_pattern.clone(),
+                    },
+                    move |user_id| linux_users.linux_username(user_id),
+                    user_repo_for_services.clone(),
+                );
+                session_service = session_service.with_user_mmry(user_mmry);
+            }
+        }
+    }
 
     // Run startup cleanup to handle orphan containers and stale sessions
     if let Err(e) = session_service.startup_cleanup().await {
@@ -1933,6 +1973,8 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
         local_service_url: ctx.config.mmry.local_service_url.clone(),
         host_service_url: ctx.config.mmry.host_service_url.clone(),
         host_api_key: ctx.config.mmry.host_api_key.clone(),
+        user_base_port: ctx.config.mmry.user_base_port,
+        user_port_range: ctx.config.mmry.user_port_range,
     };
 
     // Build voice state based on configuration

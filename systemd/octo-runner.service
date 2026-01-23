@@ -11,8 +11,11 @@
 #   systemctl --user enable octo-runner
 #   systemctl --user start octo-runner
 #
-# The runner listens on /run/user/<uid>/octo-runner.sock by default.
-# The main octo server communicates with runners via these sockets.
+# The runner listens on a shared socket path by default:
+#   /run/octo/runner-sockets/<user>/octo-runner.sock
+#
+# The main octo server (running as a non-root service user in the shared "octo" group)
+# communicates with runners via these sockets.
 
 [Unit]
 Description=Octo Runner - Process runner for multi-user isolation
@@ -21,7 +24,7 @@ After=default.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/octo-runner --socket %t/octo-runner.sock
+ExecStart=/usr/local/bin/octo-runner --socket /run/octo/runner-sockets/%u/octo-runner.sock
 Restart=on-failure
 RestartSec=5
 
@@ -34,6 +37,7 @@ ProtectSystem=strict
 ProtectHome=read-only
 PrivateTmp=true
 ReadWritePaths=%h
+ReadWritePaths=/run/octo/runner-sockets/%u
 
 [Install]
 WantedBy=default.target

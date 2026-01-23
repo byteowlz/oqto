@@ -15,6 +15,7 @@ use tokio_tungstenite::connect_async;
 use std::time::Duration;
 
 use crate::session::SessionStatus;
+use crate::auth::CurrentUser;
 
 use super::state::AppState;
 
@@ -242,11 +243,13 @@ async fn handle_voice_ws_proxy(
 /// Proxy HTTP requests to a session's opencode server.
 pub async fn proxy_opencode(
     State(state): State<AppState>,
+    user: CurrentUser,
     Path((session_id, path)): Path<(String, String)>,
     req: Request<Body>,
 ) -> Result<Response, StatusCode> {
     let _requested = state
         .sessions
+        .for_user(user.id())
         .get_session(&session_id)
         .await
         .map_err(|e| {
@@ -257,6 +260,7 @@ pub async fn proxy_opencode(
 
     let opencode_session = state
         .sessions
+        .for_user(user.id())
         .get_or_create_opencode_session()
         .await
         .map_err(|e| {
@@ -316,12 +320,14 @@ pub async fn proxy_fileserver(
 /// Proxy HTTP requests to a workspace file server by workspace path.
 pub async fn proxy_fileserver_for_workspace(
     State(state): State<AppState>,
+    user: CurrentUser,
     Path(path): Path<String>,
     Query(query): Query<WorkspaceProxyQuery>,
     req: Request<Body>,
 ) -> Result<Response, StatusCode> {
     let session = state
         .sessions
+        .for_user(user.id())
         .get_or_create_io_session_for_workspace(&query.workspace_path)
         .await
         .map_err(|e| {
@@ -525,11 +531,13 @@ pub async fn proxy_terminal_ws(
 /// WebSocket upgrade handler for terminal proxy by workspace path.
 pub async fn proxy_terminal_ws_for_workspace(
     State(state): State<AppState>,
+    user: CurrentUser,
     Query(query): Query<WorkspaceProxyQuery>,
     ws: WebSocketUpgrade,
 ) -> Result<impl IntoResponse, StatusCode> {
     let session = state
         .sessions
+        .for_user(user.id())
         .get_or_create_io_session_for_workspace(&query.workspace_path)
         .await
         .map_err(|e| {
@@ -920,11 +928,13 @@ async fn handle_browser_stream_proxy(
 /// SSE events proxy for a specific session's opencode server.
 pub async fn proxy_opencode_events(
     State(state): State<AppState>,
+    user: CurrentUser,
     Path(session_id): Path<String>,
     Query(query): Query<OpencodeEventQuery>,
 ) -> Result<Response, StatusCode> {
     let _requested = state
         .sessions
+        .for_user(user.id())
         .get_session(&session_id)
         .await
         .map_err(|e| {
@@ -935,6 +945,7 @@ pub async fn proxy_opencode_events(
 
     let opencode_session = state
         .sessions
+        .for_user(user.id())
         .get_or_create_opencode_session()
         .await
         .map_err(|e| {
@@ -1066,9 +1077,13 @@ mod tests {
 /// Proxies to opencode's /global/event endpoint which provides events for all
 /// directories/sessions. The SDK expects this endpoint to receive real-time
 /// updates about sessions, messages, permissions, etc.
-pub async fn opencode_events(State(state): State<AppState>) -> Result<Response, StatusCode> {
+pub async fn opencode_events(
+    State(state): State<AppState>,
+    user: CurrentUser,
+) -> Result<Response, StatusCode> {
     let opencode_session = state
         .sessions
+        .for_user(user.id())
         .get_or_create_opencode_session()
         .await
         .map_err(|e| {
@@ -1228,11 +1243,7 @@ fn get_mmry_store_name(state: &AppState, session: &crate::session::Session) -> O
 /// In single-user mode, each workspace maps to a separate mmry store.
 /// The store name is derived from the last component of the workspace path.
 /// For example: `/home/user/byteowlz/octo` -> `octo`
-fn get_mmry_store_name_from_path(state: &AppState, workspace_path: &str) -> Option<String> {
-    if !state.mmry.single_user {
-        return None;
-    }
-
+fn get_mmry_store_name_from_path(_state: &AppState, workspace_path: &str) -> Option<String> {
     let trimmed = workspace_path.trim_end_matches('/');
     if trimmed.is_empty() {
         return None;
@@ -1260,17 +1271,29 @@ fn resolve_mmry_store_for_workspace(
     get_mmry_store_name_from_path(state, &query.workspace_path)
 }
 
-/// Get the mmry target URL for workspace-based access (single-user mode only).
-fn get_mmry_target_for_workspace(state: &AppState) -> Result<String, StatusCode> {
+/// Get the mmry target URL for workspace-based access.
+///
+/// - Single-user mode: proxy to the configured local mmry service.
+/// - Multi-user mode (local): proxy to the user's pinned mmry instance.
+async fn get_mmry_target_for_workspace(
+    state: &AppState,
+    user_id: &str,
+) -> Result<String, StatusCode> {
     if !state.mmry.enabled {
         warn!("mmry integration is not enabled");
         return Err(StatusCode::NOT_FOUND);
     }
 
     if !state.mmry.single_user {
-        // Workspace-based mmry access only works in single-user mode
-        warn!("Workspace-based mmry access requires single-user mode");
-        return Err(StatusCode::NOT_FOUND);
+        let port = state
+            .sessions
+            .ensure_user_mmry_pinned(user_id)
+            .await
+            .map_err(|e| {
+                error!("Failed to ensure per-user mmry for workspace access: {:?}", e);
+                StatusCode::SERVICE_UNAVAILABLE
+            })?;
+        return Ok(format!("http://localhost:{}", port));
     }
 
     Ok(state.mmry.local_service_url.clone())
@@ -1539,10 +1562,11 @@ pub async fn proxy_mmry_stores(
 /// Routes: GET /workspace/memories
 pub async fn proxy_mmry_list_for_workspace(
     State(state): State<AppState>,
+    user: CurrentUser,
     Query(query): Query<WorkspaceProxyQuery>,
     req: Request<Body>,
 ) -> Result<Response, StatusCode> {
-    let target_url = get_mmry_target_for_workspace(&state)?;
+    let target_url = get_mmry_target_for_workspace(&state, user.id()).await?;
     let store = resolve_mmry_store_for_workspace(&state, &query);
     proxy_mmry_request_to_url(
         state.http_client.clone(),
@@ -1559,10 +1583,11 @@ pub async fn proxy_mmry_list_for_workspace(
 /// Routes: POST /workspace/memories
 pub async fn proxy_mmry_add_for_workspace(
     State(state): State<AppState>,
+    user: CurrentUser,
     Query(query): Query<WorkspaceProxyQuery>,
     req: Request<Body>,
 ) -> Result<Response, StatusCode> {
-    let target_url = get_mmry_target_for_workspace(&state)?;
+    let target_url = get_mmry_target_for_workspace(&state, user.id()).await?;
     let store = resolve_mmry_store_for_workspace(&state, &query);
     proxy_mmry_request_to_url(
         state.http_client.clone(),
@@ -1579,10 +1604,11 @@ pub async fn proxy_mmry_add_for_workspace(
 /// Routes: POST /workspace/memories/search
 pub async fn proxy_mmry_search_for_workspace(
     State(state): State<AppState>,
+    user: CurrentUser,
     Query(query): Query<WorkspaceProxyQuery>,
     req: Request<Body>,
 ) -> Result<Response, StatusCode> {
-    let target_url = get_mmry_target_for_workspace(&state)?;
+    let target_url = get_mmry_target_for_workspace(&state, user.id()).await?;
     let store = resolve_mmry_store_for_workspace(&state, &query);
     proxy_mmry_request_to_url(
         state.http_client.clone(),
@@ -1600,10 +1626,11 @@ pub async fn proxy_mmry_search_for_workspace(
 pub async fn proxy_mmry_memory_for_workspace(
     State(state): State<AppState>,
     Path(memory_id): Path<String>,
+    user: CurrentUser,
     Query(query): Query<WorkspaceProxyQuery>,
     req: Request<Body>,
 ) -> Result<Response, StatusCode> {
-    let target_url = get_mmry_target_for_workspace(&state)?;
+    let target_url = get_mmry_target_for_workspace(&state, user.id()).await?;
     let store = resolve_mmry_store_for_workspace(&state, &query);
     let path = format!("v1/memories/{}", memory_id);
     proxy_mmry_request_to_url(
@@ -1625,11 +1652,13 @@ pub async fn proxy_mmry_memory_for_workspace(
 /// Routes: /session/{session_id}/agent/{agent_id}/code/{*path}
 pub async fn proxy_opencode_agent(
     State(state): State<AppState>,
+    user: CurrentUser,
     Path((session_id, agent_id, path)): Path<(String, String, String)>,
     req: Request<Body>,
 ) -> Result<Response, StatusCode> {
     let _requested = state
         .sessions
+        .for_user(user.id())
         .get_session(&session_id)
         .await
         .map_err(|e| {
@@ -1640,6 +1669,7 @@ pub async fn proxy_opencode_agent(
 
     let opencode_session = state
         .sessions
+        .for_user(user.id())
         .get_or_create_opencode_session()
         .await
         .map_err(|e| {
@@ -1688,11 +1718,13 @@ pub async fn proxy_opencode_agent(
 /// Routes: /session/{session_id}/agent/{agent_id}/code/event
 pub async fn proxy_opencode_agent_events(
     State(state): State<AppState>,
+    user: CurrentUser,
     Path((session_id, agent_id)): Path<(String, String)>,
     Query(query): Query<OpencodeEventQuery>,
 ) -> Result<Response, StatusCode> {
     let _requested = state
         .sessions
+        .for_user(user.id())
         .get_session(&session_id)
         .await
         .map_err(|e| {
@@ -1703,6 +1735,7 @@ pub async fn proxy_opencode_agent_events(
 
     let opencode_session = state
         .sessions
+        .for_user(user.id())
         .get_or_create_opencode_session()
         .await
         .map_err(|e| {

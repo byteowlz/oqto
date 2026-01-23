@@ -43,6 +43,13 @@ sudo -u <username> systemctl --user enable octo-runner
 sudo -u <username> systemctl --user start octo-runner
 ```
 
+Note: When Octo is configured for local multi-user Linux isolation, it will also
+attempt to enable lingering and start `octo-runner` automatically when provisioning
+new platform users.
+
+For non-root Octo backends, prefer shared runner sockets under:
+`/run/octo/runner-sockets/<user>/octo-runner.sock` (see `systemd/octo-runner.tmpfiles.conf`).
+
 ### Socket Activation (Optional)
 
 For on-demand startup instead of always-running:

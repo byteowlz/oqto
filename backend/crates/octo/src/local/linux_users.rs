@@ -6,7 +6,7 @@
 use anyhow::{Context, Result};
 use log::{debug, info, warn};
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// Configuration for Linux user isolation.
@@ -121,9 +121,12 @@ impl LinuxUsersConfig {
             args.push("-M".to_string());
         }
 
-        // Add comment with project ID for reference
+        // Add comment with project ID for reference (sanitize for useradd compat)
         args.push("-c".to_string());
-        args.push(format!("Octo shared project: {}", project_id));
+        args.push(sanitize_gecos(&format!(
+            "Octo shared project: {}",
+            project_id
+        )));
 
         args.push(username.clone());
 
@@ -308,9 +311,9 @@ impl LinuxUsersConfig {
             args.push("-M".to_string());
         }
 
-        // Add comment with platform user ID for reference
+        // Add comment with platform user ID for reference (sanitize for useradd compat)
         args.push("-c".to_string());
-        args.push(format!("Octo platform user: {}", user_id));
+        args.push(sanitize_gecos(&format!("Octo platform user: {}", user_id)));
 
         args.push(username.clone());
 
@@ -334,7 +337,91 @@ impl LinuxUsersConfig {
         self.ensure_group()?;
 
         // Create user if needed
-        self.create_user(user_id)
+        let uid = self.create_user(user_id)?;
+
+        // Best-effort: ensure the per-user octo-runner daemon is enabled and started.
+        // This is required for multi-user components that must run as the target Linux user
+        // (e.g. per-user mmry instances, Pi runner mode).
+        let username = self.linux_username(user_id);
+        self.ensure_octo_runner_running(&username, uid)
+            .with_context(|| format!("ensuring octo-runner for user '{}'", username))?;
+
+        Ok(uid)
+    }
+
+    /// Ensure the per-user octo-runner daemon is enabled and started.
+    fn ensure_octo_runner_running(&self, username: &str, uid: u32) -> Result<()> {
+        // Ensure shared runner socket directory exists for this user.
+        // Octo (backend) must be able to connect to this socket without root.
+        let base_dir = "/run/octo/runner-sockets";
+        run_privileged_command(self.use_sudo, "mkdir", &["-p", base_dir])
+            .context("creating runner socket base dir")?;
+        run_privileged_command(
+            self.use_sudo,
+            "chown",
+            &[&format!("root:{}", self.group), base_dir],
+        )
+        .ok();
+        // Setgid so per-user sockets inherit group.
+        run_privileged_command(self.use_sudo, "chmod", &["2770", base_dir]).ok();
+
+        let user_dir = format!("{}/{}", base_dir, username);
+        run_privileged_command(self.use_sudo, "mkdir", &["-p", &user_dir])
+            .context("creating runner socket user dir")?;
+        run_privileged_command(
+            self.use_sudo,
+            "chown",
+            &[&format!("{}:{}", username, self.group), &user_dir],
+        )
+        .context("chown runner socket user dir")?;
+        // Setgid so socket inherits group.
+        run_privileged_command(self.use_sudo, "chmod", &["2770", &user_dir])
+            .context("chmod runner socket user dir")?;
+
+        // Enable lingering so the user's systemd instance can run without login.
+        // This is required for headless multi-user deployments.
+        run_privileged_command(self.use_sudo, "loginctl", &["enable-linger", username])
+            .context("enabling systemd linger")?;
+
+        // Ensure the user's systemd instance is running.
+        // This is best-effort; if it fails, systemctl --user may still work depending on distro.
+        let _ = run_privileged_command(
+            self.use_sudo,
+            "systemctl",
+            &["start", &format!("user@{}.service", uid)],
+        );
+
+        // Enable + start the runner as that user.
+        // We need to set the user bus environment explicitly to target the per-user manager.
+        let runtime_dir = format!("/run/user/{}", uid);
+        let bus = format!("unix:path={}/bus", runtime_dir);
+
+        if let Err(e) = run_as_user(
+            self.use_sudo,
+            username,
+            "systemctl",
+            &["--user", "enable", "--now", "octo-runner"],
+            &[
+                ("XDG_RUNTIME_DIR", runtime_dir.as_str()),
+                ("DBUS_SESSION_BUS_ADDRESS", bus.as_str()),
+            ],
+        ) {
+            warn!(
+                "Failed to enable/start octo-runner for {} via systemctl --user: {:?}",
+                username, e
+            );
+        }
+
+        // If the runner socket exists, we consider it good enough.
+        let expected_socket = Path::new(base_dir).join(username).join("octo-runner.sock");
+        if !expected_socket.exists() {
+            anyhow::bail!(
+                "octo-runner socket not found at {}",
+                expected_socket.display()
+            );
+        }
+
+        Ok(())
     }
 
     /// Find the next available UID starting from uid_start.
@@ -399,6 +486,25 @@ fn sanitize_username(user_id: &str) -> String {
     }
 
     result
+}
+
+/// Sanitize GECOS/comment field for useradd.
+/// useradd (shadow) rejects ':' and control characters.
+fn sanitize_gecos(input: &str) -> String {
+    let mut cleaned = String::with_capacity(input.len());
+    for c in input.chars() {
+        if c == ':' || c == '\n' || c == '\r' || c == '\0' {
+            cleaned.push(' ');
+        } else {
+            cleaned.push(c);
+        }
+    }
+    let trimmed = cleaned.trim();
+    if trimmed.is_empty() {
+        "Octo user".to_string()
+    } else {
+        trimmed.to_string()
+    }
 }
 
 /// Check if a group exists.
@@ -484,6 +590,53 @@ fn run_privileged_command(use_sudo: bool, cmd: &str, args: &[&str]) -> Result<()
         let stderr = String::from_utf8_lossy(&output.stderr);
         anyhow::bail!(
             "Command failed: {} {:?}\nstderr: {}",
+            cmd,
+            args,
+            stderr.trim()
+        );
+    }
+
+    Ok(())
+}
+
+/// Run a command as a specific Linux user, with optional sudo, and environment overrides.
+fn run_as_user(
+    use_sudo: bool,
+    username: &str,
+    cmd: &str,
+    args: &[&str],
+    env: &[(&str, &str)],
+) -> Result<()> {
+    let is_root = unsafe { libc::geteuid() } == 0;
+
+    let mut command = if is_root {
+        // Prefer runuser when root.
+        let mut c = Command::new("runuser");
+        c.args(["-u", username, "--", cmd]);
+        c
+    } else if use_sudo {
+        let mut c = Command::new("sudo");
+        c.args(["-u", username, cmd]);
+        c
+    } else {
+        anyhow::bail!("must be root or have sudo enabled to run as another user");
+    };
+
+    command.args(args);
+    for (k, v) in env {
+        command.env(k, v);
+    }
+
+    debug!("Running as {}: {} {:?}", username, cmd, args);
+    let output = command
+        .output()
+        .with_context(|| format!("running {} as user {}", cmd, username))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!(
+            "Command failed (as {}): {} {:?}\nstderr: {}",
+            username,
             cmd,
             args,
             stderr.trim()

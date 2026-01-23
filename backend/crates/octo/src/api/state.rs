@@ -37,6 +37,11 @@ pub struct MmryState {
     pub host_service_url: String,
     /// API key for authenticating with host mmry (optional).
     pub host_api_key: Option<String>,
+
+    /// Dedicated base port for per-user mmry instances (local multi-user mode).
+    pub user_base_port: u16,
+    /// Size of the per-user mmry port range (local multi-user mode).
+    pub user_port_range: u16,
 }
 
 impl Default for MmryState {
@@ -47,6 +52,9 @@ impl Default for MmryState {
             local_service_url: "http://localhost:8081".to_string(),
             host_service_url: "http://localhost:8081".to_string(),
             host_api_key: None,
+
+            user_base_port: 48_000,
+            user_port_range: 1_000,
         }
     }
 }

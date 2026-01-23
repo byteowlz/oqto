@@ -235,10 +235,13 @@ impl SessionWithUrls {
     }
 }
 
-/// List all sessions.
-#[instrument(skip(state))]
-pub async fn list_sessions(State(state): State<AppState>) -> ApiResult<Json<Vec<Session>>> {
-    let sessions = state.sessions.list_sessions().await?;
+/// List all sessions for the authenticated user.
+#[instrument(skip(state, user))]
+pub async fn list_sessions(
+    State(state): State<AppState>,
+    user: CurrentUser,
+) -> ApiResult<Json<Vec<Session>>> {
+    let sessions = state.sessions.for_user(user.id()).list_sessions().await?;
     info!(count = sessions.len(), "Listed sessions");
     Ok(Json(sessions))
 }
@@ -251,9 +254,10 @@ pub async fn list_sessions(State(state): State<AppState>) -> ApiResult<Json<Vec<
 #[instrument(skip(state))]
 pub async fn get_session(
     State(state): State<AppState>,
+    user: CurrentUser,
     Path(session_id): Path<String>,
 ) -> ApiResult<Json<Session>> {
-    if let Some(session) = state.sessions.get_session(&session_id).await? {
+    if let Some(session) = state.sessions.for_user(user.id()).get_session(&session_id).await? {
         return Ok(Json(session));
     }
 
@@ -267,9 +271,10 @@ pub async fn get_session(
 #[instrument(skip(state, request), fields(workspace_path = ?request.workspace_path))]
 pub async fn create_session(
     State(state): State<AppState>,
+    user: CurrentUser,
     Json(request): Json<CreateSessionRequest>,
 ) -> ApiResult<(StatusCode, Json<SessionWithUrls>)> {
-    let session = state.sessions.create_session(request).await?;
+    let session = state.sessions.for_user(user.id()).create_session(request).await?;
     info!(session_id = %session.id, "Created new session");
 
     // TODO: Get actual host from request headers
@@ -281,10 +286,11 @@ pub async fn create_session(
 #[instrument(skip(state))]
 pub async fn stop_session(
     State(state): State<AppState>,
+    user: CurrentUser,
     Path(session_id): Path<String>,
 ) -> ApiResult<StatusCode> {
     // First check if session exists
-    let session = state.sessions.get_session(&session_id).await?;
+    let session = state.sessions.for_user(user.id()).get_session(&session_id).await?;
 
     if session.is_none() {
         return Err(ApiError::not_found(format!(
@@ -293,7 +299,7 @@ pub async fn stop_session(
         )));
     }
 
-    state.sessions.stop_session(&session_id).await?;
+    state.sessions.for_user(user.id()).stop_session(&session_id).await?;
     info!(session_id = %session_id, "Stopped session");
 
     Ok(StatusCode::NO_CONTENT)
@@ -303,10 +309,11 @@ pub async fn stop_session(
 #[instrument(skip(state))]
 pub async fn delete_session(
     State(state): State<AppState>,
+    user: CurrentUser,
     Path(session_id): Path<String>,
 ) -> ApiResult<StatusCode> {
     // Uses centralized From<anyhow::Error> conversion
-    state.sessions.delete_session(&session_id).await?;
+    state.sessions.for_user(user.id()).delete_session(&session_id).await?;
 
     info!(session_id = %session_id, "Deleted session");
     Ok(StatusCode::NO_CONTENT)
@@ -319,9 +326,10 @@ pub async fn delete_session(
 #[instrument(skip(state))]
 pub async fn resume_session(
     State(state): State<AppState>,
+    user: CurrentUser,
     Path(session_id): Path<String>,
 ) -> ApiResult<Json<SessionWithUrls>> {
-    let session = state.sessions.resume_session(&session_id).await?;
+    let session = state.sessions.for_user(user.id()).resume_session(&session_id).await?;
     info!(session_id = %session_id, "Resumed session");
 
     let response = SessionWithUrls::from_session(session, "localhost");
@@ -336,9 +344,14 @@ pub async fn resume_session(
 #[instrument(skip(state, request), fields(workspace_path = ?request.workspace_path))]
 pub async fn get_or_create_session(
     State(state): State<AppState>,
+    user: CurrentUser,
     Json(request): Json<CreateSessionRequest>,
 ) -> ApiResult<Json<SessionWithUrls>> {
-    let session = state.sessions.get_or_create_session(request).await?;
+    let session = state
+        .sessions
+        .for_user(user.id())
+        .get_or_create_session(request)
+        .await?;
     info!(session_id = %session.id, status = ?session.status, "Got or created session");
 
     let response = SessionWithUrls::from_session(session, "localhost");
@@ -362,10 +375,12 @@ pub struct GetOrCreateForWorkspaceRequest {
 #[instrument(skip(state, request), fields(workspace_path = %request.workspace_path))]
 pub async fn get_or_create_session_for_workspace(
     State(state): State<AppState>,
+    user: CurrentUser,
     Json(request): Json<GetOrCreateForWorkspaceRequest>,
 ) -> ApiResult<Json<SessionWithUrls>> {
     let session = state
         .sessions
+        .for_user(user.id())
         .get_or_create_session_for_workspace(&request.workspace_path)
         .await?;
     info!(
@@ -383,22 +398,32 @@ pub async fn get_or_create_session_for_workspace(
 ///
 /// This should be called when the user interacts with the session
 /// (e.g., sends a message, runs a command).
-#[instrument(skip(state))]
+#[instrument(skip(state, user))]
 pub async fn touch_session_activity(
     State(state): State<AppState>,
+    user: CurrentUser,
     Path(session_id): Path<String>,
 ) -> ApiResult<StatusCode> {
-    state.sessions.touch_session_activity(&session_id).await?;
+    state
+        .sessions
+        .for_user(user.id())
+        .touch_session_activity(&session_id)
+        .await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
 /// Check if a session has an available image update.
-#[instrument(skip(state))]
+#[instrument(skip(state, user))]
 pub async fn check_session_update(
     State(state): State<AppState>,
+    user: CurrentUser,
     Path(session_id): Path<String>,
 ) -> ApiResult<Json<SessionUpdateStatus>> {
-    let update_available = state.sessions.check_for_image_update(&session_id).await?;
+    let update_available = state
+        .sessions
+        .for_user(user.id())
+        .check_for_image_update(&session_id)
+        .await?;
 
     Ok(Json(SessionUpdateStatus {
         session_id,
@@ -408,12 +433,13 @@ pub async fn check_session_update(
 }
 
 /// Upgrade a session to the latest image version.
-#[instrument(skip(state))]
+#[instrument(skip(state, user))]
 pub async fn upgrade_session(
     State(state): State<AppState>,
+    user: CurrentUser,
     Path(session_id): Path<String>,
 ) -> ApiResult<Json<SessionWithUrls>> {
-    let session = state.sessions.upgrade_session(&session_id).await?;
+    let session = state.sessions.for_user(user.id()).upgrade_session(&session_id).await?;
     info!(session_id = %session_id, "Upgraded session");
 
     let response = SessionWithUrls::from_session(session, "localhost");
@@ -429,11 +455,12 @@ pub struct SessionUpdateStatus {
 }
 
 /// Check all sessions for available updates.
-#[instrument(skip(state))]
+#[instrument(skip(state, user))]
 pub async fn check_all_updates(
     State(state): State<AppState>,
+    user: CurrentUser,
 ) -> ApiResult<Json<Vec<SessionUpdateStatus>>> {
-    let updates = state.sessions.check_all_for_updates().await?;
+    let updates = state.sessions.for_user(user.id()).check_all_for_updates().await?;
 
     let statuses: Vec<SessionUpdateStatus> = updates
         .into_iter()
@@ -1147,6 +1174,17 @@ pub async fn register(
         }
     }
 
+    // Allocate a stable per-user mmry port in local multi-user mode.
+    if state.mmry.enabled && !state.mmry.single_user {
+        if let Err(e) = state
+            .users
+            .ensure_mmry_port(&user.id, state.mmry.user_base_port, state.mmry.user_port_range)
+            .await
+        {
+            warn!(user_id = %user.id, error = %e, "Failed to allocate user mmry port");
+        }
+    }
+
     // Generate JWT token for the new user
     let token = state.auth.generate_token(
         &user.id,
@@ -1462,6 +1500,17 @@ pub async fn create_user(
                     "Failed to create Linux user (will retry on session start)"
                 );
             }
+        }
+    }
+
+    // Allocate a stable per-user mmry port in local multi-user mode.
+    if state.mmry.enabled && !state.mmry.single_user {
+        if let Err(e) = state
+            .users
+            .ensure_mmry_port(&user.id, state.mmry.user_base_port, state.mmry.user_port_range)
+            .await
+        {
+            warn!(user_id = %user.id, error = %e, "Failed to allocate user mmry port");
         }
     }
 

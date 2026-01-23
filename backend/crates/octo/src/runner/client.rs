@@ -205,6 +205,49 @@ impl RunnerClient {
             _ => anyhow::bail!("unexpected response to subscribe_stdout"),
         }
     }
+
+    /// Spawn a detached process (fire and forget, no stdin/stdout).
+    ///
+    /// If `sandboxed` is true, the runner will wrap the process in a sandbox
+    /// using its trusted configuration from `/etc/octo/sandbox.toml`.
+    pub async fn spawn_process(
+        &self,
+        id: impl Into<String>,
+        binary: impl Into<String>,
+        args: Vec<String>,
+        cwd: impl Into<PathBuf>,
+        env: HashMap<String, String>,
+        sandboxed: bool,
+    ) -> Result<u32> {
+        let req = RunnerRequest::SpawnProcess(SpawnProcessRequest {
+            id: id.into(),
+            binary: binary.into(),
+            args,
+            cwd: cwd.into(),
+            env,
+            sandboxed,
+        });
+
+        let resp = self.request(&req).await?;
+        match resp {
+            RunnerResponse::ProcessSpawned(p) => Ok(p.pid),
+            _ => anyhow::bail!("unexpected response to spawn_process"),
+        }
+    }
+
+    /// Kill a managed process by runner process ID.
+    pub async fn kill_process(&self, id: impl Into<String>, force: bool) -> Result<bool> {
+        let req = RunnerRequest::KillProcess(KillProcessRequest {
+            id: id.into(),
+            force,
+        });
+
+        let resp = self.request(&req).await?;
+        match resp {
+            RunnerResponse::ProcessKilled(k) => Ok(k.was_running),
+            _ => anyhow::bail!("unexpected response to kill_process"),
+        }
+    }
 }
 
 /// An active stdout subscription that yields lines as they arrive.
