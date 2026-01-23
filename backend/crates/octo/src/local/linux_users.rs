@@ -207,21 +207,27 @@ impl LinuxUsersConfig {
         }
 
         if self.use_sudo {
-            // Check if sudo is available and we can use it without password
-            let output = Command::new("sudo")
-                .args(["-n", "true"])
-                .output()
-                .context("checking sudo availability")?;
+            // IMPORTANT: do not use `sudo -n true` as a probe.
+            // Secure setups often allow NOPASSWD only for a restricted allowlist
+            // (e.g. useradd/usermod/userdel), and `true` would fail.
+            // Instead, probe one of the exact helpers required by setup.sh.
 
-            if output.status.success() {
-                debug!("Passwordless sudo available for user management");
-                return Ok(());
+            let output = Command::new("sudo")
+                .args(["-n", "/usr/sbin/useradd", "--help"])
+                .output();
+
+            if let Ok(out) = output {
+                if out.status.success() {
+                    debug!("Passwordless sudo available for user management helpers");
+                    return Ok(());
+                }
             }
 
-            anyhow::bail!(
-                "sudo is enabled but requires a password (non-interactive sudo -n failed). \
-                 Configure NOPASSWD sudoers for Octo multi-user commands (run setup.sh) or run octo as root."
+            // If we can't verify here, rely on operation-time errors.
+            debug!(
+                "Could not verify sudo allowlist via /usr/sbin/useradd --help; proceeding and relying on operation-time errors"
             );
+            return Ok(());
         }
 
         anyhow::bail!(
