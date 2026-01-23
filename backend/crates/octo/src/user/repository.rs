@@ -19,15 +19,49 @@ impl UserRepository {
         Self { pool }
     }
 
-    /// Generate a new user ID.
-    fn generate_id() -> String {
-        format!("usr_{}", nanoid::nanoid!(12))
+    fn normalize_linux_username(input: &str) -> String {
+        let mut s = input.trim().to_lowercase();
+        s = s
+            .chars()
+            .map(|c| match c {
+                'a'..='z' | '0'..='9' | '_' | '-' => c,
+                ' ' | '.' => '-',
+                _ => '-',
+            })
+            .collect();
+        s = s.trim_matches('-').to_string();
+        if s.is_empty() {
+            s = "user".to_string();
+        }
+        if !s.chars().next().unwrap_or('u').is_ascii_alphabetic() && !s.starts_with('_') {
+            s = format!("u-{}", s);
+        }
+        if s.len() > 31 {
+            s.truncate(31);
+        }
+        s
     }
 
     /// Create a new user.
     #[instrument(skip(self, request), fields(username = %request.username))]
     pub async fn create(&self, request: CreateUserRequest) -> Result<User> {
-        let id = Self::generate_id();
+        // Use a stable, human-readable id so it can be used for workspace dir names
+        // and Linux user provisioning.
+        let base = Self::normalize_linux_username(&request.username);
+        let mut id = base.clone();
+        for _ in 0..10 {
+            let exists: Option<(i64,)> = sqlx::query_as("SELECT 1 FROM users WHERE id = ? LIMIT 1")
+                .bind(&id)
+                .fetch_optional(&self.pool)
+                .await
+                .context("checking user id availability")?;
+            if exists.is_none() {
+                break;
+            }
+            id = format!("{}-{}", base, nanoid::nanoid!(4));
+        }
+
+        let linux_username = id.clone();
         let display_name = request
             .display_name
             .unwrap_or_else(|| request.username.clone());
@@ -37,8 +71,8 @@ impl UserRepository {
 
         sqlx::query(
             r#"
-            INSERT INTO users (id, external_id, username, email, password_hash, display_name, role)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO users (id, external_id, username, email, password_hash, display_name, role, linux_username)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&id)
@@ -48,6 +82,7 @@ impl UserRepository {
         .bind(&request.password)
         .bind(&display_name)
         .bind(role.to_string())
+        .bind(&linux_username)
         .execute(&self.pool)
         .await
         .context("Failed to insert user")?;
@@ -63,7 +98,7 @@ impl UserRepository {
         let user = sqlx::query_as::<_, User>(
             r#"
             SELECT id, external_id, username, email, password_hash, display_name, 
-                   avatar_url, role, is_active, created_at, updated_at, last_login_at, settings, mmry_port
+                   avatar_url, role, is_active, created_at, updated_at, last_login_at, settings, mmry_port, linux_username
             FROM users
             WHERE id = ?
             "#,
@@ -82,7 +117,7 @@ impl UserRepository {
         let user = sqlx::query_as::<_, User>(
             r#"
             SELECT id, external_id, username, email, password_hash, display_name,
-                   avatar_url, role, is_active, created_at, updated_at, last_login_at, settings, mmry_port
+                   avatar_url, role, is_active, created_at, updated_at, last_login_at, settings, mmry_port, linux_username
             FROM users
             WHERE username = ?
             "#,
@@ -101,7 +136,7 @@ impl UserRepository {
         let user = sqlx::query_as::<_, User>(
             r#"
             SELECT id, external_id, username, email, password_hash, display_name,
-                   avatar_url, role, is_active, created_at, updated_at, last_login_at, settings, mmry_port
+                   avatar_url, role, is_active, created_at, updated_at, last_login_at, settings, mmry_port, linux_username
             FROM users
             WHERE email = ?
             "#,
@@ -120,7 +155,7 @@ impl UserRepository {
         let user = sqlx::query_as::<_, User>(
             r#"
             SELECT id, external_id, username, email, password_hash, display_name,
-                   avatar_url, role, is_active, created_at, updated_at, last_login_at, settings, mmry_port
+                   avatar_url, role, is_active, created_at, updated_at, last_login_at, settings, mmry_port, linux_username
             FROM users
             WHERE external_id = ?
             "#,
@@ -143,7 +178,7 @@ impl UserRepository {
         let mut sql = String::from(
             r#"
             SELECT id, external_id, username, email, password_hash, display_name,
-                   avatar_url, role, is_active, created_at, updated_at, last_login_at, settings, mmry_port
+                   avatar_url, role, is_active, created_at, updated_at, last_login_at, settings, mmry_port, linux_username
             FROM users
             WHERE 1=1
             "#,
