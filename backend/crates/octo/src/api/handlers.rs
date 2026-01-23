@@ -460,7 +460,11 @@ pub async fn check_all_updates(
     State(state): State<AppState>,
     user: CurrentUser,
 ) -> ApiResult<Json<Vec<SessionUpdateStatus>>> {
-    let updates = state.sessions.for_user(user.id()).check_all_for_updates().await?;
+    let updates: Vec<(String, String)> = state
+        .sessions
+        .for_user(user.id())
+        .check_all_for_updates()
+        .await?;
 
     let statuses: Vec<SessionUpdateStatus> = updates
         .into_iter()
@@ -717,9 +721,10 @@ async fn maybe_sync_templates_repo(state: &AppState) -> Result<(), ApiError> {
 #[instrument(skip(state))]
 pub async fn list_workspace_dirs(
     State(state): State<AppState>,
+    user: CurrentUser,
     Query(query): Query<WorkspaceDirQuery>,
 ) -> ApiResult<Json<Vec<WorkspaceDirEntry>>> {
-    let root = state.sessions.workspace_root();
+    let root = state.sessions.for_user(user.id()).workspace_root();
     let relative = query.path.unwrap_or_else(|| ".".to_string());
     let rel_path = std::path::PathBuf::from(&relative);
 
@@ -818,6 +823,7 @@ pub async fn list_project_templates(
 #[instrument(skip(state, request))]
 pub async fn create_project_from_template(
     State(state): State<AppState>,
+    user: CurrentUser,
     Json(request): Json<CreateProjectFromTemplateRequest>,
 ) -> ApiResult<Json<WorkspaceDirEntry>> {
     let repo_path = state
@@ -842,7 +848,7 @@ pub async fn create_project_from_template(
         return Err(ApiError::bad_request("project path is required"));
     }
 
-    let workspace_root = state.sessions.workspace_root();
+    let workspace_root = state.sessions.for_user(user.id()).workspace_root();
     let target_dir = workspace_root.join(&project_rel);
     if target_dir.exists() {
         return Err(ApiError::bad_request("project path already exists"));
@@ -930,11 +936,12 @@ mod tests {
 #[instrument(skip(state))]
 pub async fn get_project_logo(
     State(state): State<AppState>,
+    user: CurrentUser,
     axum::extract::Path(path): axum::extract::Path<String>,
 ) -> Result<impl IntoResponse, ApiError> {
     use axum::http::header;
 
-    let root = state.sessions.workspace_root();
+    let root = state.sessions.for_user(user.id()).workspace_root();
     let file_path = std::path::PathBuf::from(&path);
 
     // Security: prevent path traversal
@@ -2703,7 +2710,7 @@ pub async fn agents_ask(
 
     // Handle OpenCode sessions differently from Pi sessions
     if let AskTarget::OpenCodeSession { id, workspace_path } = parsed_target {
-        return handle_opencode_ask(&state, &req, &id, workspace_path.as_deref()).await;
+        return handle_opencode_ask(&state, &user, &req, &id, workspace_path.as_deref()).await;
     }
 
     // Get the Pi service for Pi-based targets
@@ -2988,6 +2995,7 @@ pub async fn agents_ask(
 /// by subscribing to the SSE event stream.
 async fn handle_opencode_ask(
     state: &AppState,
+    user: &CurrentUser,
     req: &AgentAskRequest,
     session_id: &str,
     provided_workspace_path: Option<&str>,
@@ -2997,18 +3005,32 @@ async fn handle_opencode_ask(
 
     // Get workspace path from provided value or look up from chat history
     let workspace_path = if let Some(path) = provided_workspace_path {
-        path.to_string()
+        // Ensure this workspace path is valid for the authenticated user.
+        state
+            .sessions
+            .for_user(user.id())
+            .validate_workspace_path(path)
+            .map_err(|e| ApiError::bad_request(format!("Invalid workspace path: {}", e)))?
+            .to_string_lossy()
+            .to_string()
     } else {
         // Look up session in chat history to get workspace path
         let chat_session = crate::history::get_session(session_id)
             .map_err(|e| ApiError::internal(format!("Failed to lookup session: {}", e)))?
             .ok_or_else(|| ApiError::not_found(format!("Session not found: {}", session_id)))?;
-        chat_session.workspace_path
+        state
+            .sessions
+            .for_user(user.id())
+            .validate_workspace_path(&chat_session.workspace_path)
+            .map_err(|e| ApiError::bad_request(format!("Invalid workspace path: {}", e)))?
+            .to_string_lossy()
+            .to_string()
     };
 
     // Get or create the OpenCode runtime session
     let opencode_session = state
         .sessions
+        .for_user(user.id())
         .get_or_create_opencode_session()
         .await
         .map_err(|e| ApiError::internal(format!("Failed to get OpenCode session: {}", e)))?;
@@ -3591,14 +3613,13 @@ pub struct SchedulerOverview {
     pub schedules: Vec<SchedulerEntry>,
 }
 
-fn resolve_skdlr_bin(state: &AppState) -> std::path::PathBuf {
+fn resolve_skdlr_bin(workspace_root: &PathBuf) -> std::path::PathBuf {
     if let Ok(value) = std::env::var("SKDLR_BIN") {
         if !value.is_empty() {
             return std::path::PathBuf::from(value);
         }
     }
 
-    let workspace_root = state.sessions.workspace_root();
     let release = workspace_root
         .join("skdlr")
         .join("target")
@@ -3619,9 +3640,8 @@ fn resolve_skdlr_bin(state: &AppState) -> std::path::PathBuf {
     std::path::PathBuf::from("skdlr")
 }
 
-async fn exec_skdlr_command(state: &AppState, args: &[&str]) -> Result<String, ApiError> {
-    let bin = resolve_skdlr_bin(state);
-    let workspace_root = state.sessions.workspace_root();
+async fn exec_skdlr_command(workspace_root: &PathBuf, args: &[&str]) -> Result<String, ApiError> {
+    let bin = resolve_skdlr_bin(workspace_root);
 
     let output = Command::new(bin)
         .args(args)
@@ -3717,12 +3737,14 @@ fn parse_skdlr_next(output: &str) -> HashMap<String, String> {
 }
 
 /// Scheduler overview (skdlr) for the dashboard.
-#[instrument(skip(state))]
+#[instrument(skip(state, user))]
 pub async fn scheduler_overview(
     State(state): State<AppState>,
+    user: CurrentUser,
 ) -> ApiResult<Json<SchedulerOverview>> {
-    let list_output = exec_skdlr_command(&state, &["list"]).await?;
-    let next_output = exec_skdlr_command(&state, &["next"])
+    let workspace_root = state.sessions.for_user(user.id()).workspace_root();
+    let list_output = exec_skdlr_command(&workspace_root, &["list"]).await?;
+    let next_output = exec_skdlr_command(&workspace_root, &["next"])
         .await
         .unwrap_or_default();
 
@@ -4035,8 +4057,12 @@ pub struct TrxWorkspaceQuery {
 
 /// Validate and resolve a workspace path, ensuring it's within the allowed workspace root
 /// or is a valid Main Chat workspace path.
-fn validate_workspace_path(state: &AppState, workspace_path: &str) -> Result<PathBuf, ApiError> {
-    let workspace_root = state.sessions.workspace_root();
+fn validate_workspace_path(
+    state: &AppState,
+    user_id: &str,
+    workspace_path: &str,
+) -> Result<PathBuf, ApiError> {
+    let workspace_root = state.sessions.for_user(user_id).workspace_root();
     let canonical_root = workspace_root
         .canonicalize()
         .unwrap_or_else(|_| workspace_root.clone());
@@ -4109,13 +4135,14 @@ fn is_main_chat_path(state: &AppState, path: &std::path::Path) -> bool {
 /// Execute trx command in a validated workspace directory.
 async fn exec_trx_command(
     state: &AppState,
+    user_id: &str,
     workspace_path: &str,
     args: &[&str],
 ) -> Result<String, ApiError> {
     use tokio::process::Command;
 
     // Validate workspace path before executing command
-    let validated_path = validate_workspace_path(state, workspace_path)?;
+    let validated_path = validate_workspace_path(state, user_id, workspace_path)?;
 
     let output = Command::new("trx")
         .args(args)
@@ -4137,13 +4164,14 @@ async fn exec_trx_command(
 }
 
 /// List TRX issues for a workspace.
-#[instrument(skip(state))]
+#[instrument(skip(state, user))]
 pub async fn list_trx_issues(
     State(state): State<AppState>,
+    user: CurrentUser,
     Query(query): Query<TrxWorkspaceQuery>,
 ) -> ApiResult<Json<Vec<TrxIssue>>> {
     let output =
-        exec_trx_command(&state, &query.workspace_path, &["list", "--all"]).await?;
+        exec_trx_command(&state, user.id(), &query.workspace_path, &["list", "--all"]).await?;
 
     // Parse the raw JSON output and transform to API format
     let raw_issues: Vec<TrxIssueRaw> = serde_json::from_str(&output)
@@ -4155,13 +4183,15 @@ pub async fn list_trx_issues(
 }
 
 /// Get a specific TRX issue.
-#[instrument(skip(state))]
+#[instrument(skip(state, user))]
 pub async fn get_trx_issue(
     State(state): State<AppState>,
+    user: CurrentUser,
     Path(issue_id): Path<String>,
     Query(query): Query<TrxWorkspaceQuery>,
 ) -> ApiResult<Json<TrxIssue>> {
-    let output = exec_trx_command(&state, &query.workspace_path, &["show", &issue_id]).await?;
+    let output =
+        exec_trx_command(&state, user.id(), &query.workspace_path, &["show", &issue_id]).await?;
 
     let raw_issue: TrxIssueRaw = serde_json::from_str(&output)
         .map_err(|e| ApiError::internal(format!("Failed to parse trx output: {}", e)))?;
@@ -4170,9 +4200,10 @@ pub async fn get_trx_issue(
 }
 
 /// Create a new TRX issue.
-#[instrument(skip(state, request))]
+#[instrument(skip(state, user, request))]
 pub async fn create_trx_issue(
     State(state): State<AppState>,
+    user: CurrentUser,
     Query(query): Query<TrxWorkspaceQuery>,
     Json(request): Json<CreateTrxIssueRequest>,
 ) -> ApiResult<Json<TrxIssue>> {
@@ -4190,7 +4221,7 @@ pub async fn create_trx_issue(
         args.push(parent);
     }
 
-    let output = exec_trx_command(&state, &query.workspace_path, &args).await?;
+    let output = exec_trx_command(&state, user.id(), &query.workspace_path, &args).await?;
 
     // trx create --json returns the created issue
     let raw_issue: TrxIssueRaw = serde_json::from_str(&output)
@@ -4202,9 +4233,10 @@ pub async fn create_trx_issue(
 }
 
 /// Update a TRX issue.
-#[instrument(skip(state, request))]
+#[instrument(skip(state, user, request))]
 pub async fn update_trx_issue(
     State(state): State<AppState>,
+    user: CurrentUser,
     Path(issue_id): Path<String>,
     Query(query): Query<TrxWorkspaceQuery>,
     Json(request): Json<UpdateTrxIssueRequest>,
@@ -4240,7 +4272,7 @@ pub async fn update_trx_issue(
         args.push(&priority_arg);
     }
 
-    let output = exec_trx_command(&state, &query.workspace_path, &args).await?;
+    let output = exec_trx_command(&state, user.id(), &query.workspace_path, &args).await?;
 
     // Parse the updated issue (trx update --json returns a single issue object)
     let raw_issue: TrxIssueRaw = serde_json::from_str(&output)
@@ -4253,9 +4285,10 @@ pub async fn update_trx_issue(
 }
 
 /// Close a TRX issue.
-#[instrument(skip(state, request))]
+#[instrument(skip(state, user, request))]
 pub async fn close_trx_issue(
     State(state): State<AppState>,
+    user: CurrentUser,
     Path(issue_id): Path<String>,
     Query(query): Query<TrxWorkspaceQuery>,
     Json(request): Json<CloseTrxIssueRequest>,
@@ -4269,7 +4302,7 @@ pub async fn close_trx_issue(
         args.push(&reason_arg);
     }
 
-    let output = exec_trx_command(&state, &query.workspace_path, &args).await?;
+    let output = exec_trx_command(&state, user.id(), &query.workspace_path, &args).await?;
 
     // Parse the closed issue (trx close --json returns a single issue object)
     let raw_issue: TrxIssueRaw = serde_json::from_str(&output)
@@ -4285,10 +4318,11 @@ pub async fn close_trx_issue(
 #[instrument(skip(state))]
 pub async fn sync_trx(
     State(state): State<AppState>,
+    user: CurrentUser,
     Query(query): Query<TrxWorkspaceQuery>,
 ) -> ApiResult<Json<serde_json::Value>> {
     // Validate workspace path before executing command
-    let validated_path = validate_workspace_path(&state, &query.workspace_path)?;
+    let validated_path = validate_workspace_path(&state, user.id(), &query.workspace_path)?;
 
     // Note: trx sync doesn't have JSON output, so we just check for success
     use tokio::process::Command;

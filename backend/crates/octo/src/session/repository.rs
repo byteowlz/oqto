@@ -165,6 +165,22 @@ impl SessionRepository {
         Ok(sessions)
     }
 
+    pub async fn list_for_user(&self, user_id: &str) -> Result<Vec<Session>> {
+        let sessions = sqlx::query_as::<_, Session>(
+            r#"
+            SELECT * FROM sessions
+            WHERE user_id = ?
+            ORDER BY created_at DESC
+            "#,
+        )
+        .bind(user_id)
+        .fetch_all(&self.pool)
+        .await
+        .context("listing sessions for user")?;
+
+        Ok(sessions)
+    }
+
     /// List sessions by user.
     #[allow(dead_code)]
     pub async fn list_by_user(&self, user_id: &str) -> Result<Vec<Session>> {

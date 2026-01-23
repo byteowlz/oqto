@@ -21,6 +21,7 @@ use super::state::AppState;
 
 async fn ensure_session_active_for_proxy(
     state: &AppState,
+    user_id: &str,
     session_id: &str,
     session: crate::session::Session,
 ) -> Result<crate::session::Session, StatusCode> {
@@ -31,11 +32,16 @@ async fn ensure_session_active_for_proxy(
                     "Opencode for session {} is unreachable; attempting restart",
                     session_id
                 );
-                if let Err(err) = state.sessions.stop_session(session_id).await {
+                if let Err(err) = state
+                    .sessions
+                    .for_user(user_id)
+                    .stop_session(session_id)
+                    .await
+                {
                     error!("Failed to stop session {}: {:?}", session_id, err);
                     return Err(StatusCode::SERVICE_UNAVAILABLE);
                 }
-                match state.sessions.resume_session(session_id).await {
+                match state.sessions.for_user(user_id).resume_session(session_id).await {
                     Ok(resumed) => Ok(resumed),
                     Err(err) => {
                         error!("Failed to resume session {}: {:?}", session_id, err);
@@ -52,7 +58,7 @@ async fn ensure_session_active_for_proxy(
                 "Session {} is stopped; attempting to resume for proxy request",
                 session_id
             );
-            match state.sessions.resume_session(session_id).await {
+            match state.sessions.for_user(user_id).resume_session(session_id).await {
                 Ok(resumed) => Ok(resumed),
                 Err(err) => {
                     error!("Failed to resume session {}: {:?}", session_id, err);
@@ -89,6 +95,7 @@ async fn is_opencode_healthy(client: Client<HttpConnector, Body>, port: u16) -> 
 
 async fn ensure_session_for_io_proxy(
     state: &AppState,
+    user_id: &str,
     session_id: &str,
     session: crate::session::Session,
 ) -> Result<crate::session::Session, StatusCode> {
@@ -100,7 +107,12 @@ async fn ensure_session_for_io_proxy(
         "Session {} is stopped; attempting to resume for IO proxy request",
         session_id
     );
-    match state.sessions.resume_session_for_io(session_id).await {
+    match state
+        .sessions
+        .for_user(user_id)
+        .resume_session_for_io(session_id)
+        .await
+    {
         Ok(resumed) => Ok(resumed),
         Err(err) => {
             error!("Failed to resume session {}: {:?}", session_id, err);
@@ -270,7 +282,13 @@ pub async fn proxy_opencode(
 
     let opencode_session_id = opencode_session.id.clone();
     let opencode_session =
-        ensure_session_active_for_proxy(&state, &opencode_session_id, opencode_session).await?;
+        ensure_session_active_for_proxy(
+            &state,
+            user.id(),
+            &opencode_session_id,
+            opencode_session,
+        )
+        .await?;
 
     let starting = matches!(opencode_session.status, SessionStatus::Starting);
     proxy_request(
@@ -290,11 +308,13 @@ pub async fn proxy_opencode(
 /// even when the opencode session is inactive.
 pub async fn proxy_fileserver(
     State(state): State<AppState>,
+    user: CurrentUser,
     Path((session_id, path)): Path<(String, String)>,
     req: Request<Body>,
 ) -> Result<Response, StatusCode> {
     let session = state
         .sessions
+        .for_user(user.id())
         .get_session(&session_id)
         .await
         .map_err(|e| {
@@ -303,7 +323,7 @@ pub async fn proxy_fileserver(
         })?
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    let session = ensure_session_for_io_proxy(&state, &session_id, session).await?;
+    let session = ensure_session_for_io_proxy(&state, user.id(), &session_id, session).await?;
 
     let starting = matches!(session.status, SessionStatus::Starting);
     proxy_request(
@@ -504,11 +524,13 @@ async fn proxy_request_with_query(
 /// WebSocket upgrade handler for terminal proxy.
 pub async fn proxy_terminal_ws(
     State(state): State<AppState>,
+    user: CurrentUser,
     Path(session_id): Path<String>,
     ws: WebSocketUpgrade,
 ) -> Result<impl IntoResponse, StatusCode> {
     let session = state
         .sessions
+        .for_user(user.id())
         .get_session(&session_id)
         .await
         .map_err(|e| {
@@ -517,7 +539,7 @@ pub async fn proxy_terminal_ws(
         })?
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    let session = ensure_session_for_io_proxy(&state, &session_id, session).await?;
+    let session = ensure_session_for_io_proxy(&state, user.id(), &session_id, session).await?;
 
     let ttyd_port = session.ttyd_port;
 
@@ -560,6 +582,7 @@ pub async fn proxy_terminal_ws_for_workspace(
 /// WebSocket upgrade handler for browser stream proxy.
 pub async fn proxy_browser_stream_ws(
     State(state): State<AppState>,
+    user: CurrentUser,
     Path(session_id): Path<String>,
     ws: WebSocketUpgrade,
 ) -> Result<impl IntoResponse, StatusCode> {
@@ -569,6 +592,7 @@ pub async fn proxy_browser_stream_ws(
 
     let session = state
         .sessions
+        .for_user(user.id())
         .get_session(&session_id)
         .await
         .map_err(|e| {
@@ -577,7 +601,7 @@ pub async fn proxy_browser_stream_ws(
         })?
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    let _session = ensure_session_for_io_proxy(&state, &session_id, session).await?;
+    let _session = ensure_session_for_io_proxy(&state, user.id(), &session_id, session).await?;
 
     let stream_port = state
         .sessions
@@ -955,7 +979,13 @@ pub async fn proxy_opencode_events(
 
     let opencode_session_id = opencode_session.id.clone();
     let opencode_session =
-        ensure_session_active_for_proxy(&state, &opencode_session_id, opencode_session).await?;
+        ensure_session_active_for_proxy(
+            &state,
+            user.id(),
+            &opencode_session_id,
+            opencode_session,
+        )
+        .await?;
 
     let target_url = if let Some(directory) = query.directory.as_deref() {
         format!(
@@ -1093,7 +1123,13 @@ pub async fn opencode_events(
 
     let opencode_session_id = opencode_session.id.clone();
     let opencode_session =
-        ensure_session_active_for_proxy(&state, &opencode_session_id, opencode_session).await?;
+        ensure_session_active_for_proxy(
+            &state,
+            user.id(),
+            &opencode_session_id,
+            opencode_session,
+        )
+        .await?;
 
     let target_url = format!(
         "http://localhost:{}/global/event",
@@ -1285,10 +1321,7 @@ async fn get_mmry_target_for_workspace(
     }
 
     if !state.mmry.single_user {
-        let port = state
-            .sessions
-            .ensure_user_mmry_pinned(user_id)
-            .await
+        let port = state.sessions.for_user(user_id).ensure_user_mmry_pinned().await
             .map_err(|e| {
                 error!("Failed to ensure per-user mmry for workspace access: {:?}", e);
                 StatusCode::SERVICE_UNAVAILABLE
@@ -1679,7 +1712,13 @@ pub async fn proxy_opencode_agent(
 
     let opencode_session_id = opencode_session.id.clone();
     let opencode_session =
-        ensure_session_active_for_proxy(&state, &opencode_session_id, opencode_session).await?;
+        ensure_session_active_for_proxy(
+            &state,
+            user.id(),
+            &opencode_session_id,
+            opencode_session,
+        )
+        .await?;
 
     // Resolve the agent's port
     let port = state
@@ -1745,7 +1784,13 @@ pub async fn proxy_opencode_agent_events(
 
     let opencode_session_id = opencode_session.id.clone();
     let _opencode_session =
-        ensure_session_active_for_proxy(&state, &opencode_session_id, opencode_session).await?;
+        ensure_session_active_for_proxy(
+            &state,
+            user.id(),
+            &opencode_session_id,
+            opencode_session,
+        )
+        .await?;
 
     // Resolve the agent's port
     let port = state

@@ -411,9 +411,5 @@ impl UserMmryManager {
         }
     }
 
-    /// Get the port for a running per-user mmry instance, if any.
-    pub async fn get_user_mmry_port(&self, user_id: &str) -> Option<u16> {
-        let state = self.state.lock().await;
-        state.instances.get(user_id).map(|i| i.port)
-    }
+    // Intentionally no public "get port" API: callers should pin/ensure and use the returned port.
 }

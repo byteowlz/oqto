@@ -249,21 +249,6 @@ impl<'a> MainChatRepository<'a> {
     }
 
     /// Get messages for a specific session.
-    pub async fn get_messages_by_session(&self, session_id: &str) -> Result<Vec<ChatMessage>> {
-        sqlx::query_as::<_, ChatMessage>(
-            r#"
-            SELECT id, role, content, pi_session_id, timestamp, created_at
-            FROM messages
-            WHERE pi_session_id = ?
-            ORDER BY timestamp ASC
-            "#,
-        )
-        .bind(session_id)
-        .fetch_all(self.db.pool())
-        .await
-        .context("fetching messages by session")
-    }
-
     /// Get messages for a session range (from session start to end/next session).
     /// This finds all messages from the given session_id until the next separator or end.
     pub async fn get_messages_for_session_range(

@@ -87,6 +87,19 @@ impl LocalRuntimeConfig {
             );
         }
 
+        // In local multi-user mode, workspaces must be physically separated.
+        // Require a per-user placeholder to avoid accidentally sharing the same
+        // directory across all users.
+        if self.linux_users.enabled && !self.single_user {
+            if !self.workspace_dir.contains("{user_id}") {
+                anyhow::bail!(
+                    "local.workspace_dir must include '{{user_id}}' in multi-user mode (got: {}). \
+                     This is required to prevent cross-user filesystem access.",
+                    self.workspace_dir
+                );
+            }
+        }
+
         Ok(())
     }
 

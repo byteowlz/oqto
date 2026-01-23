@@ -94,7 +94,7 @@ install-system:
     #
     # Prefer copying from ~/.cargo/bin (freshly updated by `just install`) so updates
     # are not blocked by PATH precedence.
-    for bin in trx mmry mmry-service agntz hstry octo octo-runner octo-files; do
+    for bin in trx mmry mmry-service agntz hstry skdlr octo octo-runner octo-files; do
       src="$HOME/.cargo/bin/$bin"
       if [[ ! -x "$src" ]]; then
         src="$(command -v "$bin" || true)"

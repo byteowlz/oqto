@@ -1693,7 +1693,6 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
         base_port,
         user_data_path,
         skel_path,
-        default_user_id: "default".to_string(),
         default_session_budget_usd: ctx
             .config
             .eavs

@@ -257,7 +257,7 @@ impl Runner {
 
             // Build bwrap args using the trusted config
             // Note: We use the current user (runner's user) for path expansion
-            match sandbox_config.build_bwrap_args(&req.cwd) {
+            match sandbox_config.build_bwrap_args_for_user(&req.cwd, None) {
                 Some(bwrap_args) => {
                     // Command: bwrap [bwrap_args] -- binary [args]
                     let mut full_args = bwrap_args;
@@ -874,28 +874,42 @@ async fn main() -> Result<()> {
         }
     } else {
         // Load from system config (trusted, root-owned)
-        match SandboxConfig::load_system_config() {
-            Ok(config) => {
-                if config.enabled {
-                    info!(
-                        "Loaded system sandbox config from {}, profile='{}'",
-                        octo::local::SYSTEM_SANDBOX_CONFIG,
-                        config.profile
-                    );
-                    Some(config)
-                } else {
-                    info!(
-                        "System sandbox config exists but is disabled (enabled=false)"
+        let config_path = std::path::Path::new("/etc/octo/sandbox.toml");
+        if !config_path.exists() {
+            None
+        } else {
+            match std::fs::read_to_string(config_path) {
+                Ok(contents) => match toml::from_str::<SandboxConfig>(&contents) {
+                    Ok(config) => {
+                        if config.enabled {
+                            info!(
+                                "Loaded system sandbox config from {}, profile='{}'",
+                                "/etc/octo/sandbox.toml",
+                                config.profile
+                            );
+                            Some(config)
+                        } else {
+                            info!(
+                                "System sandbox config exists but is disabled (enabled=false)"
+                            );
+                            None
+                        }
+                    }
+                    Err(e) => {
+                        warn!(
+                            "Failed to parse system sandbox config: {}. Sandboxing disabled.",
+                            e
+                        );
+                        None
+                    }
+                },
+                Err(e) => {
+                    warn!(
+                        "Failed to read system sandbox config: {}. Sandboxing disabled.",
+                        e
                     );
                     None
                 }
-            }
-            Err(e) => {
-                warn!(
-                    "Failed to load system sandbox config: {}. Sandboxing disabled.",
-                    e
-                );
-                None
             }
         }
     };
