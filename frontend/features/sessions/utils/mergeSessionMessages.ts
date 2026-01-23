@@ -68,7 +68,15 @@ export function mergeSessionMessages(
 		return existing;
 	});
 
-	return pendingOptimistic.length > 0
-		? [...merged, ...pendingOptimistic]
-		: merged;
+	const combined =
+		pendingOptimistic.length > 0 ? [...merged, ...pendingOptimistic] : merged;
+
+	return combined
+		.map((message, index) => ({
+			message,
+			index,
+			created: message.info.time?.created ?? 0,
+		}))
+		.sort((a, b) => a.created - b.created || a.index - b.index)
+		.map(({ message }) => message);
 }

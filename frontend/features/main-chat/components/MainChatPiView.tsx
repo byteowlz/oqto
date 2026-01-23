@@ -113,6 +113,8 @@ export interface MainChatPiViewProps {
 	onScrollToMessageComplete?: () => void;
 	/** Trigger to create a new session - increment to trigger */
 	newSessionTrigger?: number;
+	/** Callback when a message is sent (for sidebar refresh) */
+	onMessageSent?: () => void;
 }
 
 /**
@@ -132,6 +134,7 @@ export function MainChatPiView({
 	scrollToMessageId,
 	onScrollToMessageComplete,
 	newSessionTrigger,
+	onMessageSent,
 }: MainChatPiViewProps) {
 	const {
 		messages,
@@ -790,11 +793,14 @@ export function MainChatPiView({
 				inputRef.current.style.height = "auto";
 			}
 			await send(message, { mode });
+			// Notify that a message was sent (for sidebar refresh)
+			onMessageSent?.();
 		},
 		[
 			builtInCommandNames,
 			fileAttachments,
 			input,
+			onMessageSent,
 			runSlashCommand,
 			send,
 			slashQuery.command,
@@ -1061,6 +1067,10 @@ export function MainChatPiView({
 								(m) => surfacesByMessageId.get(m.id) ?? [],
 							);
 							const groupMessageId = group.messages[0]?.id;
+							// Check if this is the last assistant group
+							const isLastAssistantGroup =
+								group.role === "assistant" &&
+								!grouped.slice(groupIndex + 1).some((g) => g.role === "assistant");
 							return (
 								<div
 									key={groupMessageId ?? `${group.role}-${groupIndex}`}
@@ -1075,6 +1085,7 @@ export function MainChatPiView({
 										a2uiSurfaces={groupSurfaces}
 										onA2UIAction={handleA2UIAction}
 										messageId={groupMessageId}
+										showWorkingIndicator={isStreaming && isLastAssistantGroup}
 									/>
 								</div>
 							);
@@ -1367,27 +1378,16 @@ export function MainChatPiView({
 						>
 							<span className="stop-button-ring" aria-hidden>
 								<svg viewBox="0 0 100 100" role="presentation">
-									<defs>
-										<linearGradient
-											id="stop-ring-gradient"
-											x1="0"
-											y1="0"
-											x2="100"
-											y2="100"
-											gradientUnits="userSpaceOnUse"
-										>
-											<stop offset="0" stopColor="transparent" />
-											<stop offset="0.2" stopColor="currentColor" />
-											<stop offset="0.8" stopColor="currentColor" />
-											<stop offset="1" stopColor="transparent" />
-										</linearGradient>
-									</defs>
-									<rect
-										x="2"
-										y="2"
-										width="96"
-										height="96"
-										stroke="url(#stop-ring-gradient)"
+									<circle
+										cx="50"
+										cy="50"
+										r="46"
+										fill="none"
+										stroke="currentColor"
+										strokeWidth="3"
+										strokeLinecap="round"
+										strokeDasharray="72 216"
+										opacity="0.8"
 									/>
 								</svg>
 							</span>
@@ -1455,6 +1455,7 @@ const PiMessageGroupCard = memo(function PiMessageGroupCard({
 	a2uiSurfaces = [],
 	onA2UIAction,
 	messageId,
+	showWorkingIndicator = false,
 }: {
 	group: PiMessageGroup;
 	assistantName?: string | null;
@@ -1464,6 +1465,7 @@ const PiMessageGroupCard = memo(function PiMessageGroupCard({
 	a2uiSurfaces?: A2UISurfaceState[];
 	onA2UIAction?: (action: import("@/lib/a2ui/types").A2UIUserAction) => void;
 	messageId?: string;
+	showWorkingIndicator?: boolean;
 }) {
 	const isUser = group.role === "user";
 	const isStreamingGroup = group.messages.some((m) => Boolean(m.isStreaming));
@@ -1649,7 +1651,7 @@ const PiMessageGroupCard = memo(function PiMessageGroupCard({
 			</div>
 
 			<div className="px-2 sm:px-4 py-2 sm:py-3 group space-y-3 overflow-hidden">
-				{segments.length === 0 && !isUser && (
+				{segments.length === 0 && !isUser && showWorkingIndicator && (
 					<div className="flex items-center gap-3 text-muted-foreground text-sm">
 						<BrailleSpinner />
 						<span>{locale === "de" ? "Arbeitet..." : "Working..."}</span>

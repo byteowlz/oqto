@@ -1174,6 +1174,13 @@ export const TrxView = memo(function TrxView({
 								>
 									Open only
 								</DropdownMenuCheckboxItem>
+								<DropdownMenuCheckboxItem
+									checked={filterStatus === "closed"}
+									onCheckedChange={() => setFilterStatus("closed")}
+									className="text-xs"
+								>
+									Closed only
+								</DropdownMenuCheckboxItem>
 								<DropdownMenuSeparator />
 								<DropdownMenuLabel className="text-xs">Type</DropdownMenuLabel>
 								<DropdownMenuCheckboxItem

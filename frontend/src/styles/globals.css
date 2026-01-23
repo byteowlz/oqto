@@ -457,21 +457,31 @@ input[type="radio"] {
 
 .stop-button-animated {
 	position: relative;
-	border-radius: 8px;
+	border-radius: 50%;
+	background: transparent !important;
 }
 
-/* Stop button animated border - moving segment along outline */
-@keyframes stop-ring-dash {
+.stop-button-animated:hover {
+	background: transparent !important;
+}
+
+.stop-button-animated:hover > *:not(.stop-button-ring) {
+	filter: drop-shadow(0 0 4px currentColor);
+}
+
+/* Stop button animated border - smooth rotating arc */
+@keyframes stop-ring-rotate {
 	to {
-		stroke-dashoffset: -420;
+		transform: rotate(360deg);
 	}
 }
 
 .stop-button-ring {
 	position: absolute;
-	inset: -2px;
+	inset: 0;
 	pointer-events: none;
 	z-index: 0;
+	animation: stop-ring-rotate 1.2s linear infinite;
 }
 
 .stop-button-ring svg {
@@ -479,24 +489,10 @@ input[type="radio"] {
 	height: 100%;
 }
 
-.stop-button-ring rect {
-	fill: none;
-	stroke-width: 3;
-	rx: 8;
-	ry: 8;
-	stroke-linecap: round;
-	stroke-dasharray: 120 300;
-	stroke-dashoffset: 0;
-	animation: stop-ring-dash 1.3s linear infinite;
-	filter: drop-shadow(
-			0 0 6px color-mix(in oklch, var(--destructive) 65%, white)
-		)
-		drop-shadow(0 0 12px color-mix(in oklch, var(--destructive) 35%, white));
-}
-
 .stop-button-animated > *:not(.stop-button-ring) {
 	position: relative;
 	z-index: 1;
+	transition: filter 0.15s ease;
 }
 
 .sidebar-chat .chat-input-container {

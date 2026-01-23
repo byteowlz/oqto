@@ -97,6 +97,17 @@ impl WsHub {
             .insert(user_id.to_string());
 
         // Get or create adapter for this session
+        if let Some(existing) = self.adapters.get(&session_id) {
+            if !existing.matches(&subscription.workspace_path, subscription.opencode_port) {
+                info!(
+                    "Replacing OpenCode adapter for session {} (port/path updated)",
+                    session_id
+                );
+                existing.stop();
+                self.adapters.remove(&session_id);
+            }
+        }
+
         if !self.adapters.contains_key(&session_id) {
             let adapter = OpenCodeAdapter::new(
                 session_id.clone(),
@@ -134,11 +145,11 @@ impl WsHub {
         // If no more subscribers, consider cleaning up the adapter
         if let Some(subscribers) = self.session_subscribers.get(session_id) {
             if subscribers.is_empty() {
-                // TODO: Implement graceful adapter shutdown after idle timeout
-                debug!(
-                    "Session {} has no subscribers, adapter will continue running",
-                    session_id
-                );
+                if let Some(adapter) = self.adapters.get(session_id) {
+                    adapter.stop();
+                }
+                self.adapters.remove(session_id);
+                debug!("Session {} has no subscribers, adapter stopped", session_id);
             }
         }
     }

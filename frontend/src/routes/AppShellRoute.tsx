@@ -141,6 +141,7 @@ const AppShell = memo(function AppShell() {
 		setScrollToMessageId,
 		mainChatNewSessionTrigger,
 		requestNewMainChatSession,
+		mainChatSessionActivityTrigger,
 	} = useApp();
 	const location = useLocation();
 	const navigate = useNavigate();
@@ -1902,6 +1903,7 @@ const AppShell = memo(function AppShell() {
 														mainChatActive ? mainChatCurrentSessionId : null
 													}
 													newSessionTrigger={mainChatNewSessionTrigger}
+													sessionActivityTrigger={mainChatSessionActivityTrigger}
 													onSelect={handleMainChatSelect}
 													onSessionSelect={handleMainChatSessionSelect}
 													onNewSession={handleMainChatNewSession}
@@ -2767,6 +2769,7 @@ const AppShell = memo(function AppShell() {
 													mainChatActive ? mainChatCurrentSessionId : null
 												}
 												newSessionTrigger={mainChatNewSessionTrigger}
+												sessionActivityTrigger={mainChatSessionActivityTrigger}
 												onSelect={handleMainChatSelect}
 												onSessionSelect={handleMainChatSessionSelect}
 												onNewSession={handleMainChatNewSession}

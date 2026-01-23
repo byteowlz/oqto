@@ -107,6 +107,10 @@ interface SessionContextValue {
 	mainChatNewSessionTrigger: number;
 	/** Request a new Main Chat session (increments trigger) */
 	requestNewMainChatSession: () => void;
+	/** Trigger that increments when Main Chat session has activity (message sent) */
+	mainChatSessionActivityTrigger: number;
+	/** Notify that Main Chat session has activity (increments trigger) */
+	notifyMainChatSessionActivity: () => void;
 	/** Target message ID to scroll to after navigation (from search) */
 	scrollToMessageId: string | null;
 	setScrollToMessageId: (id: string | null) => void;
@@ -161,6 +165,8 @@ const defaultSessionContext: SessionContextValue = {
 	setMainChatWorkspacePath: noop,
 	mainChatNewSessionTrigger: 0,
 	requestNewMainChatSession: noop,
+	mainChatSessionActivityTrigger: 0,
+	notifyMainChatSessionActivity: noop,
 	scrollToMessageId: null,
 	setScrollToMessageId: noop,
 };
@@ -878,6 +884,15 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 		setMainChatNewSessionTrigger((prev) => prev + 1);
 	}, []);
 
+	// Trigger for Main Chat session activity (message sent)
+	const [mainChatSessionActivityTrigger, setMainChatSessionActivityTrigger] =
+		useState(0);
+
+	// Notify that Main Chat session has activity
+	const notifyMainChatSessionActivity = useCallback(() => {
+		setMainChatSessionActivityTrigger((prev) => prev + 1);
+	}, []);
+
 	const deleteChatSession = useCallback(
 		async (sessionId: string, baseUrlOverride?: string): Promise<boolean> => {
 			const baseUrl = baseUrlOverride || opencodeBaseUrl;
@@ -1036,6 +1051,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 			setMainChatWorkspacePath,
 			mainChatNewSessionTrigger,
 			requestNewMainChatSession,
+			mainChatSessionActivityTrigger,
+			notifyMainChatSessionActivity,
 			scrollToMessageId,
 			setScrollToMessageId,
 		}),
@@ -1075,6 +1092,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 			mainChatWorkspacePath,
 			mainChatNewSessionTrigger,
 			requestNewMainChatSession,
+			mainChatSessionActivityTrigger,
+			notifyMainChatSessionActivity,
 			setMainChatWorkspacePath,
 			scrollToMessageId,
 		],

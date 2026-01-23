@@ -49,6 +49,8 @@ export interface MainChatEntryProps {
 	activeSessionId?: string | null;
 	/** Trigger value that changes when a new session is requested */
 	newSessionTrigger?: number;
+	/** Trigger value that changes when session has activity (message sent) */
+	sessionActivityTrigger?: number;
 	/** Callback when the entry is clicked */
 	onSelect: (assistantName: string, sessionId: string | null) => void;
 	/** Callback when a specific session in the timeline is clicked */
@@ -74,6 +76,7 @@ export function MainChatEntry({
 	isSelected,
 	activeSessionId,
 	newSessionTrigger,
+	sessionActivityTrigger,
 	onSelect,
 	onSessionSelect,
 	onNewSession,
@@ -141,9 +144,11 @@ export function MainChatEntry({
 	}, [resetName]);
 	const lastNewSessionTriggerRef = useRef(newSessionTrigger);
 	const lastActiveSessionIdRef = useRef(activeSessionId);
+	const lastSessionActivityTriggerRef = useRef(sessionActivityTrigger);
 
-	const refreshSessions = useCallback(() => {
-		if (!assistantName || !isSelected) return;
+	// Unconditional refresh - always fetches sessions regardless of selection state
+	const refreshSessionsUnconditional = useCallback(() => {
+		if (!assistantName) return;
 		listMainChatPiSessions()
 			.then((sessionList) => {
 				const sorted = [...sessionList].sort(
@@ -156,7 +161,12 @@ export function MainChatEntry({
 			.catch(() => {
 				// ignore
 			});
-	}, [assistantName, isSelected]);
+	}, [assistantName]);
+
+	const refreshSessions = useCallback(() => {
+		if (!isSelected) return;
+		refreshSessionsUnconditional();
+	}, [isSelected, refreshSessionsUnconditional]);
 
 	// Load assistant on mount
 	useEffect(() => {
@@ -187,6 +197,20 @@ export function MainChatEntry({
 			refreshSessions();
 		}
 	}, [assistantName, isSelected, newSessionTrigger, refreshSessions]);
+
+	// Refresh when session activity trigger changes (message sent) - always refresh
+	useEffect(() => {
+		if (!assistantName) return;
+		if (sessionActivityTrigger === undefined) return;
+		if (lastSessionActivityTriggerRef.current === undefined) {
+			lastSessionActivityTriggerRef.current = sessionActivityTrigger;
+			return;
+		}
+		if (sessionActivityTrigger !== lastSessionActivityTriggerRef.current) {
+			lastSessionActivityTriggerRef.current = sessionActivityTrigger;
+			refreshSessionsUnconditional();
+		}
+	}, [assistantName, sessionActivityTrigger, refreshSessionsUnconditional]);
 
 	function cacheKeySessions(name: string) {
 		return `octo:mainChatPi:${name}:sessions:v1`;

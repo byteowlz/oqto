@@ -283,6 +283,7 @@ type ChatMessagesPaneProps = {
 	scrollToBottom: (behavior?: ScrollBehavior) => void;
 	loadMoreMessages: () => void;
 	onA2UIAction?: (action: A2UIUserAction) => void;
+	isStreaming?: boolean;
 };
 
 const ChatMessagesPane = memo(function ChatMessagesPane({
@@ -309,6 +310,7 @@ const ChatMessagesPane = memo(function ChatMessagesPane({
 	scrollToBottom,
 	loadMoreMessages,
 	onA2UIAction,
+	isStreaming,
 }: ChatMessagesPaneProps) {
 	return (
 		<>
@@ -383,31 +385,38 @@ const ChatMessagesPane = memo(function ChatMessagesPane({
 				)}
 
 				{/* Message groups with A2UI surfaces embedded */}
-				{visibleGroups.map((group, groupIndex) => (
-					<div
-						key={
-							group.messages[0]?.info.id || `${group.role}-${group.startIndex}`
-						}
-						className={groupIndex > 0 ? "mt-4 sm:mt-6" : ""}
-					>
-						{/* Session divider for Main Chat threaded view */}
-						{group.isNewSession && group.sessionTitle && (
-							<SessionDivider title={group.sessionTitle} />
-						)}
-						<MessageGroupCard
-							group={group}
-							persona={persona}
-							workspaceName={workspaceName}
-							readableId={readableId}
-							workspaceDirectory={workspaceDirectory}
-							onFork={onFork}
-							locale={locale}
-							a2uiSurfaces={a2uiByGroupIndex.get(groupIndex)}
-							onA2UIAction={onA2UIAction}
-							messageId={group.messages[0]?.info.id}
-						/>
-					</div>
-				))}
+				{visibleGroups.map((group, groupIndex) => {
+					// Check if this is the last assistant group (for showing working indicator)
+					const isLastAssistantGroup =
+						group.role === "assistant" &&
+						!visibleGroups.slice(groupIndex + 1).some((g) => g.role === "assistant");
+					return (
+						<div
+							key={
+								group.messages[0]?.info.id || `${group.role}-${group.startIndex}`
+							}
+							className={groupIndex > 0 ? "mt-4 sm:mt-6" : ""}
+						>
+							{/* Session divider for Main Chat threaded view */}
+							{group.isNewSession && group.sessionTitle && (
+								<SessionDivider title={group.sessionTitle} />
+							)}
+							<MessageGroupCard
+								group={group}
+								persona={persona}
+								workspaceName={workspaceName}
+								readableId={readableId}
+								workspaceDirectory={workspaceDirectory}
+								onFork={onFork}
+								locale={locale}
+								a2uiSurfaces={a2uiByGroupIndex.get(groupIndex)}
+								onA2UIAction={onA2UIAction}
+								messageId={group.messages[0]?.info.id}
+								showWorkingIndicator={isStreaming && isLastAssistantGroup}
+							/>
+						</div>
+					);
+				})}
 
 				<div ref={messagesEndRef} data-messages-end />
 			</div>
@@ -605,12 +614,16 @@ export const SessionScreen = memo(function SessionScreen() {
 		mainChatWorkspacePath,
 		setMainChatWorkspacePath,
 		mainChatNewSessionTrigger,
+		mainChatSessionActivityTrigger,
+		notifyMainChatSessionActivity,
 		scrollToMessageId,
 		setScrollToMessageId,
 	} = useApp();
 	const { registerSessionControls } = useUIControl();
 	const [messages, setMessages] = useState<OpenCodeMessageWithParts[]>([]);
 	const [chatInputMountKey, setChatInputMountKey] = useState(0);
+	const lastActiveChatSessionRef = useRef<string | null>(null);
+	const lastActiveOpencodeBaseUrlRef = useRef<string>("");
 	// Ref to track messages for A2UI anchoring
 	const messagesRef = useRef(messages);
 	useEffect(() => {
@@ -733,6 +746,11 @@ export const SessionScreen = memo(function SessionScreen() {
 		if (mainChatActive && mainChatBaseUrl) return mainChatBaseUrl;
 		return opencodeBaseUrl;
 	}, [mainChatActive, mainChatBaseUrl, opencodeBaseUrl]);
+	useEffect(() => {
+		if (effectiveOpencodeBaseUrl) {
+			lastActiveOpencodeBaseUrlRef.current = effectiveOpencodeBaseUrl;
+		}
+	}, [effectiveOpencodeBaseUrl]);
 
 	const [opencodeModelOptions, setOpencodeModelOptions] = useState<
 		ModelOption[]
@@ -2416,6 +2434,12 @@ export const SessionScreen = memo(function SessionScreen() {
 				});
 			} else if (eventType === "session_busy") {
 				setChatState("sending");
+				if (
+					event.session_id === selectedChatSessionId ||
+					event.session_id === mainChatCurrentSessionId
+				) {
+					lastActiveChatSessionRef.current = event.session_id;
+				}
 			}
 
 			if (eventType === "permission_request") {
@@ -3409,6 +3433,11 @@ export const SessionScreen = memo(function SessionScreen() {
 				targetSessionId = selectedChatSessionId;
 			}
 
+			lastActiveChatSessionRef.current = targetSessionId;
+			if (effectiveBaseUrl) {
+				lastActiveOpencodeBaseUrlRef.current = effectiveBaseUrl;
+			}
+
 			// Optimistic update - show user message immediately (now that we have the session ID)
 			const optimisticMessage: OpenCodeMessageWithParts = {
 				info: {
@@ -3706,11 +3735,18 @@ export const SessionScreen = memo(function SessionScreen() {
 	};
 
 	const handleStop = async () => {
-		if (!opencodeBaseUrl || !selectedChatSessionId) return;
 		if (chatState !== "sending") return;
+		const sessionId =
+			lastActiveChatSessionRef.current ??
+			(mainChatActive ? mainChatCurrentSessionId : selectedChatSessionId);
+		const baseUrl =
+			lastActiveOpencodeBaseUrlRef.current ||
+			effectiveOpencodeBaseUrl ||
+			opencodeBaseUrl;
+		if (!baseUrl || !sessionId) return;
 
 		try {
-			await abortSession(opencodeBaseUrl, selectedChatSessionId, {
+			await abortSession(baseUrl, sessionId, {
 				directory: opencodeDirectory,
 			});
 			// The SSE event will set the state to idle
@@ -4151,6 +4187,7 @@ export const SessionScreen = memo(function SessionScreen() {
 						scrollToBottom={scrollToBottom}
 						loadMoreMessages={loadMoreMessages}
 						onA2UIAction={handleA2UIAction}
+						isStreaming={chatState === "sending"}
 					/>
 				)}
 			</div>
@@ -4516,27 +4553,16 @@ export const SessionScreen = memo(function SessionScreen() {
 						>
 							<span className="stop-button-ring" aria-hidden>
 								<svg viewBox="0 0 100 100" role="presentation">
-									<defs>
-										<linearGradient
-											id="stop-ring-gradient"
-											x1="0"
-											y1="0"
-											x2="100"
-											y2="100"
-											gradientUnits="userSpaceOnUse"
-										>
-											<stop offset="0" stopColor="transparent" />
-											<stop offset="0.2" stopColor="currentColor" />
-											<stop offset="0.8" stopColor="currentColor" />
-											<stop offset="1" stopColor="transparent" />
-										</linearGradient>
-									</defs>
-									<rect
-										x="2"
-										y="2"
-										width="96"
-										height="96"
-										stroke="url(#stop-ring-gradient)"
+									<circle
+										cx="50"
+										cy="50"
+										r="46"
+										fill="none"
+										stroke="currentColor"
+										strokeWidth="3"
+										strokeLinecap="round"
+										strokeDasharray="72 216"
+										opacity="0.8"
 									/>
 								</svg>
 							</span>
@@ -4910,6 +4936,7 @@ export const SessionScreen = memo(function SessionScreen() {
 								scrollToMessageId={scrollToMessageId}
 								onScrollToMessageComplete={() => setScrollToMessageId(null)}
 								newSessionTrigger={mainChatNewSessionTrigger}
+								onMessageSent={notifyMainChatSessionActivity}
 							/>
 						) : (
 							renderChatContent(true)
@@ -5103,6 +5130,7 @@ export const SessionScreen = memo(function SessionScreen() {
 								scrollToMessageId={scrollToMessageId}
 								onScrollToMessageComplete={() => setScrollToMessageId(null)}
 								newSessionTrigger={mainChatNewSessionTrigger}
+								onMessageSent={notifyMainChatSessionActivity}
 							/>
 						)
 					) : chatInSidebar ? (
@@ -5235,6 +5263,7 @@ export const SessionScreen = memo(function SessionScreen() {
 													setScrollToMessageId(null)
 												}
 												newSessionTrigger={mainChatNewSessionTrigger}
+												onMessageSent={notifyMainChatSessionActivity}
 											/>
 										) : (
 											renderChatContent(false)
@@ -5604,6 +5633,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 	a2uiSurfaces = [],
 	onA2UIAction,
 	messageId,
+	showWorkingIndicator = false,
 }: {
 	group: MessageGroup;
 	persona?: Persona | null;
@@ -5615,6 +5645,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 	a2uiSurfaces?: A2UISurfaceState[];
 	onA2UIAction?: (action: A2UIUserAction) => void;
 	messageId?: string;
+	showWorkingIndicator?: boolean;
 }) {
 	const isUser = group.role === "user";
 
@@ -5825,7 +5856,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 
 			{/* Content - render segments in order */}
 			<div className="px-2 sm:px-4 py-2 sm:py-3 group space-y-3 overflow-hidden">
-				{segments.length === 0 && !isUser && (
+				{segments.length === 0 && !isUser && showWorkingIndicator && (
 					<div className="flex items-center gap-3 text-muted-foreground text-sm">
 						<BrailleSpinner />
 						<span>Working...</span>
