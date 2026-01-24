@@ -80,6 +80,7 @@ import {
 	listMainChatSessions,
 	opencodeProxyBaseUrl,
 	registerMainChatSession,
+	touchSessionActivity,
 	workspaceFileUrl,
 } from "@/features/sessions/api";
 import {
@@ -1068,6 +1069,8 @@ export const SessionScreen = memo(function SessionScreen() {
 	} | null>(null);
 	// Track the session ID that loadMessages is currently loading for (to prevent stale updates)
 	const loadingSessionIdRef = useRef<string | null>(null);
+	// Track request counter to prevent race conditions when multiple fetches overlap
+	const loadRequestCounterRef = useRef(0);
 	const fileInputRef = useRef<HTMLInputElement>(null);
 	const chatInputRef = useRef<HTMLTextAreaElement>(null);
 	const chatContainerRef = useRef<HTMLDivElement>(null);
@@ -2027,9 +2030,10 @@ export const SessionScreen = memo(function SessionScreen() {
 
 			if (!selectedChatSessionId) return;
 
-			// Capture session ID at start to detect stale responses
+			// Capture session ID and request counter at start to detect stale responses
 			const targetSessionId = selectedChatSessionId;
 			loadingSessionIdRef.current = targetSessionId;
+			const requestId = ++loadRequestCounterRef.current;
 			setMessagesLoading(true);
 
 			try {
@@ -2067,8 +2071,11 @@ export const SessionScreen = memo(function SessionScreen() {
 					}
 				}
 
-				// Check if session changed during async load - discard stale response
-				if (loadingSessionIdRef.current !== targetSessionId) {
+				// Check if session changed or newer request started - discard stale response
+				if (
+					loadingSessionIdRef.current !== targetSessionId ||
+					loadRequestCounterRef.current !== requestId
+				) {
 					return;
 				}
 
@@ -3500,6 +3507,11 @@ export const SessionScreen = memo(function SessionScreen() {
 				lastActiveOpencodeBaseUrlRef.current = effectiveBaseUrl;
 			}
 
+			// Touch activity to prevent idle timeout while user is active
+			if (selectedWorkspaceSessionId) {
+				touchSessionActivity(selectedWorkspaceSessionId).catch(() => {});
+			}
+
 			// Optimistic update - show user message immediately (now that we have the session ID)
 			const optimisticMessage: OpenCodeMessageWithParts = {
 				info: {
@@ -4526,7 +4538,7 @@ export const SessionScreen = memo(function SessionScreen() {
 							/>
 						) : (
 							<textarea
-								key={chatInputMountKey}
+								key={`${chatInputMountKey}-${selectedChatSessionId || 'none'}`}
 								ref={setChatInputEl}
 								autoComplete="off"
 								autoCorrect="off"

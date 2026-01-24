@@ -13,6 +13,7 @@ export {
 	listMainChatSessions,
 	opencodeProxyBaseUrl,
 	registerMainChatSession,
+	touchSessionActivity,
 	workspaceFileUrl,
 } from "@/lib/control-plane-client";
 

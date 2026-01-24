@@ -498,10 +498,41 @@ export function useWsSessionEvents(
 		client.subscribeSession(workspaceSessionId);
 		setIsSubscribed(true);
 
+		// Throttle delta events to prevent UI freezing
+		let deltaTimer: ReturnType<typeof setTimeout> | null = null;
+		let deltaLastEmitAt = 0;
+		let deltaPending: WsEvent | null = null;
+		const DELTA_THROTTLE_MS = 250;
+
+		const emitDelta = () => {
+			if (deltaPending) {
+				onEventRef.current(deltaPending);
+				deltaPending = null;
+			}
+		};
+
+		const scheduleDelta = (event: WsEvent) => {
+			deltaPending = event;
+			if (deltaTimer) return;
+
+			const elapsed = Date.now() - deltaLastEmitAt;
+			const wait = Math.max(0, DELTA_THROTTLE_MS - elapsed);
+			deltaTimer = setTimeout(() => {
+				deltaTimer = null;
+				deltaLastEmitAt = Date.now();
+				emitDelta();
+			}, wait);
+		};
+
 		// Handle events for this session
 		const unsubscribe = client.onSessionEvent(
 			workspaceSessionId,
 			(event: WsEvent) => {
+				// Throttle high-frequency delta events
+				if (event.type === "text_delta" || event.type === "thinking_delta") {
+					scheduleDelta(event);
+					return;
+				}
 				onEventRef.current(event);
 			},
 		);
@@ -510,6 +541,10 @@ export function useWsSessionEvents(
 			unsubscribe();
 			client.unsubscribeSession(workspaceSessionId);
 			setIsSubscribed(false);
+			if (deltaTimer) {
+				clearTimeout(deltaTimer);
+				deltaTimer = null;
+			}
 		};
 	}, [workspaceSessionId, enabled, client]);
 
