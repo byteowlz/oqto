@@ -16,6 +16,7 @@ pub mod local;
 pub mod main_chat;
 pub mod markdown;
 pub mod observability;
+pub mod onboarding;
 pub mod pi;
 pub mod projects;
 pub mod runner;

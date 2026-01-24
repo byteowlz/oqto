@@ -18,6 +18,7 @@ use crate::auth::AuthState;
 use crate::invite::InviteCodeRepository;
 use crate::local::LinuxUsersConfig;
 use crate::main_chat::{MainChatPiService, MainChatService};
+use crate::onboarding::OnboardingService;
 use crate::session::SessionService;
 use crate::session_ui::SessionAutoAttachMode;
 use crate::settings::SettingsService;
@@ -318,6 +319,8 @@ pub struct AppState {
     pub main_chat: Option<Arc<MainChatService>>,
     /// Main Chat Pi service for managing Pi subprocesses.
     pub main_chat_pi: Option<Arc<MainChatPiService>>,
+    /// Onboarding service for user setup flow.
+    pub onboarding: Option<Arc<OnboardingService>>,
     /// WebSocket hub for real-time communication.
     pub ws_hub: Arc<WsHub>,
     /// Pending A2UI blocking requests (request_id -> response channel).
@@ -363,6 +366,7 @@ impl AppState {
             settings_mmry: None,
             main_chat: None,
             main_chat_pi: None,
+            onboarding: None,
             ws_hub: Arc::new(WsHub::new()),
             pending_a2ui_requests: super::a2ui::new_pending_requests(),
             max_proxy_body_bytes,
@@ -404,6 +408,7 @@ impl AppState {
             settings_mmry: None,
             main_chat: None,
             main_chat_pi: None,
+            onboarding: None,
             ws_hub: Arc::new(WsHub::new()),
             pending_a2ui_requests: super::a2ui::new_pending_requests(),
             max_proxy_body_bytes,
@@ -451,6 +456,12 @@ impl AppState {
     /// Set the main chat Pi service from an existing Arc.
     pub fn with_main_chat_pi_arc(mut self, service: Arc<MainChatPiService>) -> Self {
         self.main_chat_pi = Some(service);
+        self
+    }
+
+    /// Set the onboarding service.
+    pub fn with_onboarding(mut self, service: OnboardingService) -> Self {
+        self.onboarding = Some(Arc::new(service));
         self
     }
 }

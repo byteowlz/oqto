@@ -13,22 +13,26 @@
  * - useMainChat() - for main chat state only
  * - useSessionContext() - for all session-related state
  * - useUIContext() - for all UI-related state
+ * - useOnboarding() - for onboarding state and progressive unlock
  */
 
 import type { ReactNode } from "react";
-import { SessionProvider, UIProvider } from "./contexts";
+import { OnboardingProvider, SessionProvider, UIProvider } from "./contexts";
 
 /**
- * AppProvider - Composes UIProvider and SessionProvider
+ * AppProvider - Composes UIProvider, SessionProvider, and OnboardingProvider
  *
  * The split contexts ensure that:
  * - UI changes (locale, theme) don't re-render session components
  * - Session changes (busySessions) don't re-render UI components
+ * - Onboarding state is available throughout the app
  */
 export function AppProvider({ children }: { children: ReactNode }) {
 	return (
 		<UIProvider>
-			<SessionProvider>{children}</SessionProvider>
+			<SessionProvider>
+				<OnboardingProvider>{children}</OnboardingProvider>
+			</SessionProvider>
 		</UIProvider>
 	);
 }
@@ -46,4 +50,8 @@ export {
 	useSelectedChat,
 	useWorkspaceSessions,
 	useMainChat,
+	// Onboarding hooks
+	useOnboarding,
+	useIsUnlocked,
+	useNeedsOnboarding,
 } from "./contexts";

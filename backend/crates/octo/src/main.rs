@@ -30,6 +30,7 @@ mod local;
 mod main_chat;
 mod markdown;
 mod observability;
+mod onboarding;
 mod pi;
 mod projects;
 mod runner;
@@ -2135,6 +2136,11 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
         state = state.with_settings_mmry(mmry_settings);
     }
 
+    // Add onboarding service
+    let onboarding_service = onboarding::OnboardingService::new(database.pool().clone());
+    state = state.with_onboarding(onboarding_service);
+    info!("Onboarding service initialized");
+
     // Add Linux users config for multi-user isolation
     if ctx.config.local.linux_users.enabled {
         let linux_users_config = local::LinuxUsersConfig {
@@ -2161,21 +2167,26 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
 
     // Initialize Main Chat Pi service for agent runtime (if enabled)
     if ctx.config.pi.enabled {
-        // Resolve extensions: use config or fall back to bundled extension
+        // Resolve extensions: use config or fall back to bundled extensions
         let extensions = if ctx.config.pi.extensions.is_empty() {
-            // Look for bundled extension in data directory
-            let bundled_ext = ctx
-                .paths
-                .data_dir
-                .join("extensions")
-                .join("octo-delegate.ts");
-            if bundled_ext.exists() {
-                info!("Using bundled Pi extension: {:?}", bundled_ext);
-                vec![bundled_ext.to_string_lossy().to_string()]
-            } else {
-                debug!("No bundled Pi extension found at {:?}", bundled_ext);
-                Vec::new()
+            // Look for bundled extensions in data directory
+            let extensions_dir = ctx.paths.data_dir.join("extensions");
+            let mut found_extensions = Vec::new();
+            if extensions_dir.exists() {
+                if let Ok(entries) = std::fs::read_dir(&extensions_dir) {
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        if path.extension().map_or(false, |ext| ext == "ts") {
+                            info!("Using bundled Pi extension: {:?}", path);
+                            found_extensions.push(path.to_string_lossy().to_string());
+                        }
+                    }
+                }
             }
+            if found_extensions.is_empty() {
+                debug!("No bundled Pi extensions found in {:?}", extensions_dir);
+            }
+            found_extensions
         } else {
             ctx.config.pi.extensions.clone()
         };

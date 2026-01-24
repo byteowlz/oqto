@@ -1,4 +1,4 @@
-import { AppProvider } from "@/components/app-context";
+import { AppProvider, useOnboarding } from "@/components/app-context";
 import { CommandPalette } from "@/components/command-palette";
 import { MainChatEntry } from "@/components/main-chat";
 import {
@@ -146,6 +146,7 @@ const AppShell = memo(function AppShell() {
 	const location = useLocation();
 	const navigate = useNavigate();
 	const { theme, setTheme, resolvedTheme } = useTheme();
+	const { activateGodmode, state: onboardingState } = useOnboarding();
 	const [mounted, setMounted] = useState(false);
 	const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 	const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -592,6 +593,20 @@ const AppShell = memo(function AppShell() {
 		document.addEventListener("keydown", handleKeyDown);
 		return () => document.removeEventListener("keydown", handleKeyDown);
 	}, []);
+
+	// Keyboard shortcut: Ctrl+Shift+G to activate godmode (skip onboarding)
+	useEffect(() => {
+		const handleKeyDown = (e: KeyboardEvent) => {
+			if (e.key === "g" && (e.metaKey || e.ctrlKey) && e.shiftKey) {
+				e.preventDefault();
+				if (!onboardingState.completed && !onboardingState.godmode) {
+					activateGodmode();
+				}
+			}
+		};
+		document.addEventListener("keydown", handleKeyDown);
+		return () => document.removeEventListener("keydown", handleKeyDown);
+	}, [activateGodmode, onboardingState.completed, onboardingState.godmode]);
 
 	useEffect(() => {
 		const query = deferredSearch.trim().toLowerCase();

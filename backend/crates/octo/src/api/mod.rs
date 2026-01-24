@@ -9,6 +9,7 @@ mod handlers;
 mod main_chat;
 mod main_chat_files;
 mod main_chat_pi;
+mod onboarding_handlers;
 mod proxy;
 mod routes;
 mod state;

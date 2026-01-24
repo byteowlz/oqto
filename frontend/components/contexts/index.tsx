@@ -19,3 +19,14 @@ export {
 	useWorkspaceSessions,
 	useMainChat,
 } from "./session-context";
+
+export {
+	OnboardingProvider,
+	useOnboarding,
+	useIsUnlocked,
+	useNeedsOnboarding,
+	type OnboardingState,
+	type OnboardingStage,
+	type UserLevel,
+	type UnlockedComponents,
+} from "./onboarding-context";
