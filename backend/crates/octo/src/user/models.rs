@@ -143,6 +143,9 @@ pub struct UpdateUserRequest {
     pub role: Option<UserRole>,
     pub is_active: Option<bool>,
     pub settings: Option<String>,
+    /// Linux username for multi-user isolation mode.
+    /// Set this to map the Octo user to an existing Linux user.
+    pub linux_username: Option<String>,
 }
 
 /// User list query parameters.

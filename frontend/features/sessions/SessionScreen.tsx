@@ -74,6 +74,7 @@ import {
 	getChatMessages,
 	getFeatures,
 	getMainChatAssistant,
+	getOrCreateSessionForWorkspace,
 	getProjectLogoUrl,
 	getWorkspaceConfig,
 	listMainChatSessions,
@@ -1330,11 +1331,12 @@ export const SessionScreen = memo(function SessionScreen() {
 	// Register global keyboard shortcuts for voice (Alt+V, Alt+D)
 	useVoiceShortcuts(!!features.voice);
 
-	// Streaming TTS: Track what text we've already sent to TTS for current message
+	// Streaming TTS: Track the active stream for current message
 	const ttsStreamStateRef = useRef<{
 		messageId: string | null;
+		streamId: string | null;
 		sentLength: number; // How many characters we've already sent
-	}>({ messageId: null, sentLength: 0 });
+	}>({ messageId: null, streamId: null, sentLength: 0 });
 	const voiceActivationRef = useRef(false);
 
 	// Seed TTS stream state when voice mode is activated to avoid reading history
@@ -1347,17 +1349,18 @@ export const SessionScreen = memo(function SessionScreen() {
 				const fullText = getMessageText(lastAssistant.parts);
 				ttsStreamStateRef.current = {
 					messageId: lastAssistant.info.id,
+					streamId: null,
 					sentLength: fullText.length,
 				};
 			} else {
-				ttsStreamStateRef.current = { messageId: null, sentLength: 0 };
+				ttsStreamStateRef.current = { messageId: null, streamId: null, sentLength: 0 };
 			}
 		}
 		voiceActivationRef.current = voiceMode.isActive;
 	}, [voiceMode.isActive, messages]);
 
-	// Auto-TTS: Stream assistant responses to TTS as text arrives
-	// Kokorox handles sentence segmentation internally
+	// Auto-TTS: Stream assistant responses to TTS using streaming mode
+	// Kokorox handles sentence segmentation and seamless audio playback
 	useEffect(() => {
 		// Only trigger TTS when voice mode is active and not muted
 		if (!voiceMode.isActive || voiceMode.settings.muted) return;
@@ -1369,40 +1372,74 @@ export const SessionScreen = memo(function SessionScreen() {
 		const messageId = lastMessage.info.id;
 		const streamState = ttsStreamStateRef.current;
 
-		// Reset state if this is a new message
+		// New message - start a new stream
 		if (streamState.messageId !== messageId) {
+			// End previous stream if any
+			if (streamState.streamId) {
+				voiceMode.streamEnd();
+			}
 			streamState.messageId = messageId;
+			streamState.streamId = null;
 			streamState.sentLength = 0;
+
+			// Start new stream
+			voiceMode.streamStart()
+				.then((streamId) => {
+					streamState.streamId = streamId;
+					// Send any text that arrived while starting
+					const fullText = getMessageText(lastMessage.parts);
+					if (fullText && fullText.length > streamState.sentLength) {
+						const newText = fullText.slice(streamState.sentLength);
+						streamState.sentLength = fullText.length;
+						voiceMode.streamAppend(newText);
+					}
+				})
+				.catch((err) => {
+					console.error("[Voice] Failed to start TTS stream:", err);
+				});
+			return;
 		}
 
+		// Existing stream - append new text
 		const fullText = getMessageText(lastMessage.parts);
-
 		if (!fullText) return;
 
 		// Nothing new to send
 		if (fullText.length <= streamState.sentLength) return;
 
-		// Get the new text since last send and stream it to kokorox
+		// Get the new text since last send
 		const newText = fullText.slice(streamState.sentLength);
 		streamState.sentLength = fullText.length;
 
-		console.log(
-			"[Voice] Streaming TTS:",
-			newText.slice(0, 50) + (newText.length > 50 ? "..." : ""),
-		);
-		voiceMode.speak(newText).catch((err) => {
-			console.error("[Voice] Auto-TTS failed:", err);
-		});
-	}, [messages, voiceMode.isActive, voiceMode.settings.muted, voiceMode.speak]);
+		// If stream is ready, append; otherwise it will be sent when stream starts
+		if (streamState.streamId) {
+			voiceMode.streamAppend(newText);
+		}
+	}, [messages, voiceMode.isActive, voiceMode.settings.muted, voiceMode.streamStart, voiceMode.streamAppend, voiceMode.streamEnd]);
+
+	// End TTS stream when message finishes (chatState goes from sending to idle)
+	const prevChatStateRef = useRef<"idle" | "sending">("idle");
+	useEffect(() => {
+		const wasStreaming = prevChatStateRef.current === "sending";
+		const isNowIdle = chatState === "idle";
+		prevChatStateRef.current = chatState;
+
+		// When streaming ends, close the TTS stream to flush remaining text
+		if (wasStreaming && isNowIdle && ttsStreamStateRef.current.streamId) {
+			voiceMode.streamEnd();
+			ttsStreamStateRef.current.streamId = null;
+		}
+	}, [chatState, voiceMode.streamEnd]);
 
 	// Stop TTS playback when voice mode is deactivated
 	useEffect(() => {
 		if (!voiceMode.isActive) {
+			voiceMode.streamCancel();
 			voiceMode.interrupt();
 			// Reset stream state so next activation starts fresh
-			ttsStreamStateRef.current = { messageId: null, sentLength: 0 };
+			ttsStreamStateRef.current = { messageId: null, streamId: null, sentLength: 0 };
 		}
-	}, [voiceMode.isActive, voiceMode.interrupt]);
+	}, [voiceMode.isActive, voiceMode.interrupt, voiceMode.streamCancel]);
 
 	// Auto-switch to voice tab on desktop when voice mode starts
 	useEffect(() => {
@@ -1998,7 +2035,11 @@ export const SessionScreen = memo(function SessionScreen() {
 			try {
 				let loadedMessages: OpenCodeMessageWithParts[] = [];
 
-				if (opencodeBaseUrl && !isHistoryOnlySession) {
+				// Only fetch from opencode if we have a valid opencode session ID (starts with "ses_")
+				// Main Chat sessions (pending-*, pi-*, etc.) should not be sent to opencode
+				const isOpencodeSession = targetSessionId.startsWith("ses_");
+
+				if (opencodeBaseUrl && !isHistoryOnlySession && isOpencodeSession) {
 					// Live opencode is authoritative for streaming updates.
 					try {
 						loadedMessages = await fetchMessages(
@@ -3274,10 +3315,31 @@ export const SessionScreen = memo(function SessionScreen() {
 				);
 				// Build target string based on type
 				// - main-chat: "main-chat"
+				// - new-session: create session first, then ask
 				// - session (OpenCode): "opencode:<id>:<workspace_path>" or "opencode:<id>"
 				let targetString: string;
 				if (currentAgentTarget.type === "main-chat") {
 					targetString = "main-chat";
+				} else if (currentAgentTarget.type === "new-session") {
+					// Create a new session for the workspace path first
+					if (!currentAgentTarget.workspace_path) {
+						throw new Error("New session requires a workspace path");
+					}
+					setStatus(
+						locale === "de"
+							? `Erstelle Session in ${currentAgentTarget.workspace_path}...`
+							: `Creating session in ${currentAgentTarget.workspace_path}...`,
+					);
+					const newSession = await getOrCreateSessionForWorkspace(
+						currentAgentTarget.workspace_path,
+					);
+					targetString = `opencode:${newSession.id}:${currentAgentTarget.workspace_path}`;
+					// Update status to show we're now asking
+					setStatus(
+						locale === "de"
+							? `Frage ${currentAgentTarget.name}...`
+							: `Asking ${currentAgentTarget.name}...`,
+					);
 				} else if (currentAgentTarget.workspace_path) {
 					targetString = `opencode:${currentAgentTarget.id}:${currentAgentTarget.workspace_path}`;
 				} else {
@@ -3700,16 +3762,22 @@ export const SessionScreen = memo(function SessionScreen() {
 				);
 			}
 
-			try {
-				const liveMessages = await fetchMessages(url, selectedChatSessionId, {
-					directory: resumeWorkspacePath,
-				});
-				if (liveMessages.length > 0) {
-					setMessages((prev) => mergeMessages(prev, liveMessages));
-				} else {
+			// Only fetch from opencode if we have a valid opencode session ID (starts with "ses_")
+			if (selectedChatSessionId.startsWith("ses_")) {
+				try {
+					const liveMessages = await fetchMessages(url, selectedChatSessionId, {
+						directory: resumeWorkspacePath,
+					});
+					if (liveMessages.length > 0) {
+						setMessages((prev) => mergeMessages(prev, liveMessages));
+					} else {
+						await loadMessages();
+					}
+				} catch {
 					await loadMessages();
 				}
-			} catch {
+			} else {
+				// Non-opencode session (Main Chat, etc.) - load from history
 				await loadMessages();
 			}
 

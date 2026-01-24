@@ -310,40 +310,6 @@ impl LocalRuntime {
         self.process_manager.stop_session(session_id).await
     }
 
-    /// Resume a stopped session by restarting its processes.
-    ///
-    /// Note: For local runtime, "resume" actually restarts the processes since
-    /// we don't have container state to preserve. The workspace data is preserved.
-    pub async fn resume_session(
-        &self,
-        session_id: &str,
-        user_id: &str,
-        workspace_path: &Path,
-        agent: Option<&str>,
-        project_id: Option<&str>,
-        opencode_port: u16,
-        fileserver_port: u16,
-        ttyd_port: u16,
-        env: HashMap<String, String>,
-    ) -> Result<String> {
-        info!("Resuming local session {}", session_id);
-
-        // For local runtime, resume is the same as start
-        // The processes don't persist state, but the workspace does
-        self.start_session(
-            session_id,
-            user_id,
-            workspace_path,
-            agent,
-            project_id,
-            opencode_port,
-            fileserver_port,
-            ttyd_port,
-            env,
-        )
-        .await
-    }
-
     /// Check if a session's processes are running.
     pub async fn is_session_running(&self, session_id: &str) -> bool {
         self.process_manager.is_session_running(session_id).await

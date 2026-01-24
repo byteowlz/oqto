@@ -333,6 +333,7 @@ impl Default for UpdateUserRequest {
             role: None,
             is_active: None,
             settings: None,
+            linux_username: None,
         }
     }
 }

@@ -247,7 +247,6 @@ const AppShell = memo(function AppShell() {
 	const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
 	const [renameDialogOpen, setRenameDialogOpen] = useState(false);
 	const [targetSessionId, setTargetSessionId] = useState<string>("");
-	const [renameValue, setRenameValue] = useState("");
 	const [sessionLimit, setSessionLimit] = useState<number>(3);
 
 	// Command palette
@@ -293,7 +292,6 @@ const AppShell = memo(function AppShell() {
 	const [renameProjectDialogOpen, setRenameProjectDialogOpen] = useState(false);
 	const [targetProjectKey, setTargetProjectKey] = useState<string>("");
 	const [targetProjectName, setTargetProjectName] = useState<string>("");
-	const [renameProjectValue, setRenameProjectValue] = useState("");
 	const [newProjectDialogOpen, setNewProjectDialogOpen] = useState(false);
 	const [projectTemplates, setProjectTemplates] = useState<
 		ProjectTemplateEntry[]
@@ -1120,25 +1118,30 @@ const AppShell = memo(function AppShell() {
 		});
 	}, []);
 
+	// Track initial value for rename dialog (not the live input value)
+	const [renameInitialValue, setRenameInitialValue] = useState("");
+
 	const handleRenameSession = useCallback(
 		(sessionId: string) => {
 			// Use chatHistory (disk-based) to find session title
 			const session = chatHistory.find((s) => s.id === sessionId);
 			setTargetSessionId(sessionId);
-			setRenameValue(session?.title || "");
+			setRenameInitialValue(session?.title || "");
 			setRenameDialogOpen(true);
 		},
 		[chatHistory],
 	);
 
-	const handleConfirmRename = useCallback(async () => {
-		if (targetSessionId && renameValue.trim()) {
-			await renameChatSession(targetSessionId, renameValue.trim());
-		}
-		setRenameDialogOpen(false);
-		setTargetSessionId("");
-		setRenameValue("");
-	}, [targetSessionId, renameValue, renameChatSession]);
+	const handleConfirmRename = useCallback(
+		async (newTitle: string) => {
+			if (targetSessionId && newTitle.trim()) {
+				await renameChatSession(targetSessionId, newTitle.trim());
+			}
+			setRenameDialogOpen(false);
+			setTargetSessionId("");
+		},
+		[targetSessionId, renameChatSession],
+	);
 
 	const handleDeleteSession = useCallback((sessionId: string) => {
 		setTargetSessionId(sessionId);
@@ -1183,33 +1186,39 @@ const AppShell = memo(function AppShell() {
 		});
 	}, []);
 
+	// Track initial value for project rename dialog (not the live input value)
+	const [renameProjectInitialValue, setRenameProjectInitialValue] =
+		useState("");
+
 	const handleRenameProject = useCallback(
 		(projectKey: string, currentName: string) => {
 			setTargetProjectKey(projectKey);
 			setTargetProjectName(currentName);
-			setRenameProjectValue(currentName);
+			setRenameProjectInitialValue(currentName);
 			setRenameProjectDialogOpen(true);
 		},
 		[],
 	);
 
-	const handleConfirmRenameProject = useCallback(async () => {
-		if (targetProjectKey && renameProjectValue.trim()) {
-			// Find all sessions belonging to this project and rename them
-			// For now, we'll just close the dialog - actual renaming would need backend support
-			// TODO: Implement project rename via backend API
-			console.log(
-				"[handleConfirmRenameProject] Would rename project:",
-				targetProjectKey,
-				"to:",
-				renameProjectValue.trim(),
-			);
-		}
-		setRenameProjectDialogOpen(false);
-		setTargetProjectKey("");
-		setTargetProjectName("");
-		setRenameProjectValue("");
-	}, [targetProjectKey, renameProjectValue]);
+	const handleConfirmRenameProject = useCallback(
+		async (newName: string) => {
+			if (targetProjectKey && newName.trim()) {
+				// Find all sessions belonging to this project and rename them
+				// For now, we'll just close the dialog - actual renaming would need backend support
+				// TODO: Implement project rename via backend API
+				console.log(
+					"[handleConfirmRenameProject] Would rename project:",
+					targetProjectKey,
+					"to:",
+					newName.trim(),
+				);
+			}
+			setRenameProjectDialogOpen(false);
+			setTargetProjectKey("");
+			setTargetProjectName("");
+		},
+		[targetProjectKey],
+	);
 
 	const handleDeleteProject = useCallback(
 		(projectKey: string, projectName: string) => {
@@ -3549,43 +3558,14 @@ const AppShell = memo(function AppShell() {
 					</AlertDialogContent>
 				</AlertDialog>
 
-				{/* Rename dialog */}
-				<Dialog open={renameDialogOpen} onOpenChange={setRenameDialogOpen}>
-					<DialogContent>
-						<DialogHeader>
-							<DialogTitle>
-								{locale === "de" ? "Chat umbenennen" : "Rename chat"}
-							</DialogTitle>
-							<DialogDescription>
-								{locale === "de"
-									? "Geben Sie einen neuen Namen fur diesen Chat ein."
-									: "Enter a new name for this chat."}
-							</DialogDescription>
-						</DialogHeader>
-						<Input
-							value={renameValue}
-							onChange={(e) => setRenameValue(e.target.value)}
-							placeholder={locale === "de" ? "Chat-Titel" : "Chat title"}
-							onKeyDown={(e) => {
-								if (e.key === "Enter") {
-									handleConfirmRename();
-								}
-							}}
-						/>
-						<DialogFooter>
-							<Button
-								type="button"
-								variant="outline"
-								onClick={() => setRenameDialogOpen(false)}
-							>
-								{locale === "de" ? "Abbrechen" : "Cancel"}
-							</Button>
-							<Button type="button" onClick={handleConfirmRename}>
-								{locale === "de" ? "Speichern" : "Save"}
-							</Button>
-						</DialogFooter>
-					</DialogContent>
-				</Dialog>
+				{/* Rename dialog - memoized to prevent full AppShell re-renders */}
+				<RenameSessionDialog
+					open={renameDialogOpen}
+					onOpenChange={setRenameDialogOpen}
+					initialValue={renameInitialValue}
+					onConfirm={handleConfirmRename}
+					locale={locale}
+				/>
 
 				{/* Delete project confirmation dialog */}
 				<AlertDialog
@@ -3616,46 +3596,14 @@ const AppShell = memo(function AppShell() {
 					</AlertDialogContent>
 				</AlertDialog>
 
-				{/* Rename project dialog */}
-				<Dialog
+				{/* Rename project dialog - memoized to prevent full AppShell re-renders */}
+				<RenameProjectDialog
 					open={renameProjectDialogOpen}
 					onOpenChange={setRenameProjectDialogOpen}
-				>
-					<DialogContent>
-						<DialogHeader>
-							<DialogTitle>
-								{locale === "de" ? "Projekt umbenennen" : "Rename project"}
-							</DialogTitle>
-							<DialogDescription>
-								{locale === "de"
-									? "Geben Sie einen neuen Namen fur dieses Projekt ein."
-									: "Enter a new name for this project."}
-							</DialogDescription>
-						</DialogHeader>
-						<Input
-							value={renameProjectValue}
-							onChange={(e) => setRenameProjectValue(e.target.value)}
-							placeholder={locale === "de" ? "Projektname" : "Project name"}
-							onKeyDown={(e) => {
-								if (e.key === "Enter") {
-									handleConfirmRenameProject();
-								}
-							}}
-						/>
-						<DialogFooter>
-							<Button
-								type="button"
-								variant="outline"
-								onClick={() => setRenameProjectDialogOpen(false)}
-							>
-								{locale === "de" ? "Abbrechen" : "Cancel"}
-							</Button>
-							<Button type="button" onClick={handleConfirmRenameProject}>
-								{locale === "de" ? "Speichern" : "Save"}
-							</Button>
-						</DialogFooter>
-					</DialogContent>
-				</Dialog>
+					initialValue={renameProjectInitialValue}
+					onConfirm={handleConfirmRenameProject}
+					locale={locale}
+				/>
 
 				<Dialog
 					open={newProjectDialogOpen}
@@ -3795,6 +3743,140 @@ const AppShell = memo(function AppShell() {
 				</Dialog>
 			</div>
 		</UIControlProvider>
+	);
+});
+
+// Memoized rename dialog to prevent full AppShell re-renders on input
+const RenameSessionDialog = memo(function RenameSessionDialog({
+	open,
+	onOpenChange,
+	initialValue,
+	onConfirm,
+	locale,
+}: {
+	open: boolean;
+	onOpenChange: (open: boolean) => void;
+	initialValue: string;
+	onConfirm: (newValue: string) => void;
+	locale: string;
+}) {
+	const [value, setValue] = useState(initialValue);
+
+	// Sync with initial value when dialog opens
+	useEffect(() => {
+		if (open) {
+			setValue(initialValue);
+		}
+	}, [open, initialValue]);
+
+	const handleConfirm = useCallback(() => {
+		onConfirm(value);
+	}, [onConfirm, value]);
+
+	return (
+		<Dialog open={open} onOpenChange={onOpenChange}>
+			<DialogContent>
+				<DialogHeader>
+					<DialogTitle>
+						{locale === "de" ? "Chat umbenennen" : "Rename chat"}
+					</DialogTitle>
+					<DialogDescription>
+						{locale === "de"
+							? "Geben Sie einen neuen Namen fur diesen Chat ein."
+							: "Enter a new name for this chat."}
+					</DialogDescription>
+				</DialogHeader>
+				<Input
+					value={value}
+					onChange={(e) => setValue(e.target.value)}
+					placeholder={locale === "de" ? "Chat-Titel" : "Chat title"}
+					onKeyDown={(e) => {
+						if (e.key === "Enter") {
+							handleConfirm();
+						}
+					}}
+				/>
+				<DialogFooter>
+					<Button
+						type="button"
+						variant="outline"
+						onClick={() => onOpenChange(false)}
+					>
+						{locale === "de" ? "Abbrechen" : "Cancel"}
+					</Button>
+					<Button type="button" onClick={handleConfirm}>
+						{locale === "de" ? "Speichern" : "Save"}
+					</Button>
+				</DialogFooter>
+			</DialogContent>
+		</Dialog>
+	);
+});
+
+// Memoized rename project dialog to prevent full AppShell re-renders on input
+const RenameProjectDialog = memo(function RenameProjectDialog({
+	open,
+	onOpenChange,
+	initialValue,
+	onConfirm,
+	locale,
+}: {
+	open: boolean;
+	onOpenChange: (open: boolean) => void;
+	initialValue: string;
+	onConfirm: (newValue: string) => void;
+	locale: string;
+}) {
+	const [value, setValue] = useState(initialValue);
+
+	// Sync with initial value when dialog opens
+	useEffect(() => {
+		if (open) {
+			setValue(initialValue);
+		}
+	}, [open, initialValue]);
+
+	const handleConfirm = useCallback(() => {
+		onConfirm(value);
+	}, [onConfirm, value]);
+
+	return (
+		<Dialog open={open} onOpenChange={onOpenChange}>
+			<DialogContent>
+				<DialogHeader>
+					<DialogTitle>
+						{locale === "de" ? "Projekt umbenennen" : "Rename project"}
+					</DialogTitle>
+					<DialogDescription>
+						{locale === "de"
+							? "Geben Sie einen neuen Namen fur dieses Projekt ein."
+							: "Enter a new name for this project."}
+					</DialogDescription>
+				</DialogHeader>
+				<Input
+					value={value}
+					onChange={(e) => setValue(e.target.value)}
+					placeholder={locale === "de" ? "Projektname" : "Project name"}
+					onKeyDown={(e) => {
+						if (e.key === "Enter") {
+							handleConfirm();
+						}
+					}}
+				/>
+				<DialogFooter>
+					<Button
+						type="button"
+						variant="outline"
+						onClick={() => onOpenChange(false)}
+					>
+						{locale === "de" ? "Abbrechen" : "Cancel"}
+					</Button>
+					<Button type="button" onClick={handleConfirm}>
+						{locale === "de" ? "Speichern" : "Save"}
+					</Button>
+				</DialogFooter>
+			</DialogContent>
+		</Dialog>
 	);
 });
 

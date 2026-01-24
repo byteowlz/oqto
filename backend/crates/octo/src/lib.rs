@@ -23,5 +23,6 @@ pub mod session;
 pub mod session_ui;
 pub mod settings;
 pub mod user;
+pub mod user_plane;
 pub mod wordlist;
 pub mod ws;

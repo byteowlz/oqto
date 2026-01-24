@@ -2,8 +2,21 @@
 //!
 //! Defines the request/response types for communication between octo and the runner daemon.
 //! The protocol uses JSON over Unix sockets with newline-delimited messages.
+//!
+//! ## Protocol Categories
+//!
+//! ### Process Management (original)
+//! - SpawnProcess, SpawnRpcProcess, KillProcess, GetStatus, ListProcesses
+//! - WriteStdin, ReadStdout, SubscribeStdout
+//!
+//! ### User-Plane Operations (for multi-user isolation)
+//! - Filesystem: ReadFile, WriteFile, ListDirectory, Stat, DeletePath
+//! - Sessions: ListSessions, GetSession, CreateSession, StopSession
+//! - Main Chat: ListMainChatSessions, GetMainChatMessages
+//! - Memory: SearchMemories, AddMemory, DeleteMemory
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -11,6 +24,9 @@ use std::path::PathBuf;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum RunnerRequest {
+    // ========================================================================
+    // Process Management (original)
+    // ========================================================================
     /// Spawn a detached process (fire and forget, no stdin/stdout).
     SpawnProcess(SpawnProcessRequest),
 
@@ -43,12 +59,72 @@ pub enum RunnerRequest {
 
     /// Shutdown the runner gracefully.
     Shutdown,
+
+    // ========================================================================
+    // Filesystem Operations (user-plane)
+    // ========================================================================
+    /// Read a file from the user's workspace.
+    ReadFile(ReadFileRequest),
+
+    /// Write a file to the user's workspace.
+    WriteFile(WriteFileRequest),
+
+    /// List contents of a directory.
+    ListDirectory(ListDirectoryRequest),
+
+    /// Get file/directory metadata (stat).
+    Stat(StatRequest),
+
+    /// Delete a file or directory.
+    DeletePath(DeletePathRequest),
+
+    /// Create a directory (with parents if needed).
+    CreateDirectory(CreateDirectoryRequest),
+
+    // ========================================================================
+    // Session Operations (user-plane)
+    // ========================================================================
+    /// List all sessions for this user.
+    ListSessions,
+
+    /// Get a specific session by ID.
+    GetSession(GetSessionRequest),
+
+    /// Start services for a session.
+    StartSession(StartSessionRequest),
+
+    /// Stop a running session.
+    StopSession(StopSessionRequest),
+
+    // ========================================================================
+    // Main Chat Operations (user-plane)
+    // ========================================================================
+    /// List main chat session files.
+    ListMainChatSessions,
+
+    /// Get messages from a main chat session.
+    GetMainChatMessages(GetMainChatMessagesRequest),
+
+    // ========================================================================
+    // Memory Operations (user-plane)
+    // ========================================================================
+    /// Search memories.
+    SearchMemories(SearchMemoriesRequest),
+
+    /// Add a new memory.
+    AddMemory(AddMemoryRequest),
+
+    /// Delete a memory by ID.
+    DeleteMemory(DeleteMemoryRequest),
 }
 
 /// Response from runner to octo.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum RunnerResponse {
+    // ========================================================================
+    // Process Management Responses
+    // ========================================================================
     /// Process spawned successfully.
     ProcessSpawned(ProcessSpawnedResponse),
 
@@ -81,6 +157,69 @@ pub enum RunnerResponse {
 
     /// Shutdown acknowledged.
     ShuttingDown,
+
+    // ========================================================================
+    // Filesystem Responses
+    // ========================================================================
+    /// File content (base64 encoded for binary safety).
+    FileContent(FileContentResponse),
+
+    /// File written successfully.
+    FileWritten(FileWrittenResponse),
+
+    /// Directory listing.
+    DirectoryListing(DirectoryListingResponse),
+
+    /// File/directory metadata.
+    FileStat(FileStatResponse),
+
+    /// Path deleted successfully.
+    PathDeleted(PathDeletedResponse),
+
+    /// Directory created successfully.
+    DirectoryCreated(DirectoryCreatedResponse),
+
+    // ========================================================================
+    // Session Responses
+    // ========================================================================
+    /// List of sessions.
+    SessionList(SessionListResponse),
+
+    /// Single session info.
+    Session(SessionResponse),
+
+    /// Session started (with service ports/PIDs).
+    SessionStarted(SessionStartedResponse),
+
+    /// Session stopped.
+    SessionStopped(SessionStoppedResponse),
+
+    // ========================================================================
+    // Main Chat Responses
+    // ========================================================================
+    /// List of main chat sessions.
+    MainChatSessionList(MainChatSessionListResponse),
+
+    /// Main chat messages.
+    MainChatMessages(MainChatMessagesResponse),
+
+    // ========================================================================
+    // Memory Responses
+    // ========================================================================
+    /// Memory search results.
+    MemorySearchResults(MemorySearchResultsResponse),
+
+    /// Memory added.
+    MemoryAdded(MemoryAddedResponse),
+
+    /// Memory deleted.
+    MemoryDeleted(MemoryDeletedResponse),
+
+    // ========================================================================
+    // Generic
+    // ========================================================================
+    /// Generic success (for operations with no specific response data).
+    Ok,
 
     /// Error response.
     Error(ErrorResponse),
@@ -169,6 +308,170 @@ pub struct ReadStdoutRequest {
 pub struct SubscribeStdoutRequest {
     /// Process ID.
     pub id: String,
+}
+
+// ============================================================================
+// Filesystem Request Types
+// ============================================================================
+
+/// Request to read a file.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReadFileRequest {
+    /// Path to the file (relative to workspace root or absolute within allowed roots).
+    pub path: PathBuf,
+    /// Optional byte offset to start reading from.
+    #[serde(default)]
+    pub offset: Option<u64>,
+    /// Optional maximum bytes to read.
+    #[serde(default)]
+    pub limit: Option<u64>,
+}
+
+/// Request to write a file.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WriteFileRequest {
+    /// Path to the file.
+    pub path: PathBuf,
+    /// File content (base64 encoded for binary safety).
+    pub content_base64: String,
+    /// Whether to create parent directories if they don't exist.
+    #[serde(default)]
+    pub create_parents: bool,
+}
+
+/// Request to list a directory.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ListDirectoryRequest {
+    /// Path to the directory.
+    pub path: PathBuf,
+    /// Whether to include hidden files (starting with .).
+    #[serde(default)]
+    pub include_hidden: bool,
+}
+
+/// Request to get file/directory metadata.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StatRequest {
+    /// Path to stat.
+    pub path: PathBuf,
+}
+
+/// Request to delete a path.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeletePathRequest {
+    /// Path to delete.
+    pub path: PathBuf,
+    /// If true and path is a directory, delete recursively.
+    #[serde(default)]
+    pub recursive: bool,
+}
+
+/// Request to create a directory.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateDirectoryRequest {
+    /// Path to create.
+    pub path: PathBuf,
+    /// Create parent directories if they don't exist.
+    #[serde(default = "default_true")]
+    pub create_parents: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+// ============================================================================
+// Session Request Types
+// ============================================================================
+
+/// Request to get a specific session.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GetSessionRequest {
+    /// Session ID.
+    pub session_id: String,
+}
+
+/// Request to start session services.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StartSessionRequest {
+    /// Session ID.
+    pub session_id: String,
+    /// Workspace path for the session.
+    pub workspace_path: PathBuf,
+    /// Port for opencode/Claude Code.
+    pub opencode_port: u16,
+    /// Port for fileserver.
+    pub fileserver_port: u16,
+    /// Port for ttyd terminal.
+    pub ttyd_port: u16,
+    /// Optional agent name for opencode.
+    #[serde(default)]
+    pub agent: Option<String>,
+    /// Additional environment variables.
+    #[serde(default)]
+    pub env: HashMap<String, String>,
+}
+
+/// Request to stop a session.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StopSessionRequest {
+    /// Session ID.
+    pub session_id: String,
+}
+
+// ============================================================================
+// Main Chat Request Types
+// ============================================================================
+
+/// Request to get messages from a main chat session.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GetMainChatMessagesRequest {
+    /// Session ID (Pi session file ID).
+    pub session_id: String,
+    /// Optional limit on number of messages.
+    #[serde(default)]
+    pub limit: Option<usize>,
+}
+
+// ============================================================================
+// Memory Request Types
+// ============================================================================
+
+/// Request to search memories.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SearchMemoriesRequest {
+    /// Search query.
+    pub query: String,
+    /// Maximum results to return.
+    #[serde(default = "default_memory_limit")]
+    pub limit: usize,
+    /// Optional category filter.
+    #[serde(default)]
+    pub category: Option<String>,
+}
+
+fn default_memory_limit() -> usize {
+    20
+}
+
+/// Request to add a memory.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AddMemoryRequest {
+    /// Memory content.
+    pub content: String,
+    /// Category (e.g., "api", "architecture", "debugging").
+    #[serde(default)]
+    pub category: Option<String>,
+    /// Importance level (1-10).
+    #[serde(default)]
+    pub importance: Option<u8>,
+}
+
+/// Request to delete a memory.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeleteMemoryRequest {
+    /// Memory ID.
+    pub memory_id: String,
 }
 
 // ============================================================================
@@ -275,6 +578,252 @@ pub struct StdoutEndResponse {
     pub exit_code: Option<i32>,
 }
 
+// ============================================================================
+// Filesystem Response Types
+// ============================================================================
+
+/// Response with file content.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileContentResponse {
+    /// Path that was read.
+    pub path: PathBuf,
+    /// File content (base64 encoded).
+    pub content_base64: String,
+    /// Total file size in bytes.
+    pub size: u64,
+    /// Whether the response is truncated (more data available).
+    pub truncated: bool,
+}
+
+/// Response when file is written.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileWrittenResponse {
+    /// Path that was written.
+    pub path: PathBuf,
+    /// Bytes written.
+    pub bytes_written: u64,
+}
+
+/// Directory listing entry.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DirEntry {
+    /// Entry name (not full path).
+    pub name: String,
+    /// Whether this is a directory.
+    pub is_dir: bool,
+    /// Whether this is a symlink.
+    pub is_symlink: bool,
+    /// File size in bytes (0 for directories).
+    pub size: u64,
+    /// Last modification time (Unix timestamp ms).
+    pub modified_at: i64,
+}
+
+/// Response with directory listing.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DirectoryListingResponse {
+    /// Path that was listed.
+    pub path: PathBuf,
+    /// Directory entries.
+    pub entries: Vec<DirEntry>,
+}
+
+/// Response with file metadata.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileStatResponse {
+    /// Path that was stat'd.
+    pub path: PathBuf,
+    /// Whether the path exists.
+    pub exists: bool,
+    /// Whether this is a file.
+    pub is_file: bool,
+    /// Whether this is a directory.
+    pub is_dir: bool,
+    /// Whether this is a symlink.
+    pub is_symlink: bool,
+    /// File size in bytes.
+    pub size: u64,
+    /// Last modification time (Unix timestamp ms).
+    pub modified_at: i64,
+    /// Creation time (Unix timestamp ms), if available.
+    pub created_at: Option<i64>,
+    /// File permissions (octal, e.g., 0o644).
+    pub mode: u32,
+}
+
+/// Response when path is deleted.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PathDeletedResponse {
+    /// Path that was deleted.
+    pub path: PathBuf,
+}
+
+/// Response when directory is created.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DirectoryCreatedResponse {
+    /// Path that was created.
+    pub path: PathBuf,
+}
+
+// ============================================================================
+// Session Response Types
+// ============================================================================
+
+/// Session information.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionInfo {
+    /// Session ID.
+    pub id: String,
+    /// Workspace path.
+    pub workspace_path: PathBuf,
+    /// Session status.
+    pub status: String,
+    /// OpenCode/Claude Code port.
+    pub opencode_port: Option<u16>,
+    /// Fileserver port.
+    pub fileserver_port: Option<u16>,
+    /// ttyd port.
+    pub ttyd_port: Option<u16>,
+    /// PIDs of running processes (comma-separated).
+    pub pids: Option<String>,
+    /// Created at timestamp (RFC3339).
+    pub created_at: String,
+    /// Started at timestamp (RFC3339).
+    pub started_at: Option<String>,
+    /// Last activity timestamp (RFC3339).
+    pub last_activity_at: Option<String>,
+}
+
+/// Response with list of sessions.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionListResponse {
+    /// List of sessions.
+    pub sessions: Vec<SessionInfo>,
+}
+
+/// Response with single session.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionResponse {
+    /// Session info, or None if not found.
+    pub session: Option<SessionInfo>,
+}
+
+/// Response when session is started.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionStartedResponse {
+    /// Session ID.
+    pub session_id: String,
+    /// PIDs of started processes (comma-separated).
+    pub pids: String,
+}
+
+/// Response when session is stopped.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionStoppedResponse {
+    /// Session ID.
+    pub session_id: String,
+}
+
+// ============================================================================
+// Main Chat Response Types
+// ============================================================================
+
+/// Main chat session info.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MainChatSessionInfo {
+    /// Session ID.
+    pub id: String,
+    /// Session title (from first user message).
+    pub title: Option<String>,
+    /// Number of messages.
+    pub message_count: usize,
+    /// File size in bytes.
+    pub size: u64,
+    /// Last modified timestamp (Unix ms).
+    pub modified_at: i64,
+    /// Session start timestamp (ISO 8601).
+    pub started_at: String,
+}
+
+/// Response with list of main chat sessions.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MainChatSessionListResponse {
+    /// List of sessions.
+    pub sessions: Vec<MainChatSessionInfo>,
+}
+
+/// Main chat message.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MainChatMessage {
+    /// Message ID.
+    pub id: String,
+    /// Role: user, assistant, system.
+    pub role: String,
+    /// Message content (JSON value for structured content).
+    pub content: Value,
+    /// Timestamp (Unix ms).
+    pub timestamp: i64,
+}
+
+/// Response with main chat messages.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MainChatMessagesResponse {
+    /// Session ID.
+    pub session_id: String,
+    /// Messages in chronological order.
+    pub messages: Vec<MainChatMessage>,
+}
+
+// ============================================================================
+// Memory Response Types
+// ============================================================================
+
+/// Memory entry.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryEntry {
+    /// Memory ID.
+    pub id: String,
+    /// Memory content.
+    pub content: String,
+    /// Category.
+    pub category: Option<String>,
+    /// Importance level.
+    pub importance: Option<u8>,
+    /// Created at timestamp (RFC3339).
+    pub created_at: String,
+    /// Relevance score (for search results).
+    pub score: Option<f64>,
+}
+
+/// Response with memory search results.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemorySearchResultsResponse {
+    /// Search query.
+    pub query: String,
+    /// Matching memories.
+    pub memories: Vec<MemoryEntry>,
+    /// Total matches available.
+    pub total: usize,
+}
+
+/// Response when memory is added.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryAddedResponse {
+    /// Assigned memory ID.
+    pub memory_id: String,
+}
+
+/// Response when memory is deleted.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryDeletedResponse {
+    /// Deleted memory ID.
+    pub memory_id: String,
+}
+
+// ============================================================================
+// Error Types
+// ============================================================================
+
 /// Error response.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ErrorResponse {
@@ -288,6 +837,7 @@ pub struct ErrorResponse {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ErrorCode {
+    // Process errors
     /// Process not found.
     ProcessNotFound,
     /// Process already exists with this ID.
@@ -298,10 +848,42 @@ pub enum ErrorCode {
     KillFailed,
     /// Process is not an RPC process (no stdin/stdout).
     NotRpcProcess,
+
+    // Filesystem errors
+    /// File or directory not found.
+    PathNotFound,
+    /// Path is outside allowed workspace.
+    PathNotAllowed,
+    /// Permission denied.
+    PermissionDenied,
+    /// Path already exists.
+    PathExists,
+    /// Not a directory.
+    NotADirectory,
+    /// Not a file.
+    NotAFile,
+
+    // Session errors
+    /// Session not found.
+    SessionNotFound,
+    /// Session already exists.
+    SessionExists,
+    /// Session is not running.
+    SessionNotRunning,
+    /// Session is already running.
+    SessionAlreadyRunning,
+
+    // Memory errors
+    /// Memory not found.
+    MemoryNotFound,
+
+    // Generic errors
     /// IO error.
     IoError,
     /// Invalid request.
     InvalidRequest,
+    /// Database error.
+    DatabaseError,
     /// Internal error.
     Internal,
 }
@@ -322,6 +904,7 @@ mod tests {
             ],
             cwd: PathBuf::from("/home/user/project"),
             env: HashMap::from([("FOO".to_string(), "bar".to_string())]),
+            sandboxed: false,
         });
 
         let json = serde_json::to_string(&req).unwrap();

@@ -276,6 +276,11 @@ impl UserRepository {
             values.push(settings.clone());
         }
 
+        if let Some(linux_username) = &request.linux_username {
+            updates.push("linux_username = ?");
+            values.push(linux_username.clone());
+        }
+
         if updates.is_empty() {
             return Ok(existing);
         }

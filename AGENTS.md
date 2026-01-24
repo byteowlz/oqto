@@ -52,7 +52,11 @@ Both `pi` and `opencode` can run in different isolation modes:
 | `octo-runner` | Multi-user process daemon (Linux only) |
 | `octo-sandbox` | Sandbox wrapper using bwrap/sandbox-exec |
 | `pi-bridge` | HTTP/WebSocket bridge for Pi in containers |
-| `fileserver` | File access server for workspaces |
+| `octo-files` | File access server for workspaces |
+
+### External Dependencies
+
+fresh clones of dependencies like opencode or pi-mono can be found in ../external-repos
 
 ### Process Sandboxing
 

@@ -16,14 +16,20 @@ interface TTSMessage {
 		| "synthesis_started"
 		| "audio_chunk"
 		| "synthesis_completed"
+		| "stream_started"
+		| "stream_chunk"
+		| "stream_ended"
+		| "stream_cancelled"
 		| "error";
 	voice?: string;
 	voices?: string[];
 	chunk?: string; // Base64 encoded WAV
 	index?: number;
 	total?: number;
+	total_chunks?: number;
 	sample_rate?: number;
 	message?: string;
+	stream_id?: string;
 }
 
 /** TTS Service event callbacks */
@@ -65,6 +71,19 @@ export class TTSService {
 
 	// Flag to reject incoming audio after stopPlayback is called
 	private isStopped = false;
+
+	// Scheduled playback: track when the next audio should start
+	private nextPlayTime = 0;
+	// Track all scheduled sources for cleanup
+	private scheduledSources: AudioBufferSourceNode[] = [];
+
+	// Streaming mode: active stream ID (one stream per message)
+	private activeStreamId: string | null = null;
+	// Pending stream start promise
+	private streamStartPromise: {
+		resolve: (streamId: string) => void;
+		reject: (error: Error) => void;
+	} | null = null;
 
 	constructor(private wsUrl: string) {}
 
@@ -179,10 +198,47 @@ export class TTSService {
 				this.processNextInQueue();
 				break;
 
+			// Streaming mode messages
+			case "stream_started":
+				if (message.stream_id) {
+					console.log("[TTS] Stream started:", message.stream_id);
+					this.activeStreamId = message.stream_id;
+					this.streamStartPromise?.resolve(message.stream_id);
+					this.streamStartPromise = null;
+				}
+				break;
+
+			case "stream_chunk":
+				if (message.chunk && message.stream_id === this.activeStreamId) {
+					console.log("[TTS] Stream chunk", message.index);
+					this.callbacks.onChunk?.(message.index || 0, -1); // -1 = unknown total
+					if (!this.isMuted) {
+						this.handleAudioChunk(message.chunk);
+					}
+				}
+				break;
+
+			case "stream_ended":
+				if (message.stream_id === this.activeStreamId) {
+					console.log("[TTS] Stream ended, total chunks:", message.total_chunks);
+					this.activeStreamId = null;
+				}
+				break;
+
+			case "stream_cancelled":
+				if (message.stream_id === this.activeStreamId) {
+					console.log("[TTS] Stream cancelled");
+					this.activeStreamId = null;
+				}
+				break;
+
 			case "error":
 				console.error("[TTS] Synthesis error:", message.message);
 				this.callbacks.onError?.(message.message || "Synthesis failed");
 				this.isProcessing = false;
+				// Also reject pending stream start
+				this.streamStartPromise?.reject(new Error(message.message || "TTS error"));
+				this.streamStartPromise = null;
 				if (this.synthesisQueue.length > 0) {
 					const item = this.synthesisQueue.shift();
 					item?.reject(new Error(message.message || "TTS synthesis failed"));
@@ -235,36 +291,25 @@ export class TTSService {
 			}
 
 			const audioBuffer = await this.audioContext.decodeAudioData(bytes.buffer);
-			this.audioQueue.push(audioBuffer);
 			if (this.stopTimer) {
 				window.clearTimeout(this.stopTimer);
 				this.stopTimer = null;
 			}
 
-			// Start playback if not already playing
-			if (!this.isPlaying) {
-				this.playNextChunk();
-			}
+			// Schedule this chunk immediately for seamless playback
+			this.scheduleAudioBuffer(audioBuffer);
 		} catch (error) {
 			console.error("[TTS] Failed to decode audio chunk:", error);
 		}
 	}
 
-	private playNextChunk() {
-		if (this.audioQueue.length === 0) {
-			this.scheduleStopCheck();
-			return;
-		}
-
-		this.isPlaying = true;
-		this.callbacks.onPlaying?.();
-
-		const audioBuffer = this.audioQueue.shift();
+	/**
+	 * Schedule an audio buffer for seamless playback.
+	 * Uses precise timing to eliminate gaps between chunks.
+	 */
+	private scheduleAudioBuffer(audioBuffer: AudioBuffer) {
 		const audioContext = this.audioContext;
-		if (!audioBuffer || !audioContext) {
-			this.isPlaying = false;
-			this.currentSource = null;
-			this.callbacks.onStopped?.();
+		if (!audioContext) {
 			return;
 		}
 
@@ -278,16 +323,50 @@ export class TTSService {
 			source.connect(audioContext.destination);
 		}
 
+		// Schedule at the next available time slot (seamless with previous chunk)
+		const now = audioContext.currentTime;
+		const startTime = Math.max(now + 0.01, this.nextPlayTime); // Small buffer to avoid underrun
+		this.nextPlayTime = startTime + audioBuffer.duration;
+
+		// Track for cleanup
+		this.scheduledSources.push(source);
 		this.currentSource = source;
 
+		// Update playing state
+		if (!this.isPlaying) {
+			this.isPlaying = true;
+			this.callbacks.onPlaying?.();
+		}
+
+		// Clean up finished sources from tracking array
 		source.onended = () => {
-			if (this.currentSource === source) {
-				this.currentSource = null;
+			const idx = this.scheduledSources.indexOf(source);
+			if (idx !== -1) {
+				this.scheduledSources.splice(idx, 1);
 			}
-			this.playNextChunk();
+			// If this was the last source, schedule stop check
+			if (this.scheduledSources.length === 0) {
+				this.scheduleStopCheck();
+			}
 		};
 
-		source.start(0);
+		source.start(startTime);
+	}
+
+	private playNextChunk() {
+		// Legacy method - now audio is scheduled immediately in handleAudioChunk
+		// This is kept for compatibility but shouldn't be called
+		if (this.audioQueue.length === 0) {
+			this.scheduleStopCheck();
+			return;
+		}
+
+		while (this.audioQueue.length > 0) {
+			const audioBuffer = this.audioQueue.shift();
+			if (audioBuffer) {
+				this.scheduleAudioBuffer(audioBuffer);
+			}
+		}
 	}
 
 	private scheduleStopCheck() {
@@ -388,6 +467,99 @@ export class TTSService {
 		});
 	}
 
+	// =========================================================================
+	// Streaming API - for low-latency incremental TTS
+	// =========================================================================
+
+	/**
+	 * Start a new streaming session for a message.
+	 * Call streamAppend() to add text incrementally, then streamEnd() when done.
+	 */
+	async streamStart(): Promise<string> {
+		if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+			throw new Error("WebSocket not connected");
+		}
+
+		// Cancel any existing stream
+		if (this.activeStreamId) {
+			this.streamCancel();
+		}
+
+		this.isStopped = false;
+
+		return new Promise((resolve, reject) => {
+			this.streamStartPromise = { resolve, reject };
+			this.ws?.send(
+				JSON.stringify({
+					command: "stream_start",
+					voice: this.currentVoice,
+					speed: this.currentSpeed,
+				}),
+			);
+		});
+	}
+
+	/**
+	 * Append text to the active stream.
+	 * Kokorox will synthesize complete sentences and send audio immediately.
+	 */
+	streamAppend(text: string): void {
+		if (!this.activeStreamId || !this.ws || this.ws.readyState !== WebSocket.OPEN) {
+			console.warn("[TTS] No active stream to append to");
+			return;
+		}
+
+		if (!text) return;
+
+		this.ws.send(
+			JSON.stringify({
+				command: "stream_append",
+				stream_id: this.activeStreamId,
+				text,
+			}),
+		);
+	}
+
+	/**
+	 * End the active stream, flushing any remaining text.
+	 */
+	streamEnd(): void {
+		if (!this.activeStreamId || !this.ws || this.ws.readyState !== WebSocket.OPEN) {
+			return;
+		}
+
+		this.ws.send(
+			JSON.stringify({
+				command: "stream_end",
+				stream_id: this.activeStreamId,
+			}),
+		);
+	}
+
+	/**
+	 * Cancel the active stream without flushing.
+	 */
+	streamCancel(): void {
+		if (!this.activeStreamId || !this.ws || this.ws.readyState !== WebSocket.OPEN) {
+			return;
+		}
+
+		this.ws.send(
+			JSON.stringify({
+				command: "stream_cancel",
+				stream_id: this.activeStreamId,
+			}),
+		);
+		this.activeStreamId = null;
+	}
+
+	/**
+	 * Check if a stream is active.
+	 */
+	isStreaming(): boolean {
+		return this.activeStreamId !== null;
+	}
+
 	/**
 	 * Set the voice to use.
 	 */
@@ -476,15 +648,20 @@ export class TTSService {
 			this.stopTimer = null;
 		}
 
-		if (this.currentSource) {
+		// Stop all scheduled sources
+		for (const source of this.scheduledSources) {
 			try {
-				this.currentSource.stop();
-				this.currentSource.disconnect();
+				source.stop();
+				source.disconnect();
 			} catch (error) {
-				console.error("[TTS] Error stopping audio source:", error);
+				// Ignore errors from already-stopped sources
 			}
-			this.currentSource = null;
 		}
+		this.scheduledSources = [];
+		this.currentSource = null;
+
+		// Reset scheduled playback time
+		this.nextPlayTime = 0;
 
 		this.audioQueue = [];
 		this.isPlaying = false;

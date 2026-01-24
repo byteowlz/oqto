@@ -2,6 +2,87 @@
 
 ## Open
 
+### [octo-xjs5.10] Test plan: isolation matrix (P1, task)
+Add automated tests / manual checklist for:
+- local single-user
+- local linux multi-user (2 users) verifying no cross access to sessions/files/memories/main chat
+- container multi-user
+
+...
+
+
+### [octo-xjs5.7] Local linux provisioning: non-interactive sudo + tmpfiles (P1, task)
+Make user provisioning deterministic and non-interactive:
+- ensure /run/octo/runner-sockets exists via tmpfiles
+- ensure per-user runner directories (2770, setgid) are created at user creation
+- ensure linger + octo-runner user unit enabled
+- verify runner socket reachable after provisioning
+...
+
+
+### [octo-xjs5.6] Security: runner socket authz + strict path guards (P1, task)
+Harden the runner boundary:
+- unix socket permissions via /run/octo/runner-sockets/<linux_username>/octo-runner.sock (group octo)
+- runner validates every request against its own user roots
+- deny dangerous env vars, validate binary allowlist
+- ensure backend cannot ask runner to read outside workspace/main-chat dirs
+...
+
+
+### [octo-xjs5.5] Backend: route all user operations through runner (P1, task)
+Refactor backend handlers/proxies so all user-plane operations are served via runner:
+- sessions list/create/resume/stop
+- terminal + opencode process lifecycle
+- workspace file viewer
+- memories (mmry target resolution)
+...
+
+
+### [octo-xjs5.4] Runner API: main chat storage ownership (P1, task)
+Make main chat data physically per-user:
+- move main chat DB + session files into linux user's home dir
+- runner provides APIs for main chat list/create/load/save
+- migrate existing shared main chat data into per-user location
+
+...
+
+
+### [octo-xjs5.3] Runner API: per-user mmry lifecycle (P1, task)
+Move mmry lifecycle/port ownership fully into runner:
+- allocate stable per-user mmry port (persisted in per-user db)
+- spawn/stop/pin mmry process for that linux user
+- health check + log capture
+- expose mmry external_api URL for backend proxy
+...
+
+
+### [octo-xjs5.2] Runner API: per-user file operations (P1, task)
+Define + implement runner-side filesystem API used by the backend:
+- list tree, read file, write file, mkdir, stat
+- path validation against per-user workspace roots (no traversal)
+- optional read/write quotas
+
+...
+
+
+### [octo-xjs5.1] Runner API: user-plane session registry (P1, task)
+Add runner RPC endpoints for per-user session state:
+- create/get/list/stop/resume/delete sessions (local runtime)
+- persist session metadata in per-user store (DB or JSON) owned by the linux user
+- include workspace path validation against runner-owned workspace roots
+- return ports + status + errors
+...
+
+
+### [octo-xjs5] Runner As Core User-Plane (P1, epic)
+Goal: make octo-runner the mandatory user-plane boundary. The octo backend becomes primarily auth/routing/proxy with a minimal control-plane DB. All user data + user operations (sessions, filesystem ops, mmry lifecycle/ports, main-chat state) live behind per-user runners, enabling OS-level isolation locally and clean extension to remote runner nodes later.
+
+## Non-Goals (initial phase)
+- Remote runner nodes over network transport (design for it, but implement local Unix socket first)
+- Replacing container isolation model on macOS/Windows (container mode remains primary there)
+...
+
+
 ### [octo-y1nq] Opencode agent connection cycling - rapid disconnect/reconnect loop (P1, bug)
 The opencode agent repeatedly disconnects and reconnects in rapid succession (observed 15+ cycles in logs). Pattern observed:
 
@@ -55,6 +136,24 @@ Implementation:
 
 ### [workspace-5pmk.11] Add backend URL configuration to login form (P1, task)
 Add a 'Server URL' field to the login form allowing users to specify the backend URL. Store in localStorage for persistence. Show connection status indicator. Default to current origin for web, require input for mobile apps.
+
+### [octo-fmxv] Invalid `boundary` for `multipart/form-data` request when trying to save a file after editing it in the sidebar. (P2, bug)
+
+### [octo-xjs5.9] Observability: runner logs + health endpoints (P2, task)
+Add runner health + diagnostics:
+- ping/status endpoint
+- per-process status + stdout/stderr tail
+- structured events for start/stop/crash
+- backend exposes aggregated diagnostics for admins
+
+### [octo-xjs5.8] Compatibility: container mode runner adapter (P2, task)
+Keep docker multi-user working:
+- define how runner API maps to container runtime
+- either run runner inside container, or implement a backend adapter that satisfies runner interface using container APIs
+- ensure streaming still works
+
+...
+
 
 ### [octo-h0by] add user self-service section in settings (change password etc) (P2, task)
 
@@ -578,6 +677,7 @@ Desired behavior: Tool calls hidden by default, toggle to show
 
 ## Closed
 
+- [octo-vvn7] Define runner user-plane RPC API (closed 2026-01-23)
 - [octo-wzvn] Agent-driven UI control (conversational navigation) (closed 2026-01-21)
 - [octo-q9dx] Transcription continuing after stopping Conversation mode (closed 2026-01-21)
 - [octo-thhx.7] Add data-spotlight attributes to UI elements (closed 2026-01-21)

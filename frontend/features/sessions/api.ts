@@ -7,6 +7,7 @@ export {
 	getChatMessages,
 	getFeatures,
 	getMainChatAssistant,
+	getOrCreateSessionForWorkspace,
 	getProjectLogoUrl,
 	getWorkspaceConfig,
 	listMainChatSessions,

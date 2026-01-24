@@ -21,7 +21,7 @@ use crate::agent_browser::{AgentBrowserConfig, AgentBrowserManager};
 use crate::container::{ContainerConfig, ContainerRuntimeApi, ContainerStats};
 use crate::eavs::{CreateKeyRequest, EavsApi, KeyPermissions};
 use crate::local::{LocalRuntime, LocalRuntimeConfig, UserMmryManager};
-use crate::projects;
+use crate::runner::client::RunnerClient;
 
 use super::models::{CreateSessionRequest, RuntimeMode, Session, SessionStatus};
 use super::repository::SessionRepository;
@@ -303,7 +303,12 @@ pub struct SessionService {
     repo: SessionRepository,
     /// Container runtime (used when runtime_mode is Container).
     container_runtime: Option<Arc<dyn ContainerRuntimeApi>>,
-    /// Local runtime (used when runtime_mode is Local).
+    /// Runner client for local mode. All local process spawning goes through
+    /// the runner daemon, which provides consistent process management and
+    /// enables user-plane isolation in multi-user deployments.
+    runner: Option<RunnerClient>,
+    /// Local runtime config for port utilities only (check/clear ports).
+    /// Process spawning goes through runner, not this.
     local_runtime: Option<Arc<LocalRuntime>>,
     eavs: Option<Arc<dyn EavsApi>>,
     readiness: Arc<dyn SessionReadiness>,
@@ -327,6 +332,7 @@ impl SessionService {
         Self {
             repo,
             container_runtime: Some(runtime),
+            runner: None,
             local_runtime: None,
             eavs: None,
             readiness: Arc::new(HttpSessionReadiness::default()),
@@ -346,6 +352,7 @@ impl SessionService {
         Self {
             repo,
             container_runtime: Some(runtime),
+            runner: None,
             local_runtime: None,
             eavs: Some(eavs),
             readiness: Arc::new(HttpSessionReadiness::default()),
@@ -355,15 +362,20 @@ impl SessionService {
         }
     }
 
-    /// Create a new session service with local runtime (no containers).
-    pub fn with_local_runtime(
+    /// Create a new session service with runner for local mode.
+    ///
+    /// All local process spawning goes through the runner daemon.
+    /// LocalRuntime is used only for port utilities (check/clear).
+    pub fn with_runner(
         repo: SessionRepository,
+        runner: RunnerClient,
         local_runtime: LocalRuntime,
         config: SessionServiceConfig,
     ) -> Self {
         Self {
             repo,
             container_runtime: None,
+            runner: Some(runner),
             local_runtime: Some(Arc::new(local_runtime)),
             eavs: None,
             readiness: Arc::new(HttpSessionReadiness::default()),
@@ -373,9 +385,10 @@ impl SessionService {
         }
     }
 
-    /// Create a new session service with local runtime and EAVS integration.
-    pub fn with_local_runtime_and_eavs(
+    /// Create a new session service with runner and EAVS integration.
+    pub fn with_runner_and_eavs(
         repo: SessionRepository,
+        runner: RunnerClient,
         local_runtime: LocalRuntime,
         eavs: Arc<dyn EavsApi>,
         config: SessionServiceConfig,
@@ -383,6 +396,7 @@ impl SessionService {
         Self {
             repo,
             container_runtime: None,
+            runner: Some(runner),
             local_runtime: Some(Arc::new(local_runtime)),
             eavs: Some(eavs),
             readiness: Arc::new(HttpSessionReadiness::default()),
@@ -396,6 +410,23 @@ impl SessionService {
     pub fn with_user_mmry(mut self, manager: UserMmryManager) -> Self {
         self.user_mmry = Some(Arc::new(manager));
         self
+    }
+
+    /// Get runner client for a user.
+    ///
+    /// In single-user mode, returns the shared runner.
+    /// In multi-user mode, creates a client for the user's per-user runner socket.
+    fn runner_for_user(&self, user_id: &str) -> Result<RunnerClient> {
+        if self.config.single_user {
+            // Single-user mode: use the shared runner
+            self.runner
+                .clone()
+                .context("runner not configured for local mode")
+        } else {
+            // Multi-user mode: connect to user's runner socket
+            // The user_id is the Linux username in multi-user mode
+            RunnerClient::for_user(user_id)
+        }
     }
 
     async fn ensure_user_mmry_pinned(&self, user_id: &str) -> Result<u16> {
@@ -1249,15 +1280,16 @@ impl SessionService {
     }
 
     /// Start local processes for the given session (local mode).
+    ///
+    /// All process spawning goes through the runner daemon.
+    /// In multi-user mode, connects to the user's per-user runner socket.
     async fn start_local_mode(
         &self,
         session: &Session,
         eavs_virtual_key: Option<&str>,
         require_opencode: bool,
     ) -> Result<()> {
-        let local_runtime = self
-            .local_runtime()
-            .context("local runtime not available")?;
+        let runner = self.runner_for_user(&session.user_id)?;
 
         let opencode_port = session.opencode_port as u16;
         let fileserver_port = session.fileserver_port as u16;
@@ -1289,32 +1321,6 @@ impl SessionService {
             }
         }
 
-        // Check if ports are available before attempting to start
-        if !local_runtime.check_ports_available(opencode_port, fileserver_port, ttyd_port) {
-            // Ports are in use - try to clear them first
-            warn!(
-                "Ports {}/{}/{} are in use, attempting to clear orphan processes...",
-                opencode_port, fileserver_port, ttyd_port
-            );
-            let cleared = local_runtime.clear_ports(&[opencode_port, fileserver_port, ttyd_port]);
-
-            // Check again after clearing
-            if !local_runtime.check_ports_available(opencode_port, fileserver_port, ttyd_port) {
-                anyhow::bail!(
-                    "Ports {}/{}/{} are still in use after cleanup (cleared {} processes). \
-                     Another process may be using these ports.",
-                    opencode_port,
-                    fileserver_port,
-                    ttyd_port,
-                    cleared
-                );
-            }
-            info!(
-                "Cleared {} orphan process(es), ports now available",
-                cleared
-            );
-        }
-
         // Build environment variables for the processes
         let mut env = std::collections::HashMap::new();
         if let Some(ref eavs_url) = self.config.eavs_container_url {
@@ -1328,47 +1334,44 @@ impl SessionService {
         }
 
         let workspace_path = PathBuf::from(&session.workspace_path);
-        let project_id = self.project_id_for_workspace(&workspace_path);
 
-        // Start all services
-        let pids = local_runtime
+        info!(
+            "Starting session {} via runner for user {}",
+            session.id, session.user_id
+        );
+
+        // Start services via runner
+        let response = runner
             .start_session(
                 &session.id,
-                &session.user_id,
                 &workspace_path,
-                session.agent.as_deref(),
-                project_id.as_deref(),
                 opencode_port,
                 fileserver_port,
                 ttyd_port,
+                session.agent.clone(),
                 env,
             )
             .await
-            .context("starting local services")?;
+            .context("starting session via runner")?;
 
         info!(
             "Started local services for session {} with PIDs: {}",
-            session.id, pids
+            session.id, response.pids
         );
 
         // Update session with PIDs (stored as container_id for compatibility)
-        self.repo.set_container_id(&session.id, &pids).await?;
+        self.repo.set_container_id(&session.id, &response.pids).await?;
 
         // Wait for core services to become reachable
         if let Err(e) = self
             .readiness
-            .wait_for_session_services(
-                session.opencode_port as u16,
-                session.fileserver_port as u16,
-                session.ttyd_port as u16,
-                require_opencode,
-            )
+            .wait_for_session_services(opencode_port, fileserver_port, ttyd_port, require_opencode)
             .await
         {
-            // Best-effort cleanup: stop the processes
-            if let Err(stop_err) = local_runtime.stop_session(&session.id).await {
+            // Best-effort cleanup: stop the session via runner
+            if let Err(stop_err) = runner.stop_session(&session.id).await {
                 warn!(
-                    "Failed to stop local services after readiness failure: {:?}",
+                    "Failed to stop runner session after readiness failure: {:?}",
                     stop_err
                 );
             }
@@ -1426,10 +1429,15 @@ impl SessionService {
                 }
             }
             RuntimeMode::Local => {
-                // Stop the local processes
-                if let Some(local_runtime) = self.local_runtime() {
-                    if let Err(e) = local_runtime.stop_session(session_id).await {
-                        warn!("Failed to stop local processes for {}: {:?}", session_id, e);
+                // Stop the local processes via runner (per-user in multi-user mode)
+                match self.runner_for_user(&session.user_id) {
+                    Ok(runner) => {
+                        if let Err(e) = runner.stop_session(session_id).await {
+                            warn!("Failed to stop local processes for {}: {:?}", session_id, e);
+                        }
+                    }
+                    Err(e) => {
+                        warn!("Failed to get runner for user {}: {:?}", session.user_id, e);
                     }
                 }
 
@@ -1641,6 +1649,9 @@ impl SessionService {
                 }
             }
             RuntimeMode::Local => {
+                let runner = self.runner_for_user(&session.user_id)?;
+
+                // Use local_runtime for port utilities only
                 let local_runtime = self
                     .local_runtime()
                     .context("local runtime not available")?;
@@ -1789,26 +1800,26 @@ impl SessionService {
                 }
 
                 let workspace_path = PathBuf::from(&session.workspace_path);
-                let project_id = self.project_id_for_workspace(&workspace_path);
 
-                // Respawn the processes (local mode doesn't preserve process state)
-                match local_runtime
-                    .resume_session(
+                // Stop any stale session state in the runner (ignore errors - session may not exist)
+                let _ = runner.stop_session(session_id).await;
+
+                // Respawn the processes via runner
+                match runner
+                    .start_session(
                         session_id,
-                        &session.user_id,
                         &workspace_path,
-                        session.agent.as_deref(),
-                        project_id.as_deref(),
                         opencode_port,
                         fileserver_port,
                         ttyd_port,
+                        session.agent.clone(),
                         env,
                     )
                     .await
                 {
-                    Ok(pids) => {
+                    Ok(response) => {
                         // Update with new PIDs
-                        self.repo.set_container_id(session_id, &pids).await?;
+                        self.repo.set_container_id(session_id, &response.pids).await?;
                     }
                     Err(e) => {
                         error!(
@@ -1837,7 +1848,7 @@ impl SessionService {
                         "Services not ready after resume for session {}: {:?}",
                         session_id, e
                     );
-                    let _ = local_runtime.stop_session(session_id).await;
+                    let _ = runner.stop_session(session_id).await;
                     self.repo
                         .mark_failed(
                             session_id,
@@ -1970,9 +1981,14 @@ impl SessionService {
                 }
             }
             RuntimeMode::Local => {
-                // Stop any remaining processes (should already be stopped)
-                if let Some(local_runtime) = self.local_runtime() {
-                    let _ = local_runtime.stop_session(session_id).await;
+                // Stop any remaining processes via runner (should already be stopped)
+                match self.runner_for_user(&session.user_id) {
+                    Ok(runner) => {
+                        let _ = runner.stop_session(session_id).await;
+                    }
+                    Err(e) => {
+                        warn!("Failed to get runner for user {} during delete: {:?}", session.user_id, e);
+                    }
                 }
             }
         }
@@ -2741,20 +2757,6 @@ impl SessionService {
         self.create_session_for_user(user_id, request).await
     }
 
-    fn project_id_for_workspace(&self, workspace_path: &PathBuf) -> Option<String> {
-        match projects::read_metadata(workspace_path) {
-            Ok(Some(metadata)) if metadata.shared => Some(metadata.project_id),
-            Ok(_) => None,
-            Err(err) => {
-                warn!(
-                    "Failed to read project metadata for {:?}: {:?}",
-                    workspace_path, err
-                );
-                None
-            }
-        }
-    }
-
     /// Get or create a session for IO (fileserver + ttyd) for a workspace path.
     ///
     /// This does NOT require opencode to be ready before returning.
@@ -3201,18 +3203,20 @@ mod tests {
 
         let db = Database::in_memory().await.unwrap();
         let repo = SessionRepository::new(db.pool().clone());
-        let service = SessionService::with_local_runtime(repo, local_runtime, config);
+        let runner = RunnerClient::default();
+        let service = SessionService::with_runner(repo, runner, local_runtime, config);
 
+        let user_id = "test-user";
         let resolved = service
-            .resolve_workspace_path(allowed.to_string_lossy().as_ref())
+            .resolve_workspace_path(user_id, allowed.to_string_lossy().as_ref())
             .unwrap();
         assert_eq!(resolved, allowed.canonicalize().unwrap());
 
-        let relative = service.resolve_workspace_path("project").unwrap();
+        let relative = service.resolve_workspace_path(user_id, "project").unwrap();
         assert_eq!(relative, allowed.canonicalize().unwrap());
 
         let err = service
-            .resolve_workspace_path(outside.to_string_lossy().as_ref())
+            .resolve_workspace_path(user_id, outside.to_string_lossy().as_ref())
             .unwrap_err();
         assert!(err.to_string().contains("outside allowed roots"));
     }
@@ -3244,12 +3248,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_session_service_with_local_runtime_constructor() {
+    async fn test_session_service_with_runner_constructor() {
         let db = Database::in_memory().await.unwrap();
         let repo = SessionRepository::new(db.pool().clone());
 
         let local_config = LocalRuntimeConfig::default();
         let local_runtime = LocalRuntime::new(local_config);
+        let runner = RunnerClient::default();
 
         let config = SessionServiceConfig {
             runtime_mode: RuntimeMode::Local,
@@ -3257,20 +3262,22 @@ mod tests {
             ..Default::default()
         };
 
-        let service = SessionService::with_local_runtime(repo, local_runtime, config);
+        let service = SessionService::with_runner(repo, runner, local_runtime, config);
 
-        // Verify local runtime is set
+        // Verify local runtime and runner are set
         assert!(service.local_runtime().is_some());
+        assert!(service.runner.is_some());
         assert!(service.container_runtime().is_none());
     }
 
     #[tokio::test]
-    async fn test_session_service_with_local_runtime_and_eavs_constructor() {
+    async fn test_session_service_with_runner_and_eavs_constructor() {
         let db = Database::in_memory().await.unwrap();
         let repo = SessionRepository::new(db.pool().clone());
 
         let local_config = LocalRuntimeConfig::default();
         let local_runtime = LocalRuntime::new(local_config);
+        let runner = RunnerClient::default();
         let eavs: Arc<dyn EavsApi> = Arc::new(FakeEavs::default());
 
         let config = SessionServiceConfig {
@@ -3280,10 +3287,11 @@ mod tests {
         };
 
         let service =
-            SessionService::with_local_runtime_and_eavs(repo, local_runtime, eavs, config);
+            SessionService::with_runner_and_eavs(repo, runner, local_runtime, eavs, config);
 
-        // Verify both local runtime and EAVS are set
+        // Verify runner, local runtime, and EAVS are set
         assert!(service.local_runtime().is_some());
+        assert!(service.runner.is_some());
         assert!(service.container_runtime().is_none());
         assert!(service.eavs.is_some());
     }

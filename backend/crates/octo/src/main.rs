@@ -37,6 +37,7 @@ mod session;
 mod session_ui;
 mod settings;
 mod user;
+mod user_plane;
 mod wordlist;
 mod ws;
 
@@ -522,6 +523,8 @@ struct BackendConfig {
     mode: BackendMode,
     /// Use the new AgentRPC abstraction (experimental)
     use_agent_rpc: bool,
+    /// Runner configuration for user-plane isolation.
+    runner: RunnerConfig,
 }
 
 impl Default for BackendConfig {
@@ -529,6 +532,40 @@ impl Default for BackendConfig {
         Self {
             mode: BackendMode::Container,
             use_agent_rpc: false,
+            runner: RunnerConfig::default(),
+        }
+    }
+}
+
+/// Runner configuration for user-plane isolation.
+///
+/// When `user_plane_enabled` is true in local multi-user mode, all user data
+/// operations are routed through per-user runner daemons, providing OS-level
+/// isolation between users.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+struct RunnerConfig {
+    /// Enable runner as the user-plane boundary.
+    ///
+    /// When true:
+    /// - All user data access goes through per-user runner daemons
+    /// - Backend cannot directly read user workspaces or per-user DBs
+    /// - Provides OS-level isolation in local multi-user mode
+    ///
+    /// When false:
+    /// - Backend accesses user data directly (legacy behavior)
+    /// - Only sandbox provides isolation (if enabled)
+    user_plane_enabled: bool,
+    /// Socket directory pattern for per-user runner sockets.
+    /// Default: /run/user/{uid}/octo-runner.sock
+    socket_pattern: Option<String>,
+}
+
+impl Default for RunnerConfig {
+    fn default() -> Self {
+        Self {
+            user_plane_enabled: false, // Disabled by default for backward compatibility
+            socket_pattern: None,
         }
     }
 }
@@ -1787,16 +1824,19 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     // Create session service based on runtime mode
     let mut session_service = if local_mode {
         let local_rt = local_runtime.expect("local runtime should be set in local mode");
+        let runner = runner::client::RunnerClient::default();
         if let Some(eavs) = eavs_client.clone() {
-            session::SessionService::with_local_runtime_and_eavs(
+            session::SessionService::with_runner_and_eavs(
                 session_repo,
+                runner,
                 local_rt,
                 eavs,
                 session_config.clone(),
             )
         } else {
-            session::SessionService::with_local_runtime(
+            session::SessionService::with_runner(
                 session_repo,
+                runner,
                 local_rt,
                 session_config.clone(),
             )
