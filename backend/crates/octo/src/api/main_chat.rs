@@ -10,10 +10,12 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 
+use tracing::warn;
+
 use crate::auth::CurrentUser;
 use crate::main_chat::{
     AssistantInfo, CreateHistoryEntry, CreateSession, HistoryEntry, HistoryEntryType,
-    MainChatService, MainChatSession,
+    MainChatService, MainChatSession, MainChatTemplates,
 };
 
 use super::error::{ApiError, ApiResult};
@@ -138,8 +140,29 @@ pub async fn initialize_main_chat(
         return Err(ApiError::conflict("Main Chat already exists"));
     }
 
+    // Resolve templates from the templates service (if available)
+    let templates = if let Some(ref templates_service) = state.onboarding_templates {
+        match templates_service.resolve(None).await {
+            Ok(resolved) => Some(MainChatTemplates {
+                agents: Some(resolved.agents),
+                personality: Some(resolved.personality),
+                onboard: Some(resolved.onboard),
+                user: Some(resolved.user),
+            }),
+            Err(e) => {
+                warn!(
+                    "Failed to resolve onboarding templates, using embedded: {}",
+                    e
+                );
+                None
+            }
+        }
+    } else {
+        None
+    };
+
     let info = service
-        .initialize_main_chat(user.id(), req.name.as_deref())
+        .initialize_main_chat(user.id(), req.name.as_deref(), templates)
         .await
         .map_err(|e| ApiError::internal(format!("Failed to initialize main chat: {}", e)))?;
 

@@ -42,6 +42,7 @@ async fn try_main() -> Result<()> {
         Command::Ui { command } => handle_ui(&client, command, cli.json).await,
         Command::Local { command } => handle_local(&client, command, cli.json).await,
         Command::Sandbox { command } => handle_sandbox(command, cli.json).await,
+        Command::User { command } => handle_user(command, cli.json).await,
     }
 }
 
@@ -132,6 +133,12 @@ enum Command {
     Sandbox {
         #[command(subcommand)]
         command: SandboxCommand,
+    },
+
+    /// Manage users and runner provisioning
+    User {
+        #[command(subcommand)]
+        command: UserCommand,
     },
 
     /// Send A2UI surface to user (for agents)
@@ -239,6 +246,57 @@ enum SandboxCommand {
         /// Skip confirmation prompt
         #[arg(long, short)]
         yes: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum UserCommand {
+    /// Create a new user with Linux user and runner provisioning
+    Create {
+        /// Octo username (will also be Linux username if not specified)
+        username: String,
+        /// Email address
+        #[arg(long, short)]
+        email: String,
+        /// Display name
+        #[arg(long, short)]
+        display_name: Option<String>,
+        /// User role (user, admin)
+        #[arg(long, short, default_value = "user")]
+        role: String,
+        /// Linux username (defaults to Octo username)
+        #[arg(long)]
+        linux_user: Option<String>,
+        /// Skip Linux user creation (use existing user)
+        #[arg(long)]
+        no_linux_user: bool,
+        /// Skip runner setup
+        #[arg(long)]
+        no_runner: bool,
+    },
+    /// List all users
+    List {
+        /// Show runner status for each user
+        #[arg(long)]
+        runner_status: bool,
+    },
+    /// Show user details
+    Show {
+        /// Username or user ID
+        user: String,
+    },
+    /// Setup runner for an existing user
+    SetupRunner {
+        /// Username or user ID
+        user: String,
+        /// Force reinstall even if runner is already configured
+        #[arg(long, short)]
+        force: bool,
+    },
+    /// Check runner status for a user
+    RunnerStatus {
+        /// Username or user ID
+        user: String,
     },
 }
 
@@ -1211,10 +1269,13 @@ async fn handle_sandbox(command: SandboxCommand, json: bool) -> Result<()> {
     match command {
         SandboxCommand::Show => {
             let config_path = std::path::Path::new(SYSTEM_SANDBOX_CONFIG);
-            
+
             if !config_path.exists() {
                 if json {
-                    println!(r#"{{"exists": false, "path": "{}"}}"#, SYSTEM_SANDBOX_CONFIG);
+                    println!(
+                        r#"{{"exists": false, "path": "{}"}}"#,
+                        SYSTEM_SANDBOX_CONFIG
+                    );
                 } else {
                     println!("Sandbox config not found at {}", SYSTEM_SANDBOX_CONFIG);
                     println!("\nTo create default config, run:");
@@ -1222,10 +1283,10 @@ async fn handle_sandbox(command: SandboxCommand, json: bool) -> Result<()> {
                 }
                 return Ok(());
             }
-            
-            let content = std::fs::read_to_string(config_path)
-                .context("Failed to read sandbox config")?;
-            
+
+            let content =
+                std::fs::read_to_string(config_path).context("Failed to read sandbox config")?;
+
             if json {
                 // Parse and output as JSON
                 match toml::from_str::<toml::Value>(&content) {
@@ -1252,10 +1313,10 @@ async fn handle_sandbox(command: SandboxCommand, json: bool) -> Result<()> {
                 println!("{}", content);
             }
         }
-        
+
         SandboxCommand::Edit => {
             let config_path = std::path::Path::new(SYSTEM_SANDBOX_CONFIG);
-            
+
             // Create parent directory if needed
             if let Some(parent) = config_path.parent() {
                 if !parent.exists() {
@@ -1269,7 +1330,7 @@ async fn handle_sandbox(command: SandboxCommand, json: bool) -> Result<()> {
                     }
                 }
             }
-            
+
             // If config doesn't exist, create it with defaults first
             if !config_path.exists() {
                 println!("Config not found, creating with defaults...");
@@ -1279,27 +1340,27 @@ async fn handle_sandbox(command: SandboxCommand, json: bool) -> Result<()> {
                     .stdout(std::process::Stdio::null())
                     .spawn()
                     .context("Failed to spawn sudo tee")?;
-                
+
                 if let Some(mut stdin) = child.stdin.take() {
                     use std::io::Write;
                     stdin.write_all(DEFAULT_SANDBOX_CONFIG.as_bytes())?;
                 }
-                
+
                 let status = child.wait()?;
                 if !status.success() {
                     anyhow::bail!("Failed to write default config");
                 }
             }
-            
+
             // Get editor from environment
             let editor = std::env::var("EDITOR")
                 .or_else(|_| std::env::var("VISUAL"))
                 .unwrap_or_else(|_| "nano".to_string());
-            
+
             // Copy to temp file for editing
             let temp_dir = std::env::temp_dir();
             let temp_path = temp_dir.join("sandbox.toml.edit");
-            
+
             // Try to copy directly, fallback to sudo cat
             if std::fs::copy(config_path, &temp_path).is_err() {
                 // If can't read directly, try with sudo
@@ -1307,32 +1368,31 @@ async fn handle_sandbox(command: SandboxCommand, json: bool) -> Result<()> {
                     .args(["cat", SYSTEM_SANDBOX_CONFIG])
                     .output()
                     .context("Failed to read config with sudo")?;
-                std::fs::write(&temp_path, &output.stdout)
-                    .context("Failed to write temp file")?;
+                std::fs::write(&temp_path, &output.stdout).context("Failed to write temp file")?;
             }
-            
+
             // Open editor
             println!("Opening {} with {}...", temp_path.display(), editor);
             let status = std::process::Command::new(&editor)
                 .arg(&temp_path)
                 .status()
                 .context("Failed to open editor")?;
-            
+
             if !status.success() {
                 anyhow::bail!("Editor exited with error");
             }
-            
+
             // Validate the edited config
-            let edited_content = std::fs::read_to_string(&temp_path)
-                .context("Failed to read edited config")?;
-            
+            let edited_content =
+                std::fs::read_to_string(&temp_path).context("Failed to read edited config")?;
+
             if let Err(e) = toml::from_str::<toml::Value>(&edited_content) {
                 eprintln!("Error: Invalid TOML syntax: {}", e);
                 eprintln!("\nConfig was NOT saved. Fix the errors and try again.");
                 eprintln!("Edited file is at: {}", temp_path.display());
                 anyhow::bail!("Invalid config");
             }
-            
+
             // Write back with sudo
             let mut child = std::process::Command::new("sudo")
                 .args(["tee", SYSTEM_SANDBOX_CONFIG])
@@ -1340,26 +1400,26 @@ async fn handle_sandbox(command: SandboxCommand, json: bool) -> Result<()> {
                 .stdout(std::process::Stdio::null())
                 .spawn()
                 .context("Failed to spawn sudo tee")?;
-            
+
             if let Some(mut stdin) = child.stdin.take() {
                 use std::io::Write;
                 stdin.write_all(edited_content.as_bytes())?;
             }
-            
+
             let status = child.wait()?;
             if !status.success() {
                 anyhow::bail!("Failed to save config");
             }
-            
+
             // Clean up temp file
             let _ = std::fs::remove_file(&temp_path);
-            
+
             println!("Sandbox config saved to {}", SYSTEM_SANDBOX_CONFIG);
         }
-        
+
         SandboxCommand::Validate => {
             let config_path = std::path::Path::new(SYSTEM_SANDBOX_CONFIG);
-            
+
             if !config_path.exists() {
                 if json {
                     println!(r#"{{"valid": false, "error": "Config file not found"}}"#);
@@ -1368,7 +1428,7 @@ async fn handle_sandbox(command: SandboxCommand, json: bool) -> Result<()> {
                 }
                 return Ok(());
             }
-            
+
             // Try to read (may need sudo)
             let content = match std::fs::read_to_string(config_path) {
                 Ok(c) => c,
@@ -1380,20 +1440,21 @@ async fn handle_sandbox(command: SandboxCommand, json: bool) -> Result<()> {
                     String::from_utf8_lossy(&output.stdout).to_string()
                 }
             };
-            
+
             match toml::from_str::<toml::Value>(&content) {
                 Ok(config) => {
                     // Check required fields
                     let mut warnings = vec![];
-                    
+
                     if config.get("enabled").is_none() {
                         warnings.push("Missing 'enabled' field (defaults to false)");
                     }
-                    
+
                     if config.get("deny_read").is_none() {
-                        warnings.push("Missing 'deny_read' field (sensitive files won't be protected)");
+                        warnings
+                            .push("Missing 'deny_read' field (sensitive files won't be protected)");
                     }
-                    
+
                     if json {
                         let json_val = serde_json::json!({
                             "valid": true,
@@ -1410,9 +1471,15 @@ async fn handle_sandbox(command: SandboxCommand, json: bool) -> Result<()> {
                                 println!("  - {}", w);
                             }
                         }
-                        
-                        let enabled = config.get("enabled").and_then(|v| v.as_bool()).unwrap_or(false);
-                        let profile = config.get("profile").and_then(|v| v.as_str()).unwrap_or("default");
+
+                        let enabled = config
+                            .get("enabled")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false);
+                        let profile = config
+                            .get("profile")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("default");
                         println!("\nStatus:");
                         println!("  Enabled: {}", enabled);
                         println!("  Profile: {}", profile);
@@ -1427,21 +1494,21 @@ async fn handle_sandbox(command: SandboxCommand, json: bool) -> Result<()> {
                 }
             }
         }
-        
+
         SandboxCommand::Reset { yes } => {
             if !yes {
                 print!("This will reset sandbox config to defaults. Continue? [y/N] ");
                 let _ = io::stdout().flush();
-                
+
                 let mut input = String::new();
                 io::stdin().read_line(&mut input)?;
-                
+
                 if !input.trim().eq_ignore_ascii_case("y") {
                     println!("Aborted.");
                     return Ok(());
                 }
             }
-            
+
             // Create parent directory if needed
             let config_path = std::path::Path::new(SYSTEM_SANDBOX_CONFIG);
             if let Some(parent) = config_path.parent() {
@@ -1455,7 +1522,7 @@ async fn handle_sandbox(command: SandboxCommand, json: bool) -> Result<()> {
                     }
                 }
             }
-            
+
             // Write default config
             let mut child = std::process::Command::new("sudo")
                 .args(["tee", SYSTEM_SANDBOX_CONFIG])
@@ -1463,17 +1530,17 @@ async fn handle_sandbox(command: SandboxCommand, json: bool) -> Result<()> {
                 .stdout(std::process::Stdio::null())
                 .spawn()
                 .context("Failed to spawn sudo tee")?;
-            
+
             if let Some(mut stdin) = child.stdin.take() {
                 use std::io::Write;
                 stdin.write_all(DEFAULT_SANDBOX_CONFIG.as_bytes())?;
             }
-            
+
             let status = child.wait()?;
             if !status.success() {
                 anyhow::bail!("Failed to write config");
             }
-            
+
             // Set permissions
             let _ = std::process::Command::new("sudo")
                 .args(["chmod", "644", SYSTEM_SANDBOX_CONFIG])
@@ -1481,14 +1548,534 @@ async fn handle_sandbox(command: SandboxCommand, json: bool) -> Result<()> {
             let _ = std::process::Command::new("sudo")
                 .args(["chown", "root:root", SYSTEM_SANDBOX_CONFIG])
                 .status();
-            
+
             if json {
-                println!(r#"{{"status": "reset", "path": "{}"}}"#, SYSTEM_SANDBOX_CONFIG);
+                println!(
+                    r#"{{"status": "reset", "path": "{}"}}"#,
+                    SYSTEM_SANDBOX_CONFIG
+                );
             } else {
-                println!("Sandbox config reset to defaults at {}", SYSTEM_SANDBOX_CONFIG);
+                println!(
+                    "Sandbox config reset to defaults at {}",
+                    SYSTEM_SANDBOX_CONFIG
+                );
             }
         }
     }
+    Ok(())
+}
+
+async fn handle_user(command: UserCommand, json: bool) -> Result<()> {
+    match command {
+        UserCommand::Create {
+            username,
+            email,
+            display_name,
+            role,
+            linux_user,
+            no_linux_user,
+            no_runner,
+        } => {
+            let linux_username = linux_user.as_deref().unwrap_or(&username);
+
+            // Validate role
+            let _role = match role.to_lowercase().as_str() {
+                "user" | "admin" => role.to_lowercase(),
+                _ => anyhow::bail!("Invalid role: {}. Must be 'user' or 'admin'", role),
+            };
+
+            if !no_linux_user {
+                // Check if Linux user already exists
+                let user_exists = std::process::Command::new("id")
+                    .arg(linux_username)
+                    .output()
+                    .map(|o| o.status.success())
+                    .unwrap_or(false);
+
+                if user_exists {
+                    if !json {
+                        println!(
+                            "Linux user '{}' already exists, skipping creation",
+                            linux_username
+                        );
+                    }
+                } else {
+                    // Create Linux user with sudo
+                    if !json {
+                        println!("Creating Linux user '{}'...", linux_username);
+                    }
+
+                    let status = std::process::Command::new("sudo")
+                        .args(["useradd", "-m", "-s", "/bin/bash", linux_username])
+                        .status()
+                        .context("Failed to run useradd")?;
+
+                    if !status.success() {
+                        anyhow::bail!("Failed to create Linux user '{}'", linux_username);
+                    }
+
+                    if !json {
+                        println!("Linux user '{}' created", linux_username);
+                    }
+                }
+
+                // Enable lingering for systemd user services
+                if !json {
+                    println!("Enabling systemd lingering for '{}'...", linux_username);
+                }
+
+                let status = std::process::Command::new("sudo")
+                    .args(["loginctl", "enable-linger", linux_username])
+                    .status()
+                    .context("Failed to enable lingering")?;
+
+                if !status.success() {
+                    eprintln!(
+                        "Warning: Failed to enable lingering for '{}'",
+                        linux_username
+                    );
+                }
+            }
+
+            // Setup runner if not skipped
+            if !no_runner && !no_linux_user {
+                setup_runner_for_user(linux_username, json)?;
+            }
+
+            // Create Octo user via API
+            // For now, just print what would be done - actual API call would need the server running
+            if json {
+                let result = serde_json::json!({
+                    "status": "created",
+                    "username": username,
+                    "email": email,
+                    "display_name": display_name.as_deref().unwrap_or(&username),
+                    "role": role,
+                    "linux_username": if no_linux_user { None } else { Some(linux_username) },
+                    "runner_setup": !no_runner && !no_linux_user,
+                });
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("\nUser provisioning complete:");
+                println!("  Octo username: {}", username);
+                println!("  Email: {}", email);
+                println!(
+                    "  Display name: {}",
+                    display_name.as_deref().unwrap_or(&username)
+                );
+                println!("  Role: {}", role);
+                if !no_linux_user {
+                    println!("  Linux user: {}", linux_username);
+                }
+                if !no_runner && !no_linux_user {
+                    println!("  Runner: configured");
+                }
+                println!(
+                    "\nNote: Run the Octo server and use the API to create the database user record."
+                );
+            }
+        }
+
+        UserCommand::List { runner_status } => {
+            // List users from /etc/passwd that have octo-runner configured
+            // In a full implementation, this would query the Octo database
+            if !json {
+                println!("Listing users with runner configuration:\n");
+            }
+
+            let mut users = vec![];
+
+            // Check all users with home directories
+            if let Ok(passwd) = std::fs::read_to_string("/etc/passwd") {
+                for line in passwd.lines() {
+                    let parts: Vec<&str> = line.split(':').collect();
+                    if parts.len() >= 6 {
+                        let username = parts[0];
+                        let uid: u32 = parts[2].parse().unwrap_or(0);
+                        let home = parts[5];
+
+                        // Skip system users
+                        if uid < 1000 || uid == 65534 {
+                            continue;
+                        }
+
+                        // Check if user has runner service installed
+                        let service_path =
+                            format!("{}/.config/systemd/user/octo-runner.service", home);
+                        let has_runner = std::path::Path::new(&service_path).exists();
+
+                        if has_runner {
+                            let status = if runner_status {
+                                get_runner_status(username)
+                            } else {
+                                "unknown".to_string()
+                            };
+
+                            users.push(serde_json::json!({
+                                "username": username,
+                                "uid": uid,
+                                "home": home,
+                                "runner_installed": true,
+                                "runner_status": status,
+                            }));
+                        }
+                    }
+                }
+            }
+
+            if json {
+                println!("{}", serde_json::to_string_pretty(&users)?);
+            } else {
+                if users.is_empty() {
+                    println!("No users with runner configured found.");
+                } else {
+                    println!(
+                        "{:<20} {:<8} {:<15} {}",
+                        "USERNAME", "UID", "RUNNER STATUS", "HOME"
+                    );
+                    println!("{}", "-".repeat(70));
+                    for user in &users {
+                        println!(
+                            "{:<20} {:<8} {:<15} {}",
+                            user["username"].as_str().unwrap_or("-"),
+                            user["uid"].as_u64().unwrap_or(0),
+                            user["runner_status"].as_str().unwrap_or("-"),
+                            user["home"].as_str().unwrap_or("-"),
+                        );
+                    }
+                }
+            }
+        }
+
+        UserCommand::Show { user } => {
+            // Get user info from system and check runner status
+            let output = std::process::Command::new("id")
+                .arg(&user)
+                .output()
+                .context("Failed to run id command")?;
+
+            if !output.status.success() {
+                anyhow::bail!("User '{}' not found", user);
+            }
+
+            let id_output = String::from_utf8_lossy(&output.stdout);
+
+            // Parse uid and gid from id output
+            let uid = id_output
+                .split("uid=")
+                .nth(1)
+                .and_then(|s| s.split('(').next())
+                .and_then(|s| s.parse::<u32>().ok())
+                .unwrap_or(0);
+
+            // Get home directory
+            let home = std::process::Command::new("bash")
+                .args(["-c", &format!("echo ~{}", user)])
+                .output()
+                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+                .unwrap_or_default();
+
+            // Check runner installation
+            let service_path = format!("{}/.config/systemd/user/octo-runner.service", home);
+            let runner_installed = std::path::Path::new(&service_path).exists();
+
+            // Check runner status
+            let runner_status = get_runner_status(&user);
+
+            // Check socket
+            let socket_path = format!("/run/user/{}/octo-runner.sock", uid);
+            let socket_exists = std::path::Path::new(&socket_path).exists();
+
+            // Check lingering
+            let linger_path = format!("/var/lib/systemd/linger/{}", user);
+            let lingering = std::path::Path::new(&linger_path).exists();
+
+            if json {
+                let result = serde_json::json!({
+                    "username": user,
+                    "uid": uid,
+                    "home": home,
+                    "runner": {
+                        "installed": runner_installed,
+                        "status": runner_status,
+                        "socket": socket_path,
+                        "socket_exists": socket_exists,
+                    },
+                    "lingering": lingering,
+                });
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("User: {}", user);
+                println!("  UID: {}", uid);
+                println!("  Home: {}", home);
+                println!(
+                    "  Lingering: {}",
+                    if lingering { "enabled" } else { "disabled" }
+                );
+                println!("\nRunner:");
+                println!("  Installed: {}", runner_installed);
+                println!("  Status: {}", runner_status);
+                println!("  Socket: {}", socket_path);
+                println!("  Socket exists: {}", socket_exists);
+            }
+        }
+
+        UserCommand::SetupRunner { user, force } => {
+            // Check if user exists
+            let output = std::process::Command::new("id")
+                .arg(&user)
+                .output()
+                .context("Failed to run id command")?;
+
+            if !output.status.success() {
+                anyhow::bail!("User '{}' not found", user);
+            }
+
+            // Get home directory
+            let home = std::process::Command::new("bash")
+                .args(["-c", &format!("echo ~{}", user)])
+                .output()
+                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+                .context("Failed to get home directory")?;
+
+            // Check if already installed
+            let service_path = format!("{}/.config/systemd/user/octo-runner.service", home);
+            if std::path::Path::new(&service_path).exists() && !force {
+                if json {
+                    println!(r#"{{"status": "already_installed", "user": "{}"}}"#, user);
+                } else {
+                    println!(
+                        "Runner already installed for '{}'. Use --force to reinstall.",
+                        user
+                    );
+                }
+                return Ok(());
+            }
+
+            setup_runner_for_user(&user, json)?;
+
+            if json {
+                println!(r#"{{"status": "installed", "user": "{}"}}"#, user);
+            } else {
+                println!("Runner setup complete for '{}'", user);
+            }
+        }
+
+        UserCommand::RunnerStatus { user } => {
+            let status = get_runner_status(&user);
+
+            // Get uid for socket path
+            let uid = std::process::Command::new("id")
+                .args(["-u", &user])
+                .output()
+                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+                .unwrap_or_default();
+
+            let socket_path = format!("/run/user/{}/octo-runner.sock", uid);
+            let socket_exists = std::path::Path::new(&socket_path).exists();
+
+            if json {
+                let result = serde_json::json!({
+                    "user": user,
+                    "status": status,
+                    "socket": socket_path,
+                    "socket_exists": socket_exists,
+                });
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("User: {}", user);
+                println!("Status: {}", status);
+                println!(
+                    "Socket: {} ({})",
+                    socket_path,
+                    if socket_exists { "exists" } else { "not found" }
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Get the systemd status of the runner for a user
+fn get_runner_status(username: &str) -> String {
+    // Get the user's UID first
+    let uid = std::process::Command::new("id")
+        .args(["-u", username])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_default();
+
+    if uid.is_empty() {
+        return "error (no uid)".to_string();
+    }
+
+    // Check if socket exists as a quick status check
+    let socket_path = format!("/run/user/{}/octo-runner.sock", uid);
+    if std::path::Path::new(&socket_path).exists() {
+        // Socket exists, try to check if service is actually running
+        // Use machinectl shell for proper systemd user context
+        let output = std::process::Command::new("sudo")
+            .args([
+                "machinectl",
+                "shell",
+                &format!("{}@", username),
+                "/usr/bin/systemctl",
+                "--user",
+                "is-active",
+                "octo-runner",
+            ])
+            .output();
+
+        match output {
+            Ok(o) if o.status.success() => {
+                let status = String::from_utf8_lossy(&o.stdout).trim().to_string();
+                // machinectl adds extra output, extract just the status
+                if status.contains("active") {
+                    return "active".to_string();
+                } else if status.contains("inactive") {
+                    return "inactive".to_string();
+                }
+                // Socket exists, assume running
+                "active (socket exists)".to_string()
+            }
+            _ => {
+                // machinectl not available or failed, but socket exists
+                "active (socket exists)".to_string()
+            }
+        }
+    } else {
+        // No socket, try systemctl directly (may work if we're running as that user)
+        let output = std::process::Command::new("systemctl")
+            .args(["--user", "is-active", "octo-runner"])
+            .env("XDG_RUNTIME_DIR", format!("/run/user/{}", uid))
+            .output();
+
+        match output {
+            Ok(o) => {
+                let status = String::from_utf8_lossy(&o.stdout).trim().to_string();
+                if status.is_empty() {
+                    "inactive (no socket)".to_string()
+                } else {
+                    status
+                }
+            }
+            Err(_) => "inactive (no socket)".to_string(),
+        }
+    }
+}
+
+/// Setup octo-runner for a user
+fn setup_runner_for_user(username: &str, json: bool) -> Result<()> {
+    // Get home directory
+    let home = std::process::Command::new("bash")
+        .args(["-c", &format!("echo ~{}", username)])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .context("Failed to get home directory")?;
+
+    if home.is_empty() {
+        anyhow::bail!("Could not determine home directory for '{}'", username);
+    }
+
+    // Create systemd user directory
+    let systemd_dir = format!("{}/.config/systemd/user", home);
+    if !json {
+        println!("Creating systemd user directory...");
+    }
+
+    let status = std::process::Command::new("sudo")
+        .args(["-u", username, "mkdir", "-p", &systemd_dir])
+        .status()
+        .context("Failed to create systemd directory")?;
+
+    if !status.success() {
+        anyhow::bail!("Failed to create systemd directory");
+    }
+
+    // Copy service file
+    let service_src = "/usr/local/share/octo/systemd/octo-runner.service";
+    let service_dst = format!("{}/octo-runner.service", systemd_dir);
+
+    // If source doesn't exist, try local path
+    let service_content = if std::path::Path::new(service_src).exists() {
+        std::fs::read_to_string(service_src).context("Failed to read service file")?
+    } else {
+        // Fallback to embedded service file
+        include_str!("../../../../../systemd/octo-runner.service").to_string()
+    };
+
+    if !json {
+        println!("Installing octo-runner.service...");
+    }
+
+    // Write service file as user
+    let mut child = std::process::Command::new("sudo")
+        .args(["-u", username, "tee", &service_dst])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .spawn()
+        .context("Failed to write service file")?;
+
+    if let Some(mut stdin) = child.stdin.take() {
+        use std::io::Write;
+        stdin.write_all(service_content.as_bytes())?;
+    }
+
+    let status = child.wait()?;
+    if !status.success() {
+        anyhow::bail!("Failed to write service file");
+    }
+
+    // Reload systemd
+    if !json {
+        println!("Reloading systemd...");
+    }
+
+    let _ = std::process::Command::new("sudo")
+        .args(["-u", username, "systemctl", "--user", "daemon-reload"])
+        .status();
+
+    // Enable and start the service
+    if !json {
+        println!("Enabling octo-runner service...");
+    }
+
+    let status = std::process::Command::new("sudo")
+        .args([
+            "-u",
+            username,
+            "systemctl",
+            "--user",
+            "enable",
+            "octo-runner",
+        ])
+        .status()
+        .context("Failed to enable service")?;
+
+    if !status.success() {
+        eprintln!("Warning: Failed to enable octo-runner service");
+    }
+
+    if !json {
+        println!("Starting octo-runner service...");
+    }
+
+    let status = std::process::Command::new("sudo")
+        .args([
+            "-u",
+            username,
+            "systemctl",
+            "--user",
+            "start",
+            "octo-runner",
+        ])
+        .status()
+        .context("Failed to start service")?;
+
+    if !status.success() {
+        eprintln!("Warning: Failed to start octo-runner service. It may start on user login.");
+    }
+
     Ok(())
 }
 

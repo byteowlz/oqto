@@ -5,6 +5,7 @@ import {
 	ContextMenu,
 	ContextMenuContent,
 	ContextMenuItem,
+	ContextMenuSeparator,
 	ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import {
@@ -25,6 +26,7 @@ import {
 	getMainChatAssistant,
 	listMainChatAssistants,
 	listMainChatPiSessions,
+	renamePiSession,
 	updateMainChatAssistant,
 } from "@/features/main-chat/api";
 import { formatSessionDate, generateReadableId } from "@/lib/session-utils";
@@ -36,6 +38,7 @@ import {
 	Loader2,
 	MessageCircle,
 	MessageSquare,
+	Pencil,
 	Plus,
 	Settings,
 	Trash2,
@@ -142,25 +145,83 @@ export function MainChatEntry({
 	const resetNameIsValid = useMemo(() => {
 		return Boolean(resetName.trim().match(/^[A-Za-z0-9_-]+$/));
 	}, [resetName]);
+	// Rename session state
+	const [showRenameDialog, setShowRenameDialog] = useState(false);
+	const [renameSessionId, setRenameSessionId] = useState<string | null>(null);
+	const [renameTitle, setRenameTitle] = useState("");
+	const [renaming, setRenaming] = useState(false);
+	const [renameError, setRenameError] = useState<string | null>(null);
 	const lastNewSessionTriggerRef = useRef(newSessionTrigger);
 	const lastActiveSessionIdRef = useRef(activeSessionId);
 	const lastSessionActivityTriggerRef = useRef(sessionActivityTrigger);
+	// Throttle refresh to avoid excessive API calls
+	const lastRefreshTimeRef = useRef(0);
+	const pendingRefreshRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const REFRESH_THROTTLE_MS = 5000; // At most one refresh every 5 seconds
 
 	// Unconditional refresh - always fetches sessions regardless of selection state
+	// Now with throttling to avoid excessive refreshes
 	const refreshSessionsUnconditional = useCallback(() => {
 		if (!assistantName) return;
-		listMainChatPiSessions()
-			.then((sessionList) => {
-				const sorted = [...sessionList].sort(
-					(a, b) => b.modified_at - a.modified_at,
-				);
-				setSessions(sorted);
-				setLatestSessionId(sorted[0]?.id ?? null);
-				writeCachedSessions(assistantName, sorted);
-			})
-			.catch(() => {
-				// ignore
-			});
+
+		const now = Date.now();
+		const elapsed = now - lastRefreshTimeRef.current;
+
+		// Clear any pending refresh
+		if (pendingRefreshRef.current) {
+			clearTimeout(pendingRefreshRef.current);
+			pendingRefreshRef.current = null;
+		}
+
+		const doRefresh = () => {
+			lastRefreshTimeRef.current = Date.now();
+			listMainChatPiSessions()
+				.then((sessionList) => {
+					const sorted = [...sessionList].sort(
+						(a, b) => b.modified_at - a.modified_at,
+					);
+					// Only update state if data actually changed
+					setSessions((prev) => {
+						if (prev.length !== sorted.length) {
+							writeCachedSessions(assistantName, sorted);
+							return sorted;
+						}
+						// Check if any session changed
+						let changed = false;
+						for (let i = 0; i < prev.length; i++) {
+							if (
+								prev[i].id !== sorted[i].id ||
+								prev[i].modified_at !== sorted[i].modified_at ||
+								prev[i].title !== sorted[i].title
+							) {
+								changed = true;
+								break;
+							}
+						}
+						if (changed) {
+							writeCachedSessions(assistantName, sorted);
+							return sorted;
+						}
+						return prev;
+					});
+					setLatestSessionId((prev) => {
+						const newLatest = sorted[0]?.id ?? null;
+						return prev === newLatest ? prev : newLatest;
+					});
+				})
+				.catch(() => {
+					// ignore
+				});
+		};
+
+		if (elapsed >= REFRESH_THROTTLE_MS) {
+			// Enough time has passed, refresh immediately
+			doRefresh();
+		} else {
+			// Schedule refresh after throttle interval
+			const delay = REFRESH_THROTTLE_MS - elapsed;
+			pendingRefreshRef.current = setTimeout(doRefresh, delay);
+		}
 	}, [assistantName]);
 
 	const refreshSessions = useCallback(() => {
@@ -367,6 +428,36 @@ export function MainChatEntry({
 		[assistantName, onNewSession],
 	);
 
+	const handleRenameSession = useCallback((session: PiSessionFile) => {
+		setRenameSessionId(session.id);
+		setRenameTitle(session.title || "");
+		setRenameError(null);
+		setShowRenameDialog(true);
+	}, []);
+
+	async function handleConfirmRename() {
+		if (!renameSessionId || !renameTitle.trim()) return;
+
+		try {
+			setRenaming(true);
+			setRenameError(null);
+			const updated = await renamePiSession(renameSessionId, renameTitle.trim());
+			// Update local state
+			setSessions((prev) =>
+				prev.map((s) => (s.id === updated.id ? updated : s)),
+			);
+			setShowRenameDialog(false);
+			setRenameSessionId(null);
+			setRenameTitle("");
+		} catch (err) {
+			console.error("Failed to rename session:", err);
+			const message = err instanceof Error ? err.message : "Failed to rename";
+			setRenameError(message);
+		} finally {
+			setRenaming(false);
+		}
+	}
+
 	// Loading state - show placeholder
 	if (loading) {
 		return (
@@ -542,6 +633,13 @@ export function MainChatEntry({
 											<Copy className="w-4 h-4 mr-2" />
 											{readableId}
 										</ContextMenuItem>
+										<ContextMenuSeparator />
+										<ContextMenuItem
+											onClick={() => handleRenameSession(session)}
+										>
+											<Pencil className="w-4 h-4 mr-2" />
+											{locale === "de" ? "Umbenennen" : "Rename"}
+										</ContextMenuItem>
 									</ContextMenuContent>
 								</ContextMenu>
 							);
@@ -570,6 +668,16 @@ export function MainChatEntry({
 				onSubmit={handleReset}
 				loading={resetting}
 				error={resetError}
+				locale={locale}
+			/>
+			<RenameSessionDialog
+				open={showRenameDialog}
+				onOpenChange={setShowRenameDialog}
+				title={renameTitle}
+				onTitleChange={setRenameTitle}
+				onSubmit={handleConfirmRename}
+				loading={renaming}
+				error={renameError}
 				locale={locale}
 			/>
 		</>
@@ -806,16 +914,92 @@ function ResetAssistantDialog({
 						onClick={onSubmit}
 						disabled={loading || !name.trim() || !nameIsValid}
 					>
-						{loading
-							? locale === "de"
-								? "Zurucksetzen..."
-								: "Resetting..."
-							: locale === "de"
-								? "Zurucksetzen"
-								: "Reset"}
+					{loading
+						? locale === "de"
+							? "Zurucksetzen..."
+							: "Resetting..."
+						: locale === "de"
+							? "Zurucksetzen"
+							: "Reset"}
 					</Button>
 				</DialogFooter>
 			</DialogContent>
 		</Dialog>
 	);
 }
+
+function RenameSessionDialog({
+	open,
+	onOpenChange,
+	title,
+	onTitleChange,
+	onSubmit,
+	loading,
+	error,
+	locale,
+}: {
+	open: boolean;
+	onOpenChange: (open: boolean) => void;
+	title: string;
+	onTitleChange: (title: string) => void;
+	onSubmit: () => void;
+	loading: boolean;
+	error: string | null;
+	locale: "en" | "de";
+}) {
+	return (
+		<Dialog open={open} onOpenChange={onOpenChange}>
+			<DialogContent>
+				<DialogHeader>
+					<DialogTitle>
+						{locale === "de" ? "Sitzung umbenennen" : "Rename Session"}
+					</DialogTitle>
+					<DialogDescription>
+						{locale === "de"
+							? "Geben Sie einen neuen Titel fur diese Sitzung ein."
+							: "Enter a new title for this session."}
+					</DialogDescription>
+				</DialogHeader>
+
+				<div className="grid gap-4 py-4">
+					<div className="grid gap-2">
+						<Label htmlFor="session-title">
+							{locale === "de" ? "Titel" : "Title"}
+						</Label>
+						<Input
+							id="session-title"
+							placeholder={
+								locale === "de" ? "Sitzungstitel" : "Session title"
+							}
+							value={title}
+							onChange={(e) => onTitleChange(e.target.value)}
+							onKeyDown={(e) => {
+								if (e.key === "Enter" && !loading) {
+									onSubmit();
+								}
+							}}
+							disabled={loading}
+						/>
+					</div>
+
+					{error && <p className="text-sm text-destructive">{error}</p>}
+				</div>
+
+				<DialogFooter>
+					<Button
+						variant="outline"
+						onClick={() => onOpenChange(false)}
+						disabled={loading}
+					>
+						{locale === "de" ? "Abbrechen" : "Cancel"}
+					</Button>
+					<Button onClick={onSubmit} disabled={loading || !title.trim()}>
+						{loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+						{locale === "de" ? "Speichern" : "Save"}
+					</Button>
+				</DialogFooter>
+			</DialogContent>
+		</Dialog>
+	);
+}
+

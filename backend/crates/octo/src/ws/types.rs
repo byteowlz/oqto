@@ -358,6 +358,25 @@ pub enum WsCommand {
     },
 }
 
+impl WsCommand {
+    pub fn session_id(&self) -> Option<&str> {
+        match self {
+            WsCommand::Subscribe { session_id }
+            | WsCommand::Unsubscribe { session_id }
+            | WsCommand::SendMessage { session_id, .. }
+            | WsCommand::SendParts { session_id, .. }
+            | WsCommand::Abort { session_id }
+            | WsCommand::PermissionReply { session_id, .. }
+            | WsCommand::QuestionReply { session_id, .. }
+            | WsCommand::QuestionReject { session_id, .. }
+            | WsCommand::A2uiAction { session_id, .. }
+            | WsCommand::RefreshSession { session_id }
+            | WsCommand::GetMessages { session_id, .. } => Some(session_id),
+            WsCommand::Pong => None,
+        }
+    }
+}
+
 /// Attachment for messages.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Attachment {

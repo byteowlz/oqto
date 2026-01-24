@@ -15,6 +15,7 @@ export {
 	getMainChatPiStats,
 	listMainChatAssistants,
 	newMainChatPiSessionFile,
+	renamePiSession,
 	resetMainChatPiSession,
 	resumeMainChatPiSession,
 	setMainChatPiModel,

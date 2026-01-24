@@ -5,6 +5,11 @@ Octo is a self-hosted platform for managing AI coding agents. Supports local mod
 **New to Octo?** Start with the [SETUP.md](./SETUP.md) guide for installation and prerequisites.
 
 ---
+## Debugging
+
+Tmux is always available, use it to debug the logs of the running backend and frontend.
+
+Use agent-browser + tmux for end-to-end testing
 
 ## Architecture Overview
 
@@ -52,7 +57,11 @@ Both `pi` and `opencode` can run in different isolation modes:
 | `octo-runner` | Multi-user process daemon (Linux only) |
 | `octo-sandbox` | Sandbox wrapper using bwrap/sandbox-exec |
 | `pi-bridge` | HTTP/WebSocket bridge for Pi in containers |
-| `fileserver` | File access server for workspaces |
+| `octo-files` | File access server for workspaces |
+
+### External Dependencies
+
+fresh clones of dependencies like opencode or pi-mono can be found in ../external-repos
 
 ### Process Sandboxing
 

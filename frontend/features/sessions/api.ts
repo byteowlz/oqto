@@ -7,11 +7,13 @@ export {
 	getChatMessages,
 	getFeatures,
 	getMainChatAssistant,
+	getOrCreateSessionForWorkspace,
 	getProjectLogoUrl,
 	getWorkspaceConfig,
 	listMainChatSessions,
 	opencodeProxyBaseUrl,
 	registerMainChatSession,
+	touchSessionActivity,
 	workspaceFileUrl,
 } from "@/lib/control-plane-client";
 

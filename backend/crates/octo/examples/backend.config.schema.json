@@ -227,6 +227,27 @@
       "additionalProperties": false,
       "x-note": "Sandbox configuration is in a separate file (~/.config/octo/sandbox.toml) for security. See sandbox.schema.json."
     },
+    "runner": {
+      "type": "object",
+      "description": "Runner configuration for user-plane isolation. The octo-runner daemon reads this section to locate user data directories. This enables existing users to use their current data locations without migration.",
+      "x-scope": "user",
+      "x-category": "Infrastructure",
+      "properties": {
+        "pi_sessions_dir": {
+          "type": ["string", "null"],
+          "description": "Directory containing Pi session files (for main chat history). Supports ~ for home directory. Defaults to $XDG_DATA_HOME/pi/sessions (~/.local/share/pi/sessions).",
+          "default": null,
+          "examples": ["~/.local/share/pi/sessions", "/home/alice/.local/share/pi/sessions", "~/pi-sessions"]
+        },
+        "memories_dir": {
+          "type": ["string", "null"],
+          "description": "Directory containing memories (mmry database). Supports ~ for home directory. Defaults to $XDG_DATA_HOME/mmry (~/.local/share/mmry).",
+          "default": null,
+          "examples": ["~/.local/share/mmry", "/home/alice/.local/share/mmry", "~/memories"]
+        }
+      },
+      "additionalProperties": false
+    },
     "agent_browser": {
       "type": "object",
       "description": "Agent-browser daemon configuration for server-side browser sessions.",

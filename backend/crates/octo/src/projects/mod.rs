@@ -15,6 +15,7 @@ pub fn metadata_path(workspace_path: &Path) -> PathBuf {
     workspace_path.join(".octo").join("project.json")
 }
 
+#[allow(dead_code)]
 pub fn read_metadata(workspace_path: &Path) -> Result<Option<ProjectMetadata>> {
     let path = metadata_path(workspace_path);
     if !path.exists() {

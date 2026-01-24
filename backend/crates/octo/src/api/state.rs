@@ -5,8 +5,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use axum::body::Body;
-use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::client::legacy::Client;
+use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::rt::TokioExecutor;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
@@ -18,10 +18,13 @@ use crate::auth::AuthState;
 use crate::invite::InviteCodeRepository;
 use crate::local::LinuxUsersConfig;
 use crate::main_chat::{MainChatPiService, MainChatService};
+use crate::onboarding::OnboardingService;
 use crate::session::SessionService;
 use crate::session_ui::SessionAutoAttachMode;
 use crate::settings::SettingsService;
+use crate::templates::OnboardingTemplatesService;
 use crate::user::UserService;
+use crate::user_plane::{DirectUserPlane, RunnerUserPlane, UserPlane};
 use crate::ws::WsHub;
 
 /// Mmry configuration for the API layer.
@@ -198,6 +201,92 @@ impl Default for TemplatesState {
     }
 }
 
+/// Factory for creating per-user UserPlane instances.
+///
+/// In single-user mode, returns a DirectUserPlane.
+/// In multi-user mode, returns a RunnerUserPlane connected to the user's runner socket.
+#[derive(Clone)]
+pub struct UserPlaneFactory {
+    /// Whether multi-user mode is enabled.
+    multi_user_enabled: bool,
+    /// Default workspace root for single-user mode.
+    default_workspace_root: PathBuf,
+}
+
+impl std::fmt::Debug for UserPlaneFactory {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("UserPlaneFactory")
+            .field("multi_user_enabled", &self.multi_user_enabled)
+            .field("default_workspace_root", &self.default_workspace_root)
+            .finish()
+    }
+}
+
+impl UserPlaneFactory {
+    /// Create a new factory for single-user mode.
+    pub fn single_user(workspace_root: impl Into<PathBuf>) -> Self {
+        Self {
+            multi_user_enabled: false,
+            default_workspace_root: workspace_root.into(),
+        }
+    }
+
+    /// Create a new factory for multi-user mode.
+    pub fn multi_user() -> Self {
+        Self {
+            multi_user_enabled: true,
+            default_workspace_root: PathBuf::from("/tmp"),
+        }
+    }
+
+    /// Check if multi-user mode is enabled.
+    pub fn is_multi_user(&self) -> bool {
+        self.multi_user_enabled
+    }
+
+    /// Create a UserPlane for the given user.
+    ///
+    /// - In single-user mode: returns DirectUserPlane with workspace_root
+    /// - In multi-user mode with linux_username: returns RunnerUserPlane for that user
+    /// - In multi-user mode without linux_username: falls back to DirectUserPlane
+    pub fn for_user(&self, linux_username: Option<&str>) -> Arc<dyn UserPlane> {
+        if self.multi_user_enabled {
+            if let Some(username) = linux_username {
+                match RunnerUserPlane::for_user(username) {
+                    Ok(plane) => return Arc::new(plane),
+                    Err(e) => {
+                        tracing::warn!(
+                            "Failed to create RunnerUserPlane for {}: {:?}, falling back to direct",
+                            username,
+                            e
+                        );
+                    }
+                }
+            }
+        }
+        // Fallback to direct access
+        Arc::new(DirectUserPlane::new(&self.default_workspace_root))
+    }
+
+    /// Create a UserPlane using the default runner socket (current user).
+    ///
+    /// This is useful for single-user mode where we still want runner isolation.
+    pub fn for_current_user(&self) -> Arc<dyn UserPlane> {
+        if self.multi_user_enabled {
+            // Use default socket path (current user's XDG_RUNTIME_DIR)
+            Arc::new(RunnerUserPlane::default())
+        } else {
+            Arc::new(DirectUserPlane::new(&self.default_workspace_root))
+        }
+    }
+}
+
+impl Default for UserPlaneFactory {
+    fn default() -> Self {
+        Self::single_user(std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string()))
+    }
+}
+
 /// Application state shared across all handlers.
 #[derive(Clone)]
 pub struct AppState {
@@ -231,6 +320,10 @@ pub struct AppState {
     pub main_chat: Option<Arc<MainChatService>>,
     /// Main Chat Pi service for managing Pi subprocesses.
     pub main_chat_pi: Option<Arc<MainChatPiService>>,
+    /// Onboarding service for user setup flow.
+    pub onboarding: Option<Arc<OnboardingService>>,
+    /// Onboarding templates service for Main Chat initialization.
+    pub onboarding_templates: Option<Arc<OnboardingTemplatesService>>,
     /// WebSocket hub for real-time communication.
     pub ws_hub: Arc<WsHub>,
     /// Pending A2UI blocking requests (request_id -> response channel).
@@ -239,6 +332,8 @@ pub struct AppState {
     pub max_proxy_body_bytes: usize,
     /// Linux user isolation configuration (for multi-user mode).
     pub linux_users: Option<LinuxUsersConfig>,
+    /// Factory for creating per-user UserPlane instances.
+    pub user_plane_factory: UserPlaneFactory,
 }
 
 impl AppState {
@@ -274,10 +369,13 @@ impl AppState {
             settings_mmry: None,
             main_chat: None,
             main_chat_pi: None,
+            onboarding: None,
+            onboarding_templates: None,
             ws_hub: Arc::new(WsHub::new()),
             pending_a2ui_requests: super::a2ui::new_pending_requests(),
             max_proxy_body_bytes,
             linux_users: None,
+            user_plane_factory: UserPlaneFactory::default(),
         }
     }
 
@@ -314,10 +412,13 @@ impl AppState {
             settings_mmry: None,
             main_chat: None,
             main_chat_pi: None,
+            onboarding: None,
+            onboarding_templates: None,
             ws_hub: Arc::new(WsHub::new()),
             pending_a2ui_requests: super::a2ui::new_pending_requests(),
             max_proxy_body_bytes,
             linux_users: None,
+            user_plane_factory: UserPlaneFactory::default(),
         }
     }
 
@@ -337,7 +438,15 @@ impl AppState {
     pub fn with_linux_users(mut self, config: LinuxUsersConfig) -> Self {
         if config.enabled {
             self.linux_users = Some(config);
+            // Enable multi-user mode in the UserPlaneFactory
+            self.user_plane_factory = UserPlaneFactory::multi_user();
         }
+        self
+    }
+
+    /// Set a custom UserPlaneFactory.
+    pub fn with_user_plane_factory(mut self, factory: UserPlaneFactory) -> Self {
+        self.user_plane_factory = factory;
         self
     }
 
@@ -352,6 +461,18 @@ impl AppState {
     /// Set the main chat Pi service from an existing Arc.
     pub fn with_main_chat_pi_arc(mut self, service: Arc<MainChatPiService>) -> Self {
         self.main_chat_pi = Some(service);
+        self
+    }
+
+    /// Set the onboarding service.
+    pub fn with_onboarding(mut self, service: OnboardingService) -> Self {
+        self.onboarding = Some(Arc::new(service));
+        self
+    }
+
+    /// Set the onboarding templates service.
+    pub fn with_onboarding_templates(mut self, service: OnboardingTemplatesService) -> Self {
+        self.onboarding_templates = Some(Arc::new(service));
         self
     }
 }

@@ -671,10 +671,13 @@ pub async fn search_pi_sessions(
     Query(query): Query<SearchQuery>,
 ) -> ApiResult<Json<SearchResponse>> {
     let pi_service = get_pi_service(&state)?;
-    
+
     let query_str = query.q.trim();
     if query_str.is_empty() {
-        return Ok(Json(SearchResponse { hits: vec![], total: 0 }));
+        return Ok(Json(SearchResponse {
+            hits: vec![],
+            total: 0,
+        }));
     }
 
     let sessions = pi_service
@@ -695,10 +698,10 @@ pub async fn search_pi_sessions(
         for (line_idx, msg) in messages.iter().enumerate() {
             // Extract text content from the message
             let text_content = extract_message_text(&msg.content);
-            
+
             if text_content.to_lowercase().contains(&query_lower) {
                 let snippet = create_snippet(&text_content, &query_lower, 100);
-                
+
                 all_hits.push(SearchHit {
                     agent: "pi_agent".to_string(),
                     source_path: format!("pi:{}:{}", session.id, msg.id),
@@ -725,27 +728,29 @@ pub async fn search_pi_sessions(
     }
 
     let total = all_hits.len();
-    Ok(Json(SearchResponse { hits: all_hits, total }))
+    Ok(Json(SearchResponse {
+        hits: all_hits,
+        total,
+    }))
 }
 
 /// Extract text content from a Pi message content field.
 fn extract_message_text(content: &serde_json::Value) -> String {
     match content {
         Value::String(s) => s.clone(),
-        Value::Array(arr) => {
-            arr.iter()
-                .filter_map(|part| {
-                    if let Some(text) = part.get("text").and_then(|t| t.as_str()) {
-                        Some(text.to_string())
-                    } else if let Some(content) = part.get("content").and_then(|c| c.as_str()) {
-                        Some(content.to_string())
-                    } else {
-                        None
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join(" ")
-        }
+        Value::Array(arr) => arr
+            .iter()
+            .filter_map(|part| {
+                if let Some(text) = part.get("text").and_then(|t| t.as_str()) {
+                    Some(text.to_string())
+                } else if let Some(content) = part.get("content").and_then(|c| c.as_str()) {
+                    Some(content.to_string())
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" "),
         Value::Object(obj) => {
             if let Some(text) = obj.get("text").and_then(|t| t.as_str()) {
                 text.to_string()
@@ -819,9 +824,7 @@ pub async fn get_pi_session_messages(
     let messages = match pi_service.get_session_messages(user.id(), &session_id) {
         Ok(messages) => messages,
         Err(err) => {
-            if pi_service
-                .is_active_session(user.id(), &session_id)
-                .await
+            if pi_service.is_active_session(user.id(), &session_id).await
                 && err.to_string().contains("Session not found")
             {
                 Vec::new()
@@ -858,6 +861,46 @@ pub async fn resume_pi_session(
         .map_err(|e| ApiError::internal(format!("Failed to get Pi state: {}", e)))?;
 
     Ok(Json(pi_state_to_response(pi_state)))
+}
+
+/// Request body for updating a Pi session.
+#[derive(Debug, Deserialize)]
+pub struct UpdatePiSessionRequest {
+    /// New title for the session
+    pub title: Option<String>,
+}
+
+/// Update a Pi session's metadata (e.g., title).
+///
+/// PATCH /api/main/pi/sessions/{session_id}
+pub async fn update_pi_session(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    axum::extract::Path(session_id): axum::extract::Path<String>,
+    Json(request): Json<UpdatePiSessionRequest>,
+) -> ApiResult<Json<PiSessionFile>> {
+    let pi_service = get_pi_service(&state)?;
+
+    if let Some(title) = request.title {
+        let session = pi_service
+            .update_session_title(user.id(), &session_id, &title)
+            .map_err(|e| ApiError::internal(format!("Failed to update Pi session: {}", e)))?;
+
+        info!("Updated Pi session title: session_id={}, title={}", session_id, title);
+        Ok(Json(session))
+    } else {
+        // No updates requested, return current session info
+        let sessions = pi_service
+            .list_sessions(user.id())
+            .map_err(|e| ApiError::internal(format!("Failed to list sessions: {}", e)))?;
+
+        let session = sessions
+            .into_iter()
+            .find(|s| s.id == session_id)
+            .ok_or_else(|| ApiError::not_found(format!("Session not found: {}", session_id)))?;
+
+        Ok(Json(session))
+    }
 }
 
 /// WebSocket endpoint for streaming Pi events.

@@ -85,10 +85,7 @@ impl UserMmryManager {
         }
 
         let uid_str = String::from_utf8_lossy(&output.stdout);
-        let uid = uid_str
-            .trim()
-            .parse::<u32>()
-            .context("parsing uid")?;
+        let uid = uid_str.trim().parse::<u32>().context("parsing uid")?;
         Ok(uid)
     }
 
@@ -123,7 +120,7 @@ impl UserMmryManager {
 
     async fn wait_for_port_ready(port: u16) -> bool {
         use tokio::net::TcpStream;
-        use tokio::time::{sleep, Duration, Instant};
+        use tokio::time::{Duration, Instant, sleep};
 
         let deadline = Instant::now() + Duration::from_secs(3);
         while Instant::now() < deadline {
@@ -168,10 +165,7 @@ impl UserMmryManager {
         let _ = linux_username;
 
         let mut env = std::collections::HashMap::new();
-        env.insert(
-            "MMRY__EXTERNAL_API__PORT".to_string(),
-            port.to_string(),
-        );
+        env.insert("MMRY__EXTERNAL_API__PORT".to_string(), port.to_string());
         // NOTE: Do not set MMRY__EXTERNAL_API__HOST here.
         // The mmry config loader uses `try_parsing(true)` for env values and some
         // shells/configurations can cause host parsing to fail. Port override alone
@@ -220,7 +214,10 @@ impl UserMmryManager {
             client.socket_path()
         );
 
-        if let Err(err) = self.spawn_mmry(&client, &process_id, &linux_username, port).await {
+        if let Err(err) = self
+            .spawn_mmry(&client, &process_id, &linux_username, port)
+            .await
+        {
             // Common case after backend restart: runner still has process id.
             // Don't rely on string matching; check runner status.
             match client.get_status(&process_id).await {
@@ -262,7 +259,9 @@ impl UserMmryManager {
         if !Self::wait_for_port_ready(port).await {
             // Try a one-time restart (common case: config port collision / stale process).
             let _ = client.kill_process(&process_id, true).await;
-            let _ = self.spawn_mmry(&client, &process_id, &linux_username, port).await;
+            let _ = self
+                .spawn_mmry(&client, &process_id, &linux_username, port)
+                .await;
 
             if !Self::wait_for_port_ready(port).await {
                 let status = client.get_status(&process_id).await.ok();
@@ -308,7 +307,10 @@ impl UserMmryManager {
             client.socket_path()
         );
 
-        if let Err(err) = self.spawn_mmry(&client, &process_id, &linux_username, port).await {
+        if let Err(err) = self
+            .spawn_mmry(&client, &process_id, &linux_username, port)
+            .await
+        {
             match client.get_status(&process_id).await {
                 Ok(status) if status.running => {
                     warn!(
@@ -351,7 +353,9 @@ impl UserMmryManager {
         if !Self::wait_for_port_ready(port).await {
             // Try a one-time restart.
             let _ = client.kill_process(&process_id, true).await;
-            let _ = self.spawn_mmry(&client, &process_id, &linux_username, port).await;
+            let _ = self
+                .spawn_mmry(&client, &process_id, &linux_username, port)
+                .await;
 
             if !Self::wait_for_port_ready(port).await {
                 let status = client.get_status(&process_id).await.ok();

@@ -124,6 +124,18 @@ export interface UseVoiceModeReturn {
 	interrupt: () => void;
 	/** Speak text via TTS (for manual triggering) */
 	speak: (text: string) => Promise<void>;
+
+	// Streaming TTS (low-latency for LLM output)
+	/** Start a new TTS stream for a message */
+	streamStart: () => Promise<string>;
+	/** Append text to the active stream */
+	streamAppend: (text: string) => void;
+	/** End the stream and flush remaining text */
+	streamEnd: () => void;
+	/** Cancel the stream without flushing */
+	streamCancel: () => void;
+	/** Check if a stream is active */
+	isStreaming: boolean;
 }
 
 /**
@@ -659,6 +671,40 @@ export function useVoiceMode(options: UseVoiceModeOptions): UseVoiceModeReturn {
 		}));
 	}, []);
 
+	// Streaming TTS methods
+	const streamStart = useCallback(async (): Promise<string> => {
+		if (!isActive || !isActiveRef.current) {
+			throw new Error("Voice mode not active");
+		}
+		if (!ttsRef.current?.isConnected()) {
+			throw new Error("TTS not connected");
+		}
+
+		// Set up listening for interrupts if enabled
+		if (!settingsRef.current.micMuted && settingsRef.current.interruptWordCount > 0) {
+			if (!sttRef.current?.getIsListening()) {
+				sttRef.current?.startListening().catch(console.error);
+			}
+		}
+
+		setVoiceState("speaking");
+		interruptWordCountRef.current = 0;
+		return ttsRef.current.streamStart();
+	}, [isActive]);
+
+	const streamAppend = useCallback((text: string): void => {
+		if (!isActive || !isActiveRef.current) return;
+		ttsRef.current?.streamAppend(text);
+	}, [isActive]);
+
+	const streamEnd = useCallback((): void => {
+		ttsRef.current?.streamEnd();
+	}, []);
+
+	const streamCancel = useCallback((): void => {
+		ttsRef.current?.streamCancel();
+	}, []);
+
 	// Cleanup on unmount
 	useEffect(() => {
 		return () => {
@@ -698,5 +744,12 @@ export function useVoiceMode(options: UseVoiceModeOptions): UseVoiceModeReturn {
 		stop,
 		interrupt,
 		speak,
+
+		// Streaming TTS
+		streamStart,
+		streamAppend,
+		streamEnd,
+		streamCancel,
+		isStreaming: ttsRef.current?.isStreaming() ?? false,
 	};
 }

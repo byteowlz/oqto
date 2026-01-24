@@ -1,15 +1,16 @@
 //! Authentication middleware.
 
+use std::sync::Arc;
+
 use axum::{
     extract::{FromRequestParts, State},
-    http::{header::AUTHORIZATION, request::Parts},
+    http::{header, header::AUTHORIZATION, request::Parts},
     middleware::Next,
     response::Response,
 };
 use chrono::Utc;
-use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
+use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
 use log::{debug, warn};
-use std::sync::Arc;
 
 use super::{AuthConfig, AuthError, Claims, DevUser, Role};
 
@@ -274,20 +275,24 @@ pub async fn auth_middleware(
         .and_then(|h| h.to_str().ok())
         .and_then(|cookie_header| token_from_cookie_header(cookie_header, "auth_token"));
 
-    // Allow token in query parameter for WebSocket connections (browsers can't set headers on WS)
-    let query_token = req.uri().query().and_then(|q| {
-        q.split('&').find_map(|pair| {
-            let mut parts = pair.splitn(2, '=');
-            let key = parts.next()?;
-            let value = parts.next()?;
-            if key == "token" {
-                // URL decode the token value
-                urlencoding::decode(value).ok().map(|s| s.into_owned())
-            } else {
-                None
-            }
+    // Allow token in query parameter only for WebSocket-only paths.
+    let query_token = if is_websocket_auth_path(&req) {
+        req.uri().query().and_then(|q| {
+            q.split('&').find_map(|pair| {
+                let mut parts = pair.splitn(2, '=');
+                let key = parts.next()?;
+                let value = parts.next()?;
+                if key == "token" {
+                    // URL decode the token value
+                    urlencoding::decode(value).ok().map(|s| s.into_owned())
+                } else {
+                    None
+                }
+            })
         })
-    });
+    } else {
+        None
+    };
 
     let claims = if let Some(header) = auth_header {
         // Parse Bearer token
@@ -320,6 +325,41 @@ pub async fn auth_middleware(
     req.extensions_mut().insert(user);
 
     Ok(next.run(req).await)
+}
+
+fn is_websocket_auth_path(req: &axum::http::Request<axum::body::Body>) -> bool {
+    let path = req.uri().path();
+    let upgrade_header = req
+        .headers()
+        .get(header::UPGRADE)
+        .and_then(|value| value.to_str().ok())
+        .map(|value| value.eq_ignore_ascii_case("websocket"))
+        .unwrap_or(false);
+
+    if !upgrade_header {
+        return false;
+    }
+
+    if matches!(
+        path,
+        "/api/ws"
+            | "/api/voice/stt"
+            | "/api/voice/tts"
+            | "/api/main/pi/ws"
+            | "/api/workspace/term"
+    ) {
+        return true;
+    }
+
+    if let Some(rest) = path.strip_prefix("/api/session/") {
+        return rest.ends_with("/term") || rest.ends_with("/browser/stream");
+    }
+
+    if let Some(rest) = path.strip_prefix("/api/sessions/") {
+        return rest.ends_with("/terminal") || rest.ends_with("/browser/stream");
+    }
+
+    false
 }
 
 /// Require admin role.

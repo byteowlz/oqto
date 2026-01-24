@@ -30,13 +30,16 @@ mod local;
 mod main_chat;
 mod markdown;
 mod observability;
+mod onboarding;
 mod pi;
 mod projects;
 mod runner;
 mod session;
 mod session_ui;
 mod settings;
+mod templates;
 mod user;
+mod user_plane;
 mod wordlist;
 mod ws;
 
@@ -483,6 +486,8 @@ struct AppConfig {
     agent_browser: agent_browser::AgentBrowserConfig,
     /// Server configuration.
     server: ServerConfig,
+    /// Onboarding templates configuration.
+    onboarding_templates: templates::OnboardingTemplatesConfig,
 }
 
 /// Server configuration.
@@ -522,6 +527,8 @@ struct BackendConfig {
     mode: BackendMode,
     /// Use the new AgentRPC abstraction (experimental)
     use_agent_rpc: bool,
+    /// Runner configuration for user-plane isolation.
+    runner: RunnerConfig,
 }
 
 impl Default for BackendConfig {
@@ -529,6 +536,40 @@ impl Default for BackendConfig {
         Self {
             mode: BackendMode::Container,
             use_agent_rpc: false,
+            runner: RunnerConfig::default(),
+        }
+    }
+}
+
+/// Runner configuration for user-plane isolation.
+///
+/// When `user_plane_enabled` is true in local multi-user mode, all user data
+/// operations are routed through per-user runner daemons, providing OS-level
+/// isolation between users.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+struct RunnerConfig {
+    /// Enable runner as the user-plane boundary.
+    ///
+    /// When true:
+    /// - All user data access goes through per-user runner daemons
+    /// - Backend cannot directly read user workspaces or per-user DBs
+    /// - Provides OS-level isolation in local multi-user mode
+    ///
+    /// When false:
+    /// - Backend accesses user data directly (legacy behavior)
+    /// - Only sandbox provides isolation (if enabled)
+    user_plane_enabled: bool,
+    /// Socket directory pattern for per-user runner sockets.
+    /// Default: /run/user/{uid}/octo-runner.sock
+    socket_pattern: Option<String>,
+}
+
+impl Default for RunnerConfig {
+    fn default() -> Self {
+        Self {
+            user_plane_enabled: false, // Disabled by default for backward compatibility
+            socket_pattern: None,
         }
     }
 }
@@ -562,6 +603,7 @@ impl Default for AppConfig {
             pi: PiConfig::default(),
             agent_browser: agent_browser::AgentBrowserConfig::default(),
             server: ServerConfig::default(),
+            onboarding_templates: templates::OnboardingTemplatesConfig::default(),
         }
     }
 }
@@ -1059,7 +1101,9 @@ impl Default for LocalModeConfig {
             linux_users: LinuxUsersConfig::default(),
             cleanup_on_startup: false,
             stop_sessions_on_shutdown: false,
-            runner_socket_pattern: Some("/run/octo/runner-sockets/{user}/octo-runner.sock".to_string()),
+            runner_socket_pattern: Some(
+                "/run/octo/runner-sockets/{user}/octo-runner.sock".to_string(),
+            ),
         }
     }
 }
@@ -1787,16 +1831,19 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     // Create session service based on runtime mode
     let mut session_service = if local_mode {
         let local_rt = local_runtime.expect("local runtime should be set in local mode");
+        let runner = runner::client::RunnerClient::default();
         if let Some(eavs) = eavs_client.clone() {
-            session::SessionService::with_local_runtime_and_eavs(
+            session::SessionService::with_runner_and_eavs(
                 session_repo,
+                runner,
                 local_rt,
                 eavs,
                 session_config.clone(),
             )
         } else {
-            session::SessionService::with_local_runtime(
+            session::SessionService::with_runner(
                 session_repo,
+                runner,
                 local_rt,
                 session_config.clone(),
             )
@@ -1821,9 +1868,7 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     if local_mode && !single_user && ctx.config.mmry.enabled {
         if let Some(ref local_cfg) = session_config.local_config {
             if !local_cfg.linux_users.enabled {
-                warn!(
-                    "mmry per-user instances require local.linux_users.enabled=true (skipping)"
-                );
+                warn!("mmry per-user instances require local.linux_users.enabled=true (skipping)");
             } else {
                 let linux_users = local_cfg.linux_users.clone();
                 let user_mmry = local::UserMmryManager::new(
@@ -2095,6 +2140,11 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
         state = state.with_settings_mmry(mmry_settings);
     }
 
+    // Add onboarding service
+    let onboarding_service = onboarding::OnboardingService::new(database.pool().clone());
+    state = state.with_onboarding(onboarding_service);
+    info!("Onboarding service initialized");
+
     // Add Linux users config for multi-user isolation
     if ctx.config.local.linux_users.enabled {
         let linux_users_config = local::LinuxUsersConfig {
@@ -2109,6 +2159,14 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
         state = state.with_linux_users(linux_users_config);
     }
 
+    // Initialize onboarding templates service
+    let onboarding_templates_service = templates::OnboardingTemplatesService::new(
+        ctx.config.onboarding_templates.clone(),
+        &ctx.paths.data_dir,
+    );
+    info!("Onboarding templates service initialized");
+    state = state.with_onboarding_templates(onboarding_templates_service);
+
     // Initialize Main Chat service
     // Uses the user data path as the workspace dir for per-user Main Chat data
     let main_chat_workspace_dir = ctx.paths.data_dir.join("users");
@@ -2121,21 +2179,26 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
 
     // Initialize Main Chat Pi service for agent runtime (if enabled)
     if ctx.config.pi.enabled {
-        // Resolve extensions: use config or fall back to bundled extension
+        // Resolve extensions: use config or fall back to bundled extensions
         let extensions = if ctx.config.pi.extensions.is_empty() {
-            // Look for bundled extension in data directory
-            let bundled_ext = ctx
-                .paths
-                .data_dir
-                .join("extensions")
-                .join("octo-delegate.ts");
-            if bundled_ext.exists() {
-                info!("Using bundled Pi extension: {:?}", bundled_ext);
-                vec![bundled_ext.to_string_lossy().to_string()]
-            } else {
-                debug!("No bundled Pi extension found at {:?}", bundled_ext);
-                Vec::new()
+            // Look for bundled extensions in data directory
+            let extensions_dir = ctx.paths.data_dir.join("extensions");
+            let mut found_extensions = Vec::new();
+            if extensions_dir.exists() {
+                if let Ok(entries) = std::fs::read_dir(&extensions_dir) {
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        if path.extension().map_or(false, |ext| ext == "ts") {
+                            info!("Using bundled Pi extension: {:?}", path);
+                            found_extensions.push(path.to_string_lossy().to_string());
+                        }
+                    }
+                }
             }
+            if found_extensions.is_empty() {
+                debug!("No bundled Pi extensions found in {:?}", extensions_dir);
+            }
+            found_extensions
         } else {
             ctx.config.pi.extensions.clone()
         };

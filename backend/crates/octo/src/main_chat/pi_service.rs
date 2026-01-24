@@ -632,6 +632,59 @@ impl MainChatPiService {
         Ok(scored.into_iter().map(|(_, s)| s).collect())
     }
 
+    /// Update the title of a Pi session.
+    /// This modifies the session header line in the JSONL file.
+    pub fn update_session_title(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        title: &str,
+    ) -> Result<PiSessionFile> {
+        use std::io::{BufRead, BufReader, Write};
+
+        let work_dir = self.get_main_chat_dir(user_id);
+        let sessions_dir = self.get_pi_sessions_dir(&work_dir);
+
+        // Find session file - filename format is {timestamp}_{session_id}.jsonl
+        let session_path = self.find_session_file(&sessions_dir, session_id)?;
+
+        // Read the file
+        let file = std::fs::File::open(&session_path).context("opening session file")?;
+        let reader = BufReader::new(file);
+        let mut lines: Vec<String> = reader.lines().collect::<std::io::Result<_>>()?;
+
+        if lines.is_empty() {
+            anyhow::bail!("Session file is empty");
+        }
+
+        // Parse and update the header (first line)
+        let mut header: serde_json::Value =
+            serde_json::from_str(&lines[0]).context("parsing session header")?;
+
+        if header.get("type").and_then(|t| t.as_str()) != Some("session") {
+            anyhow::bail!("Invalid session file: missing session header");
+        }
+
+        // Update or add the title field
+        header["title"] = serde_json::Value::String(title.to_string());
+        lines[0] = serde_json::to_string(&header)?;
+
+        // Write back to file
+        let mut file =
+            std::fs::File::create(&session_path).context("creating session file for write")?;
+        for (i, line) in lines.iter().enumerate() {
+            if i > 0 {
+                writeln!(file)?;
+            }
+            write!(file, "{}", line)?;
+        }
+        writeln!(file)?;
+
+        // Return the updated session info
+        self.parse_session_file(&session_path)
+            .ok_or_else(|| anyhow::anyhow!("Failed to parse updated session"))
+    }
+
     /// Compute a match score for a session against a query.
     /// Returns 0 if no match, higher scores for better matches.
     fn compute_match_score(&self, session: &PiSessionFile, query: &str) -> i32 {
@@ -768,7 +821,11 @@ impl MainChatPiService {
             .and_then(|v| v.as_str())?
             .to_string();
 
-        let mut title = None;
+        // Check for explicit title in header first (set via rename)
+        let mut title = header
+            .get("title")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
         let mut message_count = 0usize;
 
         for line in reader.lines().filter_map(|l| l.ok()) {
@@ -787,6 +844,7 @@ impl MainChatPiService {
 
             message_count += 1;
 
+            // Only extract title from first user message if no explicit title set
             if title.is_none() {
                 if let Some(msg) = entry.get("message") {
                     if msg.get("role").and_then(|r| r.as_str()) == Some("user") {

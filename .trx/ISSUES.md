@@ -2,6 +2,84 @@
 
 ## Open
 
+### [octo-9bqx] Add limits to zip download endpoints to prevent disk/CPU exhaustion (P1, bug)
+Zip creation for /download and /download-zip has no caps on total size, file count, or path count; a single request can create huge archives and fill disk/CPU. Add configurable limits (max total bytes, max entries, max depth) and fail early. Consider streaming without temp files or rejecting large directories. Affected: backend/crates/octo-files/src/handlers.rs (download, download_zip, create_zip_file_from_paths, create_zip_tempfile_blocking).
+
+### [octo-k9sp] Restrict token query auth to WebSocket-only paths (P1, bug)
+Auth middleware accepts a token from the query string for all requests (not just WS upgrades). This risks leaking tokens via logs/referrers and enables accidental use on normal HTTP endpoints. Consider restricting query-token auth to Upgrade: websocket requests or specific WS routes, or require the auth_token cookie instead. Affected: backend/crates/octo/src/auth/middleware.rs (query_token parsing and selection).
+
+### [octo-xjs5.10] Test plan: isolation matrix (P1, task)
+Add automated tests / manual checklist for:
+- local single-user
+- local linux multi-user (2 users) verifying no cross access to sessions/files/memories/main chat
+- container multi-user
+
+...
+
+
+### [octo-xjs5.7] Local linux provisioning: non-interactive sudo + tmpfiles (P1, task)
+Make user provisioning deterministic and non-interactive:
+- ensure /run/octo/runner-sockets exists via tmpfiles
+- ensure per-user runner directories (2770, setgid) are created at user creation
+- ensure linger + octo-runner user unit enabled
+- verify runner socket reachable after provisioning
+...
+
+
+### [octo-xjs5.6] Security: runner socket authz + strict path guards (P1, task)
+Harden the runner boundary:
+- unix socket permissions via /run/octo/runner-sockets/<linux_username>/octo-runner.sock (group octo)
+- runner validates every request against its own user roots
+- deny dangerous env vars, validate binary allowlist
+- ensure backend cannot ask runner to read outside workspace/main-chat dirs
+...
+
+
+### [octo-xjs5.5] Backend: route all user operations through runner (P1, task)
+Refactor backend handlers/proxies so all user-plane operations are served via runner:
+- sessions list/create/resume/stop
+- terminal + opencode process lifecycle
+- workspace file viewer
+- memories (mmry target resolution)
+...
+
+
+### [octo-xjs5.4] Runner API: main chat storage ownership (P1, task)
+Make main chat data physically per-user:
+- move main chat DB + session files into linux user's home dir
+- runner provides APIs for main chat list/create/load/save
+- migrate existing shared main chat data into per-user location
+
+...
+
+
+### [octo-xjs5.3] Runner API: per-user mmry lifecycle (P1, task)
+Move mmry lifecycle/port ownership fully into runner:
+- allocate stable per-user mmry port (persisted in per-user db)
+- spawn/stop/pin mmry process for that linux user
+- health check + log capture
+- expose mmry external_api URL for backend proxy
+...
+
+
+### [octo-xjs5.2] Runner API: per-user file operations (P1, task)
+Define + implement runner-side filesystem API used by the backend:
+- list tree, read file, write file, mkdir, stat
+- path validation against per-user workspace roots (no traversal)
+- optional read/write quotas
+
+...
+
+
+### [octo-xjs5.1] Runner API: user-plane session registry (P1, task)
+Add runner RPC endpoints for per-user session state:
+- create/get/list/stop/resume/delete sessions (local runtime)
+- persist session metadata in per-user store (DB or JSON) owned by the linux user
+- include workspace path validation against runner-owned workspace roots
+- return ports + status + errors
+...
+
+
 ### [octo-y1nq] Opencode agent connection cycling - rapid disconnect/reconnect loop (P1, bug)
 The opencode agent repeatedly disconnects and reconnects in rapid succession (observed 15+ cycles in logs). Pattern observed:
 
@@ -56,18 +134,33 @@ Implementation:
 ### [workspace-5pmk.11] Add backend URL configuration to login form (P1, task)
 Add a 'Server URL' field to the login form allowing users to specify the backend URL. Store in localStorage for persistence. Show connection status indicator. Default to current origin for web, require input for mobile apps.
 
+### [octo-8erz] Prevent template copy from following symlinks (P2, bug)
+copy_template_dir uses fs::copy on DirEntry paths without checking for symlinks; on most platforms this follows symlinks and can copy arbitrary files outside the template repo into the new project. This is a security risk if template repos are user-supplied. Use symlink_metadata to detect symlinks and either skip, copy as symlink, or enforce that resolved targets stay within the template repo. Affected: backend/crates/octo/src/api/handlers.rs::copy_template_dir.
+
+### [octo-015j] Move blocking filesystem work out of async request handlers (P2, task)
+Several async handlers call std::fs synchronously (read_dir/read_to_string/copy), which can block the Tokio runtime under load. Convert to tokio::fs or wrap in spawn_blocking. Examples: backend/crates/octo/src/api/main_chat_pi.rs::get_prompt_commands (read_dir/read_to_string), backend/crates/octo/src/api/handlers.rs::list_workspace_dirs (read_dir), list_project_templates (read_dir), find_project_logo (read_dir), copy_template_dir (read_dir/fs::copy).
+
+### [octo-fmxv] Invalid `boundary` for `multipart/form-data` request when trying to save a file after editing it in the sidebar. (P2, bug)
+
+### [octo-xjs5.9] Observability: runner logs + health endpoints (P2, task)
+Add runner health + diagnostics:
+- ping/status endpoint
+- per-process status + stdout/stderr tail
+- structured events for start/stop/crash
+- backend exposes aggregated diagnostics for admins
+
+### [octo-xjs5.8] Compatibility: container mode runner adapter (P2, task)
+Keep docker multi-user working:
+- define how runner API maps to container runtime
+- either run runner inside container, or implement a backend adapter that satisfies runner interface using container APIs
+- ensure streaming still works
+
+...
+
+
 ### [octo-h0by] add user self-service section in settings (change password etc) (P2, task)
 
 ### [octo-f50n] redirect to login for unauthenticated users (P2, task)
-
-### [octo-eb0b] Per-user mmry instances in local multi-user mode (P2, feature)
-## Overview
-
-In local multi-user mode, each platform user should get their own mmry service instance for memory isolation. Currently mmry_port is allocated per-session but mmry is never spawned.
-
-## Architecture
-...
-
 
 ### [octo-85f4] the stop button doesnt seem to stop a running agent response (P2, bug)
 
@@ -179,48 +272,14 @@ A versioned envelope composed of multiple context "sources".
 
 ### [octo-k8z1.8] Session management: Browser lifecycle (start/stop with session) (P2, task)
 
-### [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (P2, task)
-Add MCP tools that shell out to agent-browser CLI:
-- browser_open: agent-browser --session $id open $url
-- browser_snapshot: agent-browser --session $id snapshot -i --json
-- browser_click: agent-browser --session $id click $ref
-- browser_fill: agent-browser --session $id fill $ref "$text"
-...
-
-
-### [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (P2, task)
-
 ### [octo-k8z1.5] Frontend: Add browser tab to central pane view switcher (P2, task)
-
-### [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (P2, task)
-Create BrowserView React component:
-- Canvas element for rendering screencast frames
-- WebSocket connection to /api/session/{id}/browser/ws
-- Decode base64 JPEG frames and draw to canvas
-- Capture mouse/keyboard events and send to backend
+Wire BrowserView into SessionScreen.tsx:
+1. Add 'browser' to ActiveView type union
+2. Add browser tab to TabButton row
+3. Import and render BrowserView when activeView === 'browser'
+4. Add keyboard shortcut for browser tab
 ...
 
-
-### [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (P2, task)
-Forward user input from frontend to agent-browser:
-- Mouse events: { type: 'input_mouse', eventType, x, y, button, clickCount }
-- Keyboard events: { type: 'input_keyboard', eventType, key, code }
-- Touch events for mobile: { type: 'input_touch', eventType, touchPoints }
-Use agent-browser's injectMouseEvent/injectKeyboardEvent APIs
-
-### [octo-k8z1.2] Backend: WebSocket proxy for screencast stream (P2, task)
-Create WebSocket endpoint /api/session/{id}/browser/ws that:
-- Connects to agent-browser's screencast WebSocket (localhost:STREAM_PORT)
-- Forwards JPEG frames to frontend
-- Handles reconnection if browser restarts
-- Multiplexes input events from frontend to agent-browser
-
-### [octo-k8z1.1] Backend: Integrate agent-browser daemon per session (P2, task)
-Install agent-browser as dependency. Create BrowserService in backend that:
-- Spawns agent-browser daemon per session (AGENT_BROWSER_SESSION=${sessionId})
-- Manages lifecycle (start on first browser request, stop on session end)
-- Configures AGENT_BROWSER_STREAM_PORT for screencast
-- Uses BrowserManager API for programmatic control
 
 ### [octo-k8z1] Add server-side browser feature (Option B) using agent-browser (P2, feature)
 Server-side browser for AI agent control, rendered in Octo frontend.
@@ -484,6 +543,30 @@ Enable multiple platform users to access the same project/workspace with proper 
 ...
 
 
+### [octo-xncy.7] Android: UI exploration mode (DroidBot-style UTG crawler) (P3, task)
+Build UI exploration/crawling mode for unknown apps.
+
+## Approach
+DroidBot-style UI Transition Graph (UTG) crawler:
+1. Systematically explore app screens
+...
+
+
+### [octo-xncy.6] Android: MCP tools for agent control (snapshot, tap, type, scroll) (P3, task)
+
+### [octo-xncy.5] Android: Frontend AndroidView component with touch forwarding (P3, task)
+
+### [octo-xncy.4] Android: Screencast streaming to frontend (reuse BrowserView pattern) (P3, task)
+
+### [octo-xncy] Android Emulator: Agent-controlled Android environment (P3, epic)
+-
+
+### [octo-mbeh] Deduplicate and centralize path sanitization logic (P3, task)
+There are multiple path sanitization/validation implementations with overlapping intent (e.g., sanitize_relative_path in API handlers vs resolve_path/resolve_and_verify_path in the file server). This risks divergence and inconsistent security rules. Consider centralizing into a shared utility with shared tests. Affected: backend/crates/octo/src/api/handlers.rs::sanitize_relative_path, backend/crates/octo-files/src/handlers.rs::resolve_path/resolve_and_verify_path.
+
+### [octo-a256] Consolidate CopyButton implementations and handle clipboard failures consistently (P3, task)
+CopyButton logic is duplicated across multiple components with inconsistent error handling and timer cleanup (e.g., missing try/catch and no timeout cleanup on unmount). Consider a shared CopyButton component/hook with fallback copy logic and timeout cleanup. Affected: frontend/components/ui/markdown-renderer.tsx, frontend/components/ui/code-viewer.tsx, frontend/components/ui/typst-viewer.tsx, frontend/apps/admin/InviteCodesPanel.tsx, frontend/features/sessions/SessionScreen.tsx, frontend/features/main-chat/components/MainChatPiView.tsx.
+
 ### [octo-3trr] Add browser extension mode (Option A) - fork Playwriter (P3, feature)
 Browser extension mode for controlling user's existing browser.
 
@@ -561,6 +644,8 @@ Implementation:
 ### [workspace-5pmk.10] Add platform-specific native features (P3, task)
 Desktop: window management, system tray, keyboard shortcuts. Mobile: haptic feedback, safe area insets, native share. Use Tauri plugins and conditional compilation.
 
+### [octo-xncy.9] Android: Vision fallback with OmniParser/grounding model (P4, task)
+
 ### [octo-gpj7] Avoid unwrap on WS event serialization (P4, chore)
 backend/src/ws/handler.rs and backend/src/ws/types.rs use serde_json::to_string(...).unwrap(). A serialization failure would panic the server. Use map_err/Result and return an error response instead, even if failure is unlikely.
 
@@ -578,6 +663,23 @@ Desired behavior: Tool calls hidden by default, toggle to show
 
 ## Closed
 
+- [octo-tbsf] Security: Session services were binding to 0.0.0.0 instead of 127.0.0.1 (closed 2026-01-26)
+- [octo-xjs5] Runner As Core User-Plane (closed 2026-01-26)
+- [octo-wbyq] Performance: eliminate >50ms UI handlers (closed 2026-01-25)
+- [octo-psdq] text input boxes rerendering the entire component on every key stroke (closed 2026-01-25)
+- [octo-xncy.1] Android: Emulator lifecycle management (AVD/Cuttlefish per session) (closed 2026-01-25)
+- [octo-xncy.8] Android: Network traffic interception (mitmproxy for API discovery) (closed 2026-01-25)
+- [octo-xncy.16] Android: System settings get/set and permission management (closed 2026-01-25)
+- [octo-xncy.15] Android: Frida runtime hooking for API tracing (closed 2026-01-25)
+- [octo-xncy.14] Android: Logcat streaming and parsing (closed 2026-01-25)
+- [octo-xncy.13] Android: Intent/broadcast injection and activity inspection (closed 2026-01-25)
+- [octo-xncy.12] Android: Content Provider queries (contacts, sms, calendar, media) (closed 2026-01-25)
+- [octo-xncy.11] Android: Storage access (SQLite, SharedPrefs, files pull/push) (closed 2026-01-25)
+- [octo-xncy.3] Android: UI tree extraction via accessibility service (closed 2026-01-25)
+- [octo-xncy.2] Android: ADB control API (tap, type, scroll, back, home) (closed 2026-01-25)
+- [octo-xncy.10] agent-android: Core CLI/daemon scaffold (Rust) (closed 2026-01-25)
+- [octo-eb0b] Per-user mmry instances in local multi-user mode (closed 2026-01-24)
+- [octo-vvn7] Define runner user-plane RPC API (closed 2026-01-23)
 - [octo-wzvn] Agent-driven UI control (conversational navigation) (closed 2026-01-21)
 - [octo-q9dx] Transcription continuing after stopping Conversation mode (closed 2026-01-21)
 - [octo-thhx.7] Add data-spotlight attributes to UI elements (closed 2026-01-21)
@@ -1076,3 +1178,9 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
+- [octo-k8z1.1] Backend: Integrate agent-browser daemon per session (closed )
+- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
+- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
+- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
+- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
+- [octo-k8z1.2] Backend: WebSocket proxy for screencast stream (closed )
