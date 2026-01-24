@@ -1872,6 +1872,10 @@ export const SessionScreen = memo(function SessionScreen() {
 		) {
 			return false;
 		}
+		// If we have a running workspace session with an opencode URL, it's not history-only
+		if (selectedWorkspaceSession?.status === "running" && opencodeBaseUrl) {
+			return false;
+		}
 		// If we have this session in disk history but no live session, it's history-only
 		if (
 			selectedChatFromHistory &&
@@ -1880,7 +1884,7 @@ export const SessionScreen = memo(function SessionScreen() {
 			return true;
 		}
 		return false;
-	}, [selectedChatSession, selectedChatFromHistory, selectedChatSessionId]);
+	}, [selectedChatSession, selectedChatFromHistory, selectedChatSessionId, selectedWorkspaceSession, opencodeBaseUrl]);
 
 	const autoAttachMode = features.session_auto_attach ?? "off";
 	const autoAttachScan = features.session_auto_attach_scan ?? false;
