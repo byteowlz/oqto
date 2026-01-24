@@ -5952,7 +5952,11 @@ const MessageGroupCard = memo(function MessageGroupCard({
 					</span>
 				)}
 
-				{segments.map((segment) => {
+				{segments.map((segment, idx) => {
+					// Add top margin to non-text segments that follow text segments
+					const prevSegment = idx > 0 ? segments[idx - 1] : null;
+					const needsTopMargin = prevSegment?.type === "text" && segment.type !== "text";
+
 					if (segment.type === "text") {
 						// Parse @file references from the text, excluding code blocks
 						const uniqueFileRefs = extractFileReferences(segment.content);
@@ -5991,43 +5995,50 @@ const MessageGroupCard = memo(function MessageGroupCard({
 
 					if (segment.type === "file") {
 						return (
-							<FilePartCard
-								key={segment.key}
-								part={segment.part}
-								workspaceDirectory={workspaceDirectory}
-							/>
+							<div key={segment.key} className={needsTopMargin ? "mt-3" : undefined}>
+								<FilePartCard
+									part={segment.part}
+									workspaceDirectory={workspaceDirectory}
+								/>
+							</div>
 						);
 					}
 
 					if (segment.type === "tool") {
 						return (
-							<ToolCallCard
-								key={segment.key}
-								part={segment.part}
-								defaultCollapsed={true}
-								hideTodoTools={true}
-							/>
+							<div key={segment.key} className={needsTopMargin ? "mt-3" : undefined}>
+								<ToolCallCard
+									part={segment.part}
+									defaultCollapsed={true}
+									hideTodoTools={true}
+								/>
+							</div>
 						);
 					}
 
 					if (segment.type === "other") {
-						return <OtherPartCard key={segment.key} part={segment.part} />;
+						return (
+							<div key={segment.key} className={needsTopMargin ? "mt-3" : undefined}>
+								<OtherPartCard part={segment.part} />
+							</div>
+						);
 					}
 
 					if (segment.type === "a2ui") {
 						return (
-							<A2UICallCard
-								key={segment.key}
-								surfaceId={segment.surface.surfaceId}
-								messages={segment.surface.messages}
-								blocking={segment.surface.blocking}
-								requestId={segment.surface.requestId}
-								answered={segment.surface.answered}
-								answeredAction={segment.surface.answeredAction}
-								answeredAt={segment.surface.answeredAt}
-								onAction={onA2UIAction}
-								defaultCollapsed={segment.surface.answered}
-							/>
+							<div key={segment.key} className={needsTopMargin ? "mt-3" : undefined}>
+								<A2UICallCard
+									surfaceId={segment.surface.surfaceId}
+									messages={segment.surface.messages}
+									blocking={segment.surface.blocking}
+									requestId={segment.surface.requestId}
+									answered={segment.surface.answered}
+									answeredAction={segment.surface.answeredAction}
+									answeredAt={segment.surface.answeredAt}
+									onAction={onA2UIAction}
+									defaultCollapsed={segment.surface.answered}
+								/>
+							</div>
 						);
 					}
 
