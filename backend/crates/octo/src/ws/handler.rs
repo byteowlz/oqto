@@ -1,19 +1,24 @@
 //! WebSocket handler for client connections.
 
 use axum::{
+    body::Body,
     extract::{
-        State, WebSocketUpgrade,
         ws::{Message, WebSocket},
+        State, WebSocketUpgrade,
     },
+    http::{Request, Uri},
     response::Response,
 };
 use futures::{SinkExt, StreamExt};
+use hyper_util::client::legacy::connect::HttpConnector;
+use hyper_util::client::legacy::Client;
 use log::{debug, error, info, warn};
 use std::sync::Arc;
 use std::time::Duration;
 
 use crate::api::{ApiError, AppState};
 use crate::auth::CurrentUser;
+use crate::session::SessionStatus;
 
 use super::hub::WsHub;
 use super::types::{SessionSubscription, WsCommand, WsEvent};
@@ -36,6 +41,70 @@ pub async fn ws_handler(
     let hub = state.ws_hub.clone();
 
     Ok(ws.on_upgrade(move |socket| handle_ws_connection(socket, hub, user_id, state)))
+}
+
+async fn ensure_session_ready_for_ws(
+    state: &AppState,
+    user_id: &str,
+    session: crate::session::Session,
+) -> anyhow::Result<crate::session::Session> {
+    match session.status {
+        SessionStatus::Running => {
+            if !is_opencode_healthy(state.http_client.clone(), session.opencode_port as u16).await {
+                warn!(
+                    "Opencode for session {} is unreachable; attempting restart",
+                    session.id
+                );
+                state
+                    .sessions
+                    .for_user(user_id)
+                    .stop_session(&session.id)
+                    .await?;
+                let resumed = state
+                    .sessions
+                    .for_user(user_id)
+                    .resume_session(&session.id)
+                    .await?;
+                Ok(resumed)
+            } else {
+                Ok(session)
+            }
+        }
+        SessionStatus::Starting | SessionStatus::Pending => Ok(session),
+        SessionStatus::Stopped => {
+            let resumed = state
+                .sessions
+                .for_user(user_id)
+                .resume_session(&session.id)
+                .await?;
+            Ok(resumed)
+        }
+        SessionStatus::Stopping | SessionStatus::Failed => anyhow::bail!(
+            "Session {} is not active (status={:?})",
+            session.id,
+            session.status
+        ),
+    }
+}
+
+async fn is_opencode_healthy(client: Client<HttpConnector, Body>, port: u16) -> bool {
+    let uri = match format!("http://localhost:{}/session", port).parse::<Uri>() {
+        Ok(uri) => uri,
+        Err(_) => return false,
+    };
+    let req = match Request::builder()
+        .method("GET")
+        .uri(uri)
+        .body(Body::empty())
+    {
+        Ok(req) => req,
+        Err(_) => return false,
+    };
+
+    match tokio::time::timeout(Duration::from_secs(2), client.request(req)).await {
+        Ok(Ok(resp)) => resp.status().is_success(),
+        _ => false,
+    }
 }
 
 /// Handle a WebSocket connection.
@@ -137,6 +206,7 @@ async fn handle_ws_connection(
                 let text_str = text.to_string();
                 match serde_json::from_str::<WsCommand>(&text_str) {
                     Ok(cmd) => {
+                        let cmd_session_id = cmd.session_id().map(|id| id.to_string());
                         if let Err(e) = handle_command(&hub, &state, &user_id, cmd).await {
                             warn!("Failed to handle command from user {}: {}", user_id, e);
                             // Send error to user
@@ -144,7 +214,7 @@ async fn handle_ws_connection(
                                 &user_id,
                                 WsEvent::Error {
                                     message: e.to_string(),
-                                    session_id: None,
+                                    session_id: cmd_session_id,
                                 },
                             )
                             .await;
@@ -213,6 +283,8 @@ async fn handle_command(
                 .get_session(&session_id)
                 .await?
                 .ok_or_else(|| anyhow::anyhow!("Session not found"))?;
+
+            let session = ensure_session_ready_for_ws(state, user_id, session).await?;
 
             let subscription = SessionSubscription {
                 session_id: session_id.clone(),

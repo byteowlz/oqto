@@ -61,7 +61,7 @@ const CopyButton = memo(function CopyButton({
 	);
 });
 
-// Code block with theme awareness
+// Code block with theme awareness and auto-collapse for large blocks
 const CodeBlockWithTheme = memo(function CodeBlockWithTheme({
 	className,
 	children,
@@ -75,6 +75,11 @@ const CodeBlockWithTheme = memo(function CodeBlockWithTheme({
 	const match = /language-(\w+)/.exec(className || "");
 	const codeString = String(children).replace(/\n$/, "");
 	const isInline = !match && !codeString.includes("\n");
+	const lineCount = codeString.split("\n").length;
+
+	// Auto-collapse code blocks with more than 15 lines
+	const shouldCollapse = lineCount > 15;
+	const [isExpanded, setIsExpanded] = useState(!shouldCollapse);
 
 	if (isInline) {
 		return (
@@ -103,36 +108,54 @@ const CodeBlockWithTheme = memo(function CodeBlockWithTheme({
 					borderBottomWidth: "1px",
 				}}
 			>
-				<span
-					className="text-xs font-mono"
-					style={{ color: "var(--code-muted)" }}
-				>
-					{match ? match[1] : "plaintext"}
-				</span>
+				<div className="flex items-center gap-2">
+					{shouldCollapse && (
+						<button
+							type="button"
+							onClick={() => setIsExpanded(!isExpanded)}
+							className="text-xs text-muted-foreground hover:text-foreground"
+						>
+							{isExpanded ? "[-]" : "[+]"}
+						</button>
+					)}
+					<span
+						className="text-xs font-mono"
+						style={{ color: "var(--code-muted)" }}
+					>
+						{match ? match[1] : "plaintext"}
+						{shouldCollapse && !isExpanded && (
+							<span className="ml-2 text-muted-foreground">
+								({lineCount} lines)
+							</span>
+						)}
+					</span>
+				</div>
 				<CopyButton text={codeString} />
 			</div>
-			<div className="overflow-x-auto">
-				<SyntaxHighlighter
-					style={
-						(isDarkMode ? oneDark : oneLight) as Record<
-							string,
-							React.CSSProperties
-						>
-					}
-					language={match ? match[1] : "text"}
-					PreTag="div"
-					wrapLongLines={false}
-					customStyle={{
-						margin: 0,
-						padding: "1rem",
-						backgroundColor: "var(--code-bg)",
-						fontSize: "0.75rem",
-						minWidth: "fit-content",
-					}}
-				>
-					{codeString}
-				</SyntaxHighlighter>
-			</div>
+			{isExpanded && (
+				<div className="overflow-x-auto">
+					<SyntaxHighlighter
+						style={
+							(isDarkMode ? oneDark : oneLight) as Record<
+								string,
+								React.CSSProperties
+							>
+						}
+						language={match ? match[1] : "text"}
+						PreTag="div"
+						wrapLongLines={false}
+						customStyle={{
+							margin: 0,
+							padding: "1rem",
+							backgroundColor: "var(--code-bg)",
+							fontSize: "0.75rem",
+							minWidth: "fit-content",
+						}}
+					>
+						{codeString}
+					</SyntaxHighlighter>
+				</div>
+			)}
 		</div>
 	);
 });

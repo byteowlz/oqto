@@ -14,8 +14,8 @@ use tokio_tungstenite::connect_async;
 
 use std::time::Duration;
 
-use crate::session::SessionStatus;
 use crate::auth::CurrentUser;
+use crate::session::SessionStatus;
 
 use super::state::AppState;
 
@@ -41,7 +41,12 @@ async fn ensure_session_active_for_proxy(
                     error!("Failed to stop session {}: {:?}", session_id, err);
                     return Err(StatusCode::SERVICE_UNAVAILABLE);
                 }
-                match state.sessions.for_user(user_id).resume_session(session_id).await {
+                match state
+                    .sessions
+                    .for_user(user_id)
+                    .resume_session(session_id)
+                    .await
+                {
                     Ok(resumed) => Ok(resumed),
                     Err(err) => {
                         error!("Failed to resume session {}: {:?}", session_id, err);
@@ -58,7 +63,12 @@ async fn ensure_session_active_for_proxy(
                 "Session {} is stopped; attempting to resume for proxy request",
                 session_id
             );
-            match state.sessions.for_user(user_id).resume_session(session_id).await {
+            match state
+                .sessions
+                .for_user(user_id)
+                .resume_session(session_id)
+                .await
+            {
                 Ok(resumed) => Ok(resumed),
                 Err(err) => {
                     error!("Failed to resume session {}: {:?}", session_id, err);
@@ -282,13 +292,8 @@ pub async fn proxy_opencode(
 
     let opencode_session_id = opencode_session.id.clone();
     let opencode_session =
-        ensure_session_active_for_proxy(
-            &state,
-            user.id(),
-            &opencode_session_id,
-            opencode_session,
-        )
-        .await?;
+        ensure_session_active_for_proxy(&state, user.id(), &opencode_session_id, opencode_session)
+            .await?;
 
     let starting = matches!(opencode_session.status, SessionStatus::Starting);
     proxy_request(
@@ -979,13 +984,8 @@ pub async fn proxy_opencode_events(
 
     let opencode_session_id = opencode_session.id.clone();
     let opencode_session =
-        ensure_session_active_for_proxy(
-            &state,
-            user.id(),
-            &opencode_session_id,
-            opencode_session,
-        )
-        .await?;
+        ensure_session_active_for_proxy(&state, user.id(), &opencode_session_id, opencode_session)
+            .await?;
 
     let target_url = if let Some(directory) = query.directory.as_deref() {
         format!(
@@ -1123,13 +1123,8 @@ pub async fn opencode_events(
 
     let opencode_session_id = opencode_session.id.clone();
     let opencode_session =
-        ensure_session_active_for_proxy(
-            &state,
-            user.id(),
-            &opencode_session_id,
-            opencode_session,
-        )
-        .await?;
+        ensure_session_active_for_proxy(&state, user.id(), &opencode_session_id, opencode_session)
+            .await?;
 
     let target_url = format!(
         "http://localhost:{}/global/event",
@@ -1321,9 +1316,16 @@ async fn get_mmry_target_for_workspace(
     }
 
     if !state.mmry.single_user {
-        let port = state.sessions.for_user(user_id).ensure_user_mmry_pinned().await
+        let port = state
+            .sessions
+            .for_user(user_id)
+            .ensure_user_mmry_pinned()
+            .await
             .map_err(|e| {
-                error!("Failed to ensure per-user mmry for workspace access: {:?}", e);
+                error!(
+                    "Failed to ensure per-user mmry for workspace access: {:?}",
+                    e
+                );
                 StatusCode::SERVICE_UNAVAILABLE
             })?;
         return Ok(format!("http://localhost:{}", port));
@@ -1712,13 +1714,8 @@ pub async fn proxy_opencode_agent(
 
     let opencode_session_id = opencode_session.id.clone();
     let opencode_session =
-        ensure_session_active_for_proxy(
-            &state,
-            user.id(),
-            &opencode_session_id,
-            opencode_session,
-        )
-        .await?;
+        ensure_session_active_for_proxy(&state, user.id(), &opencode_session_id, opencode_session)
+            .await?;
 
     // Resolve the agent's port
     let port = state
@@ -1784,13 +1781,8 @@ pub async fn proxy_opencode_agent_events(
 
     let opencode_session_id = opencode_session.id.clone();
     let _opencode_session =
-        ensure_session_active_for_proxy(
-            &state,
-            user.id(),
-            &opencode_session_id,
-            opencode_session,
-        )
-        .await?;
+        ensure_session_active_for_proxy(&state, user.id(), &opencode_session_id, opencode_session)
+            .await?;
 
     // Resolve the agent's port
     let port = state

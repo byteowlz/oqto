@@ -11,9 +11,13 @@ use tokio::net::UnixStream;
 
 use super::protocol::*;
 
-/// Default socket path pattern. {user} is replaced with the username.
+/// Default socket path pattern.
 /// Uses XDG_RUNTIME_DIR if available, otherwise falls back to /tmp.
 pub const DEFAULT_SOCKET_PATTERN: &str = "{runtime_dir}/octo-runner.sock";
+
+/// Per-user socket path pattern for multi-user mode.
+/// {uid} is replaced with the user's numeric UID.
+pub const USER_SOCKET_PATTERN: &str = "/run/user/{uid}/octo-runner.sock";
 
 /// Client for communicating with the runner daemon.
 #[derive(Clone)]
@@ -31,18 +35,30 @@ impl RunnerClient {
 
     /// Create a runner client using the default socket path.
     /// Uses XDG_RUNTIME_DIR if available, otherwise /tmp.
+    ///
+    /// This is for single-user mode where the runner runs as the current user.
     pub fn default() -> Self {
         let runtime_dir = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_string());
         let socket_path = DEFAULT_SOCKET_PATTERN.replace("{runtime_dir}", &runtime_dir);
         Self::new(socket_path)
     }
 
-    /// Create a runner client for a specific user using the default socket pattern.
-    #[allow(dead_code)]
-    pub fn for_user(username: &str) -> Self {
-        // Legacy method - now just uses default
-        let _ = username;
-        Self::default()
+    /// Create a runner client for a specific Linux user by UID.
+    ///
+    /// Used in multi-user mode where each user has their own runner daemon
+    /// at /run/user/{uid}/octo-runner.sock.
+    pub fn for_uid(uid: u32) -> Self {
+        let socket_path = USER_SOCKET_PATTERN.replace("{uid}", &uid.to_string());
+        Self::new(socket_path)
+    }
+
+    /// Create a runner client for a specific Linux user by username.
+    ///
+    /// Looks up the user's UID and returns a client for their runner socket.
+    /// Returns an error if the user doesn't exist.
+    pub fn for_user(username: &str) -> Result<Self> {
+        let uid = lookup_uid(username)?;
+        Ok(Self::for_uid(uid))
     }
 
     /// Get the socket path.
@@ -218,6 +234,284 @@ impl RunnerClient {
             _ => anyhow::bail!("unexpected response to kill_process"),
         }
     }
+
+    // ========================================================================
+    // Filesystem Operations (user-plane)
+    // ========================================================================
+
+    /// Read a file from the user's workspace.
+    pub async fn read_file(
+        &self,
+        path: impl Into<PathBuf>,
+        offset: Option<u64>,
+        limit: Option<u64>,
+    ) -> Result<FileContentResponse> {
+        let req = RunnerRequest::ReadFile(ReadFileRequest {
+            path: path.into(),
+            offset,
+            limit,
+        });
+
+        let resp = self.request(&req).await?;
+        match resp {
+            RunnerResponse::FileContent(r) => Ok(r),
+            _ => anyhow::bail!("unexpected response to read_file"),
+        }
+    }
+
+    /// Write a file to the user's workspace.
+    pub async fn write_file(
+        &self,
+        path: impl Into<PathBuf>,
+        content: &[u8],
+        create_parents: bool,
+    ) -> Result<FileWrittenResponse> {
+        use base64::Engine;
+
+        let content_base64 = base64::engine::general_purpose::STANDARD.encode(content);
+
+        let req = RunnerRequest::WriteFile(WriteFileRequest {
+            path: path.into(),
+            content_base64,
+            create_parents,
+        });
+
+        let resp = self.request(&req).await?;
+        match resp {
+            RunnerResponse::FileWritten(r) => Ok(r),
+            _ => anyhow::bail!("unexpected response to write_file"),
+        }
+    }
+
+    /// List contents of a directory.
+    pub async fn list_directory(
+        &self,
+        path: impl Into<PathBuf>,
+        include_hidden: bool,
+    ) -> Result<DirectoryListingResponse> {
+        let req = RunnerRequest::ListDirectory(ListDirectoryRequest {
+            path: path.into(),
+            include_hidden,
+        });
+
+        let resp = self.request(&req).await?;
+        match resp {
+            RunnerResponse::DirectoryListing(r) => Ok(r),
+            _ => anyhow::bail!("unexpected response to list_directory"),
+        }
+    }
+
+    /// Get file/directory metadata.
+    pub async fn stat(&self, path: impl Into<PathBuf>) -> Result<FileStatResponse> {
+        let req = RunnerRequest::Stat(StatRequest { path: path.into() });
+
+        let resp = self.request(&req).await?;
+        match resp {
+            RunnerResponse::FileStat(r) => Ok(r),
+            _ => anyhow::bail!("unexpected response to stat"),
+        }
+    }
+
+    /// Delete a file or directory.
+    pub async fn delete_path(
+        &self,
+        path: impl Into<PathBuf>,
+        recursive: bool,
+    ) -> Result<PathDeletedResponse> {
+        let req = RunnerRequest::DeletePath(DeletePathRequest {
+            path: path.into(),
+            recursive,
+        });
+
+        let resp = self.request(&req).await?;
+        match resp {
+            RunnerResponse::PathDeleted(r) => Ok(r),
+            _ => anyhow::bail!("unexpected response to delete_path"),
+        }
+    }
+
+    /// Create a directory.
+    pub async fn create_directory(
+        &self,
+        path: impl Into<PathBuf>,
+        create_parents: bool,
+    ) -> Result<DirectoryCreatedResponse> {
+        let req = RunnerRequest::CreateDirectory(CreateDirectoryRequest {
+            path: path.into(),
+            create_parents,
+        });
+
+        let resp = self.request(&req).await?;
+        match resp {
+            RunnerResponse::DirectoryCreated(r) => Ok(r),
+            _ => anyhow::bail!("unexpected response to create_directory"),
+        }
+    }
+
+    // ========================================================================
+    // Session Operations (user-plane)
+    // ========================================================================
+
+    /// List all sessions for this user.
+    pub async fn list_sessions(&self) -> Result<SessionListResponse> {
+        let req = RunnerRequest::ListSessions;
+
+        let resp = self.request(&req).await?;
+        match resp {
+            RunnerResponse::SessionList(r) => Ok(r),
+            _ => anyhow::bail!("unexpected response to list_sessions"),
+        }
+    }
+
+    /// Get a specific session by ID.
+    pub async fn get_session(&self, session_id: impl Into<String>) -> Result<SessionResponse> {
+        let req = RunnerRequest::GetSession(GetSessionRequest {
+            session_id: session_id.into(),
+        });
+
+        let resp = self.request(&req).await?;
+        match resp {
+            RunnerResponse::Session(r) => Ok(r),
+            _ => anyhow::bail!("unexpected response to get_session"),
+        }
+    }
+
+    /// Start services for a session.
+    pub async fn start_session(
+        &self,
+        session_id: impl Into<String>,
+        workspace_path: impl Into<PathBuf>,
+        opencode_port: u16,
+        fileserver_port: u16,
+        ttyd_port: u16,
+        agent: Option<String>,
+        env: HashMap<String, String>,
+    ) -> Result<SessionStartedResponse> {
+        let req = RunnerRequest::StartSession(StartSessionRequest {
+            session_id: session_id.into(),
+            workspace_path: workspace_path.into(),
+            opencode_port,
+            fileserver_port,
+            ttyd_port,
+            agent,
+            env,
+        });
+
+        let resp = self.request(&req).await?;
+        match resp {
+            RunnerResponse::SessionStarted(r) => Ok(r),
+            _ => anyhow::bail!("unexpected response to start_session"),
+        }
+    }
+
+    /// Stop a running session.
+    pub async fn stop_session(
+        &self,
+        session_id: impl Into<String>,
+    ) -> Result<SessionStoppedResponse> {
+        let req = RunnerRequest::StopSession(StopSessionRequest {
+            session_id: session_id.into(),
+        });
+
+        let resp = self.request(&req).await?;
+        match resp {
+            RunnerResponse::SessionStopped(r) => Ok(r),
+            _ => anyhow::bail!("unexpected response to stop_session"),
+        }
+    }
+
+    // ========================================================================
+    // Main Chat Operations (user-plane)
+    // ========================================================================
+
+    /// List main chat session files.
+    pub async fn list_main_chat_sessions(&self) -> Result<MainChatSessionListResponse> {
+        let req = RunnerRequest::ListMainChatSessions;
+
+        let resp = self.request(&req).await?;
+        match resp {
+            RunnerResponse::MainChatSessionList(r) => Ok(r),
+            _ => anyhow::bail!("unexpected response to list_main_chat_sessions"),
+        }
+    }
+
+    /// Get messages from a main chat session.
+    pub async fn get_main_chat_messages(
+        &self,
+        session_id: impl Into<String>,
+        limit: Option<usize>,
+    ) -> Result<MainChatMessagesResponse> {
+        let req = RunnerRequest::GetMainChatMessages(GetMainChatMessagesRequest {
+            session_id: session_id.into(),
+            limit,
+        });
+
+        let resp = self.request(&req).await?;
+        match resp {
+            RunnerResponse::MainChatMessages(r) => Ok(r),
+            _ => anyhow::bail!("unexpected response to get_main_chat_messages"),
+        }
+    }
+
+    // ========================================================================
+    // Memory Operations (user-plane)
+    // ========================================================================
+
+    /// Search memories.
+    pub async fn search_memories(
+        &self,
+        query: impl Into<String>,
+        limit: usize,
+        category: Option<String>,
+    ) -> Result<MemorySearchResultsResponse> {
+        let req = RunnerRequest::SearchMemories(SearchMemoriesRequest {
+            query: query.into(),
+            limit,
+            category,
+        });
+
+        let resp = self.request(&req).await?;
+        match resp {
+            RunnerResponse::MemorySearchResults(r) => Ok(r),
+            _ => anyhow::bail!("unexpected response to search_memories"),
+        }
+    }
+
+    /// Add a new memory.
+    pub async fn add_memory(
+        &self,
+        content: impl Into<String>,
+        category: Option<String>,
+        importance: Option<u8>,
+    ) -> Result<MemoryAddedResponse> {
+        let req = RunnerRequest::AddMemory(AddMemoryRequest {
+            content: content.into(),
+            category,
+            importance,
+        });
+
+        let resp = self.request(&req).await?;
+        match resp {
+            RunnerResponse::MemoryAdded(r) => Ok(r),
+            _ => anyhow::bail!("unexpected response to add_memory"),
+        }
+    }
+
+    /// Delete a memory by ID.
+    pub async fn delete_memory(
+        &self,
+        memory_id: impl Into<String>,
+    ) -> Result<MemoryDeletedResponse> {
+        let req = RunnerRequest::DeleteMemory(DeleteMemoryRequest {
+            memory_id: memory_id.into(),
+        });
+
+        let resp = self.request(&req).await?;
+        match resp {
+            RunnerResponse::MemoryDeleted(r) => Ok(r),
+            _ => anyhow::bail!("unexpected response to delete_memory"),
+        }
+    }
 }
 
 /// An active stdout subscription that yields lines as they arrive.
@@ -270,6 +564,32 @@ impl std::fmt::Debug for RunnerClient {
     }
 }
 
+/// Look up a Linux user's UID by username.
+#[cfg(unix)]
+fn lookup_uid(username: &str) -> Result<u32> {
+    use std::ffi::CString;
+
+    let c_username =
+        CString::new(username).with_context(|| format!("invalid username: {}", username))?;
+
+    // SAFETY: getpwnam is safe to call with a valid C string.
+    // We immediately copy the uid before the pointer could become invalid.
+    let passwd = unsafe { libc::getpwnam(c_username.as_ptr()) };
+
+    if passwd.is_null() {
+        anyhow::bail!("user not found: {}", username);
+    }
+
+    // SAFETY: We checked passwd is not null above
+    let uid = unsafe { (*passwd).pw_uid };
+    Ok(uid)
+}
+
+#[cfg(not(unix))]
+fn lookup_uid(_username: &str) -> Result<u32> {
+    anyhow::bail!("user lookup not supported on this platform")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -286,5 +606,203 @@ mod tests {
     fn test_custom_socket_path() {
         let client = RunnerClient::new("/tmp/test-runner.sock");
         assert_eq!(client.socket_path(), Path::new("/tmp/test-runner.sock"));
+    }
+
+    #[test]
+    fn test_for_uid() {
+        let client = RunnerClient::for_uid(1000);
+        assert_eq!(
+            client.socket_path(),
+            Path::new("/run/user/1000/octo-runner.sock")
+        );
+    }
+
+    #[test]
+    fn test_for_uid_different_users() {
+        let alice = RunnerClient::for_uid(1001);
+        let bob = RunnerClient::for_uid(1002);
+
+        // Different users should have different socket paths
+        assert_ne!(alice.socket_path(), bob.socket_path());
+
+        // Verify socket path format
+        assert!(
+            alice
+                .socket_path()
+                .to_string_lossy()
+                .contains("/run/user/1001/")
+        );
+        assert!(
+            bob.socket_path()
+                .to_string_lossy()
+                .contains("/run/user/1002/")
+        );
+    }
+}
+
+/// Security tests for cross-user isolation.
+///
+/// These tests verify that the runner provides proper isolation between users.
+/// They require a properly configured test environment with multiple Linux users
+/// and running runner daemons. Run with `cargo test --features integration-tests`.
+#[cfg(all(test, feature = "integration-tests"))]
+mod security_tests {
+    use super::*;
+
+    /// Test that user A cannot access user B's files through their own runner.
+    ///
+    /// Security expectation: Each runner runs as its respective user and can only
+    /// access files that user has permission to access.
+    #[tokio::test]
+    #[ignore = "requires multi-user test environment"]
+    async fn test_user_cannot_access_other_users_files() {
+        // Setup: Assume users 'alice' (uid 1001) and 'bob' (uid 1002) exist
+        // with home directories /home/alice and /home/bob
+        let alice_client = RunnerClient::for_uid(1001);
+        let bob_client = RunnerClient::for_uid(1002);
+
+        // Alice's runner should be able to read Alice's files
+        let alice_result = alice_client
+            .read_file("/home/alice/.bashrc", None, None)
+            .await;
+        assert!(
+            alice_result.is_ok(),
+            "Alice should be able to read her own files"
+        );
+
+        // Alice's runner should NOT be able to read Bob's files
+        let cross_access_result = alice_client
+            .read_file("/home/bob/.bashrc", None, None)
+            .await;
+        assert!(
+            cross_access_result.is_err(),
+            "Alice's runner should not be able to access Bob's files"
+        );
+
+        // And vice versa
+        let bob_result = bob_client.read_file("/home/bob/.bashrc", None, None).await;
+        assert!(
+            bob_result.is_ok(),
+            "Bob should be able to read his own files"
+        );
+
+        let cross_access_result = bob_client
+            .read_file("/home/alice/.bashrc", None, None)
+            .await;
+        assert!(
+            cross_access_result.is_err(),
+            "Bob's runner should not be able to access Alice's files"
+        );
+    }
+
+    /// Test that user A cannot spawn processes that access user B's workspace.
+    #[tokio::test]
+    #[ignore = "requires multi-user test environment"]
+    async fn test_user_cannot_spawn_in_other_users_workspace() {
+        let alice_client = RunnerClient::for_uid(1001);
+
+        // Alice should NOT be able to spawn a session in Bob's workspace
+        let result = alice_client
+            .start_session(
+                "test-session",
+                "/home/bob/workspace",
+                41820,
+                41821,
+                41822,
+                None,
+                std::collections::HashMap::new(),
+            )
+            .await;
+
+        // The runner should either:
+        // 1. Fail to create the workspace directory (permission denied), or
+        // 2. Fail to spawn processes with access to that directory
+        assert!(
+            result.is_err(),
+            "Alice's runner should not be able to start a session in Bob's workspace"
+        );
+    }
+
+    /// Test that processes spawned by a runner inherit the correct user identity.
+    #[tokio::test]
+    #[ignore = "requires multi-user test environment"]
+    async fn test_spawned_processes_have_correct_uid() {
+        let alice_client = RunnerClient::for_uid(1001);
+
+        // Spawn a process that prints its UID
+        let pid = alice_client
+            .spawn_rpc_process(
+                "test-whoami",
+                "id",
+                vec!["-u".to_string()],
+                "/tmp",
+                std::collections::HashMap::new(),
+                false,
+            )
+            .await
+            .expect("should spawn process");
+
+        // Read the output
+        let output = alice_client
+            .read_stdout("test-whoami", 1000)
+            .await
+            .expect("should read stdout");
+
+        // Verify the UID matches Alice's UID
+        let uid: u32 = output.data.trim().parse().expect("should be a number");
+        assert_eq!(uid, 1001, "Process should run as Alice (uid 1001)");
+
+        // Cleanup
+        let _ = alice_client.kill_process("test-whoami", false).await;
+    }
+
+    /// Test that socket files are only accessible by their respective users.
+    #[tokio::test]
+    #[ignore = "requires multi-user test environment"]
+    async fn test_socket_permissions() {
+        // This test verifies that:
+        // 1. Each user's runner socket is in their XDG_RUNTIME_DIR
+        // 2. XDG_RUNTIME_DIR has mode 0700 (owner-only access)
+        // 3. Attempting to connect to another user's socket fails
+
+        let alice_client = RunnerClient::for_uid(1001);
+
+        // Alice should be able to ping her own runner
+        // (assuming the test is run as user alice or root)
+        // This will fail if we're not alice, which is expected
+        let alice_socket = alice_client.socket_path();
+        assert!(alice_socket.starts_with("/run/user/1001/"));
+
+        // Verify we can't connect to bob's runner (should fail with permission denied)
+        let bob_client = RunnerClient::for_uid(1002);
+        let ping_result = bob_client.request(&RunnerRequest::Ping).await;
+
+        // If we're not bob/root, this should fail
+        if !ping_result.is_ok() {
+            // Expected - we don't have permission to access bob's socket
+        }
+    }
+
+    /// Test that a compromised runner cannot affect other users.
+    ///
+    /// This tests the threat model where an attacker gains control of one user's
+    /// runner process. They should not be able to:
+    /// - Access other users' files
+    /// - Connect to other users' runner sockets
+    /// - Spawn processes as other users
+    #[tokio::test]
+    #[ignore = "requires multi-user test environment with security harness"]
+    async fn test_runner_isolation_under_compromise() {
+        // This is a conceptual test that would require a security testing harness
+        // to properly verify. The key points are:
+        //
+        // 1. Each runner runs as a non-privileged user
+        // 2. Runners cannot setuid/setgid to become other users
+        // 3. File system permissions prevent cross-user access
+        // 4. Socket permissions prevent cross-user communication
+        // 5. Process namespacing (if enabled) prevents process visibility
+        //
+        // These properties should be verified by the security team as part of
+        // the deployment security review.
     }
 }

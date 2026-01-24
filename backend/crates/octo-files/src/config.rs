@@ -9,6 +9,14 @@ pub struct Config {
     #[serde(default = "default_max_upload_size")]
     pub max_upload_size: u64,
 
+    /// Maximum total uncompressed size for zip downloads (in bytes). Set to 0 for no limit.
+    #[serde(default = "default_max_zip_bytes")]
+    pub max_zip_bytes: u64,
+
+    /// Maximum number of file entries allowed in zip downloads. Set to 0 for no limit.
+    #[serde(default = "default_max_zip_entries")]
+    pub max_zip_entries: u64,
+
     /// Maximum depth for directory traversal
     #[serde(default = "default_max_depth")]
     pub max_depth: usize,
@@ -28,6 +36,14 @@ pub struct Config {
 
 fn default_max_upload_size() -> u64 {
     100 * 1024 * 1024 // 100 MB
+}
+
+fn default_max_zip_bytes() -> u64 {
+    500 * 1024 * 1024 // 500 MB
+}
+
+fn default_max_zip_entries() -> u64 {
+    10_000
 }
 
 fn default_max_depth() -> usize {
@@ -94,6 +110,8 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             max_upload_size: default_max_upload_size(),
+            max_zip_bytes: default_max_zip_bytes(),
+            max_zip_entries: default_max_zip_entries(),
             max_depth: default_max_depth(),
             hidden_extensions: default_hidden_extensions(),
             hidden_dirs: default_hidden_dirs(),

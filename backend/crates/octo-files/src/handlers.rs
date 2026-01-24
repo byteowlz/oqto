@@ -35,6 +35,7 @@ use zip::write::SimpleFileOptions;
 
 use crate::AppState;
 use crate::error::FileServerError;
+use crate::Config;
 
 // Lazy-loaded syntax highlighting assets
 static SYNTAX_SET: LazyLock<SyntaxSet> = LazyLock::new(SyntaxSet::load_defaults_newlines);
@@ -60,6 +61,21 @@ pub struct FileNode {
 pub enum FileType {
     File,
     Directory,
+}
+
+#[derive(Clone, Copy)]
+struct ZipLimits {
+    max_bytes: u64,
+    max_entries: u64,
+}
+
+impl ZipLimits {
+    fn from_config(config: &Config) -> Self {
+        Self {
+            max_bytes: config.max_zip_bytes,
+            max_entries: config.max_zip_entries,
+        }
+    }
 }
 
 /// Query parameters for tree endpoint
@@ -1429,8 +1445,9 @@ pub async fn download(
         let zip_name = format!("{}.zip", file_name);
         let safe_zip_name = zip_name.replace('"', "'");
 
+        let limits = ZipLimits::from_config(&state.config);
         let (zip_file, zip_size) =
-            create_zip_file_from_paths(root_dir.clone(), vec![path.clone()]).await?;
+            create_zip_file_from_paths(root_dir.clone(), vec![path.clone()], limits).await?;
         let body = Body::from_stream(ReaderStream::new(zip_file));
 
         Ok((
@@ -1476,7 +1493,8 @@ pub async fn download_zip(
 
     debug!("Downloading {} items as zip", resolved_paths.len());
 
-    let (zip_file, zip_size) = create_zip_file_from_paths(root_dir, resolved_paths).await?;
+    let limits = ZipLimits::from_config(&state.config);
+    let (zip_file, zip_size) = create_zip_file_from_paths(root_dir, resolved_paths, limits).await?;
     let body = Body::from_stream(ReaderStream::new(zip_file));
 
     let zip_name = query.name.unwrap_or_else(|| "download.zip".to_string());
@@ -1504,9 +1522,10 @@ pub async fn download_zip(
 async fn create_zip_file_from_paths(
     root: PathBuf,
     paths: Vec<PathBuf>,
+    limits: ZipLimits,
 ) -> Result<(fs::File, u64), FileServerError> {
     let (file, size) =
-        tokio::task::spawn_blocking(move || create_zip_tempfile_blocking(&root, &paths))
+        tokio::task::spawn_blocking(move || create_zip_tempfile_blocking(&root, &paths, limits))
             .await
             .map_err(|err| {
                 FileServerError::Io(std::io::Error::new(
@@ -1521,7 +1540,9 @@ async fn create_zip_file_from_paths(
 fn create_zip_tempfile_blocking(
     root: &Path,
     paths: &[PathBuf],
+    limits: ZipLimits,
 ) -> Result<(std::fs::File, u64), FileServerError> {
+    enforce_zip_limits(root, paths, limits)?;
     let file = tempfile()?;
     let mut zip = ZipWriter::new(file);
     let options = SimpleFileOptions::default()
@@ -1590,10 +1611,73 @@ fn add_directory_to_zip<W: Write + Seek>(
     Ok(())
 }
 
+fn enforce_zip_limits(
+    root: &Path,
+    paths: &[PathBuf],
+    limits: ZipLimits,
+) -> Result<(), FileServerError> {
+    let mut total_bytes = 0u64;
+    let mut total_entries = 0u64;
+
+    for path in paths {
+        if path.is_file() {
+            track_zip_entry(path, &mut total_bytes, &mut total_entries, limits)?;
+            continue;
+        }
+
+        if path.is_dir() {
+            for entry in WalkDir::new(path).into_iter().filter_map(|entry| entry.ok()) {
+                if entry.file_type().is_file() {
+                    track_zip_entry(
+                        entry.path(),
+                        &mut total_bytes,
+                        &mut total_entries,
+                        limits,
+                    )?;
+                }
+            }
+            continue;
+        }
+
+        let relative = get_relative_path(root, path);
+        return Err(FileServerError::NotFound(relative));
+    }
+
+    Ok(())
+}
+
+fn track_zip_entry(
+    path: &Path,
+    total_bytes: &mut u64,
+    total_entries: &mut u64,
+    limits: ZipLimits,
+) -> Result<(), FileServerError> {
+    let size = std::fs::metadata(path)?.len();
+    *total_entries = total_entries.saturating_add(1);
+    *total_bytes = total_bytes.saturating_add(size);
+
+    if limits.max_entries > 0 && *total_entries > limits.max_entries {
+        return Err(FileServerError::ZipTooManyEntries {
+            entries: *total_entries,
+            limit: limits.max_entries,
+        });
+    }
+
+    if limits.max_bytes > 0 && *total_bytes > limits.max_bytes {
+        return Err(FileServerError::ZipTooLarge {
+            size: *total_bytes,
+            limit: limits.max_bytes,
+        });
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use notify::event::ModifyKind;
+    use std::fs;
     use std::io::Read;
     use std::path::PathBuf;
     use tempfile::TempDir;
@@ -1732,9 +1816,16 @@ mod tests {
         std::fs::create_dir_all(root.join("nested")).unwrap();
         std::fs::write(root.join("nested").join("child.txt"), "child").unwrap();
 
-        let (file, size) =
-            create_zip_tempfile_blocking(root, &[root.join("nested"), root.join("root.txt")])
-                .unwrap();
+        let limits = ZipLimits {
+            max_bytes: 0,
+            max_entries: 0,
+        };
+        let (file, size) = create_zip_tempfile_blocking(
+            root,
+            &[root.join("nested"), root.join("root.txt")],
+            limits,
+        )
+        .unwrap();
         assert!(size > 0);
 
         let mut archive = ZipArchive::new(file).unwrap();
@@ -1752,6 +1843,44 @@ mod tests {
             child_entry.read_to_string(&mut child_content).unwrap();
             assert_eq!(child_content, "child");
         }
+    }
+
+    #[test]
+    fn test_enforce_zip_limits_rejects_too_many_entries() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+
+        fs::write(root.join("a.txt"), "a").unwrap();
+        fs::write(root.join("b.txt"), "b").unwrap();
+        fs::write(root.join("c.txt"), "c").unwrap();
+
+        let limits = ZipLimits {
+            max_bytes: 0,
+            max_entries: 2,
+        };
+
+        let result = enforce_zip_limits(root, &[root.to_path_buf()], limits);
+        assert!(matches!(
+            result,
+            Err(FileServerError::ZipTooManyEntries { .. })
+        ));
+    }
+
+    #[test]
+    fn test_enforce_zip_limits_rejects_too_large() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+
+        let payload = vec![0u8; 2048];
+        fs::write(root.join("big.bin"), payload).unwrap();
+
+        let limits = ZipLimits {
+            max_bytes: 1024,
+            max_entries: 0,
+        };
+
+        let result = enforce_zip_limits(root, &[root.to_path_buf()], limits);
+        assert!(matches!(result, Err(FileServerError::ZipTooLarge { .. })));
     }
 
     // ========================================================================

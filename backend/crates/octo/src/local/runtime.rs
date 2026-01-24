@@ -91,7 +91,9 @@ impl LocalRuntimeConfig {
         // Require a per-user placeholder to avoid accidentally sharing the same
         // directory across all users.
         if self.linux_users.enabled && !self.single_user {
-            if !self.workspace_dir.contains("{user_id}") && !self.workspace_dir.contains("{linux_username}") {
+            if !self.workspace_dir.contains("{user_id}")
+                && !self.workspace_dir.contains("{linux_username}")
+            {
                 anyhow::bail!(
                     "local.workspace_dir must include '{{user_id}}' or '{{linux_username}}' in multi-user mode (got: {}). \
                      This is required to prevent cross-user filesystem access.",
@@ -310,43 +312,16 @@ impl LocalRuntime {
         self.process_manager.stop_session(session_id).await
     }
 
-    /// Resume a stopped session by restarting its processes.
-    ///
-    /// Note: For local runtime, "resume" actually restarts the processes since
-    /// we don't have container state to preserve. The workspace data is preserved.
-    pub async fn resume_session(
-        &self,
-        session_id: &str,
-        user_id: &str,
-        workspace_path: &Path,
-        agent: Option<&str>,
-        project_id: Option<&str>,
-        opencode_port: u16,
-        fileserver_port: u16,
-        ttyd_port: u16,
-        env: HashMap<String, String>,
-    ) -> Result<String> {
-        info!("Resuming local session {}", session_id);
-
-        // For local runtime, resume is the same as start
-        // The processes don't persist state, but the workspace does
-        self.start_session(
-            session_id,
-            user_id,
-            workspace_path,
-            agent,
-            project_id,
-            opencode_port,
-            fileserver_port,
-            ttyd_port,
-            env,
-        )
-        .await
-    }
-
     /// Check if a session's processes are running.
     pub async fn is_session_running(&self, session_id: &str) -> bool {
         self.process_manager.is_session_running(session_id).await
+    }
+
+    /// Get exit information for crashed processes in a session.
+    ///
+    /// Returns a list of (service_name, exit_reason) for processes that have exited.
+    pub async fn get_session_exit_info(&self, session_id: &str) -> Vec<(String, String)> {
+        self.process_manager.get_session_exit_info(session_id).await
     }
 
     /// Get the state of a session (similar to container state).

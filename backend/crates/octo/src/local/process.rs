@@ -74,6 +74,53 @@ impl ProcessHandle {
         }
     }
 
+    /// Check if the process has exited and return exit info.
+    ///
+    /// Returns `None` if still running, or `Some((exit_code, signal))` if exited.
+    /// On Unix, if killed by signal, exit_code is None and signal contains the signal number.
+    pub fn check_exit_status(&mut self) -> Option<(Option<i32>, Option<i32>)> {
+        match self.child.try_wait() {
+            Ok(None) => None, // Still running
+            Ok(Some(status)) => {
+                let code = status.code();
+                #[cfg(unix)]
+                let signal = {
+                    use std::os::unix::process::ExitStatusExt;
+                    status.signal()
+                };
+                #[cfg(not(unix))]
+                let signal = None;
+                Some((code, signal))
+            }
+            Err(e) => {
+                warn!("Error checking process {} status: {:?}", self.pid, e);
+                Some((None, None))
+            }
+        }
+    }
+
+    /// Format exit status as a human-readable string.
+    pub fn format_exit_status(exit_code: Option<i32>, signal: Option<i32>) -> String {
+        match (exit_code, signal) {
+            (Some(code), _) => format!("exited with code {}", code),
+            (None, Some(sig)) => {
+                let sig_name = match sig {
+                    9 => "SIGKILL",
+                    15 => "SIGTERM",
+                    11 => "SIGSEGV",
+                    6 => "SIGABRT",
+                    _ => "",
+                };
+                if sig_name.is_empty() {
+                    format!("killed by signal {}", sig)
+                } else {
+                    format!("killed by {} (signal {})", sig_name, sig)
+                }
+            }
+            (None, None) => "exited (unknown status)".to_string(),
+        }
+    }
+
     /// Kill the process and wait for it to be reaped.
     ///
     /// This both sends SIGKILL and waits for the process to exit,
@@ -152,7 +199,7 @@ impl ProcessManager {
             "--port".to_string(),
             port.to_string(),
             "--hostname".to_string(),
-            "0.0.0.0".to_string(),
+            "127.0.0.1".to_string(),
         ];
 
         if let Some(agent_name) = agent {
@@ -209,7 +256,7 @@ impl ProcessManager {
                     "--port",
                     &port.to_string(),
                     "--bind",
-                    "0.0.0.0",
+                    "127.0.0.1",
                     "--root",
                     root_dir.to_str().unwrap_or("."),
                 ],
@@ -280,7 +327,7 @@ impl ProcessManager {
             "--port",
             &port_str,
             "--interface",
-            "0.0.0.0",
+            "127.0.0.1",
             "--writable",
             "--cwd",
             cwd_str,
@@ -542,6 +589,26 @@ impl ProcessManager {
         } else {
             false
         }
+    }
+
+    /// Get exit information for any crashed processes in a session.
+    ///
+    /// Returns a list of (service_name, exit_reason) for processes that have exited.
+    /// Returns empty vec if all processes are running or session doesn't exist.
+    pub async fn get_session_exit_info(&self, session_id: &str) -> Vec<(String, String)> {
+        let mut processes = self.processes.lock().await;
+        let mut exit_info = Vec::new();
+
+        if let Some(handles) = processes.get_mut(session_id) {
+            for handle in handles.iter_mut() {
+                if let Some((code, signal)) = handle.check_exit_status() {
+                    let reason = ProcessHandle::format_exit_status(code, signal);
+                    exit_info.push((handle.service.clone(), reason));
+                }
+            }
+        }
+
+        exit_info
     }
 
     /// Get the list of PIDs for a session.
@@ -999,5 +1066,132 @@ mod tests {
 
         // Cleanup
         manager.stop_session("session1").await.unwrap();
+    }
+
+    // =========================================================================
+    // Security tests: Verify services bind to localhost only
+    // =========================================================================
+    //
+    // These tests ensure that session services (opencode, fileserver, ttyd) bind
+    // to 127.0.0.1 (localhost) rather than 0.0.0.0 (all interfaces). Binding to
+    // 0.0.0.0 would expose these services to the network, bypassing the proxy.
+
+    /// Helper to build opencode args (mirrors the logic in spawn_opencode).
+    fn build_opencode_args(port: u16, agent: Option<&str>) -> Vec<String> {
+        let mut args = vec![
+            "serve".to_string(),
+            "--port".to_string(),
+            port.to_string(),
+            "--hostname".to_string(),
+            "127.0.0.1".to_string(),
+        ];
+        if let Some(agent_name) = agent {
+            args.push("--agent".to_string());
+            args.push(agent_name.to_string());
+        }
+        args
+    }
+
+    /// Helper to build fileserver args (mirrors the logic in spawn_fileserver).
+    fn build_fileserver_args(port: u16, root_dir: &str) -> Vec<String> {
+        vec![
+            "--port".to_string(),
+            port.to_string(),
+            "--bind".to_string(),
+            "127.0.0.1".to_string(),
+            "--root".to_string(),
+            root_dir.to_string(),
+        ]
+    }
+
+    /// Helper to build ttyd args (mirrors the logic in spawn_ttyd).
+    fn build_ttyd_args(port: u16, cwd: &str) -> Vec<String> {
+        vec![
+            "--port".to_string(),
+            port.to_string(),
+            "--interface".to_string(),
+            "127.0.0.1".to_string(),
+            "--writable".to_string(),
+            "--cwd".to_string(),
+            cwd.to_string(),
+            "zsh".to_string(),
+            "-l".to_string(),
+        ]
+    }
+
+    #[test]
+    fn test_opencode_binds_to_localhost_only() {
+        let args = build_opencode_args(4096, None);
+
+        // Find the --hostname argument
+        let hostname_idx = args.iter().position(|a| a == "--hostname");
+        assert!(hostname_idx.is_some(), "opencode args must include --hostname");
+
+        let bind_addr = &args[hostname_idx.unwrap() + 1];
+        assert_eq!(
+            bind_addr, "127.0.0.1",
+            "opencode must bind to 127.0.0.1, not {}. Binding to 0.0.0.0 exposes the service to the network!",
+            bind_addr
+        );
+
+        // Verify it's NOT 0.0.0.0
+        assert_ne!(
+            bind_addr, "0.0.0.0",
+            "SECURITY: opencode must NOT bind to 0.0.0.0"
+        );
+    }
+
+    #[test]
+    fn test_opencode_with_agent_binds_to_localhost_only() {
+        let args = build_opencode_args(4096, Some("test-agent"));
+
+        let hostname_idx = args.iter().position(|a| a == "--hostname");
+        assert!(hostname_idx.is_some());
+
+        let bind_addr = &args[hostname_idx.unwrap() + 1];
+        assert_eq!(bind_addr, "127.0.0.1");
+        assert_ne!(bind_addr, "0.0.0.0");
+    }
+
+    #[test]
+    fn test_fileserver_binds_to_localhost_only() {
+        let args = build_fileserver_args(8080, "/workspace");
+
+        // Find the --bind argument
+        let bind_idx = args.iter().position(|a| a == "--bind");
+        assert!(bind_idx.is_some(), "fileserver args must include --bind");
+
+        let bind_addr = &args[bind_idx.unwrap() + 1];
+        assert_eq!(
+            bind_addr, "127.0.0.1",
+            "fileserver must bind to 127.0.0.1, not {}. Binding to 0.0.0.0 exposes the service to the network!",
+            bind_addr
+        );
+
+        assert_ne!(
+            bind_addr, "0.0.0.0",
+            "SECURITY: fileserver must NOT bind to 0.0.0.0"
+        );
+    }
+
+    #[test]
+    fn test_ttyd_binds_to_localhost_only() {
+        let args = build_ttyd_args(7681, "/workspace");
+
+        // Find the --interface argument
+        let interface_idx = args.iter().position(|a| a == "--interface");
+        assert!(interface_idx.is_some(), "ttyd args must include --interface");
+
+        let bind_addr = &args[interface_idx.unwrap() + 1];
+        assert_eq!(
+            bind_addr, "127.0.0.1",
+            "ttyd must bind to 127.0.0.1, not {}. Binding to 0.0.0.0 exposes the service to the network!",
+            bind_addr
+        );
+
+        assert_ne!(
+            bind_addr, "0.0.0.0",
+            "SECURITY: ttyd must NOT bind to 0.0.0.0"
+        );
     }
 }

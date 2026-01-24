@@ -117,7 +117,12 @@ type SessionMessageCacheEntry = {
 const sessionMessageCache = {
 	messagesBySession: new Map<string, SessionMessageCacheEntry>(),
 	initialized: false,
+	// Throttle localStorage writes to reduce I/O during streaming
+	lastWriteTime: new Map<string, number>(),
+	pendingWrite: new Map<string, ReturnType<typeof setTimeout>>(),
 };
+
+const CACHE_WRITE_THROTTLE_MS = 2000; // Write to localStorage at most every 2s during streaming
 
 function cacheKeyMessages(sessionId: string) {
 	return `octo:mainChatPi:session:${sessionId}:messages:v1`;
@@ -163,6 +168,7 @@ function readCachedSessionMessages(sessionId: string): PiDisplayMessage[] {
 function writeCachedSessionMessages(
 	sessionId: string,
 	messages: PiDisplayMessage[],
+	forceWrite = false,
 ) {
 	// Strip isStreaming flag when caching - it's transient state that shouldn't persist
 	const cleanedMessages = messages.map((m) => {
@@ -176,15 +182,42 @@ function writeCachedSessionMessages(
 		messages: cleanedMessages,
 		timestamp: Date.now(),
 	};
+	// Always update in-memory cache immediately
 	sessionMessageCache.messagesBySession.set(sessionId, entry);
 	if (typeof window === "undefined") return;
-	queueMicrotask(() => {
-		try {
-			localStorage.setItem(cacheKeyMessages(sessionId), JSON.stringify(entry));
-		} catch {
-			// ignore
-		}
-	});
+
+	// Throttle localStorage writes to reduce I/O during streaming
+	const now = Date.now();
+	const lastWrite = sessionMessageCache.lastWriteTime.get(sessionId) ?? 0;
+	const elapsed = now - lastWrite;
+
+	// Clear any pending write for this session
+	const pending = sessionMessageCache.pendingWrite.get(sessionId);
+	if (pending) {
+		clearTimeout(pending);
+		sessionMessageCache.pendingWrite.delete(sessionId);
+	}
+
+	const doWrite = () => {
+		sessionMessageCache.lastWriteTime.set(sessionId, Date.now());
+		queueMicrotask(() => {
+			try {
+				localStorage.setItem(cacheKeyMessages(sessionId), JSON.stringify(entry));
+			} catch {
+				// ignore
+			}
+		});
+	};
+
+	if (forceWrite || elapsed >= CACHE_WRITE_THROTTLE_MS) {
+		// Write immediately
+		doWrite();
+	} else {
+		// Schedule write after throttle interval
+		const delay = CACHE_WRITE_THROTTLE_MS - elapsed;
+		const timer = setTimeout(doWrite, delay);
+		sessionMessageCache.pendingWrite.set(sessionId, timer);
+	}
 }
 
 const PI_MESSAGE_ID_PATTERN = /^pi-msg-(\d+)$/;
@@ -201,6 +234,15 @@ function getMaxPiMessageId(messages: PiDisplayMessage[]): number {
 	}
 	return maxId;
 }
+
+// Batched update state for token streaming - reduces per-token React updates
+type BatchedUpdateState = {
+	rafId: number | null;
+	lastFlushTime: number;
+	pendingUpdate: boolean;
+};
+
+const BATCH_FLUSH_INTERVAL_MS = 50; // Flush UI updates at most every 50ms
 
 // We keep only per-session message caches; state is fetched from backend.
 function getCachedState(): PiState | null {
@@ -391,6 +433,62 @@ export function usePiChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 	const messageIdRef = useRef(getMaxPiMessageId(messages));
 	const refreshRef = useRef<(() => Promise<void>) | null>(null);
 	const initStartedRef = useRef(false);
+
+	// Batched update state for streaming - reduces per-token React re-renders
+	const batchedUpdateRef = useRef<BatchedUpdateState>({
+		rafId: null,
+		lastFlushTime: 0,
+		pendingUpdate: false,
+	});
+
+	// Flush batched streaming message updates to React state
+	const flushStreamingUpdate = useCallback(() => {
+		const batch = batchedUpdateRef.current;
+		batch.rafId = null;
+		batch.pendingUpdate = false;
+
+		const currentMsg = streamingMessageRef.current;
+		if (!currentMsg) return;
+
+		batch.lastFlushTime = Date.now();
+
+		// Single state update with new parts array for React to detect change
+		setMessages((prev) => {
+			const idx = prev.findIndex((m) => m.id === currentMsg.id);
+			if (idx >= 0) {
+				const updated = [...prev];
+				updated[idx] = {
+					...currentMsg,
+					parts: currentMsg.parts.map((p) => ({ ...p })),
+				};
+				return updated;
+			}
+			return prev;
+		});
+	}, []);
+
+	// Schedule a batched update - coalesces rapid token updates
+	const scheduleStreamingUpdate = useCallback(() => {
+		const batch = batchedUpdateRef.current;
+		batch.pendingUpdate = true;
+
+		// If RAF already scheduled, let it handle the update
+		if (batch.rafId !== null) return;
+
+		const elapsed = Date.now() - batch.lastFlushTime;
+		if (elapsed >= BATCH_FLUSH_INTERVAL_MS) {
+			// Enough time has passed, flush immediately via RAF
+			batch.rafId = requestAnimationFrame(flushStreamingUpdate);
+		} else {
+			// Schedule flush after remaining interval
+			const delay = BATCH_FLUSH_INTERVAL_MS - elapsed;
+			setTimeout(() => {
+				if (batch.pendingUpdate && batch.rafId === null) {
+					batch.rafId = requestAnimationFrame(flushStreamingUpdate);
+				}
+			}, delay);
+		}
+	}, [flushStreamingUpdate]);
 
 	// We need access to connect/disconnect in the effect, but they depend on handleWsMessage.
 	// Store them in refs to avoid circular dependencies.
@@ -602,123 +700,109 @@ export function usePiChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 						break;
 					}
 
-					case "text": {
-						// Append text to streaming message
-						const text = data.data as string;
-						const currentTextMsg = streamingMessageRef.current;
-						if (currentTextMsg) {
-							const lastPart =
-								currentTextMsg.parts[currentTextMsg.parts.length - 1];
-							if (lastPart?.type === "text") {
-								lastPart.content += text;
-							} else {
-								currentTextMsg.parts.push({
-									type: "text",
-									content: text,
-								});
+				case "text": {
+					// Append text to streaming message (mutate ref, batch UI updates)
+					const text = data.data as string;
+					const currentTextMsg = streamingMessageRef.current;
+					if (currentTextMsg) {
+						const lastPart =
+							currentTextMsg.parts[currentTextMsg.parts.length - 1];
+						if (lastPart?.type === "text") {
+							lastPart.content += text;
+						} else {
+							currentTextMsg.parts.push({
+								type: "text",
+								content: text,
+							});
+						}
+						// Schedule batched update instead of per-token setState
+						scheduleStreamingUpdate();
+					}
+					break;
+				}
+
+				case "tool_use": {
+					const tool = data.data as {
+						id: string;
+						name: string;
+						input: unknown;
+					};
+					const currentToolMsg = streamingMessageRef.current;
+					if (currentToolMsg) {
+						currentToolMsg.parts.push({
+							type: "tool_use",
+							id: tool.id,
+							name: tool.name,
+							input: tool.input,
+						});
+						// Tool events are less frequent, flush immediately via RAF
+						scheduleStreamingUpdate();
+					}
+					break;
+				}
+
+				case "tool_result": {
+					const result = data.data as {
+						id: string;
+						name?: string;
+						content: unknown;
+						isError?: boolean;
+					};
+					const currentResultMsg = streamingMessageRef.current;
+					if (currentResultMsg) {
+						// Check if there's a matching tool_use to associate the name with
+						const matchingToolUse = currentResultMsg.parts.find(
+							(p) => p.type === "tool_use" && p.id === result.id,
+						);
+						currentResultMsg.parts.push({
+							type: "tool_result",
+							id: result.id,
+							// Use the tool name from the matching tool_use if available
+							name:
+								result.name ||
+								(matchingToolUse?.type === "tool_use"
+									? matchingToolUse.name
+									: undefined),
+							content: result.content,
+							isError: result.isError,
+						});
+						// Tool events are less frequent, flush immediately via RAF
+						scheduleStreamingUpdate();
+					}
+					break;
+				}
+
+				case "done": {
+					// Cancel any pending batched update
+					const batch = batchedUpdateRef.current;
+					if (batch.rafId !== null) {
+						cancelAnimationFrame(batch.rafId);
+						batch.rafId = null;
+					}
+					batch.pendingUpdate = false;
+
+					// Mark message as complete
+					if (streamingMessageRef.current) {
+						streamingMessageRef.current.isStreaming = false;
+						const completedMessage = {
+							...streamingMessageRef.current,
+							parts: streamingMessageRef.current.parts.map((p) => ({ ...p })),
+						};
+						setMessages((prev) => {
+							const idx = prev.findIndex((m) => m.id === completedMessage.id);
+							if (idx >= 0) {
+								const updated = [...prev];
+								updated[idx] = completedMessage;
+								return updated;
 							}
-							// Update messages state - create new parts array for React to detect change
-							setMessages((prev) => {
-								const idx = prev.findIndex((m) => m.id === currentTextMsg.id);
-								if (idx >= 0) {
-									const updated = [...prev];
-									updated[idx] = {
-										...currentTextMsg,
-										parts: currentTextMsg.parts.map((p) => ({ ...p })),
-									};
-									return updated;
-								}
-								return prev;
-							});
-						}
-						break;
+							return prev;
+						});
+						onMessageComplete?.(completedMessage);
+						streamingMessageRef.current = null;
 					}
-
-					case "tool_use": {
-						const tool = data.data as {
-							id: string;
-							name: string;
-							input: unknown;
-						};
-						const currentToolMsg = streamingMessageRef.current;
-						if (currentToolMsg) {
-							currentToolMsg.parts.push({
-								type: "tool_use",
-								id: tool.id,
-								name: tool.name,
-								input: tool.input,
-							});
-							setMessages((prev) => {
-								const idx = prev.findIndex((m) => m.id === currentToolMsg.id);
-								if (idx >= 0) {
-									const updated = [...prev];
-									updated[idx] = {
-										...currentToolMsg,
-										parts: currentToolMsg.parts.map((p) => ({ ...p })),
-									};
-									return updated;
-								}
-								return prev;
-							});
-						}
-						break;
-					}
-
-					case "tool_result": {
-						const result = data.data as {
-							id: string;
-							name?: string;
-							content: unknown;
-							isError?: boolean;
-						};
-						const currentResultMsg = streamingMessageRef.current;
-						if (currentResultMsg) {
-							currentResultMsg.parts.push({
-								type: "tool_result",
-								id: result.id,
-								name: result.name,
-								content: result.content,
-								isError: result.isError,
-							});
-							setMessages((prev) => {
-								const idx = prev.findIndex((m) => m.id === currentResultMsg.id);
-								if (idx >= 0) {
-									const updated = [...prev];
-									updated[idx] = {
-										...currentResultMsg,
-										parts: currentResultMsg.parts.map((p) => ({ ...p })),
-									};
-									return updated;
-								}
-								return prev;
-							});
-						}
-						break;
-					}
-
-					case "done": {
-						// Mark message as complete
-						if (streamingMessageRef.current) {
-							streamingMessageRef.current.isStreaming = false;
-							const completedMessage = {
-								...streamingMessageRef.current,
-								parts: streamingMessageRef.current.parts.map((p) => ({ ...p })),
-							};
-							setMessages((prev) => {
-								const idx = prev.findIndex((m) => m.id === completedMessage.id);
-								if (idx >= 0) {
-									const updated = [...prev];
-									updated[idx] = completedMessage;
-									return updated;
-								}
-								return prev;
-							});
-							onMessageComplete?.(completedMessage);
-							streamingMessageRef.current = null;
-						}
-						setIsStreaming(false);
-						break;
-					}
+					setIsStreaming(false);
+					break;
+				}
 
 					case "error": {
 						const errMsg =
@@ -753,7 +837,7 @@ export function usePiChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 				console.error("Failed to parse Pi WebSocket message:", e);
 			}
 		},
-		[onMessageComplete, onError, nextMessageId],
+		[onMessageComplete, onError, nextMessageId, scheduleStreamingUpdate],
 	);
 
 	// Connect to WebSocket - uses global cache to survive remounts
@@ -918,13 +1002,14 @@ export function usePiChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 		disconnectRef.current = disconnect;
 	}, [disconnect]);
 
-	// Keep per-session cache in sync when messages change
+	// Keep per-session cache in sync when messages change (throttled during streaming)
 	useEffect(() => {
 		if (!activeSessionId) return;
 		if (messages.length > 0) {
-			writeCachedSessionMessages(activeSessionId, messages);
+			// During streaming, writes are throttled; on completion they're forced
+			writeCachedSessionMessages(activeSessionId, messages, !isStreaming);
 		}
-	}, [activeSessionId, messages]);
+	}, [activeSessionId, messages, isStreaming]);
 
 	// Fallback: if streaming gets stuck, poll backend state to clear.
 	useEffect(() => {

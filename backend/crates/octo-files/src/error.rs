@@ -23,6 +23,12 @@ pub enum FileServerError {
     #[error("File too large: {size} bytes exceeds limit of {limit} bytes")]
     FileTooLarge { size: u64, limit: u64 },
 
+    #[error("Zip too large: {size} bytes exceeds limit of {limit} bytes")]
+    ZipTooLarge { size: u64, limit: u64 },
+
+    #[error("Zip has too many entries: {entries} exceeds limit of {limit}")]
+    ZipTooManyEntries { entries: u64, limit: u64 },
+
     #[error("Directory operation not allowed on file")]
     NotADirectory,
 
@@ -49,6 +55,13 @@ impl IntoResponse for FileServerError {
             FileServerError::FileTooLarge { .. } => {
                 (StatusCode::PAYLOAD_TOO_LARGE, "FILE_TOO_LARGE")
             }
+            FileServerError::ZipTooLarge { .. } => {
+                (StatusCode::PAYLOAD_TOO_LARGE, "ZIP_TOO_LARGE")
+            }
+            FileServerError::ZipTooManyEntries { .. } => (
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "ZIP_TOO_MANY_ENTRIES",
+            ),
             FileServerError::NotADirectory => (StatusCode::BAD_REQUEST, "NOT_A_DIRECTORY"),
             FileServerError::NotAFile => (StatusCode::BAD_REQUEST, "NOT_A_FILE"),
             FileServerError::CreateDirFailed(_) => {

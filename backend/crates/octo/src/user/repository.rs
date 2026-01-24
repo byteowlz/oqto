@@ -276,6 +276,11 @@ impl UserRepository {
             values.push(settings.clone());
         }
 
+        if let Some(linux_username) = &request.linux_username {
+            updates.push("linux_username = ?");
+            values.push(linux_username.clone());
+        }
+
         if updates.is_empty() {
             return Ok(existing);
         }
@@ -329,11 +334,12 @@ impl UserRepository {
     }
 
     pub async fn get_mmry_port(&self, user_id: &str) -> Result<Option<i64>> {
-        let row: Option<(Option<i64>,)> = sqlx::query_as("SELECT mmry_port FROM users WHERE id = ?")
-            .bind(user_id)
-            .fetch_optional(&self.pool)
-            .await
-            .context("Failed to fetch user mmry_port")?;
+        let row: Option<(Option<i64>,)> =
+            sqlx::query_as("SELECT mmry_port FROM users WHERE id = ?")
+                .bind(user_id)
+                .fetch_optional(&self.pool)
+                .await
+                .context("Failed to fetch user mmry_port")?;
         Ok(row.and_then(|r| r.0))
     }
 
@@ -377,8 +383,7 @@ impl UserRepository {
                     .fetch_all(&self.pool)
                     .await
                     .context("Failed to list allocated mmry ports")?;
-            let used: std::collections::HashSet<i64> =
-                used_rows.into_iter().map(|r| r.0).collect();
+            let used: std::collections::HashSet<i64> = used_rows.into_iter().map(|r| r.0).collect();
 
             // Pick first free port in range that is also bindable.
             let mut candidate: Option<i64> = None;
@@ -578,6 +583,7 @@ mod tests {
             role: Some(UserRole::Admin),
             is_active: None,
             settings: None,
+            linux_username: None,
         };
 
         let updated = repo.update(&user.id, update).await.unwrap();

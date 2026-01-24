@@ -84,6 +84,14 @@ import {
 	useState,
 } from "react";
 
+/** Todo item structure (matching OpenCode's todowrite tool) */
+export interface TodoItem {
+	id: string;
+	content: string;
+	status: "pending" | "in_progress" | "completed" | "cancelled";
+	priority: "high" | "medium" | "low";
+}
+
 export interface MainChatPiViewProps {
 	/** Current locale */
 	locale?: "en" | "de";
@@ -115,6 +123,8 @@ export interface MainChatPiViewProps {
 	newSessionTrigger?: number;
 	/** Callback when a message is sent (for sidebar refresh) */
 	onMessageSent?: () => void;
+	/** Callback when todos change (extracted from Pi todowrite tool calls) */
+	onTodosChange?: (todos: TodoItem[]) => void;
 }
 
 /**
@@ -135,6 +145,7 @@ export function MainChatPiView({
 	onScrollToMessageComplete,
 	newSessionTrigger,
 	onMessageSent,
+	onTodosChange,
 }: MainChatPiViewProps) {
 	const {
 		messages,
@@ -164,6 +175,14 @@ export function MainChatPiView({
 			lastNewSessionTriggerRef.current !== undefined
 		) {
 			newSession();
+			// Clear the input when starting a new session
+			setInput("");
+			setFileAttachments([]);
+			try {
+				localStorage.removeItem("octo:mainChatDraft");
+			} catch {
+				// Ignore localStorage errors
+			}
 		}
 		lastNewSessionTriggerRef.current = newSessionTrigger;
 	}, [newSessionTrigger, newSession]);
@@ -252,6 +271,31 @@ export function MainChatPiView({
 		}
 		return { surfacesByMessageId: map, orphanedSurfaces: orphaned };
 	}, [a2uiSurfaces, messages]);
+
+	// Extract todos from messages and notify parent
+	useEffect(() => {
+		if (!onTodosChange) return;
+
+		// Go through all messages in reverse to find the most recent todowrite
+		for (let i = messages.length - 1; i >= 0; i--) {
+			const msg = messages[i];
+			for (let j = msg.parts.length - 1; j >= 0; j--) {
+				const part = msg.parts[j];
+				if (
+					part.type === "tool_use" &&
+					part.name?.toLowerCase().includes("todo")
+				) {
+					const input = part.input as Record<string, unknown> | undefined;
+					if (input?.todos && Array.isArray(input.todos)) {
+						onTodosChange(input.todos as TodoItem[]);
+						return;
+					}
+				}
+			}
+		}
+		// No todos found
+		onTodosChange([]);
+	}, [messages, onTodosChange]);
 
 	// Voice configuration
 	const voiceConfig = useMemo(
@@ -1443,6 +1487,12 @@ type PiSegment =
 			toolResult?: Extract<PiMessagePart, { type: "tool_result" }>;
 			timestamp: number;
 	  }
+	| {
+			key: string;
+			type: "tool_result_only";
+			part: Extract<PiMessagePart, { type: "tool_result" }>;
+			timestamp: number;
+	  }
 	| { key: string; type: "thinking"; content: string; timestamp: number }
 	| { key: string; type: "compaction"; content: string; timestamp: number };
 
@@ -1545,16 +1595,11 @@ const PiMessageGroupCard = memo(function PiMessageGroupCard({
 		} else if (part.type === "tool_result") {
 			// Render only if we don't have a corresponding tool_use
 			if (!toolUseIds.has(part.id)) {
+				// Render as a standalone tool result segment (not a fake tool_use with empty input)
 				segments.push({
 					key,
-					type: "tool_use",
-					part: {
-						type: "tool_use",
-						id: part.id,
-						name: part.name ?? "tool",
-						input: {},
-					},
-					toolResult: part,
+					type: "tool_result_only",
+					part,
 					timestamp,
 				});
 			}
@@ -1675,6 +1720,17 @@ const PiMessageGroupCard = memo(function PiMessageGroupCard({
 								key={segment.key}
 								part={segment.part}
 								toolResult={segment.toolResult}
+								locale={locale}
+								workspacePath={workspacePath}
+							/>
+						);
+					}
+					if (segment.type === "tool_result_only") {
+						// Render standalone tool result (no matching tool_use found)
+						return (
+							<PiPartRenderer
+								key={segment.key}
+								part={segment.part}
 								locale={locale}
 								workspacePath={workspacePath}
 							/>

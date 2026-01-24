@@ -1,5 +1,11 @@
 import type { OpenCodeMessageWithParts } from "@/features/sessions/api";
 
+// Generate a fingerprint for optimistic message matching
+function getOptimisticFingerprint(msg: OpenCodeMessageWithParts): string {
+	const text = msg.parts.find((p) => p.type === "text")?.text || "";
+	return `${msg.info.role}:${text}`;
+}
+
 // Merge messages to prevent flickering - preserves existing message references when unchanged.
 // Also preserves optimistic (temp-*) messages that haven't been confirmed yet.
 export function mergeSessionMessages(
@@ -13,26 +19,52 @@ export function mergeSessionMessages(
 		return optimistic.length > 0 ? optimistic : next;
 	}
 
-	// Build a map of existing messages by ID for quick lookup.
+	// Build a map of existing messages by ID for O(1) lookup.
 	const prevById = new Map(prev.map((m) => [m.info.id, m]));
 
+	// Pre-index next messages by fingerprint for O(1) optimistic matching
+	const nextByFingerprint = new Map<string, OpenCodeMessageWithParts[]>();
+	for (const m of next) {
+		if (m.info.role !== "user") continue;
+		const fp = getOptimisticFingerprint(m);
+		const existing = nextByFingerprint.get(fp);
+		if (existing) {
+			existing.push(m);
+		} else {
+			nextByFingerprint.set(fp, [m]);
+		}
+	}
+
 	// Preserve optimistic messages (temp-*) that don't have corresponding real messages yet.
-	const optimisticMessages = prev.filter((m) => m.info.id.startsWith("temp-"));
-	const pendingOptimistic = optimisticMessages.filter((optMsg) => {
-		const optText = optMsg.parts.find((p) => p.type === "text")?.text || "";
+	const pendingOptimistic: OpenCodeMessageWithParts[] = [];
+	for (const optMsg of prev) {
+		if (!optMsg.info.id.startsWith("temp-")) continue;
+
 		const optCreated = optMsg.info.time?.created;
-		const hasMatchingRealMessage = next.some((m) => {
-			if (m.info.role !== "user") return false;
-			const realText = m.parts.find((p) => p.type === "text")?.text || "";
-			if (realText !== optText) return false;
-			const realCreated = m.info.time?.created;
-			if (optCreated && realCreated) {
-				return Math.abs(realCreated - optCreated) < 15000;
+		const fp = getOptimisticFingerprint(optMsg);
+		const candidates = nextByFingerprint.get(fp);
+
+		let hasMatch = false;
+		if (candidates) {
+			for (const m of candidates) {
+				const realCreated = m.info.time?.created;
+				if (optCreated && realCreated) {
+					if (Math.abs(realCreated - optCreated) < 15000) {
+						hasMatch = true;
+						break;
+					}
+				} else {
+					// No timestamps, consider it a match by content
+					hasMatch = true;
+					break;
+				}
 			}
-			return false;
-		});
-		return !hasMatchingRealMessage;
-	});
+		}
+
+		if (!hasMatch) {
+			pendingOptimistic.push(optMsg);
+		}
+	}
 
 	// Merge: keep existing reference if message hasn't changed, otherwise use new one.
 	const merged = next.map((newMsg) => {
@@ -67,6 +99,20 @@ export function mergeSessionMessages(
 		// No significant changes detected, keep existing reference.
 		return existing;
 	});
+
+	if (pendingOptimistic.length === 0) {
+		// Fast path: no optimistic messages, check if already sorted
+		let isSorted = true;
+		for (let i = 1; i < merged.length; i++) {
+			const prevCreated = merged[i - 1].info.time?.created ?? 0;
+			const currCreated = merged[i].info.time?.created ?? 0;
+			if (currCreated < prevCreated) {
+				isSorted = false;
+				break;
+			}
+		}
+		if (isSorted) return merged;
+	}
 
 	const combined =
 		pendingOptimistic.length > 0 ? [...merged, ...pendingOptimistic] : merged;

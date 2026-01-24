@@ -1,16 +1,29 @@
 "use client";
 
 import { cn } from "@/lib/utils";
-import { Bot, Loader2, MessageSquare } from "lucide-react";
+import { Bot, FolderPlus, Loader2, MessageSquare } from "lucide-react";
 import { memo, useCallback, useEffect, useRef, useState } from "react";
+
+/** Check if a string looks like a directory path */
+function looksLikePath(query: string): boolean {
+	if (!query) return false;
+	// Starts with / or ~ or contains /
+	return query.startsWith("/") || query.startsWith("~") || query.includes("/");
+}
+
+/** Expand ~ to home directory placeholder (actual expansion happens server-side) */
+function expandPath(path: string): string {
+	// Keep ~ as-is - server will expand it
+	return path;
+}
 
 export interface AgentTarget {
 	id: string;
 	name: string;
-	type: "main-chat" | "session";
+	type: "main-chat" | "session" | "new-session";
 	title?: string;
 	description?: string;
-	/** Workspace path for filtering */
+	/** Workspace path for filtering or for new session creation */
 	workspace_path?: string;
 	/** Project name for filtering */
 	project_name?: string;
@@ -174,7 +187,7 @@ export const AgentMentionPopup = memo(function AgentMentionPopup({
 		}
 
 		// Sort by match quality
-		return targets
+		const sorted = targets
 			.sort((a, b) => {
 				const scoreFields = (t: AgentTarget) =>
 					Math.max(
@@ -185,7 +198,31 @@ export const AgentMentionPopup = memo(function AgentMentionPopup({
 					);
 				return scoreFields(b) - scoreFields(a);
 			})
-			.slice(0, 15);
+			.slice(0, 14); // Leave room for new session option
+
+		// Add "New session" option if query looks like a path
+		if (looksLikePath(query)) {
+			const expandedPath = expandPath(query);
+			const dirName = expandedPath.split("/").pop() || expandedPath;
+			
+			// Check if we already have a session for this exact path
+			const hasExactMatch = sessionTargets.some(
+				(t) => t.workspace_path === expandedPath
+			);
+
+			// Always show "New session" option for path-like queries
+			// It will create a new session even if one exists for the path
+			sorted.unshift({
+				id: `new-session:${expandedPath}`,
+				name: dirName,
+				type: "new-session",
+				title: hasExactMatch ? "New session" : "Start session",
+				description: expandedPath,
+				workspace_path: expandedPath,
+			});
+		}
+
+		return sorted.slice(0, 15);
 	})();
 
 	// Reset selection when query changes
@@ -287,21 +324,29 @@ export const AgentMentionPopup = memo(function AgentMentionPopup({
 					>
 						{target.type === "main-chat" ? (
 							<Bot className="w-4 h-4 text-primary shrink-0" />
+						) : target.type === "new-session" ? (
+							<FolderPlus className="w-4 h-4 text-green-500 shrink-0" />
 						) : (
 							<MessageSquare className="w-4 h-4 text-muted-foreground shrink-0" />
 						)}
 						<div className="flex-1 min-w-0">
 							<div className="text-sm font-medium truncate">{target.name}</div>
-							{target.type === "session" && (
+							{(target.type === "session" || target.type === "new-session") && (
 								<div className="text-xs text-muted-foreground truncate">
-									{target.project_name ||
-										target.workspace_path?.split("/").pop() ||
-										"Session"}
+									{target.type === "new-session"
+										? target.description
+										: target.project_name ||
+											target.workspace_path?.split("/").pop() ||
+											"Session"}
 								</div>
 							)}
 						</div>
 						<span className="text-xs text-muted-foreground shrink-0">
-							{target.type === "main-chat" ? "Main" : "Session"}
+							{target.type === "main-chat"
+								? "Main"
+								: target.type === "new-session"
+									? target.title
+									: "Session"}
 						</span>
 					</button>
 				))}
@@ -323,13 +368,27 @@ export const AgentTargetChip = memo(function AgentTargetChip({
 		navigator.platform.toLowerCase().includes("mac");
 	const modKey = isMac ? "Cmd" : "Ctrl";
 
+	const isNewSession = target.type === "new-session";
+	const colorClass = isNewSession
+		? "bg-green-500/10 text-green-500"
+		: "bg-blue-500/10 text-blue-500";
+
 	return (
 		<span
-			className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-500/10 text-blue-500 rounded text-sm"
-			title={`Enter: ask and inject reply | ${modKey}+Enter: ask without reply`}
+			className={cn(
+				"inline-flex items-center gap-1 px-2 py-0.5 rounded text-sm",
+				colorClass,
+			)}
+			title={
+				isNewSession
+					? `New session in ${target.workspace_path}`
+					: `Enter: ask and inject reply | ${modKey}+Enter: ask without reply`
+			}
 		>
 			{target.type === "main-chat" ? (
 				<Bot className="w-3 h-3" />
+			) : target.type === "new-session" ? (
+				<FolderPlus className="w-3 h-3" />
 			) : (
 				<MessageSquare className="w-3 h-3" />
 			)}

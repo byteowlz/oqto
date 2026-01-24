@@ -257,7 +257,12 @@ pub async fn get_session(
     user: CurrentUser,
     Path(session_id): Path<String>,
 ) -> ApiResult<Json<Session>> {
-    if let Some(session) = state.sessions.for_user(user.id()).get_session(&session_id).await? {
+    if let Some(session) = state
+        .sessions
+        .for_user(user.id())
+        .get_session(&session_id)
+        .await?
+    {
         return Ok(Json(session));
     }
 
@@ -274,7 +279,11 @@ pub async fn create_session(
     user: CurrentUser,
     Json(request): Json<CreateSessionRequest>,
 ) -> ApiResult<(StatusCode, Json<SessionWithUrls>)> {
-    let session = state.sessions.for_user(user.id()).create_session(request).await?;
+    let session = state
+        .sessions
+        .for_user(user.id())
+        .create_session(request)
+        .await?;
     info!(session_id = %session.id, "Created new session");
 
     // TODO: Get actual host from request headers
@@ -290,7 +299,11 @@ pub async fn stop_session(
     Path(session_id): Path<String>,
 ) -> ApiResult<StatusCode> {
     // First check if session exists
-    let session = state.sessions.for_user(user.id()).get_session(&session_id).await?;
+    let session = state
+        .sessions
+        .for_user(user.id())
+        .get_session(&session_id)
+        .await?;
 
     if session.is_none() {
         return Err(ApiError::not_found(format!(
@@ -299,7 +312,11 @@ pub async fn stop_session(
         )));
     }
 
-    state.sessions.for_user(user.id()).stop_session(&session_id).await?;
+    state
+        .sessions
+        .for_user(user.id())
+        .stop_session(&session_id)
+        .await?;
     info!(session_id = %session_id, "Stopped session");
 
     Ok(StatusCode::NO_CONTENT)
@@ -313,7 +330,11 @@ pub async fn delete_session(
     Path(session_id): Path<String>,
 ) -> ApiResult<StatusCode> {
     // Uses centralized From<anyhow::Error> conversion
-    state.sessions.for_user(user.id()).delete_session(&session_id).await?;
+    state
+        .sessions
+        .for_user(user.id())
+        .delete_session(&session_id)
+        .await?;
 
     info!(session_id = %session_id, "Deleted session");
     Ok(StatusCode::NO_CONTENT)
@@ -329,7 +350,11 @@ pub async fn resume_session(
     user: CurrentUser,
     Path(session_id): Path<String>,
 ) -> ApiResult<Json<SessionWithUrls>> {
-    let session = state.sessions.for_user(user.id()).resume_session(&session_id).await?;
+    let session = state
+        .sessions
+        .for_user(user.id())
+        .resume_session(&session_id)
+        .await?;
     info!(session_id = %session_id, "Resumed session");
 
     let response = SessionWithUrls::from_session(session, "localhost");
@@ -439,7 +464,11 @@ pub async fn upgrade_session(
     user: CurrentUser,
     Path(session_id): Path<String>,
 ) -> ApiResult<Json<SessionWithUrls>> {
-    let session = state.sessions.for_user(user.id()).upgrade_session(&session_id).await?;
+    let session = state
+        .sessions
+        .for_user(user.id())
+        .upgrade_session(&session_id)
+        .await?;
     info!(session_id = %session_id, "Upgraded session");
 
     let response = SessionWithUrls::from_session(session, "localhost");
@@ -1185,7 +1214,11 @@ pub async fn register(
     if state.mmry.enabled && !state.mmry.single_user {
         if let Err(e) = state
             .users
-            .ensure_mmry_port(&user.id, state.mmry.user_base_port, state.mmry.user_port_range)
+            .ensure_mmry_port(
+                &user.id,
+                state.mmry.user_base_port,
+                state.mmry.user_port_range,
+            )
             .await
         {
             warn!(user_id = %user.id, error = %e, "Failed to allocate user mmry port");
@@ -1514,7 +1547,11 @@ pub async fn create_user(
     if state.mmry.enabled && !state.mmry.single_user {
         if let Err(e) = state
             .users
-            .ensure_mmry_port(&user.id, state.mmry.user_base_port, state.mmry.user_port_range)
+            .ensure_mmry_port(
+                &user.id,
+                state.mmry.user_base_port,
+                state.mmry.user_port_range,
+            )
             .await
         {
             warn!(user_id = %user.id, error = %e, "Failed to allocate user mmry port");
@@ -1811,7 +1848,11 @@ pub async fn list_agents(
         .await?
         .ok_or_else(|| ApiError::not_found(format!("Session {} not found", session_id)))?;
 
-    let opencode_session = state.sessions.for_user(user.id()).get_or_create_opencode_session().await?;
+    let opencode_session = state
+        .sessions
+        .for_user(user.id())
+        .get_or_create_opencode_session()
+        .await?;
     let agents = state
         .agents
         .list_agents(&opencode_session.id, query.include_context)
@@ -1840,7 +1881,11 @@ pub async fn get_agent(
         .await?
         .ok_or_else(|| ApiError::not_found(format!("Session {} not found", session_id)))?;
 
-    let opencode_session = state.sessions.for_user(user.id()).get_or_create_opencode_session().await?;
+    let opencode_session = state
+        .sessions
+        .for_user(user.id())
+        .get_or_create_opencode_session()
+        .await?;
     state
         .agents
         .get_agent(&opencode_session.id, &agent_id, query.include_context)
@@ -1864,7 +1909,11 @@ pub async fn start_agent(
         .await?
         .ok_or_else(|| ApiError::not_found(format!("Session {} not found", session_id)))?;
 
-    let opencode_session = state.sessions.for_user(user.id()).get_or_create_opencode_session().await?;
+    let opencode_session = state
+        .sessions
+        .for_user(user.id())
+        .get_or_create_opencode_session()
+        .await?;
     let response = state
         .agents
         .start_agent(&opencode_session.id, &request.directory)
@@ -1893,7 +1942,11 @@ pub async fn stop_agent(
         .await?
         .ok_or_else(|| ApiError::not_found(format!("Session {} not found", session_id)))?;
 
-    let opencode_session = state.sessions.for_user(user.id()).get_or_create_opencode_session().await?;
+    let opencode_session = state
+        .sessions
+        .for_user(user.id())
+        .get_or_create_opencode_session()
+        .await?;
     let response = state
         .agents
         .stop_agent(&opencode_session.id, &agent_id)
@@ -1922,7 +1975,11 @@ pub async fn rediscover_agents(
         .await?
         .ok_or_else(|| ApiError::not_found(format!("Session {} not found", session_id)))?;
 
-    let opencode_session = state.sessions.for_user(user.id()).get_or_create_opencode_session().await?;
+    let opencode_session = state
+        .sessions
+        .for_user(user.id())
+        .get_or_create_opencode_session()
+        .await?;
     state.agents.rediscover_agents(&opencode_session.id).await?;
     info!(
         requested_session_id = %session_id,
@@ -1947,7 +2004,11 @@ pub async fn create_agent(
         .await?
         .ok_or_else(|| ApiError::not_found(format!("Session {} not found", session_id)))?;
 
-    let opencode_session = state.sessions.for_user(user.id()).get_or_create_opencode_session().await?;
+    let opencode_session = state
+        .sessions
+        .for_user(user.id())
+        .get_or_create_opencode_session()
+        .await?;
     let response = state
         .agents
         .create_agent(
@@ -1982,7 +2043,11 @@ pub async fn exec_agent_command(
         .await?
         .ok_or_else(|| ApiError::not_found(format!("Session {} not found", session_id)))?;
 
-    let opencode_session = state.sessions.for_user(user.id()).get_or_create_opencode_session().await?;
+    let opencode_session = state
+        .sessions
+        .for_user(user.id())
+        .get_or_create_opencode_session()
+        .await?;
     let response = state
         .agents
         .exec_command(&opencode_session.id, request)
@@ -4190,8 +4255,13 @@ pub async fn get_trx_issue(
     Path(issue_id): Path<String>,
     Query(query): Query<TrxWorkspaceQuery>,
 ) -> ApiResult<Json<TrxIssue>> {
-    let output =
-        exec_trx_command(&state, user.id(), &query.workspace_path, &["show", &issue_id]).await?;
+    let output = exec_trx_command(
+        &state,
+        user.id(),
+        &query.workspace_path,
+        &["show", &issue_id],
+    )
+    .await?;
 
     let raw_issue: TrxIssueRaw = serde_json::from_str(&output)
         .map_err(|e| ApiError::internal(format!("Failed to parse trx output: {}", e)))?;

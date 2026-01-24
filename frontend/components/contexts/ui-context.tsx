@@ -44,38 +44,17 @@ const defaultUIContext: UIContextValue = {
 
 const UIContext = createContext<UIContextValue>(defaultUIContext);
 
-const LAST_APP_KEY = "octo:lastActiveApp";
-
 export function UIProvider({ children }: { children: ReactNode }) {
 	const [locale, setLocaleState] = useState<Locale>("de");
 	const apps = useMemo(() => appRegistry.getAllApps(), []);
-	// Restore last active app from localStorage, default to "sessions" (chat view)
+	// Always start with sessions app - last active chat is restored by SessionContext
 	const [activeAppId, setActiveAppIdRaw] = useState(() => {
-		if (typeof window !== "undefined") {
-			try {
-				const stored = localStorage.getItem(LAST_APP_KEY);
-				if (stored && apps.some((app) => app.id === stored)) {
-					return stored;
-				}
-			} catch {
-				// Ignore localStorage errors
-			}
-		}
-		// Default to sessions app to show the most recent chat
 		return apps.find((app) => app.id === "sessions")?.id ?? apps[0]?.id ?? "";
 	});
 	const activeApp = apps.find((app) => app.id === activeAppId) ?? apps[0];
 
-	// Persist active app to localStorage
 	const setActiveAppId = useCallback((id: string) => {
 		setActiveAppIdRaw(id);
-		if (typeof window !== "undefined") {
-			try {
-				localStorage.setItem(LAST_APP_KEY, id);
-			} catch {
-				// Ignore localStorage errors
-			}
-		}
 	}, []);
 
 	useEffect(() => {

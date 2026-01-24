@@ -1,5 +1,11 @@
 # Changes
 
+- 2026-01-25: Retry OpenCode sessions on WS subscribe when opencode is unhealthy and only treat local sessions as running when all core ports are bound.
+- 2026-01-25: Attach session IDs to WebSocket command errors so OpenCode failures surface in the chat UI.
+- 2026-01-25: Show a toast when OpenCode message sends fail in the session screen.
+- 2026-01-25: Create a TRX epic with performance hotspots and remediation steps for UI handler violations.
+- 2026-01-25: Restrict auth token query parameters to WebSocket-only endpoints.
+- 2026-01-25: Cap zip downloads by total bytes and entry count in octo-files.
 - 2026-01-21: Sidebar session search now filters Main Chat entries and counts Main Chat matches in results.
 - 2026-01-21: Improved chat session selection stability, Main Chat sidebar refresh, and file upload handling.
 - 2026-01-21: Added a rotating segment ring around stop buttons in Main Chat and OpenCode sessions.

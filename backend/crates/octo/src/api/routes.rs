@@ -19,6 +19,7 @@ use super::handlers;
 use super::main_chat as main_chat_handlers;
 use super::main_chat_files;
 use super::main_chat_pi as main_chat_pi_handlers;
+use super::onboarding_handlers;
 use super::proxy;
 use super::state::AppState;
 use super::ui_control as ui_control_handlers;
@@ -186,6 +187,32 @@ pub fn create_router_with_config(state: AppState, max_upload_size_mb: usize) -> 
         .route("/ui/sidebar", post(ui_control_handlers::sidebar))
         .route("/ui/panel", post(ui_control_handlers::panel))
         .route("/ui/theme", post(ui_control_handlers::theme))
+        // Onboarding routes
+        .route(
+            "/onboarding",
+            get(onboarding_handlers::get_onboarding).put(onboarding_handlers::update_onboarding),
+        )
+        .route(
+            "/onboarding/check",
+            get(onboarding_handlers::needs_onboarding),
+        )
+        .route(
+            "/onboarding/advance",
+            post(onboarding_handlers::advance_stage),
+        )
+        .route(
+            "/onboarding/unlock/{component}",
+            post(onboarding_handlers::unlock_component),
+        )
+        .route("/onboarding/godmode", post(onboarding_handlers::godmode))
+        .route(
+            "/onboarding/complete",
+            post(onboarding_handlers::complete_onboarding),
+        )
+        .route(
+            "/onboarding/reset",
+            post(onboarding_handlers::reset_onboarding),
+        )
         // Admin routes - sessions
         .route("/admin/sessions", get(handlers::admin_list_sessions))
         .route(
@@ -378,7 +405,8 @@ pub fn create_router_with_config(state: AppState, max_upload_size_mb: usize) -> 
         .route(
             "/main/pi/sessions/{session_id}",
             get(main_chat_pi_handlers::get_pi_session_messages)
-                .post(main_chat_pi_handlers::resume_pi_session),
+                .post(main_chat_pi_handlers::resume_pi_session)
+                .patch(main_chat_pi_handlers::update_pi_session),
         )
         // Main Chat file access routes
         .nest("/main/files", main_chat_files::main_chat_file_routes())

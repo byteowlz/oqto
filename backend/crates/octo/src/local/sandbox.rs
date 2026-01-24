@@ -127,6 +127,54 @@ impl Default for SandboxConfig {
 }
 
 impl SandboxConfig {
+    /// Create a minimal sandbox config (least restrictive).
+    pub fn minimal() -> Self {
+        Self {
+            enabled: true,
+            profile: "minimal".to_string(),
+            deny_read: vec![],
+            allow_write: vec!["/tmp".to_string()],
+            deny_write: vec![],
+            isolate_network: false,
+            isolate_pid: false,
+            extra_ro_bind: vec![],
+            extra_rw_bind: vec![],
+        }
+    }
+
+    /// Create a strict sandbox config (most restrictive).
+    pub fn strict() -> Self {
+        Self {
+            enabled: true,
+            profile: "strict".to_string(),
+            deny_read: vec![
+                "~/.ssh".to_string(),
+                "~/.gnupg".to_string(),
+                "~/.aws".to_string(),
+                "~/.config".to_string(),
+            ],
+            allow_write: vec!["/tmp".to_string()],
+            deny_write: vec![],
+            isolate_network: true,
+            isolate_pid: true,
+            extra_ro_bind: vec![],
+            extra_rw_bind: vec![],
+        }
+    }
+
+    /// Create a config from a named profile.
+    pub fn from_profile(profile: &str) -> Self {
+        match profile {
+            "minimal" => Self::minimal(),
+            "strict" => Self::strict(),
+            "development" => Self::default(),
+            _ => {
+                // Unknown profiles fall back to development
+                Self::default()
+            }
+        }
+    }
+
     /// Load user-level sandbox config from `~/.config/octo/sandbox.toml`.
     ///
     /// Returns default config if file doesn't exist.

@@ -130,6 +130,17 @@ create_home = true
 # while preventing them from weakening their own security restrictions.
 # See examples/sandbox.toml for sandbox configuration options.
 
+# Runner configuration for user-plane isolation.
+# The runner daemon (octo-runner) reads this section to locate user data.
+[runner]
+# Directory containing Pi session files (for main chat history).
+# Defaults to $XDG_DATA_HOME/pi/sessions (~/.local/share/pi/sessions)
+# pi_sessions_dir = "~/.local/share/pi/sessions"
+
+# Directory containing memories (mmry database).
+# Defaults to $XDG_DATA_HOME/mmry (~/.local/share/mmry)
+# memories_dir = "~/.local/share/mmry"
+
 [agent_browser]
 # Enable per-session agent-browser daemon management.
 enabled = false
