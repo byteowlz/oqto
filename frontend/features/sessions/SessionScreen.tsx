@@ -2201,43 +2201,63 @@ export const SessionScreen = memo(function SessionScreen() {
 		loadMessages();
 	}, [loadMessages]);
 
+	// RAF-throttled scroll handler state
+	const scrollRafRef = useRef<number | null>(null);
+	const pendingScrollRef = useRef(false);
+
 	// Handle scroll events to show/hide scroll to bottom button and cache position
+	// Throttled via RAF to avoid blocking the main thread
 	const handleScroll = useCallback(() => {
-		const container = messagesContainerRef.current;
-		if (!container) return;
+		pendingScrollRef.current = true;
 
-		const { scrollTop, scrollHeight, clientHeight } = container;
-		const distanceFromBottom = scrollHeight - scrollTop - clientHeight;
-		const lastScrollTop = lastScrollTopRef.current;
-		lastScrollTopRef.current = scrollTop;
+		// If RAF already scheduled, let it handle the update
+		if (scrollRafRef.current !== null) return;
 
-		// Detect if user scrolled up (intentionally moving away from bottom)
-		const scrolledUp = scrollTop < lastScrollTop;
-		const isAtBottom = distanceFromBottom < 50;
+		scrollRafRef.current = requestAnimationFrame(() => {
+			scrollRafRef.current = null;
+			if (!pendingScrollRef.current) return;
+			pendingScrollRef.current = false;
 
-		// Disable auto-scroll when user scrolls up away from bottom
-		if (scrolledUp && distanceFromBottom > 100) {
-			autoScrollEnabledRef.current = false;
-		}
+			const container = messagesContainerRef.current;
+			if (!container) return;
 
-		// Re-enable auto-scroll when user scrolls to bottom
-		if (isAtBottom) {
-			autoScrollEnabledRef.current = true;
-		}
+			const { scrollTop, scrollHeight, clientHeight } = container;
+			const distanceFromBottom = scrollHeight - scrollTop - clientHeight;
+			const lastScrollTop = lastScrollTopRef.current;
+			lastScrollTopRef.current = scrollTop;
 
-		// Cache scroll position for current session
-		if (selectedChatSessionId) {
-			if (isAtBottom) {
-				// At bottom - clear cached position so next load scrolls to bottom
-				scrollPositionCacheRef.current.set(selectedChatSessionId, null);
-			} else {
-				// Save scroll position
-				scrollPositionCacheRef.current.set(selectedChatSessionId, scrollTop);
+			// Detect if user scrolled up (intentionally moving away from bottom)
+			const scrolledUp = scrollTop < lastScrollTop;
+			const isAtBottom = distanceFromBottom < 50;
+
+			// Disable auto-scroll when user scrolls up away from bottom
+			if (scrolledUp && distanceFromBottom > 100) {
+				autoScrollEnabledRef.current = false;
 			}
-		}
 
-		// Show button when not at bottom (use small threshold for better UX)
-		setShowScrollToBottom(distanceFromBottom > 100);
+			// Re-enable auto-scroll when user scrolls to bottom
+			if (isAtBottom) {
+				autoScrollEnabledRef.current = true;
+			}
+
+			// Cache scroll position for current session
+			if (selectedChatSessionId) {
+				if (isAtBottom) {
+					// At bottom - clear cached position so next load scrolls to bottom
+					scrollPositionCacheRef.current.set(selectedChatSessionId, null);
+				} else {
+					// Save scroll position
+					scrollPositionCacheRef.current.set(selectedChatSessionId, scrollTop);
+				}
+			}
+
+			// Only update state if threshold actually changed
+			const shouldShow = distanceFromBottom > 100;
+			setShowScrollToBottom((prev) => {
+				if (prev === shouldShow) return prev;
+				return shouldShow;
+			});
+		});
 	}, [selectedChatSessionId]);
 
 	const messageCount = messages.length;
@@ -2394,8 +2414,9 @@ export const SessionScreen = memo(function SessionScreen() {
 		(event: WsEvent) => {
 			const eventType = event.type as string;
 
-			// Debug: log all events to help diagnose permission issues
+			// Debug: log events only when perf debugging is enabled
 			if (
+				perfEnabled &&
 				eventType !== "message_updated" &&
 				eventType !== "text_delta" &&
 				eventType !== "thinking_delta"
@@ -2611,19 +2632,23 @@ export const SessionScreen = memo(function SessionScreen() {
 				eventType === "tool_start" ||
 				eventType === "tool_end"
 			) {
+				// Only invalidate cache on completion events to reduce overhead
+				// High-frequency events (text_delta, thinking_delta) just trigger refresh
+				const isCompletionEvent =
+					eventType === "message_end" || eventType === "tool_end";
+				const isHighFrequency =
+					eventType === "text_delta" || eventType === "thinking_delta";
+
 				startTransition(() => {
-					if (effectiveOpencodeBaseUrl && activeSessionId) {
+					if (isCompletionEvent && effectiveOpencodeBaseUrl && activeSessionId) {
 						invalidateMessageCache(
 							effectiveOpencodeBaseUrl,
 							activeSessionId,
 							opencodeDirectory,
 						);
 					}
-					requestMessageRefresh(
-						eventType === "text_delta" || eventType === "thinking_delta"
-							? 400
-							: 1000,
-					);
+					// Use longer throttle for high-frequency events
+					requestMessageRefresh(isHighFrequency ? 500 : 1000);
 				});
 			}
 
@@ -2675,6 +2700,7 @@ export const SessionScreen = memo(function SessionScreen() {
 			refreshChatHistory,
 			requestMessageRefresh,
 			setChatState,
+			perfEnabled,
 		],
 	);
 
@@ -3695,33 +3721,35 @@ export const SessionScreen = memo(function SessionScreen() {
 			}, 300);
 
 			// Defer popup state updates to avoid blocking input
+			// Only update state when values actually change to minimize re-renders
 			startTransition(() => {
 				// Show slash popup when typing /
-				if (value.startsWith("/")) {
-					setShowSlashPopup(true);
-					setShowFileMentionPopup(false);
-					setShowAgentMentionPopup(false);
-				} else {
-					setShowSlashPopup(false);
-				}
+				const shouldShowSlash = value.startsWith("/");
+				setShowSlashPopup((prev) => (prev === shouldShowSlash ? prev : shouldShowSlash));
+
 				// Show agent mention popup when typing @@ (check before single @)
 				const doubleAtMatch = value.match(/@@([^\s]*)$/);
-				if (doubleAtMatch && !value.startsWith("/")) {
+				const shouldShowAgent = !!doubleAtMatch && !value.startsWith("/");
+				const newAgentQuery = doubleAtMatch?.[1] ?? "";
+
+				if (shouldShowAgent) {
 					setShowAgentMentionPopup(true);
-					setAgentMentionQuery(doubleAtMatch[1]);
+					setAgentMentionQuery((prev) => (prev === newAgentQuery ? prev : newAgentQuery));
 					setShowFileMentionPopup(false);
 					setFileMentionQuery("");
 				} else {
-					setShowAgentMentionPopup(false);
-					setAgentMentionQuery("");
+					setShowAgentMentionPopup((prev) => (prev === false ? prev : false));
+					setAgentMentionQuery((prev) => (prev === "" ? prev : ""));
 					// Show file mention popup when typing single @ (but not @@)
 					const atMatch = value.match(/(?<!@)@([^\s@]*)$/);
-					if (atMatch && !value.startsWith("/")) {
+					const shouldShowFile = !!atMatch && !value.startsWith("/");
+					const newFileQuery = atMatch?.[1] ?? "";
+					if (shouldShowFile) {
 						setShowFileMentionPopup(true);
-						setFileMentionQuery(atMatch[1]);
+						setFileMentionQuery((prev) => (prev === newFileQuery ? prev : newFileQuery));
 					} else {
-						setShowFileMentionPopup(false);
-						setFileMentionQuery("");
+						setShowFileMentionPopup((prev) => (prev === false ? prev : false));
+						setFileMentionQuery((prev) => (prev === "" ? prev : ""));
 					}
 				}
 			});

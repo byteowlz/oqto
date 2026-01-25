@@ -154,22 +154,74 @@ export function MainChatEntry({
 	const lastNewSessionTriggerRef = useRef(newSessionTrigger);
 	const lastActiveSessionIdRef = useRef(activeSessionId);
 	const lastSessionActivityTriggerRef = useRef(sessionActivityTrigger);
+	// Throttle refresh to avoid excessive API calls
+	const lastRefreshTimeRef = useRef(0);
+	const pendingRefreshRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const REFRESH_THROTTLE_MS = 5000; // At most one refresh every 5 seconds
 
 	// Unconditional refresh - always fetches sessions regardless of selection state
+	// Now with throttling to avoid excessive refreshes
 	const refreshSessionsUnconditional = useCallback(() => {
 		if (!assistantName) return;
-		listMainChatPiSessions()
-			.then((sessionList) => {
-				const sorted = [...sessionList].sort(
-					(a, b) => b.modified_at - a.modified_at,
-				);
-				setSessions(sorted);
-				setLatestSessionId(sorted[0]?.id ?? null);
-				writeCachedSessions(assistantName, sorted);
-			})
-			.catch(() => {
-				// ignore
-			});
+
+		const now = Date.now();
+		const elapsed = now - lastRefreshTimeRef.current;
+
+		// Clear any pending refresh
+		if (pendingRefreshRef.current) {
+			clearTimeout(pendingRefreshRef.current);
+			pendingRefreshRef.current = null;
+		}
+
+		const doRefresh = () => {
+			lastRefreshTimeRef.current = Date.now();
+			listMainChatPiSessions()
+				.then((sessionList) => {
+					const sorted = [...sessionList].sort(
+						(a, b) => b.modified_at - a.modified_at,
+					);
+					// Only update state if data actually changed
+					setSessions((prev) => {
+						if (prev.length !== sorted.length) {
+							writeCachedSessions(assistantName, sorted);
+							return sorted;
+						}
+						// Check if any session changed
+						let changed = false;
+						for (let i = 0; i < prev.length; i++) {
+							if (
+								prev[i].id !== sorted[i].id ||
+								prev[i].modified_at !== sorted[i].modified_at ||
+								prev[i].title !== sorted[i].title
+							) {
+								changed = true;
+								break;
+							}
+						}
+						if (changed) {
+							writeCachedSessions(assistantName, sorted);
+							return sorted;
+						}
+						return prev;
+					});
+					setLatestSessionId((prev) => {
+						const newLatest = sorted[0]?.id ?? null;
+						return prev === newLatest ? prev : newLatest;
+					});
+				})
+				.catch(() => {
+					// ignore
+				});
+		};
+
+		if (elapsed >= REFRESH_THROTTLE_MS) {
+			// Enough time has passed, refresh immediately
+			doRefresh();
+		} else {
+			// Schedule refresh after throttle interval
+			const delay = REFRESH_THROTTLE_MS - elapsed;
+			pendingRefreshRef.current = setTimeout(doRefresh, delay);
+		}
 	}, [assistantName]);
 
 	const refreshSessions = useCallback(() => {
