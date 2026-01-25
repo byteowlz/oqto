@@ -405,7 +405,10 @@ impl RunnerClient {
     }
 
     /// Stop a running session.
-    pub async fn stop_session(&self, session_id: impl Into<String>) -> Result<SessionStoppedResponse> {
+    pub async fn stop_session(
+        &self,
+        session_id: impl Into<String>,
+    ) -> Result<SessionStoppedResponse> {
         let req = RunnerRequest::StopSession(StopSessionRequest {
             session_id: session_id.into(),
         });
@@ -495,7 +498,10 @@ impl RunnerClient {
     }
 
     /// Delete a memory by ID.
-    pub async fn delete_memory(&self, memory_id: impl Into<String>) -> Result<MemoryDeletedResponse> {
+    pub async fn delete_memory(
+        &self,
+        memory_id: impl Into<String>,
+    ) -> Result<MemoryDeletedResponse> {
         let req = RunnerRequest::DeleteMemory(DeleteMemoryRequest {
             memory_id: memory_id.into(),
         });
@@ -563,8 +569,8 @@ impl std::fmt::Debug for RunnerClient {
 fn lookup_uid(username: &str) -> Result<u32> {
     use std::ffi::CString;
 
-    let c_username = CString::new(username)
-        .with_context(|| format!("invalid username: {}", username))?;
+    let c_username =
+        CString::new(username).with_context(|| format!("invalid username: {}", username))?;
 
     // SAFETY: getpwnam is safe to call with a valid C string.
     // We immediately copy the uid before the pointer could become invalid.
@@ -620,14 +626,17 @@ mod tests {
         assert_ne!(alice.socket_path(), bob.socket_path());
 
         // Verify socket path format
-        assert!(alice
-            .socket_path()
-            .to_string_lossy()
-            .contains("/run/user/1001/"));
-        assert!(bob
-            .socket_path()
-            .to_string_lossy()
-            .contains("/run/user/1002/"));
+        assert!(
+            alice
+                .socket_path()
+                .to_string_lossy()
+                .contains("/run/user/1001/")
+        );
+        assert!(
+            bob.socket_path()
+                .to_string_lossy()
+                .contains("/run/user/1002/")
+        );
     }
 }
 
@@ -656,7 +665,10 @@ mod security_tests {
         let alice_result = alice_client
             .read_file("/home/alice/.bashrc", None, None)
             .await;
-        assert!(alice_result.is_ok(), "Alice should be able to read her own files");
+        assert!(
+            alice_result.is_ok(),
+            "Alice should be able to read her own files"
+        );
 
         // Alice's runner should NOT be able to read Bob's files
         let cross_access_result = alice_client
@@ -668,10 +680,11 @@ mod security_tests {
         );
 
         // And vice versa
-        let bob_result = bob_client
-            .read_file("/home/bob/.bashrc", None, None)
-            .await;
-        assert!(bob_result.is_ok(), "Bob should be able to read his own files");
+        let bob_result = bob_client.read_file("/home/bob/.bashrc", None, None).await;
+        assert!(
+            bob_result.is_ok(),
+            "Bob should be able to read his own files"
+        );
 
         let cross_access_result = bob_client
             .read_file("/home/alice/.bashrc", None, None)

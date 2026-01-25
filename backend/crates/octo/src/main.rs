@@ -37,6 +37,7 @@ mod runner;
 mod session;
 mod session_ui;
 mod settings;
+mod templates;
 mod user;
 mod user_plane;
 mod wordlist;
@@ -485,6 +486,8 @@ struct AppConfig {
     agent_browser: agent_browser::AgentBrowserConfig,
     /// Server configuration.
     server: ServerConfig,
+    /// Onboarding templates configuration.
+    onboarding_templates: templates::OnboardingTemplatesConfig,
 }
 
 /// Server configuration.
@@ -600,6 +603,7 @@ impl Default for AppConfig {
             pi: PiConfig::default(),
             agent_browser: agent_browser::AgentBrowserConfig::default(),
             server: ServerConfig::default(),
+            onboarding_templates: templates::OnboardingTemplatesConfig::default(),
         }
     }
 }
@@ -1097,7 +1101,9 @@ impl Default for LocalModeConfig {
             linux_users: LinuxUsersConfig::default(),
             cleanup_on_startup: false,
             stop_sessions_on_shutdown: false,
-            runner_socket_pattern: Some("/run/octo/runner-sockets/{user}/octo-runner.sock".to_string()),
+            runner_socket_pattern: Some(
+                "/run/octo/runner-sockets/{user}/octo-runner.sock".to_string(),
+            ),
         }
     }
 }
@@ -1862,9 +1868,7 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     if local_mode && !single_user && ctx.config.mmry.enabled {
         if let Some(ref local_cfg) = session_config.local_config {
             if !local_cfg.linux_users.enabled {
-                warn!(
-                    "mmry per-user instances require local.linux_users.enabled=true (skipping)"
-                );
+                warn!("mmry per-user instances require local.linux_users.enabled=true (skipping)");
             } else {
                 let linux_users = local_cfg.linux_users.clone();
                 let user_mmry = local::UserMmryManager::new(
@@ -2154,6 +2158,14 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
         };
         state = state.with_linux_users(linux_users_config);
     }
+
+    // Initialize onboarding templates service
+    let onboarding_templates_service = templates::OnboardingTemplatesService::new(
+        ctx.config.onboarding_templates.clone(),
+        &ctx.paths.data_dir,
+    );
+    info!("Onboarding templates service initialized");
+    state = state.with_onboarding_templates(onboarding_templates_service);
 
     // Initialize Main Chat service
     // Uses the user data path as the workspace dir for per-user Main Chat data

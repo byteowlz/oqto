@@ -53,7 +53,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { memo, useCallback, useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 
 // Issue attachment type
 interface IssueAttachment {
@@ -601,6 +601,8 @@ export const TrxView = memo(function TrxView({
   const [filterType, setFilterType] = useState<FilterType>("all");
   const [hideClosed, setHideClosed] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const deferredSearchQuery = useDeferredValue(searchQuery);
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const [searchIncludeDescription, setSearchIncludeDescription] =
     useState(false);
   const [selectedIssueIds, setSelectedIssueIds] = useState<Set<string>>(
@@ -702,13 +704,13 @@ export const TrxView = memo(function TrxView({
         if (filterType !== "all" && issue.issue_type !== filterType)
           return false;
         // Fuzzy search on title, optionally description, and id
-        if (searchQuery) {
-          const matchesTitle = fuzzyMatch(issue.title, searchQuery);
+        if (deferredSearchQuery) {
+          const matchesTitle = fuzzyMatch(issue.title, deferredSearchQuery);
           const matchesDescription =
             searchIncludeDescription && issue.description
-              ? fuzzyMatch(issue.description, searchQuery)
+              ? fuzzyMatch(issue.description, deferredSearchQuery)
               : false;
-          const matchesId = fuzzyMatch(issue.id, searchQuery);
+          const matchesId = fuzzyMatch(issue.id, deferredSearchQuery);
           if (!matchesTitle && !matchesDescription && !matchesId) return false;
         }
         return true;
@@ -718,7 +720,7 @@ export const TrxView = memo(function TrxView({
       filterStatus,
       filterType,
       hideClosed,
-      searchQuery,
+      deferredSearchQuery,
       searchIncludeDescription,
       fuzzyMatch,
     ],
@@ -1242,19 +1244,25 @@ export const TrxView = memo(function TrxView({
           <div className="flex items-center h-7 rounded-md bg-muted/30 px-2 text-xs">
             <Search className="ml-1 w-3.5 h-3.5 text-muted-foreground shrink-0" />
 
-            <Input
-              value={searchQuery}
+            <input
+              ref={searchInputRef}
+              defaultValue={searchQuery}
               onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
                 setSearchQuery(e.target.value)
               }
               placeholder="Search tasks..."
-              className="h-full flex-1 border-none bg-transparent px-2 shadow-none focus-visible:ring-0"
+              className="h-full flex-1 border-none bg-transparent px-2 shadow-none outline-none text-foreground placeholder:text-muted-foreground"
             />
 
             {searchQuery && (
               <button
                 type="button"
-                onClick={() => setSearchQuery("")}
+                onClick={() => {
+                  setSearchQuery("");
+                  if (searchInputRef.current) {
+                    searchInputRef.current.value = "";
+                  }
+                }}
                 className="text-muted-foreground hover:text-foreground shrink-0"
               >
                 <X className="w-3 h-3" />
@@ -1360,7 +1368,7 @@ export const TrxView = memo(function TrxView({
       )}
 
       {/* Issues list */}
-      <div className="flex-1 overflow-auto pl-3 pr-0.5 space-y-1">
+      <div className="flex-1 overflow-auto pl-3 pr-0.5 pt-0.5 space-y-1">
         {issues.length === 0 ? (
           <div className="flex items-center justify-center h-full">
             <div className="text-center text-muted-foreground">

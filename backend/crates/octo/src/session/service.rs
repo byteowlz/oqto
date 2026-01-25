@@ -211,43 +211,63 @@ impl<'a> UserSessionService<'a> {
     }
 
     pub async fn get_session(&self, session_id: &str) -> Result<Option<Session>> {
-        self.svc.get_session_for_user(self.user_id, session_id).await
+        self.svc
+            .get_session_for_user(self.user_id, session_id)
+            .await
     }
 
     pub async fn create_session(&self, request: CreateSessionRequest) -> Result<Session> {
-        self.svc.create_session_for_user(self.user_id, request).await
+        self.svc
+            .create_session_for_user(self.user_id, request)
+            .await
     }
 
     pub async fn get_or_create_session(&self, request: CreateSessionRequest) -> Result<Session> {
-        self.svc.get_or_create_session_for_user(self.user_id, request).await
+        self.svc
+            .get_or_create_session_for_user(self.user_id, request)
+            .await
     }
 
-    pub async fn get_or_create_session_for_workspace(&self, workspace_path: &str) -> Result<Session> {
+    pub async fn get_or_create_session_for_workspace(
+        &self,
+        workspace_path: &str,
+    ) -> Result<Session> {
         self.svc
             .get_or_create_session_for_workspace_for_user(self.user_id, workspace_path)
             .await
     }
 
-    pub async fn get_or_create_io_session_for_workspace(&self, workspace_path: &str) -> Result<Session> {
+    pub async fn get_or_create_io_session_for_workspace(
+        &self,
+        workspace_path: &str,
+    ) -> Result<Session> {
         self.svc
             .get_or_create_io_session_for_workspace_for_user(self.user_id, workspace_path)
             .await
     }
 
     pub async fn get_or_create_opencode_session(&self) -> Result<Session> {
-        self.svc.get_or_create_opencode_session_for_user(self.user_id).await
+        self.svc
+            .get_or_create_opencode_session_for_user(self.user_id)
+            .await
     }
 
     pub async fn stop_session(&self, session_id: &str) -> Result<()> {
-        self.svc.stop_session_for_user(self.user_id, session_id).await
+        self.svc
+            .stop_session_for_user(self.user_id, session_id)
+            .await
     }
 
     pub async fn delete_session(&self, session_id: &str) -> Result<()> {
-        self.svc.delete_session_for_user(self.user_id, session_id).await
+        self.svc
+            .delete_session_for_user(self.user_id, session_id)
+            .await
     }
 
     pub async fn resume_session(&self, session_id: &str) -> Result<Session> {
-        self.svc.resume_session_for_user(self.user_id, session_id).await
+        self.svc
+            .resume_session_for_user(self.user_id, session_id)
+            .await
     }
 
     pub async fn resume_session_for_io(&self, session_id: &str) -> Result<Session> {
@@ -257,7 +277,9 @@ impl<'a> UserSessionService<'a> {
     }
 
     pub async fn touch_session_activity(&self, session_id: &str) -> Result<()> {
-        self.svc.touch_session_activity_for_user(self.user_id, session_id).await
+        self.svc
+            .touch_session_activity_for_user(self.user_id, session_id)
+            .await
     }
 
     pub async fn check_for_image_update(&self, session_id: &str) -> Result<Option<String>> {
@@ -267,7 +289,9 @@ impl<'a> UserSessionService<'a> {
     }
 
     pub async fn upgrade_session(&self, session_id: &str) -> Result<Session> {
-        self.svc.upgrade_session_for_user(self.user_id, session_id).await
+        self.svc
+            .upgrade_session_for_user(self.user_id, session_id)
+            .await
     }
 
     pub async fn check_all_for_updates(&self) -> Result<Vec<(String, String)>> {
@@ -437,28 +461,48 @@ impl SessionService {
     }
 
     async fn stop_session_for_user(&self, user_id: &str, session_id: &str) -> Result<()> {
-        if self.get_session_for_user(user_id, session_id).await?.is_none() {
+        if self
+            .get_session_for_user(user_id, session_id)
+            .await?
+            .is_none()
+        {
             anyhow::bail!("Session not found");
         }
         self.stop_session(session_id).await
     }
 
     async fn delete_session_for_user(&self, user_id: &str, session_id: &str) -> Result<()> {
-        if self.get_session_for_user(user_id, session_id).await?.is_none() {
+        if self
+            .get_session_for_user(user_id, session_id)
+            .await?
+            .is_none()
+        {
             anyhow::bail!("Session not found");
         }
         self.delete_session(session_id).await
     }
 
     async fn resume_session_for_user(&self, user_id: &str, session_id: &str) -> Result<Session> {
-        if self.get_session_for_user(user_id, session_id).await?.is_none() {
+        if self
+            .get_session_for_user(user_id, session_id)
+            .await?
+            .is_none()
+        {
             anyhow::bail!("Session not found");
         }
         self.resume_session(session_id).await
     }
 
-    async fn resume_session_for_io_for_user(&self, user_id: &str, session_id: &str) -> Result<Session> {
-        if self.get_session_for_user(user_id, session_id).await?.is_none() {
+    async fn resume_session_for_io_for_user(
+        &self,
+        user_id: &str,
+        session_id: &str,
+    ) -> Result<Session> {
+        if self
+            .get_session_for_user(user_id, session_id)
+            .await?
+            .is_none()
+        {
             anyhow::bail!("Session not found");
         }
         self.resume_session_for_io(session_id).await
@@ -469,14 +513,22 @@ impl SessionService {
         user_id: &str,
         session_id: &str,
     ) -> Result<Option<String>> {
-        if self.get_session_for_user(user_id, session_id).await?.is_none() {
+        if self
+            .get_session_for_user(user_id, session_id)
+            .await?
+            .is_none()
+        {
             anyhow::bail!("Session not found");
         }
         self.check_for_image_update(session_id).await
     }
 
     async fn upgrade_session_for_user(&self, user_id: &str, session_id: &str) -> Result<Session> {
-        if self.get_session_for_user(user_id, session_id).await?.is_none() {
+        if self
+            .get_session_for_user(user_id, session_id)
+            .await?
+            .is_none()
+        {
             anyhow::bail!("Session not found");
         }
         self.upgrade_session(session_id).await
@@ -515,9 +567,7 @@ impl SessionService {
             if self.config.single_user {
                 return std::path::PathBuf::from(home).join("octo");
             }
-            return std::path::PathBuf::from(home)
-                .join("octo")
-                .join(user_id);
+            return std::path::PathBuf::from(home).join("octo").join(user_id);
         }
         // Container mode - use /workspace
         std::path::PathBuf::from("/workspace")
@@ -571,7 +621,8 @@ impl SessionService {
         //
         // IMPORTANT: do NOT allow the entire data directory; that would let users
         // reference other users' data by path. We only allow the per-user subtree.
-        let main_chat_users_root = std::path::PathBuf::from(&self.config.user_data_path).join("users");
+        let main_chat_users_root =
+            std::path::PathBuf::from(&self.config.user_data_path).join("users");
         let main_chat_root = if self.config.single_user {
             main_chat_users_root.join("main")
         } else {
@@ -625,7 +676,6 @@ impl SessionService {
         user_id: &str,
         request: CreateSessionRequest,
     ) -> Result<Session> {
-
         // Check for running sessions that need upgrading
         let running_sessions = self.repo.list_running_for_user(user_id).await?;
         if let Some(session) = running_sessions.into_iter().next() {
@@ -772,8 +822,13 @@ impl SessionService {
     ///
     /// Security: the EAVS virtual key is never persisted to the database; it is passed
     /// directly into container env and then dropped.
-    async fn create_session_for_user(&self, user_id: &str, request: CreateSessionRequest) -> Result<Session> {
-        self.create_session_with_readiness(user_id, request, true).await
+    async fn create_session_for_user(
+        &self,
+        user_id: &str,
+        request: CreateSessionRequest,
+    ) -> Result<Session> {
+        self.create_session_with_readiness(user_id, request, true)
+            .await
     }
 
     async fn create_session_with_readiness(
@@ -868,17 +923,17 @@ impl SessionService {
 
         let mut last_error = None;
         for attempt in 0..Self::MAX_PORT_ALLOCATION_RETRIES {
-                match self
-                    .try_create_session(
-                        &user_home_path,
-                        &image,
-                        image_digest.as_deref(),
-                        agent.as_deref(),
-                        user_id,
-                        attempt,
-                        require_opencode,
-                    )
-                    .await
+            match self
+                .try_create_session(
+                    &user_home_path,
+                    &image,
+                    image_digest.as_deref(),
+                    agent.as_deref(),
+                    user_id,
+                    attempt,
+                    require_opencode,
+                )
+                .await
             {
                 Ok(session) => return Ok(session),
                 Err(e) => {
@@ -1317,7 +1372,9 @@ impl SessionService {
                     }
                 }
             } else {
-                warn!("mmry enabled in local multi-user mode but UserMmryManager is not configured");
+                warn!(
+                    "mmry enabled in local multi-user mode but UserMmryManager is not configured"
+                );
             }
         }
 
@@ -1360,7 +1417,9 @@ impl SessionService {
         );
 
         // Update session with PIDs (stored as container_id for compatibility)
-        self.repo.set_container_id(&session.id, &response.pids).await?;
+        self.repo
+            .set_container_id(&session.id, &response.pids)
+            .await?;
 
         // Wait for core services to become reachable
         if let Err(e) = self
@@ -1563,9 +1622,9 @@ impl SessionService {
         } else {
             session.mmry_port
         };
-        let new_agent_base_port = session.agent_base_port.map(|_| {
-            base_port + if include_mmry_port { 4 } else { 3 }
-        });
+        let new_agent_base_port = session
+            .agent_base_port
+            .map(|_| base_port + if include_mmry_port { 4 } else { 3 });
 
         self.repo
             .update_ports(
@@ -1819,7 +1878,9 @@ impl SessionService {
                 {
                     Ok(response) => {
                         // Update with new PIDs
-                        self.repo.set_container_id(session_id, &response.pids).await?;
+                        self.repo
+                            .set_container_id(session_id, &response.pids)
+                            .await?;
                     }
                     Err(e) => {
                         error!(
@@ -1987,7 +2048,10 @@ impl SessionService {
                         let _ = runner.stop_session(session_id).await;
                     }
                     Err(e) => {
-                        warn!("Failed to get runner for user {} during delete: {:?}", session.user_id, e);
+                        warn!(
+                            "Failed to get runner for user {} during delete: {:?}",
+                            session.user_id, e
+                        );
                     }
                 }
             }
@@ -2400,7 +2464,7 @@ impl SessionService {
         ];
         ports
             .iter()
-            .any(|port| !crate::local::is_port_available(*port))
+            .all(|port| !crate::local::is_port_available(*port))
     }
 
     /// Reconcile local mode session state.
@@ -2416,11 +2480,33 @@ impl SessionService {
         {
             Ok(session)
         } else {
-            warn!(
-                "Local processes for session {} are not running, marking as stopped",
-                session.id
-            );
-            self.repo.mark_stopped(&session.id).await?;
+            // Get detailed exit info to help debug why processes stopped
+            let exit_info = local_runtime.get_session_exit_info(&session.id).await;
+
+            if exit_info.is_empty() {
+                warn!(
+                    "Local processes for session {} are not running (no exit info available), marking as stopped",
+                    session.id
+                );
+                self.repo.mark_stopped(&session.id).await?;
+            } else {
+                // Format exit reasons for the error message
+                let reasons: Vec<String> = exit_info
+                    .iter()
+                    .map(|(service, reason)| format!("{}: {}", service, reason))
+                    .collect();
+                let error_message =
+                    format!("Processes stopped unexpectedly: {}", reasons.join("; "));
+
+                warn!(
+                    "Local processes for session {} crashed: {}",
+                    session.id, error_message
+                );
+
+                // Use mark_failed instead of mark_stopped to preserve the error message
+                self.repo.mark_failed(&session.id, &error_message).await?;
+            }
+
             Ok(self.repo.get(&session.id).await?.unwrap_or(session))
         }
     }
@@ -2697,7 +2783,6 @@ impl SessionService {
         user_id: &str,
         workspace_path: &str,
     ) -> Result<Session> {
-
         // Check if we already have a running session for this workspace
         if let Some(session) = self
             .repo
@@ -2765,7 +2850,6 @@ impl SessionService {
         user_id: &str,
         workspace_path: &str,
     ) -> Result<Session> {
-
         if let Some(session) = self
             .repo
             .find_running_for_workspace(user_id, workspace_path)
@@ -2797,7 +2881,8 @@ impl SessionService {
             env: Default::default(),
         };
 
-        self.create_session_with_readiness(user_id, request, false).await
+        self.create_session_with_readiness(user_id, request, false)
+            .await
     }
 
     /// Enforce the maximum concurrent sessions cap using LRU policy.

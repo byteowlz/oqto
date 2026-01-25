@@ -5,8 +5,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use axum::body::Body;
-use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::client::legacy::Client;
+use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::rt::TokioExecutor;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
@@ -22,6 +22,7 @@ use crate::onboarding::OnboardingService;
 use crate::session::SessionService;
 use crate::session_ui::SessionAutoAttachMode;
 use crate::settings::SettingsService;
+use crate::templates::OnboardingTemplatesService;
 use crate::user::UserService;
 use crate::user_plane::{DirectUserPlane, RunnerUserPlane, UserPlane};
 use crate::ws::WsHub;
@@ -321,6 +322,8 @@ pub struct AppState {
     pub main_chat_pi: Option<Arc<MainChatPiService>>,
     /// Onboarding service for user setup flow.
     pub onboarding: Option<Arc<OnboardingService>>,
+    /// Onboarding templates service for Main Chat initialization.
+    pub onboarding_templates: Option<Arc<OnboardingTemplatesService>>,
     /// WebSocket hub for real-time communication.
     pub ws_hub: Arc<WsHub>,
     /// Pending A2UI blocking requests (request_id -> response channel).
@@ -367,6 +370,7 @@ impl AppState {
             main_chat: None,
             main_chat_pi: None,
             onboarding: None,
+            onboarding_templates: None,
             ws_hub: Arc::new(WsHub::new()),
             pending_a2ui_requests: super::a2ui::new_pending_requests(),
             max_proxy_body_bytes,
@@ -409,6 +413,7 @@ impl AppState {
             main_chat: None,
             main_chat_pi: None,
             onboarding: None,
+            onboarding_templates: None,
             ws_hub: Arc::new(WsHub::new()),
             pending_a2ui_requests: super::a2ui::new_pending_requests(),
             max_proxy_body_bytes,
@@ -462,6 +467,12 @@ impl AppState {
     /// Set the onboarding service.
     pub fn with_onboarding(mut self, service: OnboardingService) -> Self {
         self.onboarding = Some(Arc::new(service));
+        self
+    }
+
+    /// Set the onboarding templates service.
+    pub fn with_onboarding_templates(mut self, service: OnboardingTemplatesService) -> Self {
+        self.onboarding_templates = Some(Arc::new(service));
         self
     }
 }

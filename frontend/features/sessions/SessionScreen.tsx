@@ -49,7 +49,7 @@ import {
 	SelectValue,
 } from "@/components/ui/select";
 import { SlashCommandPopup } from "@/components/ui/slash-command-popup";
-import { ToolCallCard } from "@/components/ui/tool-call-card";
+import { type TodoItem, ToolCallCard } from "@/components/ui/tool-call-card";
 import {
 	UserQuestionBanner,
 	UserQuestionDialog,
@@ -239,14 +239,6 @@ const CanvasView = lazy(() =>
 	})),
 );
 
-// Todo item structure
-interface TodoItem {
-	id: string;
-	content: string;
-	status: "pending" | "in_progress" | "completed" | "cancelled";
-	priority: "high" | "medium" | "low";
-}
-
 // ThreadedMessage and MessageGroup live in features/sessions/types.
 
 type ActiveView =
@@ -260,6 +252,7 @@ type ActiveView =
 	| "canvas";
 
 type ExpandedView = "preview" | "canvas" | "memories" | "terminal" | null;
+type TasksSubTab = "todos" | "planner";
 
 type ChatMessagesPaneProps = {
 	messages: OpenCodeMessageWithParts[];
@@ -1021,6 +1014,8 @@ export const SessionScreen = memo(function SessionScreen() {
 	const [messagesLoading, setMessagesLoading] = useState(false);
 	const [showTimeoutError, setShowTimeoutError] = useState(false);
 	const [activeView, setActiveView] = useState<ActiveView>("chat");
+	const [tasksSubTab, setTasksSubTab] = useState<TasksSubTab>("todos");
+	const [mainChatTodos, setMainChatTodos] = useState<TodoItem[]>([]);
 	const [expandedView, setExpandedView] = useState<ExpandedView>(null);
 	const [rightSidebarCollapsed, setRightSidebarCollapsed] = useState(false);
 	const [isSearchOpen, setIsSearchOpen] = useState(false);
@@ -2438,24 +2433,47 @@ export const SessionScreen = memo(function SessionScreen() {
 				const resumePath =
 					selectedChatFromHistory?.workspace_path ?? resumeWorkspacePath;
 
-				toast.error(
-					locale === "de" ? "Sitzung getrennt" : "Session disconnected",
-					{
-						description:
-							locale === "de"
-								? "Verbindung zum Agenten verloren."
-								: "Lost connection to the agent.",
-						action: resumePath
-							? {
-									label: locale === "de" ? "Neu verbinden" : "Reconnect",
-									onClick: () => {
-										void ensureOpencodeRunning(resumePath);
-									},
-								}
-							: undefined,
-						duration: 10_000,
-					},
-				);
+				// Extract disconnect reason if available
+				const disconnectReason =
+					"reason" in event && typeof event.reason === "string"
+						? event.reason
+						: undefined;
+
+				// Check if this looks like a crash (contains exit code or signal info)
+				const isCrash =
+					disconnectReason &&
+					(disconnectReason.includes("exited") ||
+						disconnectReason.includes("signal") ||
+						disconnectReason.includes("killed"));
+
+				const title = isCrash
+					? locale === "de"
+						? "Sitzung abgestuerzt"
+						: "Session crashed"
+					: locale === "de"
+						? "Sitzung getrennt"
+						: "Session disconnected";
+
+				const description = disconnectReason
+					? disconnectReason
+					: locale === "de"
+						? "Verbindung zum Agenten verloren."
+						: "Lost connection to the agent.";
+
+				console.error("[Session Disconnected]", disconnectReason || "no reason");
+
+				toast.error(title, {
+					description,
+					action: resumePath
+						? {
+								label: locale === "de" ? "Neu verbinden" : "Reconnect",
+								onClick: () => {
+									void ensureOpencodeRunning(resumePath);
+								},
+							}
+						: undefined,
+					duration: 10_000,
+				});
 
 				if (autoAttachMode === "resume" && resumePath) {
 					void ensureOpencodeRunning(resumePath).then((url) => {
@@ -2964,8 +2982,8 @@ export const SessionScreen = memo(function SessionScreen() {
 		tokenUsage.modelID,
 	]);
 
-	// Extract the latest todo list from messages
-	const latestTodos = useMemo(() => {
+	// Extract the latest todo list from messages (OpenCode sessions)
+	const opencodeTodos = useMemo(() => {
 		// Go through all messages in reverse to find the most recent todowrite
 		for (let i = messages.length - 1; i >= 0; i--) {
 			const msg = messages[i];
@@ -2983,6 +3001,9 @@ export const SessionScreen = memo(function SessionScreen() {
 		}
 		return [];
 	}, [messages]);
+
+	// Use mainChatTodos when in main chat mode, otherwise use opencode todos
+	const latestTodos = mainChatActive ? mainChatTodos : opencodeTodos;
 
 	// Handle slash command selection from popup
 	const handleSlashCommandSelect = useCallback(
@@ -5021,6 +5042,7 @@ export const SessionScreen = memo(function SessionScreen() {
 								onScrollToMessageComplete={() => setScrollToMessageId(null)}
 								newSessionTrigger={mainChatNewSessionTrigger}
 								onMessageSent={notifyMainChatSessionActivity}
+								onTodosChange={setMainChatTodos}
 							/>
 						) : (
 							renderChatContent(true)
@@ -5030,54 +5052,106 @@ export const SessionScreen = memo(function SessionScreen() {
 					</div>
 					{activeView === "tasks" && (
 						<div className="flex flex-col h-full overflow-hidden">
-							<TodoListView todos={latestTodos} emptyMessage={t.noTasks} />
+							{/* Sub-tabs for Todos and Planner */}
+							<div className="flex-shrink-0 flex border-b border-border bg-muted/30">
+								<button
+									type="button"
+									onClick={() => setTasksSubTab("todos")}
+									className={cn(
+										"flex-1 px-3 py-2 text-xs font-medium transition-colors",
+										tasksSubTab === "todos"
+											? "text-foreground border-b-2 border-primary bg-background"
+											: "text-muted-foreground hover:text-foreground hover:bg-muted/50",
+									)}
+								>
+									<div className="flex items-center justify-center gap-1.5">
+										<ListTodo className="w-3.5 h-3.5" />
+										<span>Todos</span>
+										{latestTodos.length > 0 && (
+											<span className="text-[10px] px-1.5 py-0.5 bg-muted rounded-full">
+												{latestTodos.length}
+											</span>
+										)}
+									</div>
+								</button>
+								<button
+									type="button"
+									onClick={() => setTasksSubTab("planner")}
+									className={cn(
+										"flex-1 px-3 py-2 text-xs font-medium transition-colors",
+										tasksSubTab === "planner"
+											? "text-foreground border-b-2 border-primary bg-background"
+											: "text-muted-foreground hover:text-foreground hover:bg-muted/50",
+									)}
+								>
+									<div className="flex items-center justify-center gap-1.5">
+										<CircleDot className="w-3.5 h-3.5" />
+										<span>Planner</span>
+									</div>
+								</button>
+							</div>
 
-							<TrxView
-								key={resumeWorkspacePath ?? "no-workspace"}
-								workspacePath={resumeWorkspacePath}
-								className="flex-1 min-h-0 border-t border-border"
-								onStartIssue={(issueId, title, description) => {
-									const content = description
-										? `Working on #${issueId}: ${title}\n\n${description}\n\n`
-										: `Working on #${issueId}: ${title}\n\n`;
-									setMessageInputWithResize(content);
-									// On mobile, switch to chat view
-									if (window.innerWidth < 768) {
-										setActiveView("chat");
-									}
-								}}
-								onStartIssueNewSession={async (
-									issueIds,
-									title,
-									attachments,
-								) => {
-									if (!resumeWorkspacePath) return;
-									try {
-										const url =
-											await ensureOpencodeRunning(resumeWorkspacePath);
-										if (!url) return;
-										const newSession = await createSession(
-											url,
-											`${title}`,
-											undefined,
-											{ directory: resumeWorkspacePath },
-										);
-										await refreshOpencodeSessions();
-										await refreshChatHistory();
-										if (newSession.id) {
-											setSelectedChatSessionId(newSession.id);
-											setIssueAttachments(attachments);
+							{/* Tab content */}
+							{tasksSubTab === "todos" && (
+								<div className="flex-1 min-h-0 overflow-hidden">
+									<TodoListView
+										todos={latestTodos}
+										emptyMessage={t.noTasks}
+										fullHeight
+									/>
+								</div>
+							)}
+							{tasksSubTab === "planner" && (
+								<TrxView
+									key={resumeWorkspacePath ?? "no-workspace"}
+									workspacePath={resumeWorkspacePath}
+									className="flex-1 min-h-0"
+									onStartIssue={(issueId, title, description) => {
+										const content = description
+											? `Working on #${issueId}: ${title}\n\n${description}\n\n`
+											: `Working on #${issueId}: ${title}\n\n`;
+										setMessageInputWithResize(content);
+										// On mobile, switch to chat view
+										if (window.innerWidth < 768) {
 											setActiveView("chat");
 										}
-									} catch (err) {
-										console.error("Failed to start issue in new session:", err);
-									}
-								}}
-								onAddIssueAttachments={(attachments) => {
-									setIssueAttachments((prev) => [...prev, ...attachments]);
-									setActiveView("chat");
-								}}
-							/>
+									}}
+									onStartIssueNewSession={async (
+										issueIds,
+										title,
+										attachments,
+									) => {
+										if (!resumeWorkspacePath) return;
+										try {
+											const url =
+												await ensureOpencodeRunning(resumeWorkspacePath);
+											if (!url) return;
+											const newSession = await createSession(
+												url,
+												`${title}`,
+												undefined,
+												{ directory: resumeWorkspacePath },
+											);
+											await refreshOpencodeSessions();
+											await refreshChatHistory();
+											if (newSession.id) {
+												setSelectedChatSessionId(newSession.id);
+												setIssueAttachments(attachments);
+												setActiveView("chat");
+											}
+										} catch (err) {
+											console.error(
+												"Failed to start issue in new session:",
+												err,
+											);
+										}
+									}}
+									onAddIssueAttachments={(attachments) => {
+										setIssueAttachments((prev) => [...prev, ...attachments]);
+										setActiveView("chat");
+									}}
+								/>
+							)}
 						</div>
 					)}
 					{features.mmry_enabled && activeView === "memories" && (
@@ -5215,6 +5289,7 @@ export const SessionScreen = memo(function SessionScreen() {
 								onScrollToMessageComplete={() => setScrollToMessageId(null)}
 								newSessionTrigger={mainChatNewSessionTrigger}
 								onMessageSent={notifyMainChatSessionActivity}
+								onTodosChange={setMainChatTodos}
 							/>
 						)
 					) : chatInSidebar ? (
@@ -5348,6 +5423,7 @@ export const SessionScreen = memo(function SessionScreen() {
 												}
 												newSessionTrigger={mainChatNewSessionTrigger}
 												onMessageSent={notifyMainChatSessionActivity}
+												onTodosChange={setMainChatTodos}
 											/>
 										) : (
 											renderChatContent(false)
@@ -5428,122 +5504,110 @@ export const SessionScreen = memo(function SessionScreen() {
 										>
 											{filesView}
 										</div>
-										{activeView === "tasks" && (
+										{(activeView === "tasks" || activeView === "chat") && (
 											<div className="flex flex-col h-full overflow-hidden">
-												<TodoListView
-													todos={latestTodos}
-													emptyMessage={t.noTasks}
-												/>
+												{/* Sub-tabs for Todos and Planner */}
+												<div className="flex-shrink-0 flex border-b border-border bg-muted/30">
+													<button
+														type="button"
+														onClick={() => setTasksSubTab("todos")}
+														className={cn(
+															"flex-1 px-3 py-2 text-xs font-medium transition-colors",
+															tasksSubTab === "todos"
+																? "text-foreground border-b-2 border-primary bg-background"
+																: "text-muted-foreground hover:text-foreground hover:bg-muted/50",
+														)}
+													>
+														<div className="flex items-center justify-center gap-1.5">
+															<ListTodo className="w-3.5 h-3.5" />
+															<span>Todos</span>
+															{latestTodos.length > 0 && (
+																<span className="text-[10px] px-1.5 py-0.5 bg-muted rounded-full">
+																	{latestTodos.length}
+																</span>
+															)}
+														</div>
+													</button>
+													<button
+														type="button"
+														onClick={() => setTasksSubTab("planner")}
+														className={cn(
+															"flex-1 px-3 py-2 text-xs font-medium transition-colors",
+															tasksSubTab === "planner"
+																? "text-foreground border-b-2 border-primary bg-background"
+																: "text-muted-foreground hover:text-foreground hover:bg-muted/50",
+														)}
+													>
+														<div className="flex items-center justify-center gap-1.5">
+															<CircleDot className="w-3.5 h-3.5" />
+															<span>Planner</span>
+														</div>
+													</button>
+												</div>
 
-												<TrxView
-													key={resumeWorkspacePath ?? "no-workspace"}
-													workspacePath={resumeWorkspacePath}
-													className="flex-1 min-h-0 border-t border-border"
-													onStartIssue={(issueId, title, description) => {
-														const content = description
-															? `Working on #${issueId}: ${title}\n\n${description}\n\n`
-															: `Working on #${issueId}: ${title}\n\n`;
-														setMessageInputWithResize(content);
-														setActiveView("chat");
-													}}
-													onStartIssueNewSession={async (
-														issueIds,
-														title,
-														attachments,
-													) => {
-														if (!resumeWorkspacePath) return;
-														try {
-															const url =
-																await ensureOpencodeRunning(
-																	resumeWorkspacePath,
+												{/* Tab content */}
+												{tasksSubTab === "todos" && (
+													<div className="flex-1 min-h-0 overflow-hidden">
+														<TodoListView
+															todos={latestTodos}
+															emptyMessage={t.noTasks}
+															fullHeight
+														/>
+													</div>
+												)}
+												{tasksSubTab === "planner" && (
+													<TrxView
+														key={resumeWorkspacePath ?? "no-workspace"}
+														workspacePath={resumeWorkspacePath}
+														className="flex-1 min-h-0"
+														onStartIssue={(issueId, title, description) => {
+															const content = description
+																? `Working on #${issueId}: ${title}\n\n${description}\n\n`
+																: `Working on #${issueId}: ${title}\n\n`;
+															setMessageInputWithResize(content);
+															setActiveView("chat");
+														}}
+														onStartIssueNewSession={async (
+															issueIds,
+															title,
+															attachments,
+														) => {
+															if (!resumeWorkspacePath) return;
+															try {
+																const url =
+																	await ensureOpencodeRunning(
+																		resumeWorkspacePath,
+																	);
+																if (!url) return;
+																const newSession = await createSession(
+																	url,
+																	`${title}`,
+																	undefined,
+																	{ directory: resumeWorkspacePath },
 																);
-															if (!url) return;
-															const newSession = await createSession(
-																url,
-																`${title}`,
-																undefined,
-																{ directory: resumeWorkspacePath },
-															);
-															await refreshOpencodeSessions();
-															await refreshChatHistory();
-															if (newSession.id) {
-																setSelectedChatSessionId(newSession.id);
-																setIssueAttachments(attachments);
-																setActiveView("chat");
-															}
-														} catch (err) {
-															console.error(
-																"Failed to start issue in new session:",
-																err,
-															);
-														}
-													}}
-													onAddIssueAttachments={(attachments) => {
-														setIssueAttachments((prev) => [
-															...prev,
-															...attachments,
-														]);
-														setActiveView("chat");
-													}}
-												/>
-											</div>
-										)}
-										{activeView === "chat" && (
-											<div className="flex flex-col h-full overflow-hidden">
-												<TodoListView
-													todos={latestTodos}
-													emptyMessage={t.noTasks}
-												/>
-												<TrxView
-													key={resumeWorkspacePath ?? "no-workspace"}
-													workspacePath={resumeWorkspacePath}
-													className="flex-1 min-h-0 border-t border-border"
-													onStartIssue={(issueId, title, description) => {
-														const content = description
-															? `Working on #${issueId}: ${title}\n\n${description}\n\n`
-															: `Working on #${issueId}: ${title}\n\n`;
-														setMessageInputWithResize(content);
-													}}
-													onStartIssueNewSession={async (
-														issueIds,
-														title,
-														attachments,
-													) => {
-														if (!resumeWorkspacePath) return;
-														try {
-															const url =
-																await ensureOpencodeRunning(
-																	resumeWorkspacePath,
+																await refreshOpencodeSessions();
+																await refreshChatHistory();
+																if (newSession.id) {
+																	setSelectedChatSessionId(newSession.id);
+																	setIssueAttachments(attachments);
+																	setActiveView("chat");
+																}
+															} catch (err) {
+																console.error(
+																	"Failed to start issue in new session:",
+																	err,
 																);
-															if (!url) return;
-															const newSession = await createSession(
-																url,
-																`${title}`,
-																undefined,
-																{ directory: resumeWorkspacePath },
-															);
-															await refreshOpencodeSessions();
-															await refreshChatHistory();
-															if (newSession.id) {
-																setSelectedChatSessionId(newSession.id);
-																setIssueAttachments(attachments);
-																setActiveView("chat");
 															}
-														} catch (err) {
-															console.error(
-																"Failed to start issue in new session:",
-																err,
-															);
-														}
-													}}
-													onAddIssueAttachments={(attachments) => {
-														setIssueAttachments((prev) => [
-															...prev,
-															...attachments,
-														]);
-														setActiveView("chat");
-													}}
-												/>
+														}}
+														onAddIssueAttachments={(attachments) => {
+															setIssueAttachments((prev) => [
+																...prev,
+																...attachments,
+															]);
+															setActiveView("chat");
+														}}
+													/>
+												)}
 											</div>
 										)}
 										{features.mmry_enabled && activeView === "memories" && (
@@ -6390,9 +6454,8 @@ const FileReferenceCard = memo(function FileReferenceCard({
 const TodoListView = memo(function TodoListView({
 	todos,
 	emptyMessage,
-}: { todos: TodoItem[]; emptyMessage: string }) {
-	const [isCollapsed, setIsCollapsed] = useState(false);
-
+	fullHeight = false,
+}: { todos: TodoItem[]; emptyMessage: string; fullHeight?: boolean }) {
 	// Group todos by status for summary
 	const summary = useMemo(() => {
 		const pending = todos.filter((t) => t.status === "pending").length;
@@ -6403,44 +6466,25 @@ const TodoListView = memo(function TodoListView({
 	}, [todos]);
 
 	if (todos.length === 0) {
-		// Return null when empty to allow TrxView to take full space
-		return null;
-	}
-
-	// Collapsed view - just a status bar
-	if (isCollapsed) {
-		return (
-			<button
-				type="button"
-				onClick={() => setIsCollapsed(false)}
-				className="flex-shrink-0 w-full flex items-center justify-between px-3 py-2 border-b border-border bg-muted/30 hover:bg-muted/50 transition-colors"
-				data-spotlight="todo-list"
-			>
-				<div className="flex items-center gap-3 text-[11px] text-muted-foreground">
-					<ListTodo className="w-3.5 h-3.5" />
-					<span className="font-medium">Tasks</span>
-					<span>{summary.total} total</span>
-					{summary.inProgress > 0 && (
-						<span className="flex items-center gap-1 text-primary">
-							<CircleDot className="w-3 h-3" />
-							{summary.inProgress}
-						</span>
-					)}
-					{summary.pending > 0 && (
-						<span className="flex items-center gap-1 text-muted-foreground">
-							<Square className="w-3 h-3" />
-							{summary.pending}
-						</span>
-					)}
+		// Show empty state when in full height mode (tabbed view)
+		if (fullHeight) {
+			return (
+				<div className="flex flex-col items-center justify-center h-full text-muted-foreground">
+					<ListTodo className="w-8 h-8 mb-2 opacity-50" />
+					<p className="text-sm">{emptyMessage}</p>
 				</div>
-				<ChevronUp className="w-3.5 h-3.5 text-muted-foreground" />
-			</button>
-		);
+			);
+		}
+		// Return null when empty to allow TrxView to take full space (stacked view)
+		return null;
 	}
 
 	return (
 		<div
-			className="flex flex-col flex-shrink-0 max-h-[40%] overflow-hidden"
+			className={cn(
+				"flex flex-col overflow-hidden",
+				fullHeight ? "h-full" : "flex-shrink-0 max-h-[40%]",
+			)}
 			data-spotlight="todo-list"
 		>
 			{/* Summary header */}
@@ -6466,14 +6510,6 @@ const TodoListView = memo(function TodoListView({
 								{summary.completed}
 							</span>
 						)}
-						<button
-							type="button"
-							onClick={() => setIsCollapsed(true)}
-							className="p-1 hover:bg-muted rounded transition-colors"
-							title="Collapse"
-						>
-							<ChevronDown className="w-3 h-3 text-muted-foreground" />
-						</button>
 					</div>
 				</div>
 			</div>

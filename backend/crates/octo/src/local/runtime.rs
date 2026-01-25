@@ -91,7 +91,9 @@ impl LocalRuntimeConfig {
         // Require a per-user placeholder to avoid accidentally sharing the same
         // directory across all users.
         if self.linux_users.enabled && !self.single_user {
-            if !self.workspace_dir.contains("{user_id}") && !self.workspace_dir.contains("{linux_username}") {
+            if !self.workspace_dir.contains("{user_id}")
+                && !self.workspace_dir.contains("{linux_username}")
+            {
                 anyhow::bail!(
                     "local.workspace_dir must include '{{user_id}}' or '{{linux_username}}' in multi-user mode (got: {}). \
                      This is required to prevent cross-user filesystem access.",
@@ -313,6 +315,13 @@ impl LocalRuntime {
     /// Check if a session's processes are running.
     pub async fn is_session_running(&self, session_id: &str) -> bool {
         self.process_manager.is_session_running(session_id).await
+    }
+
+    /// Get exit information for crashed processes in a session.
+    ///
+    /// Returns a list of (service_name, exit_reason) for processes that have exited.
+    pub async fn get_session_exit_info(&self, session_id: &str) -> Vec<(String, String)> {
+        self.process_manager.get_session_exit_info(session_id).await
     }
 
     /// Get the state of a session (similar to container state).

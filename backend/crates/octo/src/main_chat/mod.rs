@@ -34,4 +34,4 @@ pub use pi_service::{
     MainChatPiService, MainChatPiServiceConfig, PiRuntimeMode, PiSessionFile, PiSessionMessage,
     UserPiSession,
 };
-pub use service::MainChatService;
+pub use service::{MainChatService, MainChatTemplates};

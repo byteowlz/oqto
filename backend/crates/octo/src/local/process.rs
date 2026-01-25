@@ -74,6 +74,53 @@ impl ProcessHandle {
         }
     }
 
+    /// Check if the process has exited and return exit info.
+    ///
+    /// Returns `None` if still running, or `Some((exit_code, signal))` if exited.
+    /// On Unix, if killed by signal, exit_code is None and signal contains the signal number.
+    pub fn check_exit_status(&mut self) -> Option<(Option<i32>, Option<i32>)> {
+        match self.child.try_wait() {
+            Ok(None) => None, // Still running
+            Ok(Some(status)) => {
+                let code = status.code();
+                #[cfg(unix)]
+                let signal = {
+                    use std::os::unix::process::ExitStatusExt;
+                    status.signal()
+                };
+                #[cfg(not(unix))]
+                let signal = None;
+                Some((code, signal))
+            }
+            Err(e) => {
+                warn!("Error checking process {} status: {:?}", self.pid, e);
+                Some((None, None))
+            }
+        }
+    }
+
+    /// Format exit status as a human-readable string.
+    pub fn format_exit_status(exit_code: Option<i32>, signal: Option<i32>) -> String {
+        match (exit_code, signal) {
+            (Some(code), _) => format!("exited with code {}", code),
+            (None, Some(sig)) => {
+                let sig_name = match sig {
+                    9 => "SIGKILL",
+                    15 => "SIGTERM",
+                    11 => "SIGSEGV",
+                    6 => "SIGABRT",
+                    _ => "",
+                };
+                if sig_name.is_empty() {
+                    format!("killed by signal {}", sig)
+                } else {
+                    format!("killed by {} (signal {})", sig_name, sig)
+                }
+            }
+            (None, None) => "exited (unknown status)".to_string(),
+        }
+    }
+
     /// Kill the process and wait for it to be reaped.
     ///
     /// This both sends SIGKILL and waits for the process to exit,
@@ -542,6 +589,26 @@ impl ProcessManager {
         } else {
             false
         }
+    }
+
+    /// Get exit information for any crashed processes in a session.
+    ///
+    /// Returns a list of (service_name, exit_reason) for processes that have exited.
+    /// Returns empty vec if all processes are running or session doesn't exist.
+    pub async fn get_session_exit_info(&self, session_id: &str) -> Vec<(String, String)> {
+        let mut processes = self.processes.lock().await;
+        let mut exit_info = Vec::new();
+
+        if let Some(handles) = processes.get_mut(session_id) {
+            for handle in handles.iter_mut() {
+                if let Some((code, signal)) = handle.check_exit_status() {
+                    let reason = ProcessHandle::format_exit_status(code, signal);
+                    exit_info.push((handle.service.clone(), reason));
+                }
+            }
+        }
+
+        exit_info
     }
 
     /// Get the list of PIDs for a session.

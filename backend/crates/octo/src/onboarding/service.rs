@@ -45,7 +45,10 @@ impl OnboardingService {
 
         let Some((settings_json,)) = row else {
             // User doesn't exist - return fresh state
-            debug!("User {} not found, returning fresh onboarding state", user_id);
+            debug!(
+                "User {} not found, returning fresh onboarding state",
+                user_id
+            );
             return Ok(OnboardingState::new());
         };
 
@@ -166,7 +169,8 @@ impl OnboardingService {
             serde_json::from_str(&existing_json).unwrap_or_else(|_| serde_json::json!({}));
 
         // Update the onboarding field
-        settings["onboarding"] = serde_json::to_value(state).context("serializing onboarding state")?;
+        settings["onboarding"] =
+            serde_json::to_value(state).context("serializing onboarding state")?;
 
         let settings_json = serde_json::to_string(&settings).context("serializing settings")?;
 

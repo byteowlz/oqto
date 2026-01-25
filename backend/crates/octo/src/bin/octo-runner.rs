@@ -886,15 +886,14 @@ impl Runner {
                     truncated,
                 })
             }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                error_response(ErrorCode::PathNotFound, format!("File not found: {:?}", path))
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
-                error_response(
-                    ErrorCode::PermissionDenied,
-                    format!("Permission denied: {:?}", path),
-                )
-            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => error_response(
+                ErrorCode::PathNotFound,
+                format!("File not found: {:?}", path),
+            ),
+            Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => error_response(
+                ErrorCode::PermissionDenied,
+                format!("Permission denied: {:?}", path),
+            ),
             Err(e) => error_response(ErrorCode::IoError, format!("Read error: {}", e)),
         }
     }
@@ -932,12 +931,10 @@ impl Runner {
                 path: path.clone(),
                 bytes_written: content.len() as u64,
             }),
-            Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
-                error_response(
-                    ErrorCode::PermissionDenied,
-                    format!("Permission denied: {:?}", path),
-                )
-            }
+            Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => error_response(
+                ErrorCode::PermissionDenied,
+                format!("Permission denied: {:?}", path),
+            ),
             Err(e) => error_response(ErrorCode::IoError, format!("Write error: {}", e)),
         }
     }
@@ -1088,12 +1085,10 @@ impl Runner {
 
         match result {
             Ok(()) => RunnerResponse::PathDeleted(PathDeletedResponse { path: path.clone() }),
-            Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
-                error_response(
-                    ErrorCode::PermissionDenied,
-                    format!("Permission denied: {:?}", path),
-                )
-            }
+            Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => error_response(
+                ErrorCode::PermissionDenied,
+                format!("Permission denied: {:?}", path),
+            ),
             Err(e) => error_response(ErrorCode::IoError, format!("Delete error: {}", e)),
         }
     }
@@ -1108,21 +1103,17 @@ impl Runner {
         };
 
         match result {
-            Ok(()) => RunnerResponse::DirectoryCreated(DirectoryCreatedResponse {
-                path: path.clone(),
-            }),
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                error_response(
-                    ErrorCode::PathExists,
-                    format!("Path already exists: {:?}", path),
-                )
+            Ok(()) => {
+                RunnerResponse::DirectoryCreated(DirectoryCreatedResponse { path: path.clone() })
             }
-            Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
-                error_response(
-                    ErrorCode::PermissionDenied,
-                    format!("Permission denied: {:?}", path),
-                )
-            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => error_response(
+                ErrorCode::PathExists,
+                format!("Path already exists: {:?}", path),
+            ),
+            Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => error_response(
+                ErrorCode::PermissionDenied,
+                format!("Permission denied: {:?}", path),
+            ),
             Err(e) => error_response(ErrorCode::IoError, format!("Create dir error: {}", e)),
         }
     }
@@ -1146,7 +1137,10 @@ impl Runner {
                     opencode_port: Some(s.opencode_port),
                     fileserver_port: Some(s.fileserver_port),
                     ttyd_port: Some(s.ttyd_port),
-                    pids: Some(format!("{},{},{}", s.opencode_id, s.fileserver_id, s.ttyd_id)),
+                    pids: Some(format!(
+                        "{},{},{}",
+                        s.opencode_id, s.fileserver_id, s.ttyd_id
+                    )),
                     created_at: chrono::Utc::now().to_rfc3339(), // TODO: track actual time
                     started_at: Some(chrono::Utc::now().to_rfc3339()),
                     last_activity_at: None,
@@ -1166,7 +1160,10 @@ impl Runner {
             opencode_port: Some(s.opencode_port),
             fileserver_port: Some(s.fileserver_port),
             ttyd_port: Some(s.ttyd_port),
-            pids: Some(format!("{},{},{}", s.opencode_id, s.fileserver_id, s.ttyd_id)),
+            pids: Some(format!(
+                "{},{},{}",
+                s.opencode_id, s.fileserver_id, s.ttyd_id
+            )),
             created_at: chrono::Utc::now().to_rfc3339(),
             started_at: Some(chrono::Utc::now().to_rfc3339()),
             last_activity_at: None,
@@ -1178,7 +1175,11 @@ impl Runner {
     async fn start_session(&self, req: StartSessionRequest) -> RunnerResponse {
         info!(
             "Starting session {} in {:?} with ports {}/{}/{}",
-            req.session_id, req.workspace_path, req.opencode_port, req.fileserver_port, req.ttyd_port
+            req.session_id,
+            req.workspace_path,
+            req.opencode_port,
+            req.fileserver_port,
+            req.ttyd_port
         );
 
         // Check if session already exists
@@ -1248,7 +1249,12 @@ impl Runner {
 
         if let RunnerResponse::Error(e) = self.spawn_process(ttyd_req, false).await {
             // Clean up fileserver
-            let _ = self.kill_process(KillProcessRequest { id: fileserver_id.clone(), force: false }).await;
+            let _ = self
+                .kill_process(KillProcessRequest {
+                    id: fileserver_id.clone(),
+                    force: false,
+                })
+                .await;
             return RunnerResponse::Error(e);
         }
 
@@ -1271,13 +1277,27 @@ impl Runner {
             args: opencode_args,
             cwd: req.workspace_path.clone(),
             env: req.env.clone(),
-            sandboxed: self.sandbox_config.as_ref().map(|s| s.enabled).unwrap_or(false),
+            sandboxed: self
+                .sandbox_config
+                .as_ref()
+                .map(|s| s.enabled)
+                .unwrap_or(false),
         };
 
         if let RunnerResponse::Error(e) = self.spawn_process(opencode_req, false).await {
             // Clean up fileserver and ttyd
-            let _ = self.kill_process(KillProcessRequest { id: fileserver_id.clone(), force: false }).await;
-            let _ = self.kill_process(KillProcessRequest { id: ttyd_id.clone(), force: false }).await;
+            let _ = self
+                .kill_process(KillProcessRequest {
+                    id: fileserver_id.clone(),
+                    force: false,
+                })
+                .await;
+            let _ = self
+                .kill_process(KillProcessRequest {
+                    id: ttyd_id.clone(),
+                    force: false,
+                })
+                .await;
             return RunnerResponse::Error(e);
         }
 
@@ -1301,7 +1321,10 @@ impl Runner {
         }
 
         let pids = format!("{},{},{}", opencode_id, fileserver_id, ttyd_id);
-        info!("Session {} started with processes: {}", req.session_id, pids);
+        info!(
+            "Session {} started with processes: {}",
+            req.session_id, pids
+        );
 
         RunnerResponse::SessionStarted(SessionStartedResponse {
             session_id: req.session_id,
@@ -1328,20 +1351,26 @@ impl Runner {
         };
 
         // Kill all session processes
-        let _ = self.kill_process(KillProcessRequest {
-            id: session_state.opencode_id,
-            force: false,
-        }).await;
+        let _ = self
+            .kill_process(KillProcessRequest {
+                id: session_state.opencode_id,
+                force: false,
+            })
+            .await;
 
-        let _ = self.kill_process(KillProcessRequest {
-            id: session_state.fileserver_id,
-            force: false,
-        }).await;
+        let _ = self
+            .kill_process(KillProcessRequest {
+                id: session_state.fileserver_id,
+                force: false,
+            })
+            .await;
 
-        let _ = self.kill_process(KillProcessRequest {
-            id: session_state.ttyd_id,
-            force: false,
-        }).await;
+        let _ = self
+            .kill_process(KillProcessRequest {
+                id: session_state.ttyd_id,
+                force: false,
+            })
+            .await;
 
         info!("Session {} stopped", req.session_id);
 
@@ -1675,14 +1704,11 @@ async fn main() -> Result<()> {
                         if config.enabled {
                             info!(
                                 "Loaded system sandbox config from {}, profile='{}'",
-                                "/etc/octo/sandbox.toml",
-                                config.profile
+                                "/etc/octo/sandbox.toml", config.profile
                             );
                             Some(config)
                         } else {
-                            info!(
-                                "System sandbox config exists but is disabled (enabled=false)"
-                            );
+                            info!("System sandbox config exists but is disabled (enabled=false)");
                             None
                         }
                     }

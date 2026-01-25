@@ -10,8 +10,8 @@
 //! - POST /onboarding/reset - Reset onboarding state
 
 use axum::{
-    extract::{Path, State},
     Json,
+    extract::{Path, State},
 };
 use tracing::instrument;
 

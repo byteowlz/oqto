@@ -137,6 +137,8 @@ Implementation:
 ### [workspace-5pmk.11] Add backend URL configuration to login form (P1, task)
 Add a 'Server URL' field to the login form allowing users to specify the backend URL. Store in localStorage for persistence. Show connection status indicator. Default to current origin for web, require input for mobile apps.
 
+### [octo-psdq] text input boxes rerendering the entire component on every key stroke (P2, bug)
+
 ### [octo-fmxv] Invalid `boundary` for `multipart/form-data` request when trying to save a file after editing it in the sidebar. (P2, bug)
 
 ### [octo-xjs5.9] Observability: runner logs + health endpoints (P2, task)
@@ -158,15 +160,6 @@ Keep docker multi-user working:
 ### [octo-h0by] add user self-service section in settings (change password etc) (P2, task)
 
 ### [octo-f50n] redirect to login for unauthenticated users (P2, task)
-
-### [octo-eb0b] Per-user mmry instances in local multi-user mode (P2, feature)
-## Overview
-
-In local multi-user mode, each platform user should get their own mmry service instance for memory isolation. Currently mmry_port is allocated per-session but mmry is never spawned.
-
-## Architecture
-...
-
 
 ### [octo-85f4] the stop button doesnt seem to stop a running agent response (P2, bug)
 
@@ -677,6 +670,7 @@ Desired behavior: Tool calls hidden by default, toggle to show
 
 ## Closed
 
+- [octo-eb0b] Per-user mmry instances in local multi-user mode (closed 2026-01-24)
 - [octo-vvn7] Define runner user-plane RPC API (closed 2026-01-23)
 - [octo-wzvn] Agent-driven UI control (conversational navigation) (closed 2026-01-21)
 - [octo-q9dx] Transcription continuing after stopping Conversation mode (closed 2026-01-21)

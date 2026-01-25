@@ -5,6 +5,11 @@ Octo is a self-hosted platform for managing AI coding agents. Supports local mod
 **New to Octo?** Start with the [SETUP.md](./SETUP.md) guide for installation and prerequisites.
 
 ---
+## Debugging
+
+Tmux is always available, use it to debug the logs of the running backend and frontend.
+
+Use agent-browser + tmux for end-to-end testing
 
 ## Architecture Overview
 

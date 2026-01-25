@@ -6,8 +6,8 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use std::path::Path;
 
-use super::types::*;
 use super::UserPlane;
+use super::types::*;
 
 /// Direct user-plane implementation using local filesystem access.
 ///
@@ -44,7 +44,10 @@ impl DirectUserPlane {
                 .with_context(|| format!("canonicalizing path {:?}", resolved))?;
 
             // Verify it's within workspace root
-            let workspace_canonical = self.workspace_root.canonicalize().unwrap_or_else(|_| self.workspace_root.clone());
+            let workspace_canonical = self
+                .workspace_root
+                .canonicalize()
+                .unwrap_or_else(|_| self.workspace_root.clone());
             if !canonical.starts_with(&workspace_canonical) {
                 anyhow::bail!("path {:?} is outside workspace root", path);
             }
@@ -55,7 +58,10 @@ impl DirectUserPlane {
             if let Some(parent) = resolved.parent() {
                 if parent.exists() {
                     let parent_canonical = parent.canonicalize()?;
-                    let workspace_canonical = self.workspace_root.canonicalize().unwrap_or_else(|_| self.workspace_root.clone());
+                    let workspace_canonical = self
+                        .workspace_root
+                        .canonicalize()
+                        .unwrap_or_else(|_| self.workspace_root.clone());
                     if !parent_canonical.starts_with(&workspace_canonical) {
                         anyhow::bail!("path {:?} is outside workspace root", path);
                     }
@@ -323,7 +329,10 @@ mod tests {
             .unwrap();
 
         // Read it back
-        let result = up.read_file(Path::new("test.txt"), None, None).await.unwrap();
+        let result = up
+            .read_file(Path::new("test.txt"), None, None)
+            .await
+            .unwrap();
         assert_eq!(result.content, content);
         assert_eq!(result.size, content.len() as u64);
         assert!(!result.truncated);
@@ -335,9 +344,15 @@ mod tests {
         let up = DirectUserPlane::new(temp.path());
 
         // Create some files
-        up.write_file(Path::new("a.txt"), b"a", false).await.unwrap();
-        up.write_file(Path::new("b.txt"), b"b", false).await.unwrap();
-        up.write_file(Path::new(".hidden"), b"h", false).await.unwrap();
+        up.write_file(Path::new("a.txt"), b"a", false)
+            .await
+            .unwrap();
+        up.write_file(Path::new("b.txt"), b"b", false)
+            .await
+            .unwrap();
+        up.write_file(Path::new(".hidden"), b"h", false)
+            .await
+            .unwrap();
 
         // List without hidden
         let entries = up.list_directory(Path::new("."), false).await.unwrap();
@@ -360,7 +375,9 @@ mod tests {
         assert!(!stat.exists);
 
         // Create and stat
-        up.write_file(Path::new("test.txt"), b"hello", false).await.unwrap();
+        up.write_file(Path::new("test.txt"), b"hello", false)
+            .await
+            .unwrap();
         let stat = up.stat(Path::new("test.txt")).await.unwrap();
         assert!(stat.exists);
         assert!(stat.is_file);
@@ -373,7 +390,9 @@ mod tests {
         let temp = tempdir().unwrap();
         let up = DirectUserPlane::new(temp.path());
 
-        up.create_directory(Path::new("subdir"), false).await.unwrap();
+        up.create_directory(Path::new("subdir"), false)
+            .await
+            .unwrap();
 
         let stat = up.stat(Path::new("subdir")).await.unwrap();
         assert!(stat.exists);
@@ -386,14 +405,20 @@ mod tests {
         let up = DirectUserPlane::new(temp.path());
 
         // Create and delete file
-        up.write_file(Path::new("test.txt"), b"hello", false).await.unwrap();
+        up.write_file(Path::new("test.txt"), b"hello", false)
+            .await
+            .unwrap();
         up.delete_path(Path::new("test.txt"), false).await.unwrap();
         let stat = up.stat(Path::new("test.txt")).await.unwrap();
         assert!(!stat.exists);
 
         // Create and delete directory
-        up.create_directory(Path::new("subdir"), false).await.unwrap();
-        up.write_file(Path::new("subdir/file.txt"), b"hello", false).await.unwrap();
+        up.create_directory(Path::new("subdir"), false)
+            .await
+            .unwrap();
+        up.write_file(Path::new("subdir/file.txt"), b"hello", false)
+            .await
+            .unwrap();
         up.delete_path(Path::new("subdir"), true).await.unwrap();
         let stat = up.stat(Path::new("subdir")).await.unwrap();
         assert!(!stat.exists);

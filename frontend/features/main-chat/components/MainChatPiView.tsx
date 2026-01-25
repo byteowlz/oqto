@@ -84,6 +84,14 @@ import {
 	useState,
 } from "react";
 
+/** Todo item structure (matching OpenCode's todowrite tool) */
+export interface TodoItem {
+	id: string;
+	content: string;
+	status: "pending" | "in_progress" | "completed" | "cancelled";
+	priority: "high" | "medium" | "low";
+}
+
 export interface MainChatPiViewProps {
 	/** Current locale */
 	locale?: "en" | "de";
@@ -115,6 +123,8 @@ export interface MainChatPiViewProps {
 	newSessionTrigger?: number;
 	/** Callback when a message is sent (for sidebar refresh) */
 	onMessageSent?: () => void;
+	/** Callback when todos change (extracted from Pi todowrite tool calls) */
+	onTodosChange?: (todos: TodoItem[]) => void;
 }
 
 /**
@@ -135,6 +145,7 @@ export function MainChatPiView({
 	onScrollToMessageComplete,
 	newSessionTrigger,
 	onMessageSent,
+	onTodosChange,
 }: MainChatPiViewProps) {
 	const {
 		messages,
@@ -252,6 +263,31 @@ export function MainChatPiView({
 		}
 		return { surfacesByMessageId: map, orphanedSurfaces: orphaned };
 	}, [a2uiSurfaces, messages]);
+
+	// Extract todos from messages and notify parent
+	useEffect(() => {
+		if (!onTodosChange) return;
+
+		// Go through all messages in reverse to find the most recent todowrite
+		for (let i = messages.length - 1; i >= 0; i--) {
+			const msg = messages[i];
+			for (let j = msg.parts.length - 1; j >= 0; j--) {
+				const part = msg.parts[j];
+				if (
+					part.type === "tool_use" &&
+					part.name?.toLowerCase().includes("todo")
+				) {
+					const input = part.input as Record<string, unknown> | undefined;
+					if (input?.todos && Array.isArray(input.todos)) {
+						onTodosChange(input.todos as TodoItem[]);
+						return;
+					}
+				}
+			}
+		}
+		// No todos found
+		onTodosChange([]);
+	}, [messages, onTodosChange]);
 
 	// Voice configuration
 	const voiceConfig = useMemo(

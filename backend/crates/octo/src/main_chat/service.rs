@@ -13,6 +13,20 @@ use super::models::{
 };
 use super::repository::MainChatRepository;
 
+/// Resolved templates for Main Chat initialization.
+/// If not provided, embedded templates are used.
+#[derive(Debug, Clone, Default)]
+pub struct MainChatTemplates {
+    /// AGENTS.md content (supports {{name}} placeholder).
+    pub agents: Option<String>,
+    /// PERSONALITY.md content (supports {{name}} placeholder).
+    pub personality: Option<String>,
+    /// ONBOARD.md content.
+    pub onboard: Option<String>,
+    /// USER.md content.
+    pub user: Option<String>,
+}
+
 /// Service for managing main chat.
 pub struct MainChatService {
     workspace_dir: PathBuf,
@@ -109,10 +123,13 @@ impl MainChatService {
     }
 
     /// Initialize Main Chat for a user.
+    ///
+    /// If `templates` is provided, uses those templates; otherwise uses embedded defaults.
     pub async fn initialize_main_chat(
         &self,
         user_id: &str,
         name: Option<&str>,
+        templates: Option<MainChatTemplates>,
     ) -> Result<AssistantInfo> {
         if self.main_chat_exists(user_id) {
             anyhow::bail!("Main Chat already exists for user");
@@ -135,40 +152,59 @@ impl MainChatService {
             .await?;
 
         // Create default files
-        self.create_default_files(user_id, name.unwrap_or("main"))
+        self.create_default_files(user_id, name.unwrap_or("main"), templates.as_ref())
             .await?;
 
         self.get_main_chat_info(user_id).await
     }
 
     /// Create default configuration files for Main Chat.
-    async fn create_default_files(&self, user_id: &str, name: &str) -> Result<()> {
+    ///
+    /// Uses provided templates if available, otherwise falls back to embedded defaults.
+    async fn create_default_files(
+        &self,
+        user_id: &str,
+        name: &str,
+        templates: Option<&MainChatTemplates>,
+    ) -> Result<()> {
         let main_chat_dir = self.get_main_chat_dir(user_id);
 
         // Create AGENTS.md from template (replace {{name}} placeholder)
-        let agents_template = include_str!("templates/AGENTS.md");
+        let agents_template = templates
+            .and_then(|t| t.agents.as_ref())
+            .map(|s| s.as_str())
+            .unwrap_or(include_str!("templates/AGENTS.md"));
         let agents_content = agents_template.replace("{{name}}", name);
         let agents_path = main_chat_dir.join("AGENTS.md");
         std::fs::write(&agents_path, agents_content)
             .with_context(|| format!("writing AGENTS.md: {}", agents_path.display()))?;
 
         // Create PERSONALITY.md from template (replace {{name}} placeholder)
-        let personality_template = include_str!("templates/PERSONALITY.md");
+        let personality_template = templates
+            .and_then(|t| t.personality.as_ref())
+            .map(|s| s.as_str())
+            .unwrap_or(include_str!("templates/PERSONALITY.md"));
         let personality_content = personality_template.replace("{{name}}", name);
         let personality_path = main_chat_dir.join("PERSONALITY.md");
         std::fs::write(&personality_path, personality_content)
             .with_context(|| format!("writing PERSONALITY.md: {}", personality_path.display()))?;
 
         // Create ONBOARD.md from template (bootstrap instructions)
-        let onboard_content = include_str!("templates/ONBOARD.md");
+        let onboard_template = templates
+            .and_then(|t| t.onboard.as_ref())
+            .map(|s| s.as_str())
+            .unwrap_or(include_str!("templates/ONBOARD.md"));
         let onboard_path = main_chat_dir.join("ONBOARD.md");
-        std::fs::write(&onboard_path, onboard_content)
+        std::fs::write(&onboard_path, onboard_template)
             .with_context(|| format!("writing ONBOARD.md: {}", onboard_path.display()))?;
 
         // Create USER.md from template
-        let user_content = include_str!("templates/USER.md");
+        let user_template = templates
+            .and_then(|t| t.user.as_ref())
+            .map(|s| s.as_str())
+            .unwrap_or(include_str!("templates/USER.md"));
         let user_path = main_chat_dir.join("USER.md");
-        std::fs::write(&user_path, user_content)
+        std::fs::write(&user_path, user_template)
             .with_context(|| format!("writing USER.md: {}", user_path.display()))?;
 
         // Create .pi directory for pi agent config
@@ -356,9 +392,9 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let service = MainChatService::new(temp.path().to_path_buf(), true);
 
-        // Initialize main chat
+        // Initialize main chat (using embedded templates)
         let info = service
-            .initialize_main_chat("user123", Some("jarvis"))
+            .initialize_main_chat("user123", Some("jarvis"), None)
             .await
             .unwrap();
         assert_eq!(info.name, "jarvis");
@@ -381,7 +417,7 @@ mod tests {
         let service = MainChatService::new(temp.path().to_path_buf(), true);
 
         service
-            .initialize_main_chat("user123", Some("jarvis"))
+            .initialize_main_chat("user123", Some("jarvis"), None)
             .await
             .unwrap();
 

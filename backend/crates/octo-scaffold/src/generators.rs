@@ -6,9 +6,9 @@ use std::process::Command;
 use anyhow::{Context, Result};
 use tracing::info;
 
+use crate::Tier;
 use crate::templates::copy_template;
 use crate::tiers::ScaffoldConfig;
-use crate::Tier;
 
 /// Configuration for creating a new project.
 pub struct ProjectConfig {
