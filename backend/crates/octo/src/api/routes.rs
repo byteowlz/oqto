@@ -1,10 +1,11 @@
 //! API route definitions.
 
 use axum::extract::DefaultBodyLimit;
-use axum::http::{HeaderValue, Method, header};
+use axum::http::{header, HeaderValue, Method};
 use axum::{
-    Router, middleware,
+    middleware,
     routing::{delete, get, post, put},
+    Router,
 };
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::trace::{DefaultMakeSpan, DefaultOnRequest, DefaultOnResponse, TraceLayer};
@@ -404,7 +405,8 @@ pub fn create_router_with_config(state: AppState, max_upload_size_mb: usize) -> 
         .route(
             "/main/pi/sessions/{session_id}",
             get(main_chat_pi_handlers::get_pi_session_messages)
-                .post(main_chat_pi_handlers::resume_pi_session),
+                .post(main_chat_pi_handlers::resume_pi_session)
+                .patch(main_chat_pi_handlers::update_pi_session),
         )
         // Main Chat file access routes
         .nest("/main/files", main_chat_files::main_chat_file_routes())

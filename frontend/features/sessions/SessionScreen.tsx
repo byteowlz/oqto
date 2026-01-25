@@ -3638,7 +3638,13 @@ export const SessionScreen = memo(function SessionScreen() {
 				loadMessages();
 			}
 		} catch (err) {
-			setStatus((err as Error).message);
+			const message =
+				err instanceof Error ? err.message : "Failed to send message";
+			setStatus(message);
+			toast.error(
+				locale === "de" ? "Senden fehlgeschlagen" : "Failed to send message",
+				{ description: message },
+			);
 			setChatState("idle");
 			// Remove optimistic message on error
 			setMessages((prev) => prev.filter((m) => !m.info.id.startsWith("temp-")));

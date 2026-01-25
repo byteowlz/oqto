@@ -1572,6 +1572,24 @@ export async function listMainChatPiSessions(): Promise<PiSessionFile[]> {
 	return res.json();
 }
 
+/** Rename a Pi session (update title) */
+export async function renamePiSession(
+	sessionId: string,
+	title: string,
+): Promise<PiSessionFile> {
+	const res = await authFetch(
+		controlPlaneApiUrl(`/api/main/pi/sessions/${sessionId}`),
+		{
+			method: "PATCH",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ title }),
+			credentials: "include",
+		},
+	);
+	if (!res.ok) throw new Error(await readApiError(res));
+	return res.json();
+}
+
 /** Search result from Pi session search */
 export type PiSearchHit = {
 	agent: string;

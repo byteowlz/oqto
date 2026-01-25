@@ -863,6 +863,46 @@ pub async fn resume_pi_session(
     Ok(Json(pi_state_to_response(pi_state)))
 }
 
+/// Request body for updating a Pi session.
+#[derive(Debug, Deserialize)]
+pub struct UpdatePiSessionRequest {
+    /// New title for the session
+    pub title: Option<String>,
+}
+
+/// Update a Pi session's metadata (e.g., title).
+///
+/// PATCH /api/main/pi/sessions/{session_id}
+pub async fn update_pi_session(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    axum::extract::Path(session_id): axum::extract::Path<String>,
+    Json(request): Json<UpdatePiSessionRequest>,
+) -> ApiResult<Json<PiSessionFile>> {
+    let pi_service = get_pi_service(&state)?;
+
+    if let Some(title) = request.title {
+        let session = pi_service
+            .update_session_title(user.id(), &session_id, &title)
+            .map_err(|e| ApiError::internal(format!("Failed to update Pi session: {}", e)))?;
+
+        info!("Updated Pi session title: session_id={}, title={}", session_id, title);
+        Ok(Json(session))
+    } else {
+        // No updates requested, return current session info
+        let sessions = pi_service
+            .list_sessions(user.id())
+            .map_err(|e| ApiError::internal(format!("Failed to list sessions: {}", e)))?;
+
+        let session = sessions
+            .into_iter()
+            .find(|s| s.id == session_id)
+            .ok_or_else(|| ApiError::not_found(format!("Session not found: {}", session_id)))?;
+
+        Ok(Json(session))
+    }
+}
+
 /// WebSocket endpoint for streaming Pi events.
 ///
 /// GET /api/main/pi/ws

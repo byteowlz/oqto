@@ -2,9 +2,6 @@
 
 ## Open
 
-### [octo-8erz] Prevent template copy from following symlinks (P1, bug)
-copy_template_dir uses fs::copy on DirEntry paths without checking for symlinks; on most platforms this follows symlinks and can copy arbitrary files outside the template repo into the new project. This is a security risk if template repos are user-supplied. Use symlink_metadata to detect symlinks and either skip, copy as symlink, or enforce that resolved targets stay within the template repo. Affected: backend/crates/octo/src/api/handlers.rs::copy_template_dir.
-
 ### [octo-9bqx] Add limits to zip download endpoints to prevent disk/CPU exhaustion (P1, bug)
 Zip creation for /download and /download-zip has no caps on total size, file count, or path count; a single request can create huge archives and fill disk/CPU. Add configurable limits (max total bytes, max entries, max depth) and fail early. Consider streaming without temp files or rejecting large directories. Affected: backend/crates/octo-files/src/handlers.rs (download, download_zip, create_zip_file_from_paths, create_zip_tempfile_blocking).
 
@@ -154,6 +151,9 @@ Evidence
 Causes and Fix Instructions
 ...
 
+
+### [octo-8erz] Prevent template copy from following symlinks (P2, bug)
+copy_template_dir uses fs::copy on DirEntry paths without checking for symlinks; on most platforms this follows symlinks and can copy arbitrary files outside the template repo into the new project. This is a security risk if template repos are user-supplied. Use symlink_metadata to detect symlinks and either skip, copy as symlink, or enforce that resolved targets stay within the template repo. Affected: backend/crates/octo/src/api/handlers.rs::copy_template_dir.
 
 ### [octo-015j] Move blocking filesystem work out of async request handlers (P2, task)
 Several async handlers call std::fs synchronously (read_dir/read_to_string/copy), which can block the Tokio runtime under load. Convert to tokio::fs or wrap in spawn_blocking. Examples: backend/crates/octo/src/api/main_chat_pi.rs::get_prompt_commands (read_dir/read_to_string), backend/crates/octo/src/api/handlers.rs::list_workspace_dirs (read_dir), list_project_templates (read_dir), find_project_logo (read_dir), copy_template_dir (read_dir/fs::copy).
@@ -1194,9 +1194,9 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
-- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
-- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
-- [octo-k8z1.2] Backend: WebSocket proxy for screencast stream (closed )
-- [octo-k8z1.1] Backend: Integrate agent-browser daemon per session (closed )
 - [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
+- [octo-k8z1.1] Backend: Integrate agent-browser daemon per session (closed )
+- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
+- [octo-k8z1.2] Backend: WebSocket proxy for screencast stream (closed )
+- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
 - [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )

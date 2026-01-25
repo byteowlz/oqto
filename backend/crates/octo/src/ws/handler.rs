@@ -206,6 +206,7 @@ async fn handle_ws_connection(
                 let text_str = text.to_string();
                 match serde_json::from_str::<WsCommand>(&text_str) {
                     Ok(cmd) => {
+                        let cmd_session_id = cmd.session_id().map(|id| id.to_string());
                         if let Err(e) = handle_command(&hub, &state, &user_id, cmd).await {
                             warn!("Failed to handle command from user {}: {}", user_id, e);
                             // Send error to user
@@ -213,7 +214,7 @@ async fn handle_ws_connection(
                                 &user_id,
                                 WsEvent::Error {
                                     message: e.to_string(),
-                                    session_id: None,
+                                    session_id: cmd_session_id,
                                 },
                             )
                             .await;
