@@ -106,8 +106,25 @@ export const ChatInputArea = memo(
 		},
 		ref,
 	) {
-		// Input state - isolated from parent
-		const [messageInput, setMessageInput] = useState(initialValue);
+		// Input state - use ref to avoid re-renders on every keystroke
+		// Only sync to state when needed for deferred computations
+		const messageInputRef = useRef(initialValue);
+		const [messageInputState, setMessageInputState] = useState(initialValue);
+		const inputSyncTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+		const syncInputToState = useCallback((value: string) => {
+			messageInputRef.current = value;
+			if (inputSyncTimeoutRef.current) {
+				clearTimeout(inputSyncTimeoutRef.current);
+			}
+			// Sync to state after 100ms for deferred computations
+			inputSyncTimeoutRef.current = setTimeout(() => {
+				startTransition(() => {
+					setMessageInputState(value);
+				});
+			}, 100);
+		}, []);
+
 		const [showSlashPopup, setShowSlashPopup] = useState(false);
 		const [showFileMentionPopup, setShowFileMentionPopup] = useState(false);
 		const [fileMentionQuery, setFileMentionQuery] = useState("");
@@ -118,15 +135,9 @@ export const ChatInputArea = memo(
 		const [isUploading, setIsUploading] = useState(false);
 
 		const chatInputRef = useRef<HTMLTextAreaElement>(null);
-		const messageInputRef = useRef(messageInput);
-
-		// Keep ref in sync
-		useEffect(() => {
-			messageInputRef.current = messageInput;
-		}, [messageInput]);
 
 		// Deferred value for non-critical computations
-		const deferredMessageInput = useDeferredValue(messageInput);
+		const deferredMessageInput = useDeferredValue(messageInputState);
 
 		// Parse slash command from input
 		const slashQuery = useMemo(
@@ -141,7 +152,11 @@ export const ChatInputArea = memo(
 		}>({ raf: null, value: "" });
 
 		const setMessageInputWithResize = useCallback((value: string) => {
-			setMessageInput(value);
+			messageInputRef.current = value;
+			if (chatInputRef.current) {
+				chatInputRef.current.value = value;
+			}
+			syncInputToState(value);
 			chatInputResizeRef.current.value = value;
 
 			if (chatInputResizeRef.current.raf !== null) return;
@@ -157,7 +172,7 @@ export const ChatInputArea = memo(
 					textarea.style.height = `${Math.min(textarea.scrollHeight, 200)}px`;
 				}
 			});
-		}, []);
+		}, [syncInputToState]);
 
 		// Expose imperative handle for parent access
 		useImperativeHandle(
@@ -177,7 +192,7 @@ export const ChatInputArea = memo(
 			[fileAttachments, pendingUploads, setMessageInputWithResize],
 		);
 
-		// Draft change notification (debounced in parent)
+		// Draft change notification (debounced)
 		const draftTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 		useEffect(() => {
 			if (!onDraftChange) return;
@@ -185,14 +200,14 @@ export const ChatInputArea = memo(
 				clearTimeout(draftTimeoutRef.current);
 			}
 			draftTimeoutRef.current = setTimeout(() => {
-				onDraftChange(messageInput);
+				onDraftChange(messageInputState);
 			}, 300);
 			return () => {
 				if (draftTimeoutRef.current) {
 					clearTimeout(draftTimeoutRef.current);
 				}
 			};
-		}, [messageInput, onDraftChange]);
+		}, [messageInputState, onDraftChange]);
 
 		// Handle input change
 		const handleInputChange = useCallback(
@@ -200,7 +215,8 @@ export const ChatInputArea = memo(
 				const value = e.target.value;
 
 				if (dictation.isActive) {
-					setMessageInput(value);
+					messageInputRef.current = value;
+					syncInputToState(value);
 					e.target.style.height = "36px";
 				} else {
 					setMessageInputWithResize(value);
@@ -225,12 +241,12 @@ export const ChatInputArea = memo(
 					}
 				});
 			},
-			[dictation.isActive, setMessageInputWithResize],
+			[dictation.isActive, setMessageInputWithResize, syncInputToState],
 		);
 
 		// Handle send
 		const handleSend = useCallback(() => {
-			const text = messageInput.trim();
+			const text = messageInputRef.current.trim();
 			if (
 				!text &&
 				pendingUploads.length === 0 &&
@@ -253,7 +269,6 @@ export const ChatInputArea = memo(
 			setFileAttachments([]);
 			setPendingUploads([]);
 		}, [
-			messageInput,
 			pendingUploads,
 			fileAttachments,
 			dictation,
@@ -365,13 +380,13 @@ export const ChatInputArea = memo(
 		// Handle file mention select
 		const handleFileMentionSelect = useCallback(
 			(file: FileAttachment) => {
-				const newInput = messageInput.replace(/@[^\s]*$/, "");
+				const newInput = messageInputRef.current.replace(/@[^\s]*$/, "");
 				setMessageInputWithResize(newInput);
 				setFileAttachments((prev) => [...prev, file]);
 				setShowFileMentionPopup(false);
 				chatInputRef.current?.focus();
 			},
-			[messageInput, setMessageInputWithResize],
+			[setMessageInputWithResize],
 		);
 
 		const canSend =
