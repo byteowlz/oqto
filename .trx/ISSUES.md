@@ -563,6 +563,24 @@ Enable multiple platform users to access the same project/workspace with proper 
 ...
 
 
+### [octo-xncy.7] Android: UI exploration mode (DroidBot-style UTG crawler) (P3, task)
+Build UI exploration/crawling mode for unknown apps.
+
+## Approach
+DroidBot-style UI Transition Graph (UTG) crawler:
+1. Systematically explore app screens
+...
+
+
+### [octo-xncy.6] Android: MCP tools for agent control (snapshot, tap, type, scroll) (P3, task)
+
+### [octo-xncy.5] Android: Frontend AndroidView component with touch forwarding (P3, task)
+
+### [octo-xncy.4] Android: Screencast streaming to frontend (reuse BrowserView pattern) (P3, task)
+
+### [octo-xncy] Android Emulator: Agent-controlled Android environment (P3, epic)
+-
+
 ### [octo-mbeh] Deduplicate and centralize path sanitization logic (P3, task)
 There are multiple path sanitization/validation implementations with overlapping intent (e.g., sanitize_relative_path in API handlers vs resolve_path/resolve_and_verify_path in the file server). This risks divergence and inconsistent security rules. Consider centralizing into a shared utility with shared tests. Affected: backend/crates/octo/src/api/handlers.rs::sanitize_relative_path, backend/crates/octo-files/src/handlers.rs::resolve_path/resolve_and_verify_path.
 
@@ -646,6 +664,8 @@ Implementation:
 ### [workspace-5pmk.10] Add platform-specific native features (P3, task)
 Desktop: window management, system tray, keyboard shortcuts. Mobile: haptic feedback, safe area insets, native share. Use Tauri plugins and conditional compilation.
 
+### [octo-xncy.9] Android: Vision fallback with OmniParser/grounding model (P4, task)
+
 ### [octo-gpj7] Avoid unwrap on WS event serialization (P4, chore)
 backend/src/ws/handler.rs and backend/src/ws/types.rs use serde_json::to_string(...).unwrap(). A serialization failure would panic the server. Use map_err/Result and return an error response instead, even if failure is unlikely.
 
@@ -663,6 +683,17 @@ Desired behavior: Tool calls hidden by default, toggle to show
 
 ## Closed
 
+- [octo-xncy.1] Android: Emulator lifecycle management (AVD/Cuttlefish per session) (closed 2026-01-25)
+- [octo-xncy.8] Android: Network traffic interception (mitmproxy for API discovery) (closed 2026-01-25)
+- [octo-xncy.16] Android: System settings get/set and permission management (closed 2026-01-25)
+- [octo-xncy.15] Android: Frida runtime hooking for API tracing (closed 2026-01-25)
+- [octo-xncy.14] Android: Logcat streaming and parsing (closed 2026-01-25)
+- [octo-xncy.13] Android: Intent/broadcast injection and activity inspection (closed 2026-01-25)
+- [octo-xncy.12] Android: Content Provider queries (contacts, sms, calendar, media) (closed 2026-01-25)
+- [octo-xncy.11] Android: Storage access (SQLite, SharedPrefs, files pull/push) (closed 2026-01-25)
+- [octo-xncy.3] Android: UI tree extraction via accessibility service (closed 2026-01-25)
+- [octo-xncy.2] Android: ADB control API (tap, type, scroll, back, home) (closed 2026-01-25)
+- [octo-xncy.10] agent-android: Core CLI/daemon scaffold (Rust) (closed 2026-01-25)
 - [octo-eb0b] Per-user mmry instances in local multi-user mode (closed 2026-01-24)
 - [octo-vvn7] Define runner user-plane RPC API (closed 2026-01-23)
 - [octo-wzvn] Agent-driven UI control (conversational navigation) (closed 2026-01-21)
@@ -1163,9 +1194,9 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
-- [octo-k8z1.1] Backend: Integrate agent-browser daemon per session (closed )
-- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
 - [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
-- [octo-k8z1.2] Backend: WebSocket proxy for screencast stream (closed )
 - [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
+- [octo-k8z1.2] Backend: WebSocket proxy for screencast stream (closed )
+- [octo-k8z1.1] Backend: Integrate agent-browser daemon per session (closed )
 - [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
+- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )

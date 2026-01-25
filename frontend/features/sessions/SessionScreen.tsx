@@ -2666,6 +2666,7 @@ export const SessionScreen = memo(function SessionScreen() {
 			opencodeDirectory,
 			activeSessionId,
 			selectedChatSessionId,
+			mainChatCurrentSessionId,
 			selectedChatFromHistory,
 			resumeWorkspacePath,
 			locale,
@@ -3400,6 +3401,7 @@ export const SessionScreen = memo(function SessionScreen() {
 				// This allows the current agent to see and respond to it
 				effectiveMessageText = `I asked @@${currentAgentTarget.name}:\n> ${messageText}\n\nTheir response:\n${response.response}`;
 
+				console.log("[@@agent] Got response, effectiveMessageText:", effectiveMessageText.slice(0, 200));
 				// Fall through to normal send flow below with the formatted message
 			} catch (err) {
 				const message = err instanceof Error ? err.message : "Agent ask failed";
@@ -3606,6 +3608,7 @@ export const SessionScreen = memo(function SessionScreen() {
 				);
 			} else {
 				// Use async send - the response will come via SSE events
+				console.log("[@@agent] Sending to session:", targetSessionId, "message:", effectiveMessageText.slice(0, 100));
 				await sendMessageAsync(
 					effectiveBaseUrl,
 					targetSessionId,
