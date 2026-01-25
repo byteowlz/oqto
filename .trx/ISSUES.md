@@ -143,22 +143,11 @@ Implementation:
 ### [workspace-5pmk.11] Add backend URL configuration to login form (P1, task)
 Add a 'Server URL' field to the login form allowing users to specify the backend URL. Store in localStorage for persistence. Show connection status indicator. Default to current origin for web, require input for mobile apps.
 
-### [octo-wbyq] Performance: eliminate >50ms UI handlers (P2, epic)
-Evidence
-- Console violations: message handlers (>50ms), setTimeout handlers (>50ms), keydown handlers (~187ms), click handlers (>50ms), forced reflow (~43ms).
-- React profiler capture: uploads/profiling-data.14-01-2026.18-45-18.json. Top total actual render time: AppShell (~7.7s, max 731ms), SessionsApp (~6.1s, max 365ms), AppProvider (~5.8s, max 732ms), MainChatEntry (~0.8s, max 7ms), DropdownMenu and StatusBar repeated small costs.
-
-Causes and Fix Instructions
-...
-
-
 ### [octo-8erz] Prevent template copy from following symlinks (P2, bug)
 copy_template_dir uses fs::copy on DirEntry paths without checking for symlinks; on most platforms this follows symlinks and can copy arbitrary files outside the template repo into the new project. This is a security risk if template repos are user-supplied. Use symlink_metadata to detect symlinks and either skip, copy as symlink, or enforce that resolved targets stay within the template repo. Affected: backend/crates/octo/src/api/handlers.rs::copy_template_dir.
 
 ### [octo-015j] Move blocking filesystem work out of async request handlers (P2, task)
 Several async handlers call std::fs synchronously (read_dir/read_to_string/copy), which can block the Tokio runtime under load. Convert to tokio::fs or wrap in spawn_blocking. Examples: backend/crates/octo/src/api/main_chat_pi.rs::get_prompt_commands (read_dir/read_to_string), backend/crates/octo/src/api/handlers.rs::list_workspace_dirs (read_dir), list_project_templates (read_dir), find_project_logo (read_dir), copy_template_dir (read_dir/fs::copy).
-
-### [octo-psdq] text input boxes rerendering the entire component on every key stroke (P2, bug)
 
 ### [octo-fmxv] Invalid `boundary` for `multipart/form-data` request when trying to save a file after editing it in the sidebar. (P2, bug)
 
@@ -683,6 +672,8 @@ Desired behavior: Tool calls hidden by default, toggle to show
 
 ## Closed
 
+- [octo-wbyq] Performance: eliminate >50ms UI handlers (closed 2026-01-25)
+- [octo-psdq] text input boxes rerendering the entire component on every key stroke (closed 2026-01-25)
 - [octo-xncy.1] Android: Emulator lifecycle management (AVD/Cuttlefish per session) (closed 2026-01-25)
 - [octo-xncy.8] Android: Network traffic interception (mitmproxy for API discovery) (closed 2026-01-25)
 - [octo-xncy.16] Android: System settings get/set and permission management (closed 2026-01-25)
@@ -1194,9 +1185,9 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
+- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
 - [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
-- [octo-k8z1.1] Backend: Integrate agent-browser daemon per session (closed )
 - [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
 - [octo-k8z1.2] Backend: WebSocket proxy for screencast stream (closed )
+- [octo-k8z1.1] Backend: Integrate agent-browser daemon per session (closed )
 - [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
-- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
