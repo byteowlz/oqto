@@ -2,6 +2,15 @@
 
 ## Open
 
+### [octo-8erz] Prevent template copy from following symlinks (P1, bug)
+copy_template_dir uses fs::copy on DirEntry paths without checking for symlinks; on most platforms this follows symlinks and can copy arbitrary files outside the template repo into the new project. This is a security risk if template repos are user-supplied. Use symlink_metadata to detect symlinks and either skip, copy as symlink, or enforce that resolved targets stay within the template repo. Affected: backend/crates/octo/src/api/handlers.rs::copy_template_dir.
+
+### [octo-9bqx] Add limits to zip download endpoints to prevent disk/CPU exhaustion (P1, bug)
+Zip creation for /download and /download-zip has no caps on total size, file count, or path count; a single request can create huge archives and fill disk/CPU. Add configurable limits (max total bytes, max entries, max depth) and fail early. Consider streaming without temp files or rejecting large directories. Affected: backend/crates/octo-files/src/handlers.rs (download, download_zip, create_zip_file_from_paths, create_zip_tempfile_blocking).
+
+### [octo-k9sp] Restrict token query auth to WebSocket-only paths (P1, bug)
+Auth middleware accepts a token from the query string for all requests (not just WS upgrades). This risks leaking tokens via logs/referrers and enables accidental use on normal HTTP endpoints. Consider restricting query-token auth to Upgrade: websocket requests or specific WS routes, or require the auth_token cookie instead. Affected: backend/crates/octo/src/auth/middleware.rs (query_token parsing and selection).
+
 ### [octo-xjs5.10] Test plan: isolation matrix (P1, task)
 Add automated tests / manual checklist for:
 - local single-user
@@ -137,6 +146,18 @@ Implementation:
 ### [workspace-5pmk.11] Add backend URL configuration to login form (P1, task)
 Add a 'Server URL' field to the login form allowing users to specify the backend URL. Store in localStorage for persistence. Show connection status indicator. Default to current origin for web, require input for mobile apps.
 
+### [octo-wbyq] Performance: eliminate >50ms UI handlers (P2, epic)
+Evidence
+- Console violations: message handlers (>50ms), setTimeout handlers (>50ms), keydown handlers (~187ms), click handlers (>50ms), forced reflow (~43ms).
+- React profiler capture: uploads/profiling-data.14-01-2026.18-45-18.json. Top total actual render time: AppShell (~7.7s, max 731ms), SessionsApp (~6.1s, max 365ms), AppProvider (~5.8s, max 732ms), MainChatEntry (~0.8s, max 7ms), DropdownMenu and StatusBar repeated small costs.
+
+Causes and Fix Instructions
+...
+
+
+### [octo-015j] Move blocking filesystem work out of async request handlers (P2, task)
+Several async handlers call std::fs synchronously (read_dir/read_to_string/copy), which can block the Tokio runtime under load. Convert to tokio::fs or wrap in spawn_blocking. Examples: backend/crates/octo/src/api/main_chat_pi.rs::get_prompt_commands (read_dir/read_to_string), backend/crates/octo/src/api/handlers.rs::list_workspace_dirs (read_dir), list_project_templates (read_dir), find_project_logo (read_dir), copy_template_dir (read_dir/fs::copy).
+
 ### [octo-psdq] text input boxes rerendering the entire component on every key stroke (P2, bug)
 
 ### [octo-fmxv] Invalid `boundary` for `multipart/form-data` request when trying to save a file after editing it in the sidebar. (P2, bug)
@@ -271,48 +292,14 @@ A versioned envelope composed of multiple context "sources".
 
 ### [octo-k8z1.8] Session management: Browser lifecycle (start/stop with session) (P2, task)
 
-### [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (P2, task)
-Add MCP tools that shell out to agent-browser CLI:
-- browser_open: agent-browser --session $id open $url
-- browser_snapshot: agent-browser --session $id snapshot -i --json
-- browser_click: agent-browser --session $id click $ref
-- browser_fill: agent-browser --session $id fill $ref "$text"
-...
-
-
-### [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (P2, task)
-
 ### [octo-k8z1.5] Frontend: Add browser tab to central pane view switcher (P2, task)
-
-### [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (P2, task)
-Create BrowserView React component:
-- Canvas element for rendering screencast frames
-- WebSocket connection to /api/session/{id}/browser/ws
-- Decode base64 JPEG frames and draw to canvas
-- Capture mouse/keyboard events and send to backend
+Wire BrowserView into SessionScreen.tsx:
+1. Add 'browser' to ActiveView type union
+2. Add browser tab to TabButton row
+3. Import and render BrowserView when activeView === 'browser'
+4. Add keyboard shortcut for browser tab
 ...
 
-
-### [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (P2, task)
-Forward user input from frontend to agent-browser:
-- Mouse events: { type: 'input_mouse', eventType, x, y, button, clickCount }
-- Keyboard events: { type: 'input_keyboard', eventType, key, code }
-- Touch events for mobile: { type: 'input_touch', eventType, touchPoints }
-Use agent-browser's injectMouseEvent/injectKeyboardEvent APIs
-
-### [octo-k8z1.2] Backend: WebSocket proxy for screencast stream (P2, task)
-Create WebSocket endpoint /api/session/{id}/browser/ws that:
-- Connects to agent-browser's screencast WebSocket (localhost:STREAM_PORT)
-- Forwards JPEG frames to frontend
-- Handles reconnection if browser restarts
-- Multiplexes input events from frontend to agent-browser
-
-### [octo-k8z1.1] Backend: Integrate agent-browser daemon per session (P2, task)
-Install agent-browser as dependency. Create BrowserService in backend that:
-- Spawns agent-browser daemon per session (AGENT_BROWSER_SESSION=${sessionId})
-- Manages lifecycle (start on first browser request, stop on session end)
-- Configures AGENT_BROWSER_STREAM_PORT for screencast
-- Uses BrowserManager API for programmatic control
 
 ### [octo-k8z1] Add server-side browser feature (Option B) using agent-browser (P2, feature)
 Server-side browser for AI agent control, rendered in Octo frontend.
@@ -575,6 +562,12 @@ Enable multiple platform users to access the same project/workspace with proper 
 ### Core Concept
 ...
 
+
+### [octo-mbeh] Deduplicate and centralize path sanitization logic (P3, task)
+There are multiple path sanitization/validation implementations with overlapping intent (e.g., sanitize_relative_path in API handlers vs resolve_path/resolve_and_verify_path in the file server). This risks divergence and inconsistent security rules. Consider centralizing into a shared utility with shared tests. Affected: backend/crates/octo/src/api/handlers.rs::sanitize_relative_path, backend/crates/octo-files/src/handlers.rs::resolve_path/resolve_and_verify_path.
+
+### [octo-a256] Consolidate CopyButton implementations and handle clipboard failures consistently (P3, task)
+CopyButton logic is duplicated across multiple components with inconsistent error handling and timer cleanup (e.g., missing try/catch and no timeout cleanup on unmount). Consider a shared CopyButton component/hook with fallback copy logic and timeout cleanup. Affected: frontend/components/ui/markdown-renderer.tsx, frontend/components/ui/code-viewer.tsx, frontend/components/ui/typst-viewer.tsx, frontend/apps/admin/InviteCodesPanel.tsx, frontend/features/sessions/SessionScreen.tsx, frontend/features/main-chat/components/MainChatPiView.tsx.
 
 ### [octo-3trr] Add browser extension mode (Option A) - fork Playwriter (P3, feature)
 Browser extension mode for controlling user's existing browser.
@@ -1170,3 +1163,9 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
+- [octo-k8z1.1] Backend: Integrate agent-browser daemon per session (closed )
+- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
+- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
+- [octo-k8z1.2] Backend: WebSocket proxy for screencast stream (closed )
+- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
+- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
