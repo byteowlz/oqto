@@ -644,11 +644,9 @@ impl MainChatPiService {
 
         let work_dir = self.get_main_chat_dir(user_id);
         let sessions_dir = self.get_pi_sessions_dir(&work_dir);
-        let session_path = sessions_dir.join(format!("{}.jsonl", session_id));
 
-        if !session_path.exists() {
-            anyhow::bail!("Session not found: {}", session_id);
-        }
+        // Find session file - filename format is {timestamp}_{session_id}.jsonl
+        let session_path = self.find_session_file(&sessions_dir, session_id)?;
 
         // Read the file
         let file = std::fs::File::open(&session_path).context("opening session file")?;
