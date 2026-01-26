@@ -80,15 +80,6 @@ Add runner RPC endpoints for per-user session state:
 ...
 
 
-### [octo-xjs5] Runner As Core User-Plane (P1, epic)
-Goal: make octo-runner the mandatory user-plane boundary. The octo backend becomes primarily auth/routing/proxy with a minimal control-plane DB. All user data + user operations (sessions, filesystem ops, mmry lifecycle/ports, main-chat state) live behind per-user runners, enabling OS-level isolation locally and clean extension to remote runner nodes later.
-
-## Non-Goals (initial phase)
-- Remote runner nodes over network transport (design for it, but implement local Unix socket first)
-- Replacing container isolation model on macOS/Windows (container mode remains primary there)
-...
-
-
 ### [octo-y1nq] Opencode agent connection cycling - rapid disconnect/reconnect loop (P1, bug)
 The opencode agent repeatedly disconnects and reconnects in rapid succession (observed 15+ cycles in logs). Pattern observed:
 
@@ -672,6 +663,8 @@ Desired behavior: Tool calls hidden by default, toggle to show
 
 ## Closed
 
+- [octo-tbsf] Security: Session services were binding to 0.0.0.0 instead of 127.0.0.1 (closed 2026-01-26)
+- [octo-xjs5] Runner As Core User-Plane (closed 2026-01-26)
 - [octo-wbyq] Performance: eliminate >50ms UI handlers (closed 2026-01-25)
 - [octo-psdq] text input boxes rerendering the entire component on every key stroke (closed 2026-01-25)
 - [octo-xncy.1] Android: Emulator lifecycle management (AVD/Cuttlefish per session) (closed 2026-01-25)
@@ -1185,9 +1178,9 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
+- [octo-k8z1.1] Backend: Integrate agent-browser daemon per session (closed )
+- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
 - [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
 - [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
 - [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
 - [octo-k8z1.2] Backend: WebSocket proxy for screencast stream (closed )
-- [octo-k8z1.1] Backend: Integrate agent-browser daemon per session (closed )
-- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
