@@ -175,6 +175,14 @@ export function MainChatPiView({
 			lastNewSessionTriggerRef.current !== undefined
 		) {
 			newSession();
+			// Clear the input when starting a new session
+			setInput("");
+			setFileAttachments([]);
+			try {
+				localStorage.removeItem("octo:mainChatDraft");
+			} catch {
+				// Ignore localStorage errors
+			}
 		}
 		lastNewSessionTriggerRef.current = newSessionTrigger;
 	}, [newSessionTrigger, newSession]);
