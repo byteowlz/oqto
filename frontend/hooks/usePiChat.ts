@@ -750,10 +750,19 @@ export function usePiChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 					};
 					const currentResultMsg = streamingMessageRef.current;
 					if (currentResultMsg) {
+						// Check if there's a matching tool_use to associate the name with
+						const matchingToolUse = currentResultMsg.parts.find(
+							(p) => p.type === "tool_use" && p.id === result.id,
+						);
 						currentResultMsg.parts.push({
 							type: "tool_result",
 							id: result.id,
-							name: result.name,
+							// Use the tool name from the matching tool_use if available
+							name:
+								result.name ||
+								(matchingToolUse?.type === "tool_use"
+									? matchingToolUse.name
+									: undefined),
 							content: result.content,
 							isError: result.isError,
 						});

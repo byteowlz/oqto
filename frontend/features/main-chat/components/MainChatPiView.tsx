@@ -1479,6 +1479,12 @@ type PiSegment =
 			toolResult?: Extract<PiMessagePart, { type: "tool_result" }>;
 			timestamp: number;
 	  }
+	| {
+			key: string;
+			type: "tool_result_only";
+			part: Extract<PiMessagePart, { type: "tool_result" }>;
+			timestamp: number;
+	  }
 	| { key: string; type: "thinking"; content: string; timestamp: number }
 	| { key: string; type: "compaction"; content: string; timestamp: number };
 
@@ -1581,16 +1587,11 @@ const PiMessageGroupCard = memo(function PiMessageGroupCard({
 		} else if (part.type === "tool_result") {
 			// Render only if we don't have a corresponding tool_use
 			if (!toolUseIds.has(part.id)) {
+				// Render as a standalone tool result segment (not a fake tool_use with empty input)
 				segments.push({
 					key,
-					type: "tool_use",
-					part: {
-						type: "tool_use",
-						id: part.id,
-						name: part.name ?? "tool",
-						input: {},
-					},
-					toolResult: part,
+					type: "tool_result_only",
+					part,
 					timestamp,
 				});
 			}
@@ -1711,6 +1712,17 @@ const PiMessageGroupCard = memo(function PiMessageGroupCard({
 								key={segment.key}
 								part={segment.part}
 								toolResult={segment.toolResult}
+								locale={locale}
+								workspacePath={workspacePath}
+							/>
+						);
+					}
+					if (segment.type === "tool_result_only") {
+						// Render standalone tool result (no matching tool_use found)
+						return (
+							<PiPartRenderer
+								key={segment.key}
+								part={segment.part}
 								locale={locale}
 								workspacePath={workspacePath}
 							/>
