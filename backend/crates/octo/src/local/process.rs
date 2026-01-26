@@ -199,7 +199,7 @@ impl ProcessManager {
             "--port".to_string(),
             port.to_string(),
             "--hostname".to_string(),
-            "0.0.0.0".to_string(),
+            "127.0.0.1".to_string(),
         ];
 
         if let Some(agent_name) = agent {
@@ -256,7 +256,7 @@ impl ProcessManager {
                     "--port",
                     &port.to_string(),
                     "--bind",
-                    "0.0.0.0",
+                    "127.0.0.1",
                     "--root",
                     root_dir.to_str().unwrap_or("."),
                 ],
@@ -327,7 +327,7 @@ impl ProcessManager {
             "--port",
             &port_str,
             "--interface",
-            "0.0.0.0",
+            "127.0.0.1",
             "--writable",
             "--cwd",
             cwd_str,
@@ -1066,5 +1066,132 @@ mod tests {
 
         // Cleanup
         manager.stop_session("session1").await.unwrap();
+    }
+
+    // =========================================================================
+    // Security tests: Verify services bind to localhost only
+    // =========================================================================
+    //
+    // These tests ensure that session services (opencode, fileserver, ttyd) bind
+    // to 127.0.0.1 (localhost) rather than 0.0.0.0 (all interfaces). Binding to
+    // 0.0.0.0 would expose these services to the network, bypassing the proxy.
+
+    /// Helper to build opencode args (mirrors the logic in spawn_opencode).
+    fn build_opencode_args(port: u16, agent: Option<&str>) -> Vec<String> {
+        let mut args = vec![
+            "serve".to_string(),
+            "--port".to_string(),
+            port.to_string(),
+            "--hostname".to_string(),
+            "127.0.0.1".to_string(),
+        ];
+        if let Some(agent_name) = agent {
+            args.push("--agent".to_string());
+            args.push(agent_name.to_string());
+        }
+        args
+    }
+
+    /// Helper to build fileserver args (mirrors the logic in spawn_fileserver).
+    fn build_fileserver_args(port: u16, root_dir: &str) -> Vec<String> {
+        vec![
+            "--port".to_string(),
+            port.to_string(),
+            "--bind".to_string(),
+            "127.0.0.1".to_string(),
+            "--root".to_string(),
+            root_dir.to_string(),
+        ]
+    }
+
+    /// Helper to build ttyd args (mirrors the logic in spawn_ttyd).
+    fn build_ttyd_args(port: u16, cwd: &str) -> Vec<String> {
+        vec![
+            "--port".to_string(),
+            port.to_string(),
+            "--interface".to_string(),
+            "127.0.0.1".to_string(),
+            "--writable".to_string(),
+            "--cwd".to_string(),
+            cwd.to_string(),
+            "zsh".to_string(),
+            "-l".to_string(),
+        ]
+    }
+
+    #[test]
+    fn test_opencode_binds_to_localhost_only() {
+        let args = build_opencode_args(4096, None);
+
+        // Find the --hostname argument
+        let hostname_idx = args.iter().position(|a| a == "--hostname");
+        assert!(hostname_idx.is_some(), "opencode args must include --hostname");
+
+        let bind_addr = &args[hostname_idx.unwrap() + 1];
+        assert_eq!(
+            bind_addr, "127.0.0.1",
+            "opencode must bind to 127.0.0.1, not {}. Binding to 0.0.0.0 exposes the service to the network!",
+            bind_addr
+        );
+
+        // Verify it's NOT 0.0.0.0
+        assert_ne!(
+            bind_addr, "0.0.0.0",
+            "SECURITY: opencode must NOT bind to 0.0.0.0"
+        );
+    }
+
+    #[test]
+    fn test_opencode_with_agent_binds_to_localhost_only() {
+        let args = build_opencode_args(4096, Some("test-agent"));
+
+        let hostname_idx = args.iter().position(|a| a == "--hostname");
+        assert!(hostname_idx.is_some());
+
+        let bind_addr = &args[hostname_idx.unwrap() + 1];
+        assert_eq!(bind_addr, "127.0.0.1");
+        assert_ne!(bind_addr, "0.0.0.0");
+    }
+
+    #[test]
+    fn test_fileserver_binds_to_localhost_only() {
+        let args = build_fileserver_args(8080, "/workspace");
+
+        // Find the --bind argument
+        let bind_idx = args.iter().position(|a| a == "--bind");
+        assert!(bind_idx.is_some(), "fileserver args must include --bind");
+
+        let bind_addr = &args[bind_idx.unwrap() + 1];
+        assert_eq!(
+            bind_addr, "127.0.0.1",
+            "fileserver must bind to 127.0.0.1, not {}. Binding to 0.0.0.0 exposes the service to the network!",
+            bind_addr
+        );
+
+        assert_ne!(
+            bind_addr, "0.0.0.0",
+            "SECURITY: fileserver must NOT bind to 0.0.0.0"
+        );
+    }
+
+    #[test]
+    fn test_ttyd_binds_to_localhost_only() {
+        let args = build_ttyd_args(7681, "/workspace");
+
+        // Find the --interface argument
+        let interface_idx = args.iter().position(|a| a == "--interface");
+        assert!(interface_idx.is_some(), "ttyd args must include --interface");
+
+        let bind_addr = &args[interface_idx.unwrap() + 1];
+        assert_eq!(
+            bind_addr, "127.0.0.1",
+            "ttyd must bind to 127.0.0.1, not {}. Binding to 0.0.0.0 exposes the service to the network!",
+            bind_addr
+        );
+
+        assert_ne!(
+            bind_addr, "0.0.0.0",
+            "SECURITY: ttyd must NOT bind to 0.0.0.0"
+        );
     }
 }

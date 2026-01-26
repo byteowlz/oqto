@@ -440,6 +440,16 @@ impl Runner {
             RunnerRequest::SearchMemories(r) => self.search_memories(r).await,
             RunnerRequest::AddMemory(r) => self.add_memory(r).await,
             RunnerRequest::DeleteMemory(r) => self.delete_memory(r).await,
+
+            // ================================================================
+            // OpenCode chat history operations (user-plane)
+            // ================================================================
+            RunnerRequest::ListOpencodeSessions(r) => self.list_opencode_sessions(r).await,
+            RunnerRequest::GetOpencodeSession(r) => self.get_opencode_session(r).await,
+            RunnerRequest::GetOpencodeSessionMessages(r) => {
+                self.get_opencode_session_messages(r).await
+            }
+            RunnerRequest::UpdateOpencodeSession(r) => self.update_opencode_session(r).await,
         }
     }
 
@@ -1214,7 +1224,7 @@ impl Runner {
                 "--port".to_string(),
                 req.fileserver_port.to_string(),
                 "--bind".to_string(),
-                "0.0.0.0".to_string(),
+                "127.0.0.1".to_string(),
                 "--root".to_string(),
                 req.workspace_path.to_string_lossy().to_string(),
             ],
@@ -1235,7 +1245,7 @@ impl Runner {
                 "--port".to_string(),
                 req.ttyd_port.to_string(),
                 "--interface".to_string(),
-                "0.0.0.0".to_string(),
+                "127.0.0.1".to_string(),
                 "--writable".to_string(),
                 "--cwd".to_string(),
                 req.workspace_path.to_string_lossy().to_string(),
@@ -1264,7 +1274,7 @@ impl Runner {
             "--port".to_string(),
             req.opencode_port.to_string(),
             "--hostname".to_string(),
-            "0.0.0.0".to_string(),
+            "127.0.0.1".to_string(),
         ];
         if let Some(ref agent) = req.agent {
             opencode_args.push("--agent".to_string());
@@ -1423,6 +1433,205 @@ impl Runner {
         // TODO: Delete from mmry database
         let _ = req;
         error_response(ErrorCode::Internal, "Memory operations not yet implemented")
+    }
+
+    // ========================================================================
+    // OpenCode Chat History Operations (user-plane)
+    // ========================================================================
+
+    /// Get the OpenCode data directory for this user.
+    fn opencode_data_dir(&self) -> PathBuf {
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+        let data_dir = std::env::var("XDG_DATA_HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from(&home).join(".local").join("share"));
+        data_dir.join("opencode")
+    }
+
+    async fn list_opencode_sessions(
+        &self,
+        req: ListOpencodeSessionsRequest,
+    ) -> RunnerResponse {
+        let opencode_dir = self.opencode_data_dir();
+        
+        match octo::history::list_sessions_from_dir(&opencode_dir) {
+            Ok(sessions) => {
+                let mut filtered: Vec<_> = sessions
+                    .into_iter()
+                    .filter(|s| {
+                        // Filter by workspace if specified
+                        if let Some(ref ws) = req.workspace {
+                            if s.workspace_path != *ws {
+                                return false;
+                            }
+                        }
+                        // Filter out child sessions unless explicitly included
+                        if !req.include_children && s.is_child {
+                            return false;
+                        }
+                        true
+                    })
+                    .collect();
+
+                // Apply limit if specified
+                if let Some(limit) = req.limit {
+                    filtered.truncate(limit);
+                }
+
+                let sessions: Vec<OpencodeSessionInfo> = filtered
+                    .into_iter()
+                    .map(|s| OpencodeSessionInfo {
+                        id: s.id,
+                        readable_id: s.readable_id,
+                        title: s.title,
+                        parent_id: s.parent_id,
+                        workspace_path: s.workspace_path,
+                        project_name: s.project_name,
+                        created_at: s.created_at,
+                        updated_at: s.updated_at,
+                        version: s.version,
+                        is_child: s.is_child,
+                    })
+                    .collect();
+
+                RunnerResponse::OpencodeSessionList(OpencodeSessionListResponse { sessions })
+            }
+            Err(e) => error_response(
+                ErrorCode::IoError,
+                format!("Failed to list OpenCode sessions: {}", e),
+            ),
+        }
+    }
+
+    async fn get_opencode_session(&self, req: GetOpencodeSessionRequest) -> RunnerResponse {
+        let opencode_dir = self.opencode_data_dir();
+        
+        match octo::history::get_session_from_dir(&req.session_id, &opencode_dir) {
+            Ok(Some(s)) => RunnerResponse::OpencodeSession(OpencodeSessionResponse {
+                session: Some(OpencodeSessionInfo {
+                    id: s.id,
+                    readable_id: s.readable_id,
+                    title: s.title,
+                    parent_id: s.parent_id,
+                    workspace_path: s.workspace_path,
+                    project_name: s.project_name,
+                    created_at: s.created_at,
+                    updated_at: s.updated_at,
+                    version: s.version,
+                    is_child: s.is_child,
+                }),
+            }),
+            Ok(None) => RunnerResponse::OpencodeSession(OpencodeSessionResponse { session: None }),
+            Err(e) => error_response(
+                ErrorCode::IoError,
+                format!("Failed to get OpenCode session: {}", e),
+            ),
+        }
+    }
+
+    async fn get_opencode_session_messages(
+        &self,
+        req: GetOpencodeSessionMessagesRequest,
+    ) -> RunnerResponse {
+        let opencode_dir = self.opencode_data_dir();
+        
+        let messages_result = if req.render {
+            // Use blocking task for rendering since it may do async markdown processing
+            let session_id = req.session_id.clone();
+            let dir = opencode_dir.clone();
+            tokio::task::spawn_blocking(move || {
+                // We need to run async code in blocking context
+                let rt = tokio::runtime::Handle::current();
+                rt.block_on(async {
+                    octo::history::get_session_messages_rendered_from_dir(&session_id, &dir).await
+                })
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!("Task join error: {}", e))
+            .and_then(|r| r)
+        } else {
+            octo::history::get_session_messages_from_dir(&req.session_id, &opencode_dir)
+        };
+
+        match messages_result {
+            Ok(messages) => {
+                let messages: Vec<OpencodeMessage> = messages
+                    .into_iter()
+                    .map(|m| OpencodeMessage {
+                        id: m.id,
+                        session_id: m.session_id,
+                        role: m.role,
+                        created_at: m.created_at,
+                        completed_at: m.completed_at,
+                        parent_id: m.parent_id,
+                        model_id: m.model_id,
+                        provider_id: m.provider_id,
+                        agent: m.agent,
+                        summary_title: m.summary_title,
+                        tokens_input: m.tokens_input,
+                        tokens_output: m.tokens_output,
+                        tokens_reasoning: m.tokens_reasoning,
+                        cost: m.cost,
+                        parts: m
+                            .parts
+                            .into_iter()
+                            .map(|p| OpencodeMessagePart {
+                                id: p.id,
+                                part_type: p.part_type,
+                                text: p.text,
+                                text_html: p.text_html,
+                                tool_name: p.tool_name,
+                                tool_input: p.tool_input,
+                                tool_output: p.tool_output,
+                                tool_status: p.tool_status,
+                                tool_title: p.tool_title,
+                            })
+                            .collect(),
+                    })
+                    .collect();
+
+                RunnerResponse::OpencodeSessionMessages(OpencodeSessionMessagesResponse {
+                    session_id: req.session_id,
+                    messages,
+                })
+            }
+            Err(e) => error_response(
+                ErrorCode::IoError,
+                format!("Failed to get OpenCode session messages: {}", e),
+            ),
+        }
+    }
+
+    async fn update_opencode_session(
+        &self,
+        req: UpdateOpencodeSessionRequest,
+    ) -> RunnerResponse {
+        let opencode_dir = self.opencode_data_dir();
+        
+        if let Some(title) = req.title {
+            match octo::history::update_session_title_in_dir(&req.session_id, &title, &opencode_dir) {
+                Ok(s) => RunnerResponse::OpencodeSessionUpdated(OpencodeSessionUpdatedResponse {
+                    session: OpencodeSessionInfo {
+                        id: s.id,
+                        readable_id: s.readable_id,
+                        title: s.title,
+                        parent_id: s.parent_id,
+                        workspace_path: s.workspace_path,
+                        project_name: s.project_name,
+                        created_at: s.created_at,
+                        updated_at: s.updated_at,
+                        version: s.version,
+                        is_child: s.is_child,
+                    },
+                }),
+                Err(e) => error_response(
+                    ErrorCode::IoError,
+                    format!("Failed to update OpenCode session: {}", e),
+                ),
+            }
+        } else {
+            error_response(ErrorCode::InvalidRequest, "No update fields provided")
+        }
     }
 
     /// Handle a client connection.
@@ -1766,4 +1975,120 @@ async fn main() -> Result<()> {
 
     let runner = Runner::new(sandbox_config, binaries, user_config);
     runner.run(&socket_path).await
+}
+
+// =============================================================================
+// Tests
+// =============================================================================
+
+#[cfg(test)]
+mod tests {
+    //! Security tests for octo-runner session spawning.
+    //!
+    //! These tests verify that session services bind to localhost (127.0.0.1)
+    //! rather than all interfaces (0.0.0.0). This is critical for security:
+    //! services should only be accessible via the octo backend proxy.
+
+    /// Helper to build opencode args (mirrors the logic in Runner::start_session).
+    fn build_opencode_args(port: u16, agent: Option<&str>) -> Vec<String> {
+        let mut args = vec![
+            "serve".to_string(),
+            "--port".to_string(),
+            port.to_string(),
+            "--hostname".to_string(),
+            "127.0.0.1".to_string(),
+        ];
+        if let Some(agent_name) = agent {
+            args.push("--agent".to_string());
+            args.push(agent_name.to_string());
+        }
+        args
+    }
+
+    /// Helper to build fileserver args (mirrors the logic in Runner::start_session).
+    fn build_fileserver_args(port: u16, workspace_path: &str) -> Vec<String> {
+        vec![
+            "--port".to_string(),
+            port.to_string(),
+            "--bind".to_string(),
+            "127.0.0.1".to_string(),
+            "--root".to_string(),
+            workspace_path.to_string(),
+        ]
+    }
+
+    /// Helper to build ttyd args (mirrors the logic in Runner::start_session).
+    fn build_ttyd_args(port: u16, workspace_path: &str) -> Vec<String> {
+        vec![
+            "--port".to_string(),
+            port.to_string(),
+            "--interface".to_string(),
+            "127.0.0.1".to_string(),
+            "--writable".to_string(),
+            "--cwd".to_string(),
+            workspace_path.to_string(),
+            "zsh".to_string(),
+            "-l".to_string(),
+        ]
+    }
+
+    #[test]
+    fn test_opencode_binds_to_localhost_only() {
+        let args = build_opencode_args(4096, None);
+
+        let hostname_idx = args.iter().position(|a| a == "--hostname");
+        assert!(hostname_idx.is_some(), "opencode args must include --hostname");
+
+        let bind_addr = &args[hostname_idx.unwrap() + 1];
+        assert_eq!(
+            bind_addr, "127.0.0.1",
+            "opencode must bind to 127.0.0.1, not {}. Binding to 0.0.0.0 exposes the service to the network!",
+            bind_addr
+        );
+        assert_ne!(bind_addr, "0.0.0.0", "SECURITY: opencode must NOT bind to 0.0.0.0");
+    }
+
+    #[test]
+    fn test_opencode_with_agent_binds_to_localhost_only() {
+        let args = build_opencode_args(4096, Some("test-agent"));
+
+        let hostname_idx = args.iter().position(|a| a == "--hostname");
+        assert!(hostname_idx.is_some());
+
+        let bind_addr = &args[hostname_idx.unwrap() + 1];
+        assert_eq!(bind_addr, "127.0.0.1");
+        assert_ne!(bind_addr, "0.0.0.0");
+    }
+
+    #[test]
+    fn test_fileserver_binds_to_localhost_only() {
+        let args = build_fileserver_args(8080, "/home/user/workspace");
+
+        let bind_idx = args.iter().position(|a| a == "--bind");
+        assert!(bind_idx.is_some(), "fileserver args must include --bind");
+
+        let bind_addr = &args[bind_idx.unwrap() + 1];
+        assert_eq!(
+            bind_addr, "127.0.0.1",
+            "fileserver must bind to 127.0.0.1, not {}. Binding to 0.0.0.0 exposes the service to the network!",
+            bind_addr
+        );
+        assert_ne!(bind_addr, "0.0.0.0", "SECURITY: fileserver must NOT bind to 0.0.0.0");
+    }
+
+    #[test]
+    fn test_ttyd_binds_to_localhost_only() {
+        let args = build_ttyd_args(7681, "/home/user/workspace");
+
+        let interface_idx = args.iter().position(|a| a == "--interface");
+        assert!(interface_idx.is_some(), "ttyd args must include --interface");
+
+        let bind_addr = &args[interface_idx.unwrap() + 1];
+        assert_eq!(
+            bind_addr, "127.0.0.1",
+            "ttyd must bind to 127.0.0.1, not {}. Binding to 0.0.0.0 exposes the service to the network!",
+            bind_addr
+        );
+        assert_ne!(bind_addr, "0.0.0.0", "SECURITY: ttyd must NOT bind to 0.0.0.0");
+    }
 }
