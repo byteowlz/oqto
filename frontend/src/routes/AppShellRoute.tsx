@@ -182,12 +182,12 @@ const AppShell = memo(function AppShell() {
 			}
 			return;
 		}
-		if (!matchedAppId && location.pathname === "/" && apps[0]?.id) {
-			setActiveAppId(apps[0].id);
+		// When at root path "/", redirect to sessions (last chat) instead of dashboard
+		if (!matchedAppId && location.pathname === "/" && sessionsRoute) {
+			navigate(sessionsRoute, { replace: true });
 		}
 	}, [
 		activeAppId,
-		apps,
 		location.pathname,
 		matchedAppId,
 		navigate,
@@ -2493,12 +2493,15 @@ const AppShell = memo(function AppShell() {
 
 				{/* Desktop sidebar */}
 				<aside
-					className={`fixed inset-y-0 left-0 flex-col transition-all duration-200 z-40 hidden md:flex ${
+					className={`fixed inset-y-0 left-0 flex-col transition-all duration-200 z-40 hidden md:flex border-r border-transparent dark:border-transparent ${
 						sidebarCollapsed
 							? "w-[4.5rem] items-center"
 							: "w-[16.25rem] items-center"
 					}`}
-					style={{ backgroundColor: sidebarBg }}
+					style={{
+						backgroundColor: sidebarBg,
+						borderRightColor: isDark ? "transparent" : "var(--sidebar-border)",
+					}}
 					data-spotlight="sidebar"
 				>
 					<div
