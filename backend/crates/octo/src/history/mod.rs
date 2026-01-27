@@ -7,12 +7,15 @@
 //! where projectID is a hash of the workspace directory path.
 
 use std::collections::HashMap;
+use std::env;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
+use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+use sqlx::Row;
 use tokio::sync::RwLock;
 
 use crate::markdown;
@@ -80,6 +83,278 @@ fn default_opencode_data_dir() -> PathBuf {
     dirs::data_local_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join("opencode")
+}
+
+/// Default hstry database path, if it exists.
+pub fn hstry_db_path() -> Option<PathBuf> {
+    if let Ok(path) = env::var("OCTO_HSTRY_DB") {
+        let path = PathBuf::from(path);
+        if path.exists() {
+            return Some(path);
+        }
+    }
+    let default = dirs::data_local_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("hstry")
+        .join("hstry.db");
+    if default.exists() {
+        Some(default)
+    } else {
+        None
+    }
+}
+
+async fn open_hstry_pool(db_path: &Path) -> Result<sqlx::SqlitePool> {
+    let options = SqliteConnectOptions::new()
+        .filename(db_path)
+        .read_only(true);
+    let pool = SqlitePoolOptions::new()
+        .max_connections(2)
+        .connect_with(options)
+        .await?;
+    Ok(pool)
+}
+
+fn hstry_timestamp_ms(value: Option<i64>) -> Option<i64> {
+    value.map(|ts| ts * 1000)
+}
+
+pub async fn list_sessions_from_hstry(db_path: &Path) -> Result<Vec<ChatSession>> {
+    let pool = open_hstry_pool(db_path).await?;
+    let rows = sqlx::query(
+        r#"
+        SELECT id, external_id, readable_id, title, created_at, updated_at, workspace
+        FROM conversations
+        ORDER BY created_at DESC
+        "#,
+    )
+    .fetch_all(&pool)
+    .await?;
+
+    let mut sessions = Vec::new();
+    for row in rows {
+        let id: String = row.get("id");
+        let external_id: Option<String> = row.get("external_id");
+        let readable_id: Option<String> = row.get("readable_id");
+        let title: Option<String> = row.get("title");
+        let created_at: i64 = row.get("created_at");
+        let updated_at: Option<i64> = row.get("updated_at");
+        let workspace: Option<String> = row.get("workspace");
+
+        let session_id = external_id.clone().unwrap_or_else(|| id.clone());
+        let workspace_path = workspace.unwrap_or_else(|| "global".to_string());
+        let project_name = project_name_from_path(&workspace_path);
+        let readable_id = readable_id.unwrap_or_else(|| wordlist::readable_id_from_session_id(&session_id));
+
+        sessions.push(ChatSession {
+            id: session_id,
+            readable_id,
+            title,
+            parent_id: None,
+            workspace_path,
+            project_name,
+            created_at: created_at * 1000,
+            updated_at: updated_at.map(|ts| ts * 1000).unwrap_or(created_at * 1000),
+            version: None,
+            is_child: false,
+            source_path: None,
+        });
+    }
+
+    Ok(sessions)
+}
+
+pub async fn get_session_from_hstry(
+    session_id: &str,
+    db_path: &Path,
+) -> Result<Option<ChatSession>> {
+    let pool = open_hstry_pool(db_path).await?;
+    let row = sqlx::query(
+        r#"
+        SELECT id, external_id, readable_id, title, created_at, updated_at, workspace
+        FROM conversations
+        WHERE external_id = ? OR readable_id = ? OR id = ?
+        LIMIT 1
+        "#,
+    )
+    .bind(session_id)
+    .bind(session_id)
+    .bind(session_id)
+    .fetch_optional(&pool)
+    .await?;
+
+    let Some(row) = row else { return Ok(None); };
+
+    let id: String = row.get("id");
+    let external_id: Option<String> = row.get("external_id");
+    let readable_id: Option<String> = row.get("readable_id");
+    let title: Option<String> = row.get("title");
+    let created_at: i64 = row.get("created_at");
+    let updated_at: Option<i64> = row.get("updated_at");
+    let workspace: Option<String> = row.get("workspace");
+
+    let session_id = external_id.clone().unwrap_or_else(|| id.clone());
+    let workspace_path = workspace.unwrap_or_else(|| "global".to_string());
+    let project_name = project_name_from_path(&workspace_path);
+    let readable_id = readable_id.unwrap_or_else(|| wordlist::readable_id_from_session_id(&session_id));
+
+    Ok(Some(ChatSession {
+        id: session_id,
+        readable_id,
+        title,
+        parent_id: None,
+        workspace_path,
+        project_name,
+        created_at: created_at * 1000,
+        updated_at: updated_at.map(|ts| ts * 1000).unwrap_or(created_at * 1000),
+        version: None,
+        is_child: false,
+        source_path: None,
+    }))
+}
+
+async fn get_session_messages_from_hstry(
+    session_id: &str,
+    db_path: &Path,
+) -> Result<Vec<ChatMessage>> {
+    let pool = open_hstry_pool(db_path).await?;
+    let conversation_row = sqlx::query(
+        r#"
+        SELECT id
+        FROM conversations
+        WHERE external_id = ? OR readable_id = ? OR id = ?
+        LIMIT 1
+        "#,
+    )
+    .bind(session_id)
+    .bind(session_id)
+    .bind(session_id)
+    .fetch_optional(&pool)
+    .await?;
+
+    let Some(conversation_row) = conversation_row else {
+        return Ok(Vec::new());
+    };
+    let conversation_id: String = conversation_row.get("id");
+
+    let rows = sqlx::query(
+        r#"
+        SELECT id, role, content, created_at, model, tokens, cost_usd, parts_json
+        FROM messages
+        WHERE conversation_id = ?
+        ORDER BY idx
+        "#,
+    )
+    .bind(conversation_id)
+    .fetch_all(&pool)
+    .await?;
+
+    let mut messages = Vec::new();
+    for row in rows {
+        let id: String = row.get("id");
+        let role: String = row.get("role");
+        let content: String = row.get("content");
+        let created_at: Option<i64> = row.get("created_at");
+        let model: Option<String> = row.get("model");
+        let tokens: Option<i64> = row.get("tokens");
+        let cost: Option<f64> = row.get("cost_usd");
+        let parts_json: Option<String> = row.get("parts_json");
+
+        let parts = hstry_parts_to_chat_parts(parts_json.as_deref(), &content, &id);
+
+        messages.push(ChatMessage {
+            id,
+            session_id: session_id.to_string(),
+            role,
+            created_at: hstry_timestamp_ms(created_at).unwrap_or(0),
+            completed_at: None,
+            parent_id: None,
+            model_id: model,
+            provider_id: None,
+            agent: None,
+            summary_title: None,
+            tokens_input: None,
+            tokens_output: tokens,
+            tokens_reasoning: None,
+            cost,
+            parts,
+        });
+    }
+
+    Ok(messages)
+}
+
+async fn get_session_messages_rendered_from_hstry(
+    session_id: &str,
+    db_path: &Path,
+) -> Result<Vec<ChatMessage>> {
+    let mut messages = get_session_messages_from_hstry(session_id, db_path).await?;
+    for message in &mut messages {
+        for part in &mut message.parts {
+            if let Some(text) = &part.text {
+                part.text_html = Some(markdown::render_markdown(text).await);
+            }
+        }
+    }
+    Ok(messages)
+}
+
+fn hstry_parts_to_chat_parts(
+    parts_json: Option<&str>,
+    content: &str,
+    message_id: &str,
+) -> Vec<ChatMessagePart> {
+    let mut parts = Vec::new();
+
+    if let Some(parts_json) = parts_json {
+        if let Ok(serde_json::Value::Array(values)) = serde_json::from_str(parts_json) {
+            for (idx, value) in values.iter().enumerate() {
+                let serde_json::Value::Object(obj) = value else { continue };
+                let part_type = obj
+                    .get("type")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("text")
+                    .to_string();
+                let text = match part_type.as_str() {
+                    "text" | "thinking" => obj.get("text").and_then(|v| v.as_str()),
+                    "status" | "error" => obj
+                        .get("message")
+                        .or_else(|| obj.get("text"))
+                        .and_then(|v| v.as_str()),
+                    _ => None,
+                };
+                if let Some(text) = text {
+                    parts.push(ChatMessagePart {
+                        id: format!("{message_id}-part-{idx}"),
+                        part_type,
+                        text: Some(text.to_string()),
+                        text_html: None,
+                        tool_name: None,
+                        tool_input: None,
+                        tool_output: None,
+                        tool_status: None,
+                        tool_title: None,
+                    });
+                }
+            }
+        }
+    }
+
+    if parts.is_empty() && !content.trim().is_empty() {
+        parts.push(ChatMessagePart {
+            id: format!("{message_id}-part-0"),
+            part_type: "text".to_string(),
+            text: Some(content.to_string()),
+            text_html: None,
+            tool_name: None,
+            tool_input: None,
+            tool_output: None,
+            tool_status: None,
+            tool_title: None,
+        });
+    }
+
+    parts
 }
 
 /// Extract project name from workspace path.
@@ -223,7 +498,12 @@ pub fn list_sessions_grouped() -> Result<HashMap<String, Vec<ChatSession>>> {
 
 /// Get a single session by ID.
 pub fn get_session(session_id: &str) -> Result<Option<ChatSession>> {
-    let sessions = list_sessions()?;
+    get_session_from_dir(session_id, &default_opencode_data_dir())
+}
+
+/// Get a single session by ID from a specific OpenCode data directory.
+pub fn get_session_from_dir(session_id: &str, opencode_dir: &Path) -> Result<Option<ChatSession>> {
+    let sessions = list_sessions_from_dir(opencode_dir)?;
     Ok(sessions.into_iter().find(|s| s.id == session_id))
 }
 
@@ -437,6 +717,28 @@ pub async fn get_session_messages_async(session_id: &str) -> Result<Vec<ChatMess
             if timestamp.elapsed().as_secs() < CACHE_TTL_SECS {
                 tracing::debug!("Cache hit for session {}", session_id);
                 return Ok(messages.clone());
+            }
+        }
+    }
+
+    // Cache miss - try hstry DB first if available
+    if let Some(db_path) = hstry_db_path() {
+        match get_session_messages_from_hstry(session_id, &db_path).await {
+            Ok(messages) if !messages.is_empty() => {
+                let mut cache = MESSAGE_CACHE.write().await;
+                cache.insert(
+                    session_id.to_string(),
+                    (messages.clone(), std::time::Instant::now()),
+                );
+                return Ok(messages);
+            }
+            Ok(_) => {}
+            Err(err) => {
+                tracing::warn!(
+                    session_id = %session_id,
+                    error = %err,
+                    "Failed to load messages from hstry DB, falling back to disk"
+                );
             }
         }
     }
@@ -753,7 +1055,28 @@ fn load_message_parts(message_id: &str, session_id: &str, part_dir: &Path) -> Ve
 /// This is useful for initial load of completed conversations.
 /// During streaming, clients should use raw markdown and render client-side.
 pub async fn get_session_messages_rendered(session_id: &str) -> Result<Vec<ChatMessage>> {
-    let mut messages = get_session_messages_async(session_id).await?;
+    if let Some(db_path) = hstry_db_path() {
+        match get_session_messages_rendered_from_hstry(session_id, &db_path).await {
+            Ok(messages) if !messages.is_empty() => return Ok(messages),
+            Ok(_) => {}
+            Err(err) => {
+                tracing::warn!(
+                    session_id = %session_id,
+                    error = %err,
+                    "Failed to render messages from hstry DB, falling back to disk"
+                );
+            }
+        }
+    }
+    get_session_messages_rendered_from_dir(session_id, &default_opencode_data_dir()).await
+}
+
+/// Get all messages for a session with pre-rendered markdown HTML from a specific directory.
+pub async fn get_session_messages_rendered_from_dir(
+    session_id: &str,
+    opencode_dir: &Path,
+) -> Result<Vec<ChatMessage>> {
+    let mut messages = get_session_messages_from_dir(session_id, opencode_dir)?;
 
     // Collect all text content that needs rendering
     let texts_to_render: Vec<(usize, usize, String)> = messages

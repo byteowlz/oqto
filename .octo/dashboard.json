@@ -45,8 +45,8 @@
       "span": 6
     },
     "feeds": {
-      "visible": false,
-      "span": 12
+      "visible": true,
+      "span": 6
     }
   },
   "feeds": []

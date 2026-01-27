@@ -22,6 +22,7 @@ use crate::container::{ContainerConfig, ContainerRuntimeApi, ContainerStats};
 use crate::eavs::{CreateKeyRequest, EavsApi, KeyPermissions};
 use crate::local::{LocalRuntime, LocalRuntimeConfig, UserMmryManager};
 use crate::runner::client::RunnerClient;
+use crate::wordlist;
 
 use super::models::{CreateSessionRequest, RuntimeMode, Session, SessionStatus};
 use super::repository::SessionRepository;
@@ -1052,6 +1053,7 @@ impl SessionService {
         let now = Utc::now().to_rfc3339();
         let session = Session {
             id: session_id.clone(),
+            readable_id: Some(wordlist::readable_id_from_session_id(&session_id)),
             container_id: None,
             container_name: container_name.clone(),
             user_id: user_id.to_string(),
@@ -3225,6 +3227,7 @@ mod tests {
 
         let session = Session {
             id: "session-1".to_string(),
+            readable_id: None,
 
             container_id: Some("container-1".to_string()),
             container_name: "octo-session-1".to_string(),
@@ -3565,6 +3568,7 @@ mod tests {
         // Create a stopped session in the database
         let session = Session {
             id: "test-session-1".to_string(),
+            readable_id: None,
 
             container_id: Some("container-1".to_string()),
             container_name: "octo-test-1".to_string(),
@@ -3633,6 +3637,7 @@ mod tests {
         // Create a stopped session
         let session = Session {
             id: "test-session-2".to_string(),
+            readable_id: None,
 
             container_id: Some("container-2".to_string()),
             container_name: "octo-test-2".to_string(),
@@ -3687,6 +3692,7 @@ mod tests {
         // Create a running session
         let session = Session {
             id: "test-session-3".to_string(),
+            readable_id: None,
 
             container_id: Some("container-3".to_string()),
             container_name: "octo-test-3".to_string(),
@@ -3758,6 +3764,7 @@ mod tests {
         // Create a stopped session
         let session = Session {
             id: "test-session-4".to_string(),
+            readable_id: None,
 
             container_id: Some("container-4".to_string()),
             container_name: "octo-test-4".to_string(),

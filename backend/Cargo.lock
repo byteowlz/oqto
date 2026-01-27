@@ -1972,7 +1972,7 @@ dependencies = [
 
 [[package]]
 name = "octo"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2025,7 +2025,7 @@ dependencies = [
 
 [[package]]
 name = "octo-browser"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -2036,7 +2036,7 @@ dependencies = [
 
 [[package]]
 name = "octo-files"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "axum",
  "bytes",
@@ -2062,7 +2062,7 @@ dependencies = [
 
 [[package]]
 name = "octo-scaffold"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "anyhow",
  "clap",

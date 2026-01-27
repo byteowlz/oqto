@@ -44,6 +44,23 @@ pub fn create_router_with_config(state: AppState, max_upload_size_mb: usize) -> 
     let protected_routes = Router::new()
         // WebSocket endpoint for real-time communication
         .route("/ws", get(ws_handler))
+        // sldr routes
+        .route(
+            "/sldr",
+            get(proxy::proxy_sldr_root)
+                .post(proxy::proxy_sldr_root)
+                .put(proxy::proxy_sldr_root)
+                .delete(proxy::proxy_sldr_root)
+                .patch(proxy::proxy_sldr_root),
+        )
+        .route(
+            "/sldr/{*path}",
+            get(proxy::proxy_sldr)
+                .post(proxy::proxy_sldr)
+                .put(proxy::proxy_sldr)
+                .delete(proxy::proxy_sldr)
+                .patch(proxy::proxy_sldr),
+        )
         // Project management
         .route("/projects", get(handlers::list_workspace_dirs))
         .route("/projects/logo/{*path}", get(handlers::get_project_logo))

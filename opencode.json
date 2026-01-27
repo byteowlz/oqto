@@ -7,5 +7,6 @@
   },
   "compaction": {
     "auto": true
-  }
+  },
+  "model": "zgx/glm-4.7-flash"
 }

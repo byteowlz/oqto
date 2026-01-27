@@ -63,6 +63,7 @@ pub struct User {
     pub last_login_at: Option<String>,
     pub settings: Option<String>,
     pub mmry_port: Option<i64>,
+    pub sldr_port: Option<i64>,
     pub linux_username: Option<String>,
 }
 

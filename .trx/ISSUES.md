@@ -2,6 +2,9 @@
 
 ## Open
 
+### [octo-p3n2] API Key Authentication & External Integration (P1, epic)
+Enable external apps (omni, ctx) to integrate with Octo via API keys. Support fire-and-forget and streaming responses, .ctx context files, auto-session creation.
+
 ### [octo-9bqx] Add limits to zip download endpoints to prevent disk/CPU exhaustion (P1, bug)
 Zip creation for /download and /download-zip has no caps on total size, file count, or path count; a single request can create huge archives and fill disk/CPU. Add configurable limits (max total bytes, max entries, max depth) and fail early. Consider streaming without temp files or rejecting large directories. Affected: backend/crates/octo-files/src/handlers.rs (download, download_zip, create_zip_file_from_paths, create_zip_tempfile_blocking).
 
@@ -133,6 +136,24 @@ Implementation:
 
 ### [workspace-5pmk.11] Add backend URL configuration to login form (P1, task)
 Add a 'Server URL' field to the login form allowing users to specify the backend URL. Store in localStorage for persistence. Show connection status indicator. Default to current origin for web, require input for mobile apps.
+
+### [octo-p3n2.6] .ctx file parsing (P2, task)
+Parse .ctx zip files: extract images, text context, metadata. Store temporarily for agent access.
+
+### [octo-p3n2.5] Sessions listing endpoint (P2, task)
+GET /api/v1/sessions - list available sessions for API consumers
+
+### [octo-p3n2.4] External chat API endpoint (P2, task)
+POST /api/v1/chat - accepts message + optional .ctx file, auto-creates session for workspace, supports stream and fire_and_forget modes
+
+### [octo-p3n2.3] Key management endpoints (P2, task)
+POST /api/keys (create), GET /api/keys (list), DELETE /api/keys/{id} (revoke)
+
+### [octo-p3n2.2] API key generation and validation (P2, task)
+Generate prefixed keys (octo_sk_...), hash storage, validation in auth middleware alongside JWT
+
+### [octo-p3n2.1] Database migration for api_keys table (P2, task)
+Create SQLite migration with: id, user_id, name, key_prefix, key_hash, scopes, last_used_at, expires_at, created_at, revoked_at
 
 ### [octo-8erz] Prevent template copy from following symlinks (P2, bug)
 copy_template_dir uses fs::copy on DirEntry paths without checking for symlinks; on most platforms this follows symlinks and can copy arbitrary files outside the template repo into the new project. This is a security risk if template repos are user-supplied. Use symlink_metadata to detect symlinks and either skip, copy as symlink, or enforce that resolved targets stay within the template repo. Affected: backend/crates/octo/src/api/handlers.rs::copy_template_dir.
@@ -1180,7 +1201,7 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
 - [octo-k8z1.1] Backend: Integrate agent-browser daemon per session (closed )
 - [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
-- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
 - [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
 - [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
+- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
 - [octo-k8z1.2] Backend: WebSocket proxy for screencast stream (closed )

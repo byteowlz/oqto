@@ -404,7 +404,31 @@ export function getSyntaxLanguage(filename: string): string {
  * Extract @file references from text content, excluding those inside code blocks.
  * Returns unique file paths without the @ prefix.
  */
-export function extractFileReferences(content: string): string[] {
+type FileReferenceDetail = {
+	filePath: string;
+	label: string;
+	raw: string;
+};
+
+function stripTrailingPunctuation(value: string) {
+	return value.replace(/[),.;:!?\]}]+$/g, "");
+}
+
+function splitReferenceSuffix(value: string) {
+	const trimmed = stripTrailingPunctuation(value);
+	const match = /[†‡✝✟]/.exec(trimmed);
+	if (!match || match.index === undefined) {
+		return { filePath: trimmed, suffix: "" };
+	}
+	return {
+		filePath: trimmed.slice(0, match.index),
+		suffix: trimmed.slice(match.index),
+	};
+}
+
+export function extractFileReferenceDetails(
+	content: string,
+): FileReferenceDetail[] {
 	// Remove code blocks (both fenced ``` and inline `)
 	// Fenced code blocks: ```...``` or ~~~...~~~
 	const withoutFencedBlocks = content.replace(
@@ -414,10 +438,28 @@ export function extractFileReferences(content: string): string[] {
 	// Inline code: `...`
 	const withoutInlineCode = withoutFencedBlocks.replace(/`[^`\n]+`/g, "");
 
-	// Match @file references - must have a file extension
-	const fileRefPattern = /@([^\s@`"'<>()[\]{}]+\.[a-zA-Z0-9]+)/g;
-	const matches = withoutInlineCode.match(fileRefPattern) || [];
+	const fileRefPattern = /@([^\s@`"'<>()[\]{}]+)/g;
+	const details: FileReferenceDetail[] = [];
+	const seen = new Set<string>();
 
-	// Remove @ prefix and deduplicate
-	return [...new Set(matches.map((m) => m.slice(1)))];
+	let match: RegExpExecArray | null;
+	while ((match = fileRefPattern.exec(withoutInlineCode)) !== null) {
+		const raw = match[1];
+		const { filePath, suffix } = splitReferenceSuffix(raw);
+		if (!/\.[a-zA-Z0-9]+$/.test(filePath)) {
+			continue;
+		}
+		const fileName = filePath.split("/").pop() || filePath;
+		const label = suffix ? `${fileName} ${suffix}` : fileName;
+		const key = `${filePath}|${suffix}`;
+		if (seen.has(key)) continue;
+		seen.add(key);
+		details.push({ filePath, label, raw });
+	}
+
+	return details;
+}
+
+export function extractFileReferences(content: string): string[] {
+	return extractFileReferenceDetails(content).map((detail) => detail.filePath);
 }

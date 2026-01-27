@@ -28,6 +28,7 @@ mod process;
 mod runtime;
 mod sandbox;
 mod user_mmry;
+mod user_sldr;
 
 pub use linux_users::LinuxUsersConfig;
 #[allow(unused_imports)]
@@ -38,3 +39,4 @@ pub use process::{
 pub use runtime::{LocalRuntime, LocalRuntimeConfig};
 pub use sandbox::SandboxConfig;
 pub use user_mmry::{UserMmryConfig, UserMmryManager};
+pub use user_sldr::{UserSldrConfig, UserSldrManager};

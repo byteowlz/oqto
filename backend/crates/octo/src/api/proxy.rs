@@ -378,6 +378,51 @@ pub async fn proxy_fileserver_for_workspace(
     .await
 }
 
+/// Proxy HTTP requests to per-user sldr-server.
+pub async fn proxy_sldr_root(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    req: Request<Body>,
+) -> Result<Response, StatusCode> {
+    proxy_sldr_internal(state, user, String::new(), req).await
+}
+
+pub async fn proxy_sldr(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(path): Path<String>,
+    req: Request<Body>,
+) -> Result<Response, StatusCode> {
+    proxy_sldr_internal(state, user, path, req).await
+}
+
+async fn proxy_sldr_internal(
+    state: AppState,
+    user: CurrentUser,
+    path: String,
+    req: Request<Body>,
+) -> Result<Response, StatusCode> {
+    let manager = state.sldr_users.as_ref().ok_or_else(|| {
+        error!("sldr manager not configured");
+        StatusCode::SERVICE_UNAVAILABLE
+    })?;
+
+    let port = manager.ensure_user_sldr(user.id()).await.map_err(|e| {
+        error!("Failed to start sldr for user {}: {:?}", user.id(), e);
+        StatusCode::SERVICE_UNAVAILABLE
+    })?;
+
+    proxy_request(
+        state.http_client.clone(),
+        req,
+        port,
+        &path,
+        true,
+        state.max_proxy_body_bytes,
+    )
+    .await
+}
+
 /// Generic HTTP proxy function.
 async fn proxy_request(
     client: Client<hyper_util::client::legacy::connect::HttpConnector, Body>,

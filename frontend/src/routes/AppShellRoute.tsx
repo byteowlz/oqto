@@ -57,7 +57,7 @@ import {
 	listWorkspaceDirectories,
 } from "@/lib/control-plane-client";
 import { type OpenCodeAgent, fetchAgents } from "@/lib/opencode-client";
-import { formatSessionDate, generateReadableId } from "@/lib/session-utils";
+import { formatSessionDate, resolveReadableId } from "@/lib/session-utils";
 import { cn } from "@/lib/utils";
 import {
 	ArrowDown,
@@ -770,7 +770,7 @@ const AppShell = memo(function AppShell() {
 				// Search in title
 				if (session.title?.toLowerCase().includes(searchLower)) return true;
 				// Search in readable ID (adjective-noun)
-				const readableId = generateReadableId(session.id);
+				const readableId = resolveReadableId(session.id, session.readable_id);
 				if (readableId.toLowerCase().includes(searchLower)) return true;
 				// Search in date (ChatSession uses updated_at)
 				if (session.updated_at) {
@@ -1580,7 +1580,10 @@ const AppShell = memo(function AppShell() {
 											{" | "}
 										</span>
 									)}
-									{generateReadableId(selectedChatFromHistory.id)}
+									{resolveReadableId(
+										selectedChatFromHistory.id,
+										selectedChatFromHistory.readable_id,
+									)}
 									{selectedChatFromHistory.updated_at && (
 										<span className="opacity-60">
 											{" "}
@@ -2083,8 +2086,9 @@ const AppShell = memo(function AppShell() {
 																		const isExpanded = expandedSessions.has(
 																			session.id,
 																		);
-																		const readableId = generateReadableId(
+																		const readableId = resolveReadableId(
 																			session.id,
+																			session.readable_id,
 																		);
 																		const formattedDate = session.updated_at
 																			? formatSessionDate(session.updated_at)
@@ -2946,8 +2950,9 @@ const AppShell = memo(function AppShell() {
 																	const isExpanded = expandedSessions.has(
 																		session.id,
 																	);
-																	const readableId = generateReadableId(
+																	const readableId = resolveReadableId(
 																		session.id,
+																		session.readable_id,
 																	);
 																	const formattedDate = session.updated_at
 																		? formatSessionDate(session.updated_at)
@@ -3086,7 +3091,10 @@ const AppShell = memo(function AppShell() {
 																							selectedChatSessionId ===
 																							child.id;
 																						const childReadableId =
-																							generateReadableId(child.id);
+																							resolveReadableId(
+																								child.id,
+																								child.readable_id,
+																							);
 																						const childFormattedDate =
 																							child.updated_at
 																								? formatSessionDate(

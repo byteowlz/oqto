@@ -22,7 +22,9 @@ export type PiEventType =
 	| "message_start"
 	| "message"
 	| "text"
+	| "thinking"
 	| "tool_use"
+	| "tool_start"
 	| "tool_result"
 	| "done"
 	| "error"
@@ -112,6 +114,7 @@ const STORAGE_KEY_SCROLL = "octo:mainChat:scrollPosition";
 type SessionMessageCacheEntry = {
 	messages: PiDisplayMessage[];
 	timestamp: number;
+	version: number;
 };
 
 const sessionMessageCache = {
@@ -123,22 +126,206 @@ const sessionMessageCache = {
 };
 
 const CACHE_WRITE_THROTTLE_MS = 2000; // Write to localStorage at most every 2s during streaming
+const SESSION_CACHE_VERSION = 2;
+
+type RawPiMessage = {
+	id?: string;
+	role: string;
+	content: unknown;
+	timestamp?: number;
+	usage?: PiAgentMessage["usage"];
+	toolCallId?: string;
+	toolName?: string;
+	isError?: boolean;
+};
+
+function normalizePiContentToParts(content: unknown): PiMessagePart[] {
+	const parts: PiMessagePart[] = [];
+
+	if (typeof content === "string") {
+		parts.push({ type: "text", content });
+		return parts;
+	}
+
+	if (Array.isArray(content)) {
+		for (const block of content) {
+			if (typeof block === "string") {
+				parts.push({ type: "text", content: block });
+				continue;
+			}
+			if (!block || typeof block !== "object") continue;
+			const b = block as Record<string, unknown>;
+			const blockType = typeof b.type === "string" ? b.type : "";
+
+			if (blockType === "text" && typeof b.text === "string") {
+				parts.push({ type: "text", content: b.text });
+				continue;
+			}
+			if (blockType === "thinking") {
+				const thinkingText =
+					typeof b.thinking === "string"
+						? b.thinking
+						: typeof b.content === "string"
+							? b.content
+							: "";
+				if (thinkingText.trim()) {
+					parts.push({ type: "thinking", content: thinkingText });
+				}
+				continue;
+			}
+			if (blockType === "toolCall" || blockType === "tool_use") {
+				parts.push({
+					type: "tool_use",
+					id: typeof b.id === "string" ? b.id : "",
+					name: typeof b.name === "string" ? b.name : "unknown",
+					input:
+						typeof b.arguments === "object" && b.arguments !== null
+							? b.arguments
+							: b.input,
+				});
+				continue;
+			}
+			if (blockType === "tool_result" || blockType === "toolResult") {
+				parts.push({
+					type: "tool_result",
+					id:
+						(typeof b.tool_use_id === "string" && b.tool_use_id) ||
+						(typeof b.toolCallId === "string" && b.toolCallId) ||
+						(typeof b.id === "string" && b.id) ||
+						"",
+					name:
+						(typeof b.name === "string" && b.name) ||
+						(typeof b.toolName === "string" && b.toolName) ||
+						undefined,
+					content:
+						"content" in b ? b.content : typeof b.text === "string" ? b.text : b,
+					isError: Boolean(b.is_error ?? b.isError),
+				});
+			}
+		}
+		return parts;
+	}
+
+	if (content && typeof content === "object") {
+		const b = content as Record<string, unknown>;
+		if (b.type === "text" && typeof b.text === "string") {
+			parts.push({ type: "text", content: b.text });
+		} else if (b.type === "thinking" && typeof b.thinking === "string") {
+			parts.push({ type: "thinking", content: b.thinking });
+		}
+	}
+
+	return parts;
+}
+
+function normalizePiMessages(
+	messages: RawPiMessage[],
+	idPrefix: string,
+): PiDisplayMessage[] {
+	const display: PiDisplayMessage[] = [];
+	const toolUseIndexById = new Map<string, number>();
+	const pendingToolUseByName = new Map<string, number[]>();
+
+	const addPendingByName = (name: string, index: number) => {
+		const list = pendingToolUseByName.get(name) ?? [];
+		list.push(index);
+		pendingToolUseByName.set(name, list);
+	};
+
+	const resolvePendingByName = (name: string | undefined): number | undefined => {
+		if (!name) return undefined;
+		const list = pendingToolUseByName.get(name);
+		if (!list || list.length === 0) return undefined;
+		return list[list.length - 1];
+	};
+
+	for (const [idx, message] of messages.entries()) {
+		const role = message.role;
+		const timestamp = message.timestamp ?? Date.now();
+
+		if (role === "toolResult") {
+			const toolCallId = message.toolCallId || message.id || `tool-result-${idx}`;
+			const toolResultPart: PiMessagePart = {
+				type: "tool_result",
+				id: toolCallId,
+				name: message.toolName,
+				content: message.content,
+				isError: message.isError,
+			};
+
+			const targetIndex = message.toolCallId
+				? toolUseIndexById.get(message.toolCallId)
+				: resolvePendingByName(message.toolName);
+
+			if (targetIndex !== undefined) {
+				display[targetIndex].parts.push(toolResultPart);
+			} else {
+				display.push({
+					id: `${idPrefix}-${idx}-${message.id ?? "tool-result"}`,
+					role: "assistant",
+					parts: [toolResultPart],
+					timestamp,
+				});
+			}
+			continue;
+		}
+
+		const normalizedRole =
+			role === "user" || role === "assistant" || role === "system"
+				? role
+				: "assistant";
+		const parts = normalizePiContentToParts(message.content);
+		const displayMessage: PiDisplayMessage = {
+			id: `${idPrefix}-${idx}-${message.id ?? ""}`,
+			role: normalizedRole,
+			parts,
+			timestamp,
+			usage: message.usage,
+		};
+
+		display.push(displayMessage);
+
+		if (normalizedRole === "assistant") {
+			for (const part of parts) {
+				if (part.type === "tool_use" && part.id) {
+					toolUseIndexById.set(part.id, display.length - 1);
+					addPendingByName(part.name, display.length - 1);
+				}
+				if (part.type === "tool_result") {
+					const id = part.id;
+					const indexById = id ? toolUseIndexById.get(id) : undefined;
+					const indexByName = resolvePendingByName(part.name);
+					const targetIndex = indexById ?? indexByName;
+					if (targetIndex !== undefined && targetIndex !== display.length - 1) {
+						display[targetIndex].parts.push(part);
+					}
+				}
+			}
+		}
+	}
+
+	return display;
+}
 
 function cacheKeyMessages(sessionId: string) {
-	return `octo:mainChatPi:session:${sessionId}:messages:v1`;
+	return `octo:mainChatPi:session:${sessionId}:messages:v${SESSION_CACHE_VERSION}`;
 }
 
 function readCachedSessionMessages(sessionId: string): PiDisplayMessage[] {
 	const inMemory = sessionMessageCache.messagesBySession.get(sessionId);
 	if (inMemory) {
-		// Strip isStreaming from cached messages - it's transient state
-		return inMemory.messages.map((m) => {
-			if (m.isStreaming) {
-				const { isStreaming: _, ...rest } = m;
-				return rest;
-			}
-			return m;
-		});
+		if (inMemory.version !== SESSION_CACHE_VERSION) {
+			sessionMessageCache.messagesBySession.delete(sessionId);
+		} else {
+			// Strip isStreaming from cached messages - it's transient state
+			return inMemory.messages.map((m) => {
+				if (m.isStreaming) {
+					const { isStreaming: _, ...rest } = m;
+					return rest;
+				}
+				return m;
+			});
+		}
 	}
 	if (typeof window === "undefined") return [];
 	try {
@@ -146,6 +333,7 @@ function readCachedSessionMessages(sessionId: string): PiDisplayMessage[] {
 		if (!raw) return [];
 		const parsed = JSON.parse(raw) as SessionMessageCacheEntry;
 		if (!parsed || !Array.isArray(parsed.messages)) return [];
+		if (parsed.version !== SESSION_CACHE_VERSION) return [];
 		// Strip isStreaming from cached messages - it's transient state
 		const cleanedMessages = parsed.messages.map((m) => {
 			if (m.isStreaming) {
@@ -157,6 +345,7 @@ function readCachedSessionMessages(sessionId: string): PiDisplayMessage[] {
 		const cleanedEntry = {
 			messages: cleanedMessages,
 			timestamp: parsed.timestamp,
+			version: SESSION_CACHE_VERSION,
 		};
 		sessionMessageCache.messagesBySession.set(sessionId, cleanedEntry);
 		return cleanedMessages;
@@ -181,6 +370,7 @@ function writeCachedSessionMessages(
 	const entry: SessionMessageCacheEntry = {
 		messages: cleanedMessages,
 		timestamp: Date.now(),
+		version: SESSION_CACHE_VERSION,
 	};
 	// Always update in-memory cache immediately
 	sessionMessageCache.messagesBySession.set(sessionId, entry);
@@ -550,111 +740,30 @@ export function usePiChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 	// Convert Pi agent messages to display messages (from Pi's context)
 	const convertToDisplayMessages = useCallback(
 		(agentMessages: PiAgentMessage[]): PiDisplayMessage[] => {
-			return agentMessages.map((msg, idx) => {
-				const parts: PiMessagePart[] = [];
-
-				if (typeof msg.content === "string") {
-					parts.push({ type: "text", content: msg.content });
-				} else if (Array.isArray(msg.content)) {
-					for (const block of msg.content) {
-						if (typeof block === "string") {
-							parts.push({ type: "text", content: block });
-						} else if (block && typeof block === "object") {
-							const b = block as Record<string, unknown>;
-							if (b.type === "text" && typeof b.text === "string") {
-								parts.push({ type: "text", content: b.text });
-							} else if (b.type === "thinking") {
-								// Pi sends thinking blocks with "thinking" field (may be empty)
-								// and optionally "thinkingSignature" for extended thinking
-								const thinkingText =
-									typeof b.thinking === "string" ? b.thinking : "";
-								// Only add if there's actual content
-								if (thinkingText.trim()) {
-									parts.push({ type: "thinking", content: thinkingText });
-								}
-							} else if (b.type === "tool_use") {
-								parts.push({
-									type: "tool_use",
-									id: String(b.id ?? ""),
-									name: String(b.name ?? "unknown"),
-									input: b.input,
-								});
-							} else if (b.type === "tool_result") {
-								parts.push({
-									type: "tool_result",
-									id: String(b.tool_use_id ?? ""),
-									content: b.content,
-									isError: Boolean(b.is_error),
-								});
-							}
-							// Skip unknown block types (thinkingSignature, etc.)
-						}
-					}
-				}
-
-				return {
-					id: `pi-hist-${idx}`,
-					role: msg.role as "user" | "assistant",
-					parts,
-					timestamp: msg.timestamp ?? Date.now(),
-					usage: msg.usage,
-				};
-			});
+			const rawMessages: RawPiMessage[] = agentMessages.map((msg) => ({
+				role: msg.role,
+				content: msg.content,
+				timestamp: msg.timestamp,
+				usage: msg.usage,
+			}));
+			return normalizePiMessages(rawMessages, "pi-hist");
 		},
 		[],
 	);
 
 	const convertSessionMessagesToDisplay = useCallback(
 		(sessionMessages: PiSessionMessage[]): PiDisplayMessage[] => {
-			return sessionMessages.map((msg, idx) => {
-				const parts: PiMessagePart[] = [];
-				const content = msg.content;
-
-				if (typeof content === "string") {
-					parts.push({ type: "text", content });
-				} else if (Array.isArray(content)) {
-					for (const block of content) {
-						if (typeof block === "string") {
-							parts.push({ type: "text", content: block });
-							continue;
-						}
-						if (!block || typeof block !== "object") continue;
-						const b = block as Record<string, unknown>;
-						if (b.type === "text" && typeof b.text === "string") {
-							parts.push({ type: "text", content: b.text });
-						} else if (b.type === "thinking") {
-							const thinkingText =
-								typeof b.thinking === "string" ? b.thinking : "";
-							if (thinkingText.trim()) {
-								parts.push({ type: "thinking", content: thinkingText });
-							}
-						} else if (b.type === "tool_use") {
-							parts.push({
-								type: "tool_use",
-								id: String(b.id ?? ""),
-								name: String(b.name ?? "unknown"),
-								input: b.input,
-							});
-						} else if (b.type === "tool_result") {
-							parts.push({
-								type: "tool_result",
-								id: String(b.tool_use_id ?? b.id ?? ""),
-								name: typeof b.name === "string" ? b.name : undefined,
-								content: b.content,
-								isError: Boolean(b.is_error ?? b.isError),
-							});
-						}
-					}
-				}
-
-				return {
-					id: `pi-session-${idx}-${msg.id}`,
-					role: msg.role,
-					parts,
-					timestamp: msg.timestamp || Date.now(),
-					usage: msg.usage as PiAgentMessage["usage"],
-				};
-			});
+			const rawMessages: RawPiMessage[] = sessionMessages.map((msg) => ({
+				id: msg.id,
+				role: msg.role,
+				content: msg.content,
+				timestamp: msg.timestamp || Date.now(),
+				usage: msg.usage as PiAgentMessage["usage"],
+				toolCallId: msg.toolCallId,
+				toolName: msg.toolName,
+				isError: msg.isError,
+			}));
+			return normalizePiMessages(rawMessages, "pi-session");
 		},
 		[],
 	);
@@ -721,6 +830,27 @@ export function usePiChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 					break;
 				}
 
+				case "thinking": {
+					const text = data.data as string;
+					const currentThinkingMsg = streamingMessageRef.current;
+					if (currentThinkingMsg && text) {
+						const lastPart =
+							currentThinkingMsg.parts[
+								currentThinkingMsg.parts.length - 1
+							];
+						if (lastPart?.type === "thinking") {
+							lastPart.content += text;
+						} else {
+							currentThinkingMsg.parts.push({
+								type: "thinking",
+								content: text,
+							});
+						}
+						scheduleStreamingUpdate();
+					}
+					break;
+				}
+
 				case "tool_use": {
 					const tool = data.data as {
 						id: string;
@@ -737,6 +867,30 @@ export function usePiChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 						});
 						// Tool events are less frequent, flush immediately via RAF
 						scheduleStreamingUpdate();
+					}
+					break;
+				}
+
+				case "tool_start": {
+					const tool = data.data as {
+						id: string;
+						name: string;
+						input: unknown;
+					};
+					const currentToolMsg = streamingMessageRef.current;
+					if (currentToolMsg) {
+						const alreadyPresent = currentToolMsg.parts.some(
+							(p) => p.type === "tool_use" && p.id === tool.id,
+						);
+						if (!alreadyPresent) {
+							currentToolMsg.parts.push({
+								type: "tool_use",
+								id: tool.id,
+								name: tool.name,
+								input: tool.input,
+							});
+							scheduleStreamingUpdate();
+						}
 					}
 					break;
 				}

@@ -162,6 +162,8 @@ impl OpenCodeAdapter {
 
         info!("Connected to OpenCode SSE for session {}", self.session_id);
 
+        let mut last_error_key: Option<String> = None;
+
         // Process events
         loop {
             let event_result = tokio::select! {
@@ -188,6 +190,23 @@ impl OpenCodeAdapter {
                             msg.event,
                             &msg.data[..msg.data.len().min(500)]
                         );
+                    }
+                    let parsed = serde_json::from_str::<Value>(&msg.data).ok();
+                    if let Some(parsed) = parsed.as_ref() {
+                        if let Some(err) =
+                            extract_session_error(&self.session_id, &msg.event, parsed)
+                        {
+                            let key = format!("{}::{}", err.error_type, err.message);
+                            if last_error_key.as_ref() != Some(&key) {
+                                last_error_key = Some(key);
+                                on_event(WsEvent::SessionError {
+                                    session_id: err.session_id,
+                                    error_type: err.error_type,
+                                    message: err.message,
+                                    details: err.details,
+                                });
+                            }
+                        }
                     }
                     // Parse and translate the event
                     if let Some(ws_event) = self.translate_sse_event(&msg.event, &msg.data) {
@@ -568,6 +587,82 @@ impl OpenCodeAdapter {
             }),
         }
     }
+}
+
+#[derive(Debug, Clone)]
+struct SessionErrorInfo {
+    session_id: String,
+    error_type: String,
+    message: String,
+    details: Option<Value>,
+}
+
+fn extract_session_error(
+    session_id: &str,
+    event_type: &str,
+    data: &Value,
+) -> Option<SessionErrorInfo> {
+    if event_type == "session.error" || event_type == "error" {
+        return None;
+    }
+
+    let data_type = data.get("type").and_then(|v| v.as_str()).unwrap_or("");
+    if data_type == "session.error" || data_type == "error" {
+        return None;
+    }
+
+    let kind = if !data_type.is_empty() {
+        data_type
+    } else {
+        event_type
+    };
+    if !kind.starts_with("message") && !kind.starts_with("part") {
+        return None;
+    }
+
+    let props = data.get("properties").unwrap_or(data);
+    let info = props.get("info").unwrap_or(props);
+    let error = info.get("error").or_else(|| props.get("error"));
+
+    let explicit_type = props
+        .get("error_type")
+        .and_then(|v| v.as_str())
+        .or_else(|| props.get("errorType").and_then(|v| v.as_str()))
+        .map(|v| v.to_string());
+    let error_type = explicit_type
+        .clone()
+        .or_else(|| error.and_then(|e| e.get("name")).and_then(|v| v.as_str()).map(|v| v.to_string()))
+        .or_else(|| error.and_then(|e| e.get("type")).and_then(|v| v.as_str()).map(|v| v.to_string()))
+        .unwrap_or_else(|| "UnknownError".to_string());
+
+    let message = props
+        .get("message")
+        .and_then(|v| v.as_str())
+        .or_else(|| {
+            error
+                .and_then(|e| e.get("data"))
+                .and_then(|d| d.get("message"))
+                .and_then(|v| v.as_str())
+        })
+        .or_else(|| error.and_then(|e| e.get("message")).and_then(|v| v.as_str()))
+        .or_else(|| error.and_then(|e| e.as_str()))
+        .unwrap_or("")
+        .to_string();
+
+    if error.is_none() && explicit_type.is_none() && message.is_empty() {
+        return None;
+    }
+
+    Some(SessionErrorInfo {
+        session_id: session_id.to_string(),
+        error_type,
+        message: if message.is_empty() {
+            "An unknown error occurred".to_string()
+        } else {
+            message
+        },
+        details: error.cloned().or_else(|| props.get("details").cloned()),
+    })
 }
 
 /// Calculate exponential backoff delay.
