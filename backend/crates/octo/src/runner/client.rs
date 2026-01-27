@@ -512,6 +512,82 @@ impl RunnerClient {
             _ => anyhow::bail!("unexpected response to delete_memory"),
         }
     }
+
+    // ========================================================================
+    // OpenCode Chat History Operations (user-plane)
+    // ========================================================================
+
+    /// List OpenCode chat sessions.
+    pub async fn list_opencode_sessions(
+        &self,
+        workspace: Option<String>,
+        include_children: bool,
+        limit: Option<usize>,
+    ) -> Result<OpencodeSessionListResponse> {
+        let req = RunnerRequest::ListOpencodeSessions(ListOpencodeSessionsRequest {
+            workspace,
+            include_children,
+            limit,
+        });
+
+        let resp = self.request(&req).await?;
+        match resp {
+            RunnerResponse::OpencodeSessionList(r) => Ok(r),
+            _ => anyhow::bail!("unexpected response to list_opencode_sessions"),
+        }
+    }
+
+    /// Get a specific OpenCode session.
+    pub async fn get_opencode_session(
+        &self,
+        session_id: impl Into<String>,
+    ) -> Result<OpencodeSessionResponse> {
+        let req = RunnerRequest::GetOpencodeSession(GetOpencodeSessionRequest {
+            session_id: session_id.into(),
+        });
+
+        let resp = self.request(&req).await?;
+        match resp {
+            RunnerResponse::OpencodeSession(r) => Ok(r),
+            _ => anyhow::bail!("unexpected response to get_opencode_session"),
+        }
+    }
+
+    /// Get messages from an OpenCode session.
+    pub async fn get_opencode_session_messages(
+        &self,
+        session_id: impl Into<String>,
+        render: bool,
+    ) -> Result<OpencodeSessionMessagesResponse> {
+        let req = RunnerRequest::GetOpencodeSessionMessages(GetOpencodeSessionMessagesRequest {
+            session_id: session_id.into(),
+            render,
+        });
+
+        let resp = self.request(&req).await?;
+        match resp {
+            RunnerResponse::OpencodeSessionMessages(r) => Ok(r),
+            _ => anyhow::bail!("unexpected response to get_opencode_session_messages"),
+        }
+    }
+
+    /// Update an OpenCode session (e.g., rename title).
+    pub async fn update_opencode_session(
+        &self,
+        session_id: impl Into<String>,
+        title: Option<String>,
+    ) -> Result<OpencodeSessionUpdatedResponse> {
+        let req = RunnerRequest::UpdateOpencodeSession(UpdateOpencodeSessionRequest {
+            session_id: session_id.into(),
+            title,
+        });
+
+        let resp = self.request(&req).await?;
+        match resp {
+            RunnerResponse::OpencodeSessionUpdated(r) => Ok(r),
+            _ => anyhow::bail!("unexpected response to update_opencode_session"),
+        }
+    }
 }
 
 /// An active stdout subscription that yields lines as they arrive.

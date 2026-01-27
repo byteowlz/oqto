@@ -2157,6 +2157,8 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
             create_home: ctx.config.local.linux_users.create_home,
         };
         state = state.with_linux_users(linux_users_config);
+        // Also set runner socket pattern for multi-user chat history access
+        state = state.with_runner_socket_pattern(ctx.config.local.runner_socket_pattern.clone());
     }
 
     // Initialize onboarding templates service

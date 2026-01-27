@@ -1437,8 +1437,11 @@ export type PiSessionFile = {
 /** Message loaded from a Pi session JSONL file */
 export type PiSessionMessage = {
 	id: string;
-	role: "user" | "assistant" | "system";
+	role: "user" | "assistant" | "system" | "toolResult";
 	content: unknown;
+	toolCallId?: string;
+	toolName?: string;
+	isError?: boolean;
 	timestamp: number;
 	usage?: unknown;
 };

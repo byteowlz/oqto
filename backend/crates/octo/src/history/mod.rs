@@ -223,7 +223,12 @@ pub fn list_sessions_grouped() -> Result<HashMap<String, Vec<ChatSession>>> {
 
 /// Get a single session by ID.
 pub fn get_session(session_id: &str) -> Result<Option<ChatSession>> {
-    let sessions = list_sessions()?;
+    get_session_from_dir(session_id, &default_opencode_data_dir())
+}
+
+/// Get a single session by ID from a specific OpenCode data directory.
+pub fn get_session_from_dir(session_id: &str, opencode_dir: &Path) -> Result<Option<ChatSession>> {
+    let sessions = list_sessions_from_dir(opencode_dir)?;
     Ok(sessions.into_iter().find(|s| s.id == session_id))
 }
 
@@ -753,7 +758,15 @@ fn load_message_parts(message_id: &str, session_id: &str, part_dir: &Path) -> Ve
 /// This is useful for initial load of completed conversations.
 /// During streaming, clients should use raw markdown and render client-side.
 pub async fn get_session_messages_rendered(session_id: &str) -> Result<Vec<ChatMessage>> {
-    let mut messages = get_session_messages_async(session_id).await?;
+    get_session_messages_rendered_from_dir(session_id, &default_opencode_data_dir()).await
+}
+
+/// Get all messages for a session with pre-rendered markdown HTML from a specific directory.
+pub async fn get_session_messages_rendered_from_dir(
+    session_id: &str,
+    opencode_dir: &Path,
+) -> Result<Vec<ChatMessage>> {
+    let mut messages = get_session_messages_from_dir(session_id, opencode_dir)?;
 
     // Collect all text content that needs rendering
     let texts_to_render: Vec<(usize, usize, String)> = messages

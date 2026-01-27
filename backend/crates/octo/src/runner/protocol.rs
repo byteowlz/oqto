@@ -106,6 +106,21 @@ pub enum RunnerRequest {
     GetMainChatMessages(GetMainChatMessagesRequest),
 
     // ========================================================================
+    // OpenCode Chat History (user-plane)
+    // ========================================================================
+    /// List OpenCode chat sessions from ~/.local/share/opencode/storage/session/
+    ListOpencodeSessions(ListOpencodeSessionsRequest),
+
+    /// Get a specific OpenCode chat session.
+    GetOpencodeSession(GetOpencodeSessionRequest),
+
+    /// Get messages from an OpenCode chat session.
+    GetOpencodeSessionMessages(GetOpencodeSessionMessagesRequest),
+
+    /// Update an OpenCode chat session (e.g., rename title).
+    UpdateOpencodeSession(UpdateOpencodeSessionRequest),
+
+    // ========================================================================
     // Memory Operations (user-plane)
     // ========================================================================
     /// Search memories.
@@ -202,6 +217,21 @@ pub enum RunnerResponse {
 
     /// Main chat messages.
     MainChatMessages(MainChatMessagesResponse),
+
+    // ========================================================================
+    // OpenCode Chat History Responses
+    // ========================================================================
+    /// List of OpenCode chat sessions.
+    OpencodeSessionList(OpencodeSessionListResponse),
+
+    /// Single OpenCode chat session.
+    OpencodeSession(OpencodeSessionResponse),
+
+    /// OpenCode chat session messages.
+    OpencodeSessionMessages(OpencodeSessionMessagesResponse),
+
+    /// OpenCode session updated.
+    OpencodeSessionUpdated(OpencodeSessionUpdatedResponse),
 
     // ========================================================================
     // Memory Responses
@@ -431,6 +461,51 @@ pub struct GetMainChatMessagesRequest {
     /// Optional limit on number of messages.
     #[serde(default)]
     pub limit: Option<usize>,
+}
+
+// ============================================================================
+// OpenCode Chat History Request Types
+// ============================================================================
+
+/// Request to list OpenCode chat sessions.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ListOpencodeSessionsRequest {
+    /// Filter by workspace path.
+    #[serde(default)]
+    pub workspace: Option<String>,
+    /// Include child sessions (default: false).
+    #[serde(default)]
+    pub include_children: bool,
+    /// Maximum number of sessions to return.
+    #[serde(default)]
+    pub limit: Option<usize>,
+}
+
+/// Request to get a specific OpenCode session.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GetOpencodeSessionRequest {
+    /// Session ID.
+    pub session_id: String,
+}
+
+/// Request to get messages from an OpenCode session.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GetOpencodeSessionMessagesRequest {
+    /// Session ID.
+    pub session_id: String,
+    /// Whether to render markdown to HTML.
+    #[serde(default)]
+    pub render: bool,
+}
+
+/// Request to update an OpenCode session.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateOpencodeSessionRequest {
+    /// Session ID.
+    pub session_id: String,
+    /// New title (if updating).
+    #[serde(default)]
+    pub title: Option<String>,
 }
 
 // ============================================================================
@@ -772,6 +847,123 @@ pub struct MainChatMessagesResponse {
     pub session_id: String,
     /// Messages in chronological order.
     pub messages: Vec<MainChatMessage>,
+}
+
+// ============================================================================
+// OpenCode Chat History Response Types
+// ============================================================================
+
+/// OpenCode chat session info.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OpencodeSessionInfo {
+    /// Session ID (e.g., "ses_xxx").
+    pub id: String,
+    /// Human-readable ID (e.g., "cold-lamp").
+    pub readable_id: String,
+    /// Session title.
+    pub title: Option<String>,
+    /// Parent session ID (for child sessions).
+    pub parent_id: Option<String>,
+    /// Workspace/project path.
+    pub workspace_path: String,
+    /// Project name (derived from path).
+    pub project_name: String,
+    /// Created timestamp (ms since epoch).
+    pub created_at: i64,
+    /// Updated timestamp (ms since epoch).
+    pub updated_at: i64,
+    /// OpenCode version that created this session.
+    pub version: Option<String>,
+    /// Whether this session is a child session.
+    pub is_child: bool,
+}
+
+/// Response with list of OpenCode sessions.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OpencodeSessionListResponse {
+    /// List of sessions.
+    pub sessions: Vec<OpencodeSessionInfo>,
+}
+
+/// Response with single OpenCode session.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OpencodeSessionResponse {
+    /// Session info, or None if not found.
+    pub session: Option<OpencodeSessionInfo>,
+}
+
+/// OpenCode chat message part.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OpencodeMessagePart {
+    /// Part ID.
+    pub id: String,
+    /// Part type: "text", "tool", etc.
+    pub part_type: String,
+    /// Text content (for text parts).
+    pub text: Option<String>,
+    /// Pre-rendered HTML (if render=true was requested).
+    pub text_html: Option<String>,
+    /// Tool name (for tool parts).
+    pub tool_name: Option<String>,
+    /// Tool input (for tool parts).
+    pub tool_input: Option<serde_json::Value>,
+    /// Tool output (for tool parts).
+    pub tool_output: Option<String>,
+    /// Tool status (for tool parts).
+    pub tool_status: Option<String>,
+    /// Tool title/summary (for tool parts).
+    pub tool_title: Option<String>,
+}
+
+/// OpenCode chat message.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OpencodeMessage {
+    /// Message ID.
+    pub id: String,
+    /// Session ID.
+    pub session_id: String,
+    /// Role: user, assistant.
+    pub role: String,
+    /// Created timestamp (ms since epoch).
+    pub created_at: i64,
+    /// Completed timestamp (ms since epoch).
+    pub completed_at: Option<i64>,
+    /// Parent message ID.
+    pub parent_id: Option<String>,
+    /// Model ID.
+    pub model_id: Option<String>,
+    /// Provider ID.
+    pub provider_id: Option<String>,
+    /// Agent name.
+    pub agent: Option<String>,
+    /// Summary title.
+    pub summary_title: Option<String>,
+    /// Input tokens.
+    pub tokens_input: Option<i64>,
+    /// Output tokens.
+    pub tokens_output: Option<i64>,
+    /// Reasoning tokens.
+    pub tokens_reasoning: Option<i64>,
+    /// Cost in USD.
+    pub cost: Option<f64>,
+    /// Message parts.
+    pub parts: Vec<OpencodeMessagePart>,
+}
+
+/// Response with OpenCode session messages.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OpencodeSessionMessagesResponse {
+    /// Session ID.
+    pub session_id: String,
+    /// Messages in chronological order.
+    pub messages: Vec<OpencodeMessage>,
+}
+
+/// Response when OpenCode session is updated.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OpencodeSessionUpdatedResponse {
+    /// Updated session info.
+    pub session: OpencodeSessionInfo,
 }
 
 // ============================================================================

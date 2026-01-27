@@ -5,8 +5,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use axum::body::Body;
-use hyper_util::client::legacy::Client;
 use hyper_util::client::legacy::connect::HttpConnector;
+use hyper_util::client::legacy::Client;
 use hyper_util::rt::TokioExecutor;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
@@ -334,6 +334,8 @@ pub struct AppState {
     pub linux_users: Option<LinuxUsersConfig>,
     /// Factory for creating per-user UserPlane instances.
     pub user_plane_factory: UserPlaneFactory,
+    /// Runner socket pattern for multi-user mode (e.g., "/run/octo/runner-sockets/{user}/octo-runner.sock").
+    pub runner_socket_pattern: Option<String>,
 }
 
 impl AppState {
@@ -376,6 +378,7 @@ impl AppState {
             max_proxy_body_bytes,
             linux_users: None,
             user_plane_factory: UserPlaneFactory::default(),
+            runner_socket_pattern: None,
         }
     }
 
@@ -419,6 +422,7 @@ impl AppState {
             max_proxy_body_bytes,
             linux_users: None,
             user_plane_factory: UserPlaneFactory::default(),
+            runner_socket_pattern: None,
         }
     }
 
@@ -441,6 +445,12 @@ impl AppState {
             // Enable multi-user mode in the UserPlaneFactory
             self.user_plane_factory = UserPlaneFactory::multi_user();
         }
+        self
+    }
+
+    /// Set the runner socket pattern for multi-user mode.
+    pub fn with_runner_socket_pattern(mut self, pattern: Option<String>) -> Self {
+        self.runner_socket_pattern = pattern;
         self
     }
 
