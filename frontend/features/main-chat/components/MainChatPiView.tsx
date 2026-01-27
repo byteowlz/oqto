@@ -55,7 +55,7 @@ import {
 	extractFileReferenceDetails,
 	getFileTypeInfo,
 } from "@/lib/file-types";
-import { formatSessionDate, generateReadableId } from "@/lib/session-utils";
+import { formatSessionDate, resolveReadableId } from "@/lib/session-utils";
 import {
 	type SlashCommand,
 	fuzzyMatch,
@@ -1044,7 +1044,7 @@ export function MainChatPiView({
 	}, [selectedSessionId]);
 
 	const readableId = selectedSessionId
-		? generateReadableId(selectedSessionId)
+		? resolveReadableId(selectedSessionId, null)
 		: null;
 	const formattedDate = sessionMeta?.started_at
 		? formatSessionDate(new Date(sessionMeta.started_at).getTime())

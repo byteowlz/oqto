@@ -29,7 +29,7 @@ import {
 	renamePiSession,
 	updateMainChatAssistant,
 } from "@/features/main-chat/api";
-import { formatSessionDate, generateReadableId } from "@/lib/session-utils";
+import { formatSessionDate, resolveReadableId } from "@/lib/session-utils";
 import { cn } from "@/lib/utils";
 import {
 	ChevronDown,
@@ -101,7 +101,7 @@ export function MainChatEntry({
 		return sessions.filter((session) => {
 			if ((session.title ?? "").toLowerCase().includes(filterLower))
 				return true;
-			const readableId = generateReadableId(session.id);
+			const readableId = resolveReadableId(session.id, session.readable_id);
 			if (readableId.toLowerCase().includes(filterLower)) return true;
 			const dateStr = formatSessionDate(session.modified_at);
 			if (dateStr.toLowerCase().includes(filterLower)) return true;
@@ -595,7 +595,10 @@ export function MainChatEntry({
 						{visibleSessions.map((session) => {
 							const isActive =
 								session.id === (activeSessionId ?? latestSessionId);
-							const readableId = generateReadableId(session.id);
+							const readableId = resolveReadableId(
+								session.id,
+								session.readable_id,
+							);
 							const formattedDate = formatSessionDate(
 								new Date(session.started_at).getTime(),
 							);
@@ -710,7 +713,7 @@ function SessionTimeline({
 						new Date(session.started_at).getTime(),
 					);
 
-					const readableId = generateReadableId(session.id);
+					const readableId = resolveReadableId(session.id, session.readable_id);
 
 					return (
 						<button
@@ -1002,4 +1005,3 @@ function RenameSessionDialog({
 		</Dialog>
 	);
 }
-

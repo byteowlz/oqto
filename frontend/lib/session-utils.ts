@@ -1830,6 +1830,16 @@ export function generateReadableId(sessionId: string): string {
 	return `${ADJECTIVES[adjIndex]}-${NOUNS[noun1Index]}-${NOUNS[noun2Index]}`;
 }
 
+export function resolveReadableId(
+	sessionId: string,
+	readableId?: string | null,
+): string {
+	if (readableId && readableId.trim().length > 0) {
+		return readableId;
+	}
+	return generateReadableId(sessionId);
+}
+
 /**
  * Format a timestamp as YYYY/MM/DD - HH:MM
  */
