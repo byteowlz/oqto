@@ -37,3 +37,4 @@
 - 2026-01-22: Spawn per-user mmry instances in multi-user mode for isolated memory stores.
 - 2026-01-27: Invalidate Main Chat Pi message caches after tool-call/result merge changes and strip Pi citation tokens like 【...†L...】 before markdown rendering.
 - 2026-01-27: Prefer stored readable IDs in session UI and persist readable_id in session records.
+- 2026-01-27: Add optional hstry-backed chat history reads when a hstry.db is available.

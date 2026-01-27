@@ -2148,6 +2148,40 @@ pub async fn list_chat_history(
         }
     }
 
+    if let Some(db_path) = crate::history::hstry_db_path() {
+        match crate::history::list_sessions_from_hstry(&db_path).await {
+            Ok(sessions) => {
+                let mut filtered: Vec<ChatSession> = sessions
+                    .into_iter()
+                    .filter(|s| {
+                        if let Some(ref ws) = query.workspace {
+                            if s.workspace_path != *ws {
+                                return false;
+                            }
+                        }
+                        if !query.include_children && s.is_child {
+                            return false;
+                        }
+                        true
+                    })
+                    .collect();
+
+                if let Some(limit) = query.limit {
+                    filtered.truncate(limit);
+                }
+
+                info!(count = filtered.len(), "Listed chat history via hstry");
+                return Ok(Json(filtered));
+            }
+            Err(err) => {
+                tracing::warn!(
+                    error = %err,
+                    "Failed to list chat history via hstry, falling back to direct access"
+                );
+            }
+        }
+    }
+
     // Single-user mode or runner fallback: direct filesystem access
     let sessions = crate::history::list_sessions()
         .map_err(|e| ApiError::internal(format!("Failed to list chat history: {}", e)))?;
@@ -2205,6 +2239,20 @@ pub async fn get_chat_session(
             }
         }
         // Runner failed or session not found, fall through to direct access
+    }
+
+    if let Some(db_path) = crate::history::hstry_db_path() {
+        match crate::history::get_session_from_hstry(&session_id, &db_path).await {
+            Ok(Some(session)) => return Ok(Json(session)),
+            Ok(None) => {}
+            Err(err) => {
+                tracing::warn!(
+                    session_id = %session_id,
+                    error = %err,
+                    "Failed to load chat session via hstry, falling back to direct access"
+                );
+            }
+        }
     }
 
     // Single-user mode or runner fallback: direct access
@@ -2352,6 +2400,58 @@ pub async fn list_chat_history_grouped(
             return Ok(Json(result));
         }
         // Runner failed, fall through to direct access
+    }
+
+    if let Some(db_path) = crate::history::hstry_db_path() {
+        match crate::history::list_sessions_from_hstry(&db_path).await {
+            Ok(sessions) => {
+                let mut grouped: std::collections::HashMap<String, Vec<ChatSession>> =
+                    std::collections::HashMap::new();
+                for session in sessions {
+                    grouped
+                        .entry(session.workspace_path.clone())
+                        .or_default()
+                        .push(session);
+                }
+
+                let mut result: Vec<GroupedChatHistory> = grouped
+                    .into_iter()
+                    .map(|(workspace_path, mut sessions)| {
+                        if !query.include_children {
+                            sessions.retain(|s| !s.is_child);
+                        }
+                        if let Some(limit) = query.limit {
+                            sessions.truncate(limit);
+                        }
+                        let project_name = sessions
+                            .first()
+                            .map(|s| s.project_name.clone())
+                            .unwrap_or_else(|| crate::history::project_name_from_path(&workspace_path));
+                        GroupedChatHistory {
+                            workspace_path,
+                            project_name,
+                            sessions,
+                        }
+                    })
+                    .filter(|g| !g.sessions.is_empty())
+                    .collect();
+
+                result.sort_by(|a, b| {
+                    let a_updated = a.sessions.first().map(|s| s.updated_at).unwrap_or(0);
+                    let b_updated = b.sessions.first().map(|s| s.updated_at).unwrap_or(0);
+                    b_updated.cmp(&a_updated)
+                });
+
+                info!(count = result.len(), "Listed grouped chat history via hstry");
+                return Ok(Json(result));
+            }
+            Err(err) => {
+                tracing::warn!(
+                    error = %err,
+                    "Failed to list grouped chat history via hstry, falling back to direct access"
+                );
+            }
+        }
     }
 
     // Single-user mode or runner fallback: direct access
