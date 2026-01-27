@@ -16,7 +16,7 @@ import {
 	formatShortcut,
 	useVoiceCommandEmitter,
 } from "@/hooks/use-voice-commands";
-import { generateReadableId } from "@/lib/session-utils";
+import { resolveReadableId } from "@/lib/session-utils";
 import {
 	AudioLines,
 	Bot,
@@ -253,7 +253,7 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
 										{session.title || "Untitled"}
 									</span>
 									<span className="ml-2 text-xs text-muted-foreground font-mono">
-										{generateReadableId(session.id)}
+										{resolveReadableId(session.id, session.readable_id)}
 									</span>
 								</CommandItem>
 							))}

@@ -146,6 +146,15 @@ pub struct PiSessionMessage {
     pub role: String,
     /// Content (text or structured)
     pub content: Value,
+    /// Tool call ID (toolResult messages only)
+    #[serde(rename = "toolCallId", skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
+    /// Tool name (toolResult messages only)
+    #[serde(rename = "toolName", skip_serializing_if = "Option::is_none")]
+    pub tool_name: Option<String>,
+    /// Tool error flag (toolResult messages only)
+    #[serde(rename = "isError", skip_serializing_if = "Option::is_none")]
+    pub is_error: Option<bool>,
     /// Timestamp (Unix ms)
     pub timestamp: i64,
     /// Usage stats (for assistant messages)
@@ -935,6 +944,15 @@ impl MainChatPiService {
                             .unwrap_or("user")
                             .to_string();
                         let content = msg.get("content").cloned().unwrap_or(Value::Null);
+                        let tool_call_id = msg
+                            .get("toolCallId")
+                            .and_then(|v| v.as_str())
+                            .map(|v| v.to_string());
+                        let tool_name = msg
+                            .get("toolName")
+                            .and_then(|v| v.as_str())
+                            .map(|v| v.to_string());
+                        let is_error = msg.get("isError").and_then(|v| v.as_bool());
                         let timestamp = msg.get("timestamp").and_then(|v| v.as_i64()).unwrap_or(0);
                         let usage = msg.get("usage").cloned();
 
@@ -942,6 +960,9 @@ impl MainChatPiService {
                             id,
                             role,
                             content,
+                            tool_call_id,
+                            tool_name,
+                            is_error,
                             timestamp,
                             usage,
                         });

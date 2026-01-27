@@ -58,6 +58,7 @@ install:
     cd backend && cargo install --path crates/octo
     cd backend && cargo install --path crates/octo --bin octo-runner
     cd backend && cargo install --path crates/octo-files
+    cd ../hstry && cargo install --path crates/hstry-cli || echo "hstry build failed, skipping"
 
 # Install binaries + systemd unit system-wide (Linux).
 #
@@ -72,6 +73,8 @@ install-system:
     sudo -v
 
     just install
+    (cd ../sldr && cargo install --path crates/sldr-cli)
+    (cd ../sldr && cargo install --path crates/sldr-server)
 
     if [[ "$(uname -s)" != "Linux" ]]; then
       echo "install-system is Linux-only"
@@ -94,7 +97,7 @@ install-system:
     #
     # Prefer copying from ~/.cargo/bin (freshly updated by `just install`) so updates
     # are not blocked by PATH precedence.
-    for bin in trx mmry mmry-service agntz hstry skdlr octo octo-runner octo-files; do
+    for bin in trx mmry mmry-service agntz hstry skdlr octo octo-runner octo-files sldr sldr-server; do
       src="$HOME/.cargo/bin/$bin"
       if [[ ! -x "$src" ]]; then
         src="$(command -v "$bin" || true)"

@@ -134,7 +134,7 @@ import { extractFileReferences, getFileTypeInfo } from "@/lib/file-types";
 import { getMessageText } from "@/lib/message-text";
 import { type ModelOption, filterModelOptions } from "@/lib/model-filter";
 import { normalizePermissionEvent } from "@/lib/session-events";
-import { formatSessionDate, generateReadableId } from "@/lib/session-utils";
+import { formatSessionDate, resolveReadableId } from "@/lib/session-utils";
 import {
 	type SlashCommand,
 	builtInCommands,
@@ -3184,7 +3184,7 @@ export const SessionScreen = memo(function SessionScreen() {
 				const parentTitle =
 					selectedChatSession?.title ||
 					selectedChatFromHistory?.title ||
-					generateReadableId(sessionId);
+					resolveReadableId(sessionId, session?.readable_id);
 				const requestOptions = workspacePath
 					? { directory: workspacePath }
 					: opencodeRequestOptions;
@@ -3476,7 +3476,8 @@ export const SessionScreen = memo(function SessionScreen() {
 					);
 					const readableMatch = mainSessions.find(
 						(session) =>
-							generateReadableId(session.id) === resolvedMainChatSessionId,
+							resolveReadableId(session.id, session.readable_id) ===
+								resolvedMainChatSessionId,
 					);
 					const resolved = matched ?? readableMatch;
 					if (resolved) {
@@ -4188,7 +4189,10 @@ export const SessionScreen = memo(function SessionScreen() {
 
 	// Session metadata for chat display
 	const readableId = selectedChatSession?.id
-		? generateReadableId(selectedChatSession.id)
+		? resolveReadableId(
+				selectedChatSession.id,
+				selectedChatSession.readable_id,
+			)
 		: null;
 	// Extract workspace name from path (last segment)
 	const workspaceName = opencodeDirectory

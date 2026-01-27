@@ -4,7 +4,7 @@ import {
 	type PiSessionFile,
 	listMainChatPiSessions,
 } from "@/features/main-chat/api";
-import { formatSessionDate, generateReadableId } from "@/lib/session-utils";
+import { formatSessionDate, resolveReadableId } from "@/lib/session-utils";
 import { cn } from "@/lib/utils";
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -140,7 +140,7 @@ function TimelineDot({
 					<div className="font-medium">
 						{session.title || "Untitled"}
 						<span className="opacity-60">
-							[{generateReadableId(session.id)}]
+							[{resolveReadableId(session.id, session.readable_id)}]
 						</span>
 					</div>
 					<div className="text-muted-foreground">{formattedDate}</div>

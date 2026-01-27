@@ -51,8 +51,11 @@ import {
 	setCachedScrollPosition,
 	usePiChat,
 } from "@/hooks/usePiChat";
-import { extractFileReferences, getFileTypeInfo } from "@/lib/file-types";
-import { formatSessionDate, generateReadableId } from "@/lib/session-utils";
+import {
+	extractFileReferenceDetails,
+	getFileTypeInfo,
+} from "@/lib/file-types";
+import { formatSessionDate, resolveReadableId } from "@/lib/session-utils";
 import {
 	type SlashCommand,
 	fuzzyMatch,
@@ -61,11 +64,13 @@ import {
 import { cn } from "@/lib/utils";
 import {
 	Bot,
+	Check,
 	Copy,
 	ExternalLink,
-	File as FileIcon,
+	FileCode,
+	FileImage,
+	FileText,
 	FileVideo,
-	ImageIcon,
 	Loader2,
 	Paperclip,
 	Send,
@@ -330,6 +335,29 @@ export function MainChatPiView({
 		}
 		return 200000;
 	}, [currentModelInfo]);
+
+	const displayError = commandError ?? error;
+	const showSkeleton = messages.length === 0 && !isConnected && !displayError;
+
+	const ChatSkeleton = (
+		<div className="flex-1 flex flex-col gap-4 min-h-0 animate-pulse">
+			<div className="flex-1 bg-muted/20 p-4 space-y-6">
+				<div className="mr-8 space-y-2">
+					<div className="h-4 bg-muted/40 w-24" />
+					<div className="h-16 bg-muted/30" />
+				</div>
+				<div className="ml-8 space-y-2">
+					<div className="h-4 bg-muted/40 w-16 ml-auto" />
+					<div className="h-10 bg-muted/30" />
+				</div>
+				<div className="mr-8 space-y-2">
+					<div className="h-4 bg-muted/40 w-24" />
+					<div className="h-24 bg-muted/30" />
+				</div>
+			</div>
+			<div className="h-10 bg-muted/20" />
+		</div>
+	);
 	const slashQuery = useMemo(() => parseSlashInput(input), [input]);
 	const builtInCommands = useMemo<SlashCommand[]>(
 		() => [
@@ -358,7 +386,6 @@ export function MainChatPiView({
 		}
 		return merged;
 	}, [builtInCommands, customCommands]);
-	const displayError = commandError ?? error;
 	const filteredModels = useMemo(() => {
 		const query = modelQuery.trim();
 		if (!query) return availableModels;
@@ -1017,7 +1044,7 @@ export function MainChatPiView({
 	}, [selectedSessionId]);
 
 	const readableId = selectedSessionId
-		? generateReadableId(selectedSessionId)
+		? resolveReadableId(selectedSessionId, null)
 		: null;
 	const formattedDate = sessionMeta?.started_at
 		? formatSessionDate(new Date(sessionMeta.started_at).getTime())
@@ -1091,7 +1118,9 @@ export function MainChatPiView({
 					className="h-full bg-muted/30 border border-border p-2 sm:p-4 overflow-y-auto scrollbar-hide"
 					data-spotlight="chat-timeline"
 				>
-					{messages.length === 0 && (
+					{showSkeleton && ChatSkeleton}
+
+					{!showSkeleton && messages.length === 0 && (
 						<div className="text-sm text-muted-foreground">{t.noMessages}</div>
 					)}
 
@@ -1103,38 +1132,41 @@ export function MainChatPiView({
 					)}
 
 					{/* Only render the last visibleCount messages for performance */}
-					{(() => {
-						const visibleMessages = messages.slice(-visibleCount);
-						const grouped = groupPiMessages(visibleMessages);
-						return grouped.map((group, groupIndex) => {
-							const groupSurfaces = group.messages.flatMap(
-								(m) => surfacesByMessageId.get(m.id) ?? [],
-							);
-							const groupMessageId = group.messages[0]?.id;
-							// Check if this is the last assistant group
-							const isLastAssistantGroup =
-								group.role === "assistant" &&
-								!grouped.slice(groupIndex + 1).some((g) => g.role === "assistant");
-							return (
-								<div
-									key={groupMessageId ?? `${group.role}-${groupIndex}`}
-									className={groupIndex > 0 ? "mt-4 sm:mt-6" : ""}
-								>
-									<PiMessageGroupCard
-										group={group}
-										assistantName={assistantName}
-										readableId={readableId}
-										workspacePath={workspacePath}
-										locale={locale}
-										a2uiSurfaces={groupSurfaces}
-										onA2UIAction={handleA2UIAction}
-										messageId={groupMessageId}
-										showWorkingIndicator={isStreaming && isLastAssistantGroup}
-									/>
-								</div>
-							);
-						});
-					})()}
+					{!showSkeleton &&
+						(() => {
+							const visibleMessages = messages.slice(-visibleCount);
+							const grouped = groupPiMessages(visibleMessages);
+							return grouped.map((group, groupIndex) => {
+								const groupSurfaces = group.messages.flatMap(
+									(m) => surfacesByMessageId.get(m.id) ?? [],
+								);
+								const groupMessageId = group.messages[0]?.id;
+								// Check if this is the last assistant group
+								const isLastAssistantGroup =
+									group.role === "assistant" &&
+									!grouped
+										.slice(groupIndex + 1)
+										.some((g) => g.role === "assistant");
+								return (
+									<div
+										key={groupMessageId ?? `${group.role}-${groupIndex}`}
+										className={groupIndex > 0 ? "mt-4 sm:mt-6" : ""}
+									>
+										<PiMessageGroupCard
+											group={group}
+											assistantName={assistantName}
+											readableId={readableId}
+											workspacePath={workspacePath}
+											locale={locale}
+											a2uiSurfaces={groupSurfaces}
+											onA2UIAction={handleA2UIAction}
+											messageId={groupMessageId}
+											showWorkingIndicator={isStreaming && isLastAssistantGroup}
+										/>
+									</div>
+								);
+							});
+						})()}
 
 					{/* Orphaned A2UI surfaces (no valid anchor) */}
 					{orphanedSurfaces.length > 0 && (
@@ -1478,6 +1510,47 @@ function groupPiMessages(messages: PiDisplayMessage[]): PiMessageGroup[] {
 	return groups;
 }
 
+// Compact copy button for message headers
+function CompactCopyButton({
+	text,
+	className,
+}: { text: string; className?: string }) {
+	const [copied, setCopied] = useState(false);
+
+	const handleCopy = useCallback(() => {
+		try {
+			if (navigator.clipboard?.writeText) {
+				navigator.clipboard.writeText(text);
+			} else {
+				const textArea = document.createElement("textarea");
+				textArea.value = text;
+				textArea.style.position = "fixed";
+				textArea.style.left = "-9999px";
+				document.body.appendChild(textArea);
+				textArea.select();
+				document.execCommand("copy");
+				document.body.removeChild(textArea);
+			}
+			setCopied(true);
+			setTimeout(() => setCopied(false), 2000);
+		} catch {}
+	}, [text]);
+
+	return (
+		<button
+			type="button"
+			onClick={handleCopy}
+			className={cn("text-muted-foreground hover:text-foreground", className)}
+		>
+			{copied ? (
+				<Check className="w-3 h-3 text-primary" />
+			) : (
+				<Copy className="w-3 h-3" />
+			)}
+		</button>
+	);
+}
+
 type PiSegment =
 	| { key: string; type: "text"; content: string; timestamp: number }
 	| {
@@ -1494,7 +1567,13 @@ type PiSegment =
 			timestamp: number;
 	  }
 	| { key: string; type: "thinking"; content: string; timestamp: number }
-	| { key: string; type: "compaction"; content: string; timestamp: number };
+	| { key: string; type: "compaction"; content: string; timestamp: number }
+	| {
+			key: string;
+			type: "a2ui";
+			surface: A2UISurfaceState;
+			timestamp: number;
+	  };
 
 const PiMessageGroupCard = memo(function PiMessageGroupCard({
 	group,
@@ -1518,7 +1597,6 @@ const PiMessageGroupCard = memo(function PiMessageGroupCard({
 	showWorkingIndicator?: boolean;
 }) {
 	const isUser = group.role === "user";
-	const isStreamingGroup = group.messages.some((m) => Boolean(m.isStreaming));
 	const createdAt = group.messages[0]?.timestamp
 		? new Date(group.messages[0].timestamp)
 		: null;
@@ -1577,6 +1655,14 @@ const PiMessageGroupCard = memo(function PiMessageGroupCard({
 		if (part.type === "text") {
 			// Skip empty chunks to match OpenCode feel
 			if (!part.content.trim()) continue;
+			// Skip text that looks like raw question tool JSON output
+			const trimmedText = part.content.trim();
+			const looksLikeQuestionJson =
+				trimmedText.startsWith("{") &&
+				trimmedText.includes('"questions"') &&
+				trimmedText.includes('"header"') &&
+				trimmedText.includes('"options"');
+			if (looksLikeQuestionJson) continue;
 			if (!textKey) textKey = key;
 			textBuf.push(part.content);
 			continue;
@@ -1620,6 +1706,15 @@ const PiMessageGroupCard = memo(function PiMessageGroupCard({
 		}
 	}
 	flushText();
+
+	for (const surface of a2uiSurfaces) {
+		segments.push({
+			key: `a2ui-${surface.surfaceId}`,
+			type: "a2ui",
+			surface,
+			timestamp: surface.createdAt.getTime(),
+		});
+	}
 
 	segments.sort((a, b) => a.timestamp - b.timestamp);
 
@@ -1676,7 +1771,7 @@ const PiMessageGroupCard = memo(function PiMessageGroupCard({
 					</span>
 				)}
 				<div className="flex-1" />
-				{!isUser && allTextContent && !isStreamingGroup && (
+				{!isUser && allTextContent && (
 					<ReadAloudButton text={allTextContent} className="ml-1" />
 				)}
 				{createdAt && !Number.isNaN(createdAt.getTime()) && (
@@ -1687,11 +1782,14 @@ const PiMessageGroupCard = memo(function PiMessageGroupCard({
 						})}
 					</span>
 				)}
-				{allTextContent && !isStreamingGroup && (
+				{allTextContent && (
 					<CopyButton
 						text={allTextContent}
-						className="ml-1 [&_svg]:w-3 [&_svg]:h-3"
+						className="hidden sm:inline-flex ml-1 [&_svg]:w-3 [&_svg]:h-3"
 					/>
+				)}
+				{allTextContent && (
+					<CompactCopyButton text={allTextContent} className="sm:hidden ml-1" />
 				)}
 			</div>
 
@@ -1702,8 +1800,17 @@ const PiMessageGroupCard = memo(function PiMessageGroupCard({
 						<span>{locale === "de" ? "Arbeitet..." : "Working..."}</span>
 					</div>
 				)}
+				{segments.length === 0 && isUser && (
+					<span className="text-muted-foreground italic text-sm">
+						No content
+					</span>
+				)}
 
-				{segments.map((segment) => {
+				{segments.map((segment, idx) => {
+					const prevSegment = idx > 0 ? segments[idx - 1] : null;
+					const needsTopMargin =
+						prevSegment?.type === "text" && segment.type !== "text";
+
 					if (segment.type === "text") {
 						return (
 							<TextWithFileReferences
@@ -1716,78 +1823,75 @@ const PiMessageGroupCard = memo(function PiMessageGroupCard({
 					}
 					if (segment.type === "tool_use") {
 						return (
-							<PiPartRenderer
-								key={segment.key}
-								part={segment.part}
-								toolResult={segment.toolResult}
-								locale={locale}
-								workspacePath={workspacePath}
-							/>
+							<div key={segment.key} className={needsTopMargin ? "mt-3" : undefined}>
+								<PiPartRenderer
+									part={segment.part}
+									toolResult={segment.toolResult}
+									locale={locale}
+									workspacePath={workspacePath}
+								/>
+							</div>
 						);
 					}
 					if (segment.type === "tool_result_only") {
 						// Render standalone tool result (no matching tool_use found)
 						return (
-							<PiPartRenderer
-								key={segment.key}
-								part={segment.part}
-								locale={locale}
-								workspacePath={workspacePath}
-							/>
+							<div key={segment.key} className={needsTopMargin ? "mt-3" : undefined}>
+								<PiPartRenderer
+									part={segment.part}
+									locale={locale}
+									workspacePath={workspacePath}
+								/>
+							</div>
 						);
 					}
 					if (segment.type === "thinking") {
 						return (
-							<PiPartRenderer
-								key={segment.key}
-								part={{ type: "thinking", content: segment.content }}
-								locale={locale}
-								workspacePath={workspacePath}
-							/>
+							<div key={segment.key} className={needsTopMargin ? "mt-3" : undefined}>
+								<PiPartRenderer
+									part={{ type: "thinking", content: segment.content }}
+									locale={locale}
+									workspacePath={workspacePath}
+								/>
+							</div>
 						);
 					}
 					if (segment.type === "compaction") {
 						return (
-							<div key={segment.key} className="text-xs text-muted-foreground">
+							<div
+								key={segment.key}
+								className={cn(
+									"text-xs text-muted-foreground",
+									needsTopMargin && "mt-3",
+								)}
+							>
 								{segment.content}
+							</div>
+						);
+					}
+					if (segment.type === "a2ui") {
+						return (
+							<div key={segment.key} className={needsTopMargin ? "mt-3" : undefined}>
+								<A2UICallCard
+									surfaceId={segment.surface.surfaceId}
+									messages={segment.surface.messages}
+									blocking={segment.surface.blocking}
+									requestId={segment.surface.requestId}
+									answered={segment.surface.answered}
+									answeredAction={segment.surface.answeredAction}
+									answeredAt={segment.surface.answeredAt}
+									onAction={onA2UIAction}
+									defaultCollapsed={segment.surface.answered}
+								/>
 							</div>
 						);
 					}
 					return null;
 				})}
 
-				{a2uiSurfaces.length > 0 && (
-					<div className="space-y-2 mt-2">
-						{a2uiSurfaces.map((surface) => (
-							<A2UICallCard
-								key={surface.surfaceId}
-								surfaceId={surface.surfaceId}
-								messages={surface.messages}
-								blocking={surface.blocking}
-								requestId={surface.requestId}
-								answered={surface.answered}
-								answeredAction={surface.answeredAction}
-								answeredAt={surface.answeredAt}
-								onAction={onA2UIAction}
-								defaultCollapsed={surface.answered}
-							/>
-						))}
-					</div>
-				)}
-
-				{isStreamingGroup && segments.length > 0 && (
-					<div className="flex items-center gap-3 text-muted-foreground text-sm">
-						<BrailleSpinner />
-						<span>{locale === "de" ? "Arbeitet..." : "Working..."}</span>
-					</div>
-				)}
 			</div>
 		</div>
 	);
-
-	if (!allTextContent || isStreamingGroup) {
-		return messageCard;
-	}
 
 	return (
 		<ContextMenu>
@@ -1795,13 +1899,15 @@ const PiMessageGroupCard = memo(function PiMessageGroupCard({
 				{messageCard}
 			</ContextMenuTrigger>
 			<ContextMenuContent>
-				<ContextMenuItem
-					onClick={() => navigator.clipboard?.writeText(allTextContent)}
-					className="gap-2"
-				>
-					<Copy className="w-4 h-4" />
-					{locale === "de" ? "Alles kopieren" : "Copy all"}
-				</ContextMenuItem>
+				{allTextContent && (
+					<ContextMenuItem
+						onClick={() => navigator.clipboard?.writeText(allTextContent)}
+						className="gap-2"
+					>
+						<Copy className="w-4 h-4" />
+						{locale === "de" ? "Alles kopieren" : "Copy all"}
+					</ContextMenuItem>
+				)}
 			</ContextMenuContent>
 		</ContextMenu>
 	);
@@ -2034,6 +2140,37 @@ function PiPartRenderer({
 	locale: "en" | "de";
 	workspacePath?: string | null;
 }) {
+	const formatToolResultOutput = (content: unknown): string | undefined => {
+		if (typeof content === "string") return content;
+		if (Array.isArray(content)) {
+			const textBlocks = content
+				.map((block) => {
+					if (typeof block === "string") return block;
+					if (!block || typeof block !== "object") return null;
+					const b = block as Record<string, unknown>;
+					if (b.type === "text" && typeof b.text === "string") return b.text;
+					return null;
+				})
+				.filter((text): text is string => Boolean(text));
+			if (textBlocks.length > 0) {
+				return textBlocks.join("\n\n");
+			}
+		}
+		if (content && typeof content === "object") {
+			const obj = content as Record<string, unknown>;
+			if (typeof obj.text === "string") return obj.text;
+			if (Array.isArray(obj.content)) {
+				const nestedText = formatToolResultOutput(obj.content);
+				if (nestedText) return nestedText;
+			}
+		}
+		try {
+			return JSON.stringify(content, null, 2);
+		} catch {
+			return String(content);
+		}
+	};
+
 	switch (part.type) {
 		case "text":
 			return (
@@ -2070,15 +2207,13 @@ function PiPartRenderer({
 							status: toolResult ? "completed" : "running",
 							input: part.input as Record<string, unknown>,
 							output: toolResult
-								? typeof toolResult.content === "string"
-									? toolResult.content
-									: JSON.stringify(toolResult.content)
+								? formatToolResultOutput(toolResult.content)
 								: undefined,
 							title: part.name,
 						},
 					}}
 					defaultCollapsed={true}
-					hideTodoTools={false}
+					hideTodoTools={true}
 				/>
 			);
 
@@ -2096,15 +2231,12 @@ function PiPartRenderer({
 						callID: part.id,
 						state: {
 							status: "completed",
-							output:
-								typeof part.content === "string"
-									? part.content
-									: JSON.stringify(part.content),
+							output: formatToolResultOutput(part.content),
 							title: part.name || "Tool Result",
 						},
 					}}
 					defaultCollapsed={true}
-					hideTodoTools={false}
+					hideTodoTools={true}
 				/>
 			);
 
@@ -2129,7 +2261,10 @@ function TextWithFileReferences({
 	locale?: "en" | "de";
 }) {
 	// Parse @file references, excluding code blocks
-	const fileRefs = useMemo(() => extractFileReferences(content), [content]);
+	const fileRefs = useMemo(
+		() => extractFileReferenceDetails(content),
+		[content],
+	);
 
 	return (
 		<ContextMenu>
@@ -2137,16 +2272,17 @@ function TextWithFileReferences({
 				<div className="space-y-2 select-none sm:select-auto">
 					<MarkdownRenderer
 						content={content}
-						className="text-sm leading-relaxed"
+						className="text-sm text-foreground leading-relaxed overflow-hidden"
 					/>
 					{/* Render file reference cards */}
 					{fileRefs.length > 0 && workspacePath && (
 						<div className="flex flex-wrap gap-2 mt-2">
-							{fileRefs.map((filePath) => (
+							{fileRefs.map((ref) => (
 								<FileReferenceCard
-									key={filePath}
-									filePath={filePath}
+									key={`${ref.filePath}-${ref.label}`}
+									filePath={ref.filePath}
 									workspacePath={workspacePath}
+									label={ref.label}
 								/>
 							))}
 						</div>
@@ -2173,22 +2309,36 @@ function TextWithFileReferences({
 export const FileReferenceCard = memo(function FileReferenceCard({
 	filePath,
 	workspacePath,
+	directUrl,
+	label,
 }: {
 	filePath: string;
 	workspacePath: string;
+	directUrl?: string;
+	label?: string;
 }) {
-	const [imageError, setImageError] = useState(false);
 	const [isLoading, setIsLoading] = useState(true);
+	const [error, setError] = useState<string | null>(null);
+	const [imageLoaded, setImageLoaded] = useState(false);
 	const [fileExists, setFileExists] = useState<boolean | null>(null);
 
 	const fileInfo = useMemo(() => getFileTypeInfo(filePath), [filePath]);
 	const isImage = fileInfo.category === "image";
 	const isVideo = fileInfo.category === "video";
+	const fileName = label || filePath.split("/").pop() || filePath;
 
-	const fileUrl = workspaceFileUrl(workspacePath, filePath);
+	// Build the file URL
+	const fileUrl = useMemo(() => {
+		if (directUrl) return directUrl;
+		return workspaceFileUrl(workspacePath, filePath);
+	}, [directUrl, filePath, workspacePath]);
 
 	// Check if file exists using HEAD request
 	useEffect(() => {
+		if (!fileUrl) {
+			setFileExists(false);
+			return;
+		}
 		let cancelled = false;
 		fetch(fileUrl, {
 			method: "HEAD",
@@ -2222,70 +2372,89 @@ export const FileReferenceCard = memo(function FileReferenceCard({
 		return null;
 	}
 
-	if (isImage && !imageError) {
+	if (!fileUrl) {
+		return null;
+	}
+
+	// For images, render inline preview
+	if (isImage) {
 		return (
-			<div className="relative inline-block rounded-lg overflow-hidden border border-border bg-muted/50 max-w-[200px]">
-				{isLoading && (
-					<div className="absolute inset-0 flex items-center justify-center bg-muted">
-						<Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
-					</div>
-				)}
-				<img
-					src={fileUrl}
-					alt={filePath}
-					className="max-w-full h-auto max-h-[150px] object-contain"
-					onLoad={() => setIsLoading(false)}
-					onError={() => {
-						setImageError(true);
-						setIsLoading(false);
-					}}
-				/>
-				<div className="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-xs px-2 py-1 truncate">
-					{filePath.split("/").pop()}
+			<div className="border border-border bg-muted/20 rounded overflow-hidden max-w-md">
+				<div className="flex items-center gap-2 px-3 py-2 bg-muted/50 border-b border-border">
+					<FileImage className="w-4 h-4 text-muted-foreground" />
+					<span className="text-xs font-medium truncate">{fileName}</span>
+				</div>
+				<div className="relative">
+					{isLoading && !imageLoaded && (
+						<div className="flex items-center justify-center p-4">
+							<Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
+						</div>
+					)}
+					{error ? (
+						<div className="flex items-center justify-center p-4 text-xs text-muted-foreground">
+							{error}
+						</div>
+					) : (
+						<img
+							src={fileUrl}
+							alt={fileName}
+							className={cn(
+								"max-w-full h-auto",
+								isLoading && !imageLoaded && "hidden",
+							)}
+							onLoad={() => {
+								setImageLoaded(true);
+								setIsLoading(false);
+							}}
+							onError={() => {
+								setError("Failed to load image");
+								setIsLoading(false);
+							}}
+						/>
+					)}
 				</div>
 			</div>
 		);
 	}
 
 	// Video preview
-	if (isVideo && !imageError) {
+	if (isVideo) {
 		return (
-			<div className="relative inline-block rounded-lg overflow-hidden border border-border bg-muted/50 max-w-[200px]">
+			<div className="border border-border bg-muted/20 rounded overflow-hidden max-w-md">
+				<div className="flex items-center gap-2 px-3 py-2 bg-muted/50 border-b border-border">
+					<FileVideo className="w-4 h-4 text-muted-foreground" />
+					<span className="text-xs font-medium truncate">{fileName}</span>
+				</div>
 				<video
 					src={fileUrl}
 					controls
 					playsInline
-					className="max-w-full h-auto max-h-[150px] object-contain"
+					className="max-w-full h-auto"
 					onLoadedData={() => setIsLoading(false)}
 					onError={() => {
-						setImageError(true);
+						setError("Failed to load video");
 						setIsLoading(false);
 					}}
 				>
 					<track kind="captions" />
+					Your browser does not support the video tag.
 				</video>
-				<div className="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-xs px-2 py-1 truncate flex items-center gap-1">
-					<FileVideo className="w-3 h-3" />
-					{filePath.split("/").pop()}
-				</div>
 			</div>
 		);
 	}
 
-	// Non-image/video or load error - show compact link
-	const Icon = isImage ? ImageIcon : FileIcon;
-
+	// For non-images/videos, render a compact file reference link
+	const FileIcon = fileInfo.category === "code" ? FileCode : FileText;
 	return (
 		<a
 			href={fileUrl}
 			target="_blank"
 			rel="noopener noreferrer"
-			className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-muted/50 border border-border text-xs hover:bg-muted transition-colors"
+			className="inline-flex items-center gap-2 px-3 py-1.5 border border-border bg-muted/20 rounded hover:bg-muted/40 transition-colors text-sm"
 		>
-			<Icon className="w-3.5 h-3.5 text-muted-foreground" />
-			<span className="truncate max-w-[150px]">
-				{filePath.split("/").pop()}
-			</span>
+			<FileIcon className="w-4 h-4 text-muted-foreground" />
+			<span className="font-medium">{fileName}</span>
+			<span className="text-xs text-muted-foreground">{filePath}</span>
 			<ExternalLink className="w-3 h-3 text-muted-foreground" />
 		</a>
 	);

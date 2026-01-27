@@ -1,8 +1,13 @@
 # Changes
 
+- 2026-01-26: Align Main Chat (Pi) message rendering with OpenCode cards and merge Pi tool results with tool calls for consistent display.
+- 2026-01-26: Show OpenCode-style loading skeletons in Main Chat while Pi chat connects.
+- 2026-01-26: Fix Main Chat crash caused by referencing displayError before initialization.
+- 2026-01-26: Match Main Chat file reference cards to OpenCode and strip dagger-style suffixes from @file references for preview headers.
 - 2026-01-25: Retry OpenCode sessions on WS subscribe when opencode is unhealthy and only treat local sessions as running when all core ports are bound.
 - 2026-01-25: Attach session IDs to WebSocket command errors so OpenCode failures surface in the chat UI.
 - 2026-01-25: Show a toast when OpenCode message sends fail in the session screen.
+- 2026-01-26: Emit session error events when OpenCode message updates include error payloads so UI toasts always appear.
 - 2026-01-25: Create a TRX epic with performance hotspots and remediation steps for UI handler violations.
 - 2026-01-25: Restrict auth token query parameters to WebSocket-only endpoints.
 - 2026-01-25: Cap zip downloads by total bytes and entry count in octo-files.
@@ -30,3 +35,8 @@
 - 2026-01-22: Prefer sudo over su when spawning ttyd shells to avoid su option errors.
 - 2026-01-22: Fix ttyd shell args to pass each argument separately instead of as a joined string.
 - 2026-01-22: Spawn per-user mmry instances in multi-user mode for isolated memory stores.
+- 2026-01-27: Invalidate Main Chat Pi message caches after tool-call/result merge changes and strip Pi citation tokens like 【...†L...】 before markdown rendering.
+- 2026-01-27: Prefer stored readable IDs in session UI and persist readable_id in session records.
+- 2026-01-27: Add optional hstry-backed chat history reads when a hstry.db is available.
+- 2026-01-28: Install hstry via `just install` so Octo setups include the hstry CLI.
+- 2026-01-28: Fix session insert SQL placeholder count so workspace IO sessions can be created.

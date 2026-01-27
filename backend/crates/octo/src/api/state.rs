@@ -5,11 +5,13 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use axum::body::Body;
-use hyper_util::client::legacy::Client;
 use hyper_util::client::legacy::connect::HttpConnector;
+use hyper_util::client::legacy::Client;
 use hyper_util::rt::TokioExecutor;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
+
+use crate::local::UserSldrManager;
 
 use super::super::agent::AgentService;
 use super::a2ui::PendingA2uiRequests;
@@ -312,6 +314,8 @@ pub struct AppState {
     pub session_ui: SessionUiState,
     /// Project templates configuration.
     pub templates: TemplatesState,
+    /// Per-user sldr manager (local multi-user mode).
+    pub sldr_users: Option<Arc<UserSldrManager>>,
     /// Settings service for octo config.
     pub settings_octo: Option<Arc<SettingsService>>,
     /// Settings service for mmry config.
@@ -334,6 +338,8 @@ pub struct AppState {
     pub linux_users: Option<LinuxUsersConfig>,
     /// Factory for creating per-user UserPlane instances.
     pub user_plane_factory: UserPlaneFactory,
+    /// Runner socket pattern for multi-user mode (e.g., "/run/octo/runner-sockets/{user}/octo-runner.sock").
+    pub runner_socket_pattern: Option<String>,
 }
 
 impl AppState {
@@ -365,6 +371,7 @@ impl AppState {
             voice,
             session_ui,
             templates,
+            sldr_users: None,
             settings_octo: None,
             settings_mmry: None,
             main_chat: None,
@@ -376,6 +383,7 @@ impl AppState {
             max_proxy_body_bytes,
             linux_users: None,
             user_plane_factory: UserPlaneFactory::default(),
+            runner_socket_pattern: None,
         }
     }
 
@@ -408,6 +416,7 @@ impl AppState {
             voice,
             session_ui,
             templates,
+            sldr_users: None,
             settings_octo: None,
             settings_mmry: None,
             main_chat: None,
@@ -419,6 +428,7 @@ impl AppState {
             max_proxy_body_bytes,
             linux_users: None,
             user_plane_factory: UserPlaneFactory::default(),
+            runner_socket_pattern: None,
         }
     }
 
@@ -441,6 +451,12 @@ impl AppState {
             // Enable multi-user mode in the UserPlaneFactory
             self.user_plane_factory = UserPlaneFactory::multi_user();
         }
+        self
+    }
+
+    /// Set the runner socket pattern for multi-user mode.
+    pub fn with_runner_socket_pattern(mut self, pattern: Option<String>) -> Self {
+        self.runner_socket_pattern = pattern;
         self
     }
 
@@ -473,6 +489,12 @@ impl AppState {
     /// Set the onboarding templates service.
     pub fn with_onboarding_templates(mut self, service: OnboardingTemplatesService) -> Self {
         self.onboarding_templates = Some(Arc::new(service));
+        self
+    }
+
+    /// Set the per-user sldr manager.
+    pub fn with_sldr_users(mut self, manager: UserSldrManager) -> Self {
+        self.sldr_users = Some(Arc::new(manager));
         self
     }
 }

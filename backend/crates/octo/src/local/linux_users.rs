@@ -48,10 +48,30 @@ impl Default for LinuxUsersConfig {
 /// Prefix for project-based Linux users.
 const PROJECT_PREFIX: &str = "proj_";
 
+/// Check if a Linux user exists.
+fn user_exists(username: &str) -> bool {
+    Command::new("id")
+        .arg("-u")
+        .arg(username)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
 impl LinuxUsersConfig {
     /// Get the Linux username for a platform user ID.
+    ///
+    /// If a Linux user already exists with the exact user_id (no prefix),
+    /// that name is used. This handles admin users who have their own
+    /// Linux accounts without the platform prefix.
     pub fn linux_username(&self, user_id: &str) -> String {
-        format!("{}{}", self.prefix, sanitize_username(user_id))
+        // Check if user already exists without prefix (e.g., admin users)
+        let sanitized = sanitize_username(user_id);
+        if user_exists(&sanitized) {
+            return sanitized;
+        }
+        // Otherwise, use the configured prefix
+        format!("{}{}", self.prefix, sanitized)
     }
 
     /// Get the Linux username for a shared project.

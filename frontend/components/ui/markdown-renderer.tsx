@@ -280,17 +280,29 @@ const markdownComponents: Components = {
 	},
 };
 
+// Pi can emit inline citation tokens like 【...†L1-L1】 that should not render.
+const PI_CITATION_PATTERN = /【[^】]*[†‡✝✟][^】]*】/g;
+
+function stripPiCitations(content: string) {
+	return content
+		.replace(PI_CITATION_PATTERN, "")
+		.replace(/[ \t]+\n/g, "\n")
+		.replace(/\n{3,}/g, "\n\n")
+		.trimEnd();
+}
+
 export const MarkdownRenderer = memo(function MarkdownRenderer({
 	content,
 	className,
 }: MarkdownRendererProps) {
+	const sanitizedContent = stripPiCitations(content);
 	return (
 		<div className={cn("markdown-content", className)}>
 			<ReactMarkdown
 				remarkPlugins={remarkPlugins}
 				components={markdownComponents}
 			>
-				{content}
+				{sanitizedContent}
 			</ReactMarkdown>
 		</div>
 	);

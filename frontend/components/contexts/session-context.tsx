@@ -25,7 +25,7 @@ import {
 	fetchSessions,
 	updateSession,
 } from "@/lib/opencode-client";
-import { generateReadableId } from "@/lib/session-utils";
+import { resolveReadableId } from "@/lib/session-utils";
 import { type WsEvent, getWsClient } from "@/lib/ws-client";
 import {
 	type Dispatch,
@@ -436,7 +436,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 			const optimisticId = `pending-${now}-${Math.random().toString(36).slice(2, 10)}`;
 			const session: ChatSession = {
 				id: optimisticId,
-				readable_id: generateReadableId(optimisticId),
+				readable_id: resolveReadableId(optimisticId, null),
 				title: locale === "de" ? "Neue Sitzung" : "New Session",
 				parent_id: null,
 				workspace_path: resolvedPath,
