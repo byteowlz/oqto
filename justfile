@@ -58,6 +58,7 @@ install:
     cd backend && cargo install --path crates/octo
     cd backend && cargo install --path crates/octo --bin octo-runner
     cd backend && cargo install --path crates/octo-files
+    cd ../hstry && cargo install --path .
 
 # Install binaries + systemd unit system-wide (Linux).
 #
