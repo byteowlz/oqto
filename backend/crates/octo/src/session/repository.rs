@@ -34,7 +34,7 @@ impl SessionRepository {
                 opencode_port, fileserver_port, ttyd_port, eavs_port, agent_base_port, max_agents,
                 eavs_key_id, eavs_key_hash, eavs_virtual_key, mmry_port,
                 status, runtime_mode, created_at, started_at, stopped_at, last_activity_at, error_message
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&session.id)

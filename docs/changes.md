@@ -39,3 +39,4 @@
 - 2026-01-27: Prefer stored readable IDs in session UI and persist readable_id in session records.
 - 2026-01-27: Add optional hstry-backed chat history reads when a hstry.db is available.
 - 2026-01-28: Install hstry via `just install` so Octo setups include the hstry CLI.
+- 2026-01-28: Fix session insert SQL placeholder count so workspace IO sessions can be created.
