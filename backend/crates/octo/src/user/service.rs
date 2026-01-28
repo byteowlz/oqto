@@ -24,6 +24,10 @@ impl UserService {
         self.repo.ensure_mmry_port(user_id, base_port, range).await
     }
 
+    pub async fn ensure_sldr_port(&self, user_id: &str, base_port: u16, range: u16) -> Result<i64> {
+        self.repo.ensure_sldr_port(user_id, base_port, range).await
+    }
+
     /// Create a new user with validation.
     #[instrument(skip(self, request), fields(username = %request.username))]
     pub async fn create_user(&self, request: CreateUserRequest) -> Result<User> {

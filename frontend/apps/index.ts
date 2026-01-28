@@ -1,6 +1,7 @@
 import { AdminApp } from "@/apps/admin";
 import { AgentsApp } from "@/apps/agents";
 import { DashboardApp } from "@/apps/dashboard";
+import { SldrApp } from "@/apps/sldr";
 import { SessionsApp } from "@/apps/sessions";
 import { SettingsApp } from "@/apps/settings";
 import { appRegistry } from "@/lib/app-registry";
@@ -23,6 +24,15 @@ appRegistry
 		routes: ["/sessions"],
 		permissions: ["user"],
 		priority: 1,
+	})
+	.register({
+		id: "sldr",
+		label: { de: "Folien", en: "Slides" },
+		description: "Build and preview slide decks",
+		component: SldrApp,
+		routes: ["/sldr"],
+		permissions: ["user"],
+		priority: 4,
 	})
 	.register({
 		id: "agents",

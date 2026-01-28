@@ -488,6 +488,8 @@ struct AppConfig {
     server: ServerConfig,
     /// Onboarding templates configuration.
     onboarding_templates: templates::OnboardingTemplatesConfig,
+    /// sldr configuration.
+    sldr: SldrConfig,
 }
 
 /// Server configuration.
@@ -595,6 +597,7 @@ impl Default for AppConfig {
             local: LocalModeConfig::default(),
             eavs: None,
             mmry: MmryConfig::default(),
+            sldr: SldrConfig::default(),
             voice: VoiceConfig::default(),
             sessions: SessionUiConfig::default(),
             auth: auth::AuthConfig::default(),
@@ -813,6 +816,31 @@ impl Default for MmryConfig {
             container_url: None,
 
             user_base_port: 48_000,
+            user_port_range: 1_000,
+        }
+    }
+}
+
+/// sldr configuration for per-user slide services.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SldrConfig {
+    /// Whether sldr integration is enabled.
+    pub enabled: bool,
+    /// Path to sldr-server binary (for spawning per-user instances in multi-user mode).
+    pub binary: String,
+    /// Dedicated base port for per-user sldr instances (local multi-user mode).
+    pub user_base_port: u16,
+    /// Size of the per-user sldr port range (local multi-user mode).
+    pub user_port_range: u16,
+}
+
+impl Default for SldrConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            binary: "sldr-server".to_string(),
+            user_base_port: 49_000,
             user_port_range: 1_000,
         }
     }
@@ -1864,6 +1892,8 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
         }
     };
 
+    let mut sldr_users: Option<local::UserSldrManager> = None;
+
     // Enable per-user mmry instances in local multi-user mode.
     if local_mode && !single_user && ctx.config.mmry.enabled {
         if let Some(ref local_cfg) = session_config.local_config {
@@ -1882,6 +1912,28 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
                     user_repo_for_services.clone(),
                 );
                 session_service = session_service.with_user_mmry(user_mmry);
+            }
+        }
+    }
+
+    // Enable per-user sldr instances in local multi-user mode.
+    if local_mode && !single_user && ctx.config.sldr.enabled {
+        if let Some(ref local_cfg) = session_config.local_config {
+            if !local_cfg.linux_users.enabled {
+                warn!("sldr per-user instances require local.linux_users.enabled=true (skipping)");
+            } else {
+                let linux_users = local_cfg.linux_users.clone();
+                let user_sldr = local::UserSldrManager::new(
+                    local::UserSldrConfig {
+                        sldr_binary: ctx.config.sldr.binary.clone(),
+                        base_port: ctx.config.sldr.user_base_port,
+                        port_range: ctx.config.sldr.user_port_range,
+                        runner_socket_pattern: ctx.config.local.runner_socket_pattern.clone(),
+                    },
+                    move |user_id| linux_users.linux_username(user_id),
+                    user_repo_for_services.clone(),
+                );
+                sldr_users = Some(user_sldr);
             }
         }
     }
@@ -2138,6 +2190,10 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     state = state.with_settings_octo(settings_octo);
     if let Some(mmry_settings) = settings_mmry {
         state = state.with_settings_mmry(mmry_settings);
+    }
+
+    if let Some(manager) = sldr_users {
+        state = state.with_sldr_users(manager);
     }
 
     // Add onboarding service

@@ -128,6 +128,32 @@ impl RunnerClient {
         }
     }
 
+    /// Spawn a detached process (no stdin/stdout pipes).
+    pub async fn spawn_process(
+        &self,
+        id: impl Into<String>,
+        binary: impl Into<String>,
+        args: Vec<String>,
+        cwd: impl Into<PathBuf>,
+        env: HashMap<String, String>,
+        sandboxed: bool,
+    ) -> Result<u32> {
+        let req = RunnerRequest::SpawnProcess(SpawnProcessRequest {
+            id: id.into(),
+            binary: binary.into(),
+            args,
+            cwd: cwd.into(),
+            env,
+            sandboxed,
+        });
+
+        let resp = self.request(&req).await?;
+        match resp {
+            RunnerResponse::ProcessSpawned(p) => Ok(p.pid),
+            _ => anyhow::bail!("unexpected response to spawn_process"),
+        }
+    }
+
     /// Get process status.
     pub async fn get_status(&self, id: impl Into<String>) -> Result<ProcessStatusResponse> {
         let req = RunnerRequest::GetStatus(GetStatusRequest { id: id.into() });
