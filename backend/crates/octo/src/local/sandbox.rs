@@ -303,6 +303,8 @@ impl SandboxProfile {
                 "~/.npm".to_string(),
                 "~/.bun".to_string(),
                 "~/.local/bin".to_string(),
+                "~/.local/share/uv".to_string(),
+                "~/.cache/uv".to_string(),
                 // Agent tools - data directories
                 "~/.local/share/skdlr".to_string(),
                 "~/.local/share/mmry".to_string(),

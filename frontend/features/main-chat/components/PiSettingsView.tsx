@@ -229,12 +229,18 @@ export function PiSettingsView({
 						<SettingsEditor
 							app="pi-agent"
 							title={locale === "de" ? "Pi Einstellungen" : "Pi Settings"}
+							workspacePath={
+								scope === "workspace" ? workspacePath ?? undefined : undefined
+							}
 						/>
 					</TabsContent>
 					<TabsContent value="models" className="space-y-3">
 						<SettingsEditor
 							app="pi-models"
 							title={locale === "de" ? "Pi Modelle" : "Pi Models"}
+							workspacePath={
+								scope === "workspace" ? workspacePath ?? undefined : undefined
+							}
 						/>
 					</TabsContent>
 				</Tabs>

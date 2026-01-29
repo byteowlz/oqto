@@ -109,6 +109,16 @@ impl SettingsService {
         filter_schema_by_scope(&self.schema, scope)
     }
 
+    /// Create a new settings service scoped to a different config directory.
+    pub fn with_config_dir(&self, config_dir: PathBuf) -> Result<Self> {
+        Self::new_with_format(
+            self.schema.clone(),
+            config_dir,
+            &self.config_filename,
+            self.format,
+        )
+    }
+
     /// Get current values with metadata about configured vs default.
     pub async fn get_values(&self, scope: SettingsScope) -> HashMap<String, SettingsValue> {
         let values = self.values.read().await;

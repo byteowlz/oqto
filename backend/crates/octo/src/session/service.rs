@@ -3209,7 +3209,7 @@ mod tests {
         let session = service
             .for_user("test")
             .create_session(CreateSessionRequest {
-                workspace_path: Some(workspace_dir.path().to_string_lossy().to_string()),
+                workspace_path: None,
                 image: None,
                 agent: None,
                 env: Default::default(),

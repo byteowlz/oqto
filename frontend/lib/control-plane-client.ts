@@ -1338,10 +1338,19 @@ export type SettingsUpdateRequest = {
 	values: Record<string, unknown>;
 };
 
+function buildSettingsQuery(app: string, workspacePath?: string): string {
+	const params = new URLSearchParams({ app });
+	if (workspacePath) params.set("workspace_path", workspacePath);
+	return params.toString();
+}
+
 /** Get the JSON schema for an app's settings (filtered by user permissions) */
-export async function getSettingsSchema(app: string): Promise<unknown> {
+export async function getSettingsSchema(
+	app: string,
+	workspacePath?: string,
+): Promise<unknown> {
 	const res = await authFetch(
-		controlPlaneApiUrl(`/api/settings/schema?app=${encodeURIComponent(app)}`),
+		controlPlaneApiUrl(`/api/settings/schema?${buildSettingsQuery(app, workspacePath)}`),
 		{
 			credentials: "include",
 		},
@@ -1351,9 +1360,12 @@ export async function getSettingsSchema(app: string): Promise<unknown> {
 }
 
 /** Get current settings values for an app */
-export async function getSettingsValues(app: string): Promise<SettingsValues> {
+export async function getSettingsValues(
+	app: string,
+	workspacePath?: string,
+): Promise<SettingsValues> {
 	const res = await authFetch(
-		controlPlaneApiUrl(`/api/settings?app=${encodeURIComponent(app)}`),
+		controlPlaneApiUrl(`/api/settings?${buildSettingsQuery(app, workspacePath)}`),
 		{
 			credentials: "include",
 		},
@@ -1366,9 +1378,10 @@ export async function getSettingsValues(app: string): Promise<SettingsValues> {
 export async function updateSettingsValues(
 	app: string,
 	updates: SettingsUpdateRequest,
+	workspacePath?: string,
 ): Promise<SettingsValues> {
 	const res = await authFetch(
-		controlPlaneApiUrl(`/api/settings?app=${encodeURIComponent(app)}`),
+		controlPlaneApiUrl(`/api/settings?${buildSettingsQuery(app, workspacePath)}`),
 		{
 			method: "PATCH",
 			headers: { "Content-Type": "application/json" },
@@ -1381,9 +1394,12 @@ export async function updateSettingsValues(
 }
 
 /** Reload settings from disk (admin only) */
-export async function reloadSettings(app: string): Promise<void> {
+export async function reloadSettings(
+	app: string,
+	workspacePath?: string,
+): Promise<void> {
 	const res = await authFetch(
-		controlPlaneApiUrl(`/api/settings/reload?app=${encodeURIComponent(app)}`),
+		controlPlaneApiUrl(`/api/settings/reload?${buildSettingsQuery(app, workspacePath)}`),
 		{
 			method: "POST",
 			credentials: "include",

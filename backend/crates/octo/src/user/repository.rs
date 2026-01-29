@@ -605,8 +605,22 @@ mod tests {
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
                 updated_at TEXT NOT NULL DEFAULT (datetime('now')),
                 last_login_at TEXT,
-                settings TEXT DEFAULT '{}'
+                settings TEXT DEFAULT '{}',
+                mmry_port INTEGER,
+                sldr_port INTEGER,
+                linux_username TEXT
             )
+            "#,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            r#"
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_users_linux_username
+            ON users(linux_username)
+            WHERE linux_username IS NOT NULL
             "#,
         )
         .execute(&pool)
