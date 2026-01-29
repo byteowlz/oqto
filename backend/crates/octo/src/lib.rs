@@ -19,6 +19,7 @@ pub mod observability;
 pub mod onboarding;
 pub mod pi;
 pub mod projects;
+pub mod prompts;
 pub mod runner;
 pub mod session;
 pub mod session_ui;

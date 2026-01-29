@@ -7,17 +7,107 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use futures::{SinkExt, StreamExt};
-use hyper_util::client::legacy::Client;
 use hyper_util::client::legacy::connect::HttpConnector;
+use hyper_util::client::legacy::Client;
 use log::{debug, error, warn};
 use tokio_tungstenite::connect_async;
+use tokio_tungstenite::WebSocketStream;
 
+use std::path::Path as StdPath;
 use std::time::Duration;
 
 use crate::auth::CurrentUser;
 use crate::session::SessionStatus;
 
 use super::state::AppState;
+
+/// Enum to handle both Unix socket and TCP WebSocket connections to ttyd
+enum TtydConnection {
+    Unix(WebSocketStream<tokio::net::UnixStream>),
+    Tcp(WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>),
+}
+
+impl TtydConnection {
+    /// Split the connection into write and read halves
+    fn split(
+        self,
+    ) -> (
+        TtydConnectionWrite,
+        TtydConnectionRead,
+    ) {
+        match self {
+            TtydConnection::Unix(ws) => {
+                let (write, read) = ws.split();
+                (TtydConnectionWrite::Unix(write), TtydConnectionRead::Unix(read))
+            }
+            TtydConnection::Tcp(ws) => {
+                let (write, read) = ws.split();
+                (TtydConnectionWrite::Tcp(write), TtydConnectionRead::Tcp(read))
+            }
+        }
+    }
+}
+
+enum TtydConnectionWrite {
+    Unix(futures::stream::SplitSink<WebSocketStream<tokio::net::UnixStream>, tokio_tungstenite::tungstenite::Message>),
+    Tcp(futures::stream::SplitSink<WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>, tokio_tungstenite::tungstenite::Message>),
+}
+
+enum TtydConnectionRead {
+    Unix(futures::stream::SplitStream<WebSocketStream<tokio::net::UnixStream>>),
+    Tcp(futures::stream::SplitStream<WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>>),
+}
+
+impl TtydConnectionWrite {
+    async fn send(&mut self, msg: tokio_tungstenite::tungstenite::Message) -> Result<(), tokio_tungstenite::tungstenite::Error> {
+        match self {
+            TtydConnectionWrite::Unix(w) => w.send(msg).await,
+            TtydConnectionWrite::Tcp(w) => w.send(msg).await,
+        }
+    }
+}
+
+impl TtydConnectionRead {
+    async fn next(&mut self) -> Option<Result<tokio_tungstenite::tungstenite::Message, tokio_tungstenite::tungstenite::Error>> {
+        match self {
+            TtydConnectionRead::Unix(r) => r.next().await,
+            TtydConnectionRead::Tcp(r) => r.next().await,
+        }
+    }
+}
+
+/// Connect to ttyd via Unix socket
+async fn connect_ttyd_unix(socket_path: &StdPath) -> anyhow::Result<TtydConnection> {
+    use tokio::net::UnixStream;
+    use tokio_tungstenite::client_async;
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+
+    let stream = UnixStream::connect(socket_path).await?;
+
+    // For Unix sockets, we still need a valid HTTP request
+    // ttyd expects a WebSocket upgrade at /ws
+    let mut request = "ws://localhost/ws".into_client_request()?;
+    request
+        .headers_mut()
+        .insert("Sec-WebSocket-Protocol", "tty".parse().unwrap());
+
+    let (socket, _response) = client_async(request, stream).await?;
+    Ok(TtydConnection::Unix(socket))
+}
+
+/// Connect to ttyd via TCP (for container mode or fallback)
+async fn connect_ttyd_tcp(port: u16) -> anyhow::Result<TtydConnection> {
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+
+    let url = format!("ws://localhost:{}/ws", port);
+    let mut request = url.into_client_request()?;
+    request
+        .headers_mut()
+        .insert("Sec-WebSocket-Protocol", "tty".parse().unwrap());
+
+    let (socket, _response) = connect_async(request).await?;
+    Ok(TtydConnection::Tcp(socket))
+}
 
 async fn ensure_session_active_for_proxy(
     state: &AppState,
@@ -591,10 +681,13 @@ pub async fn proxy_terminal_ws(
 
     let session = ensure_session_for_io_proxy(&state, user.id(), &session_id, session).await?;
 
+    let session_id_clone = session.id.clone();
     let ttyd_port = session.ttyd_port;
 
     Ok(ws.on_upgrade(move |socket| async move {
-        if let Err(e) = handle_terminal_proxy(socket, ttyd_port as u16, None).await {
+        if let Err(e) =
+            handle_terminal_proxy(socket, &session_id_clone, ttyd_port as u16, None).await
+        {
             error!("Terminal proxy error: {:?}", e);
         }
     }))
@@ -620,10 +713,11 @@ pub async fn proxy_terminal_ws_for_workspace(
             StatusCode::SERVICE_UNAVAILABLE
         })?;
 
+    let session_id = session.id.clone();
     let ttyd_port = session.ttyd_port;
 
     Ok(ws.on_upgrade(move |socket| async move {
-        if let Err(e) = handle_terminal_proxy(socket, ttyd_port as u16, None).await {
+        if let Err(e) = handle_terminal_proxy(socket, &session_id, ttyd_port as u16, None).await {
             error!("Terminal proxy error: {:?}", e);
         }
     }))
@@ -688,56 +782,79 @@ pub async fn proxy_browser_stream_ws(
 ///   '2' + JSON  = Set preferences
 ///
 /// This proxy:
-/// 1. Connects to ttyd with the 'tty' subprotocol
+/// 1. Connects to ttyd via Unix socket with the 'tty' subprotocol
 /// 2. Sends the initial auth/resize message
 /// 3. Translates between raw terminal data (from ghostty-web) and ttyd protocol
+///
+/// The Unix socket approach ensures sandboxed agents cannot connect to ttyd directly,
+/// as the socket is in XDG_RUNTIME_DIR which is not mounted into the sandbox.
 async fn handle_terminal_proxy(
     client_socket: axum::extract::ws::WebSocket,
-    ttyd_port: u16,
+    session_id: &str,
+    ttyd_port: u16, // Kept for fallback/logging
     initial_command: Option<String>,
 ) -> anyhow::Result<()> {
     use axum::extract::ws::Message as AxumMessage;
     use tokio::time::{Duration, Instant};
     use tokio_tungstenite::tungstenite::Message as TungsteniteMessage;
-    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 
-    let ttyd_url = format!("ws://localhost:{}/ws", ttyd_port);
-    debug!("Connecting to ttyd at {}", ttyd_url);
+    // Try Unix socket first (local mode), fall back to TCP (container mode)
+    let socket_path = crate::local::ProcessManager::ttyd_socket_path(session_id);
 
-    // Connect to ttyd with subprotocol, retrying during startup.
-    // This avoids a race where the client opens the WS before ttyd is listening.
     let start = Instant::now();
     let timeout = Duration::from_secs(60);
     let mut attempts: u32 = 0;
 
-    let (ttyd_socket, _) = loop {
+    // Try to connect via Unix socket or TCP
+    let ttyd_socket = loop {
         attempts += 1;
-        let mut request = ttyd_url.clone().into_client_request()?;
-        request
-            .headers_mut()
-            .insert("Sec-WebSocket-Protocol", "tty".parse().unwrap());
 
-        match connect_async(request).await {
-            Ok(result) => break result,
-            Err(err) => {
-                if start.elapsed() >= timeout {
-                    return Err(anyhow::anyhow!(
-                        "ttyd not available after {} attempts over {:?}: {}",
-                        attempts,
-                        timeout,
-                        err
-                    ));
+        // First try Unix socket (for local mode)
+        if socket_path.exists() {
+            match connect_ttyd_unix(&socket_path).await {
+                Ok(socket) => {
+                    debug!("Connected to ttyd via Unix socket: {:?}", socket_path);
+                    break socket;
                 }
-
-                let backoff_ms = (attempts.min(20) as u64) * 100;
-                let backoff = Duration::from_millis(backoff_ms);
-                debug!(
-                    "ttyd not ready yet (attempt {}): {}; retrying in {:?}",
-                    attempts, err, backoff
-                );
-                tokio::time::sleep(backoff).await;
+                Err(err) => {
+                    if start.elapsed() >= timeout {
+                        return Err(anyhow::anyhow!(
+                            "ttyd Unix socket not available after {} attempts over {:?}: {}",
+                            attempts,
+                            timeout,
+                            err
+                        ));
+                    }
+                    debug!(
+                        "ttyd Unix socket not ready yet (attempt {}): {}",
+                        attempts, err
+                    );
+                }
+            }
+        } else {
+            // Fall back to TCP (for container mode or if socket doesn't exist yet)
+            match connect_ttyd_tcp(ttyd_port).await {
+                Ok(socket) => {
+                    debug!("Connected to ttyd via TCP port {}", ttyd_port);
+                    break socket;
+                }
+                Err(err) => {
+                    if start.elapsed() >= timeout {
+                        return Err(anyhow::anyhow!(
+                            "ttyd not available after {} attempts over {:?}: {}",
+                            attempts,
+                            timeout,
+                            err
+                        ));
+                    }
+                    debug!("ttyd not ready yet (attempt {}): {}", attempts, err);
+                }
             }
         }
+
+        let backoff_ms = (attempts.min(20) as u64) * 100;
+        let backoff = Duration::from_millis(backoff_ms);
+        tokio::time::sleep(backoff).await;
     };
     let (mut ttyd_write, mut ttyd_read) = ttyd_socket.split();
 

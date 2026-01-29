@@ -1,0 +1,45 @@
+# SSH Hardening Configuration
+# Managed by Ansible - Drop-in configuration
+# This file overrides settings in /etc/ssh/sshd_config
+
+# Port Configuration
+Port {{ ssh_port | default(22) }}
+
+# Crypto Hardening
+KexAlgorithms curve25519-sha256,curve25519-sha256@libssh.org,diffie-hellman-group16-sha512,diffie-hellman-group18-sha512,diffie-hellman-group-exchange-sha256
+Ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com,aes128-gcm@openssh.com,aes256-ctr,aes192-ctr,aes128-ctr
+MACs hmac-sha2-512-etm@openssh.com,hmac-sha2-256-etm@openssh.com,hmac-sha2-512,hmac-sha2-256
+
+# Enhanced Logging
+LogLevel VERBOSE
+
+# Authentication Hardening
+LoginGraceTime 30s
+PermitRootLogin no
+StrictModes yes
+MaxAuthTries 3
+MaxSessions 10
+
+# Force Public Key Authentication Only
+PubkeyAuthentication yes
+PasswordAuthentication no
+PermitEmptyPasswords no
+ChallengeResponseAuthentication no
+
+# Disable Forwarding by Default
+AllowAgentForwarding no
+AllowTcpForwarding no
+X11Forwarding no
+PermitTunnel no
+
+# Connection Timeouts
+ClientAliveInterval 300
+ClientAliveCountMax 2
+
+# Access Control
+{% if ssh_allowed_users is defined %}
+AllowUsers {{ ssh_allowed_users | join(' ') }}
+{% endif %}
+{% if ssh_allowed_groups is defined %}
+AllowGroups {{ ssh_allowed_groups | join(' ') }}
+{% endif %}

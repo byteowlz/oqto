@@ -3,7 +3,6 @@
 import {
 	type CassSearchHit,
 	type CassSearchResponse,
-	searchMainChatPiSessions,
 	searchSessions,
 } from "@/lib/control-plane-client";
 import { cn } from "@/lib/utils";
@@ -11,7 +10,7 @@ import { Bot, Loader2, MessageSquare, Search, User } from "lucide-react";
 import { useEffect, useState } from "react";
 
 export type SearchMode = "sessions" | "messages";
-// cass indexes: opencode, claude_code, pi_agent, codex, amp, etc.
+// hstry indexes: opencode, pi, and other adapters.
 export type AgentFilter = "all" | "opencode" | "pi_agent";
 
 interface SearchResultsProps {
@@ -95,7 +94,7 @@ export function SearchResults({
 	const [loading, setLoading] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 
-	// Debounced search - combines cass search with direct Pi session search
+	// Debounced search (hstry-backed)
 	useEffect(() => {
 		if (!query.trim()) {
 			setResults(null);
@@ -107,49 +106,12 @@ export function SearchResults({
 			setLoading(true);
 			setError(null);
 			try {
-				// Determine which searches to run based on agent filter
-				const shouldSearchCass =
-					agentFilter === "all" || agentFilter === "opencode";
-				const shouldSearchPi =
-					agentFilter === "all" || agentFilter === "pi_agent";
-
-				const searchPromises: Promise<CassSearchHit[]>[] = [];
-
-				// Search cass (for opencode sessions)
-				if (shouldSearchCass) {
-					searchPromises.push(
-						searchSessions({
-							q: query,
-							agents: agentFilter === "all" ? "opencode" : agentFilter,
-							limit: 50,
-						}).then((r) => r.hits ?? []),
-					);
-				}
-
-				// Search Pi sessions directly
-				if (shouldSearchPi) {
-					searchPromises.push(
-						searchMainChatPiSessions(query, 50)
-							.then((r) =>
-								r.hits.map((hit) => ({
-									agent: hit.agent,
-									source_path: hit.source_path,
-									session_id: hit.session_id,
-									message_id: hit.message_id,
-									line_number: hit.line_number,
-									snippet: hit.snippet,
-									score: hit.score,
-									timestamp: hit.timestamp,
-									role: hit.role,
-									title: hit.title,
-								})),
-							)
-							.catch(() => []), // Silently fail Pi search if endpoint unavailable
-					);
-				}
-
-				const results = await Promise.all(searchPromises);
-				const allHits = results.flat();
+				const response = await searchSessions({
+					q: query,
+					agents: agentFilter,
+					limit: 50,
+				});
+				const allHits = response.hits ?? [];
 
 				// Sort by timestamp (most recent first)
 				allHits.sort((a, b) => (b.timestamp ?? 0) - (a.timestamp ?? 0));

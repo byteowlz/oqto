@@ -195,6 +195,7 @@ mod tests {
             last_login_at: None,
             settings: None,
             mmry_port: None,
+            sldr_port: None,
             linux_username: None,
         };
 

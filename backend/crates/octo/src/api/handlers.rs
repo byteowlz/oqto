@@ -3698,15 +3698,15 @@ pub struct InSessionSearchQuery {
     /// Search query
     pub q: String,
     /// Maximum number of results
-    #[serde(default = "default_cass_limit")]
+    #[serde(default = "default_in_session_search_limit")]
     pub limit: usize,
 }
 
-fn default_cass_limit() -> usize {
+fn default_in_session_search_limit() -> usize {
     20
 }
 
-/// Search result from CASS.
+/// Search result from session search.
 #[derive(Debug, Serialize)]
 pub struct InSessionSearchResult {
     /// Line number in the source file
@@ -3730,7 +3730,7 @@ pub struct InSessionSearchResult {
     pub message_id: Option<String>,
 }
 
-/// Search within a specific Pi session using CASS.
+/// Search within a specific Pi session using hstry.
 ///
 /// GET /api/agents/sessions/{session_id}/search?q=query&limit=20
 #[instrument(skip(state, user))]
@@ -4754,12 +4754,12 @@ pub async fn sync_trx(
 }
 
 // ============================================================================
-// CASS (Coding Agent Session Search) handlers
+// HSTRY search handlers
 // ============================================================================
 
-/// Query parameters for cass search.
+/// Query parameters for session search.
 #[derive(Debug, Deserialize)]
-pub struct CassSearchQuery {
+pub struct SearchQuery {
     /// Search query string.
     pub q: String,
     /// Agent filter: "all", "pi_agent", "opencode", or comma-separated list.
@@ -4778,9 +4778,9 @@ fn default_search_limit() -> usize {
     50
 }
 
-/// A single search hit from cass.
+/// A single search hit from hstry.
 #[derive(Debug, Serialize, Deserialize)]
-pub struct CassSearchHit {
+pub struct SearchHit {
     /// Agent type (pi_agent, opencode, etc.)
     pub agent: String,
     /// Path to the session file.
@@ -4803,7 +4803,7 @@ pub struct CassSearchHit {
     /// Search relevance score.
     #[serde(default)]
     pub score: Option<f64>,
-    /// Timestamp of the message (cass uses created_at).
+    /// Timestamp of the message (ms since epoch).
     #[serde(default, alias = "created_at")]
     pub timestamp: Option<i64>,
     /// Role (user, assistant, system).
@@ -4812,25 +4812,25 @@ pub struct CassSearchHit {
     /// Session/conversation title if available.
     #[serde(default)]
     pub title: Option<String>,
-    /// Full content (cass returns this)
+    /// Full content
     #[serde(default)]
     pub content: Option<String>,
-    /// Match type from cass
+    /// Match type
     #[serde(default)]
     pub match_type: Option<String>,
-    /// Origin kind from cass
+    /// Origin kind
     #[serde(default)]
     pub origin_kind: Option<String>,
-    /// Source ID from cass
+    /// Source ID
     #[serde(default)]
     pub source_id: Option<String>,
 }
 
-/// Response from cass search.
+/// Response from hstry search.
 #[derive(Debug, Serialize, Deserialize)]
-pub struct CassSearchResponse {
-    pub hits: Vec<CassSearchHit>,
-    /// Total count from cass (field is "count" in cass output)
+pub struct SearchResponse {
+    pub hits: Vec<SearchHit>,
+    /// Total count
     #[serde(default, alias = "count")]
     pub total: Option<usize>,
     #[serde(default)]
@@ -4839,17 +4839,15 @@ pub struct CassSearchResponse {
     pub cursor: Option<String>,
 }
 
-/// Search across coding agent sessions using cass.
+/// Search across coding agent sessions using hstry.
 #[instrument(skip(_state))]
 pub async fn search_sessions(
     State(_state): State<AppState>,
-    Query(query): Query<CassSearchQuery>,
-) -> ApiResult<Json<CassSearchResponse>> {
-    use tokio::process::Command;
-
+    Query(query): Query<SearchQuery>,
+) -> ApiResult<Json<SearchResponse>> {
     // Don't search empty queries
     if query.q.trim().is_empty() {
-        return Ok(Json(CassSearchResponse {
+        return Ok(Json(SearchResponse {
             hits: vec![],
             total: Some(0),
             elapsed_ms: Some(0),
@@ -4857,141 +4855,126 @@ pub async fn search_sessions(
         }));
     }
 
-    // Build cass command
-    let args = build_cass_args(&query);
-
-    // Try to find cass in common locations
-    let cass_path = std::env::var("CASS_PATH")
-        .ok()
-        .or_else(|| {
-            // Check common locations
-            let home = std::env::var("HOME").ok()?;
-            let local_bin = format!("{}/.local/bin/cass", home);
-            if std::path::Path::new(&local_bin).exists() {
-                return Some(local_bin);
-            }
-            None
-        })
-        .unwrap_or_else(|| "cass".to_string());
-
-    let output = Command::new(&cass_path)
-        .args(&args)
-        .env("HOME", std::env::var("HOME").unwrap_or_default())
-        .output()
+    let hits = crate::history::search_hstry(&query.q, query.limit)
         .await
-        .map_err(|e| {
-            if e.kind() == std::io::ErrorKind::NotFound {
-                ApiError::internal(format!(
-                    "cass not found at '{}'. Install from: https://github.com/Dicklesworthstone/coding_agent_session_search",
-                    cass_path
-                ))
-            } else {
-                ApiError::internal(format!("Failed to execute cass: {}", e))
-            }
-        })?;
+        .map_err(|e| ApiError::internal(format!("hstry search failed: {e}")))?;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        // Check for common errors
-        if stderr.contains("index") && stderr.contains("not found") {
-            return Err(ApiError::internal(
-                "cass index not built. Run 'cass index --full' to build the search index.",
-            ));
+    let allowed_sources = parse_agent_filters(&query.agents);
+    let mut results = Vec::new();
+    for hit in hits {
+        if let Some(ref allowed) = allowed_sources {
+            if !allowed.contains(&hit.source_id) {
+                continue;
+            }
         }
-        return Err(ApiError::internal(format!(
-            "cass search failed: {}",
-            stderr
-        )));
+
+        let timestamp = hit
+            .created_at
+            .or(hit.conv_updated_at)
+            .map(|dt| dt.timestamp_millis())
+            .or_else(|| Some(hit.conv_created_at.timestamp_millis()));
+
+        let session_id = hit
+            .external_id
+            .clone()
+            .unwrap_or_else(|| hit.conversation_id.clone());
+
+        let source_path = hit.source_path.clone().unwrap_or_else(|| {
+            format!("hstry:{}:{}", hit.source_id, hit.conversation_id)
+        });
+
+        results.push(SearchHit {
+            agent: map_source_id_to_agent(&hit.source_id),
+            source_path,
+            session_id: Some(session_id),
+            workspace: hit.workspace.clone(),
+            message_id: None,
+            line_number: Some((hit.message_idx.max(0) as usize) + 1),
+            snippet: Some(hit.snippet.clone()),
+            score: Some(f64::from(hit.score)),
+            timestamp,
+            role: Some(hit.role.clone()),
+            title: hit.title.clone(),
+            content: Some(hit.content.clone()),
+            match_type: None,
+            origin_kind: Some(hit.source_adapter.clone()),
+            source_id: Some(hit.source_id.clone()),
+        });
+
+        if results.len() >= query.limit {
+            break;
+        }
     }
 
-    // Parse cass JSON output
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let response: CassSearchResponse = serde_json::from_str(&stdout).map_err(|e| {
-        ApiError::internal(format!(
-            "Failed to parse cass output: {}. Output: {}",
-            e,
-            stdout.chars().take(500).collect::<String>()
-        ))
-    })?;
-
-    Ok(Json(response))
+    Ok(Json(SearchResponse {
+        total: Some(results.len()),
+        hits: results,
+        elapsed_ms: None,
+        cursor: None,
+    }))
 }
 
-fn build_cass_args(query: &CassSearchQuery) -> Vec<String> {
-    let mut args = vec![
-        "search".to_string(),
-        query.q.clone(),
-        "--robot".to_string(),
-        "--robot-meta".to_string(),
-        "--limit".to_string(),
-        query.limit.to_string(),
-    ];
-
-    let agents = query.agents.trim();
-    if !agents.is_empty() && agents != "all" {
-        for agent in agents
-            .split(',')
-            .map(|agent| agent.trim())
-            .filter(|a| !a.is_empty())
-        {
-            args.push("--agent".to_string());
-            args.push(agent.to_string());
-        }
+fn parse_agent_filters(agents: &str) -> Option<std::collections::HashSet<String>> {
+    let agents = agents.trim();
+    if agents.is_empty() || agents.eq_ignore_ascii_case("all") {
+        return None;
     }
 
-    args
+    let mut filters = std::collections::HashSet::new();
+    for agent in agents
+        .split(',')
+        .map(|agent| agent.trim())
+        .filter(|agent| !agent.is_empty())
+    {
+        filters.insert(map_agent_filter_to_source_id(agent));
+    }
+
+    if filters.is_empty() {
+        None
+    } else {
+        Some(filters)
+    }
+}
+
+fn map_agent_filter_to_source_id(agent: &str) -> String {
+    match agent {
+        "pi_agent" => "pi".to_string(),
+        other => other.to_string(),
+    }
+}
+
+fn map_source_id_to_agent(source_id: &str) -> String {
+    match source_id {
+        "pi" => "pi_agent".to_string(),
+        other => other.to_string(),
+    }
 }
 
 #[cfg(test)]
-mod cass_search_tests {
-    use super::{CassSearchQuery, build_cass_args};
+mod hstry_search_tests {
+    use super::{map_agent_filter_to_source_id, parse_agent_filters};
 
-    fn base_query() -> CassSearchQuery {
-        CassSearchQuery {
-            q: "hello".to_string(),
-            agents: "all".to_string(),
-            limit: 50,
-        }
+    #[test]
+    fn hstry_filters_skip_all() {
+        assert!(parse_agent_filters("all").is_none());
     }
 
     #[test]
-    fn cass_args_skip_all_agent_filter() {
-        let query = base_query();
-        let args = build_cass_args(&query);
-        assert!(!args.contains(&"--agent".to_string()));
+    fn hstry_filters_support_multiple() {
+        let filters = parse_agent_filters("opencode,pi_agent").expect("filters");
+        assert!(filters.contains("opencode"));
+        assert!(filters.contains("pi"));
     }
 
     #[test]
-    fn cass_args_supports_multiple_agents() {
-        let mut query = base_query();
-        query.agents = "opencode,pi_agent".to_string();
-        let args = build_cass_args(&query);
-        assert_eq!(
-            args,
-            vec![
-                "search",
-                "hello",
-                "--robot",
-                "--robot-meta",
-                "--limit",
-                "50",
-                "--agent",
-                "opencode",
-                "--agent",
-                "pi_agent",
-            ]
-            .into_iter()
-            .map(str::to_string)
-            .collect::<Vec<_>>()
-        );
+    fn hstry_filters_trim_tokens() {
+        let filters = parse_agent_filters(" opencode , pi_agent , ").expect("filters");
+        assert!(filters.contains("opencode"));
+        assert!(filters.contains("pi"));
     }
 
     #[test]
-    fn cass_args_trims_agent_tokens() {
-        let mut query = base_query();
-        query.agents = " opencode , pi_agent , ".to_string();
-        let args = build_cass_args(&query);
-        assert!(args.contains(&"opencode".to_string()));
-        assert!(args.contains(&"pi_agent".to_string()));
+    fn hstry_filter_maps_pi_agent() {
+        assert_eq!(map_agent_filter_to_source_id("pi_agent"), "pi");
     }
 }

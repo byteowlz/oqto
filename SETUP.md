@@ -46,9 +46,48 @@ For non-interactive installation:
 OCTO_USER_MODE=single OCTO_BACKEND_MODE=local ./setup.sh --non-interactive
 ```
 
-### Option 2: Ansible Playbook (Production/Server)
+### Option 2: Setup Script with Server Hardening (Production)
 
-For production server deployment with hardening:
+For production deployment with built-in server hardening (Linux only):
+
+```bash
+# Interactive production setup with hardening
+OCTO_DEV_MODE=false ./setup.sh
+
+# Or fully automated with all hardening enabled
+OCTO_DEV_MODE=false \
+OCTO_HARDEN_SERVER=yes \
+OCTO_SETUP_CADDY=yes \
+OCTO_DOMAIN=octo.example.com \
+./setup.sh --non-interactive
+```
+
+The setup script with hardening enabled will:
+- Configure UFW/firewalld firewall (only allow SSH, HTTP/S)
+- Install and configure fail2ban for SSH protection
+- Harden SSH (disable password auth, use strong ciphers)
+- Enable automatic security updates
+- Apply kernel security parameters (sysctl)
+- Enable audit logging (auditd)
+- Set up Caddy reverse proxy with automatic HTTPS
+
+**Hardening Environment Variables**:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `OCTO_HARDEN_SERVER` | prompt | Enable server hardening (yes/no) |
+| `OCTO_SSH_PORT` | 22 | SSH port number |
+| `OCTO_SETUP_FIREWALL` | yes | Configure UFW/firewalld |
+| `OCTO_SETUP_FAIL2BAN` | yes | Install and configure fail2ban |
+| `OCTO_HARDEN_SSH` | yes | Apply SSH hardening (disables passwords!) |
+| `OCTO_SETUP_AUTO_UPDATES` | yes | Enable automatic security updates |
+| `OCTO_HARDEN_KERNEL` | yes | Apply kernel security parameters |
+
+> ⚠️ **Warning**: SSH hardening disables password authentication. Ensure you have SSH key access before enabling!
+
+### Option 3: Ansible Playbook (Production/Server)
+
+For more complex deployments or when you need full control:
 
 ```bash
 cd deploy/ansible
@@ -57,13 +96,11 @@ cp inventory.yml.example inventory.yml
 ansible-playbook -i inventory.yml octo.yml
 ```
 
-The Ansible playbook:
-- Hardens SSH (key-only auth, strong ciphers)
-- Configures fail2ban and UFW firewall
-- Enables automatic security updates
+The Ansible playbook provides the same hardening as `setup.sh --harden-server` plus:
+- Creates dedicated octo system user
 - Installs all Octo dependencies including trash-cli
 - Sets up systemd services
-- Creates octo system user
+- More granular control via Ansible variables
 
 See [deploy/ansible/README.md](./deploy/ansible/README.md) for details.
 

@@ -2331,9 +2331,16 @@ export const SessionScreen = memo(function SessionScreen() {
 	useEffect(() => {
 		if (!scrollToMessageId || !messagesContainerRef.current) return;
 
+		let targetId = scrollToMessageId;
+		if (targetId.startsWith("line-")) {
+			const idx = Number.parseInt(targetId.slice(5), 10);
+			const resolved = Number.isFinite(idx) ? messages[idx - 1]?.id : undefined;
+			if (resolved) targetId = resolved;
+		}
+
 		// Find the message element with this ID
 		const messageEl = messagesContainerRef.current.querySelector(
-			`[data-message-id="${scrollToMessageId}"]`,
+			`[data-message-id="${targetId}"]`,
 		);
 
 		if (messageEl) {
@@ -2353,7 +2360,7 @@ export const SessionScreen = memo(function SessionScreen() {
 			// Clear the scroll target
 			setScrollToMessageId(null);
 		}
-	}, [scrollToMessageId, setScrollToMessageId]);
+	}, [scrollToMessageId, setScrollToMessageId, messages]);
 
 	// Keyboard shortcut for search (Ctrl+F / Cmd+F)
 	useEffect(() => {

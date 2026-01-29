@@ -162,23 +162,9 @@ pub struct PiSessionMessage {
     pub usage: Option<Value>,
 }
 
-/// CASS search response.
+/// A single search result for a session.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CassResponse {
-    /// Search results (CASS uses "hits" not "results")
-    #[serde(default)]
-    pub hits: Vec<CassSearchResult>,
-    /// Number of results returned
-    #[serde(default)]
-    pub count: usize,
-    /// Total matches available
-    #[serde(default)]
-    pub total_matches: usize,
-}
-
-/// A single CASS search result.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CassSearchResult {
+pub struct SessionSearchResult {
     /// Source file path
     pub source_path: String,
     /// Line number in the source file
@@ -983,15 +969,15 @@ impl MainChatPiService {
         session_id: &str,
         query: &str,
         limit: usize,
-    ) -> Result<Vec<CassSearchResult>> {
-        // First try CASS search filtered by session ID
-        let cass_results = self
-            .search_in_session_via_cass(session_id, query, limit)
+    ) -> Result<Vec<SessionSearchResult>> {
+        // First try hstry search filtered by session ID
+        let hstry_results = self
+            .search_in_session_via_hstry(session_id, query, limit)
             .await;
 
-        if let Ok(ref results) = cass_results {
+        if let Ok(ref results) = hstry_results {
             if !results.is_empty() {
-                return cass_results;
+                return hstry_results;
             }
         }
 
@@ -1000,65 +986,66 @@ impl MainChatPiService {
             .await
     }
 
-    /// Search using CASS and filter by session ID.
-    async fn search_in_session_via_cass(
+    /// Search using hstry and filter by session ID.
+    async fn search_in_session_via_hstry(
         &self,
         session_id: &str,
         query: &str,
         limit: usize,
-    ) -> Result<Vec<CassSearchResult>> {
-        let search_limit = limit * 10;
+    ) -> Result<Vec<SessionSearchResult>> {
+        let search_limit = limit.saturating_mul(6).max(10);
+        let hits = crate::history::search_hstry(query, search_limit).await?;
 
-        let output = tokio::process::Command::new("cass")
-            .arg("search")
-            .arg(query)
-            .arg("--mode")
-            .arg("lexical")
-            .arg("--limit")
-            .arg(search_limit.to_string())
-            .arg("--json")
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-            .context("Failed to spawn cass")?
-            .wait_with_output()
-            .await
-            .context("Failed to wait for cass")?;
+        let mut results = Vec::new();
+        for hit in hits {
+            let external_id = hit.external_id.clone().unwrap_or_default();
+            let source_path = hit
+                .source_path
+                .clone()
+                .unwrap_or_else(|| format!("hstry:{}:{}", hit.source_id, hit.conversation_id));
 
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            if stderr.contains("No results") || output.stdout.is_empty() {
-                return Ok(Vec::new());
+            let matches_session = external_id == session_id
+                || hit.conversation_id == session_id
+                || source_path.contains(session_id);
+            if !matches_session {
+                continue;
             }
-            anyhow::bail!("CASS search failed: {}", stderr);
+
+            let timestamp = hit
+                .created_at
+                .or(hit.conv_updated_at)
+                .map(|dt| dt.timestamp_millis())
+                .or_else(|| Some(hit.conv_created_at.timestamp_millis()));
+
+            results.push(SessionSearchResult {
+                source_path,
+                line_number: (hit.message_idx.max(0) as usize) + 1,
+                agent: hit.source_id.clone(),
+                score: f64::from(hit.score),
+                content: Some(hit.content.clone()),
+                snippet: Some(hit.snippet.clone()),
+                title: hit.title.clone(),
+                match_type: None,
+                created_at: timestamp,
+                message_id: None,
+            });
+
+            if results.len() >= limit {
+                break;
+            }
         }
 
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        if stdout.trim().is_empty() {
-            return Ok(Vec::new());
-        }
-
-        let cass_response: CassResponse =
-            serde_json::from_str(&stdout).context("Failed to parse CASS output")?;
-
-        let filtered: Vec<CassSearchResult> = cass_response
-            .hits
-            .into_iter()
-            .filter(|hit| hit.source_path.contains(session_id))
-            .take(limit)
-            .collect();
-
-        Ok(filtered)
+        Ok(results)
     }
 
     /// Direct text search in OpenCode session message parts.
-    /// Fallback when CASS hasn't indexed the session.
+    /// Fallback when hstry hasn't indexed the session.
     async fn search_in_opencode_session(
         &self,
         session_id: &str,
         query: &str,
         limit: usize,
-    ) -> Result<Vec<CassSearchResult>> {
+    ) -> Result<Vec<SessionSearchResult>> {
         let home = std::env::var("HOME").context("HOME not set")?;
         let messages_dir = PathBuf::from(&home)
             .join(".local/share/opencode/storage/message")
@@ -1116,7 +1103,7 @@ impl MainChatPiService {
                                 // Create a snippet around the match
                                 let snippet = Self::create_snippet(text, &query_lower, 100);
 
-                                results.push(CassSearchResult {
+                                results.push(SessionSearchResult {
                                     source_path: part_path.to_string_lossy().to_string(),
                                     line_number,
                                     agent: "opencode".to_string(),

@@ -662,16 +662,13 @@ pub async fn list_pi_sessions(
 }
 
 /// Search Main Chat Pi sessions for message content.
-/// This provides a direct search fallback when cass doesn't index Pi sessions.
 ///
 /// GET /api/main/pi/sessions/search?q=query&limit=50
 pub async fn search_pi_sessions(
-    State(state): State<AppState>,
-    user: CurrentUser,
+    State(_state): State<AppState>,
+    _user: CurrentUser,
     Query(query): Query<SearchQuery>,
 ) -> ApiResult<Json<SearchResponse>> {
-    let pi_service = get_pi_service(&state)?;
-
     let query_str = query.q.trim();
     if query_str.is_empty() {
         return Ok(Json(SearchResponse {
@@ -680,47 +677,45 @@ pub async fn search_pi_sessions(
         }));
     }
 
-    let sessions = pi_service
-        .list_sessions(user.id())
-        .map_err(|e| ApiError::internal(format!("Failed to list sessions: {}", e)))?;
-
-    let query_lower = query_str.to_lowercase();
     let mut all_hits = Vec::new();
 
-    for session in sessions {
-        // Load session messages
-        let messages = match pi_service.get_session_messages(user.id(), &session.id) {
-            Ok(msgs) => msgs,
-            Err(_) => continue,
-        };
+    let hits = crate::history::search_hstry(query_str, query.limit)
+        .await
+        .map_err(|e| ApiError::internal(format!("hstry search failed: {e}")))?;
 
-        // Search through messages
-        for (line_idx, msg) in messages.iter().enumerate() {
-            // Extract text content from the message
-            let text_content = extract_message_text(&msg.content);
-
-            if text_content.to_lowercase().contains(&query_lower) {
-                let snippet = create_snippet(&text_content, &query_lower, 100);
-
-                all_hits.push(SearchHit {
-                    agent: "pi_agent".to_string(),
-                    source_path: format!("pi:{}:{}", session.id, msg.id),
-                    session_id: session.id.clone(),
-                    message_id: Some(msg.id.clone()),
-                    line_number: line_idx + 1,
-                    snippet: Some(snippet),
-                    score: 1.0,
-                    timestamp: Some(msg.timestamp),
-                    role: Some(msg.role.to_string()),
-                    title: session.title.clone(),
-                });
-
-                // Stop if we have enough hits for this session
-                if all_hits.len() >= query.limit {
-                    break;
-                }
-            }
+    for hit in hits {
+        if hit.source_id != "pi" {
+            continue;
         }
+
+        let timestamp = hit
+            .created_at
+            .or(hit.conv_updated_at)
+            .map(|dt| dt.timestamp_millis())
+            .or_else(|| Some(hit.conv_created_at.timestamp_millis()));
+
+        let session_id = hit
+            .external_id
+            .clone()
+            .unwrap_or_else(|| hit.conversation_id.clone());
+
+        let source_path = hit
+            .source_path
+            .clone()
+            .unwrap_or_else(|| format!("hstry:pi:{}", hit.conversation_id));
+
+        all_hits.push(SearchHit {
+            agent: "pi_agent".to_string(),
+            source_path,
+            session_id,
+            message_id: None,
+            line_number: (hit.message_idx.max(0) as usize) + 1,
+            snippet: Some(hit.snippet.clone()),
+            score: f64::from(hit.score),
+            timestamp,
+            role: Some(hit.role.clone()),
+            title: hit.title.clone(),
+        });
 
         if all_hits.len() >= query.limit {
             break;
@@ -734,60 +729,7 @@ pub async fn search_pi_sessions(
     }))
 }
 
-/// Extract text content from a Pi message content field.
-fn extract_message_text(content: &serde_json::Value) -> String {
-    match content {
-        Value::String(s) => s.clone(),
-        Value::Array(arr) => arr
-            .iter()
-            .filter_map(|part| {
-                if let Some(text) = part.get("text").and_then(|t| t.as_str()) {
-                    Some(text.to_string())
-                } else if let Some(content) = part.get("content").and_then(|c| c.as_str()) {
-                    Some(content.to_string())
-                } else {
-                    None
-                }
-            })
-            .collect::<Vec<_>>()
-            .join(" "),
-        Value::Object(obj) => {
-            if let Some(text) = obj.get("text").and_then(|t| t.as_str()) {
-                text.to_string()
-            } else if let Some(content) = obj.get("content").and_then(|c| c.as_str()) {
-                content.to_string()
-            } else {
-                String::new()
-            }
-        }
-        _ => String::new(),
-    }
-}
-
-/// Create a snippet around the first match of query in text.
-fn create_snippet(text: &str, query: &str, context_chars: usize) -> String {
-    let text_lower = text.to_lowercase();
-    if let Some(pos) = text_lower.find(query) {
-        let start = pos.saturating_sub(context_chars);
-        let end = (pos + query.len() + context_chars).min(text.len());
-
-        // Find word boundaries
-        let snippet_start = text[..start].rfind(' ').map(|p| p + 1).unwrap_or(start);
-        let snippet_end = text[end..].find(' ').map(|p| end + p).unwrap_or(end);
-
-        let mut snippet = String::new();
-        if snippet_start > 0 {
-            snippet.push_str("...");
-        }
-        snippet.push_str(&text[snippet_start..snippet_end]);
-        if snippet_end < text.len() {
-            snippet.push_str("...");
-        }
-        snippet
-    } else {
-        text.chars().take(200).collect()
-    }
-}
+// Search uses hstry index; no local content helpers needed.
 
 /// Start a fresh Pi session and return its state.
 ///

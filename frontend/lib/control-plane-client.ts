@@ -2043,7 +2043,7 @@ export async function addMainChatPiSeparator(): Promise<MainChatDbMessage> {
 }
 
 // ============================================================================
-// CASS (Coding Agent Session Search)
+// Search (hstry-backed)
 // ============================================================================
 
 /** Agent filter for search */
@@ -2059,7 +2059,7 @@ export type CassSearchQuery = {
 	limit?: number;
 };
 
-/** A single search hit from cass */
+/** A single search hit from hstry */
 export type CassSearchHit = {
 	/** Agent type (pi_agent, opencode, etc.) */
 	agent: string;
@@ -2083,13 +2083,13 @@ export type CassSearchHit = {
 	role?: string;
 	/** Session/conversation title if available */
 	title?: string;
-	/** Full content from cass */
+	/** Full content from hstry */
 	content?: string;
 	/** Match type */
 	match_type?: string;
 };
 
-/** Response from cass search */
+/** Response from hstry search */
 export type CassSearchResponse = {
 	hits: CassSearchHit[];
 	total?: number;
@@ -2097,7 +2097,7 @@ export type CassSearchResponse = {
 };
 
 /**
- * Search across coding agent sessions using cass.
+ * Search across coding agent sessions using hstry.
  * Searches both Main Chat (pi_agent) and OpenCode sessions.
  */
 export async function searchSessions(

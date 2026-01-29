@@ -137,15 +137,6 @@ Implementation:
 ### [workspace-5pmk.11] Add backend URL configuration to login form (P1, task)
 Add a 'Server URL' field to the login form allowing users to specify the backend URL. Store in localStorage for persistence. Show connection status indicator. Default to current origin for web, require input for mobile apps.
 
-### [octo-mxd8] Sandbox Security Enhancements: Custom Profiles, FUSE Guard, SSH Proxy (P2, epic)
-Epic for enhancing octo-sandbox with custom profiles, runtime access control via FUSE, and SSH agent proxying.
-
-## Overview
-
-Three major enhancements to the sandbox security model:
-...
-
-
 ### [octo-p3n2.6] .ctx file parsing (P2, task)
 Parse .ctx zip files: extract images, text context, metadata. Store temporarily for agent access.
 
@@ -702,6 +693,7 @@ Desired behavior: Tool calls hidden by default, toggle to show
 
 ## Closed
 
+- [octo-mxd8] Sandbox Security Enhancements: Custom Profiles, FUSE Guard, SSH Proxy (closed 2026-01-29)
 - [octo-mxd8.2] Implement octo-guard FUSE filesystem for runtime access control (closed 2026-01-29)
 - [octo-mxd8.3] Implement octo-ssh-proxy for controlled SSH agent access (closed 2026-01-29)
 - [octo-mxd8.6] Implement prompt system for security approvals (closed 2026-01-29)
@@ -1223,8 +1215,8 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
 - [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
-- [octo-k8z1.1] Backend: Integrate agent-browser daemon per session (closed )
 - [octo-k8z1.2] Backend: WebSocket proxy for screencast stream (closed )
+- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
 - [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
 - [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
-- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
+- [octo-k8z1.1] Backend: Integrate agent-browser daemon per session (closed )

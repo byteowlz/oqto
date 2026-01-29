@@ -569,7 +569,7 @@ const AppShell = memo(function AppShell() {
 	// Session search
 	const [sessionSearch, setSessionSearch] = useState("");
 	const deferredSearch = useDeferredValue(sessionSearch);
-	// Search mode: "sessions" = filter by name, "messages" = deep search via cass
+	// Search mode: "sessions" = filter by name, "messages" = deep search via hstry
 	const [searchMode, setSearchMode] = useState<SearchMode>("sessions");
 	const [agentFilter, setAgentFilter] = useState<AgentFilter>("all");
 	const [mainChatTitleHits, setMainChatTitleHits] = useState<CassSearchHit[]>(

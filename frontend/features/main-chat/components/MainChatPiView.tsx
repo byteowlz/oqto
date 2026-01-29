@@ -538,15 +538,22 @@ export function MainChatPiView({
 	useEffect(() => {
 		if (!scrollToMessageId || !messagesContainerRef.current) return;
 
+		let targetId = scrollToMessageId;
+		if (targetId.startsWith("line-")) {
+			const idx = Number.parseInt(targetId.slice(5), 10);
+			const resolved = Number.isFinite(idx) ? messages[idx - 1]?.id : undefined;
+			if (resolved) targetId = resolved;
+		}
+
 		// Find the message element with this ID
 		const messageEl = messagesContainerRef.current.querySelector(
-			`[data-message-id="${scrollToMessageId}"]`,
+			`[data-message-id="${targetId}"]`,
 		);
 
 		if (messageEl) {
 			// Ensure we have enough messages visible
 			const messageIndex = messages.findIndex(
-				(m) => m.id === scrollToMessageId,
+				(m) => m.id === targetId,
 			);
 			if (messageIndex !== -1) {
 				const messagesFromEnd = messages.length - messageIndex;
