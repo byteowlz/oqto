@@ -22,6 +22,7 @@ use tracing::{info, instrument, warn};
 use uuid::Uuid;
 
 use crate::auth::{AuthError, CurrentUser, RequireAdmin};
+use crate::local::LinuxUsersConfig;
 use crate::observability::{CpuTimes, HostMetrics, read_host_metrics};
 use crate::projects::{self, ProjectMetadata};
 use crate::session::{CreateSessionRequest, Session, SessionContainerStats};
@@ -4020,15 +4021,63 @@ fn resolve_skdlr_bin(workspace_root: &PathBuf) -> std::path::PathBuf {
     std::path::PathBuf::from("skdlr")
 }
 
-async fn exec_skdlr_command(workspace_root: &PathBuf, args: &[&str]) -> Result<String, ApiError> {
+async fn exec_skdlr_command(
+    workspace_root: &PathBuf,
+    args: &[&str],
+    linux_users: Option<&LinuxUsersConfig>,
+    user_id: &str,
+) -> Result<String, ApiError> {
     let bin = resolve_skdlr_bin(workspace_root);
+    let skdlr_config = PathBuf::from("/etc/octo/skdlr-agent.toml");
+    let mut full_args: Vec<&str> = Vec::new();
 
-    let output = Command::new(bin)
-        .args(args)
-        .current_dir(&workspace_root)
-        .output()
-        .await
-        .map_err(|e| ApiError::internal(format!("Failed to execute skdlr: {}", e)))?;
+    if skdlr_config.exists() {
+        full_args.push("--config");
+        full_args.push(
+            skdlr_config
+                .to_str()
+                .unwrap_or("/etc/octo/skdlr-agent.toml"),
+        );
+    }
+
+    full_args.extend_from_slice(args);
+
+    let output = if let Some(linux_users) = linux_users.filter(|cfg| cfg.enabled) {
+        let linux_username = linux_users.linux_username(user_id);
+        let home_dir = linux_users
+            .get_home_dir(user_id)
+            .map_err(|e| ApiError::internal(format!("Failed to resolve linux user home: {e}")))?
+            .unwrap_or_else(|| PathBuf::from(format!("/home/{}", linux_username)));
+        let xdg_config = home_dir.join(".config");
+        let xdg_data = home_dir.join(".local/share");
+
+        let mut cmd = Command::new("sudo");
+        cmd.arg("-n")
+            .arg("-u")
+            .arg(&linux_username)
+            .arg("--")
+            .arg("env")
+            .arg("SKDLR_OCTO_MODE=1")
+            .arg(format!("XDG_CONFIG_HOME={}", xdg_config.display()))
+            .arg(format!("XDG_DATA_HOME={}", xdg_data.display()))
+            .arg(bin)
+            .args(&full_args)
+            .current_dir(&workspace_root);
+
+        cmd.output()
+            .await
+            .map_err(|e| ApiError::internal(format!("Failed to execute skdlr: {}", e)))?
+    } else {
+        let mut cmd = Command::new(bin);
+        if skdlr_config.exists() {
+            cmd.env("SKDLR_OCTO_MODE", "1");
+        }
+        cmd.args(&full_args)
+            .current_dir(&workspace_root)
+            .output()
+            .await
+            .map_err(|e| ApiError::internal(format!("Failed to execute skdlr: {}", e)))?
+    };
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -4153,10 +4202,21 @@ pub async fn scheduler_overview(
     user: CurrentUser,
 ) -> ApiResult<Json<SchedulerOverview>> {
     let workspace_root = state.sessions.for_user(user.id()).workspace_root();
-    let list_output = exec_skdlr_command(&workspace_root, &["list"]).await?;
-    let next_output = exec_skdlr_command(&workspace_root, &["next"])
-        .await
-        .unwrap_or_default();
+    let list_output = exec_skdlr_command(
+        &workspace_root,
+        &["list"],
+        state.linux_users.as_ref(),
+        user.id(),
+    )
+    .await?;
+    let next_output = exec_skdlr_command(
+        &workspace_root,
+        &["next"],
+        state.linux_users.as_ref(),
+        user.id(),
+    )
+    .await
+    .unwrap_or_default();
 
     let mut schedules = parse_skdlr_list(&list_output);
     let next_runs = parse_skdlr_next(&next_output);
