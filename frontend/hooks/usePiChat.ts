@@ -4,19 +4,19 @@ import {
 	type PiSessionMessage,
 	type PiState,
 	abortMainChatPi,
+	abortWorkspacePiSession,
 	createMainChatPiWebSocket,
+	createWorkspacePiWebSocket,
 	getMainChatPiSessionMessages,
 	getMainChatPiState,
-	newMainChatPiSessionFile,
-	resetMainChatPiSession,
-	resumeMainChatPiSession,
-	startMainChatPiSession,
-	abortWorkspacePiSession,
-	createWorkspacePiWebSocket,
 	getWorkspacePiSessionMessages,
 	getWorkspacePiState,
+	newMainChatPiSessionFile,
 	newWorkspacePiSession,
+	resetMainChatPiSession,
+	resumeMainChatPiSession,
 	resumeWorkspacePiSession,
+	startMainChatPiSession,
 } from "@/features/main-chat/api";
 import type { PiAgentMessage } from "@/lib/control-plane-client";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -557,7 +557,10 @@ const scrollCache = {
 };
 
 function initScrollCache(storageKey: string) {
-	if (scrollCache.initialized.has(storageKey) || typeof window === "undefined") {
+	if (
+		scrollCache.initialized.has(storageKey) ||
+		typeof window === "undefined"
+	) {
 		return;
 	}
 	scrollCache.initialized.add(storageKey);
@@ -753,6 +756,11 @@ export function usePiChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 		if (justCreatedSessionRef.current === activeSessionId) {
 			justCreatedSessionRef.current = null;
 			// WebSocket reconnection is handled by newSession() itself
+			return;
+		}
+
+		// Skip resume attempts for optimistic placeholder sessions
+		if (activeSessionId.startsWith("pending-")) {
 			return;
 		}
 
@@ -1621,10 +1629,8 @@ export function usePiChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 				// Only show error if we have no cached data for this session
 				if (
 					!activeSessionId ||
-					readCachedSessionMessages(
-						activeSessionId,
-						resolvedStorageKeyPrefix,
-					).length === 0
+					readCachedSessionMessages(activeSessionId, resolvedStorageKeyPrefix)
+						.length === 0
 				) {
 					const err =
 						e instanceof Error ? e : new Error("Failed to initialize");

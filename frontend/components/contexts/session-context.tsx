@@ -484,6 +484,30 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 		[selectedChatSessionId, setSelectedChatSessionId],
 	);
 
+	const replaceOptimisticChatSession = useCallback(
+		(optimisticId: string, sessionId: string) => {
+			const optimistic = optimisticChatSessionsRef.current.get(optimisticId);
+			if (!optimistic) return;
+			optimisticChatSessionsRef.current.delete(optimisticId);
+			optimisticSelectionRef.current.delete(optimisticId);
+
+			const updated: ChatSession = {
+				...optimistic,
+				id: sessionId,
+				readable_id: resolveReadableId(sessionId, null),
+			};
+
+			optimisticChatSessionsRef.current.set(sessionId, updated);
+			setChatHistory((prev) => {
+				const filtered = prev.filter(
+					(session) => session.id !== optimisticId && session.id !== sessionId,
+				);
+				return [updated, ...filtered];
+			});
+		},
+		[],
+	);
+
 	const sessionEventSubscriptions = useRef(new Map<string, () => void>());
 
 	useEffect(() => {
@@ -900,7 +924,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 					throw new Error("Pi session id missing");
 				}
 				if (options?.optimisticId) {
-					clearOptimisticChatSession(options.optimisticId);
+					replaceOptimisticChatSession(options.optimisticId, sessionId);
 				}
 				recentlyCreatedSessionRef.current = sessionId;
 				setSelectedChatSessionId(sessionId);
@@ -924,6 +948,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 		[
 			clearOptimisticChatSession,
 			opencodeDirectory,
+			replaceOptimisticChatSession,
 			refreshChatHistory,
 			selectedChatFromHistory,
 			setSelectedChatSessionId,

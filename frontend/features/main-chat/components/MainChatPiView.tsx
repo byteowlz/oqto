@@ -159,8 +159,10 @@ export function MainChatPiView({
 		storageKeyPrefix ??
 		(isMainScope
 			? "octo:mainChatPi"
-			: `octo:workspacePi:${(workspacePath ?? "global")
-					.replace(/[^a-zA-Z0-9._-]+/g, "_")}`);
+			: `octo:workspacePi:${(workspacePath ?? "global").replace(
+					/[^a-zA-Z0-9._-]+/g,
+					"_",
+				)}`);
 	const draftStorageKey = isMainScope
 		? "octo:mainChatDraft"
 		: `${resolvedStorageKeyPrefix}:draft`;
@@ -363,6 +365,25 @@ export function MainChatPiView({
 		return 200000;
 	}, [currentModelInfo]);
 
+	const modelStorageKey = useMemo(() => {
+		if (!selectedSessionId) return null;
+		return `octo:chatModel:${selectedSessionId}`;
+	}, [selectedSessionId]);
+
+	useEffect(() => {
+		if (!modelStorageKey) return;
+		const modelRef = currentModelRef ?? selectedModelRef;
+		try {
+			if (modelRef) {
+				localStorage.setItem(modelStorageKey, modelRef);
+			} else {
+				localStorage.removeItem(modelStorageKey);
+			}
+		} catch {
+			// Ignore storage errors.
+		}
+	}, [currentModelRef, modelStorageKey, selectedModelRef]);
+
 	const displayError = commandError ?? error;
 	const showSkeleton = messages.length === 0 && !isConnected && !displayError;
 
@@ -386,26 +407,23 @@ export function MainChatPiView({
 		</div>
 	);
 	const slashQuery = useMemo(() => parseSlashInput(input), [input]);
-	const builtInCommands = useMemo<SlashCommand[]>(
-		() => {
-			const commands: SlashCommand[] = [
-				{ name: "compact", description: "Summarize context" },
-				{ name: "new", description: "Start a fresh session" },
-				{ name: "reset", description: "Reload personality and user files" },
-				{ name: "abort", description: "Abort current run" },
-				{ name: "steer", description: "Queue a steering message" },
-				{ name: "followup", description: "Queue a follow-up message" },
-			];
-			if (isMainScope) {
-				commands.push({
-					name: "model",
-					description: "Switch model (provider/model)",
-				});
-			}
-			return commands;
-		},
-		[isMainScope],
-	);
+	const builtInCommands = useMemo<SlashCommand[]>(() => {
+		const commands: SlashCommand[] = [
+			{ name: "compact", description: "Summarize context" },
+			{ name: "new", description: "Start a fresh session" },
+			{ name: "reset", description: "Reload personality and user files" },
+			{ name: "abort", description: "Abort current run" },
+			{ name: "steer", description: "Queue a steering message" },
+			{ name: "followup", description: "Queue a follow-up message" },
+		];
+		if (isMainScope) {
+			commands.push({
+				name: "model",
+				description: "Switch model (provider/model)",
+			});
+		}
+		return commands;
+	}, [isMainScope]);
 	const builtInCommandNames = useMemo(
 		() => new Set(builtInCommands.map((cmd) => cmd.name)),
 		[builtInCommands],

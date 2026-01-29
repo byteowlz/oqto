@@ -1357,6 +1357,7 @@ const AppShell = memo(function AppShell() {
 		mainChatActive,
 		requestNewMainChatSession,
 		selectedWorkspaceSession,
+		opencodeBaseUrl,
 		opencodeDirectory,
 		selectedChatFromHistory,
 		selectedProjectKey,

@@ -1997,14 +1997,17 @@ export function createMainChatPiWebSocket(): WebSocket {
 export async function newWorkspacePiSession(
 	workspacePath: string,
 ): Promise<PiState> {
-	const res = await authFetch(controlPlaneApiUrl("/api/pi/workspace/sessions"), {
-		method: "POST",
-		credentials: "include",
-		headers: {
-			"Content-Type": "application/json",
+	const res = await authFetch(
+		controlPlaneApiUrl("/api/pi/workspace/sessions"),
+		{
+			method: "POST",
+			credentials: "include",
+			headers: {
+				"Content-Type": "application/json",
+			},
+			body: JSON.stringify({ workspace_path: workspacePath }),
 		},
-		body: JSON.stringify({ workspace_path: workspacePath }),
-	});
+	);
 	if (!res.ok) throw new Error(await readApiError(res));
 	return res.json();
 }

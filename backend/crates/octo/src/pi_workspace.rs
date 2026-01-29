@@ -3,6 +3,7 @@
 //! Manages one Pi process per workspace session (per user), with idle cleanup.
 
 use anyhow::{Context, Result};
+use chrono::DateTime;
 use log::{debug, info};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -13,7 +14,7 @@ use std::time::Duration;
 use tokio::sync::RwLock;
 
 use crate::main_chat::{MainChatPiServiceConfig, PiRuntimeMode, UserPiSession};
-use crate::pi::{ContainerPiRuntime, LocalPiRuntime, PiSpawnConfig, PiRuntime, RunnerPiRuntime};
+use crate::pi::{ContainerPiRuntime, LocalPiRuntime, PiRuntime, PiSpawnConfig, RunnerPiRuntime};
 use crate::runner::client::RunnerClient;
 
 /// Default idle timeout for sessions (5 minutes).
@@ -67,6 +68,19 @@ pub struct PiSessionMessage {
     /// Usage stats (for assistant messages)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub usage: Option<Value>,
+}
+
+/// Summary info for a workspace Pi session.
+#[derive(Debug, Clone)]
+pub struct WorkspacePiSessionSummary {
+    pub id: String,
+    pub title: Option<String>,
+    pub parent_id: Option<String>,
+    pub workspace_path: String,
+    pub created_at: i64,
+    pub updated_at: i64,
+    pub version: Option<String>,
+    pub source_path: Option<String>,
 }
 
 /// Service for managing Pi sessions for workspace chats.
@@ -188,6 +202,143 @@ impl WorkspacePiService {
         anyhow::bail!("Session not found: {}", session_id)
     }
 
+    fn parse_session_file(&self, path: &Path) -> Option<WorkspacePiSessionSummary> {
+        use std::io::{BufRead, BufReader};
+
+        let file = std::fs::File::open(path).ok()?;
+        let metadata = file.metadata().ok()?;
+        let modified = metadata.modified().ok()?;
+        let modified_ms = modified
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()?
+            .as_millis() as i64;
+
+        let mut reader = BufReader::new(file);
+        let mut first_line = String::new();
+        reader.read_line(&mut first_line).ok()?;
+        if first_line.trim().is_empty() {
+            return None;
+        }
+
+        let header: Value = serde_json::from_str(&first_line).ok()?;
+        if header.get("type").and_then(|t| t.as_str()) != Some("session") {
+            return None;
+        }
+
+        let id = header.get("id").and_then(|v| v.as_str())?.to_string();
+        let timestamp = header
+            .get("timestamp")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let created_at = DateTime::parse_from_rfc3339(timestamp)
+            .map(|dt| dt.timestamp_millis())
+            .unwrap_or(modified_ms);
+        let workspace_path = header
+            .get("cwd")
+            .and_then(|v| v.as_str())
+            .filter(|v| !v.is_empty())
+            .unwrap_or("global")
+            .to_string();
+
+        let mut title = header
+            .get("title")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let parent_id = header
+            .get("parentSession")
+            .and_then(|v| v.as_str())
+            .and_then(Self::read_parent_session_id);
+        let version = match header.get("version") {
+            Some(Value::String(s)) => Some(s.clone()),
+            Some(Value::Number(n)) => Some(n.to_string()),
+            _ => None,
+        };
+
+        if title.is_none() {
+            for line in reader.lines().filter_map(|l| l.ok()) {
+                if line.is_empty() {
+                    continue;
+                }
+
+                let entry: Value = match serde_json::from_str(&line) {
+                    Ok(v) => v,
+                    Err(_) => continue,
+                };
+
+                if entry.get("type").and_then(|t| t.as_str()) != Some("message") {
+                    continue;
+                }
+
+                if let Some(msg) = entry.get("message") {
+                    if msg.get("role").and_then(|r| r.as_str()) == Some("user") {
+                        if let Some(content) = msg.get("content") {
+                            title = Self::extract_title_from_content(content);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        Some(WorkspacePiSessionSummary {
+            id,
+            title,
+            parent_id,
+            workspace_path,
+            created_at,
+            updated_at: modified_ms,
+            version,
+            source_path: Some(path.to_string_lossy().to_string()),
+        })
+    }
+
+    fn read_parent_session_id(path: &str) -> Option<String> {
+        use std::io::{BufRead, BufReader};
+
+        let file = std::fs::File::open(path).ok()?;
+        let mut reader = BufReader::new(file);
+        let mut line = String::new();
+        reader.read_line(&mut line).ok()?;
+        if line.trim().is_empty() {
+            return None;
+        }
+        let header: Value = serde_json::from_str(&line).ok()?;
+        if header.get("type").and_then(|t| t.as_str()) != Some("session") {
+            return None;
+        }
+        header
+            .get("id")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+    }
+
+    fn extract_title_from_content(content: &Value) -> Option<String> {
+        if let Some(text) = content.as_str() {
+            return Some(Self::truncate_title(text));
+        }
+
+        if let Some(arr) = content.as_array() {
+            for block in arr {
+                if block.get("type").and_then(|t| t.as_str()) == Some("text") {
+                    if let Some(text) = block.get("text").and_then(|t| t.as_str()) {
+                        return Some(Self::truncate_title(text));
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
+    fn truncate_title(text: &str) -> String {
+        let text = text.trim();
+        if text.len() <= 50 {
+            text.to_string()
+        } else {
+            format!("{}...", &text[..47])
+        }
+    }
+
     async fn create_session(
         &self,
         user_id: &str,
@@ -227,7 +378,10 @@ impl WorkspacePiService {
 
         let runtime = self.create_runtime_for_user(user_id);
         let process = runtime.spawn(spawn_config).await.with_context(|| {
-            format!("Failed to spawn Pi process for user {} in {:?}", user_id, work_dir)
+            format!(
+                "Failed to spawn Pi process for user {} in {:?}",
+                user_id, work_dir
+            )
         })?;
 
         Ok(UserPiSession::from_process(process))
@@ -368,5 +522,42 @@ impl WorkspacePiService {
         }
 
         Ok(messages)
+    }
+
+    /// List all workspace Pi sessions from disk for the current user.
+    pub fn list_sessions_for_user(&self, _user_id: &str) -> Result<Vec<WorkspacePiSessionSummary>> {
+        let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
+        let sessions_root = home.join(".pi").join("agent").join("sessions");
+        if !sessions_root.exists() {
+            return Ok(Vec::new());
+        }
+
+        let mut sessions = Vec::new();
+        let roots = std::fs::read_dir(&sessions_root)
+            .with_context(|| format!("reading Pi sessions root: {:?}", sessions_root))?;
+
+        for root in roots.filter_map(|e| e.ok()) {
+            let root_path = root.path();
+            if !root_path.is_dir() {
+                continue;
+            }
+
+            let entries = match std::fs::read_dir(&root_path) {
+                Ok(entries) => entries,
+                Err(_) => continue,
+            };
+
+            for entry in entries.filter_map(|e| e.ok()) {
+                let path = entry.path();
+                if path.extension().map(|e| e == "jsonl").unwrap_or(false) {
+                    if let Some(session) = self.parse_session_file(&path) {
+                        sessions.push(session);
+                    }
+                }
+            }
+        }
+
+        sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        Ok(sessions)
     }
 }

@@ -2075,15 +2075,18 @@ pub struct ChatHistoryQuery {
 
 /// Create a runner client for a user based on socket pattern.
 /// Returns the runner client if available, None for direct access.
-fn get_runner_for_user(state: &AppState, user_id: &str) -> Option<crate::runner::client::RunnerClient> {
+fn get_runner_for_user(
+    state: &AppState,
+    user_id: &str,
+) -> Option<crate::runner::client::RunnerClient> {
     // Need runner socket pattern for multi-user mode
     let pattern = state.runner_socket_pattern.as_ref()?;
-    
+
     // Replace {user} with the user_id (which is the platform user_id, e.g., "wismut")
     // The socket is named after the platform user, not the linux username
     let socket_path = pattern.replace("{user}", user_id);
     let socket = std::path::Path::new(&socket_path);
-    
+
     if socket.exists() {
         tracing::debug!(
             user_id = %user_id,
@@ -2101,6 +2104,63 @@ fn get_runner_for_user(state: &AppState, user_id: &str) -> Option<crate::runner:
     }
 }
 
+fn list_workspace_pi_sessions(state: &AppState, user_id: &str) -> Vec<ChatSession> {
+    let Some(workspace_pi) = state.workspace_pi.as_ref() else {
+        return Vec::new();
+    };
+
+    let workspace_root = state.sessions.for_user(user_id).workspace_root();
+    let canonical_root = workspace_root
+        .canonicalize()
+        .unwrap_or_else(|_| workspace_root.clone());
+
+    let sessions = match workspace_pi.list_sessions_for_user(user_id) {
+        Ok(sessions) => sessions,
+        Err(err) => {
+            warn!(user_id = %user_id, error = %err, "Failed to list workspace Pi sessions");
+            return Vec::new();
+        }
+    };
+
+    sessions
+        .into_iter()
+        .filter_map(|session| {
+            let workspace_path = session.workspace_path.clone();
+            if workspace_path != "global" && !workspace_path.is_empty() {
+                let path = PathBuf::from(&workspace_path);
+                let canonical = if path.exists() {
+                    path.canonicalize().unwrap_or(path.clone())
+                } else {
+                    path.clone()
+                };
+
+                if !canonical.starts_with(&canonical_root) {
+                    return None;
+                }
+
+                if is_main_chat_path(state, &canonical) {
+                    return None;
+                }
+            }
+
+            let project_name = crate::history::project_name_from_path(&workspace_path);
+            Some(ChatSession {
+                id: session.id.clone(),
+                readable_id: crate::wordlist::readable_id_from_session_id(&session.id),
+                title: session.title,
+                parent_id: session.parent_id.clone(),
+                workspace_path,
+                project_name,
+                created_at: session.created_at,
+                updated_at: session.updated_at,
+                version: session.version,
+                is_child: session.parent_id.is_some(),
+                source_path: session.source_path,
+            })
+        })
+        .collect()
+}
+
 /// List all chat sessions from OpenCode history.
 ///
 /// In multi-user mode, this uses the runner to read from the user's home directory.
@@ -2111,16 +2171,14 @@ pub async fn list_chat_history(
     user: CurrentUser,
     Query(query): Query<ChatHistoryQuery>,
 ) -> ApiResult<Json<Vec<ChatSession>>> {
+    let mut sessions: Vec<ChatSession> = Vec::new();
+    let mut source = "direct";
+
     // In multi-user mode, use runner to access user's home directory
     if let Some(runner) = get_runner_for_user(&state, user.id()) {
-
-        match runner
-            .list_opencode_sessions(query.workspace.clone(), query.include_children, query.limit)
-            .await
-        {
+        match runner.list_opencode_sessions(None, true, None).await {
             Ok(response) => {
-                // Convert protocol types to history types
-                let sessions: Vec<ChatSession> = response
+                sessions = response
                     .sessions
                     .into_iter()
                     .map(|s| ChatSession {
@@ -2137,79 +2195,54 @@ pub async fn list_chat_history(
                         source_path: None,
                     })
                     .collect();
-
-                info!(user_id = %user.id(), count = sessions.len(), "Listed chat history via runner");
-                return Ok(Json(sessions));
+                source = "runner";
             }
             Err(e) => {
-                // Runner failed, log and fall through to direct access
                 tracing::warn!(user_id = %user.id(), error = %e, "Runner failed, falling back to direct access");
             }
         }
     }
 
-    if let Some(db_path) = crate::history::hstry_db_path() {
-        match crate::history::list_sessions_from_hstry(&db_path).await {
-            Ok(sessions) => {
-                let mut filtered: Vec<ChatSession> = sessions
-                    .into_iter()
-                    .filter(|s| {
-                        if let Some(ref ws) = query.workspace {
-                            if s.workspace_path != *ws {
-                                return false;
-                            }
-                        }
-                        if !query.include_children && s.is_child {
-                            return false;
-                        }
-                        true
-                    })
-                    .collect();
-
-                if let Some(limit) = query.limit {
-                    filtered.truncate(limit);
+    if sessions.is_empty() {
+        if let Some(db_path) = crate::history::hstry_db_path() {
+            match crate::history::list_sessions_from_hstry(&db_path).await {
+                Ok(found) => {
+                    sessions = found;
+                    source = "hstry";
                 }
-
-                info!(count = filtered.len(), "Listed chat history via hstry");
-                return Ok(Json(filtered));
-            }
-            Err(err) => {
-                tracing::warn!(
-                    error = %err,
-                    "Failed to list chat history via hstry, falling back to direct access"
-                );
+                Err(err) => {
+                    tracing::warn!(
+                        error = %err,
+                        "Failed to list chat history via hstry, falling back to direct access"
+                    );
+                }
             }
         }
     }
 
-    // Single-user mode or runner fallback: direct filesystem access
-    let sessions = crate::history::list_sessions()
-        .map_err(|e| ApiError::internal(format!("Failed to list chat history: {}", e)))?;
-
-    let mut filtered: Vec<ChatSession> = sessions
-        .into_iter()
-        .filter(|s| {
-            // Filter by workspace if specified
-            if let Some(ref ws) = query.workspace {
-                if s.workspace_path != *ws {
-                    return false;
-                }
-            }
-            // Filter out child sessions unless explicitly included
-            if !query.include_children && s.is_child {
-                return false;
-            }
-            true
-        })
-        .collect();
-
-    // Apply limit if specified
-    if let Some(limit) = query.limit {
-        filtered.truncate(limit);
+    if sessions.is_empty() {
+        sessions = crate::history::list_sessions()
+            .map_err(|e| ApiError::internal(format!("Failed to list chat history: {}", e)))?;
     }
 
-    info!(count = filtered.len(), "Listed chat history");
-    Ok(Json(filtered))
+    sessions.extend(list_workspace_pi_sessions(&state, user.id()));
+
+    if let Some(ref ws) = query.workspace {
+        sessions.retain(|s| s.workspace_path == *ws);
+    }
+
+    if !query.include_children {
+        sessions.retain(|s| !s.is_child);
+    }
+
+    sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+
+    if let Some(limit) = query.limit {
+        sessions.truncate(limit);
+    }
+
+    info!(user_id = %user.id(), count = sessions.len(), source = source, "Listed chat history");
+    Ok(Json(sessions))
 }
 
 /// Get a specific chat session by ID.
@@ -2341,141 +2374,84 @@ pub async fn list_chat_history_grouped(
     user: CurrentUser,
     Query(query): Query<ChatHistoryQuery>,
 ) -> ApiResult<Json<Vec<GroupedChatHistory>>> {
-    // In multi-user mode, use runner
+    let mut sessions: Vec<ChatSession> = Vec::new();
+    let mut source = "direct";
+
     if let Some(runner) = get_runner_for_user(&state, user.id()) {
-        // Get all sessions and group them
-        if let Ok(response) = runner
-            .list_opencode_sessions(None, query.include_children, None)
-            .await
-        {
-            // Group by workspace
-            let mut grouped: std::collections::HashMap<String, Vec<ChatSession>> =
-                std::collections::HashMap::new();
-            for s in response.sessions {
-                let session = ChatSession {
+        if let Ok(response) = runner.list_opencode_sessions(None, true, None).await {
+            sessions = response
+                .sessions
+                .into_iter()
+                .map(|s| ChatSession {
                     id: s.id,
                     readable_id: s.readable_id,
                     title: s.title,
                     parent_id: s.parent_id,
-                    workspace_path: s.workspace_path.clone(),
+                    workspace_path: s.workspace_path,
                     project_name: s.project_name,
                     created_at: s.created_at,
                     updated_at: s.updated_at,
                     version: s.version,
                     is_child: s.is_child,
                     source_path: None,
-                };
-                grouped
-                    .entry(s.workspace_path)
-                    .or_default()
-                    .push(session);
-            }
-
-            let mut result: Vec<GroupedChatHistory> = grouped
-                .into_iter()
-                .map(|(workspace_path, mut sessions)| {
-                    if let Some(limit) = query.limit {
-                        sessions.truncate(limit);
-                    }
-                    let project_name = sessions
-                        .first()
-                        .map(|s| s.project_name.clone())
-                        .unwrap_or_else(|| crate::history::project_name_from_path(&workspace_path));
-                    GroupedChatHistory {
-                        workspace_path,
-                        project_name,
-                        sessions,
-                    }
                 })
-                .filter(|g| !g.sessions.is_empty())
                 .collect();
-
-            result.sort_by(|a, b| {
-                let a_updated = a.sessions.first().map(|s| s.updated_at).unwrap_or(0);
-                let b_updated = b.sessions.first().map(|s| s.updated_at).unwrap_or(0);
-                b_updated.cmp(&a_updated)
-            });
-
-            info!(user_id = %user.id(), count = result.len(), "Listed grouped chat history via runner");
-            return Ok(Json(result));
+            source = "runner";
         }
-        // Runner failed, fall through to direct access
     }
 
-    if let Some(db_path) = crate::history::hstry_db_path() {
-        match crate::history::list_sessions_from_hstry(&db_path).await {
-            Ok(sessions) => {
-                let mut grouped: std::collections::HashMap<String, Vec<ChatSession>> =
-                    std::collections::HashMap::new();
-                for session in sessions {
-                    grouped
-                        .entry(session.workspace_path.clone())
-                        .or_default()
-                        .push(session);
+    if sessions.is_empty() {
+        if let Some(db_path) = crate::history::hstry_db_path() {
+            match crate::history::list_sessions_from_hstry(&db_path).await {
+                Ok(found) => {
+                    sessions = found;
+                    source = "hstry";
                 }
-
-                let mut result: Vec<GroupedChatHistory> = grouped
-                    .into_iter()
-                    .map(|(workspace_path, mut sessions)| {
-                        if !query.include_children {
-                            sessions.retain(|s| !s.is_child);
-                        }
-                        if let Some(limit) = query.limit {
-                            sessions.truncate(limit);
-                        }
-                        let project_name = sessions
-                            .first()
-                            .map(|s| s.project_name.clone())
-                            .unwrap_or_else(|| crate::history::project_name_from_path(&workspace_path));
-                        GroupedChatHistory {
-                            workspace_path,
-                            project_name,
-                            sessions,
-                        }
-                    })
-                    .filter(|g| !g.sessions.is_empty())
-                    .collect();
-
-                result.sort_by(|a, b| {
-                    let a_updated = a.sessions.first().map(|s| s.updated_at).unwrap_or(0);
-                    let b_updated = b.sessions.first().map(|s| s.updated_at).unwrap_or(0);
-                    b_updated.cmp(&a_updated)
-                });
-
-                info!(count = result.len(), "Listed grouped chat history via hstry");
-                return Ok(Json(result));
-            }
-            Err(err) => {
-                tracing::warn!(
-                    error = %err,
-                    "Failed to list grouped chat history via hstry, falling back to direct access"
-                );
+                Err(err) => {
+                    tracing::warn!(
+                        error = %err,
+                        "Failed to list grouped chat history via hstry, falling back to direct access"
+                    );
+                }
             }
         }
     }
 
-    // Single-user mode or runner fallback: direct access
-    let grouped = crate::history::list_sessions_grouped()
-        .map_err(|e| ApiError::internal(format!("Failed to list chat history: {}", e)))?;
+    if sessions.is_empty() {
+        sessions = crate::history::list_sessions()
+            .map_err(|e| ApiError::internal(format!("Failed to list chat history: {}", e)))?;
+    }
+
+    sessions.extend(list_workspace_pi_sessions(&state, user.id()));
+
+    if let Some(ref ws) = query.workspace {
+        sessions.retain(|s| s.workspace_path == *ws);
+    }
+
+    if !query.include_children {
+        sessions.retain(|s| !s.is_child);
+    }
+
+    let mut grouped: std::collections::HashMap<String, Vec<ChatSession>> =
+        std::collections::HashMap::new();
+    for session in sessions {
+        grouped
+            .entry(session.workspace_path.clone())
+            .or_default()
+            .push(session);
+    }
 
     let mut result: Vec<GroupedChatHistory> = grouped
         .into_iter()
         .map(|(workspace_path, mut sessions)| {
-            // Filter out child sessions unless explicitly included
-            if !query.include_children {
-                sessions.retain(|s| !s.is_child);
-            }
-
-            // Apply limit per workspace
+            sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
             if let Some(limit) = query.limit {
                 sessions.truncate(limit);
             }
-
             let project_name = sessions
                 .first()
                 .map(|s| s.project_name.clone())
                 .unwrap_or_else(|| crate::history::project_name_from_path(&workspace_path));
-
             GroupedChatHistory {
                 workspace_path,
                 project_name,
@@ -2485,14 +2461,13 @@ pub async fn list_chat_history_grouped(
         .filter(|g| !g.sessions.is_empty())
         .collect();
 
-    // Sort by most recently updated session in each group
     result.sort_by(|a, b| {
         let a_updated = a.sessions.first().map(|s| s.updated_at).unwrap_or(0);
         let b_updated = b.sessions.first().map(|s| s.updated_at).unwrap_or(0);
         b_updated.cmp(&a_updated)
     });
 
-    info!(count = result.len(), "Listed grouped chat history");
+    info!(user_id = %user.id(), count = result.len(), source = source, "Listed grouped chat history");
     Ok(Json(result))
 }
 
@@ -4879,9 +4854,10 @@ pub async fn search_sessions(
             .clone()
             .unwrap_or_else(|| hit.conversation_id.clone());
 
-        let source_path = hit.source_path.clone().unwrap_or_else(|| {
-            format!("hstry:{}:{}", hit.source_id, hit.conversation_id)
-        });
+        let source_path = hit
+            .source_path
+            .clone()
+            .unwrap_or_else(|| format!("hstry:{}:{}", hit.source_id, hit.conversation_id));
 
         results.push(SearchHit {
             agent: map_source_id_to_agent(&hit.source_id),

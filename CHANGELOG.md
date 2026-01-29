@@ -16,6 +16,7 @@ All notable changes to this project will be documented in this file.
 - Replaced cass-backed session search with hstry search and added line-based scroll resolution for search hits.
 - Renamed CASS search types and comments to hstry in the API and frontend.
 - Session UI now renders non-OpenCode sessions with the Pi chat view, and new chats default to Pi workspace sessions.
+- Chat history now includes workspace Pi sessions, and the status bar shows the active Pi model for main/workspace chats.
 
 ### Security
 

@@ -4303,7 +4303,8 @@ export const SessionScreen = memo(function SessionScreen() {
 	}
 
 	// Session metadata for chat display
-	const readableIdSource = selectedChatSession ?? selectedChatFromHistory ?? null;
+	const readableIdSource =
+		selectedChatSession ?? selectedChatFromHistory ?? null;
 	const readableId = readableIdSource
 		? resolveReadableId(readableIdSource.id, readableIdSource.readable_id)
 		: null;
@@ -4341,539 +4342,541 @@ export const SessionScreen = memo(function SessionScreen() {
 				ref={chatContainerRef}
 				className="flex-1 flex flex-col gap-2 sm:gap-4 min-h-0"
 			>
-			{/* Permission banner */}
-			<PermissionBanner
-				count={pendingPermissions.length}
-				onClick={handlePermissionBannerClick}
-			/>
+				{/* Permission banner */}
+				<PermissionBanner
+					count={pendingPermissions.length}
+					onClick={handlePermissionBannerClick}
+				/>
 
-			{/* User question banner */}
-			<UserQuestionBanner
-				count={pendingQuestions.length}
-				onClick={handleQuestionBannerClick}
-			/>
+				{/* User question banner */}
+				<UserQuestionBanner
+					count={pendingQuestions.length}
+					onClick={handleQuestionBannerClick}
+				/>
 
-			<div className="relative flex-1 min-h-0">
-				{allowExpanded && showExpandedPreview ? (
-					<div className="h-full bg-muted/30 border border-border overflow-hidden">
-						<Suspense fallback={viewLoadingFallback}>
-							<PreviewView
-								filePath={previewFilePath}
-								workspacePath={resumeWorkspacePath}
-								onClose={closePreview}
-								onToggleExpand={() => toggleExpandedView("preview")}
-								isExpanded
-								showExpand={!isMobileLayout}
-							/>
-						</Suspense>
-					</div>
-				) : allowExpanded && showExpandedCanvas ? (
-					<div className="h-full bg-muted/30 border border-border overflow-hidden flex flex-col">
-						{!isMobileLayout && (
-							<div className="flex items-center justify-between px-2 py-1 border-b border-border bg-muted/30">
-								<span className="text-xs text-muted-foreground">Canvas</span>
-								<button
-									type="button"
-									onClick={() => toggleExpandedView("canvas")}
-									className="p-1 text-muted-foreground hover:text-foreground hover:bg-muted/50"
-									aria-label="Collapse canvas"
-								>
-									<Minimize2 className="w-3.5 h-3.5" />
-								</button>
-							</div>
-						)}
-						<div className="flex-1 min-h-0">
+				<div className="relative flex-1 min-h-0">
+					{allowExpanded && showExpandedPreview ? (
+						<div className="h-full bg-muted/30 border border-border overflow-hidden">
 							<Suspense fallback={viewLoadingFallback}>
-								<CanvasView
+								<PreviewView
+									filePath={previewFilePath}
 									workspacePath={resumeWorkspacePath}
-									initialImagePath={previewFilePath}
-									onSaveAndAddToChat={handleCanvasSaveAndAddToChat}
+									onClose={closePreview}
+									onToggleExpand={() => toggleExpandedView("preview")}
+									isExpanded
+									showExpand={!isMobileLayout}
 								/>
 							</Suspense>
 						</div>
-					</div>
-				) : allowExpanded && showExpandedMemories ? (
-					<div className="h-full bg-muted/30 border border-border overflow-hidden flex flex-col">
-						{!isMobileLayout && (
-							<div className="flex items-center justify-between px-2 py-1 border-b border-border bg-muted/30">
-								<span className="text-xs text-muted-foreground">
-									{t.memories}
-								</span>
-								<button
-									type="button"
-									onClick={() => toggleExpandedView("memories")}
-									className="p-1 text-muted-foreground hover:text-foreground hover:bg-muted/50"
-									aria-label="Collapse memories"
-								>
-									<Minimize2 className="w-3.5 h-3.5" />
-								</button>
+					) : allowExpanded && showExpandedCanvas ? (
+						<div className="h-full bg-muted/30 border border-border overflow-hidden flex flex-col">
+							{!isMobileLayout && (
+								<div className="flex items-center justify-between px-2 py-1 border-b border-border bg-muted/30">
+									<span className="text-xs text-muted-foreground">Canvas</span>
+									<button
+										type="button"
+										onClick={() => toggleExpandedView("canvas")}
+										className="p-1 text-muted-foreground hover:text-foreground hover:bg-muted/50"
+										aria-label="Collapse canvas"
+									>
+										<Minimize2 className="w-3.5 h-3.5" />
+									</button>
+								</div>
+							)}
+							<div className="flex-1 min-h-0">
+								<Suspense fallback={viewLoadingFallback}>
+									<CanvasView
+										workspacePath={resumeWorkspacePath}
+										initialImagePath={previewFilePath}
+										onSaveAndAddToChat={handleCanvasSaveAndAddToChat}
+									/>
+								</Suspense>
 							</div>
-						)}
-						<div className="flex-1 min-h-0">
-							<Suspense fallback={viewLoadingFallback}>
-								<MemoriesView
-									workspacePath={resumeWorkspacePath}
-									storeName={null}
-								/>
-							</Suspense>
 						</div>
-					</div>
-				) : allowExpanded && showExpandedTerminal ? (
-					<div className="h-full bg-muted/30 border border-border overflow-hidden flex flex-col">
-						{!isMobileLayout && (
-							<div className="flex items-center justify-between px-2 py-1 border-b border-border bg-muted/30">
-								<span className="text-xs text-muted-foreground">
-									{t.terminal}
-								</span>
-								<button
-									type="button"
-									onClick={() => toggleExpandedView("terminal")}
-									className="p-1 text-muted-foreground hover:text-foreground hover:bg-muted/50"
-									aria-label="Collapse terminal"
-								>
-									<Minimize2 className="w-3.5 h-3.5" />
-								</button>
+					) : allowExpanded && showExpandedMemories ? (
+						<div className="h-full bg-muted/30 border border-border overflow-hidden flex flex-col">
+							{!isMobileLayout && (
+								<div className="flex items-center justify-between px-2 py-1 border-b border-border bg-muted/30">
+									<span className="text-xs text-muted-foreground">
+										{t.memories}
+									</span>
+									<button
+										type="button"
+										onClick={() => toggleExpandedView("memories")}
+										className="p-1 text-muted-foreground hover:text-foreground hover:bg-muted/50"
+										aria-label="Collapse memories"
+									>
+										<Minimize2 className="w-3.5 h-3.5" />
+									</button>
+								</div>
+							)}
+							<div className="flex-1 min-h-0">
+								<Suspense fallback={viewLoadingFallback}>
+									<MemoriesView
+										workspacePath={resumeWorkspacePath}
+										storeName={null}
+									/>
+								</Suspense>
 							</div>
-						)}
-						<div className="flex-1 min-h-0">
-							<Suspense fallback={viewLoadingFallback}>
-								<TerminalView workspacePath={resumeWorkspacePath} />
-							</Suspense>
 						</div>
-					</div>
-				) : (
-					<ChatMessagesPane
-						messages={messages}
-						messagesLoading={messagesLoading}
-						selectedChatSessionId={selectedChatSessionId ?? undefined}
-						sessionHadMessages={Boolean(
-							selectedChatSessionId &&
-								sessionsWithMessagesRef.current.has(selectedChatSessionId),
-						)}
-						hasHiddenMessages={hasHiddenMessages}
-						messageGroupsLength={messageGroups.length}
-						visibleGroups={visibleGroups}
-						visibleGroupCount={visibleGroupCount}
-						a2uiByGroupIndex={a2uiByGroupIndex}
-						locale={locale}
-						noMessagesText={t.noMessages}
-						persona={selectedSession?.persona}
-						workspaceName={workspaceName}
-						readableId={readableId}
-						workspaceDirectory={opencodeDirectory}
-						onFork={handleForkSession}
-						onScroll={handleScroll}
-						messagesContainerRef={messagesContainerRef}
-						messagesEndRef={messagesEndRef}
-						showScrollToBottom={showScrollToBottom}
-						scrollToBottom={scrollToBottom}
-						loadMoreMessages={loadMoreMessages}
-						onA2UIAction={handleA2UIAction}
-						isStreaming={chatState === "sending"}
-					/>
-				)}
-			</div>
-
-			{/* Pending uploads indicator */}
-			{pendingUploads.length > 0 && (
-				<div className="flex flex-wrap gap-2 mb-2">
-					{pendingUploads.map((upload) => (
-						<div
-							key={upload.path}
-							className="flex items-center gap-1.5 px-2 py-1 bg-primary/10 border border-primary/30 text-xs text-foreground"
-						>
-							<Paperclip className="w-3 h-3 text-primary" />
-							<span className="truncate max-w-[150px]">{upload.name}</span>
-							<button
-								type="button"
-								onClick={() => removePendingUpload(upload.path)}
-								className="text-muted-foreground hover:text-foreground ml-1"
-							>
-								<X className="w-3 h-3" />
-							</button>
+					) : allowExpanded && showExpandedTerminal ? (
+						<div className="h-full bg-muted/30 border border-border overflow-hidden flex flex-col">
+							{!isMobileLayout && (
+								<div className="flex items-center justify-between px-2 py-1 border-b border-border bg-muted/30">
+									<span className="text-xs text-muted-foreground">
+										{t.terminal}
+									</span>
+									<button
+										type="button"
+										onClick={() => toggleExpandedView("terminal")}
+										className="p-1 text-muted-foreground hover:text-foreground hover:bg-muted/50"
+										aria-label="Collapse terminal"
+									>
+										<Minimize2 className="w-3.5 h-3.5" />
+									</button>
+								</div>
+							)}
+							<div className="flex-1 min-h-0">
+								<Suspense fallback={viewLoadingFallback}>
+									<TerminalView workspacePath={resumeWorkspacePath} />
+								</Suspense>
+							</div>
 						</div>
-					))}
-				</div>
-			)}
-
-			{/* Hidden file input */}
-			<input
-				ref={fileInputRef}
-				type="file"
-				multiple
-				className="hidden"
-				onChange={(e) => handleFileUpload(e.target.files)}
-			/>
-
-			{/* Chat input - works for both live and history sessions */}
-			<div className="chat-input-container flex flex-col gap-1 bg-muted/30 border border-border px-2 py-1">
-				{/* Show hint for history sessions that will be resumed - hide when sending/resuming */}
-				{isHistoryOnlySession && chatState === "idle" && (
-					<div className="flex items-center gap-1.5 px-1 pt-1 text-xs text-muted-foreground">
-						<Clock className="w-3 h-3" />
-						<span>
-							{locale === "de"
-								? canResumeWithoutMessage
-									? "Nachricht senden oder ohne Nachricht fortsetzen"
-									: "Sende eine Nachricht um diese Sitzung fortzusetzen"
-								: canResumeWithoutMessage
-									? "Send a message or resume without one"
-									: "Send a message to resume this session"}
-						</span>
-					</div>
-				)}
-				<div className="flex items-center gap-2">
-					<button
-						type="button"
-						onClick={() => fileInputRef.current?.click()}
-						disabled={isUploading}
-						className="flex-shrink-0 h-8 px-2 flex items-center justify-center text-muted-foreground hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-						title={locale === "de" ? "Datei hochladen" : "Upload file"}
-					>
-						{isUploading ? (
-							<Loader2 className="size-4 animate-spin" />
-						) : (
-							<Paperclip className="size-4" />
-						)}
-					</button>
-					{/* Unified voice menu button - conversation or dictation */}
-					{features.voice && (
-						<VoiceMenuButton
-							activeMode={
-								voiceMode.isActive
-									? "conversation"
-									: dictation.isActive
-										? "dictation"
-										: null
-							}
-							voiceState={voiceMode.voiceState}
-							onConversation={() => {
-								if (dictation.isActive) dictation.stop();
-								voiceMode.start().catch(console.error);
-							}}
-							onDictation={() => {
-								if (voiceMode.isActive) voiceMode.stop();
-								dictation.start().catch(console.error);
-							}}
-							onStop={() => {
-								if (voiceMode.isActive) voiceMode.stop();
-								if (dictation.isActive) dictation.stop();
-							}}
+					) : (
+						<ChatMessagesPane
+							messages={messages}
+							messagesLoading={messagesLoading}
+							selectedChatSessionId={selectedChatSessionId ?? undefined}
+							sessionHadMessages={Boolean(
+								selectedChatSessionId &&
+									sessionsWithMessagesRef.current.has(selectedChatSessionId),
+							)}
+							hasHiddenMessages={hasHiddenMessages}
+							messageGroupsLength={messageGroups.length}
+							visibleGroups={visibleGroups}
+							visibleGroupCount={visibleGroupCount}
+							a2uiByGroupIndex={a2uiByGroupIndex}
 							locale={locale}
-							className="flex-shrink-0"
+							noMessagesText={t.noMessages}
+							persona={selectedSession?.persona}
+							workspaceName={workspaceName}
+							readableId={readableId}
+							workspaceDirectory={opencodeDirectory}
+							onFork={handleForkSession}
+							onScroll={handleScroll}
+							messagesContainerRef={messagesContainerRef}
+							messagesEndRef={messagesEndRef}
+							showScrollToBottom={showScrollToBottom}
+							scrollToBottom={scrollToBottom}
+							loadMoreMessages={loadMoreMessages}
+							onA2UIAction={handleA2UIAction}
+							isStreaming={chatState === "sending"}
 						/>
 					)}
-					{/* Textarea wrapper with slash command popup */}
-					<div
-						className="flex-1 relative flex flex-col min-h-[32px]"
-						data-spotlight="chat-input"
-					>
-						<SlashCommandPopup
-							commands={slashCommands}
-							query={slashQuery.command}
-							isOpen={showSlashPopup && slashQuery.isSlash && !slashQuery.args}
-							onSelect={handleSlashCommandSelect}
-							onClose={() => setShowSlashPopup(false)}
-						/>
-						<FileMentionPopup
-							query={fileMentionQuery}
-							isOpen={showFileMentionPopup}
-							workspacePath={resumeWorkspacePath}
-							onSelect={(attachment) => {
-								// Remove @query from input, only show chip
-								const newInput = messageInput.replace(/@[^\s]*$/, "");
-								setMessageInputWithResize(newInput);
-								setFileAttachments((prev) => [...prev, attachment]);
-								setShowFileMentionPopup(false);
-								setFileMentionQuery("");
-								chatInputRef.current?.focus();
-							}}
-							onClose={() => {
-								setShowFileMentionPopup(false);
-								setFileMentionQuery("");
-							}}
-						/>
-						<AgentMentionPopup
-							query={agentMentionQuery}
-							isOpen={showAgentMentionPopup}
-							mainChatName={mainChatAssistantName}
-							mainChatWorkspacePath={mainChatWorkspacePath}
-							sessions={chatHistory.map((s) => ({
-								id: s.id,
-								title: s.title,
-								workspace_path: s.workspace_path,
-								project_name: s.project_name,
-							}))}
-							onSelect={(target) => {
-								// Remove @@query from input, store target
-								// Use ref value directly since debounced state may be stale
-								const newInput = messageInputRef.current.replace(
-									/@@[^\s]*$/,
-									"",
-								);
-								setMessageInputWithResize(newInput);
-								messageInputRef.current = newInput;
-								setAgentTarget(target);
-								setShowAgentMentionPopup(false);
-								setAgentMentionQuery("");
-								chatInputRef.current?.focus();
-							}}
-							onClose={() => {
-								setShowAgentMentionPopup(false);
-								setAgentMentionQuery("");
-							}}
-						/>
-						{/* File attachment chips */}
-						{fileAttachments.length > 0 && (
-							<div className="flex flex-wrap gap-1 mb-1">
-								{fileAttachments.map((attachment) => (
-									<FileAttachmentChip
-										key={attachment.id}
-										attachment={attachment}
-										onRemove={() => {
-											setFileAttachments((prev) =>
-												prev.filter((a) => a.id !== attachment.id),
-											);
-										}}
-									/>
-								))}
+				</div>
+
+				{/* Pending uploads indicator */}
+				{pendingUploads.length > 0 && (
+					<div className="flex flex-wrap gap-2 mb-2">
+						{pendingUploads.map((upload) => (
+							<div
+								key={upload.path}
+								className="flex items-center gap-1.5 px-2 py-1 bg-primary/10 border border-primary/30 text-xs text-foreground"
+							>
+								<Paperclip className="w-3 h-3 text-primary" />
+								<span className="truncate max-w-[150px]">{upload.name}</span>
+								<button
+									type="button"
+									onClick={() => removePendingUpload(upload.path)}
+									className="text-muted-foreground hover:text-foreground ml-1"
+								>
+									<X className="w-3 h-3" />
+								</button>
 							</div>
-						)}
-						{/* Issue attachment chips */}
-						{issueAttachments.length > 0 && (
-							<div className="flex flex-wrap gap-1 mb-1">
-								{issueAttachments.map((attachment) => (
-									<IssueAttachmentChip
-										key={attachment.id}
-										attachment={attachment}
-										onRemove={() => {
-											setIssueAttachments((prev) =>
-												prev.filter((a) => a.id !== attachment.id),
-											);
-										}}
-									/>
-								))}
-							</div>
-						)}
-						{/* Agent target chip (@@mention) */}
-						{agentTarget && (
-							<div className="flex flex-wrap gap-1 mb-1">
-								<AgentTargetChip
-									target={agentTarget}
-									onRemove={() => setAgentTarget(null)}
-								/>
-							</div>
-						)}
-						{features.voice && dictation.isActive ? (
-							<DictationOverlay
-								open
-								value={messageInputRef.current}
-								liveTranscript={dictation.liveTranscript}
-								placeholder={
-									locale === "de" ? "Sprechen Sie..." : "Speak now..."
-								}
-								vadProgress={dictation.vadProgress}
-								autoSend={dictation.autoSendEnabled}
-								onAutoSendChange={dictation.setAutoSendEnabled}
-								onStop={() => {
-									// Use cancel() to stop without auto-send - user clicked X
-									dictation.cancel();
-									requestAnimationFrame(() => {
-										setMessageInputWithResize(messageInputRef.current);
-									});
-								}}
-								onChange={handleInputChange}
-								onKeyDown={handleInputKeyDown}
-								onPaste={(e) => {
-									// Handle pasted files (images, etc.)
-									const items = e.clipboardData?.items;
-									if (!items) return;
-
-									const files: File[] = [];
-									let imageIndex = 0;
-									for (const item of Array.from(items)) {
-										if (item.kind === "file") {
-											const file = item.getAsFile();
-											if (file) {
-												// Rename generic clipboard image names to be unique
-												const isGenericName =
-													/^image\.(png|gif|jpg|jpeg|webp)$/i.test(file.name);
-												if (isGenericName) {
-													const ext = file.name.split(".").pop() || "png";
-													const uniqueName = `pasted-image-${Date.now()}-${imageIndex++}.${ext}`;
-													const renamedFile = new File([file], uniqueName, {
-														type: file.type,
-													});
-													files.push(renamedFile);
-												} else {
-													files.push(file);
-												}
-											}
-										}
-									}
-
-									if (files.length > 0) {
-										// Prevent default paste behavior for files
-										e.preventDefault();
-										// Create a FileList-like object and upload
-										const dataTransfer = new DataTransfer();
-										for (const file of files) {
-											dataTransfer.items.add(file);
-										}
-										handleFileUpload(dataTransfer.files);
-									}
-									// If no files, let the default paste behavior handle text
-								}}
-								onBlur={() => {
-									// Delay closing to allow click on popup items
-									setTimeout(() => setShowSlashPopup(false), 150);
-								}}
-								onFocus={(e) => {
-									// Scroll input into view on mobile when keyboard opens
-									setTimeout(() => {
-										e.target.scrollIntoView({
-											behavior: "smooth",
-											block: "nearest",
-										});
-									}, 300);
-								}}
-							/>
-						) : (
-							<textarea
-								key={`${chatInputMountKey}-${selectedChatSessionId || "none"}`}
-								ref={setChatInputEl}
-								autoComplete="off"
-								autoCorrect="off"
-								autoCapitalize="sentences"
-								spellCheck={false}
-								enterKeyHint="send"
-								data-form-type="other"
-								placeholder={
-									isHistoryOnlySession
-										? locale === "de"
-											? "Nachricht zum Fortsetzen..."
-											: "Message to resume..."
-										: t.inputPlaceholder
-								}
-								defaultValue=""
-								onChange={handleInputChange}
-								onKeyDown={handleInputKeyDown}
-								onPaste={(e) => {
-									// Handle pasted files (images, etc.)
-									const items = e.clipboardData?.items;
-									if (!items) return;
-
-									const files: File[] = [];
-									let imageIndex = 0;
-									for (const item of Array.from(items)) {
-										if (item.kind === "file") {
-											const file = item.getAsFile();
-											if (file) {
-												// Rename generic clipboard image names to be unique
-												const isGenericName =
-													/^image\.(png|gif|jpg|jpeg|webp)$/i.test(file.name);
-												if (isGenericName) {
-													const ext = file.name.split(".").pop() || "png";
-													const uniqueName = `pasted-image-${Date.now()}-${imageIndex++}.${ext}`;
-													const renamedFile = new File([file], uniqueName, {
-														type: file.type,
-													});
-													files.push(renamedFile);
-												} else {
-													files.push(file);
-												}
-											}
-										}
-									}
-
-									if (files.length > 0) {
-										// Prevent default paste behavior for files
-										e.preventDefault();
-										// Create a FileList-like object and upload
-										const dataTransfer = new DataTransfer();
-										for (const file of files) {
-											dataTransfer.items.add(file);
-										}
-										handleFileUpload(dataTransfer.files);
-									}
-									// If no files, let the default paste behavior handle text
-								}}
-								onBlur={() => {
-									// Delay closing to allow click on popup items
-									setTimeout(() => setShowSlashPopup(false), 150);
-								}}
-								onFocus={(e) => {
-									// Show popup if input starts with /
-									if (deferredMessageInput.startsWith("/")) {
-										setShowSlashPopup(true);
-									}
-									// Scroll input into view on mobile when keyboard opens
-									setTimeout(() => {
-										e.target.scrollIntoView({
-											behavior: "smooth",
-											block: "nearest",
-										});
-									}, 300);
-								}}
-								rows={1}
-								className="w-full bg-transparent border-none outline-none text-foreground placeholder:text-muted-foreground text-sm resize-none py-1.5 leading-5 max-h-[200px] overflow-y-auto"
-							/>
-						)}
+						))}
 					</div>
-					{chatState === "sending" && (
+				)}
+
+				{/* Hidden file input */}
+				<input
+					ref={fileInputRef}
+					type="file"
+					multiple
+					className="hidden"
+					onChange={(e) => handleFileUpload(e.target.files)}
+				/>
+
+				{/* Chat input - works for both live and history sessions */}
+				<div className="chat-input-container flex flex-col gap-1 bg-muted/30 border border-border px-2 py-1">
+					{/* Show hint for history sessions that will be resumed - hide when sending/resuming */}
+					{isHistoryOnlySession && chatState === "idle" && (
+						<div className="flex items-center gap-1.5 px-1 pt-1 text-xs text-muted-foreground">
+							<Clock className="w-3 h-3" />
+							<span>
+								{locale === "de"
+									? canResumeWithoutMessage
+										? "Nachricht senden oder ohne Nachricht fortsetzen"
+										: "Sende eine Nachricht um diese Sitzung fortzusetzen"
+									: canResumeWithoutMessage
+										? "Send a message or resume without one"
+										: "Send a message to resume this session"}
+							</span>
+						</div>
+					)}
+					<div className="flex items-center gap-2">
+						<button
+							type="button"
+							onClick={() => fileInputRef.current?.click()}
+							disabled={isUploading}
+							className="flex-shrink-0 h-8 px-2 flex items-center justify-center text-muted-foreground hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+							title={locale === "de" ? "Datei hochladen" : "Upload file"}
+						>
+							{isUploading ? (
+								<Loader2 className="size-4 animate-spin" />
+							) : (
+								<Paperclip className="size-4" />
+							)}
+						</button>
+						{/* Unified voice menu button - conversation or dictation */}
+						{features.voice && (
+							<VoiceMenuButton
+								activeMode={
+									voiceMode.isActive
+										? "conversation"
+										: dictation.isActive
+											? "dictation"
+											: null
+								}
+								voiceState={voiceMode.voiceState}
+								onConversation={() => {
+									if (dictation.isActive) dictation.stop();
+									voiceMode.start().catch(console.error);
+								}}
+								onDictation={() => {
+									if (voiceMode.isActive) voiceMode.stop();
+									dictation.start().catch(console.error);
+								}}
+								onStop={() => {
+									if (voiceMode.isActive) voiceMode.stop();
+									if (dictation.isActive) dictation.stop();
+								}}
+								locale={locale}
+								className="flex-shrink-0"
+							/>
+						)}
+						{/* Textarea wrapper with slash command popup */}
+						<div
+							className="flex-1 relative flex flex-col min-h-[32px]"
+							data-spotlight="chat-input"
+						>
+							<SlashCommandPopup
+								commands={slashCommands}
+								query={slashQuery.command}
+								isOpen={
+									showSlashPopup && slashQuery.isSlash && !slashQuery.args
+								}
+								onSelect={handleSlashCommandSelect}
+								onClose={() => setShowSlashPopup(false)}
+							/>
+							<FileMentionPopup
+								query={fileMentionQuery}
+								isOpen={showFileMentionPopup}
+								workspacePath={resumeWorkspacePath}
+								onSelect={(attachment) => {
+									// Remove @query from input, only show chip
+									const newInput = messageInput.replace(/@[^\s]*$/, "");
+									setMessageInputWithResize(newInput);
+									setFileAttachments((prev) => [...prev, attachment]);
+									setShowFileMentionPopup(false);
+									setFileMentionQuery("");
+									chatInputRef.current?.focus();
+								}}
+								onClose={() => {
+									setShowFileMentionPopup(false);
+									setFileMentionQuery("");
+								}}
+							/>
+							<AgentMentionPopup
+								query={agentMentionQuery}
+								isOpen={showAgentMentionPopup}
+								mainChatName={mainChatAssistantName}
+								mainChatWorkspacePath={mainChatWorkspacePath}
+								sessions={chatHistory.map((s) => ({
+									id: s.id,
+									title: s.title,
+									workspace_path: s.workspace_path,
+									project_name: s.project_name,
+								}))}
+								onSelect={(target) => {
+									// Remove @@query from input, store target
+									// Use ref value directly since debounced state may be stale
+									const newInput = messageInputRef.current.replace(
+										/@@[^\s]*$/,
+										"",
+									);
+									setMessageInputWithResize(newInput);
+									messageInputRef.current = newInput;
+									setAgentTarget(target);
+									setShowAgentMentionPopup(false);
+									setAgentMentionQuery("");
+									chatInputRef.current?.focus();
+								}}
+								onClose={() => {
+									setShowAgentMentionPopup(false);
+									setAgentMentionQuery("");
+								}}
+							/>
+							{/* File attachment chips */}
+							{fileAttachments.length > 0 && (
+								<div className="flex flex-wrap gap-1 mb-1">
+									{fileAttachments.map((attachment) => (
+										<FileAttachmentChip
+											key={attachment.id}
+											attachment={attachment}
+											onRemove={() => {
+												setFileAttachments((prev) =>
+													prev.filter((a) => a.id !== attachment.id),
+												);
+											}}
+										/>
+									))}
+								</div>
+							)}
+							{/* Issue attachment chips */}
+							{issueAttachments.length > 0 && (
+								<div className="flex flex-wrap gap-1 mb-1">
+									{issueAttachments.map((attachment) => (
+										<IssueAttachmentChip
+											key={attachment.id}
+											attachment={attachment}
+											onRemove={() => {
+												setIssueAttachments((prev) =>
+													prev.filter((a) => a.id !== attachment.id),
+												);
+											}}
+										/>
+									))}
+								</div>
+							)}
+							{/* Agent target chip (@@mention) */}
+							{agentTarget && (
+								<div className="flex flex-wrap gap-1 mb-1">
+									<AgentTargetChip
+										target={agentTarget}
+										onRemove={() => setAgentTarget(null)}
+									/>
+								</div>
+							)}
+							{features.voice && dictation.isActive ? (
+								<DictationOverlay
+									open
+									value={messageInputRef.current}
+									liveTranscript={dictation.liveTranscript}
+									placeholder={
+										locale === "de" ? "Sprechen Sie..." : "Speak now..."
+									}
+									vadProgress={dictation.vadProgress}
+									autoSend={dictation.autoSendEnabled}
+									onAutoSendChange={dictation.setAutoSendEnabled}
+									onStop={() => {
+										// Use cancel() to stop without auto-send - user clicked X
+										dictation.cancel();
+										requestAnimationFrame(() => {
+											setMessageInputWithResize(messageInputRef.current);
+										});
+									}}
+									onChange={handleInputChange}
+									onKeyDown={handleInputKeyDown}
+									onPaste={(e) => {
+										// Handle pasted files (images, etc.)
+										const items = e.clipboardData?.items;
+										if (!items) return;
+
+										const files: File[] = [];
+										let imageIndex = 0;
+										for (const item of Array.from(items)) {
+											if (item.kind === "file") {
+												const file = item.getAsFile();
+												if (file) {
+													// Rename generic clipboard image names to be unique
+													const isGenericName =
+														/^image\.(png|gif|jpg|jpeg|webp)$/i.test(file.name);
+													if (isGenericName) {
+														const ext = file.name.split(".").pop() || "png";
+														const uniqueName = `pasted-image-${Date.now()}-${imageIndex++}.${ext}`;
+														const renamedFile = new File([file], uniqueName, {
+															type: file.type,
+														});
+														files.push(renamedFile);
+													} else {
+														files.push(file);
+													}
+												}
+											}
+										}
+
+										if (files.length > 0) {
+											// Prevent default paste behavior for files
+											e.preventDefault();
+											// Create a FileList-like object and upload
+											const dataTransfer = new DataTransfer();
+											for (const file of files) {
+												dataTransfer.items.add(file);
+											}
+											handleFileUpload(dataTransfer.files);
+										}
+										// If no files, let the default paste behavior handle text
+									}}
+									onBlur={() => {
+										// Delay closing to allow click on popup items
+										setTimeout(() => setShowSlashPopup(false), 150);
+									}}
+									onFocus={(e) => {
+										// Scroll input into view on mobile when keyboard opens
+										setTimeout(() => {
+											e.target.scrollIntoView({
+												behavior: "smooth",
+												block: "nearest",
+											});
+										}, 300);
+									}}
+								/>
+							) : (
+								<textarea
+									key={`${chatInputMountKey}-${selectedChatSessionId || "none"}`}
+									ref={setChatInputEl}
+									autoComplete="off"
+									autoCorrect="off"
+									autoCapitalize="sentences"
+									spellCheck={false}
+									enterKeyHint="send"
+									data-form-type="other"
+									placeholder={
+										isHistoryOnlySession
+											? locale === "de"
+												? "Nachricht zum Fortsetzen..."
+												: "Message to resume..."
+											: t.inputPlaceholder
+									}
+									defaultValue=""
+									onChange={handleInputChange}
+									onKeyDown={handleInputKeyDown}
+									onPaste={(e) => {
+										// Handle pasted files (images, etc.)
+										const items = e.clipboardData?.items;
+										if (!items) return;
+
+										const files: File[] = [];
+										let imageIndex = 0;
+										for (const item of Array.from(items)) {
+											if (item.kind === "file") {
+												const file = item.getAsFile();
+												if (file) {
+													// Rename generic clipboard image names to be unique
+													const isGenericName =
+														/^image\.(png|gif|jpg|jpeg|webp)$/i.test(file.name);
+													if (isGenericName) {
+														const ext = file.name.split(".").pop() || "png";
+														const uniqueName = `pasted-image-${Date.now()}-${imageIndex++}.${ext}`;
+														const renamedFile = new File([file], uniqueName, {
+															type: file.type,
+														});
+														files.push(renamedFile);
+													} else {
+														files.push(file);
+													}
+												}
+											}
+										}
+
+										if (files.length > 0) {
+											// Prevent default paste behavior for files
+											e.preventDefault();
+											// Create a FileList-like object and upload
+											const dataTransfer = new DataTransfer();
+											for (const file of files) {
+												dataTransfer.items.add(file);
+											}
+											handleFileUpload(dataTransfer.files);
+										}
+										// If no files, let the default paste behavior handle text
+									}}
+									onBlur={() => {
+										// Delay closing to allow click on popup items
+										setTimeout(() => setShowSlashPopup(false), 150);
+									}}
+									onFocus={(e) => {
+										// Show popup if input starts with /
+										if (deferredMessageInput.startsWith("/")) {
+											setShowSlashPopup(true);
+										}
+										// Scroll input into view on mobile when keyboard opens
+										setTimeout(() => {
+											e.target.scrollIntoView({
+												behavior: "smooth",
+												block: "nearest",
+											});
+										}, 300);
+									}}
+									rows={1}
+									className="w-full bg-transparent border-none outline-none text-foreground placeholder:text-muted-foreground text-sm resize-none py-1.5 leading-5 max-h-[200px] overflow-y-auto"
+								/>
+							)}
+						</div>
+						{chatState === "sending" && (
+							<Button
+								type="button"
+								onClick={handleStop}
+								className="stop-button-animated flex-shrink-0 h-8 px-2 flex items-center justify-center text-destructive hover:text-destructive/80 transition-colors bg-transparent hover:bg-transparent"
+								variant="ghost"
+								size="icon"
+								title={
+									locale === "de"
+										? "Agent stoppen (2x Esc)"
+										: "Stop agent (2x Esc)"
+								}
+							>
+								<span className="stop-button-ring" aria-hidden>
+									<svg viewBox="0 0 100 100" role="presentation">
+										<circle
+											cx="50"
+											cy="50"
+											r="46"
+											fill="none"
+											stroke="currentColor"
+											strokeWidth="3"
+											strokeLinecap="round"
+											strokeDasharray="72 216"
+											opacity="0.8"
+										/>
+									</svg>
+								</span>
+								<StopCircle className="w-4 h-4" />
+							</Button>
+						)}
 						<Button
 							type="button"
-							onClick={handleStop}
-							className="stop-button-animated flex-shrink-0 h-8 px-2 flex items-center justify-center text-destructive hover:text-destructive/80 transition-colors bg-transparent hover:bg-transparent"
+							data-voice-send
+							onClick={handleSendOrResume}
+							disabled={
+								!canResumeWithoutMessage &&
+								!deferredMessageInput.trim() &&
+								pendingUploads.length === 0 &&
+								fileAttachments.length === 0 &&
+								issueAttachments.length === 0
+							}
+							className="flex-shrink-0 h-8 px-2 flex items-center justify-center text-muted-foreground hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed transition-colors bg-transparent hover:bg-transparent"
 							variant="ghost"
 							size="icon"
-							title={
-								locale === "de"
-									? "Agent stoppen (2x Esc)"
-									: "Stop agent (2x Esc)"
-							}
 						>
-							<span className="stop-button-ring" aria-hidden>
-								<svg viewBox="0 0 100 100" role="presentation">
-									<circle
-										cx="50"
-										cy="50"
-										r="46"
-										fill="none"
-										stroke="currentColor"
-										strokeWidth="3"
-										strokeLinecap="round"
-										strokeDasharray="72 216"
-										opacity="0.8"
-									/>
-								</svg>
-							</span>
-							<StopCircle className="w-4 h-4" />
+							{canResumeWithoutMessage ? (
+								<RefreshCw className="w-4 h-4" />
+							) : (
+								<Send className="w-4 h-4" />
+							)}
 						</Button>
-					)}
-					<Button
-						type="button"
-						data-voice-send
-						onClick={handleSendOrResume}
-						disabled={
-							!canResumeWithoutMessage &&
-							!deferredMessageInput.trim() &&
-							pendingUploads.length === 0 &&
-							fileAttachments.length === 0 &&
-							issueAttachments.length === 0
-						}
-						className="flex-shrink-0 h-8 px-2 flex items-center justify-center text-muted-foreground hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed transition-colors bg-transparent hover:bg-transparent"
-						variant="ghost"
-						size="icon"
-					>
-						{canResumeWithoutMessage ? (
-							<RefreshCw className="w-4 h-4" />
-						) : (
-							<Send className="w-4 h-4" />
-						)}
-					</Button>
+					</div>
 				</div>
-			</div>
 			</div>
 		);
 	};
