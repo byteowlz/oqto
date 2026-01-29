@@ -15,8 +15,8 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
-use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::Row;
+use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use tokio::sync::RwLock;
 
 use crate::markdown;
@@ -188,7 +188,9 @@ pub async fn search_hstry(query: &str, limit: usize) -> Result<Vec<HstrySearchHi
     let response: HstryJsonResponse<Vec<HstrySearchHit>> =
         serde_json::from_str(&stdout).context("Failed to parse hstry search output")?;
     if !response.ok {
-        let error = response.error.unwrap_or_else(|| "hstry search failed".to_string());
+        let error = response
+            .error
+            .unwrap_or_else(|| "hstry search failed".to_string());
         anyhow::bail!(error);
     }
 
@@ -235,7 +237,8 @@ pub async fn list_sessions_from_hstry(db_path: &Path) -> Result<Vec<ChatSession>
         let session_id = external_id.clone().unwrap_or_else(|| id.clone());
         let workspace_path = workspace.unwrap_or_else(|| "global".to_string());
         let project_name = project_name_from_path(&workspace_path);
-        let readable_id = readable_id.unwrap_or_else(|| wordlist::readable_id_from_session_id(&session_id));
+        let readable_id =
+            readable_id.unwrap_or_else(|| wordlist::readable_id_from_session_id(&session_id));
 
         sessions.push(ChatSession {
             id: session_id,
@@ -274,7 +277,9 @@ pub async fn get_session_from_hstry(
     .fetch_optional(&pool)
     .await?;
 
-    let Some(row) = row else { return Ok(None); };
+    let Some(row) = row else {
+        return Ok(None);
+    };
 
     let id: String = row.get("id");
     let external_id: Option<String> = row.get("external_id");
@@ -287,7 +292,8 @@ pub async fn get_session_from_hstry(
     let session_id = external_id.clone().unwrap_or_else(|| id.clone());
     let workspace_path = workspace.unwrap_or_else(|| "global".to_string());
     let project_name = project_name_from_path(&workspace_path);
-    let readable_id = readable_id.unwrap_or_else(|| wordlist::readable_id_from_session_id(&session_id));
+    let readable_id =
+        readable_id.unwrap_or_else(|| wordlist::readable_id_from_session_id(&session_id));
 
     Ok(Some(ChatSession {
         id: session_id,
@@ -400,7 +406,9 @@ fn hstry_parts_to_chat_parts(
     if let Some(parts_json) = parts_json {
         if let Ok(serde_json::Value::Array(values)) = serde_json::from_str(parts_json) {
             for (idx, value) in values.iter().enumerate() {
-                let serde_json::Value::Object(obj) = value else { continue };
+                let serde_json::Value::Object(obj) = value else {
+                    continue;
+                };
                 let part_type = obj
                     .get("type")
                     .and_then(|v| v.as_str())

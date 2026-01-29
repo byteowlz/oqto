@@ -32,8 +32,8 @@
 use anyhow::{Context, Result};
 use clap::Parser;
 use fuser::{
-    FileAttr, FileType, Filesystem, MountOption, ReplyAttr, ReplyData, ReplyDirectory, ReplyEntry,
-    Request, FUSE_ROOT_ID,
+    FUSE_ROOT_ID, FileAttr, FileType, Filesystem, MountOption, ReplyAttr, ReplyData,
+    ReplyDirectory, ReplyEntry, Request,
 };
 use glob::Pattern;
 use log::{debug, error, info, warn};
@@ -142,9 +142,7 @@ impl GuardedFs {
         let policy_patterns: Vec<(Pattern, GuardPolicy)> = config
             .policy
             .iter()
-            .filter_map(|(pattern, policy)| {
-                Pattern::new(pattern).ok().map(|p| (p, policy.clone()))
-            })
+            .filter_map(|(pattern, policy)| Pattern::new(pattern).ok().map(|p| (p, policy.clone())))
             .collect();
 
         let mut fs = Self {
@@ -352,10 +350,7 @@ impl GuardedFs {
                 "timeout_secs": self.config.timeout_secs,
             });
 
-            info!(
-                "Requesting approval for {} access to {:?}",
-                operation, path
-            );
+            info!("Requesting approval for {} access to {:?}", operation, path);
 
             match client
                 .post(format!("{}/internal/prompt", self.octo_server))
@@ -367,8 +362,7 @@ impl GuardedFs {
                     if response.status().is_success() {
                         if let Ok(result) = response.json::<serde_json::Value>().await {
                             if let Some(action) = result.get("action").and_then(|a| a.as_str()) {
-                                let approved =
-                                    action == "allow_once" || action == "allow_session";
+                                let approved = action == "allow_once" || action == "allow_session";
 
                                 if approved && action == "allow_session" {
                                     self.cache_approval(path, operation);

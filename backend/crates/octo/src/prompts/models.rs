@@ -151,7 +151,9 @@ impl PromptRequest {
             description: Some(format!(
                 "SSH connection to {}{}",
                 host,
-                key_comment.map(|k| format!(" using key '{}'", k)).unwrap_or_default()
+                key_comment
+                    .map(|k| format!(" using key '{}'", k))
+                    .unwrap_or_default()
             )),
             context: key_comment.map(|k| serde_json::json!({ "key": k })),
             timeout_secs: default_timeout(),
@@ -284,8 +286,12 @@ pub struct PromptResponse {
 fn generate_prompt_id() -> String {
     use rand::Rng;
     let mut rng = rand::rng();
-    let adjectives = ["red", "blue", "green", "swift", "calm", "bold", "warm", "cool"];
-    let nouns = ["hawk", "bear", "wolf", "deer", "lion", "fish", "frog", "owl"];
+    let adjectives = [
+        "red", "blue", "green", "swift", "calm", "bold", "warm", "cool",
+    ];
+    let nouns = [
+        "hawk", "bear", "wolf", "deer", "lion", "fish", "frog", "owl",
+    ];
     let adj = adjectives[rng.random_range(0..adjectives.len())];
     let noun = nouns[rng.random_range(0..nouns.len())];
     let num: u16 = rng.random_range(100..999);
@@ -300,7 +306,10 @@ pub enum PromptMessage {
     Created { prompt: Prompt },
 
     /// Prompt was responded to
-    Responded { prompt_id: String, action: PromptAction },
+    Responded {
+        prompt_id: String,
+        action: PromptAction,
+    },
 
     /// Prompt timed out
     TimedOut { prompt_id: String },
@@ -336,7 +345,7 @@ mod tests {
     fn test_prompt_expiry() {
         let req = PromptRequest::file_access("/test", "read").with_timeout(1);
         let prompt = Prompt::new(req);
-        
+
         assert!(!prompt.is_expired());
         assert!(prompt.remaining() <= Duration::from_secs(1));
     }
@@ -345,11 +354,11 @@ mod tests {
     fn test_prompt_response() {
         let req = PromptRequest::file_access("/test", "read");
         let mut prompt = Prompt::new(req);
-        
+
         assert_eq!(prompt.status, PromptStatus::Pending);
-        
+
         prompt.respond(PromptAction::AllowSession);
-        
+
         assert_eq!(prompt.status, PromptStatus::Responded);
         assert!(prompt.response.is_some());
         assert_eq!(prompt.response.unwrap().action, PromptAction::AllowSession);

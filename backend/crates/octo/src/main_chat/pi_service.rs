@@ -885,7 +885,10 @@ impl MainChatPiService {
         if header.get("type").and_then(|t| t.as_str()) != Some("session") {
             return None;
         }
-        header.get("id").and_then(|v| v.as_str()).map(|s| s.to_string())
+        header
+            .get("id")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
     }
 
     /// Extract a title from message content (first ~50 chars of text).

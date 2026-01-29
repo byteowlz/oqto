@@ -1,14 +1,14 @@
 //! Workspace Pi session API handlers.
 
+use axum::Json;
+use axum::extract::ws::WebSocketUpgrade;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::Response;
-use axum::Json;
-use axum::extract::ws::WebSocketUpgrade;
 use serde::Deserialize;
 
 use crate::api::handlers::validate_workspace_path;
-use crate::api::main_chat_pi::{pi_state_to_response, PiStateResponse};
+use crate::api::main_chat_pi::{PiStateResponse, pi_state_to_response};
 use crate::api::{ApiError, ApiResult, AppState};
 
 #[derive(Debug, Deserialize)]
@@ -22,7 +22,9 @@ pub struct WorkspaceSessionQuery {
     pub session_id: Option<String>,
 }
 
-fn get_workspace_pi_service(state: &AppState) -> ApiResult<&crate::pi_workspace::WorkspacePiService> {
+fn get_workspace_pi_service(
+    state: &AppState,
+) -> ApiResult<&crate::pi_workspace::WorkspacePiService> {
     state
         .workspace_pi
         .as_ref()

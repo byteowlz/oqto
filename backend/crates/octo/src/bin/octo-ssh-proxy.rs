@@ -275,7 +275,7 @@ fn handle_client(
                 if let Some(ref mut upstream) = upstream {
                     write_message(upstream, &request)?;
                     let response = read_message(upstream)?;
-                    
+
                     // TODO: Filter keys based on policy.allowed_keys
                     write_message(&mut client, &response)?;
                 } else {
@@ -287,7 +287,7 @@ fn handle_client(
 
             ssh_agent::SSH_AGENTC_SIGN_REQUEST => {
                 // Sign request - this is where we enforce policy
-                
+
                 // Extract key blob and data from request
                 // Format: type(1) | key_blob_len(4) | key_blob | data_len(4) | data | flags(4)
                 if request.len() < 9 {
@@ -313,7 +313,7 @@ fn handle_client(
                     PolicyResult::Prompt => {
                         // Request approval synchronously using tokio runtime
                         let approved = runtime.block_on(policy.request_approval(host, None))?;
-                        
+
                         if !approved {
                             warn!("User denied SSH to {}", host);
                             send_failure(&mut client)?;
@@ -369,7 +369,7 @@ fn main() -> Result<()> {
         let content = std::fs::read_to_string(config_path)
             .with_context(|| format!("Failed to read config: {:?}", config_path))?;
         let sandbox: SandboxConfig = toml::from_str(&content)?;
-        
+
         // Get SSH config from profile
         sandbox
             .profiles
@@ -441,7 +441,9 @@ fn main() -> Result<()> {
                 let dry_run = args.dry_run;
 
                 std::thread::spawn(move || {
-                    if let Err(e) = handle_client(client, &upstream, &policy_clone, &handle_clone, dry_run) {
+                    if let Err(e) =
+                        handle_client(client, &upstream, &policy_clone, &handle_clone, dry_run)
+                    {
                         error!("Client error: {}", e);
                     }
                 });

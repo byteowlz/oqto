@@ -195,6 +195,18 @@ command_exists() {
     command -v "$1" &>/dev/null
 }
 
+# Package manager update flags (avoid repeated updates)
+APT_UPDATED="false"
+
+apt_update_once() {
+    local force="${1:-}"
+    if [[ "$APT_UPDATED" != "true" || "$force" == "force" ]]; then
+        log_info "Updating apt package index..."
+        sudo apt-get update
+        APT_UPDATED="true"
+    fi
+}
+
 # ==============================================================================
 # OS Detection
 # ==============================================================================
@@ -384,7 +396,8 @@ install_ttyd() {
                     ;;
                 debian|ubuntu|pop|linuxmint)
                     log_info "Installing ttyd via apt..."
-                    sudo apt-get update && sudo apt-get install -y ttyd
+                    apt_update_once
+                    sudo apt-get install -y ttyd
                     ;;
                 fedora|centos|rhel|rocky|alma)
                     log_info "Installing ttyd via dnf..."
@@ -711,7 +724,7 @@ install_shell_tools_debian() {
     
     if [[ ${#apt_pkgs[@]} -gt 0 ]]; then
         log_info "Installing via apt: ${apt_pkgs[*]}"
-        sudo apt-get update
+        apt_update_once
         sudo apt-get install -y "${apt_pkgs[@]}"
     fi
     
@@ -1153,7 +1166,7 @@ install_caddy() {
                     sudo apt-get install -y debian-keyring debian-archive-keyring apt-transport-https curl
                     curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | sudo gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
                     curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | sudo tee /etc/apt/sources.list.d/caddy-stable.list
-                    sudo apt-get update
+                    apt_update_once force
                     sudo apt-get install -y caddy
                     ;;
                 fedora)
@@ -1551,6 +1564,33 @@ generate_password_hash() {
     fi
 }
 
+write_skdlr_agent_config() {
+    local skdlr_config="/etc/octo/skdlr-agent.toml"
+    local sandbox_config="/etc/octo/sandbox.toml"
+
+    log_info "Writing skdlr agent config to $skdlr_config"
+
+    sudo mkdir -p /etc/octo
+
+    # Ensure sandbox config exists for octo-sandbox
+    if [[ ! -f "$sandbox_config" ]]; then
+        log_info "Creating default sandbox config at $sandbox_config"
+        sudo cp "$SCRIPT_DIR/backend/crates/octo/examples/sandbox.toml" "$sandbox_config"
+        sudo chmod 644 "$sandbox_config"
+    fi
+
+    sudo tee "$skdlr_config" >/dev/null << 'EOF'
+# skdlr config for Octo sandboxed agents
+# Forces all scheduled commands through octo-sandbox
+
+[executor]
+wrapper = "octo-sandbox"
+wrapper_args = ["--config", "/etc/octo/sandbox.toml", "--workspace", "{workdir}", "--"]
+EOF
+
+    sudo chmod 644 "$skdlr_config"
+}
+
 generate_config() {
     log_step "Generating configuration"
     
@@ -1944,6 +1984,11 @@ EOF
         fi
     fi
     
+    # Write skdlr agent wrapper config for sandboxed schedules
+    if [[ "$SELECTED_BACKEND_MODE" == "local" ]]; then
+        write_skdlr_agent_config
+    fi
+
     # Save admin credentials for post-setup user creation
     if [[ "$PRODUCTION_MODE" == "true" && -n "$ADMIN_USERNAME" ]]; then
         local creds_file="$OCTO_CONFIG_DIR/.admin_setup"
@@ -2065,6 +2110,10 @@ deny_read = [
     "~/.aws",
     "~/.config/gcloud",
     "~/.kube",
+    "/usr/bin/systemctl",
+    "/bin/systemctl",
+    "/usr/bin/systemd-run",
+    "/bin/systemd-run",
 ]
 
 # Paths to allow write access (in addition to workspace)
@@ -2100,6 +2149,27 @@ EOF
     sudo chmod 644 "$sandbox_config"
     sudo chown root:root "$sandbox_config"
     log_success "System sandbox config installed: $sandbox_config"
+
+    # 6. Install skdlr agent config (forces octo-sandbox wrapper)
+    log_info "Installing skdlr agent configuration..."
+    local skdlr_config="/etc/octo/skdlr-agent.toml"
+
+    sudo tee "$skdlr_config" > /dev/null << 'EOF'
+# Octo skdlr configuration for agent scheduling
+# This file is owned by root and enforces octo-sandbox for scheduled runs.
+
+[executor]
+wrapper = "octo-sandbox"
+wrapper_args = [
+    "--config", "/etc/octo/sandbox.toml",
+    "--workspace", "{workdir}",
+    "--"
+]
+EOF
+
+    sudo chmod 644 "$skdlr_config"
+    sudo chown root:root "$skdlr_config"
+    log_success "Skdlr agent config installed: $skdlr_config"
     
     echo
     log_success "Linux user isolation configured successfully"
@@ -2220,7 +2290,7 @@ install_security_packages() {
     case "$OS_DISTRO" in
         debian|ubuntu|pop|linuxmint)
             log_info "Installing security packages via apt..."
-            sudo apt-get update
+            apt_update_once
             sudo apt-get install -y \
                 ufw \
                 fail2ban \

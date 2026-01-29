@@ -34,8 +34,8 @@ use zip::ZipWriter;
 use zip::write::SimpleFileOptions;
 
 use crate::AppState;
-use crate::error::FileServerError;
 use crate::Config;
+use crate::error::FileServerError;
 
 // Lazy-loaded syntax highlighting assets
 static SYNTAX_SET: LazyLock<SyntaxSet> = LazyLock::new(SyntaxSet::load_defaults_newlines);
@@ -1626,14 +1626,12 @@ fn enforce_zip_limits(
         }
 
         if path.is_dir() {
-            for entry in WalkDir::new(path).into_iter().filter_map(|entry| entry.ok()) {
+            for entry in WalkDir::new(path)
+                .into_iter()
+                .filter_map(|entry| entry.ok())
+            {
                 if entry.file_type().is_file() {
-                    track_zip_entry(
-                        entry.path(),
-                        &mut total_bytes,
-                        &mut total_entries,
-                        limits,
-                    )?;
+                    track_zip_entry(entry.path(), &mut total_bytes, &mut total_entries, limits)?;
                 }
             }
             continue;

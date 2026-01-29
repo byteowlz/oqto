@@ -110,7 +110,7 @@ impl UserSldrManager {
 
     async fn wait_for_port_ready(port: u16) -> bool {
         use tokio::net::TcpStream;
-        use tokio::time::{sleep, Duration, Instant};
+        use tokio::time::{Duration, Instant, sleep};
 
         let deadline = Instant::now() + Duration::from_secs(3);
         while Instant::now() < deadline {
@@ -122,17 +122,9 @@ impl UserSldrManager {
         false
     }
 
-    async fn spawn_sldr(
-        &self,
-        client: &RunnerClient,
-        process_id: &str,
-        port: u16,
-    ) -> Result<()> {
+    async fn spawn_sldr(&self, client: &RunnerClient, process_id: &str, port: u16) -> Result<()> {
         let mut env = std::collections::HashMap::new();
-        env.insert(
-            "SLDR_SERVER_ADDR".to_string(),
-            format!("127.0.0.1:{port}"),
-        );
+        env.insert("SLDR_SERVER_ADDR".to_string(), format!("127.0.0.1:{port}"));
 
         client
             .spawn_process(
@@ -170,7 +162,9 @@ impl UserSldrManager {
             info!("sldr ready on port {} for user {}", port, user_id);
         }
 
-        state.instances.insert(user_id.to_string(), UserSldrInstance { port });
+        state
+            .instances
+            .insert(user_id.to_string(), UserSldrInstance { port });
         Ok(port)
     }
 }

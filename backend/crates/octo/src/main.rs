@@ -2291,8 +2291,9 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
             "Main Chat Pi service initialized (executable: {})",
             ctx.config.pi.executable
         );
-        let workspace_pi_service =
-            Arc::new(crate::pi_workspace::WorkspacePiService::new(workspace_pi_config));
+        let workspace_pi_service = Arc::new(crate::pi_workspace::WorkspacePiService::new(
+            workspace_pi_config,
+        ));
         workspace_pi_service.start_cleanup_task();
         state = state
             .with_main_chat_pi_arc(Arc::clone(&main_chat_pi_service))

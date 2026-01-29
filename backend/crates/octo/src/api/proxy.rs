@@ -7,11 +7,11 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use futures::{SinkExt, StreamExt};
-use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::client::legacy::Client;
+use hyper_util::client::legacy::connect::HttpConnector;
 use log::{debug, error, warn};
-use tokio_tungstenite::connect_async;
 use tokio_tungstenite::WebSocketStream;
+use tokio_tungstenite::connect_async;
 
 use std::path::Path as StdPath;
 use std::time::Duration;
@@ -29,37 +29,55 @@ enum TtydConnection {
 
 impl TtydConnection {
     /// Split the connection into write and read halves
-    fn split(
-        self,
-    ) -> (
-        TtydConnectionWrite,
-        TtydConnectionRead,
-    ) {
+    fn split(self) -> (TtydConnectionWrite, TtydConnectionRead) {
         match self {
             TtydConnection::Unix(ws) => {
                 let (write, read) = ws.split();
-                (TtydConnectionWrite::Unix(write), TtydConnectionRead::Unix(read))
+                (
+                    TtydConnectionWrite::Unix(write),
+                    TtydConnectionRead::Unix(read),
+                )
             }
             TtydConnection::Tcp(ws) => {
                 let (write, read) = ws.split();
-                (TtydConnectionWrite::Tcp(write), TtydConnectionRead::Tcp(read))
+                (
+                    TtydConnectionWrite::Tcp(write),
+                    TtydConnectionRead::Tcp(read),
+                )
             }
         }
     }
 }
 
 enum TtydConnectionWrite {
-    Unix(futures::stream::SplitSink<WebSocketStream<tokio::net::UnixStream>, tokio_tungstenite::tungstenite::Message>),
-    Tcp(futures::stream::SplitSink<WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>, tokio_tungstenite::tungstenite::Message>),
+    Unix(
+        futures::stream::SplitSink<
+            WebSocketStream<tokio::net::UnixStream>,
+            tokio_tungstenite::tungstenite::Message,
+        >,
+    ),
+    Tcp(
+        futures::stream::SplitSink<
+            WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
+            tokio_tungstenite::tungstenite::Message,
+        >,
+    ),
 }
 
 enum TtydConnectionRead {
     Unix(futures::stream::SplitStream<WebSocketStream<tokio::net::UnixStream>>),
-    Tcp(futures::stream::SplitStream<WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>>),
+    Tcp(
+        futures::stream::SplitStream<
+            WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
+        >,
+    ),
 }
 
 impl TtydConnectionWrite {
-    async fn send(&mut self, msg: tokio_tungstenite::tungstenite::Message) -> Result<(), tokio_tungstenite::tungstenite::Error> {
+    async fn send(
+        &mut self,
+        msg: tokio_tungstenite::tungstenite::Message,
+    ) -> Result<(), tokio_tungstenite::tungstenite::Error> {
         match self {
             TtydConnectionWrite::Unix(w) => w.send(msg).await,
             TtydConnectionWrite::Tcp(w) => w.send(msg).await,
@@ -68,7 +86,11 @@ impl TtydConnectionWrite {
 }
 
 impl TtydConnectionRead {
-    async fn next(&mut self) -> Option<Result<tokio_tungstenite::tungstenite::Message, tokio_tungstenite::tungstenite::Error>> {
+    async fn next(
+        &mut self,
+    ) -> Option<
+        Result<tokio_tungstenite::tungstenite::Message, tokio_tungstenite::tungstenite::Error>,
+    > {
         match self {
             TtydConnectionRead::Unix(r) => r.next().await,
             TtydConnectionRead::Tcp(r) => r.next().await,

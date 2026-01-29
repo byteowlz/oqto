@@ -828,7 +828,10 @@ pub async fn update_pi_session(
             .update_session_title(user.id(), &session_id, &title)
             .map_err(|e| ApiError::internal(format!("Failed to update Pi session: {}", e)))?;
 
-        info!("Updated Pi session title: session_id={}, title={}", session_id, title);
+        info!(
+            "Updated Pi session title: session_id={}, title={}",
+            session_id, title
+        );
         Ok(Json(session))
     } else {
         // No updates requested, return current session info

@@ -9,13 +9,13 @@ mod handlers;
 mod main_chat;
 mod main_chat_files;
 mod main_chat_pi;
-mod workspace_pi;
 mod onboarding_handlers;
 mod proxy;
 mod routes;
 mod state;
 mod test_harness;
 pub mod ui_control;
+mod workspace_pi;
 
 // Re-export error types for external use
 #[allow(unused_imports)]

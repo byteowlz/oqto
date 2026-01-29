@@ -302,7 +302,7 @@ enum UserCommand {
     ///
     /// This creates an admin user directly in the database without requiring
     /// an invite code. Use this for initial setup of a production instance.
-    /// 
+    ///
     /// In multi-user mode, also creates the Linux user and sets up the runner.
     Bootstrap {
         /// Admin username
@@ -1943,19 +1943,27 @@ async fn handle_user(command: UserCommand, json: bool) -> Result<()> {
             no_runner,
         } => {
             let linux_username = linux_user.as_deref().unwrap_or(&username);
-            
+
             // Create Linux user if not skipped
             if !no_linux_user {
                 create_linux_user(linux_username, json)?;
             }
-            
+
             // Setup runner if not skipped
             if !no_runner && !no_linux_user {
                 setup_runner_for_user(linux_username, json)?;
             }
-            
+
             // Create database user
-            bootstrap_admin_user(&username, &email, password.as_deref(), display_name.as_deref(), database.as_deref(), json).await?;
+            bootstrap_admin_user(
+                &username,
+                &email,
+                password.as_deref(),
+                display_name.as_deref(),
+                database.as_deref(),
+                json,
+            )
+            .await?;
         }
     }
     Ok(())
@@ -1983,30 +1991,30 @@ async fn bootstrap_admin_user(
             if json {
                 anyhow::bail!("Password is required in JSON mode. Use --password");
             }
-            
+
             // Simple password prompt without rpassword dependency
             eprint!("Enter admin password: ");
             std::io::stderr().flush()?;
-            
+
             let mut password = String::new();
             std::io::stdin().read_line(&mut password)?;
             let password = password.trim().to_string();
-            
+
             if password.len() < 8 {
                 anyhow::bail!("Password must be at least 8 characters");
             }
-            
+
             eprint!("Confirm password: ");
             std::io::stderr().flush()?;
-            
+
             let mut confirm = String::new();
             std::io::stdin().read_line(&mut confirm)?;
             let confirm = confirm.trim();
-            
+
             if password != confirm {
                 anyhow::bail!("Passwords do not match");
             }
-            
+
             password
         }
     };
@@ -2017,15 +2025,15 @@ async fn bootstrap_admin_user(
     }
 
     // Hash the password
-    let password_hash = bcrypt::hash(&password, bcrypt::DEFAULT_COST)
-        .context("Failed to hash password")?;
+    let password_hash =
+        bcrypt::hash(&password, bcrypt::DEFAULT_COST).context("Failed to hash password")?;
 
     // Get database path from option or default
     let db_path = match database_path {
         Some(p) => std::path::PathBuf::from(p),
         None => get_database_path()?,
     };
-    
+
     if !json {
         eprintln!("Using database: {}", db_path.display());
     }
@@ -2056,10 +2064,13 @@ async fn bootstrap_admin_user(
         .unwrap_or((0,));
 
     if user_count.0 > 0 && !json {
-        eprintln!("Warning: {} user(s) already exist in the database.", user_count.0);
+        eprintln!(
+            "Warning: {} user(s) already exist in the database.",
+            user_count.0
+        );
         eprint!("Continue anyway? [y/N] ");
         std::io::stderr().flush()?;
-        
+
         let mut input = String::new();
         std::io::stdin().read_line(&mut input)?;
         if !input.trim().eq_ignore_ascii_case("y") {
@@ -2069,9 +2080,7 @@ async fn bootstrap_admin_user(
     }
 
     // Check if username already exists
-    let existing: Option<(String,)> = sqlx::query_as(
-        "SELECT id FROM users WHERE username = ?1"
-    )
+    let existing: Option<(String,)> = sqlx::query_as("SELECT id FROM users WHERE username = ?1")
         .bind(username)
         .fetch_optional(&pool)
         .await?;
@@ -2081,9 +2090,7 @@ async fn bootstrap_admin_user(
     }
 
     // Check if email already exists
-    let existing_email: Option<(String,)> = sqlx::query_as(
-        "SELECT id FROM users WHERE email = ?1"
-    )
+    let existing_email: Option<(String,)> = sqlx::query_as("SELECT id FROM users WHERE email = ?1")
         .bind(email)
         .fetch_optional(&pool)
         .await?;
@@ -2154,30 +2161,30 @@ fn get_database_path() -> Result<std::path::PathBuf> {
     let data_dir = dirs::data_dir()
         .map(|d| d.join("octo"))
         .unwrap_or_else(|| std::path::PathBuf::from("."));
-    
+
     let db_path = data_dir.join("octo.db");
-    
+
     // If database exists, use it
     if db_path.exists() {
         return Ok(db_path);
     }
-    
+
     // Try config dir
     let config_dir = dirs::config_dir()
         .map(|d| d.join("octo"))
         .unwrap_or_else(|| std::path::PathBuf::from("."));
-    
+
     let config_db = config_dir.join("octo.db");
     if config_db.exists() {
         return Ok(config_db);
     }
-    
+
     // Try current directory
     let local_db = std::path::PathBuf::from("octo.db");
     if local_db.exists() {
         return Ok(local_db);
     }
-    
+
     // Return default path (will be created)
     // Create data directory if it doesn't exist
     std::fs::create_dir_all(&data_dir).ok();

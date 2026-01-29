@@ -2,14 +2,14 @@
 
 use crate::prompts::{PromptAction, PromptManager, PromptMessage, PromptRequest};
 use axum::{
+    Json, Router,
     extract::{
-        ws::{Message, WebSocket},
         Path, State, WebSocketUpgrade,
+        ws::{Message, WebSocket},
     },
     http::StatusCode,
     response::IntoResponse,
     routing::{get, post},
-    Json, Router,
 };
 use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
@@ -42,10 +42,7 @@ async fn list_prompts(State(state): State<PromptState>) -> impl IntoResponse {
 }
 
 /// Get a specific prompt.
-async fn get_prompt(
-    State(state): State<PromptState>,
-    Path(id): Path<String>,
-) -> impl IntoResponse {
+async fn get_prompt(State(state): State<PromptState>, Path(id): Path<String>) -> impl IntoResponse {
     match state.manager.get(&id).await {
         Some(prompt) => Ok(Json(prompt)),
         None => Err((StatusCode::NOT_FOUND, "Prompt not found")),
@@ -105,15 +102,21 @@ async fn create_prompt(
     );
 
     match state.manager.request(req).await {
-        Ok(response) => (StatusCode::OK, Json(serde_json::json!({
-            "success": true,
-            "action": response.action,
-            "responded_at": response.responded_at,
-        }))),
-        Err(e) => (StatusCode::REQUEST_TIMEOUT, Json(serde_json::json!({
-            "success": false,
-            "error": e.to_string(),
-        }))),
+        Ok(response) => (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "success": true,
+                "action": response.action,
+                "responded_at": response.responded_at,
+            })),
+        ),
+        Err(e) => (
+            StatusCode::REQUEST_TIMEOUT,
+            Json(serde_json::json!({
+                "success": false,
+                "error": e.to_string(),
+            })),
+        ),
     }
 }
 

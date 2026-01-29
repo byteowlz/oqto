@@ -3,12 +3,12 @@
 use crate::prompts::models::{
     Prompt, PromptAction, PromptMessage, PromptRequest, PromptResponse, PromptStatus,
 };
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use log::{debug, info, warn};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{broadcast, oneshot, RwLock};
-use tokio::time::{interval, Duration};
+use tokio::sync::{RwLock, broadcast, oneshot};
+use tokio::time::{Duration, interval};
 
 /// Channel capacity for prompt broadcasts.
 const BROADCAST_CAPACITY: usize = 64;
@@ -154,9 +154,9 @@ impl PromptManager {
         }
 
         // Broadcast to connected clients
-        let _ = self
-            .broadcast_tx
-            .send(PromptMessage::Created { prompt: prompt.clone() });
+        let _ = self.broadcast_tx.send(PromptMessage::Created {
+            prompt: prompt.clone(),
+        });
 
         // Show desktop notification if enabled and no UI connected
         if self.desktop_notifications && self.broadcast_tx.receiver_count() == 0 {
@@ -168,10 +168,7 @@ impl PromptManager {
 
         match result {
             Ok(Ok(response)) => {
-                info!(
-                    "Prompt {} responded: {:?}",
-                    prompt_id, response.action
-                );
+                info!("Prompt {} responded: {:?}", prompt_id, response.action);
 
                 // Cache session approvals
                 if response.action == PromptAction::AllowSession {

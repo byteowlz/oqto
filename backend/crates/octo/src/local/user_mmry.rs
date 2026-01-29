@@ -158,10 +158,7 @@ impl UserMmryManager {
         let output = match output {
             Ok(o) => o,
             Err(e) => {
-                debug!(
-                    "Failed to check mmry status for {}: {}",
-                    linux_username, e
-                );
+                debug!("Failed to check mmry status for {}: {}", linux_username, e);
                 return None;
             }
         };

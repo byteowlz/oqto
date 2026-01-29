@@ -1542,8 +1542,14 @@ export function DashboardApp() {
 												</p>
 											</div>
 											<div className="text-xs text-muted-foreground text-right">
-												<div>{humanizeCron(schedule.schedule, locale)}</div>
-												<div className="opacity-70">{schedule.schedule}</div>
+												{schedule.schedule.trim().split(/\s+/).length === 5 ? (
+													<>
+														<div>{humanizeCron(schedule.schedule, locale)}</div>
+														<div className="opacity-70">{schedule.schedule}</div>
+													</>
+												) : (
+													<div>Once: {schedule.schedule}</div>
+												)}
 												{schedule.next_run && (
 													<div>Next: {schedule.next_run}</div>
 												)}

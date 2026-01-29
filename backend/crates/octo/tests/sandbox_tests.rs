@@ -53,9 +53,11 @@ mod sandbox_profiles {
         assert!(profile.deny_read.contains(&"~/.aws".to_string()));
 
         // Should protect sandbox config from modification
-        assert!(profile
-            .deny_write
-            .contains(&"~/.config/octo/sandbox.toml".to_string()));
+        assert!(
+            profile
+                .deny_write
+                .contains(&"~/.config/octo/sandbox.toml".to_string())
+        );
 
         // Should have SSH proxy enabled with common hosts
         let ssh = profile.ssh.as_ref().expect("SSH config should exist");
@@ -138,9 +140,10 @@ prompt_unknown = true
         assert!(custom.isolate_network);
 
         let ssh = custom.ssh.as_ref().expect("SSH config should exist");
-        assert!(ssh
-            .allowed_hosts
-            .contains(&"internal.company.com".to_string()));
+        assert!(
+            ssh.allowed_hosts
+                .contains(&"internal.company.com".to_string())
+        );
     }
 
     #[test]
@@ -162,9 +165,13 @@ timeout_secs = 120
 "~/.docker/config.json" = "auto"
 "#;
 
-        let config: SandboxConfigFile = toml::from_str(toml_str).expect("Should parse guard config");
+        let config: SandboxConfigFile =
+            toml::from_str(toml_str).expect("Should parse guard config");
 
-        let profile = config.profiles.get("guarded").expect("Profile should exist");
+        let profile = config
+            .profiles
+            .get("guarded")
+            .expect("Profile should exist");
         let guard = profile.guard.as_ref().expect("Guard config should exist");
 
         assert!(guard.enabled);
@@ -209,7 +216,11 @@ log_requests = true
             .expect("Network config should exist");
 
         assert_eq!(network.mode, NetworkMode::Proxy);
-        assert!(network.allow_domains.contains(&"api.github.com".to_string()));
+        assert!(
+            network
+                .allow_domains
+                .contains(&"api.github.com".to_string())
+        );
         assert!(network.log_requests);
     }
 }
@@ -490,10 +501,7 @@ mod guard_policy {
             config.policy.get("~/.docker/config.json"),
             Some(&GuardPolicy::Auto)
         );
-        assert_eq!(
-            config.policy.get("~/.secrets/*"),
-            Some(&GuardPolicy::Deny)
-        );
+        assert_eq!(config.policy.get("~/.secrets/*"), Some(&GuardPolicy::Deny));
     }
 
     #[test]
@@ -528,10 +536,7 @@ mod guard_policy {
         assert!(toml_str.contains("prompt"));
 
         let restored: GuardConfig = toml::from_str(&toml_str).expect("Should deserialize");
-        assert_eq!(
-            restored.policy.get("test_path"),
-            Some(&GuardPolicy::Prompt)
-        );
+        assert_eq!(restored.policy.get("test_path"), Some(&GuardPolicy::Prompt));
     }
 }
 
@@ -740,11 +745,7 @@ mod path_expansion {
         // No trailing slashes (except root)
         for path in &profile.deny_read {
             if path != "/" {
-                assert!(
-                    !path.ends_with('/'),
-                    "Path should not end with /: {}",
-                    path
-                );
+                assert!(!path.ends_with('/'), "Path should not end with /: {}", path);
             }
         }
     }
@@ -833,12 +834,16 @@ desktop_notifications = true
 auto_deny_timeout_secs = 60
 "#;
 
-        let config: SandboxConfigFile = toml::from_str(toml_str).expect("Should parse complex profile");
+        let config: SandboxConfigFile =
+            toml::from_str(toml_str).expect("Should parse complex profile");
 
         assert!(config.enabled);
         assert_eq!(config.profile, "enterprise");
 
-        let profile = config.profiles.get("enterprise").expect("Profile should exist");
+        let profile = config
+            .profiles
+            .get("enterprise")
+            .expect("Profile should exist");
 
         // Verify all sections parsed correctly
         assert!(profile.deny_read.contains(&"~/.vault".to_string()));
@@ -849,7 +854,10 @@ auto_deny_timeout_secs = 60
         assert_eq!(guard.timeout_secs, 90);
 
         let ssh = profile.ssh.as_ref().expect("SSH should exist");
-        assert!(ssh.allowed_hosts.contains(&"gitlab.company.internal".to_string()));
+        assert!(
+            ssh.allowed_hosts
+                .contains(&"gitlab.company.internal".to_string())
+        );
 
         let network = profile.network.as_ref().expect("Network should exist");
         assert_eq!(network.mode, NetworkMode::Proxy);
@@ -894,9 +902,11 @@ mod security_boundaries {
         let profile = SandboxProfile::development();
 
         // The sandbox config file should always be protected from modification
-        assert!(profile
-            .deny_write
-            .contains(&"~/.config/octo/sandbox.toml".to_string()));
+        assert!(
+            profile
+                .deny_write
+                .contains(&"~/.config/octo/sandbox.toml".to_string())
+        );
     }
 
     #[test]

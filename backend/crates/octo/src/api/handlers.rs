@@ -4055,28 +4055,58 @@ fn parse_skdlr_list(output: &str) -> Vec<SchedulerEntry> {
         }
 
         let parts: Vec<&str> = trimmed.split_whitespace().collect();
-        if parts.len() < 3 {
+        if parts.len() < 4 {
             continue;
         }
 
-        let (name, status, schedule, command) = if parts.len() >= 7 {
-            (
-                parts[0].to_string(),
-                parts[1].to_string(),
-                parts[2..7].join(" "),
-                if parts.len() > 7 {
-                    parts[7..].join(" ")
+        let name = parts[0].to_string();
+        let status = parts[1].to_string();
+        let sched_type = parts[2];
+
+        let (schedule, command) = match sched_type {
+            "cron" => {
+                if parts.len() < 8 {
+                    (parts[3..].join(" "), String::new())
                 } else {
-                    String::new()
-                },
-            )
-        } else {
-            (
-                parts[0].to_string(),
-                parts[1].to_string(),
-                parts[2..].join(" "),
-                String::new(),
-            )
+                    (
+                        parts[3..8].join(" "),
+                        if parts.len() > 8 {
+                            parts[8..].join(" ")
+                        } else {
+                            String::new()
+                        },
+                    )
+                }
+            }
+            "once" => {
+                if parts.len() < 6 {
+                    (parts[3..].join(" "), String::new())
+                } else {
+                    (
+                        parts[3..6].join(" "),
+                        if parts.len() > 6 {
+                            parts[6..].join(" ")
+                        } else {
+                            String::new()
+                        },
+                    )
+                }
+            }
+            _ => {
+                // Fallback for unknown format
+                if parts.len() >= 7 {
+                    (
+                        parts[2..7].join(" "),
+                        if parts.len() > 7 {
+                            parts[7..].join(" ")
+                        } else {
+                            String::new()
+                        },
+                    )
+                } else {
+                    (parts[2..].join(" "), String::new())
+                }
+            }
         };
 
         schedules.push(SchedulerEntry {

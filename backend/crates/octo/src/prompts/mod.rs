@@ -38,7 +38,7 @@ mod routes;
 
 pub use manager::PromptManager;
 pub use models::{
-    Prompt, PromptAction, PromptMessage, PromptRequest, PromptResponse, PromptSource,
-    PromptStatus, PromptType,
+    Prompt, PromptAction, PromptMessage, PromptRequest, PromptResponse, PromptSource, PromptStatus,
+    PromptType,
 };
 pub use routes::prompt_routes;

@@ -266,6 +266,10 @@ impl SandboxProfile {
                 "~/.ssh".to_string(),
                 "~/.gnupg".to_string(),
                 "~/.aws".to_string(),
+                "/usr/bin/systemctl".to_string(),
+                "/bin/systemctl".to_string(),
+                "/usr/bin/systemd-run".to_string(),
+                "/bin/systemd-run".to_string(),
             ],
             allow_write: vec!["/tmp".to_string()],
             deny_write: vec![],
@@ -287,6 +291,10 @@ impl SandboxProfile {
                 "~/.ssh".to_string(),
                 "~/.gnupg".to_string(),
                 "~/.aws".to_string(),
+                "/usr/bin/systemctl".to_string(),
+                "/bin/systemctl".to_string(),
+                "/usr/bin/systemd-run".to_string(),
+                "/bin/systemd-run".to_string(),
             ],
             allow_write: vec![
                 // Package managers / toolchains
@@ -316,10 +324,7 @@ impl SandboxProfile {
             guard: None,
             ssh: Some(SshProxyConfig {
                 enabled: true,
-                allowed_hosts: vec![
-                    "github.com".to_string(),
-                    "gitlab.com".to_string(),
-                ],
+                allowed_hosts: vec!["github.com".to_string(), "gitlab.com".to_string()],
                 allowed_keys: vec![],
                 prompt_unknown: true,
                 log_connections: true,
@@ -344,6 +349,10 @@ impl SandboxProfile {
                 "~/.gnupg".to_string(),
                 "~/.aws".to_string(),
                 "~/.config".to_string(),
+                "/usr/bin/systemctl".to_string(),
+                "/bin/systemctl".to_string(),
+                "/usr/bin/systemd-run".to_string(),
+                "/bin/systemd-run".to_string(),
             ],
             allow_write: vec!["/tmp".to_string()],
             deny_write: vec![],
@@ -1224,9 +1233,11 @@ deny_write = []
         let config: SandboxConfig = file.into();
 
         // sandbox.toml should always be in deny_write, even if not specified
-        assert!(config
-            .deny_write
-            .contains(&"~/.config/octo/sandbox.toml".to_string()));
+        assert!(
+            config
+                .deny_write
+                .contains(&"~/.config/octo/sandbox.toml".to_string())
+        );
     }
 
     #[test]
@@ -1271,7 +1282,7 @@ timeout_secs = 120
         let config: SandboxConfig = file.into();
 
         assert_eq!(config.profile, "guarded");
-        
+
         // Check guard config was parsed
         let profile = config.profiles.get("guarded").unwrap();
         let guard = profile.guard.as_ref().unwrap();
@@ -1279,7 +1290,10 @@ timeout_secs = 120
         assert_eq!(guard.paths.len(), 2);
         assert!(guard.paths.contains(&"~/.kube".to_string()));
         assert_eq!(guard.timeout_secs, 120);
-        assert_eq!(guard.policy.get("~/.kube/config"), Some(&GuardPolicy::Prompt));
+        assert_eq!(
+            guard.policy.get("~/.kube/config"),
+            Some(&GuardPolicy::Prompt)
+        );
         assert_eq!(guard.policy.get("~/.docker/*"), Some(&GuardPolicy::Auto));
     }
 

@@ -392,10 +392,7 @@ impl ProcessManager {
             .or_default()
             .push(handle);
 
-        info!(
-            "ttyd spawned with PID {} on socket {:?}",
-            pid, socket_path
-        );
+        info!("ttyd spawned with PID {} on socket {:?}", pid, socket_path);
         Ok(pid)
     }
 
@@ -1162,7 +1159,10 @@ mod tests {
 
         // Find the --hostname argument
         let hostname_idx = args.iter().position(|a| a == "--hostname");
-        assert!(hostname_idx.is_some(), "opencode args must include --hostname");
+        assert!(
+            hostname_idx.is_some(),
+            "opencode args must include --hostname"
+        );
 
         let bind_addr = &args[hostname_idx.unwrap() + 1];
         assert_eq!(
@@ -1217,7 +1217,10 @@ mod tests {
 
         // Find the --interface argument
         let interface_idx = args.iter().position(|a| a == "--interface");
-        assert!(interface_idx.is_some(), "ttyd args must include --interface");
+        assert!(
+            interface_idx.is_some(),
+            "ttyd args must include --interface"
+        );
 
         let bind_addr = &args[interface_idx.unwrap() + 1];
         assert_eq!(

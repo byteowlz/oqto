@@ -1448,12 +1448,9 @@ impl Runner {
         data_dir.join("opencode")
     }
 
-    async fn list_opencode_sessions(
-        &self,
-        req: ListOpencodeSessionsRequest,
-    ) -> RunnerResponse {
+    async fn list_opencode_sessions(&self, req: ListOpencodeSessionsRequest) -> RunnerResponse {
         let opencode_dir = self.opencode_data_dir();
-        
+
         match octo::history::list_sessions_from_dir(&opencode_dir) {
             Ok(sessions) => {
                 let mut filtered: Vec<_> = sessions
@@ -1505,7 +1502,7 @@ impl Runner {
 
     async fn get_opencode_session(&self, req: GetOpencodeSessionRequest) -> RunnerResponse {
         let opencode_dir = self.opencode_data_dir();
-        
+
         match octo::history::get_session_from_dir(&req.session_id, &opencode_dir) {
             Ok(Some(s)) => RunnerResponse::OpencodeSession(OpencodeSessionResponse {
                 session: Some(OpencodeSessionInfo {
@@ -1534,7 +1531,7 @@ impl Runner {
         req: GetOpencodeSessionMessagesRequest,
     ) -> RunnerResponse {
         let opencode_dir = self.opencode_data_dir();
-        
+
         let messages_result = if req.render {
             // Use blocking task for rendering since it may do async markdown processing
             let session_id = req.session_id.clone();
@@ -1602,14 +1599,12 @@ impl Runner {
         }
     }
 
-    async fn update_opencode_session(
-        &self,
-        req: UpdateOpencodeSessionRequest,
-    ) -> RunnerResponse {
+    async fn update_opencode_session(&self, req: UpdateOpencodeSessionRequest) -> RunnerResponse {
         let opencode_dir = self.opencode_data_dir();
-        
+
         if let Some(title) = req.title {
-            match octo::history::update_session_title_in_dir(&req.session_id, &title, &opencode_dir) {
+            match octo::history::update_session_title_in_dir(&req.session_id, &title, &opencode_dir)
+            {
                 Ok(s) => RunnerResponse::OpencodeSessionUpdated(OpencodeSessionUpdatedResponse {
                     session: OpencodeSessionInfo {
                         id: s.id,
@@ -2037,7 +2032,10 @@ mod tests {
         let args = build_opencode_args(4096, None);
 
         let hostname_idx = args.iter().position(|a| a == "--hostname");
-        assert!(hostname_idx.is_some(), "opencode args must include --hostname");
+        assert!(
+            hostname_idx.is_some(),
+            "opencode args must include --hostname"
+        );
 
         let bind_addr = &args[hostname_idx.unwrap() + 1];
         assert_eq!(
@@ -2045,7 +2043,10 @@ mod tests {
             "opencode must bind to 127.0.0.1, not {}. Binding to 0.0.0.0 exposes the service to the network!",
             bind_addr
         );
-        assert_ne!(bind_addr, "0.0.0.0", "SECURITY: opencode must NOT bind to 0.0.0.0");
+        assert_ne!(
+            bind_addr, "0.0.0.0",
+            "SECURITY: opencode must NOT bind to 0.0.0.0"
+        );
     }
 
     #[test]
@@ -2073,7 +2074,10 @@ mod tests {
             "fileserver must bind to 127.0.0.1, not {}. Binding to 0.0.0.0 exposes the service to the network!",
             bind_addr
         );
-        assert_ne!(bind_addr, "0.0.0.0", "SECURITY: fileserver must NOT bind to 0.0.0.0");
+        assert_ne!(
+            bind_addr, "0.0.0.0",
+            "SECURITY: fileserver must NOT bind to 0.0.0.0"
+        );
     }
 
     #[test]
@@ -2081,7 +2085,10 @@ mod tests {
         let args = build_ttyd_args(7681, "/home/user/workspace");
 
         let interface_idx = args.iter().position(|a| a == "--interface");
-        assert!(interface_idx.is_some(), "ttyd args must include --interface");
+        assert!(
+            interface_idx.is_some(),
+            "ttyd args must include --interface"
+        );
 
         let bind_addr = &args[interface_idx.unwrap() + 1];
         assert_eq!(
@@ -2089,6 +2096,9 @@ mod tests {
             "ttyd must bind to 127.0.0.1, not {}. Binding to 0.0.0.0 exposes the service to the network!",
             bind_addr
         );
-        assert_ne!(bind_addr, "0.0.0.0", "SECURITY: ttyd must NOT bind to 0.0.0.0");
+        assert_ne!(
+            bind_addr, "0.0.0.0",
+            "SECURITY: ttyd must NOT bind to 0.0.0.0"
+        );
     }
 }

@@ -3,15 +3,15 @@
 use axum::{
     body::Body,
     extract::{
-        ws::{Message, WebSocket},
         State, WebSocketUpgrade,
+        ws::{Message, WebSocket},
     },
     http::{Request, Uri},
     response::Response,
 };
 use futures::{SinkExt, StreamExt};
-use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::client::legacy::Client;
+use hyper_util::client::legacy::connect::HttpConnector;
 use log::{debug, error, info, warn};
 use std::sync::Arc;
 use std::time::Duration;

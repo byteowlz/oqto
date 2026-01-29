@@ -1392,6 +1392,21 @@ impl SessionService {
             env.insert("OPENAI_API_KEY".to_string(), virtual_key.to_string());
         }
 
+        // Enforce skdlr wrapper in Octo sandboxed runs
+        let skdlr_config_path = std::path::Path::new("/etc/octo/skdlr-agent.toml");
+        if skdlr_config_path.exists() {
+            env.insert("SKDLR_OCTO_MODE".to_string(), "1".to_string());
+            env.insert(
+                "SKDLR_CONFIG".to_string(),
+                skdlr_config_path.display().to_string(),
+            );
+        } else {
+            warn!(
+                "skdlr agent config not found at {}, scheduling will not be sandboxed",
+                skdlr_config_path.display()
+            );
+        }
+
         let workspace_path = PathBuf::from(&session.workspace_path);
 
         info!(
