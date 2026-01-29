@@ -587,11 +587,34 @@ openssl rand -base64 48
 ```
 
 **Creating the Admin User**:
-The setup script creates an admin user during production setup. To create additional admin users:
+
+For a fresh install, use the bootstrap command to create the first admin user:
 
 ```bash
-# Using the CLI
-octo user create --username admin --email admin@example.com --role admin
+# Bootstrap admin user with Linux user + runner (multi-user mode)
+# This creates: database user + Linux user + systemd runner
+octoctl user bootstrap -u admin -e admin@example.com -p "your-secure-password"
+
+# Database-only (single-user mode or existing Linux user)
+octoctl user bootstrap -u admin -e admin@example.com -p "password" --no-linux-user
+
+# Custom Linux username (different from Octo username)
+octoctl user bootstrap -u admin -e admin@example.com --linux-user octo_admin
+
+# With a custom database path
+octoctl user bootstrap -u admin -e admin@example.com --database /path/to/octo.db
+
+# Non-interactive JSON output (for scripting)
+octoctl --json user bootstrap -u admin -e admin@example.com -p "password"
+```
+
+The setup script (`./setup.sh --production`) will prompt for admin credentials and show the bootstrap command.
+
+To create additional users after the server is running:
+
+```bash
+# Using the CLI (server must be running)
+octoctl user create admin2 --email admin2@example.com --role admin
 
 # Generate password hash for config file
 htpasswd -nbBC 12 admin yourpassword | cut -d: -f2
