@@ -446,6 +446,14 @@ pub fn create_router_with_config(state: AppState, max_upload_size_mb: usize) -> 
             get(crate::api::workspace_pi::get_workspace_state),
         )
         .route(
+            "/pi/workspace/models",
+            get(crate::api::workspace_pi::get_workspace_models),
+        )
+        .route(
+            "/pi/workspace/model",
+            post(crate::api::workspace_pi::set_workspace_model),
+        )
+        .route(
             "/pi/workspace/ws",
             get(crate::api::workspace_pi::ws_handler),
         )

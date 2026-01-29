@@ -8,7 +8,9 @@ use axum::response::Response;
 use serde::Deserialize;
 
 use crate::api::handlers::validate_workspace_path;
-use crate::api::main_chat_pi::{PiStateResponse, pi_state_to_response};
+use crate::api::main_chat_pi::{
+    PiModelInfo, PiModelsResponse, PiStateResponse, pi_state_to_response,
+};
 use crate::api::{ApiError, ApiResult, AppState};
 
 #[derive(Debug, Deserialize)]
@@ -20,6 +22,13 @@ pub struct WorkspaceQuery {
 pub struct WorkspaceSessionQuery {
     pub workspace_path: String,
     pub session_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SetPiModelRequest {
+    pub provider: String,
+    #[serde(rename = "model_id")]
+    pub model_id: String,
 }
 
 fn get_workspace_pi_service(
@@ -132,6 +141,71 @@ pub async fn get_workspace_state(
         .get_session(user.id(), &work_dir, &session_id)
         .await
         .ok_or_else(|| ApiError::not_found("Pi session not active"))?;
+    let pi_state = session
+        .get_state()
+        .await
+        .map_err(|e| ApiError::internal(format!("Failed to get Pi state: {e}")))?;
+    Ok(Json(pi_state_to_response(pi_state)))
+}
+
+/// Get available models for a workspace Pi session.
+///
+/// GET /api/pi/workspace/models?workspace_path=...&session_id=...
+pub async fn get_workspace_models(
+    State(state): State<AppState>,
+    user: crate::auth::CurrentUser,
+    Query(query): Query<WorkspaceSessionQuery>,
+) -> ApiResult<Json<PiModelsResponse>> {
+    let session_id = query
+        .session_id
+        .clone()
+        .ok_or_else(|| ApiError::bad_request("session_id is required"))?;
+    let svc = get_workspace_pi_service(&state)?;
+    let work_dir = validate_workspace_path(&state, user.id(), &query.workspace_path)?;
+    let session = svc
+        .resume_session(user.id(), &work_dir, &session_id)
+        .await
+        .map_err(|e| ApiError::internal(format!("Failed to resume Pi session: {e}")))?;
+    let models = session
+        .get_available_models()
+        .await
+        .map_err(|e| ApiError::internal(format!("Failed to get models: {e}")))?;
+    let mapped = models
+        .into_iter()
+        .map(|model| PiModelInfo {
+            id: model.id,
+            provider: model.provider,
+            name: model.name,
+            context_window: model.context_window,
+            max_tokens: model.max_tokens,
+        })
+        .collect();
+    Ok(Json(PiModelsResponse { models: mapped }))
+}
+
+/// Set the model for a workspace Pi session.
+///
+/// POST /api/pi/workspace/model?workspace_path=...&session_id=...
+pub async fn set_workspace_model(
+    State(state): State<AppState>,
+    user: crate::auth::CurrentUser,
+    Query(query): Query<WorkspaceSessionQuery>,
+    Json(req): Json<SetPiModelRequest>,
+) -> ApiResult<Json<PiStateResponse>> {
+    let session_id = query
+        .session_id
+        .clone()
+        .ok_or_else(|| ApiError::bad_request("session_id is required"))?;
+    let svc = get_workspace_pi_service(&state)?;
+    let work_dir = validate_workspace_path(&state, user.id(), &query.workspace_path)?;
+    let session = svc
+        .resume_session(user.id(), &work_dir, &session_id)
+        .await
+        .map_err(|e| ApiError::internal(format!("Failed to resume Pi session: {e}")))?;
+    session
+        .set_model(&req.provider, &req.model_id)
+        .await
+        .map_err(|e| ApiError::internal(format!("Failed to set model: {e}")))?;
     let pi_state = session
         .get_state()
         .await

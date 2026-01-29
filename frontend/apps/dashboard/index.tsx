@@ -1545,7 +1545,9 @@ export function DashboardApp() {
 												{schedule.schedule.trim().split(/\s+/).length === 5 ? (
 													<>
 														<div>{humanizeCron(schedule.schedule, locale)}</div>
-														<div className="opacity-70">{schedule.schedule}</div>
+														<div className="opacity-70">
+															{schedule.schedule}
+														</div>
 													</>
 												) : (
 													<div>Once: {schedule.schedule}</div>

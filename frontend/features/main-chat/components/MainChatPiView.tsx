@@ -37,8 +37,10 @@ import {
 	getMainChatPiCommands,
 	getMainChatPiModels,
 	getMainChatPiStats,
+	getWorkspacePiModels,
 	listMainChatPiSessions,
 	setMainChatPiModel,
+	setWorkspacePiModel,
 	workspaceFileUrl,
 } from "@/features/main-chat/api";
 import { type A2UISurfaceState, useA2UI } from "@/hooks/use-a2ui";
@@ -415,15 +417,10 @@ export function MainChatPiView({
 			{ name: "abort", description: "Abort current run" },
 			{ name: "steer", description: "Queue a steering message" },
 			{ name: "followup", description: "Queue a follow-up message" },
+			{ name: "model", description: "Switch model (provider/model)" },
 		];
-		if (isMainScope) {
-			commands.push({
-				name: "model",
-				description: "Switch model (provider/model)",
-			});
-		}
 		return commands;
-	}, [isMainScope]);
+	}, []);
 	const builtInCommandNames = useMemo(
 		() => new Set(builtInCommands.map((cmd) => cmd.name)),
 		[builtInCommands],
@@ -524,10 +521,16 @@ export function MainChatPiView({
 
 	useEffect(() => {
 		// Only fetch models once session is active (piState available)
-		if (!isMainScope) return;
 		if (!isConnected || !piState) return;
+		if (!isMainScope && !selectedSessionId) return;
 		let active = true;
-		getMainChatPiModels()
+		const fetchModels = isMainScope
+			? getMainChatPiModels()
+			: getWorkspacePiModels(
+					workspacePath ?? "global",
+					selectedSessionId ?? "",
+				);
+		fetchModels
 			.then((models) => {
 				if (active) setAvailableModels(models);
 			})
@@ -537,7 +540,7 @@ export function MainChatPiView({
 		return () => {
 			active = false;
 		};
-	}, [isConnected, isMainScope, piState]);
+	}, [isConnected, isMainScope, piState, selectedSessionId, workspacePath]);
 
 	useEffect(() => {
 		// Only fetch commands once session is active (piState available)
@@ -795,7 +798,6 @@ export function MainChatPiView({
 
 	const handleModelChange = useCallback(
 		async (value: string) => {
-			if (!isMainScope) return;
 			const separatorIndex = value.indexOf("/");
 			if (separatorIndex <= 0 || separatorIndex === value.length - 1) return;
 			const provider = value.slice(0, separatorIndex);
@@ -803,7 +805,16 @@ export function MainChatPiView({
 			setSelectedModelRef(value);
 			setIsSwitchingModel(true);
 			try {
-				await setMainChatPiModel(provider, modelId);
+				if (isMainScope) {
+					await setMainChatPiModel(provider, modelId);
+				} else if (selectedSessionId) {
+					await setWorkspacePiModel(
+						workspacePath ?? "global",
+						selectedSessionId,
+						provider,
+						modelId,
+					);
+				}
 				await refresh();
 			} catch (err) {
 				console.error("Failed to switch model:", err);
@@ -811,7 +822,7 @@ export function MainChatPiView({
 				setIsSwitchingModel(false);
 			}
 		},
-		[isMainScope, refresh],
+		[isMainScope, refresh, selectedSessionId, workspacePath],
 	);
 
 	const runSlashCommand = useCallback(
@@ -852,9 +863,6 @@ export function MainChatPiView({
 					return { handled: true, clearInput: true };
 				}
 				case "model": {
-					if (!isMainScope) {
-						throw new Error("Model switching is only available in main chat");
-					}
 					const separatorIndex = trimmedArgs.indexOf("/");
 					if (
 						separatorIndex <= 0 ||
@@ -873,7 +881,6 @@ export function MainChatPiView({
 			abort,
 			compact,
 			handleModelChange,
-			isMainScope,
 			newSession,
 			refresh,
 			resetSession,

@@ -1926,6 +1926,50 @@ export async function getMainChatPiModels(): Promise<PiModelInfo[]> {
 	return data.models ?? [];
 }
 
+/** Set workspace Pi session model */
+export async function setWorkspacePiModel(
+	workspacePath: string,
+	sessionId: string,
+	provider: string,
+	modelId: string,
+): Promise<PiState> {
+	const url = new URL(
+		controlPlaneApiUrl("/api/pi/workspace/model"),
+		window.location.origin,
+	);
+	url.searchParams.set("workspace_path", workspacePath);
+	url.searchParams.set("session_id", sessionId);
+
+	const res = await authFetch(url.toString(), {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ provider, model_id: modelId }),
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+	return res.json();
+}
+
+/** Get available workspace Pi models */
+export async function getWorkspacePiModels(
+	workspacePath: string,
+	sessionId: string,
+): Promise<PiModelInfo[]> {
+	const url = new URL(
+		controlPlaneApiUrl("/api/pi/workspace/models"),
+		window.location.origin,
+	);
+	url.searchParams.set("workspace_path", workspacePath);
+	url.searchParams.set("session_id", sessionId);
+
+	const res = await authFetch(url.toString(), {
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+	const data = (await res.json()) as { models?: PiModelInfo[] };
+	return data.models ?? [];
+}
+
 /** Get available Pi prompt commands (slash templates). */
 export async function getMainChatPiCommands(): Promise<PiPromptCommandInfo[]> {
 	const res = await authFetch(controlPlaneApiUrl("/api/main/pi/commands"), {

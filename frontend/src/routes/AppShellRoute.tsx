@@ -1349,9 +1349,11 @@ const AppShell = memo(function AppShell() {
 			clearOptimisticChatSession(optimisticId);
 		}
 
-		// No workspace context - create a new Main Chat session
-		console.log("[handleNewChat] Creating new Main Chat session (fallback)");
+		// No workspace context - create a new Pi session in the global workspace
+		console.log("[handleNewChat] Creating new Pi chat session (fallback)");
 		setActiveAppId("sessions");
+		const created = await createNewPiChat("global");
+		if (created) return;
 		requestNewMainChatSession();
 	}, [
 		mainChatActive,
