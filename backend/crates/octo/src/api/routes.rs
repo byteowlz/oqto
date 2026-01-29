@@ -1,11 +1,10 @@
 //! API route definitions.
 
 use axum::extract::DefaultBodyLimit;
-use axum::http::{header, HeaderValue, Method};
+use axum::http::{HeaderValue, Method, header};
 use axum::{
-    middleware,
+    Router, middleware,
     routing::{delete, get, post, put},
-    Router,
 };
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::trace::{DefaultMakeSpan, DefaultOnRequest, DefaultOnResponse, TraceLayer};
@@ -24,6 +23,9 @@ use super::proxy;
 use super::state::AppState;
 use super::ui_control as ui_control_handlers;
 use crate::ws::ws_handler;
+
+// Note: handlers module now provides all public handlers via re-exports in handlers/mod.rs
+// Routes continue to use `handlers::function_name` - no changes needed
 
 /// Create the application router with configurable max upload size.
 pub fn create_router_with_config(state: AppState, max_upload_size_mb: usize) -> Router {
@@ -425,9 +427,42 @@ pub fn create_router_with_config(state: AppState, max_upload_size_mb: usize) -> 
                 .post(main_chat_pi_handlers::resume_pi_session)
                 .patch(main_chat_pi_handlers::update_pi_session),
         )
+        // Workspace Pi routes (per-workspace Pi sessions)
+        .route(
+            "/pi/workspace/sessions",
+            post(crate::api::workspace_pi::new_workspace_session),
+        )
+        .route(
+            "/pi/workspace/sessions/{session_id}/resume",
+            post(crate::api::workspace_pi::resume_workspace_session),
+        )
+        .route(
+            "/pi/workspace/sessions/{session_id}/messages",
+            get(crate::api::workspace_pi::get_workspace_session_messages),
+        )
+        .route(
+            "/pi/workspace/sessions/{session_id}/abort",
+            post(crate::api::workspace_pi::abort_workspace_session),
+        )
+        .route(
+            "/pi/workspace/state",
+            get(crate::api::workspace_pi::get_workspace_state),
+        )
+        .route(
+            "/pi/workspace/models",
+            get(crate::api::workspace_pi::get_workspace_models),
+        )
+        .route(
+            "/pi/workspace/model",
+            post(crate::api::workspace_pi::set_workspace_model),
+        )
+        .route(
+            "/pi/workspace/ws",
+            get(crate::api::workspace_pi::ws_handler),
+        )
         // Main Chat file access routes
         .nest("/main/files", main_chat_files::main_chat_file_routes())
-        // CASS (Coding Agent Session Search) routes
+        // HSTRY (chat history) search routes
         .route("/search", get(handlers::search_sessions))
         // Scheduler (skdlr) overview
         .route("/scheduler/overview", get(handlers::scheduler_overview))
@@ -484,7 +519,7 @@ pub fn create_router_with_config(state: AppState, max_upload_size_mb: usize) -> 
         .route("/agents/ask", post(handlers::agents_ask))
         // Agent sessions search endpoint - find sessions by query
         .route("/agents/sessions", get(handlers::agents_search_sessions))
-        // In-session search - search within a specific session using CASS
+        // In-session search - search within a specific session using hstry
         .route(
             "/agents/sessions/{session_id}/search",
             get(handlers::agents_session_search),

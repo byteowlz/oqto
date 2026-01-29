@@ -2,10 +2,12 @@
 
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
+use ts_rs::TS;
 
 /// User role enumeration.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, TS)]
 #[serde(rename_all = "lowercase")]
+#[ts(export, export_to = "../../../../frontend/src/generated/")]
 pub enum UserRole {
     #[default]
     User,
@@ -65,6 +67,9 @@ pub struct User {
     pub mmry_port: Option<i64>,
     pub sldr_port: Option<i64>,
     pub linux_username: Option<String>,
+    /// Linux UID for multi-user isolation. Stored to verify ownership
+    /// since users can modify their own GECOS via chfn.
+    pub linux_uid: Option<i64>,
 }
 
 impl sqlx::Type<sqlx::Sqlite> for UserRole {
@@ -93,7 +98,8 @@ impl<'r> sqlx::Decode<'r, sqlx::Sqlite> for UserRole {
 }
 
 /// Public user info (safe to return to clients).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../../frontend/src/generated/")]
 pub struct UserInfo {
     pub id: String,
     pub username: String,
@@ -147,6 +153,8 @@ pub struct UpdateUserRequest {
     /// Linux username for multi-user isolation mode.
     /// Set this to map the Octo user to an existing Linux user.
     pub linux_username: Option<String>,
+    /// Linux UID for multi-user isolation. Used to verify ownership.
+    pub linux_uid: Option<i64>,
 }
 
 /// User list query parameters.
@@ -195,7 +203,9 @@ mod tests {
             last_login_at: None,
             settings: None,
             mmry_port: None,
+            sldr_port: None,
             linux_username: None,
+            linux_uid: None,
         };
 
         let info: UserInfo = user.into();

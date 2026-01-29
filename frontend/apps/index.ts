@@ -1,9 +1,9 @@
 import { AdminApp } from "@/apps/admin";
 import { AgentsApp } from "@/apps/agents";
 import { DashboardApp } from "@/apps/dashboard";
-import { SldrApp } from "@/apps/sldr";
 import { SessionsApp } from "@/apps/sessions";
 import { SettingsApp } from "@/apps/settings";
+import { SldrApp } from "@/apps/sldr";
 import { appRegistry } from "@/lib/app-registry";
 
 appRegistry

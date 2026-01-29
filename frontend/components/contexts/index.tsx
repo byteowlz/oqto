@@ -10,14 +10,37 @@ export {
 	useUIControl,
 } from "./ui-control-context";
 
+// Main Chat context exports
 export {
-	SessionProvider,
-	useSessionContext,
+	MainChatProvider,
+	useMainChatContext,
+	useMainChat,
+	type MainChatContextValue,
+} from "./main-chat-context";
+
+// Workspace context exports
+export {
+	WorkspaceProvider,
+	useWorkspaceContext,
+	useWorkspaceSessions,
+	type WorkspaceContextValue,
+} from "./workspace-context";
+
+// Chat context exports
+export {
+	ChatProvider,
+	useChatContext,
 	useBusySessions,
 	useChatHistory,
 	useSelectedChat,
-	useWorkspaceSessions,
-	useMainChat,
+	type ChatContextValue,
+} from "./chat-context";
+
+// Combined session context (composition layer for backward compatibility)
+export {
+	SessionProvider,
+	useSessionContext,
+	type SessionContextValue,
 } from "./session-context";
 
 export {

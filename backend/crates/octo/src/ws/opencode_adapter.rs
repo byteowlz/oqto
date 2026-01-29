@@ -631,8 +631,18 @@ fn extract_session_error(
         .map(|v| v.to_string());
     let error_type = explicit_type
         .clone()
-        .or_else(|| error.and_then(|e| e.get("name")).and_then(|v| v.as_str()).map(|v| v.to_string()))
-        .or_else(|| error.and_then(|e| e.get("type")).and_then(|v| v.as_str()).map(|v| v.to_string()))
+        .or_else(|| {
+            error
+                .and_then(|e| e.get("name"))
+                .and_then(|v| v.as_str())
+                .map(|v| v.to_string())
+        })
+        .or_else(|| {
+            error
+                .and_then(|e| e.get("type"))
+                .and_then(|v| v.as_str())
+                .map(|v| v.to_string())
+        })
         .unwrap_or_else(|| "UnknownError".to_string());
 
     let message = props
@@ -644,7 +654,11 @@ fn extract_session_error(
                 .and_then(|d| d.get("message"))
                 .and_then(|v| v.as_str())
         })
-        .or_else(|| error.and_then(|e| e.get("message")).and_then(|v| v.as_str()))
+        .or_else(|| {
+            error
+                .and_then(|e| e.get("message"))
+                .and_then(|v| v.as_str())
+        })
         .or_else(|| error.and_then(|e| e.as_str()))
         .unwrap_or("")
         .to_string();

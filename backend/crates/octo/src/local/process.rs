@@ -5,7 +5,7 @@
 //! Optionally wraps processes in a bubblewrap sandbox for additional security.
 
 use anyhow::{Context, Result};
-use log::{debug, info, warn};
+use log::{debug, error, info, warn};
 use std::collections::HashMap;
 use std::path::Path;
 use std::process::Stdio;
@@ -280,16 +280,49 @@ impl ProcessManager {
         Ok(pid)
     }
 
+    /// Get the Unix socket path for ttyd.
+    ///
+    /// The socket is placed in a per-user runtime directory which is:
+    /// - Per-user (can't be accessed by other users)
+    /// - Not mounted into sandboxed agent processes
+    ///
+    /// Paths by platform:
+    /// - Linux: $XDG_RUNTIME_DIR or /run/user/$UID
+    /// - macOS: $TMPDIR (which is per-user, e.g., /var/folders/.../T/)
+    pub fn ttyd_socket_path(session_id: &str) -> std::path::PathBuf {
+        let runtime_dir = if cfg!(target_os = "macos") {
+            // macOS: Use TMPDIR which is per-user and secure
+            // e.g., /var/folders/xx/xxxxxxxxx/T/
+            std::env::var("TMPDIR").unwrap_or_else(|_| "/tmp".to_string())
+        } else {
+            // Linux: Use XDG_RUNTIME_DIR or fall back to /run/user/$UID
+            let uid = unsafe { libc::getuid() };
+            std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| format!("/run/user/{}", uid))
+        };
+        std::path::PathBuf::from(runtime_dir).join(format!("octo-ttyd-{}.sock", session_id))
+    }
+
     /// Spawn ttyd.
+    ///
+    /// ttyd listens on a Unix socket (not TCP) to prevent sandboxed agents
+    /// from connecting directly. The socket is placed in XDG_RUNTIME_DIR
+    /// which is not accessible from inside the bwrap sandbox.
     pub async fn spawn_ttyd(
         &self,
         session_id: &str,
-        port: u16,
+        port: u16, // Kept for compatibility, but we use Unix socket
         cwd: &Path,
         ttyd_binary: &str,
         run_as: &RunAsUser,
     ) -> Result<u32> {
-        info!("Spawning ttyd on port {} for session {}", port, session_id);
+        let socket_path = Self::ttyd_socket_path(session_id);
+        info!(
+            "Spawning ttyd on socket {:?} for session {} (port {} for logging only)",
+            socket_path, session_id, port
+        );
+
+        // Remove existing socket if it exists
+        let _ = std::fs::remove_file(&socket_path);
 
         // For ttyd, we need to spawn a shell as the target user.
         // ttyd takes: <command> [<arguments...>] as separate positional args.
@@ -321,27 +354,28 @@ impl ProcessManager {
         };
 
         // Build ttyd args: options first, then shell command + args
-        let port_str = port.to_string();
+        // Use Unix socket via --interface instead of TCP port
+        let socket_path_str = socket_path.to_string_lossy().to_string();
         let cwd_str = cwd.to_str().unwrap_or(".");
-        let mut ttyd_args: Vec<&str> = vec![
-            "--port",
-            &port_str,
-            "--interface",
-            "127.0.0.1",
-            "--writable",
-            "--cwd",
-            cwd_str,
+        let mut ttyd_args: Vec<String> = vec![
+            "--interface".to_string(),
+            socket_path_str,
+            "--writable".to_string(),
+            "--cwd".to_string(),
+            cwd_str.to_string(),
         ];
         // Append shell command and its arguments as separate positional args
         for arg in &shell_args {
-            ttyd_args.push(arg);
+            ttyd_args.push(arg.clone());
         }
+
+        let ttyd_args_refs: Vec<&str> = ttyd_args.iter().map(|s| s.as_str()).collect();
 
         let child = self
             .spawn_as_user(
                 &RunAsUser::current(), // ttyd itself runs as current user
                 ttyd_binary,
-                &ttyd_args,
+                &ttyd_args_refs,
                 None,
                 HashMap::new(),
             )
@@ -358,7 +392,7 @@ impl ProcessManager {
             .or_default()
             .push(handle);
 
-        info!("ttyd spawned with PID {} on port {}", pid, port);
+        info!("ttyd spawned with PID {} on socket {:?}", pid, socket_path);
         Ok(pid)
     }
 
@@ -543,14 +577,20 @@ impl ProcessManager {
             // bwrap handles the actual command execution inside the sandbox
             self.spawn_as_user(run_as, "bwrap", &full_args_refs, None, env)
                 .await
+        } else if sandbox.map(|s| s.enabled).unwrap_or(false) {
+            // SECURITY: Sandbox was requested but bwrap args couldn't be built
+            // (either bwrap not available or config error). Refuse to run unsandboxed.
+            error!(
+                "SECURITY: Sandbox enabled but bwrap not available or failed to build args. \
+                 Refusing to spawn {} without sandbox. Install bubblewrap (bwrap).",
+                binary
+            );
+            anyhow::bail!(
+                "Sandbox enabled but bwrap not available. Cannot spawn '{}' without sandbox.",
+                binary
+            )
         } else {
-            // Direct spawn without sandbox
-            if sandbox.map(|s| s.enabled).unwrap_or(false) {
-                warn!(
-                    "Sandbox enabled but bwrap not available, spawning {} without sandbox",
-                    binary
-                );
-            }
+            // No sandbox requested - direct spawn
             self.spawn_as_user(run_as, binary, args, cwd, env).await
         }
     }
@@ -1125,7 +1165,10 @@ mod tests {
 
         // Find the --hostname argument
         let hostname_idx = args.iter().position(|a| a == "--hostname");
-        assert!(hostname_idx.is_some(), "opencode args must include --hostname");
+        assert!(
+            hostname_idx.is_some(),
+            "opencode args must include --hostname"
+        );
 
         let bind_addr = &args[hostname_idx.unwrap() + 1];
         assert_eq!(
@@ -1180,7 +1223,10 @@ mod tests {
 
         // Find the --interface argument
         let interface_idx = args.iter().position(|a| a == "--interface");
-        assert!(interface_idx.is_some(), "ttyd args must include --interface");
+        assert!(
+            interface_idx.is_some(),
+            "ttyd args must include --interface"
+        );
 
         let bind_addr = &args[interface_idx.unwrap() + 1];
         assert_eq!(

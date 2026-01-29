@@ -442,8 +442,11 @@ export function extractFileReferenceDetails(
 	const details: FileReferenceDetail[] = [];
 	const seen = new Set<string>();
 
-	let match: RegExpExecArray | null;
-	while ((match = fileRefPattern.exec(withoutInlineCode)) !== null) {
+	for (
+		let match = fileRefPattern.exec(withoutInlineCode);
+		match !== null;
+		match = fileRefPattern.exec(withoutInlineCode)
+	) {
 		const raw = match[1];
 		const { filePath, suffix } = splitReferenceSuffix(raw);
 		if (!/\.[a-zA-Z0-9]+$/.test(filePath)) {

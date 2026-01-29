@@ -133,6 +133,11 @@ pub struct PiSessionFile {
     pub modified_at: i64,
     /// Title (derived from first user message, or None)
     pub title: Option<String>,
+    /// Human-readable ID (e.g., "cold-lamp-verb")
+    /// Parsed from auto-generated title format: <workdir>: <title> [readable_id]
+    pub readable_id: Option<String>,
+    /// Parent session ID (if this session was spawned as a child)
+    pub parent_id: Option<String>,
     /// Number of messages in session
     pub message_count: usize,
 }
@@ -162,23 +167,9 @@ pub struct PiSessionMessage {
     pub usage: Option<Value>,
 }
 
-/// CASS search response.
+/// A single search result for a session.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CassResponse {
-    /// Search results (CASS uses "hits" not "results")
-    #[serde(default)]
-    pub hits: Vec<CassSearchResult>,
-    /// Number of results returned
-    #[serde(default)]
-    pub count: usize,
-    /// Total matches available
-    #[serde(default)]
-    pub total_matches: usize,
-}
-
-/// A single CASS search result.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CassSearchResult {
+pub struct SessionSearchResult {
     /// Source file path
     pub source_path: String,
     /// Line number in the source file
@@ -223,6 +214,9 @@ enum StreamPart {
         name: Option<String>,
         content: Value,
         is_error: bool,
+    },
+    Error {
+        reason: String,
     },
 }
 
@@ -298,6 +292,16 @@ impl StreamSnapshot {
                         input: tool_call.arguments.clone(),
                     });
                 }
+                AssistantMessageEvent::Error { reason } => {
+                    if message.role == "assistant" {
+                        self.is_streaming = true;
+                        self.has_message = true;
+                    }
+                    // Store error as a special part
+                    self.parts.push(StreamPart::Error {
+                        reason: reason.clone(),
+                    });
+                }
                 _ => {}
             },
             PiEvent::ToolExecutionEnd {
@@ -358,6 +362,12 @@ impl StreamSnapshot {
                             "content": content,
                             "isError": is_error
                         }
+                    }));
+                }
+                StreamPart::Error { reason } => {
+                    events.push(json!({
+                        "type": "error",
+                        "data": reason
                     }));
                 }
             }
@@ -532,10 +542,16 @@ impl MainChatPiService {
         }
     }
 
+    /// Get the Pi agent directory for a working directory.
+    fn get_pi_agent_dir(&self, _work_dir: &PathBuf) -> PathBuf {
+        dirs::home_dir()
+            .map(|home| home.join(".pi").join("agent"))
+            .unwrap_or_else(|| PathBuf::from(".pi/agent"))
+    }
+
     /// Get the Pi sessions directory for a working directory.
     /// Pi stores sessions in ~/.pi/agent/sessions/{escaped-path}/
     fn get_pi_sessions_dir(&self, work_dir: &PathBuf) -> PathBuf {
-        let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
         let escaped_path = work_dir
             .to_string_lossy()
             .replace('/', "-")
@@ -543,8 +559,7 @@ impl MainChatPiService {
             .to_string();
         // Pi stores sessions under a directory name wrapped in double-dashes.
         // Example: `--home-user-.local-share-octo-users-main--`
-        home.join(".pi")
-            .join("agent")
+        self.get_pi_agent_dir(work_dir)
             .join("sessions")
             .join(format!("--{}--", escaped_path))
     }
@@ -835,6 +850,10 @@ impl MainChatPiService {
             .get("title")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
+        let parent_id = header
+            .get("parentSession")
+            .and_then(|v| v.as_str())
+            .and_then(Self::read_parent_session_id);
         let mut message_count = 0usize;
 
         for line in reader.lines().filter_map(|l| l.ok()) {
@@ -867,14 +886,59 @@ impl MainChatPiService {
             }
         }
 
+        // Parse title to extract readable_id (format: <workdir>: <title> [readable_id])
+        let parsed_title = title
+            .as_ref()
+            .map(|t| crate::pi::session_parser::ParsedTitle::parse(t));
+
+        let readable_id = parsed_title
+            .as_ref()
+            .and_then(|p| p.get_readable_id())
+            .map(String::from);
+
+        // Optionally strip workspace and ID from title for cleaner display
+        // This preserves the original auto-generated format in the file but returns cleaner version
+        let display_title = if let Some(parsed) = parsed_title {
+            parsed.display_title().to_string()
+        } else {
+            title.clone().unwrap_or_default()
+        };
+
         Some(PiSessionFile {
             id,
             started_at,
             size: metadata.len(),
             modified_at: modified_ms,
-            title,
+            title: if display_title.is_empty() {
+                None
+            } else {
+                Some(display_title)
+            },
+            readable_id,
+            parent_id,
             message_count,
         })
+    }
+
+    /// Resolve a parent session ID from a session file path.
+    fn read_parent_session_id(path: &str) -> Option<String> {
+        use std::io::{BufRead, BufReader};
+
+        let file = std::fs::File::open(path).ok()?;
+        let mut reader = BufReader::new(file);
+        let mut line = String::new();
+        reader.read_line(&mut line).ok()?;
+        if line.trim().is_empty() {
+            return None;
+        }
+        let header: Value = serde_json::from_str(&line).ok()?;
+        if header.get("type").and_then(|t| t.as_str()) != Some("session") {
+            return None;
+        }
+        header
+            .get("id")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
     }
 
     /// Extract a title from message content (first ~50 chars of text).
@@ -974,7 +1038,7 @@ impl MainChatPiService {
         Ok(messages)
     }
 
-    /// Search within a specific session using CASS, with fallback to direct text search.
+    /// Search within a specific session using hstry, with fallback to direct text search.
     /// Returns search results from the session's content.
     /// Supports both Pi sessions (.jsonl) and OpenCode sessions (.json).
     pub async fn search_in_session(
@@ -983,15 +1047,15 @@ impl MainChatPiService {
         session_id: &str,
         query: &str,
         limit: usize,
-    ) -> Result<Vec<CassSearchResult>> {
-        // First try CASS search filtered by session ID
-        let cass_results = self
-            .search_in_session_via_cass(session_id, query, limit)
+    ) -> Result<Vec<SessionSearchResult>> {
+        // First try hstry search filtered by session ID
+        let hstry_results = self
+            .search_in_session_via_hstry(session_id, query, limit)
             .await;
 
-        if let Ok(ref results) = cass_results {
+        if let Ok(ref results) = hstry_results {
             if !results.is_empty() {
-                return cass_results;
+                return hstry_results;
             }
         }
 
@@ -1000,65 +1064,66 @@ impl MainChatPiService {
             .await
     }
 
-    /// Search using CASS and filter by session ID.
-    async fn search_in_session_via_cass(
+    /// Search using hstry and filter by session ID.
+    async fn search_in_session_via_hstry(
         &self,
         session_id: &str,
         query: &str,
         limit: usize,
-    ) -> Result<Vec<CassSearchResult>> {
-        let search_limit = limit * 10;
+    ) -> Result<Vec<SessionSearchResult>> {
+        let search_limit = limit.saturating_mul(6).max(10);
+        let hits = crate::history::search_hstry(query, search_limit).await?;
 
-        let output = tokio::process::Command::new("cass")
-            .arg("search")
-            .arg(query)
-            .arg("--mode")
-            .arg("lexical")
-            .arg("--limit")
-            .arg(search_limit.to_string())
-            .arg("--json")
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-            .context("Failed to spawn cass")?
-            .wait_with_output()
-            .await
-            .context("Failed to wait for cass")?;
+        let mut results = Vec::new();
+        for hit in hits {
+            let external_id = hit.external_id.clone().unwrap_or_default();
+            let source_path = hit
+                .source_path
+                .clone()
+                .unwrap_or_else(|| format!("hstry:{}:{}", hit.source_id, hit.conversation_id));
 
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            if stderr.contains("No results") || output.stdout.is_empty() {
-                return Ok(Vec::new());
+            let matches_session = external_id == session_id
+                || hit.conversation_id == session_id
+                || source_path.contains(session_id);
+            if !matches_session {
+                continue;
             }
-            anyhow::bail!("CASS search failed: {}", stderr);
+
+            let timestamp = hit
+                .created_at
+                .or(hit.conv_updated_at)
+                .map(|dt| dt.timestamp_millis())
+                .or_else(|| Some(hit.conv_created_at.timestamp_millis()));
+
+            results.push(SessionSearchResult {
+                source_path,
+                line_number: (hit.message_idx.max(0) as usize) + 1,
+                agent: hit.source_id.clone(),
+                score: f64::from(hit.score),
+                content: Some(hit.content.clone()),
+                snippet: Some(hit.snippet.clone()),
+                title: hit.title.clone(),
+                match_type: None,
+                created_at: timestamp,
+                message_id: None,
+            });
+
+            if results.len() >= limit {
+                break;
+            }
         }
 
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        if stdout.trim().is_empty() {
-            return Ok(Vec::new());
-        }
-
-        let cass_response: CassResponse =
-            serde_json::from_str(&stdout).context("Failed to parse CASS output")?;
-
-        let filtered: Vec<CassSearchResult> = cass_response
-            .hits
-            .into_iter()
-            .filter(|hit| hit.source_path.contains(session_id))
-            .take(limit)
-            .collect();
-
-        Ok(filtered)
+        Ok(results)
     }
 
     /// Direct text search in OpenCode session message parts.
-    /// Fallback when CASS hasn't indexed the session.
+    /// Fallback when hstry hasn't indexed the session.
     async fn search_in_opencode_session(
         &self,
         session_id: &str,
         query: &str,
         limit: usize,
-    ) -> Result<Vec<CassSearchResult>> {
+    ) -> Result<Vec<SessionSearchResult>> {
         let home = std::env::var("HOME").context("HOME not set")?;
         let messages_dir = PathBuf::from(&home)
             .join(".local/share/opencode/storage/message")
@@ -1116,7 +1181,7 @@ impl MainChatPiService {
                                 // Create a snippet around the match
                                 let snippet = Self::create_snippet(text, &query_lower, 100);
 
-                                results.push(CassSearchResult {
+                                results.push(SessionSearchResult {
                                     source_path: part_path.to_string_lossy().to_string(),
                                     line_number,
                                     agent: "opencode".to_string(),
@@ -1517,55 +1582,7 @@ impl MainChatPiService {
             )
         })?;
 
-        let stream_snapshot = Arc::new(Mutex::new(StreamSnapshot::default()));
-        let stream_snapshot_task = Arc::clone(&stream_snapshot);
-        let is_streaming = Arc::new(RwLock::new(false));
-        let is_streaming_task = Arc::clone(&is_streaming);
-        let last_activity = Arc::new(RwLock::new(std::time::Instant::now()));
-        let last_activity_task = Arc::clone(&last_activity);
-
-        let mut event_rx = process.subscribe();
-        tokio::spawn(async move {
-            loop {
-                match event_rx.recv().await {
-                    Ok(event) => {
-                        // Update last activity on any event
-                        *last_activity_task.write().await = std::time::Instant::now();
-
-                        // Track streaming state
-                        match &event {
-                            PiEvent::AgentStart | PiEvent::MessageStart { .. } => {
-                                *is_streaming_task.write().await = true;
-                            }
-                            PiEvent::AgentEnd { .. } => {
-                                *is_streaming_task.write().await = false;
-                            }
-                            _ => {}
-                        }
-
-                        let mut snapshot = stream_snapshot_task.lock().await;
-                        snapshot.apply_event(&event);
-                    }
-                    Err(broadcast::error::RecvError::Closed) => break,
-                    Err(broadcast::error::RecvError::Lagged(_)) => {
-                        let mut snapshot = stream_snapshot_task.lock().await;
-                        snapshot.reset();
-                    }
-                }
-            }
-        });
-
-        // Session ID will be fetched from Pi state after spawn
-        let session_id = format!("pending-{}", uuid::Uuid::new_v4());
-
-        Ok(UserPiSession {
-            process: Arc::new(tokio::sync::RwLock::new(process)),
-            stream_snapshot,
-            _session_id: session_id,
-            last_activity,
-            is_streaming,
-            persistence_writer_claimed: Arc::new(AtomicBool::new(false)),
-        })
+        Ok(UserPiSession::from_process(process))
     }
 
     /// Close a specific session for a user.
@@ -1724,6 +1741,63 @@ impl MainChatPiService {
 }
 
 impl UserPiSession {
+    pub(crate) fn from_process(process: Box<dyn PiProcess>) -> Self {
+        let stream_snapshot = Arc::new(Mutex::new(StreamSnapshot::default()));
+        let stream_snapshot_task = Arc::clone(&stream_snapshot);
+        let is_streaming = Arc::new(RwLock::new(false));
+        let is_streaming_task = Arc::clone(&is_streaming);
+        let last_activity = Arc::new(RwLock::new(std::time::Instant::now()));
+        let last_activity_task = Arc::clone(&last_activity);
+
+        let mut event_rx = process.subscribe();
+        tokio::spawn(async move {
+            loop {
+                match event_rx.recv().await {
+                    Ok(event) => {
+                        *last_activity_task.write().await = std::time::Instant::now();
+
+                        match &event {
+                            PiEvent::AgentStart | PiEvent::MessageStart { .. } => {
+                                *is_streaming_task.write().await = true;
+                            }
+                            PiEvent::AgentEnd { .. } => {
+                                *is_streaming_task.write().await = false;
+                            }
+                            _ => {}
+                        }
+
+                        let mut snapshot = stream_snapshot_task.lock().await;
+                        snapshot.apply_event(&event);
+                    }
+                    Err(broadcast::error::RecvError::Closed) => break,
+                    Err(broadcast::error::RecvError::Lagged(_)) => {
+                        let mut snapshot = stream_snapshot_task.lock().await;
+                        snapshot.reset();
+                    }
+                }
+            }
+        });
+
+        let session_id = format!("pending-{}", uuid::Uuid::new_v4());
+
+        UserPiSession {
+            process: Arc::new(tokio::sync::RwLock::new(process)),
+            stream_snapshot,
+            _session_id: session_id,
+            last_activity,
+            is_streaming,
+            persistence_writer_claimed: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    pub async fn is_streaming(&self) -> bool {
+        *self.is_streaming.read().await
+    }
+
+    pub async fn last_activity_elapsed(&self) -> std::time::Duration {
+        std::time::Instant::now() - *self.last_activity.read().await
+    }
+
     // session_id is currently stored for future session switching features.
 
     /// Claim exclusive persistence for this session (used to prevent duplicate WS saves).

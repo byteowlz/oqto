@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/*"]
 
 [workspace.package]
-version = "0.5.1"
+version = "0.5.2"
 edition = "2024"
 license = "MIT"
 authors = ["Octo Team"]
@@ -58,6 +58,7 @@ chrono = { version = "0.4", features = ["serde"] }
 async-trait = "0.1"
 futures = "0.3"
 bytes = "1"
+regex = "1"
 
 # Markdown rendering with syntax highlighting
 comrak = { version = "0.49", default-features = false, features = ["syntect"] }

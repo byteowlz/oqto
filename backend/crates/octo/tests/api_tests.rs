@@ -1,11 +1,15 @@
 //! API integration tests.
 
+use std::path::PathBuf;
+
 use axum::{
     body::Body,
     http::{Method, Request, StatusCode, header},
 };
 use serde_json::{Value, json};
 use tower::ServiceExt;
+use urlencoding::encode;
+use uuid::Uuid;
 
 mod common;
 use common::test_app;
@@ -1134,4 +1138,99 @@ async fn test_agent_endpoints_require_auth() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn test_pi_settings_workspace_scope_does_not_mutate_global() {
+    let (app, token) = common::test_app_with_token().await;
+
+    let workspace_root = std::env::temp_dir()
+        .join("octo-tests-workspaces")
+        .join("dev");
+    let workspace_dir = workspace_root.join(format!("pi-settings-{}", Uuid::new_v4()));
+    std::fs::create_dir_all(&workspace_dir).unwrap();
+
+    let global_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/settings?app=pi-agent")
+                .method(Method::GET)
+                .header(header::AUTHORIZATION, format!("Bearer {}", token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(global_response.status(), StatusCode::OK);
+
+    let global_body = axum::body::to_bytes(global_response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let global_values: Value = serde_json::from_slice(&global_body).unwrap();
+    assert_eq!(global_values["defaultProvider"]["is_configured"], false);
+    assert!(global_values["defaultProvider"]["value"].is_null());
+
+    let update_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/settings?app=pi-agent&workspace_path={}",
+                    encode(workspace_dir.to_string_lossy().as_ref())
+                ))
+                .method(Method::PATCH)
+                .header(header::AUTHORIZATION, format!("Bearer {}", token))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    serde_json::to_string(&json!({
+                        "values": { "defaultProvider": "anthropic" }
+                    }))
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(update_response.status(), StatusCode::OK);
+
+    let update_body = axum::body::to_bytes(update_response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let update_values: Value = serde_json::from_slice(&update_body).unwrap();
+    assert_eq!(update_values["defaultProvider"]["value"], "anthropic");
+    assert_eq!(update_values["defaultProvider"]["is_configured"], true);
+
+    let workspace_settings = workspace_dir.join(".pi").join("settings.json");
+    assert!(workspace_settings.exists());
+
+    let settings_content = std::fs::read_to_string(&workspace_settings).unwrap();
+    let settings_json: Value = serde_json::from_str(&settings_content).unwrap();
+    assert_eq!(settings_json["defaultProvider"], "anthropic");
+
+    let global_after_response = app
+        .oneshot(
+            Request::builder()
+                .uri("/settings?app=pi-agent")
+                .method(Method::GET)
+                .header(header::AUTHORIZATION, format!("Bearer {}", token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(global_after_response.status(), StatusCode::OK);
+
+    let global_after_body = axum::body::to_bytes(global_after_response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let global_after_values: Value = serde_json::from_slice(&global_after_body).unwrap();
+    assert_eq!(
+        global_after_values["defaultProvider"]["is_configured"],
+        false
+    );
+    assert!(global_after_values["defaultProvider"]["value"].is_null());
 }

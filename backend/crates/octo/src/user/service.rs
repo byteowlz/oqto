@@ -28,9 +28,18 @@ impl UserService {
         self.repo.ensure_sldr_port(user_id, base_port, range).await
     }
 
-    /// Create a new user with validation.
-    #[instrument(skip(self, request), fields(username = %request.username))]
-    pub async fn create_user(&self, request: CreateUserRequest) -> Result<User> {
+    /// Generate a unique user ID for a username.
+    /// Can be used to create Linux user before DB user.
+    pub fn generate_user_id(username: &str) -> String {
+        UserRepository::generate_user_id(username)
+    }
+
+    /// Validate a user creation request without creating the user.
+    /// Returns the processed request with hashed password.
+    async fn validate_create_request(
+        &self,
+        request: CreateUserRequest,
+    ) -> Result<CreateUserRequest> {
         // Validate username format
         if !is_valid_username(&request.username) {
             bail!(
@@ -60,9 +69,25 @@ impl UserService {
             processed_request.password = Some(hash_password(password)?);
         }
 
+        Ok(processed_request)
+    }
+
+    /// Create a new user with validation.
+    #[instrument(skip(self, request), fields(username = %request.username))]
+    pub async fn create_user(&self, request: CreateUserRequest) -> Result<User> {
+        let processed_request = self.validate_create_request(request).await?;
         let user = self.repo.create(processed_request).await?;
         info!(user_id = %user.id, username = %user.username, "Created new user");
+        Ok(user)
+    }
 
+    /// Create a new user with a pre-generated ID.
+    /// Used when Linux user must be created before DB user for isolation.
+    #[instrument(skip(self, request), fields(id = %id, username = %request.username))]
+    pub async fn create_user_with_id(&self, id: &str, request: CreateUserRequest) -> Result<User> {
+        let processed_request = self.validate_create_request(request).await?;
+        let user = self.repo.create_with_id(id, processed_request).await?;
+        info!(user_id = %user.id, username = %user.username, "Created new user with pre-generated ID");
         Ok(user)
     }
 
@@ -338,6 +363,7 @@ impl Default for UpdateUserRequest {
             is_active: None,
             settings: None,
             linux_username: None,
+            linux_uid: None,
         }
     }
 }

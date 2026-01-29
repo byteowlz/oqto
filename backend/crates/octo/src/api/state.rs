@@ -5,8 +5,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use axum::body::Body;
-use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::client::legacy::Client;
+use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::rt::TokioExecutor;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
@@ -21,6 +21,7 @@ use crate::invite::InviteCodeRepository;
 use crate::local::LinuxUsersConfig;
 use crate::main_chat::{MainChatPiService, MainChatService};
 use crate::onboarding::OnboardingService;
+use crate::pi_workspace::WorkspacePiService;
 use crate::session::SessionService;
 use crate::session_ui::SessionAutoAttachMode;
 use crate::settings::SettingsService;
@@ -320,10 +321,16 @@ pub struct AppState {
     pub settings_octo: Option<Arc<SettingsService>>,
     /// Settings service for mmry config.
     pub settings_mmry: Option<Arc<SettingsService>>,
+    /// Settings service for Pi agent settings.json.
+    pub settings_pi_agent: Option<Arc<SettingsService>>,
+    /// Settings service for Pi agent models.json.
+    pub settings_pi_models: Option<Arc<SettingsService>>,
     /// Main Chat service for persistent assistants.
     pub main_chat: Option<Arc<MainChatService>>,
     /// Main Chat Pi service for managing Pi subprocesses.
     pub main_chat_pi: Option<Arc<MainChatPiService>>,
+    /// Workspace Pi service for per-workspace Pi sessions.
+    pub workspace_pi: Option<Arc<WorkspacePiService>>,
     /// Onboarding service for user setup flow.
     pub onboarding: Option<Arc<OnboardingService>>,
     /// Onboarding templates service for Main Chat initialization.
@@ -374,8 +381,11 @@ impl AppState {
             sldr_users: None,
             settings_octo: None,
             settings_mmry: None,
+            settings_pi_agent: None,
+            settings_pi_models: None,
             main_chat: None,
             main_chat_pi: None,
+            workspace_pi: None,
             onboarding: None,
             onboarding_templates: None,
             ws_hub: Arc::new(WsHub::new()),
@@ -419,8 +429,11 @@ impl AppState {
             sldr_users: None,
             settings_octo: None,
             settings_mmry: None,
+            settings_pi_agent: None,
+            settings_pi_models: None,
             main_chat: None,
             main_chat_pi: None,
+            workspace_pi: None,
             onboarding: None,
             onboarding_templates: None,
             ws_hub: Arc::new(WsHub::new()),
@@ -441,6 +454,18 @@ impl AppState {
     /// Set the mmry settings service.
     pub fn with_settings_mmry(mut self, service: SettingsService) -> Self {
         self.settings_mmry = Some(Arc::new(service));
+        self
+    }
+
+    /// Set the Pi agent settings service.
+    pub fn with_settings_pi_agent(mut self, service: SettingsService) -> Self {
+        self.settings_pi_agent = Some(Arc::new(service));
+        self
+    }
+
+    /// Set the Pi agent models settings service.
+    pub fn with_settings_pi_models(mut self, service: SettingsService) -> Self {
+        self.settings_pi_models = Some(Arc::new(service));
         self
     }
 
@@ -477,6 +502,12 @@ impl AppState {
     /// Set the main chat Pi service from an existing Arc.
     pub fn with_main_chat_pi_arc(mut self, service: Arc<MainChatPiService>) -> Self {
         self.main_chat_pi = Some(service);
+        self
+    }
+
+    /// Attach WorkspacePiService to application state.
+    pub fn with_workspace_pi_arc(mut self, service: Arc<WorkspacePiService>) -> Self {
+        self.workspace_pi = Some(service);
         self
     }
 

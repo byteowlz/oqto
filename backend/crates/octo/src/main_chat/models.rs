@@ -3,10 +3,12 @@
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 use std::fmt;
+use ts_rs::TS;
 
 /// Type of history entry.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
+#[ts(export, export_to = "../../../../frontend/src/generated/")]
 pub enum HistoryEntryType {
     /// Summary of a session or compaction
     Summary,
@@ -104,7 +106,8 @@ pub struct CreateSession {
 }
 
 /// Full assistant info including metadata.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../../frontend/src/generated/")]
 pub struct AssistantInfo {
     /// Assistant name
     pub name: String,
@@ -123,8 +126,9 @@ pub struct AssistantInfo {
 // ========== Chat Message Types ==========
 
 /// Role of a chat message.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
+#[ts(export, export_to = "../../../../frontend/src/generated/")]
 pub enum MessageRole {
     User,
     Assistant,

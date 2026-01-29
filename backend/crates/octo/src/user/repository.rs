@@ -42,26 +42,26 @@ impl UserRepository {
         s
     }
 
+    /// Generate a unique user ID from a username.
+    /// Always includes a random suffix to guarantee uniqueness without DB lookup.
+    /// This allows creating Linux users before DB users for better isolation.
+    pub fn generate_user_id(username: &str) -> String {
+        let base = Self::normalize_linux_username(username);
+        format!("{}-{}", base, nanoid::nanoid!(4))
+    }
+
     /// Create a new user.
     #[instrument(skip(self, request), fields(username = %request.username))]
     pub async fn create(&self, request: CreateUserRequest) -> Result<User> {
-        // Use a stable, human-readable id so it can be used for workspace dir names
-        // and Linux user provisioning.
-        let base = Self::normalize_linux_username(&request.username);
-        let mut id = base.clone();
-        for _ in 0..10 {
-            let exists: Option<(i64,)> = sqlx::query_as("SELECT 1 FROM users WHERE id = ? LIMIT 1")
-                .bind(&id)
-                .fetch_optional(&self.pool)
-                .await
-                .context("checking user id availability")?;
-            if exists.is_none() {
-                break;
-            }
-            id = format!("{}-{}", base, nanoid::nanoid!(4));
-        }
+        let id = Self::generate_user_id(&request.username);
+        self.create_with_id(&id, request).await
+    }
 
-        let linux_username = id.clone();
+    /// Create a new user with a pre-generated ID.
+    /// Used when Linux user must be created before DB user.
+    #[instrument(skip(self, request), fields(id = %id, username = %request.username))]
+    pub async fn create_with_id(&self, id: &str, request: CreateUserRequest) -> Result<User> {
+        let linux_username = id.to_string();
         let display_name = request
             .display_name
             .unwrap_or_else(|| request.username.clone());
@@ -98,7 +98,7 @@ impl UserRepository {
         let user = sqlx::query_as::<_, User>(
             r#"
             SELECT id, external_id, username, email, password_hash, display_name, 
-                   avatar_url, role, is_active, created_at, updated_at, last_login_at, settings, mmry_port, sldr_port, linux_username
+                   avatar_url, role, is_active, created_at, updated_at, last_login_at, settings, mmry_port, sldr_port, linux_username, linux_uid
             FROM users
             WHERE id = ?
             "#,
@@ -117,7 +117,7 @@ impl UserRepository {
         let user = sqlx::query_as::<_, User>(
             r#"
             SELECT id, external_id, username, email, password_hash, display_name,
-                   avatar_url, role, is_active, created_at, updated_at, last_login_at, settings, mmry_port, sldr_port, linux_username
+                   avatar_url, role, is_active, created_at, updated_at, last_login_at, settings, mmry_port, sldr_port, linux_username, linux_uid
             FROM users
             WHERE username = ?
             "#,
@@ -136,7 +136,7 @@ impl UserRepository {
         let user = sqlx::query_as::<_, User>(
             r#"
             SELECT id, external_id, username, email, password_hash, display_name,
-                   avatar_url, role, is_active, created_at, updated_at, last_login_at, settings, mmry_port, sldr_port, linux_username
+                   avatar_url, role, is_active, created_at, updated_at, last_login_at, settings, mmry_port, sldr_port, linux_username, linux_uid
             FROM users
             WHERE email = ?
             "#,
@@ -155,7 +155,7 @@ impl UserRepository {
         let user = sqlx::query_as::<_, User>(
             r#"
             SELECT id, external_id, username, email, password_hash, display_name,
-                   avatar_url, role, is_active, created_at, updated_at, last_login_at, settings, mmry_port, sldr_port, linux_username
+                   avatar_url, role, is_active, created_at, updated_at, last_login_at, settings, mmry_port, sldr_port, linux_username, linux_uid
             FROM users
             WHERE external_id = ?
             "#,
@@ -178,7 +178,7 @@ impl UserRepository {
         let mut sql = String::from(
             r#"
             SELECT id, external_id, username, email, password_hash, display_name,
-                   avatar_url, role, is_active, created_at, updated_at, last_login_at, settings, mmry_port, sldr_port, linux_username
+                   avatar_url, role, is_active, created_at, updated_at, last_login_at, settings, mmry_port, sldr_port, linux_username, linux_uid
             FROM users
             WHERE 1=1
             "#,
@@ -279,6 +279,11 @@ impl UserRepository {
         if let Some(linux_username) = &request.linux_username {
             updates.push("linux_username = ?");
             values.push(linux_username.clone());
+        }
+
+        if let Some(linux_uid) = request.linux_uid {
+            updates.push("linux_uid = ?");
+            values.push(linux_uid.to_string());
         }
 
         if updates.is_empty() {
@@ -605,8 +610,23 @@ mod tests {
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
                 updated_at TEXT NOT NULL DEFAULT (datetime('now')),
                 last_login_at TEXT,
-                settings TEXT DEFAULT '{}'
+                settings TEXT DEFAULT '{}',
+                mmry_port INTEGER,
+                sldr_port INTEGER,
+                linux_username TEXT,
+                linux_uid INTEGER
             )
+            "#,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            r#"
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_users_linux_username
+            ON users(linux_username)
+            WHERE linux_username IS NOT NULL
             "#,
         )
         .execute(&pool)
@@ -680,6 +700,7 @@ mod tests {
             is_active: None,
             settings: None,
             linux_username: None,
+            linux_uid: None,
         };
 
         let updated = repo.update(&user.id, update).await.unwrap();

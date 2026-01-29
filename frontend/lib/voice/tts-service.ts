@@ -220,7 +220,10 @@ export class TTSService {
 
 			case "stream_ended":
 				if (message.stream_id === this.activeStreamId) {
-					console.log("[TTS] Stream ended, total chunks:", message.total_chunks);
+					console.log(
+						"[TTS] Stream ended, total chunks:",
+						message.total_chunks,
+					);
 					this.activeStreamId = null;
 				}
 				break;
@@ -237,7 +240,9 @@ export class TTSService {
 				this.callbacks.onError?.(message.message || "Synthesis failed");
 				this.isProcessing = false;
 				// Also reject pending stream start
-				this.streamStartPromise?.reject(new Error(message.message || "TTS error"));
+				this.streamStartPromise?.reject(
+					new Error(message.message || "TTS error"),
+				);
 				this.streamStartPromise = null;
 				if (this.synthesisQueue.length > 0) {
 					const item = this.synthesisQueue.shift();
@@ -504,7 +509,11 @@ export class TTSService {
 	 * Kokorox will synthesize complete sentences and send audio immediately.
 	 */
 	streamAppend(text: string): void {
-		if (!this.activeStreamId || !this.ws || this.ws.readyState !== WebSocket.OPEN) {
+		if (
+			!this.activeStreamId ||
+			!this.ws ||
+			this.ws.readyState !== WebSocket.OPEN
+		) {
 			console.warn("[TTS] No active stream to append to");
 			return;
 		}
@@ -524,7 +533,11 @@ export class TTSService {
 	 * End the active stream, flushing any remaining text.
 	 */
 	streamEnd(): void {
-		if (!this.activeStreamId || !this.ws || this.ws.readyState !== WebSocket.OPEN) {
+		if (
+			!this.activeStreamId ||
+			!this.ws ||
+			this.ws.readyState !== WebSocket.OPEN
+		) {
 			return;
 		}
 
@@ -540,7 +553,11 @@ export class TTSService {
 	 * Cancel the active stream without flushing.
 	 */
 	streamCancel(): void {
-		if (!this.activeStreamId || !this.ws || this.ws.readyState !== WebSocket.OPEN) {
+		if (
+			!this.activeStreamId ||
+			!this.ws ||
+			this.ws.readyState !== WebSocket.OPEN
+		) {
 			return;
 		}
 

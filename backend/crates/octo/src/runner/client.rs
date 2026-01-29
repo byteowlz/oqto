@@ -56,9 +56,28 @@ impl RunnerClient {
     ///
     /// Looks up the user's UID and returns a client for their runner socket.
     /// Returns an error if the user doesn't exist.
+    ///
+    /// Uses the default pattern `/run/user/{uid}/octo-runner.sock`.
+    /// For custom patterns, use `for_user_with_pattern`.
     pub fn for_user(username: &str) -> Result<Self> {
         let uid = lookup_uid(username)?;
         Ok(Self::for_uid(uid))
+    }
+
+    /// Create a runner client for a Linux user using a custom socket pattern.
+    ///
+    /// The pattern supports placeholders:
+    /// - `{user}`: Linux username
+    /// - `{uid}`: User's numeric UID
+    ///
+    /// Example pattern: `/run/octo/runner-sockets/{user}/octo-runner.sock`
+    pub fn for_user_with_pattern(username: &str, pattern: &str) -> Result<Self> {
+        let mut socket_path = pattern.replace("{user}", username);
+        if socket_path.contains("{uid}") {
+            let uid = lookup_uid(username)?;
+            socket_path = socket_path.replace("{uid}", &uid.to_string());
+        }
+        Ok(Self::new(socket_path))
     }
 
     /// Get the socket path.

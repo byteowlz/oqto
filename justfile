@@ -40,6 +40,10 @@ test-frontend:
 fmt:
     cd backend && cargo fmt
 
+# Generate TypeScript types from Rust structs
+gen-types:
+    cd backend && cargo test -p octo export_typescript_bindings -- --nocapture
+
 # Check all Rust code compiles
 check:
     cd backend && cargo check

@@ -15,6 +15,7 @@ mod routes;
 mod state;
 mod test_harness;
 pub mod ui_control;
+mod workspace_pi;
 
 // Re-export error types for external use
 #[allow(unused_imports)]

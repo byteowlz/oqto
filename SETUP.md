@@ -46,9 +46,48 @@ For non-interactive installation:
 OCTO_USER_MODE=single OCTO_BACKEND_MODE=local ./setup.sh --non-interactive
 ```
 
-### Option 2: Ansible Playbook (Production/Server)
+### Option 2: Setup Script with Server Hardening (Production)
 
-For production server deployment with hardening:
+For production deployment with built-in server hardening (Linux only):
+
+```bash
+# Interactive production setup with hardening
+OCTO_DEV_MODE=false ./setup.sh
+
+# Or fully automated with all hardening enabled
+OCTO_DEV_MODE=false \
+OCTO_HARDEN_SERVER=yes \
+OCTO_SETUP_CADDY=yes \
+OCTO_DOMAIN=octo.example.com \
+./setup.sh --non-interactive
+```
+
+The setup script with hardening enabled will:
+- Configure UFW/firewalld firewall (only allow SSH, HTTP/S)
+- Install and configure fail2ban for SSH protection
+- Harden SSH (disable password auth, use strong ciphers)
+- Enable automatic security updates
+- Apply kernel security parameters (sysctl)
+- Enable audit logging (auditd)
+- Set up Caddy reverse proxy with automatic HTTPS
+
+**Hardening Environment Variables**:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `OCTO_HARDEN_SERVER` | prompt | Enable server hardening (yes/no) |
+| `OCTO_SSH_PORT` | 22 | SSH port number |
+| `OCTO_SETUP_FIREWALL` | yes | Configure UFW/firewalld |
+| `OCTO_SETUP_FAIL2BAN` | yes | Install and configure fail2ban |
+| `OCTO_HARDEN_SSH` | yes | Apply SSH hardening (disables passwords!) |
+| `OCTO_SETUP_AUTO_UPDATES` | yes | Enable automatic security updates |
+| `OCTO_HARDEN_KERNEL` | yes | Apply kernel security parameters |
+
+> ⚠️ **Warning**: SSH hardening disables password authentication. Ensure you have SSH key access before enabling!
+
+### Option 3: Ansible Playbook (Production/Server)
+
+For more complex deployments or when you need full control:
 
 ```bash
 cd deploy/ansible
@@ -57,13 +96,11 @@ cp inventory.yml.example inventory.yml
 ansible-playbook -i inventory.yml octo.yml
 ```
 
-The Ansible playbook:
-- Hardens SSH (key-only auth, strong ciphers)
-- Configures fail2ban and UFW firewall
-- Enables automatic security updates
+The Ansible playbook provides the same hardening as `setup.sh --harden-server` plus:
+- Creates dedicated octo system user
 - Installs all Octo dependencies including trash-cli
 - Sets up systemd services
-- Creates octo system user
+- More granular control via Ansible variables
 
 See [deploy/ansible/README.md](./deploy/ansible/README.md) for details.
 
@@ -550,11 +587,34 @@ openssl rand -base64 48
 ```
 
 **Creating the Admin User**:
-The setup script creates an admin user during production setup. To create additional admin users:
+
+For a fresh install, use the bootstrap command to create the first admin user:
 
 ```bash
-# Using the CLI
-octo user create --username admin --email admin@example.com --role admin
+# Bootstrap admin user with Linux user + runner (multi-user mode)
+# This creates: database user + Linux user + systemd runner
+octoctl user bootstrap -u admin -e admin@example.com -p "your-secure-password"
+
+# Database-only (single-user mode or existing Linux user)
+octoctl user bootstrap -u admin -e admin@example.com -p "password" --no-linux-user
+
+# Custom Linux username (different from Octo username)
+octoctl user bootstrap -u admin -e admin@example.com --linux-user octo_admin
+
+# With a custom database path
+octoctl user bootstrap -u admin -e admin@example.com --database /path/to/octo.db
+
+# Non-interactive JSON output (for scripting)
+octoctl --json user bootstrap -u admin -e admin@example.com -p "password"
+```
+
+The setup script (`./setup.sh --production`) will prompt for admin credentials and show the bootstrap command.
+
+To create additional users after the server is running:
+
+```bash
+# Using the CLI (server must be running)
+octoctl user create admin2 --email admin2@example.com --role admin
 
 # Generate password hash for config file
 htpasswd -nbBC 12 admin yourpassword | cut -d: -f2

@@ -298,6 +298,38 @@ enum UserCommand {
         /// Username or user ID
         user: String,
     },
+    /// Bootstrap the first admin user (for fresh installs)
+    ///
+    /// This creates an admin user directly in the database without requiring
+    /// an invite code. Use this for initial setup of a production instance.
+    ///
+    /// In multi-user mode, also creates the Linux user and sets up the runner.
+    Bootstrap {
+        /// Admin username
+        #[arg(long, short)]
+        username: String,
+        /// Admin email
+        #[arg(long, short)]
+        email: String,
+        /// Admin password (will prompt if not provided)
+        #[arg(long, short)]
+        password: Option<String>,
+        /// Display name
+        #[arg(long, short = 'n')]
+        display_name: Option<String>,
+        /// Database path (default: ~/.local/share/octo/octo.db)
+        #[arg(long, env = "OCTO_DATABASE_PATH")]
+        database: Option<String>,
+        /// Linux username (defaults to Octo username)
+        #[arg(long)]
+        linux_user: Option<String>,
+        /// Skip Linux user creation
+        #[arg(long)]
+        no_linux_user: bool,
+        /// Skip runner setup
+        #[arg(long)]
+        no_runner: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -1565,6 +1597,62 @@ async fn handle_sandbox(command: SandboxCommand, json: bool) -> Result<()> {
     Ok(())
 }
 
+/// Create a Linux user with home directory and enable systemd lingering.
+fn create_linux_user(linux_username: &str, json: bool) -> Result<()> {
+    // Check if Linux user already exists
+    let user_exists = std::process::Command::new("id")
+        .arg(linux_username)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+
+    if user_exists {
+        if !json {
+            eprintln!(
+                "Linux user '{}' already exists, skipping creation",
+                linux_username
+            );
+        }
+    } else {
+        // Create Linux user with sudo
+        if !json {
+            eprintln!("Creating Linux user '{}'...", linux_username);
+        }
+
+        let status = std::process::Command::new("sudo")
+            .args(["useradd", "-m", "-s", "/bin/bash", linux_username])
+            .status()
+            .context("Failed to run useradd")?;
+
+        if !status.success() {
+            anyhow::bail!("Failed to create Linux user '{}'", linux_username);
+        }
+
+        if !json {
+            eprintln!("Linux user '{}' created", linux_username);
+        }
+    }
+
+    // Enable lingering for systemd user services
+    if !json {
+        eprintln!("Enabling systemd lingering for '{}'...", linux_username);
+    }
+
+    let status = std::process::Command::new("sudo")
+        .args(["loginctl", "enable-linger", linux_username])
+        .status()
+        .context("Failed to enable lingering")?;
+
+    if !status.success() {
+        eprintln!(
+            "Warning: Failed to enable lingering for '{}'",
+            linux_username
+        );
+    }
+
+    Ok(())
+}
+
 async fn handle_user(command: UserCommand, json: bool) -> Result<()> {
     match command {
         UserCommand::Create {
@@ -1585,56 +1673,7 @@ async fn handle_user(command: UserCommand, json: bool) -> Result<()> {
             };
 
             if !no_linux_user {
-                // Check if Linux user already exists
-                let user_exists = std::process::Command::new("id")
-                    .arg(linux_username)
-                    .output()
-                    .map(|o| o.status.success())
-                    .unwrap_or(false);
-
-                if user_exists {
-                    if !json {
-                        println!(
-                            "Linux user '{}' already exists, skipping creation",
-                            linux_username
-                        );
-                    }
-                } else {
-                    // Create Linux user with sudo
-                    if !json {
-                        println!("Creating Linux user '{}'...", linux_username);
-                    }
-
-                    let status = std::process::Command::new("sudo")
-                        .args(["useradd", "-m", "-s", "/bin/bash", linux_username])
-                        .status()
-                        .context("Failed to run useradd")?;
-
-                    if !status.success() {
-                        anyhow::bail!("Failed to create Linux user '{}'", linux_username);
-                    }
-
-                    if !json {
-                        println!("Linux user '{}' created", linux_username);
-                    }
-                }
-
-                // Enable lingering for systemd user services
-                if !json {
-                    println!("Enabling systemd lingering for '{}'...", linux_username);
-                }
-
-                let status = std::process::Command::new("sudo")
-                    .args(["loginctl", "enable-linger", linux_username])
-                    .status()
-                    .context("Failed to enable lingering")?;
-
-                if !status.success() {
-                    eprintln!(
-                        "Warning: Failed to enable lingering for '{}'",
-                        linux_username
-                    );
-                }
+                create_linux_user(linux_username, json)?;
             }
 
             // Setup runner if not skipped
@@ -1892,8 +1931,264 @@ async fn handle_user(command: UserCommand, json: bool) -> Result<()> {
                 );
             }
         }
+
+        UserCommand::Bootstrap {
+            username,
+            email,
+            password,
+            display_name,
+            database,
+            linux_user,
+            no_linux_user,
+            no_runner,
+        } => {
+            let linux_username = linux_user.as_deref().unwrap_or(&username);
+
+            // Create Linux user if not skipped
+            if !no_linux_user {
+                create_linux_user(linux_username, json)?;
+            }
+
+            // Setup runner if not skipped
+            if !no_runner && !no_linux_user {
+                setup_runner_for_user(linux_username, json)?;
+            }
+
+            // Create database user
+            bootstrap_admin_user(
+                &username,
+                &email,
+                password.as_deref(),
+                display_name.as_deref(),
+                database.as_deref(),
+                json,
+            )
+            .await?;
+        }
     }
     Ok(())
+}
+
+/// Bootstrap the first admin user directly in the database.
+///
+/// This bypasses the normal registration flow (which requires an invite code)
+/// and creates an admin user directly. Used for initial production setup.
+async fn bootstrap_admin_user(
+    username: &str,
+    email: &str,
+    password: Option<&str>,
+    display_name: Option<&str>,
+    database_path: Option<&str>,
+    json: bool,
+) -> Result<()> {
+    use sqlx::sqlite::SqlitePoolOptions;
+    use std::io::Write;
+
+    // Get or prompt for password
+    let password = match password {
+        Some(p) => p.to_string(),
+        None => {
+            if json {
+                anyhow::bail!("Password is required in JSON mode. Use --password");
+            }
+
+            // Simple password prompt without rpassword dependency
+            eprint!("Enter admin password: ");
+            std::io::stderr().flush()?;
+
+            let mut password = String::new();
+            std::io::stdin().read_line(&mut password)?;
+            let password = password.trim().to_string();
+
+            if password.len() < 8 {
+                anyhow::bail!("Password must be at least 8 characters");
+            }
+
+            eprint!("Confirm password: ");
+            std::io::stderr().flush()?;
+
+            let mut confirm = String::new();
+            std::io::stdin().read_line(&mut confirm)?;
+            let confirm = confirm.trim();
+
+            if password != confirm {
+                anyhow::bail!("Passwords do not match");
+            }
+
+            password
+        }
+    };
+
+    // Validate password length
+    if password.len() < 8 {
+        anyhow::bail!("Password must be at least 8 characters");
+    }
+
+    // Hash the password
+    let password_hash =
+        bcrypt::hash(&password, bcrypt::DEFAULT_COST).context("Failed to hash password")?;
+
+    // Get database path from option or default
+    let db_path = match database_path {
+        Some(p) => std::path::PathBuf::from(p),
+        None => get_database_path()?,
+    };
+
+    if !json {
+        eprintln!("Using database: {}", db_path.display());
+    }
+
+    // Ensure database directory exists
+    if let Some(parent) = db_path.parent() {
+        std::fs::create_dir_all(parent).ok();
+    }
+
+    // Connect to database
+    let db_url = format!("sqlite:{}?mode=rwc", db_path.display());
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect(&db_url)
+        .await
+        .context("Failed to connect to database")?;
+
+    // Run migrations to ensure schema exists
+    sqlx::migrate!("./migrations")
+        .run(&pool)
+        .await
+        .context("Failed to run migrations")?;
+
+    // Check if any users exist
+    let user_count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users")
+        .fetch_one(&pool)
+        .await
+        .unwrap_or((0,));
+
+    if user_count.0 > 0 && !json {
+        eprintln!(
+            "Warning: {} user(s) already exist in the database.",
+            user_count.0
+        );
+        eprint!("Continue anyway? [y/N] ");
+        std::io::stderr().flush()?;
+
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input)?;
+        if !input.trim().eq_ignore_ascii_case("y") {
+            eprintln!("Aborted.");
+            return Ok(());
+        }
+    }
+
+    // Check if username already exists
+    let existing: Option<(String,)> = sqlx::query_as("SELECT id FROM users WHERE username = ?1")
+        .bind(username)
+        .fetch_optional(&pool)
+        .await?;
+
+    if existing.is_some() {
+        anyhow::bail!("User '{}' already exists", username);
+    }
+
+    // Check if email already exists
+    let existing_email: Option<(String,)> = sqlx::query_as("SELECT id FROM users WHERE email = ?1")
+        .bind(email)
+        .fetch_optional(&pool)
+        .await?;
+
+    if existing_email.is_some() {
+        anyhow::bail!("Email '{}' is already registered", email);
+    }
+
+    // Generate user ID
+    let user_id = format!("usr_{}", generate_id());
+    let now = chrono::Utc::now().to_rfc3339();
+    let display = display_name.unwrap_or(username);
+
+    // Insert the admin user
+    sqlx::query(
+        r#"
+        INSERT INTO users (id, username, email, password_hash, display_name, role, is_active, created_at, updated_at)
+        VALUES (?1, ?2, ?3, ?4, ?5, 'admin', 1, ?6, ?6)
+        "#
+    )
+        .bind(&user_id)
+        .bind(username)
+        .bind(email)
+        .bind(&password_hash)
+        .bind(display)
+        .bind(&now)
+        .execute(&pool)
+        .await
+        .context("Failed to insert admin user")?;
+
+    if json {
+        let result = serde_json::json!({
+            "status": "created",
+            "user_id": user_id,
+            "username": username,
+            "email": email,
+            "role": "admin",
+        });
+        println!("{}", serde_json::to_string_pretty(&result)?);
+    } else {
+        eprintln!();
+        eprintln!("Admin user created successfully!");
+        eprintln!("  User ID:  {}", user_id);
+        eprintln!("  Username: {}", username);
+        eprintln!("  Email:    {}", email);
+        eprintln!("  Role:     admin");
+        eprintln!();
+        eprintln!("You can now start Octo and log in with these credentials.");
+    }
+
+    Ok(())
+}
+
+/// Generate a short random ID
+fn generate_id() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
+    let random: u32 = rand::random();
+    format!("{:x}{:08x}", timestamp, random)
+}
+
+/// Get the database path from config or default location
+fn get_database_path() -> Result<std::path::PathBuf> {
+    // Try XDG data dir first
+    let data_dir = dirs::data_dir()
+        .map(|d| d.join("octo"))
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
+
+    let db_path = data_dir.join("octo.db");
+
+    // If database exists, use it
+    if db_path.exists() {
+        return Ok(db_path);
+    }
+
+    // Try config dir
+    let config_dir = dirs::config_dir()
+        .map(|d| d.join("octo"))
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
+
+    let config_db = config_dir.join("octo.db");
+    if config_db.exists() {
+        return Ok(config_db);
+    }
+
+    // Try current directory
+    let local_db = std::path::PathBuf::from("octo.db");
+    if local_db.exists() {
+        return Ok(local_db);
+    }
+
+    // Return default path (will be created)
+    // Create data directory if it doesn't exist
+    std::fs::create_dir_all(&data_dir).ok();
+    Ok(db_path)
 }
 
 /// Get the systemd status of the runner for a user

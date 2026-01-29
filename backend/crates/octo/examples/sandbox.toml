@@ -5,6 +5,13 @@
 # Agents can modify config.toml but cannot modify sandbox.toml, ensuring
 # they cannot weaken their own security restrictions.
 #
+# ## Security Layers
+#
+# 1. **octo-sandbox (bwrap)**: Hard deny/allow via namespace isolation
+# 2. **octo-guard (FUSE)**: Runtime approval for "gray area" paths
+# 3. **octo-ssh-proxy**: SSH access without exposing private keys
+# 4. **Network (eavs)**: Domain-level network filtering
+#
 # Sandboxing uses:
 # - Linux: bubblewrap (bwrap) for namespace isolation
 # - macOS: sandbox-exec with Seatbelt profiles
@@ -12,49 +19,131 @@
 "$schema" = "https://raw.githubusercontent.com/byteowlz/schemas/refs/heads/main/octo/octo.sandbox.schema.json"
 
 # Enable process sandboxing (default: false)
-enabled = false
+enabled = true
 
-# Sandbox profile preset (default: "development")
-# - "minimal": Protects secrets only (~/.ssh, ~/.gnupg, ~/.aws)
-# - "development": Protects secrets, allows tool installation (~/.cargo, ~/.npm, etc.)
-# - "strict": Network isolation, PID isolation, limited write access
+# Which profile to use (default: "development")
+# Built-in profiles: "minimal", "development", "strict"
+# Or use a custom profile defined below
 profile = "development"
 
-# Paths to deny read access (blocks these completely)
-# Agents cannot read files in these directories
+# ==============================================================================
+# Built-in Profile Presets
+# ==============================================================================
+#
+# "minimal" profile:
+#   - Protects secrets only (~/.ssh, ~/.gnupg, ~/.aws)
+#   - No tool installation (allow_write = ["/tmp"])
+#   - No network/PID isolation
+#
+# "development" profile (default):
+#   - Protects secrets
+#   - Allows tool installation (~/.cargo, ~/.npm, etc.)
+#   - PID isolation enabled
+#   - SSH proxy enabled for github.com, gitlab.com
+#
+# "strict" profile:
+#   - Protects secrets and all config (~/.config)
+#   - No tool installation
+#   - Full network and PID isolation
+#   - No SSH access
+
+# ==============================================================================
+# Custom Profile Definitions
+# ==============================================================================
+#
+# Define custom profiles in [profiles.<name>] sections.
+# Each profile can configure all security layers.
+
+# Example: Custom profile with guarded paths and SSH proxy
+[profiles.my-custom]
+# --- Hard restrictions (octo-sandbox / bwrap) ---
 deny_read = ["~/.ssh", "~/.gnupg", "~/.aws"]
-
-# Paths to allow write access (in addition to workspace directory)
-# Note: ~/.config/octo is allowed so agents can modify config.toml
-allow_write = [
-  "~/.cargo",
-  "~/.rustup",
-  "~/.local/bin",
-  "~/.npm",
-  "~/.bun",
-  "~/.config/octo", # Allow config.toml edits
-  "/tmp",
-]
-
-# Paths to explicitly deny write access (takes precedence over allow_write)
-# This file is always protected automatically, but you can add more paths here
-deny_write = [
-  "~/.config/octo/sandbox.toml", # Always protected (added automatically)
-]
-
-# Isolate network namespace (default: false)
-# When true, the sandboxed process has no network access
+allow_write = ["~/.cargo", "~/.npm", "/tmp"]
+deny_write = []
 isolate_network = false
-
-# Isolate PID namespace (default: true)
-# When true, the sandboxed process cannot see other processes
 isolate_pid = true
 
-# Additional paths to bind read-only into the sandbox
-# extra_ro_bind = ["/opt/shared-tools"]
+# --- Guarded paths (octo-guard / FUSE) ---
+# These paths are accessible but require runtime approval
+[profiles.my-custom.guard]
+enabled = true
+paths = ["~/.kube", "~/.docker", "~/.config/gcloud"]
+timeout_secs = 60
+default_on_timeout = "deny"
 
-# Additional paths to bind read-write into the sandbox
-# extra_rw_bind = ["/data/shared"]
+# Per-path policies: "auto" (allow + audit), "prompt" (ask user), "deny"
+[profiles.my-custom.guard.policy]
+"~/.kube/config" = "prompt"
+"~/.docker/config.json" = "auto"
+"~/.config/gcloud/*" = "prompt"
+
+# --- SSH proxy (octo-ssh-proxy) ---
+# Allows SSH without exposing private keys
+[profiles.my-custom.ssh]
+enabled = true
+allowed_hosts = ["github.com", "gitlab.com", "*.internal.corp"]
+allowed_keys = []  # Empty = all keys allowed
+prompt_unknown = true
+log_connections = true
+
+# --- Network (eavs integration) ---
+# "open" = no restrictions, "isolated" = no network, "proxy" = via eavs
+[profiles.my-custom.network]
+mode = "open"
+allow_domains = []
+log_requests = false
+
+# --- Prompt delivery ---
+[profiles.my-custom.prompts]
+desktop_notifications = true
+auto_deny_timeout_secs = 30
+
+
+# Example: Airgapped profile (no network, no SSH)
+[profiles.airgapped]
+deny_read = ["~/.ssh", "~/.gnupg", "~/.aws"]
+allow_write = ["/tmp"]
+isolate_network = true
+isolate_pid = true
+
+[profiles.airgapped.ssh]
+enabled = false
+
+[profiles.airgapped.network]
+mode = "isolated"
+
+
+# Example: Profile with network proxy (domain allowlist)
+[profiles.proxied]
+deny_read = ["~/.ssh", "~/.gnupg", "~/.aws"]
+allow_write = ["~/.cargo", "~/.npm", "~/.bun", "/tmp"]
+isolate_network = false  # Network goes through proxy, not isolated
+isolate_pid = true
+
+[profiles.proxied.ssh]
+enabled = true
+allowed_hosts = ["github.com"]
+prompt_unknown = true
+
+[profiles.proxied.network]
+mode = "proxy"
+allow_domains = [
+    # Rust
+    "crates.io",
+    "static.crates.io",
+    "index.crates.io",
+    # Node
+    "registry.npmjs.org",
+    # Git
+    "github.com",
+    "api.github.com",
+    "gitlab.com",
+    # Python
+    "pypi.org",
+    "files.pythonhosted.org",
+]
+log_requests = true
+
 
 # ==============================================================================
 # Per-Workspace Configuration
@@ -67,35 +156,15 @@ isolate_pid = true
 # - deny_write: Union (workspace can ADD paths, not remove)
 # - allow_write: Intersection (must be allowed by BOTH global and workspace)
 # - isolate_network/isolate_pid: OR (if either enables, it's enabled)
+# - Workspace can reference profiles defined in global config
 #
 # This ensures workspaces can only STRENGTHEN security, never weaken it.
 #
 # Example workspace .octo/sandbox.toml:
 #
-#   # This project doesn't need network access
-#   isolate_network = true
+#   # Use a profile from global config
+#   profile = "airgapped"
 #
-#   # Also protect kubernetes config for this project
-#   deny_read = ["~/.kube"]
-#
-# ==============================================================================
-# Profile Presets
-# ==============================================================================
-#
-# "minimal" profile:
-#   deny_read = ["~/.ssh", "~/.gnupg", "~/.aws"]
-#   allow_write = ["/tmp"]
-#   isolate_network = false
-#   isolate_pid = false
-#
-# "development" profile (default):
-#   deny_read = ["~/.ssh", "~/.gnupg", "~/.aws"]
-#   allow_write = ["~/.cargo", "~/.rustup", "~/.local/bin", "~/.npm", "~/.bun", "~/.config/octo", "/tmp"]
-#   isolate_network = false
-#   isolate_pid = true
-#
-# "strict" profile:
-#   deny_read = ["~/.ssh", "~/.gnupg", "~/.aws", "~/.kube"]
-#   allow_write = ["/tmp"]
-#   isolate_network = true
-#   isolate_pid = true
+#   # Or add additional restrictions
+#   deny_read = ["~/.kube"]  # Added to global deny_read
+#   isolate_network = true   # Override if global allows

@@ -5,6 +5,7 @@ export type { MainChatEntryProps } from "@/features/main-chat/components/MainCha
 export { MainChatPiView } from "@/features/main-chat/components/MainChatPiView";
 export type { MainChatPiViewProps } from "@/features/main-chat/components/MainChatPiView";
 export { MainChatSettingsView } from "@/features/main-chat/components/MainChatSettingsView";
+export { PiSettingsView } from "@/features/main-chat/components/PiSettingsView";
 export {
 	MainChatTimeline,
 	useActiveSessionTracker,

@@ -55,13 +55,10 @@ impl IntoResponse for FileServerError {
             FileServerError::FileTooLarge { .. } => {
                 (StatusCode::PAYLOAD_TOO_LARGE, "FILE_TOO_LARGE")
             }
-            FileServerError::ZipTooLarge { .. } => {
-                (StatusCode::PAYLOAD_TOO_LARGE, "ZIP_TOO_LARGE")
+            FileServerError::ZipTooLarge { .. } => (StatusCode::PAYLOAD_TOO_LARGE, "ZIP_TOO_LARGE"),
+            FileServerError::ZipTooManyEntries { .. } => {
+                (StatusCode::PAYLOAD_TOO_LARGE, "ZIP_TOO_MANY_ENTRIES")
             }
-            FileServerError::ZipTooManyEntries { .. } => (
-                StatusCode::PAYLOAD_TOO_LARGE,
-                "ZIP_TOO_MANY_ENTRIES",
-            ),
             FileServerError::NotADirectory => (StatusCode::BAD_REQUEST, "NOT_A_DIRECTORY"),
             FileServerError::NotAFile => (StatusCode::BAD_REQUEST, "NOT_A_FILE"),
             FileServerError::CreateDirFailed(_) => {

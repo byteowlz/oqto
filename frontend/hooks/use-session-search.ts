@@ -1,5 +1,5 @@
 /**
- * Hook for searching within a specific Pi session using CASS.
+ * Hook for searching within a specific Pi session using hstry.
  */
 
 import {

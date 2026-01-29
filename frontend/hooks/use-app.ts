@@ -53,6 +53,7 @@ export function useApp() {
 			clearOptimisticChatSession: session.clearOptimisticChatSession,
 			ensureOpencodeRunning: session.ensureOpencodeRunning,
 			createNewChat: session.createNewChat,
+			createNewPiChat: session.createNewPiChat,
 			deleteChatSession: session.deleteChatSession,
 			renameChatSession: session.renameChatSession,
 			stopWorkspaceSession: session.stopWorkspaceSession,

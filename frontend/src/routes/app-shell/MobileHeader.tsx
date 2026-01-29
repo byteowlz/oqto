@@ -1,0 +1,134 @@
+import type { AppConfig } from "@/components/app-context";
+import { Button } from "@/components/ui/button";
+import type { ChatSession } from "@/lib/control-plane-client";
+import { formatSessionDate, resolveReadableId } from "@/lib/session-utils";
+import { Menu, Plus } from "lucide-react";
+import { memo } from "react";
+
+const sidebarBg = "var(--sidebar, #181b1a)";
+
+export interface MobileHeaderProps {
+	locale: string;
+	isDark: boolean;
+	activeAppId: string;
+	activeApp: AppConfig | null;
+	resolveText: (text: string | { en: string; de: string }) => string;
+	selectedChatFromHistory: ChatSession | null;
+	opencodeDirectory: string | null;
+	mainChatActive: boolean;
+	mainChatAssistantName: string | null;
+	onMenuOpen: () => void;
+	onNewChat: () => void;
+}
+
+export const MobileHeader = memo(function MobileHeader({
+	locale,
+	isDark,
+	activeAppId,
+	activeApp,
+	resolveText,
+	selectedChatFromHistory,
+	opencodeDirectory,
+	mainChatActive,
+	mainChatAssistantName,
+	onMenuOpen,
+	onNewChat,
+}: MobileHeaderProps) {
+	return (
+		<header
+			className="fixed top-0 left-0 right-0 flex items-center px-3 z-50 md:hidden h-[calc(3.5rem+env(safe-area-inset-top))]"
+			style={{
+				backgroundColor: sidebarBg,
+				paddingTop: "env(safe-area-inset-top)",
+			}}
+		>
+			<Button
+				type="button"
+				variant="ghost"
+				size="icon"
+				aria-label="Menu"
+				onClick={onMenuOpen}
+				className="text-muted-foreground hover:text-primary flex-shrink-0"
+			>
+				<Menu className="w-5 h-5" />
+			</Button>
+			{/* Header title */}
+			{activeAppId === "sessions" ? (
+				selectedChatFromHistory ? (
+					<div className="flex-1 min-w-0 px-3 text-center">
+						<div className="text-sm font-medium text-foreground truncate">
+							{selectedChatFromHistory.title
+								?.replace(
+									/\s*-\s*\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z?$/,
+									"",
+								)
+								.trim() || "Chat"}
+						</div>
+						<div className="text-[10px] text-muted-foreground truncate">
+							{opencodeDirectory && (
+								<span className="font-medium">
+									{opencodeDirectory.split("/").filter(Boolean).pop()}
+									{" | "}
+								</span>
+							)}
+							{resolveReadableId(
+								selectedChatFromHistory.id,
+								selectedChatFromHistory.readable_id,
+							)}
+							{selectedChatFromHistory.updated_at && (
+								<span className="opacity-60">
+									{" "}
+									| {formatSessionDate(selectedChatFromHistory.updated_at)}
+								</span>
+							)}
+						</div>
+					</div>
+				) : mainChatActive ? (
+					<div className="flex-1 min-w-0 px-3 text-center">
+						<div className="text-sm font-medium text-foreground truncate">
+							{mainChatAssistantName ||
+								(locale === "de" ? "Hauptchat" : "Main Chat")}
+						</div>
+						<div className="text-[10px] text-muted-foreground truncate">
+							{locale === "de" ? "Hauptchat" : "Main Chat"}
+						</div>
+					</div>
+				) : (
+					<div className="flex-1 flex justify-center">
+						<img
+							src={
+								isDark ? "/octo_logo_new_white.png" : "/octo_logo_new_black.png"
+							}
+							alt="OCTO"
+							width={80}
+							height={32}
+							className="h-8 w-auto object-contain"
+						/>
+					</div>
+				)
+			) : (
+				<div className="flex-1 min-w-0 px-3 text-center">
+					<div className="text-sm font-medium text-foreground truncate">
+						{activeApp?.label ? resolveText(activeApp.label) : "Octo"}
+					</div>
+					<div className="text-[10px] text-muted-foreground truncate">
+						{activeApp?.description || ""}
+					</div>
+				</div>
+			)}
+			{/* New chat button */}
+			{activeAppId === "sessions" && (
+				<Button
+					type="button"
+					variant="ghost"
+					size="icon"
+					aria-label={locale === "de" ? "Neuer Chat" : "New Chat"}
+					onClick={onNewChat}
+					className="text-muted-foreground hover:text-primary flex-shrink-0"
+				>
+					<Plus className="w-5 h-5" />
+				</Button>
+			)}
+		</header>
+	);
+});

@@ -1,7 +1,20 @@
 "use client";
 
-import { A2UICallCard } from "@/components/ui/a2ui-call-card";
-import { BrailleSpinner } from "@/components/ui/braille-spinner";
+import {
+	A2UICallCard,
+	type FileAttachment,
+	FileAttachmentChip,
+	FileMentionPopup,
+	ReadAloudButton,
+	SlashCommandPopup,
+	ToolCallCard,
+} from "@/components/chat";
+import { BrailleSpinner } from "@/components/common";
+import {
+	ContextWindowGauge,
+	CopyButton,
+	MarkdownRenderer,
+} from "@/components/data-display";
 import { Button } from "@/components/ui/button";
 import {
 	ContextMenu,
@@ -9,20 +22,7 @@ import {
 	ContextMenuItem,
 	ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import { ContextWindowGauge } from "@/components/ui/context-window-gauge";
-import {
-	type FileAttachment,
-	FileAttachmentChip,
-	FileMentionPopup,
-} from "@/components/ui/file-mention-popup";
 import { Input } from "@/components/ui/input";
-import {
-	CopyButton,
-	MarkdownRenderer,
-} from "@/components/ui/markdown-renderer";
-import { ReadAloudButton } from "@/components/ui/read-aloud-button";
-import { SlashCommandPopup } from "@/components/ui/slash-command-popup";
-import { ToolCallCard } from "@/components/ui/tool-call-card";
 import { DictationOverlay } from "@/components/voice";
 import {
 	VoiceMenuButton,
@@ -32,14 +32,15 @@ import {
 	type Features,
 	type PiModelInfo,
 	type PiSessionFile,
-	compactMainChatPi,
 	fileserverWorkspaceBaseUrl,
 	getAuthHeaders,
 	getMainChatPiCommands,
 	getMainChatPiModels,
 	getMainChatPiStats,
+	getWorkspacePiModels,
 	listMainChatPiSessions,
 	setMainChatPiModel,
+	setWorkspacePiModel,
 	workspaceFileUrl,
 } from "@/features/main-chat/api";
 import { type A2UISurfaceState, useA2UI } from "@/hooks/use-a2ui";
@@ -51,10 +52,7 @@ import {
 	setCachedScrollPosition,
 	usePiChat,
 } from "@/hooks/usePiChat";
-import {
-	extractFileReferenceDetails,
-	getFileTypeInfo,
-} from "@/lib/file-types";
+import { extractFileReferenceDetails, getFileTypeInfo } from "@/lib/file-types";
 import { formatSessionDate, resolveReadableId } from "@/lib/session-utils";
 import {
 	type SlashCommand,
@@ -102,6 +100,10 @@ export interface MainChatPiViewProps {
 	locale?: "en" | "de";
 	/** Class name for container */
 	className?: string;
+	/** Scope for Pi sessions */
+	scope?: "main" | "workspace";
+	/** Storage key prefix for cached messages */
+	storageKeyPrefix?: string;
 	/** Features config (for voice settings) */
 	features?: Features | null;
 	/** Workspace path for file operations */
@@ -132,6 +134,10 @@ export interface MainChatPiViewProps {
 	onTodosChange?: (todos: TodoItem[]) => void;
 }
 
+function isPendingSessionId(id: string | null | undefined): boolean {
+	return !!id && id.startsWith("pending-");
+}
+
 /**
  * Main Chat view using Pi agent runtime.
  * Styled to match OpenCode chat UI exactly.
@@ -139,6 +145,8 @@ export interface MainChatPiViewProps {
 export function MainChatPiView({
 	locale = "en",
 	className,
+	scope = "main",
+	storageKeyPrefix,
 	features,
 	workspacePath,
 	assistantName,
@@ -152,6 +160,21 @@ export function MainChatPiView({
 	onMessageSent,
 	onTodosChange,
 }: MainChatPiViewProps) {
+	const isMainScope = scope === "main";
+	const resolvedStorageKeyPrefix =
+		storageKeyPrefix ??
+		(isMainScope
+			? "octo:mainChatPi"
+			: `octo:workspacePi:${(workspacePath ?? "global").replace(
+					/[^a-zA-Z0-9._-]+/g,
+					"_",
+				)}`);
+	const draftStorageKey = isMainScope
+		? "octo:mainChatDraft"
+		: `${resolvedStorageKeyPrefix}:draft`;
+	const scrollStorageKey = isMainScope
+		? "octo:mainChat:scrollPosition"
+		: `${resolvedStorageKeyPrefix}:scrollPosition`;
 	const {
 		messages,
 		isConnected,
@@ -159,11 +182,15 @@ export function MainChatPiView({
 		error,
 		send,
 		abort,
+		compact,
 		newSession,
 		resetSession,
 		state: piState,
 		refresh,
 	} = usePiChat({
+		scope,
+		workspacePath,
+		storageKeyPrefix: resolvedStorageKeyPrefix,
 		selectedSessionId,
 		onSelectedSessionIdChange,
 	});
@@ -184,23 +211,31 @@ export function MainChatPiView({
 			setInput("");
 			setFileAttachments([]);
 			try {
-				localStorage.removeItem("octo:mainChatDraft");
+				localStorage.removeItem(draftStorageKey);
 			} catch {
 				// Ignore localStorage errors
 			}
 		}
 		lastNewSessionTriggerRef.current = newSessionTrigger;
-	}, [newSessionTrigger, newSession]);
+	}, [draftStorageKey, newSession, newSessionTrigger]);
 
 	// Draft persistence - restore from localStorage on mount
 	const [input, setInput] = useState(() => {
 		if (typeof window === "undefined") return "";
 		try {
-			return localStorage.getItem("octo:mainChatDraft") || "";
+			return localStorage.getItem(draftStorageKey) || "";
 		} catch {
 			return "";
 		}
 	});
+	useEffect(() => {
+		if (typeof window === "undefined") return;
+		try {
+			setInput(localStorage.getItem(draftStorageKey) || "");
+		} catch {
+			setInput("");
+		}
+	}, [draftStorageKey]);
 	const [fileAttachments, setFileAttachments] = useState<FileAttachment[]>([]);
 	const [showFileMentionPopup, setShowFileMentionPopup] = useState(false);
 	const [fileMentionQuery, setFileMentionQuery] = useState("");
@@ -228,7 +263,7 @@ export function MainChatPiView({
 	const initialScrollDoneRef = useRef(false);
 	// Initialize from cached scroll position - null means bottom
 	const [isUserScrolled, setIsUserScrolled] = useState(
-		() => getCachedScrollPosition() !== null,
+		() => getCachedScrollPosition(scrollStorageKey) !== null,
 	);
 	// Pagination: start with last 30 messages, load more on scroll up
 	const INITIAL_MESSAGES = 30;
@@ -314,6 +349,9 @@ export function MainChatPiView({
 		if (!piState?.model) return null;
 		return `${piState.model.provider}/${piState.model.id}`;
 	}, [piState?.model]);
+	const canSwitchModel = Boolean(
+		piState && !piState.is_streaming && !piState.is_compacting && !isStreaming,
+	);
 	const currentModelInfo = useMemo(() => {
 		if (piState?.model) {
 			return piState.model;
@@ -335,6 +373,25 @@ export function MainChatPiView({
 		}
 		return 200000;
 	}, [currentModelInfo]);
+
+	const modelStorageKey = useMemo(() => {
+		if (!selectedSessionId) return null;
+		return `octo:chatModel:${selectedSessionId}`;
+	}, [selectedSessionId]);
+
+	useEffect(() => {
+		if (!modelStorageKey) return;
+		const modelRef = currentModelRef ?? selectedModelRef;
+		try {
+			if (modelRef) {
+				localStorage.setItem(modelStorageKey, modelRef);
+			} else {
+				localStorage.removeItem(modelStorageKey);
+			}
+		} catch {
+			// Ignore storage errors.
+		}
+	}, [currentModelRef, modelStorageKey, selectedModelRef]);
 
 	const displayError = commandError ?? error;
 	const showSkeleton = messages.length === 0 && !isConnected && !displayError;
@@ -359,18 +416,23 @@ export function MainChatPiView({
 		</div>
 	);
 	const slashQuery = useMemo(() => parseSlashInput(input), [input]);
-	const builtInCommands = useMemo<SlashCommand[]>(
-		() => [
+	const builtInCommands = useMemo<SlashCommand[]>(() => {
+		const commands: SlashCommand[] = [
 			{ name: "compact", description: "Summarize context" },
 			{ name: "new", description: "Start a fresh session" },
 			{ name: "reset", description: "Reload personality and user files" },
 			{ name: "abort", description: "Abort current run" },
 			{ name: "steer", description: "Queue a steering message" },
 			{ name: "followup", description: "Queue a follow-up message" },
-			{ name: "model", description: "Switch model (provider/model)" },
-		],
-		[],
-	);
+		];
+		if (canSwitchModel) {
+			commands.push({
+				name: "model",
+				description: "Switch model (provider/model)",
+			});
+		}
+		return commands;
+	}, [canSwitchModel]);
 	const builtInCommandNames = useMemo(
 		() => new Set(builtInCommands.map((cmd) => cmd.name)),
 		[builtInCommands],
@@ -472,8 +534,20 @@ export function MainChatPiView({
 	useEffect(() => {
 		// Only fetch models once session is active (piState available)
 		if (!isConnected || !piState) return;
+		if (
+			!isMainScope &&
+			(!selectedSessionId || isPendingSessionId(selectedSessionId))
+		) {
+			return;
+		}
 		let active = true;
-		getMainChatPiModels()
+		const fetchModels = isMainScope
+			? getMainChatPiModels()
+			: getWorkspacePiModels(
+					workspacePath ?? "global",
+					selectedSessionId ?? "",
+				);
+		fetchModels
 			.then((models) => {
 				if (active) setAvailableModels(models);
 			})
@@ -483,10 +557,11 @@ export function MainChatPiView({
 		return () => {
 			active = false;
 		};
-	}, [isConnected, piState]);
+	}, [isConnected, isMainScope, piState, selectedSessionId, workspacePath]);
 
 	useEffect(() => {
 		// Only fetch commands once session is active (piState available)
+		if (!isMainScope) return;
 		if (!isConnected || !piState) return;
 		let active = true;
 		getMainChatPiCommands()
@@ -505,9 +580,10 @@ export function MainChatPiView({
 		return () => {
 			active = false;
 		};
-	}, [isConnected, piState]);
+	}, [isConnected, isMainScope, piState]);
 
 	const refreshStats = useCallback(async () => {
+		if (!isMainScope) return;
 		try {
 			const stats = await getMainChatPiStats();
 			if (stats.tokens) {
@@ -519,7 +595,7 @@ export function MainChatPiView({
 		} catch {
 			// Ignore stats errors; token gauge will fall back to message usage.
 		}
-	}, []);
+	}, [isMainScope]);
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: messages.length triggers refresh when message count changes
 	useEffect(() => {
@@ -538,16 +614,21 @@ export function MainChatPiView({
 	useEffect(() => {
 		if (!scrollToMessageId || !messagesContainerRef.current) return;
 
+		let targetId = scrollToMessageId;
+		if (targetId.startsWith("line-")) {
+			const idx = Number.parseInt(targetId.slice(5), 10);
+			const resolved = Number.isFinite(idx) ? messages[idx - 1]?.id : undefined;
+			if (resolved) targetId = resolved;
+		}
+
 		// Find the message element with this ID
 		const messageEl = messagesContainerRef.current.querySelector(
-			`[data-message-id="${scrollToMessageId}"]`,
+			`[data-message-id="${targetId}"]`,
 		);
 
 		if (messageEl) {
 			// Ensure we have enough messages visible
-			const messageIndex = messages.findIndex(
-				(m) => m.id === scrollToMessageId,
-			);
+			const messageIndex = messages.findIndex((m) => m.id === targetId);
 			if (messageIndex !== -1) {
 				const messagesFromEnd = messages.length - messageIndex;
 				if (messagesFromEnd > visibleCount) {
@@ -577,7 +658,7 @@ export function MainChatPiView({
 
 		initialScrollDoneRef.current = true;
 		const container = messagesContainerRef.current;
-		const cachedPosition = getCachedScrollPosition();
+		const cachedPosition = getCachedScrollPosition(scrollStorageKey);
 
 		if (cachedPosition !== null) {
 			// Restore user's scroll position instantly
@@ -586,7 +667,7 @@ export function MainChatPiView({
 			// Scroll to bottom instantly (no animation)
 			container.scrollTop = container.scrollHeight;
 		}
-	}, [messages.length]);
+	}, [messages.length, scrollStorageKey]);
 
 	// Auto-scroll to bottom when NEW messages arrive (only if user hasn't scrolled up)
 	const prevMessageCountRef = useRef(messages.length);
@@ -634,12 +715,12 @@ export function MainChatPiView({
 
 		// Save scroll position to cache
 		if (userScrolled) {
-			setCachedScrollPosition(container.scrollTop);
+			setCachedScrollPosition(container.scrollTop, scrollStorageKey);
 		} else {
 			// At bottom - clear saved position so next mount scrolls to bottom
-			setCachedScrollPosition(null);
+			setCachedScrollPosition(null, scrollStorageKey);
 		}
-	}, [visibleCount, messages.length]);
+	}, [scrollStorageKey, visibleCount, messages.length]);
 
 	// Focus input on mount - only on desktop to avoid opening keyboard on mobile
 	useEffect(() => {
@@ -734,6 +815,9 @@ export function MainChatPiView({
 
 	const handleModelChange = useCallback(
 		async (value: string) => {
+			if (!canSwitchModel) {
+				throw new Error("Model switching is only available when Pi is idle.");
+			}
 			const separatorIndex = value.indexOf("/");
 			if (separatorIndex <= 0 || separatorIndex === value.length - 1) return;
 			const provider = value.slice(0, separatorIndex);
@@ -741,7 +825,16 @@ export function MainChatPiView({
 			setSelectedModelRef(value);
 			setIsSwitchingModel(true);
 			try {
-				await setMainChatPiModel(provider, modelId);
+				if (isMainScope) {
+					await setMainChatPiModel(provider, modelId);
+				} else if (selectedSessionId) {
+					await setWorkspacePiModel(
+						workspacePath ?? "global",
+						selectedSessionId,
+						provider,
+						modelId,
+					);
+				}
 				await refresh();
 			} catch (err) {
 				console.error("Failed to switch model:", err);
@@ -749,7 +842,7 @@ export function MainChatPiView({
 				setIsSwitchingModel(false);
 			}
 		},
-		[refresh],
+		[canSwitchModel, isMainScope, refresh, selectedSessionId, workspacePath],
 	);
 
 	const runSlashCommand = useCallback(
@@ -765,7 +858,7 @@ export function MainChatPiView({
 
 			switch (command) {
 				case "compact": {
-					await compactMainChatPi(trimmedArgs || undefined);
+					await compact(trimmedArgs || undefined);
 					await refresh();
 					return { handled: true, clearInput: true };
 				}
@@ -790,6 +883,11 @@ export function MainChatPiView({
 					return { handled: true, clearInput: true };
 				}
 				case "model": {
+					if (!canSwitchModel) {
+						throw new Error(
+							"Model switching is only available when Pi is idle.",
+						);
+					}
 					const separatorIndex = trimmedArgs.indexOf("/");
 					if (
 						separatorIndex <= 0 ||
@@ -804,7 +902,16 @@ export function MainChatPiView({
 					return { handled: false, clearInput: false };
 			}
 		},
-		[abort, handleModelChange, newSession, refresh, resetSession, send],
+		[
+			abort,
+			canSwitchModel,
+			compact,
+			handleModelChange,
+			newSession,
+			refresh,
+			resetSession,
+			send,
+		],
 	);
 
 	const handleSend = useCallback(
@@ -855,7 +962,7 @@ export function MainChatPiView({
 			setFileAttachments([]);
 			// Clear draft from localStorage
 			try {
-				localStorage.removeItem("octo:mainChatDraft");
+				localStorage.removeItem(draftStorageKey);
 			} catch {
 				// Ignore localStorage errors
 			}
@@ -869,6 +976,7 @@ export function MainChatPiView({
 		},
 		[
 			builtInCommandNames,
+			draftStorageKey,
 			fileAttachments,
 			input,
 			onMessageSent,
@@ -932,9 +1040,9 @@ export function MainChatPiView({
 			draftSaveTimeoutRef.current = setTimeout(() => {
 				try {
 					if (value.trim()) {
-						localStorage.setItem("octo:mainChatDraft", value);
+						localStorage.setItem(draftStorageKey, value);
 					} else {
-						localStorage.removeItem("octo:mainChatDraft");
+						localStorage.removeItem(draftStorageKey);
 					}
 				} catch {
 					// Ignore localStorage errors
@@ -960,7 +1068,7 @@ export function MainChatPiView({
 				setFileMentionQuery("");
 			}
 		},
-		[dictation.isActive],
+		[draftStorageKey, dictation.isActive],
 	);
 
 	const handleFileSelect = useCallback((file: FileAttachment) => {
@@ -1026,6 +1134,10 @@ export function MainChatPiView({
 			setSessionMeta(null);
 			return;
 		}
+		if (!isMainScope) {
+			setSessionMeta(null);
+			return;
+		}
 
 		let cancelled = false;
 		listMainChatPiSessions()
@@ -1041,7 +1153,7 @@ export function MainChatPiView({
 		return () => {
 			cancelled = true;
 		};
-	}, [selectedSessionId]);
+	}, [isMainScope, selectedSessionId]);
 
 	const readableId = selectedSessionId
 		? resolveReadableId(selectedSessionId, null)
@@ -1723,7 +1835,9 @@ const PiMessageGroupCard = memo(function PiMessageGroupCard({
 		.map((s) => s.content)
 		.join("\n\n");
 
-	const assistantDisplayName = assistantName || "Assistant";
+	// Use workspace name instead of "Assistant" when assistantName is not provided
+	const workspaceName = workspacePath?.split("/").pop() || "Assistant";
+	const assistantDisplayName = assistantName || workspaceName;
 
 	const messageCard = (
 		<div
@@ -1823,7 +1937,10 @@ const PiMessageGroupCard = memo(function PiMessageGroupCard({
 					}
 					if (segment.type === "tool_use") {
 						return (
-							<div key={segment.key} className={needsTopMargin ? "mt-3" : undefined}>
+							<div
+								key={segment.key}
+								className={needsTopMargin ? "mt-3" : undefined}
+							>
 								<PiPartRenderer
 									part={segment.part}
 									toolResult={segment.toolResult}
@@ -1836,7 +1953,10 @@ const PiMessageGroupCard = memo(function PiMessageGroupCard({
 					if (segment.type === "tool_result_only") {
 						// Render standalone tool result (no matching tool_use found)
 						return (
-							<div key={segment.key} className={needsTopMargin ? "mt-3" : undefined}>
+							<div
+								key={segment.key}
+								className={needsTopMargin ? "mt-3" : undefined}
+							>
 								<PiPartRenderer
 									part={segment.part}
 									locale={locale}
@@ -1847,7 +1967,10 @@ const PiMessageGroupCard = memo(function PiMessageGroupCard({
 					}
 					if (segment.type === "thinking") {
 						return (
-							<div key={segment.key} className={needsTopMargin ? "mt-3" : undefined}>
+							<div
+								key={segment.key}
+								className={needsTopMargin ? "mt-3" : undefined}
+							>
 								<PiPartRenderer
 									part={{ type: "thinking", content: segment.content }}
 									locale={locale}
@@ -1871,7 +1994,10 @@ const PiMessageGroupCard = memo(function PiMessageGroupCard({
 					}
 					if (segment.type === "a2ui") {
 						return (
-							<div key={segment.key} className={needsTopMargin ? "mt-3" : undefined}>
+							<div
+								key={segment.key}
+								className={needsTopMargin ? "mt-3" : undefined}
+							>
 								<A2UICallCard
 									surfaceId={segment.surface.surfaceId}
 									messages={segment.surface.messages}
@@ -1888,7 +2014,6 @@ const PiMessageGroupCard = memo(function PiMessageGroupCard({
 					}
 					return null;
 				})}
-
 			</div>
 		</div>
 	);
@@ -1946,8 +2071,9 @@ const PiMessageCard = memo(function PiMessageCard({
 
 	const createdAt = message.timestamp ? new Date(message.timestamp) : null;
 
-	// Use configured assistant name or fallback to "Assistant"
-	const displayName = isUser ? "You" : assistantName || "Assistant";
+	// Use configured assistant name or fallback to workspace name instead of "Assistant"
+	const workspaceName = workspacePath?.split("/").pop() || "Assistant";
+	const displayName = isUser ? "You" : assistantName || workspaceName;
 
 	const messageCard = (
 		<div

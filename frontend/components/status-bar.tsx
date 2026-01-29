@@ -1,6 +1,6 @@
 "use client";
 
-import { ProviderIcon } from "@/components/ui/provider-icon";
+import { ProviderIcon } from "@/components/data-display";
 import { useApp } from "@/hooks/use-app";
 import { useCurrentUser } from "@/hooks/use-auth";
 import { controlPlaneApiUrl, getAuthHeaders } from "@/lib/control-plane-client";
@@ -80,7 +80,12 @@ function shortenModelRef(modelRef: string): string {
 
 export function StatusBar() {
 	const { data: user } = useCurrentUser();
-	const { workspaceSessions, selectedChatSessionId, mainChatActive } = useApp();
+	const {
+		workspaceSessions,
+		selectedChatSessionId,
+		mainChatActive,
+		mainChatCurrentSessionId,
+	} = useApp();
 
 	const isAdmin = user?.role === "admin";
 
@@ -89,9 +94,12 @@ export function StatusBar() {
 
 	// Storage key matches sessions app: octo:chatModel:${chatSessionId}
 	const modelStorageKey = useMemo(() => {
-		if (!selectedChatSessionId || mainChatActive) return null;
-		return `octo:chatModel:${selectedChatSessionId}`;
-	}, [selectedChatSessionId, mainChatActive]);
+		const activeSessionId = mainChatActive
+			? mainChatCurrentSessionId
+			: selectedChatSessionId;
+		if (!activeSessionId) return null;
+		return `octo:chatModel:${activeSessionId}`;
+	}, [mainChatActive, mainChatCurrentSessionId, selectedChatSessionId]);
 
 	// Read model from localStorage and listen for changes
 	useEffect(() => {

@@ -1,4 +1,4 @@
-import { ReadAloudButton } from "@/components/ui/read-aloud-button";
+import { ReadAloudButton } from "@/components/chat";
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 

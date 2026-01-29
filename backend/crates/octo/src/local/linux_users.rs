@@ -91,15 +91,15 @@ impl LinuxUsersConfig {
     /// Ensure a Linux user exists for a shared project.
     ///
     /// Creates the project user if it doesn't exist and sets up the project directory.
-    /// Returns the UID of the project user.
+    /// Returns (UID, linux_username) of the project user.
     pub fn ensure_project_user(
         &self,
         project_id: &str,
         project_path: &std::path::Path,
-    ) -> Result<u32> {
+    ) -> Result<(u32, String)> {
         if !self.enabled {
             // Return current user's UID when not enabled
-            return Ok(unsafe { libc::getuid() });
+            return Ok((unsafe { libc::getuid() }, project_id.to_string()));
         }
 
         // Ensure group exists first
@@ -115,7 +115,7 @@ impl LinuxUsersConfig {
             );
             // Ensure directory ownership is correct
             self.chown_directory_to_user(project_path, &username)?;
-            return Ok(uid);
+            return Ok((uid, username));
         }
 
         // Find next available UID
@@ -162,7 +162,7 @@ impl LinuxUsersConfig {
             .with_context(|| format!("creating project directory: {:?}", project_path))?;
         self.chown_directory_to_user(project_path, &username)?;
 
-        Ok(uid)
+        Ok((uid, username))
     }
 
     /// Set ownership of a directory to a specific Linux username.
@@ -202,12 +202,14 @@ impl LinuxUsersConfig {
     /// This is the main entry point for automatic user creation:
     /// - If project_id is provided, ensures project user exists
     /// - Otherwise, ensures platform user's Linux user exists
+    ///
+    /// Returns (UID, linux_username).
     pub fn ensure_effective_user(
         &self,
         user_id: &str,
         project_id: Option<&str>,
         project_path: Option<&std::path::Path>,
-    ) -> Result<u32> {
+    ) -> Result<(u32, String)> {
         match (project_id, project_path) {
             (Some(pid), Some(path)) => self.ensure_project_user(pid, path),
             _ => self.ensure_user(user_id),
@@ -296,10 +298,97 @@ impl LinuxUsersConfig {
         get_user_home(&username)
     }
 
+    /// Generate a unique user ID that won't collide with existing Linux users.
+    ///
+    /// This should be called BEFORE creating the DB user to ensure the Linux username
+    /// derived from this ID is available. Regenerates the ID if collision detected.
+    ///
+    /// Returns the user_id to use for both DB and Linux user creation.
+    pub fn generate_unique_user_id(&self, username: &str) -> Result<String> {
+        const MAX_ATTEMPTS: u32 = 10;
+
+        for attempt in 0..MAX_ATTEMPTS {
+            let user_id = crate::user::UserRepository::generate_user_id(username);
+            let linux_username = self.linux_username(&user_id);
+
+            // Check if this Linux username is available
+            if let Some(_uid) = get_user_uid(&linux_username)? {
+                // Linux user exists - check if it's ours (shouldn't happen for new registration)
+                if let Some(gecos) = get_user_gecos(&linux_username)? {
+                    if let Some(owner_id) = extract_user_id_from_gecos(&gecos) {
+                        if owner_id == user_id {
+                            // This is our user (idempotent retry) - ID is fine
+                            debug!(
+                                "Linux user '{}' already belongs to user_id '{}' (attempt {})",
+                                linux_username,
+                                user_id,
+                                attempt + 1
+                            );
+                            return Ok(user_id);
+                        }
+                    }
+                }
+                // Collision with different owner - regenerate
+                debug!(
+                    "Linux username '{}' already exists, regenerating ID (attempt {})",
+                    linux_username,
+                    attempt + 1
+                );
+                continue;
+            }
+
+            // Username is available
+            debug!(
+                "Generated unique user_id '{}' -> linux username '{}' (attempt {})",
+                user_id,
+                linux_username,
+                attempt + 1
+            );
+            return Ok(user_id);
+        }
+
+        anyhow::bail!(
+            "Could not generate unique user_id for username '{}' after {} attempts",
+            username,
+            MAX_ATTEMPTS
+        )
+    }
+
+    /// Verify that a Linux user matches the expected UID from the database.
+    ///
+    /// SECURITY: This is the primary ownership verification. UID is immutable by non-root
+    /// users (unlike GECOS which can be changed via chfn), so this check cannot be bypassed.
+    ///
+    /// Returns Ok(()) if the UID matches, Err if mismatch or user doesn't exist.
+    pub fn verify_linux_user_uid(&self, linux_username: &str, expected_uid: u32) -> Result<()> {
+        if !self.enabled {
+            return Ok(()); // No verification needed in single-user mode
+        }
+
+        let actual_uid = get_user_uid(linux_username)?
+            .ok_or_else(|| anyhow::anyhow!("Linux user '{}' does not exist", linux_username))?;
+
+        if actual_uid != expected_uid {
+            anyhow::bail!(
+                "SECURITY: Linux user '{}' UID mismatch! Expected {}, got {}. \
+                 This could indicate an attack or misconfiguration.",
+                linux_username,
+                expected_uid,
+                actual_uid
+            );
+        }
+
+        Ok(())
+    }
+
     /// Create a Linux user for the given platform user.
     ///
-    /// Returns the UID of the created user.
-    pub fn create_user(&self, user_id: &str) -> Result<u32> {
+    /// Returns a tuple of (UID, actual_linux_username).
+    ///
+    /// SECURITY: Verifies ownership via GECOS field before returning an existing user's UID.
+    /// If the Linux user exists but belongs to a different user_id, returns an error.
+    /// Callers should use `generate_unique_user_id()` before DB user creation to avoid this.
+    pub fn create_user(&self, user_id: &str) -> Result<(u32, String)> {
         if !self.enabled {
             anyhow::bail!("Linux user isolation is not enabled");
         }
@@ -308,10 +397,48 @@ impl LinuxUsersConfig {
 
         // Check if user already exists
         if let Some(uid) = get_user_uid(&username)? {
-            debug!("User '{}' already exists with UID {}", username, uid);
-            return Ok(uid);
+            // SECURITY: Verify this user belongs to the same platform user_id via GECOS
+            if let Some(gecos) = get_user_gecos(&username)? {
+                if let Some(owner_id) = extract_user_id_from_gecos(&gecos) {
+                    if owner_id == user_id {
+                        debug!(
+                            "Linux user '{}' already exists with UID {} and belongs to user_id '{}'",
+                            username, uid, user_id
+                        );
+                        return Ok((uid, username));
+                    }
+                    // SECURITY: Different owner - this should not happen if generate_unique_user_id was used
+                    anyhow::bail!(
+                        "Linux user '{}' belongs to different user_id '{}', expected '{}'",
+                        username,
+                        owner_id,
+                        user_id
+                    );
+                }
+            }
+            // No GECOS or can't parse - user exists but we can't verify ownership.
+            // This could be: a manually created user, a system user, or a race condition.
+            // SECURITY: We cannot safely return this UID as it may belong to someone else.
+            // The admin should either:
+            // 1. Delete the conflicting Linux user, or
+            // 2. Add proper GECOS: "Octo platform user: <user_id>"
+            anyhow::bail!(
+                "Linux user '{}' exists but has no valid Octo GECOS field. \
+                 Cannot verify ownership for user_id '{}'. \
+                 Either delete the Linux user or set GECOS to 'Octo platform user: {}'",
+                username,
+                user_id,
+                user_id
+            );
         }
 
+        // Create the Linux user
+        self.create_linux_user_internal(user_id, &username)
+    }
+
+    /// Internal helper to create a Linux user with the given username.
+    /// Returns (uid, username).
+    fn create_linux_user_internal(&self, user_id: &str, username: &str) -> Result<(u32, String)> {
         // Find next available UID
         let uid = self.find_next_uid()?;
 
@@ -337,41 +464,76 @@ impl LinuxUsersConfig {
         }
 
         // Add comment with platform user ID for reference (sanitize for useradd compat)
+        // This GECOS field is used to verify ownership on subsequent calls
         args.push("-c".to_string());
         args.push(sanitize_gecos(&format!("Octo platform user: {}", user_id)));
 
-        args.push(username.clone());
+        args.push(username.to_string());
 
         let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
         run_privileged_command(self.use_sudo, "useradd", &args_refs)
             .with_context(|| format!("creating user '{}'", username))?;
 
         info!("Created Linux user '{}' with UID {}", username, uid);
-        Ok(uid)
+        Ok((uid, username.to_string()))
     }
 
     /// Ensure a Linux user exists, creating it if necessary.
-    /// Returns the UID of the user.
-    pub fn ensure_user(&self, user_id: &str) -> Result<u32> {
+    /// Returns (UID, actual_linux_username).
+    ///
+    /// The actual username may differ from `linux_username(user_id)` if a suffix was
+    /// needed to avoid collision with another user. Callers should store this username
+    /// in the database for future lookups.
+    pub fn ensure_user(&self, user_id: &str) -> Result<(u32, String)> {
+        self.ensure_user_with_verification(user_id, None, None)
+    }
+
+    /// Ensure a Linux user exists with optional UID verification.
+    ///
+    /// If `expected_linux_username` and `expected_uid` are provided (from DB), verifies
+    /// the existing Linux user matches before returning. This prevents attacks where
+    /// a user modifies their GECOS via chfn to impersonate another user.
+    ///
+    /// SECURITY: The UID check is the authoritative verification since UIDs cannot be
+    /// changed by non-root users.
+    pub fn ensure_user_with_verification(
+        &self,
+        user_id: &str,
+        expected_linux_username: Option<&str>,
+        expected_uid: Option<u32>,
+    ) -> Result<(u32, String)> {
         if !self.enabled {
-            // Return current user's UID when not enabled
-            return Ok(unsafe { libc::getuid() });
+            // Return current user's UID and a placeholder username when not enabled
+            return Ok((unsafe { libc::getuid() }, user_id.to_string()));
         }
 
+        // If we have expected values from the DB, verify them first
+        if let (Some(linux_username), Some(uid)) = (expected_linux_username, expected_uid) {
+            // Verify the UID matches what's in the DB
+            self.verify_linux_user_uid(linux_username, uid)?;
+
+            // User exists and is verified - ensure runner is running
+            self.ensure_group()?;
+            self.ensure_octo_runner_running(linux_username, uid)
+                .with_context(|| format!("ensuring octo-runner for user '{}'", linux_username))?;
+
+            return Ok((uid, linux_username.to_string()));
+        }
+
+        // No expected values - this is a new user or legacy user without stored UID
         // Ensure group exists first
         self.ensure_group()?;
 
-        // Create user if needed
-        let uid = self.create_user(user_id)?;
+        // Create user if needed (returns actual username which may have suffix)
+        let (uid, username) = self.create_user(user_id)?;
 
         // Best-effort: ensure the per-user octo-runner daemon is enabled and started.
         // This is required for multi-user components that must run as the target Linux user
         // (e.g. per-user mmry instances, Pi runner mode).
-        let username = self.linux_username(user_id);
         self.ensure_octo_runner_running(&username, uid)
             .with_context(|| format!("ensuring octo-runner for user '{}'", username))?;
 
-        Ok(uid)
+        Ok((uid, username))
     }
 
     /// Ensure the per-user octo-runner daemon is enabled and started.
@@ -432,44 +594,87 @@ impl LinuxUsersConfig {
                 .context("enabling systemd linger")?;
         }
 
+        // Install the octo-runner systemd user service file if not present.
+        // The user needs ~/.config/systemd/user/octo-runner.service for `systemctl --user enable`.
+        self.install_runner_service_for_user(username, uid)
+            .context("installing octo-runner.service for user")?;
+
         // Ensure the user's systemd instance is running.
-        // This is best-effort; if it fails, systemctl --user may still work depending on distro.
-        let _ = run_privileged_command(
+        // This is required for systemctl --user to work.
+        run_privileged_command(
             self.use_sudo,
             "systemctl",
             &["start", &format!("user@{}.service", uid)],
-        );
+        )
+        .context("starting user systemd instance")?;
+
+        // Give the user's systemd instance a moment to initialize.
+        // This is especially important for newly created users.
+        std::thread::sleep(std::time::Duration::from_millis(500));
 
         // Enable + start the runner as that user.
-        // We need to set the user bus environment explicitly to target the per-user manager.
+        // Try multiple approaches since the user may not have a D-Bus session yet.
         let runtime_dir = format!("/run/user/{}", uid);
         let bus = format!("unix:path={}/bus", runtime_dir);
 
-        if let Err(e) = run_as_user(
+        // Method 1: Use --machine=user@.host which connects via machinectl
+        // This works without a local D-Bus session socket.
+        let machine_arg = format!("{}@.host", username);
+        let machine_result = run_privileged_command(
             self.use_sudo,
-            username,
             "systemctl",
-            &["--user", "enable", "--now", "octo-runner"],
             &[
-                ("XDG_RUNTIME_DIR", runtime_dir.as_str()),
-                ("DBUS_SESSION_BUS_ADDRESS", bus.as_str()),
+                "--machine",
+                &machine_arg,
+                "--user",
+                "enable",
+                "--now",
+                "octo-runner",
             ],
-        ) {
-            warn!(
-                "Failed to enable/start octo-runner for {} via systemctl --user: {:?}",
+        );
+
+        if let Err(e) = &machine_result {
+            debug!(
+                "systemctl --machine failed for {}: {:?}, trying XDG_RUNTIME_DIR method",
                 username, e
             );
+
+            // Method 2: Set XDG_RUNTIME_DIR and DBUS_SESSION_BUS_ADDRESS explicitly
+            if let Err(e2) = run_as_user(
+                self.use_sudo,
+                username,
+                "systemctl",
+                &["--user", "enable", "--now", "octo-runner"],
+                &[
+                    ("XDG_RUNTIME_DIR", runtime_dir.as_str()),
+                    ("DBUS_SESSION_BUS_ADDRESS", bus.as_str()),
+                ],
+            ) {
+                warn!(
+                    "Failed to enable/start octo-runner for {} (both methods failed): \
+                     machine method: {:?}, env method: {:?}",
+                    username, e, e2
+                );
+            }
         }
 
-        // If the runner socket exists, we consider it good enough.
-        if !expected_socket.exists() {
-            anyhow::bail!(
-                "octo-runner socket not found at {}",
-                expected_socket.display()
-            );
+        // Wait for the socket to appear (up to 5 seconds).
+        // The service may take a moment to create its socket.
+        for i in 0..10 {
+            if expected_socket.exists() {
+                debug!("octo-runner socket appeared after {}ms", i * 500);
+                return Ok(());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(500));
         }
 
-        Ok(())
+        // If the runner socket still doesn't exist, fail.
+        anyhow::bail!(
+            "octo-runner socket not found at {} after waiting 5s. \
+             Check if octo-runner.service is properly installed for user {}.",
+            expected_socket.display(),
+            username
+        )
     }
 
     /// Check if systemd linger is already enabled for a user.
@@ -486,6 +691,97 @@ impl LinuxUsersConfig {
                         .eq_ignore_ascii_case("yes")
             })
             .unwrap_or(false)
+    }
+
+    /// Install the octo-runner systemd user service file for a user.
+    ///
+    /// This creates ~/.config/systemd/user/octo-runner.service so that
+    /// `systemctl --user enable octo-runner` can find the service.
+    fn install_runner_service_for_user(&self, username: &str, uid: u32) -> Result<()> {
+        // Get the user's home directory
+        let home = get_user_home(username)?
+            .ok_or_else(|| anyhow::anyhow!("could not find home directory for {}", username))?;
+        let home_str = home.to_string_lossy();
+
+        let service_dir = format!("{}/.config/systemd/user", home_str);
+        let service_path = format!("{}/octo-runner.service", service_dir);
+
+        // Check if already installed
+        if Path::new(&service_path).exists() {
+            debug!("octo-runner.service already installed for {}", username);
+            return Ok(());
+        }
+
+        // Find the octo-runner binary
+        let runner_path = find_octo_runner_binary()?;
+
+        // Service file content
+        let service_content = format!(
+            r#"[Unit]
+Description=Octo Runner - Process isolation daemon
+After=default.target
+
+[Service]
+Type=simple
+ExecStart={}
+Restart=on-failure
+RestartSec=5
+Environment=RUST_LOG=info
+
+[Install]
+WantedBy=default.target
+"#,
+            runner_path.display()
+        );
+
+        // Create the directory and service file as the target user
+        let is_current_user = std::env::var("USER").ok().as_deref() == Some(username);
+
+        if is_current_user {
+            std::fs::create_dir_all(&service_dir)
+                .with_context(|| format!("creating {}", service_dir))?;
+            std::fs::write(&service_path, &service_content)
+                .with_context(|| format!("writing {}", service_path))?;
+        } else {
+            // Create directory as the target user
+            run_as_user(self.use_sudo, username, "mkdir", &["-p", &service_dir], &[])
+                .with_context(|| format!("creating {} as {}", service_dir, username))?;
+
+            // Write the service file via a temp file and move
+            // (we can't easily write file content via run_as_user)
+            let temp_file = format!("/tmp/octo-runner-{}.service", uid);
+            std::fs::write(&temp_file, &service_content).context("writing temp service file")?;
+
+            // Copy and set ownership
+            run_privileged_command(self.use_sudo, "cp", &[&temp_file, &service_path])
+                .context("copying service file")?;
+            run_privileged_command(
+                self.use_sudo,
+                "chown",
+                &[&format!("{}:{}", username, username), &service_path],
+            )
+            .context("chown service file")?;
+
+            // Clean up temp file
+            let _ = std::fs::remove_file(&temp_file);
+
+            // Reload systemd for the user to pick up the new service file
+            let runtime_dir = format!("/run/user/{}", uid);
+            let bus = format!("unix:path={}/bus", runtime_dir);
+            let _ = run_as_user(
+                self.use_sudo,
+                username,
+                "systemctl",
+                &["--user", "daemon-reload"],
+                &[
+                    ("XDG_RUNTIME_DIR", runtime_dir.as_str()),
+                    ("DBUS_SESSION_BUS_ADDRESS", bus.as_str()),
+                ],
+            );
+        }
+
+        info!("Installed octo-runner.service for user {}", username);
+        Ok(())
     }
 
     /// Find the next available UID starting from uid_start.
@@ -631,6 +927,72 @@ fn get_user_home(username: &str) -> Result<Option<PathBuf>> {
     }
 }
 
+/// Find the octo-runner binary.
+///
+/// Searches in common locations and PATH.
+fn find_octo_runner_binary() -> Result<PathBuf> {
+    // Try `which` first
+    if let Ok(output) = Command::new("which").arg("octo-runner").output() {
+        if output.status.success() {
+            let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !path.is_empty() {
+                return Ok(PathBuf::from(path));
+            }
+        }
+    }
+
+    // Check common locations
+    let candidates = ["/usr/local/bin/octo-runner", "/usr/bin/octo-runner"];
+
+    for path in candidates {
+        if Path::new(path).exists() {
+            return Ok(PathBuf::from(path));
+        }
+    }
+
+    // Check ~/.cargo/bin for current user (development)
+    if let Ok(home) = std::env::var("HOME") {
+        let cargo_path = format!("{}/.cargo/bin/octo-runner", home);
+        if Path::new(&cargo_path).exists() {
+            return Ok(PathBuf::from(cargo_path));
+        }
+    }
+
+    anyhow::bail!(
+        "octo-runner binary not found. Install it with 'cargo install --path backend/crates/octo' \
+         or copy to /usr/local/bin/"
+    )
+}
+
+/// Get the GECOS field (comment) of a Linux user.
+/// Used to verify which platform user_id owns a Linux account.
+fn get_user_gecos(username: &str) -> Result<Option<String>> {
+    let output = Command::new("getent")
+        .args(["passwd", username])
+        .output()
+        .context("getting user GECOS field")?;
+
+    if !output.status.success() {
+        return Ok(None);
+    }
+
+    let line = String::from_utf8_lossy(&output.stdout);
+    let parts: Vec<&str> = line.trim().split(':').collect();
+
+    // passwd format: name:password:uid:gid:gecos:home:shell
+    if parts.len() >= 5 {
+        Ok(Some(parts[4].to_string()))
+    } else {
+        Ok(None)
+    }
+}
+
+/// Extract the platform user_id from a GECOS field.
+/// GECOS format: "Octo platform user: <user_id>"
+fn extract_user_id_from_gecos(gecos: &str) -> Option<&str> {
+    gecos.strip_prefix("Octo platform user: ").map(|s| s.trim())
+}
+
 /// Run a command with optional sudo.
 fn run_privileged_command(use_sudo: bool, cmd: &str, args: &[&str]) -> Result<()> {
     let is_root = unsafe { libc::geteuid() } == 0;
@@ -665,6 +1027,9 @@ fn run_privileged_command(use_sudo: bool, cmd: &str, args: &[&str]) -> Result<()
 }
 
 /// Run a command as a specific Linux user, with optional sudo, and environment overrides.
+///
+/// Environment variables are passed to the target command using `env VAR=value cmd args...`
+/// because sudo/runuser don't propagate the parent process environment by default.
 fn run_as_user(
     use_sudo: bool,
     username: &str,
@@ -674,25 +1039,35 @@ fn run_as_user(
 ) -> Result<()> {
     let is_root = unsafe { libc::geteuid() } == 0;
 
+    // Build the actual command with environment variables using `env`.
+    // Format: sudo/runuser -u user -- env VAR1=val1 VAR2=val2 cmd args...
     let mut command = if is_root {
-        // Prefer runuser when root.
         let mut c = Command::new("runuser");
-        c.args(["-u", username, "--", cmd]);
+        c.args(["-u", username, "--"]);
         c
     } else if use_sudo {
         let mut c = Command::new("sudo");
-        c.args(["-n", "-u", username, cmd]);
+        c.args(["-n", "-u", username, "--"]);
         c
     } else {
         anyhow::bail!("must be root or have sudo enabled to run as another user");
     };
 
-    command.args(args);
-    for (k, v) in env {
-        command.env(k, v);
+    // If we have environment variables, use `env` to set them
+    if !env.is_empty() {
+        command.arg("env");
+        for (k, v) in env {
+            command.arg(format!("{}={}", k, v));
+        }
     }
 
-    debug!("Running as {}: {} {:?}", username, cmd, args);
+    command.arg(cmd);
+    command.args(args);
+
+    debug!(
+        "Running as {}: {} {:?} (env: {:?})",
+        username, cmd, args, env
+    );
     let output = command
         .output()
         .with_context(|| format!("running {} as user {}", cmd, username))?;

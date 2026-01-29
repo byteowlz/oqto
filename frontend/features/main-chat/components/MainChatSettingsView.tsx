@@ -11,7 +11,9 @@ import {
 } from "@/components/ui/select";
 import {
 	type PiModelInfo,
+	type PiState,
 	getMainChatPiModels,
+	getMainChatPiState,
 	setMainChatPiModel,
 } from "@/features/main-chat/api";
 import { fuzzyMatch } from "@/lib/slash-commands";
@@ -33,6 +35,8 @@ export function MainChatSettingsView({
 	const [isSwitchingModel, setIsSwitchingModel] = useState(false);
 	const [modelQuery, setModelQuery] = useState("");
 	const [loading, setLoading] = useState(true);
+	const [piState, setPiState] = useState<PiState | null>(null);
+	const [loadingState, setLoadingState] = useState(false);
 
 	// Load available models
 	useEffect(() => {
@@ -60,6 +64,29 @@ export function MainChatSettingsView({
 		};
 	}, [selectedModelRef]);
 
+	useEffect(() => {
+		let active = true;
+		let intervalId: ReturnType<typeof setInterval> | null = null;
+		const fetchState = async () => {
+			if (!active) return;
+			try {
+				const nextState = await getMainChatPiState();
+				if (active) setPiState(nextState);
+			} catch {
+				if (active) setPiState(null);
+			} finally {
+				if (active) setLoadingState(false);
+			}
+		};
+		setLoadingState(true);
+		void fetchState();
+		intervalId = setInterval(fetchState, 2000);
+		return () => {
+			active = false;
+			if (intervalId) clearInterval(intervalId);
+		};
+	}, []);
+
 	const filteredModels = useMemo(() => {
 		const query = modelQuery.trim();
 		if (!query) return availableModels;
@@ -74,21 +101,27 @@ export function MainChatSettingsView({
 		});
 	}, [availableModels, modelQuery]);
 
-	const handleModelChange = useCallback(async (value: string) => {
-		const separatorIndex = value.indexOf("/");
-		if (separatorIndex <= 0 || separatorIndex === value.length - 1) return;
-		const provider = value.slice(0, separatorIndex);
-		const modelId = value.slice(separatorIndex + 1);
-		setSelectedModelRef(value);
-		setIsSwitchingModel(true);
-		try {
-			await setMainChatPiModel(provider, modelId);
-		} catch (err) {
-			console.error("Failed to switch model:", err);
-		} finally {
-			setIsSwitchingModel(false);
-		}
-	}, []);
+	const isIdle = !(piState?.is_streaming || piState?.is_compacting);
+
+	const handleModelChange = useCallback(
+		async (value: string) => {
+			if (!isIdle) return;
+			const separatorIndex = value.indexOf("/");
+			if (separatorIndex <= 0 || separatorIndex === value.length - 1) return;
+			const provider = value.slice(0, separatorIndex);
+			const modelId = value.slice(separatorIndex + 1);
+			setSelectedModelRef(value);
+			setIsSwitchingModel(true);
+			try {
+				await setMainChatPiModel(provider, modelId);
+			} catch (err) {
+				console.error("Failed to switch model:", err);
+			} finally {
+				setIsSwitchingModel(false);
+			}
+		},
+		[isIdle],
+	);
 
 	if (loading) {
 		return (
@@ -122,7 +155,12 @@ export function MainChatSettingsView({
 						onOpenChange={(open) => {
 							if (open) setModelQuery("");
 						}}
-						disabled={isSwitchingModel || availableModels.length === 0}
+						disabled={
+							isSwitchingModel ||
+							availableModels.length === 0 ||
+							loadingState ||
+							!isIdle
+						}
 					>
 						<SelectTrigger className="h-8 text-xs">
 							<SelectValue
@@ -184,6 +222,13 @@ export function MainChatSettingsView({
 							? "Provider/Modell fur den Hauptchat"
 							: "Provider/model for the main chat"}
 					</p>
+					{!isIdle && (
+						<p className="text-[10px] text-muted-foreground">
+							{locale === "de"
+								? "Modellwechsel nur im Leerlauf möglich."
+								: "Model switching is only available when Pi is idle."}
+						</p>
+					)}
 				</div>
 			</div>
 		</div>
