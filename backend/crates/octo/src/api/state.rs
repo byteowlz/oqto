@@ -321,6 +321,10 @@ pub struct AppState {
     pub settings_octo: Option<Arc<SettingsService>>,
     /// Settings service for mmry config.
     pub settings_mmry: Option<Arc<SettingsService>>,
+    /// Settings service for Pi agent settings.json.
+    pub settings_pi_agent: Option<Arc<SettingsService>>,
+    /// Settings service for Pi agent models.json.
+    pub settings_pi_models: Option<Arc<SettingsService>>,
     /// Main Chat service for persistent assistants.
     pub main_chat: Option<Arc<MainChatService>>,
     /// Main Chat Pi service for managing Pi subprocesses.
@@ -377,6 +381,8 @@ impl AppState {
             sldr_users: None,
             settings_octo: None,
             settings_mmry: None,
+            settings_pi_agent: None,
+            settings_pi_models: None,
             main_chat: None,
             main_chat_pi: None,
             workspace_pi: None,
@@ -423,6 +429,8 @@ impl AppState {
             sldr_users: None,
             settings_octo: None,
             settings_mmry: None,
+            settings_pi_agent: None,
+            settings_pi_models: None,
             main_chat: None,
             main_chat_pi: None,
             workspace_pi: None,
@@ -446,6 +454,18 @@ impl AppState {
     /// Set the mmry settings service.
     pub fn with_settings_mmry(mut self, service: SettingsService) -> Self {
         self.settings_mmry = Some(Arc::new(service));
+        self
+    }
+
+    /// Set the Pi agent settings service.
+    pub fn with_settings_pi_agent(mut self, service: SettingsService) -> Self {
+        self.settings_pi_agent = Some(Arc::new(service));
+        self
+    }
+
+    /// Set the Pi agent models settings service.
+    pub fn with_settings_pi_models(mut self, service: SettingsService) -> Self {
+        self.settings_pi_models = Some(Arc::new(service));
         self
     }
 

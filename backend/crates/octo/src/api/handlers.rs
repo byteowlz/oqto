@@ -3962,6 +3962,8 @@ fn get_settings_service<'a>(state: &'a AppState, app: &str) -> ApiResult<&'a Arc
     match app {
         "octo" => state.settings_octo.as_ref(),
         "mmry" => state.settings_mmry.as_ref(),
+        "pi-agent" => state.settings_pi_agent.as_ref(),
+        "pi-models" => state.settings_pi_models.as_ref(),
         _ => None,
     }
     .ok_or_else(|| ApiError::not_found(format!("Settings for app '{}' not found", app)))

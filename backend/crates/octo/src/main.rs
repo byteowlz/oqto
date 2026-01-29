@@ -2157,6 +2157,44 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
         None
     };
 
+    // Create Pi agent settings services (settings.json + models.json)
+    let pi_schema_root = PathBuf::from("/home/wismut/byteowlz/schemas/pi-agent");
+    let pi_settings_schema = std::fs::read_to_string(pi_schema_root.join("settings.schema.json"))
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_else(|| {
+            serde_json::json!({
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "title": "Pi Agent Settings",
+                "type": "object",
+                "properties": {}
+            })
+        });
+    let pi_models_schema = std::fs::read_to_string(pi_schema_root.join("models.schema.json"))
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_else(|| {
+            serde_json::json!({
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "title": "Pi Agent Models",
+                "type": "object",
+                "properties": {}
+            })
+        });
+
+    let pi_config_dir = dirs::home_dir()
+        .map(|home| home.join(".pi").join("agent"))
+        .unwrap_or_else(|| PathBuf::from(".pi/agent"));
+
+    let settings_pi_agent = settings::SettingsService::new_json(
+        pi_settings_schema,
+        pi_config_dir.clone(),
+        "settings.json",
+    )
+    .ok();
+    let settings_pi_models =
+        settings::SettingsService::new_json(pi_models_schema, pi_config_dir, "models.json").ok();
+
     // Create app state
     let mut state = if let Some(backend) = agent_backend {
         api::AppState::with_agent_backend(
@@ -2191,6 +2229,12 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     state = state.with_settings_octo(settings_octo);
     if let Some(mmry_settings) = settings_mmry {
         state = state.with_settings_mmry(mmry_settings);
+    }
+    if let Some(pi_settings) = settings_pi_agent {
+        state = state.with_settings_pi_agent(pi_settings);
+    }
+    if let Some(pi_models) = settings_pi_models {
+        state = state.with_settings_pi_models(pi_models);
     }
 
     if let Some(manager) = sldr_users {

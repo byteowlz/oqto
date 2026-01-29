@@ -4,7 +4,7 @@ import { useUIControl } from "@/components/contexts/ui-control-context";
 import {
 	ChatSearchBar,
 	MainChatPiView,
-	MainChatSettingsView,
+	PiSettingsView,
 } from "@/components/main-chat";
 import { A2UICallCard } from "@/components/ui/a2ui-call-card";
 import {
@@ -5336,7 +5336,18 @@ export const SessionScreen = memo(function SessionScreen() {
 					{activeView === "settings" && (
 						<Suspense fallback={viewLoadingFallback}>
 							{mainChatActive || isWorkspacePiSession ? (
-								<MainChatSettingsView locale={locale} />
+								<PiSettingsView
+									locale={locale}
+									scope={mainChatActive ? "main" : "workspace"}
+									sessionId={
+										mainChatActive
+											? mainChatCurrentSessionId
+											: selectedChatSessionId
+									}
+									workspacePath={
+										mainChatActive ? mainChatWorkspacePath : workspacePiPath
+									}
+								/>
 							) : (
 								<AgentSettingsView
 									modelOptions={opencodeModelOptions}
@@ -5822,7 +5833,20 @@ export const SessionScreen = memo(function SessionScreen() {
 										{activeView === "settings" && (
 											<Suspense fallback={viewLoadingFallback}>
 												{mainChatActive || isWorkspacePiSession ? (
-													<MainChatSettingsView locale={locale} />
+													<PiSettingsView
+														locale={locale}
+														scope={mainChatActive ? "main" : "workspace"}
+														sessionId={
+															mainChatActive
+																? mainChatCurrentSessionId
+																: selectedChatSessionId
+														}
+														workspacePath={
+															mainChatActive
+																? mainChatWorkspacePath
+																: workspacePiPath
+														}
+													/>
 												) : (
 													<AgentSettingsView
 														modelOptions={opencodeModelOptions}
