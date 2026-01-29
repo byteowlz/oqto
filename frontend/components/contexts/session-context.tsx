@@ -12,6 +12,7 @@ import {
 	listChatHistory,
 	listProjects,
 	listWorkspaceSessions,
+	newWorkspacePiSession,
 	opencodeProxyBaseUrl,
 	stopWorkspaceSession,
 	touchSessionActivity,
@@ -76,6 +77,10 @@ interface SessionContextValue {
 		directoryOverride?: string,
 		options?: { optimisticId?: string },
 	) => Promise<OpenCodeSession | null>;
+	createNewPiChat: (
+		workspacePath?: string,
+		options?: { optimisticId?: string },
+	) => Promise<string | null>;
 	deleteChatSession: (
 		sessionId: string,
 		baseUrlOverride?: string,
@@ -146,6 +151,7 @@ const defaultSessionContext: SessionContextValue = {
 	clearOptimisticChatSession: noop,
 	ensureOpencodeRunning: asyncNoop,
 	createNewChat: asyncNoop,
+	createNewPiChat: asyncNoop,
 	deleteChatSession: asyncNoopBool,
 	renameChatSession: asyncNoopBool,
 	stopWorkspaceSession: asyncNoopBool,
@@ -876,6 +882,55 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 		],
 	);
 
+	const createNewPiChat = useCallback(
+		async (
+			workspacePathOverride?: string,
+			options?: { optimisticId?: string },
+		): Promise<string | null> => {
+			setMainChatActive(false);
+			const resolvedPath =
+				workspacePathOverride?.trim() ||
+				opencodeDirectory ||
+				selectedChatFromHistory?.workspace_path ||
+				"global";
+			try {
+				const newState = await newWorkspacePiSession(resolvedPath);
+				const sessionId = newState.session_id;
+				if (!sessionId) {
+					throw new Error("Pi session id missing");
+				}
+				if (options?.optimisticId) {
+					clearOptimisticChatSession(options.optimisticId);
+				}
+				recentlyCreatedSessionRef.current = sessionId;
+				setSelectedChatSessionId(sessionId);
+				setTimeout(() => {
+					refreshChatHistory();
+					setTimeout(() => {
+						if (recentlyCreatedSessionRef.current === sessionId) {
+							recentlyCreatedSessionRef.current = null;
+						}
+					}, 100);
+				}, 500);
+				return sessionId;
+			} catch (err) {
+				if (options?.optimisticId) {
+					clearOptimisticChatSession(options.optimisticId);
+				}
+				console.error("Failed to create new Pi chat session:", err);
+				return null;
+			}
+		},
+		[
+			clearOptimisticChatSession,
+			opencodeDirectory,
+			refreshChatHistory,
+			selectedChatFromHistory,
+			setSelectedChatSessionId,
+			setMainChatActive,
+		],
+	);
+
 	// Trigger for creating a new Main Chat session
 	const [mainChatNewSessionTrigger, setMainChatNewSessionTrigger] = useState(0);
 
@@ -1032,6 +1087,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 			clearOptimisticChatSession,
 			ensureOpencodeRunning,
 			createNewChat,
+			createNewPiChat,
 			deleteChatSession,
 			renameChatSession,
 			stopWorkspaceSession: handleStopWorkspaceSession,
@@ -1077,6 +1133,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 			clearOptimisticChatSession,
 			ensureOpencodeRunning,
 			createNewChat,
+			createNewPiChat,
 			deleteChatSession,
 			renameChatSession,
 			handleStopWorkspaceSession,

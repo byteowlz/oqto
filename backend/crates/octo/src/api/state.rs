@@ -20,6 +20,7 @@ use crate::auth::AuthState;
 use crate::invite::InviteCodeRepository;
 use crate::local::LinuxUsersConfig;
 use crate::main_chat::{MainChatPiService, MainChatService};
+use crate::pi_workspace::WorkspacePiService;
 use crate::onboarding::OnboardingService;
 use crate::session::SessionService;
 use crate::session_ui::SessionAutoAttachMode;
@@ -324,6 +325,8 @@ pub struct AppState {
     pub main_chat: Option<Arc<MainChatService>>,
     /// Main Chat Pi service for managing Pi subprocesses.
     pub main_chat_pi: Option<Arc<MainChatPiService>>,
+    /// Workspace Pi service for per-workspace Pi sessions.
+    pub workspace_pi: Option<Arc<WorkspacePiService>>,
     /// Onboarding service for user setup flow.
     pub onboarding: Option<Arc<OnboardingService>>,
     /// Onboarding templates service for Main Chat initialization.
@@ -376,6 +379,7 @@ impl AppState {
             settings_mmry: None,
             main_chat: None,
             main_chat_pi: None,
+            workspace_pi: None,
             onboarding: None,
             onboarding_templates: None,
             ws_hub: Arc::new(WsHub::new()),
@@ -421,6 +425,7 @@ impl AppState {
             settings_mmry: None,
             main_chat: None,
             main_chat_pi: None,
+            workspace_pi: None,
             onboarding: None,
             onboarding_templates: None,
             ws_hub: Arc::new(WsHub::new()),
@@ -477,6 +482,12 @@ impl AppState {
     /// Set the main chat Pi service from an existing Arc.
     pub fn with_main_chat_pi_arc(mut self, service: Arc<MainChatPiService>) -> Self {
         self.main_chat_pi = Some(service);
+        self
+    }
+
+    /// Attach WorkspacePiService to application state.
+    pub fn with_workspace_pi_arc(mut self, service: Arc<WorkspacePiService>) -> Self {
+        self.workspace_pi = Some(service);
         self
     }
 

@@ -836,6 +836,12 @@ export const SessionScreen = memo(function SessionScreen() {
 		outputTokens: number;
 		maxTokens: number;
 	}>({ inputTokens: 0, outputTokens: 0, maxTokens: 200000 });
+	// Workspace Pi token usage (for sessions rendered via Pi)
+	const [workspacePiTokenUsage, setWorkspacePiTokenUsage] = useState<{
+		inputTokens: number;
+		outputTokens: number;
+		maxTokens: number;
+	}>({ inputTokens: 0, outputTokens: 0, maxTokens: 200000 });
 
 	// Per-chat state (working indicator is per-session, not global)
 	const [chatStates, setChatStates] = useState<Map<string, "idle" | "sending">>(
@@ -848,6 +854,36 @@ export const SessionScreen = memo(function SessionScreen() {
 	const chatState = activeSessionId
 		? chatStates.get(activeSessionId) || "idle"
 		: "idle";
+	const isWorkspacePiSession =
+		!mainChatActive &&
+		!!selectedChatSessionId &&
+		!selectedChatSessionId.startsWith("ses_");
+	const workspacePiPath = useMemo(() => {
+		if (!isWorkspacePiSession) return null;
+		return (
+			selectedChatFromHistory?.workspace_path ??
+			selectedWorkspaceSession?.workspace_path ??
+			opencodeDirectory ??
+			null
+		);
+	}, [
+		isWorkspacePiSession,
+		opencodeDirectory,
+		selectedChatFromHistory,
+		selectedWorkspaceSession,
+	]);
+	const workspacePiStorageKeyPrefix = useMemo(() => {
+		if (!workspacePiPath) return "octo:workspacePi:global";
+		return `octo:workspacePi:${workspacePiPath.replace(/[^a-zA-Z0-9._-]+/g, "_")}`;
+	}, [workspacePiPath]);
+	const handleWorkspacePiSessionChange = useCallback(
+		(id: string | null) => {
+			if (!id) return;
+			setSelectedChatSessionId(id);
+			refreshChatHistory();
+		},
+		[refreshChatHistory, setSelectedChatSessionId],
+	);
 	const selectedModelOverride = useMemo(() => {
 		if (!selectedModelRef) return undefined;
 		return parseModelRef(selectedModelRef) ?? undefined;
@@ -1019,6 +1055,7 @@ export const SessionScreen = memo(function SessionScreen() {
 	const [activeView, setActiveView] = useState<ActiveView>("chat");
 	const [tasksSubTab, setTasksSubTab] = useState<TasksSubTab>("todos");
 	const [mainChatTodos, setMainChatTodos] = useState<TodoItem[]>([]);
+	const [workspacePiTodos, setWorkspacePiTodos] = useState<TodoItem[]>([]);
 	const [expandedView, setExpandedView] = useState<ExpandedView>(null);
 	const [rightSidebarCollapsed, setRightSidebarCollapsed] = useState(false);
 	const [isSearchOpen, setIsSearchOpen] = useState(false);
@@ -1919,6 +1956,7 @@ export const SessionScreen = memo(function SessionScreen() {
 
 	// Auto-attach to running sessions (or resume) when opening history sessions.
 	useEffect(() => {
+		if (isWorkspacePiSession) return;
 		if (!selectedChatSessionId || !isHistoryOnlySession) return;
 		if (autoAttachMode === "off") return;
 		if (!selectedChatFromHistory?.workspace_path) return;
@@ -2021,6 +2059,7 @@ export const SessionScreen = memo(function SessionScreen() {
 		autoAttachMode,
 		autoAttachScan,
 		ensureOpencodeRunning,
+		isWorkspacePiSession,
 		isHistoryOnlySession,
 		selectedChatFromHistory,
 		selectedChatSessionId,
@@ -2046,7 +2085,7 @@ export const SessionScreen = memo(function SessionScreen() {
 	const loadMessages = useCallback(
 		async (options?: { forceFresh?: boolean }) => {
 			// Main Chat Pi view handles its own messages via usePiChat - skip loading here
-			if (mainChatActive) {
+			if (mainChatActive || isWorkspacePiSession) {
 				loadingSessionIdRef.current = "main-chat";
 				// Don't load messages - MainChatPiView has its own cached message loading
 				return;
@@ -2120,6 +2159,7 @@ export const SessionScreen = memo(function SessionScreen() {
 		},
 		[
 			mainChatActive,
+			isWorkspacePiSession,
 			opencodeBaseUrl,
 			opencodeDirectory,
 			selectedChatSessionId,
@@ -3034,6 +3074,24 @@ export const SessionScreen = memo(function SessionScreen() {
 		tokenUsage.modelID,
 		200000, // Default fallback
 	);
+	const displayTokenUsage = useMemo(() => {
+		if (mainChatActive) return mainChatTokenUsage;
+		if (isWorkspacePiSession) return workspacePiTokenUsage;
+		return {
+			inputTokens: tokenUsage.inputTokens,
+			outputTokens: tokenUsage.outputTokens,
+			maxTokens: contextLimit,
+		};
+	}, [
+		contextLimit,
+		isWorkspacePiSession,
+		mainChatActive,
+		mainChatTokenUsage,
+		tokenUsage.inputTokens,
+		tokenUsage.outputTokens,
+		workspacePiTokenUsage,
+	]);
+	const displayContextLimit = displayTokenUsage.maxTokens || contextLimit;
 
 	useEffect(() => {
 		if (mainChatActive) return;
@@ -3068,8 +3126,12 @@ export const SessionScreen = memo(function SessionScreen() {
 		return [];
 	}, [messages]);
 
-	// Use mainChatTodos when in main chat mode, otherwise use opencode todos
-	const latestTodos = mainChatActive ? mainChatTodos : opencodeTodos;
+	// Use Pi todos for main chat/workspace Pi, otherwise use opencode todos
+	const latestTodos = mainChatActive
+		? mainChatTodos
+		: isWorkspacePiSession
+			? workspacePiTodos
+			: opencodeTodos;
 
 	// Handle slash command selection from popup
 	const handleSlashCommandSelect = useCallback(
@@ -4241,20 +4303,44 @@ export const SessionScreen = memo(function SessionScreen() {
 	}
 
 	// Session metadata for chat display
-	const readableId = selectedChatSession?.id
-		? resolveReadableId(selectedChatSession.id, selectedChatSession.readable_id)
+	const readableIdSource = selectedChatSession ?? selectedChatFromHistory ?? null;
+	const readableId = readableIdSource
+		? resolveReadableId(readableIdSource.id, readableIdSource.readable_id)
 		: null;
 	// Extract workspace name from path (last segment)
-	const workspaceName = opencodeDirectory
-		? opencodeDirectory.split("/").filter(Boolean).pop() || null
-		: null;
+	const workspaceName =
+		(isWorkspacePiSession ? workspacePiPath : opencodeDirectory)
+			?.split("/")
+			.filter(Boolean)
+			.pop() || null;
 
 	// Chat content component (reused in both layouts)
-	const renderChatContent = (allowExpanded: boolean) => (
-		<div
-			ref={chatContainerRef}
-			className="flex-1 flex flex-col gap-2 sm:gap-4 min-h-0"
-		>
+	const renderChatContent = (allowExpanded: boolean) => {
+		if (isWorkspacePiSession) {
+			return (
+				<MainChatPiView
+					locale={locale}
+					className="flex-1"
+					features={features}
+					workspacePath={workspacePiPath}
+					hideHeader
+					scope="workspace"
+					storageKeyPrefix={workspacePiStorageKeyPrefix}
+					selectedSessionId={selectedChatSessionId}
+					onSelectedSessionIdChange={handleWorkspacePiSessionChange}
+					scrollToMessageId={scrollToMessageId}
+					onScrollToMessageComplete={() => setScrollToMessageId(null)}
+					onTokenUsageChange={setWorkspacePiTokenUsage}
+					onTodosChange={setWorkspacePiTodos}
+					onMessageSent={refreshChatHistory}
+				/>
+			);
+		}
+		return (
+			<div
+				ref={chatContainerRef}
+				className="flex-1 flex flex-col gap-2 sm:gap-4 min-h-0"
+			>
 			{/* Permission banner */}
 			<PermissionBanner
 				count={pendingPermissions.length}
@@ -4788,8 +4874,9 @@ export const SessionScreen = memo(function SessionScreen() {
 					</Button>
 				</div>
 			</div>
-		</div>
-	);
+			</div>
+		);
+	};
 
 	// Voice input overlay - shown on mobile when voice mode is active
 	const mobileVoiceOverlay =
@@ -5020,9 +5107,9 @@ export const SessionScreen = memo(function SessionScreen() {
 			{/* Context window gauge - full width bar at bottom of header */}
 			<div className="mt-2">
 				<ContextWindowGauge
-					inputTokens={tokenUsage.inputTokens}
-					outputTokens={tokenUsage.outputTokens}
-					maxTokens={contextLimit}
+					inputTokens={displayTokenUsage.inputTokens}
+					outputTokens={displayTokenUsage.outputTokens}
+					maxTokens={displayContextLimit}
 					locale={locale}
 					compact
 				/>
@@ -5092,19 +5179,9 @@ export const SessionScreen = memo(function SessionScreen() {
 					</div>
 					{/* Mobile context window gauge - full width bar directly below tabs */}
 					<ContextWindowGauge
-						inputTokens={
-							mainChatActive
-								? mainChatTokenUsage.inputTokens
-								: tokenUsage.inputTokens
-						}
-						outputTokens={
-							mainChatActive
-								? mainChatTokenUsage.outputTokens
-								: tokenUsage.outputTokens
-						}
-						maxTokens={
-							mainChatActive ? mainChatTokenUsage.maxTokens : contextLimit
-						}
+						inputTokens={displayTokenUsage.inputTokens}
+						outputTokens={displayTokenUsage.outputTokens}
+						maxTokens={displayContextLimit}
 						locale={locale}
 						compact
 					/>
@@ -5255,7 +5332,7 @@ export const SessionScreen = memo(function SessionScreen() {
 					)}
 					{activeView === "settings" && (
 						<Suspense fallback={viewLoadingFallback}>
-							{mainChatActive ? (
+							{mainChatActive || isWorkspacePiSession ? (
 								<MainChatSettingsView locale={locale} />
 							) : (
 								<AgentSettingsView
@@ -5741,7 +5818,7 @@ export const SessionScreen = memo(function SessionScreen() {
 										)}
 										{activeView === "settings" && (
 											<Suspense fallback={viewLoadingFallback}>
-												{mainChatActive ? (
+												{mainChatActive || isWorkspacePiSession ? (
 													<MainChatSettingsView locale={locale} />
 												) : (
 													<AgentSettingsView

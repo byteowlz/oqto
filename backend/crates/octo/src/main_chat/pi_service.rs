@@ -1529,55 +1529,7 @@ impl MainChatPiService {
             )
         })?;
 
-        let stream_snapshot = Arc::new(Mutex::new(StreamSnapshot::default()));
-        let stream_snapshot_task = Arc::clone(&stream_snapshot);
-        let is_streaming = Arc::new(RwLock::new(false));
-        let is_streaming_task = Arc::clone(&is_streaming);
-        let last_activity = Arc::new(RwLock::new(std::time::Instant::now()));
-        let last_activity_task = Arc::clone(&last_activity);
-
-        let mut event_rx = process.subscribe();
-        tokio::spawn(async move {
-            loop {
-                match event_rx.recv().await {
-                    Ok(event) => {
-                        // Update last activity on any event
-                        *last_activity_task.write().await = std::time::Instant::now();
-
-                        // Track streaming state
-                        match &event {
-                            PiEvent::AgentStart | PiEvent::MessageStart { .. } => {
-                                *is_streaming_task.write().await = true;
-                            }
-                            PiEvent::AgentEnd { .. } => {
-                                *is_streaming_task.write().await = false;
-                            }
-                            _ => {}
-                        }
-
-                        let mut snapshot = stream_snapshot_task.lock().await;
-                        snapshot.apply_event(&event);
-                    }
-                    Err(broadcast::error::RecvError::Closed) => break,
-                    Err(broadcast::error::RecvError::Lagged(_)) => {
-                        let mut snapshot = stream_snapshot_task.lock().await;
-                        snapshot.reset();
-                    }
-                }
-            }
-        });
-
-        // Session ID will be fetched from Pi state after spawn
-        let session_id = format!("pending-{}", uuid::Uuid::new_v4());
-
-        Ok(UserPiSession {
-            process: Arc::new(tokio::sync::RwLock::new(process)),
-            stream_snapshot,
-            _session_id: session_id,
-            last_activity,
-            is_streaming,
-            persistence_writer_claimed: Arc::new(AtomicBool::new(false)),
-        })
+        Ok(UserPiSession::from_process(process))
     }
 
     /// Close a specific session for a user.
@@ -1736,6 +1688,63 @@ impl MainChatPiService {
 }
 
 impl UserPiSession {
+    pub(crate) fn from_process(process: Box<dyn PiProcess>) -> Self {
+        let stream_snapshot = Arc::new(Mutex::new(StreamSnapshot::default()));
+        let stream_snapshot_task = Arc::clone(&stream_snapshot);
+        let is_streaming = Arc::new(RwLock::new(false));
+        let is_streaming_task = Arc::clone(&is_streaming);
+        let last_activity = Arc::new(RwLock::new(std::time::Instant::now()));
+        let last_activity_task = Arc::clone(&last_activity);
+
+        let mut event_rx = process.subscribe();
+        tokio::spawn(async move {
+            loop {
+                match event_rx.recv().await {
+                    Ok(event) => {
+                        *last_activity_task.write().await = std::time::Instant::now();
+
+                        match &event {
+                            PiEvent::AgentStart | PiEvent::MessageStart { .. } => {
+                                *is_streaming_task.write().await = true;
+                            }
+                            PiEvent::AgentEnd { .. } => {
+                                *is_streaming_task.write().await = false;
+                            }
+                            _ => {}
+                        }
+
+                        let mut snapshot = stream_snapshot_task.lock().await;
+                        snapshot.apply_event(&event);
+                    }
+                    Err(broadcast::error::RecvError::Closed) => break,
+                    Err(broadcast::error::RecvError::Lagged(_)) => {
+                        let mut snapshot = stream_snapshot_task.lock().await;
+                        snapshot.reset();
+                    }
+                }
+            }
+        });
+
+        let session_id = format!("pending-{}", uuid::Uuid::new_v4());
+
+        UserPiSession {
+            process: Arc::new(tokio::sync::RwLock::new(process)),
+            stream_snapshot,
+            _session_id: session_id,
+            last_activity,
+            is_streaming,
+            persistence_writer_claimed: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    pub async fn is_streaming(&self) -> bool {
+        *self.is_streaming.read().await
+    }
+
+    pub async fn last_activity_elapsed(&self) -> std::time::Duration {
+        std::time::Instant::now() - *self.last_activity.read().await
+    }
+
     // session_id is currently stored for future session switching features.
 
     /// Claim exclusive persistence for this session (used to prevent duplicate WS saves).

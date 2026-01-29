@@ -4462,7 +4462,7 @@ pub struct TrxWorkspaceQuery {
 
 /// Validate and resolve a workspace path, ensuring it's within the allowed workspace root
 /// or is a valid Main Chat workspace path.
-fn validate_workspace_path(
+pub(crate) fn validate_workspace_path(
     state: &AppState,
     user_id: &str,
     workspace_path: &str,

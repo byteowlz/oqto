@@ -882,7 +882,7 @@ pub async fn ws_handler(
 }
 
 /// Handle WebSocket connection for Pi events.
-async fn handle_ws(
+pub(crate) async fn handle_ws(
     socket: WebSocket,
     session: Arc<crate::main_chat::UserPiSession>,
     user_id: String,
@@ -1319,7 +1319,7 @@ async fn index_turn_to_mmry(
     Ok(())
 }
 
-fn pi_state_to_response(state: PiState) -> PiStateResponse {
+pub(crate) fn pi_state_to_response(state: PiState) -> PiStateResponse {
     PiStateResponse {
         model: state.model.map(|m| PiModelInfo {
             id: m.id,

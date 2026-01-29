@@ -9,11 +9,13 @@ All notable changes to this project will be documented in this file.
 - Sldr integration: backend mounts `/api/sldr` routes and frontend adds a Slides app for browsing slides, skeletons, flavors, and previews.
 - Multi-user sldr: per-user sldr-server instances spawned via octo-runner with `/api/sldr` proxy routing.
 - Install system now installs and publishes `sldr` and `sldr-server` binaries to `/usr/local/bin`.
+- Workspace Pi sessions: per-workspace Pi processes with idle cleanup, API endpoints, and WebSocket streaming.
 
 ### Changed
 
 - Replaced cass-backed session search with hstry search and added line-based scroll resolution for search hits.
 - Renamed CASS search types and comments to hstry in the API and frontend.
+- Session UI now renders non-OpenCode sessions with the Pi chat view, and new chats default to Pi workspace sessions.
 
 ### Security
 

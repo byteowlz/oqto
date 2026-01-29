@@ -32,6 +32,7 @@ mod markdown;
 mod observability;
 mod onboarding;
 mod pi;
+mod pi_workspace;
 mod projects;
 mod runner;
 mod session;
@@ -2273,6 +2274,7 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
             bridge_url: ctx.config.pi.bridge_url.clone(),
             sandboxed: ctx.config.pi.sandboxed.unwrap_or(false),
         };
+        let workspace_pi_config = main_chat_pi_config.clone();
         let main_chat_pi_service = Arc::new(main_chat::MainChatPiService::new(
             main_chat_workspace_dir,
             ctx.config.local.single_user,
@@ -2289,7 +2291,12 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
             "Main Chat Pi service initialized (executable: {})",
             ctx.config.pi.executable
         );
-        state = state.with_main_chat_pi_arc(Arc::clone(&main_chat_pi_service));
+        let workspace_pi_service =
+            Arc::new(crate::pi_workspace::WorkspacePiService::new(workspace_pi_config));
+        workspace_pi_service.start_cleanup_task();
+        state = state
+            .with_main_chat_pi_arc(Arc::clone(&main_chat_pi_service))
+            .with_workspace_pi_arc(Arc::clone(&workspace_pi_service));
     } else {
         info!("Main Chat Pi service disabled");
     }

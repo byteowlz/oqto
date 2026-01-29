@@ -78,7 +78,7 @@ export function UIControlProvider({
 		setSelectedChatSessionId,
 		setMainChatActive,
 		setMainChatCurrentSessionId,
-		createNewChat,
+		createNewPiChat,
 		setLocale,
 	} = useApp();
 	const sessionControlsRef = useRef<SessionUiControls | null>(null);
@@ -185,7 +185,7 @@ export function UIControlProvider({
 		async (command: string, args?: Record<string, unknown>) => {
 			switch (command) {
 				case "new_chat":
-					await createNewChat();
+					await createNewPiChat();
 					setActiveAppId("sessions");
 					return;
 				case "toggle_theme": {
@@ -227,7 +227,7 @@ export function UIControlProvider({
 			}
 		},
 		[
-			createNewChat,
+			createNewPiChat,
 			locale,
 			setActiveAppId,
 			setLocale,

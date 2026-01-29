@@ -1993,6 +1993,123 @@ export function createMainChatPiWebSocket(): WebSocket {
 	return new WebSocket(wsUrl);
 }
 
+/** Start a new workspace Pi session */
+export async function newWorkspacePiSession(
+	workspacePath: string,
+): Promise<PiState> {
+	const res = await authFetch(controlPlaneApiUrl("/api/pi/workspace/sessions"), {
+		method: "POST",
+		credentials: "include",
+		headers: {
+			"Content-Type": "application/json",
+		},
+		body: JSON.stringify({ workspace_path: workspacePath }),
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+	return res.json();
+}
+
+/** Resume a workspace Pi session */
+export async function resumeWorkspacePiSession(
+	workspacePath: string,
+	sessionId: string,
+): Promise<PiState> {
+	const url = new URL(
+		controlPlaneApiUrl(`/api/pi/workspace/sessions/${sessionId}/resume`),
+		window.location.origin,
+	);
+	url.searchParams.set("workspace_path", workspacePath);
+
+	const res = await authFetch(url.toString(), {
+		method: "POST",
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+	return res.json();
+}
+
+/** Get workspace Pi session state */
+export async function getWorkspacePiState(
+	workspacePath: string,
+	sessionId: string,
+): Promise<PiState> {
+	const url = new URL(
+		controlPlaneApiUrl("/api/pi/workspace/state"),
+		window.location.origin,
+	);
+	url.searchParams.set("workspace_path", workspacePath);
+	url.searchParams.set("session_id", sessionId);
+
+	const res = await authFetch(url.toString(), {
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+	return res.json();
+}
+
+/** Get messages from a workspace Pi session */
+export async function getWorkspacePiSessionMessages(
+	workspacePath: string,
+	sessionId: string,
+): Promise<PiSessionMessage[]> {
+	const url = new URL(
+		controlPlaneApiUrl(`/api/pi/workspace/sessions/${sessionId}/messages`),
+		window.location.origin,
+	);
+	url.searchParams.set("workspace_path", workspacePath);
+
+	const res = await authFetch(url.toString(), {
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+	return res.json();
+}
+
+/** Abort a workspace Pi session */
+export async function abortWorkspacePiSession(
+	workspacePath: string,
+	sessionId: string,
+): Promise<void> {
+	const url = new URL(
+		controlPlaneApiUrl(`/api/pi/workspace/sessions/${sessionId}/abort`),
+		window.location.origin,
+	);
+	url.searchParams.set("workspace_path", workspacePath);
+
+	const res = await authFetch(url.toString(), {
+		method: "POST",
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+}
+
+/** Create WebSocket connection to a workspace Pi session for streaming events */
+export function createWorkspacePiWebSocket(
+	workspacePath: string,
+	sessionId: string,
+): WebSocket {
+	const baseUrl = getControlPlaneBaseUrl();
+	let wsUrl: string;
+	if (baseUrl) {
+		// Direct connection to control plane - no /api prefix needed
+		wsUrl = `${baseUrl.replace(/^http/, "ws")}/pi/workspace/ws`;
+	} else {
+		// Proxied via frontend dev server - use /api prefix
+		wsUrl = `${window.location.origin.replace(/^http/, "ws")}/api/pi/workspace/ws`;
+	}
+	const params = new URLSearchParams();
+	params.set("workspace_path", workspacePath);
+	params.set("session_id", sessionId);
+
+	// Add auth token as query parameter for WebSocket auth
+	const token = getAuthToken();
+	if (token) {
+		params.set("token", token);
+	}
+	wsUrl = `${wsUrl}?${params.toString()}`;
+	return new WebSocket(wsUrl);
+}
+
 /** Chat message stored in main_chat.db for persistent display history */
 export type MainChatDbMessage = {
 	id: number;

@@ -32,7 +32,6 @@ import {
 	type Features,
 	type PiModelInfo,
 	type PiSessionFile,
-	compactMainChatPi,
 	fileserverWorkspaceBaseUrl,
 	getAuthHeaders,
 	getMainChatPiCommands,
@@ -99,6 +98,10 @@ export interface MainChatPiViewProps {
 	locale?: "en" | "de";
 	/** Class name for container */
 	className?: string;
+	/** Scope for Pi sessions */
+	scope?: "main" | "workspace";
+	/** Storage key prefix for cached messages */
+	storageKeyPrefix?: string;
 	/** Features config (for voice settings) */
 	features?: Features | null;
 	/** Workspace path for file operations */
@@ -136,6 +139,8 @@ export interface MainChatPiViewProps {
 export function MainChatPiView({
 	locale = "en",
 	className,
+	scope = "main",
+	storageKeyPrefix,
 	features,
 	workspacePath,
 	assistantName,
@@ -149,6 +154,19 @@ export function MainChatPiView({
 	onMessageSent,
 	onTodosChange,
 }: MainChatPiViewProps) {
+	const isMainScope = scope === "main";
+	const resolvedStorageKeyPrefix =
+		storageKeyPrefix ??
+		(isMainScope
+			? "octo:mainChatPi"
+			: `octo:workspacePi:${(workspacePath ?? "global")
+					.replace(/[^a-zA-Z0-9._-]+/g, "_")}`);
+	const draftStorageKey = isMainScope
+		? "octo:mainChatDraft"
+		: `${resolvedStorageKeyPrefix}:draft`;
+	const scrollStorageKey = isMainScope
+		? "octo:mainChat:scrollPosition"
+		: `${resolvedStorageKeyPrefix}:scrollPosition`;
 	const {
 		messages,
 		isConnected,
@@ -156,11 +174,15 @@ export function MainChatPiView({
 		error,
 		send,
 		abort,
+		compact,
 		newSession,
 		resetSession,
 		state: piState,
 		refresh,
 	} = usePiChat({
+		scope,
+		workspacePath,
+		storageKeyPrefix: resolvedStorageKeyPrefix,
 		selectedSessionId,
 		onSelectedSessionIdChange,
 	});
@@ -181,23 +203,31 @@ export function MainChatPiView({
 			setInput("");
 			setFileAttachments([]);
 			try {
-				localStorage.removeItem("octo:mainChatDraft");
+				localStorage.removeItem(draftStorageKey);
 			} catch {
 				// Ignore localStorage errors
 			}
 		}
 		lastNewSessionTriggerRef.current = newSessionTrigger;
-	}, [newSessionTrigger, newSession]);
+	}, [draftStorageKey, newSession, newSessionTrigger]);
 
 	// Draft persistence - restore from localStorage on mount
 	const [input, setInput] = useState(() => {
 		if (typeof window === "undefined") return "";
 		try {
-			return localStorage.getItem("octo:mainChatDraft") || "";
+			return localStorage.getItem(draftStorageKey) || "";
 		} catch {
 			return "";
 		}
 	});
+	useEffect(() => {
+		if (typeof window === "undefined") return;
+		try {
+			setInput(localStorage.getItem(draftStorageKey) || "");
+		} catch {
+			setInput("");
+		}
+	}, [draftStorageKey]);
 	const [fileAttachments, setFileAttachments] = useState<FileAttachment[]>([]);
 	const [showFileMentionPopup, setShowFileMentionPopup] = useState(false);
 	const [fileMentionQuery, setFileMentionQuery] = useState("");
@@ -225,7 +255,7 @@ export function MainChatPiView({
 	const initialScrollDoneRef = useRef(false);
 	// Initialize from cached scroll position - null means bottom
 	const [isUserScrolled, setIsUserScrolled] = useState(
-		() => getCachedScrollPosition() !== null,
+		() => getCachedScrollPosition(scrollStorageKey) !== null,
 	);
 	// Pagination: start with last 30 messages, load more on scroll up
 	const INITIAL_MESSAGES = 30;
@@ -357,16 +387,24 @@ export function MainChatPiView({
 	);
 	const slashQuery = useMemo(() => parseSlashInput(input), [input]);
 	const builtInCommands = useMemo<SlashCommand[]>(
-		() => [
-			{ name: "compact", description: "Summarize context" },
-			{ name: "new", description: "Start a fresh session" },
-			{ name: "reset", description: "Reload personality and user files" },
-			{ name: "abort", description: "Abort current run" },
-			{ name: "steer", description: "Queue a steering message" },
-			{ name: "followup", description: "Queue a follow-up message" },
-			{ name: "model", description: "Switch model (provider/model)" },
-		],
-		[],
+		() => {
+			const commands: SlashCommand[] = [
+				{ name: "compact", description: "Summarize context" },
+				{ name: "new", description: "Start a fresh session" },
+				{ name: "reset", description: "Reload personality and user files" },
+				{ name: "abort", description: "Abort current run" },
+				{ name: "steer", description: "Queue a steering message" },
+				{ name: "followup", description: "Queue a follow-up message" },
+			];
+			if (isMainScope) {
+				commands.push({
+					name: "model",
+					description: "Switch model (provider/model)",
+				});
+			}
+			return commands;
+		},
+		[isMainScope],
 	);
 	const builtInCommandNames = useMemo(
 		() => new Set(builtInCommands.map((cmd) => cmd.name)),
@@ -468,6 +506,7 @@ export function MainChatPiView({
 
 	useEffect(() => {
 		// Only fetch models once session is active (piState available)
+		if (!isMainScope) return;
 		if (!isConnected || !piState) return;
 		let active = true;
 		getMainChatPiModels()
@@ -480,10 +519,11 @@ export function MainChatPiView({
 		return () => {
 			active = false;
 		};
-	}, [isConnected, piState]);
+	}, [isConnected, isMainScope, piState]);
 
 	useEffect(() => {
 		// Only fetch commands once session is active (piState available)
+		if (!isMainScope) return;
 		if (!isConnected || !piState) return;
 		let active = true;
 		getMainChatPiCommands()
@@ -502,9 +542,10 @@ export function MainChatPiView({
 		return () => {
 			active = false;
 		};
-	}, [isConnected, piState]);
+	}, [isConnected, isMainScope, piState]);
 
 	const refreshStats = useCallback(async () => {
+		if (!isMainScope) return;
 		try {
 			const stats = await getMainChatPiStats();
 			if (stats.tokens) {
@@ -516,7 +557,7 @@ export function MainChatPiView({
 		} catch {
 			// Ignore stats errors; token gauge will fall back to message usage.
 		}
-	}, []);
+	}, [isMainScope]);
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: messages.length triggers refresh when message count changes
 	useEffect(() => {
@@ -579,7 +620,7 @@ export function MainChatPiView({
 
 		initialScrollDoneRef.current = true;
 		const container = messagesContainerRef.current;
-		const cachedPosition = getCachedScrollPosition();
+		const cachedPosition = getCachedScrollPosition(scrollStorageKey);
 
 		if (cachedPosition !== null) {
 			// Restore user's scroll position instantly
@@ -588,7 +629,7 @@ export function MainChatPiView({
 			// Scroll to bottom instantly (no animation)
 			container.scrollTop = container.scrollHeight;
 		}
-	}, [messages.length]);
+	}, [messages.length, scrollStorageKey]);
 
 	// Auto-scroll to bottom when NEW messages arrive (only if user hasn't scrolled up)
 	const prevMessageCountRef = useRef(messages.length);
@@ -636,12 +677,12 @@ export function MainChatPiView({
 
 		// Save scroll position to cache
 		if (userScrolled) {
-			setCachedScrollPosition(container.scrollTop);
+			setCachedScrollPosition(container.scrollTop, scrollStorageKey);
 		} else {
 			// At bottom - clear saved position so next mount scrolls to bottom
-			setCachedScrollPosition(null);
+			setCachedScrollPosition(null, scrollStorageKey);
 		}
-	}, [visibleCount, messages.length]);
+	}, [scrollStorageKey, visibleCount, messages.length]);
 
 	// Focus input on mount - only on desktop to avoid opening keyboard on mobile
 	useEffect(() => {
@@ -736,6 +777,7 @@ export function MainChatPiView({
 
 	const handleModelChange = useCallback(
 		async (value: string) => {
+			if (!isMainScope) return;
 			const separatorIndex = value.indexOf("/");
 			if (separatorIndex <= 0 || separatorIndex === value.length - 1) return;
 			const provider = value.slice(0, separatorIndex);
@@ -751,7 +793,7 @@ export function MainChatPiView({
 				setIsSwitchingModel(false);
 			}
 		},
-		[refresh],
+		[isMainScope, refresh],
 	);
 
 	const runSlashCommand = useCallback(
@@ -767,7 +809,7 @@ export function MainChatPiView({
 
 			switch (command) {
 				case "compact": {
-					await compactMainChatPi(trimmedArgs || undefined);
+					await compact(trimmedArgs || undefined);
 					await refresh();
 					return { handled: true, clearInput: true };
 				}
@@ -792,6 +834,9 @@ export function MainChatPiView({
 					return { handled: true, clearInput: true };
 				}
 				case "model": {
+					if (!isMainScope) {
+						throw new Error("Model switching is only available in main chat");
+					}
 					const separatorIndex = trimmedArgs.indexOf("/");
 					if (
 						separatorIndex <= 0 ||
@@ -806,7 +851,16 @@ export function MainChatPiView({
 					return { handled: false, clearInput: false };
 			}
 		},
-		[abort, handleModelChange, newSession, refresh, resetSession, send],
+		[
+			abort,
+			compact,
+			handleModelChange,
+			isMainScope,
+			newSession,
+			refresh,
+			resetSession,
+			send,
+		],
 	);
 
 	const handleSend = useCallback(
@@ -857,7 +911,7 @@ export function MainChatPiView({
 			setFileAttachments([]);
 			// Clear draft from localStorage
 			try {
-				localStorage.removeItem("octo:mainChatDraft");
+				localStorage.removeItem(draftStorageKey);
 			} catch {
 				// Ignore localStorage errors
 			}
@@ -871,6 +925,7 @@ export function MainChatPiView({
 		},
 		[
 			builtInCommandNames,
+			draftStorageKey,
 			fileAttachments,
 			input,
 			onMessageSent,
@@ -934,9 +989,9 @@ export function MainChatPiView({
 			draftSaveTimeoutRef.current = setTimeout(() => {
 				try {
 					if (value.trim()) {
-						localStorage.setItem("octo:mainChatDraft", value);
+						localStorage.setItem(draftStorageKey, value);
 					} else {
-						localStorage.removeItem("octo:mainChatDraft");
+						localStorage.removeItem(draftStorageKey);
 					}
 				} catch {
 					// Ignore localStorage errors
@@ -962,7 +1017,7 @@ export function MainChatPiView({
 				setFileMentionQuery("");
 			}
 		},
-		[dictation.isActive],
+		[draftStorageKey, dictation.isActive],
 	);
 
 	const handleFileSelect = useCallback((file: FileAttachment) => {
@@ -1028,6 +1083,10 @@ export function MainChatPiView({
 			setSessionMeta(null);
 			return;
 		}
+		if (!isMainScope) {
+			setSessionMeta(null);
+			return;
+		}
 
 		let cancelled = false;
 		listMainChatPiSessions()
@@ -1043,7 +1102,7 @@ export function MainChatPiView({
 		return () => {
 			cancelled = true;
 		};
-	}, [selectedSessionId]);
+	}, [isMainScope, selectedSessionId]);
 
 	const readableId = selectedSessionId
 		? resolveReadableId(selectedSessionId, null)

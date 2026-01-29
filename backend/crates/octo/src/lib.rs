@@ -18,6 +18,7 @@ pub mod markdown;
 pub mod observability;
 pub mod onboarding;
 pub mod pi;
+pub mod pi_workspace;
 pub mod projects;
 pub mod prompts;
 pub mod runner;

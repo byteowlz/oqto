@@ -425,6 +425,31 @@ pub fn create_router_with_config(state: AppState, max_upload_size_mb: usize) -> 
                 .post(main_chat_pi_handlers::resume_pi_session)
                 .patch(main_chat_pi_handlers::update_pi_session),
         )
+        // Workspace Pi routes (per-workspace Pi sessions)
+        .route(
+            "/pi/workspace/sessions",
+            post(crate::api::workspace_pi::new_workspace_session),
+        )
+        .route(
+            "/pi/workspace/sessions/{session_id}/resume",
+            post(crate::api::workspace_pi::resume_workspace_session),
+        )
+        .route(
+            "/pi/workspace/sessions/{session_id}/messages",
+            get(crate::api::workspace_pi::get_workspace_session_messages),
+        )
+        .route(
+            "/pi/workspace/sessions/{session_id}/abort",
+            post(crate::api::workspace_pi::abort_workspace_session),
+        )
+        .route(
+            "/pi/workspace/state",
+            get(crate::api::workspace_pi::get_workspace_state),
+        )
+        .route(
+            "/pi/workspace/ws",
+            get(crate::api::workspace_pi::ws_handler),
+        )
         // Main Chat file access routes
         .nest("/main/files", main_chat_files::main_chat_file_routes())
         // HSTRY (chat history) search routes

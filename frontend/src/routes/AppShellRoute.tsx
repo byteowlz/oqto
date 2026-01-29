@@ -124,7 +124,7 @@ const AppShell = memo(function AppShell() {
 		ensureOpencodeRunning,
 		createOptimisticChatSession,
 		clearOptimisticChatSession,
-		createNewChat,
+		createNewPiChat,
 		deleteChatSession,
 		renameChatSession,
 		busySessions,
@@ -1315,21 +1315,19 @@ const AppShell = memo(function AppShell() {
 				);
 				setActiveAppId("sessions");
 				const optimisticId = createOptimisticChatSession(project.directory);
-				const baseUrl = await ensureOpencodeRunning(project.directory);
-				console.log("[handleNewChat] Got baseUrl:", baseUrl);
-				if (baseUrl) {
-					await createNewChat(baseUrl, project.directory, { optimisticId });
-					return;
-				}
+				const created = await createNewPiChat(project.directory, {
+					optimisticId,
+				});
+				if (created) return;
 				clearOptimisticChatSession(optimisticId);
 			}
 		}
 
 		// If we have a running workspace session, create a new chat in it
-		if (selectedWorkspaceSession && opencodeBaseUrl) {
+		if (selectedWorkspaceSession) {
 			console.log("[handleNewChat] Using existing workspace session");
 			setActiveAppId("sessions");
-			await createNewChat();
+			await createNewPiChat(opencodeDirectory ?? undefined);
 			return;
 		}
 
@@ -1344,13 +1342,10 @@ const AppShell = memo(function AppShell() {
 			);
 			setActiveAppId("sessions");
 			const optimisticId = createOptimisticChatSession(currentWorkspacePath);
-			const baseUrl = await ensureOpencodeRunning(currentWorkspacePath);
-			if (baseUrl) {
-				await createNewChat(baseUrl, currentWorkspacePath, {
-					optimisticId,
-				});
-				return;
-			}
+			const created = await createNewPiChat(currentWorkspacePath, {
+				optimisticId,
+			});
+			if (created) return;
 			clearOptimisticChatSession(optimisticId);
 		}
 
@@ -1362,12 +1357,11 @@ const AppShell = memo(function AppShell() {
 		mainChatActive,
 		requestNewMainChatSession,
 		selectedWorkspaceSession,
-		opencodeBaseUrl,
+		opencodeDirectory,
 		selectedChatFromHistory,
 		selectedProjectKey,
 		projectSummaries,
-		ensureOpencodeRunning,
-		createNewChat,
+		createNewPiChat,
 		createOptimisticChatSession,
 		clearOptimisticChatSession,
 		setActiveAppId,
@@ -1379,16 +1373,12 @@ const AppShell = memo(function AppShell() {
 			setActiveAppId("sessions");
 			setMobileMenuOpen(false);
 			const optimisticId = createOptimisticChatSession(directory);
-			const baseUrl = await ensureOpencodeRunning(directory);
-			if (baseUrl) {
-				await createNewChat(baseUrl, directory, { optimisticId });
-				return;
-			}
+			const created = await createNewPiChat(directory, { optimisticId });
+			if (created) return;
 			clearOptimisticChatSession(optimisticId);
 		},
 		[
-			ensureOpencodeRunning,
-			createNewChat,
+			createNewPiChat,
 			createOptimisticChatSession,
 			clearOptimisticChatSession,
 			setActiveAppId,
