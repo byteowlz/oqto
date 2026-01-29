@@ -1,5 +1,6 @@
 "use client";
 
+import { FileIcon } from "@/components/data-display";
 import {
 	ContextMenu,
 	ContextMenuContent,
@@ -7,7 +8,6 @@ import {
 	ContextMenuSeparator,
 	ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import { FileIcon } from "@/components/ui/file-icon";
 import {
 	fileserverWorkspaceBaseUrl,
 	mainChatFilesBaseUrl,

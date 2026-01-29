@@ -2,11 +2,13 @@
 
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
+use ts_rs::TS;
 
 /// Session status.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type, TS)]
 #[serde(rename_all = "lowercase")]
 #[sqlx(rename_all = "lowercase")]
+#[ts(export, export_to = "../../../../frontend/src/generated/")]
 pub enum SessionStatus {
     /// Session is being set up.
     Pending,
@@ -52,9 +54,10 @@ impl std::str::FromStr for SessionStatus {
 }
 
 /// Runtime mode for the session.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, sqlx::Type)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, sqlx::Type, TS)]
 #[serde(rename_all = "lowercase")]
 #[sqlx(rename_all = "lowercase")]
+#[ts(export, export_to = "../../../../frontend/src/generated/")]
 pub enum RuntimeMode {
     /// Container-based runtime (Docker/Podman).
     #[default]
@@ -93,7 +96,8 @@ impl TryFrom<String> for RuntimeMode {
 }
 
 /// A container session.
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow, TS)]
+#[ts(export, export_to = "../../../../frontend/src/generated/")]
 pub struct Session {
     /// Unique session ID.
     pub id: String,
@@ -186,7 +190,8 @@ impl Default for SessionConfig {
 }
 
 /// Request to create a new session.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../../frontend/src/generated/")]
 pub struct CreateSessionRequest {
     /// Path to the workspace directory.
     #[serde(default)]
@@ -205,8 +210,9 @@ pub struct CreateSessionRequest {
 }
 
 /// Response from session creation.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[allow(dead_code)]
+#[ts(export, export_to = "../../../../frontend/src/generated/")]
 pub struct SessionResponse {
     /// Session information.
     #[serde(flatten)]
@@ -216,8 +222,9 @@ pub struct SessionResponse {
 }
 
 /// URLs for accessing session services.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[allow(dead_code)]
+#[ts(export, export_to = "../../../../frontend/src/generated/")]
 pub struct SessionUrls {
     /// URL for opencode API.
     pub opencode: String,

@@ -82,49 +82,17 @@ struct Args {
 
 fn load_config(args: &Args) -> Result<SandboxConfig> {
     if let Some(config_path) = &args.config {
-        // Load from file
+        // Load from file (supports custom profiles via [profiles.*] sections)
         let content = std::fs::read_to_string(config_path)
             .with_context(|| format!("reading config file: {:?}", config_path))?;
-        let config: SandboxConfig =
+        let file: octo::local::SandboxConfigFile =
             toml::from_str(&content).with_context(|| "parsing config file")?;
+        let mut config: SandboxConfig = file.into();
+        config.enabled = !args.no_sandbox;
         Ok(config)
     } else {
-        // Use built-in profile
-        let mut config = match args.profile.as_str() {
-            "minimal" => SandboxConfig {
-                enabled: true,
-                profile: "minimal".to_string(),
-                deny_read: vec![
-                    "~/.ssh".to_string(),
-                    "~/.gnupg".to_string(),
-                    "~/.aws".to_string(),
-                ],
-                allow_write: vec!["/tmp".to_string()],
-                deny_write: vec![],
-                isolate_network: false,
-                isolate_pid: false,
-                extra_ro_bind: vec![],
-                extra_rw_bind: vec![],
-            },
-            "strict" => SandboxConfig {
-                enabled: true,
-                profile: "strict".to_string(),
-                deny_read: vec![
-                    "~/.ssh".to_string(),
-                    "~/.gnupg".to_string(),
-                    "~/.aws".to_string(),
-                    "~/.config/octo".to_string(),
-                    "~/.kube".to_string(),
-                ],
-                allow_write: vec!["/tmp".to_string()],
-                deny_write: vec![],
-                isolate_network: true,
-                isolate_pid: true,
-                extra_ro_bind: vec![],
-                extra_rw_bind: vec![],
-            },
-            _ => SandboxConfig::default(),
-        };
+        // Use built-in profile (or load from global config if available)
+        let mut config = SandboxConfig::from_profile(&args.profile);
         config.enabled = !args.no_sandbox;
         Ok(config)
     }

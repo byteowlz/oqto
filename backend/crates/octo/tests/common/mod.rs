@@ -13,10 +13,14 @@ use octo::auth::{AuthConfig, AuthState, DevUser, Role};
 use octo::container::ContainerRuntime;
 use octo::db::Database;
 use octo::invite::InviteCodeRepository;
-use octo::session::{SessionRepository, SessionService, SessionServiceConfig};
+use octo::local::LocalRuntimeConfig;
+use octo::session::{RuntimeMode, SessionRepository, SessionService, SessionServiceConfig};
+use octo::settings::SettingsService;
 use octo::user::{UserRepository, UserService};
-use std::path::Path;
+use serde_json::json;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use uuid::Uuid;
 
 fn make_dev_user(id: &str, name: &str, email: &str, password: &str, role: Role) -> DevUser {
     let password_hash =
@@ -56,6 +60,61 @@ fn test_auth_config() -> AuthConfig {
     config
 }
 
+fn create_pi_settings_services() -> (SettingsService, SettingsService) {
+    let base_dir = std::env::temp_dir()
+        .join("octo-tests")
+        .join(Uuid::new_v4().to_string());
+    std::fs::create_dir_all(&base_dir).expect("create test settings dir");
+
+    let pi_settings_schema = json!({
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "title": "Pi Agent Settings",
+        "type": "object",
+        "properties": {
+            "defaultProvider": { "type": "string" },
+            "defaultModel": { "type": "string" },
+            "defaultThinkingLevel": { "type": "string" }
+        }
+    });
+    let pi_models_schema = json!({
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "title": "Pi Agent Models",
+        "type": "object",
+        "properties": {
+            "providers": { "type": "object" }
+        }
+    });
+
+    let settings = SettingsService::new_json(
+        pi_settings_schema,
+        PathBuf::from(&base_dir),
+        "settings.json",
+    )
+    .expect("create pi settings service");
+    let models =
+        SettingsService::new_json(pi_models_schema, PathBuf::from(&base_dir), "models.json")
+            .expect("create pi models service");
+
+    (settings, models)
+}
+
+fn test_session_service_config() -> SessionServiceConfig {
+    let workspace_root = std::env::temp_dir().join("octo-tests-workspaces");
+    std::fs::create_dir_all(&workspace_root).expect("create test workspace dir");
+
+    let local_config = LocalRuntimeConfig {
+        workspace_dir: format!("{}/{{user_id}}", workspace_root.display()),
+        ..LocalRuntimeConfig::default()
+    };
+
+    SessionServiceConfig {
+        runtime_mode: RuntimeMode::Local,
+        local_config: Some(local_config),
+        user_data_path: workspace_root.to_string_lossy().to_string(),
+        ..SessionServiceConfig::default()
+    }
+}
+
 /// Create a test application with all services initialized.
 pub async fn test_app() -> Router {
     // Use in-memory database for tests
@@ -69,7 +128,7 @@ pub async fn test_app() -> Router {
     let runtime = Arc::new(ContainerRuntime::new());
 
     // Create session service
-    let session_config = SessionServiceConfig::default();
+    let session_config = test_session_service_config();
     let session_repo = SessionRepository::new(db.pool().clone());
     let session_service = SessionService::new(session_repo, runtime.clone(), session_config);
 
@@ -103,6 +162,10 @@ pub async fn test_app() -> Router {
         api::TemplatesState::default(),
         max_proxy_body_bytes,
     );
+    let (pi_settings, pi_models) = create_pi_settings_services();
+    let state = state
+        .with_settings_pi_agent(pi_settings)
+        .with_settings_pi_models(pi_models);
     api::create_router_with_config(state, 100)
 }
 
@@ -238,7 +301,7 @@ pub async fn test_app_with_agent_backend() -> Router {
     let auth_state = AuthState::new(auth_config);
 
     let runtime = Arc::new(ContainerRuntime::new());
-    let session_config = SessionServiceConfig::default();
+    let session_config = test_session_service_config();
     let session_repo = SessionRepository::new(db.pool().clone());
     let session_service = SessionService::new(session_repo, runtime.clone(), session_config);
 
@@ -271,6 +334,10 @@ pub async fn test_app_with_agent_backend() -> Router {
         api::TemplatesState::default(),
         max_proxy_body_bytes,
     );
+    let (pi_settings, pi_models) = create_pi_settings_services();
+    let state = state
+        .with_settings_pi_agent(pi_settings)
+        .with_settings_pi_models(pi_models);
     api::create_router_with_config(state, 100)
 }
 
@@ -288,7 +355,7 @@ pub async fn test_app_with_token() -> (Router, String) {
         .unwrap();
 
     let runtime = Arc::new(ContainerRuntime::new());
-    let session_config = SessionServiceConfig::default();
+    let session_config = test_session_service_config();
     let session_repo = SessionRepository::new(db.pool().clone());
     let session_service = SessionService::new(session_repo, runtime.clone(), session_config);
 
@@ -321,6 +388,10 @@ pub async fn test_app_with_token() -> (Router, String) {
         api::TemplatesState::default(),
         max_proxy_body_bytes,
     );
+    let (pi_settings, pi_models) = create_pi_settings_services();
+    let state = state
+        .with_settings_pi_agent(pi_settings)
+        .with_settings_pi_models(pi_models);
     (api::create_router_with_config(state, 100), token)
 }
 
@@ -337,7 +408,7 @@ pub async fn test_app_with_user_token() -> (Router, String) {
         .unwrap();
 
     let runtime = Arc::new(ContainerRuntime::new());
-    let session_config = SessionServiceConfig::default();
+    let session_config = test_session_service_config();
     let session_repo = SessionRepository::new(db.pool().clone());
     let session_service = SessionService::new(session_repo, runtime.clone(), session_config);
 
@@ -370,5 +441,9 @@ pub async fn test_app_with_user_token() -> (Router, String) {
         api::TemplatesState::default(),
         max_proxy_body_bytes,
     );
+    let (pi_settings, pi_models) = create_pi_settings_services();
+    let state = state
+        .with_settings_pi_agent(pi_settings)
+        .with_settings_pi_models(pi_models);
     (api::create_router_with_config(state, 100), token)
 }

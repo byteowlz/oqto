@@ -9,7 +9,7 @@ use axum::{
     response::Response,
 };
 use chrono::Utc;
-use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
+use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
 use log::{debug, warn};
 
 use super::{AuthConfig, AuthError, Claims, DevUser, Role};
@@ -342,11 +342,7 @@ fn is_websocket_auth_path(req: &axum::http::Request<axum::body::Body>) -> bool {
 
     if matches!(
         path,
-        "/api/ws"
-            | "/api/voice/stt"
-            | "/api/voice/tts"
-            | "/api/main/pi/ws"
-            | "/api/workspace/term"
+        "/api/ws" | "/api/voice/stt" | "/api/voice/tts" | "/api/main/pi/ws" | "/api/workspace/term"
     ) {
         return true;
     }

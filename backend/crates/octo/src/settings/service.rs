@@ -29,6 +29,13 @@ pub struct ConfigUpdate {
     pub values: HashMap<String, Value>,
 }
 
+/// Settings file format.
+#[derive(Debug, Clone, Copy)]
+enum SettingsFormat {
+    Toml,
+    Json,
+}
+
 /// Settings service for managing configuration.
 pub struct SettingsService {
     /// Embedded schema for the app
@@ -37,6 +44,8 @@ pub struct SettingsService {
     config_dir: PathBuf,
     /// Config filename
     config_filename: String,
+    /// Settings file format
+    format: SettingsFormat,
     /// Current config values (cached)
     values: Arc<RwLock<Value>>,
     /// Reload notification channel
@@ -44,15 +53,32 @@ pub struct SettingsService {
 }
 
 impl SettingsService {
-    /// Create a new settings service.
+    /// Create a new settings service for TOML configuration files.
     pub fn new(schema: Value, config_dir: PathBuf, config_filename: &str) -> Result<Self> {
+        Self::new_with_format(schema, config_dir, config_filename, SettingsFormat::Toml)
+    }
+
+    /// Create a new settings service for JSON configuration files.
+    pub fn new_json(schema: Value, config_dir: PathBuf, config_filename: &str) -> Result<Self> {
+        Self::new_with_format(schema, config_dir, config_filename, SettingsFormat::Json)
+    }
+
+    fn new_with_format(
+        schema: Value,
+        config_dir: PathBuf,
+        config_filename: &str,
+        format: SettingsFormat,
+    ) -> Result<Self> {
         let (reload_tx, _reload_rx) = watch::channel(());
 
         let config_path = config_dir.join(config_filename);
         tracing::info!("Loading settings from: {:?}", config_path);
 
         let values = if config_path.exists() {
-            let v = load_toml_as_json(&config_path)?;
+            let v = match format {
+                SettingsFormat::Toml => load_toml_as_json(&config_path)?,
+                SettingsFormat::Json => load_json_as_json(&config_path)?,
+            };
             // Debug: log sessions config at load time
             if let Some(sessions) = v.get("sessions") {
                 tracing::info!("Loaded sessions config: {:?}", sessions);
@@ -67,6 +93,7 @@ impl SettingsService {
             schema,
             config_dir,
             config_filename: config_filename.to_string(),
+            format,
             values: Arc::new(RwLock::new(values)),
             reload_tx,
         })
@@ -80,6 +107,16 @@ impl SettingsService {
     /// Get the schema, filtered by user scope.
     pub fn get_schema(&self, scope: SettingsScope) -> Value {
         filter_schema_by_scope(&self.schema, scope)
+    }
+
+    /// Create a new settings service scoped to a different config directory.
+    pub fn with_config_dir(&self, config_dir: PathBuf) -> Result<Self> {
+        Self::new_with_format(
+            self.schema.clone(),
+            config_dir,
+            &self.config_filename,
+            self.format,
+        )
     }
 
     /// Get current values with metadata about configured vs default.
@@ -120,32 +157,54 @@ impl SettingsService {
             }
         }
 
-        // Read current TOML, apply updates, write back
         let config_path = self.config_path();
-        let mut toml_value = if config_path.exists() {
-            let content =
-                std::fs::read_to_string(&config_path).context("Failed to read config file")?;
-            content
-                .parse::<toml::Value>()
-                .context("Failed to parse config file")?
-        } else {
-            toml::Value::Table(toml::map::Map::new())
-        };
 
-        // Apply updates
-        for (path, value) in updates.values {
-            set_toml_value(&mut toml_value, &path, json_to_toml(&value)?)?;
+        match self.format {
+            SettingsFormat::Toml => {
+                // Read current TOML, apply updates, write back
+                let mut toml_value = if config_path.exists() {
+                    let content = std::fs::read_to_string(&config_path)
+                        .context("Failed to read config file")?;
+                    content
+                        .parse::<toml::Value>()
+                        .context("Failed to parse config file")?
+                } else {
+                    toml::Value::Table(toml::map::Map::new())
+                };
+
+                for (path, value) in updates.values {
+                    set_toml_value(&mut toml_value, &path, json_to_toml(&value)?)?;
+                }
+
+                let content =
+                    toml::to_string_pretty(&toml_value).context("Failed to serialize config")?;
+                if let Some(parent) = config_path.parent() {
+                    std::fs::create_dir_all(parent).context("Failed to create config directory")?;
+                }
+                std::fs::write(&config_path, content).context("Failed to write config file")?;
+            }
+            SettingsFormat::Json => {
+                let mut json_value = if config_path.exists() {
+                    let content = std::fs::read_to_string(&config_path)
+                        .context("Failed to read config file")?;
+                    serde_json::from_str::<Value>(&content)
+                        .context("Failed to parse config file")?
+                } else {
+                    Value::Object(serde_json::Map::new())
+                };
+
+                for (path, value) in updates.values {
+                    set_json_value(&mut json_value, &path, value)?;
+                }
+
+                if let Some(parent) = config_path.parent() {
+                    std::fs::create_dir_all(parent).context("Failed to create config directory")?;
+                }
+                let content = serde_json::to_string_pretty(&json_value)
+                    .context("Failed to serialize config")?;
+                std::fs::write(&config_path, content).context("Failed to write config file")?;
+            }
         }
-
-        // Write back
-        let content = toml::to_string_pretty(&toml_value).context("Failed to serialize config")?;
-
-        // Ensure directory exists
-        if let Some(parent) = config_path.parent() {
-            std::fs::create_dir_all(parent).context("Failed to create config directory")?;
-        }
-
-        std::fs::write(&config_path, content).context("Failed to write config file")?;
 
         // Reload cached values
         self.reload().await?;
@@ -157,7 +216,10 @@ impl SettingsService {
     pub async fn reload(&self) -> Result<()> {
         let config_path = self.config_path();
         let new_values = if config_path.exists() {
-            load_toml_as_json(&config_path)?
+            match self.format {
+                SettingsFormat::Toml => load_toml_as_json(&config_path)?,
+                SettingsFormat::Json => load_json_as_json(&config_path)?,
+            }
         } else {
             Value::Object(serde_json::Map::new())
         };
@@ -185,6 +247,13 @@ fn load_toml_as_json(path: &Path) -> Result<Value> {
         .with_context(|| format!("Failed to parse {:?}", path))?;
 
     toml_to_json(&toml_value)
+}
+
+/// Load a JSON file as JSON Value.
+fn load_json_as_json(path: &Path) -> Result<Value> {
+    let content =
+        std::fs::read_to_string(path).with_context(|| format!("Failed to read {:?}", path))?;
+    serde_json::from_str(&content).context("Failed to parse config file")
 }
 
 /// Convert TOML Value to JSON Value.
@@ -266,6 +335,47 @@ fn set_toml_value(root: &mut toml::Value, path: &str, value: toml::Value) -> Res
                     path
                 );
             }
+        }
+    }
+
+    Ok(())
+}
+
+fn set_json_value(root: &mut Value, path: &str, value: Value) -> Result<()> {
+    let parts: Vec<&str> = path.split('.').collect();
+    let mut current = root;
+
+    for (i, part) in parts.iter().enumerate() {
+        if i == parts.len() - 1 {
+            match current {
+                Value::Object(map) => {
+                    map.insert(part.to_string(), value.clone());
+                    return Ok(());
+                }
+                _ => {
+                    *current = Value::Object(serde_json::Map::new());
+                    if let Value::Object(map) = current {
+                        map.insert(part.to_string(), value.clone());
+                        return Ok(());
+                    }
+                    anyhow::bail!("Failed to set JSON value at '{}'", path);
+                }
+            }
+        } else {
+            current = match current {
+                Value::Object(map) => map
+                    .entry(part.to_string())
+                    .or_insert_with(|| Value::Object(serde_json::Map::new())),
+                _ => {
+                    *current = Value::Object(serde_json::Map::new());
+                    if let Value::Object(map) = current {
+                        map.entry(part.to_string())
+                            .or_insert_with(|| Value::Object(serde_json::Map::new()))
+                    } else {
+                        anyhow::bail!("Failed to create JSON object at '{}'", path);
+                    }
+                }
+            };
         }
     }
 

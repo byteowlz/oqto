@@ -28,6 +28,8 @@ interface SettingsEditorProps {
 	app: string;
 	/** Title to display */
 	title?: string;
+	/** Optional workspace path for project-scoped settings. */
+	workspacePath?: string;
 	/** Whether user is admin */
 	isAdmin?: boolean;
 }
@@ -56,6 +58,7 @@ interface Schema {
 export function SettingsEditor({
 	app,
 	title,
+	workspacePath,
 	isAdmin = false,
 }: SettingsEditorProps) {
 	const [schema, setSchema] = useState<Schema | null>(null);
@@ -74,8 +77,8 @@ export function SettingsEditor({
 		setError(null);
 		try {
 			const [schemaData, valuesData] = await Promise.all([
-				getSettingsSchema(app),
-				getSettingsValues(app),
+				getSettingsSchema(app, workspacePath),
+				getSettingsValues(app, workspacePath),
 			]);
 			setSchema(schemaData as Schema);
 			setValues(valuesData);
@@ -85,7 +88,7 @@ export function SettingsEditor({
 		} finally {
 			setLoading(false);
 		}
-	}, [app]);
+	}, [app, workspacePath]);
 
 	useEffect(() => {
 		loadSettings();
@@ -99,9 +102,13 @@ export function SettingsEditor({
 		setError(null);
 		setSuccess(false);
 		try {
-			const newValues = await updateSettingsValues(app, {
-				values: pendingChanges,
-			});
+			const newValues = await updateSettingsValues(
+				app,
+				{
+					values: pendingChanges,
+				},
+				workspacePath,
+			);
 			setValues(newValues);
 			setPendingChanges({});
 			setSuccess(true);
@@ -111,20 +118,20 @@ export function SettingsEditor({
 		} finally {
 			setSaving(false);
 		}
-	}, [app, pendingChanges]);
+	}, [app, pendingChanges, workspacePath]);
 
 	// Reload from disk (admin only)
 	const handleReload = useCallback(async () => {
 		setError(null);
 		try {
-			await reloadSettings(app);
+			await reloadSettings(app, workspacePath);
 			await loadSettings();
 		} catch (err) {
 			setError(
 				err instanceof Error ? err.message : "Failed to reload settings",
 			);
 		}
-	}, [app, loadSettings]);
+	}, [app, loadSettings, workspacePath]);
 
 	// Update a value
 	const handleValueChange = useCallback((path: string, value: unknown) => {
@@ -488,11 +495,15 @@ function SettingsField({
 					<Input
 						id={fullPath}
 						type="number"
-						value={value !== undefined ? String(value) : ""}
+						value={value === null || value === undefined ? "" : String(value)}
 						min={property.minimum}
 						max={property.maximum}
 						placeholder={hasDefault ? `${setting?.default}` : undefined}
 						onChange={(e) => {
+							if (e.target.value === "") {
+								onValueChange(fullPath, null);
+								return;
+							}
 							const v =
 								type === "integer"
 									? Number.parseInt(e.target.value)

@@ -224,19 +224,24 @@ impl LocalRuntime {
         // Determine how to run processes (as current user, platform user, or project user)
         let run_as = if self.config.linux_users.enabled && !self.config.single_user {
             // Ensure effective Linux user exists (project user or platform user)
-            let uid = self.config.linux_users.ensure_effective_user(
+            let (uid, username) = self.config.linux_users.ensure_effective_user(
                 user_id,
                 project_id,
                 Some(workspace_path),
             )?;
-            let username = self
-                .config
-                .linux_users
-                .effective_username(user_id, project_id);
             info!("Running session as Linux user '{}' (UID {})", username, uid);
             RunAsUser::new(username, self.config.linux_users.use_sudo)
-        } else {
+        } else if self.config.single_user {
+            // Single-user mode: safe to run as current user
             RunAsUser::current()
+        } else {
+            // SECURITY: Multi-user mode with linux_users disabled is a misconfiguration.
+            // We refuse to run sessions as the backend user to prevent data leakage.
+            anyhow::bail!(
+                "Cannot start session: linux_users is disabled but single_user is false. \
+                 This configuration would run all user sessions as the backend user, \
+                 causing data isolation issues. Enable linux_users or set single_user=true."
+            );
         };
 
         // Ensure workspace directory exists

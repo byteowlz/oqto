@@ -662,16 +662,13 @@ pub async fn list_pi_sessions(
 }
 
 /// Search Main Chat Pi sessions for message content.
-/// This provides a direct search fallback when cass doesn't index Pi sessions.
 ///
 /// GET /api/main/pi/sessions/search?q=query&limit=50
 pub async fn search_pi_sessions(
-    State(state): State<AppState>,
-    user: CurrentUser,
+    State(_state): State<AppState>,
+    _user: CurrentUser,
     Query(query): Query<SearchQuery>,
 ) -> ApiResult<Json<SearchResponse>> {
-    let pi_service = get_pi_service(&state)?;
-
     let query_str = query.q.trim();
     if query_str.is_empty() {
         return Ok(Json(SearchResponse {
@@ -680,47 +677,45 @@ pub async fn search_pi_sessions(
         }));
     }
 
-    let sessions = pi_service
-        .list_sessions(user.id())
-        .map_err(|e| ApiError::internal(format!("Failed to list sessions: {}", e)))?;
-
-    let query_lower = query_str.to_lowercase();
     let mut all_hits = Vec::new();
 
-    for session in sessions {
-        // Load session messages
-        let messages = match pi_service.get_session_messages(user.id(), &session.id) {
-            Ok(msgs) => msgs,
-            Err(_) => continue,
-        };
+    let hits = crate::history::search_hstry(query_str, query.limit)
+        .await
+        .map_err(|e| ApiError::internal(format!("hstry search failed: {e}")))?;
 
-        // Search through messages
-        for (line_idx, msg) in messages.iter().enumerate() {
-            // Extract text content from the message
-            let text_content = extract_message_text(&msg.content);
-
-            if text_content.to_lowercase().contains(&query_lower) {
-                let snippet = create_snippet(&text_content, &query_lower, 100);
-
-                all_hits.push(SearchHit {
-                    agent: "pi_agent".to_string(),
-                    source_path: format!("pi:{}:{}", session.id, msg.id),
-                    session_id: session.id.clone(),
-                    message_id: Some(msg.id.clone()),
-                    line_number: line_idx + 1,
-                    snippet: Some(snippet),
-                    score: 1.0,
-                    timestamp: Some(msg.timestamp),
-                    role: Some(msg.role.to_string()),
-                    title: session.title.clone(),
-                });
-
-                // Stop if we have enough hits for this session
-                if all_hits.len() >= query.limit {
-                    break;
-                }
-            }
+    for hit in hits {
+        if hit.source_id != "pi" {
+            continue;
         }
+
+        let timestamp = hit
+            .created_at
+            .or(hit.conv_updated_at)
+            .map(|dt| dt.timestamp_millis())
+            .or_else(|| Some(hit.conv_created_at.timestamp_millis()));
+
+        let session_id = hit
+            .external_id
+            .clone()
+            .unwrap_or_else(|| hit.conversation_id.clone());
+
+        let source_path = hit
+            .source_path
+            .clone()
+            .unwrap_or_else(|| format!("hstry:pi:{}", hit.conversation_id));
+
+        all_hits.push(SearchHit {
+            agent: "pi_agent".to_string(),
+            source_path,
+            session_id,
+            message_id: None,
+            line_number: (hit.message_idx.max(0) as usize) + 1,
+            snippet: Some(hit.snippet.clone()),
+            score: f64::from(hit.score),
+            timestamp,
+            role: Some(hit.role.clone()),
+            title: hit.title.clone(),
+        });
 
         if all_hits.len() >= query.limit {
             break;
@@ -734,60 +729,7 @@ pub async fn search_pi_sessions(
     }))
 }
 
-/// Extract text content from a Pi message content field.
-fn extract_message_text(content: &serde_json::Value) -> String {
-    match content {
-        Value::String(s) => s.clone(),
-        Value::Array(arr) => arr
-            .iter()
-            .filter_map(|part| {
-                if let Some(text) = part.get("text").and_then(|t| t.as_str()) {
-                    Some(text.to_string())
-                } else if let Some(content) = part.get("content").and_then(|c| c.as_str()) {
-                    Some(content.to_string())
-                } else {
-                    None
-                }
-            })
-            .collect::<Vec<_>>()
-            .join(" "),
-        Value::Object(obj) => {
-            if let Some(text) = obj.get("text").and_then(|t| t.as_str()) {
-                text.to_string()
-            } else if let Some(content) = obj.get("content").and_then(|c| c.as_str()) {
-                content.to_string()
-            } else {
-                String::new()
-            }
-        }
-        _ => String::new(),
-    }
-}
-
-/// Create a snippet around the first match of query in text.
-fn create_snippet(text: &str, query: &str, context_chars: usize) -> String {
-    let text_lower = text.to_lowercase();
-    if let Some(pos) = text_lower.find(query) {
-        let start = pos.saturating_sub(context_chars);
-        let end = (pos + query.len() + context_chars).min(text.len());
-
-        // Find word boundaries
-        let snippet_start = text[..start].rfind(' ').map(|p| p + 1).unwrap_or(start);
-        let snippet_end = text[end..].find(' ').map(|p| end + p).unwrap_or(end);
-
-        let mut snippet = String::new();
-        if snippet_start > 0 {
-            snippet.push_str("...");
-        }
-        snippet.push_str(&text[snippet_start..snippet_end]);
-        if snippet_end < text.len() {
-            snippet.push_str("...");
-        }
-        snippet
-    } else {
-        text.chars().take(200).collect()
-    }
-}
+// Search uses hstry index; no local content helpers needed.
 
 /// Start a fresh Pi session and return its state.
 ///
@@ -886,7 +828,10 @@ pub async fn update_pi_session(
             .update_session_title(user.id(), &session_id, &title)
             .map_err(|e| ApiError::internal(format!("Failed to update Pi session: {}", e)))?;
 
-        info!("Updated Pi session title: session_id={}, title={}", session_id, title);
+        info!(
+            "Updated Pi session title: session_id={}, title={}",
+            session_id, title
+        );
         Ok(Json(session))
     } else {
         // No updates requested, return current session info
@@ -940,7 +885,7 @@ pub async fn ws_handler(
 }
 
 /// Handle WebSocket connection for Pi events.
-async fn handle_ws(
+pub(crate) async fn handle_ws(
     socket: WebSocket,
     session: Arc<crate::main_chat::UserPiSession>,
     user_id: String,
@@ -952,15 +897,18 @@ async fn handle_ws(
     // Subscribe to Pi events
     let mut event_rx = session.subscribe().await;
 
-    // Snapshot Pi session id for traceability (best-effort).
-    let pi_session_id = session.get_state().await.ok().and_then(|s| s.session_id);
-
     // Only one WS connection should persist assistant output for a session.
     let persistence_guard = session.claim_persistence_writer();
     let can_persist = persistence_guard.is_some();
 
-    // Send connected message
-    let connected_msg = serde_json::json!({"type": "connected"});
+    // Get current session_id for the connected message
+    let initial_session_id = session.get_state().await.ok().and_then(|s| s.session_id);
+
+    // Send connected message with session_id
+    let connected_msg = serde_json::json!({
+        "type": "connected",
+        "session_id": initial_session_id
+    });
     if sender
         .send(Message::Text(connected_msg.to_string().into()))
         .await
@@ -986,7 +934,7 @@ async fn handle_ws(
     let accumulator_for_events = Arc::clone(&message_accumulator);
     let main_chat_for_events = main_chat_svc.clone();
     let user_id_for_events = user_id.clone();
-    let pi_session_id_for_events = pi_session_id.clone();
+    let session_for_events = Arc::clone(&session);
     let mmry_state_for_events = mmry_state.clone();
 
     // Persist Pi auto-compaction summaries to main_chat.db so they can be injected
@@ -997,6 +945,14 @@ async fn handle_ws(
     // Transform raw Pi events into simplified format for frontend
     let send_task = tokio::spawn(async move {
         while let Ok(event) = event_rx.recv().await {
+            // Get current session_id dynamically (not from a stale snapshot)
+            // This ensures messages are saved to the correct session even after session switches
+            let current_session_id = session_for_events
+                .get_state()
+                .await
+                .ok()
+                .and_then(|s| s.session_id);
+
             // Accumulate message content for saving (only from the primary WS connection).
             if can_persist {
                 let mut acc = accumulator_for_events.lock().await;
@@ -1012,7 +968,7 @@ async fn handle_ws(
                                     CreateChatMessage {
                                         role: MessageRole::Assistant,
                                         content: content.clone(),
-                                        pi_session_id: pi_session_id_for_events.clone(),
+                                        pi_session_id: current_session_id.clone(),
                                     },
                                 )
                                 .await;
@@ -1024,7 +980,7 @@ async fn handle_ws(
                                     if let Err(e) = index_turn_to_mmry(
                                         &mmry_state_for_events,
                                         &user_id_for_events,
-                                        &pi_session_id_for_events,
+                                        &current_session_id,
                                         &saved,
                                     )
                                     .await
@@ -1054,7 +1010,7 @@ async fn handle_ws(
                                 crate::main_chat::CreateHistoryEntry {
                                     entry_type: crate::main_chat::HistoryEntryType::Summary,
                                     content: result.summary.clone(),
-                                    session_id: None,
+                                    session_id: current_session_id.clone(),
                                     meta: Some(serde_json::json!({
                                         "source": "pi_auto_compaction",
                                         "first_kept_entry_id": result.first_kept_entry_id,
@@ -1071,8 +1027,8 @@ async fn handle_ws(
                 }
             }
 
-            // Transform Pi events into frontend-friendly format
-            let ws_event = transform_pi_event_for_ws(&event);
+            // Transform Pi events into frontend-friendly format with session_id for validation
+            let ws_event = transform_pi_event_for_ws(&event, current_session_id.as_deref());
             if ws_event.is_none() {
                 continue; // Skip events we don't need to forward
             }
@@ -1099,11 +1055,14 @@ async fn handle_ws(
                 match serde_json::from_str::<WsCommand>(&text) {
                     Ok(cmd) => {
                         // Save user message before sending to Pi
+                        // Get current session_id dynamically to avoid stale references
                         if let WsCommand::Prompt { ref message }
                         | WsCommand::Steer { ref message }
                         | WsCommand::FollowUp { ref message } = cmd
                         {
                             if let Some(svc) = &main_chat_svc {
+                                let current_session_id =
+                                    session.get_state().await.ok().and_then(|s| s.session_id);
                                 let content =
                                     serde_json::json!([{"type": "text", "text": message}]);
                                 if let Err(e) = svc
@@ -1112,7 +1071,7 @@ async fn handle_ws(
                                         CreateChatMessage {
                                             role: MessageRole::User,
                                             content,
-                                            pi_session_id: pi_session_id.clone(),
+                                            pi_session_id: current_session_id,
                                         },
                                     )
                                     .await
@@ -1223,6 +1182,12 @@ impl MessageAccumulator {
                         "id": tool_call.id,
                         "name": tool_call.name,
                         "input": tool_call.arguments
+                    }));
+                }
+                AssistantMessageEvent::Error { reason } => {
+                    self.tool_calls.push(serde_json::json!({
+                        "type": "error",
+                        "reason": reason
                     }));
                 }
                 _ => {}
@@ -1377,7 +1342,7 @@ async fn index_turn_to_mmry(
     Ok(())
 }
 
-fn pi_state_to_response(state: PiState) -> PiStateResponse {
+pub(crate) fn pi_state_to_response(state: PiState) -> PiStateResponse {
     PiStateResponse {
         model: state.model.map(|m| PiModelInfo {
             id: m.id,
@@ -1397,15 +1362,26 @@ fn pi_state_to_response(state: PiState) -> PiStateResponse {
 
 /// Transform a raw Pi event into a simplified WebSocket event for the frontend.
 /// Returns None for events that don't need to be forwarded.
-fn transform_pi_event_for_ws(event: &PiEvent) -> Option<Value> {
+/// Includes session_id in all events so frontend can validate message ownership.
+fn transform_pi_event_for_ws(event: &PiEvent, session_id: Option<&str>) -> Option<Value> {
     match event {
-        PiEvent::AgentStart => Some(serde_json::json!({"type": "agent_start"})),
-        PiEvent::AgentEnd { .. } => Some(serde_json::json!({"type": "done"})),
+        PiEvent::AgentStart => Some(serde_json::json!({
+            "type": "agent_start",
+            "session_id": session_id
+        })),
+        PiEvent::AgentEnd { .. } => Some(serde_json::json!({
+            "type": "done",
+            "session_id": session_id
+        })),
         PiEvent::TurnStart => None,      // Don't forward
         PiEvent::TurnEnd { .. } => None, // Don't forward
         PiEvent::MessageStart { message } => {
             if message.role == "assistant" {
-                Some(serde_json::json!({"type": "message_start", "role": "assistant"}))
+                Some(serde_json::json!({
+                    "type": "message_start",
+                    "role": "assistant",
+                    "session_id": session_id
+                }))
             } else {
                 None
             }
@@ -1418,11 +1394,13 @@ fn transform_pi_event_for_ws(event: &PiEvent) -> Option<Value> {
             match assistant_message_event {
                 AssistantMessageEvent::TextDelta { delta, .. } => Some(serde_json::json!({
                     "type": "text",
-                    "data": delta
+                    "data": delta,
+                    "session_id": session_id
                 })),
                 AssistantMessageEvent::ThinkingDelta { delta, .. } => Some(serde_json::json!({
                     "type": "thinking",
-                    "data": delta
+                    "data": delta,
+                    "session_id": session_id
                 })),
                 AssistantMessageEvent::ToolcallEnd { tool_call, .. } => Some(serde_json::json!({
                     "type": "tool_use",
@@ -1430,7 +1408,13 @@ fn transform_pi_event_for_ws(event: &PiEvent) -> Option<Value> {
                         "id": tool_call.id,
                         "name": tool_call.name,
                         "input": tool_call.arguments
-                    }
+                    },
+                    "session_id": session_id
+                })),
+                AssistantMessageEvent::Error { reason } => Some(serde_json::json!({
+                    "type": "error",
+                    "data": reason,
+                    "session_id": session_id
                 })),
                 _ => None, // Skip other message updates
             }
@@ -1446,7 +1430,8 @@ fn transform_pi_event_for_ws(event: &PiEvent) -> Option<Value> {
                 "id": tool_call_id,
                 "name": tool_name,
                 "input": args
-            }
+            },
+            "session_id": session_id
         })),
         PiEvent::ToolExecutionEnd {
             tool_call_id,
@@ -1459,12 +1444,17 @@ fn transform_pi_event_for_ws(event: &PiEvent) -> Option<Value> {
                 "id": tool_call_id,
                 "name": tool_name,
                 "content": result
-            }
+            },
+            "session_id": session_id
         })),
-        PiEvent::AutoCompactionStart { .. } => {
-            Some(serde_json::json!({"type": "compaction_start"}))
-        }
-        PiEvent::AutoCompactionEnd { .. } => Some(serde_json::json!({"type": "compaction"})),
+        PiEvent::AutoCompactionStart { .. } => Some(serde_json::json!({
+            "type": "compaction_start",
+            "session_id": session_id
+        })),
+        PiEvent::AutoCompactionEnd { .. } => Some(serde_json::json!({
+            "type": "compaction",
+            "session_id": session_id
+        })),
         _ => None, // Skip other events
     }
 }

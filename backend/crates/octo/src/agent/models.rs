@@ -1,10 +1,12 @@
 //! Agent data models.
 
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
 /// Agent status.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "lowercase")]
+#[ts(export, export_to = "../../../../frontend/src/generated/")]
 pub enum AgentStatus {
     /// Agent is running (opencode serve is responding).
     Running,
@@ -50,7 +52,8 @@ impl TryFrom<String> for AgentStatus {
 }
 
 /// Information about an agent.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../../frontend/src/generated/")]
 pub struct AgentInfo {
     /// Agent ID (directory name, or "main" for workspace root).
     pub id: String,
@@ -139,7 +142,8 @@ impl AgentInfo {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../../frontend/src/generated/")]
 pub struct AgentRuntimeInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub directory: Option<String>,
@@ -151,20 +155,23 @@ pub struct AgentRuntimeInfo {
     pub context: Option<OpenCodeContextInfo>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../../frontend/src/generated/")]
 pub struct OpenCodeSessionInfo {
     pub id: String,
     pub title: String,
     pub time: OpenCodeSessionTime,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../../frontend/src/generated/")]
 pub struct OpenCodeSessionTime {
     pub created: i64,
     pub updated: i64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../../frontend/src/generated/")]
 pub struct OpenCodeSessionStatus {
     #[serde(rename = "type")]
     pub status_type: String,
@@ -174,7 +181,8 @@ pub struct OpenCodeSessionStatus {
     pub message: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../../frontend/src/generated/")]
 pub struct OpenCodeContextInfo {
     pub session_id: String,
     pub session_title: String,
@@ -186,7 +194,8 @@ pub struct OpenCodeContextInfo {
     pub usage: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../../frontend/src/generated/")]
 pub struct OpenCodeTokenTotals {
     pub input: u64,
     pub output: u64,
@@ -194,13 +203,15 @@ pub struct OpenCodeTokenTotals {
     pub cache: OpenCodeTokenCache,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../../frontend/src/generated/")]
 pub struct OpenCodeTokenCache {
     pub read: u64,
     pub write: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../../frontend/src/generated/")]
 pub struct OpenCodeTokenLimit {
     pub context: u64,
     pub output: u64,

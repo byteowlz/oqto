@@ -1,19 +1,38 @@
 "use client";
 
-import { useUIControl } from "@/components/contexts/ui-control-context";
 import {
-	ChatSearchBar,
-	MainChatPiView,
-	MainChatSettingsView,
-} from "@/components/main-chat";
-import { A2UICallCard } from "@/components/ui/a2ui-call-card";
-import {
+	A2UICallCard,
 	AgentMentionPopup,
 	type AgentTarget,
 	AgentTargetChip,
-} from "@/components/ui/agent-mention-popup";
+	type FileAttachment,
+	FileAttachmentChip,
+	FileMentionPopup,
+	type IssueAttachment,
+	IssueAttachmentChip,
+	PermissionBanner,
+	PermissionDialog,
+	ReadAloudButton,
+	SlashCommandPopup,
+	type TodoItem,
+	ToolCallCard,
+	UserQuestionBanner,
+	UserQuestionDialog,
+} from "@/components/chat";
+import { BrailleSpinner } from "@/components/common";
+import { useUIControl } from "@/components/contexts/ui-control-context";
+import {
+	ContextWindowGauge,
+	CopyButton,
+	MarkdownRenderer,
+	ProviderIcon,
+} from "@/components/data-display";
+import {
+	ChatSearchBar,
+	MainChatPiView,
+	PiSettingsView,
+} from "@/components/main-chat";
 import { Badge } from "@/components/ui/badge";
-import { BrailleSpinner } from "@/components/ui/braille-spinner";
 import { Button } from "@/components/ui/button";
 import {
 	ContextMenu,
@@ -22,25 +41,7 @@ import {
 	ContextMenuSeparator,
 	ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import { ContextWindowGauge } from "@/components/ui/context-window-gauge";
-import {
-	type FileAttachment,
-	FileAttachmentChip,
-	FileMentionPopup,
-	type IssueAttachment,
-	IssueAttachmentChip,
-} from "@/components/ui/file-mention-popup";
 import { Input } from "@/components/ui/input";
-import {
-	CopyButton,
-	MarkdownRenderer,
-} from "@/components/ui/markdown-renderer";
-import {
-	PermissionBanner,
-	PermissionDialog,
-} from "@/components/ui/permission-dialog";
-import { ProviderIcon } from "@/components/ui/provider-icon";
-import { ReadAloudButton } from "@/components/ui/read-aloud-button";
 import {
 	Select,
 	SelectContent,
@@ -48,12 +49,6 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from "@/components/ui/select";
-import { SlashCommandPopup } from "@/components/ui/slash-command-popup";
-import { type TodoItem, ToolCallCard } from "@/components/ui/tool-call-card";
-import {
-	UserQuestionBanner,
-	UserQuestionDialog,
-} from "@/components/ui/user-question-dialog";
 import {
 	DictationOverlay,
 	VoiceInputOverlay,
@@ -61,6 +56,13 @@ import {
 	type VoiceMode,
 	VoicePanel,
 } from "@/components/voice";
+import {
+	type PiModelInfo,
+	type PiState,
+	getWorkspacePiModels,
+	getWorkspacePiState,
+	setWorkspacePiModel,
+} from "@/features/main-chat/api";
 import {
 	type Features,
 	type MainChatSession,
@@ -139,6 +141,7 @@ import {
 	type SlashCommand,
 	builtInCommands,
 	commandInfoToSlashCommands,
+	fuzzyMatch,
 	parseSlashInput,
 } from "@/lib/slash-commands";
 import { cn } from "@/lib/utils";
@@ -384,11 +387,14 @@ const ChatMessagesPane = memo(function ChatMessagesPane({
 					// Check if this is the last assistant group (for showing working indicator)
 					const isLastAssistantGroup =
 						group.role === "assistant" &&
-						!visibleGroups.slice(groupIndex + 1).some((g) => g.role === "assistant");
+						!visibleGroups
+							.slice(groupIndex + 1)
+							.some((g) => g.role === "assistant");
 					return (
 						<div
 							key={
-								group.messages[0]?.info.id || `${group.role}-${group.startIndex}`
+								group.messages[0]?.info.id ||
+								`${group.role}-${group.startIndex}`
 							}
 							className={groupIndex > 0 ? "mt-4 sm:mt-6" : ""}
 						>
@@ -582,6 +588,10 @@ function parseModelRef(
 	};
 }
 
+function isPendingSessionId(id: string | null | undefined): boolean {
+	return !!id && id.startsWith("pending-");
+}
+
 export const SessionScreen = memo(function SessionScreen() {
 	const {
 		locale,
@@ -753,6 +763,14 @@ export const SessionScreen = memo(function SessionScreen() {
 	const [selectedModelRef, setSelectedModelRef] = useState<string | null>(null);
 	const [isModelLoading, setIsModelLoading] = useState(false);
 	const [modelQuery, setModelQuery] = useState("");
+	const [piModelOptions, setPiModelOptions] = useState<PiModelInfo[]>([]);
+	const [piSelectedModelRef, setPiSelectedModelRef] = useState<string | null>(
+		null,
+	);
+	const [piModelQuery, setPiModelQuery] = useState("");
+	const [piIsModelLoading, setPiIsModelLoading] = useState(false);
+	const [piIsSwitchingModel, setPiIsSwitchingModel] = useState(false);
+	const [piState, setPiState] = useState<PiState | null>(null);
 	const modelStorageKey = useMemo(() => {
 		if (!selectedChatSessionId || mainChatActive) return null;
 		return `octo:chatModel:${selectedChatSessionId}`;
@@ -833,6 +851,12 @@ export const SessionScreen = memo(function SessionScreen() {
 		outputTokens: number;
 		maxTokens: number;
 	}>({ inputTokens: 0, outputTokens: 0, maxTokens: 200000 });
+	// Workspace Pi token usage (for sessions rendered via Pi)
+	const [workspacePiTokenUsage, setWorkspacePiTokenUsage] = useState<{
+		inputTokens: number;
+		outputTokens: number;
+		maxTokens: number;
+	}>({ inputTokens: 0, outputTokens: 0, maxTokens: 200000 });
 
 	// Per-chat state (working indicator is per-session, not global)
 	const [chatStates, setChatStates] = useState<Map<string, "idle" | "sending">>(
@@ -845,10 +869,175 @@ export const SessionScreen = memo(function SessionScreen() {
 	const chatState = activeSessionId
 		? chatStates.get(activeSessionId) || "idle"
 		: "idle";
+	const isWorkspacePiSession =
+		!mainChatActive &&
+		!!selectedChatSessionId &&
+		!selectedChatSessionId.startsWith("ses_");
+	const workspacePiPath = useMemo(() => {
+		if (!isWorkspacePiSession) return null;
+		return (
+			selectedChatFromHistory?.workspace_path ??
+			selectedWorkspaceSession?.workspace_path ??
+			opencodeDirectory ??
+			null
+		);
+	}, [
+		isWorkspacePiSession,
+		opencodeDirectory,
+		selectedChatFromHistory,
+		selectedWorkspaceSession,
+	]);
+	const workspacePiStorageKeyPrefix = useMemo(() => {
+		if (!workspacePiPath) return "octo:workspacePi:global";
+		return `octo:workspacePi:${workspacePiPath.replace(/[^a-zA-Z0-9._-]+/g, "_")}`;
+	}, [workspacePiPath]);
+	const handleWorkspacePiSessionChange = useCallback(
+		(id: string | null) => {
+			if (!id) return;
+			setSelectedChatSessionId(id);
+			refreshChatHistory();
+		},
+		[refreshChatHistory, setSelectedChatSessionId],
+	);
+
+	useEffect(() => {
+		if (
+			!isWorkspacePiSession ||
+			!selectedChatSessionId ||
+			!workspacePiPath ||
+			isPendingSessionId(selectedChatSessionId)
+		) {
+			setPiModelOptions([]);
+			setPiIsModelLoading(false);
+			return;
+		}
+		let active = true;
+		setPiIsModelLoading(true);
+		getWorkspacePiModels(workspacePiPath, selectedChatSessionId)
+			.then((models) => {
+				if (!active) return;
+				setPiModelOptions(models);
+			})
+			.catch((err) => {
+				console.error("Failed to fetch Pi models:", err);
+				if (active) setPiModelOptions([]);
+			})
+			.finally(() => {
+				if (active) setPiIsModelLoading(false);
+			});
+		return () => {
+			active = false;
+		};
+	}, [isWorkspacePiSession, selectedChatSessionId, workspacePiPath]);
+
+	useEffect(() => {
+		if (piSelectedModelRef || piModelOptions.length === 0) return;
+		const first = piModelOptions[0];
+		setPiSelectedModelRef(`${first.provider}/${first.id}`);
+	}, [piModelOptions, piSelectedModelRef]);
+
+	useEffect(() => {
+		let active = true;
+		let intervalId: ReturnType<typeof setInterval> | null = null;
+
+		const fetchState = async () => {
+			if (!active) return;
+			try {
+				if (
+					!workspacePiPath ||
+					!selectedChatSessionId ||
+					isPendingSessionId(selectedChatSessionId)
+				) {
+					setPiState(null);
+					return;
+				}
+				const nextState = await getWorkspacePiState(
+					workspacePiPath,
+					selectedChatSessionId,
+				);
+				if (active) setPiState(nextState);
+			} catch {
+				if (active) setPiState(null);
+			}
+		};
+
+		if (
+			isWorkspacePiSession &&
+			selectedChatSessionId &&
+			workspacePiPath &&
+			!isPendingSessionId(selectedChatSessionId)
+		) {
+			void fetchState();
+			intervalId = setInterval(fetchState, 2000);
+		} else {
+			setPiState(null);
+		}
+
+		return () => {
+			active = false;
+			if (intervalId) clearInterval(intervalId);
+		};
+	}, [isWorkspacePiSession, selectedChatSessionId, workspacePiPath]);
+
+	useEffect(() => {
+		if (!piState?.model) return;
+		const modelRef = `${piState.model.provider}/${piState.model.id}`;
+		setPiSelectedModelRef(modelRef);
+	}, [piState?.model]);
 	const selectedModelOverride = useMemo(() => {
 		if (!selectedModelRef) return undefined;
 		return parseModelRef(selectedModelRef) ?? undefined;
 	}, [selectedModelRef]);
+	const piIsIdle = !(piState?.is_streaming || piState?.is_compacting);
+	const filteredPiModels = useMemo(() => {
+		const query = piModelQuery.trim();
+		if (!query) return piModelOptions;
+		return piModelOptions.filter((model) => {
+			const fullRef = `${model.provider}/${model.id}`;
+			return (
+				fuzzyMatch(query, fullRef) ||
+				fuzzyMatch(query, model.provider) ||
+				fuzzyMatch(query, model.id) ||
+				(model.name ? fuzzyMatch(query, model.name) : false)
+			);
+		});
+	}, [piModelOptions, piModelQuery]);
+	const handlePiModelChange = useCallback(
+		async (value: string) => {
+			if (
+				!piIsIdle ||
+				!workspacePiPath ||
+				!selectedChatSessionId ||
+				isPendingSessionId(selectedChatSessionId)
+			) {
+				return;
+			}
+			const separatorIndex = value.indexOf("/");
+			if (separatorIndex <= 0 || separatorIndex === value.length - 1) return;
+			const provider = value.slice(0, separatorIndex);
+			const modelId = value.slice(separatorIndex + 1);
+			setPiSelectedModelRef(value);
+			setPiIsSwitchingModel(true);
+			try {
+				await setWorkspacePiModel(
+					workspacePiPath,
+					selectedChatSessionId,
+					provider,
+					modelId,
+				);
+				const refreshed = await getWorkspacePiState(
+					workspacePiPath,
+					selectedChatSessionId,
+				);
+				setPiState(refreshed);
+			} catch (err) {
+				console.error("Failed to switch Pi model:", err);
+			} finally {
+				setPiIsSwitchingModel(false);
+			}
+		},
+		[piIsIdle, selectedChatSessionId, workspacePiPath],
+	);
 	const setChatState = useCallback(
 		(state: "idle" | "sending") => {
 			const sessionId = mainChatActive
@@ -1016,6 +1205,7 @@ export const SessionScreen = memo(function SessionScreen() {
 	const [activeView, setActiveView] = useState<ActiveView>("chat");
 	const [tasksSubTab, setTasksSubTab] = useState<TasksSubTab>("todos");
 	const [mainChatTodos, setMainChatTodos] = useState<TodoItem[]>([]);
+	const [workspacePiTodos, setWorkspacePiTodos] = useState<TodoItem[]>([]);
 	const [expandedView, setExpandedView] = useState<ExpandedView>(null);
 	const [rightSidebarCollapsed, setRightSidebarCollapsed] = useState(false);
 	const [isSearchOpen, setIsSearchOpen] = useState(false);
@@ -1351,7 +1541,11 @@ export const SessionScreen = memo(function SessionScreen() {
 					sentLength: fullText.length,
 				};
 			} else {
-				ttsStreamStateRef.current = { messageId: null, streamId: null, sentLength: 0 };
+				ttsStreamStateRef.current = {
+					messageId: null,
+					streamId: null,
+					sentLength: 0,
+				};
 			}
 		}
 		voiceActivationRef.current = voiceMode.isActive;
@@ -1381,7 +1575,8 @@ export const SessionScreen = memo(function SessionScreen() {
 			streamState.sentLength = 0;
 
 			// Start new stream
-			voiceMode.streamStart()
+			voiceMode
+				.streamStart()
 				.then((streamId) => {
 					streamState.streamId = streamId;
 					// Send any text that arrived while starting
@@ -1413,7 +1608,14 @@ export const SessionScreen = memo(function SessionScreen() {
 		if (streamState.streamId) {
 			voiceMode.streamAppend(newText);
 		}
-	}, [messages, voiceMode.isActive, voiceMode.settings.muted, voiceMode.streamStart, voiceMode.streamAppend, voiceMode.streamEnd]);
+	}, [
+		messages,
+		voiceMode.isActive,
+		voiceMode.settings.muted,
+		voiceMode.streamStart,
+		voiceMode.streamAppend,
+		voiceMode.streamEnd,
+	]);
 
 	// End TTS stream when message finishes (chatState goes from sending to idle)
 	const prevChatStateRef = useRef<"idle" | "sending">("idle");
@@ -1435,7 +1637,11 @@ export const SessionScreen = memo(function SessionScreen() {
 			voiceMode.streamCancel();
 			voiceMode.interrupt();
 			// Reset stream state so next activation starts fresh
-			ttsStreamStateRef.current = { messageId: null, streamId: null, sentLength: 0 };
+			ttsStreamStateRef.current = {
+				messageId: null,
+				streamId: null,
+				sentLength: 0,
+			};
 		}
 	}, [voiceMode.isActive, voiceMode.interrupt, voiceMode.streamCancel]);
 
@@ -1879,7 +2085,13 @@ export const SessionScreen = memo(function SessionScreen() {
 			return true;
 		}
 		return false;
-	}, [selectedChatSession, selectedChatFromHistory, selectedChatSessionId, selectedWorkspaceSession, opencodeBaseUrl]);
+	}, [
+		selectedChatSession,
+		selectedChatFromHistory,
+		selectedChatSessionId,
+		selectedWorkspaceSession,
+		opencodeBaseUrl,
+	]);
 
 	const autoAttachMode = features.session_auto_attach ?? "off";
 	const autoAttachScan = features.session_auto_attach_scan ?? false;
@@ -1894,6 +2106,7 @@ export const SessionScreen = memo(function SessionScreen() {
 
 	// Auto-attach to running sessions (or resume) when opening history sessions.
 	useEffect(() => {
+		if (isWorkspacePiSession) return;
 		if (!selectedChatSessionId || !isHistoryOnlySession) return;
 		if (autoAttachMode === "off") return;
 		if (!selectedChatFromHistory?.workspace_path) return;
@@ -1996,6 +2209,7 @@ export const SessionScreen = memo(function SessionScreen() {
 		autoAttachMode,
 		autoAttachScan,
 		ensureOpencodeRunning,
+		isWorkspacePiSession,
 		isHistoryOnlySession,
 		selectedChatFromHistory,
 		selectedChatSessionId,
@@ -2021,7 +2235,7 @@ export const SessionScreen = memo(function SessionScreen() {
 	const loadMessages = useCallback(
 		async (options?: { forceFresh?: boolean }) => {
 			// Main Chat Pi view handles its own messages via usePiChat - skip loading here
-			if (mainChatActive) {
+			if (mainChatActive || isWorkspacePiSession) {
 				loadingSessionIdRef.current = "main-chat";
 				// Don't load messages - MainChatPiView has its own cached message loading
 				return;
@@ -2095,6 +2309,7 @@ export const SessionScreen = memo(function SessionScreen() {
 		},
 		[
 			mainChatActive,
+			isWorkspacePiSession,
 			opencodeBaseUrl,
 			opencodeDirectory,
 			selectedChatSessionId,
@@ -2331,9 +2546,16 @@ export const SessionScreen = memo(function SessionScreen() {
 	useEffect(() => {
 		if (!scrollToMessageId || !messagesContainerRef.current) return;
 
+		let targetId = scrollToMessageId;
+		if (targetId.startsWith("line-")) {
+			const idx = Number.parseInt(targetId.slice(5), 10);
+			const resolved = Number.isFinite(idx) ? messages[idx - 1]?.id : undefined;
+			if (resolved) targetId = resolved;
+		}
+
 		// Find the message element with this ID
 		const messageEl = messagesContainerRef.current.querySelector(
-			`[data-message-id="${scrollToMessageId}"]`,
+			`[data-message-id="${targetId}"]`,
 		);
 
 		if (messageEl) {
@@ -2353,7 +2575,7 @@ export const SessionScreen = memo(function SessionScreen() {
 			// Clear the scroll target
 			setScrollToMessageId(null);
 		}
-	}, [scrollToMessageId, setScrollToMessageId]);
+	}, [scrollToMessageId, setScrollToMessageId, messages]);
 
 	// Keyboard shortcut for search (Ctrl+F / Cmd+F)
 	useEffect(() => {
@@ -2481,7 +2703,10 @@ export const SessionScreen = memo(function SessionScreen() {
 						? "Verbindung zum Agenten verloren."
 						: "Lost connection to the agent.";
 
-				console.error("[Session Disconnected]", disconnectReason || "no reason");
+				console.error(
+					"[Session Disconnected]",
+					disconnectReason || "no reason",
+				);
 
 				toast.error(title, {
 					description,
@@ -2640,7 +2865,11 @@ export const SessionScreen = memo(function SessionScreen() {
 					eventType === "text_delta" || eventType === "thinking_delta";
 
 				startTransition(() => {
-					if (isCompletionEvent && effectiveOpencodeBaseUrl && activeSessionId) {
+					if (
+						isCompletionEvent &&
+						effectiveOpencodeBaseUrl &&
+						activeSessionId
+					) {
 						invalidateMessageCache(
 							effectiveOpencodeBaseUrl,
 							activeSessionId,
@@ -2995,6 +3224,24 @@ export const SessionScreen = memo(function SessionScreen() {
 		tokenUsage.modelID,
 		200000, // Default fallback
 	);
+	const displayTokenUsage = useMemo(() => {
+		if (mainChatActive) return mainChatTokenUsage;
+		if (isWorkspacePiSession) return workspacePiTokenUsage;
+		return {
+			inputTokens: tokenUsage.inputTokens,
+			outputTokens: tokenUsage.outputTokens,
+			maxTokens: contextLimit,
+		};
+	}, [
+		contextLimit,
+		isWorkspacePiSession,
+		mainChatActive,
+		mainChatTokenUsage,
+		tokenUsage.inputTokens,
+		tokenUsage.outputTokens,
+		workspacePiTokenUsage,
+	]);
+	const displayContextLimit = displayTokenUsage.maxTokens || contextLimit;
 
 	useEffect(() => {
 		if (mainChatActive) return;
@@ -3029,8 +3276,12 @@ export const SessionScreen = memo(function SessionScreen() {
 		return [];
 	}, [messages]);
 
-	// Use mainChatTodos when in main chat mode, otherwise use opencode todos
-	const latestTodos = mainChatActive ? mainChatTodos : opencodeTodos;
+	// Use Pi todos for main chat/workspace Pi, otherwise use opencode todos
+	const latestTodos = mainChatActive
+		? mainChatTodos
+		: isWorkspacePiSession
+			? workspacePiTodos
+			: opencodeTodos;
 
 	// Handle slash command selection from popup
 	const handleSlashCommandSelect = useCallback(
@@ -3427,7 +3678,10 @@ export const SessionScreen = memo(function SessionScreen() {
 				// This allows the current agent to see and respond to it
 				effectiveMessageText = `I asked @@${currentAgentTarget.name}:\n> ${messageText}\n\nTheir response:\n${response.response}`;
 
-				console.log("[@@agent] Got response, effectiveMessageText:", effectiveMessageText.slice(0, 200));
+				console.log(
+					"[@@agent] Got response, effectiveMessageText:",
+					effectiveMessageText.slice(0, 200),
+				);
 				// Fall through to normal send flow below with the formatted message
 			} catch (err) {
 				const message = err instanceof Error ? err.message : "Agent ask failed";
@@ -3477,7 +3731,7 @@ export const SessionScreen = memo(function SessionScreen() {
 					const readableMatch = mainSessions.find(
 						(session) =>
 							resolveReadableId(session.id, session.readable_id) ===
-								resolvedMainChatSessionId,
+							resolvedMainChatSessionId,
 					);
 					const resolved = matched ?? readableMatch;
 					if (resolved) {
@@ -3635,7 +3889,12 @@ export const SessionScreen = memo(function SessionScreen() {
 				);
 			} else {
 				// Use async send - the response will come via SSE events
-				console.log("[@@agent] Sending to session:", targetSessionId, "message:", effectiveMessageText.slice(0, 100));
+				console.log(
+					"[@@agent] Sending to session:",
+					targetSessionId,
+					"message:",
+					effectiveMessageText.slice(0, 100),
+				);
 				await sendMessageAsync(
 					effectiveBaseUrl,
 					targetSessionId,
@@ -3726,7 +3985,9 @@ export const SessionScreen = memo(function SessionScreen() {
 			startTransition(() => {
 				// Show slash popup when typing /
 				const shouldShowSlash = value.startsWith("/");
-				setShowSlashPopup((prev) => (prev === shouldShowSlash ? prev : shouldShowSlash));
+				setShowSlashPopup((prev) =>
+					prev === shouldShowSlash ? prev : shouldShowSlash,
+				);
 
 				// Show agent mention popup when typing @@ (check before single @)
 				const doubleAtMatch = value.match(/@@([^\s]*)$/);
@@ -3735,7 +3996,9 @@ export const SessionScreen = memo(function SessionScreen() {
 
 				if (shouldShowAgent) {
 					setShowAgentMentionPopup(true);
-					setAgentMentionQuery((prev) => (prev === newAgentQuery ? prev : newAgentQuery));
+					setAgentMentionQuery((prev) =>
+						prev === newAgentQuery ? prev : newAgentQuery,
+					);
 					setShowFileMentionPopup(false);
 					setFileMentionQuery("");
 				} else {
@@ -3747,7 +4010,9 @@ export const SessionScreen = memo(function SessionScreen() {
 					const newFileQuery = atMatch?.[1] ?? "";
 					if (shouldShowFile) {
 						setShowFileMentionPopup(true);
-						setFileMentionQuery((prev) => (prev === newFileQuery ? prev : newFileQuery));
+						setFileMentionQuery((prev) =>
+							prev === newFileQuery ? prev : newFileQuery,
+						);
 					} else {
 						setShowFileMentionPopup((prev) => (prev === false ? prev : false));
 						setFileMentionQuery((prev) => (prev === "" ? prev : ""));
@@ -4188,558 +4453,583 @@ export const SessionScreen = memo(function SessionScreen() {
 	}
 
 	// Session metadata for chat display
-	const readableId = selectedChatSession?.id
-		? resolveReadableId(
-				selectedChatSession.id,
-				selectedChatSession.readable_id,
-			)
+	const readableIdSource =
+		selectedChatSession ?? selectedChatFromHistory ?? null;
+	const readableId = readableIdSource
+		? resolveReadableId(readableIdSource.id, readableIdSource.readable_id)
 		: null;
 	// Extract workspace name from path (last segment)
-	const workspaceName = opencodeDirectory
-		? opencodeDirectory.split("/").filter(Boolean).pop() || null
-		: null;
+	const workspaceName =
+		(isWorkspacePiSession ? workspacePiPath : opencodeDirectory)
+			?.split("/")
+			.filter(Boolean)
+			.pop() || null;
 
 	// Chat content component (reused in both layouts)
-	const renderChatContent = (allowExpanded: boolean) => (
-		<div
-			ref={chatContainerRef}
-			className="flex-1 flex flex-col gap-2 sm:gap-4 min-h-0"
-		>
-			{/* Permission banner */}
-			<PermissionBanner
-				count={pendingPermissions.length}
-				onClick={handlePermissionBannerClick}
-			/>
+	const renderChatContent = (allowExpanded: boolean) => {
+		if (isWorkspacePiSession) {
+			return (
+				<MainChatPiView
+					locale={locale}
+					className="flex-1"
+					features={features}
+					workspacePath={workspacePiPath}
+					hideHeader
+					scope="workspace"
+					storageKeyPrefix={workspacePiStorageKeyPrefix}
+					selectedSessionId={selectedChatSessionId}
+					onSelectedSessionIdChange={handleWorkspacePiSessionChange}
+					scrollToMessageId={scrollToMessageId}
+					onScrollToMessageComplete={() => setScrollToMessageId(null)}
+					onTokenUsageChange={setWorkspacePiTokenUsage}
+					onTodosChange={setWorkspacePiTodos}
+					onMessageSent={refreshChatHistory}
+				/>
+			);
+		}
+		return (
+			<div
+				ref={chatContainerRef}
+				className="flex-1 flex flex-col gap-2 sm:gap-4 min-h-0"
+			>
+				{/* Permission banner */}
+				<PermissionBanner
+					count={pendingPermissions.length}
+					onClick={handlePermissionBannerClick}
+				/>
 
-			{/* User question banner */}
-			<UserQuestionBanner
-				count={pendingQuestions.length}
-				onClick={handleQuestionBannerClick}
-			/>
+				{/* User question banner */}
+				<UserQuestionBanner
+					count={pendingQuestions.length}
+					onClick={handleQuestionBannerClick}
+				/>
 
-			<div className="relative flex-1 min-h-0">
-				{allowExpanded && showExpandedPreview ? (
-					<div className="h-full bg-muted/30 border border-border overflow-hidden">
-						<Suspense fallback={viewLoadingFallback}>
-							<PreviewView
-								filePath={previewFilePath}
-								workspacePath={resumeWorkspacePath}
-								onClose={closePreview}
-								onToggleExpand={() => toggleExpandedView("preview")}
-								isExpanded
-								showExpand={!isMobileLayout}
-							/>
-						</Suspense>
-					</div>
-				) : allowExpanded && showExpandedCanvas ? (
-					<div className="h-full bg-muted/30 border border-border overflow-hidden flex flex-col">
-						{!isMobileLayout && (
-							<div className="flex items-center justify-between px-2 py-1 border-b border-border bg-muted/30">
-								<span className="text-xs text-muted-foreground">Canvas</span>
-								<button
-									type="button"
-									onClick={() => toggleExpandedView("canvas")}
-									className="p-1 text-muted-foreground hover:text-foreground hover:bg-muted/50"
-									aria-label="Collapse canvas"
-								>
-									<Minimize2 className="w-3.5 h-3.5" />
-								</button>
-							</div>
-						)}
-						<div className="flex-1 min-h-0">
+				<div className="relative flex-1 min-h-0">
+					{allowExpanded && showExpandedPreview ? (
+						<div className="h-full bg-muted/30 border border-border overflow-hidden">
 							<Suspense fallback={viewLoadingFallback}>
-								<CanvasView
+								<PreviewView
+									filePath={previewFilePath}
 									workspacePath={resumeWorkspacePath}
-									initialImagePath={previewFilePath}
-									onSaveAndAddToChat={handleCanvasSaveAndAddToChat}
+									onClose={closePreview}
+									onToggleExpand={() => toggleExpandedView("preview")}
+									isExpanded
+									showExpand={!isMobileLayout}
 								/>
 							</Suspense>
 						</div>
-					</div>
-				) : allowExpanded && showExpandedMemories ? (
-					<div className="h-full bg-muted/30 border border-border overflow-hidden flex flex-col">
-						{!isMobileLayout && (
-							<div className="flex items-center justify-between px-2 py-1 border-b border-border bg-muted/30">
-								<span className="text-xs text-muted-foreground">
-									{t.memories}
-								</span>
-								<button
-									type="button"
-									onClick={() => toggleExpandedView("memories")}
-									className="p-1 text-muted-foreground hover:text-foreground hover:bg-muted/50"
-									aria-label="Collapse memories"
-								>
-									<Minimize2 className="w-3.5 h-3.5" />
-								</button>
+					) : allowExpanded && showExpandedCanvas ? (
+						<div className="h-full bg-muted/30 border border-border overflow-hidden flex flex-col">
+							{!isMobileLayout && (
+								<div className="flex items-center justify-between px-2 py-1 border-b border-border bg-muted/30">
+									<span className="text-xs text-muted-foreground">Canvas</span>
+									<button
+										type="button"
+										onClick={() => toggleExpandedView("canvas")}
+										className="p-1 text-muted-foreground hover:text-foreground hover:bg-muted/50"
+										aria-label="Collapse canvas"
+									>
+										<Minimize2 className="w-3.5 h-3.5" />
+									</button>
+								</div>
+							)}
+							<div className="flex-1 min-h-0">
+								<Suspense fallback={viewLoadingFallback}>
+									<CanvasView
+										workspacePath={resumeWorkspacePath}
+										initialImagePath={previewFilePath}
+										onSaveAndAddToChat={handleCanvasSaveAndAddToChat}
+									/>
+								</Suspense>
 							</div>
-						)}
-						<div className="flex-1 min-h-0">
-							<Suspense fallback={viewLoadingFallback}>
-								<MemoriesView
-									workspacePath={resumeWorkspacePath}
-									storeName={null}
-								/>
-							</Suspense>
 						</div>
-					</div>
-				) : allowExpanded && showExpandedTerminal ? (
-					<div className="h-full bg-muted/30 border border-border overflow-hidden flex flex-col">
-						{!isMobileLayout && (
-							<div className="flex items-center justify-between px-2 py-1 border-b border-border bg-muted/30">
-								<span className="text-xs text-muted-foreground">
-									{t.terminal}
-								</span>
-								<button
-									type="button"
-									onClick={() => toggleExpandedView("terminal")}
-									className="p-1 text-muted-foreground hover:text-foreground hover:bg-muted/50"
-									aria-label="Collapse terminal"
-								>
-									<Minimize2 className="w-3.5 h-3.5" />
-								</button>
+					) : allowExpanded && showExpandedMemories ? (
+						<div className="h-full bg-muted/30 border border-border overflow-hidden flex flex-col">
+							{!isMobileLayout && (
+								<div className="flex items-center justify-between px-2 py-1 border-b border-border bg-muted/30">
+									<span className="text-xs text-muted-foreground">
+										{t.memories}
+									</span>
+									<button
+										type="button"
+										onClick={() => toggleExpandedView("memories")}
+										className="p-1 text-muted-foreground hover:text-foreground hover:bg-muted/50"
+										aria-label="Collapse memories"
+									>
+										<Minimize2 className="w-3.5 h-3.5" />
+									</button>
+								</div>
+							)}
+							<div className="flex-1 min-h-0">
+								<Suspense fallback={viewLoadingFallback}>
+									<MemoriesView
+										workspacePath={resumeWorkspacePath}
+										storeName={null}
+									/>
+								</Suspense>
 							</div>
-						)}
-						<div className="flex-1 min-h-0">
-							<Suspense fallback={viewLoadingFallback}>
-								<TerminalView workspacePath={resumeWorkspacePath} />
-							</Suspense>
 						</div>
-					</div>
-				) : (
-					<ChatMessagesPane
-						messages={messages}
-						messagesLoading={messagesLoading}
-						selectedChatSessionId={selectedChatSessionId ?? undefined}
-						sessionHadMessages={Boolean(
-							selectedChatSessionId &&
-								sessionsWithMessagesRef.current.has(selectedChatSessionId),
-						)}
-						hasHiddenMessages={hasHiddenMessages}
-						messageGroupsLength={messageGroups.length}
-						visibleGroups={visibleGroups}
-						visibleGroupCount={visibleGroupCount}
-						a2uiByGroupIndex={a2uiByGroupIndex}
-						locale={locale}
-						noMessagesText={t.noMessages}
-						persona={selectedSession?.persona}
-						workspaceName={workspaceName}
-						readableId={readableId}
-						workspaceDirectory={opencodeDirectory}
-						onFork={handleForkSession}
-						onScroll={handleScroll}
-						messagesContainerRef={messagesContainerRef}
-						messagesEndRef={messagesEndRef}
-						showScrollToBottom={showScrollToBottom}
-						scrollToBottom={scrollToBottom}
-						loadMoreMessages={loadMoreMessages}
-						onA2UIAction={handleA2UIAction}
-						isStreaming={chatState === "sending"}
-					/>
-				)}
-			</div>
-
-			{/* Pending uploads indicator */}
-			{pendingUploads.length > 0 && (
-				<div className="flex flex-wrap gap-2 mb-2">
-					{pendingUploads.map((upload) => (
-						<div
-							key={upload.path}
-							className="flex items-center gap-1.5 px-2 py-1 bg-primary/10 border border-primary/30 text-xs text-foreground"
-						>
-							<Paperclip className="w-3 h-3 text-primary" />
-							<span className="truncate max-w-[150px]">{upload.name}</span>
-							<button
-								type="button"
-								onClick={() => removePendingUpload(upload.path)}
-								className="text-muted-foreground hover:text-foreground ml-1"
-							>
-								<X className="w-3 h-3" />
-							</button>
+					) : allowExpanded && showExpandedTerminal ? (
+						<div className="h-full bg-muted/30 border border-border overflow-hidden flex flex-col">
+							{!isMobileLayout && (
+								<div className="flex items-center justify-between px-2 py-1 border-b border-border bg-muted/30">
+									<span className="text-xs text-muted-foreground">
+										{t.terminal}
+									</span>
+									<button
+										type="button"
+										onClick={() => toggleExpandedView("terminal")}
+										className="p-1 text-muted-foreground hover:text-foreground hover:bg-muted/50"
+										aria-label="Collapse terminal"
+									>
+										<Minimize2 className="w-3.5 h-3.5" />
+									</button>
+								</div>
+							)}
+							<div className="flex-1 min-h-0">
+								<Suspense fallback={viewLoadingFallback}>
+									<TerminalView workspacePath={resumeWorkspacePath} />
+								</Suspense>
+							</div>
 						</div>
-					))}
-				</div>
-			)}
-
-			{/* Hidden file input */}
-			<input
-				ref={fileInputRef}
-				type="file"
-				multiple
-				className="hidden"
-				onChange={(e) => handleFileUpload(e.target.files)}
-			/>
-
-			{/* Chat input - works for both live and history sessions */}
-			<div className="chat-input-container flex flex-col gap-1 bg-muted/30 border border-border px-2 py-1">
-				{/* Show hint for history sessions that will be resumed - hide when sending/resuming */}
-				{isHistoryOnlySession && chatState === "idle" && (
-					<div className="flex items-center gap-1.5 px-1 pt-1 text-xs text-muted-foreground">
-						<Clock className="w-3 h-3" />
-						<span>
-							{locale === "de"
-								? canResumeWithoutMessage
-									? "Nachricht senden oder ohne Nachricht fortsetzen"
-									: "Sende eine Nachricht um diese Sitzung fortzusetzen"
-								: canResumeWithoutMessage
-									? "Send a message or resume without one"
-									: "Send a message to resume this session"}
-						</span>
-					</div>
-				)}
-				<div className="flex items-center gap-2">
-					<button
-						type="button"
-						onClick={() => fileInputRef.current?.click()}
-						disabled={isUploading}
-						className="flex-shrink-0 h-8 px-2 flex items-center justify-center text-muted-foreground hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-						title={locale === "de" ? "Datei hochladen" : "Upload file"}
-					>
-						{isUploading ? (
-							<Loader2 className="size-4 animate-spin" />
-						) : (
-							<Paperclip className="size-4" />
-						)}
-					</button>
-					{/* Unified voice menu button - conversation or dictation */}
-					{features.voice && (
-						<VoiceMenuButton
-							activeMode={
-								voiceMode.isActive
-									? "conversation"
-									: dictation.isActive
-										? "dictation"
-										: null
-							}
-							voiceState={voiceMode.voiceState}
-							onConversation={() => {
-								if (dictation.isActive) dictation.stop();
-								voiceMode.start().catch(console.error);
-							}}
-							onDictation={() => {
-								if (voiceMode.isActive) voiceMode.stop();
-								dictation.start().catch(console.error);
-							}}
-							onStop={() => {
-								if (voiceMode.isActive) voiceMode.stop();
-								if (dictation.isActive) dictation.stop();
-							}}
+					) : (
+						<ChatMessagesPane
+							messages={messages}
+							messagesLoading={messagesLoading}
+							selectedChatSessionId={selectedChatSessionId ?? undefined}
+							sessionHadMessages={Boolean(
+								selectedChatSessionId &&
+									sessionsWithMessagesRef.current.has(selectedChatSessionId),
+							)}
+							hasHiddenMessages={hasHiddenMessages}
+							messageGroupsLength={messageGroups.length}
+							visibleGroups={visibleGroups}
+							visibleGroupCount={visibleGroupCount}
+							a2uiByGroupIndex={a2uiByGroupIndex}
 							locale={locale}
-							className="flex-shrink-0"
+							noMessagesText={t.noMessages}
+							persona={selectedSession?.persona}
+							workspaceName={workspaceName}
+							readableId={readableId}
+							workspaceDirectory={opencodeDirectory}
+							onFork={handleForkSession}
+							onScroll={handleScroll}
+							messagesContainerRef={messagesContainerRef}
+							messagesEndRef={messagesEndRef}
+							showScrollToBottom={showScrollToBottom}
+							scrollToBottom={scrollToBottom}
+							loadMoreMessages={loadMoreMessages}
+							onA2UIAction={handleA2UIAction}
+							isStreaming={chatState === "sending"}
 						/>
 					)}
-					{/* Textarea wrapper with slash command popup */}
-					<div
-						className="flex-1 relative flex flex-col min-h-[32px]"
-						data-spotlight="chat-input"
-					>
-						<SlashCommandPopup
-							commands={slashCommands}
-							query={slashQuery.command}
-							isOpen={showSlashPopup && slashQuery.isSlash && !slashQuery.args}
-							onSelect={handleSlashCommandSelect}
-							onClose={() => setShowSlashPopup(false)}
-						/>
-						<FileMentionPopup
-							query={fileMentionQuery}
-							isOpen={showFileMentionPopup}
-							workspacePath={resumeWorkspacePath}
-							onSelect={(attachment) => {
-								// Remove @query from input, only show chip
-								const newInput = messageInput.replace(/@[^\s]*$/, "");
-								setMessageInputWithResize(newInput);
-								setFileAttachments((prev) => [...prev, attachment]);
-								setShowFileMentionPopup(false);
-								setFileMentionQuery("");
-								chatInputRef.current?.focus();
-							}}
-							onClose={() => {
-								setShowFileMentionPopup(false);
-								setFileMentionQuery("");
-							}}
-						/>
-						<AgentMentionPopup
-							query={agentMentionQuery}
-							isOpen={showAgentMentionPopup}
-							mainChatName={mainChatAssistantName}
-							mainChatWorkspacePath={mainChatWorkspacePath}
-							sessions={chatHistory.map((s) => ({
-								id: s.id,
-								title: s.title,
-								workspace_path: s.workspace_path,
-								project_name: s.project_name,
-							}))}
-							onSelect={(target) => {
-								// Remove @@query from input, store target
-								// Use ref value directly since debounced state may be stale
-								const newInput = messageInputRef.current.replace(
-									/@@[^\s]*$/,
-									"",
-								);
-								setMessageInputWithResize(newInput);
-								messageInputRef.current = newInput;
-								setAgentTarget(target);
-								setShowAgentMentionPopup(false);
-								setAgentMentionQuery("");
-								chatInputRef.current?.focus();
-							}}
-							onClose={() => {
-								setShowAgentMentionPopup(false);
-								setAgentMentionQuery("");
-							}}
-						/>
-						{/* File attachment chips */}
-						{fileAttachments.length > 0 && (
-							<div className="flex flex-wrap gap-1 mb-1">
-								{fileAttachments.map((attachment) => (
-									<FileAttachmentChip
-										key={attachment.id}
-										attachment={attachment}
-										onRemove={() => {
-											setFileAttachments((prev) =>
-												prev.filter((a) => a.id !== attachment.id),
-											);
-										}}
-									/>
-								))}
+				</div>
+
+				{/* Pending uploads indicator */}
+				{pendingUploads.length > 0 && (
+					<div className="flex flex-wrap gap-2 mb-2">
+						{pendingUploads.map((upload) => (
+							<div
+								key={upload.path}
+								className="flex items-center gap-1.5 px-2 py-1 bg-primary/10 border border-primary/30 text-xs text-foreground"
+							>
+								<Paperclip className="w-3 h-3 text-primary" />
+								<span className="truncate max-w-[150px]">{upload.name}</span>
+								<button
+									type="button"
+									onClick={() => removePendingUpload(upload.path)}
+									className="text-muted-foreground hover:text-foreground ml-1"
+								>
+									<X className="w-3 h-3" />
+								</button>
 							</div>
-						)}
-						{/* Issue attachment chips */}
-						{issueAttachments.length > 0 && (
-							<div className="flex flex-wrap gap-1 mb-1">
-								{issueAttachments.map((attachment) => (
-									<IssueAttachmentChip
-										key={attachment.id}
-										attachment={attachment}
-										onRemove={() => {
-											setIssueAttachments((prev) =>
-												prev.filter((a) => a.id !== attachment.id),
-											);
-										}}
-									/>
-								))}
-							</div>
-						)}
-						{/* Agent target chip (@@mention) */}
-						{agentTarget && (
-							<div className="flex flex-wrap gap-1 mb-1">
-								<AgentTargetChip
-									target={agentTarget}
-									onRemove={() => setAgentTarget(null)}
-								/>
-							</div>
-						)}
-						{features.voice && dictation.isActive ? (
-							<DictationOverlay
-								open
-								value={messageInputRef.current}
-								liveTranscript={dictation.liveTranscript}
-								placeholder={
-									locale === "de" ? "Sprechen Sie..." : "Speak now..."
-								}
-								vadProgress={dictation.vadProgress}
-								autoSend={dictation.autoSendEnabled}
-								onAutoSendChange={dictation.setAutoSendEnabled}
-								onStop={() => {
-									// Use cancel() to stop without auto-send - user clicked X
-									dictation.cancel();
-									requestAnimationFrame(() => {
-										setMessageInputWithResize(messageInputRef.current);
-									});
-								}}
-								onChange={handleInputChange}
-								onKeyDown={handleInputKeyDown}
-								onPaste={(e) => {
-									// Handle pasted files (images, etc.)
-									const items = e.clipboardData?.items;
-									if (!items) return;
-
-									const files: File[] = [];
-									let imageIndex = 0;
-									for (const item of Array.from(items)) {
-										if (item.kind === "file") {
-											const file = item.getAsFile();
-											if (file) {
-												// Rename generic clipboard image names to be unique
-												const isGenericName =
-													/^image\.(png|gif|jpg|jpeg|webp)$/i.test(file.name);
-												if (isGenericName) {
-													const ext = file.name.split(".").pop() || "png";
-													const uniqueName = `pasted-image-${Date.now()}-${imageIndex++}.${ext}`;
-													const renamedFile = new File([file], uniqueName, {
-														type: file.type,
-													});
-													files.push(renamedFile);
-												} else {
-													files.push(file);
-												}
-											}
-										}
-									}
-
-									if (files.length > 0) {
-										// Prevent default paste behavior for files
-										e.preventDefault();
-										// Create a FileList-like object and upload
-										const dataTransfer = new DataTransfer();
-										for (const file of files) {
-											dataTransfer.items.add(file);
-										}
-										handleFileUpload(dataTransfer.files);
-									}
-									// If no files, let the default paste behavior handle text
-								}}
-								onBlur={() => {
-									// Delay closing to allow click on popup items
-									setTimeout(() => setShowSlashPopup(false), 150);
-								}}
-								onFocus={(e) => {
-									// Scroll input into view on mobile when keyboard opens
-									setTimeout(() => {
-										e.target.scrollIntoView({
-											behavior: "smooth",
-											block: "nearest",
-										});
-									}, 300);
-								}}
-							/>
-						) : (
-							<textarea
-								key={`${chatInputMountKey}-${selectedChatSessionId || 'none'}`}
-								ref={setChatInputEl}
-								autoComplete="off"
-								autoCorrect="off"
-								autoCapitalize="sentences"
-								spellCheck={false}
-								enterKeyHint="send"
-								data-form-type="other"
-								placeholder={
-									isHistoryOnlySession
-										? locale === "de"
-											? "Nachricht zum Fortsetzen..."
-											: "Message to resume..."
-										: t.inputPlaceholder
-								}
-								defaultValue=""
-								onChange={handleInputChange}
-								onKeyDown={handleInputKeyDown}
-								onPaste={(e) => {
-									// Handle pasted files (images, etc.)
-									const items = e.clipboardData?.items;
-									if (!items) return;
-
-									const files: File[] = [];
-									let imageIndex = 0;
-									for (const item of Array.from(items)) {
-										if (item.kind === "file") {
-											const file = item.getAsFile();
-											if (file) {
-												// Rename generic clipboard image names to be unique
-												const isGenericName =
-													/^image\.(png|gif|jpg|jpeg|webp)$/i.test(file.name);
-												if (isGenericName) {
-													const ext = file.name.split(".").pop() || "png";
-													const uniqueName = `pasted-image-${Date.now()}-${imageIndex++}.${ext}`;
-													const renamedFile = new File([file], uniqueName, {
-														type: file.type,
-													});
-													files.push(renamedFile);
-												} else {
-													files.push(file);
-												}
-											}
-										}
-									}
-
-									if (files.length > 0) {
-										// Prevent default paste behavior for files
-										e.preventDefault();
-										// Create a FileList-like object and upload
-										const dataTransfer = new DataTransfer();
-										for (const file of files) {
-											dataTransfer.items.add(file);
-										}
-										handleFileUpload(dataTransfer.files);
-									}
-									// If no files, let the default paste behavior handle text
-								}}
-								onBlur={() => {
-									// Delay closing to allow click on popup items
-									setTimeout(() => setShowSlashPopup(false), 150);
-								}}
-								onFocus={(e) => {
-									// Show popup if input starts with /
-									if (deferredMessageInput.startsWith("/")) {
-										setShowSlashPopup(true);
-									}
-									// Scroll input into view on mobile when keyboard opens
-									setTimeout(() => {
-										e.target.scrollIntoView({
-											behavior: "smooth",
-											block: "nearest",
-										});
-									}, 300);
-								}}
-								rows={1}
-								className="w-full bg-transparent border-none outline-none text-foreground placeholder:text-muted-foreground text-sm resize-none py-1.5 leading-5 max-h-[200px] overflow-y-auto"
-							/>
-						)}
+						))}
 					</div>
-					{chatState === "sending" && (
+				)}
+
+				{/* Hidden file input */}
+				<input
+					ref={fileInputRef}
+					type="file"
+					multiple
+					className="hidden"
+					onChange={(e) => handleFileUpload(e.target.files)}
+				/>
+
+				{/* Chat input - works for both live and history sessions */}
+				<div className="chat-input-container flex flex-col gap-1 bg-muted/30 border border-border px-2 py-1">
+					{/* Show hint for history sessions that will be resumed - hide when sending/resuming */}
+					{isHistoryOnlySession && chatState === "idle" && (
+						<div className="flex items-center gap-1.5 px-1 pt-1 text-xs text-muted-foreground">
+							<Clock className="w-3 h-3" />
+							<span>
+								{locale === "de"
+									? canResumeWithoutMessage
+										? "Nachricht senden oder ohne Nachricht fortsetzen"
+										: "Sende eine Nachricht um diese Sitzung fortzusetzen"
+									: canResumeWithoutMessage
+										? "Send a message or resume without one"
+										: "Send a message to resume this session"}
+							</span>
+						</div>
+					)}
+					<div className="flex items-center gap-2">
+						<button
+							type="button"
+							onClick={() => fileInputRef.current?.click()}
+							disabled={isUploading}
+							className="flex-shrink-0 h-8 px-2 flex items-center justify-center text-muted-foreground hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+							title={locale === "de" ? "Datei hochladen" : "Upload file"}
+						>
+							{isUploading ? (
+								<Loader2 className="size-4 animate-spin" />
+							) : (
+								<Paperclip className="size-4" />
+							)}
+						</button>
+						{/* Unified voice menu button - conversation or dictation */}
+						{features.voice && (
+							<VoiceMenuButton
+								activeMode={
+									voiceMode.isActive
+										? "conversation"
+										: dictation.isActive
+											? "dictation"
+											: null
+								}
+								voiceState={voiceMode.voiceState}
+								onConversation={() => {
+									if (dictation.isActive) dictation.stop();
+									voiceMode.start().catch(console.error);
+								}}
+								onDictation={() => {
+									if (voiceMode.isActive) voiceMode.stop();
+									dictation.start().catch(console.error);
+								}}
+								onStop={() => {
+									if (voiceMode.isActive) voiceMode.stop();
+									if (dictation.isActive) dictation.stop();
+								}}
+								locale={locale}
+								className="flex-shrink-0"
+							/>
+						)}
+						{/* Textarea wrapper with slash command popup */}
+						<div
+							className="flex-1 relative flex flex-col min-h-[32px]"
+							data-spotlight="chat-input"
+						>
+							<SlashCommandPopup
+								commands={slashCommands}
+								query={slashQuery.command}
+								isOpen={
+									showSlashPopup && slashQuery.isSlash && !slashQuery.args
+								}
+								onSelect={handleSlashCommandSelect}
+								onClose={() => setShowSlashPopup(false)}
+							/>
+							<FileMentionPopup
+								query={fileMentionQuery}
+								isOpen={showFileMentionPopup}
+								workspacePath={resumeWorkspacePath}
+								onSelect={(attachment) => {
+									// Remove @query from input, only show chip
+									const newInput = messageInput.replace(/@[^\s]*$/, "");
+									setMessageInputWithResize(newInput);
+									setFileAttachments((prev) => [...prev, attachment]);
+									setShowFileMentionPopup(false);
+									setFileMentionQuery("");
+									chatInputRef.current?.focus();
+								}}
+								onClose={() => {
+									setShowFileMentionPopup(false);
+									setFileMentionQuery("");
+								}}
+							/>
+							<AgentMentionPopup
+								query={agentMentionQuery}
+								isOpen={showAgentMentionPopup}
+								mainChatName={mainChatAssistantName}
+								mainChatWorkspacePath={mainChatWorkspacePath}
+								sessions={chatHistory.map((s) => ({
+									id: s.id,
+									title: s.title,
+									workspace_path: s.workspace_path,
+									project_name: s.project_name,
+								}))}
+								onSelect={(target) => {
+									// Remove @@query from input, store target
+									// Use ref value directly since debounced state may be stale
+									const newInput = messageInputRef.current.replace(
+										/@@[^\s]*$/,
+										"",
+									);
+									setMessageInputWithResize(newInput);
+									messageInputRef.current = newInput;
+									setAgentTarget(target);
+									setShowAgentMentionPopup(false);
+									setAgentMentionQuery("");
+									chatInputRef.current?.focus();
+								}}
+								onClose={() => {
+									setShowAgentMentionPopup(false);
+									setAgentMentionQuery("");
+								}}
+							/>
+							{/* File attachment chips */}
+							{fileAttachments.length > 0 && (
+								<div className="flex flex-wrap gap-1 mb-1">
+									{fileAttachments.map((attachment) => (
+										<FileAttachmentChip
+											key={attachment.id}
+											attachment={attachment}
+											onRemove={() => {
+												setFileAttachments((prev) =>
+													prev.filter((a) => a.id !== attachment.id),
+												);
+											}}
+										/>
+									))}
+								</div>
+							)}
+							{/* Issue attachment chips */}
+							{issueAttachments.length > 0 && (
+								<div className="flex flex-wrap gap-1 mb-1">
+									{issueAttachments.map((attachment) => (
+										<IssueAttachmentChip
+											key={attachment.id}
+											attachment={attachment}
+											onRemove={() => {
+												setIssueAttachments((prev) =>
+													prev.filter((a) => a.id !== attachment.id),
+												);
+											}}
+										/>
+									))}
+								</div>
+							)}
+							{/* Agent target chip (@@mention) */}
+							{agentTarget && (
+								<div className="flex flex-wrap gap-1 mb-1">
+									<AgentTargetChip
+										target={agentTarget}
+										onRemove={() => setAgentTarget(null)}
+									/>
+								</div>
+							)}
+							{features.voice && dictation.isActive ? (
+								<DictationOverlay
+									open
+									value={messageInputRef.current}
+									liveTranscript={dictation.liveTranscript}
+									placeholder={
+										locale === "de" ? "Sprechen Sie..." : "Speak now..."
+									}
+									vadProgress={dictation.vadProgress}
+									autoSend={dictation.autoSendEnabled}
+									onAutoSendChange={dictation.setAutoSendEnabled}
+									onStop={() => {
+										// Use cancel() to stop without auto-send - user clicked X
+										dictation.cancel();
+										requestAnimationFrame(() => {
+											setMessageInputWithResize(messageInputRef.current);
+										});
+									}}
+									onChange={handleInputChange}
+									onKeyDown={handleInputKeyDown}
+									onPaste={(e) => {
+										// Handle pasted files (images, etc.)
+										const items = e.clipboardData?.items;
+										if (!items) return;
+
+										const files: File[] = [];
+										let imageIndex = 0;
+										for (const item of Array.from(items)) {
+											if (item.kind === "file") {
+												const file = item.getAsFile();
+												if (file) {
+													// Rename generic clipboard image names to be unique
+													const isGenericName =
+														/^image\.(png|gif|jpg|jpeg|webp)$/i.test(file.name);
+													if (isGenericName) {
+														const ext = file.name.split(".").pop() || "png";
+														const uniqueName = `pasted-image-${Date.now()}-${imageIndex++}.${ext}`;
+														const renamedFile = new File([file], uniqueName, {
+															type: file.type,
+														});
+														files.push(renamedFile);
+													} else {
+														files.push(file);
+													}
+												}
+											}
+										}
+
+										if (files.length > 0) {
+											// Prevent default paste behavior for files
+											e.preventDefault();
+											// Create a FileList-like object and upload
+											const dataTransfer = new DataTransfer();
+											for (const file of files) {
+												dataTransfer.items.add(file);
+											}
+											handleFileUpload(dataTransfer.files);
+										}
+										// If no files, let the default paste behavior handle text
+									}}
+									onBlur={() => {
+										// Delay closing to allow click on popup items
+										setTimeout(() => setShowSlashPopup(false), 150);
+									}}
+									onFocus={(e) => {
+										// Scroll input into view on mobile when keyboard opens
+										setTimeout(() => {
+											e.target.scrollIntoView({
+												behavior: "smooth",
+												block: "nearest",
+											});
+										}, 300);
+									}}
+								/>
+							) : (
+								<textarea
+									key={`${chatInputMountKey}-${selectedChatSessionId || "none"}`}
+									ref={setChatInputEl}
+									autoComplete="off"
+									autoCorrect="off"
+									autoCapitalize="sentences"
+									spellCheck={false}
+									enterKeyHint="send"
+									data-form-type="other"
+									placeholder={
+										isHistoryOnlySession
+											? locale === "de"
+												? "Nachricht zum Fortsetzen..."
+												: "Message to resume..."
+											: t.inputPlaceholder
+									}
+									defaultValue=""
+									onChange={handleInputChange}
+									onKeyDown={handleInputKeyDown}
+									onPaste={(e) => {
+										// Handle pasted files (images, etc.)
+										const items = e.clipboardData?.items;
+										if (!items) return;
+
+										const files: File[] = [];
+										let imageIndex = 0;
+										for (const item of Array.from(items)) {
+											if (item.kind === "file") {
+												const file = item.getAsFile();
+												if (file) {
+													// Rename generic clipboard image names to be unique
+													const isGenericName =
+														/^image\.(png|gif|jpg|jpeg|webp)$/i.test(file.name);
+													if (isGenericName) {
+														const ext = file.name.split(".").pop() || "png";
+														const uniqueName = `pasted-image-${Date.now()}-${imageIndex++}.${ext}`;
+														const renamedFile = new File([file], uniqueName, {
+															type: file.type,
+														});
+														files.push(renamedFile);
+													} else {
+														files.push(file);
+													}
+												}
+											}
+										}
+
+										if (files.length > 0) {
+											// Prevent default paste behavior for files
+											e.preventDefault();
+											// Create a FileList-like object and upload
+											const dataTransfer = new DataTransfer();
+											for (const file of files) {
+												dataTransfer.items.add(file);
+											}
+											handleFileUpload(dataTransfer.files);
+										}
+										// If no files, let the default paste behavior handle text
+									}}
+									onBlur={() => {
+										// Delay closing to allow click on popup items
+										setTimeout(() => setShowSlashPopup(false), 150);
+									}}
+									onFocus={(e) => {
+										// Show popup if input starts with /
+										if (deferredMessageInput.startsWith("/")) {
+											setShowSlashPopup(true);
+										}
+										// Scroll input into view on mobile when keyboard opens
+										setTimeout(() => {
+											e.target.scrollIntoView({
+												behavior: "smooth",
+												block: "nearest",
+											});
+										}, 300);
+									}}
+									rows={1}
+									className="w-full bg-transparent border-none outline-none text-foreground placeholder:text-muted-foreground text-sm resize-none py-1.5 leading-5 max-h-[200px] overflow-y-auto"
+								/>
+							)}
+						</div>
+						{chatState === "sending" && (
+							<Button
+								type="button"
+								onClick={handleStop}
+								className="stop-button-animated flex-shrink-0 h-8 px-2 flex items-center justify-center text-destructive hover:text-destructive/80 transition-colors bg-transparent hover:bg-transparent"
+								variant="ghost"
+								size="icon"
+								title={
+									locale === "de"
+										? "Agent stoppen (2x Esc)"
+										: "Stop agent (2x Esc)"
+								}
+							>
+								<span className="stop-button-ring" aria-hidden>
+									<svg viewBox="0 0 100 100" role="presentation">
+										<circle
+											cx="50"
+											cy="50"
+											r="46"
+											fill="none"
+											stroke="currentColor"
+											strokeWidth="3"
+											strokeLinecap="round"
+											strokeDasharray="72 216"
+											opacity="0.8"
+										/>
+									</svg>
+								</span>
+								<StopCircle className="w-4 h-4" />
+							</Button>
+						)}
 						<Button
 							type="button"
-							onClick={handleStop}
-							className="stop-button-animated flex-shrink-0 h-8 px-2 flex items-center justify-center text-destructive hover:text-destructive/80 transition-colors bg-transparent hover:bg-transparent"
+							data-voice-send
+							onClick={handleSendOrResume}
+							disabled={
+								!canResumeWithoutMessage &&
+								!deferredMessageInput.trim() &&
+								pendingUploads.length === 0 &&
+								fileAttachments.length === 0 &&
+								issueAttachments.length === 0
+							}
+							className="flex-shrink-0 h-8 px-2 flex items-center justify-center text-muted-foreground hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed transition-colors bg-transparent hover:bg-transparent"
 							variant="ghost"
 							size="icon"
-							title={
-								locale === "de"
-									? "Agent stoppen (2x Esc)"
-									: "Stop agent (2x Esc)"
-							}
 						>
-							<span className="stop-button-ring" aria-hidden>
-								<svg viewBox="0 0 100 100" role="presentation">
-									<circle
-										cx="50"
-										cy="50"
-										r="46"
-										fill="none"
-										stroke="currentColor"
-										strokeWidth="3"
-										strokeLinecap="round"
-										strokeDasharray="72 216"
-										opacity="0.8"
-									/>
-								</svg>
-							</span>
-							<StopCircle className="w-4 h-4" />
+							{canResumeWithoutMessage ? (
+								<RefreshCw className="w-4 h-4" />
+							) : (
+								<Send className="w-4 h-4" />
+							)}
 						</Button>
-					)}
-					<Button
-						type="button"
-						data-voice-send
-						onClick={handleSendOrResume}
-						disabled={
-							!canResumeWithoutMessage &&
-							!deferredMessageInput.trim() &&
-							pendingUploads.length === 0 &&
-							fileAttachments.length === 0 &&
-							issueAttachments.length === 0
-						}
-						className="flex-shrink-0 h-8 px-2 flex items-center justify-center text-muted-foreground hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed transition-colors bg-transparent hover:bg-transparent"
-						variant="ghost"
-						size="icon"
-					>
-						{canResumeWithoutMessage ? (
-							<RefreshCw className="w-4 h-4" />
-						) : (
-							<Send className="w-4 h-4" />
-						)}
-					</Button>
+					</div>
 				</div>
 			</div>
-		</div>
-	);
+		);
+	};
 
 	// Voice input overlay - shown on mobile when voice mode is active
 	const mobileVoiceOverlay =
@@ -4847,13 +5137,86 @@ export const SessionScreen = memo(function SessionScreen() {
 	})();
 
 	// Session header component for reuse
-	const showModelSwitcher =
-		!mainChatActive && !!effectiveOpencodeBaseUrl && !!activeSessionId;
+	const showOpencodeModelSwitcher =
+		!mainChatActive &&
+		!isWorkspacePiSession &&
+		!!effectiveOpencodeBaseUrl &&
+		!!activeSessionId;
+	const showPiModelSwitcher =
+		isWorkspacePiSession && !!workspacePiPath && !!selectedChatSessionId;
 	const filteredModelOptions = filterModelOptions(
 		opencodeModelOptions,
 		modelQuery,
 	);
-	const modelSwitcher = showModelSwitcher ? (
+	const modelSwitcher = showPiModelSwitcher ? (
+		<div data-spotlight="model-picker">
+			<Select
+				value={piSelectedModelRef ?? undefined}
+				onValueChange={handlePiModelChange}
+				onOpenChange={(open) => {
+					if (open) setPiModelQuery("");
+				}}
+				disabled={
+					piIsSwitchingModel ||
+					piIsModelLoading ||
+					!piIsIdle ||
+					piModelOptions.length === 0
+				}
+			>
+				<SelectTrigger className="h-7 w-[220px] text-xs">
+					<SelectValue
+						placeholder={
+							piIsSwitchingModel
+								? "Switching model..."
+								: piIsModelLoading
+									? "Loading models..."
+									: "Model"
+						}
+					/>
+				</SelectTrigger>
+				<SelectContent>
+					<div
+						className="sticky top-0 z-10 bg-popover p-2 border-b border-border"
+						onPointerDown={(e) => e.stopPropagation()}
+						onKeyDown={(e) => e.stopPropagation()}
+					>
+						<Input
+							value={piModelQuery}
+							onChange={(e) => setPiModelQuery(e.target.value)}
+							placeholder="Search models..."
+							aria-label="Search models"
+							className="h-8 text-xs"
+						/>
+					</div>
+					{piModelOptions.length === 0 ? (
+						<SelectItem value="__none__" disabled>
+							{piIsModelLoading ? "Loading..." : "No models available"}
+						</SelectItem>
+					) : filteredPiModels.length === 0 ? (
+						<SelectItem value="__no_results__" disabled>
+							No matches
+						</SelectItem>
+					) : (
+						filteredPiModels.map((model) => {
+							const value = `${model.provider}/${model.id}`;
+							const label = model.name ? `${value} · ${model.name}` : value;
+							return (
+								<SelectItem key={value} value={value} textValue={label}>
+									<span className="flex items-center gap-2">
+										<ProviderIcon
+											provider={model.provider}
+											className="w-4 h-4 flex-shrink-0"
+										/>
+										<span>{label}</span>
+									</span>
+								</SelectItem>
+							);
+						})
+					)}
+				</SelectContent>
+			</Select>
+		</div>
+	) : showOpencodeModelSwitcher ? (
 		<div data-spotlight="model-picker">
 			<Select
 				value={selectedModelRef ?? undefined}
@@ -4970,9 +5333,9 @@ export const SessionScreen = memo(function SessionScreen() {
 			{/* Context window gauge - full width bar at bottom of header */}
 			<div className="mt-2">
 				<ContextWindowGauge
-					inputTokens={tokenUsage.inputTokens}
-					outputTokens={tokenUsage.outputTokens}
-					maxTokens={contextLimit}
+					inputTokens={displayTokenUsage.inputTokens}
+					outputTokens={displayTokenUsage.outputTokens}
+					maxTokens={displayContextLimit}
 					locale={locale}
 					compact
 				/>
@@ -5042,19 +5405,9 @@ export const SessionScreen = memo(function SessionScreen() {
 					</div>
 					{/* Mobile context window gauge - full width bar directly below tabs */}
 					<ContextWindowGauge
-						inputTokens={
-							mainChatActive
-								? mainChatTokenUsage.inputTokens
-								: tokenUsage.inputTokens
-						}
-						outputTokens={
-							mainChatActive
-								? mainChatTokenUsage.outputTokens
-								: tokenUsage.outputTokens
-						}
-						maxTokens={
-							mainChatActive ? mainChatTokenUsage.maxTokens : contextLimit
-						}
+						inputTokens={displayTokenUsage.inputTokens}
+						outputTokens={displayTokenUsage.outputTokens}
+						maxTokens={displayContextLimit}
 						locale={locale}
 						compact
 					/>
@@ -5205,8 +5558,19 @@ export const SessionScreen = memo(function SessionScreen() {
 					)}
 					{activeView === "settings" && (
 						<Suspense fallback={viewLoadingFallback}>
-							{mainChatActive ? (
-								<MainChatSettingsView locale={locale} />
+							{mainChatActive || isWorkspacePiSession ? (
+								<PiSettingsView
+									locale={locale}
+									scope={mainChatActive ? "main" : "workspace"}
+									sessionId={
+										mainChatActive
+											? mainChatCurrentSessionId
+											: selectedChatSessionId
+									}
+									workspacePath={
+										mainChatActive ? mainChatWorkspacePath : workspacePiPath
+									}
+								/>
 							) : (
 								<AgentSettingsView
 									modelOptions={opencodeModelOptions}
@@ -5691,8 +6055,21 @@ export const SessionScreen = memo(function SessionScreen() {
 										)}
 										{activeView === "settings" && (
 											<Suspense fallback={viewLoadingFallback}>
-												{mainChatActive ? (
-													<MainChatSettingsView locale={locale} />
+												{mainChatActive || isWorkspacePiSession ? (
+													<PiSettingsView
+														locale={locale}
+														scope={mainChatActive ? "main" : "workspace"}
+														sessionId={
+															mainChatActive
+																? mainChatCurrentSessionId
+																: selectedChatSessionId
+														}
+														workspacePath={
+															mainChatActive
+																? mainChatWorkspacePath
+																: workspacePiPath
+														}
+													/>
 												) : (
 													<AgentSettingsView
 														modelOptions={opencodeModelOptions}
@@ -6060,7 +6437,8 @@ const MessageGroupCard = memo(function MessageGroupCard({
 				{segments.map((segment, idx) => {
 					// Add top margin to non-text segments that follow text segments
 					const prevSegment = idx > 0 ? segments[idx - 1] : null;
-					const needsTopMargin = prevSegment?.type === "text" && segment.type !== "text";
+					const needsTopMargin =
+						prevSegment?.type === "text" && segment.type !== "text";
 
 					if (segment.type === "text") {
 						// Parse @file references from the text, excluding code blocks
@@ -6100,7 +6478,10 @@ const MessageGroupCard = memo(function MessageGroupCard({
 
 					if (segment.type === "file") {
 						return (
-							<div key={segment.key} className={needsTopMargin ? "mt-3" : undefined}>
+							<div
+								key={segment.key}
+								className={needsTopMargin ? "mt-3" : undefined}
+							>
 								<FilePartCard
 									part={segment.part}
 									workspaceDirectory={workspaceDirectory}
@@ -6111,7 +6492,10 @@ const MessageGroupCard = memo(function MessageGroupCard({
 
 					if (segment.type === "tool") {
 						return (
-							<div key={segment.key} className={needsTopMargin ? "mt-3" : undefined}>
+							<div
+								key={segment.key}
+								className={needsTopMargin ? "mt-3" : undefined}
+							>
 								<ToolCallCard
 									part={segment.part}
 									defaultCollapsed={true}
@@ -6123,7 +6507,10 @@ const MessageGroupCard = memo(function MessageGroupCard({
 
 					if (segment.type === "other") {
 						return (
-							<div key={segment.key} className={needsTopMargin ? "mt-3" : undefined}>
+							<div
+								key={segment.key}
+								className={needsTopMargin ? "mt-3" : undefined}
+							>
 								<OtherPartCard part={segment.part} />
 							</div>
 						);
@@ -6131,7 +6518,10 @@ const MessageGroupCard = memo(function MessageGroupCard({
 
 					if (segment.type === "a2ui") {
 						return (
-							<div key={segment.key} className={needsTopMargin ? "mt-3" : undefined}>
+							<div
+								key={segment.key}
+								className={needsTopMargin ? "mt-3" : undefined}
+							>
 								<A2UICallCard
 									surfaceId={segment.surface.surfaceId}
 									messages={segment.surface.messages}

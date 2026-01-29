@@ -167,6 +167,10 @@ pub struct SessionServiceConfig {
     pub pi_model: Option<String>,
     /// Agent-browser daemon configuration.
     pub agent_browser: AgentBrowserConfig,
+    /// Runner socket pattern for multi-user mode.
+    /// Supports `{user}` (Linux username) and `{uid}`.
+    /// Example: `/run/octo/runner-sockets/{user}/octo-runner.sock`
+    pub runner_socket_pattern: Option<String>,
 }
 
 impl Default for SessionServiceConfig {
@@ -191,6 +195,7 @@ impl Default for SessionServiceConfig {
             pi_provider: None,
             pi_model: None,
             agent_browser: AgentBrowserConfig::default(),
+            runner_socket_pattern: None,
         }
     }
 }
@@ -450,7 +455,12 @@ impl SessionService {
         } else {
             // Multi-user mode: connect to user's runner socket
             // The user_id is the Linux username in multi-user mode
-            RunnerClient::for_user(user_id)
+            if let Some(pattern) = &self.config.runner_socket_pattern {
+                RunnerClient::for_user_with_pattern(user_id, pattern)
+            } else {
+                // Fallback to default pattern
+                RunnerClient::for_user(user_id)
+            }
         }
     }
 
@@ -1390,6 +1400,21 @@ impl SessionService {
             // Also set API keys for opencode
             env.insert("ANTHROPIC_API_KEY".to_string(), virtual_key.to_string());
             env.insert("OPENAI_API_KEY".to_string(), virtual_key.to_string());
+        }
+
+        // Enforce skdlr wrapper in Octo sandboxed runs
+        let skdlr_config_path = std::path::Path::new("/etc/octo/skdlr-agent.toml");
+        if skdlr_config_path.exists() {
+            env.insert("SKDLR_OCTO_MODE".to_string(), "1".to_string());
+            env.insert(
+                "SKDLR_CONFIG".to_string(),
+                skdlr_config_path.display().to_string(),
+            );
+        } else {
+            warn!(
+                "skdlr agent config not found at {}, scheduling will not be sandboxed",
+                skdlr_config_path.display()
+            );
         }
 
         let workspace_path = PathBuf::from(&session.workspace_path);
@@ -3194,7 +3219,7 @@ mod tests {
         let session = service
             .for_user("test")
             .create_session(CreateSessionRequest {
-                workspace_path: Some(workspace_dir.path().to_string_lossy().to_string()),
+                workspace_path: None,
                 image: None,
                 agent: None,
                 env: Default::default(),

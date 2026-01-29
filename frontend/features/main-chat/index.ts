@@ -1,3 +1,17 @@
+/**
+ * Main chat feature module.
+ *
+ * Provides main chat functionality including:
+ * - Chat entry components
+ * - Timeline display
+ * - Settings views
+ * - Navigation helpers
+ */
+
+// Hooks
+export { useMainChatNavigation } from "./hooks";
+
+// Components
 export { ChatSearchBar } from "./components/ChatSearchBar";
 export type { ChatSearchBarProps } from "./components/ChatSearchBar";
 export { MainChatEntry } from "./components/MainChatEntry";

@@ -1,0 +1,401 @@
+//! Admin-only handlers.
+
+use std::convert::Infallible;
+use std::sync::Arc;
+use std::time::Duration;
+
+use axum::{
+    Json,
+    extract::{Path, Query, State},
+    http::StatusCode,
+    response::sse::{Event, KeepAlive, Sse},
+};
+use serde::Serialize;
+use tokio::sync::Mutex;
+use tokio_stream::{StreamExt, wrappers::IntervalStream};
+use tracing::{error, info, instrument, warn};
+
+use crate::auth::{CurrentUser, RequireAdmin};
+use crate::observability::{CpuTimes, HostMetrics, read_host_metrics};
+use crate::session::{Session, SessionContainerStats};
+use crate::user::{
+    CreateUserRequest, UpdateUserRequest, UserInfo as DbUserInfo, UserListQuery, UserStats,
+};
+
+use crate::api::error::{ApiError, ApiResult};
+use crate::api::state::AppState;
+
+/// Admin stats response for status bar.
+#[derive(Debug, Serialize)]
+pub struct AdminStatsResponse {
+    pub total_users: i64,
+    pub active_users: i64,
+    pub total_sessions: i64,
+    pub running_sessions: i64,
+}
+
+/// Get admin stats for the status bar (admin only).
+#[instrument(skip(state, _user))]
+pub async fn get_admin_stats(
+    State(state): State<AppState>,
+    RequireAdmin(_user): RequireAdmin,
+) -> ApiResult<Json<AdminStatsResponse>> {
+    // Get user stats
+    let user_stats = state.users.get_stats().await?;
+
+    // Get session counts
+    let sessions = state.sessions.list_sessions().await?;
+    let total_sessions = sessions.len() as i64;
+    let running_sessions = sessions
+        .iter()
+        .filter(|s| s.status == crate::session::SessionStatus::Running)
+        .count() as i64;
+
+    // Count active users (users with running sessions)
+    let active_user_ids: std::collections::HashSet<_> = sessions
+        .iter()
+        .filter(|s| s.status == crate::session::SessionStatus::Running)
+        .map(|s| s.user_id.as_str())
+        .collect();
+    let active_users = active_user_ids.len() as i64;
+
+    Ok(Json(AdminStatsResponse {
+        total_users: user_stats.total,
+        active_users,
+        total_sessions,
+        running_sessions,
+    }))
+}
+
+#[derive(Debug, Serialize)]
+pub struct AdminMetricsSnapshot {
+    pub timestamp: String,
+    pub host: Option<HostMetrics>,
+    pub containers: Vec<SessionContainerStats>,
+    pub error: Option<String>,
+}
+
+/// List all sessions (admin only).
+#[instrument(skip(state, _user))]
+pub async fn admin_list_sessions(
+    State(state): State<AppState>,
+    RequireAdmin(_user): RequireAdmin,
+) -> ApiResult<Json<Vec<Session>>> {
+    let sessions = state.sessions.list_sessions().await?;
+    info!(count = sessions.len(), "Admin listed all sessions");
+    Ok(Json(sessions))
+}
+
+/// Force stop a session (admin only).
+#[instrument(skip(state, _user))]
+pub async fn admin_force_stop_session(
+    State(state): State<AppState>,
+    RequireAdmin(_user): RequireAdmin,
+    Path(session_id): Path<String>,
+) -> ApiResult<StatusCode> {
+    // Uses centralized From<anyhow::Error> conversion
+    state.sessions.stop_session(&session_id).await?;
+
+    info!(session_id = %session_id, "Admin force stopped session");
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Debug, Serialize)]
+pub struct LocalCleanupResponse {
+    pub cleared: usize,
+}
+
+/// Clean up orphan local session processes (admin only).
+#[instrument(skip(state, _user))]
+pub async fn admin_cleanup_local_sessions(
+    State(state): State<AppState>,
+    RequireAdmin(_user): RequireAdmin,
+) -> ApiResult<Json<LocalCleanupResponse>> {
+    let cleared = state.sessions.cleanup_local_orphans().await?;
+    info!(cleared, "Admin cleaned up local sessions");
+    Ok(Json(LocalCleanupResponse { cleared }))
+}
+
+/// SSE metrics stream (admin only).
+#[instrument(skip(state, _user))]
+pub async fn admin_metrics_stream(
+    State(state): State<AppState>,
+    RequireAdmin(_user): RequireAdmin,
+) -> ApiResult<Sse<impl tokio_stream::Stream<Item = Result<Event, Infallible>>>> {
+    let state = state.clone();
+    let cpu_state: Arc<Mutex<Option<CpuTimes>>> = Arc::new(Mutex::new(None));
+    let interval = tokio::time::interval(Duration::from_secs(2));
+
+    let stream = IntervalStream::new(interval).then(move |_| {
+        let state = state.clone();
+        let cpu_state = cpu_state.clone();
+        async move {
+            let mut guard = cpu_state.lock().await;
+            let snapshot = build_admin_metrics_snapshot(&state, &mut guard).await;
+            let data = match serde_json::to_string(&snapshot) {
+                Ok(data) => data,
+                Err(err) => {
+                    warn!("Failed to serialize metrics snapshot: {:?}", err);
+                    "{\"error\":\"metrics_serialization_failed\"}".to_string()
+                }
+            };
+            Ok(Event::default().data(data))
+        }
+    });
+
+    Ok(Sse::new(stream).keep_alive(
+        KeepAlive::new()
+            .interval(Duration::from_secs(15))
+            .text("keepalive"),
+    ))
+}
+
+async fn build_admin_metrics_snapshot(
+    state: &AppState,
+    prev_cpu: &mut Option<CpuTimes>,
+) -> AdminMetricsSnapshot {
+    let timestamp = chrono::Utc::now().to_rfc3339();
+    let mut errors = Vec::new();
+
+    let previous_cpu = prev_cpu.clone();
+    let host = match read_host_metrics(previous_cpu.clone()).await {
+        Ok((metrics, cpu)) => {
+            *prev_cpu = Some(cpu);
+            Some(metrics)
+        }
+        Err(err) => {
+            *prev_cpu = previous_cpu;
+            errors.push(format!("host_metrics: {}", err));
+            None
+        }
+    };
+
+    let containers = match state.sessions.collect_container_stats().await {
+        Ok(report) => {
+            if !report.errors.is_empty() {
+                errors.extend(report.errors);
+            }
+            report.stats
+        }
+        Err(err) => {
+            errors.push(format!("container_stats: {}", err));
+            Vec::new()
+        }
+    };
+
+    let error = if errors.is_empty() {
+        None
+    } else {
+        Some(errors.join("; "))
+    };
+
+    AdminMetricsSnapshot {
+        timestamp,
+        host,
+        containers,
+        error,
+    }
+}
+
+// ============================================================================
+// User Management Handlers
+// ============================================================================
+
+/// List all users (admin only).
+#[instrument(skip(state, _user))]
+pub async fn list_users(
+    State(state): State<AppState>,
+    RequireAdmin(_user): RequireAdmin,
+    Query(query): Query<UserListQuery>,
+) -> ApiResult<Json<Vec<DbUserInfo>>> {
+    // Uses centralized From<anyhow::Error> conversion
+    let users = state.users.list_users(query).await?;
+
+    let user_infos: Vec<DbUserInfo> = users.into_iter().map(|u| u.into()).collect();
+    info!(count = user_infos.len(), "Listed users");
+    Ok(Json(user_infos))
+}
+
+/// Get a specific user (admin only).
+#[instrument(skip(state, _user))]
+pub async fn get_user(
+    State(state): State<AppState>,
+    RequireAdmin(_user): RequireAdmin,
+    Path(user_id): Path<String>,
+) -> ApiResult<Json<DbUserInfo>> {
+    // Uses centralized From<anyhow::Error> conversion
+    state
+        .users
+        .get_user(&user_id)
+        .await?
+        .map(|u| Json(u.into()))
+        .ok_or_else(|| ApiError::not_found(format!("User {} not found", user_id)))
+}
+
+/// Create a new user (admin only).
+#[instrument(skip(state, _user, request), fields(username = ?request.username))]
+pub async fn create_user(
+    State(state): State<AppState>,
+    RequireAdmin(_user): RequireAdmin,
+    Json(request): Json<CreateUserRequest>,
+) -> ApiResult<(StatusCode, Json<DbUserInfo>)> {
+    // SECURITY: In multi-user mode, generate a user_id that won't collide with existing
+    // Linux users BEFORE creating the DB user.
+    let user_id = if let Some(ref linux_users) = state.linux_users {
+        Some(linux_users.generate_unique_user_id(&request.username)?)
+    } else {
+        None
+    };
+
+    // Create the database user (with pre-generated ID if in multi-user mode)
+    let user = if let Some(id) = &user_id {
+        state.users.create_user_with_id(id, request).await?
+    } else {
+        state.users.create_user(request).await?
+    };
+
+    // SECURITY: In multi-user mode, we MUST create the Linux user or fail.
+    // Since we pre-generated a unique ID, this should succeed unless there's a system error.
+    if let Some(ref linux_users) = state.linux_users {
+        match linux_users.ensure_user(&user.id) {
+            Ok((uid, actual_linux_username)) => {
+                // Store both linux_username and linux_uid for verification
+                // UID is immutable by non-root, unlike GECOS which users can change via chfn
+                if let Err(e) = state
+                    .users
+                    .update_user(
+                        &user.id,
+                        crate::user::UpdateUserRequest {
+                            linux_username: Some(actual_linux_username.clone()),
+                            linux_uid: Some(uid as i64),
+                            ..Default::default()
+                        },
+                    )
+                    .await
+                {
+                    warn!(
+                        user_id = %user.id,
+                        error = %e,
+                        "Failed to store linux_username/uid in database"
+                    );
+                }
+
+                info!(
+                    user_id = %user.id,
+                    linux_user = %actual_linux_username,
+                    linux_uid = uid,
+                    "Created Linux user for platform user"
+                );
+            }
+            Err(e) => {
+                // This shouldn't happen since we pre-checked, but handle it safely
+                error!(
+                    user_id = %user.id,
+                    error = %e,
+                    "Failed to create Linux user - rolling back user creation"
+                );
+
+                // Delete the user from the database
+                if let Err(delete_err) = state.users.delete_user(&user.id).await {
+                    error!(
+                        user_id = %user.id,
+                        error = %delete_err,
+                        "Failed to delete user after Linux user creation failure"
+                    );
+                }
+
+                return Err(ApiError::internal(format!(
+                    "Failed to create Linux user for isolation: {}",
+                    e
+                )));
+            }
+        }
+    }
+
+    // Allocate a stable per-user mmry port in local multi-user mode.
+    if state.mmry.enabled && !state.mmry.single_user {
+        if let Err(e) = state
+            .users
+            .ensure_mmry_port(
+                &user.id,
+                state.mmry.user_base_port,
+                state.mmry.user_port_range,
+            )
+            .await
+        {
+            warn!(user_id = %user.id, error = %e, "Failed to allocate user mmry port");
+        }
+    }
+
+    info!(user_id = %user.id, "Created new user");
+    Ok((StatusCode::CREATED, Json(user.into())))
+}
+
+/// Update a user (admin only).
+#[instrument(skip(state, _user, request))]
+pub async fn update_user(
+    State(state): State<AppState>,
+    RequireAdmin(_user): RequireAdmin,
+    Path(user_id): Path<String>,
+    Json(request): Json<UpdateUserRequest>,
+) -> ApiResult<Json<DbUserInfo>> {
+    // Uses centralized From<anyhow::Error> conversion
+    let user = state.users.update_user(&user_id, request).await?;
+
+    info!(user_id = %user.id, "Updated user");
+    Ok(Json(user.into()))
+}
+
+/// Delete a user (admin only).
+#[instrument(skip(state, _user))]
+pub async fn delete_user(
+    State(state): State<AppState>,
+    RequireAdmin(_user): RequireAdmin,
+    Path(user_id): Path<String>,
+) -> ApiResult<StatusCode> {
+    // Uses centralized From<anyhow::Error> conversion
+    state.users.delete_user(&user_id).await?;
+
+    info!(user_id = %user_id, "Deleted user");
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Deactivate a user (admin only).
+#[instrument(skip(state, _user))]
+pub async fn deactivate_user(
+    State(state): State<AppState>,
+    RequireAdmin(_user): RequireAdmin,
+    Path(user_id): Path<String>,
+) -> ApiResult<Json<DbUserInfo>> {
+    // Uses centralized From<anyhow::Error> conversion
+    let user = state.users.deactivate_user(&user_id).await?;
+
+    info!(user_id = %user.id, "Deactivated user");
+    Ok(Json(user.into()))
+}
+
+/// Activate a user (admin only).
+#[instrument(skip(state, _user))]
+pub async fn activate_user(
+    State(state): State<AppState>,
+    RequireAdmin(_user): RequireAdmin,
+    Path(user_id): Path<String>,
+) -> ApiResult<Json<DbUserInfo>> {
+    // Uses centralized From<anyhow::Error> conversion
+    let user = state.users.activate_user(&user_id).await?;
+
+    info!(user_id = %user.id, "Activated user");
+    Ok(Json(user.into()))
+}
+
+/// Get user statistics (admin only).
+#[instrument(skip(state, _user))]
+pub async fn get_user_stats(
+    State(state): State<AppState>,
+    RequireAdmin(_user): RequireAdmin,
+) -> ApiResult<Json<UserStats>> {
+    // Uses centralized From<anyhow::Error> conversion
+    let stats = state.users.get_stats().await?;
+
+    Ok(Json(stats))
+}

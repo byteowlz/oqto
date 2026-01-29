@@ -1,12 +1,12 @@
 "use client";
 
-import { Button } from "@/components/ui/button";
 import {
 	type FileAttachment,
 	FileAttachmentChip,
 	FileMentionPopup,
-} from "@/components/ui/file-mention-popup";
-import { SlashCommandPopup } from "@/components/ui/slash-command-popup";
+	SlashCommandPopup,
+} from "@/components/chat";
+import { Button } from "@/components/ui/button";
 import {
 	DictationOverlay,
 	VoiceMenuButton,
@@ -110,7 +110,9 @@ export const ChatInputArea = memo(
 		// Only sync to state when needed for deferred computations
 		const messageInputRef = useRef(initialValue);
 		const [messageInputState, setMessageInputState] = useState(initialValue);
-		const inputSyncTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+		const inputSyncTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
+			null,
+		);
 
 		const syncInputToState = useCallback((value: string) => {
 			messageInputRef.current = value;
@@ -151,28 +153,31 @@ export const ChatInputArea = memo(
 			value: string;
 		}>({ raf: null, value: "" });
 
-		const setMessageInputWithResize = useCallback((value: string) => {
-			messageInputRef.current = value;
-			if (chatInputRef.current) {
-				chatInputRef.current.value = value;
-			}
-			syncInputToState(value);
-			chatInputResizeRef.current.value = value;
-
-			if (chatInputResizeRef.current.raf !== null) return;
-
-			chatInputResizeRef.current.raf = requestAnimationFrame(() => {
-				chatInputResizeRef.current.raf = null;
-				const textarea = chatInputRef.current;
-				if (!textarea) return;
-
-				const currentValue = chatInputResizeRef.current.value;
-				textarea.style.height = "36px";
-				if (currentValue) {
-					textarea.style.height = `${Math.min(textarea.scrollHeight, 200)}px`;
+		const setMessageInputWithResize = useCallback(
+			(value: string) => {
+				messageInputRef.current = value;
+				if (chatInputRef.current) {
+					chatInputRef.current.value = value;
 				}
-			});
-		}, [syncInputToState]);
+				syncInputToState(value);
+				chatInputResizeRef.current.value = value;
+
+				if (chatInputResizeRef.current.raf !== null) return;
+
+				chatInputResizeRef.current.raf = requestAnimationFrame(() => {
+					chatInputResizeRef.current.raf = null;
+					const textarea = chatInputRef.current;
+					if (!textarea) return;
+
+					const currentValue = chatInputResizeRef.current.value;
+					textarea.style.height = "36px";
+					if (currentValue) {
+						textarea.style.height = `${Math.min(textarea.scrollHeight, 200)}px`;
+					}
+				});
+			},
+			[syncInputToState],
+		);
 
 		// Expose imperative handle for parent access
 		useImperativeHandle(

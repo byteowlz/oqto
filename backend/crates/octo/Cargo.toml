@@ -79,6 +79,7 @@ uuid.workspace = true
 chrono.workspace = true
 async-trait.workspace = true
 futures.workspace = true
+regex.workspace = true
 
 # Markdown rendering
 comrak.workspace = true
@@ -103,6 +104,11 @@ rand.workspace = true
 once_cell.workspace = true
 urlencoding.workspace = true
 libc.workspace = true
+glob = "0.3.3"
+fuser = "0.16.0"
+
+# TypeScript type generation
+ts-rs = { version = "10", features = ["serde-compat", "chrono-impl", "serde-json-impl"] }
 
 [dev-dependencies]
 tower = { workspace = true, features = ["util"] }

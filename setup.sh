@@ -34,10 +34,19 @@ TEMPLATES_DIR="${SCRIPT_DIR}/templates"
 : "${OCTO_SETUP_CADDY:=}"               # yes or no - empty = prompt
 : "${OCTO_DOMAIN:=}"                    # domain for HTTPS (e.g., octo.example.com)
 
+# Server hardening options (Linux only, requires root)
+: "${OCTO_HARDEN_SERVER:=}"             # yes or no - empty = prompt in production mode
+: "${OCTO_SSH_PORT:=22}"                # SSH port (change if needed)
+: "${OCTO_SETUP_FIREWALL:=yes}"         # Configure UFW/firewalld
+: "${OCTO_SETUP_FAIL2BAN:=yes}"         # Install and configure fail2ban
+: "${OCTO_HARDEN_SSH:=yes}"             # Apply SSH hardening config
+: "${OCTO_SETUP_AUTO_UPDATES:=yes}"     # Enable automatic security updates
+: "${OCTO_HARDEN_KERNEL:=yes}"          # Apply kernel security parameters
+
 # Agent tools installation tracking
 INSTALL_MMRY="false"
-INSTALL_TRX="false"
 INSTALL_MAILZ="false"
+INSTALL_ALL_TOOLS="false"
 
 # LLM provider configuration (set during generate_config)
 LLM_PROVIDER=""
@@ -184,6 +193,18 @@ prompt_password() {
 
 command_exists() {
     command -v "$1" &>/dev/null
+}
+
+# Package manager update flags (avoid repeated updates)
+APT_UPDATED="false"
+
+apt_update_once() {
+    local force="${1:-}"
+    if [[ "$APT_UPDATED" != "true" || "$force" == "force" ]]; then
+        log_info "Updating apt package index..."
+        sudo apt-get update
+        APT_UPDATED="true"
+    fi
 }
 
 # ==============================================================================
@@ -369,20 +390,25 @@ install_ttyd() {
             ;;
         linux)
             case "$OS_DISTRO" in
-                arch|manjaro)
+                arch|manjaro|endeavouros)
                     log_info "Installing ttyd via pacman..."
                     sudo pacman -S --noconfirm ttyd
                     ;;
-                debian|ubuntu)
+                debian|ubuntu|pop|linuxmint)
                     log_info "Installing ttyd via apt..."
-                    sudo apt-get update && sudo apt-get install -y ttyd
+                    apt_update_once
+                    sudo apt-get install -y ttyd
                     ;;
-                fedora)
+                fedora|centos|rhel|rocky|alma)
                     log_info "Installing ttyd via dnf..."
-                    sudo dnf install -y ttyd
+                    sudo dnf install -y ttyd || install_ttyd_from_source
+                    ;;
+                opensuse*|suse*)
+                    log_info "Installing ttyd from binary (not in openSUSE repos)..."
+                    install_ttyd_from_source
                     ;;
                 *)
-                    log_warn "Unknown distribution. Attempting to build from source..."
+                    log_warn "Unknown distribution. Attempting to download binary..."
                     install_ttyd_from_source
                     ;;
             esac
@@ -403,6 +429,125 @@ install_ttyd_from_source() {
     log_info "Downloading ttyd binary..."
     sudo curl -L "$ttyd_url" -o /usr/local/bin/ttyd
     sudo chmod +x /usr/local/bin/ttyd
+}
+
+# ==============================================================================
+# Pi Extensions Installation
+# ==============================================================================
+
+install_pi_extensions() {
+    log_step "Installing Pi extensions"
+    
+    local pi_ext_source="${SCRIPT_DIR}/pi-extension"
+    
+    if [[ ! -d "$pi_ext_source" ]]; then
+        log_warn "Pi extension source not found at $pi_ext_source"
+        return 1
+    fi
+    
+    # Install for current user
+    install_pi_extensions_for_user "$HOME"
+    
+    log_success "Pi extensions installed"
+}
+
+# Install Pi extensions for a specific user's home directory
+install_pi_extensions_for_user() {
+    local user_home="$1"
+    local pi_ext_source="${SCRIPT_DIR}/pi-extension"
+    local pi_agent_dir="${user_home}/.pi/agent"
+    local extensions_dir="${pi_agent_dir}/extensions"
+    local octo_ext_dir="${extensions_dir}/octo"
+    
+    log_info "Installing Pi extensions to ${extensions_dir}"
+    
+    # Create extensions directory
+    mkdir -p "$octo_ext_dir"
+    
+    # Copy extension files
+    # The octo-delegate.ts becomes index.ts in the extension directory
+    if [[ -f "${pi_ext_source}/octo-delegate.ts" ]]; then
+        cp "${pi_ext_source}/octo-delegate.ts" "${octo_ext_dir}/index.ts"
+        log_success "Installed octo-delegate extension"
+    fi
+    
+    # Copy octo-todos as a separate extension if it exists
+    if [[ -f "${pi_ext_source}/octo-todos.ts" ]]; then
+        local todos_ext_dir="${extensions_dir}/octo-todos"
+        mkdir -p "$todos_ext_dir"
+        cp "${pi_ext_source}/octo-todos.ts" "${todos_ext_dir}/index.ts"
+        log_success "Installed octo-todos extension"
+    fi
+    
+    # Install dependencies if package.json exists
+    if [[ -f "${pi_ext_source}/package.json" ]]; then
+        # Copy package.json for reference (extensions may need peer deps)
+        cp "${pi_ext_source}/package.json" "${octo_ext_dir}/package.json"
+        
+        # Note: Extensions use pi's runtime, so we don't need to install deps
+        # The peer dependency @mariozechner/pi-coding-agent is provided by pi itself
+    fi
+    
+    # Create a README for the user
+    cat > "${extensions_dir}/README.md" << 'EOF'
+# Octo Pi Extensions
+
+These extensions are installed by Octo setup and provide integration between
+Pi (main chat) and Octo (session management).
+
+## Extensions
+
+- **octo/**: Task delegation to OpenCode sessions via Octo backend
+- **octo-todos/**: Todo list management for the Octo UI
+
+## Usage
+
+These extensions are automatically loaded by Pi when running within Octo.
+They provide tools like:
+
+- `octo_session`: Delegate work to an OpenCode session
+- `todowrite`: Write/update the session todo list
+- `todoread`: Read the current session todo list
+
+## Configuration
+
+Extensions can be configured via JSON files in `~/.pi/agent/` or the project directory.
+See each extension's source for available options.
+
+## Updates
+
+To update extensions, run the Octo setup script again or manually copy
+the latest files from the octo repository's `pi-extension/` directory.
+EOF
+
+    log_info "Pi extensions installed to ${extensions_dir}"
+}
+
+# Install Pi extensions for all users in multi-user mode
+install_pi_extensions_all_users() {
+    log_step "Installing Pi extensions for all users"
+    
+    local pi_ext_source="${SCRIPT_DIR}/pi-extension"
+    
+    if [[ ! -d "$pi_ext_source" ]]; then
+        log_warn "Pi extension source not found at $pi_ext_source"
+        return 1
+    fi
+    
+    # Install for current user first
+    install_pi_extensions_for_user "$HOME"
+    
+    # In multi-user mode, we might want to install to /etc/skel for new users
+    # or to a shared location. For now, each user gets their own copy.
+    
+    # Install to /etc/skel so new users get extensions automatically
+    if [[ "$SELECTED_USER_MODE" == "multi" && -d "/etc/skel" ]]; then
+        log_info "Installing Pi extensions to /etc/skel for new users..."
+        sudo mkdir -p /etc/skel/.pi/agent/extensions
+        install_pi_extensions_for_user "/etc/skel" 2>/dev/null || true
+    fi
+    
+    log_success "Pi extensions installed for all applicable users"
 }
 
 # ==============================================================================
@@ -579,7 +724,7 @@ install_shell_tools_debian() {
     
     if [[ ${#apt_pkgs[@]} -gt 0 ]]; then
         log_info "Installing via apt: ${apt_pkgs[*]}"
-        sudo apt-get update
+        apt_update_once
         sudo apt-get install -y "${apt_pkgs[@]}"
     fi
     
@@ -671,39 +816,100 @@ install_shell_tools_cargo() {
 }
 
 # ==============================================================================
-# Agent Tools Installation (agntz, mmry, trx)
+# ==============================================================================
+# Byteowlz Agent Tools Installation
+# ==============================================================================
+#
+# The byteowlz ecosystem provides several CLI tools for AI agents:
+#
+#   agntz  - Agent toolkit (wraps other tools, file reservations, etc.)
+#   mmry   - Memory storage and semantic search
+#   mailz  - Agent coordination and messaging
+#   trx    - Issue/task tracking (via byt/bd)
+#   byt    - Cross-repo governance and management
+#   sx     - External search via SearXNG
+#
+# Installation sources (in order of preference):
+#   1. cargo install from crates.io (if published)
+#   2. cargo install --git from GitHub
+#   3. Local build from byteowlz monorepo (if available)
+#
 # ==============================================================================
 
-install_agntz() {
-    log_step "Installing agntz (Agent Tools)"
+# GitHub org for byteowlz tools
+BYTEOWLZ_GITHUB="https://github.com/byteowlz"
+
+install_byteowlz_tool() {
+    local tool="$1"
+    local repo="${2:-$tool}"  # repo name, defaults to tool name
     
-    if command_exists agntz; then
-        log_success "agntz already installed: $(agntz --version 2>/dev/null || echo 'version unknown')"
-        if ! confirm "Reinstall agntz?"; then
+    if command_exists "$tool"; then
+        local version
+        version=$("$tool" --version 2>/dev/null | head -1 || echo 'unknown')
+        log_success "$tool already installed: $version"
+        return 0
+    fi
+    
+    if ! command_exists cargo; then
+        log_error "Cargo not available. Cannot install $tool."
+        return 1
+    fi
+    
+    log_info "Installing $tool..."
+    
+    # Try crates.io first
+    if cargo install "$tool" 2>/dev/null; then
+        log_success "$tool installed via crates.io"
+        return 0
+    fi
+    
+    # Try GitHub
+    log_info "Trying GitHub repository..."
+    if cargo install --git "${BYTEOWLZ_GITHUB}/${repo}.git" 2>/dev/null; then
+        log_success "$tool installed via GitHub"
+        return 0
+    fi
+    
+    # Check for local byteowlz directory (development setup)
+    local local_path
+    for base in "$HOME/byteowlz" "$HOME/code/byteowlz" "/opt/byteowlz"; do
+        if [[ -d "$base/$repo" ]]; then
+            local_path="$base/$repo"
+            break
+        fi
+    done
+    
+    if [[ -n "$local_path" && -f "$local_path/Cargo.toml" ]]; then
+        log_info "Installing from local path: $local_path"
+        if cargo install --path "$local_path" 2>/dev/null; then
+            log_success "$tool installed from local source"
             return 0
         fi
     fi
     
-    if ! command_exists cargo; then
-        log_error "Cargo not available. Cannot install agntz."
-        return 1
-    fi
+    log_warn "Failed to install $tool"
+    return 1
+}
+
+install_agntz() {
+    log_step "Installing agntz (Agent Toolkit)"
+    install_byteowlz_tool agntz
+}
+
+install_all_byteowlz_tools() {
+    log_step "Installing byteowlz agent tools"
     
-    log_info "Installing agntz via cargo..."
-    # agntz is part of the byteowlz tooling - install from crates.io or git
-    # Assuming it's published to crates.io, otherwise use git install
-    if cargo install agntz 2>/dev/null; then
-        log_success "agntz installed via crates.io"
-    else
-        log_info "Trying to install from git repository..."
-        cargo install --git https://github.com/byteowlz/agntz.git
-    fi
+    # Core tools
+    install_byteowlz_tool agntz
+    install_byteowlz_tool mmry
+    install_byteowlz_tool mailz
+    install_byteowlz_tool byt
+    install_byteowlz_tool sx
     
+    # Use agntz to install additional tools if available
     if command_exists agntz; then
-        log_success "agntz installed successfully"
-    else
-        log_warn "agntz installation may have failed"
-        return 1
+        log_info "Installing additional tools via agntz..."
+        agntz tools install all 2>/dev/null || true
     fi
 }
 
@@ -711,62 +917,54 @@ select_agent_tools() {
     log_step "Agent Tools Selection"
     
     echo
-    echo "Octo can install additional agent tools via agntz:"
+    echo "Octo can install byteowlz agent tools:"
     echo
-    echo "  ${BOLD}mmry${NC} - Memory system for AI agents"
-    echo "    - Persistent memory storage and retrieval"
-    echo "    - Semantic search across memories"
+    echo "  ${BOLD}Core tools (recommended):${NC}"
+    echo "    agntz  - Agent toolkit (file reservations, tool management)"
+    echo "    mmry   - Memory storage and semantic search"
+    echo "    mailz  - Agent coordination and messaging"
     echo
-    echo "  ${BOLD}trx${NC} - Transaction/task tracking"
-    echo "    - Track agent operations"
-    echo "    - Audit trail for actions"
+    echo "  ${BOLD}Additional tools:${NC}"
+    echo "    byt    - Cross-repo governance and management"
+    echo "    sx     - External search via SearXNG"
+    echo "    trx    - Issue/task tracking"
     echo
-    if confirm "Install mmry (memory system)?"; then
+    
+    if confirm "Install all byteowlz tools (recommended)?"; then
         INSTALL_MMRY="true"
-    fi
-    
-    if confirm "Install trx (task tracking)?"; then
-        INSTALL_TRX="true"
-    fi
-    
-    if confirm "Install mailz (agent messaging)?"; then
         INSTALL_MAILZ="true"
+        INSTALL_ALL_TOOLS="true"
+    else
+        if confirm "Install mmry (memory system)?"; then
+            INSTALL_MMRY="true"
+        fi
+        
+        if confirm "Install mailz (agent messaging)?"; then
+            INSTALL_MAILZ="true"
+        fi
     fi
 }
 
 install_agent_tools_via_agntz() {
-    log_step "Installing agent tools via agntz"
+    log_step "Installing agent tools"
     
-    if ! command_exists agntz; then
-        log_error "agntz not available. Skipping agent tools installation."
-        return 1
+    if [[ "$INSTALL_ALL_TOOLS" == "true" ]]; then
+        install_all_byteowlz_tools
+        return
     fi
     
     if [[ "$INSTALL_MMRY" == "true" ]]; then
-        log_info "Installing mmry..."
-        if agntz install mmry 2>/dev/null || cargo install mmry 2>/dev/null; then
-            log_success "mmry installed"
-        else
-            log_warn "Failed to install mmry. You can install it manually later."
-        fi
-    fi
-    
-    if [[ "$INSTALL_TRX" == "true" ]]; then
-        log_info "Installing trx..."
-        if agntz install trx 2>/dev/null || cargo install trx 2>/dev/null; then
-            log_success "trx installed"
-        else
-            log_warn "Failed to install trx. You can install it manually later."
-        fi
+        install_byteowlz_tool mmry
     fi
     
     if [[ "$INSTALL_MAILZ" == "true" ]]; then
-        log_info "Installing mailz..."
-        if agntz install mailz 2>/dev/null || cargo install mailz 2>/dev/null; then
-            log_success "mailz installed"
-        else
-            log_warn "Failed to install mailz. You can install it manually later."
-        fi
+        install_byteowlz_tool mailz
+    fi
+    
+    # Use agntz tools install for additional tools if agntz is available
+    if command_exists agntz; then
+        log_info "Running agntz doctor to check tool health..."
+        agntz tools doctor 2>/dev/null || true
     fi
 }
 
@@ -968,7 +1166,7 @@ install_caddy() {
                     sudo apt-get install -y debian-keyring debian-archive-keyring apt-transport-https curl
                     curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | sudo gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
                     curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | sudo tee /etc/apt/sources.list.d/caddy-stable.list
-                    sudo apt-get update
+                    apt_update_once force
                     sudo apt-get install -y caddy
                     ;;
                 fedora)
@@ -1028,6 +1226,14 @@ generate_caddyfile() {
     fi
     
     # Generate Caddyfile
+    # 
+    # Route structure:
+    # - /api/* -> backend (strip /api prefix)
+    # - /ws    -> backend WebSocket
+    # - /session/* -> backend (terminal, files, code proxies)
+    # - /health, /auth/*, /me, /admin/* -> backend
+    # - Everything else -> frontend
+    #
     if [[ "$DOMAIN" == "localhost" ]]; then
         # Local development - no TLS
         sudo tee "$caddyfile" > /dev/null << EOF
@@ -1035,21 +1241,44 @@ generate_caddyfile() {
 # Generated by setup.sh on $(date)
 
 :80 {
-    # Frontend (React app)
+    # Backend API - strip /api prefix
     handle /api/* {
+        uri strip_prefix /api
         reverse_proxy localhost:${backend_port}
     }
     
-    handle /ws/* {
+    # Backend WebSocket endpoint
+    handle /ws {
         reverse_proxy localhost:${backend_port}
     }
     
-    # WebSocket upgrade for sessions
-    @websockets {
-        header Connection *Upgrade*
-        header Upgrade websocket
+    # Session proxies (terminal, files, code)
+    handle /session/* {
+        reverse_proxy localhost:${backend_port}
     }
-    handle @websockets {
+    
+    # Auth endpoints
+    handle /auth/* {
+        reverse_proxy localhost:${backend_port}
+    }
+    
+    # Health check
+    handle /health {
+        reverse_proxy localhost:${backend_port}
+    }
+    
+    # User profile
+    handle /me {
+        reverse_proxy localhost:${backend_port}
+    }
+    
+    # Admin routes
+    handle /admin/* {
+        reverse_proxy localhost:${backend_port}
+    }
+    
+    # Voice endpoints
+    handle /voice/* {
         reverse_proxy localhost:${backend_port}
     }
     
@@ -1071,26 +1300,54 @@ EOF
 # Domain: ${DOMAIN}
 
 ${DOMAIN} {
-    # Backend API
+    # Backend API - strip /api prefix
+    # Frontend calls /api/sessions -> backend /sessions
     handle /api/* {
+        uri strip_prefix /api
         reverse_proxy localhost:${backend_port}
     }
     
-    # WebSocket connections
-    handle /ws/* {
+    # Backend WebSocket endpoint
+    handle /ws {
         reverse_proxy localhost:${backend_port}
     }
     
-    # WebSocket upgrade handling
-    @websockets {
-        header Connection *Upgrade*
-        header Upgrade websocket
-    }
-    handle @websockets {
+    # Session proxies (terminal WebSocket, files, code)
+    handle /session/* {
         reverse_proxy localhost:${backend_port}
     }
     
-    # Frontend (React app)
+    # Auth endpoints (login, register, logout)
+    handle /auth/* {
+        reverse_proxy localhost:${backend_port}
+    }
+    
+    # Health check
+    handle /health {
+        reverse_proxy localhost:${backend_port}
+    }
+    
+    # User profile endpoint
+    handle /me {
+        reverse_proxy localhost:${backend_port}
+    }
+    
+    # Admin routes
+    handle /admin/* {
+        reverse_proxy localhost:${backend_port}
+    }
+    
+    # Voice STT/TTS WebSocket endpoints
+    handle /voice/* {
+        reverse_proxy localhost:${backend_port}
+    }
+    
+    # Workspace terminal (by path)
+    handle /workspace/* {
+        reverse_proxy localhost:${backend_port}
+    }
+    
+    # Frontend (React app) - default handler
     handle {
         reverse_proxy localhost:${frontend_port}
     }
@@ -1100,6 +1357,8 @@ ${DOMAIN} {
         X-Content-Type-Options nosniff
         X-Frame-Options DENY
         Referrer-Policy strict-origin-when-cross-origin
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-XSS-Protection "1; mode=block"
         -Server
     }
     
@@ -1303,6 +1562,33 @@ generate_password_hash() {
         log_error "Cannot generate password hash. Install htpasswd or python3 with bcrypt."
         exit 1
     fi
+}
+
+write_skdlr_agent_config() {
+    local skdlr_config="/etc/octo/skdlr-agent.toml"
+    local sandbox_config="/etc/octo/sandbox.toml"
+
+    log_info "Writing skdlr agent config to $skdlr_config"
+
+    sudo mkdir -p /etc/octo
+
+    # Ensure sandbox config exists for octo-sandbox
+    if [[ ! -f "$sandbox_config" ]]; then
+        log_info "Creating default sandbox config at $sandbox_config"
+        sudo cp "$SCRIPT_DIR/backend/crates/octo/examples/sandbox.toml" "$sandbox_config"
+        sudo chmod 644 "$sandbox_config"
+    fi
+
+    sudo tee "$skdlr_config" >/dev/null << 'EOF'
+# skdlr config for Octo sandboxed agents
+# Forces all scheduled commands through octo-sandbox
+
+[executor]
+wrapper = "octo-sandbox"
+wrapper_args = ["--config", "/etc/octo/sandbox.toml", "--workspace", "{workdir}", "--"]
+EOF
+
+    sudo chmod 644 "$skdlr_config"
 }
 
 generate_config() {
@@ -1698,6 +1984,11 @@ EOF
         fi
     fi
     
+    # Write skdlr agent wrapper config for sandboxed schedules
+    if [[ "$SELECTED_BACKEND_MODE" == "local" ]]; then
+        write_skdlr_agent_config
+    fi
+
     # Save admin credentials for post-setup user creation
     if [[ "$PRODUCTION_MODE" == "true" && -n "$ADMIN_USERNAME" ]]; then
         local creds_file="$OCTO_CONFIG_DIR/.admin_setup"
@@ -1728,7 +2019,25 @@ setup_linux_user_isolation() {
     local octo_group="octo"
     local user_prefix="octo_"
     local server_user
-    server_user=$(whoami)
+    
+    # Determine who will run the backend:
+    # - For system service (multi-user production): use 'octo' system user
+    # - For user service (development): use current user
+    if [[ "${MULTI_USER:-false}" == "true" ]] && [[ "$OS" == "linux" ]]; then
+        # Production multi-user mode: backend runs as 'octo' system user
+        server_user="octo"
+        
+        # Create octo system user if it doesn't exist
+        if ! id "$server_user" &>/dev/null; then
+            log_info "Creating '$server_user' system user..."
+            sudo useradd -r -s /usr/sbin/nologin -d /var/lib/octo -m "$server_user" || true
+        fi
+    else
+        # Development mode: backend runs as current user
+        server_user=$(whoami)
+    fi
+    
+    log_info "Sudoers rules will be configured for user: $server_user"
     
     # 1. Create the octo group
     if ! getent group "$octo_group" &>/dev/null; then
@@ -1754,28 +2063,71 @@ setup_linux_user_isolation() {
     log_info "Configuring sudoers for multi-user process management..."
     
     local sudoers_file="/etc/sudoers.d/octo-multiuser"
-    local sudoers_content="# Octo Multi-User Process Isolation
+    # Note: uid_start comes from config, default 2000
+    local uid_start="${OCTO_UID_START:-2000}"
+    # Extract first digit of uid_start for regex (assumes 4-digit UIDs starting with 2-9)
+    local uid_first_digit="${uid_start:0:1}"
+    
+    local sudoers_content="# Octo Multi-User Process Isolation - SECURE VERSION
 # Generated by setup.sh on $(date)
 # Allows the octo server user to manage isolated user accounts
+#
+# SECURITY: Uses regex patterns (^...\$) to prevent privilege escalation.
+# - UIDs restricted to ${uid_first_digit}000-${uid_first_digit}999 range (avoids system/user UIDs)
+# - Usernames must start with ${user_prefix} prefix
+# - Workspace chown restricted to ${user_prefix}* home directories only
+# Requires sudo 1.9.10+ for regex support.
 
-# User management helpers
-Cmnd_Alias OCTO_USERADD = /usr/sbin/useradd * ${user_prefix}*
-Cmnd_Alias OCTO_USERMOD = /usr/sbin/usermod * ${user_prefix}*
-Cmnd_Alias OCTO_USERDEL = /usr/sbin/userdel * ${user_prefix}*
+# Group management - only create the ${octo_group} group (safe - fixed value)
 Cmnd_Alias OCTO_GROUPADD = /usr/sbin/groupadd ${octo_group}
-Cmnd_Alias OCTO_CHOWN = /usr/bin/chown -R ${user_prefix}*:${octo_group} *
 
-# User management - create/modify/delete octo_* users
-${server_user} ALL=(root) NOPASSWD: OCTO_USERADD, OCTO_USERMOD, OCTO_USERDEL, OCTO_GROUPADD
+# User creation - RESTRICTED to safe UID range and ${user_prefix} prefix
+# Regex matches: -u NNNN -g ${octo_group} -s /bin/bash -m/-M -c COMMENT USERNAME
+# UID must be ${uid_first_digit}000-${uid_first_digit}999, username must start with ${user_prefix}
+Cmnd_Alias OCTO_USERADD = \\
+    /usr/sbin/useradd ^-u [${uid_first_digit}][0-9][0-9][0-9] -g ${octo_group} -s /bin/bash -m -c [^ ]+ ${user_prefix}[a-z0-9_]+\$, \\
+    /usr/sbin/useradd ^-u [${uid_first_digit}][0-9][0-9][0-9] -g ${octo_group} -s /bin/bash -M -c [^ ]+ ${user_prefix}[a-z0-9_]+\$
 
-# Process execution - run commands as octo_* users
-${server_user} ALL=(${user_prefix}*) NOPASSWD: ALL
+# User deletion - only ${user_prefix} users, no home removal (-r flag not allowed)
+Cmnd_Alias OCTO_USERDEL = /usr/sbin/userdel ^${user_prefix}[a-z0-9_]+\$
 
-# Workspace ownership updates (required for linux_users chown)
-${server_user} ALL=(root) NOPASSWD: OCTO_CHOWN
+# Directory creation for runner sockets - RESTRICTED path (no path traversal)
+Cmnd_Alias OCTO_MKDIR = /bin/mkdir ^-p /run/octo/runner-sockets/${user_prefix}[a-z0-9_]+\$
 
-# Alternative: use 'su' to switch users (some systems prefer this)
-${server_user} ALL=(root) NOPASSWD: /usr/bin/su - ${user_prefix}* -c *
+# Runner socket ownership - RESTRICTED to exact paths
+Cmnd_Alias OCTO_CHOWN_RUNNER = \\
+    /usr/bin/chown ^${user_prefix}[a-z0-9_]+\\:${octo_group} /run/octo/runner-sockets/${user_prefix}[a-z0-9_]+\$
+
+# Workspace ownership - RESTRICTED to ${user_prefix} user home directories ONLY
+# SECURITY: Only allows chown on /home/${user_prefix}*/... NOT on other users' homes
+# The regex ensures the path starts with /home/${user_prefix} to prevent privilege escalation
+Cmnd_Alias OCTO_CHOWN_WORKSPACE = \\
+    /usr/bin/chown ^-R ${user_prefix}[a-z0-9_]+\\:${octo_group} /home/${user_prefix}[a-z0-9_]+(/[^.][^/]*)*\$
+
+# Permissions for runner socket directories
+Cmnd_Alias OCTO_CHMOD_RUNNER = /usr/bin/chmod ^2770 /run/octo/runner-sockets/${user_prefix}[a-z0-9_]+\$
+
+# systemd linger - only for ${user_prefix} users
+Cmnd_Alias OCTO_LINGER = /usr/bin/loginctl ^enable-linger ${user_prefix}[a-z0-9_]+\$
+
+# Start user systemd instance - RESTRICTED to ${user_prefix} user UIDs
+Cmnd_Alias OCTO_START_USER = /usr/bin/systemctl ^start user@[${uid_first_digit}][0-9][0-9][0-9]\\.service\$
+
+# User management - group and user creation
+${server_user} ALL=(root) NOPASSWD: OCTO_GROUPADD, OCTO_USERADD
+
+# systemd user management - enable/start octo-runner as ${user_prefix}* users
+Cmnd_Alias OCTO_RUNNER_SYSTEMCTL = \\
+    /usr/bin/systemctl --user enable --now octo-runner, \\
+    /usr/bin/systemctl --user start octo-runner, \\
+    /usr/bin/systemctl --user enable octo-runner
+${server_user} ALL=(${user_prefix}*) NOPASSWD: OCTO_RUNNER_SYSTEMCTL
+
+# Runner socket directory setup and workspace ownership
+${server_user} ALL=(root) NOPASSWD: OCTO_MKDIR, OCTO_CHOWN_RUNNER, OCTO_CHOWN_WORKSPACE, OCTO_CHMOD_RUNNER
+
+# User systemd management
+${server_user} ALL=(root) NOPASSWD: OCTO_START_USER, OCTO_LINGER
 "
     
     # Write sudoers file (use visudo -c to validate)
@@ -1819,6 +2171,10 @@ deny_read = [
     "~/.aws",
     "~/.config/gcloud",
     "~/.kube",
+    "/usr/bin/systemctl",
+    "/bin/systemctl",
+    "/usr/bin/systemd-run",
+    "/bin/systemd-run",
 ]
 
 # Paths to allow write access (in addition to workspace)
@@ -1854,6 +2210,27 @@ EOF
     sudo chmod 644 "$sandbox_config"
     sudo chown root:root "$sandbox_config"
     log_success "System sandbox config installed: $sandbox_config"
+
+    # 6. Install skdlr agent config (forces octo-sandbox wrapper)
+    log_info "Installing skdlr agent configuration..."
+    local skdlr_config="/etc/octo/skdlr-agent.toml"
+
+    sudo tee "$skdlr_config" > /dev/null << 'EOF'
+# Octo skdlr configuration for agent scheduling
+# This file is owned by root and enforces octo-sandbox for scheduled runs.
+
+[executor]
+wrapper = "octo-sandbox"
+wrapper_args = [
+    "--config", "/etc/octo/sandbox.toml",
+    "--workspace", "{workdir}",
+    "--"
+]
+EOF
+
+    sudo chmod 644 "$skdlr_config"
+    sudo chown root:root "$skdlr_config"
+    log_success "Skdlr agent config installed: $skdlr_config"
     
     echo
     log_success "Linux user isolation configured successfully"
@@ -1935,6 +2312,566 @@ generate_initial_invite_code() {
     else
         echo "  http://localhost:8080/admin"
     fi
+}
+
+# ==============================================================================
+# Server Hardening (Linux only)
+# ==============================================================================
+
+# Check if we should run hardening
+should_harden_server() {
+    # Only on Linux
+    [[ "$OS" != "linux" ]] && return 1
+    
+    # Only in production mode
+    [[ "$PRODUCTION_MODE" != "true" ]] && return 1
+    
+    # Check if explicitly set
+    if [[ "$OCTO_HARDEN_SERVER" == "yes" ]]; then
+        return 0
+    elif [[ "$OCTO_HARDEN_SERVER" == "no" ]]; then
+        return 1
+    fi
+    
+    # Prompt user
+    if [[ "$NONINTERACTIVE" != "true" ]]; then
+        if confirm "Apply server hardening (firewall, fail2ban, SSH hardening)?"; then
+            OCTO_HARDEN_SERVER="yes"
+            return 0
+        fi
+    fi
+    
+    return 1
+}
+
+# Install security packages
+install_security_packages() {
+    log_step "Installing security packages"
+    
+    case "$OS_DISTRO" in
+        debian|ubuntu|pop|linuxmint)
+            log_info "Installing security packages via apt..."
+            apt_update_once
+            sudo apt-get install -y \
+                ufw \
+                fail2ban \
+                unattended-upgrades \
+                apt-listchanges \
+                logwatch \
+                auditd
+            ;;
+        fedora|centos|rhel|rocky|alma)
+            log_info "Installing security packages via dnf..."
+            sudo dnf install -y \
+                firewalld \
+                fail2ban \
+                dnf-automatic \
+                audit
+            ;;
+        arch|manjaro|endeavouros)
+            log_info "Installing security packages via pacman..."
+            sudo pacman -S --noconfirm \
+                ufw \
+                fail2ban \
+                audit
+            ;;
+        opensuse*|suse*)
+            log_info "Installing security packages via zypper..."
+            sudo zypper install -y \
+                firewalld \
+                fail2ban \
+                audit
+            ;;
+        *)
+            log_warn "Unknown distribution: $OS_DISTRO. Skipping security package installation."
+            log_info "Please install manually: ufw/firewalld, fail2ban, auditd"
+            return 1
+            ;;
+    esac
+    
+    log_success "Security packages installed"
+}
+
+# Configure firewall (UFW or firewalld)
+configure_firewall() {
+    if [[ "$OCTO_SETUP_FIREWALL" != "yes" ]]; then
+        log_info "Skipping firewall configuration"
+        return
+    fi
+    
+    log_step "Configuring firewall"
+    
+    local ssh_port="${OCTO_SSH_PORT:-22}"
+    local http_port="80"
+    local https_port="443"
+    local octo_port="8080"
+    local frontend_port="3000"
+    
+    case "$OS_DISTRO" in
+        debian|ubuntu|pop|linuxmint|arch|manjaro|endeavouros)
+            if command_exists ufw; then
+                log_info "Configuring UFW firewall..."
+                
+                # Set default policies
+                sudo ufw default deny incoming
+                sudo ufw default allow outgoing
+                
+                # Allow SSH (important: do this first!)
+                sudo ufw allow "$ssh_port/tcp" comment 'SSH'
+                
+                # Allow HTTP/HTTPS for Caddy
+                if [[ "$SETUP_CADDY" == "yes" ]]; then
+                    sudo ufw allow "$http_port/tcp" comment 'HTTP'
+                    sudo ufw allow "$https_port/tcp" comment 'HTTPS'
+                fi
+                
+                # Allow Octo ports (only if not using Caddy)
+                if [[ "$SETUP_CADDY" != "yes" ]]; then
+                    sudo ufw allow "$octo_port/tcp" comment 'Octo API'
+                    sudo ufw allow "$frontend_port/tcp" comment 'Octo Frontend'
+                fi
+                
+                # Enable UFW
+                log_warn "Enabling UFW firewall. Make sure SSH port $ssh_port is correct!"
+                echo "y" | sudo ufw enable
+                
+                sudo ufw status verbose
+                log_success "UFW firewall configured"
+            else
+                log_warn "UFW not found, skipping firewall configuration"
+            fi
+            ;;
+        fedora|centos|rhel|rocky|alma|opensuse*|suse*)
+            if command_exists firewall-cmd; then
+                log_info "Configuring firewalld..."
+                
+                sudo systemctl enable --now firewalld
+                
+                # Allow SSH
+                sudo firewall-cmd --permanent --add-port="$ssh_port/tcp"
+                
+                # Allow HTTP/HTTPS for Caddy
+                if [[ "$SETUP_CADDY" == "yes" ]]; then
+                    sudo firewall-cmd --permanent --add-service=http
+                    sudo firewall-cmd --permanent --add-service=https
+                fi
+                
+                # Allow Octo ports (only if not using Caddy)
+                if [[ "$SETUP_CADDY" != "yes" ]]; then
+                    sudo firewall-cmd --permanent --add-port="$octo_port/tcp"
+                    sudo firewall-cmd --permanent --add-port="$frontend_port/tcp"
+                fi
+                
+                sudo firewall-cmd --reload
+                sudo firewall-cmd --list-all
+                log_success "firewalld configured"
+            else
+                log_warn "firewalld not found, skipping firewall configuration"
+            fi
+            ;;
+    esac
+}
+
+# Configure fail2ban
+configure_fail2ban() {
+    if [[ "$OCTO_SETUP_FAIL2BAN" != "yes" ]]; then
+        log_info "Skipping fail2ban configuration"
+        return
+    fi
+    
+    log_step "Configuring fail2ban"
+    
+    local ssh_port="${OCTO_SSH_PORT:-22}"
+    local jail_local="/etc/fail2ban/jail.local"
+    
+    # Create jail.local configuration
+    sudo tee "$jail_local" > /dev/null << EOF
+# Fail2ban Configuration for Octo Server
+# Generated by setup.sh on $(date)
+
+[DEFAULT]
+# Ban duration: 1 hour
+bantime = 3600
+
+# Time window for counting failures: 10 minutes
+findtime = 600
+
+# Number of failures before ban
+maxretry = 5
+
+# Ignore localhost
+ignoreip = 127.0.0.1/8 ::1
+
+# Default action: ban with UFW/firewalld
+banaction = ufw
+banaction_allports = ufw
+
+[sshd]
+enabled = true
+port = $ssh_port
+filter = sshd
+logpath = %(sshd_log)s
+backend = systemd
+maxretry = 3
+bantime = 3600
+findtime = 600
+EOF
+    
+    # Use firewalld action on RHEL-based and openSUSE systems
+    if [[ "$OS_DISTRO" =~ ^(fedora|centos|rhel|rocky|alma|opensuse|suse).*$ ]]; then
+        sudo sed -i 's/banaction = ufw/banaction = firewallcmd-ipset/' "$jail_local"
+        sudo sed -i 's/banaction_allports = ufw/banaction_allports = firewallcmd-ipset/' "$jail_local"
+    fi
+    
+    # Enable and restart fail2ban
+    sudo systemctl enable fail2ban
+    sudo systemctl restart fail2ban
+    
+    # Show status
+    sudo fail2ban-client status
+    log_success "fail2ban configured"
+}
+
+# Harden SSH configuration
+harden_ssh() {
+    if [[ "$OCTO_HARDEN_SSH" != "yes" ]]; then
+        log_info "Skipping SSH hardening"
+        return
+    fi
+    
+    log_step "Hardening SSH configuration"
+    
+    local ssh_port="${OCTO_SSH_PORT:-22}"
+    local sshd_config_dir="/etc/ssh/sshd_config.d"
+    local hardening_conf="$sshd_config_dir/00-octo-hardening.conf"
+    
+    # Ensure sshd_config.d directory exists
+    sudo mkdir -p "$sshd_config_dir"
+    
+    # Check if Include directive exists in main config
+    if ! sudo grep -q "^Include /etc/ssh/sshd_config.d/\*.conf" /etc/ssh/sshd_config; then
+        log_info "Adding Include directive to sshd_config..."
+        sudo sed -i '1i Include /etc/ssh/sshd_config.d/*.conf' /etc/ssh/sshd_config
+    fi
+    
+    # Create hardening configuration
+    log_info "Creating SSH hardening configuration..."
+    sudo tee "$hardening_conf" > /dev/null << EOF
+# SSH Hardening Configuration for Octo Server
+# Generated by setup.sh on $(date)
+#
+# This file applies security best practices for SSH.
+# Edit with caution - incorrect settings can lock you out!
+
+# Port Configuration
+Port $ssh_port
+
+# Strong Cryptography
+KexAlgorithms curve25519-sha256,curve25519-sha256@libssh.org,diffie-hellman-group16-sha512,diffie-hellman-group18-sha512
+Ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com,aes128-gcm@openssh.com,aes256-ctr
+MACs hmac-sha2-512-etm@openssh.com,hmac-sha2-256-etm@openssh.com,hmac-sha2-512,hmac-sha2-256
+
+# Enhanced Logging
+LogLevel VERBOSE
+
+# Authentication Hardening
+LoginGraceTime 30s
+PermitRootLogin no
+StrictModes yes
+MaxAuthTries 3
+MaxSessions 10
+
+# Force Public Key Authentication Only
+PubkeyAuthentication yes
+PasswordAuthentication no
+PermitEmptyPasswords no
+
+# Disable Challenge-Response (for TOTP, enable if using 2FA)
+KbdInteractiveAuthentication no
+
+# Disable Forwarding by Default
+AllowAgentForwarding no
+AllowTcpForwarding no
+X11Forwarding no
+PermitTunnel no
+
+# Connection Timeouts
+ClientAliveInterval 300
+ClientAliveCountMax 2
+
+# Restrict to admin user if set
+EOF
+    
+    # Add AllowUsers if admin user is set
+    if [[ -n "$ADMIN_USERNAME" ]]; then
+        echo "AllowUsers $ADMIN_USERNAME" | sudo tee -a "$hardening_conf" > /dev/null
+    fi
+    
+    # Validate configuration
+    log_info "Validating SSH configuration..."
+    if sudo sshd -t; then
+        log_success "SSH configuration is valid"
+        
+        # Restart SSH
+        local ssh_service="sshd"
+        [[ "$OS_DISTRO" =~ ^(debian|ubuntu|pop|linuxmint)$ ]] && ssh_service="ssh"
+        
+        log_warn "Restarting SSH service. Make sure you can still connect!"
+        sudo systemctl restart "$ssh_service"
+        log_success "SSH hardening applied"
+    else
+        log_error "SSH configuration validation failed! Reverting..."
+        sudo rm -f "$hardening_conf"
+        return 1
+    fi
+}
+
+# Configure automatic security updates
+configure_auto_updates() {
+    if [[ "$OCTO_SETUP_AUTO_UPDATES" != "yes" ]]; then
+        log_info "Skipping automatic updates configuration"
+        return
+    fi
+    
+    log_step "Configuring automatic security updates"
+    
+    case "$OS_DISTRO" in
+        debian|ubuntu|pop|linuxmint)
+            # Configure unattended-upgrades
+            sudo tee /etc/apt/apt.conf.d/50unattended-upgrades > /dev/null << 'EOF'
+// Automatic security updates configuration
+// Generated by Octo setup.sh
+
+Unattended-Upgrade::Allowed-Origins {
+    "${distro_id}:${distro_codename}-security";
+    "${distro_id}ESMApps:${distro_codename}-apps-security";
+    "${distro_id}ESM:${distro_codename}-infra-security";
+};
+
+Unattended-Upgrade::AutoFixInterruptedDpkg "true";
+Unattended-Upgrade::MinimalSteps "true";
+Unattended-Upgrade::Remove-Unused-Kernel-Packages "true";
+Unattended-Upgrade::Remove-Unused-Dependencies "true";
+
+// Don't auto-reboot (manual control is safer for servers)
+Unattended-Upgrade::Automatic-Reboot "false";
+
+// Log to syslog
+Unattended-Upgrade::SyslogEnable "true";
+EOF
+            
+            sudo tee /etc/apt/apt.conf.d/20auto-upgrades > /dev/null << 'EOF'
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";
+APT::Periodic::Download-Upgradeable-Packages "1";
+APT::Periodic::AutocleanInterval "7";
+EOF
+            
+            log_success "Automatic security updates configured (Debian/Ubuntu)"
+            ;;
+        fedora|centos|rhel|rocky|alma)
+            # Configure dnf-automatic
+            sudo tee /etc/dnf/automatic.conf > /dev/null << 'EOF'
+[commands]
+# Only apply security updates automatically
+upgrade_type = security
+random_sleep = 360
+
+# Download updates but don't apply automatically (safer)
+download_updates = yes
+apply_updates = no
+
+[emitters]
+system_name = octo-server
+emit_via = stdio
+
+[email]
+email_from = root@localhost
+email_to = root
+
+[command]
+[command_email]
+[base]
+EOF
+            
+            sudo systemctl enable --now dnf-automatic.timer
+            log_success "Automatic security updates configured (dnf-automatic)"
+            ;;
+        arch|manjaro|endeavouros)
+            log_warn "Arch Linux detected. Automatic updates are not recommended for Arch."
+            log_info "Consider using 'pacman -Syu' manually or setting up pacman hooks."
+            ;;
+        opensuse*|suse*)
+            # Configure transactional-update or zypper automatic patches
+            log_info "Configuring automatic security updates for openSUSE..."
+            if command_exists transactional-update; then
+                # For MicroOS / transactional systems
+                sudo systemctl enable --now transactional-update.timer
+                log_success "Transactional updates enabled"
+            else
+                # For traditional openSUSE
+                sudo zypper install -y zypper-lifecycle-plugin
+                # Enable automatic security patches
+                sudo tee /etc/zypp/zypp.conf.d/auto-updates.conf > /dev/null << 'EOCONF'
+# Automatic security updates
+solver.onlyRequires = true
+EOCONF
+                log_info "openSUSE: Run 'sudo zypper patch --category security' periodically"
+                log_info "Consider setting up a cron job or systemd timer for automatic patches"
+            fi
+            ;;
+        *)
+            log_warn "Unknown distribution. Skipping automatic updates configuration."
+            ;;
+    esac
+}
+
+# Apply kernel security parameters
+harden_kernel() {
+    if [[ "$OCTO_HARDEN_KERNEL" != "yes" ]]; then
+        log_info "Skipping kernel hardening"
+        return
+    fi
+    
+    log_step "Applying kernel security parameters"
+    
+    local sysctl_conf="/etc/sysctl.d/99-octo-hardening.conf"
+    
+    sudo tee "$sysctl_conf" > /dev/null << 'EOF'
+# Kernel Security Parameters for Octo Server
+# Generated by setup.sh
+
+# Prevent IP spoofing
+net.ipv4.conf.all.rp_filter = 1
+net.ipv4.conf.default.rp_filter = 1
+
+# Disable ICMP redirect acceptance
+net.ipv4.conf.all.accept_redirects = 0
+net.ipv4.conf.default.accept_redirects = 0
+net.ipv6.conf.all.accept_redirects = 0
+net.ipv6.conf.default.accept_redirects = 0
+
+# Disable ICMP redirect sending
+net.ipv4.conf.all.send_redirects = 0
+net.ipv4.conf.default.send_redirects = 0
+
+# Disable source routing
+net.ipv4.conf.all.accept_source_route = 0
+net.ipv4.conf.default.accept_source_route = 0
+net.ipv6.conf.all.accept_source_route = 0
+net.ipv6.conf.default.accept_source_route = 0
+
+# Enable TCP SYN cookies (protection against SYN flood attacks)
+net.ipv4.tcp_syncookies = 1
+
+# Ignore ICMP broadcast requests
+net.ipv4.icmp_echo_ignore_broadcasts = 1
+
+# Ignore bogus ICMP errors
+net.ipv4.icmp_ignore_bogus_error_responses = 1
+
+# Log martian packets (packets with impossible addresses)
+net.ipv4.conf.all.log_martians = 1
+net.ipv4.conf.default.log_martians = 1
+
+# Disable IPv6 if not needed (uncomment if you don't use IPv6)
+# net.ipv6.conf.all.disable_ipv6 = 1
+# net.ipv6.conf.default.disable_ipv6 = 1
+
+# Prevent core dumps from being written to disk (security)
+fs.suid_dumpable = 0
+
+# Restrict kernel pointer exposure
+kernel.kptr_restrict = 2
+
+# Restrict dmesg access to root
+kernel.dmesg_restrict = 1
+EOF
+    
+    # Apply sysctl settings
+    sudo sysctl -p "$sysctl_conf"
+    
+    log_success "Kernel security parameters applied"
+}
+
+# Enable audit logging
+enable_audit_logging() {
+    log_step "Enabling audit logging"
+    
+    if command_exists auditd; then
+        sudo systemctl enable auditd
+        sudo systemctl start auditd
+        log_success "Audit logging enabled"
+    else
+        log_warn "auditd not installed, skipping"
+    fi
+}
+
+# Main hardening function
+harden_server() {
+    if ! should_harden_server; then
+        log_info "Server hardening skipped"
+        return
+    fi
+    
+    log_step "Starting server hardening"
+    
+    # Check for root/sudo
+    if [[ $EUID -ne 0 ]] && ! sudo -n true 2>/dev/null; then
+        log_warn "Server hardening requires sudo privileges"
+        if ! confirm "Continue with server hardening (will prompt for sudo password)?"; then
+            log_info "Skipping server hardening"
+            return
+        fi
+    fi
+    
+    # Warn about SSH changes
+    echo
+    log_warn "╔══════════════════════════════════════════════════════════════════╗"
+    log_warn "║  WARNING: SSH hardening will disable password authentication!    ║"
+    log_warn "║  Make sure you have SSH key access before continuing.            ║"
+    log_warn "║  SSH port will be set to: ${OCTO_SSH_PORT:-22}                              ║"
+    log_warn "╚══════════════════════════════════════════════════════════════════╝"
+    echo
+    
+    if [[ "$NONINTERACTIVE" != "true" ]]; then
+        if ! confirm "Continue with server hardening?" "n"; then
+            log_info "Server hardening cancelled"
+            return
+        fi
+    fi
+    
+    # Install security packages
+    install_security_packages
+    
+    # Configure firewall
+    configure_firewall
+    
+    # Configure fail2ban
+    configure_fail2ban
+    
+    # Harden SSH
+    harden_ssh
+    
+    # Configure automatic updates
+    configure_auto_updates
+    
+    # Harden kernel
+    harden_kernel
+    
+    # Enable audit logging
+    enable_audit_logging
+    
+    log_success "Server hardening complete!"
+    echo
+    echo "Security summary:"
+    echo "  - Firewall:        $(command_exists ufw && echo 'UFW' || (command_exists firewall-cmd && echo 'firewalld' || echo 'not configured'))"
+    echo "  - Fail2ban:        $(systemctl is-active fail2ban 2>/dev/null || echo 'not running')"
+    echo "  - SSH hardening:   ${OCTO_HARDEN_SSH}"
+    echo "  - Auto updates:    ${OCTO_SETUP_AUTO_UPDATES}"
+    echo "  - Kernel hardening: ${OCTO_HARDEN_KERNEL}"
+    echo "  - Audit logging:   $(systemctl is-active auditd 2>/dev/null || echo 'not running')"
+    echo
 }
 
 # ==============================================================================
@@ -2285,6 +3222,18 @@ print_summary() {
             echo "  Config:      /etc/caddy/Caddyfile"
             echo
         fi
+        
+        if [[ "$OCTO_HARDEN_SERVER" == "yes" && "$OS" == "linux" ]]; then
+            echo "Server Hardening:"
+            echo "  Firewall:    $(command_exists ufw && echo 'UFW enabled' || (command_exists firewall-cmd && echo 'firewalld enabled' || echo 'not configured'))"
+            echo "  Fail2ban:    $(systemctl is-active fail2ban 2>/dev/null || echo 'not running')"
+            echo "  SSH port:    ${OCTO_SSH_PORT:-22}"
+            echo "  SSH auth:    public key only (password disabled)"
+            echo "  Auto updates: ${OCTO_SETUP_AUTO_UPDATES}"
+            echo "  Kernel:      hardened sysctl parameters"
+            echo "  Audit:       $(systemctl is-active auditd 2>/dev/null || echo 'not running')"
+            echo
+        fi
     fi
     
     echo "LLM Configuration:"
@@ -2326,16 +3275,25 @@ print_summary() {
     echo "  zoxide:     $(which zoxide 2>/dev/null || echo 'not installed')"
     echo
     
-    echo "Agent tools:"
+    echo "Byteowlz agent tools:"
     echo "  agntz:      $(which agntz 2>/dev/null || echo 'not installed')"
-    if [[ "$INSTALL_MMRY" == "true" ]]; then
-        echo "  mmry:       $(which mmry 2>/dev/null || echo 'not installed')"
+    echo "  mmry:       $(which mmry 2>/dev/null || echo 'not installed')"
+    echo "  mailz:      $(which mailz 2>/dev/null || echo 'not installed')"
+    echo "  byt:        $(which byt 2>/dev/null || echo 'not installed')"
+    echo "  sx:         $(which sx 2>/dev/null || echo 'not installed')"
+    echo
+    
+    echo "Pi extensions:"
+    local pi_ext_dir="$HOME/.pi/agent/extensions"
+    if [[ -d "${pi_ext_dir}/octo" ]]; then
+        echo "  octo:       installed (${pi_ext_dir}/octo)"
+    else
+        echo "  octo:       not installed"
     fi
-    if [[ "$INSTALL_TRX" == "true" ]]; then
-        echo "  trx:        $(which trx 2>/dev/null || echo 'not installed')"
-    fi
-    if [[ "$INSTALL_MAILZ" == "true" ]]; then
-        echo "  mailz:      $(which mailz 2>/dev/null || echo 'not installed')"
+    if [[ -d "${pi_ext_dir}/octo-todos" ]]; then
+        echo "  octo-todos: installed (${pi_ext_dir}/octo-todos)"
+    else
+        echo "  octo-todos: not installed"
     fi
     echo
     
@@ -2474,8 +3432,32 @@ Octo Setup Script
 Usage: $0 [OPTIONS]
 
 Options:
-  --help              Show this help message
-  --non-interactive   Run without prompts (uses defaults/env vars)
+  --help                Show this help message
+  --non-interactive     Run without prompts (uses defaults/env vars)
+  
+  --production, --prod  Production mode with ALL hardening enabled:
+                        - Disables dev mode (requires real auth)
+                        - Enables firewall, fail2ban, SSH hardening
+                        - Enables auto-updates and kernel hardening
+                        - Installs all dependencies and services
+  
+  --dev, --development  Development mode (no hardening, dev auth enabled)
+  
+  --domain <domain>     Set domain and enable Caddy reverse proxy
+                        Example: --domain octo.example.com
+  
+  --ssh-port <port>     Set SSH port for hardening (default: 22)
+  
+  Disable specific hardening features (use with --production):
+  --no-firewall         Skip firewall configuration
+  --no-fail2ban         Skip fail2ban installation
+  --no-ssh-hardening    Skip SSH hardening (keeps password auth)
+  --no-auto-updates     Skip automatic security updates
+  --no-kernel-hardening Skip kernel sysctl hardening
+  
+  Tool installation:
+  --all-tools           Install all byteowlz agent tools
+  --no-agent-tools      Skip agent tools installation
 
 Environment Variables:
   OCTO_USER_MODE          single or multi (default: single)
@@ -2489,6 +3471,15 @@ Environment Variables:
   OCTO_SETUP_CADDY        yes or no (default: prompt user in production mode)
   OCTO_DOMAIN             domain for HTTPS (e.g., octo.example.com)
 
+Server Hardening (Linux production mode only):
+  OCTO_HARDEN_SERVER      yes or no (default: prompt in production mode)
+  OCTO_SSH_PORT           SSH port number (default: 22)
+  OCTO_SETUP_FIREWALL     yes or no - configure UFW/firewalld (default: yes)
+  OCTO_SETUP_FAIL2BAN     yes or no - install and configure fail2ban (default: yes)
+  OCTO_HARDEN_SSH         yes or no - apply SSH hardening (default: yes)
+  OCTO_SETUP_AUTO_UPDATES yes or no - enable automatic security updates (default: yes)
+  OCTO_HARDEN_KERNEL      yes or no - apply kernel security parameters (default: yes)
+
 LLM Provider API Keys (set one of these, or use EAVS):
   ANTHROPIC_API_KEY       Anthropic Claude API key
   OPENAI_API_KEY          OpenAI API key
@@ -2499,28 +3490,45 @@ LLM Provider API Keys (set one of these, or use EAVS):
 Shell Tools Installed:
   tmux, fd, ripgrep, yazi, zsh, zoxide
 
-Agent Tools:
-  agntz   - Agent operations CLI (memory, issues, mail, reservations)
-  mmry    - Memory system (optional, integrated with Octo)
-  trx     - Task tracking (optional, integrated with Octo)
-  mailz   - Agent messaging (optional)
+Byteowlz Agent Tools:
+  agntz   - Agent toolkit (file reservations, tool management)
+  mmry    - Memory storage and semantic search
+  mailz   - Agent coordination and messaging
+  byt     - Cross-repo governance and management
+  sx      - External search via SearXNG
 
 Other Tools:
   opencode - OpenCode AI agent CLI (local mode)
   ttyd    - Web terminal
   pi      - Main chat interface
 
+Pi Extensions (installed to ~/.pi/agent/extensions/):
+  octo       - Task delegation to OpenCode sessions
+  octo-todos - Todo list management for Octo UI
+
 For detailed documentation on all prerequisites and components, see SETUP.md
 
 Examples:
-  # Interactive setup (recommended)
+  # Interactive setup (recommended for first-time)
   ./setup.sh
 
-  # Non-interactive single-user local setup
-  OCTO_USER_MODE=single OCTO_BACKEND_MODE=local ./setup.sh --non-interactive
+  # Quick development setup (no prompts)
+  ./setup.sh --dev
+
+  # Full production setup with all hardening (RECOMMENDED for servers)
+  ./setup.sh --production --domain octo.example.com
+
+  # Production with custom SSH port
+  ./setup.sh --production --domain octo.example.com --ssh-port 2222
+
+  # Production but keep password SSH auth (for initial setup)
+  ./setup.sh --production --domain octo.example.com --no-ssh-hardening
 
   # Multi-user container setup on Linux
-  OCTO_USER_MODE=multi OCTO_BACKEND_MODE=container ./setup.sh
+  OCTO_USER_MODE=multi OCTO_BACKEND_MODE=container ./setup.sh --production
+
+  # Environment variable style (equivalent to --production)
+  OCTO_DEV_MODE=false OCTO_HARDEN_SERVER=yes ./setup.sh --non-interactive
 EOF
 }
 
@@ -2536,6 +3544,76 @@ main() {
                 ;;
             --non-interactive)
                 NONINTERACTIVE="true"
+                shift
+                ;;
+            --production|--prod)
+                # Production mode with all hardening enabled
+                NONINTERACTIVE="true"
+                OCTO_DEV_MODE="false"
+                OCTO_HARDEN_SERVER="yes"
+                OCTO_SETUP_FIREWALL="yes"
+                OCTO_SETUP_FAIL2BAN="yes"
+                OCTO_HARDEN_SSH="yes"
+                OCTO_SETUP_AUTO_UPDATES="yes"
+                OCTO_HARDEN_KERNEL="yes"
+                OCTO_INSTALL_DEPS="yes"
+                OCTO_INSTALL_SERVICE="yes"
+                OCTO_INSTALL_AGENT_TOOLS="yes"
+                shift
+                ;;
+            --dev|--development)
+                # Development mode, no hardening
+                NONINTERACTIVE="true"
+                OCTO_DEV_MODE="true"
+                OCTO_HARDEN_SERVER="no"
+                shift
+                ;;
+            --domain)
+                OCTO_DOMAIN="$2"
+                OCTO_SETUP_CADDY="yes"
+                shift 2
+                ;;
+            --domain=*)
+                OCTO_DOMAIN="${1#*=}"
+                OCTO_SETUP_CADDY="yes"
+                shift
+                ;;
+            --ssh-port)
+                OCTO_SSH_PORT="$2"
+                shift 2
+                ;;
+            --ssh-port=*)
+                OCTO_SSH_PORT="${1#*=}"
+                shift
+                ;;
+            --no-firewall)
+                OCTO_SETUP_FIREWALL="no"
+                shift
+                ;;
+            --no-fail2ban)
+                OCTO_SETUP_FAIL2BAN="no"
+                shift
+                ;;
+            --no-ssh-hardening)
+                OCTO_HARDEN_SSH="no"
+                shift
+                ;;
+            --no-auto-updates)
+                OCTO_SETUP_AUTO_UPDATES="no"
+                shift
+                ;;
+            --no-kernel-hardening)
+                OCTO_HARDEN_KERNEL="no"
+                shift
+                ;;
+            --all-tools)
+                INSTALL_ALL_TOOLS="true"
+                INSTALL_MMRY="true"
+                INSTALL_MAILZ="true"
+                shift
+                ;;
+            --no-agent-tools)
+                OCTO_INSTALL_AGENT_TOOLS="no"
                 shift
                 ;;
             *)
@@ -2589,6 +3667,13 @@ main() {
             install_ttyd
         fi
         
+        # Pi extensions (always install for main chat integration)
+        if [[ "$SELECTED_USER_MODE" == "multi" ]]; then
+            install_pi_extensions_all_users
+        else
+            install_pi_extensions
+        fi
+        
         # Agent tools (agntz and optional mmry, trx)
         if [[ "$OCTO_INSTALL_AGENT_TOOLS" == "yes" ]]; then
             install_agntz
@@ -2623,6 +3708,9 @@ main() {
         generate_caddyfile
         install_caddy_service
     fi
+    
+    # Server hardening (Linux production only)
+    harden_server
     
     # Install service
     install_service

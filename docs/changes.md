@@ -1,5 +1,11 @@
 # Changes
 
+- 2026-01-30: Secure sudoers rules in setup.sh by removing overly permissive wildcard patterns. Replaced with explicitly whitelisted commands: restricted useradd to specific flags only, removed dangerous usermod wildcard, prevented home directory deletion with userdel, explicitly limited systemctl --user commands to octo-runner only, and restricted chown to safe paths (/home/* and /var/lib/octo/* with depth limits). Removed dangerous "ALL=(*) NOPASSWD: ALL" rule that allowed running any command as octo_* users.
+- 2026-01-30: Point Pi agent storage (settings, models, sessions) at the workspace `.pi` directory instead of `~/.pi/agent`.
+- 2026-01-30: Flatten the Pi settings view to match the OpenCode settings layout (single pane, no tabs).
+- 2026-01-30: Keep focus in the Pi model search input while typing in the selector.
+- 2026-01-30: Allow clearing numeric settings fields without "null" input warnings.
+- 2026-01-30: Write Pi settings/models to workspace `.pi` as project overrides while keeping global config in `~/.pi/agent`.
 - 2026-01-26: Align Main Chat (Pi) message rendering with OpenCode cards and merge Pi tool results with tool calls for consistent display.
 - 2026-01-26: Show OpenCode-style loading skeletons in Main Chat while Pi chat connects.
 - 2026-01-26: Fix Main Chat crash caused by referencing displayError before initialization.

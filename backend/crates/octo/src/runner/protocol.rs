@@ -1069,6 +1069,10 @@ pub enum ErrorCode {
     /// Memory not found.
     MemoryNotFound,
 
+    // Sandbox errors
+    /// Sandbox requested but not available or misconfigured.
+    SandboxError,
+
     // Generic errors
     /// IO error.
     IoError,

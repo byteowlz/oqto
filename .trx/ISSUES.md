@@ -2,6 +2,15 @@
 
 ## Open
 
+### [octo-qq9y] Security audit sudoers configuration for multi-user mode (P1, task)
+## Background
+
+The sudoers configuration in setup.sh had critical security vulnerabilities that could allow privilege escalation. These have been fixed.
+
+### Vulnerabilities Found and Fixed
+...
+
+
 ### [octo-p3n2] API Key Authentication & External Integration (P1, epic)
 Enable external apps (omni, ctx) to integrate with Octo via API keys. Support fire-and-forget and streaming responses, .ctx context files, auto-session creation.
 
@@ -136,6 +145,8 @@ Implementation:
 
 ### [workspace-5pmk.11] Add backend URL configuration to login form (P1, task)
 Add a 'Server URL' field to the login form allowing users to specify the backend URL. Store in localStorage for persistence. Show connection status indicator. Default to current origin for web, require input for mobile apps.
+
+### [octo-7xx0] Note: octo-ssh-proxy socket path must be mounted or moved for sandbox access (P2, task)
 
 ### [octo-p3n2.6] .ctx file parsing (P2, task)
 Parse .ctx zip files: extract images, text context, metadata. Store temporarily for agent access.
@@ -564,6 +575,15 @@ Enable multiple platform users to access the same project/workspace with proper 
 ...
 
 
+### [octo-mxd8.4] macOS fallback: socket broker for guarded paths (P3, feature)
+Implement a non-FUSE fallback for macOS that provides similar functionality to octo-guard using a socket-based broker.
+
+## Overview
+Since FUSE on macOS is problematic (kext deprecation, SIP issues), implement a simpler socket+copy approach.
+
+...
+
+
 ### [octo-xncy.7] Android: UI exploration mode (DroidBot-style UTG crawler) (P3, task)
 Build UI exploration/crawling mode for unknown apps.
 
@@ -684,6 +704,34 @@ Desired behavior: Tool calls hidden by default, toggle to show
 
 ## Closed
 
+- [octo-1j5m] Background history refresh races with session switches (closed 2026-01-31)
+- [octo-pwnn] Backend Pi process reuse broadcasts events across sessions (closed 2026-01-31)
+- [octo-dxsg] WebSocket handler swapping causes message leaks (closed 2026-01-31)
+- [octo-p7v5] Messages saved with stale pi_session_id when switching sessions (closed 2026-01-31)
+- [octo-jgc6] WebSocket messages lack session_id validation (closed 2026-01-31)
+- [octo-k5yx] Data isolation bug: user can see other users' data if Linux user creation fails (closed 2026-01-31)
+- [octo-6nsz] Sudoers OCTO_USERADD pattern does not match backend useradd command format (closed 2026-01-31)
+- [octo-my07] Codebase Refactoring for Maintainability (closed 2026-01-30)
+- [octo-my07.12] Add comprehensive test infrastructure (closed 2026-01-30)
+- [octo-my07.13] Extract shared UI components to component library (closed 2026-01-30)
+- [octo-my07.11] Refactor dashboard into feature components (closed 2026-01-30)
+- [octo-my07.10] Implement unified error handling in backend (closed 2026-01-30)
+- [octo-my07.9] Split session-context into focused contexts (closed 2026-01-30)
+- [octo-my07.8] Implement TypeScript type generation from Rust (closed 2026-01-30)
+- [octo-my07.4] Decompose usePiChat hook into focused hooks (closed 2026-01-30)
+- [octo-my07.7] Standardize backend domain module structure (closed 2026-01-30)
+- [octo-my07.6] Establish feature-based frontend organization (closed 2026-01-30)
+- [octo-my07.5] Implement generic proxy factory in backend (closed 2026-01-30)
+- [octo-my07.3] Split handlers.rs into domain-specific modules (closed 2026-01-30)
+- [octo-my07.2] Extract AppShellRoute into focused components (closed 2026-01-30)
+- [octo-my07.1] Split control-plane-client.ts into domain modules (closed 2026-01-30)
+- [octo-c62h] Chat history: include Pi workspace sessions + Pi model in status bar (closed 2026-01-29)
+- [octo-mxd8] Sandbox Security Enhancements: Custom Profiles, FUSE Guard, SSH Proxy (closed 2026-01-29)
+- [octo-mxd8.2] Implement octo-guard FUSE filesystem for runtime access control (closed 2026-01-29)
+- [octo-mxd8.3] Implement octo-ssh-proxy for controlled SSH agent access (closed 2026-01-29)
+- [octo-mxd8.6] Implement prompt system for security approvals (closed 2026-01-29)
+- [octo-mxd8.1] Custom sandbox profiles: update example and docs (closed 2026-01-29)
+- [octo-mxd8.5] Network proxy for granular network access control (closed 2026-01-29)
 - [octo-tbsf] Security: Session services were binding to 0.0.0.0 instead of 127.0.0.1 (closed 2026-01-26)
 - [octo-xjs5] Runner As Core User-Plane (closed 2026-01-26)
 - [octo-wbyq] Performance: eliminate >50ms UI handlers (closed 2026-01-25)
@@ -1199,9 +1247,9 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
-- [octo-k8z1.1] Backend: Integrate agent-browser daemon per session (closed )
 - [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
-- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
-- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
 - [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
+- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
+- [octo-k8z1.1] Backend: Integrate agent-browser daemon per session (closed )
+- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
 - [octo-k8z1.2] Backend: WebSocket proxy for screencast stream (closed )

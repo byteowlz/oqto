@@ -1,13 +1,17 @@
 //! Per-user mmry process manager for local multi-user mode.
 //!
-//! In local multi-user mode, each platform user gets their own mmry instance
-//! (spawned via octo-runner running as that Linux user) so that memory stores
-//! are isolated.
+//! In local multi-user mode, each platform user gets their own mmry instance.
+//! The manager first checks if mmry is already running (e.g., via systemd or
+//! manual start) and reuses it. Only spawns via octo-runner if no existing
+//! instance is found.
+//!
+//! Future: shared/remote workspaces will need separate mmry instances with
+//! isolated stores.
 
 use anyhow::{Context, Result};
 use log::{debug, info, warn};
+use regex::Regex;
 use std::collections::HashMap;
-// (hashing no longer used; ports are persisted per-user)
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::Arc;
@@ -132,6 +136,67 @@ impl UserMmryManager {
         false
     }
 
+    /// Check if mmry service is already running for a user and return its HTTP port.
+    ///
+    /// Runs `mmry service status` as the target user and parses the HTTP port from output.
+    /// Returns `Some(port)` if running with HTTP enabled, `None` otherwise.
+    fn check_existing_mmry_service(mmry_binary: &str, linux_username: &str) -> Option<u16> {
+        // Get current username from environment
+        let current_user = std::env::var("USER").unwrap_or_default();
+
+        // Run as the target user to check their mmry service
+        let output = if linux_username == current_user {
+            Command::new(mmry_binary)
+                .args(["service", "status"])
+                .output()
+        } else {
+            Command::new("sudo")
+                .args(["-u", linux_username, mmry_binary, "service", "status"])
+                .output()
+        };
+
+        let output = match output {
+            Ok(o) => o,
+            Err(e) => {
+                debug!("Failed to check mmry status for {}: {}", linux_username, e);
+                return None;
+            }
+        };
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+
+        // Check if service is running
+        if !stdout.contains("Service is running") {
+            return None;
+        }
+
+        // Parse HTTP port from output like:
+        // Service is running
+        //   PID: 2429525
+        //   gRPC port: 45443
+        //   HTTP port: 8081 (127.0.0.1:8081)
+        //   Status: Healthy
+        let http_port_re = Regex::new(r"HTTP port:\s*(\d+)").ok()?;
+        if let Some(caps) = http_port_re.captures(&stdout) {
+            if let Some(port_str) = caps.get(1) {
+                if let Ok(port) = port_str.as_str().parse::<u16>() {
+                    info!(
+                        "Found existing mmry service for {} with HTTP port {}",
+                        linux_username, port
+                    );
+                    return Some(port);
+                }
+            }
+        }
+
+        // HTTP API not enabled or couldn't parse
+        debug!(
+            "mmry service running for {} but HTTP port not found in status",
+            linux_username
+        );
+        None
+    }
+
     async fn drain_stdout_best_effort(client: &RunnerClient, process_id: &str) -> String {
         let mut out = String::new();
         for _ in 0..16 {
@@ -187,6 +252,9 @@ impl UserMmryManager {
 
     /// Ensure a per-user mmry instance is running and increment refcount.
     /// Returns the port the instance is listening on.
+    ///
+    /// First checks if mmry is already running for the user (e.g., via systemd).
+    /// Only spawns via runner if no existing instance is found.
     pub async fn ensure_user_mmry(&self, user_id: &str) -> Result<u16> {
         let mut state = self.state.lock().await;
 
@@ -199,8 +267,29 @@ impl UserMmryManager {
             return Ok(inst.port);
         }
 
-        let port = self.port_for_user(user_id).await?;
         let linux_username = (self.linux_username_for_user_id)(user_id);
+
+        // First, check if mmry is already running for this user with HTTP enabled
+        if let Some(http_port) =
+            Self::check_existing_mmry_service(&self.config.mmry_binary, &linux_username)
+        {
+            info!(
+                "Using existing mmry service for user {} on HTTP port {}",
+                user_id, http_port
+            );
+            state.instances.insert(
+                user_id.to_string(),
+                UserMmryInstance {
+                    port: http_port,
+                    session_count: 1,
+                    pinned_count: 0,
+                },
+            );
+            return Ok(http_port);
+        }
+
+        // No existing service, spawn via runner
+        let port = self.port_for_user(user_id).await?;
         let client = self
             .runner_client_for_linux_user(&linux_username)
             .context("building runner client")?;
@@ -282,6 +371,9 @@ impl UserMmryManager {
     ///
     /// This is intended for non-session use (e.g. main chat workspace memories) where we
     /// don't have a clean "stop" lifecycle. This call is idempotent per user.
+    ///
+    /// First checks if mmry is already running for the user (e.g., via systemd).
+    /// Only spawns via runner if no existing instance is found.
     pub async fn pin_user_mmry(&self, user_id: &str) -> Result<u16> {
         let mut state = self.state.lock().await;
 
@@ -292,8 +384,29 @@ impl UserMmryManager {
             return Ok(inst.port);
         }
 
-        let port = self.port_for_user(user_id).await?;
         let linux_username = (self.linux_username_for_user_id)(user_id);
+
+        // First, check if mmry is already running for this user
+        if let Some(existing_port) =
+            Self::check_existing_mmry_service(&self.config.mmry_binary, &linux_username)
+        {
+            info!(
+                "Pinning existing mmry service for user {} on port {}",
+                user_id, existing_port
+            );
+            state.instances.insert(
+                user_id.to_string(),
+                UserMmryInstance {
+                    port: existing_port,
+                    session_count: 0,
+                    pinned_count: 1,
+                },
+            );
+            return Ok(existing_port);
+        }
+
+        // No existing service, spawn via runner
+        let port = self.port_for_user(user_id).await?;
         let client = self
             .runner_client_for_linux_user(&linux_username)
             .context("building runner client")?;
