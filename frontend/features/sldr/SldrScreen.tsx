@@ -13,16 +13,16 @@ import {
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { cn } from "@/lib/utils";
 import {
+	type Flavor,
+	type Skeleton,
+	type SlideSummary,
 	listFlavors,
 	listSkeletons,
 	listSlides,
 	previewSkeleton,
-	type Flavor,
-	type Skeleton,
-	type SlideSummary,
 } from "@/lib/sldr-client";
+import { cn } from "@/lib/utils";
 import {
 	ExternalLink,
 	FileText,
@@ -59,7 +59,8 @@ export function SldrScreen() {
 			setSkeletons(skeletonsData);
 			setFlavors(flavorsData);
 		} catch (err) {
-			const message = err instanceof Error ? err.message : "Failed to load sldr";
+			const message =
+				err instanceof Error ? err.message : "Failed to load sldr";
 			setError(message);
 		} finally {
 			setLoading(false);
@@ -124,15 +125,15 @@ export function SldrScreen() {
 						onClick={refresh}
 						disabled={loading}
 					>
-						<RefreshCw className={cn("mr-2 size-4", loading && "animate-spin")} />
+						<RefreshCw
+							className={cn("mr-2 size-4", loading && "animate-spin")}
+						/>
 						Refresh
 					</Button>
 				</div>
 			</div>
 
-			{error ? (
-				<div className="text-sm text-red-500">{error}</div>
-			) : null}
+			{error ? <div className="text-sm text-red-500">{error}</div> : null}
 
 			<div className="grid gap-4 lg:grid-cols-[1.4fr_0.6fr]">
 				<Card className="relative overflow-hidden">
@@ -225,13 +226,13 @@ export function SldrScreen() {
 											<CardTitle>
 												{slide.metadata.title || slide.name}
 											</CardTitle>
-											<CardDescription>
-												{slide.relative_path}
-											</CardDescription>
+											<CardDescription>{slide.relative_path}</CardDescription>
 										</CardHeader>
 										<CardContent className="flex flex-wrap gap-2">
 											{slide.metadata.topic ? (
-												<Badge variant="secondary">{slide.metadata.topic}</Badge>
+												<Badge variant="secondary">
+													{slide.metadata.topic}
+												</Badge>
 											) : null}
 											{slide.metadata.tags?.map((tag) => (
 												<Badge key={tag} variant="outline">
@@ -263,9 +264,7 @@ export function SldrScreen() {
 								skeletons.map((skeleton) => (
 									<Card key={skeleton.name}>
 										<CardHeader>
-											<CardTitle>
-												{skeleton.title || skeleton.name}
-											</CardTitle>
+											<CardTitle>{skeleton.title || skeleton.name}</CardTitle>
 											<CardDescription>
 												{skeleton.description ||
 													`${skeleton.slides.length} slides`}

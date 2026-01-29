@@ -1,6 +1,6 @@
 export {
-  PromptStack,
-  PromptDetailDialog,
-  PromptsContainer,
-  PromptBadge,
+	PromptStack,
+	PromptDetailDialog,
+	PromptsContainer,
+	PromptBadge,
 } from "./PromptDialog";

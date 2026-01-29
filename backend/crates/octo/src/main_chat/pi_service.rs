@@ -133,6 +133,8 @@ pub struct PiSessionFile {
     pub modified_at: i64,
     /// Title (derived from first user message, or None)
     pub title: Option<String>,
+    /// Parent session ID (if this session was spawned as a child)
+    pub parent_id: Option<String>,
     /// Number of messages in session
     pub message_count: usize,
 }
@@ -821,6 +823,10 @@ impl MainChatPiService {
             .get("title")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
+        let parent_id = header
+            .get("parentSession")
+            .and_then(|v| v.as_str())
+            .and_then(Self::read_parent_session_id);
         let mut message_count = 0usize;
 
         for line in reader.lines().filter_map(|l| l.ok()) {
@@ -859,8 +865,27 @@ impl MainChatPiService {
             size: metadata.len(),
             modified_at: modified_ms,
             title,
+            parent_id,
             message_count,
         })
+    }
+
+    /// Resolve a parent session ID from a session file path.
+    fn read_parent_session_id(path: &str) -> Option<String> {
+        use std::io::{BufRead, BufReader};
+
+        let file = std::fs::File::open(path).ok()?;
+        let mut reader = BufReader::new(file);
+        let mut line = String::new();
+        reader.read_line(&mut line).ok()?;
+        if line.trim().is_empty() {
+            return None;
+        }
+        let header: Value = serde_json::from_str(&line).ok()?;
+        if header.get("type").and_then(|t| t.as_str()) != Some("session") {
+            return None;
+        }
+        header.get("id").and_then(|v| v.as_str()).map(|s| s.to_string())
     }
 
     /// Extract a title from message content (first ~50 chars of text).
@@ -960,7 +985,7 @@ impl MainChatPiService {
         Ok(messages)
     }
 
-    /// Search within a specific session using CASS, with fallback to direct text search.
+    /// Search within a specific session using hstry, with fallback to direct text search.
     /// Returns search results from the session's content.
     /// Supports both Pi sessions (.jsonl) and OpenCode sessions (.json).
     pub async fn search_in_session(

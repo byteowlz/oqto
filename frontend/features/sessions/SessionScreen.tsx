@@ -384,11 +384,14 @@ const ChatMessagesPane = memo(function ChatMessagesPane({
 					// Check if this is the last assistant group (for showing working indicator)
 					const isLastAssistantGroup =
 						group.role === "assistant" &&
-						!visibleGroups.slice(groupIndex + 1).some((g) => g.role === "assistant");
+						!visibleGroups
+							.slice(groupIndex + 1)
+							.some((g) => g.role === "assistant");
 					return (
 						<div
 							key={
-								group.messages[0]?.info.id || `${group.role}-${group.startIndex}`
+								group.messages[0]?.info.id ||
+								`${group.role}-${group.startIndex}`
 							}
 							className={groupIndex > 0 ? "mt-4 sm:mt-6" : ""}
 						>
@@ -1351,7 +1354,11 @@ export const SessionScreen = memo(function SessionScreen() {
 					sentLength: fullText.length,
 				};
 			} else {
-				ttsStreamStateRef.current = { messageId: null, streamId: null, sentLength: 0 };
+				ttsStreamStateRef.current = {
+					messageId: null,
+					streamId: null,
+					sentLength: 0,
+				};
 			}
 		}
 		voiceActivationRef.current = voiceMode.isActive;
@@ -1381,7 +1388,8 @@ export const SessionScreen = memo(function SessionScreen() {
 			streamState.sentLength = 0;
 
 			// Start new stream
-			voiceMode.streamStart()
+			voiceMode
+				.streamStart()
 				.then((streamId) => {
 					streamState.streamId = streamId;
 					// Send any text that arrived while starting
@@ -1413,7 +1421,14 @@ export const SessionScreen = memo(function SessionScreen() {
 		if (streamState.streamId) {
 			voiceMode.streamAppend(newText);
 		}
-	}, [messages, voiceMode.isActive, voiceMode.settings.muted, voiceMode.streamStart, voiceMode.streamAppend, voiceMode.streamEnd]);
+	}, [
+		messages,
+		voiceMode.isActive,
+		voiceMode.settings.muted,
+		voiceMode.streamStart,
+		voiceMode.streamAppend,
+		voiceMode.streamEnd,
+	]);
 
 	// End TTS stream when message finishes (chatState goes from sending to idle)
 	const prevChatStateRef = useRef<"idle" | "sending">("idle");
@@ -1435,7 +1450,11 @@ export const SessionScreen = memo(function SessionScreen() {
 			voiceMode.streamCancel();
 			voiceMode.interrupt();
 			// Reset stream state so next activation starts fresh
-			ttsStreamStateRef.current = { messageId: null, streamId: null, sentLength: 0 };
+			ttsStreamStateRef.current = {
+				messageId: null,
+				streamId: null,
+				sentLength: 0,
+			};
 		}
 	}, [voiceMode.isActive, voiceMode.interrupt, voiceMode.streamCancel]);
 
@@ -1879,7 +1898,13 @@ export const SessionScreen = memo(function SessionScreen() {
 			return true;
 		}
 		return false;
-	}, [selectedChatSession, selectedChatFromHistory, selectedChatSessionId, selectedWorkspaceSession, opencodeBaseUrl]);
+	}, [
+		selectedChatSession,
+		selectedChatFromHistory,
+		selectedChatSessionId,
+		selectedWorkspaceSession,
+		opencodeBaseUrl,
+	]);
 
 	const autoAttachMode = features.session_auto_attach ?? "off";
 	const autoAttachScan = features.session_auto_attach_scan ?? false;
@@ -2488,7 +2513,10 @@ export const SessionScreen = memo(function SessionScreen() {
 						? "Verbindung zum Agenten verloren."
 						: "Lost connection to the agent.";
 
-				console.error("[Session Disconnected]", disconnectReason || "no reason");
+				console.error(
+					"[Session Disconnected]",
+					disconnectReason || "no reason",
+				);
 
 				toast.error(title, {
 					description,
@@ -2647,7 +2675,11 @@ export const SessionScreen = memo(function SessionScreen() {
 					eventType === "text_delta" || eventType === "thinking_delta";
 
 				startTransition(() => {
-					if (isCompletionEvent && effectiveOpencodeBaseUrl && activeSessionId) {
+					if (
+						isCompletionEvent &&
+						effectiveOpencodeBaseUrl &&
+						activeSessionId
+					) {
 						invalidateMessageCache(
 							effectiveOpencodeBaseUrl,
 							activeSessionId,
@@ -3434,7 +3466,10 @@ export const SessionScreen = memo(function SessionScreen() {
 				// This allows the current agent to see and respond to it
 				effectiveMessageText = `I asked @@${currentAgentTarget.name}:\n> ${messageText}\n\nTheir response:\n${response.response}`;
 
-				console.log("[@@agent] Got response, effectiveMessageText:", effectiveMessageText.slice(0, 200));
+				console.log(
+					"[@@agent] Got response, effectiveMessageText:",
+					effectiveMessageText.slice(0, 200),
+				);
 				// Fall through to normal send flow below with the formatted message
 			} catch (err) {
 				const message = err instanceof Error ? err.message : "Agent ask failed";
@@ -3484,7 +3519,7 @@ export const SessionScreen = memo(function SessionScreen() {
 					const readableMatch = mainSessions.find(
 						(session) =>
 							resolveReadableId(session.id, session.readable_id) ===
-								resolvedMainChatSessionId,
+							resolvedMainChatSessionId,
 					);
 					const resolved = matched ?? readableMatch;
 					if (resolved) {
@@ -3642,7 +3677,12 @@ export const SessionScreen = memo(function SessionScreen() {
 				);
 			} else {
 				// Use async send - the response will come via SSE events
-				console.log("[@@agent] Sending to session:", targetSessionId, "message:", effectiveMessageText.slice(0, 100));
+				console.log(
+					"[@@agent] Sending to session:",
+					targetSessionId,
+					"message:",
+					effectiveMessageText.slice(0, 100),
+				);
 				await sendMessageAsync(
 					effectiveBaseUrl,
 					targetSessionId,
@@ -3733,7 +3773,9 @@ export const SessionScreen = memo(function SessionScreen() {
 			startTransition(() => {
 				// Show slash popup when typing /
 				const shouldShowSlash = value.startsWith("/");
-				setShowSlashPopup((prev) => (prev === shouldShowSlash ? prev : shouldShowSlash));
+				setShowSlashPopup((prev) =>
+					prev === shouldShowSlash ? prev : shouldShowSlash,
+				);
 
 				// Show agent mention popup when typing @@ (check before single @)
 				const doubleAtMatch = value.match(/@@([^\s]*)$/);
@@ -3742,7 +3784,9 @@ export const SessionScreen = memo(function SessionScreen() {
 
 				if (shouldShowAgent) {
 					setShowAgentMentionPopup(true);
-					setAgentMentionQuery((prev) => (prev === newAgentQuery ? prev : newAgentQuery));
+					setAgentMentionQuery((prev) =>
+						prev === newAgentQuery ? prev : newAgentQuery,
+					);
 					setShowFileMentionPopup(false);
 					setFileMentionQuery("");
 				} else {
@@ -3754,7 +3798,9 @@ export const SessionScreen = memo(function SessionScreen() {
 					const newFileQuery = atMatch?.[1] ?? "";
 					if (shouldShowFile) {
 						setShowFileMentionPopup(true);
-						setFileMentionQuery((prev) => (prev === newFileQuery ? prev : newFileQuery));
+						setFileMentionQuery((prev) =>
+							prev === newFileQuery ? prev : newFileQuery,
+						);
 					} else {
 						setShowFileMentionPopup((prev) => (prev === false ? prev : false));
 						setFileMentionQuery((prev) => (prev === "" ? prev : ""));
@@ -4196,10 +4242,7 @@ export const SessionScreen = memo(function SessionScreen() {
 
 	// Session metadata for chat display
 	const readableId = selectedChatSession?.id
-		? resolveReadableId(
-				selectedChatSession.id,
-				selectedChatSession.readable_id,
-			)
+		? resolveReadableId(selectedChatSession.id, selectedChatSession.readable_id)
 		: null;
 	// Extract workspace name from path (last segment)
 	const workspaceName = opencodeDirectory
@@ -4611,7 +4654,7 @@ export const SessionScreen = memo(function SessionScreen() {
 							/>
 						) : (
 							<textarea
-								key={`${chatInputMountKey}-${selectedChatSessionId || 'none'}`}
+								key={`${chatInputMountKey}-${selectedChatSessionId || "none"}`}
 								ref={setChatInputEl}
 								autoComplete="off"
 								autoCorrect="off"
@@ -6067,7 +6110,8 @@ const MessageGroupCard = memo(function MessageGroupCard({
 				{segments.map((segment, idx) => {
 					// Add top margin to non-text segments that follow text segments
 					const prevSegment = idx > 0 ? segments[idx - 1] : null;
-					const needsTopMargin = prevSegment?.type === "text" && segment.type !== "text";
+					const needsTopMargin =
+						prevSegment?.type === "text" && segment.type !== "text";
 
 					if (segment.type === "text") {
 						// Parse @file references from the text, excluding code blocks
@@ -6107,7 +6151,10 @@ const MessageGroupCard = memo(function MessageGroupCard({
 
 					if (segment.type === "file") {
 						return (
-							<div key={segment.key} className={needsTopMargin ? "mt-3" : undefined}>
+							<div
+								key={segment.key}
+								className={needsTopMargin ? "mt-3" : undefined}
+							>
 								<FilePartCard
 									part={segment.part}
 									workspaceDirectory={workspaceDirectory}
@@ -6118,7 +6165,10 @@ const MessageGroupCard = memo(function MessageGroupCard({
 
 					if (segment.type === "tool") {
 						return (
-							<div key={segment.key} className={needsTopMargin ? "mt-3" : undefined}>
+							<div
+								key={segment.key}
+								className={needsTopMargin ? "mt-3" : undefined}
+							>
 								<ToolCallCard
 									part={segment.part}
 									defaultCollapsed={true}
@@ -6130,7 +6180,10 @@ const MessageGroupCard = memo(function MessageGroupCard({
 
 					if (segment.type === "other") {
 						return (
-							<div key={segment.key} className={needsTopMargin ? "mt-3" : undefined}>
+							<div
+								key={segment.key}
+								className={needsTopMargin ? "mt-3" : undefined}
+							>
 								<OtherPartCard part={segment.part} />
 							</div>
 						);
@@ -6138,7 +6191,10 @@ const MessageGroupCard = memo(function MessageGroupCard({
 
 					if (segment.type === "a2ui") {
 						return (
-							<div key={segment.key} className={needsTopMargin ? "mt-3" : undefined}>
+							<div
+								key={segment.key}
+								className={needsTopMargin ? "mt-3" : undefined}
+							>
 								<A2UICallCard
 									surfaceId={segment.surface.surfaceId}
 									messages={segment.surface.messages}

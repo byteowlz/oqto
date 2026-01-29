@@ -198,7 +198,11 @@ function normalizePiContentToParts(content: unknown): PiMessagePart[] {
 						(typeof b.toolName === "string" && b.toolName) ||
 						undefined,
 					content:
-						"content" in b ? b.content : typeof b.text === "string" ? b.text : b,
+						"content" in b
+							? b.content
+							: typeof b.text === "string"
+								? b.text
+								: b,
 					isError: Boolean(b.is_error ?? b.isError),
 				});
 			}
@@ -232,7 +236,9 @@ function normalizePiMessages(
 		pendingToolUseByName.set(name, list);
 	};
 
-	const resolvePendingByName = (name: string | undefined): number | undefined => {
+	const resolvePendingByName = (
+		name: string | undefined,
+	): number | undefined => {
 		if (!name) return undefined;
 		const list = pendingToolUseByName.get(name);
 		if (!list || list.length === 0) return undefined;
@@ -244,7 +250,8 @@ function normalizePiMessages(
 		const timestamp = message.timestamp ?? Date.now();
 
 		if (role === "toolResult") {
-			const toolCallId = message.toolCallId || message.id || `tool-result-${idx}`;
+			const toolCallId =
+				message.toolCallId || message.id || `tool-result-${idx}`;
 			const toolResultPart: PiMessagePart = {
 				type: "tool_result",
 				id: toolCallId,
@@ -392,7 +399,10 @@ function writeCachedSessionMessages(
 		sessionMessageCache.lastWriteTime.set(sessionId, Date.now());
 		queueMicrotask(() => {
 			try {
-				localStorage.setItem(cacheKeyMessages(sessionId), JSON.stringify(entry));
+				localStorage.setItem(
+					cacheKeyMessages(sessionId),
+					JSON.stringify(entry),
+				);
 			} catch {
 				// ignore
 			}
@@ -809,154 +819,152 @@ export function usePiChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 						break;
 					}
 
-				case "text": {
-					// Append text to streaming message (mutate ref, batch UI updates)
-					const text = data.data as string;
-					const currentTextMsg = streamingMessageRef.current;
-					if (currentTextMsg) {
-						const lastPart =
-							currentTextMsg.parts[currentTextMsg.parts.length - 1];
-						if (lastPart?.type === "text") {
-							lastPart.content += text;
-						} else {
-							currentTextMsg.parts.push({
-								type: "text",
-								content: text,
-							});
+					case "text": {
+						// Append text to streaming message (mutate ref, batch UI updates)
+						const text = data.data as string;
+						const currentTextMsg = streamingMessageRef.current;
+						if (currentTextMsg) {
+							const lastPart =
+								currentTextMsg.parts[currentTextMsg.parts.length - 1];
+							if (lastPart?.type === "text") {
+								lastPart.content += text;
+							} else {
+								currentTextMsg.parts.push({
+									type: "text",
+									content: text,
+								});
+							}
+							// Schedule batched update instead of per-token setState
+							scheduleStreamingUpdate();
 						}
-						// Schedule batched update instead of per-token setState
-						scheduleStreamingUpdate();
+						break;
 					}
-					break;
-				}
 
-				case "thinking": {
-					const text = data.data as string;
-					const currentThinkingMsg = streamingMessageRef.current;
-					if (currentThinkingMsg && text) {
-						const lastPart =
-							currentThinkingMsg.parts[
-								currentThinkingMsg.parts.length - 1
-							];
-						if (lastPart?.type === "thinking") {
-							lastPart.content += text;
-						} else {
-							currentThinkingMsg.parts.push({
-								type: "thinking",
-								content: text,
-							});
+					case "thinking": {
+						const text = data.data as string;
+						const currentThinkingMsg = streamingMessageRef.current;
+						if (currentThinkingMsg && text) {
+							const lastPart =
+								currentThinkingMsg.parts[currentThinkingMsg.parts.length - 1];
+							if (lastPart?.type === "thinking") {
+								lastPart.content += text;
+							} else {
+								currentThinkingMsg.parts.push({
+									type: "thinking",
+									content: text,
+								});
+							}
+							scheduleStreamingUpdate();
 						}
-						scheduleStreamingUpdate();
+						break;
 					}
-					break;
-				}
 
-				case "tool_use": {
-					const tool = data.data as {
-						id: string;
-						name: string;
-						input: unknown;
-					};
-					const currentToolMsg = streamingMessageRef.current;
-					if (currentToolMsg) {
-						currentToolMsg.parts.push({
-							type: "tool_use",
-							id: tool.id,
-							name: tool.name,
-							input: tool.input,
-						});
-						// Tool events are less frequent, flush immediately via RAF
-						scheduleStreamingUpdate();
-					}
-					break;
-				}
-
-				case "tool_start": {
-					const tool = data.data as {
-						id: string;
-						name: string;
-						input: unknown;
-					};
-					const currentToolMsg = streamingMessageRef.current;
-					if (currentToolMsg) {
-						const alreadyPresent = currentToolMsg.parts.some(
-							(p) => p.type === "tool_use" && p.id === tool.id,
-						);
-						if (!alreadyPresent) {
+					case "tool_use": {
+						const tool = data.data as {
+							id: string;
+							name: string;
+							input: unknown;
+						};
+						const currentToolMsg = streamingMessageRef.current;
+						if (currentToolMsg) {
 							currentToolMsg.parts.push({
 								type: "tool_use",
 								id: tool.id,
 								name: tool.name,
 								input: tool.input,
 							});
+							// Tool events are less frequent, flush immediately via RAF
 							scheduleStreamingUpdate();
 						}
+						break;
 					}
-					break;
-				}
 
-				case "tool_result": {
-					const result = data.data as {
-						id: string;
-						name?: string;
-						content: unknown;
-						isError?: boolean;
-					};
-					const currentResultMsg = streamingMessageRef.current;
-					if (currentResultMsg) {
-						// Check if there's a matching tool_use to associate the name with
-						const matchingToolUse = currentResultMsg.parts.find(
-							(p) => p.type === "tool_use" && p.id === result.id,
-						);
-						currentResultMsg.parts.push({
-							type: "tool_result",
-							id: result.id,
-							// Use the tool name from the matching tool_use if available
-							name:
-								result.name ||
-								(matchingToolUse?.type === "tool_use"
-									? matchingToolUse.name
-									: undefined),
-							content: result.content,
-							isError: result.isError,
-						});
-						// Tool events are less frequent, flush immediately via RAF
-						scheduleStreamingUpdate();
-					}
-					break;
-				}
-
-				case "done": {
-					// Cancel any pending batched update
-					const batch = batchedUpdateRef.current;
-					if (batch.rafId !== null) {
-						cancelAnimationFrame(batch.rafId);
-						batch.rafId = null;
-					}
-					batch.pendingUpdate = false;
-
-					// Mark message as complete
-					if (streamingMessageRef.current) {
-						streamingMessageRef.current.isStreaming = false;
-						const completedMessage = {
-							...streamingMessageRef.current,
-							parts: streamingMessageRef.current.parts.map((p) => ({ ...p })),
+					case "tool_start": {
+						const tool = data.data as {
+							id: string;
+							name: string;
+							input: unknown;
 						};
-						setMessages((prev) => {
-							const idx = prev.findIndex((m) => m.id === completedMessage.id);
-							if (idx >= 0) {
-								const updated = [...prev];
-								updated[idx] = completedMessage;
-								return updated;
+						const currentToolMsg = streamingMessageRef.current;
+						if (currentToolMsg) {
+							const alreadyPresent = currentToolMsg.parts.some(
+								(p) => p.type === "tool_use" && p.id === tool.id,
+							);
+							if (!alreadyPresent) {
+								currentToolMsg.parts.push({
+									type: "tool_use",
+									id: tool.id,
+									name: tool.name,
+									input: tool.input,
+								});
+								scheduleStreamingUpdate();
 							}
-							return prev;
-						});
-						onMessageComplete?.(completedMessage);
-						streamingMessageRef.current = null;
+						}
+						break;
 					}
-					setIsStreaming(false);
-					break;
-				}
+
+					case "tool_result": {
+						const result = data.data as {
+							id: string;
+							name?: string;
+							content: unknown;
+							isError?: boolean;
+						};
+						const currentResultMsg = streamingMessageRef.current;
+						if (currentResultMsg) {
+							// Check if there's a matching tool_use to associate the name with
+							const matchingToolUse = currentResultMsg.parts.find(
+								(p) => p.type === "tool_use" && p.id === result.id,
+							);
+							currentResultMsg.parts.push({
+								type: "tool_result",
+								id: result.id,
+								// Use the tool name from the matching tool_use if available
+								name:
+									result.name ||
+									(matchingToolUse?.type === "tool_use"
+										? matchingToolUse.name
+										: undefined),
+								content: result.content,
+								isError: result.isError,
+							});
+							// Tool events are less frequent, flush immediately via RAF
+							scheduleStreamingUpdate();
+						}
+						break;
+					}
+
+					case "done": {
+						// Cancel any pending batched update
+						const batch = batchedUpdateRef.current;
+						if (batch.rafId !== null) {
+							cancelAnimationFrame(batch.rafId);
+							batch.rafId = null;
+						}
+						batch.pendingUpdate = false;
+
+						// Mark message as complete
+						if (streamingMessageRef.current) {
+							streamingMessageRef.current.isStreaming = false;
+							const completedMessage = {
+								...streamingMessageRef.current,
+								parts: streamingMessageRef.current.parts.map((p) => ({ ...p })),
+							};
+							setMessages((prev) => {
+								const idx = prev.findIndex((m) => m.id === completedMessage.id);
+								if (idx >= 0) {
+									const updated = [...prev];
+									updated[idx] = completedMessage;
+									return updated;
+								}
+								return prev;
+							});
+							onMessageComplete?.(completedMessage);
+							streamingMessageRef.current = null;
+						}
+						setIsStreaming(false);
+						break;
+					}
 
 					case "error": {
 						const errMsg =

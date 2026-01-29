@@ -45,9 +45,9 @@ import { Switch } from "@/components/ui/switch";
 import { useApp } from "@/hooks/use-app";
 import { useCommandPalette } from "@/hooks/use-command-palette";
 import {
-	type CassSearchHit,
 	type ChatSession,
 	type CreateProjectFromTemplateRequest,
+	type HstrySearchHit,
 	type ProjectLogo,
 	type ProjectTemplateEntry,
 	createProjectFromTemplate,
@@ -572,7 +572,7 @@ const AppShell = memo(function AppShell() {
 	// Search mode: "sessions" = filter by name, "messages" = deep search via hstry
 	const [searchMode, setSearchMode] = useState<SearchMode>("sessions");
 	const [agentFilter, setAgentFilter] = useState<AgentFilter>("all");
-	const [mainChatTitleHits, setMainChatTitleHits] = useState<CassSearchHit[]>(
+	const [mainChatTitleHits, setMainChatTitleHits] = useState<HstrySearchHit[]>(
 		[],
 	);
 	const [mainChatFilterCount, setMainChatFilterCount] = useState(0);
@@ -1062,7 +1062,7 @@ const AppShell = memo(function AppShell() {
 
 	// Handle search result click - navigate to the session and scroll to message
 	const handleSearchResultClick = useCallback(
-		(hit: CassSearchHit) => {
+		(hit: HstrySearchHit) => {
 			// Clear search and switch back to sessions mode
 			setSessionSearch("");
 			setSearchMode("sessions");
@@ -1930,7 +1930,9 @@ const AppShell = memo(function AppShell() {
 														mainChatActive ? mainChatCurrentSessionId : null
 													}
 													newSessionTrigger={mainChatNewSessionTrigger}
-													sessionActivityTrigger={mainChatSessionActivityTrigger}
+													sessionActivityTrigger={
+														mainChatSessionActivityTrigger
+													}
 													onSelect={handleMainChatSelect}
 													onSessionSelect={handleMainChatSessionSelect}
 													onNewSession={handleMainChatNewSession}

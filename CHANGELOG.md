@@ -13,6 +13,7 @@ All notable changes to this project will be documented in this file.
 ### Changed
 
 - Replaced cass-backed session search with hstry search and added line-based scroll resolution for search hits.
+- Renamed CASS search types and comments to hstry in the API and frontend.
 
 ### Security
 

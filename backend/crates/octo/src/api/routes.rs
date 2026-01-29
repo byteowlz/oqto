@@ -427,7 +427,7 @@ pub fn create_router_with_config(state: AppState, max_upload_size_mb: usize) -> 
         )
         // Main Chat file access routes
         .nest("/main/files", main_chat_files::main_chat_file_routes())
-        // CASS (Coding Agent Session Search) routes
+        // HSTRY (chat history) search routes
         .route("/search", get(handlers::search_sessions))
         // Scheduler (skdlr) overview
         .route("/scheduler/overview", get(handlers::scheduler_overview))
@@ -484,7 +484,7 @@ pub fn create_router_with_config(state: AppState, max_upload_size_mb: usize) -> 
         .route("/agents/ask", post(handlers::agents_ask))
         // Agent sessions search endpoint - find sessions by query
         .route("/agents/sessions", get(handlers::agents_search_sessions))
-        // In-session search - search within a specific session using CASS
+        // In-session search - search within a specific session using hstry
         .route(
             "/agents/sessions/{session_id}/search",
             get(handlers::agents_session_search),

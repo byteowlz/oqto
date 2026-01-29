@@ -1431,6 +1431,7 @@ export type PiSessionFile = {
 	size: number;
 	modified_at: number;
 	title?: string;
+	parent_id?: string;
 	message_count: number;
 };
 
@@ -1669,7 +1670,7 @@ export async function resumeMainChatPiSession(
 	return res.json();
 }
 
-/** In-session search result from CASS */
+/** In-session search result from hstry */
 export type InSessionSearchResult = {
 	/** Line number in the source file */
 	line_number: number;
@@ -1687,7 +1688,7 @@ export type InSessionSearchResult = {
 	message_id?: string;
 };
 
-/** Search within a specific Pi session using CASS */
+/** Search within a specific Pi session using hstry */
 export async function searchInPiSession(
 	sessionId: string,
 	query: string,
@@ -2047,20 +2048,20 @@ export async function addMainChatPiSeparator(): Promise<MainChatDbMessage> {
 // ============================================================================
 
 /** Agent filter for search */
-export type CassAgentFilter = "all" | "pi_agent" | "opencode" | string;
+export type HstryAgentFilter = "all" | "pi_agent" | "opencode" | string;
 
 /** Search query parameters */
-export type CassSearchQuery = {
+export type HstrySearchQuery = {
 	/** Search query string */
 	q: string;
 	/** Agent filter: "all", "pi_agent", "opencode", or comma-separated */
-	agents?: CassAgentFilter;
+	agents?: HstryAgentFilter;
 	/** Maximum results to return */
 	limit?: number;
 };
 
 /** A single search hit from hstry */
-export type CassSearchHit = {
+export type HstrySearchHit = {
 	/** Agent type (pi_agent, opencode, etc.) */
 	agent: string;
 	/** Path to the session file */
@@ -2090,8 +2091,8 @@ export type CassSearchHit = {
 };
 
 /** Response from hstry search */
-export type CassSearchResponse = {
-	hits: CassSearchHit[];
+export type HstrySearchResponse = {
+	hits: HstrySearchHit[];
 	total?: number;
 	elapsed_ms?: number;
 };
@@ -2101,8 +2102,8 @@ export type CassSearchResponse = {
  * Searches both Main Chat (pi_agent) and OpenCode sessions.
  */
 export async function searchSessions(
-	query: CassSearchQuery,
-): Promise<CassSearchResponse> {
+	query: HstrySearchQuery,
+): Promise<HstrySearchResponse> {
 	const url = new URL(
 		controlPlaneApiUrl("/api/search"),
 		window.location.origin,

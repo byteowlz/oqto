@@ -1,8 +1,8 @@
 "use client";
 
 import {
-	type CassSearchHit,
-	type CassSearchResponse,
+	type HstrySearchHit,
+	type HstrySearchResponse,
 	searchSessions,
 } from "@/lib/control-plane-client";
 import { cn } from "@/lib/utils";
@@ -17,8 +17,8 @@ interface SearchResultsProps {
 	query: string;
 	agentFilter: AgentFilter;
 	locale: "en" | "de";
-	onResultClick: (hit: CassSearchHit) => void;
-	extraHits?: CassSearchHit[];
+	onResultClick: (hit: HstrySearchHit) => void;
+	extraHits?: HstrySearchHit[];
 	className?: string;
 }
 
@@ -90,7 +90,7 @@ export function SearchResults({
 	extraHits,
 	className,
 }: SearchResultsProps) {
-	const [results, setResults] = useState<CassSearchResponse | null>(null);
+	const [results, setResults] = useState<HstrySearchResponse | null>(null);
 	const [loading, setLoading] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 

@@ -681,7 +681,10 @@ export function useVoiceMode(options: UseVoiceModeOptions): UseVoiceModeReturn {
 		}
 
 		// Set up listening for interrupts if enabled
-		if (!settingsRef.current.micMuted && settingsRef.current.interruptWordCount > 0) {
+		if (
+			!settingsRef.current.micMuted &&
+			settingsRef.current.interruptWordCount > 0
+		) {
 			if (!sttRef.current?.getIsListening()) {
 				sttRef.current?.startListening().catch(console.error);
 			}
@@ -692,10 +695,13 @@ export function useVoiceMode(options: UseVoiceModeOptions): UseVoiceModeReturn {
 		return ttsRef.current.streamStart();
 	}, [isActive]);
 
-	const streamAppend = useCallback((text: string): void => {
-		if (!isActive || !isActiveRef.current) return;
-		ttsRef.current?.streamAppend(text);
-	}, [isActive]);
+	const streamAppend = useCallback(
+		(text: string): void => {
+			if (!isActive || !isActiveRef.current) return;
+			ttsRef.current?.streamAppend(text);
+		},
+		[isActive],
+	);
 
 	const streamEnd = useCallback((): void => {
 		ttsRef.current?.streamEnd();

@@ -51,10 +51,7 @@ import {
 	setCachedScrollPosition,
 	usePiChat,
 } from "@/hooks/usePiChat";
-import {
-	extractFileReferenceDetails,
-	getFileTypeInfo,
-} from "@/lib/file-types";
+import { extractFileReferenceDetails, getFileTypeInfo } from "@/lib/file-types";
 import { formatSessionDate, resolveReadableId } from "@/lib/session-utils";
 import {
 	type SlashCommand,
@@ -552,9 +549,7 @@ export function MainChatPiView({
 
 		if (messageEl) {
 			// Ensure we have enough messages visible
-			const messageIndex = messages.findIndex(
-				(m) => m.id === targetId,
-			);
+			const messageIndex = messages.findIndex((m) => m.id === targetId);
 			if (messageIndex !== -1) {
 				const messagesFromEnd = messages.length - messageIndex;
 				if (messagesFromEnd > visibleCount) {
@@ -1830,7 +1825,10 @@ const PiMessageGroupCard = memo(function PiMessageGroupCard({
 					}
 					if (segment.type === "tool_use") {
 						return (
-							<div key={segment.key} className={needsTopMargin ? "mt-3" : undefined}>
+							<div
+								key={segment.key}
+								className={needsTopMargin ? "mt-3" : undefined}
+							>
 								<PiPartRenderer
 									part={segment.part}
 									toolResult={segment.toolResult}
@@ -1843,7 +1841,10 @@ const PiMessageGroupCard = memo(function PiMessageGroupCard({
 					if (segment.type === "tool_result_only") {
 						// Render standalone tool result (no matching tool_use found)
 						return (
-							<div key={segment.key} className={needsTopMargin ? "mt-3" : undefined}>
+							<div
+								key={segment.key}
+								className={needsTopMargin ? "mt-3" : undefined}
+							>
 								<PiPartRenderer
 									part={segment.part}
 									locale={locale}
@@ -1854,7 +1855,10 @@ const PiMessageGroupCard = memo(function PiMessageGroupCard({
 					}
 					if (segment.type === "thinking") {
 						return (
-							<div key={segment.key} className={needsTopMargin ? "mt-3" : undefined}>
+							<div
+								key={segment.key}
+								className={needsTopMargin ? "mt-3" : undefined}
+							>
 								<PiPartRenderer
 									part={{ type: "thinking", content: segment.content }}
 									locale={locale}
@@ -1878,7 +1882,10 @@ const PiMessageGroupCard = memo(function PiMessageGroupCard({
 					}
 					if (segment.type === "a2ui") {
 						return (
-							<div key={segment.key} className={needsTopMargin ? "mt-3" : undefined}>
+							<div
+								key={segment.key}
+								className={needsTopMargin ? "mt-3" : undefined}
+							>
 								<A2UICallCard
 									surfaceId={segment.surface.surfaceId}
 									messages={segment.surface.messages}
@@ -1895,7 +1902,6 @@ const PiMessageGroupCard = memo(function PiMessageGroupCard({
 					}
 					return null;
 				})}
-
 			</div>
 		</div>
 	);

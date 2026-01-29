@@ -35,6 +35,7 @@ import {
 	ChevronDown,
 	ChevronRight,
 	Copy,
+	CornerDownRight,
 	Loader2,
 	MessageCircle,
 	MessageSquare,
@@ -110,6 +111,39 @@ export function MainChatEntry({
 	}, [filterLower, sessions]);
 	const visibleSessions = filterLower ? filteredSessions : sessions;
 	const hasVisibleSessions = visibleSessions.length > 0;
+	const flattenedSessions = useMemo(() => {
+		if (filterLower) {
+			return visibleSessions.map((session) => ({ session, depth: 0 }));
+		}
+
+		const childrenByParent = new Map<string, PiSessionFile[]>();
+		for (const session of visibleSessions) {
+			if (!session.parent_id) continue;
+			const bucket = childrenByParent.get(session.parent_id) ?? [];
+			bucket.push(session);
+			childrenByParent.set(session.parent_id, bucket);
+		}
+
+		const result: Array<{ session: PiSessionFile; depth: number }> = [];
+		const added = new Set<string>();
+		for (const session of visibleSessions) {
+			if (session.parent_id) continue;
+			result.push({ session, depth: 0 });
+			added.add(session.id);
+			const children = childrenByParent.get(session.id) ?? [];
+			for (const child of children) {
+				result.push({ session: child, depth: 1 });
+				added.add(child.id);
+			}
+		}
+
+		for (const session of visibleSessions) {
+			if (added.has(session.id)) continue;
+			result.push({ session, depth: 0 });
+		}
+
+		return result;
+	}, [filterLower, visibleSessions]);
 
 	// Auto-expand when Main Chat is selected so sessions are visible.
 	useEffect(() => {
@@ -441,7 +475,10 @@ export function MainChatEntry({
 		try {
 			setRenaming(true);
 			setRenameError(null);
-			const updated = await renamePiSession(renameSessionId, renameTitle.trim());
+			const updated = await renamePiSession(
+				renameSessionId,
+				renameTitle.trim(),
+			);
 			// Update local state
 			setSessions((prev) =>
 				prev.map((s) => (s.id === updated.id ? updated : s)),
@@ -592,7 +629,7 @@ export function MainChatEntry({
 				{/* Session history list - shown when expanded */}
 				{expanded && hasSessions && (
 					<div className="space-y-0.5 pb-1">
-						{visibleSessions.map((session) => {
+						{flattenedSessions.map(({ session, depth }) => {
 							const isActive =
 								session.id === (activeSessionId ?? latestSessionId);
 							const readableId = resolveReadableId(
@@ -603,10 +640,12 @@ export function MainChatEntry({
 								new Date(session.started_at).getTime(),
 							);
 
+							const isChild = depth > 0;
+
 							return (
 								<ContextMenu key={session.id}>
 									<ContextMenuTrigger className="contents">
-										<div className="ml-3">
+										<div className={cn("ml-3", isChild && "ml-6")}>
 											<button
 												type="button"
 												onClick={() => handleTimelineSessionClick(session.id)}
@@ -617,7 +656,11 @@ export function MainChatEntry({
 														: "text-muted-foreground hover:bg-sidebar-accent border-transparent",
 												)}
 											>
-												<MessageSquare className="w-3 h-3 mt-0.5 text-primary/70 flex-shrink-0" />
+												{isChild ? (
+													<CornerDownRight className="w-3 h-3 mt-0.5 text-muted-foreground/70 flex-shrink-0" />
+												) : (
+													<MessageSquare className="w-3 h-3 mt-0.5 text-primary/70 flex-shrink-0" />
+												)}
 												<div className="flex-1 min-w-0">
 													<div className="text-xs font-medium truncate">
 														{session.title || "Untitled"}
@@ -917,13 +960,13 @@ function ResetAssistantDialog({
 						onClick={onSubmit}
 						disabled={loading || !name.trim() || !nameIsValid}
 					>
-					{loading
-						? locale === "de"
-							? "Zurucksetzen..."
-							: "Resetting..."
-						: locale === "de"
-							? "Zurucksetzen"
-							: "Reset"}
+						{loading
+							? locale === "de"
+								? "Zurucksetzen..."
+								: "Resetting..."
+							: locale === "de"
+								? "Zurucksetzen"
+								: "Reset"}
 					</Button>
 				</DialogFooter>
 			</DialogContent>
@@ -971,9 +1014,7 @@ function RenameSessionDialog({
 						</Label>
 						<Input
 							id="session-title"
-							placeholder={
-								locale === "de" ? "Sitzungstitel" : "Session title"
-							}
+							placeholder={locale === "de" ? "Sitzungstitel" : "Session title"}
 							value={title}
 							onChange={(e) => onTitleChange(e.target.value)}
 							onKeyDown={(e) => {

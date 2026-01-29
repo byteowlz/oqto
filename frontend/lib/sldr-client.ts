@@ -117,7 +117,9 @@ export async function previewSkeleton(
 	const params = new URLSearchParams();
 	if (flavor) params.set("flavor", flavor);
 	const res = await fetch(
-		controlPlaneApiUrl(`/api/sldr/preview/${encodeURIComponent(skeleton)}?${params.toString()}`),
+		controlPlaneApiUrl(
+			`/api/sldr/preview/${encodeURIComponent(skeleton)}?${params.toString()}`,
+		),
 		{
 			headers: defaultHeaders(),
 			credentials: "include",

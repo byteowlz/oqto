@@ -204,10 +204,10 @@ export const AgentMentionPopup = memo(function AgentMentionPopup({
 		if (looksLikePath(query)) {
 			const expandedPath = expandPath(query);
 			const dirName = expandedPath.split("/").pop() || expandedPath;
-			
+
 			// Check if we already have a session for this exact path
 			const hasExactMatch = sessionTargets.some(
-				(t) => t.workspace_path === expandedPath
+				(t) => t.workspace_path === expandedPath,
 			);
 
 			// Always show "New session" option for path-like queries

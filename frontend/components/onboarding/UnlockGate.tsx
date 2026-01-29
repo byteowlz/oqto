@@ -15,7 +15,7 @@ interface UnlockGateProps {
 
 /**
  * Conditionally renders children based on whether a component is unlocked.
- * 
+ *
  * Usage:
  * ```tsx
  * <UnlockGate component="terminal">
@@ -48,7 +48,7 @@ export function UnlockGate({
 
 	if (showPlaceholder) {
 		return (
-			<div 
+			<div
 				className="opacity-20 pointer-events-none select-none"
 				aria-hidden="true"
 			>
@@ -65,7 +65,7 @@ export function UnlockGate({
  */
 export function useUnlockGate(component: keyof UnlockedComponents) {
 	const { isUnlocked, loading, unlockComponent } = useOnboarding();
-	
+
 	return {
 		isUnlocked: isUnlocked(component),
 		loading,
