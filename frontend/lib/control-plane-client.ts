@@ -1447,6 +1447,8 @@ export type PiSessionFile = {
 	size: number;
 	modified_at: number;
 	title?: string;
+	/** Human-readable ID (e.g., "cold-lamp-verb") */
+	readable_id?: string;
 	parent_id?: string;
 	message_count: number;
 };

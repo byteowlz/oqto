@@ -1170,6 +1170,12 @@ impl MessageAccumulator {
                         "input": tool_call.arguments
                     }));
                 }
+                AssistantMessageEvent::Error { reason } => {
+                    self.tool_calls.push(serde_json::json!({
+                        "type": "error",
+                        "reason": reason
+                    }));
+                }
                 _ => {}
             },
             PiEvent::ToolExecutionEnd {
@@ -1376,6 +1382,10 @@ fn transform_pi_event_for_ws(event: &PiEvent) -> Option<Value> {
                         "name": tool_call.name,
                         "input": tool_call.arguments
                     }
+                })),
+                AssistantMessageEvent::Error { reason } => Some(serde_json::json!({
+                    "type": "error",
+                    "data": reason
                 })),
                 _ => None, // Skip other message updates
             }

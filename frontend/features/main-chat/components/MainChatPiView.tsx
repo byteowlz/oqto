@@ -1835,7 +1835,9 @@ const PiMessageGroupCard = memo(function PiMessageGroupCard({
 		.map((s) => s.content)
 		.join("\n\n");
 
-	const assistantDisplayName = assistantName || "Assistant";
+	// Use workspace name instead of "Assistant" when assistantName is not provided
+	const workspaceName = workspacePath?.split("/").pop() || "Assistant";
+	const assistantDisplayName = assistantName || workspaceName;
 
 	const messageCard = (
 		<div
@@ -2069,8 +2071,9 @@ const PiMessageCard = memo(function PiMessageCard({
 
 	const createdAt = message.timestamp ? new Date(message.timestamp) : null;
 
-	// Use configured assistant name or fallback to "Assistant"
-	const displayName = isUser ? "You" : assistantName || "Assistant";
+	// Use configured assistant name or fallback to workspace name instead of "Assistant"
+	const workspaceName = workspacePath?.split("/").pop() || "Assistant";
+	const displayName = isUser ? "You" : assistantName || workspaceName;
 
 	const messageCard = (
 		<div

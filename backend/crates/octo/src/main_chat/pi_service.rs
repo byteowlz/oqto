@@ -133,6 +133,9 @@ pub struct PiSessionFile {
     pub modified_at: i64,
     /// Title (derived from first user message, or None)
     pub title: Option<String>,
+    /// Human-readable ID (e.g., "cold-lamp-verb")
+    /// Parsed from auto-generated title format: <workdir>: <title> [readable_id]
+    pub readable_id: Option<String>,
     /// Parent session ID (if this session was spawned as a child)
     pub parent_id: Option<String>,
     /// Number of messages in session
@@ -212,6 +215,9 @@ enum StreamPart {
         content: Value,
         is_error: bool,
     },
+    Error {
+        reason: String,
+    },
 }
 
 #[derive(Debug, Default, Clone)]
@@ -286,6 +292,16 @@ impl StreamSnapshot {
                         input: tool_call.arguments.clone(),
                     });
                 }
+                AssistantMessageEvent::Error { reason } => {
+                    if message.role == "assistant" {
+                        self.is_streaming = true;
+                        self.has_message = true;
+                    }
+                    // Store error as a special part
+                    self.parts.push(StreamPart::Error {
+                        reason: reason.clone(),
+                    });
+                }
                 _ => {}
             },
             PiEvent::ToolExecutionEnd {
@@ -346,6 +362,12 @@ impl StreamSnapshot {
                             "content": content,
                             "isError": is_error
                         }
+                    }));
+                }
+                StreamPart::Error { reason } => {
+                    events.push(json!({
+                        "type": "error",
+                        "data": reason
                     }));
                 }
             }
@@ -864,12 +886,35 @@ impl MainChatPiService {
             }
         }
 
+        // Parse title to extract readable_id (format: <workdir>: <title> [readable_id])
+        let parsed_title = title
+            .as_ref()
+            .map(|t| crate::pi::session_parser::ParsedTitle::parse(t));
+
+        let readable_id = parsed_title
+            .as_ref()
+            .and_then(|p| p.get_readable_id())
+            .map(String::from);
+
+        // Optionally strip workspace and ID from title for cleaner display
+        // This preserves the original auto-generated format in the file but returns cleaner version
+        let display_title = if let Some(parsed) = parsed_title {
+            parsed.display_title().to_string()
+        } else {
+            title.clone().unwrap_or_default()
+        };
+
         Some(PiSessionFile {
             id,
             started_at,
             size: metadata.len(),
             modified_at: modified_ms,
-            title,
+            title: if display_title.is_empty() {
+                None
+            } else {
+                Some(display_title)
+            },
+            readable_id,
             parent_id,
             message_count,
         })

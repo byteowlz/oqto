@@ -129,6 +129,8 @@ const AppShell = memo(function AppShell() {
 		renameChatSession,
 		busySessions,
 		workspaceSessions,
+		selectedWorkspaceSessionId,
+		setSelectedWorkspaceSessionId,
 		projectDefaultAgents,
 		setProjectDefaultAgents,
 		mainChatActive,
@@ -1058,6 +1060,20 @@ const AppShell = memo(function AppShell() {
 		// Clear main chat selection when clicking a regular session
 		setMainChatActive(false);
 		setMainChatWorkspacePath(null);
+
+		// Synchronize workspace session with the selected chat's workspace
+		// This ensures new chats are created in the correct workspace
+		const selectedSession = chatHistory.find((s) => s.id === sessionId);
+		if (selectedSession?.workspace_path) {
+			const workspacePath = selectedSession.workspace_path;
+			// Find the workspace session that matches this workspace path
+			const matchingWorkspaceSession = workspaceSessions.find(
+				(ws) => ws.workspace_path === workspacePath,
+			);
+			if (matchingWorkspaceSession) {
+				setSelectedWorkspaceSessionId(matchingWorkspaceSession.id);
+			}
+		}
 	};
 
 	// Handle search result click - navigate to the session and scroll to message
@@ -1328,7 +1344,9 @@ const AppShell = memo(function AppShell() {
 			console.log("[handleNewChat] Using existing workspace session");
 			setActiveAppId("sessions");
 			const workspacePath =
-				selectedWorkspaceSession.workspace_path ?? opencodeDirectory ?? "global";
+				selectedWorkspaceSession.workspace_path ??
+				opencodeDirectory ??
+				"global";
 			const optimisticId = createOptimisticChatSession(workspacePath);
 			const created = await createNewPiChat(workspacePath, { optimisticId });
 			if (created) return;

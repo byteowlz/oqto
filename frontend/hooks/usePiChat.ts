@@ -685,6 +685,8 @@ export function usePiChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 	const resumeInFlightRef = useRef<string | null>(null);
 	// Track sessions created by newSession() to skip resume for them
 	const justCreatedSessionRef = useRef<string | null>(null);
+	// Track when a session was selected to suppress spurious connection errors
+	const sessionSelectedAtRef = useRef<number | null>(null);
 
 	// Initialize with cached data for INSTANT display
 	const [state, setState] = useState<PiState | null>(getCachedState);
@@ -779,6 +781,7 @@ export function usePiChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 		// (the session is already active and empty on the backend)
 		if (justCreatedSessionRef.current === activeSessionId) {
 			justCreatedSessionRef.current = null;
+			sessionSelectedAtRef.current = Date.now(); // Track creation time for error suppression
 			// WebSocket reconnection is handled by newSession() itself
 			return;
 		}
@@ -788,11 +791,13 @@ export function usePiChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 			return;
 		}
 
+		sessionSelectedAtRef.current = Date.now(); // Track selection time for error suppression
 		setMessages(
 			readCachedSessionMessages(activeSessionId, resolvedStorageKeyPrefix),
 		);
 		streamingMessageRef.current = null;
 		setIsStreaming(false);
+		setError(null); // Clear any previous errors when switching sessions
 
 		// Resume selected session in background, then reconnect WebSocket.
 		if (resumeInFlightRef.current === activeSessionId) return;
@@ -1138,6 +1143,19 @@ export function usePiChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 		ws.onmessage = handleWsMessage;
 
 		ws.onerror = () => {
+			// Suppress connection errors that occur shortly after session selection
+			// This handles race conditions where WebSocket connects before the backend
+			// is fully ready (e.g., after creating a new session)
+			const now = Date.now();
+			const sessionSelectedAt = sessionSelectedAtRef.current;
+			if (sessionSelectedAt && now - sessionSelectedAt < 3000) {
+				// Error occurred within 3 seconds of session selection - likely spurious
+				console.debug(
+					`[usePiChat] Suppressing WebSocket error that occurred ${now - sessionSelectedAt}ms after session selection`,
+				);
+				return;
+			}
+
 			const err = new Error("WebSocket connection error");
 			setError(err);
 			onError?.(err);

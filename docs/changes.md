@@ -1,6 +1,6 @@
 # Changes
 
-- 2026-01-30: Gate Pi model switching to idle sessions in the UI so streaming/compacting runs cannot be interrupted.
+- 2026-01-30: Secure sudoers rules in setup.sh by removing overly permissive wildcard patterns. Replaced with explicitly whitelisted commands: restricted useradd to specific flags only, removed dangerous usermod wildcard, prevented home directory deletion with userdel, explicitly limited systemctl --user commands to octo-runner only, and restricted chown to safe paths (/home/* and /var/lib/octo/* with depth limits). Removed dangerous "ALL=(*) NOPASSWD: ALL" rule that allowed running any command as octo_* users.
 - 2026-01-30: Point Pi agent storage (settings, models, sessions) at the workspace `.pi` directory instead of `~/.pi/agent`.
 - 2026-01-30: Flatten the Pi settings view to match the OpenCode settings layout (single pane, no tabs).
 - 2026-01-30: Keep focus in the Pi model search input while typing in the selector.
