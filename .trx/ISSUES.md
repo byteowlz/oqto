@@ -2,6 +2,51 @@
 
 ## Open
 
+### [octo-jgc6] WebSocket messages lack session_id validation (P0, bug)
+WebSocket messages from the backend do not include a session_id field, making it impossible for the frontend to validate that incoming messages belong to the currently active session.
+
+## Root Cause
+
+In backend/crates/octo/src/api/main_chat_pi.rs, transform_pi_event_for_ws() sends events without session context:
+...
+
+
+### [octo-p7v5] Messages saved with stale pi_session_id when switching sessions (P0, bug)
+When users switch between Main Chat sessions, the WebSocket handler captures pi_session_id once at connection time and never refreshes it. This causes messages to be persisted to the database with the wrong session_id.
+
+## Root Cause
+
+In backend/crates/octo/src/api/main_chat_pi.rs, the ws_handler captures:
+...
+
+
+### [octo-pwnn] Backend Pi process reuse broadcasts events across sessions (P1, bug)
+When resuming a session that already has a Pi process running, backend reuses the existing process without creating isolated event subscriptions. This can cause events from one session to be broadcast to WebSocket handlers for another session.
+
+## Root Cause
+
+In backend/crates/octo/src/main_chat/pi_service.rs:
+...
+
+
+### [octo-1j5m] Background history refresh races with session switches (P1, bug)
+Background history refresh (usePiChatHistory) runs periodically without checking if messages are still relevant to the current session. This can cause stale messages to appear momentarily in wrong sessions.
+
+## Root Cause
+
+In frontend/features/main-chat/hooks/usePiChatHistory.ts:
+...
+
+
+### [octo-dxsg] WebSocket handler swapping causes message leaks (P1, bug)
+Multiple Pi chat instances share the same WebSocket connection via wsCache, swapping message handlers without proper cleanup. This causes old handlers to continue receiving and processing messages meant for new sessions.
+
+## Root Cause
+
+In frontend/features/main-chat/hooks/usePiChatStreaming.ts:
+...
+
+
 ### [octo-p3n2] API Key Authentication & External Integration (P1, epic)
 Enable external apps (omni, ctx) to integrate with Octo via API keys. Support fire-and-forget and streaming responses, .ctx context files, auto-session creation.
 
@@ -1271,9 +1316,9 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
-- [octo-k8z1.2] Backend: WebSocket proxy for screencast stream (closed )
-- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
 - [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
-- [octo-k8z1.1] Backend: Integrate agent-browser daemon per session (closed )
-- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
 - [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
+- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
+- [octo-k8z1.1] Backend: Integrate agent-browser daemon per session (closed )
+- [octo-k8z1.2] Backend: WebSocket proxy for screencast stream (closed )
+- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
