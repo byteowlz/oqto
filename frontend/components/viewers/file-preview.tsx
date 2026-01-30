@@ -1,13 +1,7 @@
 "use client";
 
-import { CodeViewer } from "@/components/ui/code-viewer";
-import { CSVViewer } from "@/components/ui/csv-viewer";
-import { ImageViewer } from "@/components/ui/image-viewer";
-import { MarkdownRenderer } from "@/components/ui/markdown-renderer";
-import { PDFViewer } from "@/components/ui/pdf-viewer";
+import { MarkdownRenderer } from "@/components/data-display/markdown-renderer";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { TypstViewer } from "@/components/ui/typst-viewer";
-import { VideoViewer } from "@/components/ui/video-viewer";
 import { type FileCategory, getFileTypeInfo } from "@/lib/file-types";
 import { cn } from "@/lib/utils";
 import {
@@ -21,6 +15,12 @@ import {
 	Loader2,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { CodeViewer } from "./code-viewer";
+import { CSVViewer } from "./csv-viewer";
+import { ImageViewer } from "./image-viewer";
+import { PDFViewer } from "./pdf-viewer";
+import { TypstViewer } from "./typst-viewer";
+import { VideoViewer } from "./video-viewer";
 
 interface FilePreviewProps {
 	filename: string;

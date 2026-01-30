@@ -1,19 +1,38 @@
 "use client";
 
+import {
+	A2UICallCard,
+	AgentMentionPopup,
+	type AgentTarget,
+	AgentTargetChip,
+	type FileAttachment,
+	FileAttachmentChip,
+	FileMentionPopup,
+	type IssueAttachment,
+	IssueAttachmentChip,
+	PermissionBanner,
+	PermissionDialog,
+	ReadAloudButton,
+	SlashCommandPopup,
+	type TodoItem,
+	ToolCallCard,
+	UserQuestionBanner,
+	UserQuestionDialog,
+} from "@/components/chat";
+import { BrailleSpinner } from "@/components/common";
 import { useUIControl } from "@/components/contexts/ui-control-context";
+import {
+	ContextWindowGauge,
+	CopyButton,
+	MarkdownRenderer,
+	ProviderIcon,
+} from "@/components/data-display";
 import {
 	ChatSearchBar,
 	MainChatPiView,
 	PiSettingsView,
 } from "@/components/main-chat";
-import { A2UICallCard } from "@/components/ui/a2ui-call-card";
-import {
-	AgentMentionPopup,
-	type AgentTarget,
-	AgentTargetChip,
-} from "@/components/ui/agent-mention-popup";
 import { Badge } from "@/components/ui/badge";
-import { BrailleSpinner } from "@/components/ui/braille-spinner";
 import { Button } from "@/components/ui/button";
 import {
 	ContextMenu,
@@ -22,25 +41,7 @@ import {
 	ContextMenuSeparator,
 	ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import { ContextWindowGauge } from "@/components/ui/context-window-gauge";
-import {
-	type FileAttachment,
-	FileAttachmentChip,
-	FileMentionPopup,
-	type IssueAttachment,
-	IssueAttachmentChip,
-} from "@/components/ui/file-mention-popup";
 import { Input } from "@/components/ui/input";
-import {
-	CopyButton,
-	MarkdownRenderer,
-} from "@/components/ui/markdown-renderer";
-import {
-	PermissionBanner,
-	PermissionDialog,
-} from "@/components/ui/permission-dialog";
-import { ProviderIcon } from "@/components/ui/provider-icon";
-import { ReadAloudButton } from "@/components/ui/read-aloud-button";
 import {
 	Select,
 	SelectContent,
@@ -48,12 +49,6 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from "@/components/ui/select";
-import { SlashCommandPopup } from "@/components/ui/slash-command-popup";
-import { type TodoItem, ToolCallCard } from "@/components/ui/tool-call-card";
-import {
-	UserQuestionBanner,
-	UserQuestionDialog,
-} from "@/components/ui/user-question-dialog";
 import {
 	DictationOverlay,
 	VoiceInputOverlay,

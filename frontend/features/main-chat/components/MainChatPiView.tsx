@@ -1,7 +1,20 @@
 "use client";
 
-import { A2UICallCard } from "@/components/ui/a2ui-call-card";
-import { BrailleSpinner } from "@/components/ui/braille-spinner";
+import {
+	A2UICallCard,
+	type FileAttachment,
+	FileAttachmentChip,
+	FileMentionPopup,
+	ReadAloudButton,
+	SlashCommandPopup,
+	ToolCallCard,
+} from "@/components/chat";
+import { BrailleSpinner } from "@/components/common";
+import {
+	ContextWindowGauge,
+	CopyButton,
+	MarkdownRenderer,
+} from "@/components/data-display";
 import { Button } from "@/components/ui/button";
 import {
 	ContextMenu,
@@ -9,20 +22,7 @@ import {
 	ContextMenuItem,
 	ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import { ContextWindowGauge } from "@/components/ui/context-window-gauge";
-import {
-	type FileAttachment,
-	FileAttachmentChip,
-	FileMentionPopup,
-} from "@/components/ui/file-mention-popup";
 import { Input } from "@/components/ui/input";
-import {
-	CopyButton,
-	MarkdownRenderer,
-} from "@/components/ui/markdown-renderer";
-import { ReadAloudButton } from "@/components/ui/read-aloud-button";
-import { SlashCommandPopup } from "@/components/ui/slash-command-popup";
-import { ToolCallCard } from "@/components/ui/tool-call-card";
 import { DictationOverlay } from "@/components/voice";
 import {
 	VoiceMenuButton,

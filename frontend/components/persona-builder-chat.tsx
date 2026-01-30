@@ -1,7 +1,7 @@
 "use client";
 
+import { MarkdownRenderer } from "@/components/data-display";
 import { Button } from "@/components/ui/button";
-import { MarkdownRenderer } from "@/components/ui/markdown-renderer";
 import { Textarea } from "@/components/ui/textarea";
 import { controlPlaneDirectBaseUrl } from "@/lib/control-plane-client";
 import {

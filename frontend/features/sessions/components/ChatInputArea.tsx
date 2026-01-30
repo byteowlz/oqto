@@ -1,12 +1,12 @@
 "use client";
 
-import { Button } from "@/components/ui/button";
 import {
 	type FileAttachment,
 	FileAttachmentChip,
 	FileMentionPopup,
-} from "@/components/ui/file-mention-popup";
-import { SlashCommandPopup } from "@/components/ui/slash-command-popup";
+	SlashCommandPopup,
+} from "@/components/chat";
+import { Button } from "@/components/ui/button";
 import {
 	DictationOverlay,
 	VoiceMenuButton,

@@ -1,6 +1,6 @@
 "use client";
 
-import { ProviderIcon } from "@/components/ui/provider-icon";
+import { ProviderIcon } from "@/components/data-display";
 import { useApp } from "@/hooks/use-app";
 import { useCurrentUser } from "@/hooks/use-auth";
 import { controlPlaneApiUrl, getAuthHeaders } from "@/lib/control-plane-client";

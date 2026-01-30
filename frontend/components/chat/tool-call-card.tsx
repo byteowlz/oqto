@@ -1,5 +1,9 @@
 "use client";
 
+import {
+	CopyButton,
+	MarkdownRenderer,
+} from "@/components/data-display/markdown-renderer";
 import type { OpenCodePart } from "@/lib/opencode-client";
 import { cn } from "@/lib/utils";
 import {
@@ -24,7 +28,6 @@ import {
 	XCircle,
 } from "lucide-react";
 import { useState } from "react";
-import { CopyButton, MarkdownRenderer } from "./markdown-renderer";
 
 interface ToolCallCardProps {
 	part: OpenCodePart;
