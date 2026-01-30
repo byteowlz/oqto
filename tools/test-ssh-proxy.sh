@@ -3,19 +3,21 @@ set -euo pipefail
 
 usage() {
   cat <<'USAGE'
-Usage: tools/test-ssh-proxy.sh [--host <host>] [--octo-server <url>] [--profile <name>]
+Usage: tools/test-ssh-proxy.sh [--host <host>] [--no-host] [--octo-server <url>] [--profile <name>]
 
 Runs octo-ssh-proxy and verifies that octo-sandbox can access SSH agent keys
 via the proxy while ~/.ssh stays masked inside the sandbox.
 
 Options:
-  --host         Optional host to attempt an SSH connection (e.g. github.com).
+  --host         Host to attempt an SSH connection (default: github.com).
+  --no-host      Skip the SSH connection test.
   --octo-server  Octo server URL for approval prompts (default: http://localhost:8081).
   --profile      Sandbox profile name from config (default: development).
 USAGE
 }
 
-host=""
+host="github.com"
+run_host_test=true
 octo_server="http://localhost:8081"
 profile="development"
 
@@ -24,6 +26,10 @@ while [[ $# -gt 0 ]]; do
     --host)
       host="${2:-}"
       shift 2
+      ;;
+    --no-host)
+      run_host_test=false
+      shift 1
       ;;
     --octo-server)
       octo_server="${2:-}"
@@ -109,7 +115,7 @@ echo "Listing keys through proxy inside sandbox"
 SSH_AUTH_SOCK="$proxy_sock" \
   octo-sandbox -- bash -lc 'ssh-add -L'
 
-if [[ -n "$host" ]]; then
+if [[ "$run_host_test" == "true" && -n "$host" ]]; then
   echo "Attempting SSH connection to $host (may prompt in Octo UI)"
   SSH_AUTH_SOCK="$proxy_sock" \
     octo-sandbox -- bash -lc "ssh -T git@$host"

@@ -26,6 +26,7 @@ All notable changes to this project will be documented in this file.
 - `tools/test-ssh-proxy.sh` now auto-adds `~/.ssh/id_ed25519` if the agent has no keys loaded.
 - `tools/test-ssh-proxy.sh` now starts an `ssh-agent` if `SSH_AUTH_SOCK` is unset.
 - `tools/test-ssh-proxy.sh` now places its proxy socket under `~/.config/octo` so it is visible inside the sandbox.
+- `tools/test-ssh-proxy.sh` now runs a host SSH test by default (use `--no-host` to skip).
 - Workspace Pi header model switching now uses Pi RPC and shows Pi models instead of OpenCode options.
 - New Pi sessions clear cached messages to avoid leaking previous session history.
 - Workspace Pi API now resumes sessions when fetching state/models/WS and returns empty history when no session file exists.
