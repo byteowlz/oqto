@@ -137,6 +137,96 @@ Implementation:
 ### [workspace-5pmk.11] Add backend URL configuration to login form (P1, task)
 Add a 'Server URL' field to the login form allowing users to specify the backend URL. Store in localStorage for persistence. Show connection status indicator. Default to current origin for web, require input for mobile apps.
 
+### [octo-my07.9] Split session-context into focused contexts (P2, task)
+## Current State
+`frontend/components/contexts/session-context.tsx` (1,258 lines) manages too much:
+- Workspace sessions state
+- Chat sessions state
+- OpenCode connection state
+...
+
+
+### [octo-my07.8] Implement TypeScript type generation from Rust (P2, task)
+## Problem
+Types are duplicated between:
+- Rust structs (`session/models.rs`, etc.)
+- TypeScript types (`control-plane-client.ts`, `types.ts`)
+
+...
+
+
+### [octo-my07.7] Standardize backend domain module structure (P2, task)
+## Current State
+Backend has inconsistent domain patterns:
+- Some domains: `models.rs`, `repository.rs`, `service.rs` (good)
+- Others: Everything in one large `mod.rs` (inconsistent)
+
+...
+
+
+### [octo-my07.6] Establish feature-based frontend organization (P2, task)
+## Current State
+Frontend has flat organization:
+- `hooks/` - 22 files of varying sizes, mixed concerns
+- `components/` - Large flat directory
+- `lib/` - Utilities and clients mixed together
+...
+
+
+### [octo-my07.5] Implement generic proxy factory in backend (P2, task)
+## Current State
+`backend/crates/octo/src/api/proxy.rs` is 2,070 lines with repetitive proxy functions:
+- proxy_opencode
+- proxy_fileserver  
+- proxy_terminal_ws
+...
+
+
+### [octo-my07.4] Decompose usePiChat hook into focused hooks (P2, task)
+## Current State
+`frontend/hooks/usePiChat.ts` is 1,748 lines handling chat state, streaming, history, tool execution, and more in one massive hook.
+
+## Target Structure
+```
+...
+
+
+### [octo-my07.3] Split handlers.rs into domain-specific modules (P2, task)
+## Current State
+`backend/crates/octo/src/api/handlers.rs` is 5,088 lines with 50+ handler functions covering sessions, chat, admin, projects, settings, etc.
+
+## Target Structure
+```
+...
+
+
+### [octo-my07.2] Extract AppShellRoute into focused components (P2, task)
+## Current State
+`frontend/src/routes/AppShellRoute.tsx` is ~3,946 lines containing sidebar, navigation, dialogs, templates, project actions, and the main content router all in one file.
+
+## Target Structure
+```
+...
+
+
+### [octo-my07.1] Split control-plane-client.ts into domain modules (P2, task)
+## Current State
+`frontend/lib/control-plane-client.ts` is 2,561 lines with ~100 exported functions mixing auth, sessions, chat, admin, projects, settings, and more.
+
+## Target Structure
+```
+...
+
+
+### [octo-my07] Codebase Refactoring for Maintainability (P2, epic)
+Comprehensive refactoring initiative to improve code organization, reduce duplication, and establish clear separation of concerns across frontend and backend.
+
+## Goals
+- Break up large monolithic files (2000-5000+ lines) into focused modules
+- Establish feature-based organization for frontend
+...
+
+
 ### [octo-7xx0] Note: octo-ssh-proxy socket path must be mounted or moved for sandbox access (P2, task)
 
 ### [octo-p3n2.6] .ctx file parsing (P2, task)
@@ -563,6 +653,42 @@ Enable multiple platform users to access the same project/workspace with proper 
 ## Design
 
 ### Core Concept
+...
+
+
+### [octo-my07.13] Extract shared UI components to component library (P3, task)
+## Current State
+`frontend/components/ui/` has 76 shadcn/radix components, but:
+- Some are customized versions mixed with stock shadcn
+- App-specific components mixed with generic ones
+- No clear distinction between library and app components
+...
+
+
+### [octo-my07.12] Add comprehensive test infrastructure (P3, task)
+## Current State
+Limited test coverage, tests scattered across the codebase without clear organization.
+
+## Backend Test Structure
+```
+...
+
+
+### [octo-my07.11] Refactor dashboard into feature components (P3, task)
+## Current State
+`frontend/apps/dashboard/index.tsx` is 2,309 lines containing the entire dashboard in one file.
+
+## Target Structure
+```
+...
+
+
+### [octo-my07.10] Implement unified error handling in backend (P3, task)
+## Current State
+Error handling varies across the codebase:
+- Some handlers use `anyhow::Result`
+- Some use custom error types
+- API responses inconsistent
 ...
 
 
@@ -1217,9 +1343,9 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
-- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
+- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
 - [octo-k8z1.1] Backend: Integrate agent-browser daemon per session (closed )
 - [octo-k8z1.2] Backend: WebSocket proxy for screencast stream (closed )
-- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
-- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
+- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
 - [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
+- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
