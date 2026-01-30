@@ -2,10 +2,12 @@
 
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
+use ts_rs::TS;
 
 /// User role enumeration.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, TS)]
 #[serde(rename_all = "lowercase")]
+#[ts(export, export_to = "../../../../frontend/src/generated/")]
 pub enum UserRole {
     #[default]
     User,
@@ -93,7 +95,8 @@ impl<'r> sqlx::Decode<'r, sqlx::Sqlite> for UserRole {
 }
 
 /// Public user info (safe to return to clients).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../../frontend/src/generated/")]
 pub struct UserInfo {
     pub id: String,
     pub username: String,

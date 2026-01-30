@@ -2,6 +2,7 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
 /// OpenCode session as stored on disk.
 /// This matches the actual structure in ~/.local/share/opencode/storage/session/
@@ -28,7 +29,8 @@ pub struct SessionTime {
 }
 
 /// A chat session with its project context.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "../../../../frontend/src/generated/")]
 pub struct ChatSession {
     /// Session ID (e.g., "ses_xxx")
     pub id: String,
@@ -149,7 +151,8 @@ pub struct ToolState {
 }
 
 /// A chat message with its content parts.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "../../../../frontend/src/generated/")]
 pub struct ChatMessage {
     pub id: String,
     pub session_id: String,
@@ -170,7 +173,8 @@ pub struct ChatMessage {
 }
 
 /// A single part of a chat message.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "../../../../frontend/src/generated/")]
 pub struct ChatMessagePart {
     pub id: String,
     pub part_type: String,
