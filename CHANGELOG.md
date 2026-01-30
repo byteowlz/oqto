@@ -32,6 +32,7 @@ All notable changes to this project will be documented in this file.
 - New Pi sessions clear cached messages to avoid leaking previous session history.
 - Workspace Pi API now resumes sessions when fetching state/models/WS and returns empty history when no session file exists.
 - Workspace Pi UI now skips pending session IDs for Pi RPC/model/state calls to avoid 500s during optimistic creation.
+- Pi RPC model switching now sends `modelId` to match pi-mono's SetModel contract.
 
 ### Security
 
