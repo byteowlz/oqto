@@ -926,7 +926,7 @@ impl SandboxConfig {
 
         // Home directory base (for tool directories)
         // Bind home read-only FIRST, then overlay writable paths on top
-        if let Some(home) = target_home {
+        if let Some(ref home) = target_home {
             let home_str = home.to_string_lossy().to_string();
             info!(
                 "Using home directory '{}' for user {:?}",
@@ -964,36 +964,6 @@ impl SandboxConfig {
                     );
                 }
             }
-
-            // Block denied read paths by mounting empty tmpfs
-            for path in &self.deny_read {
-                let expanded = Self::expand_home_for_user(path, username);
-                if expanded.exists() {
-                    let expanded_str = expanded.to_string_lossy().to_string();
-                    args.push("--tmpfs".to_string());
-                    args.push(expanded_str.clone());
-                    debug!("Deny-read (tmpfs): '{}' -> '{}'", path, expanded_str);
-                } else {
-                    debug!(
-                        "Skipping deny-read '{}' (path does not exist for user {:?})",
-                        path,
-                        username.unwrap_or("(current)")
-                    );
-                }
-            }
-
-            // Block denied write paths by binding read-only
-            // Applied AFTER allow_write, so these take precedence
-            for path in &self.deny_write {
-                let expanded = Self::expand_home_for_user(path, username);
-                if expanded.exists() {
-                    let expanded_str = expanded.to_string_lossy().to_string();
-                    args.push("--ro-bind".to_string());
-                    args.push(expanded_str.clone());
-                    args.push(expanded_str.clone());
-                    debug!("Deny-write (ro-bind): '{}' -> '{}'", path, expanded_str);
-                }
-            }
         } else {
             warn!(
                 "Could not determine home directory for user {:?}, home-based paths will not be bound",
@@ -1025,6 +995,52 @@ impl SandboxConfig {
             args.push("--tmpfs".to_string());
             args.push(octo_dir.to_string_lossy().to_string());
             debug!("Mounted empty tmpfs at .octo/ to prevent creation");
+        }
+
+        // Apply deny rules AFTER workspace bind so they always take precedence,
+        // even when the workspace is the user's home directory.
+        if target_home.is_some() {
+            // Block denied read paths by mounting empty tmpfs (dirs) or masking files.
+            for path in &self.deny_read {
+                let expanded = Self::expand_home_for_user(path, username);
+                if expanded.exists() {
+                    let expanded_str = expanded.to_string_lossy().to_string();
+                    let is_dir = expanded
+                        .metadata()
+                        .map(|meta| meta.is_dir())
+                        .unwrap_or(false);
+                    if is_dir {
+                        args.push("--tmpfs".to_string());
+                        args.push(expanded_str.clone());
+                        debug!("Deny-read (tmpfs): '{}' -> '{}'", path, expanded_str);
+                    } else {
+                        // Mask file paths by binding /dev/null over them.
+                        args.push("--bind".to_string());
+                        args.push("/dev/null".to_string());
+                        args.push(expanded_str.clone());
+                        debug!("Deny-read (file mask): '{}' -> '{}'", path, expanded_str);
+                    }
+                } else {
+                    debug!(
+                        "Skipping deny-read '{}' (path does not exist for user {:?})",
+                        path,
+                        username.unwrap_or("(current)")
+                    );
+                }
+            }
+
+            // Block denied write paths by binding read-only.
+            // Applied AFTER allow_write/workspace bind, so these take precedence.
+            for path in &self.deny_write {
+                let expanded = Self::expand_home_for_user(path, username);
+                if expanded.exists() {
+                    let expanded_str = expanded.to_string_lossy().to_string();
+                    args.push("--ro-bind".to_string());
+                    args.push(expanded_str.clone());
+                    args.push(expanded_str.clone());
+                    debug!("Deny-write (ro-bind): '{}' -> '{}'", path, expanded_str);
+                }
+            }
         }
 
         // /tmp (usually needed)
@@ -1099,6 +1115,8 @@ impl SandboxConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::env;
+    use tempfile::tempdir;
 
     #[test]
     fn test_default_config() {
@@ -1352,5 +1370,42 @@ log_requests = true
         assert_eq!(network.mode, NetworkMode::Proxy);
         assert_eq!(network.allow_domains.len(), 3);
         assert!(network.log_requests);
+    }
+
+    #[test]
+    fn test_deny_read_after_workspace_bind_when_workspace_is_home() {
+        let temp = tempdir().unwrap();
+        let home = temp.path();
+        std::fs::create_dir_all(home.join(".ssh")).unwrap();
+
+        let original_home = env::var_os("HOME");
+        env::set_var("HOME", home);
+
+        let config = SandboxConfig::development();
+        let args = config.build_bwrap_args_for_user(home, None).unwrap();
+
+        let home_str = home.to_string_lossy().to_string();
+        let ssh_str = home.join(".ssh").to_string_lossy().to_string();
+
+        let workspace_idx = args
+            .as_slice()
+            .windows(3)
+            .position(|w| w[0] == "--bind" && w[1] == home_str && w[2] == home_str)
+            .expect("workspace bind not found");
+        let deny_idx = args
+            .as_slice()
+            .windows(2)
+            .position(|w| w[0] == "--tmpfs" && w[1] == ssh_str)
+            .expect("deny-read tmpfs not found");
+
+        assert!(
+            deny_idx > workspace_idx,
+            "deny-read should be applied after workspace bind"
+        );
+
+        match original_home {
+            Some(value) => env::set_var("HOME", value),
+            None => env::remove_var("HOME"),
+        }
     }
 }
