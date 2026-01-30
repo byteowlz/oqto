@@ -137,33 +137,6 @@ Implementation:
 ### [workspace-5pmk.11] Add backend URL configuration to login form (P1, task)
 Add a 'Server URL' field to the login form allowing users to specify the backend URL. Store in localStorage for persistence. Show connection status indicator. Default to current origin for web, require input for mobile apps.
 
-### [octo-my07.9] Split session-context into focused contexts (P2, task)
-## Current State
-`frontend/components/contexts/session-context.tsx` (1,258 lines) manages too much:
-- Workspace sessions state
-- Chat sessions state
-- OpenCode connection state
-...
-
-
-### [octo-my07.8] Implement TypeScript type generation from Rust (P2, task)
-## Problem
-Types are duplicated between:
-- Rust structs (`session/models.rs`, etc.)
-- TypeScript types (`control-plane-client.ts`, `types.ts`)
-
-...
-
-
-### [octo-my07.4] Decompose usePiChat hook into focused hooks (P2, task)
-## Current State
-`frontend/hooks/usePiChat.ts` is 1,748 lines handling chat state, streaming, history, tool execution, and more in one massive hook.
-
-## Target Structure
-```
-...
-
-
 ### [octo-my07] Codebase Refactoring for Maintainability (P2, epic)
 Comprehensive refactoring initiative to improve code organization, reduce duplication, and establish clear separation of concerns across frontend and backend.
 
@@ -767,6 +740,9 @@ Desired behavior: Tool calls hidden by default, toggle to show
 
 ## Closed
 
+- [octo-my07.9] Split session-context into focused contexts (closed 2026-01-30)
+- [octo-my07.8] Implement TypeScript type generation from Rust (closed 2026-01-30)
+- [octo-my07.4] Decompose usePiChat hook into focused hooks (closed 2026-01-30)
 - [octo-my07.7] Standardize backend domain module structure (closed 2026-01-30)
 - [octo-my07.6] Establish feature-based frontend organization (closed 2026-01-30)
 - [octo-my07.5] Implement generic proxy factory in backend (closed 2026-01-30)
@@ -1295,9 +1271,9 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
-- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
 - [octo-k8z1.2] Backend: WebSocket proxy for screencast stream (closed )
-- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
-- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
-- [octo-k8z1.1] Backend: Integrate agent-browser daemon per session (closed )
+- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
 - [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
+- [octo-k8z1.1] Backend: Integrate agent-browser daemon per session (closed )
+- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
+- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
