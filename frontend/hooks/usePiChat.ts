@@ -157,6 +157,10 @@ function sanitizeStorageKey(value: string): string {
 	return value.replace(/[^a-zA-Z0-9._-]+/g, "_");
 }
 
+function isPendingSessionId(id: string | null | undefined): boolean {
+	return !!id && id.startsWith("pending-");
+}
+
 function normalizePiContentToParts(content: unknown): PiMessagePart[] {
 	const parts: PiMessagePart[] = [];
 
@@ -447,6 +451,26 @@ function writeCachedSessionMessages(
 		const delay = CACHE_WRITE_THROTTLE_MS - elapsed;
 		const timer = setTimeout(doWrite, delay);
 		sessionMessageCache.pendingWrite.set(cacheKey, timer);
+	}
+}
+
+function clearCachedSessionMessages(
+	sessionId: string,
+	storageKeyPrefix: string,
+) {
+	const cacheKey = cacheEntryKey(sessionId, storageKeyPrefix);
+	sessionMessageCache.messagesBySession.delete(cacheKey);
+	const pending = sessionMessageCache.pendingWrite.get(cacheKey);
+	if (pending) {
+		clearTimeout(pending);
+		sessionMessageCache.pendingWrite.delete(cacheKey);
+	}
+	sessionMessageCache.lastWriteTime.delete(cacheKey);
+	if (typeof window === "undefined") return;
+	try {
+		localStorage.removeItem(cacheKeyMessages(sessionId, storageKeyPrefix));
+	} catch {
+		// Ignore storage errors.
 	}
 }
 
@@ -1069,7 +1093,11 @@ export function usePiChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 
 	// Connect to WebSocket - uses global cache to survive remounts
 	const connect = useCallback(() => {
-		if (scope === "workspace" && !activeSessionIdRef.current) {
+		if (
+			scope === "workspace" &&
+			(!activeSessionIdRef.current ||
+				isPendingSessionId(activeSessionIdRef.current))
+		) {
 			return;
 		}
 		// If global WebSocket is already open and healthy, reuse it
@@ -1194,6 +1222,9 @@ export function usePiChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 		if (!targetSessionId) {
 			return;
 		}
+		if (scope === "workspace" && isPendingSessionId(targetSessionId)) {
+			return;
+		}
 		try {
 			const [piState, sessionMessages] = await Promise.all([
 				scope === "workspace"
@@ -1277,7 +1308,12 @@ export function usePiChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 		const checkStreamingState = async () => {
 			try {
 				const targetSessionId = activeSessionIdRef.current;
-				if (scope === "workspace" && !targetSessionId) return;
+				if (
+					scope === "workspace" &&
+					(!targetSessionId || isPendingSessionId(targetSessionId))
+				) {
+					return;
+				}
 				const piState =
 					scope === "workspace"
 						? await getWorkspacePiState(
@@ -1486,6 +1522,7 @@ export function usePiChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 			const newSessionId = newState.session_id ?? null;
 			if (newSessionId) {
 				justCreatedSessionRef.current = newSessionId;
+				clearCachedSessionMessages(newSessionId, resolvedStorageKeyPrefix);
 			}
 
 			// Tell the UI to select the new session immediately.
@@ -1523,7 +1560,11 @@ export function usePiChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 			setIsStreaming(false);
 
 			// Tell UI selection to follow the new backend session id.
-			onSelectedSessionIdChange?.(newState.session_id ?? null);
+			const newSessionId = newState.session_id ?? null;
+			if (newSessionId) {
+				clearCachedSessionMessages(newSessionId, resolvedStorageKeyPrefix);
+			}
+			onSelectedSessionIdChange?.(newSessionId);
 
 			// Reconnect WebSocket
 			connect();
@@ -1574,12 +1615,17 @@ export function usePiChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 		const initSession = async () => {
 			try {
 				// Start session (may already be running on backend)
+				const currentSessionId = activeSessionIdRef.current;
+				const shouldResumeWorkspace =
+					scope === "workspace" &&
+					!!currentSessionId &&
+					!isPendingSessionId(currentSessionId);
 				const piState =
 					scope === "workspace"
-						? activeSessionIdRef.current
+						? shouldResumeWorkspace
 							? await resumeWorkspacePiSession(
 									workspacePath ?? "global",
-									activeSessionIdRef.current,
+									currentSessionId ?? "",
 								)
 							: null
 						: await startMainChatPiSession();
@@ -1591,12 +1637,16 @@ export function usePiChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 				}
 
 				// Connect WebSocket
-				if (autoConnect) {
+				if (
+					autoConnect &&
+					(scope !== "workspace" ||
+						(currentSessionId && !isPendingSessionId(currentSessionId)))
+				) {
 					connect();
 				}
 
 				// Load selected session messages in background (UI already has cached)
-				if (activeSessionId) {
+				if (activeSessionId && !isPendingSessionId(activeSessionId)) {
 					const sessionMessages =
 						scope === "workspace"
 							? getWorkspacePiSessionMessages(

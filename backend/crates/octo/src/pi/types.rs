@@ -59,6 +59,7 @@ pub enum PiCommand {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
         provider: String,
+        #[serde(rename = "modelId")]
         model_id: String,
     },
     /// List all configured models.

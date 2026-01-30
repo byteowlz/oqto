@@ -134,6 +134,10 @@ export interface MainChatPiViewProps {
 	onTodosChange?: (todos: TodoItem[]) => void;
 }
 
+function isPendingSessionId(id: string | null | undefined): boolean {
+	return !!id && id.startsWith("pending-");
+}
+
 /**
  * Main Chat view using Pi agent runtime.
  * Styled to match OpenCode chat UI exactly.
@@ -345,6 +349,12 @@ export function MainChatPiView({
 		if (!piState?.model) return null;
 		return `${piState.model.provider}/${piState.model.id}`;
 	}, [piState?.model]);
+	const canSwitchModel = Boolean(
+		piState &&
+			!piState.is_streaming &&
+			!piState.is_compacting &&
+			!isStreaming,
+	);
 	const currentModelInfo = useMemo(() => {
 		if (piState?.model) {
 			return piState.model;
@@ -417,10 +427,15 @@ export function MainChatPiView({
 			{ name: "abort", description: "Abort current run" },
 			{ name: "steer", description: "Queue a steering message" },
 			{ name: "followup", description: "Queue a follow-up message" },
-			{ name: "model", description: "Switch model (provider/model)" },
 		];
+		if (canSwitchModel) {
+			commands.push({
+				name: "model",
+				description: "Switch model (provider/model)",
+			});
+		}
 		return commands;
-	}, []);
+	}, [canSwitchModel]);
 	const builtInCommandNames = useMemo(
 		() => new Set(builtInCommands.map((cmd) => cmd.name)),
 		[builtInCommands],
@@ -522,7 +537,9 @@ export function MainChatPiView({
 	useEffect(() => {
 		// Only fetch models once session is active (piState available)
 		if (!isConnected || !piState) return;
-		if (!isMainScope && !selectedSessionId) return;
+		if (!isMainScope && (!selectedSessionId || isPendingSessionId(selectedSessionId))) {
+			return;
+		}
 		let active = true;
 		const fetchModels = isMainScope
 			? getMainChatPiModels()
@@ -798,6 +815,9 @@ export function MainChatPiView({
 
 	const handleModelChange = useCallback(
 		async (value: string) => {
+			if (!canSwitchModel) {
+				throw new Error("Model switching is only available when Pi is idle.");
+			}
 			const separatorIndex = value.indexOf("/");
 			if (separatorIndex <= 0 || separatorIndex === value.length - 1) return;
 			const provider = value.slice(0, separatorIndex);
@@ -822,7 +842,7 @@ export function MainChatPiView({
 				setIsSwitchingModel(false);
 			}
 		},
-		[isMainScope, refresh, selectedSessionId, workspacePath],
+		[canSwitchModel, isMainScope, refresh, selectedSessionId, workspacePath],
 	);
 
 	const runSlashCommand = useCallback(
@@ -863,6 +883,11 @@ export function MainChatPiView({
 					return { handled: true, clearInput: true };
 				}
 				case "model": {
+					if (!canSwitchModel) {
+						throw new Error(
+							"Model switching is only available when Pi is idle.",
+						);
+					}
 					const separatorIndex = trimmedArgs.indexOf("/");
 					if (
 						separatorIndex <= 0 ||
@@ -879,6 +904,7 @@ export function MainChatPiView({
 		},
 		[
 			abort,
+			canSwitchModel,
 			compact,
 			handleModelChange,
 			newSession,

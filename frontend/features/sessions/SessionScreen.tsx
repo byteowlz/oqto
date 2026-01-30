@@ -62,6 +62,13 @@ import {
 	VoicePanel,
 } from "@/components/voice";
 import {
+	type PiModelInfo,
+	type PiState,
+	getWorkspacePiModels,
+	getWorkspacePiState,
+	setWorkspacePiModel,
+} from "@/features/main-chat/api";
+import {
 	type Features,
 	type MainChatSession,
 	type Persona,
@@ -139,6 +146,7 @@ import {
 	type SlashCommand,
 	builtInCommands,
 	commandInfoToSlashCommands,
+	fuzzyMatch,
 	parseSlashInput,
 } from "@/lib/slash-commands";
 import { cn } from "@/lib/utils";
@@ -585,6 +593,10 @@ function parseModelRef(
 	};
 }
 
+function isPendingSessionId(id: string | null | undefined): boolean {
+	return !!id && id.startsWith("pending-");
+}
+
 export const SessionScreen = memo(function SessionScreen() {
 	const {
 		locale,
@@ -756,6 +768,14 @@ export const SessionScreen = memo(function SessionScreen() {
 	const [selectedModelRef, setSelectedModelRef] = useState<string | null>(null);
 	const [isModelLoading, setIsModelLoading] = useState(false);
 	const [modelQuery, setModelQuery] = useState("");
+	const [piModelOptions, setPiModelOptions] = useState<PiModelInfo[]>([]);
+	const [piSelectedModelRef, setPiSelectedModelRef] = useState<string | null>(
+		null,
+	);
+	const [piModelQuery, setPiModelQuery] = useState("");
+	const [piIsModelLoading, setPiIsModelLoading] = useState(false);
+	const [piIsSwitchingModel, setPiIsSwitchingModel] = useState(false);
+	const [piState, setPiState] = useState<PiState | null>(null);
 	const modelStorageKey = useMemo(() => {
 		if (!selectedChatSessionId || mainChatActive) return null;
 		return `octo:chatModel:${selectedChatSessionId}`;
@@ -884,10 +904,149 @@ export const SessionScreen = memo(function SessionScreen() {
 		},
 		[refreshChatHistory, setSelectedChatSessionId],
 	);
+
+	useEffect(() => {
+		if (
+			!isWorkspacePiSession ||
+			!selectedChatSessionId ||
+			!workspacePiPath ||
+			isPendingSessionId(selectedChatSessionId)
+		) {
+			setPiModelOptions([]);
+			setPiIsModelLoading(false);
+			return;
+		}
+		let active = true;
+		setPiIsModelLoading(true);
+		getWorkspacePiModels(workspacePiPath, selectedChatSessionId)
+			.then((models) => {
+				if (!active) return;
+				setPiModelOptions(models);
+			})
+			.catch((err) => {
+				console.error("Failed to fetch Pi models:", err);
+				if (active) setPiModelOptions([]);
+			})
+			.finally(() => {
+				if (active) setPiIsModelLoading(false);
+			});
+		return () => {
+			active = false;
+		};
+	}, [
+		isWorkspacePiSession,
+		selectedChatSessionId,
+		workspacePiPath,
+	]);
+
+	useEffect(() => {
+		if (piSelectedModelRef || piModelOptions.length === 0) return;
+		const first = piModelOptions[0];
+		setPiSelectedModelRef(`${first.provider}/${first.id}`);
+	}, [piModelOptions, piSelectedModelRef]);
+
+	useEffect(() => {
+		let active = true;
+		let intervalId: ReturnType<typeof setInterval> | null = null;
+
+		const fetchState = async () => {
+			if (!active) return;
+			try {
+				if (
+					!workspacePiPath ||
+					!selectedChatSessionId ||
+					isPendingSessionId(selectedChatSessionId)
+				) {
+					setPiState(null);
+					return;
+				}
+				const nextState = await getWorkspacePiState(
+					workspacePiPath,
+					selectedChatSessionId,
+				);
+				if (active) setPiState(nextState);
+			} catch {
+				if (active) setPiState(null);
+			}
+		};
+
+		if (
+			isWorkspacePiSession &&
+			selectedChatSessionId &&
+			workspacePiPath &&
+			!isPendingSessionId(selectedChatSessionId)
+		) {
+			void fetchState();
+			intervalId = setInterval(fetchState, 2000);
+		} else {
+			setPiState(null);
+		}
+
+		return () => {
+			active = false;
+			if (intervalId) clearInterval(intervalId);
+		};
+	}, [isWorkspacePiSession, selectedChatSessionId, workspacePiPath]);
+
+	useEffect(() => {
+		if (!piState?.model) return;
+		const modelRef = `${piState.model.provider}/${piState.model.id}`;
+		setPiSelectedModelRef(modelRef);
+	}, [piState?.model]);
 	const selectedModelOverride = useMemo(() => {
 		if (!selectedModelRef) return undefined;
 		return parseModelRef(selectedModelRef) ?? undefined;
 	}, [selectedModelRef]);
+	const piIsIdle = !(piState?.is_streaming || piState?.is_compacting);
+	const filteredPiModels = useMemo(() => {
+		const query = piModelQuery.trim();
+		if (!query) return piModelOptions;
+		return piModelOptions.filter((model) => {
+			const fullRef = `${model.provider}/${model.id}`;
+			return (
+				fuzzyMatch(query, fullRef) ||
+				fuzzyMatch(query, model.provider) ||
+				fuzzyMatch(query, model.id) ||
+				(model.name ? fuzzyMatch(query, model.name) : false)
+			);
+		});
+	}, [piModelOptions, piModelQuery]);
+	const handlePiModelChange = useCallback(
+		async (value: string) => {
+			if (
+				!piIsIdle ||
+				!workspacePiPath ||
+				!selectedChatSessionId ||
+				isPendingSessionId(selectedChatSessionId)
+			) {
+				return;
+			}
+			const separatorIndex = value.indexOf("/");
+			if (separatorIndex <= 0 || separatorIndex === value.length - 1) return;
+			const provider = value.slice(0, separatorIndex);
+			const modelId = value.slice(separatorIndex + 1);
+			setPiSelectedModelRef(value);
+			setPiIsSwitchingModel(true);
+			try {
+				await setWorkspacePiModel(
+					workspacePiPath,
+					selectedChatSessionId,
+					provider,
+					modelId,
+				);
+				const refreshed = await getWorkspacePiState(
+					workspacePiPath,
+					selectedChatSessionId,
+				);
+				setPiState(refreshed);
+			} catch (err) {
+				console.error("Failed to switch Pi model:", err);
+			} finally {
+				setPiIsSwitchingModel(false);
+			}
+		},
+		[piIsIdle, selectedChatSessionId, workspacePiPath],
+	);
 	const setChatState = useCallback(
 		(state: "idle" | "sending") => {
 			const sessionId = mainChatActive
@@ -4987,13 +5146,88 @@ export const SessionScreen = memo(function SessionScreen() {
 	})();
 
 	// Session header component for reuse
-	const showModelSwitcher =
-		!mainChatActive && !!effectiveOpencodeBaseUrl && !!activeSessionId;
+	const showOpencodeModelSwitcher =
+		!mainChatActive &&
+		!isWorkspacePiSession &&
+		!!effectiveOpencodeBaseUrl &&
+		!!activeSessionId;
+	const showPiModelSwitcher =
+		isWorkspacePiSession && !!workspacePiPath && !!selectedChatSessionId;
 	const filteredModelOptions = filterModelOptions(
 		opencodeModelOptions,
 		modelQuery,
 	);
-	const modelSwitcher = showModelSwitcher ? (
+	const modelSwitcher = showPiModelSwitcher ? (
+		<div data-spotlight="model-picker">
+			<Select
+				value={piSelectedModelRef ?? undefined}
+				onValueChange={handlePiModelChange}
+				onOpenChange={(open) => {
+					if (open) setPiModelQuery("");
+				}}
+				disabled={
+					piIsSwitchingModel ||
+					piIsModelLoading ||
+					!piIsIdle ||
+					piModelOptions.length === 0
+				}
+			>
+				<SelectTrigger className="h-7 w-[220px] text-xs">
+					<SelectValue
+						placeholder={
+							piIsSwitchingModel
+								? "Switching model..."
+								: piIsModelLoading
+									? "Loading models..."
+									: "Model"
+						}
+					/>
+				</SelectTrigger>
+				<SelectContent>
+					<div
+						className="sticky top-0 z-10 bg-popover p-2 border-b border-border"
+						onPointerDown={(e) => e.stopPropagation()}
+						onKeyDown={(e) => e.stopPropagation()}
+					>
+						<Input
+							value={piModelQuery}
+							onChange={(e) => setPiModelQuery(e.target.value)}
+							placeholder="Search models..."
+							aria-label="Search models"
+							className="h-8 text-xs"
+						/>
+					</div>
+					{piModelOptions.length === 0 ? (
+						<SelectItem value="__none__" disabled>
+							{piIsModelLoading
+								? "Loading..."
+								: "No models available"}
+						</SelectItem>
+					) : filteredPiModels.length === 0 ? (
+						<SelectItem value="__no_results__" disabled>
+							No matches
+						</SelectItem>
+					) : (
+						filteredPiModels.map((model) => {
+							const value = `${model.provider}/${model.id}`;
+							const label = model.name ? `${value} · ${model.name}` : value;
+							return (
+								<SelectItem key={value} value={value} textValue={label}>
+									<span className="flex items-center gap-2">
+										<ProviderIcon
+											provider={model.provider}
+											className="w-4 h-4 flex-shrink-0"
+										/>
+										<span>{label}</span>
+									</span>
+								</SelectItem>
+							);
+						})
+					)}
+				</SelectContent>
+			</Select>
+		</div>
+	) : showOpencodeModelSwitcher ? (
 		<div data-spotlight="model-picker">
 			<Select
 				value={selectedModelRef ?? undefined}

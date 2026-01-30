@@ -12,6 +12,8 @@ use crate::api::main_chat_pi::{
     PiModelInfo, PiModelsResponse, PiStateResponse, pi_state_to_response,
 };
 use crate::api::{ApiError, ApiResult, AppState};
+use crate::main_chat::UserPiSession;
+use std::sync::Arc;
 
 #[derive(Debug, Deserialize)]
 pub struct WorkspaceQuery {
@@ -39,6 +41,20 @@ fn get_workspace_pi_service(
         .as_ref()
         .map(|svc| svc.as_ref())
         .ok_or_else(|| ApiError::internal("Workspace Pi service not enabled"))
+}
+
+async fn get_or_resume_session(
+    svc: &crate::pi_workspace::WorkspacePiService,
+    user_id: &str,
+    work_dir: &std::path::Path,
+    session_id: &str,
+) -> ApiResult<Arc<UserPiSession>> {
+    if let Some(active) = svc.get_session(user_id, work_dir, session_id).await {
+        return Ok(active);
+    }
+    svc.resume_session(user_id, work_dir, session_id)
+        .await
+        .map_err(|e| ApiError::internal(format!("Failed to resume Pi session: {e}")))
 }
 
 /// Start a new Pi session for a workspace.
@@ -73,10 +89,7 @@ pub async fn resume_workspace_session(
 ) -> ApiResult<Json<PiStateResponse>> {
     let svc = get_workspace_pi_service(&state)?;
     let work_dir = validate_workspace_path(&state, user.id(), &query.workspace_path)?;
-    let session = svc
-        .resume_session(user.id(), &work_dir, &session_id)
-        .await
-        .map_err(|e| ApiError::internal(format!("Failed to resume Pi session: {e}")))?;
+    let session = get_or_resume_session(&svc, user.id(), &work_dir, &session_id).await?;
     let pi_state = session
         .get_state()
         .await
@@ -95,9 +108,19 @@ pub async fn get_workspace_session_messages(
 ) -> ApiResult<Json<Vec<crate::pi_workspace::PiSessionMessage>>> {
     let svc = get_workspace_pi_service(&state)?;
     let work_dir = validate_workspace_path(&state, user.id(), &query.workspace_path)?;
-    let messages = svc
-        .get_session_messages(&work_dir, &session_id)
-        .map_err(|e| ApiError::internal(format!("Failed to load session messages: {e}")))?;
+    let messages = match svc.get_session_messages(&work_dir, &session_id) {
+        Ok(messages) => messages,
+        Err(err) => {
+            let msg = err.to_string();
+            if msg.contains("Session not found") || msg.contains("Sessions directory not found") {
+                Vec::new()
+            } else {
+                return Err(ApiError::internal(format!(
+                    "Failed to load session messages: {err}"
+                )));
+            }
+        }
+    };
     Ok(Json(messages))
 }
 
@@ -137,10 +160,7 @@ pub async fn get_workspace_state(
         .ok_or_else(|| ApiError::bad_request("session_id is required"))?;
     let svc = get_workspace_pi_service(&state)?;
     let work_dir = validate_workspace_path(&state, user.id(), &query.workspace_path)?;
-    let session = svc
-        .get_session(user.id(), &work_dir, &session_id)
-        .await
-        .ok_or_else(|| ApiError::not_found("Pi session not active"))?;
+    let session = get_or_resume_session(&svc, user.id(), &work_dir, &session_id).await?;
     let pi_state = session
         .get_state()
         .await
@@ -162,10 +182,7 @@ pub async fn get_workspace_models(
         .ok_or_else(|| ApiError::bad_request("session_id is required"))?;
     let svc = get_workspace_pi_service(&state)?;
     let work_dir = validate_workspace_path(&state, user.id(), &query.workspace_path)?;
-    let session = svc
-        .resume_session(user.id(), &work_dir, &session_id)
-        .await
-        .map_err(|e| ApiError::internal(format!("Failed to resume Pi session: {e}")))?;
+    let session = get_or_resume_session(&svc, user.id(), &work_dir, &session_id).await?;
     let models = session
         .get_available_models()
         .await
@@ -198,10 +215,7 @@ pub async fn set_workspace_model(
         .ok_or_else(|| ApiError::bad_request("session_id is required"))?;
     let svc = get_workspace_pi_service(&state)?;
     let work_dir = validate_workspace_path(&state, user.id(), &query.workspace_path)?;
-    let session = svc
-        .resume_session(user.id(), &work_dir, &session_id)
-        .await
-        .map_err(|e| ApiError::internal(format!("Failed to resume Pi session: {e}")))?;
+    let session = get_or_resume_session(&svc, user.id(), &work_dir, &session_id).await?;
     session
         .set_model(&req.provider, &req.model_id)
         .await
@@ -228,10 +242,7 @@ pub async fn ws_handler(
         .ok_or_else(|| ApiError::bad_request("session_id is required"))?;
     let svc = get_workspace_pi_service(&state)?;
     let work_dir = validate_workspace_path(&state, user.id(), &query.workspace_path)?;
-    let session = svc
-        .resume_session(user.id(), &work_dir, &session_id)
-        .await
-        .map_err(|e| ApiError::internal(format!("Failed to resume Pi session: {e}")))?;
+    let session = get_or_resume_session(&svc, user.id(), &work_dir, &session_id).await?;
 
     let user_id = user.id().to_string();
     let mmry_state = state.mmry.clone();
