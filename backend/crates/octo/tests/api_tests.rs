@@ -1228,6 +1228,9 @@ async fn test_pi_settings_workspace_scope_does_not_mutate_global() {
         .await
         .unwrap();
     let global_after_values: Value = serde_json::from_slice(&global_after_body).unwrap();
-    assert_eq!(global_after_values["defaultProvider"]["is_configured"], false);
+    assert_eq!(
+        global_after_values["defaultProvider"]["is_configured"],
+        false
+    );
     assert!(global_after_values["defaultProvider"]["value"].is_null());
 }

@@ -10,11 +10,13 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from "@/components/ui/select";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
 	type PiModelInfo,
+	type PiState,
 	getMainChatPiModels,
+	getMainChatPiState,
 	getWorkspacePiModels,
+	getWorkspacePiState,
 	setMainChatPiModel,
 	setWorkspacePiModel,
 } from "@/features/main-chat/api";
@@ -43,6 +45,8 @@ export function PiSettingsView({
 	const [isSwitchingModel, setIsSwitchingModel] = useState(false);
 	const [modelQuery, setModelQuery] = useState("");
 	const [loadingModels, setLoadingModels] = useState(false);
+	const [piState, setPiState] = useState<PiState | null>(null);
+	const [loadingState, setLoadingState] = useState(false);
 
 	const modelStorageKey = useMemo(() => {
 		if (!sessionId) return null;
@@ -90,6 +94,42 @@ export function PiSettingsView({
 		};
 	}, [scope, sessionId, workspacePath, selectedModelRef]);
 
+	useEffect(() => {
+		let active = true;
+		let intervalId: ReturnType<typeof setInterval> | null = null;
+		const fetchState = async () => {
+			if (!active) return;
+			try {
+				const nextState =
+					scope === "main"
+						? await getMainChatPiState()
+						: sessionId
+							? await getWorkspacePiState(
+									workspacePath ?? "global",
+									sessionId,
+								)
+							: null;
+				if (active) setPiState(nextState);
+			} catch {
+				if (active) setPiState(null);
+			} finally {
+				if (active) setLoadingState(false);
+			}
+		};
+		if (scope === "main" || sessionId) {
+			setLoadingState(true);
+			void fetchState();
+			intervalId = setInterval(fetchState, 2000);
+		} else {
+			setPiState(null);
+			setLoadingState(false);
+		}
+		return () => {
+			active = false;
+			if (intervalId) clearInterval(intervalId);
+		};
+	}, [scope, sessionId, workspacePath]);
+
 	const filteredModels = useMemo(() => {
 		const query = modelQuery.trim();
 		if (!query) return availableModels;
@@ -104,8 +144,13 @@ export function PiSettingsView({
 		});
 	}, [availableModels, modelQuery]);
 
+	const isIdle = !(piState?.is_streaming || piState?.is_compacting);
+
 	const handleModelChange = useCallback(
 		async (value: string) => {
+			if (!isIdle) {
+				return;
+			}
 			if (!value) return;
 			const separatorIndex = value.indexOf("/");
 			if (separatorIndex <= 0 || separatorIndex === value.length - 1) return;
@@ -130,7 +175,7 @@ export function PiSettingsView({
 				setIsSwitchingModel(false);
 			}
 		},
-		[scope, sessionId, workspacePath],
+		[isIdle, scope, sessionId, workspacePath],
 	);
 
 	return (
@@ -140,7 +185,7 @@ export function PiSettingsView({
 					{locale === "de" ? "Pi Einstellungen" : "Pi Settings"}
 				</span>
 			</div>
-			<div className="flex-1 overflow-auto p-3 space-y-4">
+			<div className="flex-1 overflow-auto p-3 space-y-5">
 				<div className="space-y-2">
 					<Label className="text-xs font-medium">
 						{locale === "de" ? "Modell" : "Model"}
@@ -160,7 +205,12 @@ export function PiSettingsView({
 						<Select
 							value={selectedModelRef ?? undefined}
 							onValueChange={handleModelChange}
-							disabled={isSwitchingModel || availableModels.length === 0}
+							disabled={
+								isSwitchingModel ||
+								availableModels.length === 0 ||
+								loadingState ||
+								!isIdle
+							}
 							onOpenChange={(open) => {
 								if (open) setModelQuery("");
 							}}
@@ -179,7 +229,11 @@ export function PiSettingsView({
 								/>
 							</SelectTrigger>
 							<SelectContent className="w-[320px]">
-								<div className="p-2 border-b border-border">
+								<div
+									className="p-2 border-b border-border"
+									onPointerDown={(e) => e.stopPropagation()}
+									onKeyDown={(e) => e.stopPropagation()}
+								>
 									<Input
 										placeholder={
 											locale === "de"
@@ -188,8 +242,6 @@ export function PiSettingsView({
 										}
 										value={modelQuery}
 										onChange={(e) => setModelQuery(e.target.value)}
-										onKeyDown={(e) => e.stopPropagation()}
-										onKeyUp={(e) => e.stopPropagation()}
 										className="h-8"
 									/>
 								</div>
@@ -216,36 +268,36 @@ export function PiSettingsView({
 							</SelectContent>
 						</Select>
 					)}
+					{!isIdle && (
+						<p className="text-[10px] text-muted-foreground">
+							{locale === "de"
+								? "Modellwechsel nur im Leerlauf möglich."
+								: "Model switching is only available when Pi is idle."}
+						</p>
+					)}
 				</div>
 
-				<Tabs defaultValue="settings" className="space-y-3">
-					<TabsList>
-						<TabsTrigger value="settings">
-							{locale === "de" ? "Einstellungen" : "Settings"}
-						</TabsTrigger>
-						<TabsTrigger value="models">
-							{locale === "de" ? "Modelle" : "Models"}
-						</TabsTrigger>
-					</TabsList>
-					<TabsContent value="settings" className="space-y-3">
-						<SettingsEditor
-							app="pi-agent"
-							title={locale === "de" ? "Pi Einstellungen" : "Pi Settings"}
-							workspacePath={
-								scope === "workspace" ? workspacePath ?? undefined : undefined
-							}
-						/>
-					</TabsContent>
-					<TabsContent value="models" className="space-y-3">
-						<SettingsEditor
-							app="pi-models"
-							title={locale === "de" ? "Pi Modelle" : "Pi Models"}
-							workspacePath={
-								scope === "workspace" ? workspacePath ?? undefined : undefined
-							}
-						/>
-					</TabsContent>
-				</Tabs>
+				<div className="space-y-2">
+					<div className="text-xs font-medium text-muted-foreground">
+						{locale === "de" ? "Einstellungen" : "Settings"}
+					</div>
+					<SettingsEditor
+						app="pi-agent"
+						title={locale === "de" ? "Pi Einstellungen" : "Pi Settings"}
+						workspacePath={workspacePath ?? undefined}
+					/>
+				</div>
+
+				<div className="space-y-2">
+					<div className="text-xs font-medium text-muted-foreground">
+						{locale === "de" ? "Modelle" : "Models"}
+					</div>
+					<SettingsEditor
+						app="pi-models"
+						title={locale === "de" ? "Pi Modelle" : "Pi Models"}
+						workspacePath={workspacePath ?? undefined}
+					/>
+				</div>
 			</div>
 		</div>
 	);

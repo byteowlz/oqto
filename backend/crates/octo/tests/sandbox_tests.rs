@@ -47,7 +47,11 @@ mod sandbox_profiles {
         assert!(profile.allow_write.contains(&"~/.rustup".to_string()));
         assert!(profile.allow_write.contains(&"~/.npm".to_string()));
         assert!(profile.allow_write.contains(&"~/.bun".to_string()));
-        assert!(profile.allow_write.contains(&"~/.local/share/uv".to_string()));
+        assert!(
+            profile
+                .allow_write
+                .contains(&"~/.local/share/uv".to_string())
+        );
         assert!(profile.allow_write.contains(&"~/.cache/uv".to_string()));
 
         // Should deny sensitive paths

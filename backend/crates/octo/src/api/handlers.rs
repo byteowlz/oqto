@@ -3766,7 +3766,8 @@ pub async fn get_settings_schema(
     user: CurrentUser,
     Query(query): Query<SettingsQuery>,
 ) -> ApiResult<Json<serde_json::Value>> {
-    let service = resolve_settings_service(&state, &user, &query.app, query.workspace_path.as_deref())?;
+    let service =
+        resolve_settings_service(&state, &user, &query.app, query.workspace_path.as_deref())?;
     let scope = user_to_scope(&user);
 
     let schema = service.get_schema(scope);
@@ -3782,7 +3783,8 @@ pub async fn get_settings_values(
     user: CurrentUser,
     Query(query): Query<SettingsQuery>,
 ) -> ApiResult<Json<HashMap<String, SettingsValue>>> {
-    let service = resolve_settings_service(&state, &user, &query.app, query.workspace_path.as_deref())?;
+    let service =
+        resolve_settings_service(&state, &user, &query.app, query.workspace_path.as_deref())?;
     let scope = user_to_scope(&user);
 
     let values = service.get_values(scope).await;
@@ -3799,7 +3801,8 @@ pub async fn update_settings_values(
     Query(query): Query<SettingsQuery>,
     Json(updates): Json<ConfigUpdate>,
 ) -> ApiResult<Json<HashMap<String, SettingsValue>>> {
-    let service = resolve_settings_service(&state, &user, &query.app, query.workspace_path.as_deref())?;
+    let service =
+        resolve_settings_service(&state, &user, &query.app, query.workspace_path.as_deref())?;
     let scope = user_to_scope(&user);
 
     service

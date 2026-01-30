@@ -167,17 +167,22 @@ impl WorkspacePiService {
         }
     }
 
+    /// Get the Pi agent directory for a working directory.
+    fn get_pi_agent_dir(&self, _work_dir: &Path) -> PathBuf {
+        dirs::home_dir()
+            .map(|home| home.join(".pi").join("agent"))
+            .unwrap_or_else(|| PathBuf::from(".pi/agent"))
+    }
+
     /// Get the Pi sessions directory for a working directory.
     /// Pi stores sessions in ~/.pi/agent/sessions/{escaped-path}/
     fn get_pi_sessions_dir(&self, work_dir: &Path) -> PathBuf {
-        let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
         let escaped_path = work_dir
             .to_string_lossy()
             .replace('/', "-")
             .trim_start_matches('-')
             .to_string();
-        home.join(".pi")
-            .join("agent")
+        self.get_pi_agent_dir(work_dir)
             .join("sessions")
             .join(format!("--{}--", escaped_path))
     }

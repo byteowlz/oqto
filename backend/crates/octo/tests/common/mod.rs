@@ -91,12 +91,9 @@ fn create_pi_settings_services() -> (SettingsService, SettingsService) {
         "settings.json",
     )
     .expect("create pi settings service");
-    let models = SettingsService::new_json(
-        pi_models_schema,
-        PathBuf::from(&base_dir),
-        "models.json",
-    )
-    .expect("create pi models service");
+    let models =
+        SettingsService::new_json(pi_models_schema, PathBuf::from(&base_dir), "models.json")
+            .expect("create pi models service");
 
     (settings, models)
 }

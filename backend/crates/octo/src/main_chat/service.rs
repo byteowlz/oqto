@@ -217,6 +217,13 @@ impl MainChatService {
         std::fs::write(&pi_settings_path, pi_settings_content)
             .with_context(|| format!("writing pi settings: {}", pi_settings_path.display()))?;
 
+        // Ensure a local models.json exists (no API keys here; local file is for additions).
+        let pi_models_path = pi_dir.join("models.json");
+        if !pi_models_path.exists() {
+            std::fs::write(&pi_models_path, r#"{"providers":{}}"#)
+                .with_context(|| format!("writing pi models: {}", pi_models_path.display()))?;
+        }
+
         // Create sessions directory for pi
         let sessions_dir = pi_dir.join("sessions");
         std::fs::create_dir_all(&sessions_dir)?;
