@@ -191,33 +191,6 @@ Frontend has flat organization:
 ...
 
 
-### [octo-my07.3] Split handlers.rs into domain-specific modules (P2, task)
-## Current State
-`backend/crates/octo/src/api/handlers.rs` is 5,088 lines with 50+ handler functions covering sessions, chat, admin, projects, settings, etc.
-
-## Target Structure
-```
-...
-
-
-### [octo-my07.2] Extract AppShellRoute into focused components (P2, task)
-## Current State
-`frontend/src/routes/AppShellRoute.tsx` is ~3,946 lines containing sidebar, navigation, dialogs, templates, project actions, and the main content router all in one file.
-
-## Target Structure
-```
-...
-
-
-### [octo-my07.1] Split control-plane-client.ts into domain modules (P2, task)
-## Current State
-`frontend/lib/control-plane-client.ts` is 2,561 lines with ~100 exported functions mixing auth, sessions, chat, admin, projects, settings, and more.
-
-## Target Structure
-```
-...
-
-
 ### [octo-my07] Codebase Refactoring for Maintainability (P2, epic)
 Comprehensive refactoring initiative to improve code organization, reduce duplication, and establish clear separation of concerns across frontend and backend.
 
@@ -821,6 +794,9 @@ Desired behavior: Tool calls hidden by default, toggle to show
 
 ## Closed
 
+- [octo-my07.3] Split handlers.rs into domain-specific modules (closed 2026-01-30)
+- [octo-my07.2] Extract AppShellRoute into focused components (closed 2026-01-30)
+- [octo-my07.1] Split control-plane-client.ts into domain modules (closed 2026-01-30)
 - [octo-c62h] Chat history: include Pi workspace sessions + Pi model in status bar (closed 2026-01-29)
 - [octo-mxd8] Sandbox Security Enhancements: Custom Profiles, FUSE Guard, SSH Proxy (closed 2026-01-29)
 - [octo-mxd8.2] Implement octo-guard FUSE filesystem for runtime access control (closed 2026-01-29)
@@ -1343,9 +1319,9 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
+- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
 - [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
-- [octo-k8z1.1] Backend: Integrate agent-browser daemon per session (closed )
-- [octo-k8z1.2] Backend: WebSocket proxy for screencast stream (closed )
 - [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
 - [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
-- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
+- [octo-k8z1.1] Backend: Integrate agent-browser daemon per session (closed )
+- [octo-k8z1.2] Backend: WebSocket proxy for screencast stream (closed )
