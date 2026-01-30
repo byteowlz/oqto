@@ -188,6 +188,8 @@ export function PiSettingsView({
 										}
 										value={modelQuery}
 										onChange={(e) => setModelQuery(e.target.value)}
+										onKeyDown={(e) => e.stopPropagation()}
+										onKeyUp={(e) => e.stopPropagation()}
 										className="h-8"
 									/>
 								</div>

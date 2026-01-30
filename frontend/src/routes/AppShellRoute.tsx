@@ -1327,7 +1327,12 @@ const AppShell = memo(function AppShell() {
 		if (selectedWorkspaceSession) {
 			console.log("[handleNewChat] Using existing workspace session");
 			setActiveAppId("sessions");
-			await createNewPiChat(opencodeDirectory ?? undefined);
+			const workspacePath =
+				selectedWorkspaceSession.workspace_path ?? opencodeDirectory ?? "global";
+			const optimisticId = createOptimisticChatSession(workspacePath);
+			const created = await createNewPiChat(workspacePath, { optimisticId });
+			if (created) return;
+			clearOptimisticChatSession(optimisticId);
 			return;
 		}
 
