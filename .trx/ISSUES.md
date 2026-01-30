@@ -620,39 +620,12 @@ Enable multiple platform users to access the same project/workspace with proper 
 ...
 
 
-### [octo-my07.13] Extract shared UI components to component library (P3, task)
-## Current State
-`frontend/components/ui/` has 76 shadcn/radix components, but:
-- Some are customized versions mixed with stock shadcn
-- App-specific components mixed with generic ones
-- No clear distinction between library and app components
-...
-
-
 ### [octo-my07.12] Add comprehensive test infrastructure (P3, task)
 ## Current State
 Limited test coverage, tests scattered across the codebase without clear organization.
 
 ## Backend Test Structure
 ```
-...
-
-
-### [octo-my07.11] Refactor dashboard into feature components (P3, task)
-## Current State
-`frontend/apps/dashboard/index.tsx` is 2,309 lines containing the entire dashboard in one file.
-
-## Target Structure
-```
-...
-
-
-### [octo-my07.10] Implement unified error handling in backend (P3, task)
-## Current State
-Error handling varies across the codebase:
-- Some handlers use `anyhow::Result`
-- Some use custom error types
-- API responses inconsistent
 ...
 
 
@@ -785,6 +758,9 @@ Desired behavior: Tool calls hidden by default, toggle to show
 
 ## Closed
 
+- [octo-my07.13] Extract shared UI components to component library (closed 2026-01-30)
+- [octo-my07.11] Refactor dashboard into feature components (closed 2026-01-30)
+- [octo-my07.10] Implement unified error handling in backend (closed 2026-01-30)
 - [octo-my07.9] Split session-context into focused contexts (closed 2026-01-30)
 - [octo-my07.8] Implement TypeScript type generation from Rust (closed 2026-01-30)
 - [octo-my07.4] Decompose usePiChat hook into focused hooks (closed 2026-01-30)
@@ -1317,8 +1293,8 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
 - [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
-- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
 - [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
-- [octo-k8z1.1] Backend: Integrate agent-browser daemon per session (closed )
 - [octo-k8z1.2] Backend: WebSocket proxy for screencast stream (closed )
+- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
 - [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
+- [octo-k8z1.1] Backend: Integrate agent-browser daemon per session (closed )
