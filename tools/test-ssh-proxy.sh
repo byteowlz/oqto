@@ -118,7 +118,7 @@ SSH_AUTH_SOCK="$proxy_sock" \
 if [[ "$run_host_test" == "true" && -n "$host" ]]; then
   echo "Attempting SSH connection to $host (may prompt in Octo UI)"
   SSH_AUTH_SOCK="$proxy_sock" \
-    octo-sandbox -- bash -lc "ssh -T git@$host"
+    octo-sandbox -- bash -lc "ssh -F /dev/null -o UserKnownHostsFile=/dev/null -o GlobalKnownHostsFile=/dev/null -o StrictHostKeyChecking=accept-new -T git@$host"
 fi
 
 echo "OK"
