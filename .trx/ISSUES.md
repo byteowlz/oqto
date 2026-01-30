@@ -155,33 +155,6 @@ Types are duplicated between:
 ...
 
 
-### [octo-my07.7] Standardize backend domain module structure (P2, task)
-## Current State
-Backend has inconsistent domain patterns:
-- Some domains: `models.rs`, `repository.rs`, `service.rs` (good)
-- Others: Everything in one large `mod.rs` (inconsistent)
-
-...
-
-
-### [octo-my07.6] Establish feature-based frontend organization (P2, task)
-## Current State
-Frontend has flat organization:
-- `hooks/` - 22 files of varying sizes, mixed concerns
-- `components/` - Large flat directory
-- `lib/` - Utilities and clients mixed together
-...
-
-
-### [octo-my07.5] Implement generic proxy factory in backend (P2, task)
-## Current State
-`backend/crates/octo/src/api/proxy.rs` is 2,070 lines with repetitive proxy functions:
-- proxy_opencode
-- proxy_fileserver  
-- proxy_terminal_ws
-...
-
-
 ### [octo-my07.4] Decompose usePiChat hook into focused hooks (P2, task)
 ## Current State
 `frontend/hooks/usePiChat.ts` is 1,748 lines handling chat state, streaming, history, tool execution, and more in one massive hook.
@@ -794,6 +767,9 @@ Desired behavior: Tool calls hidden by default, toggle to show
 
 ## Closed
 
+- [octo-my07.7] Standardize backend domain module structure (closed 2026-01-30)
+- [octo-my07.6] Establish feature-based frontend organization (closed 2026-01-30)
+- [octo-my07.5] Implement generic proxy factory in backend (closed 2026-01-30)
 - [octo-my07.3] Split handlers.rs into domain-specific modules (closed 2026-01-30)
 - [octo-my07.2] Extract AppShellRoute into focused components (closed 2026-01-30)
 - [octo-my07.1] Split control-plane-client.ts into domain modules (closed 2026-01-30)
@@ -1319,9 +1295,9 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
-- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
 - [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
-- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
-- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
-- [octo-k8z1.1] Backend: Integrate agent-browser daemon per session (closed )
 - [octo-k8z1.2] Backend: WebSocket proxy for screencast stream (closed )
+- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
+- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
+- [octo-k8z1.1] Backend: Integrate agent-browser daemon per session (closed )
+- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
