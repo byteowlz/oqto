@@ -1,0 +1,279 @@
+//! Settings handlers.
+
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use axum::{
+    Json,
+    extract::{Query, State},
+};
+use serde::Deserialize;
+use tracing::{info, instrument};
+
+use crate::auth::{CurrentUser, RequireAdmin};
+use crate::settings::{ConfigUpdate, SettingsScope, SettingsService, SettingsValue};
+
+use crate::api::error::{ApiError, ApiResult};
+use crate::api::state::AppState;
+
+use super::trx::validate_workspace_path;
+
+/// Query parameters for settings endpoints.
+#[derive(Debug, Deserialize)]
+pub struct SettingsQuery {
+    /// App to get settings for (e.g., "octo", "mmry")
+    pub app: String,
+    /// Optional workspace path for project-scoped settings.
+    #[serde(default)]
+    pub workspace_path: Option<String>,
+}
+
+/// Get the settings schema for an app, filtered by user permissions.
+#[instrument(skip(state, user))]
+pub async fn get_settings_schema(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Query(query): Query<SettingsQuery>,
+) -> ApiResult<Json<serde_json::Value>> {
+    let service =
+        resolve_settings_service(&state, &user, &query.app, query.workspace_path.as_deref())?;
+    let scope = user_to_scope(&user);
+
+    let schema = service.get_schema(scope);
+
+    info!(user_id = %user.id(), app = %query.app, scope = ?scope, "Retrieved settings schema");
+    Ok(Json(schema))
+}
+
+/// Get current settings values for an app.
+#[instrument(skip(state, user))]
+pub async fn get_settings_values(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Query(query): Query<SettingsQuery>,
+) -> ApiResult<Json<HashMap<String, SettingsValue>>> {
+    let service =
+        resolve_settings_service(&state, &user, &query.app, query.workspace_path.as_deref())?;
+    let scope = user_to_scope(&user);
+
+    let values = service.get_values(scope).await;
+
+    info!(user_id = %user.id(), app = %query.app, count = values.len(), "Retrieved settings values");
+    Ok(Json(values))
+}
+
+/// Update settings values for an app.
+#[instrument(skip(state, user))]
+pub async fn update_settings_values(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Query(query): Query<SettingsQuery>,
+    Json(updates): Json<ConfigUpdate>,
+) -> ApiResult<Json<HashMap<String, SettingsValue>>> {
+    let service =
+        resolve_settings_service(&state, &user, &query.app, query.workspace_path.as_deref())?;
+    let scope = user_to_scope(&user);
+
+    service
+        .update_values(updates, scope)
+        .await
+        .map_err(|e| ApiError::bad_request(format!("Failed to update settings: {}", e)))?;
+
+    // Return updated values
+    let values = service.get_values(scope).await;
+
+    info!(user_id = %user.id(), app = %query.app, "Updated settings");
+    Ok(Json(values))
+}
+
+/// Reload settings from disk (admin only).
+#[instrument(skip(state, admin))]
+pub async fn reload_settings(
+    State(state): State<AppState>,
+    admin: RequireAdmin,
+    Query(query): Query<SettingsQuery>,
+) -> ApiResult<Json<serde_json::Value>> {
+    let service = resolve_settings_service(
+        &state,
+        &admin.0,
+        &query.app,
+        query.workspace_path.as_deref(),
+    )?;
+
+    service
+        .reload()
+        .await
+        .map_err(|e| ApiError::internal(format!("Failed to reload settings: {}", e)))?;
+
+    info!(app = %query.app, "Settings reloaded");
+    Ok(Json(serde_json::json!({ "status": "reloaded" })))
+}
+
+/// Convert user role to settings scope.
+fn user_to_scope(user: &CurrentUser) -> SettingsScope {
+    if user.is_admin() {
+        SettingsScope::Admin
+    } else {
+        SettingsScope::User
+    }
+}
+
+fn resolve_settings_service(
+    state: &AppState,
+    user: &CurrentUser,
+    app: &str,
+    workspace_path: Option<&str>,
+) -> ApiResult<Arc<SettingsService>> {
+    let service = get_settings_service(state, app)?;
+
+    let Some(workspace_path) = workspace_path else {
+        return Ok(service);
+    };
+
+    match app {
+        "pi-agent" | "pi-models" => {}
+        _ => {
+            return Err(ApiError::bad_request(
+                "workspace_path is only supported for pi-agent and pi-models",
+            ));
+        }
+    }
+
+    let validated = validate_workspace_path(state, user.id(), workspace_path)?;
+    let config_dir = validated.join(".pi");
+    let scoped = service
+        .with_config_dir(config_dir)
+        .map_err(|e| ApiError::internal(format!("Failed to load workspace settings: {}", e)))?;
+    Ok(Arc::new(scoped))
+}
+
+/// Get the settings service for an app.
+fn get_settings_service(state: &AppState, app: &str) -> ApiResult<Arc<SettingsService>> {
+    match app {
+        "octo" => state.settings_octo.as_ref().map(Arc::clone),
+        "mmry" => state.settings_mmry.as_ref().map(Arc::clone),
+        "pi-agent" => state.settings_pi_agent.as_ref().map(Arc::clone),
+        "pi-models" => state.settings_pi_models.as_ref().map(Arc::clone),
+        _ => None,
+    }
+    .ok_or_else(|| ApiError::not_found(format!("Settings for app '{}' not found", app)))
+}
+
+// ============================================================================
+// OpenCode Global Config
+// ============================================================================
+
+/// Get the global opencode.json config for the current user.
+///
+/// Returns the contents of ~/.config/opencode/opencode.json
+/// In local mode, this is the server user's config.
+/// In container mode, this would be per-user (not yet implemented).
+#[instrument(skip(_user))]
+pub async fn get_global_opencode_config(_user: CurrentUser) -> ApiResult<Json<serde_json::Value>> {
+    // Get the config directory path
+    let config_path = get_global_opencode_config_path();
+
+    // Read and parse the config file
+    match tokio::fs::read_to_string(&config_path).await {
+        Ok(content) => {
+            // Parse as JSON - strip comments first since opencode.json supports JSONC
+            let stripped = strip_json_comments(&content);
+            let config: serde_json::Value = serde_json::from_str(&stripped)
+                .map_err(|e| ApiError::internal(format!("Failed to parse opencode.json: {}", e)))?;
+            Ok(Json(config))
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            // Return empty object if file doesn't exist
+            Ok(Json(serde_json::json!({})))
+        }
+        Err(e) => Err(ApiError::internal(format!(
+            "Failed to read opencode.json: {}",
+            e
+        ))),
+    }
+}
+
+/// Get the path to the global opencode.json config file.
+fn get_global_opencode_config_path() -> std::path::PathBuf {
+    // Default: ~/.config/opencode/opencode.json
+    if let Some(config_dir) = dirs::config_dir() {
+        config_dir.join("opencode").join("opencode.json")
+    } else if let Some(home) = dirs::home_dir() {
+        home.join(".config").join("opencode").join("opencode.json")
+    } else {
+        // Fallback
+        std::path::PathBuf::from("/etc/opencode/opencode.json")
+    }
+}
+
+/// Strip single-line (//) and multi-line (/* */) comments from JSON content,
+/// and remove trailing commas. This allows parsing JSONC (JSON with comments) files.
+fn strip_json_comments(input: &str) -> String {
+    let mut result = String::with_capacity(input.len());
+    let mut chars = input.chars().peekable();
+    let mut in_string = false;
+    let mut escape_next = false;
+
+    while let Some(c) = chars.next() {
+        if escape_next {
+            result.push(c);
+            escape_next = false;
+            continue;
+        }
+
+        if in_string {
+            result.push(c);
+            if c == '\\' {
+                escape_next = true;
+            } else if c == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+
+        match c {
+            '"' => {
+                in_string = true;
+                result.push(c);
+            }
+            '/' => {
+                if let Some(&next) = chars.peek() {
+                    match next {
+                        '/' => {
+                            // Single-line comment: skip until end of line
+                            chars.next(); // consume the second '/'
+                            while let Some(&ch) = chars.peek() {
+                                if ch == '\n' {
+                                    break;
+                                }
+                                chars.next();
+                            }
+                        }
+                        '*' => {
+                            // Multi-line comment: skip until */
+                            chars.next(); // consume the '*'
+                            while let Some(ch) = chars.next() {
+                                if ch == '*' {
+                                    if let Some(&'/') = chars.peek() {
+                                        chars.next(); // consume the '/'
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        _ => {
+                            result.push(c);
+                        }
+                    }
+                } else {
+                    result.push(c);
+                }
+            }
+            _ => {
+                result.push(c);
+            }
+        }
+    }
+
+    result
+}

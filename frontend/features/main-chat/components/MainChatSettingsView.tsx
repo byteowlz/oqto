@@ -103,22 +103,25 @@ export function MainChatSettingsView({
 
 	const isIdle = !(piState?.is_streaming || piState?.is_compacting);
 
-	const handleModelChange = useCallback(async (value: string) => {
-		if (!isIdle) return;
-		const separatorIndex = value.indexOf("/");
-		if (separatorIndex <= 0 || separatorIndex === value.length - 1) return;
-		const provider = value.slice(0, separatorIndex);
-		const modelId = value.slice(separatorIndex + 1);
-		setSelectedModelRef(value);
-		setIsSwitchingModel(true);
-		try {
-			await setMainChatPiModel(provider, modelId);
-		} catch (err) {
-			console.error("Failed to switch model:", err);
-		} finally {
-			setIsSwitchingModel(false);
-		}
-	}, [isIdle]);
+	const handleModelChange = useCallback(
+		async (value: string) => {
+			if (!isIdle) return;
+			const separatorIndex = value.indexOf("/");
+			if (separatorIndex <= 0 || separatorIndex === value.length - 1) return;
+			const provider = value.slice(0, separatorIndex);
+			const modelId = value.slice(separatorIndex + 1);
+			setSelectedModelRef(value);
+			setIsSwitchingModel(true);
+			try {
+				await setMainChatPiModel(provider, modelId);
+			} catch (err) {
+				console.error("Failed to switch model:", err);
+			} finally {
+				setIsSwitchingModel(false);
+			}
+		},
+		[isIdle],
+	);
 
 	if (loading) {
 		return (

@@ -5,8 +5,8 @@
 //! - Extract readable ID (adj-noun-verb part)
 //! - Strip workspace and ID for clean title display
 
-use regex::Regex;
 use once_cell::sync::Lazy;
+use regex::Regex;
 
 /// Pattern for auto-generated title: `<workdir>: <generated_title> [adj-noun-verb]`
 /// Examples:
@@ -41,7 +41,9 @@ impl ParsedTitle {
 
         // Try to match auto-generated format
         if let Some(caps) = TITLE_PATTERN.captures(title) {
-            let workspace = caps.name("workspace").map(|w| w.as_str().trim().to_string());
+            let workspace = caps
+                .name("workspace")
+                .map(|w| w.as_str().trim().to_string());
             let clean_title = caps
                 .name("title")
                 .map(|t| t.as_str().trim().to_string())

@@ -933,11 +933,7 @@ export const SessionScreen = memo(function SessionScreen() {
 		return () => {
 			active = false;
 		};
-	}, [
-		isWorkspacePiSession,
-		selectedChatSessionId,
-		workspacePiPath,
-	]);
+	}, [isWorkspacePiSession, selectedChatSessionId, workspacePiPath]);
 
 	useEffect(() => {
 		if (piSelectedModelRef || piModelOptions.length === 0) return;
@@ -5199,9 +5195,7 @@ export const SessionScreen = memo(function SessionScreen() {
 					</div>
 					{piModelOptions.length === 0 ? (
 						<SelectItem value="__none__" disabled>
-							{piIsModelLoading
-								? "Loading..."
-								: "No models available"}
+							{piIsModelLoading ? "Loading..." : "No models available"}
 						</SelectItem>
 					) : filteredPiModels.length === 0 ? (
 						<SelectItem value="__no_results__" disabled>

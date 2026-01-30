@@ -104,10 +104,7 @@ export function PiSettingsView({
 					scope === "main"
 						? await getMainChatPiState()
 						: sessionId
-							? await getWorkspacePiState(
-									workspacePath ?? "global",
-									sessionId,
-								)
+							? await getWorkspacePiState(workspacePath ?? "global", sessionId)
 							: null;
 				if (active) setPiState(nextState);
 			} catch {

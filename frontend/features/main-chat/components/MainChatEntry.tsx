@@ -111,9 +111,11 @@ export function MainChatEntry({
 				: null;
 
 			// Check both clean title and full title
-			if ((parsed?.title ?? session.title ?? "")
-				.toLowerCase()
-				.includes(filterLower))
+			if (
+				(parsed?.title ?? session.title ?? "")
+					.toLowerCase()
+					.includes(filterLower)
+			)
 				return true;
 
 			// Use parsed readable_id if available, otherwise generate from session ID
@@ -662,7 +664,8 @@ export function MainChatEntry({
 								: session.title || "Untitled";
 
 							// Use parsed readable_id if available, otherwise generate from session ID
-							const readableId = session.readable_id || resolveReadableId(session.id);
+							const readableId =
+								session.readable_id || resolveReadableId(session.id);
 
 							const formattedDate = formatSessionDate(
 								new Date(session.started_at).getTime(),
@@ -792,7 +795,8 @@ function SessionTimeline({
 						? parsed.title
 						: session.title || formattedDate;
 					// Use parsed readable_id if available, otherwise generate from session ID
-					const readableId = session.readable_id || resolveReadableId(session.id);
+					const readableId =
+						session.readable_id || resolveReadableId(session.id);
 
 					return (
 						<button

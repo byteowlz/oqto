@@ -495,9 +495,7 @@ function SettingsField({
 					<Input
 						id={fullPath}
 						type="number"
-						value={
-							value === null || value === undefined ? "" : String(value)
-						}
+						value={value === null || value === undefined ? "" : String(value)}
 						min={property.minimum}
 						max={property.maximum}
 						placeholder={hasDefault ? `${setting?.default}` : undefined}

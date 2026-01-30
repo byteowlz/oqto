@@ -350,10 +350,7 @@ export function MainChatPiView({
 		return `${piState.model.provider}/${piState.model.id}`;
 	}, [piState?.model]);
 	const canSwitchModel = Boolean(
-		piState &&
-			!piState.is_streaming &&
-			!piState.is_compacting &&
-			!isStreaming,
+		piState && !piState.is_streaming && !piState.is_compacting && !isStreaming,
 	);
 	const currentModelInfo = useMemo(() => {
 		if (piState?.model) {
@@ -537,7 +534,10 @@ export function MainChatPiView({
 	useEffect(() => {
 		// Only fetch models once session is active (piState available)
 		if (!isConnected || !piState) return;
-		if (!isMainScope && (!selectedSessionId || isPendingSessionId(selectedSessionId))) {
+		if (
+			!isMainScope &&
+			(!selectedSessionId || isPendingSessionId(selectedSessionId))
+		) {
 			return;
 		}
 		let active = true;

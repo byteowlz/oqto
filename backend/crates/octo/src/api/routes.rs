@@ -24,6 +24,9 @@ use super::state::AppState;
 use super::ui_control as ui_control_handlers;
 use crate::ws::ws_handler;
 
+// Note: handlers module now provides all public handlers via re-exports in handlers/mod.rs
+// Routes continue to use `handlers::function_name` - no changes needed
+
 /// Create the application router with configurable max upload size.
 pub fn create_router_with_config(state: AppState, max_upload_size_mb: usize) -> Router {
     // CORS configuration - use specific origins from config
