@@ -1,3 +1,45 @@
+/**
+ * Sessions feature module.
+ *
+ * Provides session management functionality including:
+ * - WebSocket session connections
+ * - Session event subscriptions
+ * - OpenCode integration
+ * - Workspace session management
+ */
+
+// Hooks
+export {
+	// WebSocket session
+	useWsConnection,
+	useWsSession,
+	useWsSessionWithConnection,
+	useWsSessionEvents,
+	type SessionEvent,
+	type SessionEventCallback,
+	type Permission,
+	// Session events
+	useSessionEvents,
+	type TransportMode,
+	type UseSessionEventsOptions,
+	// OpenCode
+	useOpenCodeSessions,
+	useOpenCodeMessages,
+	useCreateOpenCodeSession,
+	useSendMessage,
+	useAbortSession,
+	useInvalidateOpenCode,
+	openCodeKeys,
+	// Workspace sessions
+	useWorkspaceSessions,
+	useWorkspaceSession,
+	useCreateWorkspaceSession,
+	useStopWorkspaceSession,
+	useRefreshWorkspaceSessions,
+	workspaceSessionKeys,
+} from "./hooks";
+
+// Components
 export { SessionScreen } from "./SessionScreen";
 export type { ChatInputAreaHandle } from "./components/ChatInputArea";
 export { ChatInputArea } from "./components/ChatInputArea";

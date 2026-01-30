@@ -1,7 +1,13 @@
 /**
- * @deprecated Import from @/features/prompts instead
- * This file re-exports for backwards compatibility
+ * Prompts feature module.
+ *
+ * Provides security prompt functionality including:
+ * - Real-time prompt notifications via WebSocket
+ * - Prompt response handling
+ * - Helper functions for prompt display
  */
+
+// Hooks
 export {
 	usePrompts,
 	getPromptTitle,
@@ -15,4 +21,4 @@ export {
 	type PromptMessage,
 	type UsePromptsOptions,
 	type UsePromptsReturn,
-} from "@/features/prompts/hooks/usePrompts";
+} from "./hooks";

@@ -1,7 +1,13 @@
 /**
- * @deprecated Import from @/features/admin instead
- * This file re-exports for backwards compatibility
+ * Admin feature hooks.
+ *
+ * This module exports all hooks related to admin functionality:
+ * - Session management
+ * - User management
+ * - Invite code management
+ * - Metrics monitoring
  */
+
 export {
 	// Types
 	type SessionStatus,
@@ -42,4 +48,4 @@ export {
 	useDeleteInviteCode,
 	// Metrics hook
 	useAdminMetrics,
-} from "@/features/admin/hooks/useAdmin";
+} from "./useAdmin";

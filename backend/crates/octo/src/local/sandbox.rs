@@ -1379,9 +1379,10 @@ log_requests = true
         std::fs::create_dir_all(home.join(".ssh")).unwrap();
 
         let original_home = env::var_os("HOME");
-        env::set_var("HOME", home);
+        // SAFETY: This test runs single-threaded and restores the value after
+        unsafe { env::set_var("HOME", home) };
 
-        let config = SandboxConfig::development();
+        let config = SandboxConfig::from_profile("development");
         let args = config.build_bwrap_args_for_user(home, None).unwrap();
 
         let home_str = home.to_string_lossy().to_string();
@@ -1403,9 +1404,10 @@ log_requests = true
             "deny-read should be applied after workspace bind"
         );
 
+        // SAFETY: Restoring environment after test
         match original_home {
-            Some(value) => env::set_var("HOME", value),
-            None => env::remove_var("HOME"),
+            Some(value) => unsafe { env::set_var("HOME", value) },
+            None => unsafe { env::remove_var("HOME") },
         }
     }
 }
