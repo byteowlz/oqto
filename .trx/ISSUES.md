@@ -11,24 +11,6 @@ The sudoers configuration in setup.sh had critical security vulnerabilities that
 ...
 
 
-### [octo-pwnn] Backend Pi process reuse broadcasts events across sessions (P1, bug)
-When resuming a session that already has a Pi process running, backend reuses the existing process without creating isolated event subscriptions. This can cause events from one session to be broadcast to WebSocket handlers for another session.
-
-## Root Cause
-
-In backend/crates/octo/src/main_chat/pi_service.rs:
-...
-
-
-### [octo-1j5m] Background history refresh races with session switches (P1, bug)
-Background history refresh (usePiChatHistory) runs periodically without checking if messages are still relevant to the current session. This can cause stale messages to appear momentarily in wrong sessions.
-
-## Root Cause
-
-In frontend/features/main-chat/hooks/usePiChatHistory.ts:
-...
-
-
 ### [octo-p3n2] API Key Authentication & External Integration (P1, epic)
 Enable external apps (omni, ctx) to integrate with Octo via API keys. Support fire-and-forget and streaming responses, .ctx context files, auto-session creation.
 
@@ -722,6 +704,8 @@ Desired behavior: Tool calls hidden by default, toggle to show
 
 ## Closed
 
+- [octo-1j5m] Background history refresh races with session switches (closed 2026-01-31)
+- [octo-pwnn] Backend Pi process reuse broadcasts events across sessions (closed 2026-01-31)
 - [octo-dxsg] WebSocket handler swapping causes message leaks (closed 2026-01-31)
 - [octo-p7v5] Messages saved with stale pi_session_id when switching sessions (closed 2026-01-31)
 - [octo-jgc6] WebSocket messages lack session_id validation (closed 2026-01-31)
@@ -1263,9 +1247,9 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
-- [octo-k8z1.1] Backend: Integrate agent-browser daemon per session (closed )
 - [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
-- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
 - [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
-- [octo-k8z1.2] Backend: WebSocket proxy for screencast stream (closed )
 - [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
+- [octo-k8z1.1] Backend: Integrate agent-browser daemon per session (closed )
+- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
+- [octo-k8z1.2] Backend: WebSocket proxy for screencast stream (closed )
