@@ -305,6 +305,11 @@ impl SandboxProfile {
                 "~/.local/bin".to_string(),
                 "~/.local/share/uv".to_string(),
                 "~/.cache/uv".to_string(),
+                // Pi (Main Chat) - session files
+                "~/.pi".to_string(),
+                // Opencode - session and state files
+                "~/.local/share/opencode".to_string(),
+                "~/.opencode".to_string(),
                 // Agent tools - data directories
                 "~/.local/share/skdlr".to_string(),
                 "~/.local/share/mmry".to_string(),
@@ -1253,11 +1258,9 @@ deny_write = []
         let config: SandboxConfig = file.into();
 
         // sandbox.toml should always be in deny_write, even if not specified
-        assert!(
-            config
-                .deny_write
-                .contains(&"~/.config/octo/sandbox.toml".to_string())
-        );
+        assert!(config
+            .deny_write
+            .contains(&"~/.config/octo/sandbox.toml".to_string()));
     }
 
     #[test]
