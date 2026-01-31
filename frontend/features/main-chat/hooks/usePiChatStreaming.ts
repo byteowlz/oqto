@@ -123,6 +123,19 @@ export function usePiChatStreaming({
 			try {
 				const data = JSON.parse(event.data) as PiStreamEvent;
 
+				// Validate session_id to prevent messages from wrong session leaking through
+				// Skip validation for 'connected' events which establish the session
+				if (data.type !== "connected" && data.session_id !== undefined) {
+					const activeId = activeSessionIdRef.current;
+					if (activeId && data.session_id !== activeId) {
+						// Message belongs to a different session - ignore it
+						console.debug(
+							`[usePiChatStreaming] Ignoring message for session ${data.session_id}, active session is ${activeId}`,
+						);
+						return;
+					}
+				}
+
 				switch (data.type) {
 					case "connected":
 						setIsConnected(true);
@@ -317,7 +330,10 @@ export function usePiChatStreaming({
 				console.error("Failed to parse Pi WebSocket message:", e);
 			}
 		},
+		// Note: activeSessionIdRef is intentionally read dynamically via .current
+		// to get the latest session ID at message time, not at callback creation time
 		[
+			activeSessionIdRef,
 			nextMessageId,
 			onCompaction,
 			onError,

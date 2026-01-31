@@ -23,6 +23,8 @@ export type PiEventType =
 export type PiStreamEvent = {
 	type: PiEventType;
 	data?: unknown;
+	/** Session ID for validation - ensures messages belong to the active session */
+	session_id?: string | null;
 };
 
 /** Message part for display */

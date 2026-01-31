@@ -897,15 +897,18 @@ pub(crate) async fn handle_ws(
     // Subscribe to Pi events
     let mut event_rx = session.subscribe().await;
 
-    // Snapshot Pi session id for traceability (best-effort).
-    let pi_session_id = session.get_state().await.ok().and_then(|s| s.session_id);
-
     // Only one WS connection should persist assistant output for a session.
     let persistence_guard = session.claim_persistence_writer();
     let can_persist = persistence_guard.is_some();
 
-    // Send connected message
-    let connected_msg = serde_json::json!({"type": "connected"});
+    // Get current session_id for the connected message
+    let initial_session_id = session.get_state().await.ok().and_then(|s| s.session_id);
+
+    // Send connected message with session_id
+    let connected_msg = serde_json::json!({
+        "type": "connected",
+        "session_id": initial_session_id
+    });
     if sender
         .send(Message::Text(connected_msg.to_string().into()))
         .await
@@ -931,7 +934,7 @@ pub(crate) async fn handle_ws(
     let accumulator_for_events = Arc::clone(&message_accumulator);
     let main_chat_for_events = main_chat_svc.clone();
     let user_id_for_events = user_id.clone();
-    let pi_session_id_for_events = pi_session_id.clone();
+    let session_for_events = Arc::clone(&session);
     let mmry_state_for_events = mmry_state.clone();
 
     // Persist Pi auto-compaction summaries to main_chat.db so they can be injected
@@ -942,6 +945,14 @@ pub(crate) async fn handle_ws(
     // Transform raw Pi events into simplified format for frontend
     let send_task = tokio::spawn(async move {
         while let Ok(event) = event_rx.recv().await {
+            // Get current session_id dynamically (not from a stale snapshot)
+            // This ensures messages are saved to the correct session even after session switches
+            let current_session_id = session_for_events
+                .get_state()
+                .await
+                .ok()
+                .and_then(|s| s.session_id);
+
             // Accumulate message content for saving (only from the primary WS connection).
             if can_persist {
                 let mut acc = accumulator_for_events.lock().await;
@@ -957,7 +968,7 @@ pub(crate) async fn handle_ws(
                                     CreateChatMessage {
                                         role: MessageRole::Assistant,
                                         content: content.clone(),
-                                        pi_session_id: pi_session_id_for_events.clone(),
+                                        pi_session_id: current_session_id.clone(),
                                     },
                                 )
                                 .await;
@@ -969,7 +980,7 @@ pub(crate) async fn handle_ws(
                                     if let Err(e) = index_turn_to_mmry(
                                         &mmry_state_for_events,
                                         &user_id_for_events,
-                                        &pi_session_id_for_events,
+                                        &current_session_id,
                                         &saved,
                                     )
                                     .await
@@ -999,7 +1010,7 @@ pub(crate) async fn handle_ws(
                                 crate::main_chat::CreateHistoryEntry {
                                     entry_type: crate::main_chat::HistoryEntryType::Summary,
                                     content: result.summary.clone(),
-                                    session_id: None,
+                                    session_id: current_session_id.clone(),
                                     meta: Some(serde_json::json!({
                                         "source": "pi_auto_compaction",
                                         "first_kept_entry_id": result.first_kept_entry_id,
@@ -1016,8 +1027,8 @@ pub(crate) async fn handle_ws(
                 }
             }
 
-            // Transform Pi events into frontend-friendly format
-            let ws_event = transform_pi_event_for_ws(&event);
+            // Transform Pi events into frontend-friendly format with session_id for validation
+            let ws_event = transform_pi_event_for_ws(&event, current_session_id.as_deref());
             if ws_event.is_none() {
                 continue; // Skip events we don't need to forward
             }
@@ -1044,11 +1055,14 @@ pub(crate) async fn handle_ws(
                 match serde_json::from_str::<WsCommand>(&text) {
                     Ok(cmd) => {
                         // Save user message before sending to Pi
+                        // Get current session_id dynamically to avoid stale references
                         if let WsCommand::Prompt { ref message }
                         | WsCommand::Steer { ref message }
                         | WsCommand::FollowUp { ref message } = cmd
                         {
                             if let Some(svc) = &main_chat_svc {
+                                let current_session_id =
+                                    session.get_state().await.ok().and_then(|s| s.session_id);
                                 let content =
                                     serde_json::json!([{"type": "text", "text": message}]);
                                 if let Err(e) = svc
@@ -1057,7 +1071,7 @@ pub(crate) async fn handle_ws(
                                         CreateChatMessage {
                                             role: MessageRole::User,
                                             content,
-                                            pi_session_id: pi_session_id.clone(),
+                                            pi_session_id: current_session_id,
                                         },
                                     )
                                     .await
@@ -1348,15 +1362,26 @@ pub(crate) fn pi_state_to_response(state: PiState) -> PiStateResponse {
 
 /// Transform a raw Pi event into a simplified WebSocket event for the frontend.
 /// Returns None for events that don't need to be forwarded.
-fn transform_pi_event_for_ws(event: &PiEvent) -> Option<Value> {
+/// Includes session_id in all events so frontend can validate message ownership.
+fn transform_pi_event_for_ws(event: &PiEvent, session_id: Option<&str>) -> Option<Value> {
     match event {
-        PiEvent::AgentStart => Some(serde_json::json!({"type": "agent_start"})),
-        PiEvent::AgentEnd { .. } => Some(serde_json::json!({"type": "done"})),
+        PiEvent::AgentStart => Some(serde_json::json!({
+            "type": "agent_start",
+            "session_id": session_id
+        })),
+        PiEvent::AgentEnd { .. } => Some(serde_json::json!({
+            "type": "done",
+            "session_id": session_id
+        })),
         PiEvent::TurnStart => None,      // Don't forward
         PiEvent::TurnEnd { .. } => None, // Don't forward
         PiEvent::MessageStart { message } => {
             if message.role == "assistant" {
-                Some(serde_json::json!({"type": "message_start", "role": "assistant"}))
+                Some(serde_json::json!({
+                    "type": "message_start",
+                    "role": "assistant",
+                    "session_id": session_id
+                }))
             } else {
                 None
             }
@@ -1369,11 +1394,13 @@ fn transform_pi_event_for_ws(event: &PiEvent) -> Option<Value> {
             match assistant_message_event {
                 AssistantMessageEvent::TextDelta { delta, .. } => Some(serde_json::json!({
                     "type": "text",
-                    "data": delta
+                    "data": delta,
+                    "session_id": session_id
                 })),
                 AssistantMessageEvent::ThinkingDelta { delta, .. } => Some(serde_json::json!({
                     "type": "thinking",
-                    "data": delta
+                    "data": delta,
+                    "session_id": session_id
                 })),
                 AssistantMessageEvent::ToolcallEnd { tool_call, .. } => Some(serde_json::json!({
                     "type": "tool_use",
@@ -1381,11 +1408,13 @@ fn transform_pi_event_for_ws(event: &PiEvent) -> Option<Value> {
                         "id": tool_call.id,
                         "name": tool_call.name,
                         "input": tool_call.arguments
-                    }
+                    },
+                    "session_id": session_id
                 })),
                 AssistantMessageEvent::Error { reason } => Some(serde_json::json!({
                     "type": "error",
-                    "data": reason
+                    "data": reason,
+                    "session_id": session_id
                 })),
                 _ => None, // Skip other message updates
             }
@@ -1401,7 +1430,8 @@ fn transform_pi_event_for_ws(event: &PiEvent) -> Option<Value> {
                 "id": tool_call_id,
                 "name": tool_name,
                 "input": args
-            }
+            },
+            "session_id": session_id
         })),
         PiEvent::ToolExecutionEnd {
             tool_call_id,
@@ -1414,12 +1444,17 @@ fn transform_pi_event_for_ws(event: &PiEvent) -> Option<Value> {
                 "id": tool_call_id,
                 "name": tool_name,
                 "content": result
-            }
+            },
+            "session_id": session_id
         })),
-        PiEvent::AutoCompactionStart { .. } => {
-            Some(serde_json::json!({"type": "compaction_start"}))
-        }
-        PiEvent::AutoCompactionEnd { .. } => Some(serde_json::json!({"type": "compaction"})),
+        PiEvent::AutoCompactionStart { .. } => Some(serde_json::json!({
+            "type": "compaction_start",
+            "session_id": session_id
+        })),
+        PiEvent::AutoCompactionEnd { .. } => Some(serde_json::json!({
+            "type": "compaction",
+            "session_id": session_id
+        })),
         _ => None, // Skip other events
     }
 }
