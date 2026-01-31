@@ -594,44 +594,87 @@ impl LinuxUsersConfig {
                 .context("enabling systemd linger")?;
         }
 
+        // Install the octo-runner systemd user service file if not present.
+        // The user needs ~/.config/systemd/user/octo-runner.service for `systemctl --user enable`.
+        self.install_runner_service_for_user(username, uid)
+            .context("installing octo-runner.service for user")?;
+
         // Ensure the user's systemd instance is running.
-        // This is best-effort; if it fails, systemctl --user may still work depending on distro.
-        let _ = run_privileged_command(
+        // This is required for systemctl --user to work.
+        run_privileged_command(
             self.use_sudo,
             "systemctl",
             &["start", &format!("user@{}.service", uid)],
-        );
+        )
+        .context("starting user systemd instance")?;
+
+        // Give the user's systemd instance a moment to initialize.
+        // This is especially important for newly created users.
+        std::thread::sleep(std::time::Duration::from_millis(500));
 
         // Enable + start the runner as that user.
-        // We need to set the user bus environment explicitly to target the per-user manager.
+        // Try multiple approaches since the user may not have a D-Bus session yet.
         let runtime_dir = format!("/run/user/{}", uid);
         let bus = format!("unix:path={}/bus", runtime_dir);
 
-        if let Err(e) = run_as_user(
+        // Method 1: Use --machine=user@.host which connects via machinectl
+        // This works without a local D-Bus session socket.
+        let machine_arg = format!("{}@.host", username);
+        let machine_result = run_privileged_command(
             self.use_sudo,
-            username,
             "systemctl",
-            &["--user", "enable", "--now", "octo-runner"],
             &[
-                ("XDG_RUNTIME_DIR", runtime_dir.as_str()),
-                ("DBUS_SESSION_BUS_ADDRESS", bus.as_str()),
+                "--machine",
+                &machine_arg,
+                "--user",
+                "enable",
+                "--now",
+                "octo-runner",
             ],
-        ) {
-            warn!(
-                "Failed to enable/start octo-runner for {} via systemctl --user: {:?}",
+        );
+
+        if let Err(e) = &machine_result {
+            debug!(
+                "systemctl --machine failed for {}: {:?}, trying XDG_RUNTIME_DIR method",
                 username, e
             );
+
+            // Method 2: Set XDG_RUNTIME_DIR and DBUS_SESSION_BUS_ADDRESS explicitly
+            if let Err(e2) = run_as_user(
+                self.use_sudo,
+                username,
+                "systemctl",
+                &["--user", "enable", "--now", "octo-runner"],
+                &[
+                    ("XDG_RUNTIME_DIR", runtime_dir.as_str()),
+                    ("DBUS_SESSION_BUS_ADDRESS", bus.as_str()),
+                ],
+            ) {
+                warn!(
+                    "Failed to enable/start octo-runner for {} (both methods failed): \
+                     machine method: {:?}, env method: {:?}",
+                    username, e, e2
+                );
+            }
         }
 
-        // If the runner socket exists, we consider it good enough.
-        if !expected_socket.exists() {
-            anyhow::bail!(
-                "octo-runner socket not found at {}",
-                expected_socket.display()
-            );
+        // Wait for the socket to appear (up to 5 seconds).
+        // The service may take a moment to create its socket.
+        for i in 0..10 {
+            if expected_socket.exists() {
+                debug!("octo-runner socket appeared after {}ms", i * 500);
+                return Ok(());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(500));
         }
 
-        Ok(())
+        // If the runner socket still doesn't exist, fail.
+        anyhow::bail!(
+            "octo-runner socket not found at {} after waiting 5s. \
+             Check if octo-runner.service is properly installed for user {}.",
+            expected_socket.display(),
+            username
+        )
     }
 
     /// Check if systemd linger is already enabled for a user.
@@ -648,6 +691,97 @@ impl LinuxUsersConfig {
                         .eq_ignore_ascii_case("yes")
             })
             .unwrap_or(false)
+    }
+
+    /// Install the octo-runner systemd user service file for a user.
+    ///
+    /// This creates ~/.config/systemd/user/octo-runner.service so that
+    /// `systemctl --user enable octo-runner` can find the service.
+    fn install_runner_service_for_user(&self, username: &str, uid: u32) -> Result<()> {
+        // Get the user's home directory
+        let home = get_user_home(username)?
+            .ok_or_else(|| anyhow::anyhow!("could not find home directory for {}", username))?;
+        let home_str = home.to_string_lossy();
+
+        let service_dir = format!("{}/.config/systemd/user", home_str);
+        let service_path = format!("{}/octo-runner.service", service_dir);
+
+        // Check if already installed
+        if Path::new(&service_path).exists() {
+            debug!("octo-runner.service already installed for {}", username);
+            return Ok(());
+        }
+
+        // Find the octo-runner binary
+        let runner_path = find_octo_runner_binary()?;
+
+        // Service file content
+        let service_content = format!(
+            r#"[Unit]
+Description=Octo Runner - Process isolation daemon
+After=default.target
+
+[Service]
+Type=simple
+ExecStart={}
+Restart=on-failure
+RestartSec=5
+Environment=RUST_LOG=info
+
+[Install]
+WantedBy=default.target
+"#,
+            runner_path.display()
+        );
+
+        // Create the directory and service file as the target user
+        let is_current_user = std::env::var("USER").ok().as_deref() == Some(username);
+
+        if is_current_user {
+            std::fs::create_dir_all(&service_dir)
+                .with_context(|| format!("creating {}", service_dir))?;
+            std::fs::write(&service_path, &service_content)
+                .with_context(|| format!("writing {}", service_path))?;
+        } else {
+            // Create directory as the target user
+            run_as_user(self.use_sudo, username, "mkdir", &["-p", &service_dir], &[])
+                .with_context(|| format!("creating {} as {}", service_dir, username))?;
+
+            // Write the service file via a temp file and move
+            // (we can't easily write file content via run_as_user)
+            let temp_file = format!("/tmp/octo-runner-{}.service", uid);
+            std::fs::write(&temp_file, &service_content).context("writing temp service file")?;
+
+            // Copy and set ownership
+            run_privileged_command(self.use_sudo, "cp", &[&temp_file, &service_path])
+                .context("copying service file")?;
+            run_privileged_command(
+                self.use_sudo,
+                "chown",
+                &[&format!("{}:{}", username, username), &service_path],
+            )
+            .context("chown service file")?;
+
+            // Clean up temp file
+            let _ = std::fs::remove_file(&temp_file);
+
+            // Reload systemd for the user to pick up the new service file
+            let runtime_dir = format!("/run/user/{}", uid);
+            let bus = format!("unix:path={}/bus", runtime_dir);
+            let _ = run_as_user(
+                self.use_sudo,
+                username,
+                "systemctl",
+                &["--user", "daemon-reload"],
+                &[
+                    ("XDG_RUNTIME_DIR", runtime_dir.as_str()),
+                    ("DBUS_SESSION_BUS_ADDRESS", bus.as_str()),
+                ],
+            );
+        }
+
+        info!("Installed octo-runner.service for user {}", username);
+        Ok(())
     }
 
     /// Find the next available UID starting from uid_start.
@@ -793,6 +927,43 @@ fn get_user_home(username: &str) -> Result<Option<PathBuf>> {
     }
 }
 
+/// Find the octo-runner binary.
+///
+/// Searches in common locations and PATH.
+fn find_octo_runner_binary() -> Result<PathBuf> {
+    // Try `which` first
+    if let Ok(output) = Command::new("which").arg("octo-runner").output() {
+        if output.status.success() {
+            let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !path.is_empty() {
+                return Ok(PathBuf::from(path));
+            }
+        }
+    }
+
+    // Check common locations
+    let candidates = ["/usr/local/bin/octo-runner", "/usr/bin/octo-runner"];
+
+    for path in candidates {
+        if Path::new(path).exists() {
+            return Ok(PathBuf::from(path));
+        }
+    }
+
+    // Check ~/.cargo/bin for current user (development)
+    if let Ok(home) = std::env::var("HOME") {
+        let cargo_path = format!("{}/.cargo/bin/octo-runner", home);
+        if Path::new(&cargo_path).exists() {
+            return Ok(PathBuf::from(cargo_path));
+        }
+    }
+
+    anyhow::bail!(
+        "octo-runner binary not found. Install it with 'cargo install --path backend/crates/octo' \
+         or copy to /usr/local/bin/"
+    )
+}
+
 /// Get the GECOS field (comment) of a Linux user.
 /// Used to verify which platform user_id owns a Linux account.
 fn get_user_gecos(username: &str) -> Result<Option<String>> {
@@ -856,6 +1027,9 @@ fn run_privileged_command(use_sudo: bool, cmd: &str, args: &[&str]) -> Result<()
 }
 
 /// Run a command as a specific Linux user, with optional sudo, and environment overrides.
+///
+/// Environment variables are passed to the target command using `env VAR=value cmd args...`
+/// because sudo/runuser don't propagate the parent process environment by default.
 fn run_as_user(
     use_sudo: bool,
     username: &str,
@@ -865,25 +1039,35 @@ fn run_as_user(
 ) -> Result<()> {
     let is_root = unsafe { libc::geteuid() } == 0;
 
+    // Build the actual command with environment variables using `env`.
+    // Format: sudo/runuser -u user -- env VAR1=val1 VAR2=val2 cmd args...
     let mut command = if is_root {
-        // Prefer runuser when root.
         let mut c = Command::new("runuser");
-        c.args(["-u", username, "--", cmd]);
+        c.args(["-u", username, "--"]);
         c
     } else if use_sudo {
         let mut c = Command::new("sudo");
-        c.args(["-n", "-u", username, cmd]);
+        c.args(["-n", "-u", username, "--"]);
         c
     } else {
         anyhow::bail!("must be root or have sudo enabled to run as another user");
     };
 
-    command.args(args);
-    for (k, v) in env {
-        command.env(k, v);
+    // If we have environment variables, use `env` to set them
+    if !env.is_empty() {
+        command.arg("env");
+        for (k, v) in env {
+            command.arg(format!("{}={}", k, v));
+        }
     }
 
-    debug!("Running as {}: {} {:?}", username, cmd, args);
+    command.arg(cmd);
+    command.args(args);
+
+    debug!(
+        "Running as {}: {} {:?} (env: {:?})",
+        username, cmd, args, env
+    );
     let output = command
         .output()
         .with_context(|| format!("running {} as user {}", cmd, username))?;
