@@ -7,7 +7,7 @@ use axum::{
     response::{AppendHeaders, IntoResponse},
 };
 use serde::{Deserialize, Serialize};
-use tracing::{info, instrument, warn};
+use tracing::{error, info, instrument, warn};
 
 use crate::auth::{AuthError, CurrentUser};
 use crate::user::{CreateUserRequest, UpdateUserRequest, UserInfo as DbUserInfo};
@@ -134,23 +134,58 @@ pub async fn register(
         .await
         .map_err(|e| ApiError::bad_request(e.to_string()))?;
 
-    // Create the user
-    let user = match state
-        .users
-        .create_user(CreateUserRequest {
-            username: request.username.clone(),
-            email: request.email.clone(),
-            password: Some(request.password),
-            display_name: request.display_name,
-            role: None, // Default to user role
-            external_id: None,
-        })
-        .await
-    {
+    // SECURITY: In multi-user mode, generate a user_id that won't collide with existing
+    // Linux users BEFORE creating the DB user. This avoids the need for rollback.
+    let user_id = if let Some(ref linux_users) = state.linux_users {
+        match linux_users.generate_unique_user_id(&request.username) {
+            Ok(id) => Some(id),
+            Err(e) => {
+                // Restore the invite code
+                if let Err(restore_err) = state.invites.restore_use(&request.invite_code).await {
+                    warn!(
+                        "Failed to restore invite code after ID generation failure: {:?}",
+                        restore_err
+                    );
+                }
+                return Err(ApiError::internal(format!(
+                    "Failed to generate user ID: {}",
+                    e
+                )));
+            }
+        }
+    } else {
+        None
+    };
+
+    // Create the database user (with pre-generated ID if in multi-user mode)
+    let user = match if let Some(id) = &user_id {
+        state
+            .users
+            .create_user_with_id(id, CreateUserRequest {
+                username: request.username.clone(),
+                email: request.email.clone(),
+                password: Some(request.password),
+                display_name: request.display_name,
+                role: None,
+                external_id: None,
+            })
+            .await
+    } else {
+        state
+            .users
+            .create_user(CreateUserRequest {
+                username: request.username.clone(),
+                email: request.email.clone(),
+                password: Some(request.password),
+                display_name: request.display_name,
+                role: None,
+                external_id: None,
+            })
+            .await
+    } {
         Ok(user) => user,
         Err(e) => {
             // User creation failed - restore the invite code use
-            // This is best-effort; if it fails, we log but don't change the error
             if let Err(restore_err) = state.invites.restore_use(&request.invite_code).await {
                 warn!(
                     "Failed to restore invite code use after user creation failure: {:?}",
@@ -161,8 +196,51 @@ pub async fn register(
         }
     };
 
+    // SECURITY: Create Linux user if multi-user isolation is enabled.
+    // Since we pre-generated a unique ID, this should succeed unless there's a system error.
+    if let Some(ref linux_users) = state.linux_users {
+        match linux_users.ensure_user(&user.id) {
+            Ok((_uid, actual_linux_username)) => {
+                info!(
+                    user_id = %user.id,
+                    linux_user = %actual_linux_username,
+                    "Created Linux user for registered user"
+                );
+            }
+            Err(e) => {
+                // This shouldn't happen since we pre-checked, but handle it safely
+                error!(
+                    user_id = %user.id,
+                    error = %e,
+                    "Failed to create Linux user - deleting database user"
+                );
+
+                // Delete the database user to maintain isolation invariant
+                if let Err(delete_err) = state.users.delete_user(&user.id).await {
+                    error!(
+                        user_id = %user.id,
+                        error = %delete_err,
+                        "Failed to delete user after Linux user creation failure"
+                    );
+                }
+
+                // Restore the invite code
+                if let Err(restore_err) = state.invites.restore_use(&request.invite_code).await {
+                    warn!(
+                        "Failed to restore invite code after rollback: {:?}",
+                        restore_err
+                    );
+                }
+
+                return Err(ApiError::internal(format!(
+                    "Failed to create user account: {}. Please contact an administrator.",
+                    e
+                )));
+            }
+        }
+    }
+
     // Update the invite code to record the actual user ID
-    // This is informational and not critical for correctness
     if let Err(e) = sqlx::query("UPDATE invite_codes SET used_by = ? WHERE code = ?")
         .bind(&user.id)
         .bind(&request.invite_code)
@@ -170,29 +248,6 @@ pub async fn register(
         .await
     {
         warn!("Failed to update invite code used_by: {:?}", e);
-    }
-
-    // Create Linux user if multi-user isolation is enabled
-    if let Some(ref linux_users) = state.linux_users {
-        match linux_users.ensure_user(&user.id) {
-            Ok(uid) => {
-                info!(
-                    user_id = %user.id,
-                    linux_user = %linux_users.linux_username(&user.id),
-                    uid = uid,
-                    "Created Linux user for registered user"
-                );
-            }
-            Err(e) => {
-                // Log warning but don't fail - user can still register
-                // Linux user will be created on first session start
-                warn!(
-                    user_id = %user.id,
-                    error = %e,
-                    "Failed to create Linux user (will retry on session start)"
-                );
-            }
-        }
     }
 
     // Allocate a stable per-user mmry port in local multi-user mode.

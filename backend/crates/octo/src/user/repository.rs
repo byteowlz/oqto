@@ -42,26 +42,26 @@ impl UserRepository {
         s
     }
 
+    /// Generate a unique user ID from a username.
+    /// Always includes a random suffix to guarantee uniqueness without DB lookup.
+    /// This allows creating Linux users before DB users for better isolation.
+    pub fn generate_user_id(username: &str) -> String {
+        let base = Self::normalize_linux_username(username);
+        format!("{}-{}", base, nanoid::nanoid!(4))
+    }
+
     /// Create a new user.
     #[instrument(skip(self, request), fields(username = %request.username))]
     pub async fn create(&self, request: CreateUserRequest) -> Result<User> {
-        // Use a stable, human-readable id so it can be used for workspace dir names
-        // and Linux user provisioning.
-        let base = Self::normalize_linux_username(&request.username);
-        let mut id = base.clone();
-        for _ in 0..10 {
-            let exists: Option<(i64,)> = sqlx::query_as("SELECT 1 FROM users WHERE id = ? LIMIT 1")
-                .bind(&id)
-                .fetch_optional(&self.pool)
-                .await
-                .context("checking user id availability")?;
-            if exists.is_none() {
-                break;
-            }
-            id = format!("{}-{}", base, nanoid::nanoid!(4));
-        }
+        let id = Self::generate_user_id(&request.username);
+        self.create_with_id(&id, request).await
+    }
 
-        let linux_username = id.clone();
+    /// Create a new user with a pre-generated ID.
+    /// Used when Linux user must be created before DB user.
+    #[instrument(skip(self, request), fields(id = %id, username = %request.username))]
+    pub async fn create_with_id(&self, id: &str, request: CreateUserRequest) -> Result<User> {
+        let linux_username = id.to_string();
         let display_name = request
             .display_name
             .unwrap_or_else(|| request.username.clone());

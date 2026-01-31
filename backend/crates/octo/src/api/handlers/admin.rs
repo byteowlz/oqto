@@ -13,7 +13,7 @@ use axum::{
 use serde::Serialize;
 use tokio::sync::Mutex;
 use tokio_stream::{StreamExt, wrappers::IntervalStream};
-use tracing::{info, instrument, warn};
+use tracing::{error, info, instrument, warn};
 
 use crate::auth::{CurrentUser, RequireAdmin};
 use crate::observability::{CpuTimes, HostMetrics, read_host_metrics};
@@ -239,28 +239,54 @@ pub async fn create_user(
     RequireAdmin(_user): RequireAdmin,
     Json(request): Json<CreateUserRequest>,
 ) -> ApiResult<(StatusCode, Json<DbUserInfo>)> {
-    // Uses centralized From<anyhow::Error> conversion
-    let user = state.users.create_user(request).await?;
+    // SECURITY: In multi-user mode, generate a user_id that won't collide with existing
+    // Linux users BEFORE creating the DB user.
+    let user_id = if let Some(ref linux_users) = state.linux_users {
+        Some(linux_users.generate_unique_user_id(&request.username)?)
+    } else {
+        None
+    };
 
-    // Create Linux user if multi-user isolation is enabled
+    // Create the database user (with pre-generated ID if in multi-user mode)
+    let user = if let Some(id) = &user_id {
+        state.users.create_user_with_id(id, request).await?
+    } else {
+        state.users.create_user(request).await?
+    };
+
+    // SECURITY: In multi-user mode, we MUST create the Linux user or fail.
+    // Since we pre-generated a unique ID, this should succeed unless there's a system error.
     if let Some(ref linux_users) = state.linux_users {
         match linux_users.ensure_user(&user.id) {
-            Ok(uid) => {
+            Ok((uid, actual_linux_username)) => {
                 info!(
                     user_id = %user.id,
-                    linux_user = %linux_users.linux_username(&user.id),
+                    linux_user = %actual_linux_username,
                     uid = uid,
                     "Created Linux user for platform user"
                 );
             }
             Err(e) => {
-                // Log warning but don't fail - user can still be created
-                // Linux user will be created on first session start
-                warn!(
+                // This shouldn't happen since we pre-checked, but handle it safely
+                error!(
                     user_id = %user.id,
                     error = %e,
-                    "Failed to create Linux user (will retry on session start)"
+                    "Failed to create Linux user - rolling back user creation"
                 );
+
+                // Delete the user from the database
+                if let Err(delete_err) = state.users.delete_user(&user.id).await {
+                    error!(
+                        user_id = %user.id,
+                        error = %delete_err,
+                        "Failed to delete user after Linux user creation failure"
+                    );
+                }
+
+                return Err(ApiError::internal(format!(
+                    "Failed to create Linux user for isolation: {}",
+                    e
+                )));
             }
         }
     }

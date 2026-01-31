@@ -91,15 +91,15 @@ impl LinuxUsersConfig {
     /// Ensure a Linux user exists for a shared project.
     ///
     /// Creates the project user if it doesn't exist and sets up the project directory.
-    /// Returns the UID of the project user.
+    /// Returns (UID, linux_username) of the project user.
     pub fn ensure_project_user(
         &self,
         project_id: &str,
         project_path: &std::path::Path,
-    ) -> Result<u32> {
+    ) -> Result<(u32, String)> {
         if !self.enabled {
             // Return current user's UID when not enabled
-            return Ok(unsafe { libc::getuid() });
+            return Ok((unsafe { libc::getuid() }, project_id.to_string()));
         }
 
         // Ensure group exists first
@@ -115,7 +115,7 @@ impl LinuxUsersConfig {
             );
             // Ensure directory ownership is correct
             self.chown_directory_to_user(project_path, &username)?;
-            return Ok(uid);
+            return Ok((uid, username));
         }
 
         // Find next available UID
@@ -162,7 +162,7 @@ impl LinuxUsersConfig {
             .with_context(|| format!("creating project directory: {:?}", project_path))?;
         self.chown_directory_to_user(project_path, &username)?;
 
-        Ok(uid)
+        Ok((uid, username))
     }
 
     /// Set ownership of a directory to a specific Linux username.
@@ -202,12 +202,14 @@ impl LinuxUsersConfig {
     /// This is the main entry point for automatic user creation:
     /// - If project_id is provided, ensures project user exists
     /// - Otherwise, ensures platform user's Linux user exists
+    ///
+    /// Returns (UID, linux_username).
     pub fn ensure_effective_user(
         &self,
         user_id: &str,
         project_id: Option<&str>,
         project_path: Option<&std::path::Path>,
-    ) -> Result<u32> {
+    ) -> Result<(u32, String)> {
         match (project_id, project_path) {
             (Some(pid), Some(path)) => self.ensure_project_user(pid, path),
             _ => self.ensure_user(user_id),
@@ -296,10 +298,70 @@ impl LinuxUsersConfig {
         get_user_home(&username)
     }
 
+    /// Generate a unique user ID that won't collide with existing Linux users.
+    ///
+    /// This should be called BEFORE creating the DB user to ensure the Linux username
+    /// derived from this ID is available. Regenerates the ID if collision detected.
+    ///
+    /// Returns the user_id to use for both DB and Linux user creation.
+    pub fn generate_unique_user_id(&self, username: &str) -> Result<String> {
+        const MAX_ATTEMPTS: u32 = 10;
+
+        for attempt in 0..MAX_ATTEMPTS {
+            let user_id = crate::user::UserRepository::generate_user_id(username);
+            let linux_username = self.linux_username(&user_id);
+
+            // Check if this Linux username is available
+            if let Some(_uid) = get_user_uid(&linux_username)? {
+                // Linux user exists - check if it's ours (shouldn't happen for new registration)
+                if let Some(gecos) = get_user_gecos(&linux_username)? {
+                    if let Some(owner_id) = extract_user_id_from_gecos(&gecos) {
+                        if owner_id == user_id {
+                            // This is our user (idempotent retry) - ID is fine
+                            debug!(
+                                "Linux user '{}' already belongs to user_id '{}' (attempt {})",
+                                linux_username,
+                                user_id,
+                                attempt + 1
+                            );
+                            return Ok(user_id);
+                        }
+                    }
+                }
+                // Collision with different owner - regenerate
+                debug!(
+                    "Linux username '{}' already exists, regenerating ID (attempt {})",
+                    linux_username,
+                    attempt + 1
+                );
+                continue;
+            }
+
+            // Username is available
+            debug!(
+                "Generated unique user_id '{}' -> linux username '{}' (attempt {})",
+                user_id,
+                linux_username,
+                attempt + 1
+            );
+            return Ok(user_id);
+        }
+
+        anyhow::bail!(
+            "Could not generate unique user_id for username '{}' after {} attempts",
+            username,
+            MAX_ATTEMPTS
+        )
+    }
+
     /// Create a Linux user for the given platform user.
     ///
-    /// Returns the UID of the created user.
-    pub fn create_user(&self, user_id: &str) -> Result<u32> {
+    /// Returns a tuple of (UID, actual_linux_username).
+    ///
+    /// SECURITY: Verifies ownership via GECOS field before returning an existing user's UID.
+    /// If the Linux user exists but belongs to a different user_id, returns an error.
+    /// Callers should use `generate_unique_user_id()` before DB user creation to avoid this.
+    pub fn create_user(&self, user_id: &str) -> Result<(u32, String)> {
         if !self.enabled {
             anyhow::bail!("Linux user isolation is not enabled");
         }
@@ -308,10 +370,48 @@ impl LinuxUsersConfig {
 
         // Check if user already exists
         if let Some(uid) = get_user_uid(&username)? {
-            debug!("User '{}' already exists with UID {}", username, uid);
-            return Ok(uid);
+            // SECURITY: Verify this user belongs to the same platform user_id via GECOS
+            if let Some(gecos) = get_user_gecos(&username)? {
+                if let Some(owner_id) = extract_user_id_from_gecos(&gecos) {
+                    if owner_id == user_id {
+                        debug!(
+                            "Linux user '{}' already exists with UID {} and belongs to user_id '{}'",
+                            username, uid, user_id
+                        );
+                        return Ok((uid, username));
+                    }
+                    // SECURITY: Different owner - this should not happen if generate_unique_user_id was used
+                    anyhow::bail!(
+                        "Linux user '{}' belongs to different user_id '{}', expected '{}'",
+                        username,
+                        owner_id,
+                        user_id
+                    );
+                }
+            }
+            // No GECOS or can't parse - user exists but we can't verify ownership.
+            // This could be: a manually created user, a system user, or a race condition.
+            // SECURITY: We cannot safely return this UID as it may belong to someone else.
+            // The admin should either:
+            // 1. Delete the conflicting Linux user, or
+            // 2. Add proper GECOS: "Octo platform user: <user_id>"
+            anyhow::bail!(
+                "Linux user '{}' exists but has no valid Octo GECOS field. \
+                 Cannot verify ownership for user_id '{}'. \
+                 Either delete the Linux user or set GECOS to 'Octo platform user: {}'",
+                username,
+                user_id,
+                user_id
+            );
         }
 
+        // Create the Linux user
+        self.create_linux_user_internal(user_id, &username)
+    }
+
+    /// Internal helper to create a Linux user with the given username.
+    /// Returns (uid, username).
+    fn create_linux_user_internal(&self, user_id: &str, username: &str) -> Result<(u32, String)> {
         // Find next available UID
         let uid = self.find_next_uid()?;
 
@@ -337,41 +437,45 @@ impl LinuxUsersConfig {
         }
 
         // Add comment with platform user ID for reference (sanitize for useradd compat)
+        // This GECOS field is used to verify ownership on subsequent calls
         args.push("-c".to_string());
         args.push(sanitize_gecos(&format!("Octo platform user: {}", user_id)));
 
-        args.push(username.clone());
+        args.push(username.to_string());
 
         let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
         run_privileged_command(self.use_sudo, "useradd", &args_refs)
             .with_context(|| format!("creating user '{}'", username))?;
 
         info!("Created Linux user '{}' with UID {}", username, uid);
-        Ok(uid)
+        Ok((uid, username.to_string()))
     }
 
     /// Ensure a Linux user exists, creating it if necessary.
-    /// Returns the UID of the user.
-    pub fn ensure_user(&self, user_id: &str) -> Result<u32> {
+    /// Returns (UID, actual_linux_username).
+    ///
+    /// The actual username may differ from `linux_username(user_id)` if a suffix was
+    /// needed to avoid collision with another user. Callers should store this username
+    /// in the database for future lookups.
+    pub fn ensure_user(&self, user_id: &str) -> Result<(u32, String)> {
         if !self.enabled {
-            // Return current user's UID when not enabled
-            return Ok(unsafe { libc::getuid() });
+            // Return current user's UID and a placeholder username when not enabled
+            return Ok((unsafe { libc::getuid() }, user_id.to_string()));
         }
 
         // Ensure group exists first
         self.ensure_group()?;
 
-        // Create user if needed
-        let uid = self.create_user(user_id)?;
+        // Create user if needed (returns actual username which may have suffix)
+        let (uid, username) = self.create_user(user_id)?;
 
         // Best-effort: ensure the per-user octo-runner daemon is enabled and started.
         // This is required for multi-user components that must run as the target Linux user
         // (e.g. per-user mmry instances, Pi runner mode).
-        let username = self.linux_username(user_id);
         self.ensure_octo_runner_running(&username, uid)
             .with_context(|| format!("ensuring octo-runner for user '{}'", username))?;
 
-        Ok(uid)
+        Ok((uid, username))
     }
 
     /// Ensure the per-user octo-runner daemon is enabled and started.
@@ -629,6 +733,35 @@ fn get_user_home(username: &str) -> Result<Option<PathBuf>> {
     } else {
         Ok(None)
     }
+}
+
+/// Get the GECOS field (comment) of a Linux user.
+/// Used to verify which platform user_id owns a Linux account.
+fn get_user_gecos(username: &str) -> Result<Option<String>> {
+    let output = Command::new("getent")
+        .args(["passwd", username])
+        .output()
+        .context("getting user GECOS field")?;
+
+    if !output.status.success() {
+        return Ok(None);
+    }
+
+    let line = String::from_utf8_lossy(&output.stdout);
+    let parts: Vec<&str> = line.trim().split(':').collect();
+
+    // passwd format: name:password:uid:gid:gecos:home:shell
+    if parts.len() >= 5 {
+        Ok(Some(parts[4].to_string()))
+    } else {
+        Ok(None)
+    }
+}
+
+/// Extract the platform user_id from a GECOS field.
+/// GECOS format: "Octo platform user: <user_id>"
+fn extract_user_id_from_gecos(gecos: &str) -> Option<&str> {
+    gecos.strip_prefix("Octo platform user: ").map(|s| s.trim())
 }
 
 /// Run a command with optional sudo.

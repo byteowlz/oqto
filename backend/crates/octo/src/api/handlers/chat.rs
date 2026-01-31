@@ -30,6 +30,13 @@ pub struct ChatHistoryQuery {
     pub limit: Option<usize>,
 }
 
+/// Check if multi-user mode is enabled (linux_users configured).
+/// In multi-user mode, we must NOT fall back to direct filesystem access
+/// as that would read from the backend user's home, not the requesting user's.
+fn is_multi_user_mode(state: &AppState) -> bool {
+    state.linux_users.is_some()
+}
+
 /// Create a runner client for a user based on socket pattern.
 /// Returns the runner client if available, None for direct access.
 pub(crate) fn get_runner_for_user(
@@ -121,7 +128,11 @@ fn list_workspace_pi_sessions(state: &AppState, user_id: &str) -> Vec<ChatSessio
 /// List all chat sessions from OpenCode history.
 ///
 /// In multi-user mode, this uses the runner to read from the user's home directory.
-/// In single-user mode, falls back to direct filesystem access.
+/// In single-user mode, uses direct filesystem access.
+///
+/// SECURITY: In multi-user mode, we MUST use the runner. Falling back to direct
+/// filesystem access would read from the backend user's home directory, potentially
+/// exposing other users' data.
 #[instrument(skip(state))]
 pub async fn list_chat_history(
     State(state): State<AppState>,
@@ -130,6 +141,7 @@ pub async fn list_chat_history(
 ) -> ApiResult<Json<Vec<ChatSession>>> {
     let mut sessions: Vec<ChatSession> = Vec::new();
     let mut source = "direct";
+    let multi_user = is_multi_user_mode(&state);
 
     // In multi-user mode, use runner to access user's home directory
     if let Some(runner) = get_runner_for_user(&state, user.id()) {
@@ -155,12 +167,33 @@ pub async fn list_chat_history(
                 source = "runner";
             }
             Err(e) => {
+                // SECURITY: In multi-user mode, do NOT fall back to direct access
+                if multi_user {
+                    tracing::error!(
+                        user_id = %user.id(),
+                        error = %e,
+                        "Runner failed in multi-user mode, cannot fall back to direct access"
+                    );
+                    return Err(ApiError::internal(
+                        "Chat history service unavailable. Please try again later."
+                    ));
+                }
                 tracing::warn!(user_id = %user.id(), error = %e, "Runner failed, falling back to direct access");
             }
         }
+    } else if multi_user {
+        // SECURITY: Multi-user mode requires runner, but none available
+        tracing::error!(
+            user_id = %user.id(),
+            "No runner available in multi-user mode"
+        );
+        return Err(ApiError::internal(
+            "Chat history service not configured for this user."
+        ));
     }
 
-    if sessions.is_empty() {
+    // SECURITY: Only use direct filesystem access in single-user mode
+    if !multi_user && sessions.is_empty() {
         if let Some(db_path) = crate::history::hstry_db_path() {
             match crate::history::list_sessions_from_hstry(&db_path).await {
                 Ok(found) => {
@@ -177,7 +210,7 @@ pub async fn list_chat_history(
         }
     }
 
-    if sessions.is_empty() {
+    if !multi_user && sessions.is_empty() {
         sessions = crate::history::list_sessions()
             .map_err(|e| ApiError::internal(format!("Failed to list chat history: {}", e)))?;
     }
@@ -203,34 +236,59 @@ pub async fn list_chat_history(
 }
 
 /// Get a specific chat session by ID.
+///
+/// SECURITY: In multi-user mode, we MUST use the runner to ensure user isolation.
 #[instrument(skip(state))]
 pub async fn get_chat_session(
     State(state): State<AppState>,
     user: CurrentUser,
     Path(session_id): Path<String>,
 ) -> ApiResult<Json<ChatSession>> {
+    let multi_user = is_multi_user_mode(&state);
+
     // In multi-user mode, use runner
     if let Some(runner) = get_runner_for_user(&state, user.id()) {
-        if let Ok(response) = runner.get_opencode_session(&session_id).await {
-            if let Some(s) = response.session {
-                return Ok(Json(ChatSession {
-                    id: s.id,
-                    readable_id: s.readable_id,
-                    title: s.title,
-                    parent_id: s.parent_id,
-                    workspace_path: s.workspace_path,
-                    project_name: s.project_name,
-                    created_at: s.created_at,
-                    updated_at: s.updated_at,
-                    version: s.version,
-                    is_child: s.is_child,
-                    source_path: None,
-                }));
+        match runner.get_opencode_session(&session_id).await {
+            Ok(response) => {
+                if let Some(s) = response.session {
+                    return Ok(Json(ChatSession {
+                        id: s.id,
+                        readable_id: s.readable_id,
+                        title: s.title,
+                        parent_id: s.parent_id,
+                        workspace_path: s.workspace_path,
+                        project_name: s.project_name,
+                        created_at: s.created_at,
+                        updated_at: s.updated_at,
+                        version: s.version,
+                        is_child: s.is_child,
+                        source_path: None,
+                    }));
+                }
+                // Session not found via runner
+                if multi_user {
+                    return Err(ApiError::not_found(format!("Chat session {} not found", session_id)));
+                }
+            }
+            Err(e) => {
+                // SECURITY: In multi-user mode, do NOT fall back
+                if multi_user {
+                    tracing::error!(
+                        user_id = %user.id(),
+                        session_id = %session_id,
+                        error = %e,
+                        "Runner failed in multi-user mode"
+                    );
+                    return Err(ApiError::internal("Chat history service unavailable."));
+                }
             }
         }
-        // Runner failed or session not found, fall through to direct access
+    } else if multi_user {
+        // SECURITY: Multi-user mode requires runner
+        return Err(ApiError::internal("Chat history service not configured for this user."));
     }
 
+    // SECURITY: Only use direct access in single-user mode
     if let Some(db_path) = crate::history::hstry_db_path() {
         match crate::history::get_session_from_hstry(&session_id, &db_path).await {
             Ok(Some(session)) => return Ok(Json(session)),
@@ -245,7 +303,7 @@ pub async fn get_chat_session(
         }
     }
 
-    // Single-user mode or runner fallback: direct access
+    // Single-user mode: direct access
     crate::history::get_session(&session_id)
         .map_err(|e| ApiError::internal(format!("Failed to get chat session: {}", e)))?
         .map(Json)
@@ -260,6 +318,8 @@ pub struct UpdateChatSessionRequest {
 }
 
 /// Update a chat session (e.g., rename).
+///
+/// SECURITY: In multi-user mode, we MUST use the runner to ensure user isolation.
 #[instrument(skip(state))]
 pub async fn update_chat_session(
     State(state): State<AppState>,
@@ -267,35 +327,53 @@ pub async fn update_chat_session(
     Path(session_id): Path<String>,
     Json(request): Json<UpdateChatSessionRequest>,
 ) -> ApiResult<Json<ChatSession>> {
-    // In multi-user mode, try runner first
+    let multi_user = is_multi_user_mode(&state);
+
+    // In multi-user mode, use runner
     if let Some(runner) = get_runner_for_user(&state, user.id()) {
-        if let Ok(response) = runner
+        match runner
             .update_opencode_session(&session_id, request.title.clone())
             .await
         {
-            let session = ChatSession {
-                id: response.session.id,
-                readable_id: response.session.readable_id,
-                title: response.session.title,
-                parent_id: response.session.parent_id,
-                workspace_path: response.session.workspace_path,
-                project_name: response.session.project_name,
-                created_at: response.session.created_at,
-                updated_at: response.session.updated_at,
-                version: response.session.version,
-                is_child: response.session.is_child,
-                source_path: None,
-            };
+            Ok(response) => {
+                let session = ChatSession {
+                    id: response.session.id,
+                    readable_id: response.session.readable_id,
+                    title: response.session.title,
+                    parent_id: response.session.parent_id,
+                    workspace_path: response.session.workspace_path,
+                    project_name: response.session.project_name,
+                    created_at: response.session.created_at,
+                    updated_at: response.session.updated_at,
+                    version: response.session.version,
+                    is_child: response.session.is_child,
+                    source_path: None,
+                };
 
-            if let Some(ref title) = request.title {
-                info!(session_id = %session_id, title = %title, "Updated chat session title via runner");
+                if let Some(ref title) = request.title {
+                    info!(session_id = %session_id, title = %title, "Updated chat session title via runner");
+                }
+                return Ok(Json(session));
             }
-            return Ok(Json(session));
+            Err(e) => {
+                // SECURITY: In multi-user mode, do NOT fall back
+                if multi_user {
+                    tracing::error!(
+                        user_id = %user.id(),
+                        session_id = %session_id,
+                        error = %e,
+                        "Runner failed in multi-user mode"
+                    );
+                    return Err(ApiError::internal("Chat history service unavailable."));
+                }
+            }
         }
-        // Runner failed, fall through to direct access
+    } else if multi_user {
+        // SECURITY: Multi-user mode requires runner
+        return Err(ApiError::internal("Chat history service not configured for this user."));
     }
 
-    // Single-user mode or runner fallback: direct access
+    // SECURITY: Only use direct access in single-user mode
     if let Some(title) = request.title {
         let session = crate::history::update_session_title(&session_id, &title).map_err(|e| {
             if e.to_string().contains("not found") {
@@ -325,6 +403,8 @@ pub struct GroupedChatHistory {
 }
 
 /// List chat sessions grouped by workspace/project.
+///
+/// SECURITY: In multi-user mode, we MUST use the runner to ensure user isolation.
 #[instrument(skip(state))]
 pub async fn list_chat_history_grouped(
     State(state): State<AppState>,
@@ -333,31 +413,49 @@ pub async fn list_chat_history_grouped(
 ) -> ApiResult<Json<Vec<GroupedChatHistory>>> {
     let mut sessions: Vec<ChatSession> = Vec::new();
     let mut source = "direct";
+    let multi_user = is_multi_user_mode(&state);
 
     if let Some(runner) = get_runner_for_user(&state, user.id()) {
-        if let Ok(response) = runner.list_opencode_sessions(None, true, None).await {
-            sessions = response
-                .sessions
-                .into_iter()
-                .map(|s| ChatSession {
-                    id: s.id,
-                    readable_id: s.readable_id,
-                    title: s.title,
-                    parent_id: s.parent_id,
-                    workspace_path: s.workspace_path,
-                    project_name: s.project_name,
-                    created_at: s.created_at,
-                    updated_at: s.updated_at,
-                    version: s.version,
-                    is_child: s.is_child,
-                    source_path: None,
-                })
-                .collect();
-            source = "runner";
+        match runner.list_opencode_sessions(None, true, None).await {
+            Ok(response) => {
+                sessions = response
+                    .sessions
+                    .into_iter()
+                    .map(|s| ChatSession {
+                        id: s.id,
+                        readable_id: s.readable_id,
+                        title: s.title,
+                        parent_id: s.parent_id,
+                        workspace_path: s.workspace_path,
+                        project_name: s.project_name,
+                        created_at: s.created_at,
+                        updated_at: s.updated_at,
+                        version: s.version,
+                        is_child: s.is_child,
+                        source_path: None,
+                    })
+                    .collect();
+                source = "runner";
+            }
+            Err(e) => {
+                // SECURITY: In multi-user mode, do NOT fall back
+                if multi_user {
+                    tracing::error!(
+                        user_id = %user.id(),
+                        error = %e,
+                        "Runner failed in multi-user mode"
+                    );
+                    return Err(ApiError::internal("Chat history service unavailable."));
+                }
+            }
         }
+    } else if multi_user {
+        // SECURITY: Multi-user mode requires runner
+        return Err(ApiError::internal("Chat history service not configured for this user."));
     }
 
-    if sessions.is_empty() {
+    // SECURITY: Only use direct access in single-user mode
+    if !multi_user && sessions.is_empty() {
         if let Some(db_path) = crate::history::hstry_db_path() {
             match crate::history::list_sessions_from_hstry(&db_path).await {
                 Ok(found) => {
@@ -374,7 +472,7 @@ pub async fn list_chat_history_grouped(
         }
     }
 
-    if sessions.is_empty() {
+    if !multi_user && sessions.is_empty() {
         sessions = crate::history::list_sessions()
             .map_err(|e| ApiError::internal(format!("Failed to list chat history: {}", e)))?;
     }
@@ -443,6 +541,8 @@ pub struct ChatMessagesQuery {
 ///
 /// Query params:
 /// - `render=true`: Include pre-rendered markdown HTML in `text_html` field
+///
+/// SECURITY: In multi-user mode, we MUST use the runner to ensure user isolation.
 #[instrument(skip(state))]
 pub async fn get_chat_messages(
     State(state): State<AppState>,
@@ -450,56 +550,74 @@ pub async fn get_chat_messages(
     Path(session_id): Path<String>,
     Query(query): Query<ChatMessagesQuery>,
 ) -> ApiResult<Json<Vec<ChatMessage>>> {
+    let multi_user = is_multi_user_mode(&state);
+
     // In multi-user mode, use runner
     if let Some(runner) = get_runner_for_user(&state, user.id()) {
-        if let Ok(response) = runner
+        match runner
             .get_opencode_session_messages(&session_id, query.render)
             .await
         {
-            // Convert protocol types to history types
-            let messages: Vec<ChatMessage> = response
-                .messages
-                .into_iter()
-                .map(|m| ChatMessage {
-                    id: m.id,
-                    session_id: m.session_id,
-                    role: m.role,
-                    created_at: m.created_at,
-                    completed_at: m.completed_at,
-                    parent_id: m.parent_id,
-                    model_id: m.model_id,
-                    provider_id: m.provider_id,
-                    agent: m.agent,
-                    summary_title: m.summary_title,
-                    tokens_input: m.tokens_input,
-                    tokens_output: m.tokens_output,
-                    tokens_reasoning: m.tokens_reasoning,
-                    cost: m.cost,
-                    parts: m
-                        .parts
-                        .into_iter()
-                        .map(|p| crate::history::ChatMessagePart {
-                            id: p.id,
-                            part_type: p.part_type,
-                            text: p.text,
-                            text_html: p.text_html,
-                            tool_name: p.tool_name,
-                            tool_input: p.tool_input,
-                            tool_output: p.tool_output,
-                            tool_status: p.tool_status,
-                            tool_title: p.tool_title,
-                        })
-                        .collect(),
-                })
-                .collect();
+            Ok(response) => {
+                // Convert protocol types to history types
+                let messages: Vec<ChatMessage> = response
+                    .messages
+                    .into_iter()
+                    .map(|m| ChatMessage {
+                        id: m.id,
+                        session_id: m.session_id,
+                        role: m.role,
+                        created_at: m.created_at,
+                        completed_at: m.completed_at,
+                        parent_id: m.parent_id,
+                        model_id: m.model_id,
+                        provider_id: m.provider_id,
+                        agent: m.agent,
+                        summary_title: m.summary_title,
+                        tokens_input: m.tokens_input,
+                        tokens_output: m.tokens_output,
+                        tokens_reasoning: m.tokens_reasoning,
+                        cost: m.cost,
+                        parts: m
+                            .parts
+                            .into_iter()
+                            .map(|p| crate::history::ChatMessagePart {
+                                id: p.id,
+                                part_type: p.part_type,
+                                text: p.text,
+                                text_html: p.text_html,
+                                tool_name: p.tool_name,
+                                tool_input: p.tool_input,
+                                tool_output: p.tool_output,
+                                tool_status: p.tool_status,
+                                tool_title: p.tool_title,
+                            })
+                            .collect(),
+                    })
+                    .collect();
 
-            info!(user_id = %user.id(), session_id = %session_id, count = messages.len(), render = query.render, "Listed chat messages via runner");
-            return Ok(Json(messages));
+                info!(user_id = %user.id(), session_id = %session_id, count = messages.len(), render = query.render, "Listed chat messages via runner");
+                return Ok(Json(messages));
+            }
+            Err(e) => {
+                // SECURITY: In multi-user mode, do NOT fall back
+                if multi_user {
+                    tracing::error!(
+                        user_id = %user.id(),
+                        session_id = %session_id,
+                        error = %e,
+                        "Runner failed in multi-user mode"
+                    );
+                    return Err(ApiError::internal("Chat history service unavailable."));
+                }
+            }
         }
-        // Runner failed, fall through to direct access
+    } else if multi_user {
+        // SECURITY: Multi-user mode requires runner
+        return Err(ApiError::internal("Chat history service not configured for this user."));
     }
 
-    // Single-user mode or runner fallback: direct access
+    // SECURITY: Only use direct access in single-user mode
     let messages = if query.render {
         crate::history::get_session_messages_rendered(&session_id).await
     } else {
