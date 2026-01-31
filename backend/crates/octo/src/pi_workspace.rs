@@ -7,11 +7,11 @@ use chrono::DateTime;
 use log::{debug, info};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 
 use crate::main_chat::{MainChatPiServiceConfig, PiRuntimeMode, UserPiSession};
 use crate::pi::{ContainerPiRuntime, LocalPiRuntime, PiRuntime, PiSpawnConfig, RunnerPiRuntime};
@@ -89,6 +89,8 @@ pub struct WorkspacePiService {
     config: MainChatPiServiceConfig,
     /// Active sessions keyed by (user_id, workspace_path, session_id).
     sessions: RwLock<HashMap<WorkspaceSessionKey, Arc<UserPiSession>>>,
+    /// Keys currently being created (to prevent duplicate spawns from concurrent requests).
+    creating: Mutex<HashSet<WorkspaceSessionKey>>,
     /// Idle timeout in seconds (sessions idle longer than this may be cleaned up).
     idle_timeout_secs: u64,
 }
@@ -102,6 +104,7 @@ impl WorkspacePiService {
         Self {
             config,
             sessions: RwLock::new(HashMap::new()),
+            creating: Mutex::new(HashSet::new()),
             idle_timeout_secs: DEFAULT_IDLE_TIMEOUT_SECS,
         }
     }
@@ -418,6 +421,8 @@ impl WorkspacePiService {
     }
 
     /// Resume a Pi session by ID for a workspace.
+    ///
+    /// Uses a creation lock to prevent duplicate process spawns from concurrent requests.
     pub async fn resume_session(
         &self,
         user_id: &str,
@@ -429,6 +434,8 @@ impl WorkspacePiService {
             work_dir.to_string_lossy().to_string(),
             session_id.to_string(),
         );
+
+        // Fast path: check if session already exists
         {
             let sessions = self.sessions.read().await;
             if let Some(existing) = sessions.get(&key) {
@@ -436,17 +443,50 @@ impl WorkspacePiService {
             }
         }
 
-        let sessions_dir = self.get_pi_sessions_dir(&work_dir.to_path_buf());
-        let session_file = self.find_session_file(&sessions_dir, session_id)?;
-        let session = self
-            .create_session(user_id, work_dir, Some(session_file))
-            .await?;
-        let session = Arc::new(session);
+        // Acquire creation lock to prevent duplicate spawns from concurrent requests.
+        // If another request is already creating this session, wait and then return the result.
+        {
+            let mut creating = self.creating.lock().await;
+            if creating.contains(&key) {
+                // Another request is creating this session - drop lock and wait
+                drop(creating);
+                // Poll until the session appears in the cache
+                for _ in 0..50 {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    let sessions = self.sessions.read().await;
+                    if let Some(existing) = sessions.get(&key) {
+                        return Ok(Arc::clone(existing));
+                    }
+                }
+                anyhow::bail!("Timed out waiting for concurrent session creation");
+            }
+            // Mark this key as being created
+            creating.insert(key.clone());
+        }
 
-        let mut sessions = self.sessions.write().await;
-        sessions.insert(key, Arc::clone(&session));
+        // Create the session (we hold the creation slot)
+        let result = async {
+            let sessions_dir = self.get_pi_sessions_dir(&work_dir.to_path_buf());
+            let session_file = self.find_session_file(&sessions_dir, session_id)?;
+            let session = self
+                .create_session(user_id, work_dir, Some(session_file))
+                .await?;
+            let session = Arc::new(session);
 
-        Ok(session)
+            let mut sessions = self.sessions.write().await;
+            sessions.insert(key.clone(), Arc::clone(&session));
+
+            Ok(session)
+        }
+        .await;
+
+        // Always remove from creating set, even on error
+        {
+            let mut creating = self.creating.lock().await;
+            creating.remove(&key);
+        }
+
+        result
     }
 
     /// Get a running session if it exists.
