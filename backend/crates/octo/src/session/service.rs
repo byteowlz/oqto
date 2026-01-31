@@ -167,6 +167,10 @@ pub struct SessionServiceConfig {
     pub pi_model: Option<String>,
     /// Agent-browser daemon configuration.
     pub agent_browser: AgentBrowserConfig,
+    /// Runner socket pattern for multi-user mode.
+    /// Supports `{user}` (Linux username) and `{uid}`.
+    /// Example: `/run/octo/runner-sockets/{user}/octo-runner.sock`
+    pub runner_socket_pattern: Option<String>,
 }
 
 impl Default for SessionServiceConfig {
@@ -191,6 +195,7 @@ impl Default for SessionServiceConfig {
             pi_provider: None,
             pi_model: None,
             agent_browser: AgentBrowserConfig::default(),
+            runner_socket_pattern: None,
         }
     }
 }
@@ -450,7 +455,12 @@ impl SessionService {
         } else {
             // Multi-user mode: connect to user's runner socket
             // The user_id is the Linux username in multi-user mode
-            RunnerClient::for_user(user_id)
+            if let Some(pattern) = &self.config.runner_socket_pattern {
+                RunnerClient::for_user_with_pattern(user_id, pattern)
+            } else {
+                // Fallback to default pattern
+                RunnerClient::for_user(user_id)
+            }
         }
     }
 
