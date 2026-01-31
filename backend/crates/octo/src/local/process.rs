@@ -5,7 +5,7 @@
 //! Optionally wraps processes in a bubblewrap sandbox for additional security.
 
 use anyhow::{Context, Result};
-use log::{debug, info, warn};
+use log::{debug, error, info, warn};
 use std::collections::HashMap;
 use std::path::Path;
 use std::process::Stdio;
@@ -577,14 +577,20 @@ impl ProcessManager {
             // bwrap handles the actual command execution inside the sandbox
             self.spawn_as_user(run_as, "bwrap", &full_args_refs, None, env)
                 .await
+        } else if sandbox.map(|s| s.enabled).unwrap_or(false) {
+            // SECURITY: Sandbox was requested but bwrap args couldn't be built
+            // (either bwrap not available or config error). Refuse to run unsandboxed.
+            error!(
+                "SECURITY: Sandbox enabled but bwrap not available or failed to build args. \
+                 Refusing to spawn {} without sandbox. Install bubblewrap (bwrap).",
+                binary
+            );
+            anyhow::bail!(
+                "Sandbox enabled but bwrap not available. Cannot spawn '{}' without sandbox.",
+                binary
+            )
         } else {
-            // Direct spawn without sandbox
-            if sandbox.map(|s| s.enabled).unwrap_or(false) {
-                warn!(
-                    "Sandbox enabled but bwrap not available, spawning {} without sandbox",
-                    binary
-                );
-            }
+            // No sandbox requested - direct spawn
             self.spawn_as_user(run_as, binary, args, cwd, env).await
         }
     }
