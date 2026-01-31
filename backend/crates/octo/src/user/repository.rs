@@ -98,7 +98,7 @@ impl UserRepository {
         let user = sqlx::query_as::<_, User>(
             r#"
             SELECT id, external_id, username, email, password_hash, display_name, 
-                   avatar_url, role, is_active, created_at, updated_at, last_login_at, settings, mmry_port, sldr_port, linux_username
+                   avatar_url, role, is_active, created_at, updated_at, last_login_at, settings, mmry_port, sldr_port, linux_username, linux_uid
             FROM users
             WHERE id = ?
             "#,
@@ -117,7 +117,7 @@ impl UserRepository {
         let user = sqlx::query_as::<_, User>(
             r#"
             SELECT id, external_id, username, email, password_hash, display_name,
-                   avatar_url, role, is_active, created_at, updated_at, last_login_at, settings, mmry_port, sldr_port, linux_username
+                   avatar_url, role, is_active, created_at, updated_at, last_login_at, settings, mmry_port, sldr_port, linux_username, linux_uid
             FROM users
             WHERE username = ?
             "#,
@@ -136,7 +136,7 @@ impl UserRepository {
         let user = sqlx::query_as::<_, User>(
             r#"
             SELECT id, external_id, username, email, password_hash, display_name,
-                   avatar_url, role, is_active, created_at, updated_at, last_login_at, settings, mmry_port, sldr_port, linux_username
+                   avatar_url, role, is_active, created_at, updated_at, last_login_at, settings, mmry_port, sldr_port, linux_username, linux_uid
             FROM users
             WHERE email = ?
             "#,
@@ -155,7 +155,7 @@ impl UserRepository {
         let user = sqlx::query_as::<_, User>(
             r#"
             SELECT id, external_id, username, email, password_hash, display_name,
-                   avatar_url, role, is_active, created_at, updated_at, last_login_at, settings, mmry_port, sldr_port, linux_username
+                   avatar_url, role, is_active, created_at, updated_at, last_login_at, settings, mmry_port, sldr_port, linux_username, linux_uid
             FROM users
             WHERE external_id = ?
             "#,
@@ -178,7 +178,7 @@ impl UserRepository {
         let mut sql = String::from(
             r#"
             SELECT id, external_id, username, email, password_hash, display_name,
-                   avatar_url, role, is_active, created_at, updated_at, last_login_at, settings, mmry_port, sldr_port, linux_username
+                   avatar_url, role, is_active, created_at, updated_at, last_login_at, settings, mmry_port, sldr_port, linux_username, linux_uid
             FROM users
             WHERE 1=1
             "#,
@@ -279,6 +279,11 @@ impl UserRepository {
         if let Some(linux_username) = &request.linux_username {
             updates.push("linux_username = ?");
             values.push(linux_username.clone());
+        }
+
+        if let Some(linux_uid) = request.linux_uid {
+            updates.push("linux_uid = ?");
+            values.push(linux_uid.to_string());
         }
 
         if updates.is_empty() {
@@ -608,7 +613,8 @@ mod tests {
                 settings TEXT DEFAULT '{}',
                 mmry_port INTEGER,
                 sldr_port INTEGER,
-                linux_username TEXT
+                linux_username TEXT,
+                linux_uid INTEGER
             )
             "#,
         )
@@ -694,6 +700,7 @@ mod tests {
             is_active: None,
             settings: None,
             linux_username: None,
+            linux_uid: None,
         };
 
         let updated = repo.update(&user.id, update).await.unwrap();

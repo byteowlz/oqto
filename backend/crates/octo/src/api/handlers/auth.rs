@@ -200,10 +200,32 @@ pub async fn register(
     // Since we pre-generated a unique ID, this should succeed unless there's a system error.
     if let Some(ref linux_users) = state.linux_users {
         match linux_users.ensure_user(&user.id) {
-            Ok((_uid, actual_linux_username)) => {
+            Ok((uid, actual_linux_username)) => {
+                // Store both linux_username and linux_uid for verification
+                // UID is immutable by non-root, unlike GECOS which users can change via chfn
+                if let Err(e) = state
+                    .users
+                    .update_user(
+                        &user.id,
+                        crate::user::UpdateUserRequest {
+                            linux_username: Some(actual_linux_username.clone()),
+                            linux_uid: Some(uid as i64),
+                            ..Default::default()
+                        },
+                    )
+                    .await
+                {
+                    warn!(
+                        user_id = %user.id,
+                        error = %e,
+                        "Failed to store linux_username/uid in database"
+                    );
+                }
+
                 info!(
                     user_id = %user.id,
                     linux_user = %actual_linux_username,
+                    linux_uid = uid,
                     "Created Linux user for registered user"
                 );
             }

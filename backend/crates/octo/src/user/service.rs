@@ -363,6 +363,7 @@ impl Default for UpdateUserRequest {
             is_active: None,
             settings: None,
             linux_username: None,
+            linux_uid: None,
         }
     }
 }

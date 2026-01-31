@@ -354,6 +354,33 @@ impl LinuxUsersConfig {
         )
     }
 
+    /// Verify that a Linux user matches the expected UID from the database.
+    ///
+    /// SECURITY: This is the primary ownership verification. UID is immutable by non-root
+    /// users (unlike GECOS which can be changed via chfn), so this check cannot be bypassed.
+    ///
+    /// Returns Ok(()) if the UID matches, Err if mismatch or user doesn't exist.
+    pub fn verify_linux_user_uid(&self, linux_username: &str, expected_uid: u32) -> Result<()> {
+        if !self.enabled {
+            return Ok(()); // No verification needed in single-user mode
+        }
+
+        let actual_uid = get_user_uid(linux_username)?
+            .ok_or_else(|| anyhow::anyhow!("Linux user '{}' does not exist", linux_username))?;
+
+        if actual_uid != expected_uid {
+            anyhow::bail!(
+                "SECURITY: Linux user '{}' UID mismatch! Expected {}, got {}. \
+                 This could indicate an attack or misconfiguration.",
+                linux_username,
+                expected_uid,
+                actual_uid
+            );
+        }
+
+        Ok(())
+    }
+
     /// Create a Linux user for the given platform user.
     ///
     /// Returns a tuple of (UID, actual_linux_username).
@@ -458,11 +485,42 @@ impl LinuxUsersConfig {
     /// needed to avoid collision with another user. Callers should store this username
     /// in the database for future lookups.
     pub fn ensure_user(&self, user_id: &str) -> Result<(u32, String)> {
+        self.ensure_user_with_verification(user_id, None, None)
+    }
+
+    /// Ensure a Linux user exists with optional UID verification.
+    ///
+    /// If `expected_linux_username` and `expected_uid` are provided (from DB), verifies
+    /// the existing Linux user matches before returning. This prevents attacks where
+    /// a user modifies their GECOS via chfn to impersonate another user.
+    ///
+    /// SECURITY: The UID check is the authoritative verification since UIDs cannot be
+    /// changed by non-root users.
+    pub fn ensure_user_with_verification(
+        &self,
+        user_id: &str,
+        expected_linux_username: Option<&str>,
+        expected_uid: Option<u32>,
+    ) -> Result<(u32, String)> {
         if !self.enabled {
             // Return current user's UID and a placeholder username when not enabled
             return Ok((unsafe { libc::getuid() }, user_id.to_string()));
         }
 
+        // If we have expected values from the DB, verify them first
+        if let (Some(linux_username), Some(uid)) = (expected_linux_username, expected_uid) {
+            // Verify the UID matches what's in the DB
+            self.verify_linux_user_uid(linux_username, uid)?;
+
+            // User exists and is verified - ensure runner is running
+            self.ensure_group()?;
+            self.ensure_octo_runner_running(linux_username, uid)
+                .with_context(|| format!("ensuring octo-runner for user '{}'", linux_username))?;
+
+            return Ok((uid, linux_username.to_string()));
+        }
+
+        // No expected values - this is a new user or legacy user without stored UID
         // Ensure group exists first
         self.ensure_group()?;
 
