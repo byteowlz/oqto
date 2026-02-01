@@ -4,8 +4,10 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
+use once_cell::sync::Lazy;
 use sqlx::Row;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+use tokio::sync::Mutex;
 
 use crate::wordlist;
 
@@ -54,14 +56,29 @@ pub fn project_name_from_path(path: &str) -> String {
 // SQLite/hstry repository functions
 // ============================================================================
 
+static HSTRY_POOL_CACHE: Lazy<Mutex<HashMap<PathBuf, sqlx::SqlitePool>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
+
 pub async fn open_hstry_pool(db_path: &Path) -> Result<sqlx::SqlitePool> {
+    let db_path = db_path.to_path_buf();
+
+    {
+        let cache = HSTRY_POOL_CACHE.lock().await;
+        if let Some(pool) = cache.get(&db_path) {
+            return Ok(pool.clone());
+        }
+    }
+
     let options = SqliteConnectOptions::new()
-        .filename(db_path)
+        .filename(&db_path)
         .read_only(true);
     let pool = SqlitePoolOptions::new()
         .max_connections(2)
         .connect_with(options)
         .await?;
+
+    let mut cache = HSTRY_POOL_CACHE.lock().await;
+    cache.insert(db_path, pool.clone());
     Ok(pool)
 }
 

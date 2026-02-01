@@ -581,10 +581,79 @@ pub struct MainChatHistoryMessage {
 /// GET /api/main/pi/history
 /// GET /api/main/pi/history?session_id=<id>
 pub async fn get_history(
-    State(_state): State<AppState>,
-    _user: CurrentUser,
+    State(state): State<AppState>,
+    user: CurrentUser,
     Query(query): Query<HistoryQuery>,
 ) -> ApiResult<Json<Vec<MainChatHistoryMessage>>> {
+    let multi_user = state.linux_users.is_some();
+
+    // In multi-user mode, always use octo-runner to access per-user hstry.db.
+    if multi_user {
+        let Some(runner) = crate::api::handlers::get_runner_for_user(&state, user.id())
+        else {
+            return Err(ApiError::internal(
+                "Chat history service not configured for this user.",
+            ));
+        };
+
+        let session_id = if let Some(session_id) = query.session_id.as_deref() {
+            session_id.to_string()
+        } else {
+            let sessions = runner
+                .list_main_chat_sessions()
+                .await
+                .map_err(|e| ApiError::internal(format!("Runner list_main_chat_sessions failed: {e}")))?
+                .sessions;
+            let Some(latest) = sessions.first() else {
+                return Ok(Json(Vec::new()));
+            };
+            latest.id.clone()
+        };
+
+        let resp = runner
+            .get_main_chat_messages(&session_id, None)
+            .await
+            .map_err(|e| ApiError::internal(format!("Runner get_main_chat_messages failed: {e}")))?;
+
+        let mut out = Vec::with_capacity(resp.messages.len());
+        for (idx, msg) in resp.messages.into_iter().enumerate() {
+            let role = match msg.role.as_str() {
+                "user" => "user",
+                "assistant" => "assistant",
+                "system" => "system",
+                "tool" | "toolResult" => "assistant",
+                _ => "assistant",
+            }
+            .to_string();
+
+            let parts = if msg.content.is_array() {
+                msg.content
+            } else if let Some(s) = msg.content.as_str() {
+                serde_json::json!([{ "type": "text", "text": s }])
+            } else {
+                serde_json::json!([])
+            };
+
+            let created_at = Utc
+                .timestamp_millis_opt(msg.timestamp)
+                .single()
+                .unwrap_or_else(Utc::now)
+                .to_rfc3339();
+
+            out.push(MainChatHistoryMessage {
+                id: (idx as i64) + 1,
+                role,
+                content: parts.to_string(),
+                pi_session_id: Some(session_id.clone()),
+                timestamp: msg.timestamp,
+                created_at,
+            });
+        }
+
+        return Ok(Json(out));
+    }
+
+    // Single-user: direct access is safe.
     // main_chat.db message history is deprecated; use hstry as the canonical store.
     // Keep returning the MainChatDbMessage shape for frontend compatibility.
     let Some(db_path) = crate::history::hstry_db_path() else {
@@ -734,10 +803,17 @@ pub async fn list_pi_sessions(
 ///
 /// GET /api/main/pi/sessions/search?q=query&limit=50
 pub async fn search_pi_sessions(
-    State(_state): State<AppState>,
-    _user: CurrentUser,
+    State(state): State<AppState>,
+    user: CurrentUser,
     Query(query): Query<SearchQuery>,
 ) -> ApiResult<Json<SearchResponse>> {
+    if state.linux_users.is_some() {
+        // TODO: Add runner-backed hstry search for multi-user mode.
+        // For now, avoid leaking backend user's hstry.db.
+        let _ = user;
+        return Ok(Json(SearchResponse { hits: vec![], total: 0 }));
+    }
+
     let query_str = query.q.trim();
     if query_str.is_empty() {
         return Ok(Json(SearchResponse {

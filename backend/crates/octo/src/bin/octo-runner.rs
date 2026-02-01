@@ -48,6 +48,8 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::Arc;
+use chrono::TimeZone;
+use sqlx::Row;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::process::{Child, Command};
@@ -1414,19 +1416,232 @@ impl Runner {
     // ========================================================================
 
     async fn list_main_chat_sessions(&self) -> RunnerResponse {
-        // TODO: List Pi session files from ~/.pi/agent/sessions/
-        RunnerResponse::MainChatSessionList(MainChatSessionListResponse {
-            sessions: Vec::new(),
-        })
+        let Some(db_path) = octo::history::hstry_db_path() else {
+            return RunnerResponse::MainChatSessionList(MainChatSessionListResponse {
+                sessions: Vec::new(),
+            });
+        };
+
+        let pool = match octo::history::repository::open_hstry_pool(&db_path).await {
+            Ok(pool) => pool,
+            Err(e) => {
+                return error_response(
+                    ErrorCode::IoError,
+                    format!("Failed to open hstry DB: {e}"),
+                );
+            }
+        };
+
+        let rows = match sqlx::query(
+            r#"
+            SELECT
+              c.id AS id,
+              c.external_id AS external_id,
+              c.title AS title,
+              c.created_at AS created_at,
+              c.updated_at AS updated_at,
+              (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id) AS message_count
+            FROM conversations c
+            WHERE c.source_id = 'pi'
+            ORDER BY COALESCE(c.updated_at, c.created_at) DESC
+            "#,
+        )
+        .fetch_all(&pool)
+        .await
+        {
+            Ok(rows) => rows,
+            Err(e) => {
+                return error_response(
+                    ErrorCode::IoError,
+                    format!("Failed to query hstry conversations: {e}"),
+                );
+            }
+        };
+
+        let mut sessions = Vec::with_capacity(rows.len());
+        for row in rows {
+            let id: String = row.get("id");
+            let external_id: Option<String> = row.get("external_id");
+            let title: Option<String> = row.get("title");
+            let created_at: i64 = row.get("created_at");
+            let updated_at: Option<i64> = row.get("updated_at");
+            let message_count: i64 = row.get("message_count");
+
+            let session_id = external_id.unwrap_or(id);
+            let started_at = chrono::Utc
+                .timestamp_opt(created_at, 0)
+                .single()
+                .map(|dt| dt.to_rfc3339())
+                .unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
+
+            let modified_at = updated_at.unwrap_or(created_at) * 1000;
+
+            sessions.push(MainChatSessionInfo {
+                id: session_id,
+                title,
+                message_count: message_count.max(0) as usize,
+                size: 0,
+                modified_at,
+                started_at,
+            });
+        }
+
+        RunnerResponse::MainChatSessionList(MainChatSessionListResponse { sessions })
     }
 
     async fn get_main_chat_messages(&self, req: GetMainChatMessagesRequest) -> RunnerResponse {
-        // TODO: Parse Pi session .jsonl file
-        let _ = req;
-        error_response(
-            ErrorCode::Internal,
-            "Main chat message retrieval not yet implemented",
+        let Some(db_path) = octo::history::hstry_db_path() else {
+            return RunnerResponse::MainChatMessages(MainChatMessagesResponse {
+                session_id: req.session_id,
+                messages: Vec::new(),
+            });
+        };
+
+        let pool = match octo::history::repository::open_hstry_pool(&db_path).await {
+            Ok(pool) => pool,
+            Err(e) => {
+                return error_response(
+                    ErrorCode::IoError,
+                    format!("Failed to open hstry DB: {e}"),
+                );
+            }
+        };
+
+        let conv_row = match sqlx::query(
+            r#"
+            SELECT id, external_id
+            FROM conversations
+            WHERE source_id = 'pi' AND (external_id = ? OR readable_id = ? OR id = ?)
+            LIMIT 1
+            "#,
         )
+        .bind(&req.session_id)
+        .bind(&req.session_id)
+        .bind(&req.session_id)
+        .fetch_optional(&pool)
+        .await
+        {
+            Ok(row) => row,
+            Err(e) => {
+                return error_response(
+                    ErrorCode::IoError,
+                    format!("Failed to resolve conversation: {e}"),
+                );
+            }
+        };
+
+        let Some(conv_row) = conv_row else {
+            return RunnerResponse::MainChatMessages(MainChatMessagesResponse {
+                session_id: req.session_id,
+                messages: Vec::new(),
+            });
+        };
+
+        let conversation_id: String = match conv_row.try_get("id") {
+            Ok(v) => v,
+            Err(e) => {
+                return error_response(
+                    ErrorCode::IoError,
+                    format!("Failed to read conversation id: {e}"),
+                );
+            }
+        };
+
+        let session_id: String = match conv_row.try_get::<Option<String>, _>("external_id") {
+            Ok(Some(v)) => v,
+            _ => req.session_id.clone(),
+        };
+
+        let rows = if let Some(limit) = req.limit {
+            match sqlx::query(
+                r#"
+                SELECT idx, role, content, created_at, parts_json
+                FROM messages
+                WHERE conversation_id = ?
+                ORDER BY idx DESC
+                LIMIT ?
+                "#,
+            )
+            .bind(&conversation_id)
+            .bind(limit as i64)
+            .fetch_all(&pool)
+            .await
+            {
+                Ok(rows) => {
+                    let mut rows = rows;
+                    rows.reverse();
+                    rows
+                }
+                Err(e) => {
+                    return error_response(
+                        ErrorCode::IoError,
+                        format!("Failed to load messages: {e}"),
+                    );
+                }
+            }
+        } else {
+            match sqlx::query(
+                r#"
+                SELECT idx, role, content, created_at, parts_json
+                FROM messages
+                WHERE conversation_id = ?
+                ORDER BY idx
+                "#,
+            )
+            .bind(&conversation_id)
+            .fetch_all(&pool)
+            .await
+            {
+                Ok(rows) => rows,
+                Err(e) => {
+                    return error_response(
+                        ErrorCode::IoError,
+                        format!("Failed to load messages: {e}"),
+                    );
+                }
+            }
+        };
+
+        let mut messages = Vec::with_capacity(rows.len());
+        for row in rows {
+            let idx: i64 = row.get("idx");
+            let role_raw: String = row.get("role");
+            let content_raw: String = row.get("content");
+            let created_at: i64 = row.get("created_at");
+            let parts_json: Option<String> = row.try_get("parts_json").ok();
+
+            let role = match role_raw.as_str() {
+                "user" => "user",
+                "assistant" => "assistant",
+                "system" => "system",
+                "tool" | "toolResult" => "assistant",
+                _ => "assistant",
+            }
+            .to_string();
+
+            let content = if let Some(parts_json) = parts_json.as_deref()
+                && let Ok(v) = serde_json::from_str::<serde_json::Value>(parts_json)
+                && v.is_array()
+            {
+                v
+            } else if !content_raw.trim().is_empty() {
+                serde_json::json!([{ "type": "text", "text": content_raw }])
+            } else {
+                serde_json::json!([])
+            };
+
+            messages.push(MainChatMessage {
+                id: idx.to_string(),
+                role,
+                content,
+                timestamp: created_at * 1000,
+            });
+        }
+
+        RunnerResponse::MainChatMessages(MainChatMessagesResponse {
+            session_id,
+            messages,
+        })
     }
 
     // ========================================================================

@@ -41,6 +41,8 @@ pub use chat::{
     update_chat_session,
 };
 
+pub(crate) use chat::get_runner_for_user;
+
 // Project handlers and types
 pub use projects::{
     create_project_from_template, get_project_logo, list_project_templates, list_workspace_dirs,

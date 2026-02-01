@@ -794,10 +794,57 @@ export const SessionScreen = memo(function SessionScreen() {
 		// Only save if the storage key hasn't changed (avoid saving old model to new session)
 		if (!modelStorageKey || prevModelStorageKeyRef.current !== modelStorageKey)
 			return;
-		if (selectedModelRef) {
-			localStorage.setItem(modelStorageKey, selectedModelRef);
-		} else {
-			localStorage.removeItem(modelStorageKey);
+
+		const isQuotaExceededError = (err: unknown): boolean => {
+			if (!err || typeof err !== "object") return false;
+			const anyErr = err as { name?: unknown; code?: unknown };
+			return (
+				anyErr.name === "QuotaExceededError" ||
+				anyErr.code === 22 ||
+				anyErr.code === 1014
+			);
+		};
+
+		const evictLocalStorageByPrefix = (prefix: string, keepKeys: Set<string>) => {
+			if (typeof window === "undefined") return;
+			for (let i = 0; i < localStorage.length; i++) {
+				const key = localStorage.key(i);
+				if (!key) continue;
+				if (!key.startsWith(prefix)) continue;
+				if (keepKeys.has(key)) continue;
+				try {
+					localStorage.removeItem(key);
+				} catch {
+					// ignore
+				}
+			}
+		};
+
+		try {
+			if (selectedModelRef) {
+				localStorage.setItem(modelStorageKey, selectedModelRef);
+			} else {
+				localStorage.removeItem(modelStorageKey);
+			}
+		} catch (err) {
+			if (isQuotaExceededError(err)) {
+				// Free space and retry once. Drafts are the biggest culprit.
+				try {
+					localStorage.removeItem("octo:chatDrafts");
+				} catch {
+					// ignore
+				}
+				evictLocalStorageByPrefix("octo:chatModel:", new Set([modelStorageKey]));
+				try {
+					if (selectedModelRef) {
+						localStorage.setItem(modelStorageKey, selectedModelRef);
+					} else {
+						localStorage.removeItem(modelStorageKey);
+					}
+				} catch {
+					// ignore
+				}
+			}
 		}
 	}, [modelStorageKey, selectedModelRef]);
 
@@ -1098,13 +1145,25 @@ export const SessionScreen = memo(function SessionScreen() {
 	const draftWriteTokenRef = useRef(0);
 
 	// Helper to get/set drafts from localStorage
+	type DraftEntry =
+		| string
+		| {
+				text: string;
+				updatedAt: number;
+			};
+
 	const getDraft = useCallback((sessionId: string): string => {
 		if (typeof window === "undefined") return "";
 		try {
-			const drafts = JSON.parse(
+			const drafts: Record<string, DraftEntry> = JSON.parse(
 				localStorage.getItem("octo:chatDrafts") || "{}",
 			);
-			return drafts[sessionId] || "";
+			const entry = drafts[sessionId];
+			if (typeof entry === "string") return entry;
+			if (entry && typeof entry === "object" && typeof entry.text === "string") {
+				return entry.text;
+			}
+			return "";
 		} catch {
 			return "";
 		}
@@ -1113,15 +1172,38 @@ export const SessionScreen = memo(function SessionScreen() {
 	const setDraft = useCallback((sessionId: string, text: string) => {
 		if (typeof window === "undefined") return;
 		try {
-			const drafts = JSON.parse(
+			const drafts: Record<string, DraftEntry> = JSON.parse(
 				localStorage.getItem("octo:chatDrafts") || "{}",
 			);
 			if (text.trim()) {
-				drafts[sessionId] = text;
+				drafts[sessionId] = { text, updatedAt: Date.now() };
 			} else {
 				delete drafts[sessionId];
 			}
-			localStorage.setItem("octo:chatDrafts", JSON.stringify(drafts));
+
+			// Prune drafts to avoid blowing localStorage quota.
+			const entries = Object.entries(drafts)
+				.map(([id, entry]) => {
+					if (typeof entry === "string") {
+						return { id, text: entry, updatedAt: 0 };
+					}
+					return {
+						id,
+						text: entry.text,
+						updatedAt:
+							typeof entry.updatedAt === "number" ? entry.updatedAt : 0,
+					};
+				})
+				.sort((a, b) => b.updatedAt - a.updatedAt);
+
+			const pruned: Record<string, DraftEntry> = {};
+			for (const e of entries.slice(0, 20)) {
+				// Cap per-draft size to keep storage bounded.
+				const cappedText = e.text.length > 20000 ? e.text.slice(0, 20000) : e.text;
+				pruned[e.id] = { text: cappedText, updatedAt: e.updatedAt };
+			}
+
+			localStorage.setItem("octo:chatDrafts", JSON.stringify(pruned));
 		} catch {
 			// Ignore localStorage errors
 		}
@@ -1180,24 +1262,9 @@ export const SessionScreen = memo(function SessionScreen() {
 			}
 			const sessionId = previousSessionIdRef.current;
 			const currentInput = messageInputRef.current;
-			if (sessionId && currentInput) {
-				// Use sync localStorage write since we're unmounting
-				try {
-					const drafts = JSON.parse(
-						localStorage.getItem("octo:chatDrafts") || "{}",
-					);
-					if (currentInput.trim()) {
-						drafts[sessionId] = currentInput;
-					} else {
-						delete drafts[sessionId];
-					}
-					localStorage.setItem("octo:chatDrafts", JSON.stringify(drafts));
-				} catch {
-					// Ignore localStorage errors
-				}
-			}
+			if (sessionId && currentInput) setDraft(sessionId, currentInput);
 		};
-	}, []);
+	}, [setDraft]);
 
 	const [isLoading, setIsLoading] = useState(true);
 	const [messagesLoading, setMessagesLoading] = useState(false);
