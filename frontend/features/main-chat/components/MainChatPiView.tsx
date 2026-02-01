@@ -563,18 +563,14 @@ export function MainChatPiView({
 	useEffect(() => {
 		// Only fetch models once session is active (piState available)
 		if (!isConnected || !piState) return;
-		if (
-			!isMainScope &&
-			(!selectedSessionId || isPendingSessionId(selectedSessionId))
-		) {
-			return;
-		}
+		const targetSessionId = selectedSessionId ?? piState.session_id ?? null;
+		if (!targetSessionId || isPendingSessionId(targetSessionId)) return;
 		let active = true;
 		const fetchModels = isMainScope
-			? getMainChatPiModels()
+			? getMainChatPiModels(targetSessionId)
 			: getWorkspacePiModels(
 					workspacePath ?? "global",
-					selectedSessionId ?? "",
+					targetSessionId,
 				);
 		fetchModels
 			.then((models) => {
@@ -592,8 +588,10 @@ export function MainChatPiView({
 		// Only fetch commands once session is active (piState available)
 		if (!isMainScope) return;
 		if (!isConnected || !piState) return;
+		const targetSessionId = selectedSessionId ?? piState.session_id ?? null;
+		if (!targetSessionId || isPendingSessionId(targetSessionId)) return;
 		let active = true;
-		getMainChatPiCommands()
+		getMainChatPiCommands(targetSessionId)
 			.then((commands) => {
 				if (!active) return;
 				setCustomCommands(
@@ -609,12 +607,14 @@ export function MainChatPiView({
 		return () => {
 			active = false;
 		};
-	}, [isConnected, isMainScope, piState]);
+	}, [isConnected, isMainScope, piState, selectedSessionId]);
 
 	const refreshStats = useCallback(async () => {
 		if (!isMainScope) return;
+		const targetSessionId = selectedSessionId ?? piState?.session_id ?? null;
+		if (!targetSessionId || isPendingSessionId(targetSessionId)) return;
 		try {
-			const stats = await getMainChatPiStats();
+			const stats = await getMainChatPiStats(targetSessionId);
 			if (stats.tokens) {
 				setSessionTokens({
 					input: stats.tokens.input ?? 0,
@@ -624,7 +624,7 @@ export function MainChatPiView({
 		} catch {
 			// Ignore stats errors; token gauge will fall back to message usage.
 		}
-	}, [isMainScope]);
+	}, [isMainScope, piState?.session_id, selectedSessionId]);
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: messages.length triggers refresh when message count changes
 	useEffect(() => {
@@ -855,7 +855,11 @@ export function MainChatPiView({
 			setIsSwitchingModel(true);
 			try {
 				if (isMainScope) {
-					await setMainChatPiModel(provider, modelId);
+					const targetSessionId = selectedSessionId ?? piState?.session_id ?? null;
+					if (!targetSessionId || isPendingSessionId(targetSessionId)) {
+						throw new Error("No active main chat session");
+					}
+					await setMainChatPiModel(targetSessionId, provider, modelId);
 				} else if (selectedSessionId) {
 					await setWorkspacePiModel(
 						workspacePath ?? "global",
@@ -871,7 +875,14 @@ export function MainChatPiView({
 				setIsSwitchingModel(false);
 			}
 		},
-		[canSwitchModel, isMainScope, refresh, selectedSessionId, workspacePath],
+		[
+			canSwitchModel,
+			isMainScope,
+			piState?.session_id,
+			refresh,
+			selectedSessionId,
+			workspacePath,
+		],
 	);
 
 	const runSlashCommand = useCallback(

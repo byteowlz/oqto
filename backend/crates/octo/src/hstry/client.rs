@@ -7,12 +7,12 @@ use anyhow::{Context, Result};
 use tokio::sync::RwLock;
 use tonic::transport::Channel;
 
+use hstry_core::service::{ReadServiceClient, WriteServiceClient};
 use hstry_core::service::proto::{
-    AppendMessagesRequest, AppendMessagesResponse, Conversation, Message,
-    UploadAttachmentRequest, UploadAttachmentResponse, WriteConversationRequest,
-    WriteConversationResponse,
+    AppendMessagesRequest, AppendMessagesResponse, Conversation, GetConversationRequest,
+    GetMessagesRequest, ListConversationsRequest, Message, UploadAttachmentRequest,
+    UploadAttachmentResponse, WriteConversationRequest, WriteConversationResponse,
 };
-use hstry_core::service::WriteServiceClient;
 
 /// Source ID for Pi sessions (used for deduplication with hstry daemon).
 pub const PI_SOURCE_ID: &str = "pi";
@@ -20,43 +20,67 @@ pub const PI_SOURCE_ID: &str = "pi";
 /// Client for communicating with hstry daemon's WriteService.
 #[derive(Clone)]
 pub struct HstryClient {
-    inner: Arc<RwLock<Option<WriteServiceClient<Channel>>>>,
+    write: Arc<RwLock<Option<WriteServiceClient<Channel>>>>,
+    read: Arc<RwLock<Option<ReadServiceClient<Channel>>>>,
 }
 
 impl HstryClient {
     /// Create a new client (not connected yet).
     pub fn new() -> Self {
         Self {
-            inner: Arc::new(RwLock::new(None)),
+            write: Arc::new(RwLock::new(None)),
+            read: Arc::new(RwLock::new(None)),
         }
     }
 
     /// Connect to the hstry daemon.
     /// Tries Unix socket first, then falls back to TCP.
     pub async fn connect(&self) -> Result<()> {
-        let client = try_connect().await?;
-        *self.inner.write().await = Some(client);
+        let channel = try_connect_channel().await?;
+        *self.write.write().await = Some(WriteServiceClient::new(channel.clone()));
+        *self.read.write().await = Some(ReadServiceClient::new(channel));
         Ok(())
     }
 
     /// Check if connected.
     pub async fn is_connected(&self) -> bool {
-        self.inner.read().await.is_some()
+        self.write.read().await.is_some()
     }
 
     /// Ensure connection is established, reconnecting if needed.
-    async fn ensure_connected(&self) -> Result<WriteServiceClient<Channel>> {
+    async fn ensure_write_connected(&self) -> Result<WriteServiceClient<Channel>> {
         {
-            let guard = self.inner.read().await;
+            let guard = self.write.read().await;
             if let Some(client) = guard.as_ref() {
                 return Ok(client.clone());
             }
         }
 
         // Try to connect
-        let client = try_connect().await?;
-        *self.inner.write().await = Some(client.clone());
-        Ok(client)
+        let channel = try_connect_channel().await?;
+        let write_client = WriteServiceClient::new(channel.clone());
+        *self.write.write().await = Some(write_client.clone());
+        if self.read.read().await.is_none() {
+            *self.read.write().await = Some(ReadServiceClient::new(channel));
+        }
+        Ok(write_client)
+    }
+
+    async fn ensure_read_connected(&self) -> Result<ReadServiceClient<Channel>> {
+        {
+            let guard = self.read.read().await;
+            if let Some(client) = guard.as_ref() {
+                return Ok(client.clone());
+            }
+        }
+
+        let channel = try_connect_channel().await?;
+        let read_client = ReadServiceClient::new(channel.clone());
+        *self.read.write().await = Some(read_client.clone());
+        if self.write.read().await.is_none() {
+            *self.write.write().await = Some(WriteServiceClient::new(channel));
+        }
+        Ok(read_client)
     }
 
     /// Write a conversation and its messages to hstry.
@@ -70,11 +94,12 @@ impl HstryClient {
         title: Option<String>,
         workspace: Option<String>,
         model: Option<String>,
+        provider: Option<String>,
         messages: Vec<Message>,
         created_at_ms: i64,
         updated_at_ms: Option<i64>,
     ) -> Result<WriteConversationResponse> {
-        let mut client = self.ensure_connected().await?;
+        let mut client = self.ensure_write_connected().await?;
 
         let request = WriteConversationRequest {
             conversation: Some(Conversation {
@@ -84,6 +109,7 @@ impl HstryClient {
                 created_at_ms,
                 updated_at_ms,
                 model,
+                provider,
                 workspace,
                 tokens_in: None,
                 tokens_out: None,
@@ -108,7 +134,7 @@ impl HstryClient {
         messages: Vec<Message>,
         updated_at_ms: Option<i64>,
     ) -> Result<AppendMessagesResponse> {
-        let mut client = self.ensure_connected().await?;
+        let mut client = self.ensure_write_connected().await?;
 
         let request = AppendMessagesRequest {
             source_id: PI_SOURCE_ID.to_string(),
@@ -133,7 +159,7 @@ impl HstryClient {
         filename: Option<String>,
         data: Vec<u8>,
     ) -> Result<UploadAttachmentResponse> {
-        let mut client = self.ensure_connected().await?;
+        let mut client = self.ensure_write_connected().await?;
 
         let request = UploadAttachmentRequest {
             message_id: message_id.to_string(),
@@ -149,6 +175,68 @@ impl HstryClient {
 
         Ok(response.into_inner())
     }
+
+    pub async fn get_conversation(
+        &self,
+        session_id: &str,
+        workspace: Option<String>,
+    ) -> Result<Option<Conversation>> {
+        let mut client = self.ensure_read_connected().await?;
+        let request = GetConversationRequest {
+            source_id: PI_SOURCE_ID.to_string(),
+            external_id: session_id.to_string(),
+            readable_id: session_id.to_string(),
+            conversation_id: session_id.to_string(),
+            workspace: workspace.unwrap_or_default(),
+        };
+        let response = client
+            .get_conversation(request)
+            .await
+            .context("Failed to get conversation from hstry")?;
+        Ok(response.into_inner().conversation)
+    }
+
+    pub async fn get_messages(
+        &self,
+        session_id: &str,
+        workspace: Option<String>,
+        limit: Option<i64>,
+    ) -> Result<Vec<Message>> {
+        let mut client = self.ensure_read_connected().await?;
+        let request = GetMessagesRequest {
+            source_id: PI_SOURCE_ID.to_string(),
+            external_id: session_id.to_string(),
+            readable_id: session_id.to_string(),
+            conversation_id: session_id.to_string(),
+            workspace: workspace.unwrap_or_default(),
+            limit: limit.unwrap_or(0),
+        };
+        let response = client
+            .get_messages(request)
+            .await
+            .context("Failed to get messages from hstry")?;
+        Ok(response.into_inner().messages)
+    }
+
+    pub async fn list_conversations(
+        &self,
+        workspace: Option<String>,
+        limit: Option<i64>,
+        offset: Option<i64>,
+    ) -> Result<Vec<hstry_core::service::proto::ConversationSummary>> {
+        let mut client = self.ensure_read_connected().await?;
+        let request = ListConversationsRequest {
+            source_id: PI_SOURCE_ID.to_string(),
+            workspace: workspace.unwrap_or_default(),
+            limit: limit.unwrap_or(0),
+            offset: offset.unwrap_or(0),
+        };
+        let response = client
+            .list_conversations(request)
+            .await
+            .context("Failed to list conversations from hstry")?;
+        Ok(response.into_inner().conversations)
+    }
 }
 
 impl Default for HstryClient {
@@ -159,7 +247,7 @@ impl Default for HstryClient {
 
 /// Try to connect to hstry daemon.
 /// Attempts Unix socket first, then falls back to TCP.
-async fn try_connect() -> Result<WriteServiceClient<Channel>> {
+async fn try_connect_channel() -> Result<Channel> {
     // Try Unix socket first (more secure)
     #[cfg(unix)]
     {
@@ -186,11 +274,11 @@ async fn try_connect() -> Result<WriteServiceClient<Channel>> {
         .context("Failed to connect to hstry daemon via TCP")?;
 
     tracing::debug!("Connected to hstry via TCP on port {port}");
-    Ok(WriteServiceClient::new(channel))
+    Ok(channel)
 }
 
 #[cfg(unix)]
-async fn try_connect_unix(socket_path: &Path) -> Result<WriteServiceClient<Channel>> {
+async fn try_connect_unix(socket_path: &Path) -> Result<Channel> {
     use hyper_util::rt::TokioIo;
     use tokio::net::UnixStream;
     use tonic::transport::Endpoint;
@@ -207,7 +295,7 @@ async fn try_connect_unix(socket_path: &Path) -> Result<WriteServiceClient<Chann
         }))
         .await?;
 
-    Ok(WriteServiceClient::new(channel))
+    Ok(channel)
 }
 
 fn read_port() -> Option<u16> {

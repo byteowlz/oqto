@@ -26,6 +26,7 @@ import {
 	clearCachedSessionMessages,
 	isPendingSessionId,
 	readCachedSessionMessages,
+	subscribeToConnectionState,
 	writeCachedSessionMessages,
 	wsCache,
 } from "./cache";
@@ -101,12 +102,38 @@ export function usePiChatCore({
 	// Send a message via WebSocket (which persists user messages)
 	const send = useCallback(
 		async (message: string, options?: PiSendOptions) => {
+			const waitForConnection = async (timeoutMs: number) => {
+				if (wsCache.ws?.readyState === WebSocket.OPEN) {
+					return true;
+				}
+				connect();
+				return await new Promise<boolean>((resolve) => {
+					let settled = false;
+					const timeout = setTimeout(() => {
+						if (settled) return;
+						settled = true;
+						unsubscribe();
+						resolve(false);
+					}, timeoutMs);
+					const unsubscribe = subscribeToConnectionState((connected) => {
+						if (!connected || settled) return;
+						settled = true;
+						clearTimeout(timeout);
+						unsubscribe();
+						resolve(true);
+					});
+				});
+			};
+
 			// Must be connected to send
 			if (!wsCache.ws || wsCache.ws.readyState !== WebSocket.OPEN) {
-				const err = new Error("Not connected to chat server");
-				setError(err);
-				onError?.(err);
-				return;
+				const connected = await waitForConnection(3000);
+				if (!connected || !wsCache.ws || wsCache.ws.readyState !== WebSocket.OPEN) {
+					const err = new Error("Not connected to chat server");
+					setError(err);
+					onError?.(err);
+					return;
+				}
 			}
 
 			setError(null);
@@ -159,6 +186,7 @@ export function usePiChatCore({
 			}
 		},
 		[
+			connect,
 			isStreaming,
 			nextMessageId,
 			onError,
@@ -180,7 +208,9 @@ export function usePiChatCore({
 					targetSessionId,
 				);
 			} else {
-				await abortMainChatPi();
+				const targetSessionId = activeSessionIdRef.current;
+				if (!targetSessionId) return;
+				await abortMainChatPi(targetSessionId);
 			}
 			setIsStreaming(false);
 			if (streamingMessageRef.current) {
@@ -242,6 +272,8 @@ export function usePiChatCore({
 			// Mark this session as just-created so the effect doesn't try to resume it
 			const newSessionId = newState.session_id ?? null;
 			if (newSessionId) {
+				// Make the new session id visible to the WS connect path immediately.
+				activeSessionIdRef.current = newSessionId;
 				justCreatedSessionRef.current = newSessionId;
 				clearCachedSessionMessages(newSessionId, storageKeyPrefix);
 			}
@@ -249,16 +281,11 @@ export function usePiChatCore({
 			// Tell the UI to select the new session immediately.
 			onSelectedSessionIdChange?.(newSessionId);
 
-			// Workspace sessions need a reconnect for the session_id-bound WS URL.
-			// Main chat WS is not session-bound, so avoid churn.
-			if (scope === "workspace") {
-				disconnectRef.current?.(true);
-				setTimeout(() => {
-					connectRef.current?.();
-				}, 100);
-			} else {
+			// WebSocket URLs are session-bound; reconnect so the new session id is used.
+			disconnectRef.current?.(true);
+			setTimeout(() => {
 				connectRef.current?.();
-			}
+			}, 100);
 		} catch (e) {
 			const err =
 				e instanceof Error ? e : new Error("Failed to start new session");
@@ -266,6 +293,7 @@ export function usePiChatCore({
 			onError?.(err);
 		}
 	}, [
+		activeSessionIdRef,
 		onError,
 		onSelectedSessionIdChange,
 		scope,
@@ -281,16 +309,20 @@ export function usePiChatCore({
 	// Reset session - restarts Pi process to reload PERSONALITY.md and USER.md
 	const resetSession = useCallback(async () => {
 		try {
-			// Only workspace sessions need a forced reconnect (WS URL includes session_id).
-			if (scope === "workspace") {
-				disconnect(true);
-			}
+			// Force reconnect so the WS follows the restarted backend session.
+			disconnect(true);
 
 			// Reset the session (this restarts the Pi process)
 			const newState =
 				scope === "workspace"
 					? await newWorkspacePiSession(workspacePath ?? "global")
-					: await resetMainChatPiSession();
+					: await (async () => {
+						const targetSessionId = activeSessionIdRef.current;
+						if (!targetSessionId) {
+							throw new Error("No active main chat session");
+						}
+						return resetMainChatPiSession(targetSessionId);
+					})();
 			setState(newState);
 			wsCache.sessionStarted = true;
 			setMessages([]);
@@ -300,22 +332,20 @@ export function usePiChatCore({
 			// Tell UI selection to follow the new backend session id.
 			const newSessionId = newState.session_id ?? null;
 			if (newSessionId) {
+				activeSessionIdRef.current = newSessionId;
 				clearCachedSessionMessages(newSessionId, storageKeyPrefix);
 			}
 			onSelectedSessionIdChange?.(newSessionId);
 
-			// Reconnect WebSocket if needed
-			if (scope === "workspace") {
-				connect();
-			} else if (wsCache.ws?.readyState !== WebSocket.OPEN) {
-				connect();
-			}
+			// Reconnect WebSocket
+			connect();
 		} catch (e) {
 			const err = e instanceof Error ? e : new Error("Failed to reset session");
 			setError(err);
 			onError?.(err);
 		}
 	}, [
+		activeSessionIdRef,
 		connect,
 		disconnect,
 		onError,
@@ -488,6 +518,7 @@ export function usePiChatStreamingFallback({
 		const checkStreamingState = async () => {
 			try {
 				const targetSessionId = activeSessionIdRef.current;
+				if (!targetSessionId) return;
 				if (
 					scope === "workspace" &&
 					(!targetSessionId || isPendingSessionId(targetSessionId))
@@ -500,7 +531,7 @@ export function usePiChatStreamingFallback({
 								workspacePath ?? "global",
 								targetSessionId ?? "",
 							)
-						: await getMainChatPiState();
+						: await getMainChatPiState(targetSessionId ?? "");
 				if (cancelled) return;
 				if (piState && piState.is_streaming === false) {
 					setState(piState);
@@ -646,7 +677,14 @@ export function usePiChatInit({
 					const startPromise = startMainChatPiSession();
 					wsCache.mainSessionInit = startPromise;
 					try {
-						return await startPromise;
+						const state = await startPromise;
+						const sessionId = state.session_id ?? null;
+						if (sessionId && !activeSessionIdRef.current) {
+							activeSessionIdRef.current = sessionId;
+							// If the UI hasn't selected a session yet, select this one.
+							if (!activeSessionId) onSelectedSessionIdChange?.(sessionId);
+						}
+						return state;
 					} finally {
 						if (wsCache.mainSessionInit === startPromise) {
 							wsCache.mainSessionInit = null;

@@ -323,18 +323,37 @@ export function usePiChatStreaming({
 						break;
 					}
 
-					case "error": {
-						const errMsg =
-							typeof data.data === "string" ? data.data : "Unknown error";
-						const err = new Error(errMsg);
-						onError(err);
-						setIsStreaming(false);
-						if (streamingMessageRef.current) {
-							streamingMessageRef.current.isStreaming = false;
-							streamingMessageRef.current = null;
-						}
-						break;
+				case "error": {
+					const errMsg =
+						typeof data.data === "string" ? data.data : "Unknown error";
+					const err = new Error(errMsg);
+					const errorText = `Error: ${errMsg}`;
+					onError(err);
+					setIsStreaming(false);
+					if (streamingMessageRef.current) {
+						streamingMessageRef.current.isStreaming = false;
+						streamingMessageRef.current.parts.push({
+							type: "text",
+							content: errorText,
+						});
+						const completedMessage = {
+							...streamingMessageRef.current,
+							parts: streamingMessageRef.current.parts.map((p) => ({ ...p })),
+						};
+						onMessageComplete(completedMessage);
+						streamingMessageRef.current = null;
+					} else {
+						const errorMessage: PiDisplayMessage = {
+							id: nextMessageId(),
+							role: "assistant",
+							parts: [{ type: "text", content: errorText }],
+							timestamp: Date.now(),
+						};
+						onMessageStart(errorMessage);
+						onMessageComplete(errorMessage);
 					}
+					break;
+				}
 
 					case "compaction":
 						onCompaction();
@@ -377,13 +396,8 @@ export function usePiChatStreaming({
 
 	// Connect to WebSocket - uses global cache to survive remounts
 	const connect = useCallback(() => {
-		if (
-			scope === "workspace" &&
-			(!activeSessionIdRef.current ||
-				isPendingSessionId(activeSessionIdRef.current))
-		) {
-			return;
-		}
+		if (!activeSessionIdRef.current) return;
+		if (isPendingSessionId(activeSessionIdRef.current)) return;
 		// If global WebSocket is already open and healthy, reuse it
 		if (wsCache.ws?.readyState === WebSocket.OPEN) {
 			// Just attach our message handler
@@ -408,9 +422,9 @@ export function usePiChatStreaming({
 			scope === "workspace"
 				? createWorkspacePiWebSocket(
 						workspacePath ?? "global",
-						activeSessionIdRef.current ?? "",
+						activeSessionIdRef.current,
 					)
-				: createMainChatPiWebSocket();
+				: createMainChatPiWebSocket(activeSessionIdRef.current);
 		wsCache.ws = ws;
 		isOwnerRef.current = true;
 

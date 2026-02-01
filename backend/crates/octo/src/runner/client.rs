@@ -488,6 +488,26 @@ impl RunnerClient {
         }
     }
 
+    /// Get messages from a workspace Pi session (hstry-backed).
+    pub async fn get_workspace_chat_messages(
+        &self,
+        workspace_path: impl Into<String>,
+        session_id: impl Into<String>,
+        limit: Option<usize>,
+    ) -> Result<MainChatMessagesResponse> {
+        let req = RunnerRequest::GetWorkspaceChatMessages(GetWorkspaceChatMessagesRequest {
+            session_id: session_id.into(),
+            workspace_path: workspace_path.into(),
+            limit,
+        });
+
+        let resp = self.request(&req).await?;
+        match resp {
+            RunnerResponse::WorkspaceChatMessages(r) => Ok(r),
+            _ => anyhow::bail!("unexpected response to get_workspace_chat_messages"),
+        }
+    }
+
     // ========================================================================
     // Memory Operations (user-plane)
     // ========================================================================

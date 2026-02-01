@@ -404,10 +404,7 @@ pub fn create_router_with_config(state: AppState, max_upload_size_mb: usize) -> 
             get(main_chat_pi_handlers::get_session_stats),
         )
         .route("/main/pi/ws", get(main_chat_pi_handlers::ws_handler))
-        .route(
-            "/main/pi/history",
-            get(main_chat_pi_handlers::get_history),
-        )
+        .route("/main/pi/history", get(main_chat_pi_handlers::get_history))
         .route(
             "/main/pi/sessions",
             get(main_chat_pi_handlers::list_pi_sessions)

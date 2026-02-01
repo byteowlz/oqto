@@ -90,7 +90,7 @@ export function usePiChatHistory({
 			const [piState, sessionMessages] = await Promise.all([
 				scope === "workspace"
 					? getWorkspacePiState(workspacePath ?? "global", targetSessionId)
-					: getMainChatPiState(),
+					: getMainChatPiState(targetSessionId),
 				scope === "workspace"
 					? getWorkspacePiSessionMessages(
 							workspacePath ?? "global",

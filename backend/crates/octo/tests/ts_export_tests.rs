@@ -11,8 +11,9 @@ use octo::agent::{
     OpenCodeSessionStatus, OpenCodeSessionTime, OpenCodeTokenCache, OpenCodeTokenLimit,
     OpenCodeTokenTotals,
 };
+use octo::canon::MessageRole;
 use octo::history::{ChatMessage, ChatMessagePart, ChatSession};
-use octo::main_chat::{AssistantInfo, HistoryEntryType, MessageRole};
+use octo::main_chat::{AssistantInfo, HistoryEntryType};
 use octo::session::{
     CreateSessionRequest, RuntimeMode, Session, SessionResponse, SessionStatus, SessionUrls,
 };

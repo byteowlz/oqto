@@ -9,12 +9,15 @@ use once_cell::sync::Lazy;
 use regex::Regex;
 
 /// Pattern for auto-generated title: `<workdir>: <generated_title> [adj-noun-verb]`
+/// or `<generated_title> [adj-noun-verb]` when workspace is omitted.
 /// Examples:
 ///   "myproject: Discuss the implementation [cold-lamp-verb]"
 ///   "frontend: Bug fix for login [blue-frog-fix]"
 static TITLE_PATTERN: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r#"^(?P<workspace>[^:]+):\s*(?P<title>[^\[]+)\s*\[(?P<readable_id>[^\]]+)\]\s*$"#)
-        .expect("Invalid regex pattern for auto-generated title")
+    Regex::new(
+        r#"^(?:(?P<workspace>[^:]+):\s*)?(?P<title>[^\[]+)\s*\[(?P<readable_id>[^\]]+)\]\s*$"#,
+    )
+    .expect("Invalid regex pattern for auto-generated title")
 });
 
 /// Parsed components of an auto-generated Pi session title

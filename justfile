@@ -77,12 +77,19 @@ install-system:
     #!/usr/bin/env bash
     set -euo pipefail
 
+    # Store the octo repo root for later use
+    OCTO_ROOT="$(pwd)"
+
     # Prompt for sudo once up-front
     sudo -v
 
     just install
-    (cd ../sldr && cargo install --path crates/sldr-cli)
-    (cd ../sldr && cargo install --path crates/sldr-server)
+    
+    # Install sldr binaries (as current user, not sudo - avoids rustup issues with root)
+    cd ../sldr && cargo install --path crates/sldr-cli && cargo install --path crates/sldr-server
+    
+    # Return to octo directory for systemd file installation
+    cd "$OCTO_ROOT"
 
     if [[ "$(uname -s)" != "Linux" ]]; then
       echo "install-system is Linux-only"

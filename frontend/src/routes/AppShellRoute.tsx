@@ -379,6 +379,11 @@ const AppShell = memo(function AppShell() {
 	const handleNewChat = useCallback(async () => {
 		if (mainChatActive) {
 			setActiveAppId("sessions");
+			// Provide immediate UI feedback and ensure we don't keep rendering the old
+			// session while a new one is being created.
+			setSelectedChatSessionId("");
+			setMainChatCurrentSessionId(null);
+			sidebarState.setMobileMenuOpen(false);
 			requestNewMainChatSession();
 			return;
 		}
@@ -429,6 +434,9 @@ const AppShell = memo(function AppShell() {
 	}, [
 		mainChatActive,
 		requestNewMainChatSession,
+		sidebarState,
+		setMainChatCurrentSessionId,
+		setSelectedChatSessionId,
 		selectedWorkspaceSession,
 		opencodeDirectory,
 		selectedChatFromHistory,

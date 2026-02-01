@@ -275,6 +275,13 @@ export function messageFingerprint(message: PiDisplayMessage): string {
 	return `${message.role}|${parts.join("|")}`;
 }
 
+function messageTextSignature(message: PiDisplayMessage): string {
+	return message.parts
+		.flatMap((p) => (p.type === "text" ? [p.content] : []))
+		.join("")
+		.trim();
+}
+
 /** Merge server messages with local messages, preserving in-flight optimistic updates */
 export function mergeServerMessages(
 	previous: PiDisplayMessage[],
@@ -285,9 +292,31 @@ export function mergeServerMessages(
 		fingerprint: messageFingerprint(message),
 		timestamp: message.timestamp ?? 0,
 	}));
+	const serverTextEntries = serverMessages.map((message) => ({
+		role: message.role,
+		text: messageTextSignature(message),
+		timestamp: message.timestamp ?? 0,
+	}));
 	const preserved = previous.filter((message) => {
 		if (!shouldPreserveLocalMessage(message)) return false;
 		if (serverIds.has(message.id)) return false;
+
+		// If the server has the same text content around the same time, drop the local
+		// message even if part segmentation differs (prevents duplicate bubbles).
+		const localText = messageTextSignature(message);
+		if (localText) {
+			for (const server of serverTextEntries) {
+				if (server.role !== message.role) continue;
+				if (!server.text) continue;
+				if (server.text !== localText) continue;
+				if (!server.timestamp || !message.timestamp) continue;
+				const diff = Math.abs(server.timestamp - message.timestamp);
+				if (diff <= MESSAGE_MATCH_WINDOW_MS) {
+					return false;
+				}
+			}
+		}
+
 		const localFingerprint = messageFingerprint(message);
 		for (const server of serverEntries) {
 			if (server.fingerprint !== localFingerprint) continue;

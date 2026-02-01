@@ -4,9 +4,7 @@ use anyhow::{Context, Result};
 use chrono::Utc;
 
 use super::db::MainChatDb;
-use super::models::{
-    CreateHistoryEntry, CreateSession, HistoryEntry, MainChatSession,
-};
+use super::models::{CreateHistoryEntry, CreateSession, HistoryEntry, MainChatSession};
 
 /// Repository for main chat operations.
 pub struct MainChatRepository<'a> {
@@ -197,7 +195,6 @@ impl<'a> MainChatRepository<'a> {
         .context("setting config")?;
         Ok(())
     }
-
 }
 
 #[cfg(test)]

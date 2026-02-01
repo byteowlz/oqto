@@ -3,23 +3,22 @@
 //! Manages one Pi process per workspace session (per user), with idle cleanup.
 
 use anyhow::{Context, Result};
-use chrono::DateTime;
+use chrono::{DateTime, TimeZone, Utc};
 use log::{debug, info, warn};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sqlx::Row;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{Mutex, RwLock};
+use uuid::Uuid;
 
 use crate::local::LinuxUsersConfig;
 use crate::main_chat::{MainChatPiServiceConfig, PiRuntimeMode, UserPiSession};
 use crate::pi::{ContainerPiRuntime, LocalPiRuntime, PiRuntime, PiSpawnConfig, RunnerPiRuntime};
 use crate::runner::client::RunnerClient;
-
-/// Default idle timeout for sessions (5 minutes).
-const DEFAULT_IDLE_TIMEOUT_SECS: u64 = 300;
 
 /// How often to run the cleanup task (1 minute).
 const CLEANUP_INTERVAL_SECS: u64 = 60;
@@ -104,11 +103,13 @@ impl WorkspacePiService {
             "WorkspacePiService initialized with runtime mode: {}",
             config.runtime_mode
         );
+
+        let idle_timeout_secs = config.idle_timeout_secs;
         Self {
             config,
             sessions: RwLock::new(HashMap::new()),
             creating: Mutex::new(HashSet::new()),
-            idle_timeout_secs: DEFAULT_IDLE_TIMEOUT_SECS,
+            idle_timeout_secs,
             linux_users,
         }
     }
@@ -123,6 +124,16 @@ impl WorkspacePiService {
                 service.cleanup_idle_sessions().await;
             }
         });
+    }
+
+    pub async fn remove_session(&self, user_id: &str, work_dir: &Path, session_id: &str) -> bool {
+        let key = (
+            user_id.to_string(),
+            work_dir.to_string_lossy().to_string(),
+            session_id.to_string(),
+        );
+        let mut sessions = self.sessions.write().await;
+        sessions.remove(&key).is_some()
     }
 
     /// Clean up idle sessions that are not streaming.
@@ -207,6 +218,341 @@ impl WorkspacePiService {
         self.get_pi_agent_dir(user_id)
             .join("sessions")
             .join(format!("--{}--", escaped_path))
+    }
+
+    fn runner_client_for_user(&self, user_id: &str) -> Option<RunnerClient> {
+        self.linux_users.as_ref()?;
+        let pattern = self.config.runner_socket_pattern.as_deref()?;
+        let socket_path = pattern.replace("{user}", user_id);
+        if std::path::Path::new(&socket_path).exists() {
+            Some(RunnerClient::new(socket_path))
+        } else {
+            None
+        }
+    }
+
+    fn map_pi_role(role: &str) -> &str {
+        match role {
+            "user" => "user",
+            "assistant" => "assistant",
+            "tool" | "toolResult" => "toolResult",
+            "system" => "custom",
+            _ => "assistant",
+        }
+    }
+
+    fn derive_provider(model: &str) -> &'static str {
+        let lower = model.to_lowercase();
+        if lower.contains("claude") || lower.contains("anthropic") {
+            return "anthropic";
+        }
+        if lower.contains("gpt") || lower.contains("openai") || lower.contains("codex") {
+            return "openai";
+        }
+        if lower.contains("gemini") || lower.contains("google") {
+            return "google";
+        }
+        if lower.contains("llama") || lower.contains("meta") {
+            return "meta";
+        }
+        "unknown"
+    }
+
+    fn build_pi_session_jsonl(
+        session_id: &str,
+        cwd: &str,
+        created_at_ms: i64,
+        title: Option<String>,
+        model: Option<String>,
+        messages: Vec<(String, serde_json::Value, i64)>,
+    ) -> String {
+        let mut lines = Vec::new();
+        let header = serde_json::json!({
+            "type": "session",
+            "version": 3,
+            "id": session_id,
+            "timestamp": Utc.timestamp_millis_opt(created_at_ms)
+                .single()
+                .unwrap_or_else(Utc::now)
+                .to_rfc3339(),
+            "cwd": cwd,
+        });
+        lines.push(serde_json::to_string(&header).unwrap_or_else(|_| "{}".to_string()));
+
+        let mut last_entry_id: Option<String> = None;
+        if let Some(model) = model.clone() {
+            let model_entry = serde_json::json!({
+                "type": "model_change",
+                "id": Uuid::new_v4().simple().to_string(),
+                "parentId": last_entry_id,
+                "timestamp": Utc.timestamp_millis_opt(created_at_ms)
+                    .single()
+                    .unwrap_or_else(Utc::now)
+                    .to_rfc3339(),
+                "provider": Self::derive_provider(&model),
+                "modelId": model,
+            });
+            if let Ok(line) = serde_json::to_string(&model_entry) {
+                last_entry_id = model_entry
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                lines.push(line);
+            }
+        }
+
+        if let Some(title) = title {
+            let info_entry = serde_json::json!({
+                "type": "session_info",
+                "id": Uuid::new_v4().simple().to_string(),
+                "parentId": last_entry_id,
+                "timestamp": Utc.timestamp_millis_opt(created_at_ms)
+                    .single()
+                    .unwrap_or_else(Utc::now)
+                    .to_rfc3339(),
+                "name": title,
+            });
+            if let Ok(line) = serde_json::to_string(&info_entry) {
+                last_entry_id = info_entry
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                lines.push(line);
+            }
+        }
+
+        for (role, content, timestamp_ms) in messages {
+            let msg_entry = serde_json::json!({
+                "type": "message",
+                "id": Uuid::new_v4().simple().to_string(),
+                "parentId": last_entry_id,
+                "timestamp": Utc.timestamp_millis_opt(timestamp_ms)
+                    .single()
+                    .unwrap_or_else(Utc::now)
+                    .to_rfc3339(),
+                "message": {
+                    "role": Self::map_pi_role(&role),
+                    "content": content,
+                    "timestamp": timestamp_ms,
+                }
+            });
+            if let Ok(line) = serde_json::to_string(&msg_entry) {
+                last_entry_id = msg_entry
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                lines.push(line);
+            }
+        }
+
+        lines.join("\n") + "\n"
+    }
+
+    async fn write_session_file(
+        &self,
+        user_id: &str,
+        sessions_dir: &Path,
+        session_id: &str,
+        content: String,
+    ) -> Result<PathBuf> {
+        let filename = format!("{}_{}.jsonl", Utc::now().timestamp_millis(), session_id);
+        let path = sessions_dir.join(filename);
+
+        if let Some(client) = self.runner_client_for_user(user_id) {
+            let _ = client.create_directory(sessions_dir, true).await;
+            client
+                .write_file(path.clone(), content.as_bytes(), true)
+                .await
+                .context("writing session file via runner")?;
+            return Ok(path);
+        }
+
+        if !sessions_dir.exists() {
+            std::fs::create_dir_all(sessions_dir).context("creating sessions directory")?;
+        }
+        std::fs::write(&path, content).context("writing session file")?;
+        Ok(path)
+    }
+
+    async fn rehydrate_session_from_hstry(
+        &self,
+        user_id: &str,
+        work_dir: &Path,
+        session_id: &str,
+    ) -> Result<Option<PathBuf>> {
+        let sessions_dir = self.get_pi_sessions_dir(user_id, work_dir);
+
+        if let Some(client) = self.runner_client_for_user(user_id) {
+            let resp = client
+                .get_workspace_chat_messages(
+                    work_dir.to_string_lossy().to_string(),
+                    session_id,
+                    None,
+                )
+                .await
+                .context("runner get_workspace_chat_messages")?;
+            if resp.messages.is_empty() {
+                return Ok(None);
+            }
+
+            let created_at_ms = resp
+                .messages
+                .first()
+                .map(|m| m.timestamp)
+                .unwrap_or_else(|| Utc::now().timestamp_millis());
+            let messages = resp
+                .messages
+                .into_iter()
+                .map(|m| (m.role, m.content, m.timestamp))
+                .collect();
+            let jsonl = Self::build_pi_session_jsonl(
+                session_id,
+                &work_dir.to_string_lossy(),
+                created_at_ms,
+                None,
+                None,
+                messages,
+            );
+            let path = self
+                .write_session_file(user_id, &sessions_dir, session_id, jsonl)
+                .await?;
+            return Ok(Some(path));
+        }
+
+        let Some(db_path) = crate::history::hstry_db_path() else {
+            return Ok(None);
+        };
+        let pool = crate::history::repository::open_hstry_pool(&db_path).await?;
+
+        let conv_row = sqlx::query(
+            r#"
+            SELECT id, external_id, title, created_at, model, workspace
+            FROM conversations
+            WHERE source_id = 'pi'
+              AND (external_id = ? OR readable_id = ? OR id = ?)
+              AND workspace = ?
+            LIMIT 1
+            "#,
+        )
+        .bind(session_id)
+        .bind(session_id)
+        .bind(session_id)
+        .bind(work_dir.to_string_lossy().to_string())
+        .fetch_optional(&pool)
+        .await?;
+
+        let conv_row = if conv_row.is_some() {
+            conv_row
+        } else {
+            sqlx::query(
+                r#"
+                SELECT id, external_id, title, created_at, model, workspace
+                FROM conversations
+                WHERE source_id = 'pi' AND (external_id = ? OR readable_id = ? OR id = ?)
+                LIMIT 1
+                "#,
+            )
+            .bind(session_id)
+            .bind(session_id)
+            .bind(session_id)
+            .fetch_optional(&pool)
+            .await?
+        };
+
+        let Some(conv_row) = conv_row else {
+            return Ok(None);
+        };
+
+        let conversation_id: String = conv_row.try_get("id")?;
+        let title: Option<String> = conv_row.try_get("title").ok();
+        let model: Option<String> = conv_row.try_get("model").ok();
+        let workspace: Option<String> = conv_row.try_get("workspace").ok();
+        let created_at: i64 = conv_row.try_get("created_at").unwrap_or_else(|_| 0);
+        let created_at_ms = created_at * 1000;
+
+        let rows = sqlx::query(
+            r#"
+            SELECT role, content, created_at, parts_json
+            FROM messages
+            WHERE conversation_id = ?
+            ORDER BY idx
+            "#,
+        )
+        .bind(&conversation_id)
+        .fetch_all(&pool)
+        .await?;
+
+        let mut messages = Vec::with_capacity(rows.len());
+        for row in rows {
+            let role: String = row
+                .try_get("role")
+                .unwrap_or_else(|_| "assistant".to_string());
+            let content_raw: String = row.try_get("content").unwrap_or_default();
+            let created_at: Option<i64> = row.try_get("created_at").ok();
+            let parts_json: Option<String> = row.try_get("parts_json").ok();
+
+            let content = if let Some(parts_json) = parts_json.as_deref()
+                && let Ok(v) = serde_json::from_str::<serde_json::Value>(parts_json)
+                && v.is_array()
+            {
+                v
+            } else {
+                serde_json::json!([{ "type": "text", "text": content_raw }])
+            };
+
+            let timestamp_ms = created_at
+                .map(|ts| ts * 1000)
+                .unwrap_or_else(|| Utc::now().timestamp_millis());
+            messages.push((role, content, timestamp_ms));
+        }
+
+        let cwd = workspace.unwrap_or_else(|| work_dir.to_string_lossy().to_string());
+        let jsonl = Self::build_pi_session_jsonl(
+            session_id,
+            &cwd,
+            if created_at_ms > 0 {
+                created_at_ms
+            } else {
+                Utc::now().timestamp_millis()
+            },
+            title,
+            model,
+            messages,
+        );
+
+        let path = self
+            .write_session_file(user_id, &sessions_dir, session_id, jsonl)
+            .await?;
+        Ok(Some(path))
+    }
+
+    fn ensure_session_file(&self, user_id: &str, work_dir: &Path, session_id: &str) -> Result<()> {
+        let sessions_dir = self.get_pi_sessions_dir(user_id, work_dir);
+        if !sessions_dir.exists() {
+            std::fs::create_dir_all(&sessions_dir).context("creating sessions directory")?;
+        } else if let Ok(entries) = std::fs::read_dir(&sessions_dir) {
+            for entry in entries.filter_map(Result::ok) {
+                let path = entry.path();
+                if path.extension().map(|e| e == "jsonl").unwrap_or(false) {
+                    let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                    if filename.contains(session_id) {
+                        return Ok(());
+                    }
+                }
+            }
+        }
+
+        let header = serde_json::json!({
+            "type": "session",
+            "id": session_id,
+            "timestamp": Utc::now().to_rfc3339(),
+            "cwd": work_dir.to_string_lossy(),
+        });
+        let content = format!("{}\n", serde_json::to_string(&header)?);
+        let filename = format!("{}_{}.jsonl", Utc::now().timestamp_millis(), session_id);
+        let path = sessions_dir.join(filename);
+        std::fs::write(&path, content).context("writing session file")?;
+        Ok(())
     }
 
     /// Find a Pi session file by ID (.jsonl format).
@@ -427,6 +773,13 @@ impl WorkspacePiService {
             .session_id
             .ok_or_else(|| anyhow::anyhow!("Pi session_id missing from state"))?;
 
+        if let Err(err) = self.ensure_session_file(user_id, work_dir, &session_id) {
+            warn!(
+                "Failed to create Pi session file for {}: {}",
+                session_id, err
+            );
+        }
+
         let key = (
             user_id.to_string(),
             work_dir.to_string_lossy().to_string(),
@@ -485,7 +838,20 @@ impl WorkspacePiService {
         // Create the session (we hold the creation slot)
         let result = async {
             let sessions_dir = self.get_pi_sessions_dir(user_id, work_dir);
-            let session_file = self.find_session_file(&sessions_dir, session_id)?;
+            let session_file = match self.find_session_file(&sessions_dir, session_id) {
+                Ok(path) => path,
+                Err(err) if err.to_string().contains("Session not found") => {
+                    if let Ok(Some(path)) = self
+                        .rehydrate_session_from_hstry(user_id, work_dir, session_id)
+                        .await
+                    {
+                        path
+                    } else {
+                        return Err(err);
+                    }
+                }
+                Err(err) => return Err(err),
+            };
             let session = self
                 .create_session(user_id, work_dir, Some(session_file))
                 .await?;

@@ -100,7 +100,7 @@ tonic = "0.12"
 prost = "0.13"
 
 # External crates
-hstry-core = { git = "https://github.com/byteowlz/hstry", branch = "main" }
+hstry-core = { path = "../../hstry/crates/hstry-core" }
 
 [profile.release]
 lto = true

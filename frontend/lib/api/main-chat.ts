@@ -486,8 +486,15 @@ export async function startMainChatPiSession(): Promise<PiState> {
 }
 
 /** Get Pi session state */
-export async function getMainChatPiState(): Promise<PiState> {
-	const res = await authFetch(controlPlaneApiUrl("/api/main/pi/state"), {
+
+function mainPiUrl(path: string, sessionId: string): string {
+	const url = new URL(controlPlaneApiUrl(path), window.location.origin);
+	url.searchParams.set("session_id", sessionId);
+	return url.toString();
+}
+
+export async function getMainChatPiState(sessionId: string): Promise<PiState> {
+	const res = await authFetch(mainPiUrl("/api/main/pi/state", sessionId), {
 		credentials: "include",
 	});
 	if (!res.ok) throw new Error(await readApiError(res));
@@ -495,8 +502,11 @@ export async function getMainChatPiState(): Promise<PiState> {
 }
 
 /** Send a prompt to Pi */
-export async function sendMainChatPiPrompt(message: string): Promise<void> {
-	const res = await authFetch(controlPlaneApiUrl("/api/main/pi/prompt"), {
+export async function sendMainChatPiPrompt(
+	sessionId: string,
+	message: string,
+): Promise<void> {
+	const res = await authFetch(mainPiUrl("/api/main/pi/prompt", sessionId), {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify({ message }),
@@ -506,8 +516,8 @@ export async function sendMainChatPiPrompt(message: string): Promise<void> {
 }
 
 /** Abort current Pi operation */
-export async function abortMainChatPi(): Promise<void> {
-	const res = await authFetch(controlPlaneApiUrl("/api/main/pi/abort"), {
+export async function abortMainChatPi(sessionId: string): Promise<void> {
+	const res = await authFetch(mainPiUrl("/api/main/pi/abort", sessionId), {
 		method: "POST",
 		credentials: "include",
 	});
@@ -515,8 +525,10 @@ export async function abortMainChatPi(): Promise<void> {
 }
 
 /** Get Pi messages */
-export async function getMainChatPiMessages(): Promise<PiAgentMessage[]> {
-	const res = await authFetch(controlPlaneApiUrl("/api/main/pi/messages"), {
+export async function getMainChatPiMessages(
+	sessionId: string,
+): Promise<PiAgentMessage[]> {
+	const res = await authFetch(mainPiUrl("/api/main/pi/messages", sessionId), {
 		credentials: "include",
 	});
 	if (!res.ok) throw new Error(await readApiError(res));
@@ -524,10 +536,12 @@ export async function getMainChatPiMessages(): Promise<PiAgentMessage[]> {
 }
 
 /** Compact Pi session */
+
 export async function compactMainChatPi(
+	sessionId: string,
 	customInstructions?: string,
 ): Promise<PiCompactionResult> {
-	const res = await authFetch(controlPlaneApiUrl("/api/main/pi/compact"), {
+	const res = await authFetch(mainPiUrl("/api/main/pi/compact", sessionId), {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify({ custom_instructions: customInstructions }),
@@ -539,10 +553,11 @@ export async function compactMainChatPi(
 
 /** Set Pi session model */
 export async function setMainChatPiModel(
+	sessionId: string,
 	provider: string,
 	modelId: string,
 ): Promise<PiState> {
-	const res = await authFetch(controlPlaneApiUrl("/api/main/pi/model"), {
+	const res = await authFetch(mainPiUrl("/api/main/pi/model", sessionId), {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify({ provider, model_id: modelId }),
@@ -553,8 +568,8 @@ export async function setMainChatPiModel(
 }
 
 /** Get available Pi models */
-export async function getMainChatPiModels(): Promise<PiModelInfo[]> {
-	const res = await authFetch(controlPlaneApiUrl("/api/main/pi/models"), {
+export async function getMainChatPiModels(sessionId: string): Promise<PiModelInfo[]> {
+	const res = await authFetch(mainPiUrl("/api/main/pi/models", sessionId), {
 		credentials: "include",
 	});
 	if (!res.ok) throw new Error(await readApiError(res));
@@ -563,8 +578,10 @@ export async function getMainChatPiModels(): Promise<PiModelInfo[]> {
 }
 
 /** Get available Pi prompt commands (slash templates). */
-export async function getMainChatPiCommands(): Promise<PiPromptCommandInfo[]> {
-	const res = await authFetch(controlPlaneApiUrl("/api/main/pi/commands"), {
+export async function getMainChatPiCommands(
+	sessionId: string,
+): Promise<PiPromptCommandInfo[]> {
+	const res = await authFetch(mainPiUrl("/api/main/pi/commands", sessionId), {
 		credentials: "include",
 	});
 	if (!res.ok) throw new Error(await readApiError(res));
@@ -583,8 +600,8 @@ export async function newMainChatPiSession(): Promise<PiState> {
 }
 
 /** Reset Pi session - restarts the process to reload PERSONALITY.md and USER.md */
-export async function resetMainChatPiSession(): Promise<PiState> {
-	const res = await authFetch(controlPlaneApiUrl("/api/main/pi/reset"), {
+export async function resetMainChatPiSession(sessionId: string): Promise<PiState> {
+	const res = await authFetch(mainPiUrl("/api/main/pi/reset", sessionId), {
 		method: "POST",
 		credentials: "include",
 	});
@@ -593,8 +610,8 @@ export async function resetMainChatPiSession(): Promise<PiState> {
 }
 
 /** Get Pi session stats */
-export async function getMainChatPiStats(): Promise<PiSessionStats> {
-	const res = await authFetch(controlPlaneApiUrl("/api/main/pi/stats"), {
+export async function getMainChatPiStats(sessionId: string): Promise<PiSessionStats> {
+	const res = await authFetch(mainPiUrl("/api/main/pi/stats", sessionId), {
 		credentials: "include",
 	});
 	if (!res.ok) throw new Error(await readApiError(res));
@@ -611,8 +628,10 @@ export async function closeMainChatPiSession(): Promise<void> {
 }
 
 /** Create WebSocket connection to Pi for streaming events */
-export function createMainChatPiWebSocket(): WebSocket {
-	let wsUrl = toAbsoluteWsUrl(controlPlaneApiUrl("/api/main/pi/ws"));
+export function createMainChatPiWebSocket(sessionId: string): WebSocket {
+	let wsUrl = toAbsoluteWsUrl(
+		controlPlaneApiUrl(`/api/main/pi/ws?session_id=${encodeURIComponent(sessionId)}`),
+	);
 	// Add auth token as query parameter for WebSocket auth
 	const token = getAuthToken();
 	if (token) {

@@ -261,7 +261,10 @@ impl UserHstryManager {
             client.socket_path()
         );
 
-        if let Err(err) = self.spawn_hstry(&client, &process_id, &linux_username).await {
+        if let Err(err) = self
+            .spawn_hstry(&client, &process_id, &linux_username)
+            .await
+        {
             // Common case after backend restart: runner still has process id.
             match client.get_status(&process_id).await {
                 Ok(status) if status.running => {
@@ -301,10 +304,7 @@ impl UserHstryManager {
             },
         );
 
-        info!(
-            "hstry ready for user {} at {:?}",
-            user_id, socket_path
-        );
+        info!("hstry ready for user {} at {:?}", user_id, socket_path);
 
         Ok(socket_path)
     }

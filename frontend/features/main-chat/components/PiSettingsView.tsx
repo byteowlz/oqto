@@ -68,11 +68,11 @@ export function PiSettingsView({
 
 	useEffect(() => {
 		let active = true;
-		if (scope !== "main" && !sessionId) return undefined;
+		if (!sessionId) return undefined;
 		setLoadingModels(true);
 		const fetchModels =
 			scope === "main"
-				? getMainChatPiModels()
+				? getMainChatPiModels(sessionId)
 				: getWorkspacePiModels(workspacePath ?? "global", sessionId ?? "");
 		fetchModels
 			.then((models) => {
@@ -102,7 +102,7 @@ export function PiSettingsView({
 			try {
 				const nextState =
 					scope === "main"
-						? await getMainChatPiState()
+						? await getMainChatPiState(sessionId ?? "")
 						: sessionId
 							? await getWorkspacePiState(workspacePath ?? "global", sessionId)
 							: null;
@@ -113,7 +113,7 @@ export function PiSettingsView({
 				if (active) setLoadingState(false);
 			}
 		};
-		if (scope === "main" || sessionId) {
+		if (sessionId) {
 			setLoadingState(true);
 			void fetchState();
 			intervalId = setInterval(fetchState, 2000);
@@ -157,7 +157,8 @@ export function PiSettingsView({
 			setIsSwitchingModel(true);
 			try {
 				if (scope === "main") {
-					await setMainChatPiModel(provider, modelId);
+					if (!sessionId) throw new Error("No active main chat session");
+					await setMainChatPiModel(sessionId, provider, modelId);
 				} else if (sessionId) {
 					await setWorkspacePiModel(
 						workspacePath ?? "global",

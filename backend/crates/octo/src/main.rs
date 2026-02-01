@@ -1117,6 +1117,10 @@ pub struct PiConfig {
     /// Whether to sandbox Pi processes (only applies to runner mode).
     /// The runner loads sandbox config from /etc/octo/sandbox.toml.
     pub sandboxed: Option<bool>,
+
+    /// Idle timeout in seconds before stopping inactive Pi processes.
+    /// Default: 300 (5 minutes).
+    pub idle_timeout_secs: Option<u64>,
 }
 
 impl Default for PiConfig {
@@ -1133,6 +1137,8 @@ impl Default for PiConfig {
             runner_socket_pattern: None,
             bridge_url: None,
             sandboxed: None,
+
+            idle_timeout_secs: None,
         }
     }
 }
@@ -2343,14 +2349,20 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
                     // Create client and connect
                     let hstry_client = hstry::HstryClient::new();
                     if let Err(e) = hstry_client.connect().await {
-                        warn!("Failed to connect to hstry daemon: {}. Will retry on first use.", e);
+                        warn!(
+                            "Failed to connect to hstry daemon: {}. Will retry on first use.",
+                            e
+                        );
                     } else {
                         info!("hstry client connected");
                     }
                     state = state.with_hstry(hstry_client);
                 }
                 Err(e) => {
-                    warn!("Failed to start hstry daemon: {}. Chat history persistence disabled.", e);
+                    warn!(
+                        "Failed to start hstry daemon: {}. Chat history persistence disabled.",
+                        e
+                    );
                 }
             }
         }
@@ -2395,6 +2407,8 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
             runner_socket_pattern: ctx.config.pi.runner_socket_pattern.clone(),
             bridge_url: ctx.config.pi.bridge_url.clone(),
             sandboxed: ctx.config.pi.sandboxed.unwrap_or(false),
+
+            idle_timeout_secs: ctx.config.pi.idle_timeout_secs.unwrap_or(300),
         };
         let workspace_pi_config = main_chat_pi_config.clone();
         let main_chat_pi_service = Arc::new(main_chat::MainChatPiService::new(

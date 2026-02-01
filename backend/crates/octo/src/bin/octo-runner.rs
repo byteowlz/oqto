@@ -41,15 +41,15 @@
 //! ```
 
 use anyhow::{Context, Result};
+use chrono::TimeZone;
 use clap::Parser;
 use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
+use sqlx::Row;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::Arc;
-use chrono::TimeZone;
-use sqlx::Row;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::process::{Child, Command};
@@ -435,6 +435,7 @@ impl Runner {
             // ================================================================
             RunnerRequest::ListMainChatSessions => self.list_main_chat_sessions().await,
             RunnerRequest::GetMainChatMessages(r) => self.get_main_chat_messages(r).await,
+            RunnerRequest::GetWorkspaceChatMessages(r) => self.get_workspace_chat_messages(r).await,
 
             // ================================================================
             // Memory operations (user-plane)
@@ -1425,10 +1426,7 @@ impl Runner {
         let pool = match octo::history::repository::open_hstry_pool(&db_path).await {
             Ok(pool) => pool,
             Err(e) => {
-                return error_response(
-                    ErrorCode::IoError,
-                    format!("Failed to open hstry DB: {e}"),
-                );
+                return error_response(ErrorCode::IoError, format!("Failed to open hstry DB: {e}"));
             }
         };
 
@@ -1500,10 +1498,7 @@ impl Runner {
         let pool = match octo::history::repository::open_hstry_pool(&db_path).await {
             Ok(pool) => pool,
             Err(e) => {
-                return error_response(
-                    ErrorCode::IoError,
-                    format!("Failed to open hstry DB: {e}"),
-                );
+                return error_response(ErrorCode::IoError, format!("Failed to open hstry DB: {e}"));
             }
         };
 
@@ -1639,6 +1634,189 @@ impl Runner {
         }
 
         RunnerResponse::MainChatMessages(MainChatMessagesResponse {
+            session_id,
+            messages,
+        })
+    }
+
+    async fn get_workspace_chat_messages(
+        &self,
+        req: GetWorkspaceChatMessagesRequest,
+    ) -> RunnerResponse {
+        let Some(db_path) = octo::history::hstry_db_path() else {
+            return RunnerResponse::WorkspaceChatMessages(MainChatMessagesResponse {
+                session_id: req.session_id,
+                messages: Vec::new(),
+            });
+        };
+
+        let pool = match octo::history::repository::open_hstry_pool(&db_path).await {
+            Ok(pool) => pool,
+            Err(e) => {
+                return error_response(ErrorCode::IoError, format!("Failed to open hstry DB: {e}"));
+            }
+        };
+
+        let conv_row = match sqlx::query(
+            r#"
+            SELECT id, external_id
+            FROM conversations
+            WHERE source_id = 'pi'
+              AND (external_id = ? OR readable_id = ? OR id = ?)
+              AND workspace = ?
+            LIMIT 1
+            "#,
+        )
+        .bind(&req.session_id)
+        .bind(&req.session_id)
+        .bind(&req.session_id)
+        .bind(&req.workspace_path)
+        .fetch_optional(&pool)
+        .await
+        {
+            Ok(row) => row,
+            Err(e) => {
+                return error_response(
+                    ErrorCode::IoError,
+                    format!("Failed to resolve conversation: {e}"),
+                );
+            }
+        };
+
+        let conv_row = if let Some(row) = conv_row {
+            Some(row)
+        } else {
+            match sqlx::query(
+                r#"
+                SELECT id, external_id
+                FROM conversations
+                WHERE source_id = 'pi' AND (external_id = ? OR readable_id = ? OR id = ?)
+                LIMIT 1
+                "#,
+            )
+            .bind(&req.session_id)
+            .bind(&req.session_id)
+            .bind(&req.session_id)
+            .fetch_optional(&pool)
+            .await
+            {
+                Ok(row) => row,
+                Err(e) => {
+                    return error_response(
+                        ErrorCode::IoError,
+                        format!("Failed to resolve conversation: {e}"),
+                    );
+                }
+            }
+        };
+
+        let Some(conv_row) = conv_row else {
+            return RunnerResponse::WorkspaceChatMessages(MainChatMessagesResponse {
+                session_id: req.session_id,
+                messages: Vec::new(),
+            });
+        };
+
+        let conversation_id: String = match conv_row.try_get("id") {
+            Ok(v) => v,
+            Err(e) => {
+                return error_response(
+                    ErrorCode::IoError,
+                    format!("Failed to read conversation id: {e}"),
+                );
+            }
+        };
+
+        let session_id: String = match conv_row.try_get::<Option<String>, _>("external_id") {
+            Ok(Some(v)) => v,
+            _ => req.session_id.clone(),
+        };
+
+        let rows = if let Some(limit) = req.limit {
+            match sqlx::query(
+                r#"
+                SELECT idx, role, content, created_at, parts_json
+                FROM messages
+                WHERE conversation_id = ?
+                ORDER BY idx DESC
+                LIMIT ?
+                "#,
+            )
+            .bind(&conversation_id)
+            .bind(limit as i64)
+            .fetch_all(&pool)
+            .await
+            {
+                Ok(rows) => {
+                    let mut rows = rows;
+                    rows.reverse();
+                    rows
+                }
+                Err(e) => {
+                    return error_response(
+                        ErrorCode::IoError,
+                        format!("Failed to load messages: {e}"),
+                    );
+                }
+            }
+        } else {
+            match sqlx::query(
+                r#"
+                SELECT idx, role, content, created_at, parts_json
+                FROM messages
+                WHERE conversation_id = ?
+                ORDER BY idx
+                "#,
+            )
+            .bind(&conversation_id)
+            .fetch_all(&pool)
+            .await
+            {
+                Ok(rows) => rows,
+                Err(e) => {
+                    return error_response(
+                        ErrorCode::IoError,
+                        format!("Failed to load messages: {e}"),
+                    );
+                }
+            }
+        };
+
+        let mut messages = Vec::with_capacity(rows.len());
+        for row in rows {
+            let idx: i64 = row.get("idx");
+            let role_raw: String = row.get("role");
+            let content_raw: String = row.get("content");
+            let created_at: i64 = row.get("created_at");
+            let parts_json: Option<String> = row.try_get("parts_json").ok();
+
+            let role = match role_raw.as_str() {
+                "user" => "user",
+                "assistant" => "assistant",
+                "system" => "system",
+                "tool" | "toolResult" => "assistant",
+                _ => "assistant",
+            }
+            .to_string();
+
+            let content = if let Some(parts_json) = parts_json.as_deref()
+                && let Ok(v) = serde_json::from_str::<serde_json::Value>(parts_json)
+                && v.is_array()
+            {
+                v
+            } else {
+                serde_json::json!([{ "type": "text", "text": content_raw }])
+            };
+
+            messages.push(MainChatMessage {
+                id: format!("msg_{}", idx),
+                role,
+                content,
+                timestamp: created_at * 1000,
+            });
+        }
+
+        RunnerResponse::WorkspaceChatMessages(MainChatMessagesResponse {
             session_id,
             messages,
         })

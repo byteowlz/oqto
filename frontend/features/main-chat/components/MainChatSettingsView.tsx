@@ -42,7 +42,14 @@ export function MainChatSettingsView({
 	useEffect(() => {
 		let active = true;
 		setLoading(true);
-		getMainChatPiModels()
+		if (!piState?.session_id) {
+			setAvailableModels([]);
+			setLoading(false);
+			return () => {
+				active = false;
+			};
+		}
+		getMainChatPiModels(piState.session_id)
 			.then((models) => {
 				if (active) {
 					setAvailableModels(models);
@@ -62,7 +69,7 @@ export function MainChatSettingsView({
 		return () => {
 			active = false;
 		};
-	}, [selectedModelRef]);
+	}, [piState?.session_id, selectedModelRef]);
 
 	useEffect(() => {
 		let active = true;
@@ -70,7 +77,11 @@ export function MainChatSettingsView({
 		const fetchState = async () => {
 			if (!active) return;
 			try {
-				const nextState = await getMainChatPiState();
+				if (!piState?.session_id) {
+					if (active) setPiState(null);
+					return;
+				}
+				const nextState = await getMainChatPiState(piState.session_id);
 				if (active) setPiState(nextState);
 			} catch {
 				if (active) setPiState(null);
@@ -85,7 +96,7 @@ export function MainChatSettingsView({
 			active = false;
 			if (intervalId) clearInterval(intervalId);
 		};
-	}, []);
+	}, [piState?.session_id]);
 
 	const filteredModels = useMemo(() => {
 		const query = modelQuery.trim();
@@ -113,14 +124,15 @@ export function MainChatSettingsView({
 			setSelectedModelRef(value);
 			setIsSwitchingModel(true);
 			try {
-				await setMainChatPiModel(provider, modelId);
+				if (!piState?.session_id) throw new Error("No active main chat session");
+				await setMainChatPiModel(piState.session_id, provider, modelId);
 			} catch (err) {
 				console.error("Failed to switch model:", err);
 			} finally {
 				setIsSwitchingModel(false);
 			}
 		},
-		[isIdle],
+		[isIdle, piState?.session_id],
 	);
 
 	if (loading) {

@@ -1664,8 +1664,7 @@ dependencies = [
 
 [[package]]
 name = "hstry-core"
-version = "0.2.13"
-source = "git+https://github.com/byteowlz/hstry?branch=main#766c978ccee1418ea2f3858321632bf0969b150f"
+version = "0.2.14"
 dependencies = [
  "anyhow",
  "chrono",

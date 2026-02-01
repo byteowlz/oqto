@@ -347,7 +347,6 @@ impl MainChatService {
         let repo = MainChatRepository::new(&db);
         repo.get_latest_session().await
     }
-
 }
 
 #[cfg(test)]

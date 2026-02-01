@@ -104,6 +104,8 @@ pub enum RunnerRequest {
 
     /// Get messages from a main chat session.
     GetMainChatMessages(GetMainChatMessagesRequest),
+    /// Get messages from a workspace Pi session (hstry-backed).
+    GetWorkspaceChatMessages(GetWorkspaceChatMessagesRequest),
 
     // ========================================================================
     // OpenCode Chat History (user-plane)
@@ -217,6 +219,8 @@ pub enum RunnerResponse {
 
     /// Main chat messages.
     MainChatMessages(MainChatMessagesResponse),
+    /// Workspace chat messages.
+    WorkspaceChatMessages(MainChatMessagesResponse),
 
     // ========================================================================
     // OpenCode Chat History Responses
@@ -458,6 +462,18 @@ pub struct StopSessionRequest {
 pub struct GetMainChatMessagesRequest {
     /// Session ID (Pi session file ID).
     pub session_id: String,
+    /// Optional limit on number of messages.
+    #[serde(default)]
+    pub limit: Option<usize>,
+}
+
+/// Request to get messages from a workspace Pi session.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GetWorkspaceChatMessagesRequest {
+    /// Session ID (Pi session file ID).
+    pub session_id: String,
+    /// Workspace path to filter conversations.
+    pub workspace_path: String,
     /// Optional limit on number of messages.
     #[serde(default)]
     pub limit: Option<usize>,
