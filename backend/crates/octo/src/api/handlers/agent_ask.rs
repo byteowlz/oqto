@@ -50,10 +50,12 @@ pub async fn agents_search_sessions(
     let sessions = if let Some(q) = &query.q {
         pi_service
             .search_sessions(user.id(), q)
+            .await
             .map_err(|e| ApiError::internal(format!("Failed to search sessions: {}", e)))?
     } else {
         pi_service
             .list_sessions(user.id())
+            .await
             .map_err(|e| ApiError::internal(format!("Failed to list sessions: {}", e)))?
     };
 
@@ -150,12 +152,12 @@ fn parse_ask_target(target: &str, assistant_name: Option<&str>) -> Result<AskTar
     }
 
     // Check custom assistant name
-    if let Some(name) = assistant_name {
-        if base_lower == name.to_lowercase() {
-            return Ok(AskTarget::MainChat {
-                session_query: parts.get(1).map(|s| s.to_string()),
-            });
-        }
+    if let Some(name) = assistant_name
+        && base_lower == name.to_lowercase()
+    {
+        return Ok(AskTarget::MainChat {
+            session_query: parts.get(1).map(|s| s.to_string()),
+        });
     }
 
     // Check for explicit session: prefix (Pi sessions)
@@ -271,6 +273,7 @@ pub async fn agents_ask(
             // Search for matching sessions
             let matches = pi_service
                 .search_sessions(user.id(), &query)
+                .await
                 .map_err(|e| ApiError::internal(format!("Failed to search sessions: {}", e)))?;
 
             if matches.is_empty() {
@@ -321,9 +324,13 @@ pub async fn agents_ask(
                 Ok(session) => session,
                 Err(_) => {
                     // Try fuzzy search
-                    let matches = pi_service.search_sessions(user.id(), &id).map_err(|e| {
-                        ApiError::internal(format!("Failed to search sessions: {}", e))
-                    })?;
+                    let matches =
+                        pi_service
+                            .search_sessions(user.id(), &id)
+                            .await
+                            .map_err(|e| {
+                                ApiError::internal(format!("Failed to search sessions: {}", e))
+                            })?;
 
                     if matches.is_empty() {
                         return Err(ApiError::not_found(format!("Session not found: {}", id)));
@@ -545,6 +552,7 @@ async fn handle_opencode_ask(
             .sessions
             .for_user(user.id())
             .validate_workspace_path(path)
+            .await
             .map_err(|e| ApiError::bad_request(format!("Invalid workspace path: {}", e)))?
             .to_string_lossy()
             .to_string()
@@ -557,6 +565,7 @@ async fn handle_opencode_ask(
             .sessions
             .for_user(user.id())
             .validate_workspace_path(&chat_session.workspace_path)
+            .await
             .map_err(|e| ApiError::bad_request(format!("Invalid workspace path: {}", e)))?
             .to_string_lossy()
             .to_string()

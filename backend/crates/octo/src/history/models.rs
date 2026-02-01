@@ -64,7 +64,7 @@ pub struct HstryJsonResponse<T> {
 }
 
 /// A single search hit returned by hstry.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct HstrySearchHit {
     pub message_id: String,
     pub conversation_id: String,

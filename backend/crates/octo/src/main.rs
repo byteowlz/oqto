@@ -21,10 +21,13 @@ mod agent_browser;
 mod agent_rpc;
 mod api;
 mod auth;
+mod canon;
 mod container;
 mod db;
 mod eavs;
+mod feedback;
 mod history;
+mod hstry;
 mod invite;
 mod local;
 mod main_chat;
@@ -42,6 +45,7 @@ mod templates;
 mod user;
 mod user_plane;
 mod wordlist;
+mod workspace;
 mod ws;
 
 const APP_NAME: &str = "octo";
@@ -491,6 +495,10 @@ struct AppConfig {
     onboarding_templates: templates::OnboardingTemplatesConfig,
     /// sldr configuration.
     sldr: SldrConfig,
+    /// hstry (chat history) configuration.
+    hstry: HstryConfig,
+    /// Feedback collection configuration.
+    feedback: feedback::FeedbackConfig,
 }
 
 /// Server configuration.
@@ -549,7 +557,7 @@ impl Default for BackendConfig {
 /// When `user_plane_enabled` is true in local multi-user mode, all user data
 /// operations are routed through per-user runner daemons, providing OS-level
 /// isolation between users.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(default)]
 struct RunnerConfig {
     /// Enable runner as the user-plane boundary.
@@ -566,15 +574,6 @@ struct RunnerConfig {
     /// Socket directory pattern for per-user runner sockets.
     /// Default: /run/user/{uid}/octo-runner.sock
     socket_pattern: Option<String>,
-}
-
-impl Default for RunnerConfig {
-    fn default() -> Self {
-        Self {
-            user_plane_enabled: false, // Disabled by default for backward compatibility
-            socket_pattern: None,
-        }
-    }
 }
 
 impl AppConfig {
@@ -608,6 +607,8 @@ impl Default for AppConfig {
             agent_browser: agent_browser::AgentBrowserConfig::default(),
             server: ServerConfig::default(),
             onboarding_templates: templates::OnboardingTemplatesConfig::default(),
+            hstry: HstryConfig::default(),
+            feedback: feedback::FeedbackConfig::default(),
         }
     }
 }
@@ -751,6 +752,8 @@ struct SessionUiConfig {
     idle_timeout_minutes: i64,
     /// Idle cleanup check interval in seconds.
     idle_check_interval_seconds: u64,
+    /// Number of recent sessions to prefetch chat messages for.
+    chat_prefetch_limit: usize,
 }
 
 impl Default for SessionUiConfig {
@@ -761,6 +764,7 @@ impl Default for SessionUiConfig {
             max_concurrent_sessions: session::SessionService::DEFAULT_MAX_CONCURRENT_SESSIONS,
             idle_timeout_minutes: session::SessionService::DEFAULT_IDLE_TIMEOUT_MINUTES,
             idle_check_interval_seconds: 5 * 60,
+            chat_prefetch_limit: 8,
         }
     }
 }
@@ -843,6 +847,30 @@ impl Default for SldrConfig {
             binary: "sldr-server".to_string(),
             user_base_port: 49_000,
             user_port_range: 1_000,
+        }
+    }
+}
+
+/// hstry (chat history) configuration.
+///
+/// hstry provides unified chat history storage across all AI agents.
+/// In multi-user mode, per-user hstry instances are spawned via octo-runner
+/// using the shared `local.runner_socket_pattern`.
+/// In single-user mode, auto-starts hstry daemon directly.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct HstryConfig {
+    /// Whether hstry integration is enabled.
+    pub enabled: bool,
+    /// Path to the hstry binary.
+    pub binary: String,
+}
+
+impl Default for HstryConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            binary: "hstry".to_string(),
         }
     }
 }
@@ -1097,6 +1125,10 @@ pub struct PiConfig {
     /// Whether to sandbox Pi processes (only applies to runner mode).
     /// The runner loads sandbox config from /etc/octo/sandbox.toml.
     pub sandboxed: Option<bool>,
+
+    /// Idle timeout in seconds before stopping inactive Pi processes.
+    /// Default: 300 (5 minutes).
+    pub idle_timeout_secs: Option<u64>,
 }
 
 impl Default for PiConfig {
@@ -1113,6 +1145,8 @@ impl Default for PiConfig {
             runner_socket_pattern: None,
             bridge_url: None,
             sandboxed: None,
+
+            idle_timeout_secs: None,
         }
     }
 }
@@ -1233,11 +1267,11 @@ fn handle_runner(command: RunnerCommand) -> Result<()> {
     // Helper to find the runner binary
     let find_runner = || -> Result<std::path::PathBuf> {
         // Check if octo-runner is in PATH
-        if let Ok(output) = StdCommand::new("which").arg("octo-runner").output() {
-            if output.status.success() {
-                let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                return Ok(std::path::PathBuf::from(path));
-            }
+        if let Ok(output) = StdCommand::new("which").arg("octo-runner").output()
+            && output.status.success()
+        {
+            let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            return Ok(std::path::PathBuf::from(path));
         }
         // Check common locations
         let home = env::var("HOME").unwrap_or_else(|_| ".".to_string());
@@ -1827,33 +1861,31 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     };
 
     // Check container image (only in container mode)
-    if !local_mode {
-        if let Some(ref runtime) = container_runtime {
-            match runtime.image_exists(&session_config.default_image).await {
-                Ok(true) => {
-                    info!("Container image '{}' found", session_config.default_image);
-                }
-                Ok(false) => {
-                    error!(
-                        "Container image '{}' not found. Please build it first:\n\
-                         \n\
-                         cd container && docker build -t {} -f Dockerfile ..\n\
-                         \n\
-                         Or specify a different image with --image or in config.toml",
-                        session_config.default_image, session_config.default_image
-                    );
-                    anyhow::bail!(
-                        "Required container image '{}' not found. Build it with: cd container && docker build -t {} -f Dockerfile ..",
-                        session_config.default_image,
-                        session_config.default_image
-                    );
-                }
-                Err(e) => {
-                    warn!(
-                        "Could not check if image '{}' exists: {:?}. Container operations may fail.",
-                        session_config.default_image, e
-                    );
-                }
+    if !local_mode && let Some(ref runtime) = container_runtime {
+        match runtime.image_exists(&session_config.default_image).await {
+            Ok(true) => {
+                info!("Container image '{}' found", session_config.default_image);
+            }
+            Ok(false) => {
+                error!(
+                    "Container image '{}' not found. Please build it first:\n\
+                     \n\
+                     cd container && docker build -t {} -f Dockerfile ..\n\
+                     \n\
+                     Or specify a different image with --image or in config.toml",
+                    session_config.default_image, session_config.default_image
+                );
+                anyhow::bail!(
+                    "Required container image '{}' not found. Build it with: cd container && docker build -t {} -f Dockerfile ..",
+                    session_config.default_image,
+                    session_config.default_image
+                );
+            }
+            Err(e) => {
+                warn!(
+                    "Could not check if image '{}' exists: {:?}. Container operations may fail.",
+                    session_config.default_image, e
+                );
             }
         }
     }
@@ -1897,46 +1929,50 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     let mut sldr_users: Option<local::UserSldrManager> = None;
 
     // Enable per-user mmry instances in local multi-user mode.
-    if local_mode && !single_user && ctx.config.mmry.enabled {
-        if let Some(ref local_cfg) = session_config.local_config {
-            if !local_cfg.linux_users.enabled {
-                warn!("mmry per-user instances require local.linux_users.enabled=true (skipping)");
-            } else {
-                let linux_users = local_cfg.linux_users.clone();
-                let user_mmry = local::UserMmryManager::new(
-                    local::UserMmryConfig {
-                        mmry_binary: ctx.config.mmry.binary.clone(),
-                        base_port: ctx.config.mmry.user_base_port,
-                        port_range: ctx.config.mmry.user_port_range,
-                        runner_socket_pattern: ctx.config.local.runner_socket_pattern.clone(),
-                    },
-                    move |user_id| linux_users.linux_username(user_id),
-                    user_repo_for_services.clone(),
-                );
-                session_service = session_service.with_user_mmry(user_mmry);
-            }
+    if local_mode
+        && !single_user
+        && ctx.config.mmry.enabled
+        && let Some(ref local_cfg) = session_config.local_config
+    {
+        if !local_cfg.linux_users.enabled {
+            warn!("mmry per-user instances require local.linux_users.enabled=true (skipping)");
+        } else {
+            let linux_users = local_cfg.linux_users.clone();
+            let user_mmry = local::UserMmryManager::new(
+                local::UserMmryConfig {
+                    mmry_binary: ctx.config.mmry.binary.clone(),
+                    base_port: ctx.config.mmry.user_base_port,
+                    port_range: ctx.config.mmry.user_port_range,
+                    runner_socket_pattern: ctx.config.local.runner_socket_pattern.clone(),
+                },
+                move |user_id| linux_users.linux_username(user_id),
+                user_repo_for_services.clone(),
+            );
+            session_service = session_service.with_user_mmry(user_mmry);
         }
     }
 
     // Enable per-user sldr instances in local multi-user mode.
-    if local_mode && !single_user && ctx.config.sldr.enabled {
-        if let Some(ref local_cfg) = session_config.local_config {
-            if !local_cfg.linux_users.enabled {
-                warn!("sldr per-user instances require local.linux_users.enabled=true (skipping)");
-            } else {
-                let linux_users = local_cfg.linux_users.clone();
-                let user_sldr = local::UserSldrManager::new(
-                    local::UserSldrConfig {
-                        sldr_binary: ctx.config.sldr.binary.clone(),
-                        base_port: ctx.config.sldr.user_base_port,
-                        port_range: ctx.config.sldr.user_port_range,
-                        runner_socket_pattern: ctx.config.local.runner_socket_pattern.clone(),
-                    },
-                    move |user_id| linux_users.linux_username(user_id),
-                    user_repo_for_services.clone(),
-                );
-                sldr_users = Some(user_sldr);
-            }
+    if local_mode
+        && !single_user
+        && ctx.config.sldr.enabled
+        && let Some(ref local_cfg) = session_config.local_config
+    {
+        if !local_cfg.linux_users.enabled {
+            warn!("sldr per-user instances require local.linux_users.enabled=true (skipping)");
+        } else {
+            let linux_users = local_cfg.linux_users.clone();
+            let user_sldr = local::UserSldrManager::new(
+                local::UserSldrConfig {
+                    sldr_binary: ctx.config.sldr.binary.clone(),
+                    base_port: ctx.config.sldr.user_base_port,
+                    port_range: ctx.config.sldr.user_port_range,
+                    runner_socket_pattern: ctx.config.local.runner_socket_pattern.clone(),
+                },
+                move |user_id| linux_users.linux_username(user_id),
+                user_repo_for_services.clone(),
+            );
+            sldr_users = Some(user_sldr);
         }
     }
 
@@ -2225,6 +2261,16 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
             max_proxy_body_bytes,
         )
     };
+    state = state.with_feedback_config(ctx.config.feedback.clone());
+
+    if let Err(err) = feedback::ensure_feedback_dirs(&ctx.config.feedback) {
+        warn!("Failed to initialize feedback directories: {}", err);
+    } else {
+        let feedback_config = ctx.config.feedback.clone();
+        tokio::spawn(async move {
+            feedback::sync_feedback_loop(feedback_config).await;
+        });
+    }
 
     // Add settings services to state
     state = state.with_settings_octo(settings_octo);
@@ -2281,6 +2327,67 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     info!("Main Chat service initialized");
     state = state.with_main_chat(main_chat_service);
 
+    // Initialize hstry (chat history) service
+    if ctx.config.hstry.enabled {
+        // For multi-user mode with runner, create UserHstryManager
+        // For single-user mode, auto-start hstry daemon directly
+        let is_multi_user = ctx.config.local.linux_users.enabled
+            && ctx.config.local.runner_socket_pattern.is_some();
+
+        if is_multi_user {
+            // Multi-user mode: hstry will be spawned per-user via runner when needed
+            let hstry_config = local::UserHstryConfig {
+                hstry_binary: ctx.config.hstry.binary.clone(),
+                runner_socket_pattern: ctx.config.local.runner_socket_pattern.clone(),
+            };
+            let linux_users_prefix = ctx.config.local.linux_users.prefix.clone();
+            let hstry_manager = local::UserHstryManager::new(hstry_config, move |user_id| {
+                // Map platform user_id to Linux username (same pattern as mmry)
+                format!("{}{}", linux_users_prefix, user_id)
+            });
+            info!("hstry configured for multi-user mode (per-user via runner)");
+            // TODO: Store hstry_manager in state and use it in main_chat_pi.rs
+            // For now, create a client that will connect lazily
+            let hstry_client = hstry::HstryClient::new();
+            state = state.with_hstry(hstry_client);
+            let _ = hstry_manager; // suppress unused warning for now
+        } else {
+            // Single-user mode: auto-start hstry daemon
+            let hstry_config = hstry::HstryServiceConfig {
+                binary: ctx.config.hstry.binary.clone(),
+                auto_start: true,
+                startup_timeout: std::time::Duration::from_secs(10),
+            };
+            let hstry_manager = hstry::HstryServiceManager::new(hstry_config);
+
+            // Ensure daemon is running (auto-starts if needed)
+            match hstry_manager.ensure_running().await {
+                Ok(()) => {
+                    info!("hstry daemon is running");
+                    // Create client and connect
+                    let hstry_client = hstry::HstryClient::new();
+                    if let Err(e) = hstry_client.connect().await {
+                        warn!(
+                            "Failed to connect to hstry daemon: {}. Will retry on first use.",
+                            e
+                        );
+                    } else {
+                        info!("hstry client connected");
+                    }
+                    state = state.with_hstry(hstry_client);
+                }
+                Err(e) => {
+                    warn!(
+                        "Failed to start hstry daemon: {}. Chat history persistence disabled.",
+                        e
+                    );
+                }
+            }
+        }
+    } else {
+        debug!("hstry integration disabled");
+    }
+
     // Initialize Main Chat Pi service for agent runtime (if enabled)
     if ctx.config.pi.enabled {
         // Resolve extensions: use config or fall back to bundled extensions
@@ -2288,14 +2395,14 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
             // Look for bundled extensions in data directory
             let extensions_dir = ctx.paths.data_dir.join("extensions");
             let mut found_extensions = Vec::new();
-            if extensions_dir.exists() {
-                if let Ok(entries) = std::fs::read_dir(&extensions_dir) {
-                    for entry in entries.flatten() {
-                        let path = entry.path();
-                        if path.extension().map_or(false, |ext| ext == "ts") {
-                            info!("Using bundled Pi extension: {:?}", path);
-                            found_extensions.push(path.to_string_lossy().to_string());
-                        }
+            if extensions_dir.exists()
+                && let Ok(entries) = std::fs::read_dir(&extensions_dir)
+            {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.extension().is_some_and(|ext| ext == "ts") {
+                        info!("Using bundled Pi extension: {:?}", path);
+                        found_extensions.push(path.to_string_lossy().to_string());
                     }
                 }
             }
@@ -2318,6 +2425,8 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
             runner_socket_pattern: ctx.config.pi.runner_socket_pattern.clone(),
             bridge_url: ctx.config.pi.bridge_url.clone(),
             sandboxed: ctx.config.pi.sandboxed.unwrap_or(false),
+
+            idle_timeout_secs: ctx.config.pi.idle_timeout_secs.unwrap_or(300),
         };
         let workspace_pi_config = main_chat_pi_config.clone();
         let main_chat_pi_service = Arc::new(main_chat::MainChatPiService::new(
@@ -2329,6 +2438,7 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
                 .as_ref()
                 .expect("MainChatService must be initialized")
                 .clone(),
+            state.linux_users.clone(),
         ));
         // Start background cleanup task for idle sessions
         main_chat_pi_service.start_cleanup_task();
@@ -2338,6 +2448,7 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
         );
         let workspace_pi_service = Arc::new(crate::pi_workspace::WorkspacePiService::new(
             workspace_pi_config,
+            state.linux_users.clone(),
         ));
         workspace_pi_service.start_cleanup_task();
         state = state
@@ -2347,8 +2458,11 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
         info!("Main Chat Pi service disabled");
     }
 
-    // Create router
-    let app = api::create_router_with_config(state, ctx.config.server.max_upload_size_mb);
+    // Create router - all API routes are served under /api prefix only.
+    // This is the single source of truth for routing. All clients (frontend,
+    // internal services, containers) must use /api/* paths.
+    let api_router = api::create_router_with_config(state, ctx.config.server.max_upload_size_mb);
+    let app = axum::Router::new().nest("/api", api_router);
 
     // Bind and serve
     let addr: SocketAddr = format!("{}:{}", cmd.host, cmd.port)

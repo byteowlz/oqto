@@ -25,6 +25,10 @@ impl SessionRepository {
         Self { pool }
     }
 
+    pub fn pool(&self) -> &SqlitePool {
+        &self.pool
+    }
+
     /// Create a new session.
     pub async fn create(&self, session: &Session) -> Result<()> {
         sqlx::query(

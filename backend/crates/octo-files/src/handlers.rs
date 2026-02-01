@@ -340,18 +340,18 @@ fn resolve_and_verify_path(root: &Path, relative: &str) -> Result<PathBuf, FileS
         Ok(canonical_path)
     } else {
         // Path doesn't exist yet - verify the parent directory
-        if let Some(parent) = built_path.parent() {
-            if parent.exists() {
-                let canonical_root = root.canonicalize().map_err(FileServerError::Io)?;
-                let canonical_parent = parent.canonicalize().map_err(FileServerError::Io)?;
+        if let Some(parent) = built_path.parent()
+            && parent.exists()
+        {
+            let canonical_root = root.canonicalize().map_err(FileServerError::Io)?;
+            let canonical_parent = parent.canonicalize().map_err(FileServerError::Io)?;
 
-                if !canonical_parent.starts_with(&canonical_root) {
-                    warn!(
-                        "Parent directory escape: {:?} parent resolved outside root",
-                        built_path
-                    );
-                    return Err(FileServerError::PathTraversal);
-                }
+            if !canonical_parent.starts_with(&canonical_root) {
+                warn!(
+                    "Parent directory escape: {:?} parent resolved outside root",
+                    built_path
+                );
+                return Err(FileServerError::PathTraversal);
             }
         }
 
@@ -548,7 +548,7 @@ async fn watch_socket(
                 match incoming {
                     Some(Ok(event)) => {
                         for path in event.paths {
-                            pending.insert(path, event.kind.clone());
+                            pending.insert(path, event.kind);
                         }
                         deadline = Some(Instant::now() + WATCH_DEBOUNCE);
                     }
@@ -576,15 +576,15 @@ async fn watch_socket(
                         ),
                     };
 
-                    if !is_dir {
-                        if let Some(filter) = &ext_filter {
-                            let ext = path
-                                .extension()
-                                .and_then(|value| value.to_str())
-                                .and_then(normalize_extension);
-                            if ext.as_ref().map_or(true, |value| !filter.contains(value)) {
-                                continue;
-                            }
+                    if !is_dir
+                        && let Some(filter) = &ext_filter
+                    {
+                        let ext = path
+                            .extension()
+                            .and_then(|value| value.to_str())
+                            .and_then(normalize_extension);
+                        if ext.as_ref().is_none_or(|value| !filter.contains(value)) {
+                            continue;
                         }
                     }
 
@@ -665,12 +665,7 @@ pub async fn get_tree(
                 get_simple_file_list(&state, &root_dir, &path, max_depth)
             })
             .await
-            .map_err(|err| {
-                FileServerError::Io(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    err.to_string(),
-                ))
-            })??;
+            .map_err(|err| FileServerError::Io(std::io::Error::other(err.to_string())))??;
             Ok(Json(files))
         }
         ViewMode::Full => {
@@ -684,12 +679,7 @@ pub async fn get_tree(
                 build_tree(&state, &root_dir, &path, max_depth, show_hidden)
             })
             .await
-            .map_err(|err| {
-                FileServerError::Io(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    err.to_string(),
-                ))
-            })??;
+            .map_err(|err| FileServerError::Io(std::io::Error::other(err.to_string())))??;
             Ok(Json(tree))
         }
     }
@@ -910,9 +900,7 @@ pub async fn get_file(
         let highlighted =
             tokio::task::spawn_blocking(move || highlight_code(&content, &path_clone, &theme_name))
                 .await
-                .map_err(|e| {
-                    FileServerError::Io(std::io::Error::new(std::io::ErrorKind::Other, e))
-                })??;
+                .map_err(|e| FileServerError::Io(std::io::Error::other(e)))??;
 
         return Ok((
             StatusCode::OK,
@@ -990,9 +978,9 @@ fn highlight_code(content: &str, path: &Path, theme_name: &str) -> Result<String
     for (i, line) in LinesWithEndings::from(content).enumerate() {
         let regions = highlighter
             .highlight_line(line, &SYNTAX_SET)
-            .map_err(|e| FileServerError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+            .map_err(|e| FileServerError::Io(std::io::Error::other(e)))?;
         let html_line = styled_line_to_highlighted_html(&regions[..], IncludeBackground::No)
-            .map_err(|e| FileServerError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+            .map_err(|e| FileServerError::Io(std::io::Error::other(e)))?;
 
         html_output.push_str("<tr>");
         // Line number cell
@@ -1003,7 +991,7 @@ fn highlight_code(content: &str, path: &Path, theme_name: &str) -> Result<String
         // Code cell
         html_output.push_str("<td style=\"white-space: pre; vertical-align: top;\">");
         if html_line.trim().is_empty() {
-            html_output.push_str(" ");
+            html_output.push(' ');
         } else {
             // Trim the trailing newline from the highlighted line
             html_output.push_str(html_line.trim_end_matches('\n'));
@@ -1029,15 +1017,14 @@ pub async fn upload_file(
     let dest_path = resolve_path(&root_dir, &query.path)?;
 
     // Create parent directories if requested
-    if query.mkdir {
-        if let Some(parent) = dest_path.parent() {
-            if parent != root_dir {
-                fs::create_dir_all(parent).await.map_err(|e| {
-                    error!("Failed to create directory: {}", e);
-                    FileServerError::CreateDirFailed(parent.display().to_string())
-                })?;
-            }
-        }
+    if query.mkdir
+        && let Some(parent) = dest_path.parent()
+        && parent != root_dir
+    {
+        fs::create_dir_all(parent).await.map_err(|e| {
+            error!("Failed to create directory: {}", e);
+            FileServerError::CreateDirFailed(parent.display().to_string())
+        })?;
     }
 
     let mut field = match multipart.next_field().await.map_err(|e| {
@@ -1102,13 +1089,13 @@ pub async fn upload_file(
             warn!("Final path resolved outside root: {:?}", final_path);
             return Err(FileServerError::PathTraversal);
         }
-    } else if let Some(parent) = final_path.parent() {
-        if parent.exists() {
-            let canonical_parent = parent.canonicalize().map_err(FileServerError::Io)?;
-            if !canonical_parent.starts_with(&canonical_root) {
-                warn!("Final path parent outside root: {:?}", final_path);
-                return Err(FileServerError::PathTraversal);
-            }
+    } else if let Some(parent) = final_path.parent()
+        && parent.exists()
+    {
+        let canonical_parent = parent.canonicalize().map_err(FileServerError::Io)?;
+        if !canonical_parent.starts_with(&canonical_root) {
+            warn!("Final path parent outside root: {:?}", final_path);
+            return Err(FileServerError::PathTraversal);
         }
     }
 
@@ -1238,15 +1225,15 @@ pub async fn write_file(
     let dest_path = resolve_path(&root_dir, &query.path)?;
 
     // Create parent directories if requested
-    if query.mkdir {
-        if let Some(parent) = dest_path.parent() {
-            if parent != root_dir && !parent.exists() {
-                fs::create_dir_all(parent).await.map_err(|e| {
-                    error!("Failed to create directory: {}", e);
-                    FileServerError::CreateDirFailed(parent.display().to_string())
-                })?;
-            }
-        }
+    if query.mkdir
+        && let Some(parent) = dest_path.parent()
+        && parent != root_dir
+        && !parent.exists()
+    {
+        fs::create_dir_all(parent).await.map_err(|e| {
+            error!("Failed to create directory: {}", e);
+            FileServerError::CreateDirFailed(parent.display().to_string())
+        })?;
     }
 
     // SECURITY: Verify final path is within root
@@ -1256,14 +1243,13 @@ pub async fn write_file(
             warn!("Write path escaped root: {:?}", dest_path);
             return Err(FileServerError::PathTraversal);
         }
-    } else if let Some(parent) = dest_path.parent() {
+    } else if let Some(parent) = dest_path.parent()
+        && let Ok(canonical_parent) = parent.canonicalize()
+        && !canonical_parent.starts_with(&canonical_root)
+    {
         // File doesn't exist yet, check parent
-        if let Ok(canonical_parent) = parent.canonicalize() {
-            if !canonical_parent.starts_with(&canonical_root) {
-                warn!("Write path parent escaped root: {:?}", parent);
-                return Err(FileServerError::PathTraversal);
-            }
-        }
+        warn!("Write path parent escaped root: {:?}", parent);
+        return Err(FileServerError::PathTraversal);
     }
 
     info!(
@@ -1527,12 +1513,7 @@ async fn create_zip_file_from_paths(
     let (file, size) =
         tokio::task::spawn_blocking(move || create_zip_tempfile_blocking(&root, &paths, limits))
             .await
-            .map_err(|err| {
-                FileServerError::Io(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    err.to_string(),
-                ))
-            })??;
+            .map_err(|err| FileServerError::Io(std::io::Error::other(err.to_string())))??;
 
     Ok((fs::File::from_std(file), size))
 }
@@ -1579,10 +1560,7 @@ fn create_zip_tempfile_blocking(
 }
 
 fn zip_error_to_fileserver_error(error: zip::result::ZipError) -> FileServerError {
-    FileServerError::Io(std::io::Error::new(
-        std::io::ErrorKind::Other,
-        error.to_string(),
-    ))
+    FileServerError::Io(std::io::Error::other(error.to_string()))
 }
 
 /// Recursively add a directory to a zip archive.

@@ -4,10 +4,12 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
+use once_cell::sync::Lazy;
 use sqlx::Row;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+use tokio::sync::Mutex;
 
-use crate::wordlist;
+use crate::{wordlist, workspace};
 
 use super::models::{
     ChatMessage, ChatMessagePart, ChatSession, MessageInfo, PartInfo, SessionInfo,
@@ -44,6 +46,12 @@ pub fn project_name_from_path(path: &str) -> String {
     if path == "global" || path.is_empty() {
         return "Global".to_string();
     }
+    let path_buf = Path::new(path);
+    if path_buf.is_dir()
+        && let Some(display_name) = workspace::workspace_display_name(path_buf)
+    {
+        return display_name;
+    }
     Path::new(path)
         .file_name()
         .map(|s| s.to_string_lossy().to_string())
@@ -54,14 +62,29 @@ pub fn project_name_from_path(path: &str) -> String {
 // SQLite/hstry repository functions
 // ============================================================================
 
+static HSTRY_POOL_CACHE: Lazy<Mutex<HashMap<PathBuf, sqlx::SqlitePool>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
+
 pub async fn open_hstry_pool(db_path: &Path) -> Result<sqlx::SqlitePool> {
+    let db_path = db_path.to_path_buf();
+
+    {
+        let cache = HSTRY_POOL_CACHE.lock().await;
+        if let Some(pool) = cache.get(&db_path) {
+            return Ok(pool.clone());
+        }
+    }
+
     let options = SqliteConnectOptions::new()
-        .filename(db_path)
+        .filename(&db_path)
         .read_only(true);
     let pool = SqlitePoolOptions::new()
         .max_connections(2)
         .connect_with(options)
         .await?;
+
+    let mut cache = HSTRY_POOL_CACHE.lock().await;
+    cache.insert(db_path, pool.clone());
     Ok(pool)
 }
 
@@ -94,8 +117,7 @@ pub async fn list_sessions_from_hstry(db_path: &Path) -> Result<Vec<ChatSession>
         let session_id = external_id.clone().unwrap_or_else(|| id.clone());
         let workspace_path = workspace.unwrap_or_else(|| "global".to_string());
         let project_name = project_name_from_path(&workspace_path);
-        let readable_id =
-            readable_id.unwrap_or_else(|| wordlist::readable_id_from_session_id(&session_id));
+        let readable_id = readable_id.unwrap_or_default();
 
         sessions.push(ChatSession {
             id: session_id,
@@ -149,8 +171,7 @@ pub async fn get_session_from_hstry(
     let session_id = external_id.clone().unwrap_or_else(|| id.clone());
     let workspace_path = workspace.unwrap_or_else(|| "global".to_string());
     let project_name = project_name_from_path(&workspace_path);
-    let readable_id =
-        readable_id.unwrap_or_else(|| wordlist::readable_id_from_session_id(&session_id));
+    let readable_id = readable_id.unwrap_or_default();
 
     Ok(Some(ChatSession {
         id: session_id,
@@ -246,6 +267,75 @@ fn hstry_parts_to_chat_parts(
     let mut parts = Vec::new();
 
     if let Some(parts_json) = parts_json {
+        if let Ok(canon_parts) =
+            serde_json::from_str::<Vec<crate::canon::CanonPart>>(parts_json)
+        {
+            for (idx, part) in canon_parts.into_iter().enumerate() {
+                let id = format!("{message_id}-part-{idx}");
+                match part {
+                    crate::canon::CanonPart::Text { text, .. } => parts.push(ChatMessagePart {
+                        id,
+                        part_type: "text".to_string(),
+                        text: Some(text),
+                        text_html: None,
+                        tool_name: None,
+                        tool_input: None,
+                        tool_output: None,
+                        tool_status: None,
+                        tool_title: None,
+                    }),
+                    crate::canon::CanonPart::Thinking { text, .. } => parts.push(ChatMessagePart {
+                        id,
+                        part_type: "thinking".to_string(),
+                        text: Some(text),
+                        text_html: None,
+                        tool_name: None,
+                        tool_input: None,
+                        tool_output: None,
+                        tool_status: None,
+                        tool_title: None,
+                    }),
+                    crate::canon::CanonPart::ToolCall {
+                        name, input, status, ..
+                    } => parts.push(ChatMessagePart {
+                        id,
+                        part_type: "tool_call".to_string(),
+                        text: None,
+                        text_html: None,
+                        tool_name: Some(name),
+                        tool_input: input,
+                        tool_output: None,
+                        tool_status: Some(match status {
+                            crate::canon::ToolStatus::Pending => "pending".to_string(),
+                            crate::canon::ToolStatus::Running => "running".to_string(),
+                            crate::canon::ToolStatus::Success => "success".to_string(),
+                            crate::canon::ToolStatus::Error => "error".to_string(),
+                        }),
+                        tool_title: None,
+                    }),
+                    crate::canon::CanonPart::ToolResult {
+                        name,
+                        output,
+                        is_error,
+                        title,
+                        ..
+                    } => parts.push(ChatMessagePart {
+                        id,
+                        part_type: "tool_result".to_string(),
+                        text: None,
+                        text_html: None,
+                        tool_name: name,
+                        tool_input: None,
+                        tool_output: output.as_ref().map(|v| v.to_string()),
+                        tool_status: Some(if is_error { "error" } else { "success" }.to_string()),
+                        tool_title: title,
+                    }),
+                    _ => {}
+                }
+            }
+            return parts;
+        }
+
         if let Ok(serde_json::Value::Array(values)) = serde_json::from_str(parts_json) {
             for (idx, value) in values.iter().enumerate() {
                 let serde_json::Value::Object(obj) = value else {
@@ -278,6 +368,7 @@ fn hstry_parts_to_chat_parts(
                     });
                 }
             }
+            return parts;
         }
     }
 

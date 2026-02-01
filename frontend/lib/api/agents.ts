@@ -11,7 +11,7 @@ import { authFetch, controlPlaneApiUrl } from "./client";
 
 /** Request to ask another agent a question */
 export type AgentAskRequest = {
-	/** Target: "main-chat", "session:<id>", or assistant name */
+	/** Target: "default-chat", "session:<id>", or assistant name */
 	target: string;
 	/** The question to ask */
 	question: string;
@@ -57,7 +57,7 @@ export class AgentAskAmbiguousException extends Error {
  * Returns the agent's response after it finishes processing.
  *
  * Target formats:
- * - "main-chat" or "pi" - Main chat assistant
+ * - "default-chat" or "pi" - Default chat assistant
  * - "session:<id>" - Specific session by ID
  * - Custom assistant name (e.g., "jarvis")
  */

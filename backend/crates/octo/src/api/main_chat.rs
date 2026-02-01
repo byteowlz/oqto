@@ -147,6 +147,7 @@ pub async fn initialize_main_chat(
                 agents: Some(resolved.agents),
                 personality: Some(resolved.personality),
                 onboard: Some(resolved.onboard),
+                bootstrap: None,
                 user: Some(resolved.user),
             }),
             Err(e) => {

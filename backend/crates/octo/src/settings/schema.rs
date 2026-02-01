@@ -39,54 +39,54 @@ fn resolve_refs(value: &Value, root: &Value) -> Value {
     match value {
         Value::Object(map) => {
             // Check for allOf with $ref - this is the pattern used in the mmry schema
-            if let Some(all_of) = map.get("allOf") {
-                if let Some(arr) = all_of.as_array() {
-                    // Merge allOf items and the current object (excluding allOf)
-                    let mut merged = serde_json::Map::new();
+            if let Some(all_of) = map.get("allOf")
+                && let Some(arr) = all_of.as_array()
+            {
+                // Merge allOf items and the current object (excluding allOf)
+                let mut merged = serde_json::Map::new();
 
-                    // First, copy all non-allOf properties from current object
-                    for (key, val) in map {
-                        if key != "allOf" {
-                            merged.insert(key.clone(), resolve_refs(val, root));
-                        }
+                // First, copy all non-allOf properties from current object
+                for (key, val) in map {
+                    if key != "allOf" {
+                        merged.insert(key.clone(), resolve_refs(val, root));
                     }
+                }
 
-                    // Then merge in properties from allOf references
-                    for item in arr {
-                        if let Some(ref_path) = item.get("$ref").and_then(|v| v.as_str()) {
-                            if let Some(resolved) = resolve_ref_path(ref_path, root) {
-                                let resolved = resolve_refs(&resolved, root);
-                                if let Some(obj) = resolved.as_object() {
-                                    for (key, val) in obj {
-                                        // Don't overwrite existing keys (like default)
-                                        if !merged.contains_key(key) {
-                                            merged.insert(key.clone(), val.clone());
-                                        }
-                                    }
-                                }
-                            }
-                        } else {
-                            // Non-ref item in allOf, merge it
-                            let resolved_item = resolve_refs(item, root);
-                            if let Some(obj) = resolved_item.as_object() {
+                // Then merge in properties from allOf references
+                for item in arr {
+                    if let Some(ref_path) = item.get("$ref").and_then(|v| v.as_str()) {
+                        if let Some(resolved) = resolve_ref_path(ref_path, root) {
+                            let resolved = resolve_refs(&resolved, root);
+                            if let Some(obj) = resolved.as_object() {
                                 for (key, val) in obj {
+                                    // Don't overwrite existing keys (like default)
                                     if !merged.contains_key(key) {
                                         merged.insert(key.clone(), val.clone());
                                     }
                                 }
                             }
                         }
+                    } else {
+                        // Non-ref item in allOf, merge it
+                        let resolved_item = resolve_refs(item, root);
+                        if let Some(obj) = resolved_item.as_object() {
+                            for (key, val) in obj {
+                                if !merged.contains_key(key) {
+                                    merged.insert(key.clone(), val.clone());
+                                }
+                            }
+                        }
                     }
-
-                    return Value::Object(merged);
                 }
+
+                return Value::Object(merged);
             }
 
             // Check for direct $ref
-            if let Some(ref_path) = map.get("$ref").and_then(|v| v.as_str()) {
-                if let Some(resolved) = resolve_ref_path(ref_path, root) {
-                    return resolve_refs(&resolved, root);
-                }
+            if let Some(ref_path) = map.get("$ref").and_then(|v| v.as_str())
+                && let Some(resolved) = resolve_ref_path(ref_path, root)
+            {
+                return resolve_refs(&resolved, root);
             }
 
             // Regular object - recursively resolve
@@ -126,17 +126,17 @@ fn filter_object(value: &Value, viewer_scope: SettingsScope) -> Value {
 
             for (key, val) in map {
                 // Check if this property has an x-scope
-                if let Some(scope_val) = val.get("x-scope") {
-                    if let Some(scope_str) = scope_val.as_str() {
-                        let prop_scope = match scope_str {
-                            "admin" => SettingsScope::Admin,
-                            "user" => SettingsScope::User,
-                            _ => SettingsScope::Admin, // Default to admin for unknown
-                        };
+                if let Some(scope_val) = val.get("x-scope")
+                    && let Some(scope_str) = scope_val.as_str()
+                {
+                    let prop_scope = match scope_str {
+                        "admin" => SettingsScope::Admin,
+                        "user" => SettingsScope::User,
+                        _ => SettingsScope::Admin, // Default to admin for unknown
+                    };
 
-                        if !viewer_scope.can_view(prop_scope) {
-                            continue; // Skip this property
-                        }
+                    if !viewer_scope.can_view(prop_scope) {
+                        continue; // Skip this property
                     }
                 }
 
@@ -146,31 +146,31 @@ fn filter_object(value: &Value, viewer_scope: SettingsScope) -> Value {
             }
 
             // Handle "properties" specially - filter them too
-            if let Some(props) = result.get("properties").cloned() {
-                if let Value::Object(props_map) = props {
-                    let mut filtered_props = serde_json::Map::new();
+            if let Some(props) = result.get("properties").cloned()
+                && let Value::Object(props_map) = props
+            {
+                let mut filtered_props = serde_json::Map::new();
 
-                    for (key, val) in props_map {
-                        // Check x-scope on each property
-                        if let Some(scope_val) = val.get("x-scope") {
-                            if let Some(scope_str) = scope_val.as_str() {
-                                let prop_scope = match scope_str {
-                                    "admin" => SettingsScope::Admin,
-                                    "user" => SettingsScope::User,
-                                    _ => SettingsScope::Admin,
-                                };
+                for (key, val) in props_map {
+                    // Check x-scope on each property
+                    if let Some(scope_val) = val.get("x-scope")
+                        && let Some(scope_str) = scope_val.as_str()
+                    {
+                        let prop_scope = match scope_str {
+                            "admin" => SettingsScope::Admin,
+                            "user" => SettingsScope::User,
+                            _ => SettingsScope::Admin,
+                        };
 
-                                if !viewer_scope.can_view(prop_scope) {
-                                    continue;
-                                }
-                            }
+                        if !viewer_scope.can_view(prop_scope) {
+                            continue;
                         }
-
-                        filtered_props.insert(key, filter_object(&val, viewer_scope));
                     }
 
-                    result.insert("properties".to_string(), Value::Object(filtered_props));
+                    filtered_props.insert(key, filter_object(&val, viewer_scope));
                 }
+
+                result.insert("properties".to_string(), Value::Object(filtered_props));
             }
 
             Value::Object(result)

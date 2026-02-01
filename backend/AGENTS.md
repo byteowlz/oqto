@@ -28,7 +28,7 @@ Guidance for coding agents working on this Rust CLI template.
 - Expand `~` and environment variables in config paths.
 - Ship a commented example under `examples/`, create a default config on first run, and load overrides via the `config` crate.
 
-## House Rules
+## General Rules
 
 - Do exactly what the user asks—no unsolicited files or docs.
 - Keep README updates concise, emoji-free, and only when requested.

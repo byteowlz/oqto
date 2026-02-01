@@ -177,16 +177,15 @@ impl UserMmryManager {
         //   HTTP port: 8081 (127.0.0.1:8081)
         //   Status: Healthy
         let http_port_re = Regex::new(r"HTTP port:\s*(\d+)").ok()?;
-        if let Some(caps) = http_port_re.captures(&stdout) {
-            if let Some(port_str) = caps.get(1) {
-                if let Ok(port) = port_str.as_str().parse::<u16>() {
-                    info!(
-                        "Found existing mmry service for {} with HTTP port {}",
-                        linux_username, port
-                    );
-                    return Some(port);
-                }
-            }
+        if let Some(caps) = http_port_re.captures(&stdout)
+            && let Some(port_str) = caps.get(1)
+            && let Ok(port) = port_str.as_str().parse::<u16>()
+        {
+            info!(
+                "Found existing mmry service for {} with HTTP port {}",
+                linux_username, port
+            );
+            return Some(port);
         }
 
         // HTTP API not enabled or couldn't parse

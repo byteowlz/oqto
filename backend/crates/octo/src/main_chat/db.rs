@@ -37,19 +37,6 @@ CREATE TABLE IF NOT EXISTS sessions (
 
 CREATE INDEX IF NOT EXISTS idx_sessions_started ON sessions(started_at);
 
--- Chat messages for display history (persists across Pi session restarts)
-CREATE TABLE IF NOT EXISTS messages (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    role TEXT NOT NULL CHECK(role IN ('user', 'assistant', 'system')),
-    content TEXT NOT NULL,
-    pi_session_id TEXT,
-    timestamp INTEGER NOT NULL,
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp);
-CREATE INDEX IF NOT EXISTS idx_messages_pi_session ON messages(pi_session_id);
-
 -- Key-value config store (includes assistant_name)
 CREATE TABLE IF NOT EXISTS config (
     key TEXT PRIMARY KEY,
@@ -57,7 +44,7 @@ CREATE TABLE IF NOT EXISTS config (
 );
 
 -- Schema version for future migrations
-INSERT OR IGNORE INTO config (key, value) VALUES ('schema_version', '2');
+INSERT OR IGNORE INTO config (key, value) VALUES ('schema_version', '3');
 "#;
 
 /// Per-user Main Chat database connection.

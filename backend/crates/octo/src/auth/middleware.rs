@@ -279,9 +279,8 @@ pub async fn auth_middleware(
     let query_token = if is_websocket_auth_path(&req) {
         req.uri().query().and_then(|q| {
             q.split('&').find_map(|pair| {
-                let mut parts = pair.splitn(2, '=');
-                let key = parts.next()?;
-                let value = parts.next()?;
+                let (key, value) = pair.split_once('=')?;
+
                 if key == "token" {
                     // URL decode the token value
                     urlencoding::decode(value).ok().map(|s| s.into_owned())
@@ -327,35 +326,32 @@ pub async fn auth_middleware(
     Ok(next.run(req).await)
 }
 
+/// Check if this is a WebSocket path that supports query parameter authentication.
+///
+/// WebSocket connections cannot send custom headers after the initial handshake,
+/// so these endpoints accept auth tokens via query parameter as a fallback.
+///
+/// Note: By the time this middleware runs, the `/api` prefix has been stripped
+/// by the router nesting, so we check for paths without the prefix.
 fn is_websocket_auth_path(req: &axum::http::Request<axum::body::Body>) -> bool {
     let path = req.uri().path();
-    let upgrade_header = req
+
+    // Must be a WebSocket upgrade request
+    let is_websocket = req
         .headers()
         .get(header::UPGRADE)
-        .and_then(|value| value.to_str().ok())
-        .map(|value| value.eq_ignore_ascii_case("websocket"))
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v.eq_ignore_ascii_case("websocket"))
         .unwrap_or(false);
 
-    if !upgrade_header {
+    if !is_websocket {
         return false;
     }
 
-    if matches!(
-        path,
-        "/api/ws" | "/api/voice/stt" | "/api/voice/tts" | "/api/main/pi/ws" | "/api/workspace/term"
-    ) {
-        return true;
-    }
-
-    if let Some(rest) = path.strip_prefix("/api/session/") {
-        return rest.ends_with("/term") || rest.ends_with("/browser/stream");
-    }
-
-    if let Some(rest) = path.strip_prefix("/api/sessions/") {
-        return rest.ends_with("/terminal") || rest.ends_with("/browser/stream");
-    }
-
-    false
+    // WebSocket paths that accept query param auth (paths after /api/ prefix is stripped)
+    matches!(path, "/ws/mux" | "/voice/stt" | "/voice/tts")
+        || path.starts_with("/session/") && path.ends_with("/browser/stream")
+        || path.starts_with("/sessions/") && path.ends_with("/browser/stream")
 }
 
 /// Require admin role.
@@ -388,6 +384,7 @@ where
 }
 
 #[cfg(test)]
+#[allow(clippy::field_reassign_with_default)]
 mod tests {
     use super::*;
 

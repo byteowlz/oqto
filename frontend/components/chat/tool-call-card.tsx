@@ -33,6 +33,8 @@ interface ToolCallCardProps {
 	part: OpenCodePart;
 	defaultCollapsed?: boolean;
 	hideTodoTools?: boolean;
+	collapsible?: boolean;
+	hideHeader?: boolean;
 }
 
 // Todo item structure from todowrite tool
@@ -165,8 +167,12 @@ function getPriorityColor(priority: string) {
 }
 
 // Get tool-specific icon
-function getToolIcon(toolName: string, input?: Record<string, unknown>) {
-	const name = toolName.toLowerCase();
+export function getToolIcon(
+	toolName: string | undefined,
+	input?: Record<string, unknown>,
+) {
+	const safeName = toolName ?? "tool";
+	const name = safeName.toLowerCase();
 
 	// Check by tool name first
 	if (name.includes("read") || name === "read") {
@@ -847,6 +853,8 @@ export function ToolCallCard({
 	part,
 	defaultCollapsed = true,
 	hideTodoTools = false,
+	collapsible = true,
+	hideHeader = false,
 }: ToolCallCardProps) {
 	const [isOpen, setIsOpen] = useState(!defaultCollapsed);
 	const { tool, state } = part;
@@ -875,6 +883,11 @@ export function ToolCallCard({
 	const hasInput = input && Object.keys(input).length > 0;
 	const hasOutput = output && output.trim().length > 0;
 	const hasContent = hasInput || hasOutput;
+	const resolvedOpen = collapsible ? isOpen : true;
+
+	if (hideHeader && !hasContent) {
+		return null;
+	}
 
 	return (
 		<div
@@ -883,41 +896,50 @@ export function ToolCallCard({
 				getStatusClasses(status, output),
 			)}
 		>
-			<button
-				type="button"
-				onClick={() => hasContent && setIsOpen(!isOpen)}
-				disabled={!hasContent}
-				className={cn(
-					"w-full flex items-center gap-2 px-3 py-2 text-left",
-					hasContent && "cursor-pointer hover:bg-muted/50",
-					!hasContent && "cursor-default",
-				)}
-			>
-				{hasContent && (
-					<ChevronRight
-						className={cn(
-							"w-4 h-4 text-muted-foreground transition-transform duration-200 flex-shrink-0",
-							isOpen && "rotate-90",
-						)}
-					/>
-				)}
-				{!hasContent && <div className="w-4" />}
+			{!hideHeader && (
+				<button
+					type="button"
+					onClick={() =>
+						collapsible && hasContent && setIsOpen(!isOpen)
+					}
+					disabled={!hasContent || !collapsible}
+					className={cn(
+						"w-full flex items-center gap-2 px-3 py-2 text-left",
+						collapsible && hasContent && "cursor-pointer hover:bg-muted/50",
+						!hasContent && "cursor-default",
+					)}
+				>
+					{collapsible && hasContent && (
+						<ChevronRight
+							className={cn(
+								"w-4 h-4 text-muted-foreground transition-transform duration-200 flex-shrink-0",
+								resolvedOpen && "rotate-90",
+							)}
+						/>
+					)}
+					{(!collapsible || !hasContent) && <div className="w-4" />}
 
-				{getStatusIcon(status, toolName, input, output)}
+					{getStatusIcon(status, toolName, input, output)}
 
-				<span className="flex-1 text-sm font-medium text-foreground truncate">
-					{title}
-				</span>
-
-				{duration && (
-					<span className="text-xs text-foreground/60 dark:text-muted-foreground flex-shrink-0">
-						{duration}
+					<span className="flex-1 text-sm font-medium text-foreground truncate">
+						{title}
 					</span>
-				)}
-			</button>
 
-			{isOpen && hasContent && (
-				<div className="px-3 pb-3 space-y-2 border-t border-border pt-2">
+					{duration && (
+						<span className="text-xs text-foreground/60 dark:text-muted-foreground flex-shrink-0">
+							{duration}
+						</span>
+					)}
+				</button>
+			)}
+
+			{resolvedOpen && hasContent && (
+				<div
+					className={cn(
+						"px-3 pb-3 space-y-2",
+						hideHeader ? "pt-3" : "border-t border-border pt-2",
+					)}
+				>
 					{input && Object.keys(input).length > 0 && (
 						<div>
 							{/* Render input based on tool type */}

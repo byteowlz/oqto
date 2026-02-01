@@ -10,14 +10,6 @@ export {
 	useUIControl,
 } from "./ui-control-context";
 
-// Main Chat context exports
-export {
-	MainChatProvider,
-	useMainChatContext,
-	useMainChat,
-	type MainChatContextValue,
-} from "./main-chat-context";
-
 // Workspace context exports
 export {
 	WorkspaceProvider,

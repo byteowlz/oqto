@@ -24,7 +24,8 @@ import {
 	TooltipContent,
 	TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { controlPlaneApiUrl, getAuthHeaders } from "@/lib/control-plane-client";
+import { getWsManager } from "@/lib/ws-manager";
+import type { TrxWsEvent } from "@/lib/ws-mux-types";
 import { cn } from "@/lib/utils";
 import {
 	AlertCircle,
@@ -103,24 +104,29 @@ interface TrxViewProps {
 
 // API functions
 async function fetchTrxIssues(workspacePath: string): Promise<TrxIssue[]> {
-	const url = new URL(
-		controlPlaneApiUrl("/api/workspace/trx/issues"),
-		window.location.origin,
-	);
-	url.searchParams.set("workspace_path", workspacePath);
+	const manager = getWsManager();
+	manager.connect();
+	const response = (await manager.sendAndWait({
+		channel: "trx",
+		type: "list",
+		workspace_path: workspacePath,
+	})) as TrxWsEvent;
 
-	const res = await fetch(url.toString(), {
-		credentials: "include",
-		headers: getAuthHeaders(),
-	});
-	if (!res.ok) {
-		if (res.status === 404) {
-			// No .trx directory - not initialized
+	if (response.type === "list_result") {
+		return response.issues as TrxIssue[];
+	}
+	if (response.type === "error") {
+		const error = response.error.toLowerCase();
+		if (
+			error.includes("not initialized") ||
+			error.includes("no .trx") ||
+			error.includes("404")
+		) {
 			return [];
 		}
-		throw new Error(`Failed to fetch TRX issues: ${res.statusText}`);
+		throw new Error(response.error);
 	}
-	return res.json();
+	throw new Error("Failed to fetch TRX issues");
 }
 
 async function createTrxIssue(
@@ -133,23 +139,22 @@ async function createTrxIssue(
 		parent_id?: string;
 	},
 ): Promise<TrxIssue> {
-	const url = new URL(
-		controlPlaneApiUrl("/api/workspace/trx/issues"),
-		window.location.origin,
-	);
-	url.searchParams.set("workspace_path", workspacePath);
+	const manager = getWsManager();
+	manager.connect();
+	const response = (await manager.sendAndWait({
+		channel: "trx",
+		type: "create",
+		workspace_path: workspacePath,
+		data,
+	})) as TrxWsEvent;
 
-	const res = await fetch(url.toString(), {
-		method: "POST",
-		credentials: "include",
-		headers: { "Content-Type": "application/json", ...getAuthHeaders() },
-		body: JSON.stringify(data),
-	});
-	if (!res.ok) {
-		const text = await res.text();
-		throw new Error(`Failed to create issue: ${text || res.statusText}`);
+	if (response.type === "issue_result") {
+		return response.issue as TrxIssue;
 	}
-	return res.json();
+	if (response.type === "error") {
+		throw new Error(response.error);
+	}
+	throw new Error("Failed to create issue");
 }
 
 async function updateTrxIssue(
@@ -162,22 +167,23 @@ async function updateTrxIssue(
 		priority?: number;
 	},
 ): Promise<TrxIssue> {
-	const url = new URL(
-		controlPlaneApiUrl(`/api/workspace/trx/issues/${issueId}`),
-		window.location.origin,
-	);
-	url.searchParams.set("workspace_path", workspacePath);
+	const manager = getWsManager();
+	manager.connect();
+	const response = (await manager.sendAndWait({
+		channel: "trx",
+		type: "update",
+		workspace_path: workspacePath,
+		issue_id: issueId,
+		data,
+	})) as TrxWsEvent;
 
-	const res = await fetch(url.toString(), {
-		method: "PUT",
-		credentials: "include",
-		headers: { "Content-Type": "application/json", ...getAuthHeaders() },
-		body: JSON.stringify(data),
-	});
-	if (!res.ok) {
-		throw new Error(`Failed to update issue: ${res.statusText}`);
+	if (response.type === "issue_result") {
+		return response.issue as TrxIssue;
 	}
-	return res.json();
+	if (response.type === "error") {
+		throw new Error(response.error);
+	}
+	throw new Error("Failed to update issue");
 }
 
 async function closeTrxIssue(
@@ -185,22 +191,23 @@ async function closeTrxIssue(
 	issueId: string,
 	reason?: string,
 ): Promise<TrxIssue> {
-	const url = new URL(
-		controlPlaneApiUrl(`/api/workspace/trx/issues/${issueId}/close`),
-		window.location.origin,
-	);
-	url.searchParams.set("workspace_path", workspacePath);
+	const manager = getWsManager();
+	manager.connect();
+	const response = (await manager.sendAndWait({
+		channel: "trx",
+		type: "close",
+		workspace_path: workspacePath,
+		issue_id: issueId,
+		reason,
+	})) as TrxWsEvent;
 
-	const res = await fetch(url.toString(), {
-		method: "POST",
-		credentials: "include",
-		headers: { "Content-Type": "application/json", ...getAuthHeaders() },
-		body: JSON.stringify({ reason }),
-	});
-	if (!res.ok) {
-		throw new Error(`Failed to close issue: ${res.statusText}`);
+	if (response.type === "issue_result") {
+		return response.issue as TrxIssue;
 	}
-	return res.json();
+	if (response.type === "error") {
+		throw new Error(response.error);
+	}
+	throw new Error("Failed to close issue");
 }
 
 // Issue type icons and colors
@@ -580,6 +587,115 @@ const IssueCard = memo(function IssueCard({
 	);
 });
 
+// Extracted AddIssueForm component to prevent parent re-renders on input changes
+const AddIssueForm = memo(function AddIssueForm({
+	parentId,
+	filterType,
+	workspacePath,
+	onClose,
+	onSuccess,
+	onError,
+}: {
+	parentId: string | null;
+	filterType: string;
+	workspacePath: string;
+	onClose: () => void;
+	onSuccess: () => void;
+	onError: (error: string) => void;
+}) {
+	// Keep input state local to this component to prevent parent re-renders
+	const [title, setTitle] = useState("");
+	const [issueType, setIssueType] = useState(filterType !== "all" ? filterType : "task");
+	const [isCreating, setIsCreating] = useState(false);
+
+	const handleCreate = useCallback(async () => {
+		if (!title.trim()) return;
+
+		setIsCreating(true);
+		try {
+			await createTrxIssue(workspacePath, {
+				title: title.trim(),
+				issue_type: issueType,
+				parent_id: parentId ?? undefined,
+			});
+			setTitle("");
+			onSuccess();
+			onClose();
+		} catch (err) {
+			onError(err instanceof Error ? err.message : "Failed to create issue");
+		} finally {
+			setIsCreating(false);
+		}
+	}, [title, issueType, parentId, workspacePath, onSuccess, onClose, onError]);
+
+	return (
+		<div className="mt-2 p-2 bg-muted/30 rounded space-y-2">
+			{parentId && (
+				<div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+					<span>Adding child to:</span>
+					<span className="font-mono bg-muted px-1 rounded">
+						{parentId}
+					</span>
+					<button
+						type="button"
+						onClick={onClose}
+						className="text-muted-foreground hover:text-foreground"
+					>
+						<X className="w-3 h-3" />
+					</button>
+				</div>
+			)}
+			<Input
+				value={title}
+				onChange={(e) => setTitle(e.target.value)}
+				placeholder={
+					parentId ? "Child issue title..." : "Issue title..."
+				}
+				className="h-7 text-xs shadow-none border-none bg-background"
+				onKeyDown={(e) => e.key === "Enter" && handleCreate()}
+				autoFocus
+			/>
+			<div className="flex items-center gap-2">
+				<select
+					value={issueType}
+					onChange={(e) => setIssueType(e.target.value)}
+					className="h-6 text-xs bg-background border-none px-2 rounded-0"
+				>
+					<option value="task">Task</option>
+					<option value="bug">Bug</option>
+					<option value="feature">Feature</option>
+					<option value="epic">Epic</option>
+					<option value="chore">Chore</option>
+				</select>
+				<div className="flex-1" />
+				<Button
+					type="button"
+					variant="ghost"
+					size="sm"
+					onClick={onClose}
+					className="h-6 px-2 text-xs"
+				>
+					Cancel
+				</Button>
+				<Button
+					type="button"
+					variant="default"
+					size="sm"
+					onClick={handleCreate}
+					disabled={isCreating || !title.trim()}
+					className="h-6 px-2 text-xs"
+				>
+					{isCreating ? (
+						<Loader2 className="w-3 h-3 animate-spin" />
+					) : (
+						"Create"
+					)}
+				</Button>
+			</div>
+		</div>
+	);
+});
+
 export const TrxView = memo(function TrxView({
 	workspacePath,
 	className,
@@ -592,10 +708,7 @@ export const TrxView = memo(function TrxView({
 	const [error, setError] = useState<string>("");
 	const [expandedEpics, setExpandedEpics] = useState<Set<string>>(new Set());
 	const [showAddForm, setShowAddForm] = useState(false);
-	const [newIssueTitle, setNewIssueTitle] = useState("");
-	const [newIssueType, setNewIssueType] = useState("task");
 	const [newIssueParentId, setNewIssueParentId] = useState<string | null>(null);
-	const [isCreating, setIsCreating] = useState(false);
 
 	// Edit state
 	const [editingIssueId, setEditingIssueId] = useState<string | null>(null);
@@ -610,6 +723,7 @@ export const TrxView = memo(function TrxView({
 	const [filterType, setFilterType] = useState<FilterType>("all");
 	const [hideClosed, setHideClosed] = useState(false);
 	const [searchQuery, setSearchQuery] = useState("");
+	const [searchQueryInput, setSearchQueryInput] = useState("");
 	const deferredSearchQuery = useDeferredValue(searchQuery);
 	const searchInputRef = useRef<HTMLInputElement>(null);
 	const [searchIncludeDescription, setSearchIncludeDescription] =
@@ -617,6 +731,10 @@ export const TrxView = memo(function TrxView({
 	const [selectedIssueIds, setSelectedIssueIds] = useState<Set<string>>(
 		new Set(),
 	);
+
+	useEffect(() => {
+		setSearchQueryInput(searchQuery);
+	}, [searchQuery]);
 
 	const loadIssues = useCallback(async () => {
 		if (!workspacePath) {
@@ -852,43 +970,26 @@ export const TrxView = memo(function TrxView({
 		[workspacePath, loadIssues, onStartIssueNewSession],
 	);
 
-	const handleCreate = useCallback(async () => {
-		if (!workspacePath || !newIssueTitle.trim()) return;
+	const handleCloseAddForm = useCallback(() => {
+		setShowAddForm(false);
+		setNewIssueParentId(null);
+	}, []);
 
-		setIsCreating(true);
-		setError("");
-		try {
-			await createTrxIssue(workspacePath, {
-				title: newIssueTitle,
-				issue_type: newIssueType,
-				parent_id: newIssueParentId ?? undefined,
-			});
-			setNewIssueTitle("");
-			setNewIssueParentId(null);
-			setShowAddForm(false);
-			await loadIssues();
-		} catch (err) {
-			setError(err instanceof Error ? err.message : "Failed to create issue");
-		} finally {
-			setIsCreating(false);
-		}
-	}, [
-		workspacePath,
-		newIssueTitle,
-		newIssueType,
-		newIssueParentId,
-		loadIssues,
-	]);
+	const handleAddFormSuccess = useCallback(() => {
+		setNewIssueParentId(null);
+		loadIssues();
+	}, [loadIssues]);
+
+	const handleSetError = useCallback((err: string) => {
+		setError(err);
+	}, []);
 
 	const handleAddChild = useCallback(
 		(parentId: string) => {
 			setNewIssueParentId(parentId);
 			setShowAddForm(true);
-			if (filterType !== "all") {
-				setNewIssueType(filterType);
-			}
 		},
-		[filterType],
+		[],
 	);
 
 	const handleStartEdit = useCallback((issue: TrxIssue) => {
@@ -1231,13 +1332,7 @@ export const TrxView = memo(function TrxView({
 							size="sm"
 							onClick={() => {
 								setNewIssueParentId(null);
-								setShowAddForm((prev) => {
-									const next = !prev;
-									if (next && filterType !== "all") {
-										setNewIssueType(filterType);
-									}
-									return next;
-								});
+								setShowAddForm((prev) => !prev);
 							}}
 							className="h-6 w-6 p-0 mr-1"
 							title="Add issue"
@@ -1255,22 +1350,21 @@ export const TrxView = memo(function TrxView({
 
 						<input
 							ref={searchInputRef}
-							defaultValue={searchQuery}
+							value={searchQueryInput}
 							onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-								setSearchQuery(e.target.value)
+								setSearchQueryInput(e.target.value)
 							}
+							onBlur={() => setSearchQuery(searchQueryInput)}
 							placeholder="Search tasks..."
 							className="h-full flex-1 border-none bg-transparent px-2 shadow-none outline-none text-foreground placeholder:text-muted-foreground"
 						/>
 
-						{searchQuery && (
+						{searchQueryInput && (
 							<button
 								type="button"
 								onClick={() => {
 									setSearchQuery("");
-									if (searchInputRef.current) {
-										searchInputRef.current.value = "";
-									}
+									setSearchQueryInput("");
 								}}
 								className="text-muted-foreground hover:text-foreground shrink-0"
 							>
@@ -1296,75 +1390,16 @@ export const TrxView = memo(function TrxView({
 					</div>
 				)}
 
-				{/* Add form */}
-				{showAddForm && (
-					<div className="mt-2 p-2 bg-muted/30 rounded space-y-2">
-						{newIssueParentId && (
-							<div className="flex items-center gap-2 text-[10px] text-muted-foreground">
-								<span>Adding child to:</span>
-								<span className="font-mono bg-muted px-1 rounded">
-									{newIssueParentId}
-								</span>
-								<button
-									type="button"
-									onClick={() => setNewIssueParentId(null)}
-									className="text-muted-foreground hover:text-foreground"
-								>
-									<X className="w-3 h-3" />
-								</button>
-							</div>
-						)}
-						<Input
-							value={newIssueTitle}
-							onChange={(e) => setNewIssueTitle(e.target.value)}
-							placeholder={
-								newIssueParentId ? "Child issue title..." : "Issue title..."
-							}
-							className="h-7 text-xs shadow-none border-none bg-background"
-							onKeyDown={(e) => e.key === "Enter" && handleCreate()}
-							autoFocus
-						/>
-						<div className="flex items-center gap-2">
-							<select
-								value={newIssueType}
-								onChange={(e) => setNewIssueType(e.target.value)}
-								className="h-6 text-xs bg-background border-none px-2 rounded-0"
-							>
-								<option value="task">Task</option>
-								<option value="bug">Bug</option>
-								<option value="feature">Feature</option>
-								<option value="epic">Epic</option>
-								<option value="chore">Chore</option>
-							</select>
-							<div className="flex-1" />
-							<Button
-								type="button"
-								variant="ghost"
-								size="sm"
-								onClick={() => {
-									setShowAddForm(false);
-									setNewIssueParentId(null);
-								}}
-								className="h-6 px-2 text-xs"
-							>
-								Cancel
-							</Button>
-							<Button
-								type="button"
-								variant="default"
-								size="sm"
-								onClick={handleCreate}
-								disabled={isCreating || !newIssueTitle.trim()}
-								className="h-6 px-2 text-xs"
-							>
-								{isCreating ? (
-									<Loader2 className="w-3 h-3 animate-spin" />
-								) : (
-									"Create"
-								)}
-							</Button>
-						</div>
-					</div>
+				{/* Add form - extracted to separate component to prevent parent re-renders */}
+				{showAddForm && workspacePath && (
+					<AddIssueForm
+						parentId={newIssueParentId}
+						filterType={filterType}
+						workspacePath={workspacePath}
+						onClose={handleCloseAddForm}
+						onSuccess={handleAddFormSuccess}
+						onError={handleSetError}
+					/>
 				)}
 			</div>
 

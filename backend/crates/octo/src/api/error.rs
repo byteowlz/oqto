@@ -125,10 +125,10 @@ impl ApiError {
                 }
             }
 
-            if let Some(reqwest_err) = cause.downcast_ref::<reqwest::Error>() {
-                if reqwest_err.is_connect() || reqwest_err.is_timeout() {
-                    return ApiError::ServiceUnavailable(msg);
-                }
+            if let Some(reqwest_err) = cause.downcast_ref::<reqwest::Error>()
+                && (reqwest_err.is_connect() || reqwest_err.is_timeout())
+            {
+                return ApiError::ServiceUnavailable(msg);
             }
 
             if let Some(io_err) = cause.downcast_ref::<std::io::Error>() {

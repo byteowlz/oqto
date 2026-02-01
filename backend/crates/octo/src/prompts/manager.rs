@@ -91,14 +91,14 @@ impl PromptManager {
     /// Check if access is already approved in the session cache.
     pub async fn is_approved(&self, source: &str, resource: &str) -> bool {
         let cache = self.approval_cache.read().await;
-        if let Some(expiry) = cache.get(&(source.to_string(), resource.to_string())) {
-            if *expiry > chrono::Utc::now() {
-                debug!(
-                    "Cache hit: {} access to {} is approved until {}",
-                    source, resource, expiry
-                );
-                return true;
-            }
+        if let Some(expiry) = cache.get(&(source.to_string(), resource.to_string()))
+            && *expiry > chrono::Utc::now()
+        {
+            debug!(
+                "Cache hit: {} access to {} is approved until {}",
+                source, resource, expiry
+            );
+            return true;
         }
         false
     }
@@ -344,15 +344,16 @@ impl PromptManager {
 
                 for id in expired {
                     let mut pending = pending.write().await;
-                    if let Some(mut p) = pending.get_mut(&id) {
-                        if p.prompt.status == PromptStatus::Pending && p.prompt.is_expired() {
-                            p.prompt.timeout();
-                            p.response_tx.take();
-                            let _ = broadcast_tx.send(PromptMessage::TimedOut {
-                                prompt_id: id.clone(),
-                            });
-                            debug!("Prompt {} expired", id);
-                        }
+                    if let Some(p) = pending.get_mut(&id)
+                        && p.prompt.status == PromptStatus::Pending
+                        && p.prompt.is_expired()
+                    {
+                        p.prompt.timeout();
+                        p.response_tx.take();
+                        let _ = broadcast_tx.send(PromptMessage::TimedOut {
+                            prompt_id: id.clone(),
+                        });
+                        debug!("Prompt {} expired", id);
                     }
                 }
 

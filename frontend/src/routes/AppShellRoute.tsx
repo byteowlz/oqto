@@ -6,7 +6,7 @@ import { useApp } from "@/hooks/use-app";
 import { useCommandPalette } from "@/hooks/use-command-palette";
 import type { HstrySearchHit } from "@/lib/control-plane-client";
 import { getSettingsValues } from "@/lib/control-plane-client";
-import { type OpenCodeAgent, fetchAgents } from "@/lib/opencode-client";
+import { setChatPrefetchLimit } from "@/lib/app-settings";
 import { cn } from "@/lib/utils";
 import { Clock, PanelLeftClose, PanelRightClose } from "lucide-react";
 import { useTheme } from "next-themes";
@@ -21,8 +21,6 @@ import {
 import { useLocation, useNavigate } from "react-router-dom";
 import "@/apps";
 import { UIControlProvider } from "@/components/contexts/ui-control-context";
-import { listMainChatPiSessions } from "@/features/main-chat/api";
-import { useMainChatNavigation } from "@/features/main-chat/hooks/useMainChatNavigation";
 
 import {
 	DeleteConfirmDialog,
@@ -49,35 +47,18 @@ const AppShell = memo(function AppShell() {
 		setLocale,
 		resolveText,
 		chatHistory,
-		opencodeSessions,
 		selectedChatSessionId,
 		setSelectedChatSessionId,
 		selectedChatFromHistory,
-		selectedWorkspaceSession,
-		opencodeBaseUrl,
-		opencodeDirectory,
-		ensureOpencodeRunning,
 		createOptimisticChatSession,
 		clearOptimisticChatSession,
-		createNewPiChat,
+		createNewChat,
 		deleteChatSession,
 		renameChatSession,
 		busySessions,
-		workspaceSessions,
-		setSelectedWorkspaceSessionId,
 		projectDefaultAgents,
 		setProjectDefaultAgents,
-		mainChatActive,
-		setMainChatActive,
-		mainChatAssistantName,
-		setMainChatAssistantName,
-		mainChatCurrentSessionId,
-		setMainChatCurrentSessionId,
-		setMainChatWorkspacePath,
 		setScrollToMessageId,
-		mainChatNewSessionTrigger,
-		requestNewMainChatSession,
-		mainChatSessionActivityTrigger,
 	} = useApp();
 
 	const location = useLocation();
@@ -88,12 +69,8 @@ const AppShell = memo(function AppShell() {
 	const [selectedProjectKey, setSelectedProjectKey] = useState<string | null>(
 		null,
 	);
-	const [availableAgents, setAvailableAgents] = useState<OpenCodeAgent[]>([]);
 	const [sessionSearch, setSessionSearch] = useState("");
 	const deferredSearch = useDeferredValue(sessionSearch);
-	const [mainChatTitleHits, setMainChatTitleHits] = useState<HstrySearchHit[]>(
-		[],
-	);
 
 	// Use extracted hooks
 	const sidebarState = useSidebarState();
@@ -110,6 +87,29 @@ const AppShell = memo(function AppShell() {
 		projectSortBy: projectActions.projectSortBy,
 		projectSortAsc: projectActions.projectSortAsc,
 	});
+
+	const handleBulkDeleteSessions = useCallback(
+		async (sessionIds: string[]) => {
+			const failures: string[] = [];
+			await Promise.all(
+				sessionIds.map(async (sessionId) => {
+					const ok = await deleteChatSession(sessionId);
+					if (!ok) {
+						failures.push(sessionId);
+					}
+				}),
+			);
+			return failures;
+		},
+		[deleteChatSession],
+	);
+
+	const handleDeleteSession = useCallback(
+		async (sessionId: string) => {
+			await deleteChatSession(sessionId);
+		},
+		[deleteChatSession],
+	);
 
 	const { open: commandPaletteOpen, setOpen: setCommandPaletteOpen } =
 		useCommandPalette();
@@ -210,47 +210,7 @@ const AppShell = memo(function AppShell() {
 		return () => document.removeEventListener("keydown", handleKeyDown);
 	}, [activateGodmode, onboardingState.completed, onboardingState.godmode]);
 
-	// Main chat title search
-	useEffect(() => {
-		const query = deferredSearch.trim().toLowerCase();
-		if (!query) {
-			setMainChatTitleHits([]);
-			return;
-		}
-		let active = true;
-		listMainChatPiSessions()
-			.then((sessions) => {
-				if (!active) return;
-				const hits = sessions
-					.filter((session) =>
-						(session.title ?? "").toLowerCase().includes(query),
-					)
-					.map((session) => ({
-						agent: "pi_agent",
-						source_path: `title:pi:${session.id}`,
-						session_id: session.id,
-						title: session.title ?? "Untitled",
-						timestamp: session.modified_at,
-						match_type: "title",
-						snippet: "Title match",
-					}));
-				setMainChatTitleHits(hits);
-			})
-			.catch(() => {
-				if (active) setMainChatTitleHits([]);
-			});
-		return () => {
-			active = false;
-		};
-	}, [deferredSearch]);
-
-	// Fetch agents
-	useEffect(() => {
-		if (!opencodeBaseUrl) return;
-		fetchAgents(opencodeBaseUrl, { directory: opencodeDirectory })
-			.then(setAvailableAgents)
-			.catch(() => setAvailableAgents([]));
-	}, [opencodeBaseUrl, opencodeDirectory]);
+	const _availableAgents = useMemo(() => [], []);
 
 	// Load settings
 	useEffect(() => {
@@ -260,31 +220,19 @@ const AppShell = memo(function AppShell() {
 				if (!mounted) return;
 				const raw = values["sessions.max_concurrent_sessions"]?.value;
 				// Session limit unused but kept for future use
+				setChatPrefetchLimit(values["sessions.chat_prefetch_limit"]?.value);
 			})
-			.catch(() => {});
+			.catch(() => {
+				setChatPrefetchLimit(null);
+			});
 		return () => {
 			mounted = false;
 		};
 	}, []);
 
-	const {
-		handleMainChatSelect,
-		handleMainChatSessionSelect,
-		handleMainChatNewSession,
-	} = useMainChatNavigation({
-		setMainChatAssistantName,
-		setMainChatActive,
-		setMainChatCurrentSessionId,
-		setSelectedChatSessionId,
-		setActiveAppId,
-		setMobileMenuOpen: sidebarState.setMobileMenuOpen,
-		setMainChatWorkspacePath,
-		requestNewMainChatSession,
-	});
-
 	const messageSearchExtraHits = useMemo(
-		() => [...sessionData.sessionTitleHits, ...mainChatTitleHits],
-		[sessionData.sessionTitleHits, mainChatTitleHits],
+		() => sessionData.sessionTitleHits,
+		[sessionData.sessionTitleHits],
 	);
 
 	// Event handlers
@@ -308,30 +256,13 @@ const AppShell = memo(function AppShell() {
 			setActiveAppId("sessions");
 			if (sessionsRoute) navigate(sessionsRoute);
 			sidebarState.setMobileMenuOpen(false);
-			setMainChatActive(false);
-			setMainChatWorkspacePath(null);
-
-			const selectedSession = chatHistory.find((s) => s.id === sessionId);
-			if (selectedSession?.workspace_path) {
-				const matchingWorkspaceSession = workspaceSessions.find(
-					(ws) => ws.workspace_path === selectedSession.workspace_path,
-				);
-				if (matchingWorkspaceSession) {
-					setSelectedWorkspaceSessionId(matchingWorkspaceSession.id);
-				}
-			}
 		},
 		[
-			chatHistory,
 			navigate,
 			sessionsRoute,
 			setActiveAppId,
-			setMainChatActive,
-			setMainChatWorkspacePath,
 			setSelectedChatSessionId,
-			setSelectedWorkspaceSessionId,
 			sidebarState,
-			workspaceSessions,
 		],
 	);
 
@@ -343,31 +274,17 @@ const AppShell = memo(function AppShell() {
 			if (targetMessageId) setScrollToMessageId(targetMessageId);
 
 			if (hit.agent === "pi_agent") {
-				setActiveAppId("sessions");
-				if (sessionsRoute) navigate(sessionsRoute);
-				setMainChatActive(true);
-				if (hit.session_id) setMainChatCurrentSessionId(hit.session_id);
-				if (hit.workspace) setMainChatWorkspacePath(hit.workspace);
-			} else if (hit.agent === "opencode" || hit.agent === "claude_code") {
-				const sessionId =
-					hit.session_id ||
-					hit.source_path.match(/ses_[a-zA-Z0-9]+/)?.[0] ||
-					"";
+				const sessionId = hit.session_id || "";
 				if (sessionId) {
 					setSelectedChatSessionId(sessionId);
-					setActiveAppId("sessions");
-					if (sessionsRoute) navigate(sessionsRoute);
-					setMainChatActive(false);
-					setMainChatWorkspacePath(null);
 				}
+				setActiveAppId("sessions");
+				if (sessionsRoute) navigate(sessionsRoute);
 			}
 			sidebarState.setMobileMenuOpen(false);
 		},
 		[
 			setActiveAppId,
-			setMainChatActive,
-			setMainChatCurrentSessionId,
-			setMainChatWorkspacePath,
 			setSelectedChatSessionId,
 			setScrollToMessageId,
 			navigate,
@@ -377,66 +294,26 @@ const AppShell = memo(function AppShell() {
 	);
 
 	const handleNewChat = useCallback(async () => {
-		if (mainChatActive) {
-			setActiveAppId("sessions");
-			requestNewMainChatSession();
-			return;
-		}
-
 		if (selectedProjectKey) {
 			const project = sessionData.projectSummaries.find(
 				(p) => p.key === selectedProjectKey,
 			);
 			if (project?.directory) {
 				setActiveAppId("sessions");
-				const optimisticId = createOptimisticChatSession(project.directory);
-				const created = await createNewPiChat(project.directory, {
-					optimisticId,
-				});
-				if (created) return;
-				clearOptimisticChatSession(optimisticId);
+				await createNewChat(project.directory);
+				return;
 			}
 		}
 
-		if (selectedWorkspaceSession) {
-			setActiveAppId("sessions");
-			const workspacePath =
-				selectedWorkspaceSession.workspace_path ??
-				opencodeDirectory ??
-				"global";
-			const optimisticId = createOptimisticChatSession(workspacePath);
-			const created = await createNewPiChat(workspacePath, { optimisticId });
-			if (created) return;
-			clearOptimisticChatSession(optimisticId);
-			return;
-		}
-
 		const currentWorkspacePath = selectedChatFromHistory?.workspace_path;
-		if (currentWorkspacePath && currentWorkspacePath !== "global") {
-			setActiveAppId("sessions");
-			const optimisticId = createOptimisticChatSession(currentWorkspacePath);
-			const created = await createNewPiChat(currentWorkspacePath, {
-				optimisticId,
-			});
-			if (created) return;
-			clearOptimisticChatSession(optimisticId);
-		}
 
 		setActiveAppId("sessions");
-		const created = await createNewPiChat("global");
-		if (created) return;
-		requestNewMainChatSession();
+		await createNewChat(currentWorkspacePath ?? undefined);
 	}, [
-		mainChatActive,
-		requestNewMainChatSession,
-		selectedWorkspaceSession,
-		opencodeDirectory,
 		selectedChatFromHistory,
 		selectedProjectKey,
 		sessionData.projectSummaries,
-		createNewPiChat,
-		createOptimisticChatSession,
-		clearOptimisticChatSession,
+		createNewChat,
 		setActiveAppId,
 	]);
 
@@ -444,15 +321,10 @@ const AppShell = memo(function AppShell() {
 		async (directory: string) => {
 			setActiveAppId("sessions");
 			sidebarState.setMobileMenuOpen(false);
-			const optimisticId = createOptimisticChatSession(directory);
-			const created = await createNewPiChat(directory, { optimisticId });
-			if (created) return;
-			clearOptimisticChatSession(optimisticId);
+			await createNewChat(directory);
 		},
 		[
-			createNewPiChat,
-			createOptimisticChatSession,
-			clearOptimisticChatSession,
+			createNewChat,
 			setActiveAppId,
 			sidebarState,
 		],
@@ -627,9 +499,6 @@ const AppShell = memo(function AppShell() {
 					activeApp={activeApp}
 					resolveText={resolveText}
 					selectedChatFromHistory={selectedChatFromHistory}
-					opencodeDirectory={opencodeDirectory}
-					mainChatActive={mainChatActive}
-					mainChatAssistantName={mainChatAssistantName}
 					onMenuOpen={() => sidebarState.setMobileMenuOpen(true)}
 					onNewChat={handleNewChat}
 				/>
@@ -646,10 +515,6 @@ const AppShell = memo(function AppShell() {
 						selectedChatSessionId={selectedChatSessionId}
 						selectedProjectKey={selectedProjectKey}
 						busySessions={busySessions}
-						mainChatActive={mainChatActive}
-						mainChatCurrentSessionId={mainChatCurrentSessionId}
-						mainChatNewSessionTrigger={mainChatNewSessionTrigger}
-						mainChatSessionActivityTrigger={mainChatSessionActivityTrigger}
 						expandedSessions={sidebarState.expandedSessions}
 						toggleSessionExpanded={sidebarState.toggleSessionExpanded}
 						expandedProjects={sidebarState.expandedProjects}
@@ -665,7 +530,7 @@ const AppShell = memo(function AppShell() {
 						selectedProjectLabel={sessionData.selectedProjectLabel}
 						projectSummaries={sessionData.projectSummaries}
 						projectDefaultAgents={projectDefaultAgents}
-						availableAgents={availableAgents}
+						availableAgents={_availableAgents}
 						onClose={() => sidebarState.setMobileMenuOpen(false)}
 						onNewChat={handleNewChat}
 						onNewProject={() => projectActions.setNewProjectDialogOpen(true)}
@@ -676,13 +541,11 @@ const AppShell = memo(function AppShell() {
 						onRenameSession={(id) =>
 							sessionDialogs.handleRenameSession(id, chatHistory)
 						}
-						onDeleteSession={sessionDialogs.handleDeleteSession}
+						onDeleteSession={handleDeleteSession}
+						onBulkDeleteSessions={handleBulkDeleteSessions}
 						onPinProject={sidebarState.togglePinProject}
 						onRenameProject={sessionDialogs.handleRenameProject}
 						onDeleteProject={sessionDialogs.handleDeleteProject}
-						onMainChatSelect={handleMainChatSelect}
-						onMainChatSessionSelect={handleMainChatSessionSelect}
-						onMainChatNewSession={handleMainChatNewSession}
 						onSearchResultClick={handleSearchResultClick}
 						messageSearchExtraHits={messageSearchExtraHits}
 						onToggleApp={handleMobileToggleClick}
@@ -769,12 +632,6 @@ const AppShell = memo(function AppShell() {
 									filteredSessions={sessionData.filteredSessions}
 									selectedChatSessionId={selectedChatSessionId}
 									busySessions={busySessions}
-									mainChatActive={mainChatActive}
-									mainChatCurrentSessionId={mainChatCurrentSessionId}
-									mainChatNewSessionTrigger={mainChatNewSessionTrigger}
-									mainChatSessionActivityTrigger={
-										mainChatSessionActivityTrigger
-									}
 									expandedSessions={sidebarState.expandedSessions}
 									toggleSessionExpanded={sidebarState.toggleSessionExpanded}
 									expandedProjects={sidebarState.expandedProjects}
@@ -799,13 +656,11 @@ const AppShell = memo(function AppShell() {
 									onRenameSession={(id) =>
 										sessionDialogs.handleRenameSession(id, chatHistory)
 									}
-									onDeleteSession={sessionDialogs.handleDeleteSession}
+									onDeleteSession={handleDeleteSession}
+									onBulkDeleteSessions={handleBulkDeleteSessions}
 									onPinProject={sidebarState.togglePinProject}
 									onRenameProject={sessionDialogs.handleRenameProject}
 									onDeleteProject={sessionDialogs.handleDeleteProject}
-									onMainChatSelect={handleMainChatSelect}
-									onMainChatSessionSelect={handleMainChatSessionSelect}
-									onMainChatNewSession={handleMainChatNewSession}
 									onSearchResultClick={handleSearchResultClick}
 									messageSearchExtraHits={messageSearchExtraHits}
 								/>
@@ -813,8 +668,7 @@ const AppShell = memo(function AppShell() {
 						</>
 					)}
 
-					{sidebarState.sidebarCollapsed &&
-						(chatHistory.length > 0 || opencodeSessions.length > 0) && (
+					{sidebarState.sidebarCollapsed && chatHistory.length > 0 && (
 							<div className="w-full px-2 mt-4">
 								<div className="pt-2">
 									<button
@@ -883,20 +737,6 @@ const AppShell = memo(function AppShell() {
 					onOpenChange={setCommandPaletteOpen}
 				/>
 
-				<DeleteConfirmDialog
-					open={sessionDialogs.deleteDialogOpen}
-					onOpenChange={sessionDialogs.setDeleteDialogOpen}
-					onConfirm={() =>
-						sessionDialogs.handleConfirmDelete(
-							deleteChatSession,
-							chatHistory,
-							opencodeBaseUrl,
-							ensureOpencodeRunning,
-						)
-					}
-					locale={locale}
-				/>
-
 				<RenameSessionDialog
 					open={sessionDialogs.renameDialogOpen}
 					onOpenChange={sessionDialogs.setRenameDialogOpen}
@@ -914,8 +754,6 @@ const AppShell = memo(function AppShell() {
 						sessionDialogs.handleConfirmDeleteProject(
 							chatHistory,
 							deleteChatSession,
-							opencodeBaseUrl,
-							ensureOpencodeRunning,
 						)
 					}
 					locale={locale}

@@ -287,11 +287,11 @@ impl ContainerRuntime {
         }
 
         // Hostname (skip if using host network mode)
-        if let Some(ref hostname) = config.hostname {
-            if config.network_mode.as_deref() != Some("host") {
-                owned_args.push("--hostname".to_string());
-                owned_args.push(hostname.clone());
-            }
+        if let Some(ref hostname) = config.hostname
+            && config.network_mode.as_deref() != Some("host")
+        {
+            owned_args.push("--hostname".to_string());
+            owned_args.push(hostname.clone());
         }
 
         // Network mode

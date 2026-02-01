@@ -823,12 +823,10 @@ async fn handle_ask(
 
             if json_output {
                 println!("{}", serde_json::to_string_pretty(&result)?);
+            } else if let Some(response_text) = result["response"].as_str() {
+                println!("{}", response_text);
             } else {
-                if let Some(response_text) = result["response"].as_str() {
-                    println!("{}", response_text);
-                } else {
-                    println!("{}", result);
-                }
+                println!("{}", result);
             }
         } else {
             let status = response.status();
@@ -870,31 +868,29 @@ async fn handle_sessions(
 
         if json_output {
             println!("{}", serde_json::to_string_pretty(&result)?);
-        } else {
-            if let Some(sessions) = result["sessions"].as_array() {
-                if sessions.is_empty() {
-                    println!("No sessions found");
-                } else {
-                    println!("{:<20} {:<40} {:<20}", "ID", "TITLE", "MODIFIED");
-                    println!("{}", "-".repeat(80));
-                    for session in sessions {
-                        let id = session["id"].as_str().unwrap_or("?");
-                        let title = session["title"].as_str().unwrap_or("(untitled)");
-                        let modified = session["modified_at"].as_str().unwrap_or("-");
+        } else if let Some(sessions) = result["sessions"].as_array() {
+            if sessions.is_empty() {
+                println!("No sessions found");
+            } else {
+                println!("{:<20} {:<40} {:<20}", "ID", "TITLE", "MODIFIED");
+                println!("{}", "-".repeat(80));
+                for session in sessions {
+                    let id = session["id"].as_str().unwrap_or("?");
+                    let title = session["title"].as_str().unwrap_or("(untitled)");
+                    let modified = session["modified_at"].as_str().unwrap_or("-");
 
-                        // Truncate title for display
-                        let title_display: String = title.chars().take(38).collect();
-                        let title_display = if title.len() > 38 {
-                            format!("{}...", title_display)
-                        } else {
-                            title_display
-                        };
+                    // Truncate title for display
+                    let title_display: String = title.chars().take(38).collect();
+                    let title_display = if title.len() > 38 {
+                        format!("{}...", title_display)
+                    } else {
+                        title_display
+                    };
 
-                        // Format modified time (just date part)
-                        let modified_short = modified.split('T').next().unwrap_or(modified);
+                    // Format modified time (just date part)
+                    let modified_short = modified.split('T').next().unwrap_or(modified);
 
-                        println!("{:<20} {:<40} {:<20}", id, title_display, modified_short);
-                    }
+                    println!("{:<20} {:<40} {:<20}", id, title_display, modified_short);
                 }
             }
         }
@@ -1350,16 +1346,16 @@ async fn handle_sandbox(command: SandboxCommand, json: bool) -> Result<()> {
             let config_path = std::path::Path::new(SYSTEM_SANDBOX_CONFIG);
 
             // Create parent directory if needed
-            if let Some(parent) = config_path.parent() {
-                if !parent.exists() {
-                    println!("Creating directory {}...", parent.display());
-                    let status = std::process::Command::new("sudo")
-                        .args(["mkdir", "-p", &parent.to_string_lossy()])
-                        .status()
-                        .context("Failed to create config directory")?;
-                    if !status.success() {
-                        anyhow::bail!("Failed to create config directory");
-                    }
+            if let Some(parent) = config_path.parent()
+                && !parent.exists()
+            {
+                println!("Creating directory {}...", parent.display());
+                let status = std::process::Command::new("sudo")
+                    .args(["mkdir", "-p", &parent.to_string_lossy()])
+                    .status()
+                    .context("Failed to create config directory")?;
+                if !status.success() {
+                    anyhow::bail!("Failed to create config directory");
                 }
             }
 
@@ -1543,15 +1539,15 @@ async fn handle_sandbox(command: SandboxCommand, json: bool) -> Result<()> {
 
             // Create parent directory if needed
             let config_path = std::path::Path::new(SYSTEM_SANDBOX_CONFIG);
-            if let Some(parent) = config_path.parent() {
-                if !parent.exists() {
-                    let status = std::process::Command::new("sudo")
-                        .args(["mkdir", "-p", &parent.to_string_lossy()])
-                        .status()
-                        .context("Failed to create config directory")?;
-                    if !status.success() {
-                        anyhow::bail!("Failed to create config directory");
-                    }
+            if let Some(parent) = config_path.parent()
+                && !parent.exists()
+            {
+                let status = std::process::Command::new("sudo")
+                    .args(["mkdir", "-p", &parent.to_string_lossy()])
+                    .status()
+                    .context("Failed to create config directory")?;
+                if !status.success() {
+                    anyhow::bail!("Failed to create config directory");
                 }
             }
 
@@ -1764,24 +1760,22 @@ async fn handle_user(command: UserCommand, json: bool) -> Result<()> {
 
             if json {
                 println!("{}", serde_json::to_string_pretty(&users)?);
+            } else if users.is_empty() {
+                println!("No users with runner configured found.");
             } else {
-                if users.is_empty() {
-                    println!("No users with runner configured found.");
-                } else {
+                println!(
+                    "{:<20} {:<8} {:<15} HOME",
+                    "USERNAME", "UID", "RUNNER STATUS"
+                );
+                println!("{}", "-".repeat(70));
+                for user in &users {
                     println!(
                         "{:<20} {:<8} {:<15} {}",
-                        "USERNAME", "UID", "RUNNER STATUS", "HOME"
+                        user["username"].as_str().unwrap_or("-"),
+                        user["uid"].as_u64().unwrap_or(0),
+                        user["runner_status"].as_str().unwrap_or("-"),
+                        user["home"].as_str().unwrap_or("-"),
                     );
-                    println!("{}", "-".repeat(70));
-                    for user in &users {
-                        println!(
-                            "{:<20} {:<8} {:<15} {}",
-                            user["username"].as_str().unwrap_or("-"),
-                            user["uid"].as_u64().unwrap_or(0),
-                            user["runner_status"].as_str().unwrap_or("-"),
-                            user["home"].as_str().unwrap_or("-"),
-                        );
-                    }
                 }
             }
         }

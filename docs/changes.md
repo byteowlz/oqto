@@ -1,5 +1,36 @@
 # Changes
 
+- 2026-02-04: Normalize default chat workspace paths to avoid invalid "global" workspace lookups.
+- 2026-02-04: Use pending session IDs for optimistic chats and replace them when Pi sessions are created.
+- 2026-02-04: Normalize workspace-scoped API calls to avoid accidental workspace Pi requests without a path.
+- 2026-02-03: Make chat sidebar deletes optimistic for single sessions to avoid UI stalls.
+- 2026-02-03: Use square pink badges for todo counts and low-verbosity tool grouping.
+- 2026-02-03: Avoid duplicate file tree fetches by coalescing in-flight requests.
+- 2026-02-03: Keep shift-range selection additive in the chat sidebar.
+- 2026-02-03: Cache session messages locally so chat history renders immediately on switch.
+- 2026-02-03: Require confirmation before bulk deleting chats from the sidebar.
+- 2026-02-03: Reduce minimal tool-call badge size to avoid covering icons.
+- 2026-02-03: Prefer Pi session_info names when listing workspace Pi sessions so auto-renames show up without extra sessions.
+- 2026-02-03: Update chat titles locally from Pi session_name state to reflect auto-renames instantly.
+- 2026-02-03: Enable Pi auto-retry by default for main and workspace sessions.
+- 2026-02-03: Render Pi error events as red assistant-width error bars in chat messages.
+- 2026-02-02: Filter Pi toolcall delta fragments from the multiplexed WS stream to stop duplicate/raw command text in Main Chat output.
+- 2026-02-02: Ensure Pi tool events start a streaming assistant message so tool spinners resolve with tool results.
+- 2026-02-02: Fix Pi file mention popup mux import to avoid frontend load errors on mobile.
+- 2026-02-02: Attach Pi tool results to the most recent assistant message so tool dropdowns resolve and spinners stop.
+- 2026-02-02: Decode tool result byte payloads to avoid garbled characters in tool output rendering.
+- 2026-02-02: Treat Pi TextEnd/ThinkingEnd as full content while de-duping in the streaming reducer to avoid empty messages.
+- 2026-02-02: Surface mux file tree errors instead of generic unexpected response messages.
+- 2026-02-02: Prevent TRX sidebar search typing from re-rendering the full issue list to avoid remounts.
+- 2026-02-02: Guard terminal IDs and Pi session IDs when crypto.randomUUID is unavailable (mobile).
+- 2026-02-02: Send Main Chat Pi messages with prompt mode by default for the primary send action.
+- 2026-02-02: Prevent multiplexed WS reconnect loops by disabling unused pong timeouts and skipping duplicate session resubscribe sends.
+- 2026-02-02: Queue Pi messages until session_created arrives and scope Main Chat drafts per session to stop cross-chat input bleed.
+- 2026-02-03: Allow hyphens in octo_* sudoers regex patterns so linux user creation succeeds for generated user IDs.
+- 2026-01-31: Use per-user Linux home directories when resolving Pi session files in main chat and workspace services to restore persistence under runner sandboxing.
+- 2026-01-31: Fix octo-guard policy pattern compilation by adding explicit type annotations for GuardPolicy pattern parsing.
+- 2026-01-31: Read and update Main Chat Pi session files via octo-runner in multi-user mode so sessions persist and titles refresh after reload.
+- 2026-01-31: Trigger Main Chat session list refresh when assistant messages complete to pick up auto-renamed titles.
 - 2026-01-30: Secure sudoers rules in setup.sh by removing overly permissive wildcard patterns. Replaced with explicitly whitelisted commands: restricted useradd to specific flags only, removed dangerous usermod wildcard, prevented home directory deletion with userdel, explicitly limited systemctl --user commands to octo-runner only, and restricted chown to safe paths (/home/* and /var/lib/octo/* with depth limits). Removed dangerous "ALL=(*) NOPASSWD: ALL" rule that allowed running any command as octo_* users.
 - 2026-01-30: Point Pi agent storage (settings, models, sessions) at the workspace `.pi` directory instead of `~/.pi/agent`.
 - 2026-01-30: Flatten the Pi settings view to match the OpenCode settings layout (single pane, no tabs).
@@ -46,3 +77,102 @@
 - 2026-01-27: Add optional hstry-backed chat history reads when a hstry.db is available.
 - 2026-01-28: Install hstry via `just install` so Octo setups include the hstry CLI.
 - 2026-01-28: Fix session insert SQL placeholder count so workspace IO sessions can be created.
+- 2026-01-31: Ensure sandboxed processes start in the requested workspace directory by setting bwrap working directory.
+- 2026-01-31: Accept newer Pi RPC events (extension UI requests, session name fields) and handle setTitle updates for Main Chat sessions.
+- 2026-02-01: Treat Pi text/thinking end events as content to avoid empty Main Chat responses when deltas are absent.
+- 2026-02-01: Add `just restart-runner` helper for restarting the system octo-runner socket.
+- 2026-02-01: Retry Main Chat Pi initialization after auth-related failures to avoid empty sessions on first load.
+- 2026-02-01: Prefer Pi session_info names when listing Main Chat Pi sessions so automatic renames show up.
+- 2026-02-01: Use absolute paths for user/group creation helpers to match sudo allowlists on Linux.
+- 2026-02-01: Add VITE_DEBUG_WS and VITE_DEBUG_PI flags to enable verbose frontend WebSocket logging in dev.
+- 2026-02-01: Add `just run-frontend` to launch the dev server with control-plane URL and WS debug flags.
+- 2026-02-01: Guard Main Chat Pi initialization globally so multiple mounts do not spam /main/pi/session.
+- 2026-02-01: Always include a Main Chat Pi session_id in WS events by falling back to the cached session id.
+- 2026-02-01: Avoid reconnecting the Main Chat WebSocket on session changes to prevent churn and empty responses.
+- 2026-02-01: Unify control-plane routes by always using /api for HTTP and WebSocket endpoints.
+- 2026-02-01: Serve backend API under /api while keeping legacy root paths during transition.
+- 2026-02-02: Queue Pi prompts until session_created and flush when ready to avoid sending before session init.
+- 2026-02-02: Make runner Pi create_session idempotent via get_or_create to support reconnects.
+- 2026-02-02: Route terminal WebSocket URLs through controlPlaneApiUrl so they include /api when a direct base URL is set.
+- 2026-02-02: Prefix terminal proxy paths with /api to keep workspace terminal WebSocket routes valid.
+- 2026-02-02: Prefer Main Chat JSONL files when loading messages, with hstry/runner fallback, to preserve tool parts and recent history.
+- 2026-02-02: Parse hstry parts_json payloads and map tool role messages to tool results in Main Chat normalization.
+- 2026-02-02: Strip ANSI escape codes from tool outputs and parse tool-result JSON strings into tool dropdown entries.
+- 2026-02-02: Add list_directory path context to file tree errors for easier debugging.
+- 2026-02-02: Collapse settings sections by default on mobile and memoize JSON value rendering to reduce mobile settings crashes.
+- 2026-02-02: Auto-recreate missing Pi sessions after runner PiSessionNotFound errors to reduce PWA crashes on resume.
+- 2026-02-02: Use configured runner socket patterns for user-plane file operations to avoid /run/user fallback failures.
+- 2026-02-02: Simplify user-plane creation by removing the factory and using runner sockets directly with direct fallback.
+- 2026-02-02: Stabilize Pi WS subscription handler to prevent subscribe/unsubscribe loops that crash the UI.
+- 2026-02-03: Auto-start Main Chat Pi session when settings views poll a missing session to avoid repeated 500s.
+- 2026-02-03: Default UI locale to English while still persisting user language selection in localStorage.
+- 2026-02-03: Prefer Pi JSONL history for workspace sessions in the multiplexed WS and reuse scope/cwd when recreating Pi sessions.
+- 2026-02-03: Fix Pi chat hook crash by restoring stable message id callback initialization.
+- 2026-02-03: Mount only the active layout to avoid duplicate Main Chat Pi subscriptions.
+- 2026-02-03: Load Pi history from JSONL/hstry before querying the live runner to make history appear immediately.
+- 2026-02-03: Add soft-delete support for Main Chat and workspace Pi sessions and hide deleted sessions from listings.
+- 2026-02-03: Force immediate Main Chat Pi session list refresh on activity to avoid delayed history updates.
+- 2026-02-04: List chat history from Pi session JSONL only; OpenCode/hstry sessions are no longer shown in the UI.
+- 2026-02-03: Add chat verbosity levels and collapse consecutive tool calls into tabbed tool groups at medium verbosity.
+- 2026-02-03: Use a slim, uncollapsible tool bar for consecutive tool calls at low verbosity.
+- 2026-02-03: Collapse thinking blocks around consecutive Pi tool calls into a single thinking section at medium verbosity.
+- 2026-02-03: Collapse thinking blocks and tool calls into ordered groups at low verbosity (thinking block followed by tool bar).
+- 2026-02-03: Avoid nested tool-call collapsibles in grouped tool views by rendering expanded cards directly.
+- 2026-02-03: Show per-tool badges for consecutive tool calls in low verbosity tool bars.
+- 2026-02-03: Remove the default disclosure arrow from Pi thinking blocks.
+- 2026-02-03: Normalize medium verbosity ordering to show collapsed thinking before grouped tool calls.
+- 2026-02-03: Guard tool icon lookup when the tool name is missing.
+- 2026-02-03: Disable interactions on low-verbosity tool bars and keep per-tool badges visible.
+- 2026-02-03: Only show tool bar scroll arrows when the icon strip overflows.
+- 2026-02-03: Collapse consecutive same-tool icons into a single badge in low verbosity tool bars without losing sequence.
+- 2026-02-03: Match low-verbosity tool badge styling to the todo list badge.
+- 2026-02-03: Cache chat history in localStorage for instant sidebar load before refresh.
+- 2026-02-03: Remount tool call groups on verbosity changes so past chats keep tool bars visible.
+- 2026-02-04: Show a skeleton loader in Pi chat when history exists but messages have not loaded yet.
+- 2026-02-03: Add multi-select chat deletion with shift/cmd in the Main Chat sidebar and make deletes optimistic.
+- 2026-02-03: Hide compact tool headers when uncollapsing tabbed tools and flatten list indentation in chat markdown.
+- 2026-02-03: Make chat sidebar multi-select require modifier keys and match the trx selection bar styling.
+- 2026-02-03: Add modifier-only multi-select with bulk delete for workspace session lists in the app shell sidebar.
+- 2026-02-03: Include Main Chat Pi sessions in chat history listings and resolve them via standard session lookups.
+- 2026-02-03: Unify session listing UX by removing the pinned Main Chat entry and relying on the shared session list.
+- 2026-02-03: Auto-load USER.md and PERSONALITY.md via a new Pi prompts extension and install extensions into Octo data dir.
+- 2026-02-03: Cache Pi chat history responses on the multiplexed WebSocket server for faster session loads.
+- 2026-02-03: Store Pi session JSONL files under repo-root session directories (Pi naming scheme) to keep per-repo history isolated.
+- 2026-02-03: Send steer messages on Enter and queue follow-ups on Cmd/Ctrl+Enter; add mobile long-press queue send.
+- 2026-02-03: Remove the footer braille spinner from the chat input and keep status text only.
+- 2026-02-03: Persist Pi message caches continuously for instant session restores.
+- 2026-02-03: Add shared mux file-tree caching to reduce duplicate list_directory traffic.
+- 2026-02-03: Shrink low-verbosity tool badges to avoid covering tool icons.
+- 2026-02-03: Add an editable queued-message tray and auto-send queued follow-ups when Pi is idle.
+- 2026-02-03: Resolve Pi sessions via JSONL header workdir and scan all session dirs to prevent split session entries.
+- 2026-02-03: Show the assistant working spinner immediately after send until streaming starts.
+- 2026-02-03: Wrap the sessions app in UI control provider to prevent startup crashes.
+- 2026-02-03: Reorder MainChatPiView state/refs to avoid initialization errors at startup.
+- 2026-02-03: Move sendPending state above early hooks to prevent TDZ errors on refresh.
+- 2026-02-03: Stop sendPending timers from resetting on every render and scope pending spinners to session keys.
+- 2026-02-03: Force initial Pi send to use prompt mode and keep pending spinners tied to original sessions.
+- 2026-02-03: Use pending session keys when deciding whether to show the assistant working spinner.
+- 2026-02-03: Wait for ws-mux connection and Pi session readiness before sending messages; surface errors instead of hanging.
+- 2026-02-03: Auto-rename extension now names sessions on first prompt send (before agent response).
+- 2026-02-03: Rename main chat UI to default chat and move chat feature code under features/chat.
+- 2026-02-03: Replace pending chat session IDs with real Pi session IDs to avoid duplicate sessions.
+- 2026-02-03: Reset streaming/awaiting state on session switch to stop spinners bleeding across chats.
+- 2026-02-03: Treat pending session IDs as placeholders and replace them with real Pi session IDs on first send.
+- 2026-02-03: Resolve pending chat sessions to real Pi session IDs before sending so first prompts and queued messages never split sessions.
+- 2026-02-03: Route steer-mode sends through prompt dispatch to ensure responses for normal chat messages.
+- 2026-02-04: List Pi sessions uniformly by removing Main Chat filtering and avoiding duplicate entries in chat history.
+- 2026-02-04: Fetch Pi slash commands over ws-mux for all sessions and surface them in the slash picker.
+- 2026-02-04: Add `/stats` slash command to render Pi session stats as an assistant message.
+- 2026-02-04: Refresh token gauge stats via ws-mux session stats for all scopes.
+- 2026-02-04: Parse auto-renamed Pi titles to extract readable IDs and clean titles for workspace sessions.
+- 2026-02-04: Update chat history and headers with parsed readable IDs once session names arrive.
+- 2026-02-04: Scope pending working spinners to the active session and show them immediately after send.
+- 2026-02-04: Add an LRU Pi message cache in ws-mux (per-user memory caps, last-N messages) to make past chats load instantly.
+- 2026-02-04: Prefetch recent chat messages after history refresh to warm the ws-mux cache.
+- 2026-02-04: Add configurable chat history prefetch limit to global settings.
+- 2026-02-04: Stop generating readable IDs for Pi sessions in backend/frontend; only use extension-provided IDs.
+- 2026-02-04: Create real Pi session IDs before first send and register them in chat history to prevent rename-induced duplication.
+- 2026-02-04: Normalize chat selection to null (no empty-string IDs), remove pending session placeholders, and stop frontend title parsing for readable IDs.
+- 2026-02-04: Pass explicit Pi session files through ws-mux/runner (session_file + ensured session dir) to keep Pi session IDs stable and avoid duplicate sessions.
+- 2026-02-04: Deduplicate Pi chat history entries by JSONL source path to avoid rename-induced duplicates.
+- 2026-02-04: Re-export Pi chat API helpers in control-plane client to fix Vite missing-export crashes.

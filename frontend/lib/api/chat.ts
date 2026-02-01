@@ -1,6 +1,6 @@
 /**
  * Chat History API
- * Reads chat history from disk (no running opencode needed)
+ * Reads Pi chat history from disk (no running opencode needed)
  */
 
 import type {
@@ -10,24 +10,29 @@ import type {
 } from "../opencode-client";
 import { authFetch, controlPlaneApiUrl, readApiError } from "./client";
 
+const normalizeWorkspacePathValue = (path?: string | null): string | null => {
+	if (!path || path === "global" || path.startsWith("global/")) return null;
+	return path;
+};
+
 // ============================================================================
 // Chat History Types (from disk, no running opencode needed)
 // ============================================================================
 
-/** A chat session read directly from OpenCode's storage on disk */
+/** A Pi session read directly from disk */
 export type ChatSession = {
-	/** Session ID (e.g., "ses_xxx") */
+	/** Session ID (UUID filename) */
 	id: string;
-	/** Human-readable ID (e.g., "cold-lamp") - deterministically generated from session ID */
-	readable_id: string;
+	/** Human-readable ID (set by auto-rename extension, if available) */
+	readable_id: string | null;
 	/** Session title */
 	title: string | null;
 	/** Parent session ID (for child sessions) */
 	parent_id: string | null;
 	/** Workspace/project path */
-	workspace_path: string;
+	workspace_path: string | null;
 	/** Project name (derived from path) */
-	project_name: string;
+	project_name: string | null;
 	/** Created timestamp (ms since epoch) */
 	created_at: number;
 	/** Updated timestamp (ms since epoch) */
@@ -107,7 +112,7 @@ export type ChatMessage = {
 // Chat History API (reads from disk, no running opencode needed)
 // ============================================================================
 
-/** List all chat sessions from OpenCode history */
+/** List all chat sessions. */
 export async function listChatHistory(
 	query: ChatHistoryQuery = {},
 ): Promise<ChatSession[]> {
@@ -124,7 +129,11 @@ export async function listChatHistory(
 		credentials: "include",
 	});
 	if (!res.ok) throw new Error(await readApiError(res));
-	return res.json();
+	const data = (await res.json()) as ChatSession[];
+	return data.map((session) => ({
+		...session,
+		workspace_path: normalizeWorkspacePathValue(session.workspace_path),
+	}));
 }
 
 /** List chat sessions grouped by workspace/project */
@@ -144,7 +153,15 @@ export async function listChatHistoryGrouped(
 		credentials: "include",
 	});
 	if (!res.ok) throw new Error(await readApiError(res));
-	return res.json();
+	const data = await res.json();
+	return data.map((group: GroupedChatHistory) => ({
+		...group,
+		workspace_path: normalizeWorkspacePathValue(group.workspace_path),
+		sessions: group.sessions.map((session: ChatSession) => ({
+			...session,
+			workspace_path: normalizeWorkspacePathValue(session.workspace_path),
+		})),
+	}));
 }
 
 /** Get a specific chat session by ID */

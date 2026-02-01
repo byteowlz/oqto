@@ -135,11 +135,11 @@ async fn handle_websocket(mut socket: WebSocket, state: PromptState) {
     // Send initial sync of pending prompts
     let pending = state.manager.list_pending().await;
     let sync_msg = PromptMessage::Sync { prompts: pending };
-    if let Ok(json) = serde_json::to_string(&sync_msg) {
-        if socket.send(Message::Text(json.into())).await.is_err() {
-            error!("Failed to send initial sync");
-            return;
-        }
+    if let Ok(json) = serde_json::to_string(&sync_msg)
+        && socket.send(Message::Text(json.into())).await.is_err()
+    {
+        error!("Failed to send initial sync");
+        return;
     }
 
     // Subscribe to prompt updates
@@ -151,12 +151,11 @@ async fn handle_websocket(mut socket: WebSocket, state: PromptState) {
             result = rx.recv() => {
                 match result {
                     Ok(msg) => {
-                        if let Ok(json) = serde_json::to_string(&msg) {
-                            if socket.send(Message::Text(json.into())).await.is_err() {
+                        if let Ok(json) = serde_json::to_string(&msg)
+                            && socket.send(Message::Text(json.into())).await.is_err() {
                                 debug!("WebSocket send failed, client disconnected");
                                 break;
                             }
-                        }
                     }
                     Err(e) => {
                         warn!("Broadcast receive error: {}", e);

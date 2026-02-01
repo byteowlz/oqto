@@ -9,5 +9,6 @@
 mod config;
 mod service;
 
+#[allow(unused_imports)]
 pub use config::{OnboardingTemplatesConfig, TemplatePreset};
 pub use service::OnboardingTemplatesService;

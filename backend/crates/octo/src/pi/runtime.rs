@@ -514,7 +514,7 @@ impl RunnerPiProcess {
                                 }
                                 Self::process_line(&line, &event_tx_clone, &pending_clone).await;
                             }
-                            crate::runner::client::StdoutSubscriptionEvent::End { .. } => {
+                            crate::runner::client::StdoutSubscriptionEvent::End => {
                                 info!("Pi process exited via runner subscription");
                                 *running_clone2.write().await = false;
                                 break;
@@ -775,10 +775,11 @@ impl ContainerPiProcess {
                     match serde_json::from_str::<serde_json::Value>(&text) {
                         Ok(value) => {
                             // Check if it's an event (has "type" field but not "success")
-                            if value.get("type").is_some() && value.get("success").is_none() {
-                                if let Ok(event) = serde_json::from_value::<PiEvent>(value) {
-                                    let _ = event_tx.send(event);
-                                }
+                            if value.get("type").is_some()
+                                && value.get("success").is_none()
+                                && let Ok(event) = serde_json::from_value::<PiEvent>(value)
+                            {
+                                let _ = event_tx.send(event);
                             }
                         }
                         Err(e) => {

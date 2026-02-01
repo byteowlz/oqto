@@ -140,7 +140,7 @@ pub struct CreateUserRequest {
 }
 
 /// Request to update an existing user.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct UpdateUserRequest {
     pub username: Option<String>,
     pub email: Option<String>,

@@ -1,6 +1,6 @@
 [package]
 name = "app"
-version = "0.5.0"
+version = "0.6.0"
 description = "A Tauri App"
 authors = ["you"]
 license = ""
@@ -31,3 +31,21 @@ tauri-plugin-http = "2.5.5"
 tauri-plugin-cors-fetch = "4.1.0"
 tauri-plugin-websocket = "2.4.2"
 tauri-plugin-fs = "2"
+
+[lints.rust]
+unsafe_code = "warn"
+
+[lints.clippy]
+collapsible_if = "warn"
+collapsible_else_if = "warn"
+needless_return = "warn"
+needless_borrow = "warn"
+clone_on_copy = "warn"
+single_char_add_str = "warn"
+manual_strip = "warn"
+manual_flatten = "warn"
+unnecessary_lazy_evaluations = "warn"
+unnecessary_map_or = "warn"
+single_match = "warn"
+cloned_instead_of_copied = "warn"
+inefficient_to_string = "warn"

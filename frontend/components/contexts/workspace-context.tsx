@@ -8,7 +8,6 @@ import {
 	getOrCreateWorkspaceSession,
 	listProjects,
 	listWorkspaceSessions,
-	opencodeProxyBaseUrl,
 	stopWorkspaceSession,
 	touchSessionActivity,
 	upgradeWorkspaceSession,
@@ -33,7 +32,6 @@ export interface WorkspaceContextValue {
 	selectedWorkspaceSessionId: string;
 	setSelectedWorkspaceSessionId: (id: string) => void;
 	selectedWorkspaceSession: WorkspaceSession | undefined;
-	opencodeBaseUrl: string;
 	/** Available projects (directories in workspace_dir) */
 	projects: ProjectEntry[];
 	/** Start a new session for a project */
@@ -43,8 +41,8 @@ export interface WorkspaceContextValue {
 	projectDefaultAgents: Record<string, string>;
 	setProjectDefaultAgents: Dispatch<SetStateAction<Record<string, string>>>;
 	refreshWorkspaceSessions: () => Promise<void>;
-	/** Ensure opencode is running and return the base URL. Starts if needed. */
-	ensureOpencodeRunning: (workspacePath?: string) => Promise<string | null>;
+	/** Ensure the workspace runner session exists (no opencode assumptions). */
+	ensureWorkspaceRunning: (workspacePath?: string) => Promise<WorkspaceSession | null>;
 	stopWorkspaceSession: (sessionId: string) => Promise<boolean>;
 	deleteWorkspaceSession: (sessionId: string) => Promise<boolean>;
 	upgradeWorkspaceSession: (sessionId: string) => Promise<boolean>;
@@ -65,13 +63,12 @@ const defaultWorkspaceContext: WorkspaceContextValue = {
 	selectedWorkspaceSessionId: "",
 	setSelectedWorkspaceSessionId: noop,
 	selectedWorkspaceSession: undefined,
-	opencodeBaseUrl: "",
 	projects: [],
 	startProjectSession: asyncNoop,
 	projectDefaultAgents: {},
 	setProjectDefaultAgents: noop,
 	refreshWorkspaceSessions: asyncNoopVoid,
-	ensureOpencodeRunning: asyncNoop,
+	ensureWorkspaceRunning: asyncNoop,
 	stopWorkspaceSession: asyncNoopBool,
 	deleteWorkspaceSession: asyncNoopBool,
 	upgradeWorkspaceSession: asyncNoopBool,
@@ -103,6 +100,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 			const stored = localStorage.getItem("octo:projectDefaultAgents");
 			return stored ? JSON.parse(stored) : {};
 		} catch {
+			localStorage.removeItem("octo:projectDefaultAgents");
 			return {};
 		}
 	});
@@ -136,19 +134,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 		);
 	}, [selectedWorkspaceSessionId, workspaceSessions]);
 
-	const opencodeBaseUrl = useMemo(() => {
-		if (typeof window !== "undefined") {
-			const params = new URLSearchParams(window.location.search);
-			const mockUrl = params.get("mockOpencode");
-			if (mockUrl) {
-				console.log("[Dev] Using mock OpenCode server:", mockUrl);
-				return mockUrl;
-			}
-		}
-		if (!selectedWorkspaceSession) return "";
-		if (selectedWorkspaceSession.status !== "running") return "";
-		return opencodeProxyBaseUrl(selectedWorkspaceSession.id);
-	}, [selectedWorkspaceSession]);
+	const _ = selectedWorkspaceSession;
 
 	// Restore selected session from localStorage
 	useEffect(() => {
@@ -303,55 +289,29 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 		[refreshWorkspaceSessions],
 	);
 
-	const ensureOpencodeRunning = useCallback(
-		async (workspacePath?: string): Promise<string | null> => {
+	const ensureWorkspaceRunning = useCallback(
+		async (workspacePath?: string): Promise<WorkspaceSession | null> => {
 			try {
 				let session: WorkspaceSession;
-
 				if (workspacePath) {
 					session = await getOrCreateSessionForWorkspace(workspacePath);
 				} else {
 					if (selectedWorkspaceSession?.status === "running") {
 						touchSessionActivity(selectedWorkspaceSession.id).catch(() => {});
-						return opencodeProxyBaseUrl(selectedWorkspaceSession.id);
+						return selectedWorkspaceSession;
 					}
 					session = await getOrCreateWorkspaceSession();
 				}
 
 				await refreshWorkspaceSessions();
 				setSelectedWorkspaceSessionId(session.id);
-
-				if (session.status === "running") {
-					return opencodeProxyBaseUrl(session.id);
-				}
-
-				let attempts = 0;
-				const maxAttempts = 30;
-				while (attempts < maxAttempts) {
-					const sessions = await listWorkspaceSessions();
-					const current = sessions.find((s) => s.id === session.id);
-					if (current?.status === "running") {
-						return opencodeProxyBaseUrl(current.id);
-					}
-					if (current?.status === "failed") {
-						console.error(
-							"Workspace session failed to start:",
-							current.error_message,
-						);
-						return null;
-					}
-					attempts++;
-					await new Promise((resolve) => setTimeout(resolve, 1000));
-				}
-
-				console.error("Timeout waiting for workspace session to start");
-				return null;
+				return session;
 			} catch (err) {
-				console.error("Failed to ensure opencode is running:", err);
+				console.error("Failed to ensure workspace is running:", err);
 				return null;
 			}
 		},
-		[selectedWorkspaceSession, refreshWorkspaceSessions],
+		[selectedWorkspaceSession, refreshWorkspaceSessions, setSelectedWorkspaceSessionId],
 	);
 
 	// Initial load
@@ -462,13 +422,12 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 			selectedWorkspaceSessionId,
 			setSelectedWorkspaceSessionId,
 			selectedWorkspaceSession,
-			opencodeBaseUrl,
 			projects,
 			startProjectSession,
 			projectDefaultAgents,
 			setProjectDefaultAgents,
 			refreshWorkspaceSessions,
-			ensureOpencodeRunning,
+			ensureWorkspaceRunning,
 			stopWorkspaceSession: handleStopWorkspaceSession,
 			deleteWorkspaceSession: handleDeleteWorkspaceSession,
 			upgradeWorkspaceSession: handleUpgradeWorkspaceSession,
@@ -479,12 +438,11 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 			workspaceSessions,
 			selectedWorkspaceSessionId,
 			selectedWorkspaceSession,
-			opencodeBaseUrl,
 			projects,
 			startProjectSession,
 			projectDefaultAgents,
 			refreshWorkspaceSessions,
-			ensureOpencodeRunning,
+			ensureWorkspaceRunning,
 			handleStopWorkspaceSession,
 			handleDeleteWorkspaceSession,
 			handleUpgradeWorkspaceSession,

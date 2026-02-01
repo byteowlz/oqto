@@ -55,16 +55,16 @@ impl DirectUserPlane {
             Ok(canonical)
         } else {
             // Path doesn't exist - check parent is valid
-            if let Some(parent) = resolved.parent() {
-                if parent.exists() {
-                    let parent_canonical = parent.canonicalize()?;
-                    let workspace_canonical = self
-                        .workspace_root
-                        .canonicalize()
-                        .unwrap_or_else(|_| self.workspace_root.clone());
-                    if !parent_canonical.starts_with(&workspace_canonical) {
-                        anyhow::bail!("path {:?} is outside workspace root", path);
-                    }
+            if let Some(parent) = resolved.parent()
+                && parent.exists()
+            {
+                let parent_canonical = parent.canonicalize()?;
+                let workspace_canonical = self
+                    .workspace_root
+                    .canonicalize()
+                    .unwrap_or_else(|_| self.workspace_root.clone());
+                if !parent_canonical.starts_with(&workspace_canonical) {
+                    anyhow::bail!("path {:?} is outside workspace root", path);
                 }
             }
             Ok(resolved)
@@ -107,12 +107,10 @@ impl UserPlane for DirectUserPlane {
     async fn write_file(&self, path: &Path, content: &[u8], create_parents: bool) -> Result<()> {
         let resolved = self.resolve_path(path)?;
 
-        if create_parents {
-            if let Some(parent) = resolved.parent() {
-                tokio::fs::create_dir_all(parent)
-                    .await
-                    .with_context(|| format!("creating parent directories for {:?}", resolved))?;
-            }
+        if create_parents && let Some(parent) = resolved.parent() {
+            tokio::fs::create_dir_all(parent)
+                .await
+                .with_context(|| format!("creating parent directories for {:?}", resolved))?;
         }
 
         tokio::fs::write(&resolved, content)

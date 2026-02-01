@@ -599,6 +599,12 @@
           "description": "Idle cleanup check interval in seconds",
           "minimum": 10,
           "default": 300
+        },
+        "chat_prefetch_limit": {
+          "type": "integer",
+          "description": "Number of recent chat sessions to prefetch messages for",
+          "minimum": 0,
+          "default": 8
         }
       },
       "additionalProperties": false
@@ -656,6 +662,93 @@
           "type": "integer",
           "description": "Minimum seconds between template repository sync attempts",
           "default": 120
+        }
+      },
+      "additionalProperties": false
+    },
+    "onboarding_templates": {
+      "type": "object",
+      "description": "Onboarding templates repository configuration",
+      "x-scope": "admin",
+      "x-category": "Infrastructure",
+      "properties": {
+        "repo_url": {
+          "type": "string",
+          "description": "Git repository URL for onboarding templates",
+          "default": "https://github.com/byteowlz/octo-templates"
+        },
+        "local_path": {
+          "type": ["string", "null"],
+          "description": "Local path to templates directory (overrides repo_url)",
+          "default": null
+        },
+        "cache_path": {
+          "type": ["string", "null"],
+          "description": "Path where remote repo is cloned",
+          "default": null
+        },
+        "sync_enabled": {
+          "type": "boolean",
+          "description": "Sync from remote before using templates",
+          "default": true
+        },
+        "sync_interval_seconds": {
+          "type": "integer",
+          "description": "Minimum seconds between sync attempts",
+          "default": 300
+        },
+        "use_embedded_fallback": {
+          "type": "boolean",
+          "description": "Use embedded templates if repo is unavailable",
+          "default": true
+        },
+        "branch": {
+          "type": "string",
+          "description": "Branch to use from remote repo",
+          "default": "main"
+        },
+        "subdirectory": {
+          "type": "string",
+          "description": "Subdirectory within repo containing onboarding templates",
+          "default": "onboarding"
+        },
+        "defaults": {
+          "type": "object",
+          "description": "Default template file names",
+          "properties": {
+            "onboard": { "type": "string", "default": "ONBOARD.md" },
+            "personality": { "type": "string", "default": "PERSONALITY.md" },
+            "user": { "type": "string", "default": "USER.md" },
+            "agents": { "type": "string", "default": "AGENTS.md" }
+          },
+          "additionalProperties": false
+        },
+        "presets": {
+          "type": "object",
+          "description": "Named presets for user onboarding",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "description": { "type": "string", "default": "" },
+              "onboard": { "type": ["string", "null"], "default": null },
+              "personality": { "type": ["string", "null"], "default": null },
+              "user": { "type": ["string", "null"], "default": null },
+              "agents": { "type": ["string", "null"], "default": null },
+              "skip_stages": {
+                "type": "array",
+                "items": { "type": "string" },
+                "default": []
+              },
+              "unlock_components": {
+                "type": "array",
+                "items": { "type": "string" },
+                "default": []
+              },
+              "user_level": { "type": ["string", "null"], "default": null }
+            },
+            "additionalProperties": false
+          },
+          "default": {}
         }
       },
       "additionalProperties": false

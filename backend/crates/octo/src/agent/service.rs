@@ -910,20 +910,16 @@ impl AgentService {
                 command.arg(&cfg.template_arg).arg(template);
                 command.arg(&cfg.output_arg).arg(workspace_root);
 
-                if *github {
-                    if let Some(ref arg) = cfg.github_arg {
-                        command.arg(arg);
-                    }
+                if *github && let Some(ref arg) = cfg.github_arg {
+                    command.arg(arg);
                 }
-                if *private {
-                    if let Some(ref arg) = cfg.private_arg {
-                        command.arg(arg);
-                    }
+                if *private && let Some(ref arg) = cfg.private_arg {
+                    command.arg(arg);
                 }
-                if let Some(desc) = description {
-                    if let Some(ref arg) = cfg.description_arg {
-                        command.arg(arg).arg(desc);
-                    }
+                if let Some(desc) = description
+                    && let Some(ref arg) = cfg.description_arg
+                {
+                    command.arg(arg).arg(desc);
                 }
 
                 debug!(

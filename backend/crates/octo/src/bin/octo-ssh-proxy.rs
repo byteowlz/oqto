@@ -38,6 +38,7 @@ use clap::Parser;
 use glob::Pattern;
 use log::{debug, error, info, warn};
 use octo::local::{SandboxConfig, SshProxyConfig};
+use rustix::process::getuid;
 use std::io::{Read, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
@@ -382,7 +383,7 @@ fn main() -> Result<()> {
 
     // Determine socket paths
     let listen_path = args.listen.unwrap_or_else(|| {
-        let uid = unsafe { libc::getuid() };
+        let uid = getuid().as_raw();
         PathBuf::from(format!("/run/user/{}/octo-ssh.sock", uid))
     });
 

@@ -62,7 +62,7 @@ The iOS PWA layout forces zero bottom safe-area padding to keep the status bar f
 
 ## Sidebar Notes
 
-The session sidebar lists the search input above the Main Chat entry on both mobile and desktop layouts.
+The session sidebar lists the search input above the Default Chat entry on both mobile and desktop layouts.
 The mobile sidebar adds top safe-area padding so the header stays below the Dynamic Island.
 Utility app headers (Dashboard, Settings, Admin) are centered on mobile.
 

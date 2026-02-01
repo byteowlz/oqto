@@ -1,0 +1,3384 @@
+"use client";
+
+import {
+	A2UICallCard,
+	type FileAttachment,
+	FileAttachmentChip,
+	FileMentionPopup,
+	ReadAloudButton,
+	SlashCommandPopup,
+	ToolCallCard,
+	ToolCallGroup,
+	getToolIcon,
+} from "@/components/chat";
+import { toast } from "sonner";
+import { BrailleSpinner } from "@/components/common";
+import { useChatVerbosity } from "@/lib/chat-verbosity";
+import {
+	ContextWindowGauge,
+	CopyButton,
+	MarkdownRenderer,
+} from "@/components/data-display";
+import { Button } from "@/components/ui/button";
+import {
+	ContextMenu,
+	ContextMenuContent,
+	ContextMenuItem,
+	ContextMenuTrigger,
+} from "@/components/ui/context-menu";
+import { Input } from "@/components/ui/input";
+import { DictationOverlay } from "@/components/voice";
+import {
+	VoiceMenuButton,
+	type VoiceMode,
+} from "@/components/voice/VoiceMenuButton";
+import { useChatContext } from "@/components/contexts/chat-context";
+import {
+	type Features,
+	type PiModelInfo,
+	getWorkspacePiModels,
+} from "@/features/chat/api";
+import { type A2UISurfaceState, useA2UI } from "@/hooks/use-a2ui";
+import { useDictation } from "@/hooks/use-dictation";
+import {
+	type PiDisplayMessage,
+	type PiMessagePart,
+	getCachedScrollPosition,
+	setCachedScrollPosition,
+	useChat,
+} from "@/hooks/useChat";
+import { extractFileReferenceDetails, getFileTypeInfo } from "@/lib/file-types";
+import {
+	downloadFileMux,
+	readFileMux,
+	statPathMux,
+	uploadFileMux,
+} from "@/lib/mux-files";
+import { getWsManager } from "@/lib/ws-manager";
+import {
+	formatSessionDate,
+	getReadableIdFromSession,
+	isPendingSessionId,
+	normalizeWorkspacePath,
+} from "@/lib/session-utils";
+import {
+	type SlashCommand,
+	fuzzyMatch,
+	parseSlashInput,
+} from "@/lib/slash-commands";
+import { cn } from "@/lib/utils";
+import {
+	Bot,
+	ArrowDown,
+	ArrowUp,
+	Check,
+	Copy,
+	ExternalLink,
+	FileCode,
+	FileImage,
+	FileText,
+	FileVideo,
+	Loader2,
+	Paperclip,
+	Send,
+	StopCircle,
+	Trash2,
+	User,
+} from "lucide-react";
+import {
+	type ChangeEvent,
+	type KeyboardEvent,
+	memo,
+	useCallback,
+	useEffect,
+	useLayoutEffect,
+	useMemo,
+	useRef,
+	useState,
+} from "react";
+
+/** Todo item structure (matching OpenCode's todowrite tool) */
+export interface TodoItem {
+	id: string;
+	content: string;
+	status: "pending" | "in_progress" | "completed" | "cancelled";
+	priority: "high" | "medium" | "low";
+}
+
+type QueuedMessage = {
+	id: string;
+	text: string;
+};
+
+export interface ChatViewProps {
+	/** Current locale */
+	locale?: "en" | "de";
+	/** Class name for container */
+	className?: string;
+	/** Storage key prefix for cached messages */
+	storageKeyPrefix?: string;
+	/** Features config (for voice settings) */
+	features?: Features | null;
+	/** Workspace path for file operations */
+	workspacePath?: string | null;
+	/** Assistant name to display (user-configured default chat name) */
+	assistantName?: string | null;
+	/** Hide the internal header (used when embedded in sessions app with external header) */
+	hideHeader?: boolean;
+	/** Callback to report token usage (for external gauge display) */
+	onTokenUsageChange?: (usage: {
+		inputTokens: number;
+		outputTokens: number;
+		maxTokens: number;
+	}) => void;
+	/** Selected session ID (from sidebar) */
+	selectedSessionId?: string | null;
+	/** Callback when selection should change (e.g. /new created a session) */
+	onSelectedSessionIdChange?: (id: string | null) => void;
+	/** Message ID to scroll to (from search results) */
+	scrollToMessageId?: string | null;
+	/** Callback when scroll target is reached (to clear the target) */
+	onScrollToMessageComplete?: () => void;
+	/** Callback when a message is sent (for sidebar refresh) */
+	onMessageSent?: () => void;
+	/** Callback when an assistant message completes (for sidebar refresh) */
+	onMessageComplete?: () => void;
+	/** Callback when todos change (extracted from Pi todowrite tool calls) */
+	onTodosChange?: (todos: TodoItem[]) => void;
+	/** Ensure a real Pi session exists (used to resolve pending sessions) */
+	onEnsureSession?: (
+		workspacePath: string | null,
+		optimisticId: string | null,
+	) => Promise<string | null>;
+}
+
+/**
+ * Chat view using Pi agent runtime.
+ */
+export function ChatView({
+	locale = "en",
+	className,
+	storageKeyPrefix,
+	features,
+	workspacePath,
+	assistantName,
+	hideHeader = false,
+	onTokenUsageChange,
+	selectedSessionId,
+	onSelectedSessionIdChange,
+	scrollToMessageId,
+	onScrollToMessageComplete,
+	onMessageSent,
+	onMessageComplete,
+	onTodosChange,
+	onEnsureSession,
+}: ChatViewProps) {
+	const [sendPending, setSendPending] = useState(false);
+	const [sendPendingSessionId, setSendPendingSessionId] = useState<
+		string | null
+	>(null);
+	const sendPendingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
+		null,
+	);
+	const normalizedWorkspacePath = useMemo(
+		() => normalizeWorkspacePath(workspacePath),
+		[workspacePath],
+	);
+
+	const resolvedStorageKeyPrefix =
+		storageKeyPrefix ??
+		`octo:workspacePi:${(normalizedWorkspacePath ?? "default").replace(
+			/[^a-zA-Z0-9._-]+/g,
+			"_",
+		)}`;
+	const draftStorageKey = `${resolvedStorageKeyPrefix}:draft`;
+	const scrollStorageKey = `${resolvedStorageKeyPrefix}:scrollPosition`;
+	const { updateChatSessionTitleLocal, selectedChatFromHistory } =
+		useChatContext();
+	const sessionMeta = selectedChatFromHistory ?? null;
+	const handleMessageComplete = useCallback(() => {
+		onMessageComplete?.();
+	}, [onMessageComplete]);
+	const {
+		messages,
+		isConnected,
+		isStreaming,
+		isAwaitingResponse,
+		error,
+		send,
+		appendLocalAssistantMessage,
+		abort,
+		compact,
+		newSession,
+		resetSession,
+		state: piState,
+		refresh,
+	} = useChat({
+		workspacePath: normalizedWorkspacePath,
+		storageKeyPrefix: resolvedStorageKeyPrefix,
+		selectedSessionId,
+		onSelectedSessionIdChange,
+		onMessageComplete: handleMessageComplete,
+	});
+	const ensureRealSessionId = useCallback(async (): Promise<string | null> => {
+		if (selectedSessionId && !isPendingSessionId(selectedSessionId)) {
+			return selectedSessionId;
+		}
+		if (!onEnsureSession) return null;
+		return onEnsureSession(
+			normalizedWorkspacePath ?? null,
+			selectedSessionId ?? null,
+		);
+	}, [onEnsureSession, selectedSessionId, normalizedWorkspacePath]);
+
+	// Draft persistence - restore from localStorage on mount
+	const [input, setInput] = useState(() => {
+		if (typeof window === "undefined") return "";
+		try {
+			return localStorage.getItem(draftStorageKey) || "";
+		} catch {
+			return "";
+		}
+	});
+	const [fileAttachments, setFileAttachments] = useState<FileAttachment[]>([]);
+	const [queuedMessages, setQueuedMessages] = useState<QueuedMessage[]>([]);
+	const messagesEndRef = useRef<HTMLDivElement>(null);
+	const messagesContainerRef = useRef<HTMLDivElement>(null);
+	const inputRef = useRef<HTMLTextAreaElement>(null);
+	const fileInputRef = useRef<HTMLInputElement>(null);
+	const queueSendInFlightRef = useRef(false);
+	const queueCooldownRef = useRef<number | null>(null);
+	const draftSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const initialScrollDoneRef = useRef(false);
+
+	useEffect(() => {
+		if (typeof window === "undefined") return;
+		try {
+			setInput(localStorage.getItem(draftStorageKey) || "");
+		} catch {
+			setInput("");
+		}
+	}, [draftStorageKey]);
+	useEffect(() => {
+		setQueuedMessages([]);
+		if (!sendPending) {
+			setSendPendingSessionId(null);
+		}
+	}, [selectedSessionId]);
+	useEffect(() => {
+		if (!selectedSessionId || !piState?.session_name) return;
+		updateChatSessionTitleLocal(selectedSessionId, piState.session_name);
+	}, [piState?.session_name, selectedSessionId, updateChatSessionTitleLocal]);
+	useEffect(() => {
+		if (isStreaming || isAwaitingResponse) {
+			setSendPending(false);
+			setSendPendingSessionId(null);
+		}
+	}, [isAwaitingResponse, isStreaming]);
+	useEffect(() => {
+		if (!sendPending || isStreaming || isAwaitingResponse) {
+			if (sendPendingTimeoutRef.current) {
+				clearTimeout(sendPendingTimeoutRef.current);
+				sendPendingTimeoutRef.current = null;
+			}
+			return;
+		}
+		if (!sendPendingTimeoutRef.current) {
+			sendPendingTimeoutRef.current = setTimeout(() => {
+				setSendPending(false);
+				setSendPendingSessionId(null);
+			}, 8000);
+		}
+		return () => {
+			if (sendPendingTimeoutRef.current) {
+				clearTimeout(sendPendingTimeoutRef.current);
+				sendPendingTimeoutRef.current = null;
+			}
+		};
+	}, [isAwaitingResponse, isStreaming, sendPending]);
+	const [showFileMentionPopup, setShowFileMentionPopup] = useState(false);
+	const [fileMentionQuery, setFileMentionQuery] = useState("");
+	const [showSlashPopup, setShowSlashPopup] = useState(false);
+	const [voiceMode, setVoiceMode] = useState<VoiceMode>(null);
+	const [isUploading, setIsUploading] = useState(false);
+	const [availableModels, setAvailableModels] = useState<PiModelInfo[]>([]);
+	const [selectedModelRef, setSelectedModelRef] = useState<string | null>(null);
+	const [isSwitchingModel, setIsSwitchingModel] = useState(false);
+	const [modelQuery, setModelQuery] = useState("");
+	const [commandError, setCommandError] = useState<Error | null>(null);
+	const [customCommands, setCustomCommands] = useState<SlashCommand[]>([]);
+	const [sessionTokens, setSessionTokens] = useState<{
+		input: number;
+		output: number;
+	} | null>(null);
+	// Initialize from cached scroll position - null means bottom
+	const [isUserScrolled, setIsUserScrolled] = useState(
+		() => getCachedScrollPosition(scrollStorageKey) !== null,
+	);
+	// Pagination: start with last 30 messages, load more on scroll up
+	const INITIAL_MESSAGES = 30;
+	const LOAD_MORE_COUNT = 30;
+	const [visibleCount, setVisibleCount] = useState(INITIAL_MESSAGES);
+
+	// A2UI integration - adapt Pi messages to expected format
+	const a2uiMessagesRef = useRef<Array<{ info: { id: string; role: string } }>>(
+		[],
+	);
+	// Keep ref in sync with messages
+	a2uiMessagesRef.current = messages.map((m) => ({
+		info: { id: m.id, role: m.role },
+	}));
+
+	const {
+		surfaces: a2uiSurfaces,
+		handleAction: handleA2UIAction,
+		getUnanchoredSurfaces,
+	} = useA2UI(a2uiMessagesRef, {
+		onSurfaceReceived: useCallback(() => {
+			// Auto-scroll when A2UI surface arrives
+			if (!isUserScrolled) {
+				messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+			}
+		}, [isUserScrolled]),
+	});
+
+	// Memoized map of message ID to surfaces to avoid creating new arrays on each render
+	// Also track "orphaned" surfaces whose anchor doesn't match any current message
+	const { surfacesByMessageId, orphanedSurfaces } = useMemo(() => {
+		const map = new Map<string, A2UISurfaceState[]>();
+		const messageIds = new Set(messages.map((m) => m.id));
+		const orphaned: A2UISurfaceState[] = [];
+
+		for (const surface of a2uiSurfaces) {
+			if (surface.anchorMessageId && messageIds.has(surface.anchorMessageId)) {
+				const existing = map.get(surface.anchorMessageId) || [];
+				existing.push(surface);
+				map.set(surface.anchorMessageId, existing);
+			} else {
+				// Surface has no anchor or anchor message doesn't exist
+				orphaned.push(surface);
+			}
+		}
+		return { surfacesByMessageId: map, orphanedSurfaces: orphaned };
+	}, [a2uiSurfaces, messages]);
+
+	// Extract todos from messages and notify parent
+	useEffect(() => {
+		if (!onTodosChange) return;
+
+		// Go through all messages in reverse to find the most recent todowrite
+		for (let i = messages.length - 1; i >= 0; i--) {
+			const msg = messages[i];
+			for (let j = msg.parts.length - 1; j >= 0; j--) {
+				const part = msg.parts[j];
+				if (
+					part.type === "tool_use" &&
+					part.name?.toLowerCase().includes("todo")
+				) {
+					const input = part.input as Record<string, unknown> | undefined;
+					if (input?.todos && Array.isArray(input.todos)) {
+						onTodosChange(input.todos as TodoItem[]);
+						return;
+					}
+				}
+			}
+		}
+		// No todos found
+		onTodosChange([]);
+	}, [messages, onTodosChange]);
+
+	// Voice configuration
+	const voiceConfig = useMemo(
+		() =>
+			(features?.voice as unknown as import("@/lib/voice/types").VoiceConfig) ??
+			null,
+		[features?.voice],
+	);
+
+	const currentModelRef = useMemo(() => {
+		if (!piState?.model) return null;
+		return `${piState.model.provider}/${piState.model.id}`;
+	}, [piState?.model]);
+	const canSwitchModel = Boolean(
+		piState && !piState.is_streaming && !piState.is_compacting && !isStreaming,
+	);
+	const currentModelInfo = useMemo(() => {
+		if (piState?.model) {
+			return piState.model;
+		}
+		if (!selectedModelRef) return null;
+		return (
+			availableModels.find(
+				(model) => `${model.provider}/${model.id}` === selectedModelRef,
+			) ?? null
+		);
+	}, [availableModels, piState?.model, selectedModelRef]);
+	const contextWindowLimit = useMemo(() => {
+		if (!currentModelInfo) return 200000;
+		if (currentModelInfo.context_window > 0) {
+			return currentModelInfo.context_window;
+		}
+		if (currentModelInfo.max_tokens > 0) {
+			return currentModelInfo.max_tokens;
+		}
+		return 200000;
+	}, [currentModelInfo]);
+
+	const modelStorageKey = useMemo(() => {
+		if (!selectedSessionId) return null;
+		return `octo:chatModel:${selectedSessionId}`;
+	}, [selectedSessionId]);
+
+	useEffect(() => {
+		if (!modelStorageKey) return;
+		const modelRef = currentModelRef ?? selectedModelRef;
+		try {
+			if (modelRef) {
+				localStorage.setItem(modelStorageKey, modelRef);
+			} else {
+				localStorage.removeItem(modelStorageKey);
+			}
+		} catch {
+			// Ignore storage errors.
+		}
+	}, [currentModelRef, modelStorageKey, selectedModelRef]);
+
+	const displayError = commandError ?? error;
+	const historyPending =
+		messages.length === 0 && (piState?.messageCount ?? 0) > 0;
+	const showSkeleton =
+		messages.length === 0 && !displayError && (!isConnected || historyPending);
+
+	const ChatSkeleton = (
+		<div className="flex-1 flex flex-col gap-4 min-h-0 animate-pulse">
+			<div className="flex-1 bg-muted/20 p-4 space-y-6">
+				<div className="mr-8 space-y-2">
+					<div className="h-4 bg-muted/40 w-24" />
+					<div className="h-16 bg-muted/30" />
+				</div>
+				<div className="ml-8 space-y-2">
+					<div className="h-4 bg-muted/40 w-16 ml-auto" />
+					<div className="h-10 bg-muted/30" />
+				</div>
+				<div className="mr-8 space-y-2">
+					<div className="h-4 bg-muted/40 w-24" />
+					<div className="h-24 bg-muted/30" />
+				</div>
+			</div>
+			<div className="h-10 bg-muted/20" />
+		</div>
+	);
+	const slashQuery = useMemo(() => parseSlashInput(input), [input]);
+
+	const enqueueMessage = useCallback(
+		(rawText?: string) => {
+			const trimmed = (rawText ?? input).trim();
+			if (!trimmed) return;
+
+			if (fileAttachments.length > 0) {
+				toast.error("Queued messages do not support file attachments yet.");
+				return;
+			}
+
+			if (draftSaveTimeoutRef.current) {
+				clearTimeout(draftSaveTimeoutRef.current);
+				draftSaveTimeoutRef.current = null;
+			}
+
+			const isShellCommand = trimmed.startsWith("!");
+			const shellCommand = isShellCommand ? trimmed.slice(1).trim() : "";
+			let message = trimmed;
+			if (isShellCommand && shellCommand) {
+				message = `Run this shell command and show me the output:\n\`\`\`bash\n${shellCommand}\n\`\`\``;
+			}
+
+			const id =
+				typeof crypto !== "undefined" && "randomUUID" in crypto
+					? crypto.randomUUID()
+					: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+			setQueuedMessages((prev) => [...prev, { id, text: message }]);
+			setInput("");
+			setFileAttachments([]);
+			setShowSlashPopup(false);
+			setCommandError(null);
+			try {
+				localStorage.removeItem(draftStorageKey);
+			} catch {
+				// Ignore localStorage errors
+			}
+			if (inputRef.current) {
+				inputRef.current.style.height = "auto";
+			}
+		},
+		[
+			draftStorageKey,
+			fileAttachments.length,
+			input,
+			setCommandError,
+			setShowSlashPopup,
+		],
+	);
+	const builtInCommands = useMemo<SlashCommand[]>(() => {
+		const commands: SlashCommand[] = [
+			{ name: "compact", description: "Summarize context" },
+			{ name: "new", description: "Start a fresh session" },
+			{ name: "reset", description: "Reload personality and user files" },
+			{ name: "abort", description: "Abort current run" },
+			{ name: "stats", description: "Show session stats" },
+			{ name: "steer", description: "Send a steering message" },
+			{ name: "followup", description: "Queue a follow-up message" },
+		];
+		if (canSwitchModel) {
+			commands.push({
+				name: "model",
+				description: "Switch model (provider/model)",
+			});
+		}
+		return commands;
+	}, [canSwitchModel]);
+	const builtInCommandNames = useMemo(
+		() => new Set(builtInCommands.map((cmd) => cmd.name)),
+		[builtInCommands],
+	);
+	const slashCommands = useMemo<SlashCommand[]>(() => {
+		const merged = [...builtInCommands];
+		const seen = new Set(merged.map((cmd) => cmd.name));
+		for (const cmd of customCommands) {
+			if (!seen.has(cmd.name)) {
+				merged.push(cmd);
+				seen.add(cmd.name);
+			}
+		}
+		return merged;
+	}, [builtInCommands, customCommands]);
+	const filteredModels = useMemo(() => {
+		const query = modelQuery.trim();
+		if (!query) return availableModels;
+		return availableModels.filter((model) => {
+			const fullRef = `${model.provider}/${model.id}`;
+			return (
+				fuzzyMatch(query, fullRef) ||
+				fuzzyMatch(query, model.provider) ||
+				fuzzyMatch(query, model.id) ||
+				(model.name ? fuzzyMatch(query, model.name) : false)
+			);
+		});
+	}, [availableModels, modelQuery]);
+	const messageTokenUsage = useMemo(() => {
+		let inputTokens = 0;
+		let outputTokens = 0;
+
+		// Find the index of the last compaction message
+		let lastCompactionIndex = -1;
+		for (let i = messages.length - 1; i >= 0; i--) {
+			const msg = messages[i];
+			if (msg.parts.some((part) => part.type === "compaction")) {
+				lastCompactionIndex = i;
+				break;
+			}
+		}
+
+		// Only count tokens from messages after the last compaction
+		const startIndex = lastCompactionIndex >= 0 ? lastCompactionIndex + 1 : 0;
+		for (let i = startIndex; i < messages.length; i++) {
+			const msg = messages[i];
+			if (!msg.usage) continue;
+			inputTokens += msg.usage.input || 0;
+			outputTokens += msg.usage.output || 0;
+		}
+		return { inputTokens, outputTokens };
+	}, [messages]);
+	const gaugeTokens = useMemo(() => {
+		const total =
+			messageTokenUsage.inputTokens + messageTokenUsage.outputTokens;
+		if (total > 0) return messageTokenUsage;
+		if (sessionTokens) {
+			return {
+				inputTokens: sessionTokens.input,
+				outputTokens: sessionTokens.output,
+			};
+		}
+		return { inputTokens: 0, outputTokens: 0 };
+	}, [messageTokenUsage, sessionTokens]);
+
+	// Report token usage to parent when it changes
+	useEffect(() => {
+		if (onTokenUsageChange) {
+			onTokenUsageChange({
+				inputTokens: gaugeTokens.inputTokens,
+				outputTokens: gaugeTokens.outputTokens,
+				maxTokens: contextWindowLimit,
+			});
+		}
+	}, [gaugeTokens, contextWindowLimit, onTokenUsageChange]);
+
+	// Dictation hook
+	const dictation = useDictation({
+		config: voiceConfig,
+		onTranscript: useCallback((text: string) => {
+			setInput((prev) => (prev ? `${prev} ${text}` : text));
+		}, []),
+		vadTimeoutMs: features?.voice?.vad_timeout_ms,
+		autoSendOnFinal: true,
+		autoSendDelayMs: 50,
+		onAutoSend: () => {
+			const sendBtn = document.querySelector(
+				"[data-dictation-send]",
+			) as HTMLButtonElement | null;
+			sendBtn?.click();
+		},
+	});
+
+	useEffect(() => {
+		if (selectedModelRef || !currentModelRef) return;
+		setSelectedModelRef(currentModelRef);
+	}, [currentModelRef, selectedModelRef]);
+
+	useEffect(() => {
+		// Only fetch models once session is active (piState available)
+		if (!isConnected || !piState) return;
+		const targetSessionId = selectedSessionId ?? piState.session_id ?? null;
+		if (!targetSessionId) return;
+		let active = true;
+		const fetchModels = normalizedWorkspacePath
+			? getWorkspacePiModels(normalizedWorkspacePath, targetSessionId)
+			: Promise.resolve([]);
+		fetchModels
+			.then((models) => {
+				if (active) setAvailableModels(models);
+			})
+			.catch(() => {
+				if (active) setAvailableModels([]);
+			});
+		return () => {
+			active = false;
+		};
+	}, [
+		isConnected,
+		piState,
+		selectedSessionId,
+		normalizedWorkspacePath,
+	]);
+
+	useEffect(() => {
+		// Only fetch commands once session is active (piState available)
+		if (!isConnected || !piState) return;
+		const targetSessionId = selectedSessionId ?? piState.session_id ?? null;
+		if (!targetSessionId) return;
+		let active = true;
+		const manager = getWsManager();
+		manager
+			.piGetCommands(targetSessionId)
+			.then((commands) => {
+				if (!active) return;
+				setCustomCommands(
+					commands.map((cmd) => ({
+						name: cmd.name,
+						description: cmd.description ?? undefined,
+					})),
+				);
+			})
+			.catch(() => {
+				if (active) setCustomCommands([]);
+			});
+		return () => {
+			active = false;
+		};
+	}, [isConnected, piState, selectedSessionId]);
+
+	const refreshStats = useCallback(async () => {
+		const targetSessionId = selectedSessionId ?? piState?.session_id ?? null;
+		if (!targetSessionId) return;
+		try {
+			const stats = await getWsManager().piGetSessionStats(targetSessionId);
+			const tokens =
+				stats && typeof stats === "object" && "tokens" in stats
+					? (stats as { tokens?: { input?: number; output?: number } }).tokens
+					: null;
+			if (tokens) {
+				setSessionTokens({
+					input: tokens.input ?? 0,
+					output: tokens.output ?? 0,
+				});
+			}
+		} catch {
+			// Ignore stats errors; token gauge will fall back to message usage.
+		}
+	}, [piState?.session_id, selectedSessionId]);
+
+	// biome-ignore lint/correctness/useExhaustiveDependencies: messages.length triggers refresh when message count changes
+	useEffect(() => {
+		if (!isConnected || isStreaming) return;
+		refreshStats();
+	}, [isConnected, isStreaming, messages.length, refreshStats]);
+
+	// Discrete sessions: selection switches message dataset (no scrolling needed)
+	useEffect(() => {
+		if (!selectedSessionId) return;
+		// Ensure we don't auto-scroll to bottom when user is navigating sessions
+		setIsUserScrolled(false);
+	}, [selectedSessionId]);
+
+	// Scroll to message when scrollToMessageId changes (from search results)
+	useEffect(() => {
+		if (!scrollToMessageId || !messagesContainerRef.current) return;
+
+		let targetId = scrollToMessageId;
+		if (targetId.startsWith("line-")) {
+			const idx = Number.parseInt(targetId.slice(5), 10);
+			const resolved = Number.isFinite(idx) ? messages[idx - 1]?.id : undefined;
+			if (resolved) targetId = resolved;
+		}
+
+		// Find the message element with this ID
+		const messageEl = messagesContainerRef.current.querySelector(
+			`[data-message-id="${targetId}"]`,
+		);
+
+		if (messageEl) {
+			// Ensure we have enough messages visible
+			const messageIndex = messages.findIndex((m) => m.id === targetId);
+			if (messageIndex !== -1) {
+				const messagesFromEnd = messages.length - messageIndex;
+				if (messagesFromEnd > visibleCount) {
+					setVisibleCount(messagesFromEnd + 10);
+				}
+			}
+
+			// Scroll to the message
+			requestAnimationFrame(() => {
+				messageEl.scrollIntoView({ behavior: "smooth", block: "center" });
+				// Add highlight animation
+				messageEl.classList.add("search-highlight");
+				setTimeout(() => {
+					messageEl.classList.remove("search-highlight");
+				}, 2000);
+			});
+
+			setIsUserScrolled(true);
+			onScrollToMessageComplete?.();
+		}
+	}, [scrollToMessageId, messages, visibleCount, onScrollToMessageComplete]);
+
+	// Initial scroll position - instant, no animation
+	useLayoutEffect(() => {
+		if (initialScrollDoneRef.current || !messagesContainerRef.current) return;
+		if (messages.length === 0) return;
+
+		initialScrollDoneRef.current = true;
+		const container = messagesContainerRef.current;
+		const cachedPosition = getCachedScrollPosition(scrollStorageKey);
+
+		if (cachedPosition !== null) {
+			// Restore user's scroll position instantly
+			container.scrollTop = cachedPosition;
+		} else {
+			// Scroll to bottom instantly (no animation)
+			container.scrollTop = container.scrollHeight;
+		}
+	}, [messages.length, scrollStorageKey]);
+
+	// Auto-scroll to bottom when NEW messages arrive (only if user hasn't scrolled up)
+	const prevMessageCountRef = useRef(messages.length);
+	useLayoutEffect(() => {
+		const prevCount = prevMessageCountRef.current;
+		prevMessageCountRef.current = messages.length;
+
+		// Only auto-scroll if messages were added (not on initial load)
+		if (messages.length > prevCount) {
+			// Ensure new messages are visible
+			setVisibleCount((prev) => Math.max(prev, INITIAL_MESSAGES));
+			if (!isUserScrolled) {
+				messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+			}
+		}
+	}, [messages.length, isUserScrolled]);
+
+	// Detect user scroll to disable auto-scroll, save position, and load more messages
+	const handleScroll = useCallback(() => {
+		const container = messagesContainerRef.current;
+		if (!container) return;
+
+		// Check if user is near the bottom (within 100px)
+		const isNearBottom =
+			container.scrollHeight - container.scrollTop - container.clientHeight <
+			100;
+
+		// Check if user scrolled to the top - load more messages
+		const isNearTop = container.scrollTop < 100;
+		if (isNearTop && visibleCount < messages.length) {
+			// Preserve scroll position when loading more
+			const prevScrollHeight = container.scrollHeight;
+			setVisibleCount((prev) =>
+				Math.min(prev + LOAD_MORE_COUNT, messages.length),
+			);
+			// After state update, adjust scroll to maintain position
+			requestAnimationFrame(() => {
+				const newScrollHeight = container.scrollHeight;
+				container.scrollTop = newScrollHeight - prevScrollHeight;
+			});
+		}
+
+		const userScrolled = !isNearBottom;
+		setIsUserScrolled(userScrolled);
+
+		// Save scroll position to cache
+		if (userScrolled) {
+			setCachedScrollPosition(container.scrollTop, scrollStorageKey);
+		} else {
+			// At bottom - clear saved position so next mount scrolls to bottom
+			setCachedScrollPosition(null, scrollStorageKey);
+		}
+	}, [scrollStorageKey, visibleCount, messages.length]);
+
+	// Focus input on mount - only on desktop to avoid opening keyboard on mobile
+	useEffect(() => {
+		// Check if device has a coarse pointer (touch) - indicates mobile
+		const isTouchDevice = window.matchMedia("(pointer: coarse)").matches;
+		if (!isTouchDevice) {
+			inputRef.current?.focus();
+		}
+	}, []);
+
+	// Auto-resize is now handled inline in handleInputChange for better performance.
+	// This effect is only needed for programmatic input changes (e.g., dictation, file select).
+	const lastInputLengthRef = useRef(input.length);
+	useEffect(() => {
+		// Keep the textarea stable during dictation; the DictationOverlay shows the transcript.
+		if (dictation.isActive) {
+			lastInputLengthRef.current = input.length;
+			if (inputRef.current) {
+				inputRef.current.style.height = "36px";
+			}
+			return;
+		}
+
+		// Only resize if the input changed programmatically (not via typing, which is handled inline)
+		const currentLength = input.length;
+		const lastLength = lastInputLengthRef.current;
+		// Skip if this is likely a single character change (typing)
+		if (Math.abs(currentLength - lastLength) <= 1) {
+			lastInputLengthRef.current = currentLength;
+			return;
+		}
+		lastInputLengthRef.current = currentLength;
+		const textarea = inputRef.current;
+		if (textarea) {
+			textarea.style.height = "auto";
+			textarea.style.height = `${Math.min(textarea.scrollHeight, 200)}px`;
+		}
+	}, [dictation.isActive, input]);
+
+	// Handle file upload
+	const handleFileUpload = useCallback(
+		async (files: FileList | null) => {
+			if (!files || files.length === 0) return;
+			
+			// File attachments require a workspace path to upload to
+			// The path is always available for default chat, but may be loading initially
+			if (!normalizedWorkspacePath) {
+				toast.error("Workspace path is still loading. Please try again in a moment.");
+				return;
+			}
+
+			setIsUploading(true);
+
+			try {
+				for (const file of Array.from(files)) {
+					try {
+						if (!normalizedWorkspacePath) {
+							throw new Error("Workspace path is still loading");
+						}
+						await uploadFileMux(normalizedWorkspacePath, file.name, file);
+
+						const attachment: FileAttachment = {
+							id: `file-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+							path: file.name,
+							filename: file.name,
+							type: "file",
+						};
+						setFileAttachments((prev) => [...prev, attachment]);
+					} catch (err) {
+						console.error("Failed to upload file:", err);
+						toast.error(`Failed to upload ${file.name}`, {
+							description: err instanceof Error ? err.message : "Unknown error",
+						});
+					}
+				}
+			} finally {
+				setIsUploading(false);
+				if (fileInputRef.current) {
+					fileInputRef.current.value = "";
+				}
+			}
+		},
+		[workspacePath],
+	);
+
+	const handleModelChange = useCallback(
+		async (value: string) => {
+			if (!canSwitchModel) {
+				throw new Error("Model switching is only available when Pi is idle.");
+			}
+			const separatorIndex = value.indexOf("/");
+			if (separatorIndex <= 0 || separatorIndex === value.length - 1) return;
+			const provider = value.slice(0, separatorIndex);
+			const modelId = value.slice(separatorIndex + 1);
+			setSelectedModelRef(value);
+			setIsSwitchingModel(true);
+			try {
+				const targetSessionId = selectedSessionId ?? piState?.session_id ?? null;
+				if (!targetSessionId) {
+					throw new Error("No active session");
+				}
+				// Use WebSocket to set model - works for both default chat and workspace
+				const manager = getWsManager();
+				await manager.piSetModel(targetSessionId, provider, modelId);
+				await refresh();
+			} catch (err) {
+				console.error("Failed to switch model:", err);
+			} finally {
+				setIsSwitchingModel(false);
+			}
+		},
+		[
+			canSwitchModel,
+			piState?.session_id,
+			refresh,
+			selectedSessionId,
+		],
+	);
+
+	const runSlashCommand = useCallback(
+		async (command: string, args: string) => {
+			setCommandError(null);
+			const trimmedArgs = args.trim();
+			const needsArgs = ["steer", "followup", "model"].includes(command);
+			if (needsArgs && !trimmedArgs) {
+				setInput(`/${command} `);
+				inputRef.current?.focus();
+				return { handled: true, clearInput: false };
+			}
+
+			switch (command) {
+				case "compact": {
+					await compact(trimmedArgs || undefined);
+					await refresh();
+					return { handled: true, clearInput: true };
+				}
+				case "new": {
+					await newSession();
+					return { handled: true, clearInput: true };
+				}
+				case "reset": {
+					await resetSession();
+					return { handled: true, clearInput: true };
+				}
+				case "abort": {
+					await abort();
+					return { handled: true, clearInput: true };
+				}
+				case "stats": {
+					const targetSessionId =
+						selectedSessionId ?? piState?.session_id ?? null;
+					if (!targetSessionId) {
+						throw new Error("No active session");
+					}
+					const stats = await getWsManager().piGetSessionStats(targetSessionId);
+					const safeStats = stats && typeof stats === "object" ? stats : null;
+					const tokens =
+						safeStats && "tokens" in safeStats
+							? (safeStats as {
+									tokens?: {
+										input?: number;
+										output?: number;
+										cache_read?: number;
+										cache_write?: number;
+										total?: number;
+									};
+								}).tokens
+							: null;
+					const text = [
+						"Session stats",
+						`- user_messages: ${
+							typeof (safeStats as { user_messages?: number })?.user_messages ===
+							"number"
+								? (safeStats as { user_messages?: number }).user_messages
+								: 0
+						}`,
+						`- assistant_messages: ${
+							typeof (safeStats as { assistant_messages?: number })
+								?.assistant_messages === "number"
+								? (safeStats as { assistant_messages?: number })
+										.assistant_messages
+								: 0
+						}`,
+						`- tool_calls: ${
+							typeof (safeStats as { tool_calls?: number })?.tool_calls ===
+							"number"
+								? (safeStats as { tool_calls?: number }).tool_calls
+								: 0
+						}`,
+						`- total_messages: ${
+							typeof (safeStats as { total_messages?: number })
+								?.total_messages === "number"
+								? (safeStats as { total_messages?: number })
+										.total_messages
+								: 0
+						}`,
+						tokens
+							? `- tokens: in ${tokens.input ?? 0}, out ${
+									tokens.output ?? 0
+								}, cache read ${tokens.cache_read ?? 0}, cache write ${
+									tokens.cache_write ?? 0
+								}, total ${tokens.total ?? 0}`
+							: "- tokens: 0",
+					].join("\n");
+					appendLocalAssistantMessage(text);
+					return { handled: true, clearInput: true };
+				}
+				case "steer": {
+					await send(trimmedArgs, { mode: "steer" });
+					return { handled: true, clearInput: true };
+				}
+				case "followup": {
+					enqueueMessage(trimmedArgs);
+					return { handled: true, clearInput: true };
+				}
+				case "model": {
+					if (!canSwitchModel) {
+						throw new Error(
+							"Model switching is only available when Pi is idle.",
+						);
+					}
+					const separatorIndex = trimmedArgs.indexOf("/");
+					if (
+						separatorIndex <= 0 ||
+						separatorIndex === trimmedArgs.length - 1
+					) {
+						throw new Error("Model must be provider/model");
+					}
+					await handleModelChange(trimmedArgs);
+					return { handled: true, clearInput: true };
+				}
+				default:
+					return { handled: false, clearInput: false };
+			}
+		},
+		[
+			abort,
+			appendLocalAssistantMessage,
+			canSwitchModel,
+			compact,
+			enqueueMessage,
+			handleModelChange,
+			newSession,
+			piState?.session_id,
+			refresh,
+			resetSession,
+			selectedSessionId,
+			send,
+		],
+	);
+
+	const handleSend = useCallback(
+		async (mode: "prompt" | "steer" | "follow_up" = "steer") => {
+			const trimmed = input.trim();
+			if (!trimmed && fileAttachments.length === 0) return;
+
+			if (slashQuery.isSlash && builtInCommandNames.has(slashQuery.command)) {
+				try {
+					const result = await runSlashCommand(
+						slashQuery.command,
+						slashQuery.args,
+					);
+					if (result.handled) {
+						if (result.clearInput) {
+							setInput("");
+							setFileAttachments([]);
+							if (inputRef.current) {
+								inputRef.current.style.height = "auto";
+							}
+						}
+						setShowSlashPopup(false);
+						return;
+					}
+				} catch (err) {
+					setCommandError(
+						err instanceof Error ? err : new Error("Command failed"),
+					);
+					return;
+				}
+			}
+
+			if (draftSaveTimeoutRef.current) {
+				clearTimeout(draftSaveTimeoutRef.current);
+				draftSaveTimeoutRef.current = null;
+			}
+
+			// Check for shell command (starts with "!")
+			const isShellCommand = trimmed.startsWith("!");
+			const shellCommand = isShellCommand ? trimmed.slice(1).trim() : "";
+
+			// Build message with file attachments
+			let message = trimmed;
+			if (isShellCommand && shellCommand) {
+				// Convert shell command to a prompt for Pi's bash tool
+				message = `Run this shell command and show me the output:\n\`\`\`bash\n${shellCommand}\n\`\`\``;
+			} else if (fileAttachments.length > 0) {
+				const fileRefs = fileAttachments.map((f) => `@${f.path}`).join(" ");
+				message = `${fileRefs}\n\n${trimmed}`;
+			}
+
+			setInput("");
+			setFileAttachments([]);
+			// Clear draft from localStorage
+			try {
+				localStorage.removeItem(draftStorageKey);
+			} catch {
+				// Ignore localStorage errors
+			}
+			// Reset textarea height
+			if (inputRef.current) {
+				inputRef.current.style.height = "auto";
+			}
+			const hasHistory =
+				messages.length > 0 || (piState?.messageCount ?? 0) > 0;
+			const effectiveMode =
+				mode === "follow_up" || mode === "steer"
+					? hasHistory
+						? mode
+						: "prompt"
+					: mode;
+
+			setSendPending(true);
+			setSendPendingSessionId(selectedSessionId ?? null);
+			let resolvedSessionId = selectedSessionId ?? null;
+			if (!resolvedSessionId) {
+				resolvedSessionId = await ensureRealSessionId();
+			}
+			if (!resolvedSessionId) {
+				setSendPending(false);
+				setSendPendingSessionId(null);
+				toast.error("Failed to create a chat session.");
+				return;
+			}
+			setSendPendingSessionId(resolvedSessionId);
+			try {
+				await send(message, { mode: effectiveMode, sessionId: resolvedSessionId });
+				// Notify that a message was sent (for sidebar refresh)
+				onMessageSent?.();
+			} catch {
+				setSendPending(false);
+				setSendPendingSessionId(null);
+				toast.error("Failed to send message.");
+			}
+		},
+		[
+			builtInCommandNames,
+			draftStorageKey,
+		fileAttachments,
+		input,
+		ensureRealSessionId,
+		messages.length,
+		onMessageSent,
+		piState?.messageCount,
+			runSlashCommand,
+			selectedSessionId,
+			send,
+			slashQuery.command,
+			slashQuery.args,
+			slashQuery.isSlash,
+		],
+	);
+
+	const handleQueueIntent = useCallback(() => {
+		if (slashQuery.isSlash && builtInCommandNames.has(slashQuery.command)) {
+			handleSend("steer");
+			return;
+		}
+		enqueueMessage();
+	}, [
+		builtInCommandNames,
+		enqueueMessage,
+		handleSend,
+		slashQuery.command,
+		slashQuery.isSlash,
+	]);
+
+	useEffect(() => {
+		if (queuedMessages.length === 0) return;
+		if (isStreaming || isAwaitingResponse) return;
+		if (queueSendInFlightRef.current) return;
+
+		const now = Date.now();
+		if (queueCooldownRef.current && now - queueCooldownRef.current < 2000) {
+			return;
+		}
+
+		const next = queuedMessages[0];
+		if (!next?.text) return;
+
+		queueSendInFlightRef.current = true;
+		(async () => {
+			setSendPending(true);
+			setSendPendingSessionId(selectedSessionId ?? null);
+			let resolvedSessionId = selectedSessionId ?? null;
+			if (!resolvedSessionId) {
+				resolvedSessionId = await ensureRealSessionId();
+			}
+			if (!resolvedSessionId) {
+				setSendPending(false);
+				setSendPendingSessionId(null);
+				toast.error("Failed to create a chat session.");
+				return;
+			}
+			setSendPendingSessionId(resolvedSessionId);
+			const hasHistory =
+				messages.length > 0 || (piState?.messageCount ?? 0) > 0;
+			const queueMode = hasHistory ? "follow_up" : "prompt";
+			send(next.text, { mode: queueMode, sessionId: resolvedSessionId })
+				.then(() => {
+					setQueuedMessages((prev) => prev.slice(1));
+					onMessageSent?.();
+				})
+				.catch(() => {
+					queueCooldownRef.current = Date.now();
+					setSendPending(false);
+					setSendPendingSessionId(null);
+					toast.error("Failed to send queued message.");
+				})
+				.finally(() => {
+					queueSendInFlightRef.current = false;
+				});
+		})().catch(() => {
+			queueSendInFlightRef.current = false;
+			setSendPending(false);
+			setSendPendingSessionId(null);
+			toast.error("Failed to send queued message.");
+		});
+	}, [
+		isAwaitingResponse,
+		isStreaming,
+		ensureRealSessionId,
+		onMessageSent,
+		queuedMessages,
+		selectedSessionId,
+		send,
+	]);
+
+	const handleQueueEdit = useCallback((id: string, text: string) => {
+		setQueuedMessages((prev) =>
+			prev.map((item) => (item.id === id ? { ...item, text } : item)),
+		);
+	}, []);
+
+	const handleQueueRemove = useCallback((id: string) => {
+		setQueuedMessages((prev) => prev.filter((item) => item.id !== id));
+	}, []);
+
+	const handleQueueMove = useCallback((id: string, direction: -1 | 1) => {
+		setQueuedMessages((prev) => {
+			const index = prev.findIndex((item) => item.id === id);
+			if (index < 0) return prev;
+			const targetIndex = index + direction;
+			if (targetIndex < 0 || targetIndex >= prev.length) return prev;
+			const next = [...prev];
+			const [item] = next.splice(index, 1);
+			next.splice(targetIndex, 0, item);
+			return next;
+		});
+	}, []);
+
+	const handleQueueClear = useCallback(() => {
+		setQueuedMessages([]);
+	}, []);
+
+	const handleKeyDown = useCallback(
+		(e: KeyboardEvent<HTMLTextAreaElement>) => {
+			if (showSlashPopup && slashQuery.isSlash && !slashQuery.args) {
+				if (
+					["ArrowDown", "ArrowUp", "Enter", "Tab", "Escape"].includes(e.key)
+				) {
+					return;
+				}
+			}
+			// Let file mention popup handle its keys
+			if (showFileMentionPopup) {
+				if (
+					["ArrowDown", "ArrowUp", "Enter", "Tab", "Escape"].includes(e.key)
+				) {
+					return;
+				}
+			}
+			if (e.key === "Enter" && !e.shiftKey) {
+				e.preventDefault();
+				// Steer on Enter, queue on Ctrl/Cmd+Enter
+				if (e.ctrlKey || e.metaKey) {
+					handleQueueIntent();
+				} else {
+					handleSend("steer");
+				}
+			}
+			if (e.key === "Escape") {
+				setShowFileMentionPopup(false);
+				setShowSlashPopup(false);
+			}
+		},
+		[
+			handleQueueIntent,
+			handleSend,
+			showFileMentionPopup,
+			showSlashPopup,
+			slashQuery,
+		],
+	);
+
+	const handleInputChange = useCallback(
+		(e: ChangeEvent<HTMLTextAreaElement>) => {
+			const textarea = e.target;
+			const value = textarea.value;
+			setInput(value);
+			setCommandError(null);
+
+			// Keep textarea stable during dictation to avoid reflow storms.
+			if (dictation.isActive) {
+				textarea.style.height = "36px";
+			} else {
+				// Auto-resize textarea immediately
+				textarea.style.height = "auto";
+				textarea.style.height = `${Math.min(textarea.scrollHeight, 200)}px`;
+			}
+
+			// Debounce draft persistence to localStorage (300ms)
+			if (draftSaveTimeoutRef.current) {
+				clearTimeout(draftSaveTimeoutRef.current);
+			}
+			draftSaveTimeoutRef.current = setTimeout(() => {
+				try {
+					if (value.trim()) {
+						localStorage.setItem(draftStorageKey, value);
+					} else {
+						localStorage.removeItem(draftStorageKey);
+					}
+				} catch {
+					// Ignore localStorage errors
+				}
+			}, 300);
+
+			if (value.startsWith("/")) {
+				setShowSlashPopup(true);
+				setShowFileMentionPopup(false);
+				setFileMentionQuery("");
+				return;
+			}
+
+			setShowSlashPopup(false);
+
+			// Show file mention popup when typing @
+			const atMatch = value.match(/@[^\s]*$/);
+			if (atMatch) {
+				setShowFileMentionPopup(true);
+				setFileMentionQuery(atMatch[1]);
+			} else {
+				setShowFileMentionPopup(false);
+				setFileMentionQuery("");
+			}
+		},
+		[draftStorageKey, dictation.isActive],
+	);
+
+	const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const suppressClickRef = useRef(false);
+
+	const clearLongPress = useCallback(() => {
+		if (longPressTimerRef.current) {
+			clearTimeout(longPressTimerRef.current);
+			longPressTimerRef.current = null;
+		}
+	}, []);
+
+	const handleSendClick = useCallback(() => {
+		if (suppressClickRef.current) {
+			suppressClickRef.current = false;
+			return;
+		}
+		handleSend("steer");
+	}, [handleSend]);
+
+	const handleSendPointerDown = useCallback(
+		(e: React.PointerEvent<HTMLButtonElement>) => {
+			if (e.pointerType !== "touch") return;
+			clearLongPress();
+			longPressTimerRef.current = setTimeout(() => {
+				suppressClickRef.current = true;
+				handleQueueIntent();
+			}, 450);
+		},
+		[clearLongPress, handleQueueIntent],
+	);
+
+	const handleSendPointerUp = useCallback(() => {
+		clearLongPress();
+	}, [clearLongPress]);
+
+	const handleSendPointerLeave = useCallback(() => {
+		clearLongPress();
+	}, [clearLongPress]);
+
+	const handleFileSelect = useCallback((file: FileAttachment) => {
+		setFileAttachments((prev) => [...prev, file]);
+		// Remove the @query from input
+		setInput((prev) => prev.replace(/@[^\s]*$/, ""));
+		setShowFileMentionPopup(false);
+		setFileMentionQuery("");
+		inputRef.current?.focus();
+	}, []);
+
+	const handleStop = useCallback(async () => {
+		await abort();
+	}, [abort]);
+
+	// Voice mode handlers
+	const handleVoiceConversation = useCallback(() => {
+		setVoiceMode("conversation");
+		dictation.start();
+	}, [dictation]);
+
+	const handleVoiceDictation = useCallback(async () => {
+		setVoiceMode("dictation");
+		await dictation.start();
+	}, [dictation]);
+
+	const handleVoiceStop = useCallback(() => {
+		// Use cancel() to stop without auto-send - user clicked X
+		dictation.cancel();
+		setVoiceMode(null);
+	}, [dictation]);
+
+	const hasVoice = !!features?.voice;
+
+	const t = useMemo(
+		() =>
+			locale === "de"
+				? {
+						noMessages: "Noch keine Nachrichten",
+						inputPlaceholder: "Nachricht eingeben...",
+						send: "Senden",
+						agentWorking: "Agent arbeitet...",
+						stopAgent: "Agent stoppen",
+						uploadFile: "Datei hochladen",
+						speakNow: "Sprechen Sie...",
+					}
+				: {
+						noMessages: "No messages yet",
+						inputPlaceholder: "Type a message...",
+						send: "Send",
+						agentWorking: "Agent working...",
+						stopAgent: "Stop agent",
+						uploadFile: "Upload file",
+						speakNow: "Speak now...",
+					},
+		[locale],
+	);
+
+	const readableId = sessionMeta ? getReadableIdFromSession(sessionMeta) : null;
+	const formattedDate = sessionMeta?.updated_at
+		? formatSessionDate(sessionMeta.updated_at)
+		: sessionMeta?.created_at
+			? formatSessionDate(sessionMeta.created_at)
+			: null;
+
+	const sessionTitle =
+		sessionMeta?.title?.trim() ||
+		assistantName?.trim() ||
+		(locale === "de" ? "Chat" : "Chat");
+
+	const SessionHeader = (
+		<div className="pb-3 mb-3 border-b border-border pr-10">
+			<div className="flex items-center justify-between">
+				<div className="flex items-center gap-3 min-w-0 flex-1">
+					<div className="min-w-0 flex-1">
+						<div className="flex items-center gap-2">
+							<h1 className="text-base sm:text-lg font-semibold text-foreground tracking-wider truncate">
+								{sessionTitle}
+							</h1>
+							{assistantName && assistantName !== sessionTitle && (
+								<span className="text-xs px-1.5 py-0.5 rounded-full text-white flex-shrink-0 bg-primary/70">
+									{assistantName}
+								</span>
+							)}
+						</div>
+						<div className="flex items-center gap-2 text-xs text-foreground/60 dark:text-muted-foreground">
+							{(workspacePath || readableId) && (
+								<span className="font-mono truncate">
+									{workspacePath?.split("/").pop()}
+									{readableId && ` [${readableId}]`}
+								</span>
+							)}
+							{(workspacePath || readableId) && formattedDate && (
+								<span className="opacity-50">|</span>
+							)}
+							{formattedDate && (
+								<span className="flex-shrink-0">{formattedDate}</span>
+							)}
+						</div>
+					</div>
+				</div>
+			</div>
+			<div className="mt-2">
+				<ContextWindowGauge
+					inputTokens={gaugeTokens.inputTokens}
+					outputTokens={gaugeTokens.outputTokens}
+					maxTokens={contextWindowLimit}
+					locale={locale}
+					compact
+				/>
+			</div>
+		</div>
+	);
+
+	return (
+		<div className={cn("flex flex-col h-full min-h-0", className)}>
+			{!hideHeader && SessionHeader}
+
+			{/* Error banner - only show if no cached messages available */}
+			{displayError && messages.length === 0 && (
+				<div className="px-4 py-2 bg-destructive/10 text-destructive text-sm">
+					{displayError.message}
+				</div>
+			)}
+
+			{/* Messages area */}
+			<div className="relative flex-1 min-h-0">
+				<div
+					ref={messagesContainerRef}
+					onScroll={handleScroll}
+					className="h-full bg-muted/30 border border-border p-2 sm:p-4 overflow-y-auto scrollbar-hide"
+					data-spotlight="chat-timeline"
+				>
+					{showSkeleton && ChatSkeleton}
+
+					{!showSkeleton &&
+						messages.length === 0 &&
+						!sendPending &&
+						!isStreaming &&
+						!isAwaitingResponse && (
+							<div className="flex items-center gap-2 text-sm text-muted-foreground">
+								<span>{t.noMessages}</span>
+							</div>
+						)}
+
+					{/* Load more indicator */}
+					{messages.length > visibleCount && (
+						<div className="text-center text-xs text-muted-foreground py-2">
+							{messages.length - visibleCount} older messages...
+						</div>
+					)}
+
+					{/* Only render the last visibleCount messages for performance */}
+					{!showSkeleton &&
+						(() => {
+							const visibleMessages = messages.slice(-visibleCount);
+							const grouped = groupPiMessages(visibleMessages);
+							const lastGroup = grouped[grouped.length - 1];
+							const activeSessionKey = selectedSessionId ?? null;
+							const isWorking =
+								isStreaming ||
+								isAwaitingResponse ||
+								(sendPending &&
+									!!sendPendingSessionId &&
+									sendPendingSessionId === activeSessionKey);
+							const needsPendingAssistant =
+								isWorking && (!lastGroup || lastGroup.role === "user");
+							const groupsToRender = needsPendingAssistant
+								? [
+										...grouped,
+										{
+											role: "assistant" as const,
+											messages: [
+												{
+													id: "pending-assistant",
+													role: "assistant" as const,
+													parts: [],
+													timestamp: Date.now(),
+													isStreaming: true,
+												},
+											],
+										},
+									]
+								: grouped;
+
+							return groupsToRender.map((group, groupIndex) => {
+								const groupSurfaces = group.messages.flatMap(
+									(m) => surfacesByMessageId.get(m.id) ?? [],
+								);
+								const groupMessageId = group.messages[0]?.id;
+								// Check if this is the last assistant group
+								const isLastAssistantGroup =
+									group.role === "assistant" &&
+									!groupsToRender
+										.slice(groupIndex + 1)
+										.some((g) => g.role === "assistant");
+								return (
+									<div
+										key={groupMessageId ?? `${group.role}-${groupIndex}`}
+										className={groupIndex > 0 ? "mt-4 sm:mt-6" : ""}
+									>
+											<PiMessageGroupCard
+												group={group}
+												assistantName={assistantName}
+												readableId={readableId}
+												workspacePath={workspacePath}
+												locale={locale}
+												a2uiSurfaces={groupSurfaces}
+												onA2UIAction={handleA2UIAction}
+												messageId={groupMessageId}
+												showWorkingIndicator={isWorking && isLastAssistantGroup}
+											/>
+									</div>
+								);
+							});
+						})()}
+
+					{/* Orphaned A2UI surfaces (no valid anchor) */}
+					{orphanedSurfaces.length > 0 && (
+						<div className="space-y-2 mt-4">
+							{orphanedSurfaces.map((surface) => (
+								<A2UICallCard
+									key={surface.surfaceId}
+									surfaceId={surface.surfaceId}
+									messages={surface.messages}
+									blocking={surface.blocking}
+									requestId={surface.requestId}
+									answered={surface.answered}
+									answeredAction={surface.answeredAction}
+									answeredAt={surface.answeredAt}
+									onAction={handleA2UIAction}
+								/>
+							))}
+						</div>
+					)}
+
+					<div ref={messagesEndRef} />
+				</div>
+			</div>
+
+			{/* Hidden file input */}
+			<input
+				ref={fileInputRef}
+				type="file"
+				multiple
+				className="hidden"
+				onChange={(e) => handleFileUpload(e.target.files)}
+			/>
+
+			{/* Chat input - matches OpenCode style exactly */}
+			<div className="chat-input-container flex flex-col gap-1 bg-muted/30 border border-border px-2 py-1 mt-2">
+				<div className="flex items-center gap-2">
+					{/* File upload button */}
+					<button
+						type="button"
+						onClick={() => fileInputRef.current?.click()}
+						disabled={isUploading}
+						className="flex-shrink-0 h-8 px-2 flex items-center justify-center text-muted-foreground hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+						title={t.uploadFile}
+					>
+						{isUploading ? (
+							<Loader2 className="size-4 animate-spin" />
+						) : (
+							<Paperclip className="size-4" />
+						)}
+					</button>
+
+					{/* Voice menu button */}
+					{hasVoice && (
+						<VoiceMenuButton
+							activeMode={voiceMode}
+							voiceState={dictation.isActive ? "listening" : "idle"}
+							onConversation={handleVoiceConversation}
+							onDictation={handleVoiceDictation}
+							onStop={handleVoiceStop}
+							locale={locale}
+							className="flex-shrink-0"
+						/>
+					)}
+
+					{/* Textarea wrapper with slash command popup */}
+					<div
+						className="flex-1 relative flex flex-col min-h-[32px]"
+						data-spotlight="chat-input"
+					>
+						<SlashCommandPopup
+							commands={slashCommands}
+							query={slashQuery.command}
+							isOpen={showSlashPopup && slashQuery.isSlash && !slashQuery.args}
+							onSelect={(cmd) => {
+								if (builtInCommandNames.has(cmd.name)) {
+									runSlashCommand(cmd.name, slashQuery.args)
+										.then((result) => {
+											if (result.clearInput) {
+												setInput("");
+												setFileAttachments([]);
+												if (inputRef.current) {
+													inputRef.current.style.height = "auto";
+												}
+											}
+											setShowSlashPopup(false);
+										})
+										.catch((err) => {
+											setCommandError(
+												err instanceof Error
+													? err
+													: new Error("Command failed"),
+											);
+											setShowSlashPopup(false);
+										});
+									return;
+								}
+
+								if (slashQuery.args.trim()) {
+									send(`/${cmd.name} ${slashQuery.args.trim()}`)
+										.then(() => {
+											setInput("");
+											setFileAttachments([]);
+											if (inputRef.current) {
+												inputRef.current.style.height = "auto";
+											}
+											setShowSlashPopup(false);
+										})
+										.catch((err) => {
+											setCommandError(
+												err instanceof Error
+													? err
+													: new Error("Command failed"),
+											);
+											setShowSlashPopup(false);
+										});
+								} else {
+									setInput(`/${cmd.name} `);
+									inputRef.current?.focus();
+									setShowSlashPopup(false);
+								}
+							}}
+							onClose={() => setShowSlashPopup(false)}
+						/>
+						<FileMentionPopup
+							query={fileMentionQuery}
+							isOpen={showFileMentionPopup}
+							workspacePath={workspacePath ?? null}
+							onSelect={handleFileSelect}
+							onClose={() => {
+								setShowFileMentionPopup(false);
+								setFileMentionQuery("");
+							}}
+						/>
+
+						{queuedMessages.length > 0 && (
+							<div className="mb-2 rounded-md border border-border/60 bg-muted/20 p-2">
+								<div className="flex items-center justify-between text-xs text-muted-foreground mb-2">
+									<span>Queued messages</span>
+									<Button
+										type="button"
+										variant="ghost"
+										size="sm"
+										className="h-6 px-2 text-xs text-muted-foreground hover:text-foreground"
+										onClick={handleQueueClear}
+									>
+										Clear
+									</Button>
+								</div>
+								<div className="space-y-1 max-h-32 overflow-y-auto pr-1">
+									{queuedMessages.map((item, index) => (
+										<div
+											key={item.id}
+											className="flex items-start gap-2 rounded-md bg-muted/30 p-1.5"
+										>
+											<span className="mt-1 text-[10px] text-muted-foreground w-4 text-right">
+												{index + 1}
+											</span>
+											<textarea
+												value={item.text}
+												onChange={(e) =>
+													handleQueueEdit(item.id, e.target.value)
+												}
+												onInput={(e) => {
+													const el = e.currentTarget;
+													el.style.height = "auto";
+													el.style.height = `${Math.min(el.scrollHeight, 120)}px`;
+												}}
+												rows={1}
+												className="flex-1 bg-transparent text-xs leading-4 resize-none outline-none"
+											/>
+											<div className="flex flex-col gap-1">
+												<Button
+													type="button"
+													variant="ghost"
+													size="icon"
+													className="h-6 w-6 text-muted-foreground hover:text-foreground"
+													disabled={index === 0}
+													onClick={() => handleQueueMove(item.id, -1)}
+												>
+													<ArrowUp className="h-3 w-3" />
+												</Button>
+												<Button
+													type="button"
+													variant="ghost"
+													size="icon"
+													className="h-6 w-6 text-muted-foreground hover:text-foreground"
+													disabled={index === queuedMessages.length - 1}
+													onClick={() => handleQueueMove(item.id, 1)}
+												>
+													<ArrowDown className="h-3 w-3" />
+												</Button>
+												<Button
+													type="button"
+													variant="ghost"
+													size="icon"
+													className="h-6 w-6 text-muted-foreground hover:text-foreground"
+													onClick={() => handleQueueRemove(item.id)}
+												>
+													<Trash2 className="h-3 w-3" />
+												</Button>
+											</div>
+										</div>
+									))}
+								</div>
+							</div>
+						)}
+
+						{/* File attachment chips */}
+						{fileAttachments.length > 0 && (
+							<div className="flex flex-wrap gap-1 mb-1">
+								{fileAttachments.map((attachment) => (
+									<FileAttachmentChip
+										key={attachment.id}
+										attachment={attachment}
+										onRemove={() => {
+											setFileAttachments((prev) =>
+												prev.filter((a) => a.id !== attachment.id),
+											);
+										}}
+									/>
+								))}
+							</div>
+						)}
+
+						{hasVoice && dictation.isActive ? (
+							<DictationOverlay
+								open
+								value={input}
+								liveTranscript={dictation.liveTranscript}
+								placeholder={t.speakNow}
+								vadProgress={dictation.vadProgress}
+								autoSend={dictation.autoSendEnabled}
+								onAutoSendChange={dictation.setAutoSendEnabled}
+								onStop={handleVoiceStop}
+								onChange={handleInputChange}
+								onKeyDown={handleKeyDown}
+								onPaste={(e) => {
+									// Handle pasted files
+									const items = e.clipboardData?.items;
+									if (!items) return;
+
+									const files: File[] = [];
+									let imageIndex = 0;
+									for (const item of Array.from(items)) {
+										if (item.kind === "file") {
+											const file = item.getAsFile();
+											if (file) {
+												// Rename generic clipboard image names to be unique
+												const isGenericName =
+													/^image\.(png|gif|jpg|jpeg|webp)$/i.test(file.name);
+												if (isGenericName) {
+													const ext = file.name.split(".").pop() || "png";
+													const uniqueName = `pasted-image-${Date.now()}-${imageIndex++}.${ext}`;
+													const renamedFile = new File([file], uniqueName, {
+														type: file.type,
+													});
+													files.push(renamedFile);
+												} else {
+													files.push(file);
+												}
+											}
+										}
+									}
+
+									if (files.length > 0) {
+										e.preventDefault();
+										const dataTransfer = new DataTransfer();
+										for (const file of files) {
+											dataTransfer.items.add(file);
+										}
+										handleFileUpload(dataTransfer.files);
+									}
+								}}
+								onFocus={(e) => {
+									// Scroll input into view on mobile when keyboard opens
+									setTimeout(() => {
+										e.target.scrollIntoView({
+											behavior: "smooth",
+											block: "nearest",
+										});
+									}, 300);
+								}}
+							/>
+						) : (
+							<textarea
+								ref={inputRef}
+								autoComplete="off"
+								autoCorrect="off"
+								autoCapitalize="sentences"
+								spellCheck={false}
+								enterKeyHint="send"
+								data-form-type="other"
+								placeholder={t.inputPlaceholder}
+								value={input}
+								onChange={handleInputChange}
+								onKeyDown={handleKeyDown}
+								onPaste={(e) => {
+									// Handle pasted files
+									const items = e.clipboardData?.items;
+									if (!items) return;
+
+									const files: File[] = [];
+									let imageIndex = 0;
+									for (const item of Array.from(items)) {
+										if (item.kind === "file") {
+											const file = item.getAsFile();
+											if (file) {
+												// Rename generic clipboard image names to be unique
+												const isGenericName =
+													/^image\.(png|gif|jpg|jpeg|webp)$/i.test(file.name);
+												if (isGenericName) {
+													const ext = file.name.split(".").pop() || "png";
+													const uniqueName = `pasted-image-${Date.now()}-${imageIndex++}.${ext}`;
+													const renamedFile = new File([file], uniqueName, {
+														type: file.type,
+													});
+													files.push(renamedFile);
+												} else {
+													files.push(file);
+												}
+											}
+										}
+									}
+
+									if (files.length > 0) {
+										e.preventDefault();
+										const dataTransfer = new DataTransfer();
+										for (const file of files) {
+											dataTransfer.items.add(file);
+										}
+										handleFileUpload(dataTransfer.files);
+									}
+								}}
+								onFocus={(e) => {
+									// Scroll input into view on mobile when keyboard opens
+									setTimeout(() => {
+										e.target.scrollIntoView({
+											behavior: "smooth",
+											block: "nearest",
+										});
+									}, 300);
+								}}
+								rows={1}
+								className="w-full bg-transparent border-none outline-none text-foreground placeholder:text-muted-foreground text-sm resize-none py-1.5 leading-5 max-h-[200px] overflow-y-auto"
+							/>
+						)}
+					</div>
+
+					{/* Stop button - only shown when streaming */}
+					{isStreaming && (
+						<Button
+							type="button"
+							onClick={handleStop}
+							className="stop-button-animated flex-shrink-0 h-8 px-2 flex items-center justify-center text-destructive hover:text-destructive/80 transition-colors bg-transparent hover:bg-transparent"
+							variant="ghost"
+							size="icon"
+							title={t.stopAgent}
+						>
+							<span className="stop-button-ring" aria-hidden>
+								<svg viewBox="0 0 100 100" role="presentation">
+									<circle
+										cx="50"
+										cy="50"
+										r="46"
+										fill="none"
+										stroke="currentColor"
+										strokeWidth="3"
+										strokeLinecap="round"
+										strokeDasharray="72 216"
+										opacity="0.8"
+									/>
+								</svg>
+							</span>
+							<StopCircle className="w-4 h-4" />
+						</Button>
+					)}
+
+					{/* Send button */}
+					<Button
+						type="button"
+						data-dictation-send
+						onClick={handleSendClick}
+						onPointerDown={handleSendPointerDown}
+						onPointerUp={handleSendPointerUp}
+						onPointerCancel={handleSendPointerUp}
+						onPointerLeave={handleSendPointerLeave}
+						disabled={!input.trim() && fileAttachments.length === 0}
+						className="flex-shrink-0 h-8 px-2 flex items-center justify-center text-muted-foreground hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed transition-colors bg-transparent hover:bg-transparent"
+						variant="ghost"
+						size="icon"
+					>
+						<Send className="w-4 h-4" />
+					</Button>
+				</div>
+			</div>
+		</div>
+	);
+}
+
+type PiMessageGroup = {
+	role: PiDisplayMessage["role"];
+	messages: PiDisplayMessage[];
+};
+
+function groupPiMessages(messages: PiDisplayMessage[]): PiMessageGroup[] {
+	const groups: PiMessageGroup[] = [];
+	let current: PiMessageGroup | null = null;
+
+	for (const message of messages) {
+		if (!current || current.role !== message.role) {
+			current = { role: message.role, messages: [message] };
+			groups.push(current);
+			continue;
+		}
+		current.messages.push(message);
+	}
+
+	return groups;
+}
+
+// Compact copy button for message headers
+function CompactCopyButton({
+	text,
+	className,
+}: { text: string; className?: string }) {
+	const [copied, setCopied] = useState(false);
+
+	const handleCopy = useCallback(() => {
+		try {
+			if (navigator.clipboard?.writeText) {
+				navigator.clipboard.writeText(text);
+			} else {
+				const textArea = document.createElement("textarea");
+				textArea.value = text;
+				textArea.style.position = "fixed";
+				textArea.style.left = "-9999px";
+				document.body.appendChild(textArea);
+				textArea.select();
+				document.execCommand("copy");
+				document.body.removeChild(textArea);
+			}
+			setCopied(true);
+			setTimeout(() => setCopied(false), 2000);
+		} catch {}
+	}, [text]);
+
+	return (
+		<button
+			type="button"
+			onClick={handleCopy}
+			className={cn("text-muted-foreground hover:text-foreground", className)}
+		>
+			{copied ? (
+				<Check className="w-3 h-3 text-primary" />
+			) : (
+				<Copy className="w-3 h-3" />
+			)}
+		</button>
+	);
+}
+
+type PiSegment =
+	| { key: string; type: "text"; content: string; timestamp: number }
+	| {
+			key: string;
+			type: "tool_use";
+			part: Extract<PiMessagePart, { type: "tool_use" }>;
+			toolResult?: Extract<PiMessagePart, { type: "tool_result" }>;
+			timestamp: number;
+	  }
+	| {
+			key: string;
+			type: "tool_result_only";
+			part: Extract<PiMessagePart, { type: "tool_result" }>;
+			timestamp: number;
+	  }
+	| { key: string; type: "thinking"; content: string; timestamp: number }
+	| { key: string; type: "compaction"; content: string; timestamp: number }
+	| { key: string; type: "error"; content: string; timestamp: number }
+	| {
+			key: string;
+			type: "a2ui";
+			surface: A2UISurfaceState;
+			timestamp: number;
+	  };
+
+const PiMessageGroupCard = memo(function PiMessageGroupCard({
+	group,
+	assistantName,
+	readableId,
+	workspacePath,
+	locale = "en",
+	a2uiSurfaces = [],
+	onA2UIAction,
+	messageId,
+	showWorkingIndicator = false,
+}: {
+	group: PiMessageGroup;
+	assistantName?: string | null;
+	readableId?: string | null;
+	workspacePath?: string | null;
+	locale?: "de" | "en";
+	a2uiSurfaces?: A2UISurfaceState[];
+	onA2UIAction?: (action: import("@/lib/a2ui/types").A2UIUserAction) => void;
+	messageId?: string;
+	showWorkingIndicator?: boolean;
+}) {
+	const isUser = group.role === "user";
+	const { verbosity } = useChatVerbosity();
+	const createdAt = group.messages[0]?.timestamp
+		? new Date(group.messages[0].timestamp)
+		: null;
+
+	// Flatten parts in order, preserve timestamps by message
+	type TimedPart = {
+		key: string;
+		part: PiMessagePart;
+		timestamp: number;
+	};
+
+	const timedParts: TimedPart[] = [];
+	for (const [msgIndex, message] of group.messages.entries()) {
+		const base = message.timestamp || Date.now();
+		for (const [partIndex, part] of message.parts.entries()) {
+			timedParts.push({
+				key: `${message.id}-${part.type}-${partIndex}`,
+				part,
+				timestamp: base + msgIndex * 100 + partIndex,
+			});
+		}
+	}
+
+	const toolResults = new Map<
+		string,
+		Extract<PiMessagePart, { type: "tool_result" }>
+	>();
+	// Also index by name for fallback matching when IDs don't align
+	const toolResultsByName = new Map<
+		string,
+		Extract<PiMessagePart, { type: "tool_result" }>
+	>();
+	const toolUseIds = new Set<string>();
+	for (const { part } of timedParts) {
+		if (part.type === "tool_result") {
+			toolResults.set(part.id, part);
+			// Index by name for fallback matching
+			if (part.name) {
+				toolResultsByName.set(part.name, part);
+			}
+		}
+		if (part.type === "tool_use") {
+			toolUseIds.add(part.id);
+		}
+	}
+
+	const segments: PiSegment[] = [];
+	let textBuf: string[] = [];
+	let textKey: string | null = null;
+	let lastTs = 0;
+	const flushText = () => {
+		if (textBuf.length === 0) return;
+		segments.push({
+			key: textKey ?? `text-${segments.length}`,
+			type: "text",
+			content: textBuf.join("\n\n"),
+			timestamp: lastTs,
+		});
+		textBuf = [];
+		textKey = null;
+	};
+
+	for (const { key, part, timestamp } of timedParts) {
+		lastTs = timestamp;
+		if (part.type === "text") {
+			// Skip empty chunks to match OpenCode feel
+			if (!part.content.trim()) continue;
+			// Skip text that looks like raw tool JSON output
+			const trimmedText = part.content.trim();
+			// Skip question tool JSON
+			const looksLikeQuestionJson =
+				trimmedText.startsWith("{") &&
+				trimmedText.includes('"questions"') &&
+				trimmedText.includes('"header"') &&
+				trimmedText.includes('"options"');
+			if (looksLikeQuestionJson) continue;
+			// Skip raw command JSON like {"command":"ls -la"} or {"filePath":"..."} 
+			const looksLikeCommandJson =
+				trimmedText.startsWith("{") &&
+				trimmedText.endsWith("}") &&
+				(trimmedText.includes('"command"') ||
+				 trimmedText.includes('"filePath"') ||
+				 trimmedText.includes('"pattern"') ||
+				 trimmedText.includes('"content"'));
+			if (looksLikeCommandJson && trimmedText.length < 500) continue;
+			if (!textKey) textKey = key;
+			textBuf.push(part.content);
+			continue;
+		}
+
+		flushText();
+
+		if (part.type === "tool_use") {
+			// Try to find matching tool_result by ID first, then fallback to name
+			const matchedResult = toolResults.get(part.id) || toolResultsByName.get(part.name);
+			segments.push({
+				key,
+				type: "tool_use",
+				part,
+				toolResult: matchedResult,
+				timestamp,
+			});
+		} else if (part.type === "tool_result") {
+			// Render only if we don't have a corresponding tool_use
+			if (!toolUseIds.has(part.id)) {
+				// Render as a standalone tool result segment (not a fake tool_use with empty input)
+				segments.push({
+					key,
+					type: "tool_result_only",
+					part,
+					timestamp,
+				});
+			}
+		} else if (part.type === "thinking") {
+			segments.push({
+				key,
+				type: "thinking",
+				content: part.content,
+				timestamp,
+			});
+		} else if (part.type === "error") {
+			segments.push({
+				key,
+				type: "error",
+				content: part.content,
+				timestamp,
+			});
+		} else if (part.type === "compaction") {
+			segments.push({
+				key,
+				type: "compaction",
+				content: part.content,
+				timestamp,
+			});
+		}
+	}
+	flushText();
+
+	for (const surface of a2uiSurfaces) {
+		segments.push({
+			key: `a2ui-${surface.surfaceId}`,
+			type: "a2ui",
+			surface,
+			timestamp: surface.createdAt.getTime(),
+		});
+	}
+
+	segments.sort((a, b) => a.timestamp - b.timestamp);
+
+	type RenderSegment =
+		| PiSegment
+		| {
+				key: string;
+				type: "tool_group";
+				segments: Array<
+					| Extract<PiSegment, { type: "tool_use" }>
+					| Extract<PiSegment, { type: "tool_result_only" }>
+				>;
+				timestamp: number;
+		  };
+
+	const renderSegments: RenderSegment[] = (() => {
+		if (verbosity === 1) {
+			const grouped: RenderSegment[] = [];
+			let toolBuffer: RenderSegment["segments"] = [];
+			let thinkingBuffer: string[] = [];
+			let thinkingKey: string | null = null;
+			let thinkingTimestamp = 0;
+
+			const flushRun = () => {
+				if (thinkingBuffer.length > 0) {
+					grouped.push({
+						key: thinkingKey ?? `thinking-${grouped.length}`,
+						type: "thinking",
+						content: thinkingBuffer.join("\n\n"),
+						timestamp: thinkingTimestamp,
+					});
+					thinkingBuffer = [];
+					thinkingKey = null;
+					thinkingTimestamp = 0;
+				}
+				if (toolBuffer.length > 0) {
+					grouped.push({
+						key: `tool-group-${toolBuffer[0].key}`,
+						type: "tool_group",
+						segments: toolBuffer,
+						timestamp: toolBuffer[0].timestamp,
+					});
+					toolBuffer = [];
+				}
+			};
+
+			for (const segment of segments) {
+				if (segment.type === "thinking") {
+					if (thinkingBuffer.length === 0) {
+						thinkingKey = segment.key;
+						thinkingTimestamp = segment.timestamp;
+					}
+					thinkingBuffer.push(segment.content);
+					continue;
+				}
+				if (segment.type === "tool_use" || segment.type === "tool_result_only") {
+					toolBuffer.push(segment);
+					continue;
+				}
+				flushRun();
+				grouped.push(segment);
+			}
+			flushRun();
+			return grouped;
+		}
+		if (verbosity !== 2) return segments;
+		const grouped: RenderSegment[] = [];
+		let toolBuffer: RenderSegment["segments"] = [];
+		let thinkingBuffer: string[] = [];
+		let thinkingKey: string | null = null;
+		let thinkingTimestamp = 0;
+
+		const flushThinking = () => {
+			if (thinkingBuffer.length === 0) return;
+			grouped.push({
+				key: thinkingKey ?? `thinking-${grouped.length}`,
+				type: "thinking",
+				content: thinkingBuffer.join("\n\n"),
+				timestamp: thinkingTimestamp,
+			});
+			thinkingBuffer = [];
+			thinkingKey = null;
+			thinkingTimestamp = 0;
+		};
+
+		const flushTools = () => {
+			if (toolBuffer.length === 0) return;
+			if (toolBuffer.length === 1) {
+				grouped.push(toolBuffer[0]);
+			} else {
+				grouped.push({
+					key: `tool-group-${toolBuffer[0].key}`,
+					type: "tool_group",
+					segments: toolBuffer,
+					timestamp: toolBuffer[0].timestamp,
+				});
+			}
+			toolBuffer = [];
+		};
+
+		const flushRun = () => {
+			flushThinking();
+			flushTools();
+		};
+
+		for (const segment of segments) {
+			if (segment.type === "tool_use" || segment.type === "tool_result_only") {
+				toolBuffer.push(segment);
+				continue;
+			}
+			if (segment.type === "thinking") {
+				if (thinkingBuffer.length === 0) {
+					thinkingKey = segment.key;
+					thinkingTimestamp = segment.timestamp;
+				}
+				thinkingBuffer.push(segment.content);
+				continue;
+			}
+			flushRun();
+			grouped.push(segment);
+		}
+		flushRun();
+		return grouped;
+	})();
+
+	const allTextContent = segments
+		.filter((s): s is Extract<PiSegment, { type: "text" }> => s.type === "text")
+		.map((s) => s.content)
+		.join("\n\n");
+
+	// Use workspace name instead of "Assistant" when assistantName is not provided
+	const workspaceName = workspacePath?.split("/").pop() || "Assistant";
+	const assistantDisplayName = assistantName || workspaceName;
+
+	const messageCard = (
+		<div
+			data-message-id={messageId}
+			className={cn(
+				"group transition-all duration-200 overflow-hidden",
+				isUser
+					? "sm:ml-8 bg-primary/20 dark:bg-primary/10 border border-primary/40 dark:border-primary/30"
+					: "sm:mr-8 bg-muted/50 border border-border",
+			)}
+		>
+			<div
+				className={cn(
+					"compact-header flex items-center gap-1 sm:gap-2 px-2 sm:px-3 py-1.5 sm:py-2 border-b",
+					isUser ? "border-primary/30 dark:border-primary/20" : "border-border",
+				)}
+			>
+				{isUser ? (
+					<User className="w-3 h-3 sm:w-4 sm:h-4 text-primary flex-shrink-0" />
+				) : (
+					<Bot className="w-3 h-3 sm:w-4 sm:h-4 text-primary flex-shrink-0" />
+				)}
+				{isUser ? (
+					<span className="text-sm font-medium text-foreground">You</span>
+				) : (
+					<span className="text-sm font-medium text-foreground">
+						{assistantDisplayName}
+						{readableId && (
+							<span className="text-[9px] text-muted-foreground/70 ml-1">
+								[{readableId}]
+							</span>
+						)}
+					</span>
+				)}
+				{group.messages.length > 1 && (
+					<span
+						className={cn(
+							"text-[9px] sm:text-[10px] px-1 border leading-none",
+							isUser
+								? "border-primary/30 text-primary"
+								: "border-border text-muted-foreground",
+						)}
+					>
+						{group.messages.length}
+					</span>
+				)}
+				<div className="flex-1" />
+				{!isUser && allTextContent && (
+					<ReadAloudButton text={allTextContent} className="ml-1" />
+				)}
+				{createdAt && !Number.isNaN(createdAt.getTime()) && (
+					<span className="text-[9px] sm:text-[10px] text-foreground/50 dark:text-muted-foreground leading-none sm:leading-normal ml-2">
+						{createdAt.toLocaleTimeString([], {
+							hour: "2-digit",
+							minute: "2-digit",
+						})}
+					</span>
+				)}
+				{allTextContent && (
+					<CopyButton
+						text={allTextContent}
+						className="hidden sm:inline-flex ml-1 [&_svg]:w-3 [&_svg]:h-3"
+					/>
+				)}
+				{allTextContent && (
+					<CompactCopyButton text={allTextContent} className="sm:hidden ml-1" />
+				)}
+			</div>
+
+			<div className="px-2 sm:px-4 py-2 sm:py-3 group space-y-3 overflow-hidden">
+				{renderSegments.length === 0 && !isUser && showWorkingIndicator && (
+					<div className="flex items-center gap-3 text-muted-foreground text-sm">
+						<BrailleSpinner />
+						<span>{locale === "de" ? "Arbeitet..." : "Working..."}</span>
+					</div>
+				)}
+				{renderSegments.length === 0 && isUser && (
+					<span className="text-muted-foreground italic text-sm">
+						No content
+					</span>
+				)}
+
+				{renderSegments.map((segment, idx) => {
+					const prevSegment = idx > 0 ? renderSegments[idx - 1] : null;
+					const needsTopMargin =
+						prevSegment?.type === "text" && segment.type !== "text";
+
+					if (segment.type === "text") {
+						return (
+							<TextWithFileReferences
+								key={segment.key}
+								content={segment.content}
+								workspacePath={workspacePath}
+								locale={locale}
+							/>
+						);
+					}
+					if (segment.type === "tool_use") {
+						return (
+							<div
+								key={segment.key}
+								className={needsTopMargin ? "mt-3" : undefined}
+							>
+								<PiPartRenderer
+									part={segment.part}
+									toolResult={segment.toolResult}
+									locale={locale}
+									workspacePath={workspacePath}
+								/>
+							</div>
+						);
+					}
+					if (segment.type === "tool_result_only") {
+						// Render standalone tool result (no matching tool_use found)
+						return (
+							<div
+								key={segment.key}
+								className={needsTopMargin ? "mt-3" : undefined}
+							>
+								<PiPartRenderer
+									part={segment.part}
+									locale={locale}
+									workspacePath={workspacePath}
+								/>
+							</div>
+						);
+					}
+					if (segment.type === "thinking") {
+						return (
+							<div
+								key={segment.key}
+								className={needsTopMargin ? "mt-3" : undefined}
+							>
+								<PiPartRenderer
+									part={{ type: "thinking", content: segment.content }}
+									locale={locale}
+									workspacePath={workspacePath}
+								/>
+							</div>
+						);
+					}
+					if (segment.type === "error") {
+						return (
+							<div
+								key={segment.key}
+								className={cn(
+									"rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-600",
+									needsTopMargin && "mt-3",
+								)}
+							>
+								{segment.content}
+							</div>
+						);
+					}
+					if (segment.type === "compaction") {
+						return (
+							<div
+								key={segment.key}
+								className={cn(
+									"text-xs text-muted-foreground",
+									needsTopMargin && "mt-3",
+								)}
+							>
+								{segment.content}
+							</div>
+						);
+					}
+					if (segment.type === "tool_group") {
+						const toolItems =
+							verbosity === 1
+								? (() => {
+										const collapsed: Array<{
+											toolName: string;
+											count: number;
+											input?: Record<string, unknown>;
+										}> = [];
+										for (const toolSegment of segment.segments) {
+											const toolName =
+												toolSegment.type === "tool_use"
+													? toolSegment.part.name
+													: toolSegment.part.name || "result";
+											const input =
+												toolSegment.type === "tool_use"
+													? (toolSegment.part.input as
+															| Record<string, unknown>
+															| undefined)
+													: undefined;
+											const last = collapsed[collapsed.length - 1];
+											if (last && last.toolName === toolName) {
+												last.count += 1;
+												continue;
+											}
+											collapsed.push({ toolName, count: 1, input });
+										}
+										return collapsed.map((entry, index) => {
+											const icon = getToolIcon(entry.toolName, entry.input);
+											return {
+												id: `${entry.toolName}-${index}`,
+												label:
+													entry.count > 1
+														? `${entry.toolName} (${entry.count})`
+														: entry.toolName,
+												icon: (
+													<span className="relative inline-flex">
+														{icon}
+														{entry.count > 1 && (
+														<span className="absolute -top-0.5 -right-0.5 w-3 h-3 bg-pink-500 text-white text-[8px] rounded-[2px] flex items-center justify-center border border-background">
+															{entry.count}
+														</span>
+														)}
+													</span>
+												),
+												render: () => null,
+											};
+										});
+									})()
+								: segment.segments.map((toolSegment) => {
+										const toolName =
+											toolSegment.type === "tool_use"
+												? toolSegment.part.name
+												: toolSegment.part.name || "result";
+										const input =
+											toolSegment.type === "tool_use"
+												? (toolSegment.part.input as
+														| Record<string, unknown>
+														| undefined)
+												: undefined;
+										return {
+											id: toolSegment.key,
+											label: toolName,
+											icon: getToolIcon(toolName, input),
+											render: () =>
+												verbosity === 1 ? null : (
+													<PiPartRenderer
+														part={toolSegment.part}
+														toolResult={
+															toolSegment.type === "tool_use"
+																? toolSegment.toolResult
+																: undefined
+														}
+														locale={locale}
+														workspacePath={workspacePath}
+														collapsible={false}
+														hideHeader={verbosity === 2}
+													/>
+												),
+										};
+									});
+						return (
+							<div
+								key={segment.key}
+								className={needsTopMargin ? "mt-3" : undefined}
+							>
+								<ToolCallGroup
+									key={`${segment.key}-verbosity-${verbosity}`}
+									mode={verbosity === 1 ? "bar" : "tabs"}
+									items={toolItems}
+									disableInteraction={verbosity === 1}
+								/>
+							</div>
+						);
+					}
+					if (segment.type === "a2ui") {
+						return (
+							<div
+								key={segment.key}
+								className={needsTopMargin ? "mt-3" : undefined}
+							>
+								<A2UICallCard
+									surfaceId={segment.surface.surfaceId}
+									messages={segment.surface.messages}
+									blocking={segment.surface.blocking}
+									requestId={segment.surface.requestId}
+									answered={segment.surface.answered}
+									answeredAction={segment.surface.answeredAction}
+									answeredAt={segment.surface.answeredAt}
+									onAction={onA2UIAction}
+									defaultCollapsed={segment.surface.answered}
+								/>
+							</div>
+						);
+					}
+					return null;
+				})}
+			</div>
+		</div>
+	);
+
+	return (
+		<ContextMenu>
+			<ContextMenuTrigger className="contents">
+				{messageCard}
+			</ContextMenuTrigger>
+			<ContextMenuContent>
+				{allTextContent && (
+					<ContextMenuItem
+						onClick={() => navigator.clipboard?.writeText(allTextContent)}
+						className="gap-2"
+					>
+						<Copy className="w-4 h-4" />
+						{locale === "de" ? "Alles kopieren" : "Copy all"}
+					</ContextMenuItem>
+				)}
+			</ContextMenuContent>
+		</ContextMenu>
+	);
+});
+
+/**
+ * Renders a single Pi message - legacy path (unused now).
+ */
+const PiMessageCard = memo(function PiMessageCard({
+	message,
+	locale,
+	workspacePath,
+	assistantName,
+	a2uiSurfaces,
+	onA2UIAction,
+}: {
+	message: PiDisplayMessage;
+	locale: "en" | "de";
+	workspacePath?: string | null;
+	assistantName?: string | null;
+	a2uiSurfaces?: A2UISurfaceState[];
+	onA2UIAction?: (action: import("@/lib/a2ui/types").A2UIUserAction) => void;
+}) {
+	const isUser = message.role === "user";
+	const isSystem = message.role === "system";
+
+	// Discrete sessions: system messages are rendered like normal messages
+	// (we don't use separators for session boundaries anymore).
+
+	const textContent = message.parts
+		.filter(
+			(p): p is Extract<PiMessagePart, { type: "text" }> => p.type === "text",
+		)
+		.map((p) => p.content)
+		.join("\n");
+
+	const createdAt = message.timestamp ? new Date(message.timestamp) : null;
+
+	// Use configured assistant name or fallback to workspace name instead of "Assistant"
+	const workspaceName = workspacePath?.split("/").pop() || "Assistant";
+	const displayName = isUser ? "You" : assistantName || workspaceName;
+
+	const messageCard = (
+		<div
+			data-message-id={message.id}
+			className={cn(
+				"group transition-all duration-200 overflow-hidden",
+				isUser
+					? "sm:ml-8 bg-primary/20 dark:bg-primary/10 border border-primary/40 dark:border-primary/30"
+					: "sm:mr-8 bg-muted/50 border border-border",
+			)}
+		>
+			{/* Header */}
+			<div
+				className={cn(
+					"compact-header flex items-center gap-1 sm:gap-2 px-2 sm:px-3 py-1.5 sm:py-2 border-b",
+					isUser ? "border-primary/30 dark:border-primary/20" : "border-border",
+				)}
+			>
+				{isUser ? (
+					<User className="w-3 h-3 sm:w-4 sm:h-4 text-primary flex-shrink-0" />
+				) : (
+					<Bot className="w-3 h-3 sm:w-4 sm:h-4 text-primary flex-shrink-0" />
+				)}
+				<span className="text-sm font-medium text-foreground">
+					{displayName}
+				</span>
+				<div className="flex-1" />
+				{/* Read aloud button for assistant messages */}
+				{!isUser && textContent && !message.isStreaming && (
+					<ReadAloudButton text={textContent} className="ml-1" />
+				)}
+				{/* Timestamp */}
+				{createdAt && !Number.isNaN(createdAt.getTime()) && (
+					<span className="text-[9px] sm:text-[10px] text-foreground/50 dark:text-muted-foreground leading-none sm:leading-normal ml-2">
+						{createdAt.toLocaleTimeString([], {
+							hour: "2-digit",
+							minute: "2-digit",
+						})}
+					</span>
+				)}
+				{/* Copy button - to the right of timestamp */}
+				{textContent && !message.isStreaming && (
+					<CopyButton
+						text={textContent}
+						className="ml-1 [&_svg]:w-3 [&_svg]:h-3"
+					/>
+				)}
+			</div>
+
+			{/* Content */}
+			<div className="px-2 sm:px-4 py-2 sm:py-3 group space-y-3 overflow-hidden">
+				{message.parts.length === 0 && !isUser && message.isStreaming && (
+					<div className="flex items-center gap-3 text-muted-foreground text-sm">
+						<BrailleSpinner />
+						<span>{locale === "de" ? "Arbeitet..." : "Working..."}</span>
+					</div>
+				)}
+
+				{/* Render parts, combining tool_use with matching tool_result */}
+				{(() => {
+					// Build a map of tool_result by id for quick lookup
+					const toolResults = new Map<string, PiMessagePart>();
+					for (const part of message.parts) {
+						if (part.type === "tool_result") {
+							toolResults.set(part.id, part);
+						}
+					}
+					// Track which tool_results we've already rendered
+					const renderedResults = new Set<string>();
+
+					return message.parts.map((part, idx) => {
+						// Skip tool_result if it will be rendered with its tool_use
+						if (part.type === "tool_result" && renderedResults.has(part.id)) {
+							return null;
+						}
+
+						// For tool_use, find and combine with matching tool_result
+						if (part.type === "tool_use") {
+							const result = toolResults.get(part.id);
+							if (result && result.type === "tool_result") {
+								renderedResults.add(part.id);
+							}
+							return (
+								<PiPartRenderer
+									key={`${message.id}-part-${idx}`}
+									part={part}
+									toolResult={
+										result?.type === "tool_result" ? result : undefined
+									}
+									locale={locale}
+									workspacePath={workspacePath}
+								/>
+							);
+						}
+
+						return (
+							<PiPartRenderer
+								key={`${message.id}-part-${idx}`}
+								part={part}
+								locale={locale}
+								workspacePath={workspacePath}
+							/>
+						);
+					});
+				})()}
+
+				{/* A2UI surfaces anchored to this message */}
+				{a2uiSurfaces && a2uiSurfaces.length > 0 && (
+					<div className="space-y-2 mt-2">
+						{a2uiSurfaces.map((surface) => (
+							<A2UICallCard
+								key={surface.surfaceId}
+								surfaceId={surface.surfaceId}
+								messages={surface.messages}
+								blocking={surface.blocking}
+								requestId={surface.requestId}
+								answered={surface.answered}
+								answeredAction={surface.answeredAction}
+								answeredAt={surface.answeredAt}
+								onAction={onA2UIAction}
+								defaultCollapsed={surface.answered}
+							/>
+						))}
+					</div>
+				)}
+
+				{/* Streaming indicator when there's already content */}
+				{message.isStreaming && message.parts.length > 0 && (
+					<div className="flex items-center gap-3 text-muted-foreground text-sm">
+						<BrailleSpinner />
+						<span>{locale === "de" ? "Arbeitet..." : "Working..."}</span>
+					</div>
+				)}
+
+				{/* Usage info */}
+				{message.usage && !message.isStreaming && (
+					<div className="text-xs text-muted-foreground pt-2 border-t border-border/50">
+						{message.usage.input + message.usage.output} tokens
+						{message.usage.cost?.total !== undefined && (
+							<span className="ml-2">
+								${message.usage.cost.total.toFixed(4)}
+							</span>
+						)}
+					</div>
+				)}
+			</div>
+		</div>
+	);
+
+	// Only wrap in context menu if there's text content to copy
+	if (!textContent) {
+		return messageCard;
+	}
+
+	return (
+		<ContextMenu>
+			<ContextMenuTrigger className="contents">
+				{messageCard}
+			</ContextMenuTrigger>
+			<ContextMenuContent>
+				<ContextMenuItem
+					onClick={() => navigator.clipboard?.writeText(textContent)}
+					className="gap-2"
+				>
+					<Copy className="w-4 h-4" />
+					{locale === "de" ? "Alles kopieren" : "Copy all"}
+				</ContextMenuItem>
+			</ContextMenuContent>
+		</ContextMenu>
+	);
+});
+
+/**
+ * Renders a single part of a Pi message.
+ */
+function PiPartRenderer({
+	part,
+	toolResult,
+	locale,
+	workspacePath,
+	collapsible = true,
+	hideHeader = false,
+}: {
+	part: PiMessagePart;
+	toolResult?: {
+		type: "tool_result";
+		id: string;
+		name?: string;
+		content: unknown;
+		isError?: boolean;
+	};
+	locale: "en" | "de";
+	workspacePath?: string | null;
+	collapsible?: boolean;
+	hideHeader?: boolean;
+}) {
+	const stripAnsi = (value: string): string =>
+		value
+			.replace(/\u001b\[[0-9;]*m/g, "")
+			.replace(/\u001b\[[0-9;]*[A-Za-z]/g, "");
+
+	const formatToolResultOutput = (content: unknown): string | undefined => {
+		const decodeBytes = (bytes: Uint8Array): string | undefined => {
+			try {
+				const text = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+				const printable = text
+					.split("")
+					.filter((ch) => ch === "\n" || ch === "\r" || ch === "\t" || ch >= " ")
+					.length;
+				if (text.length === 0) return "";
+				if (printable / text.length < 0.7) {
+					return undefined;
+				}
+				return text;
+			} catch {
+				return undefined;
+			}
+		};
+
+		if (typeof content === "string") return stripAnsi(content);
+		if (content instanceof Uint8Array) {
+			return decodeBytes(content) ?? `[binary data: ${content.byteLength} bytes]`;
+		}
+		if (Array.isArray(content)) {
+			const byteArray =
+				content.length > 0 && content.every((item) => typeof item === "number")
+					? new Uint8Array(content as number[])
+					: null;
+			if (byteArray) {
+				return (
+					decodeBytes(byteArray) ?? `[binary data: ${byteArray.byteLength} bytes]`
+				);
+			}
+			const textBlocks = content
+				.map((block) => {
+					if (typeof block === "string") return block;
+					if (!block || typeof block !== "object") return null;
+					const b = block as Record<string, unknown>;
+					if (b.type === "text" && typeof b.text === "string") return b.text;
+					return null;
+				})
+				.filter((text): text is string => Boolean(text));
+			if (textBlocks.length > 0) {
+				return stripAnsi(textBlocks.join("\n\n"));
+			}
+		}
+		if (content && typeof content === "object") {
+			const obj = content as Record<string, unknown>;
+			const base64 =
+				(typeof obj.data_base64 === "string" && obj.data_base64) ||
+				(typeof obj.content_base64 === "string" && obj.content_base64) ||
+				(typeof obj.stdout_base64 === "string" && obj.stdout_base64) ||
+				(typeof obj.bytes_base64 === "string" && obj.bytes_base64);
+			if (base64) {
+				try {
+					const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+					const decoded = decodeBytes(bytes);
+					return decoded ?? `[binary data: ${bytes.byteLength} bytes]`;
+				} catch {
+					// fall through
+				}
+			}
+			if (Array.isArray(obj.bytes)) {
+				const bytes = new Uint8Array(
+					obj.bytes.filter((item) => typeof item === "number") as number[],
+				);
+				return decodeBytes(bytes) ?? `[binary data: ${bytes.byteLength} bytes]`;
+			}
+			if (typeof obj.text === "string") return stripAnsi(obj.text);
+			if (Array.isArray(obj.content)) {
+				const nestedText = formatToolResultOutput(obj.content);
+				if (nestedText) return nestedText;
+			}
+		}
+		try {
+			return stripAnsi(JSON.stringify(content, null, 2));
+		} catch {
+			return stripAnsi(String(content));
+		}
+	};
+
+	switch (part.type) {
+		case "text":
+			return (
+				<TextWithFileReferences
+					content={part.content}
+					workspacePath={workspacePath}
+					locale={locale}
+				/>
+			);
+
+		case "thinking":
+			return (
+				<details className="text-xs text-muted-foreground border-l-2 border-muted pl-2 my-2">
+					<summary className="cursor-pointer hover:text-foreground list-none [&::-webkit-details-marker]:hidden [&::marker]:content-['']">
+						{locale === "de" ? "Gedanken" : "Thinking"}
+					</summary>
+					<pre className="mt-1 whitespace-pre-wrap font-mono text-xs">
+						{part.content}
+					</pre>
+				</details>
+			);
+
+		case "tool_use": {
+			// Determine status: if we have a toolResult, it's completed.
+			// If no toolResult but output exists in tool_use input (legacy), also treat as completed.
+			const hasResult = Boolean(toolResult);
+			const toolStatus = hasResult ? "completed" : "running";
+			return (
+				<ToolCallCard
+					part={{
+						id: part.id,
+						sessionID: "",
+						messageID: "",
+						type: "tool",
+						tool: part.name,
+						callID: part.id,
+						state: {
+							status: toolStatus,
+							input: part.input as Record<string, unknown>,
+							output: toolResult
+								? formatToolResultOutput(toolResult.content)
+								: undefined,
+							title: part.name,
+						},
+					}}
+					defaultCollapsed={true}
+					hideTodoTools={true}
+					collapsible={collapsible}
+					hideHeader={hideHeader}
+				/>
+			);
+		}
+
+		case "tool_result":
+			// Tool results are now rendered together with tool_use
+			// Only render standalone if there's no matching tool_use
+			return (
+				<ToolCallCard
+					part={{
+						id: part.id,
+						sessionID: "",
+						messageID: "",
+						type: "tool",
+						tool: part.name || "result",
+						callID: part.id,
+						state: {
+							status: "completed",
+							output: formatToolResultOutput(part.content),
+							title: part.name || "Tool Result",
+						},
+					}}
+					defaultCollapsed={true}
+					hideTodoTools={true}
+					collapsible={collapsible}
+					hideHeader={hideHeader}
+				/>
+			);
+
+		default: {
+			console.warn("Unknown Pi message part type:", part);
+			return null;
+		}
+	}
+}
+
+/**
+ * Renders text content with @file references as inline previews.
+ * Wrapped in context menu for copy functionality on mobile.
+ */
+function TextWithFileReferences({
+	content,
+	workspacePath,
+	locale = "en",
+}: {
+	content: string;
+	workspacePath?: string | null;
+	locale?: "en" | "de";
+}) {
+	// Parse @file references, excluding code blocks
+	const fileRefs = useMemo(
+		() => extractFileReferenceDetails(content),
+		[content],
+	);
+
+	return (
+		<ContextMenu>
+			<ContextMenuTrigger className="contents">
+				<div className="space-y-2 select-none sm:select-auto">
+					<MarkdownRenderer
+						content={content}
+						className="text-sm text-foreground leading-relaxed overflow-hidden"
+					/>
+					{/* Render file reference cards */}
+					{fileRefs.length > 0 && workspacePath && (
+						<div className="flex flex-wrap gap-2 mt-2">
+							{fileRefs.map((ref) => (
+								<FileReferenceCard
+									key={`${ref.filePath}-${ref.label}`}
+									filePath={ref.filePath}
+									workspacePath={workspacePath}
+									label={ref.label}
+								/>
+							))}
+						</div>
+					)}
+				</div>
+			</ContextMenuTrigger>
+			<ContextMenuContent>
+				<ContextMenuItem
+					onClick={() => navigator.clipboard?.writeText(content)}
+					className="gap-2"
+				>
+					<Copy className="w-4 h-4" />
+					{locale === "de" ? "Kopieren" : "Copy"}
+				</ContextMenuItem>
+			</ContextMenuContent>
+		</ContextMenu>
+	);
+}
+
+/**
+ * Card for displaying a @file reference with preview.
+ * Only renders if the file exists on disk.
+ */
+	export const FileReferenceCard = memo(function FileReferenceCard({
+		filePath,
+		workspacePath,
+		directUrl,
+		label,
+}: {
+	filePath: string;
+	workspacePath: string;
+	directUrl?: string;
+	label?: string;
+}) {
+		const [isLoading, setIsLoading] = useState(true);
+		const [error, setError] = useState<string | null>(null);
+		const [imageLoaded, setImageLoaded] = useState(false);
+		const [fileExists, setFileExists] = useState<boolean | null>(null);
+		const [fileUrl, setFileUrl] = useState<string | null>(null);
+		const objectUrlRef = useRef<string | null>(null);
+
+		const fileInfo = useMemo(() => getFileTypeInfo(filePath), [filePath]);
+		const isImage = fileInfo.category === "image";
+		const isVideo = fileInfo.category === "video";
+		const fileName = label || filePath.split("/").pop() || filePath;
+
+		useEffect(() => {
+			let cancelled = false;
+			setIsLoading(true);
+			setError(null);
+			setFileExists(null);
+			setImageLoaded(false);
+			setFileUrl(directUrl ?? null);
+
+			if (objectUrlRef.current) {
+				URL.revokeObjectURL(objectUrlRef.current);
+				objectUrlRef.current = null;
+			}
+
+			if (!workspacePath && !directUrl) {
+				setFileExists(false);
+				setIsLoading(false);
+				return;
+			}
+
+			const run = async () => {
+				try {
+					if (!directUrl && workspacePath) {
+						await statPathMux(workspacePath, filePath);
+					}
+
+					if (cancelled) return;
+					setFileExists(true);
+
+					if ((isImage || isVideo) && !directUrl && workspacePath) {
+						const result = await readFileMux(workspacePath, filePath);
+						if (cancelled) return;
+						const blob = new Blob([result.data]);
+						const url = URL.createObjectURL(blob);
+						objectUrlRef.current = url;
+						setFileUrl(url);
+					}
+				} catch {
+					if (cancelled) return;
+					setFileExists(false);
+					setError("File not found");
+					setIsLoading(false);
+				} finally {
+					if (!cancelled && (!isImage && !isVideo)) {
+						setIsLoading(false);
+					}
+				}
+			};
+
+			void run();
+			return () => {
+				cancelled = true;
+				if (objectUrlRef.current) {
+					URL.revokeObjectURL(objectUrlRef.current);
+					objectUrlRef.current = null;
+				}
+			};
+		}, [directUrl, filePath, isImage, isVideo, workspacePath]);
+
+	// Don't render anything if file doesn't exist
+	if (fileExists === false) {
+		return null;
+	}
+
+	// Show loading state while checking existence
+	if (fileExists === null) {
+		return null;
+	}
+
+		if ((isImage || isVideo) && !fileUrl) {
+			return null;
+		}
+
+	// For images, render inline preview
+	if (isImage) {
+		return (
+			<div className="border border-border bg-muted/20 rounded overflow-hidden max-w-md">
+				<div className="flex items-center gap-2 px-3 py-2 bg-muted/50 border-b border-border">
+					<FileImage className="w-4 h-4 text-muted-foreground" />
+					<span className="text-xs font-medium truncate">{fileName}</span>
+				</div>
+				<div className="relative">
+					{isLoading && !imageLoaded && (
+						<div className="flex items-center justify-center p-4">
+							<Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
+						</div>
+					)}
+					{error ? (
+						<div className="flex items-center justify-center p-4 text-xs text-muted-foreground">
+							{error}
+						</div>
+					) : (
+						<img
+								src={fileUrl ?? ""}
+							alt={fileName}
+							className={cn(
+								"max-w-full h-auto",
+								isLoading && !imageLoaded && "hidden",
+							)}
+							onLoad={() => {
+								setImageLoaded(true);
+								setIsLoading(false);
+							}}
+							onError={() => {
+								setError("Failed to load image");
+								setIsLoading(false);
+							}}
+						/>
+					)}
+				</div>
+			</div>
+		);
+	}
+
+	// Video preview
+	if (isVideo) {
+		return (
+			<div className="border border-border bg-muted/20 rounded overflow-hidden max-w-md">
+				<div className="flex items-center gap-2 px-3 py-2 bg-muted/50 border-b border-border">
+					<FileVideo className="w-4 h-4 text-muted-foreground" />
+					<span className="text-xs font-medium truncate">{fileName}</span>
+				</div>
+					<video
+						src={fileUrl ?? ""}
+					controls
+					playsInline
+					className="max-w-full h-auto"
+					onLoadedData={() => setIsLoading(false)}
+					onError={() => {
+						setError("Failed to load video");
+						setIsLoading(false);
+					}}
+				>
+					<track kind="captions" />
+					Your browser does not support the video tag.
+				</video>
+			</div>
+		);
+	}
+
+	// For non-images/videos, render a compact file reference link
+		const FileIcon = fileInfo.category === "code" ? FileCode : FileText;
+		return (
+			<button
+				type="button"
+				onClick={() => {
+					if (directUrl) {
+						window.open(directUrl, "_blank", "noopener");
+						return;
+					}
+					if (!workspacePath) return;
+					void downloadFileMux(workspacePath, filePath, fileName);
+				}}
+				className="inline-flex items-center gap-2 px-3 py-1.5 border border-border bg-muted/20 rounded hover:bg-muted/40 transition-colors text-sm"
+			>
+				<FileIcon className="w-4 h-4 text-muted-foreground" />
+				<span className="font-medium">{fileName}</span>
+				<span className="text-xs text-muted-foreground">{filePath}</span>
+				<ExternalLink className="w-3 h-3 text-muted-foreground" />
+			</button>
+		);
+	});

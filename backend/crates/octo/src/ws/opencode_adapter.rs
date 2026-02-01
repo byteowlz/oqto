@@ -192,20 +192,19 @@ impl OpenCodeAdapter {
                         );
                     }
                     let parsed = serde_json::from_str::<Value>(&msg.data).ok();
-                    if let Some(parsed) = parsed.as_ref() {
-                        if let Some(err) =
+                    if let Some(parsed) = parsed.as_ref()
+                        && let Some(err) =
                             extract_session_error(&self.session_id, &msg.event, parsed)
-                        {
-                            let key = format!("{}::{}", err.error_type, err.message);
-                            if last_error_key.as_ref() != Some(&key) {
-                                last_error_key = Some(key);
-                                on_event(WsEvent::SessionError {
-                                    session_id: err.session_id,
-                                    error_type: err.error_type,
-                                    message: err.message,
-                                    details: err.details,
-                                });
-                            }
+                    {
+                        let key = format!("{}::{}", err.error_type, err.message);
+                        if last_error_key.as_ref() != Some(&key) {
+                            last_error_key = Some(key);
+                            on_event(WsEvent::SessionError {
+                                session_id: err.session_id,
+                                error_type: err.error_type,
+                                message: err.message,
+                                details: err.details,
+                            });
                         }
                     }
                     // Parse and translate the event

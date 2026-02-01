@@ -83,8 +83,6 @@ export function StatusBar() {
 	const {
 		workspaceSessions,
 		selectedChatSessionId,
-		mainChatActive,
-		mainChatCurrentSessionId,
 	} = useApp();
 
 	const isAdmin = user?.role === "admin";
@@ -94,12 +92,10 @@ export function StatusBar() {
 
 	// Storage key matches sessions app: octo:chatModel:${chatSessionId}
 	const modelStorageKey = useMemo(() => {
-		const activeSessionId = mainChatActive
-			? mainChatCurrentSessionId
-			: selectedChatSessionId;
+		const activeSessionId = selectedChatSessionId;
 		if (!activeSessionId) return null;
 		return `octo:chatModel:${activeSessionId}`;
-	}, [mainChatActive, mainChatCurrentSessionId, selectedChatSessionId]);
+	}, [selectedChatSessionId]);
 
 	// Read model from localStorage and listen for changes
 	useEffect(() => {

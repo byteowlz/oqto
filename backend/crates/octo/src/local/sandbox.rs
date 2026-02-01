@@ -57,19 +57,15 @@ use std::io::Write;
 /// Policy for guarded path access.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum GuardPolicy {
     /// Auto-approve access, but log it.
     Auto,
     /// Prompt user for approval.
+    #[default]
     Prompt,
     /// Deny access (redundant with deny_read, but explicit).
     Deny,
-}
-
-impl Default for GuardPolicy {
-    fn default() -> Self {
-        Self::Prompt
-    }
 }
 
 /// Configuration for octo-guard (FUSE filesystem for runtime access control).
@@ -929,8 +925,14 @@ impl SandboxConfig {
             dirs::home_dir()
         };
 
-        // Home directory base (for tool directories)
-        // Bind home read-only FIRST, then overlay writable paths on top
+        // Home directory binding strategy:
+        // - Development/minimal profiles: bind home read-write, protect sensitive paths via deny_read
+        // - Strict profile: bind home read-only, overlay specific allow_write paths
+        //
+        // The development approach is more permissive but simpler - agents can write anywhere
+        // in home except explicitly denied paths. octo-guard provides additional runtime control.
+        let home_writable = self.profile == "development" || self.profile == "minimal";
+
         if let Some(ref home) = target_home {
             let home_str = home.to_string_lossy().to_string();
             info!(
@@ -939,34 +941,48 @@ impl SandboxConfig {
                 username.unwrap_or("(current)")
             );
 
-            // Bind home read-only first
-            args.push("--ro-bind".to_string());
-            args.push(home_str.clone());
-            args.push(home_str.clone());
-            debug!("Bound home directory '{}' as read-only", home_str);
+            if home_writable {
+                // Development mode: bind home read-write, rely on deny_read for protection
+                args.push("--bind".to_string());
+                args.push(home_str.clone());
+                args.push(home_str.clone());
+                debug!(
+                    "Bound home directory '{}' as read-write (profile={})",
+                    home_str, self.profile
+                );
+            } else {
+                // Strict mode: bind home read-only first
+                args.push("--ro-bind".to_string());
+                args.push(home_str.clone());
+                args.push(home_str.clone());
+                debug!(
+                    "Bound home directory '{}' as read-only (profile={})",
+                    home_str, self.profile
+                );
 
-            // Then bind writable directories on top
-            for path in &self.allow_write {
-                let expanded = Self::expand_home_for_user(path, username);
-                let expanded_str = expanded.to_string_lossy().to_string();
+                // Then bind writable directories on top
+                for path in &self.allow_write {
+                    let expanded = Self::expand_home_for_user(path, username);
+                    let expanded_str = expanded.to_string_lossy().to_string();
 
-                // For paths under home, always add them (bwrap will create if needed)
-                // For absolute paths like /tmp, check existence
-                if path.starts_with("~/") || expanded.exists() {
-                    args.push("--bind".to_string());
-                    args.push(expanded_str.clone());
-                    args.push(expanded_str.clone());
-                    debug!(
-                        "Allow-write: '{}' -> '{}' (exists: {})",
-                        path,
-                        expanded_str,
-                        expanded.exists()
-                    );
-                } else {
-                    debug!(
-                        "Skipping allow-write '{}' -> '{}' (path does not exist)",
-                        path, expanded_str
-                    );
+                    // For paths under home, always add them (bwrap will create if needed)
+                    // For absolute paths like /tmp, check existence
+                    if path.starts_with("~/") || expanded.exists() {
+                        args.push("--bind".to_string());
+                        args.push(expanded_str.clone());
+                        args.push(expanded_str.clone());
+                        debug!(
+                            "Allow-write: '{}' -> '{}' (exists: {})",
+                            path,
+                            expanded_str,
+                            expanded.exists()
+                        );
+                    } else {
+                        debug!(
+                            "Skipping allow-write '{}' -> '{}' (path does not exist)",
+                            path, expanded_str
+                        );
+                    }
                 }
             }
         } else {
@@ -983,6 +999,11 @@ impl SandboxConfig {
         args.push(workspace_str.clone());
         args.push(workspace_str.clone());
         debug!("Bound workspace '{}' as read-write", workspace_str);
+
+        // Ensure sandboxed processes start in the workspace directory.
+        args.push("--chdir".to_string());
+        args.push(workspace_str.clone());
+        debug!("Set sandbox working directory to '{}'", workspace_str);
 
         // SECURITY: Always bind .octo/ as read-only to prevent agents from
         // modifying their own sandbox configuration. This is applied AFTER
@@ -1258,9 +1279,11 @@ deny_write = []
         let config: SandboxConfig = file.into();
 
         // sandbox.toml should always be in deny_write, even if not specified
-        assert!(config
-            .deny_write
-            .contains(&"~/.config/octo/sandbox.toml".to_string()));
+        assert!(
+            config
+                .deny_write
+                .contains(&"~/.config/octo/sandbox.toml".to_string())
+        );
     }
 
     #[test]

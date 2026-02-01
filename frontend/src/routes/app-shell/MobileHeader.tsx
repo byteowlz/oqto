@@ -1,7 +1,10 @@
 import type { AppConfig } from "@/components/app-context";
 import { Button } from "@/components/ui/button";
 import type { ChatSession } from "@/lib/control-plane-client";
-import { formatSessionDate, resolveReadableId } from "@/lib/session-utils";
+import {
+	formatSessionDate,
+	getReadableIdFromSession,
+} from "@/lib/session-utils";
 import { Menu, Plus } from "lucide-react";
 import { memo } from "react";
 
@@ -14,9 +17,6 @@ export interface MobileHeaderProps {
 	activeApp: AppConfig | null;
 	resolveText: (text: string | { en: string; de: string }) => string;
 	selectedChatFromHistory: ChatSession | null;
-	opencodeDirectory: string | null;
-	mainChatActive: boolean;
-	mainChatAssistantName: string | null;
 	onMenuOpen: () => void;
 	onNewChat: () => void;
 }
@@ -28,9 +28,6 @@ export const MobileHeader = memo(function MobileHeader({
 	activeApp,
 	resolveText,
 	selectedChatFromHistory,
-	opencodeDirectory,
-	mainChatActive,
-	mainChatAssistantName,
 	onMenuOpen,
 	onNewChat,
 }: MobileHeaderProps) {
@@ -65,32 +62,22 @@ export const MobileHeader = memo(function MobileHeader({
 								.trim() || "Chat"}
 						</div>
 						<div className="text-[10px] text-muted-foreground truncate">
-							{opencodeDirectory && (
+							{selectedChatFromHistory.workspace_path && (
 								<span className="font-medium">
-									{opencodeDirectory.split("/").filter(Boolean).pop()}
+									{selectedChatFromHistory.workspace_path
+										.split("/")
+										.filter(Boolean)
+										.pop()}
 									{" | "}
 								</span>
 							)}
-							{resolveReadableId(
-								selectedChatFromHistory.id,
-								selectedChatFromHistory.readable_id,
-							)}
+							{getReadableIdFromSession(selectedChatFromHistory)}
 							{selectedChatFromHistory.updated_at && (
 								<span className="opacity-60">
 									{" "}
 									| {formatSessionDate(selectedChatFromHistory.updated_at)}
 								</span>
 							)}
-						</div>
-					</div>
-				) : mainChatActive ? (
-					<div className="flex-1 min-w-0 px-3 text-center">
-						<div className="text-sm font-medium text-foreground truncate">
-							{mainChatAssistantName ||
-								(locale === "de" ? "Hauptchat" : "Main Chat")}
-						</div>
-						<div className="text-[10px] text-muted-foreground truncate">
-							{locale === "de" ? "Hauptchat" : "Main Chat"}
 						</div>
 					</div>
 				) : (

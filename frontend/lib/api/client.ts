@@ -80,7 +80,8 @@ const env =
 
 function normalizeControlPlaneUrl(value: string | null | undefined): string {
 	if (!value) return "";
-	return trimTrailingSlash(value.trim());
+	const trimmed = trimTrailingSlash(value.trim());
+	return trimmed.replace(/\/api$/, "");
 }
 
 export function getControlPlaneBaseUrl(): string {
@@ -117,12 +118,7 @@ export function controlPlaneDirectBaseUrl(): string {
 export function controlPlaneApiUrl(path: string): string {
 	const base = getControlPlaneBaseUrl();
 	const normalizedPath = path.startsWith("/") ? path : `/${path}`;
-	if (base) {
-		const stripped = normalizedPath.startsWith("/api")
-			? normalizedPath.replace(/^\/api/, "")
-			: normalizedPath;
-		return `${base}${stripped}`;
-	}
+	if (base) return `${base}${normalizedPath}`;
 	if (normalizedPath.startsWith("/api")) return normalizedPath;
 	return `/api${normalizedPath}`;
 }

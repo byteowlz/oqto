@@ -56,6 +56,10 @@ serve:
 dev:
     cd frontend && bun dev
 
+# Start frontend dev server with verbose WS logs and control plane URL
+run-frontend:
+    cd frontend && VITE_CONTROL_PLANE_URL="http://archlinux:8080" VITE_DEBUG_WS=1 VITE_DEBUG_PI=1 bun dev
+
 # Install all dependencies and binaries
 install:
     cd frontend && bun install
@@ -73,12 +77,19 @@ install-system:
     #!/usr/bin/env bash
     set -euo pipefail
 
+    # Store the octo repo root for later use
+    OCTO_ROOT="$(pwd)"
+
     # Prompt for sudo once up-front
     sudo -v
 
     just install
-    (cd ../sldr && cargo install --path crates/sldr-cli)
-    (cd ../sldr && cargo install --path crates/sldr-server)
+    
+    # Install sldr binaries (as current user, not sudo - avoids rustup issues with root)
+    cd ../sldr && cargo install --path crates/sldr-cli && cargo install --path crates/sldr-server
+    
+    # Return to octo directory for systemd file installation
+    cd "$OCTO_ROOT"
 
     if [[ "$(uname -s)" != "Linux" ]]; then
       echo "install-system is Linux-only"
@@ -143,6 +154,11 @@ reload:
 # Reload backend but don't restart server
 reload-stop:
     ./scripts/reload-backend.sh --no-start
+
+# Restart system runner socket for current user
+restart-runner:
+    sudo pkill -f "/usr/local/bin/octo-runner --socket /run/octo/runner-sockets/$(id -un)/octo-runner.sock" || true
+    nohup /usr/local/bin/octo-runner --socket "/run/octo/runner-sockets/$(id -un)/octo-runner.sock" >/tmp/octo-runner.log 2>&1 &
 
 # Bump version across all components
 # Usage: just bump patch|minor|major|x.y.z

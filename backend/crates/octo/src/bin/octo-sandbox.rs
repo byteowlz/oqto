@@ -114,7 +114,7 @@ fn exec_direct(command: &[String], workspace: &PathBuf) -> Result<()> {
 fn exec_sandboxed(
     config: &SandboxConfig,
     command: &[String],
-    workspace: &PathBuf,
+    workspace: &std::path::Path,
     dry_run: bool,
 ) -> Result<()> {
     let bwrap_args = match config.build_bwrap_args_for_user(workspace, None) {
