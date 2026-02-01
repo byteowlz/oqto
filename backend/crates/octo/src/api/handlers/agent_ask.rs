@@ -50,10 +50,12 @@ pub async fn agents_search_sessions(
     let sessions = if let Some(q) = &query.q {
         pi_service
             .search_sessions(user.id(), q)
+            .await
             .map_err(|e| ApiError::internal(format!("Failed to search sessions: {}", e)))?
     } else {
         pi_service
             .list_sessions(user.id())
+            .await
             .map_err(|e| ApiError::internal(format!("Failed to list sessions: {}", e)))?
     };
 
@@ -271,6 +273,7 @@ pub async fn agents_ask(
             // Search for matching sessions
             let matches = pi_service
                 .search_sessions(user.id(), &query)
+                .await
                 .map_err(|e| ApiError::internal(format!("Failed to search sessions: {}", e)))?;
 
             if matches.is_empty() {
@@ -321,9 +324,12 @@ pub async fn agents_ask(
                 Ok(session) => session,
                 Err(_) => {
                     // Try fuzzy search
-                    let matches = pi_service.search_sessions(user.id(), &id).map_err(|e| {
-                        ApiError::internal(format!("Failed to search sessions: {}", e))
-                    })?;
+                    let matches = pi_service
+                        .search_sessions(user.id(), &id)
+                        .await
+                        .map_err(|e| {
+                            ApiError::internal(format!("Failed to search sessions: {}", e))
+                        })?;
 
                     if matches.is_empty() {
                         return Err(ApiError::not_found(format!("Session not found: {}", id)));

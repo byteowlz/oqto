@@ -108,7 +108,7 @@ pub async fn get_workspace_session_messages(
 ) -> ApiResult<Json<Vec<crate::pi_workspace::PiSessionMessage>>> {
     let svc = get_workspace_pi_service(&state)?;
     let work_dir = validate_workspace_path(&state, user.id(), &query.workspace_path)?;
-    let messages = match svc.get_session_messages(&work_dir, &session_id) {
+    let messages = match svc.get_session_messages(user.id(), &work_dir, &session_id) {
         Ok(messages) => messages,
         Err(err) => {
             let msg = err.to_string();
@@ -248,6 +248,13 @@ pub async fn ws_handler(
     let mmry_state = state.mmry.clone();
 
     Ok(ws.on_upgrade(move |socket| {
-        crate::api::main_chat_pi::handle_ws(socket, session, user_id, None, mmry_state)
+        crate::api::main_chat_pi::handle_ws(
+            socket,
+            session,
+            user_id,
+            None,
+            mmry_state,
+            None,
+        )
     }))
 }

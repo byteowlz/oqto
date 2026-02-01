@@ -2084,9 +2084,10 @@ Cmnd_Alias OCTO_GROUPADD = /usr/sbin/groupadd ${octo_group}
 # User creation - RESTRICTED to safe UID range and ${user_prefix} prefix
 # Regex matches: -u NNNN -g ${octo_group} -s /bin/bash -m/-M -c COMMENT USERNAME
 # UID must be ${uid_first_digit}000-${uid_first_digit}999, username must start with ${user_prefix}
+# GECOS format: "Octo platform user: <user_id>" - use .* to match including spaces
 Cmnd_Alias OCTO_USERADD = \\
-    /usr/sbin/useradd ^-u [${uid_first_digit}][0-9][0-9][0-9] -g ${octo_group} -s /bin/bash -m -c [^ ]+ ${user_prefix}[a-z0-9_]+\$, \\
-    /usr/sbin/useradd ^-u [${uid_first_digit}][0-9][0-9][0-9] -g ${octo_group} -s /bin/bash -M -c [^ ]+ ${user_prefix}[a-z0-9_]+\$
+    /usr/sbin/useradd ^-u [${uid_first_digit}][0-9][0-9][0-9] -g ${octo_group} -s /bin/bash -m -c .* ${user_prefix}[a-z0-9_]+\$, \\
+    /usr/sbin/useradd ^-u [${uid_first_digit}][0-9][0-9][0-9] -g ${octo_group} -s /bin/bash -M -c .* ${user_prefix}[a-z0-9_]+\$
 
 # User deletion - only ${user_prefix} users, no home removal (-r flag not allowed)
 Cmnd_Alias OCTO_USERDEL = /usr/sbin/userdel ^${user_prefix}[a-z0-9_]+\$

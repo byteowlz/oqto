@@ -41,7 +41,7 @@ pub enum PiCommand {
     NewSession {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(rename = "parentSession", skip_serializing_if = "Option::is_none")]
         parent_session: Option<String>,
     },
     /// Get current session state.
@@ -127,7 +127,7 @@ pub enum PiEvent {
     /// Turn completes.
     TurnEnd {
         message: AgentMessage,
-        #[serde(default)]
+        #[serde(rename = "toolResults", default)]
         tool_results: Vec<ToolResultMessage>,
     },
     /// Message begins.
@@ -168,6 +168,8 @@ pub enum PiEvent {
         #[serde(rename = "isError")]
         is_error: bool,
     },
+    /// Extension UI request (RPC mode).
+    ExtensionUiRequest(ExtensionUiRequest),
     /// Auto-compaction begins.
     AutoCompactionStart { reason: String },
     /// Auto-compaction completes.
@@ -201,13 +203,18 @@ pub enum PiEvent {
         event: String,
         error: String,
     },
+    /// Unknown event type (forward-compatible).
+    #[serde(other)]
+    Unknown,
 }
 
 /// Streaming delta events for assistant messages.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AssistantMessageEvent {
-    Start,
+    Start {
+        partial: Value,
+    },
     TextStart {
         #[serde(rename = "contentIndex")]
         content_index: usize,
@@ -264,10 +271,17 @@ pub enum AssistantMessageEvent {
     },
     Done {
         reason: String, // "stop", "length", "toolUse"
+        #[serde(default)]
+        message: Option<AgentMessage>,
     },
     Error {
         reason: String, // "aborted", "error"
+        #[serde(default)]
+        error: Option<AgentMessage>,
     },
+    /// Unknown assistant event type (forward-compatible).
+    #[serde(other)]
+    Unknown,
 }
 
 // ============================================================================
@@ -387,6 +401,8 @@ pub struct PiState {
     pub session_file: Option<String>,
     #[serde(rename = "sessionId")]
     pub session_id: Option<String>,
+    #[serde(rename = "sessionName")]
+    pub session_name: Option<String>,
     #[serde(rename = "autoCompactionEnabled")]
     pub auto_compaction_enabled: bool,
     #[serde(rename = "messageCount")]
@@ -441,6 +457,38 @@ pub struct SessionStats {
     pub total_messages: u64,
     pub tokens: SessionTokens,
     pub cost: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExtensionUiRequest {
+    pub id: String,
+    pub method: String,
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub message: Option<String>,
+    #[serde(default)]
+    pub options: Option<Vec<String>>,
+    #[serde(default)]
+    pub timeout: Option<u64>,
+    #[serde(rename = "statusKey", default)]
+    pub status_key: Option<String>,
+    #[serde(rename = "statusText", default)]
+    pub status_text: Option<String>,
+    #[serde(rename = "widgetKey", default)]
+    pub widget_key: Option<String>,
+    #[serde(rename = "widgetLines", default)]
+    pub widget_lines: Option<Vec<String>>,
+    #[serde(rename = "widgetPlacement", default)]
+    pub widget_placement: Option<String>,
+    #[serde(default)]
+    pub text: Option<String>,
+    #[serde(default)]
+    pub prefill: Option<String>,
+    #[serde(default)]
+    pub placeholder: Option<String>,
+    #[serde(rename = "notifyType", default)]
+    pub notify_type: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

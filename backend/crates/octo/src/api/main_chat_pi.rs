@@ -656,6 +656,7 @@ pub async fn list_pi_sessions(
 
     let sessions = pi_service
         .list_sessions(user.id())
+        .await
         .map_err(|e| ApiError::internal(format!("Failed to list Pi sessions: {}", e)))?;
 
     Ok(Json(sessions))
@@ -763,7 +764,10 @@ pub async fn get_pi_session_messages(
 ) -> ApiResult<Json<Vec<PiSessionMessage>>> {
     let pi_service = get_pi_service(&state)?;
 
-    let messages = match pi_service.get_session_messages(user.id(), &session_id) {
+    let messages = match pi_service
+        .get_session_messages(user.id(), &session_id)
+        .await
+    {
         Ok(messages) => messages,
         Err(err) => {
             if pi_service.is_active_session(user.id(), &session_id).await
@@ -826,6 +830,7 @@ pub async fn update_pi_session(
     if let Some(title) = request.title {
         let session = pi_service
             .update_session_title(user.id(), &session_id, &title)
+            .await
             .map_err(|e| ApiError::internal(format!("Failed to update Pi session: {}", e)))?;
 
         info!(
@@ -837,6 +842,7 @@ pub async fn update_pi_session(
         // No updates requested, return current session info
         let sessions = pi_service
             .list_sessions(user.id())
+            .await
             .map_err(|e| ApiError::internal(format!("Failed to list sessions: {}", e)))?;
 
         let session = sessions
@@ -879,9 +885,22 @@ pub async fn ws_handler(
     let user_id = user.id().to_string();
     let main_chat_svc = state.main_chat.clone();
     let mmry_state = state.mmry.clone();
+    let pi_service_for_ws = state
+        .main_chat_pi
+        .clone()
+        .ok_or_else(|| ApiError::internal("Main Chat Pi service not initialized"))?;
     info!("Upgrading to WebSocket for user {}", user_id);
 
-    Ok(ws.on_upgrade(move |socket| handle_ws(socket, session, user_id, main_chat_svc, mmry_state)))
+    Ok(ws.on_upgrade(move |socket| {
+        handle_ws(
+            socket,
+            session,
+            user_id,
+            main_chat_svc,
+            mmry_state,
+            Some(pi_service_for_ws),
+        )
+    }))
 }
 
 /// Handle WebSocket connection for Pi events.
@@ -891,6 +910,7 @@ pub(crate) async fn handle_ws(
     user_id: String,
     main_chat_svc: Option<Arc<MainChatService>>,
     mmry_state: super::state::MmryState,
+    pi_service: Option<Arc<MainChatPiService>>,
 ) {
     let (mut sender, mut receiver) = socket.split();
 
@@ -936,6 +956,7 @@ pub(crate) async fn handle_ws(
     let user_id_for_events = user_id.clone();
     let session_for_events = Arc::clone(&session);
     let mmry_state_for_events = mmry_state.clone();
+    let pi_service_for_events = pi_service.clone();
 
     // Persist Pi auto-compaction summaries to main_chat.db so they can be injected
     // even when the OpenCode-side plugin is not active.
@@ -952,6 +973,24 @@ pub(crate) async fn handle_ws(
                 .await
                 .ok()
                 .and_then(|s| s.session_id);
+
+            // Handle extension UI events that should update session metadata.
+            if let crate::pi::PiEvent::ExtensionUiRequest(req) = &event {
+                if req.method == "setTitle" {
+                    if let (Some(title), Some(session_id), Some(pi_svc)) = (
+                        req.title.as_ref(),
+                        current_session_id.as_ref(),
+                        pi_service_for_events.as_ref(),
+                    ) {
+                        if let Err(e) = pi_svc
+                            .update_session_title(&user_id_for_events, session_id, title)
+                            .await
+                        {
+                            warn!("Failed to update Pi session title: {}", e);
+                        }
+                    }
+                }
+            }
 
             // Accumulate message content for saving (only from the primary WS connection).
             if can_persist {
@@ -1184,7 +1223,7 @@ impl MessageAccumulator {
                         "input": tool_call.arguments
                     }));
                 }
-                AssistantMessageEvent::Error { reason } => {
+                AssistantMessageEvent::Error { reason, .. } => {
                     self.tool_calls.push(serde_json::json!({
                         "type": "error",
                         "reason": reason
@@ -1411,7 +1450,7 @@ fn transform_pi_event_for_ws(event: &PiEvent, session_id: Option<&str>) -> Optio
                     },
                     "session_id": session_id
                 })),
-                AssistantMessageEvent::Error { reason } => Some(serde_json::json!({
+                AssistantMessageEvent::Error { reason, .. } => Some(serde_json::json!({
                     "type": "error",
                     "data": reason,
                     "session_id": session_id

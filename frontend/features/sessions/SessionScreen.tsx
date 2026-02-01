@@ -4484,6 +4484,7 @@ export const SessionScreen = memo(function SessionScreen() {
 					onTokenUsageChange={setWorkspacePiTokenUsage}
 					onTodosChange={setWorkspacePiTodos}
 					onMessageSent={refreshChatHistory}
+					onMessageComplete={refreshChatHistory}
 				/>
 			);
 		}
@@ -5436,6 +5437,7 @@ export const SessionScreen = memo(function SessionScreen() {
 								onScrollToMessageComplete={() => setScrollToMessageId(null)}
 								newSessionTrigger={mainChatNewSessionTrigger}
 								onMessageSent={notifyMainChatSessionActivity}
+								onMessageComplete={notifyMainChatSessionActivity}
 								onTodosChange={setMainChatTodos}
 							/>
 						) : (
@@ -5694,6 +5696,7 @@ export const SessionScreen = memo(function SessionScreen() {
 								onScrollToMessageComplete={() => setScrollToMessageId(null)}
 								newSessionTrigger={mainChatNewSessionTrigger}
 								onMessageSent={notifyMainChatSessionActivity}
+								onMessageComplete={notifyMainChatSessionActivity}
 								onTodosChange={setMainChatTodos}
 							/>
 						)
@@ -5828,6 +5831,7 @@ export const SessionScreen = memo(function SessionScreen() {
 												}
 												newSessionTrigger={mainChatNewSessionTrigger}
 												onMessageSent={notifyMainChatSessionActivity}
+												onMessageComplete={notifyMainChatSessionActivity}
 												onTodosChange={setMainChatTodos}
 											/>
 										) : (

@@ -22,7 +22,8 @@
 //! - **Container**: HTTP client to pi-bridge in container
 
 use anyhow::{Context, Result};
-use log::{debug, info};
+use base64::Engine;
+use log::{debug, info, warn};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::HashMap;
@@ -38,6 +39,7 @@ use crate::pi::{
     SessionStats,
 };
 use crate::runner::client::RunnerClient;
+use crate::local::LinuxUsersConfig;
 
 /// Session freshness thresholds
 const SESSION_MAX_AGE_HOURS: u64 = 4;
@@ -292,7 +294,7 @@ impl StreamSnapshot {
                         input: tool_call.arguments.clone(),
                     });
                 }
-                AssistantMessageEvent::Error { reason } => {
+                AssistantMessageEvent::Error { reason, .. } => {
                     if message.role == "assistant" {
                         self.is_streaming = true;
                         self.has_message = true;
@@ -429,6 +431,8 @@ pub struct MainChatPiService {
     single_user: bool,
     /// Main Chat persistent store (for injecting session summaries).
     main_chat: Arc<crate::main_chat::MainChatService>,
+    /// Linux user isolation configuration (multi-user mode).
+    linux_users: Option<LinuxUsersConfig>,
     /// Idle timeout in seconds (sessions idle longer than this may be cleaned up).
     idle_timeout_secs: u64,
 }
@@ -440,6 +444,7 @@ impl MainChatPiService {
         single_user: bool,
         config: MainChatPiServiceConfig,
         main_chat: Arc<crate::main_chat::MainChatService>,
+        linux_users: Option<LinuxUsersConfig>,
     ) -> Self {
         info!(
             "MainChatPiService initialized with runtime mode: {}",
@@ -453,6 +458,7 @@ impl MainChatPiService {
             workspace_dir,
             single_user,
             main_chat,
+            linux_users,
             idle_timeout_secs: DEFAULT_IDLE_TIMEOUT_SECS,
         }
     }
@@ -543,15 +549,32 @@ impl MainChatPiService {
     }
 
     /// Get the Pi agent directory for a working directory.
-    fn get_pi_agent_dir(&self, _work_dir: &PathBuf) -> PathBuf {
-        dirs::home_dir()
-            .map(|home| home.join(".pi").join("agent"))
-            .unwrap_or_else(|| PathBuf::from(".pi/agent"))
+    fn get_pi_agent_dir(&self, user_id: &str) -> PathBuf {
+        let home = if self.single_user || self.linux_users.is_none() {
+            dirs::home_dir()
+        } else if let Some(linux_users) = self.linux_users.as_ref() {
+            match linux_users.get_home_dir(user_id) {
+                Ok(Some(home)) => Some(home),
+                Ok(None) => {
+                    warn!("Linux user home not found for user {}", user_id);
+                    None
+                }
+                Err(err) => {
+                    warn!("Failed to resolve linux user home for {}: {}", user_id, err);
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        home.map(|home| home.join(".pi").join("agent"))
+            .unwrap_or_else(|| PathBuf::from("/nonexistent/.pi/agent"))
     }
 
     /// Get the Pi sessions directory for a working directory.
     /// Pi stores sessions in ~/.pi/agent/sessions/{escaped-path}/
-    fn get_pi_sessions_dir(&self, work_dir: &PathBuf) -> PathBuf {
+    fn get_pi_sessions_dir(&self, user_id: &str, work_dir: &PathBuf) -> PathBuf {
         let escaped_path = work_dir
             .to_string_lossy()
             .replace('/', "-")
@@ -559,66 +582,126 @@ impl MainChatPiService {
             .to_string();
         // Pi stores sessions under a directory name wrapped in double-dashes.
         // Example: `--home-user-.local-share-octo-users-main--`
-        self.get_pi_agent_dir(work_dir)
+        self.get_pi_agent_dir(user_id)
             .join("sessions")
             .join(format!("--{}--", escaped_path))
     }
 
-    /// Find the most recent Pi session file for a directory.
-    fn find_last_session(&self, work_dir: &PathBuf) -> Option<LastSessionInfo> {
-        let sessions_dir = self.get_pi_sessions_dir(work_dir);
+    /// Create a runner client for a user if available.
+    fn runner_client_for_user(&self, user_id: &str) -> Option<RunnerClient> {
+        if self.linux_users.is_none() {
+            return None;
+        }
+        let pattern = self.config.runner_socket_pattern.as_deref()?;
+        let socket_path = pattern.replace("{user}", user_id);
+        if std::path::Path::new(&socket_path).exists() {
+            Some(RunnerClient::new(socket_path))
+        } else {
+            None
+        }
+    }
+
+    /// List session file entries for a user.
+    async fn list_session_entries(
+        &self,
+        user_id: &str,
+        sessions_dir: &PathBuf,
+    ) -> Result<Vec<(PathBuf, u64, i64)>> {
+        if let Some(client) = self.runner_client_for_user(user_id) {
+            let listing = client
+                .list_directory(sessions_dir, false)
+                .await
+                .context("listing session directory via runner")?;
+            let mut entries = Vec::new();
+            for entry in listing.entries {
+                if !entry.name.ends_with(".jsonl") {
+                    continue;
+                }
+                let path = sessions_dir.join(&entry.name);
+                entries.push((path, entry.size, entry.modified_at));
+            }
+            return Ok(entries);
+        }
 
         if !sessions_dir.exists() {
             debug!("Pi sessions directory does not exist: {:?}", sessions_dir);
-            return None;
+            return Ok(Vec::new());
         }
 
-        let mut latest: Option<LastSessionInfo> = None;
-
-        if let Ok(entries) = std::fs::read_dir(&sessions_dir) {
-            for entry in entries.filter_map(|e| e.ok()) {
+        let mut entries = Vec::new();
+        if let Ok(read_dir) = std::fs::read_dir(sessions_dir) {
+            for entry in read_dir.filter_map(|e| e.ok()) {
                 let path = entry.path();
                 if path.extension().map(|e| e == "jsonl").unwrap_or(false) {
                     if let Ok(metadata) = entry.metadata() {
-                        if let Ok(modified) = metadata.modified() {
-                            let info = LastSessionInfo {
-                                size: metadata.len(),
-                                modified,
-                            };
-
-                            if latest
-                                .as_ref()
-                                .map(|l| modified > l.modified)
-                                .unwrap_or(true)
-                            {
-                                latest = Some(info);
-                            }
-                        }
+                        let modified_at = metadata
+                            .modified()
+                            .ok()
+                            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                            .map(|d| d.as_millis() as i64)
+                            .unwrap_or(0);
+                        entries.push((path, metadata.len(), modified_at));
                     }
                 }
             }
         }
 
-        latest
+        Ok(entries)
+    }
+
+    /// Find the most recent Pi session file for a directory.
+    async fn find_last_session(
+        &self,
+        user_id: &str,
+        work_dir: &PathBuf,
+    ) -> Result<Option<LastSessionInfo>> {
+        let sessions_dir = self.get_pi_sessions_dir(user_id, work_dir);
+        let entries = self.list_session_entries(user_id, &sessions_dir).await?;
+        let mut latest: Option<LastSessionInfo> = None;
+
+        for (_path, size, modified_at) in entries {
+            let modified =
+                std::time::UNIX_EPOCH + std::time::Duration::from_millis(modified_at as u64);
+            let info = LastSessionInfo { size, modified };
+            if latest
+                .as_ref()
+                .map(|l| modified > l.modified)
+                .unwrap_or(true)
+            {
+                latest = Some(info);
+            }
+        }
+
+        Ok(latest)
     }
 
     /// List all Pi sessions for a user.
-    pub fn list_sessions(&self, user_id: &str) -> Result<Vec<PiSessionFile>> {
+    pub async fn list_sessions(&self, user_id: &str) -> Result<Vec<PiSessionFile>> {
         let work_dir = self.get_main_chat_dir(user_id);
-        let sessions_dir = self.get_pi_sessions_dir(&work_dir);
-
-        if !sessions_dir.exists() {
-            return Ok(Vec::new());
-        }
+        let sessions_dir = self.get_pi_sessions_dir(user_id, &work_dir);
 
         let mut sessions = Vec::new();
+        let entries = self.list_session_entries(user_id, &sessions_dir).await?;
 
-        let entries = std::fs::read_dir(&sessions_dir).context("reading Pi sessions directory")?;
-
-        for entry in entries.filter_map(|e| e.ok()) {
-            let path = entry.path();
-            if path.extension().map(|e| e == "jsonl").unwrap_or(false) {
-                if let Some(session) = self.parse_session_file(&path) {
+        if let Some(client) = self.runner_client_for_user(user_id) {
+            for (path, size, modified_at) in entries {
+                let content = client
+                    .read_file(&path, None, None)
+                    .await
+                    .context("reading session file via runner")?;
+                let bytes = base64::engine::general_purpose::STANDARD
+                    .decode(content.content_base64)
+                    .context("decoding session file base64")?;
+                let reader = std::io::BufReader::new(std::io::Cursor::new(bytes));
+                if let Some(session) =
+                    Self::parse_session_reader(reader, size, modified_at)
+                {
+                    sessions.push(session);
+                }
+            }
+        } else {
+            for (path, size, modified_at) in entries {
+                if let Some(session) = Self::parse_session_file(&path, size, modified_at) {
                     sessions.push(session);
                 }
             }
@@ -633,8 +716,12 @@ impl MainChatPiService {
     /// Search for sessions matching a query string.
     /// Supports fuzzy matching on session ID and title.
     /// Returns sessions sorted by match quality (best first).
-    pub fn search_sessions(&self, user_id: &str, query: &str) -> Result<Vec<PiSessionFile>> {
-        let all_sessions = self.list_sessions(user_id)?;
+    pub async fn search_sessions(
+        &self,
+        user_id: &str,
+        query: &str,
+    ) -> Result<Vec<PiSessionFile>> {
+        let all_sessions = self.list_sessions(user_id).await?;
         let query_lower = query.to_lowercase();
 
         // Score each session by match quality
@@ -658,7 +745,7 @@ impl MainChatPiService {
 
     /// Update the title of a Pi session.
     /// This modifies the session header line in the JSONL file.
-    pub fn update_session_title(
+    pub async fn update_session_title(
         &self,
         user_id: &str,
         session_id: &str,
@@ -667,15 +754,28 @@ impl MainChatPiService {
         use std::io::{BufRead, BufReader, Write};
 
         let work_dir = self.get_main_chat_dir(user_id);
-        let sessions_dir = self.get_pi_sessions_dir(&work_dir);
+        let sessions_dir = self.get_pi_sessions_dir(user_id, &work_dir);
 
         // Find session file - filename format is {timestamp}_{session_id}.jsonl
-        let session_path = self.find_session_file(&sessions_dir, session_id)?;
+        let session_path = self
+            .find_session_file(user_id, &sessions_dir, session_id)
+            .await?;
 
-        // Read the file
-        let file = std::fs::File::open(&session_path).context("opening session file")?;
-        let reader = BufReader::new(file);
-        let mut lines: Vec<String> = reader.lines().collect::<std::io::Result<_>>()?;
+        let mut lines: Vec<String> = if let Some(client) = self.runner_client_for_user(user_id) {
+            let content = client
+                .read_file(&session_path, None, None)
+                .await
+                .context("reading session file via runner")?;
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(content.content_base64)
+                .context("decoding session file base64")?;
+            let reader = BufReader::new(std::io::Cursor::new(bytes));
+            reader.lines().collect::<std::io::Result<_>>()?
+        } else {
+            let file = std::fs::File::open(&session_path).context("opening session file")?;
+            let reader = BufReader::new(file);
+            reader.lines().collect::<std::io::Result<_>>()?
+        };
 
         if lines.is_empty() {
             anyhow::bail!("Session file is empty");
@@ -693,19 +793,25 @@ impl MainChatPiService {
         header["title"] = serde_json::Value::String(title.to_string());
         lines[0] = serde_json::to_string(&header)?;
 
-        // Write back to file
-        let mut file =
-            std::fs::File::create(&session_path).context("creating session file for write")?;
-        for (i, line) in lines.iter().enumerate() {
-            if i > 0 {
-                writeln!(file)?;
-            }
-            write!(file, "{}", line)?;
+        let updated_text = lines.join("\n") + "\n";
+        if let Some(client) = self.runner_client_for_user(user_id) {
+            client
+                .write_file(&session_path, updated_text.as_bytes(), false)
+                .await
+                .context("writing session file via runner")?;
+        } else {
+            let mut file =
+                std::fs::File::create(&session_path).context("creating session file for write")?;
+            write!(file, "{}", updated_text)?;
         }
-        writeln!(file)?;
 
-        // Return the updated session info
-        self.parse_session_file(&session_path)
+        let size = updated_text.len() as u64;
+        let modified_at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0);
+        let reader = BufReader::new(std::io::Cursor::new(updated_text));
+        Self::parse_session_reader(reader, size, modified_at)
             .ok_or_else(|| anyhow::anyhow!("Failed to parse updated session"))
     }
 
@@ -814,19 +920,11 @@ impl MainChatPiService {
     }
 
     /// Parse a Pi session file to extract metadata.
-    fn parse_session_file(&self, path: &std::path::Path) -> Option<PiSessionFile> {
-        use std::io::{BufRead, BufReader};
-
-        let file = std::fs::File::open(path).ok()?;
-        let metadata = file.metadata().ok()?;
-        let modified = metadata.modified().ok()?;
-        let modified_ms = modified
-            .duration_since(std::time::UNIX_EPOCH)
-            .ok()?
-            .as_millis() as i64;
-
-        let mut reader = BufReader::new(file);
-
+    fn parse_session_reader<R: std::io::BufRead>(
+        mut reader: R,
+        size: u64,
+        modified_ms: i64,
+    ) -> Option<PiSessionFile> {
         // Fast path: parse only header + first user message.
         let mut first_line = String::new();
         reader.read_line(&mut first_line).ok()?;
@@ -907,7 +1005,7 @@ impl MainChatPiService {
         Some(PiSessionFile {
             id,
             started_at,
-            size: metadata.len(),
+            size,
             modified_at: modified_ms,
             title: if display_title.is_empty() {
                 None
@@ -918,6 +1016,16 @@ impl MainChatPiService {
             parent_id,
             message_count,
         })
+    }
+
+    fn parse_session_file(
+        path: &std::path::Path,
+        size: u64,
+        modified_ms: i64,
+    ) -> Option<PiSessionFile> {
+        let file = std::fs::File::open(path).ok()?;
+        let reader = std::io::BufReader::new(file);
+        Self::parse_session_reader(reader, size, modified_ms)
     }
 
     /// Resolve a parent session ID from a session file path.
@@ -971,7 +1079,7 @@ impl MainChatPiService {
     }
 
     /// Get messages from a specific Pi session file.
-    pub fn get_session_messages(
+    pub async fn get_session_messages(
         &self,
         user_id: &str,
         session_id: &str,
@@ -979,13 +1087,27 @@ impl MainChatPiService {
         use std::io::{BufRead, BufReader};
 
         let work_dir = self.get_main_chat_dir(user_id);
-        let sessions_dir = self.get_pi_sessions_dir(&work_dir);
+        let sessions_dir = self.get_pi_sessions_dir(user_id, &work_dir);
 
         // Find the session file by ID
-        let session_file = self.find_session_file(&sessions_dir, session_id)?;
+        let session_file = self
+            .find_session_file(user_id, &sessions_dir, session_id)
+            .await?;
 
-        let file = std::fs::File::open(&session_file).context("opening session file")?;
-        let reader = BufReader::new(file);
+        let reader: Box<dyn BufRead> = if let Some(client) = self.runner_client_for_user(user_id)
+        {
+            let content = client
+                .read_file(&session_file, None, None)
+                .await
+                .context("reading session file via runner")?;
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(content.content_base64)
+                .context("decoding session file base64")?;
+            Box::new(BufReader::new(std::io::Cursor::new(bytes)))
+        } else {
+            let file = std::fs::File::open(&session_file).context("opening session file")?;
+            Box::new(BufReader::new(file))
+        };
 
         let mut messages = Vec::new();
 
@@ -1236,19 +1358,17 @@ impl MainChatPiService {
     }
 
     /// Find a Pi session file by ID (.jsonl format).
-    fn find_session_file(
+    async fn find_session_file(
         &self,
+        user_id: &str,
         sessions_dir: &std::path::Path,
         session_id: &str,
     ) -> Result<PathBuf> {
-        if !sessions_dir.exists() {
-            anyhow::bail!("Sessions directory not found");
-        }
+        let entries = self
+            .list_session_entries(user_id, &sessions_dir.to_path_buf())
+            .await?;
 
-        let entries = std::fs::read_dir(sessions_dir).context("reading sessions directory")?;
-
-        for entry in entries.filter_map(|e| e.ok()) {
-            let path = entry.path();
+        for (path, _size, _modified_at) in entries {
             if path.extension().map(|e| e == "jsonl").unwrap_or(false) {
                 let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
                 if filename.contains(session_id) {
@@ -1285,10 +1405,12 @@ impl MainChatPiService {
         }
 
         let work_dir = self.get_main_chat_dir(user_id);
-        let sessions_dir = self.get_pi_sessions_dir(&work_dir);
+        let sessions_dir = self.get_pi_sessions_dir(user_id, &work_dir);
 
         // Verify session exists on disk for cold resume.
-        let session_file = self.find_session_file(&sessions_dir, session_id)?;
+        let session_file = self
+            .find_session_file(user_id, &sessions_dir, session_id)
+            .await?;
         info!("Resuming Pi session {} from {:?}", session_id, session_file);
 
         // Spawn a new process for this session
@@ -1357,8 +1479,11 @@ impl MainChatPiService {
 
         // Find session file if resuming
         let session_file = if let Some(session_id) = resume_session_id {
-            let sessions_dir = self.get_pi_sessions_dir(&work_dir);
-            Some(self.find_session_file(&sessions_dir, session_id)?)
+            let sessions_dir = self.get_pi_sessions_dir(user_id, &work_dir);
+            Some(
+                self.find_session_file(user_id, &sessions_dir, session_id)
+                    .await?,
+            )
         } else {
             None
         };
@@ -1492,7 +1617,7 @@ impl MainChatPiService {
         }
 
         // Determine if we should continue or start fresh
-        let last_session = self.find_last_session(&work_dir);
+        let last_session = self.find_last_session(user_id, &work_dir).await?;
         let should_continue = !force_fresh
             && last_session
                 .as_ref()
@@ -2061,10 +2186,11 @@ mod tests {
             true,
             MainChatPiServiceConfig::default(),
             main_chat,
+            None,
         );
 
         let work_dir = PathBuf::from("/home/user/.local/share/octo/users/main");
-        let sessions_dir = service.get_pi_sessions_dir(&work_dir);
+        let sessions_dir = service.get_pi_sessions_dir("user", &work_dir);
 
         // Should escape slashes and wrap with double-dashes
         assert!(
@@ -2088,6 +2214,7 @@ mod tests {
                 ..Default::default()
             },
             main_chat,
+            None,
         );
 
         // Fresh session (now)
@@ -2119,6 +2246,7 @@ mod tests {
                 ..Default::default()
             },
             main_chat,
+            None,
         );
 
         // Small session
@@ -2161,6 +2289,7 @@ mod tests {
             true,
             MainChatPiServiceConfig::default(),
             main_chat,
+            None,
         );
 
         // This would fail without pi installed

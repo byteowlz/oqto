@@ -4,7 +4,7 @@
 
 use anyhow::{Context, Result};
 use chrono::DateTime;
-use log::{debug, info};
+use log::{debug, info, warn};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
@@ -13,6 +13,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{Mutex, RwLock};
 
+use crate::local::LinuxUsersConfig;
 use crate::main_chat::{MainChatPiServiceConfig, PiRuntimeMode, UserPiSession};
 use crate::pi::{ContainerPiRuntime, LocalPiRuntime, PiRuntime, PiSpawnConfig, RunnerPiRuntime};
 use crate::runner::client::RunnerClient;
@@ -93,10 +94,12 @@ pub struct WorkspacePiService {
     creating: Mutex<HashSet<WorkspaceSessionKey>>,
     /// Idle timeout in seconds (sessions idle longer than this may be cleaned up).
     idle_timeout_secs: u64,
+    /// Linux user isolation configuration (multi-user mode).
+    linux_users: Option<LinuxUsersConfig>,
 }
 
 impl WorkspacePiService {
-    pub fn new(config: MainChatPiServiceConfig) -> Self {
+    pub fn new(config: MainChatPiServiceConfig, linux_users: Option<LinuxUsersConfig>) -> Self {
         info!(
             "WorkspacePiService initialized with runtime mode: {}",
             config.runtime_mode
@@ -106,6 +109,7 @@ impl WorkspacePiService {
             sessions: RwLock::new(HashMap::new()),
             creating: Mutex::new(HashSet::new()),
             idle_timeout_secs: DEFAULT_IDLE_TIMEOUT_SECS,
+            linux_users,
         }
     }
 
@@ -171,21 +175,36 @@ impl WorkspacePiService {
     }
 
     /// Get the Pi agent directory for a working directory.
-    fn get_pi_agent_dir(&self, _work_dir: &Path) -> PathBuf {
-        dirs::home_dir()
-            .map(|home| home.join(".pi").join("agent"))
-            .unwrap_or_else(|| PathBuf::from(".pi/agent"))
+    fn get_pi_agent_dir(&self, user_id: &str) -> PathBuf {
+        let home = if let Some(linux_users) = self.linux_users.as_ref() {
+            match linux_users.get_home_dir(user_id) {
+                Ok(Some(home)) => Some(home),
+                Ok(None) => {
+                    warn!("Linux user home not found for user {}", user_id);
+                    None
+                }
+                Err(err) => {
+                    warn!("Failed to resolve linux user home for {}: {}", user_id, err);
+                    None
+                }
+            }
+        } else {
+            dirs::home_dir()
+        };
+
+        home.map(|home| home.join(".pi").join("agent"))
+            .unwrap_or_else(|| PathBuf::from("/nonexistent/.pi/agent"))
     }
 
     /// Get the Pi sessions directory for a working directory.
     /// Pi stores sessions in ~/.pi/agent/sessions/{escaped-path}/
-    fn get_pi_sessions_dir(&self, work_dir: &Path) -> PathBuf {
+    fn get_pi_sessions_dir(&self, user_id: &str, work_dir: &Path) -> PathBuf {
         let escaped_path = work_dir
             .to_string_lossy()
             .replace('/', "-")
             .trim_start_matches('-')
             .to_string();
-        self.get_pi_agent_dir(work_dir)
+        self.get_pi_agent_dir(user_id)
             .join("sessions")
             .join(format!("--{}--", escaped_path))
     }
@@ -466,7 +485,7 @@ impl WorkspacePiService {
 
         // Create the session (we hold the creation slot)
         let result = async {
-            let sessions_dir = self.get_pi_sessions_dir(&work_dir.to_path_buf());
+            let sessions_dir = self.get_pi_sessions_dir(user_id, &work_dir.to_path_buf());
             let session_file = self.find_session_file(&sessions_dir, session_id)?;
             let session = self
                 .create_session(user_id, work_dir, Some(session_file))
@@ -508,12 +527,13 @@ impl WorkspacePiService {
     /// Get messages from a specific Pi session file.
     pub fn get_session_messages(
         &self,
+        user_id: &str,
         work_dir: &Path,
         session_id: &str,
     ) -> Result<Vec<PiSessionMessage>> {
         use std::io::{BufRead, BufReader};
 
-        let sessions_dir = self.get_pi_sessions_dir(&work_dir.to_path_buf());
+        let sessions_dir = self.get_pi_sessions_dir(user_id, &work_dir.to_path_buf());
         let session_file = self.find_session_file(&sessions_dir, session_id)?;
 
         let file = std::fs::File::open(&session_file).context("opening session file")?;

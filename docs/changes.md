@@ -1,5 +1,9 @@
 # Changes
 
+- 2026-01-31: Use per-user Linux home directories when resolving Pi session files in main chat and workspace services to restore persistence under runner sandboxing.
+- 2026-01-31: Fix octo-guard policy pattern compilation by adding explicit type annotations for GuardPolicy pattern parsing.
+- 2026-01-31: Read and update Main Chat Pi session files via octo-runner in multi-user mode so sessions persist and titles refresh after reload.
+- 2026-01-31: Trigger Main Chat session list refresh when assistant messages complete to pick up auto-renamed titles.
 - 2026-01-30: Secure sudoers rules in setup.sh by removing overly permissive wildcard patterns. Replaced with explicitly whitelisted commands: restricted useradd to specific flags only, removed dangerous usermod wildcard, prevented home directory deletion with userdel, explicitly limited systemctl --user commands to octo-runner only, and restricted chown to safe paths (/home/* and /var/lib/octo/* with depth limits). Removed dangerous "ALL=(*) NOPASSWD: ALL" rule that allowed running any command as octo_* users.
 - 2026-01-30: Point Pi agent storage (settings, models, sessions) at the workspace `.pi` directory instead of `~/.pi/agent`.
 - 2026-01-30: Flatten the Pi settings view to match the OpenCode settings layout (single pane, no tabs).
@@ -46,3 +50,5 @@
 - 2026-01-27: Add optional hstry-backed chat history reads when a hstry.db is available.
 - 2026-01-28: Install hstry via `just install` so Octo setups include the hstry CLI.
 - 2026-01-28: Fix session insert SQL placeholder count so workspace IO sessions can be created.
+- 2026-01-31: Ensure sandboxed processes start in the requested workspace directory by setting bwrap working directory.
+- 2026-01-31: Accept newer Pi RPC events (extension UI requests, session name fields) and handle setTitle updates for Main Chat sessions.

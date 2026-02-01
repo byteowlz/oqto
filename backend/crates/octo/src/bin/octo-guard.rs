@@ -142,7 +142,9 @@ impl GuardedFs {
         let policy_patterns: Vec<(Pattern, GuardPolicy)> = config
             .policy
             .iter()
-            .filter_map(|(pattern, policy)| Pattern::new(pattern).ok().map(|p| (p, policy.clone())))
+            .filter_map(|(pattern, policy): (&String, &GuardPolicy)| {
+                Pattern::new(pattern).ok().map(|p| (p, policy.clone()))
+            })
             .collect();
 
         let mut fs = Self {
@@ -298,7 +300,7 @@ impl GuardedFs {
         let path_str = path.to_string_lossy();
 
         for (pattern, policy) in &self.policy_patterns {
-            if pattern.matches(&path_str) {
+            if pattern.matches(path_str.as_ref()) {
                 return policy.clone();
             }
         }

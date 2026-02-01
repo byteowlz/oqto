@@ -2329,6 +2329,7 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
                 .as_ref()
                 .expect("MainChatService must be initialized")
                 .clone(),
+            state.linux_users.clone(),
         ));
         // Start background cleanup task for idle sessions
         main_chat_pi_service.start_cleanup_task();
@@ -2338,6 +2339,7 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
         );
         let workspace_pi_service = Arc::new(crate::pi_workspace::WorkspacePiService::new(
             workspace_pi_config,
+            state.linux_users.clone(),
         ));
         workspace_pi_service.start_cleanup_task();
         state = state

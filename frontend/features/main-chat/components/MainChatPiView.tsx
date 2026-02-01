@@ -130,6 +130,8 @@ export interface MainChatPiViewProps {
 	newSessionTrigger?: number;
 	/** Callback when a message is sent (for sidebar refresh) */
 	onMessageSent?: () => void;
+	/** Callback when an assistant message completes (for sidebar refresh) */
+	onMessageComplete?: () => void;
 	/** Callback when todos change (extracted from Pi todowrite tool calls) */
 	onTodosChange?: (todos: TodoItem[]) => void;
 }
@@ -158,6 +160,7 @@ export function MainChatPiView({
 	onScrollToMessageComplete,
 	newSessionTrigger,
 	onMessageSent,
+	onMessageComplete,
 	onTodosChange,
 }: MainChatPiViewProps) {
 	const isMainScope = scope === "main";
@@ -175,6 +178,31 @@ export function MainChatPiView({
 	const scrollStorageKey = isMainScope
 		? "octo:mainChat:scrollPosition"
 		: `${resolvedStorageKeyPrefix}:scrollPosition`;
+	const [sessionMeta, setSessionMeta] = useState<PiSessionFile | null>(null);
+	const refreshSessionMeta = useCallback(() => {
+		if (!selectedSessionId || !isMainScope) {
+			setSessionMeta(null);
+			return;
+		}
+		let cancelled = false;
+		listMainChatPiSessions()
+			.then((sessions) => {
+				if (cancelled) return;
+				setSessionMeta(
+					sessions.find((s) => s.id === selectedSessionId) ?? null,
+				);
+			})
+			.catch(() => {
+				// ignore
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, [isMainScope, selectedSessionId]);
+	const handleMessageComplete = useCallback(() => {
+		onMessageComplete?.();
+		refreshSessionMeta();
+	}, [onMessageComplete, refreshSessionMeta]);
 	const {
 		messages,
 		isConnected,
@@ -193,6 +221,7 @@ export function MainChatPiView({
 		storageKeyPrefix: resolvedStorageKeyPrefix,
 		selectedSessionId,
 		onSelectedSessionIdChange,
+		onMessageComplete: handleMessageComplete,
 	});
 
 	// Track the last trigger value to detect changes
@@ -1127,33 +1156,9 @@ export function MainChatPiView({
 		[locale],
 	);
 
-	const [sessionMeta, setSessionMeta] = useState<PiSessionFile | null>(null);
-
 	useEffect(() => {
-		if (!selectedSessionId) {
-			setSessionMeta(null);
-			return;
-		}
-		if (!isMainScope) {
-			setSessionMeta(null);
-			return;
-		}
-
-		let cancelled = false;
-		listMainChatPiSessions()
-			.then((sessions) => {
-				if (cancelled) return;
-				setSessionMeta(
-					sessions.find((s) => s.id === selectedSessionId) ?? null,
-				);
-			})
-			.catch(() => {
-				// ignore
-			});
-		return () => {
-			cancelled = true;
-		};
-	}, [isMainScope, selectedSessionId]);
+		return refreshSessionMeta();
+	}, [refreshSessionMeta]);
 
 	const readableId = selectedSessionId
 		? resolveReadableId(selectedSessionId, null)
