@@ -101,7 +101,6 @@ export default defineConfig(({ mode }) => {
 					target: controlPlaneUrl,
 					changeOrigin: true,
 					ws: true,
-					rewrite: (pathValue) => pathValue.replace(/^\/api/, ""),
 				},
 			},
 		},

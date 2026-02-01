@@ -2440,11 +2440,11 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
         info!("Main Chat Pi service disabled");
     }
 
-    // Create router (serve under /api and keep legacy root paths for now).
+    // Create router - all API routes are served under /api prefix only.
+    // This is the single source of truth for routing. All clients (frontend,
+    // internal services, containers) must use /api/* paths.
     let api_router = api::create_router_with_config(state, ctx.config.server.max_upload_size_mb);
-    let app = axum::Router::new()
-        .nest("/api", api_router.clone())
-        .merge(api_router);
+    let app = axum::Router::new().nest("/api", api_router);
 
     // Bind and serve
     let addr: SocketAddr = format!("{}:{}", cmd.host, cmd.port)

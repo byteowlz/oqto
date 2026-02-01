@@ -326,35 +326,36 @@ pub async fn auth_middleware(
     Ok(next.run(req).await)
 }
 
+/// Check if this is a WebSocket path that supports query parameter authentication.
+///
+/// WebSocket connections cannot send custom headers after the initial handshake,
+/// so these endpoints accept auth tokens via query parameter as a fallback.
+/// All paths are under /api/* - this is the only routing prefix.
 fn is_websocket_auth_path(req: &axum::http::Request<axum::body::Body>) -> bool {
     let path = req.uri().path();
-    let upgrade_header = req
+
+    // Must be a WebSocket upgrade request
+    let is_websocket = req
         .headers()
         .get(header::UPGRADE)
-        .and_then(|value| value.to_str().ok())
-        .map(|value| value.eq_ignore_ascii_case("websocket"))
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v.eq_ignore_ascii_case("websocket"))
         .unwrap_or(false);
 
-    if !upgrade_header {
+    if !is_websocket {
         return false;
     }
 
-    if matches!(
+    // WebSocket paths that accept query param auth (all under /api/)
+    matches!(
         path,
-        "/api/ws" | "/api/voice/stt" | "/api/voice/tts" | "/api/main/pi/ws" | "/api/workspace/term"
-    ) {
-        return true;
-    }
-
-    if let Some(rest) = path.strip_prefix("/api/session/") {
-        return rest.ends_with("/term") || rest.ends_with("/browser/stream");
-    }
-
-    if let Some(rest) = path.strip_prefix("/api/sessions/") {
-        return rest.ends_with("/terminal") || rest.ends_with("/browser/stream");
-    }
-
-    false
+        "/api/ws"
+            | "/api/voice/stt"
+            | "/api/voice/tts"
+            | "/api/main/pi/ws"
+            | "/api/workspace/term"
+    ) || path.starts_with("/api/session/") && (path.ends_with("/term") || path.ends_with("/browser/stream"))
+      || path.starts_with("/api/sessions/") && (path.ends_with("/terminal") || path.ends_with("/browser/stream"))
 }
 
 /// Require admin role.
