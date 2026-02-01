@@ -21,10 +21,12 @@ mod agent_browser;
 mod agent_rpc;
 mod api;
 mod auth;
+mod canon;
 mod container;
 mod db;
 mod eavs;
 mod history;
+mod hstry;
 mod invite;
 mod local;
 mod main_chat;
@@ -491,6 +493,8 @@ struct AppConfig {
     onboarding_templates: templates::OnboardingTemplatesConfig,
     /// sldr configuration.
     sldr: SldrConfig,
+    /// hstry (chat history) configuration.
+    hstry: HstryConfig,
 }
 
 /// Server configuration.
@@ -599,6 +603,7 @@ impl Default for AppConfig {
             agent_browser: agent_browser::AgentBrowserConfig::default(),
             server: ServerConfig::default(),
             onboarding_templates: templates::OnboardingTemplatesConfig::default(),
+            hstry: HstryConfig::default(),
         }
     }
 }
@@ -834,6 +839,30 @@ impl Default for SldrConfig {
             binary: "sldr-server".to_string(),
             user_base_port: 49_000,
             user_port_range: 1_000,
+        }
+    }
+}
+
+/// hstry (chat history) configuration.
+///
+/// hstry provides unified chat history storage across all AI agents.
+/// In multi-user mode, per-user hstry instances are spawned via octo-runner
+/// using the shared `local.runner_socket_pattern`.
+/// In single-user mode, auto-starts hstry daemon directly.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct HstryConfig {
+    /// Whether hstry integration is enabled.
+    pub enabled: bool,
+    /// Path to the hstry binary.
+    pub binary: String,
+}
+
+impl Default for HstryConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            binary: "hstry".to_string(),
         }
     }
 }
@@ -2273,6 +2302,61 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     );
     info!("Main Chat service initialized");
     state = state.with_main_chat(main_chat_service);
+
+    // Initialize hstry (chat history) service
+    if ctx.config.hstry.enabled {
+        // For multi-user mode with runner, create UserHstryManager
+        // For single-user mode, auto-start hstry daemon directly
+        let is_multi_user = ctx.config.local.linux_users.enabled
+            && ctx.config.local.runner_socket_pattern.is_some();
+
+        if is_multi_user {
+            // Multi-user mode: hstry will be spawned per-user via runner when needed
+            let hstry_config = local::UserHstryConfig {
+                hstry_binary: ctx.config.hstry.binary.clone(),
+                runner_socket_pattern: ctx.config.local.runner_socket_pattern.clone(),
+            };
+            let linux_users_prefix = ctx.config.local.linux_users.prefix.clone();
+            let hstry_manager = local::UserHstryManager::new(hstry_config, move |user_id| {
+                // Map platform user_id to Linux username (same pattern as mmry)
+                format!("{}{}", linux_users_prefix, user_id)
+            });
+            info!("hstry configured for multi-user mode (per-user via runner)");
+            // TODO: Store hstry_manager in state and use it in main_chat_pi.rs
+            // For now, create a client that will connect lazily
+            let hstry_client = hstry::HstryClient::new();
+            state = state.with_hstry(hstry_client);
+            let _ = hstry_manager; // suppress unused warning for now
+        } else {
+            // Single-user mode: auto-start hstry daemon
+            let hstry_config = hstry::HstryServiceConfig {
+                binary: ctx.config.hstry.binary.clone(),
+                auto_start: true,
+                startup_timeout: std::time::Duration::from_secs(10),
+            };
+            let hstry_manager = hstry::HstryServiceManager::new(hstry_config);
+
+            // Ensure daemon is running (auto-starts if needed)
+            match hstry_manager.ensure_running().await {
+                Ok(()) => {
+                    info!("hstry daemon is running");
+                    // Create client and connect
+                    let hstry_client = hstry::HstryClient::new();
+                    if let Err(e) = hstry_client.connect().await {
+                        warn!("Failed to connect to hstry daemon: {}. Will retry on first use.", e);
+                    } else {
+                        info!("hstry client connected");
+                    }
+                    state = state.with_hstry(hstry_client);
+                }
+                Err(e) => {
+                    warn!("Failed to start hstry daemon: {}. Chat history persistence disabled.", e);
+                }
+            }
+        }
+    } else {
+        debug!("hstry integration disabled");
+    }
 
     // Initialize Main Chat Pi service for agent runtime (if enabled)
     if ctx.config.pi.enabled {

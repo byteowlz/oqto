@@ -3,6 +3,7 @@
 //! This library provides the core components for the AI Agent Workspace Platform backend.
 
 pub mod agent;
+pub mod canon;
 pub mod agent_browser;
 pub mod agent_rpc;
 pub mod api;
@@ -11,6 +12,7 @@ pub mod container;
 pub mod db;
 pub mod eavs;
 pub mod history;
+pub mod hstry;
 pub mod invite;
 pub mod local;
 pub mod main_chat;

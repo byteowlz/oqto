@@ -11,6 +11,7 @@ use hyper_util::rt::TokioExecutor;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
+use crate::hstry::HstryClient;
 use crate::local::UserSldrManager;
 
 use super::super::agent::AgentService;
@@ -348,6 +349,8 @@ pub struct AppState {
     pub user_plane_factory: UserPlaneFactory,
     /// Runner socket pattern for multi-user mode (e.g., "/run/octo/runner-sockets/{user}/octo-runner.sock").
     pub runner_socket_pattern: Option<String>,
+    /// hstry client for unified chat history persistence.
+    pub hstry: Option<HstryClient>,
 }
 
 impl AppState {
@@ -395,6 +398,7 @@ impl AppState {
             linux_users: None,
             user_plane_factory: UserPlaneFactory::default(),
             runner_socket_pattern: None,
+            hstry: None,
         }
     }
 
@@ -443,6 +447,7 @@ impl AppState {
             linux_users: None,
             user_plane_factory: UserPlaneFactory::default(),
             runner_socket_pattern: None,
+            hstry: None,
         }
     }
 
@@ -525,6 +530,12 @@ impl AppState {
     /// Set the per-user sldr manager.
     pub fn with_sldr_users(mut self, manager: UserSldrManager) -> Self {
         self.sldr_users = Some(Arc::new(manager));
+        self
+    }
+
+    /// Set the hstry client for unified chat history persistence.
+    pub fn with_hstry(mut self, client: HstryClient) -> Self {
+        self.hstry = Some(client);
         self
     }
 }

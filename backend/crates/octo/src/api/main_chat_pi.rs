@@ -13,33 +13,22 @@ use axum::{
     response::Response,
 };
 use futures::{SinkExt, StreamExt};
-use log::{info, warn};
+use log::{debug, info, warn};
+use sqlx::Row;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::Arc;
 
+use chrono::{TimeZone, Utc};
+
 use crate::auth::CurrentUser;
 use crate::main_chat::{
-    ChatMessage, CreateChatMessage, MainChatPiService, MainChatService, MessageRole, PiSessionFile,
-    PiSessionMessage,
+    MainChatPiService, MainChatService, PiSessionFile, PiSessionMessage,
 };
 use crate::pi::{AgentMessage, AssistantMessageEvent, CompactionResult, PiEvent, PiState};
 
-use super::state::MmryState;
-
 use super::error::{ApiError, ApiResult};
 use super::state::AppState;
-
-#[derive(Debug, serde::Serialize)]
-struct MmryAgentMemoryCreateRequest {
-    content: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    category: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    tags: Option<Vec<String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    importance: Option<i32>,
-}
 
 // ========== Request/Response Types ==========
 
@@ -572,77 +561,156 @@ pub struct SearchResponse {
     pub total: usize,
 }
 
+/// Chat message returned by `GET /api/main/pi/history`.
+///
+/// Matches the historical `main_chat.db` message shape for frontend compatibility.
+#[derive(Debug, Serialize)]
+pub struct MainChatHistoryMessage {
+    pub id: i64,
+    pub role: String,
+    /// JSON array serialized as string.
+    pub content: String,
+    pub pi_session_id: Option<String>,
+    pub timestamp: i64,
+    pub created_at: String,
+}
+
 /// Get chat history from database (persistent display history).
 /// If session_id is provided, returns only messages for that session.
 ///
 /// GET /api/main/pi/history
 /// GET /api/main/pi/history?session_id=<id>
 pub async fn get_history(
-    State(state): State<AppState>,
-    user: CurrentUser,
+    State(_state): State<AppState>,
+    _user: CurrentUser,
     Query(query): Query<HistoryQuery>,
-) -> ApiResult<Json<Vec<ChatMessage>>> {
-    let main_chat_service = get_main_chat_service(&state)?;
-
-    let messages = if let Some(session_id) = query.session_id {
-        main_chat_service
-            .get_messages_by_session(user.id(), &session_id)
-            .await
-            .map_err(|e| ApiError::internal(format!("Failed to get session history: {}", e)))?
-    } else {
-        main_chat_service
-            .get_all_messages(user.id())
-            .await
-            .map_err(|e| ApiError::internal(format!("Failed to get history: {}", e)))?
+) -> ApiResult<Json<Vec<MainChatHistoryMessage>>> {
+    // main_chat.db message history is deprecated; use hstry as the canonical store.
+    // Keep returning the MainChatDbMessage shape for frontend compatibility.
+    let Some(db_path) = crate::history::hstry_db_path() else {
+        return Ok(Json(Vec::new()));
     };
 
-    Ok(Json(messages))
-}
-
-/// Clear chat history (for fresh start).
-///
-/// DELETE /api/main/pi/history
-pub async fn clear_history(
-    State(state): State<AppState>,
-    user: CurrentUser,
-) -> ApiResult<Json<Value>> {
-    let main_chat_service = get_main_chat_service(&state)?;
-
-    let deleted = main_chat_service
-        .clear_messages(user.id())
-        .await
-        .map_err(|e| ApiError::internal(format!("Failed to clear history: {}", e)))?;
-
-    Ok(Json(serde_json::json!({ "deleted": deleted })))
-}
-
-/// Add a session separator to history (legacy; used by older frontend).
-///
-/// POST /api/main/pi/history/separator
-pub async fn add_separator(
-    State(state): State<AppState>,
-    user: CurrentUser,
-) -> ApiResult<Json<ChatMessage>> {
-    let main_chat_service = get_main_chat_service(&state)?;
-
-    let content = serde_json::json!([{
-        "type": "separator",
-        "text": "New conversation started"
-    }]);
-
-    let message = main_chat_service
-        .add_message(
-            user.id(),
-            CreateChatMessage {
-                role: MessageRole::System,
-                content,
-                pi_session_id: None,
-            },
+    let session_id = if let Some(session_id) = query.session_id.as_deref() {
+        session_id.to_string()
+    } else {
+        // No session_id: fall back to most recently updated Pi conversation.
+        let pool = crate::history::repository::open_hstry_pool(&db_path)
+            .await
+            .map_err(|e| ApiError::internal(format!("Failed to open hstry DB: {e}")))?;
+        let row = sqlx::query(
+            r#"
+            SELECT external_id, id
+            FROM conversations
+            WHERE source_id = 'pi'
+            ORDER BY COALESCE(updated_at, created_at) DESC
+            LIMIT 1
+            "#,
         )
+        .fetch_optional(&pool)
         .await
-        .map_err(|e| ApiError::internal(format!("Failed to add separator: {}", e)))?;
+        .map_err(|e| ApiError::internal(format!("Failed to resolve latest Pi conversation: {e}")))?;
 
-    Ok(Json(message))
+        let Some(row) = row else {
+            return Ok(Json(Vec::new()));
+        };
+        let external_id: Option<String> = row.try_get("external_id").ok();
+        let id: String = row
+            .try_get("id")
+            .map_err(|e| ApiError::internal(format!("Failed to read hstry conversation id: {e}")))?;
+        external_id.unwrap_or(id)
+    };
+
+    let pool = crate::history::repository::open_hstry_pool(&db_path)
+        .await
+        .map_err(|e| ApiError::internal(format!("Failed to open hstry DB: {e}")))?;
+
+    // Resolve conversation id (prefer Pi source_id).
+    let conv_row = sqlx::query(
+        r#"
+        SELECT id
+        FROM conversations
+        WHERE source_id = 'pi' AND (external_id = ? OR readable_id = ? OR id = ?)
+        LIMIT 1
+        "#,
+    )
+    .bind(&session_id)
+    .bind(&session_id)
+    .bind(&session_id)
+    .fetch_optional(&pool)
+    .await
+    .map_err(|e| ApiError::internal(format!("Failed to resolve hstry conversation: {e}")))?;
+
+    let Some(conv_row) = conv_row else {
+        // If there's no matching Pi conversation, don't error: just return empty.
+        return Ok(Json(Vec::new()));
+    };
+    let conversation_id: String = conv_row
+        .try_get("id")
+        .map_err(|e| ApiError::internal(format!("Failed to read conversation id: {e}")))?;
+
+    let rows = sqlx::query(
+        r#"
+        SELECT role, content, created_at, parts_json
+        FROM messages
+        WHERE conversation_id = ?
+        ORDER BY idx
+        "#,
+    )
+    .bind(&conversation_id)
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| ApiError::internal(format!("Failed to load hstry messages: {e}")))?;
+
+    let now_ms = Utc::now().timestamp_millis();
+    let mut out: Vec<MainChatHistoryMessage> = Vec::with_capacity(rows.len());
+
+    for (idx, row) in rows.into_iter().enumerate() {
+        let role_raw: String = row.try_get("role").unwrap_or_else(|_| "assistant".to_string());
+        let content_raw: String = row.try_get("content").unwrap_or_default();
+        let created_at: Option<i64> = row.try_get("created_at").ok();
+        let parts_json: Option<String> = row.try_get("parts_json").ok();
+
+        let role = match role_raw.as_str() {
+            "user" => "user",
+            "assistant" => "assistant",
+            "system" => "system",
+            // hstry may store tool results as role=tool; MainChatDbMessage has no tool role.
+            "tool" | "toolResult" => "assistant",
+            _ => "assistant",
+        }
+        .to_string();
+
+        let parts_value = if let Some(parts_json) = parts_json.as_deref()
+            && let Ok(v) = serde_json::from_str::<serde_json::Value>(parts_json)
+            && v.is_array()
+        {
+            v
+        } else if !content_raw.trim().is_empty() {
+            serde_json::json!([{ "type": "text", "text": content_raw }])
+        } else {
+            serde_json::json!([])
+        };
+
+        let timestamp_ms = created_at
+            .and_then(|ts| Utc.timestamp_opt(ts, 0).single().map(|dt| dt.timestamp_millis()))
+            .unwrap_or(now_ms);
+        let created_at_str = created_at
+            .and_then(|ts| Utc.timestamp_opt(ts, 0).single())
+            .map(|dt| dt.to_rfc3339())
+            .unwrap_or_else(|| Utc::now().to_rfc3339());
+
+        out.push(MainChatHistoryMessage {
+            id: (idx as i64) + 1,
+            role,
+            content: parts_value.to_string(),
+            pi_session_id: Some(session_id.clone()),
+            timestamp: timestamp_ms,
+            created_at: created_at_str,
+        });
+    }
+
+    Ok(Json(out))
 }
 
 /// List Pi sessions for Main Chat from disk.
@@ -884,7 +952,7 @@ pub async fn ws_handler(
 
     let user_id = user.id().to_string();
     let main_chat_svc = state.main_chat.clone();
-    let mmry_state = state.mmry.clone();
+    let hstry_client = state.hstry.clone();
     let pi_service_for_ws = state
         .main_chat_pi
         .clone()
@@ -897,8 +965,8 @@ pub async fn ws_handler(
             session,
             user_id,
             main_chat_svc,
-            mmry_state,
             Some(pi_service_for_ws),
+            hstry_client,
         )
     }))
 }
@@ -909,8 +977,8 @@ pub(crate) async fn handle_ws(
     session: Arc<crate::main_chat::UserPiSession>,
     user_id: String,
     main_chat_svc: Option<Arc<MainChatService>>,
-    mmry_state: super::state::MmryState,
     pi_service: Option<Arc<MainChatPiService>>,
+    hstry_client: Option<crate::hstry::HstryClient>,
 ) {
     let (mut sender, mut receiver) = socket.split();
 
@@ -949,14 +1017,10 @@ pub(crate) async fn handle_ws(
         }
     }
 
-    // Message accumulator for saving assistant messages
-    let message_accumulator = Arc::new(tokio::sync::Mutex::new(MessageAccumulator::new()));
-    let accumulator_for_events = Arc::clone(&message_accumulator);
-    let main_chat_for_events = main_chat_svc.clone();
     let user_id_for_events = user_id.clone();
     let session_for_events = Arc::clone(&session);
-    let mmry_state_for_events = mmry_state.clone();
     let pi_service_for_events = pi_service.clone();
+    let hstry_for_events = hstry_client.clone();
 
     // Persist Pi auto-compaction summaries to main_chat.db so they can be injected
     // even when the OpenCode-side plugin is not active.
@@ -985,46 +1049,67 @@ pub(crate) async fn handle_ws(
                 warn!("Failed to update Pi session title: {}", e);
             }
 
-            // Accumulate message content for saving (only from the primary WS connection).
+            // Persist events (only from the primary WS connection).
             if can_persist {
-                let mut acc = accumulator_for_events.lock().await;
-                acc.process_event(&event);
-
-                // When agent completes, save the assistant message
-                if matches!(event, PiEvent::AgentEnd { .. })
-                    && let Some(svc) = &main_chat_for_events
-                    && let Some(content) = acc.take_message()
+                // Persist full conversation to hstry on AgentEnd
+                if let PiEvent::AgentEnd { messages } = &event
+                    && let Some(session_id) = &current_session_id
                 {
-                    let persisted = svc
-                        .add_message(
-                            &user_id_for_events,
-                            CreateChatMessage {
-                                role: MessageRole::Assistant,
-                                content: content.clone(),
-                                pi_session_id: current_session_id.clone(),
-                            },
-                        )
-                        .await;
+                    // Write to hstry if enabled
+                    if let Some(hstry) = &hstry_for_events {
+                        // Convert Pi AgentMessages to hstry proto Messages
+                        let proto_messages: Vec<_> = messages
+                            .iter()
+                            .enumerate()
+                            .map(|(idx, msg)| crate::hstry::agent_message_to_proto(msg, idx as i32))
+                            .collect();
 
-                    match persisted {
-                        Ok(saved) => {
-                            // Best-effort: index a compact turn chunk into mmry.
-                            // This uses the existing mmry proxy surface so Octo doesn't need a dedicated client.
-                            if let Err(e) = index_turn_to_mmry(
-                                &mmry_state_for_events,
-                                &user_id_for_events,
-                                &current_session_id,
-                                &saved,
+                        // Get timestamp from first/last message or use current time
+                        let now_ms = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_millis() as i64)
+                            .unwrap_or(0);
+                        let created_at_ms = messages
+                            .first()
+                            .and_then(|m| m.timestamp)
+                            .map(|t| t as i64)
+                            .unwrap_or(now_ms);
+                        let updated_at_ms = messages
+                            .last()
+                            .and_then(|m| m.timestamp)
+                            .map(|t| t as i64);
+
+                        // Extract model from last assistant message
+                        let model = messages.iter().rev().find_map(|m| {
+                            if m.role == "assistant" {
+                                m.model.clone()
+                            } else {
+                                None
+                            }
+                        });
+
+                        if let Err(e) = hstry
+                            .write_conversation(
+                                session_id,
+                                None, // title - could be extracted from session metadata
+                                None, // workspace - Main Chat doesn't have a workspace path
+                                model,
+                                proto_messages,
+                                created_at_ms,
+                                updated_at_ms,
                             )
                             .await
-                            {
-                                warn!("Failed to index turn into mmry: {}", e);
-                            }
-                        }
-                        Err(e) => {
-                            warn!("Failed to save assistant message: {}", e);
+                        {
+                            warn!("Failed to persist conversation to hstry: {}", e);
+                        } else {
+                            debug!(
+                                "Persisted {} messages to hstry for session {}",
+                                messages.len(),
+                                session_id
+                            );
                         }
                     }
+
                 }
 
                 // Persist auto-compaction output for continuity
@@ -1082,29 +1167,8 @@ pub(crate) async fn handle_ws(
                 // Parse as JSON command
                 match serde_json::from_str::<WsCommand>(&text) {
                     Ok(cmd) => {
-                        // Save user message before sending to Pi
-                        // Get current session_id dynamically to avoid stale references
-                        if let WsCommand::Prompt { ref message }
-                        | WsCommand::Steer { ref message }
-                        | WsCommand::FollowUp { ref message } = cmd
-                            && let Some(svc) = &main_chat_svc
-                        {
-                            let current_session_id = session.get_session_id().await;
-                            let content = serde_json::json!([{"type": "text", "text": message}]);
-                            if let Err(e) = svc
-                                .add_message(
-                                    &user_id,
-                                    CreateChatMessage {
-                                        role: MessageRole::User,
-                                        content,
-                                        pi_session_id: current_session_id,
-                                    },
-                                )
-                                .await
-                            {
-                                warn!("Failed to save user message: {}", e);
-                            }
-                        }
+                        // main_chat.db message history is deprecated; Pi session events are persisted to hstry.
+                        let _ = &main_chat_svc;
 
                         if let Err(e) = handle_ws_command(&session, cmd).await {
                             warn!("Failed to handle WS command: {}", e);
@@ -1169,119 +1233,6 @@ async fn handle_ws_command(
     Ok(())
 }
 
-// ========== Message Accumulator ==========
-
-/// Accumulates message content during streaming for persistence.
-struct MessageAccumulator {
-    text: String,
-    thinking: String,
-    tool_calls: Vec<Value>,
-    tool_results: Vec<Value>,
-}
-
-impl MessageAccumulator {
-    fn new() -> Self {
-        Self {
-            text: String::new(),
-            thinking: String::new(),
-            tool_calls: Vec::new(),
-            tool_results: Vec::new(),
-        }
-    }
-
-    fn process_event(&mut self, event: &PiEvent) {
-        match event {
-            PiEvent::MessageUpdate {
-                assistant_message_event,
-                ..
-            } => match assistant_message_event {
-                AssistantMessageEvent::TextDelta { delta, .. } => {
-                    self.text.push_str(delta);
-                }
-                AssistantMessageEvent::TextEnd { content, .. } => {
-                    if !content.is_empty() {
-                        self.text.push_str(content);
-                    }
-                }
-                AssistantMessageEvent::ThinkingDelta { delta, .. } => {
-                    self.thinking.push_str(delta);
-                }
-                AssistantMessageEvent::ThinkingEnd { content, .. } => {
-                    if !content.is_empty() {
-                        self.thinking.push_str(content);
-                    }
-                }
-                AssistantMessageEvent::ToolcallEnd { tool_call, .. } => {
-                    self.tool_calls.push(serde_json::json!({
-                        "type": "tool_use",
-                        "id": tool_call.id,
-                        "name": tool_call.name,
-                        "input": tool_call.arguments
-                    }));
-                }
-                AssistantMessageEvent::Error { reason, .. } => {
-                    self.tool_calls.push(serde_json::json!({
-                        "type": "error",
-                        "reason": reason
-                    }));
-                }
-                _ => {}
-            },
-            PiEvent::ToolExecutionEnd {
-                tool_call_id,
-                tool_name,
-                result,
-                ..
-            } => {
-                self.tool_results.push(serde_json::json!({
-                    "type": "tool_result",
-                    "id": tool_call_id,
-                    "name": tool_name,
-                    "content": result
-                }));
-            }
-            _ => {}
-        }
-    }
-
-    /// Take the accumulated message content as JSON and reset the accumulator.
-    fn take_message(&mut self) -> Option<Value> {
-        let mut parts = Vec::new();
-
-        // Add thinking first if present
-        if !self.thinking.is_empty() {
-            parts.push(serde_json::json!({
-                "type": "thinking",
-                "text": std::mem::take(&mut self.thinking)
-            }));
-        }
-
-        // Add text
-        if !self.text.is_empty() {
-            parts.push(serde_json::json!({
-                "type": "text",
-                "text": std::mem::take(&mut self.text)
-            }));
-        }
-
-        // Add tool calls
-        for tc in self.tool_calls.drain(..) {
-            parts.push(tc);
-        }
-
-        // Add tool results
-        for tr in self.tool_results.drain(..) {
-            parts.push(tr);
-        }
-
-        if parts.is_empty() {
-            None
-        } else {
-            Some(Value::Array(parts))
-        }
-    }
-}
-
 // ========== Helper Functions ==========
 
 fn get_pi_service(state: &AppState) -> ApiResult<&MainChatPiService> {
@@ -1298,83 +1249,6 @@ fn get_main_chat_service(state: &AppState) -> ApiResult<&MainChatService> {
         .as_ref()
         .map(|arc| arc.as_ref())
         .ok_or_else(|| ApiError::internal("Main Chat service not configured"))
-}
-
-async fn index_turn_to_mmry(
-    mmry: &MmryState,
-    user_id: &str,
-    pi_session_id: &Option<String>,
-    assistant_message: &ChatMessage,
-) -> Result<(), String> {
-    if !mmry.enabled {
-        return Ok(());
-    }
-
-    let pi_session_id = match pi_session_id.as_deref() {
-        Some(id) if !id.trim().is_empty() => id,
-        _ => return Ok(()),
-    };
-
-    // Best-effort extraction: store assistant text for now.
-    // We can extend this to include the paired user message later.
-    let content = format!(
-        "source: octo_main_chat\nuser_id: {user_id}\npi_session_id: {pi_session_id}\n\n{body}",
-        body = assistant_message.content
-    );
-
-    let tags = vec![
-        "source:octo".to_string(),
-        "domain:main_chat".to_string(),
-        "kind:assistant_chunk".to_string(),
-        format!("pi_session_id:{pi_session_id}"),
-    ];
-
-    let req = MmryAgentMemoryCreateRequest {
-        content,
-        category: Some("octo_main_chat".to_string()),
-        tags: Some(tags),
-        importance: Some(4),
-    };
-
-    let client = reqwest::Client::new();
-
-    let (base_url, store) = if mmry.single_user {
-        // Single-user: write to local mmry service. Keep store default.
-        (mmry.local_service_url.as_str(), None)
-    } else {
-        // Multi-user: write to host mmry service using a per-user store.
-        (
-            mmry.host_service_url.as_str(),
-            Some(format!("octo-user-{user_id}")),
-        )
-    };
-
-    let url = format!("{}/v1/agents/memories", base_url.trim_end_matches('/'));
-
-    let mut req_builder = client.post(url).json(&req);
-
-    if let Some(store) = store.as_deref() {
-        req_builder = req_builder.query(&[("store", store)]);
-    }
-
-    if let Some(key) = mmry.host_api_key.as_deref()
-        && !key.trim().is_empty()
-    {
-        req_builder = req_builder.bearer_auth(key);
-    }
-
-    let resp = req_builder
-        .send()
-        .await
-        .map_err(|e| format!("mmry request failed: {e}"))?;
-
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
-        return Err(format!("mmry returned {status}: {body}"));
-    }
-
-    Ok(())
 }
 
 pub(crate) fn pi_state_to_response(state: PiState) -> PiStateResponse {

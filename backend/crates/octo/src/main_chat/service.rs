@@ -8,8 +8,7 @@ use tokio::sync::RwLock;
 
 use super::db::{MainChatDb, main_chat_db_path, main_chat_dir_path};
 use super::models::{
-    AssistantInfo, ChatMessage, CreateChatMessage, CreateHistoryEntry, CreateSession, HistoryEntry,
-    MainChatSession,
+    AssistantInfo, CreateHistoryEntry, CreateSession, HistoryEntry, MainChatSession,
 };
 use super::repository::MainChatRepository;
 
@@ -349,43 +348,6 @@ impl MainChatService {
         repo.get_latest_session().await
     }
 
-    // ========== Message Operations ==========
-
-    /// Add a chat message.
-    pub async fn add_message(
-        &self,
-        user_id: &str,
-        message: CreateChatMessage,
-    ) -> Result<ChatMessage> {
-        let db = self.get_db(user_id).await?;
-        let repo = MainChatRepository::new(&db);
-        repo.add_message(message).await
-    }
-
-    /// Get all messages (display history).
-    pub async fn get_all_messages(&self, user_id: &str) -> Result<Vec<ChatMessage>> {
-        let db = self.get_db(user_id).await?;
-        let repo = MainChatRepository::new(&db);
-        repo.get_all_messages().await
-    }
-
-    /// Get messages for a specific session (by pi_session_id).
-    pub async fn get_messages_by_session(
-        &self,
-        user_id: &str,
-        session_id: &str,
-    ) -> Result<Vec<ChatMessage>> {
-        let db = self.get_db(user_id).await?;
-        let repo = MainChatRepository::new(&db);
-        repo.get_messages_for_session_range(session_id).await
-    }
-
-    /// Clear all messages (for fresh start).
-    pub async fn clear_messages(&self, user_id: &str) -> Result<i64> {
-        let db = self.get_db(user_id).await?;
-        let repo = MainChatRepository::new(&db);
-        repo.clear_messages().await
-    }
 }
 
 #[cfg(test)]

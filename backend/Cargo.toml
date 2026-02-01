@@ -95,6 +95,13 @@ zip = { version = "2.4", default-features = false, features = ["deflate"] }
 tempfile = "3"
 axum-test = "17"
 
+# gRPC
+tonic = "0.12"
+prost = "0.13"
+
+# External crates
+hstry-core = { git = "https://github.com/byteowlz/hstry", branch = "main" }
+
 [profile.release]
 lto = true
 codegen-units = 1

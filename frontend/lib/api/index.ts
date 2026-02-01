@@ -136,8 +136,6 @@ export {
 	closeMainChatPiSession,
 	createMainChatPiWebSocket,
 	getMainChatPiHistory,
-	clearMainChatPiHistory,
-	addMainChatPiSeparator,
 	setWorkspacePiModel,
 	getWorkspacePiModels,
 	newWorkspacePiSession,

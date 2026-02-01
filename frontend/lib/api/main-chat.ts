@@ -638,29 +638,6 @@ export async function getMainChatPiHistory(
 	return res.json();
 }
 
-/** Clear persistent chat history */
-export async function clearMainChatPiHistory(): Promise<{ deleted: number }> {
-	const res = await authFetch(controlPlaneApiUrl("/api/main/pi/history"), {
-		method: "DELETE",
-		credentials: "include",
-	});
-	if (!res.ok) throw new Error(await readApiError(res));
-	return res.json();
-}
-
-/** Add a session separator to history (marks new conversation start) */
-export async function addMainChatPiSeparator(): Promise<MainChatDbMessage> {
-	const res = await authFetch(
-		controlPlaneApiUrl("/api/main/pi/history/separator"),
-		{
-			method: "POST",
-			credentials: "include",
-		},
-	);
-	if (!res.ok) throw new Error(await readApiError(res));
-	return res.json();
-}
-
 // ============================================================================
 // Workspace Pi API
 // ============================================================================

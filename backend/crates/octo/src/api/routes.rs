@@ -406,11 +406,7 @@ pub fn create_router_with_config(state: AppState, max_upload_size_mb: usize) -> 
         .route("/main/pi/ws", get(main_chat_pi_handlers::ws_handler))
         .route(
             "/main/pi/history",
-            get(main_chat_pi_handlers::get_history).delete(main_chat_pi_handlers::clear_history),
-        )
-        .route(
-            "/main/pi/history/separator",
-            post(main_chat_pi_handlers::add_separator),
+            get(main_chat_pi_handlers::get_history),
         )
         .route(
             "/main/pi/sessions",

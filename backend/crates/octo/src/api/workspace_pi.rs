@@ -245,9 +245,9 @@ pub async fn ws_handler(
     let session = get_or_resume_session(svc, user.id(), &work_dir, &session_id).await?;
 
     let user_id = user.id().to_string();
-    let mmry_state = state.mmry.clone();
+    let hstry_client = state.hstry.clone();
 
     Ok(ws.on_upgrade(move |socket| {
-        crate::api::main_chat_pi::handle_ws(socket, session, user_id, None, mmry_state, None)
+        crate::api::main_chat_pi::handle_ws(socket, session, user_id, None, None, hstry_client)
     }))
 }
