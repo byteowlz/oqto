@@ -2,6 +2,9 @@
 
 ## Open
 
+### [octo-gj7p] Integrate hstry-core for message persistence (P1, feature)
+Replace Octo's canon module with hstry-core types. On message complete, call hstry daemon's gRPC WriteService instead of writing to main_chat.db. Use source_id=pi and Pi session IDs as external_id for deduplication.
+
 ### [octo-zjs8.3] Add strict clippy lints to all Cargo.toml files (P1, task)
 Add workspace-level clippy configuration to deny warnings and enforce best practices
 
@@ -159,6 +162,9 @@ Implementation:
 
 ### [workspace-5pmk.11] Add backend URL configuration to login form (P1, task)
 Add a 'Server URL' field to the login form allowing users to specify the backend URL. Store in localStorage for persistence. Show connection status indicator. Default to current origin for web, require input for mobile apps.
+
+### [octo-95x0] Remove main_chat.db and duplicate message types (P2, chore)
+After hstry integration, remove: main_chat.db, canon/ module, ChatMessage/ChatMessagePart from history/models.rs, duplicate Message types from agent_rpc/types.rs. Use hstry-core types everywhere.
 
 ### [octo-zjs8.4] Optimize Rust compilation times (P2, task)
 Add .cargo/config.toml with linker optimizations, split-debuginfo, incremental builds, and codegen-units settings
@@ -1264,9 +1270,9 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
-- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
-- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
 - [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
 - [octo-k8z1.2] Backend: WebSocket proxy for screencast stream (closed )
 - [octo-k8z1.1] Backend: Integrate agent-browser daemon per session (closed )
+- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
+- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
 - [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
