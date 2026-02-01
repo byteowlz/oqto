@@ -68,14 +68,14 @@ impl WsHub {
 
     /// Unregister a WebSocket connection.
     pub fn unregister_connection(&self, user_id: &str, conn_id: usize) {
-        if let Some(mut conns) = self.connections.get_mut(user_id) {
-            if conn_id < conns.len() {
-                conns.remove(conn_id);
-                info!(
-                    "Unregistered WebSocket connection {} for user {}",
-                    conn_id, user_id
-                );
-            }
+        if let Some(mut conns) = self.connections.get_mut(user_id)
+            && conn_id < conns.len()
+        {
+            conns.remove(conn_id);
+            info!(
+                "Unregistered WebSocket connection {} for user {}",
+                conn_id, user_id
+            );
         }
 
         // Clean up empty entries
@@ -97,15 +97,15 @@ impl WsHub {
             .insert(user_id.to_string());
 
         // Get or create adapter for this session
-        if let Some(existing) = self.adapters.get(&session_id) {
-            if !existing.matches(&subscription.workspace_path, subscription.opencode_port) {
-                info!(
-                    "Replacing OpenCode adapter for session {} (port/path updated)",
-                    session_id
-                );
-                existing.stop();
-                self.adapters.remove(&session_id);
-            }
+        if let Some(existing) = self.adapters.get(&session_id)
+            && !existing.matches(&subscription.workspace_path, subscription.opencode_port)
+        {
+            info!(
+                "Replacing OpenCode adapter for session {} (port/path updated)",
+                session_id
+            );
+            existing.stop();
+            self.adapters.remove(&session_id);
         }
 
         if !self.adapters.contains_key(&session_id) {
@@ -143,14 +143,14 @@ impl WsHub {
         }
 
         // If no more subscribers, consider cleaning up the adapter
-        if let Some(subscribers) = self.session_subscribers.get(session_id) {
-            if subscribers.is_empty() {
-                if let Some(adapter) = self.adapters.get(session_id) {
-                    adapter.stop();
-                }
-                self.adapters.remove(session_id);
-                debug!("Session {} has no subscribers, adapter stopped", session_id);
+        if let Some(subscribers) = self.session_subscribers.get(session_id)
+            && subscribers.is_empty()
+        {
+            if let Some(adapter) = self.adapters.get(session_id) {
+                adapter.stop();
             }
+            self.adapters.remove(session_id);
+            debug!("Session {} has no subscribers, adapter stopped", session_id);
         }
     }
 

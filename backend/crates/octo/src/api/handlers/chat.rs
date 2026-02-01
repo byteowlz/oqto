@@ -175,7 +175,7 @@ pub async fn list_chat_history(
                         "Runner failed in multi-user mode, cannot fall back to direct access"
                     );
                     return Err(ApiError::internal(
-                        "Chat history service unavailable. Please try again later."
+                        "Chat history service unavailable. Please try again later.",
                     ));
                 }
                 tracing::warn!(user_id = %user.id(), error = %e, "Runner failed, falling back to direct access");
@@ -188,24 +188,25 @@ pub async fn list_chat_history(
             "No runner available in multi-user mode"
         );
         return Err(ApiError::internal(
-            "Chat history service not configured for this user."
+            "Chat history service not configured for this user.",
         ));
     }
 
     // SECURITY: Only use direct filesystem access in single-user mode
-    if !multi_user && sessions.is_empty() {
-        if let Some(db_path) = crate::history::hstry_db_path() {
-            match crate::history::list_sessions_from_hstry(&db_path).await {
-                Ok(found) => {
-                    sessions = found;
-                    source = "hstry";
-                }
-                Err(err) => {
-                    tracing::warn!(
-                        error = %err,
-                        "Failed to list chat history via hstry, falling back to direct access"
-                    );
-                }
+    if !multi_user
+        && sessions.is_empty()
+        && let Some(db_path) = crate::history::hstry_db_path()
+    {
+        match crate::history::list_sessions_from_hstry(&db_path).await {
+            Ok(found) => {
+                sessions = found;
+                source = "hstry";
+            }
+            Err(err) => {
+                tracing::warn!(
+                    error = %err,
+                    "Failed to list chat history via hstry, falling back to direct access"
+                );
             }
         }
     }
@@ -267,7 +268,10 @@ pub async fn get_chat_session(
                 }
                 // Session not found via runner
                 if multi_user {
-                    return Err(ApiError::not_found(format!("Chat session {} not found", session_id)));
+                    return Err(ApiError::not_found(format!(
+                        "Chat session {} not found",
+                        session_id
+                    )));
                 }
             }
             Err(e) => {
@@ -285,7 +289,9 @@ pub async fn get_chat_session(
         }
     } else if multi_user {
         // SECURITY: Multi-user mode requires runner
-        return Err(ApiError::internal("Chat history service not configured for this user."));
+        return Err(ApiError::internal(
+            "Chat history service not configured for this user.",
+        ));
     }
 
     // SECURITY: Only use direct access in single-user mode
@@ -370,7 +376,9 @@ pub async fn update_chat_session(
         }
     } else if multi_user {
         // SECURITY: Multi-user mode requires runner
-        return Err(ApiError::internal("Chat history service not configured for this user."));
+        return Err(ApiError::internal(
+            "Chat history service not configured for this user.",
+        ));
     }
 
     // SECURITY: Only use direct access in single-user mode
@@ -451,23 +459,26 @@ pub async fn list_chat_history_grouped(
         }
     } else if multi_user {
         // SECURITY: Multi-user mode requires runner
-        return Err(ApiError::internal("Chat history service not configured for this user."));
+        return Err(ApiError::internal(
+            "Chat history service not configured for this user.",
+        ));
     }
 
     // SECURITY: Only use direct access in single-user mode
-    if !multi_user && sessions.is_empty() {
-        if let Some(db_path) = crate::history::hstry_db_path() {
-            match crate::history::list_sessions_from_hstry(&db_path).await {
-                Ok(found) => {
-                    sessions = found;
-                    source = "hstry";
-                }
-                Err(err) => {
-                    tracing::warn!(
-                        error = %err,
-                        "Failed to list grouped chat history via hstry, falling back to direct access"
-                    );
-                }
+    if !multi_user
+        && sessions.is_empty()
+        && let Some(db_path) = crate::history::hstry_db_path()
+    {
+        match crate::history::list_sessions_from_hstry(&db_path).await {
+            Ok(found) => {
+                sessions = found;
+                source = "hstry";
+            }
+            Err(err) => {
+                tracing::warn!(
+                    error = %err,
+                    "Failed to list grouped chat history via hstry, falling back to direct access"
+                );
             }
         }
     }
@@ -614,7 +625,9 @@ pub async fn get_chat_messages(
         }
     } else if multi_user {
         // SECURITY: Multi-user mode requires runner
-        return Err(ApiError::internal("Chat history service not configured for this user."));
+        return Err(ApiError::internal(
+            "Chat history service not configured for this user.",
+        ));
     }
 
     // SECURITY: Only use direct access in single-user mode

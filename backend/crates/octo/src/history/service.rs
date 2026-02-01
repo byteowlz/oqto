@@ -90,11 +90,11 @@ pub async fn get_session_messages_async(session_id: &str) -> Result<Vec<ChatMess
     // Check cache first
     {
         let cache = MESSAGE_CACHE.read().await;
-        if let Some((messages, timestamp)) = cache.get(session_id) {
-            if timestamp.elapsed().as_secs() < CACHE_TTL_SECS {
-                tracing::debug!("Cache hit for session {}", session_id);
-                return Ok(messages.clone());
-            }
+        if let Some((messages, timestamp)) = cache.get(session_id)
+            && timestamp.elapsed().as_secs() < CACHE_TTL_SECS
+        {
+            tracing::debug!("Cache hit for session {}", session_id);
+            return Ok(messages.clone());
         }
     }
 

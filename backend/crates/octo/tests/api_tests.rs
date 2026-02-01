@@ -1,7 +1,5 @@
 //! API integration tests.
 
-use std::path::PathBuf;
-
 use axum::{
     body::Body,
     http::{Method, Request, StatusCode, header},

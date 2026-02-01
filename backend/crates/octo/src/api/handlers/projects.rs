@@ -224,10 +224,7 @@ async fn maybe_sync_templates_repo(state: &AppState) -> Result<(), ApiError> {
     }
     let should_sync = {
         let last_sync = state.templates.last_sync.lock().await;
-        match *last_sync {
-            Some(instant) if instant.elapsed() < state.templates.sync_interval => false,
-            _ => true,
-        }
+        !matches!(*last_sync, Some(instant) if instant.elapsed() < state.templates.sync_interval)
     };
     if !should_sync {
         return Ok(());

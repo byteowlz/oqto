@@ -946,15 +946,14 @@ impl Runner {
         };
 
         // Create parent directories if requested
-        if req.create_parents {
-            if let Some(parent) = path.parent() {
-                if let Err(e) = tokio::fs::create_dir_all(parent).await {
-                    return error_response(
-                        ErrorCode::IoError,
-                        format!("Failed to create parent directories: {}", e),
-                    );
-                }
-            }
+        if req.create_parents
+            && let Some(parent) = path.parent()
+            && let Err(e) = tokio::fs::create_dir_all(parent).await
+        {
+            return error_response(
+                ErrorCode::IoError,
+                format!("Failed to create parent directories: {}", e),
+            );
         }
 
         match tokio::fs::write(path, &content).await {
@@ -1478,10 +1477,10 @@ impl Runner {
                     .into_iter()
                     .filter(|s| {
                         // Filter by workspace if specified
-                        if let Some(ref ws) = req.workspace {
-                            if s.workspace_path != *ws {
-                                return false;
-                            }
+                        if let Some(ref ws) = req.workspace
+                            && s.workspace_path != *ws
+                        {
+                            return false;
                         }
                         // Filter out child sessions unless explicitly included
                         if !req.include_children && s.is_child {

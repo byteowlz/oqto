@@ -75,7 +75,7 @@ impl UserRepository {
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
-        .bind(&id)
+        .bind(id)
         .bind(&request.external_id)
         .bind(&request.username)
         .bind(&request.email)
@@ -87,7 +87,7 @@ impl UserRepository {
         .await
         .context("Failed to insert user")?;
 
-        self.get(&id)
+        self.get(id)
             .await?
             .ok_or_else(|| anyhow::anyhow!("User not found after creation"))
     }

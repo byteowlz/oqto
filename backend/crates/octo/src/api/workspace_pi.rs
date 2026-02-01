@@ -89,7 +89,7 @@ pub async fn resume_workspace_session(
 ) -> ApiResult<Json<PiStateResponse>> {
     let svc = get_workspace_pi_service(&state)?;
     let work_dir = validate_workspace_path(&state, user.id(), &query.workspace_path)?;
-    let session = get_or_resume_session(&svc, user.id(), &work_dir, &session_id).await?;
+    let session = get_or_resume_session(svc, user.id(), &work_dir, &session_id).await?;
     let pi_state = session
         .get_state()
         .await
@@ -160,7 +160,7 @@ pub async fn get_workspace_state(
         .ok_or_else(|| ApiError::bad_request("session_id is required"))?;
     let svc = get_workspace_pi_service(&state)?;
     let work_dir = validate_workspace_path(&state, user.id(), &query.workspace_path)?;
-    let session = get_or_resume_session(&svc, user.id(), &work_dir, &session_id).await?;
+    let session = get_or_resume_session(svc, user.id(), &work_dir, &session_id).await?;
     let pi_state = session
         .get_state()
         .await
@@ -182,7 +182,7 @@ pub async fn get_workspace_models(
         .ok_or_else(|| ApiError::bad_request("session_id is required"))?;
     let svc = get_workspace_pi_service(&state)?;
     let work_dir = validate_workspace_path(&state, user.id(), &query.workspace_path)?;
-    let session = get_or_resume_session(&svc, user.id(), &work_dir, &session_id).await?;
+    let session = get_or_resume_session(svc, user.id(), &work_dir, &session_id).await?;
     let models = session
         .get_available_models()
         .await
@@ -215,7 +215,7 @@ pub async fn set_workspace_model(
         .ok_or_else(|| ApiError::bad_request("session_id is required"))?;
     let svc = get_workspace_pi_service(&state)?;
     let work_dir = validate_workspace_path(&state, user.id(), &query.workspace_path)?;
-    let session = get_or_resume_session(&svc, user.id(), &work_dir, &session_id).await?;
+    let session = get_or_resume_session(svc, user.id(), &work_dir, &session_id).await?;
     session
         .set_model(&req.provider, &req.model_id)
         .await
@@ -242,19 +242,12 @@ pub async fn ws_handler(
         .ok_or_else(|| ApiError::bad_request("session_id is required"))?;
     let svc = get_workspace_pi_service(&state)?;
     let work_dir = validate_workspace_path(&state, user.id(), &query.workspace_path)?;
-    let session = get_or_resume_session(&svc, user.id(), &work_dir, &session_id).await?;
+    let session = get_or_resume_session(svc, user.id(), &work_dir, &session_id).await?;
 
     let user_id = user.id().to_string();
     let mmry_state = state.mmry.clone();
 
     Ok(ws.on_upgrade(move |socket| {
-        crate::api::main_chat_pi::handle_ws(
-            socket,
-            session,
-            user_id,
-            None,
-            mmry_state,
-            None,
-        )
+        crate::api::main_chat_pi::handle_ws(socket, session, user_id, None, mmry_state, None)
     }))
 }

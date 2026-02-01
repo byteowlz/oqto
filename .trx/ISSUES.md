@@ -2,6 +2,18 @@
 
 ## Open
 
+### [octo-zjs8.3] Add strict clippy lints to all Cargo.toml files (P1, task)
+Add workspace-level clippy configuration to deny warnings and enforce best practices
+
+### [octo-zjs8.2] Fix clippy warnings in frontend/src-tauri (P1, task)
+Fix unnecessary_lazy_evaluations, manual_flatten, single_match, and manual_strip warnings
+
+### [octo-zjs8.1] Fix all clippy warnings in backend crates (P1, task)
+Fix warnings in octo-files, octo-scaffold, octo-browser, and octo main crate without using #[allow] or other bandaid fixes
+
+### [octo-zjs8] Rust Code Quality & Compilation Optimization (P1, epic)
+Fix all clippy warnings properly (no bandaid fixes), add strict linting rules, and optimize compilation times
+
 ### [octo-zqyg] Fix Linux user creation sudo allowlist path mismatch (P1, bug)
 
 ### [octo-qq9y] Security audit sudoers configuration for multi-user mode (P1, task)
@@ -147,6 +159,9 @@ Implementation:
 
 ### [workspace-5pmk.11] Add backend URL configuration to login form (P1, task)
 Add a 'Server URL' field to the login form allowing users to specify the backend URL. Store in localStorage for persistence. Show connection status indicator. Default to current origin for web, require input for mobile apps.
+
+### [octo-zjs8.4] Optimize Rust compilation times (P2, task)
+Add .cargo/config.toml with linker optimizations, split-debuginfo, incremental builds, and codegen-units settings
 
 ### [octo-7xx0] Note: octo-ssh-proxy socket path must be mounted or moved for sandbox access (P2, task)
 
@@ -1249,9 +1264,9 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
-- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
-- [octo-k8z1.1] Backend: Integrate agent-browser daemon per session (closed )
+- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
+- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
 - [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
 - [octo-k8z1.2] Backend: WebSocket proxy for screencast stream (closed )
-- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
-- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
+- [octo-k8z1.1] Backend: Integrate agent-browser daemon per session (closed )
+- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )

@@ -37,10 +37,10 @@ impl InviteCode {
 
         if let Some(expires_at) = &self.expires_at {
             // Parse and compare with current time
-            if let Ok(expiry) = chrono::DateTime::parse_from_rfc3339(expires_at) {
-                if expiry < chrono::Utc::now() {
-                    return false;
-                }
+            if let Ok(expiry) = chrono::DateTime::parse_from_rfc3339(expires_at)
+                && expiry < chrono::Utc::now()
+            {
+                return false;
             }
             // Also try SQLite datetime format
             if let Ok(expiry) =

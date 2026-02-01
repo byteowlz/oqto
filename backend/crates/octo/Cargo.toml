@@ -30,6 +30,11 @@ path = "src/bin/pi-bridge.rs"
 name = "octo"
 path = "src/lib.rs"
 
+[features]
+default = []
+desktop-notifications = ["notify-rust"]
+integration-tests = []
+
 [dependencies]
 # Error handling
 anyhow.workspace = true
@@ -104,8 +109,11 @@ rand.workspace = true
 once_cell.workspace = true
 urlencoding.workspace = true
 libc.workspace = true
+rustix.workspace = true
+fork.workspace = true
 glob = "0.3.3"
 fuser = "0.16.0"
+notify-rust = { version = "4", optional = true }
 
 # TypeScript type generation
 ts-rs = { version = "10", features = ["serde-compat", "chrono-impl", "serde-json-impl"] }
@@ -114,3 +122,6 @@ ts-rs = { version = "10", features = ["serde-compat", "chrono-impl", "serde-json
 tower = { workspace = true, features = ["util"] }
 axum-test.workspace = true
 tempfile.workspace = true
+
+[lints]
+workspace = true

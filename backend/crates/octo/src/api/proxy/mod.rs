@@ -23,11 +23,9 @@ pub use mmry::{
 };
 pub use sse::{opencode_events, proxy_opencode_agent_events, proxy_opencode_events};
 
-// Query types used by routes
-pub use handlers::{OpencodeEventQuery, WorkspaceProxyQuery};
-
 // Re-export tests module
 #[cfg(test)]
 pub(crate) mod tests {
+    #[allow(unused_imports)]
     pub use super::builder::tests::*;
 }

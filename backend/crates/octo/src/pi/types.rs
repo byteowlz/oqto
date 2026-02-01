@@ -519,11 +519,11 @@ impl PiMessage {
         // First, check if it's a response
         let value: Value = serde_json::from_str(line)?;
 
-        if let Some(msg_type) = value.get("type").and_then(|v| v.as_str()) {
-            if msg_type == "response" {
-                let response: PiResponse = serde_json::from_value(value)?;
-                return Ok(PiMessage::Response(response));
-            }
+        if let Some(msg_type) = value.get("type").and_then(|v| v.as_str())
+            && msg_type == "response"
+        {
+            let response: PiResponse = serde_json::from_value(value)?;
+            return Ok(PiMessage::Response(response));
         }
 
         // Otherwise, try to parse as an event

@@ -54,6 +54,7 @@ pub struct ResolvedTemplates {
     pub personality: String,
     pub user: String,
     pub agents: String,
+    #[allow(dead_code)]
     pub skip_stages: Vec<String>,
     pub unlock_components: Vec<String>,
     pub user_level: Option<String>,
@@ -350,10 +351,11 @@ impl OnboardingTemplatesService {
         for entry in std::fs::read_dir(&base_dir)? {
             let entry = entry?;
             let path = entry.path();
-            if path.is_file() && path.extension().map_or(false, |e| e == "md") {
-                if let Some(name) = path.file_name() {
-                    templates.push(name.to_string_lossy().to_string());
-                }
+            if path.is_file()
+                && path.extension().is_some_and(|e| e == "md")
+                && let Some(name) = path.file_name()
+            {
+                templates.push(name.to_string_lossy().to_string());
             }
         }
 
@@ -367,10 +369,11 @@ impl OnboardingTemplatesService {
                     for entry in std::fs::read_dir(lang_entry.path())? {
                         let entry = entry?;
                         let path = entry.path();
-                        if path.is_file() && path.extension().map_or(false, |e| e == "md") {
-                            if let Some(name) = path.file_name() {
-                                templates.push(format!("i18n/{}/{}", lang, name.to_string_lossy()));
-                            }
+                        if path.is_file()
+                            && path.extension().is_some_and(|e| e == "md")
+                            && let Some(name) = path.file_name()
+                        {
+                            templates.push(format!("i18n/{}/{}", lang, name.to_string_lossy()));
                         }
                     }
                 }

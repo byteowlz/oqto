@@ -245,38 +245,38 @@ fn hstry_parts_to_chat_parts(
 ) -> Vec<ChatMessagePart> {
     let mut parts = Vec::new();
 
-    if let Some(parts_json) = parts_json {
-        if let Ok(serde_json::Value::Array(values)) = serde_json::from_str(parts_json) {
-            for (idx, value) in values.iter().enumerate() {
-                let serde_json::Value::Object(obj) = value else {
-                    continue;
-                };
-                let part_type = obj
-                    .get("type")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("text")
-                    .to_string();
-                let text = match part_type.as_str() {
-                    "text" | "thinking" => obj.get("text").and_then(|v| v.as_str()),
-                    "status" | "error" => obj
-                        .get("message")
-                        .or_else(|| obj.get("text"))
-                        .and_then(|v| v.as_str()),
-                    _ => None,
-                };
-                if let Some(text) = text {
-                    parts.push(ChatMessagePart {
-                        id: format!("{message_id}-part-{idx}"),
-                        part_type,
-                        text: Some(text.to_string()),
-                        text_html: None,
-                        tool_name: None,
-                        tool_input: None,
-                        tool_output: None,
-                        tool_status: None,
-                        tool_title: None,
-                    });
-                }
+    if let Some(parts_json) = parts_json
+        && let Ok(serde_json::Value::Array(values)) = serde_json::from_str(parts_json)
+    {
+        for (idx, value) in values.iter().enumerate() {
+            let serde_json::Value::Object(obj) = value else {
+                continue;
+            };
+            let part_type = obj
+                .get("type")
+                .and_then(|v| v.as_str())
+                .unwrap_or("text")
+                .to_string();
+            let text = match part_type.as_str() {
+                "text" | "thinking" => obj.get("text").and_then(|v| v.as_str()),
+                "status" | "error" => obj
+                    .get("message")
+                    .or_else(|| obj.get("text"))
+                    .and_then(|v| v.as_str()),
+                _ => None,
+            };
+            if let Some(text) = text {
+                parts.push(ChatMessagePart {
+                    id: format!("{message_id}-part-{idx}"),
+                    part_type,
+                    text: Some(text.to_string()),
+                    text_html: None,
+                    tool_name: None,
+                    tool_input: None,
+                    tool_output: None,
+                    tool_status: None,
+                    tool_title: None,
+                });
             }
         }
     }

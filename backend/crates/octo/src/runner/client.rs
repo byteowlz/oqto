@@ -33,16 +33,6 @@ impl RunnerClient {
         }
     }
 
-    /// Create a runner client using the default socket path.
-    /// Uses XDG_RUNTIME_DIR if available, otherwise /tmp.
-    ///
-    /// This is for single-user mode where the runner runs as the current user.
-    pub fn default() -> Self {
-        let runtime_dir = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_string());
-        let socket_path = DEFAULT_SOCKET_PATTERN.replace("{runtime_dir}", &runtime_dir);
-        Self::new(socket_path)
-    }
-
     /// Create a runner client for a specific Linux user by UID.
     ///
     /// Used in multi-user mode where each user has their own runner daemon
@@ -635,6 +625,18 @@ impl RunnerClient {
     }
 }
 
+/// Create a runner client using the default socket path.
+/// Uses XDG_RUNTIME_DIR if available, otherwise /tmp.
+///
+/// This is for single-user mode where the runner runs as the current user.
+impl Default for RunnerClient {
+    fn default() -> Self {
+        let runtime_dir = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_string());
+        let socket_path = DEFAULT_SOCKET_PATTERN.replace("{runtime_dir}", &runtime_dir);
+        Self::new(socket_path)
+    }
+}
+
 /// An active stdout subscription that yields lines as they arrive.
 pub struct StdoutSubscription {
     lines: tokio::io::Lines<BufReader<tokio::net::unix::OwnedReadHalf>>,
@@ -851,7 +853,7 @@ mod security_tests {
         let alice_client = RunnerClient::for_uid(1001);
 
         // Spawn a process that prints its UID
-        let pid = alice_client
+        let _pid = alice_client
             .spawn_rpc_process(
                 "test-whoami",
                 "id",

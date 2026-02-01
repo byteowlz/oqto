@@ -88,7 +88,7 @@ enum Command {
     /// Send a raw JSON command to the daemon
     Raw { json: String },
     /// Send any agent-browser action with JSON or key=value args
-    Command {
+    Generic {
         action: String,
         /// JSON object to merge into the command payload
         #[arg(long)]
@@ -317,7 +317,7 @@ fn main() -> Result<()> {
             },
         )?,
         Command::Raw { json } => send_raw(&cli.session, timeout, &json)?,
-        Command::Command {
+        Command::Generic {
             action,
             json,
             file,
@@ -443,7 +443,7 @@ fn connect(session: &str, timeout: Duration) -> Result<Connection> {
         stream
             .set_write_timeout(Some(timeout))
             .context("Failed to set write timeout")?;
-        return Ok(Connection::Unix(stream));
+        Ok(Connection::Unix(stream))
     }
 
     #[cfg(not(unix))]

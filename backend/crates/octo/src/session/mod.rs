@@ -9,6 +9,7 @@ mod service;
 
 #[allow(unused_imports)]
 pub use models::SessionStatus;
+#[allow(unused_imports)]
 pub use models::{CreateSessionRequest, RuntimeMode, Session, SessionResponse, SessionUrls};
 pub use repository::SessionRepository;
 #[allow(unused_imports)]

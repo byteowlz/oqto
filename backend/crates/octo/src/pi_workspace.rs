@@ -282,7 +282,7 @@ impl WorkspacePiService {
         };
 
         if title.is_none() {
-            for line in reader.lines().filter_map(|l| l.ok()) {
+            for line in reader.lines().map_while(Result::ok) {
                 if line.is_empty() {
                     continue;
                 }
@@ -296,13 +296,12 @@ impl WorkspacePiService {
                     continue;
                 }
 
-                if let Some(msg) = entry.get("message") {
-                    if msg.get("role").and_then(|r| r.as_str()) == Some("user") {
-                        if let Some(content) = msg.get("content") {
-                            title = Self::extract_title_from_content(content);
-                            break;
-                        }
-                    }
+                if let Some(msg) = entry.get("message")
+                    && msg.get("role").and_then(|r| r.as_str()) == Some("user")
+                    && let Some(content) = msg.get("content")
+                {
+                    title = Self::extract_title_from_content(content);
+                    break;
                 }
             }
         }
@@ -346,10 +345,10 @@ impl WorkspacePiService {
 
         if let Some(arr) = content.as_array() {
             for block in arr {
-                if block.get("type").and_then(|t| t.as_str()) == Some("text") {
-                    if let Some(text) = block.get("text").and_then(|t| t.as_str()) {
-                        return Some(Self::truncate_title(text));
-                    }
+                if block.get("type").and_then(|t| t.as_str()) == Some("text")
+                    && let Some(text) = block.get("text").and_then(|t| t.as_str())
+                {
+                    return Some(Self::truncate_title(text));
                 }
             }
         }
@@ -485,7 +484,7 @@ impl WorkspacePiService {
 
         // Create the session (we hold the creation slot)
         let result = async {
-            let sessions_dir = self.get_pi_sessions_dir(user_id, &work_dir.to_path_buf());
+            let sessions_dir = self.get_pi_sessions_dir(user_id, work_dir);
             let session_file = self.find_session_file(&sessions_dir, session_id)?;
             let session = self
                 .create_session(user_id, work_dir, Some(session_file))
@@ -533,56 +532,55 @@ impl WorkspacePiService {
     ) -> Result<Vec<PiSessionMessage>> {
         use std::io::{BufRead, BufReader};
 
-        let sessions_dir = self.get_pi_sessions_dir(user_id, &work_dir.to_path_buf());
+        let sessions_dir = self.get_pi_sessions_dir(user_id, work_dir);
         let session_file = self.find_session_file(&sessions_dir, session_id)?;
 
         let file = std::fs::File::open(&session_file).context("opening session file")?;
         let reader = BufReader::new(file);
 
         let mut messages = Vec::new();
-        for line in reader.lines().filter_map(|l| l.ok()) {
+        for line in reader.lines().map_while(Result::ok) {
             if line.is_empty() {
                 continue;
             }
 
-            if let Ok(entry) = serde_json::from_str::<Value>(&line) {
-                if entry.get("type").and_then(|t| t.as_str()) == Some("message") {
-                    if let Some(msg) = entry.get("message") {
-                        let id = entry
-                            .get("id")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("")
-                            .to_string();
-                        let role = msg
-                            .get("role")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("user")
-                            .to_string();
-                        let content = msg.get("content").cloned().unwrap_or(Value::Null);
-                        let tool_call_id = msg
-                            .get("toolCallId")
-                            .and_then(|v| v.as_str())
-                            .map(|v| v.to_string());
-                        let tool_name = msg
-                            .get("toolName")
-                            .and_then(|v| v.as_str())
-                            .map(|v| v.to_string());
-                        let is_error = msg.get("isError").and_then(|v| v.as_bool());
-                        let timestamp = msg.get("timestamp").and_then(|v| v.as_i64()).unwrap_or(0);
-                        let usage = msg.get("usage").cloned();
+            if let Ok(entry) = serde_json::from_str::<Value>(&line)
+                && entry.get("type").and_then(|t| t.as_str()) == Some("message")
+                && let Some(msg) = entry.get("message")
+            {
+                let id = entry
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let role = msg
+                    .get("role")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("user")
+                    .to_string();
+                let content = msg.get("content").cloned().unwrap_or(Value::Null);
+                let tool_call_id = msg
+                    .get("toolCallId")
+                    .and_then(|v| v.as_str())
+                    .map(|v| v.to_string());
+                let tool_name = msg
+                    .get("toolName")
+                    .and_then(|v| v.as_str())
+                    .map(|v| v.to_string());
+                let is_error = msg.get("isError").and_then(|v| v.as_bool());
+                let timestamp = msg.get("timestamp").and_then(|v| v.as_i64()).unwrap_or(0);
+                let usage = msg.get("usage").cloned();
 
-                        messages.push(PiSessionMessage {
-                            id,
-                            role,
-                            content,
-                            tool_call_id,
-                            tool_name,
-                            is_error,
-                            timestamp,
-                            usage,
-                        });
-                    }
-                }
+                messages.push(PiSessionMessage {
+                    id,
+                    role,
+                    content,
+                    tool_call_id,
+                    tool_name,
+                    is_error,
+                    timestamp,
+                    usage,
+                });
             }
         }
 
@@ -614,10 +612,10 @@ impl WorkspacePiService {
 
             for entry in entries.filter_map(|e| e.ok()) {
                 let path = entry.path();
-                if path.extension().map(|e| e == "jsonl").unwrap_or(false) {
-                    if let Some(session) = self.parse_session_file(&path) {
-                        sessions.push(session);
-                    }
+                if path.extension().map(|e| e == "jsonl").unwrap_or(false)
+                    && let Some(session) = self.parse_session_file(&path)
+                {
+                    sessions.push(session);
                 }
             }
         }

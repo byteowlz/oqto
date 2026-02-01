@@ -971,21 +971,18 @@ pub(crate) async fn handle_ws(
             let current_session_id = session_for_events.get_session_id().await;
 
             // Handle extension UI events that should update session metadata.
-            if let crate::pi::PiEvent::ExtensionUiRequest(req) = &event {
-                if req.method == "setTitle" {
-                    if let (Some(title), Some(session_id), Some(pi_svc)) = (
-                        req.title.as_ref(),
-                        current_session_id.as_ref(),
-                        pi_service_for_events.as_ref(),
-                    ) {
-                        if let Err(e) = pi_svc
-                            .update_session_title(&user_id_for_events, session_id, title)
-                            .await
-                        {
-                            warn!("Failed to update Pi session title: {}", e);
-                        }
-                    }
-                }
+            if let crate::pi::PiEvent::ExtensionUiRequest(req) = &event
+                && req.method == "setTitle"
+                && let (Some(title), Some(session_id), Some(pi_svc)) = (
+                    req.title.as_ref(),
+                    current_session_id.as_ref(),
+                    pi_service_for_events.as_ref(),
+                )
+                && let Err(e) = pi_svc
+                    .update_session_title(&user_id_for_events, session_id, title)
+                    .await
+            {
+                warn!("Failed to update Pi session title: {}", e);
             }
 
             // Accumulate message content for saving (only from the primary WS connection).
@@ -994,39 +991,38 @@ pub(crate) async fn handle_ws(
                 acc.process_event(&event);
 
                 // When agent completes, save the assistant message
-                if matches!(event, PiEvent::AgentEnd { .. }) {
-                    if let Some(svc) = &main_chat_for_events {
-                        if let Some(content) = acc.take_message() {
-                            let persisted = svc
-                                .add_message(
-                                    &user_id_for_events,
-                                    CreateChatMessage {
-                                        role: MessageRole::Assistant,
-                                        content: content.clone(),
-                                        pi_session_id: current_session_id.clone(),
-                                    },
-                                )
-                                .await;
+                if matches!(event, PiEvent::AgentEnd { .. })
+                    && let Some(svc) = &main_chat_for_events
+                    && let Some(content) = acc.take_message()
+                {
+                    let persisted = svc
+                        .add_message(
+                            &user_id_for_events,
+                            CreateChatMessage {
+                                role: MessageRole::Assistant,
+                                content: content.clone(),
+                                pi_session_id: current_session_id.clone(),
+                            },
+                        )
+                        .await;
 
-                            match persisted {
-                                Ok(saved) => {
-                                    // Best-effort: index a compact turn chunk into mmry.
-                                    // This uses the existing mmry proxy surface so Octo doesn't need a dedicated client.
-                                    if let Err(e) = index_turn_to_mmry(
-                                        &mmry_state_for_events,
-                                        &user_id_for_events,
-                                        &current_session_id,
-                                        &saved,
-                                    )
-                                    .await
-                                    {
-                                        warn!("Failed to index turn into mmry: {}", e);
-                                    }
-                                }
-                                Err(e) => {
-                                    warn!("Failed to save assistant message: {}", e);
-                                }
+                    match persisted {
+                        Ok(saved) => {
+                            // Best-effort: index a compact turn chunk into mmry.
+                            // This uses the existing mmry proxy surface so Octo doesn't need a dedicated client.
+                            if let Err(e) = index_turn_to_mmry(
+                                &mmry_state_for_events,
+                                &user_id_for_events,
+                                &current_session_id,
+                                &saved,
+                            )
+                            .await
+                            {
+                                warn!("Failed to index turn into mmry: {}", e);
                             }
+                        }
+                        Err(e) => {
+                            warn!("Failed to save assistant message: {}", e);
                         }
                     }
                 }
@@ -1037,28 +1033,25 @@ pub(crate) async fn handle_ws(
                     aborted: false,
                     ..
                 } = &event
+                    && let Some(svc) = &history_for_events
+                    && let Err(e) = svc
+                        .add_history(
+                            &user_id_for_events,
+                            crate::main_chat::CreateHistoryEntry {
+                                entry_type: crate::main_chat::HistoryEntryType::Summary,
+                                content: result.summary.clone(),
+                                session_id: current_session_id.clone(),
+                                meta: Some(serde_json::json!({
+                                    "source": "pi_auto_compaction",
+                                    "first_kept_entry_id": result.first_kept_entry_id,
+                                    "tokens_before": result.tokens_before,
+                                    "details": result.details,
+                                })),
+                            },
+                        )
+                        .await
                 {
-                    if let Some(svc) = &history_for_events {
-                        if let Err(e) = svc
-                            .add_history(
-                                &user_id_for_events,
-                                crate::main_chat::CreateHistoryEntry {
-                                    entry_type: crate::main_chat::HistoryEntryType::Summary,
-                                    content: result.summary.clone(),
-                                    session_id: current_session_id.clone(),
-                                    meta: Some(serde_json::json!({
-                                        "source": "pi_auto_compaction",
-                                        "first_kept_entry_id": result.first_kept_entry_id,
-                                        "tokens_before": result.tokens_before,
-                                        "details": result.details,
-                                    })),
-                                },
-                            )
-                            .await
-                        {
-                            warn!("Failed to persist compaction summary: {}", e);
-                        }
-                    }
+                    warn!("Failed to persist compaction summary: {}", e);
                 }
             }
 
@@ -1094,24 +1087,22 @@ pub(crate) async fn handle_ws(
                         if let WsCommand::Prompt { ref message }
                         | WsCommand::Steer { ref message }
                         | WsCommand::FollowUp { ref message } = cmd
+                            && let Some(svc) = &main_chat_svc
                         {
-                            if let Some(svc) = &main_chat_svc {
-                                let current_session_id = session.get_session_id().await;
-                                let content =
-                                    serde_json::json!([{"type": "text", "text": message}]);
-                                if let Err(e) = svc
-                                    .add_message(
-                                        &user_id,
-                                        CreateChatMessage {
-                                            role: MessageRole::User,
-                                            content,
-                                            pi_session_id: current_session_id,
-                                        },
-                                    )
-                                    .await
-                                {
-                                    warn!("Failed to save user message: {}", e);
-                                }
+                            let current_session_id = session.get_session_id().await;
+                            let content = serde_json::json!([{"type": "text", "text": message}]);
+                            if let Err(e) = svc
+                                .add_message(
+                                    &user_id,
+                                    CreateChatMessage {
+                                        role: MessageRole::User,
+                                        content,
+                                        pi_session_id: current_session_id,
+                                    },
+                                )
+                                .await
+                            {
+                                warn!("Failed to save user message: {}", e);
                             }
                         }
 
@@ -1366,10 +1357,10 @@ async fn index_turn_to_mmry(
         req_builder = req_builder.query(&[("store", store)]);
     }
 
-    if let Some(key) = mmry.host_api_key.as_deref() {
-        if !key.trim().is_empty() {
-            req_builder = req_builder.bearer_auth(key);
-        }
+    if let Some(key) = mmry.host_api_key.as_deref()
+        && !key.trim().is_empty()
+    {
+        req_builder = req_builder.bearer_auth(key);
     }
 
     let resp = req_builder

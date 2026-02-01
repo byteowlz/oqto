@@ -54,3 +54,6 @@ syntect.workspace = true
 
 # Temp files (disk-backed zip creation)
 tempfile.workspace = true
+
+[lints]
+workspace = true

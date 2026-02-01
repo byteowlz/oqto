@@ -85,7 +85,7 @@ async fn http_get(url: String, headers: Option<HashMap<String, String>>) -> Resu
     })?;
 
     let data: serde_json::Value =
-        serde_json::from_str(&text).unwrap_or_else(|_| serde_json::Value::String(text));
+        serde_json::from_str(&text).unwrap_or(serde_json::Value::String(text));
 
     Ok(HttpResponse { status, data, ok })
 }
@@ -112,7 +112,7 @@ async fn http_post(
     let text = response.text().await.map_err(|e| e.to_string())?;
 
     let data: serde_json::Value =
-        serde_json::from_str(&text).unwrap_or_else(|_| serde_json::Value::String(text));
+        serde_json::from_str(&text).unwrap_or(serde_json::Value::String(text));
 
     Ok(HttpResponse { status, data, ok })
 }
@@ -139,7 +139,7 @@ async fn http_put(
     let text = response.text().await.map_err(|e| e.to_string())?;
 
     let data: serde_json::Value =
-        serde_json::from_str(&text).unwrap_or_else(|_| serde_json::Value::String(text));
+        serde_json::from_str(&text).unwrap_or(serde_json::Value::String(text));
 
     Ok(HttpResponse { status, data, ok })
 }
@@ -166,7 +166,7 @@ async fn http_patch(
     let text = response.text().await.map_err(|e| e.to_string())?;
 
     let data: serde_json::Value =
-        serde_json::from_str(&text).unwrap_or_else(|_| serde_json::Value::String(text));
+        serde_json::from_str(&text).unwrap_or(serde_json::Value::String(text));
 
     Ok(HttpResponse { status, data, ok })
 }
@@ -192,7 +192,7 @@ async fn http_delete(
     let text = response.text().await.map_err(|e| e.to_string())?;
 
     let data: serde_json::Value =
-        serde_json::from_str(&text).unwrap_or_else(|_| serde_json::Value::String(text));
+        serde_json::from_str(&text).unwrap_or(serde_json::Value::String(text));
 
     Ok(HttpResponse { status, data, ok })
 }
@@ -242,10 +242,8 @@ async fn scan_network_range(network_prefix: String, port: u16) -> Vec<Discovered
     // Wait for all checks to complete with timeout
     let results = futures::future::join_all(tasks).await;
 
-    for result in results {
-        if let Some(server) = result {
-            servers.push(server);
-        }
+    for server in results.into_iter().flatten() {
+        servers.push(server);
     }
 
     servers
@@ -261,32 +259,32 @@ async fn check_opencode_server(host: String, port: u16) -> Option<DiscoveredServ
         .build()
         .ok()?;
 
-    match timeout(Duration::from_millis(2000), client.get(&url).send()).await {
-        Ok(Ok(response)) => {
-            let response_time = start.elapsed().as_millis() as u64;
+    if let Ok(Ok(response)) = timeout(Duration::from_millis(2000), client.get(&url).send()).await {
+        let response_time = start.elapsed().as_millis() as u64;
 
-            if response.status().is_success() {
-                // Try to get server info
-                if let Ok(data) = response.json::<serde_json::Value>().await {
-                    let name = data
-                        .get("name")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("OpenCode Server")
-                        .to_string();
+        if response.status().is_success() {
+            // Try to get server info
+            if let Ok(data) = response.json::<serde_json::Value>().await {
+                let name = data
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("OpenCode Server")
+                    .to_string();
 
-                    let version = data.get("version").and_then(|v| v.as_str()).map(|s| s.to_string());
+                let version = data
+                    .get("version")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
 
-                    return Some(DiscoveredServer {
-                        host,
-                        port,
-                        name,
-                        version,
-                        response_time_ms: response_time,
-                    });
-                }
+                return Some(DiscoveredServer {
+                    host,
+                    port,
+                    name,
+                    version,
+                    response_time_ms: response_time,
+                });
             }
         }
-        _ => {}
     }
 
     None
@@ -337,8 +335,8 @@ async fn start_sse_stream(app: AppHandle, url: String, event_name: String) -> Re
 
 fn parse_sse_message(message: &str) -> Option<String> {
     for line in message.lines() {
-        if line.starts_with("data: ") {
-            return Some(line[6..].to_string());
+        if let Some(data) = line.strip_prefix("data: ") {
+            return Some(data.to_string());
         }
     }
     None

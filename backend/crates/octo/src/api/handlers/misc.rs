@@ -170,11 +170,11 @@ pub struct SchedulerOverview {
     pub schedules: Vec<SchedulerEntry>,
 }
 
-fn resolve_skdlr_bin(workspace_root: &PathBuf) -> std::path::PathBuf {
-    if let Ok(value) = std::env::var("SKDLR_BIN") {
-        if !value.is_empty() {
-            return std::path::PathBuf::from(value);
-        }
+fn resolve_skdlr_bin(workspace_root: &std::path::Path) -> std::path::PathBuf {
+    if let Ok(value) = std::env::var("SKDLR_BIN")
+        && !value.is_empty()
+    {
+        return std::path::PathBuf::from(value);
     }
 
     let release = workspace_root
@@ -470,10 +470,10 @@ pub async fn fetch_feed(
         .map(|value| value.to_string());
 
     let max_bytes = 1_000_000usize;
-    if let Some(length) = response.content_length() {
-        if length as usize > max_bytes {
-            return Err(ApiError::bad_request("Feed payload too large"));
-        }
+    if let Some(length) = response.content_length()
+        && length as usize > max_bytes
+    {
+        return Err(ApiError::bad_request("Feed payload too large"));
     }
 
     let bytes = response
@@ -667,10 +667,10 @@ pub async fn search_sessions(
     let allowed_sources = parse_agent_filters(&query.agents);
     let mut results = Vec::new();
     for hit in hits {
-        if let Some(ref allowed) = allowed_sources {
-            if !allowed.contains(&hit.source_id) {
-                continue;
-            }
+        if let Some(ref allowed) = allowed_sources
+            && !allowed.contains(&hit.source_id)
+        {
+            continue;
         }
 
         let timestamp = hit

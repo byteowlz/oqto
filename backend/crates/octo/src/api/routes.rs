@@ -664,10 +664,10 @@ fn build_cors_layer(state: &AppState) -> CorsLayer {
                 "http://127.0.0.1:3000",
                 "http://127.0.0.1:3001",
             ] {
-                if let Ok(value) = origin.parse::<HeaderValue>() {
-                    if !origins.contains(&value) {
-                        origins.push(value);
-                    }
+                if let Ok(value) = origin.parse::<HeaderValue>()
+                    && !origins.contains(&value)
+                {
+                    origins.push(value);
                 }
             }
         }

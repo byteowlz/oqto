@@ -33,9 +33,11 @@ impl RunnerUserPlane {
     pub fn for_user(username: &str) -> Result<Self> {
         Ok(Self::new(RunnerClient::for_user(username)?))
     }
+}
 
-    /// Create a runner user-plane using the default socket path.
-    pub fn default() -> Self {
+/// Create a runner user-plane using the default socket path.
+impl Default for RunnerUserPlane {
+    fn default() -> Self {
         Self::new(RunnerClient::default())
     }
 }

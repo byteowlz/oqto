@@ -1,4 +1,5 @@
 //! Test utilities and common setup.
+#![allow(clippy::field_reassign_with_default)]
 
 use anyhow::Result;
 use async_trait::async_trait;

@@ -279,9 +279,8 @@ pub async fn auth_middleware(
     let query_token = if is_websocket_auth_path(&req) {
         req.uri().query().and_then(|q| {
             q.split('&').find_map(|pair| {
-                let mut parts = pair.splitn(2, '=');
-                let key = parts.next()?;
-                let value = parts.next()?;
+                let (key, value) = pair.split_once('=')?;
+
                 if key == "token" {
                     // URL decode the token value
                     urlencoding::decode(value).ok().map(|s| s.into_owned())
@@ -388,6 +387,7 @@ where
 }
 
 #[cfg(test)]
+#[allow(clippy::field_reassign_with_default)]
 mod tests {
     use super::*;
 

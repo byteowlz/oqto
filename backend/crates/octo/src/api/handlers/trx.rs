@@ -182,21 +182,21 @@ pub fn validate_workspace_path(
             .map_err(|e| ApiError::bad_request(format!("Invalid workspace path: {}", e)))?
     } else {
         // Path doesn't exist yet - verify parent is valid
-        if let Some(parent) = resolved.parent() {
-            if parent.exists() {
-                let canonical_parent = parent
-                    .canonicalize()
-                    .map_err(|e| ApiError::bad_request(format!("Invalid workspace path: {}", e)))?;
-                if !canonical_parent.starts_with(&canonical_root) {
-                    // Check if it's a Main Chat path before rejecting
-                    if !is_main_chat_path(state, &canonical_parent) {
-                        warn!(
-                            "Workspace path parent outside root: {:?} (root: {:?})",
-                            parent, canonical_root
-                        );
-                        return Err(ApiError::bad_request("Workspace path outside allowed root"));
-                    }
-                }
+        if let Some(parent) = resolved.parent()
+            && parent.exists()
+        {
+            let canonical_parent = parent
+                .canonicalize()
+                .map_err(|e| ApiError::bad_request(format!("Invalid workspace path: {}", e)))?;
+            if !canonical_parent.starts_with(&canonical_root)
+                // Check if it's a Main Chat path before rejecting
+                && !is_main_chat_path(state, &canonical_parent)
+            {
+                warn!(
+                    "Workspace path parent outside root: {:?} (root: {:?})",
+                    parent, canonical_root
+                );
+                return Err(ApiError::bad_request("Workspace path outside allowed root"));
             }
         }
         resolved

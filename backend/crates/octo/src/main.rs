@@ -549,7 +549,7 @@ impl Default for BackendConfig {
 /// When `user_plane_enabled` is true in local multi-user mode, all user data
 /// operations are routed through per-user runner daemons, providing OS-level
 /// isolation between users.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(default)]
 struct RunnerConfig {
     /// Enable runner as the user-plane boundary.
@@ -566,15 +566,6 @@ struct RunnerConfig {
     /// Socket directory pattern for per-user runner sockets.
     /// Default: /run/user/{uid}/octo-runner.sock
     socket_pattern: Option<String>,
-}
-
-impl Default for RunnerConfig {
-    fn default() -> Self {
-        Self {
-            user_plane_enabled: false, // Disabled by default for backward compatibility
-            socket_pattern: None,
-        }
-    }
 }
 
 impl AppConfig {
@@ -1233,11 +1224,11 @@ fn handle_runner(command: RunnerCommand) -> Result<()> {
     // Helper to find the runner binary
     let find_runner = || -> Result<std::path::PathBuf> {
         // Check if octo-runner is in PATH
-        if let Ok(output) = StdCommand::new("which").arg("octo-runner").output() {
-            if output.status.success() {
-                let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                return Ok(std::path::PathBuf::from(path));
-            }
+        if let Ok(output) = StdCommand::new("which").arg("octo-runner").output()
+            && output.status.success()
+        {
+            let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            return Ok(std::path::PathBuf::from(path));
         }
         // Check common locations
         let home = env::var("HOME").unwrap_or_else(|_| ".".to_string());
@@ -1827,33 +1818,31 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     };
 
     // Check container image (only in container mode)
-    if !local_mode {
-        if let Some(ref runtime) = container_runtime {
-            match runtime.image_exists(&session_config.default_image).await {
-                Ok(true) => {
-                    info!("Container image '{}' found", session_config.default_image);
-                }
-                Ok(false) => {
-                    error!(
-                        "Container image '{}' not found. Please build it first:\n\
-                         \n\
-                         cd container && docker build -t {} -f Dockerfile ..\n\
-                         \n\
-                         Or specify a different image with --image or in config.toml",
-                        session_config.default_image, session_config.default_image
-                    );
-                    anyhow::bail!(
-                        "Required container image '{}' not found. Build it with: cd container && docker build -t {} -f Dockerfile ..",
-                        session_config.default_image,
-                        session_config.default_image
-                    );
-                }
-                Err(e) => {
-                    warn!(
-                        "Could not check if image '{}' exists: {:?}. Container operations may fail.",
-                        session_config.default_image, e
-                    );
-                }
+    if !local_mode && let Some(ref runtime) = container_runtime {
+        match runtime.image_exists(&session_config.default_image).await {
+            Ok(true) => {
+                info!("Container image '{}' found", session_config.default_image);
+            }
+            Ok(false) => {
+                error!(
+                    "Container image '{}' not found. Please build it first:\n\
+                     \n\
+                     cd container && docker build -t {} -f Dockerfile ..\n\
+                     \n\
+                     Or specify a different image with --image or in config.toml",
+                    session_config.default_image, session_config.default_image
+                );
+                anyhow::bail!(
+                    "Required container image '{}' not found. Build it with: cd container && docker build -t {} -f Dockerfile ..",
+                    session_config.default_image,
+                    session_config.default_image
+                );
+            }
+            Err(e) => {
+                warn!(
+                    "Could not check if image '{}' exists: {:?}. Container operations may fail.",
+                    session_config.default_image, e
+                );
             }
         }
     }
@@ -1897,46 +1886,50 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     let mut sldr_users: Option<local::UserSldrManager> = None;
 
     // Enable per-user mmry instances in local multi-user mode.
-    if local_mode && !single_user && ctx.config.mmry.enabled {
-        if let Some(ref local_cfg) = session_config.local_config {
-            if !local_cfg.linux_users.enabled {
-                warn!("mmry per-user instances require local.linux_users.enabled=true (skipping)");
-            } else {
-                let linux_users = local_cfg.linux_users.clone();
-                let user_mmry = local::UserMmryManager::new(
-                    local::UserMmryConfig {
-                        mmry_binary: ctx.config.mmry.binary.clone(),
-                        base_port: ctx.config.mmry.user_base_port,
-                        port_range: ctx.config.mmry.user_port_range,
-                        runner_socket_pattern: ctx.config.local.runner_socket_pattern.clone(),
-                    },
-                    move |user_id| linux_users.linux_username(user_id),
-                    user_repo_for_services.clone(),
-                );
-                session_service = session_service.with_user_mmry(user_mmry);
-            }
+    if local_mode
+        && !single_user
+        && ctx.config.mmry.enabled
+        && let Some(ref local_cfg) = session_config.local_config
+    {
+        if !local_cfg.linux_users.enabled {
+            warn!("mmry per-user instances require local.linux_users.enabled=true (skipping)");
+        } else {
+            let linux_users = local_cfg.linux_users.clone();
+            let user_mmry = local::UserMmryManager::new(
+                local::UserMmryConfig {
+                    mmry_binary: ctx.config.mmry.binary.clone(),
+                    base_port: ctx.config.mmry.user_base_port,
+                    port_range: ctx.config.mmry.user_port_range,
+                    runner_socket_pattern: ctx.config.local.runner_socket_pattern.clone(),
+                },
+                move |user_id| linux_users.linux_username(user_id),
+                user_repo_for_services.clone(),
+            );
+            session_service = session_service.with_user_mmry(user_mmry);
         }
     }
 
     // Enable per-user sldr instances in local multi-user mode.
-    if local_mode && !single_user && ctx.config.sldr.enabled {
-        if let Some(ref local_cfg) = session_config.local_config {
-            if !local_cfg.linux_users.enabled {
-                warn!("sldr per-user instances require local.linux_users.enabled=true (skipping)");
-            } else {
-                let linux_users = local_cfg.linux_users.clone();
-                let user_sldr = local::UserSldrManager::new(
-                    local::UserSldrConfig {
-                        sldr_binary: ctx.config.sldr.binary.clone(),
-                        base_port: ctx.config.sldr.user_base_port,
-                        port_range: ctx.config.sldr.user_port_range,
-                        runner_socket_pattern: ctx.config.local.runner_socket_pattern.clone(),
-                    },
-                    move |user_id| linux_users.linux_username(user_id),
-                    user_repo_for_services.clone(),
-                );
-                sldr_users = Some(user_sldr);
-            }
+    if local_mode
+        && !single_user
+        && ctx.config.sldr.enabled
+        && let Some(ref local_cfg) = session_config.local_config
+    {
+        if !local_cfg.linux_users.enabled {
+            warn!("sldr per-user instances require local.linux_users.enabled=true (skipping)");
+        } else {
+            let linux_users = local_cfg.linux_users.clone();
+            let user_sldr = local::UserSldrManager::new(
+                local::UserSldrConfig {
+                    sldr_binary: ctx.config.sldr.binary.clone(),
+                    base_port: ctx.config.sldr.user_base_port,
+                    port_range: ctx.config.sldr.user_port_range,
+                    runner_socket_pattern: ctx.config.local.runner_socket_pattern.clone(),
+                },
+                move |user_id| linux_users.linux_username(user_id),
+                user_repo_for_services.clone(),
+            );
+            sldr_users = Some(user_sldr);
         }
     }
 
@@ -2288,14 +2281,14 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
             // Look for bundled extensions in data directory
             let extensions_dir = ctx.paths.data_dir.join("extensions");
             let mut found_extensions = Vec::new();
-            if extensions_dir.exists() {
-                if let Ok(entries) = std::fs::read_dir(&extensions_dir) {
-                    for entry in entries.flatten() {
-                        let path = entry.path();
-                        if path.extension().map_or(false, |ext| ext == "ts") {
-                            info!("Using bundled Pi extension: {:?}", path);
-                            found_extensions.push(path.to_string_lossy().to_string());
-                        }
+            if extensions_dir.exists()
+                && let Ok(entries) = std::fs::read_dir(&extensions_dir)
+            {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.extension().is_some_and(|ext| ext == "ts") {
+                        info!("Using bundled Pi extension: {:?}", path);
+                        found_extensions.push(path.to_string_lossy().to_string());
                     }
                 }
             }

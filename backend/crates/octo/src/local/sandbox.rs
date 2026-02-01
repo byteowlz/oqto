@@ -57,19 +57,15 @@ use std::io::Write;
 /// Policy for guarded path access.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum GuardPolicy {
     /// Auto-approve access, but log it.
     Auto,
     /// Prompt user for approval.
+    #[default]
     Prompt,
     /// Deny access (redundant with deny_read, but explicit).
     Deny,
-}
-
-impl Default for GuardPolicy {
-    fn default() -> Self {
-        Self::Prompt
-    }
 }
 
 /// Configuration for octo-guard (FUSE filesystem for runtime access control).
@@ -1283,9 +1279,11 @@ deny_write = []
         let config: SandboxConfig = file.into();
 
         // sandbox.toml should always be in deny_write, even if not specified
-        assert!(config
-            .deny_write
-            .contains(&"~/.config/octo/sandbox.toml".to_string()));
+        assert!(
+            config
+                .deny_write
+                .contains(&"~/.config/octo/sandbox.toml".to_string())
+        );
     }
 
     #[test]

@@ -225,6 +225,7 @@ impl std::fmt::Debug for UserPlaneFactory {
     }
 }
 
+#[allow(dead_code)]
 impl UserPlaneFactory {
     /// Create a new factory for single-user mode.
     pub fn single_user(workspace_root: impl Into<PathBuf>) -> Self {
@@ -253,17 +254,17 @@ impl UserPlaneFactory {
     /// - In multi-user mode with linux_username: returns RunnerUserPlane for that user
     /// - In multi-user mode without linux_username: falls back to DirectUserPlane
     pub fn for_user(&self, linux_username: Option<&str>) -> Arc<dyn UserPlane> {
-        if self.multi_user_enabled {
-            if let Some(username) = linux_username {
-                match RunnerUserPlane::for_user(username) {
-                    Ok(plane) => return Arc::new(plane),
-                    Err(e) => {
-                        tracing::warn!(
-                            "Failed to create RunnerUserPlane for {}: {:?}, falling back to direct",
-                            username,
-                            e
-                        );
-                    }
+        if self.multi_user_enabled
+            && let Some(username) = linux_username
+        {
+            match RunnerUserPlane::for_user(username) {
+                Ok(plane) => return Arc::new(plane),
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to create RunnerUserPlane for {}: {:?}, falling back to direct",
+                        username,
+                        e
+                    );
                 }
             }
         }
@@ -496,8 +497,6 @@ impl AppState {
         self.main_chat = Some(Arc::new(service));
         self
     }
-
-    /// Set the main chat Pi service.
 
     /// Set the main chat Pi service from an existing Arc.
     pub fn with_main_chat_pi_arc(mut self, service: Arc<MainChatPiService>) -> Self {

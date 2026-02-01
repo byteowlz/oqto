@@ -27,19 +27,19 @@ use log::{debug, info, warn};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, SystemTime};
 use tokio::sync::{Mutex, RwLock, broadcast};
 
+use crate::local::LinuxUsersConfig;
 use crate::pi::{
     AgentMessage, AssistantMessageEvent, CompactionResult, ContainerPiRuntime, LocalPiRuntime,
     PiCommand, PiEvent, PiProcess, PiRuntime, PiSpawnConfig, PiState, RunnerPiRuntime,
     SessionStats,
 };
 use crate::runner::client::RunnerClient;
-use crate::local::LinuxUsersConfig;
 
 /// Session freshness thresholds
 const SESSION_MAX_AGE_HOURS: u64 = 4;
@@ -592,7 +592,7 @@ impl MainChatPiService {
 
     /// Get the Pi sessions directory for a working directory.
     /// Pi stores sessions in ~/.pi/agent/sessions/{escaped-path}/
-    fn get_pi_sessions_dir(&self, user_id: &str, work_dir: &PathBuf) -> PathBuf {
+    fn get_pi_sessions_dir(&self, user_id: &str, work_dir: &Path) -> PathBuf {
         let escaped_path = work_dir
             .to_string_lossy()
             .replace('/', "-")
@@ -607,9 +607,7 @@ impl MainChatPiService {
 
     /// Create a runner client for a user if available.
     fn runner_client_for_user(&self, user_id: &str) -> Option<RunnerClient> {
-        if self.linux_users.is_none() {
-            return None;
-        }
+        self.linux_users.as_ref()?;
         let pattern = self.config.runner_socket_pattern.as_deref()?;
         let socket_path = pattern.replace("{user}", user_id);
         if std::path::Path::new(&socket_path).exists() {
@@ -650,16 +648,16 @@ impl MainChatPiService {
         if let Ok(read_dir) = std::fs::read_dir(sessions_dir) {
             for entry in read_dir.filter_map(|e| e.ok()) {
                 let path = entry.path();
-                if path.extension().map(|e| e == "jsonl").unwrap_or(false) {
-                    if let Ok(metadata) = entry.metadata() {
-                        let modified_at = metadata
-                            .modified()
-                            .ok()
-                            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                            .map(|d| d.as_millis() as i64)
-                            .unwrap_or(0);
-                        entries.push((path, metadata.len(), modified_at));
-                    }
+                if path.extension().map(|e| e == "jsonl").unwrap_or(false)
+                    && let Ok(metadata) = entry.metadata()
+                {
+                    let modified_at = metadata
+                        .modified()
+                        .ok()
+                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                        .map(|d| d.as_millis() as i64)
+                        .unwrap_or(0);
+                    entries.push((path, metadata.len(), modified_at));
                 }
             }
         }
@@ -711,9 +709,7 @@ impl MainChatPiService {
                     .decode(content.content_base64)
                     .context("decoding session file base64")?;
                 let reader = std::io::BufReader::new(std::io::Cursor::new(bytes));
-                if let Some(session) =
-                    Self::parse_session_reader(reader, size, modified_at)
-                {
+                if let Some(session) = Self::parse_session_reader(reader, size, modified_at) {
                     sessions.push(session);
                 }
             }
@@ -734,11 +730,7 @@ impl MainChatPiService {
     /// Search for sessions matching a query string.
     /// Supports fuzzy matching on session ID and title.
     /// Returns sessions sorted by match quality (best first).
-    pub async fn search_sessions(
-        &self,
-        user_id: &str,
-        query: &str,
-    ) -> Result<Vec<PiSessionFile>> {
+    pub async fn search_sessions(&self, user_id: &str, query: &str) -> Result<Vec<PiSessionFile>> {
         let all_sessions = self.list_sessions(user_id).await?;
         let query_lower = query.to_lowercase();
 
@@ -973,7 +965,7 @@ impl MainChatPiService {
         let mut message_count = 0usize;
         let mut session_info_name: Option<String> = None;
 
-        for line in reader.lines().filter_map(|l| l.ok()) {
+        for line in reader.lines().map_while(Result::ok) {
             if line.is_empty() {
                 continue;
             }
@@ -1000,16 +992,14 @@ impl MainChatPiService {
             message_count += 1;
 
             // Only extract title from first user message if no explicit title set
-            if title.is_none() {
-                if let Some(msg) = entry.get("message") {
-                    if msg.get("role").and_then(|r| r.as_str()) == Some("user") {
-                        if let Some(content) = msg.get("content") {
-                            title = Self::extract_title_from_content(content);
-                            // Stop early once we have a title.
-                            break;
-                        }
-                    }
-                }
+            if title.is_none()
+                && let Some(msg) = entry.get("message")
+                && msg.get("role").and_then(|r| r.as_str()) == Some("user")
+                && let Some(content) = msg.get("content")
+            {
+                title = Self::extract_title_from_content(content);
+                // Stop early once we have a title.
+                break;
             }
         }
 
@@ -1091,10 +1081,10 @@ impl MainChatPiService {
 
         if let Some(arr) = content.as_array() {
             for block in arr {
-                if block.get("type").and_then(|t| t.as_str()) == Some("text") {
-                    if let Some(text) = block.get("text").and_then(|t| t.as_str()) {
-                        return Some(Self::truncate_title(text));
-                    }
+                if block.get("type").and_then(|t| t.as_str()) == Some("text")
+                    && let Some(text) = block.get("text").and_then(|t| t.as_str())
+                {
+                    return Some(Self::truncate_title(text));
                 }
             }
         }
@@ -1128,8 +1118,7 @@ impl MainChatPiService {
             .find_session_file(user_id, &sessions_dir, session_id)
             .await?;
 
-        let reader: Box<dyn BufRead> = if let Some(client) = self.runner_client_for_user(user_id)
-        {
+        let reader: Box<dyn BufRead> = if let Some(client) = self.runner_client_for_user(user_id) {
             let content = client
                 .read_file(&session_file, None, None)
                 .await
@@ -1145,49 +1134,48 @@ impl MainChatPiService {
 
         let mut messages = Vec::new();
 
-        for line in reader.lines().filter_map(|l| l.ok()) {
+        for line in reader.lines().map_while(Result::ok) {
             if line.is_empty() {
                 continue;
             }
 
-            if let Ok(entry) = serde_json::from_str::<Value>(&line) {
-                if entry.get("type").and_then(|t| t.as_str()) == Some("message") {
-                    if let Some(msg) = entry.get("message") {
-                        let id = entry
-                            .get("id")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("")
-                            .to_string();
-                        let role = msg
-                            .get("role")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("user")
-                            .to_string();
-                        let content = msg.get("content").cloned().unwrap_or(Value::Null);
-                        let tool_call_id = msg
-                            .get("toolCallId")
-                            .and_then(|v| v.as_str())
-                            .map(|v| v.to_string());
-                        let tool_name = msg
-                            .get("toolName")
-                            .and_then(|v| v.as_str())
-                            .map(|v| v.to_string());
-                        let is_error = msg.get("isError").and_then(|v| v.as_bool());
-                        let timestamp = msg.get("timestamp").and_then(|v| v.as_i64()).unwrap_or(0);
-                        let usage = msg.get("usage").cloned();
+            if let Ok(entry) = serde_json::from_str::<Value>(&line)
+                && entry.get("type").and_then(|t| t.as_str()) == Some("message")
+                && let Some(msg) = entry.get("message")
+            {
+                let id = entry
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let role = msg
+                    .get("role")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("user")
+                    .to_string();
+                let content = msg.get("content").cloned().unwrap_or(Value::Null);
+                let tool_call_id = msg
+                    .get("toolCallId")
+                    .and_then(|v| v.as_str())
+                    .map(|v| v.to_string());
+                let tool_name = msg
+                    .get("toolName")
+                    .and_then(|v| v.as_str())
+                    .map(|v| v.to_string());
+                let is_error = msg.get("isError").and_then(|v| v.as_bool());
+                let timestamp = msg.get("timestamp").and_then(|v| v.as_i64()).unwrap_or(0);
+                let usage = msg.get("usage").cloned();
 
-                        messages.push(PiSessionMessage {
-                            id,
-                            role,
-                            content,
-                            tool_call_id,
-                            tool_name,
-                            is_error,
-                            timestamp,
-                            usage,
-                        });
-                    }
-                }
+                messages.push(PiSessionMessage {
+                    id,
+                    role,
+                    content,
+                    tool_call_id,
+                    tool_name,
+                    is_error,
+                    timestamp,
+                    usage,
+                });
             }
         }
 
@@ -1209,10 +1197,10 @@ impl MainChatPiService {
             .search_in_session_via_hstry(session_id, query, limit)
             .await;
 
-        if let Ok(ref results) = hstry_results {
-            if !results.is_empty() {
-                return hstry_results;
-            }
+        if let Ok(ref results) = hstry_results
+            && !results.is_empty()
+        {
+            return hstry_results;
         }
 
         // Fallback: direct text search in OpenCode message parts
@@ -1300,10 +1288,10 @@ impl MainChatPiService {
         if let Ok(entries) = std::fs::read_dir(&messages_dir) {
             for entry in entries.filter_map(|e| e.ok()) {
                 let path = entry.path();
-                if path.extension().map(|e| e == "json").unwrap_or(false) {
-                    if let Some(filename) = path.file_stem().and_then(|s| s.to_str()) {
-                        message_ids.push(filename.to_string());
-                    }
+                if path.extension().map(|e| e == "json").unwrap_or(false)
+                    && let Some(filename) = path.file_stem().and_then(|s| s.to_str())
+                {
+                    message_ids.push(filename.to_string());
                 }
             }
         }
@@ -1684,28 +1672,27 @@ impl MainChatPiService {
         }
 
         // On a fresh start, inject the most recent persisted summary/handoff so Pi has context.
-        if !should_continue {
-            if let Ok(entries) = self
+        if !should_continue
+            && let Ok(entries) = self
                 .main_chat
                 .get_recent_history_filtered(user_id, &["summary", "handoff", "decision"], 20)
                 .await
-            {
-                let mut injected = String::new();
-                for entry in entries.into_iter().rev() {
-                    injected.push_str(&format!(
-                        "## {}\n{}\n\n",
-                        entry.entry_type.to_uppercase(),
-                        entry.content.trim()
-                    ));
-                }
+        {
+            let mut injected = String::new();
+            for entry in entries.into_iter().rev() {
+                injected.push_str(&format!(
+                    "## {}\n{}\n\n",
+                    entry.entry_type.to_uppercase(),
+                    entry.content.trim()
+                ));
+            }
 
-                if !injected.trim().is_empty() {
-                    let inject_path = work_dir.join("CONTEXT_INJECT.md");
-                    if let Err(e) = std::fs::write(&inject_path, injected) {
-                        debug!("Failed to write CONTEXT_INJECT.md: {}", e);
-                    } else {
-                        append_system_prompt.push(inject_path);
-                    }
+            if !injected.trim().is_empty() {
+                let inject_path = work_dir.join("CONTEXT_INJECT.md");
+                if let Err(e) = std::fs::write(&inject_path, injected) {
+                    debug!("Failed to write CONTEXT_INJECT.md: {}", e);
+                } else {
+                    append_system_prompt.push(inject_path);
                 }
             }
         }
@@ -1806,12 +1793,10 @@ impl MainChatPiService {
 
         let mut sessions = self.sessions.write().await;
         for key in keys_to_remove {
-            if !force {
-                if let Some(session) = sessions.get(&key) {
-                    let is_streaming = *session.is_streaming.read().await;
-                    if is_streaming {
-                        continue; // Skip streaming sessions
-                    }
+            if !force && let Some(session) = sessions.get(&key) {
+                let is_streaming = *session.is_streaming.read().await;
+                if is_streaming {
+                    continue; // Skip streaming sessions
                 }
             }
             sessions.remove(&key);
