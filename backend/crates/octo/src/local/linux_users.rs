@@ -152,7 +152,7 @@ impl LinuxUsersConfig {
         args.push(username.clone());
 
         let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-        run_privileged_command(self.use_sudo, "useradd", &args_refs)
+        run_privileged_command(self.use_sudo, "/usr/sbin/useradd", &args_refs)
             .with_context(|| format!("creating project user '{}'", username))?;
 
         info!("Created Linux user '{}' with UID {}", username, uid);
@@ -271,7 +271,7 @@ impl LinuxUsersConfig {
         }
 
         info!("Creating group '{}'", self.group);
-        run_privileged_command(self.use_sudo, "groupadd", &[&self.group])
+        run_privileged_command(self.use_sudo, "/usr/sbin/groupadd", &[&self.group])
             .context("creating group")?;
 
         Ok(())
@@ -471,7 +471,7 @@ impl LinuxUsersConfig {
         args.push(username.to_string());
 
         let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-        run_privileged_command(self.use_sudo, "useradd", &args_refs)
+        run_privileged_command(self.use_sudo, "/usr/sbin/useradd", &args_refs)
             .with_context(|| format!("creating user '{}'", username))?;
 
         info!("Created Linux user '{}' with UID {}", username, uid);

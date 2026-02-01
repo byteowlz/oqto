@@ -7,9 +7,9 @@ import {
 	authFetch,
 	controlPlaneApiUrl,
 	getAuthToken,
-	getControlPlaneBaseUrl,
 	readApiError,
 } from "./client";
+import { toAbsoluteWsUrl } from "@/lib/url";
 
 // ============================================================================
 // Main Chat Types
@@ -612,19 +612,12 @@ export async function closeMainChatPiSession(): Promise<void> {
 
 /** Create WebSocket connection to Pi for streaming events */
 export function createMainChatPiWebSocket(): WebSocket {
-	const baseUrl = getControlPlaneBaseUrl();
-	let wsUrl: string;
-	if (baseUrl) {
-		// Direct connection to control plane - no /api prefix needed
-		wsUrl = `${baseUrl.replace(/^http/, "ws")}/main/pi/ws`;
-	} else {
-		// Proxied via frontend dev server - use /api prefix
-		wsUrl = `${window.location.origin.replace(/^http/, "ws")}/api/main/pi/ws`;
-	}
+	let wsUrl = toAbsoluteWsUrl(controlPlaneApiUrl("/api/main/pi/ws"));
 	// Add auth token as query parameter for WebSocket auth
 	const token = getAuthToken();
 	if (token) {
-		wsUrl = `${wsUrl}?token=${encodeURIComponent(token)}`;
+		const separator = wsUrl.includes("?") ? "&" : "?";
+		wsUrl = `${wsUrl}${separator}token=${encodeURIComponent(token)}`;
 	}
 	return new WebSocket(wsUrl);
 }
@@ -814,15 +807,7 @@ export function createWorkspacePiWebSocket(
 	workspacePath: string,
 	sessionId: string,
 ): WebSocket {
-	const baseUrl = getControlPlaneBaseUrl();
-	let wsUrl: string;
-	if (baseUrl) {
-		// Direct connection to control plane - no /api prefix needed
-		wsUrl = `${baseUrl.replace(/^http/, "ws")}/pi/workspace/ws`;
-	} else {
-		// Proxied via frontend dev server - use /api prefix
-		wsUrl = `${window.location.origin.replace(/^http/, "ws")}/api/pi/workspace/ws`;
-	}
+	let wsUrl = toAbsoluteWsUrl(controlPlaneApiUrl("/api/pi/workspace/ws"));
 	const params = new URLSearchParams();
 	params.set("workspace_path", workspacePath);
 	params.set("session_id", sessionId);

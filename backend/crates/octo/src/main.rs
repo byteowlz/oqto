@@ -2349,8 +2349,11 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
         info!("Main Chat Pi service disabled");
     }
 
-    // Create router
-    let app = api::create_router_with_config(state, ctx.config.server.max_upload_size_mb);
+    // Create router (serve under /api and keep legacy root paths for now).
+    let api_router = api::create_router_with_config(state, ctx.config.server.max_upload_size_mb);
+    let app = axum::Router::new()
+        .nest("/api", api_router.clone())
+        .merge(api_router);
 
     // Bind and serve
     let addr: SocketAddr = format!("{}:{}", cmd.host, cmd.port)

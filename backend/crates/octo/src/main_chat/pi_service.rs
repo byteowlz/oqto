@@ -276,12 +276,30 @@ impl StreamSnapshot {
                     }
                     self.push_text(delta);
                 }
+                AssistantMessageEvent::TextEnd { content, .. } => {
+                    if message.role == "assistant" {
+                        self.is_streaming = true;
+                        self.has_message = true;
+                    }
+                    if !content.is_empty() {
+                        self.push_text(content);
+                    }
+                }
                 AssistantMessageEvent::ThinkingDelta { delta, .. } => {
                     if message.role == "assistant" {
                         self.is_streaming = true;
                         self.has_message = true;
                     }
                     self.push_thinking(delta);
+                }
+                AssistantMessageEvent::ThinkingEnd { content, .. } => {
+                    if message.role == "assistant" {
+                        self.is_streaming = true;
+                        self.has_message = true;
+                    }
+                    if !content.is_empty() {
+                        self.push_thinking(content);
+                    }
                 }
                 AssistantMessageEvent::ToolcallEnd { tool_call, .. } => {
                     if message.role == "assistant" {
@@ -953,6 +971,7 @@ impl MainChatPiService {
             .and_then(|v| v.as_str())
             .and_then(Self::read_parent_session_id);
         let mut message_count = 0usize;
+        let mut session_info_name: Option<String> = None;
 
         for line in reader.lines().filter_map(|l| l.ok()) {
             if line.is_empty() {
@@ -963,6 +982,16 @@ impl MainChatPiService {
                 Ok(v) => v,
                 Err(_) => continue,
             };
+
+            if entry.get("type").and_then(|t| t.as_str()) == Some("session_info") {
+                if let Some(name) = entry.get("name").and_then(|v| v.as_str()) {
+                    let trimmed = name.trim();
+                    if !trimmed.is_empty() {
+                        session_info_name = Some(trimmed.to_string());
+                    }
+                }
+                continue;
+            }
 
             if entry.get("type").and_then(|t| t.as_str()) != Some("message") {
                 continue;
@@ -982,6 +1011,11 @@ impl MainChatPiService {
                     }
                 }
             }
+        }
+
+        // Prefer session_info name if present (latest session_info wins)
+        if let Some(info_name) = session_info_name {
+            title = Some(info_name);
         }
 
         // Parse title to extract readable_id (format: <workdir>: <title> [readable_id])
@@ -1994,6 +2028,15 @@ impl UserPiSession {
         }
         let data = response.data.context("get_state returned no data")?;
         serde_json::from_value(data).context("failed to parse state")
+    }
+
+    /// Get current session_id, falling back to the cached id when Pi state omits it.
+    pub async fn get_session_id(&self) -> Option<String> {
+        self.get_state()
+            .await
+            .ok()
+            .and_then(|s| s.session_id)
+            .or_else(|| Some(self._session_id.clone()))
     }
 
     /// Get all messages.

@@ -9,7 +9,8 @@
  * - Connection state management
  */
 
-import { getAuthToken, getControlPlaneBaseUrl } from "./control-plane-client";
+import { controlPlaneApiUrl, getAuthToken } from "./control-plane-client";
+import { toAbsoluteWsUrl } from "./url";
 
 function isWsDebugEnabled(): boolean {
 	if (!import.meta.env.DEV) return false;
@@ -21,7 +22,7 @@ function isWsDebugEnabled(): boolean {
 	} catch {
 		// ignore
 	}
-	return false;
+	return import.meta.env.VITE_DEBUG_WS === "1";
 }
 
 // ============================================================================
@@ -498,16 +499,7 @@ class OctoWsClient {
 	// ========================================================================
 
 	private createWebSocket(): void {
-		const baseUrl = getControlPlaneBaseUrl();
-		let wsUrl: string;
-
-		if (baseUrl) {
-			// Direct connection to control plane
-			wsUrl = `${baseUrl.replace(/^http/, "ws")}/ws`;
-		} else {
-			// Proxied via frontend dev server
-			wsUrl = `${window.location.origin.replace(/^http/, "ws")}/api/ws`;
-		}
+		let wsUrl = toAbsoluteWsUrl(controlPlaneApiUrl("/api/ws"));
 
 		// Add auth token as query parameter for WebSocket auth
 		const token = getAuthToken();

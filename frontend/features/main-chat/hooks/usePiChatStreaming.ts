@@ -30,6 +30,17 @@ import type {
 } from "./types";
 
 const BATCH_FLUSH_INTERVAL_MS = 50; // Flush UI updates at most every 50ms
+const isPiDebugEnabled = (): boolean => {
+	if (!import.meta.env.DEV) return false;
+	try {
+		if (typeof localStorage !== "undefined") {
+			return localStorage.getItem("debug:pi") === "1";
+		}
+	} catch {
+		// ignore
+	}
+	return import.meta.env.VITE_DEBUG_PI === "1";
+};
 
 export type UsePiChatStreamingOptions = {
 	scope: "main" | "workspace";
@@ -122,6 +133,9 @@ export function usePiChatStreaming({
 		(event: MessageEvent) => {
 			try {
 				const data = JSON.parse(event.data) as PiStreamEvent;
+				if (isPiDebugEnabled()) {
+					console.debug("[pi/ws] event", data.type, data);
+				}
 
 				// Validate session_id to prevent messages from wrong session leaking through
 				// Skip validation for 'connected' events which establish the session
@@ -401,12 +415,26 @@ export function usePiChatStreaming({
 		isOwnerRef.current = true;
 
 		ws.onopen = () => {
+			if (isPiDebugEnabled()) {
+				console.debug("[pi/ws] open", {
+					scope,
+					workspacePath,
+					sessionId: activeSessionIdRef.current,
+				});
+			}
 			notifyConnectionStateChange(true);
 		};
 
 		ws.onmessage = handleWsMessage;
 
 		ws.onerror = () => {
+			if (isPiDebugEnabled()) {
+				console.debug("[pi/ws] error", {
+					scope,
+					workspacePath,
+					sessionId: activeSessionIdRef.current,
+				});
+			}
 			// Suppress connection errors that occur shortly after session selection
 			// This handles race conditions where WebSocket connects before the backend
 			// is fully ready (e.g., after creating a new session)
@@ -427,6 +455,13 @@ export function usePiChatStreaming({
 		};
 
 		ws.onclose = () => {
+			if (isPiDebugEnabled()) {
+				console.debug("[pi/ws] close", {
+					scope,
+					workspacePath,
+					sessionId: activeSessionIdRef.current,
+				});
+			}
 			notifyConnectionStateChange(false);
 
 			finalizeStreamingMessage(onMessageComplete);

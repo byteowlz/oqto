@@ -249,12 +249,16 @@ export function usePiChatCore({
 			// Tell the UI to select the new session immediately.
 			onSelectedSessionIdChange?.(newSessionId);
 
-			// Reconnect WebSocket to the new session after a brief delay
-			// to allow the backend to be ready
-			disconnectRef.current?.(true);
-			setTimeout(() => {
+			// Workspace sessions need a reconnect for the session_id-bound WS URL.
+			// Main chat WS is not session-bound, so avoid churn.
+			if (scope === "workspace") {
+				disconnectRef.current?.(true);
+				setTimeout(() => {
+					connectRef.current?.();
+				}, 100);
+			} else {
 				connectRef.current?.();
-			}, 100);
+			}
 		} catch (e) {
 			const err =
 				e instanceof Error ? e : new Error("Failed to start new session");
@@ -277,8 +281,10 @@ export function usePiChatCore({
 	// Reset session - restarts Pi process to reload PERSONALITY.md and USER.md
 	const resetSession = useCallback(async () => {
 		try {
-			// Force disconnect WebSocket first
-			disconnect(true);
+			// Only workspace sessions need a forced reconnect (WS URL includes session_id).
+			if (scope === "workspace") {
+				disconnect(true);
+			}
 
 			// Reset the session (this restarts the Pi process)
 			const newState =
@@ -298,8 +304,12 @@ export function usePiChatCore({
 			}
 			onSelectedSessionIdChange?.(newSessionId);
 
-			// Reconnect WebSocket
-			connect();
+			// Reconnect WebSocket if needed
+			if (scope === "workspace") {
+				connect();
+			} else if (wsCache.ws?.readyState !== WebSocket.OPEN) {
+				connect();
+			}
 		} catch (e) {
 			const err = e instanceof Error ? e : new Error("Failed to reset session");
 			setError(err);
@@ -576,6 +586,8 @@ export function usePiChatInit({
 }: UsePiChatInitOptions) {
 	const initStartedRef = useRef(false);
 	const isOwnerRef = useRef(false);
+	const retryTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const retryCountRef = useRef(0);
 
 	useEffect(() => {
 		// Prevent double initialization in strict mode
@@ -599,8 +611,49 @@ export function usePiChatInit({
 		}
 
 		// Start session and connect in background - UI already has cached data
+		const isAuthError = (err: unknown) => {
+			const message = err instanceof Error ? err.message : String(err);
+			const lowered = message.toLowerCase();
+			return (
+				lowered.includes("missing authorization") ||
+				lowered.includes("unauthorized") ||
+				lowered.includes("401")
+			);
+		};
+
+		const scheduleRetry = (err: unknown) => {
+			if (!isAuthError(err)) return;
+			if (retryCountRef.current >= 5) return;
+			const attempt = retryCountRef.current + 1;
+			retryCountRef.current = attempt;
+			const delay = Math.min(1000, 150 * 2 ** (attempt - 1));
+			if (retryTimeoutRef.current) {
+				clearTimeout(retryTimeoutRef.current);
+			}
+			retryTimeoutRef.current = setTimeout(() => {
+				if (!mounted) return;
+				initSession();
+			}, delay);
+		};
+
 		const initSession = async () => {
 			try {
+				const initMainSession = async (): Promise<PiState | null> => {
+					if (wsCache.sessionStarted) return null;
+					if (wsCache.mainSessionInit) {
+						return wsCache.mainSessionInit;
+					}
+					const startPromise = startMainChatPiSession();
+					wsCache.mainSessionInit = startPromise;
+					try {
+						return await startPromise;
+					} finally {
+						if (wsCache.mainSessionInit === startPromise) {
+							wsCache.mainSessionInit = null;
+						}
+					}
+				};
+
 				// Start session (may already be running on backend)
 				const currentSessionId = activeSessionIdRef.current;
 				const shouldResumeWorkspace =
@@ -615,7 +668,7 @@ export function usePiChatInit({
 									currentSessionId ?? "",
 								)
 							: null
-						: await startMainChatPiSession();
+						: await initMainSession();
 				if (!mounted) return;
 
 				if (piState) {
@@ -657,6 +710,7 @@ export function usePiChatInit({
 				}
 			} catch (e) {
 				if (!mounted) return;
+				scheduleRetry(e);
 				// Only show error if we have no cached data for this session
 				if (
 					!activeSessionId ||
@@ -679,6 +733,10 @@ export function usePiChatInit({
 			mounted = false;
 			isOwnerRef.current = false;
 			initStartedRef.current = false;
+			if (retryTimeoutRef.current) {
+				clearTimeout(retryTimeoutRef.current);
+				retryTimeoutRef.current = null;
+			}
 		};
 	}, [
 		activeSessionId,

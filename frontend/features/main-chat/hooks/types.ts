@@ -141,6 +141,7 @@ export type WsConnectionState = {
 	ws: WebSocket | null;
 	isConnected: boolean;
 	sessionStarted: boolean;
+	mainSessionInit: Promise<PiState | null> | null;
 	listeners: Set<(connected: boolean) => void>;
 };
 

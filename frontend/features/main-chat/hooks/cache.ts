@@ -21,6 +21,7 @@ export const wsCache: WsConnectionState = {
 	ws: null,
 	isConnected: false,
 	sessionStarted: false,
+	mainSessionInit: null,
 	listeners: new Set(),
 };
 

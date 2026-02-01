@@ -52,3 +52,15 @@
 - 2026-01-28: Fix session insert SQL placeholder count so workspace IO sessions can be created.
 - 2026-01-31: Ensure sandboxed processes start in the requested workspace directory by setting bwrap working directory.
 - 2026-01-31: Accept newer Pi RPC events (extension UI requests, session name fields) and handle setTitle updates for Main Chat sessions.
+- 2026-02-01: Treat Pi text/thinking end events as content to avoid empty Main Chat responses when deltas are absent.
+- 2026-02-01: Add `just restart-runner` helper for restarting the system octo-runner socket.
+- 2026-02-01: Retry Main Chat Pi initialization after auth-related failures to avoid empty sessions on first load.
+- 2026-02-01: Prefer Pi session_info names when listing Main Chat Pi sessions so automatic renames show up.
+- 2026-02-01: Use absolute paths for user/group creation helpers to match sudo allowlists on Linux.
+- 2026-02-01: Add VITE_DEBUG_WS and VITE_DEBUG_PI flags to enable verbose frontend WebSocket logging in dev.
+- 2026-02-01: Add `just run-frontend` to launch the dev server with control-plane URL and WS debug flags.
+- 2026-02-01: Guard Main Chat Pi initialization globally so multiple mounts do not spam /main/pi/session.
+- 2026-02-01: Always include a Main Chat Pi session_id in WS events by falling back to the cached session id.
+- 2026-02-01: Avoid reconnecting the Main Chat WebSocket on session changes to prevent churn and empty responses.
+- 2026-02-01: Unify control-plane routes by always using /api for HTTP and WebSocket endpoints.
+- 2026-02-01: Serve backend API under /api while keeping legacy root paths during transition.

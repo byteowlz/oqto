@@ -922,7 +922,7 @@ pub(crate) async fn handle_ws(
     let can_persist = persistence_guard.is_some();
 
     // Get current session_id for the connected message
-    let initial_session_id = session.get_state().await.ok().and_then(|s| s.session_id);
+    let initial_session_id = session.get_session_id().await;
 
     // Send connected message with session_id
     let connected_msg = serde_json::json!({
@@ -968,11 +968,7 @@ pub(crate) async fn handle_ws(
         while let Ok(event) = event_rx.recv().await {
             // Get current session_id dynamically (not from a stale snapshot)
             // This ensures messages are saved to the correct session even after session switches
-            let current_session_id = session_for_events
-                .get_state()
-                .await
-                .ok()
-                .and_then(|s| s.session_id);
+            let current_session_id = session_for_events.get_session_id().await;
 
             // Handle extension UI events that should update session metadata.
             if let crate::pi::PiEvent::ExtensionUiRequest(req) = &event {
@@ -1100,8 +1096,7 @@ pub(crate) async fn handle_ws(
                         | WsCommand::FollowUp { ref message } = cmd
                         {
                             if let Some(svc) = &main_chat_svc {
-                                let current_session_id =
-                                    session.get_state().await.ok().and_then(|s| s.session_id);
+                                let current_session_id = session.get_session_id().await;
                                 let content =
                                     serde_json::json!([{"type": "text", "text": message}]);
                                 if let Err(e) = svc
@@ -1212,8 +1207,18 @@ impl MessageAccumulator {
                 AssistantMessageEvent::TextDelta { delta, .. } => {
                     self.text.push_str(delta);
                 }
+                AssistantMessageEvent::TextEnd { content, .. } => {
+                    if !content.is_empty() {
+                        self.text.push_str(content);
+                    }
+                }
                 AssistantMessageEvent::ThinkingDelta { delta, .. } => {
                     self.thinking.push_str(delta);
+                }
+                AssistantMessageEvent::ThinkingEnd { content, .. } => {
+                    if !content.is_empty() {
+                        self.thinking.push_str(content);
+                    }
                 }
                 AssistantMessageEvent::ToolcallEnd { tool_call, .. } => {
                     self.tool_calls.push(serde_json::json!({
@@ -1448,6 +1453,16 @@ fn transform_pi_event_for_ws(event: &PiEvent, session_id: Option<&str>) -> Optio
                         "name": tool_call.name,
                         "input": tool_call.arguments
                     },
+                    "session_id": session_id
+                })),
+                AssistantMessageEvent::TextEnd { content, .. } => Some(serde_json::json!({
+                    "type": "text",
+                    "data": content,
+                    "session_id": session_id
+                })),
+                AssistantMessageEvent::ThinkingEnd { content, .. } => Some(serde_json::json!({
+                    "type": "thinking",
+                    "data": content,
                     "session_id": session_id
                 })),
                 AssistantMessageEvent::Error { reason, .. } => Some(serde_json::json!({
