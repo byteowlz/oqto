@@ -10,8 +10,8 @@ import { Bot, Loader2, MessageSquare, Search, User } from "lucide-react";
 import { useEffect, useState } from "react";
 
 export type SearchMode = "sessions" | "messages";
-// hstry indexes: opencode, pi, and other adapters.
-export type AgentFilter = "all" | "opencode" | "pi_agent";
+// hstry indexes: pi and other adapters.
+export type AgentFilter = "all" | "pi_agent";
 
 interface SearchResultsProps {
 	query: string;
@@ -26,8 +26,7 @@ const t = {
 	en: {
 		noResults: "No results found",
 		searching: "Searching...",
-		opencode: "OpenCode",
-		piAgent: "Main Chat",
+		piAgent: "Chat",
 		user: "User",
 		assistant: "Assistant",
 		error: "Search failed",
@@ -35,8 +34,7 @@ const t = {
 	de: {
 		noResults: "Keine Ergebnisse gefunden",
 		searching: "Suche...",
-		opencode: "OpenCode",
-		piAgent: "Haupt-Chat",
+		piAgent: "Chat",
 		user: "Benutzer",
 		assistant: "Assistent",
 		error: "Suche fehlgeschlagen",
@@ -71,13 +69,11 @@ function formatTimestamp(timestamp: number | undefined): string {
 }
 
 function getAgentLabel(agent: string, locale: "en" | "de"): string {
-	if (agent === "opencode") return t[locale].opencode;
 	if (agent === "pi_agent") return t[locale].piAgent;
 	return agent;
 }
 
 function getAgentColor(agent: string): string {
-	if (agent === "opencode") return "text-blue-500";
 	if (agent === "pi_agent") return "text-purple-500";
 	return "text-muted-foreground";
 }

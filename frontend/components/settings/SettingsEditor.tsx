@@ -20,8 +20,16 @@ import {
 	updateSettingsValues,
 } from "@/lib/control-plane-client";
 import { cn } from "@/lib/utils";
-import { AlertCircle, Check, Loader2, RotateCcw, Save } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import {
+	AlertCircle,
+	Check,
+	ChevronDown,
+	Loader2,
+	RotateCcw,
+	Save,
+} from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useIsMobile } from "@/hooks/use-mobile";
 
 interface SettingsEditorProps {
 	/** App to edit settings for (e.g., "octo", "mmry") */
@@ -70,6 +78,7 @@ export function SettingsEditor({
 	const [saving, setSaving] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [success, setSuccess] = useState(false);
+	const isMobile = useIsMobile();
 
 	// Load schema and values
 	const loadSettings = useCallback(async () => {
@@ -245,6 +254,7 @@ export function SettingsEditor({
 						isModified={isModified}
 						onValueChange={handleValueChange}
 						onReset={handleReset}
+						isMobile={isMobile}
 					/>
 				))}
 			</div>
@@ -275,6 +285,7 @@ interface SettingsSectionProps {
 	isModified: (path: string) => boolean;
 	onValueChange: (path: string, value: unknown) => void;
 	onReset: (path: string) => void;
+	isMobile: boolean;
 }
 
 function SettingsSection({
@@ -285,32 +296,56 @@ function SettingsSection({
 	isModified,
 	onValueChange,
 	onReset,
+	isMobile,
 }: SettingsSectionProps) {
+	const [open, setOpen] = useState(false);
+
+	useEffect(() => {
+		if (!isMobile) {
+			setOpen(true);
+		}
+	}, [isMobile]);
+
 	return (
 		<div>
 			{/* Section header */}
 			<div className="px-4 sm:px-0 pt-4 pb-2">
-				<h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-					{category}
-				</h3>
+				<button
+					type="button"
+					onClick={() => setOpen((prev) => !prev)}
+					className="w-full flex items-center justify-between text-left"
+					aria-expanded={open}
+				>
+					<h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+						{category}
+					</h3>
+					<ChevronDown
+						className={cn(
+							"h-4 w-4 text-muted-foreground transition-transform",
+							open ? "rotate-180" : "rotate-0",
+						)}
+					/>
+				</button>
 			</div>
 			{/* Section content */}
-			<div className="sm:bg-background/50 sm:border sm:border-border sm:rounded-lg overflow-hidden">
-				<div className="divide-y divide-border/50">
-					{Object.entries(properties).map(([key, prop]) => (
-						<SettingsField
-							key={key}
-							path={key}
-							property={prop}
-							values={values}
-							getEffectiveValue={getEffectiveValue}
-							isModified={isModified}
-							onValueChange={onValueChange}
-							onReset={onReset}
-						/>
-					))}
+			{open ? (
+				<div className="sm:bg-background/50 sm:border sm:border-border sm:rounded-lg overflow-hidden">
+					<div className="divide-y divide-border/50">
+						{Object.entries(properties).map(([key, prop]) => (
+							<SettingsField
+								key={key}
+								path={key}
+								property={prop}
+								values={values}
+								getEffectiveValue={getEffectiveValue}
+								isModified={isModified}
+								onValueChange={onValueChange}
+								onReset={onReset}
+							/>
+						))}
+					</div>
 				</div>
-			</div>
+			) : null}
 		</div>
 	);
 }
@@ -360,6 +395,17 @@ function SettingsField({
 	const isConfigured = setting?.is_configured || modified;
 	const hasDefault = setting?.default !== undefined;
 	const label = formatLabel(path);
+	const stringValue = useMemo(() => {
+		if (value === null || value === undefined) return "";
+		if (typeof value === "object") {
+			try {
+				return JSON.stringify(value);
+			} catch {
+				return String(value);
+			}
+		}
+		return String(value);
+	}, [value]);
 
 	// Handle nested objects
 	if (property.type === "object" && property.properties) {
@@ -519,13 +565,7 @@ function SettingsField({
 					<Input
 						id={fullPath}
 						type={property["x-sensitive"] ? "password" : "text"}
-						value={
-							value === null || value === undefined
-								? ""
-								: typeof value === "object"
-									? JSON.stringify(value)
-									: String(value)
-						}
+						value={stringValue}
 						placeholder={hasDefault ? `${setting?.default}` : undefined}
 						onChange={(e) => {
 							const text = e.target.value;

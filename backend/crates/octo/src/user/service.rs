@@ -130,10 +130,10 @@ impl UserService {
                 bail!("Invalid username format.");
             }
             // Check if new username is available (excluding current user)
-            if let Some(existing) = self.repo.get_by_username(username).await? {
-                if existing.id != id {
-                    bail!("Username '{}' is already taken.", username);
-                }
+            if let Some(existing) = self.repo.get_by_username(username).await?
+                && existing.id != id
+            {
+                bail!("Username '{}' is already taken.", username);
             }
         }
 
@@ -143,10 +143,10 @@ impl UserService {
                 bail!("Invalid email format.");
             }
             // Check if new email is available (excluding current user)
-            if let Some(existing) = self.repo.get_by_email(email).await? {
-                if existing.id != id {
-                    bail!("Email '{}' is already registered.", email);
-                }
+            if let Some(existing) = self.repo.get_by_email(email).await?
+                && existing.id != id
+            {
+                bail!("Email '{}' is already registered.", email);
             }
         }
 
@@ -213,12 +213,12 @@ impl UserService {
 
         match user {
             Some(user) if user.is_active => {
-                if let Some(hash) = &user.password_hash {
-                    if verify_password(password, hash)? {
-                        // Update last login
-                        self.repo.update_last_login(&user.id).await?;
-                        return Ok(Some(user));
-                    }
+                if let Some(hash) = &user.password_hash
+                    && verify_password(password, hash)?
+                {
+                    // Update last login
+                    self.repo.update_last_login(&user.id).await?;
+                    return Ok(Some(user));
                 }
                 Ok(None)
             }
@@ -348,23 +348,6 @@ fn generate_username_from_email(email: &str) -> String {
         base
     } else {
         format!("user_{}", nanoid::nanoid!(8))
-    }
-}
-
-impl Default for UpdateUserRequest {
-    fn default() -> Self {
-        Self {
-            username: None,
-            email: None,
-            password: None,
-            display_name: None,
-            avatar_url: None,
-            role: None,
-            is_active: None,
-            settings: None,
-            linux_username: None,
-            linux_uid: None,
-        }
     }
 }
 

@@ -50,25 +50,23 @@ pub fn discover_templates(path: &Path) -> Result<Vec<TemplateInfo>> {
 fn read_template_description(path: &Path) -> Option<String> {
     // Try template.json first
     let template_json = path.join("template.json");
-    if template_json.exists() {
-        if let Ok(content) = std::fs::read_to_string(&template_json) {
-            if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
-                if let Some(desc) = json.get("description").and_then(|v| v.as_str()) {
-                    return Some(desc.to_string());
-                }
-            }
-        }
+    if template_json.exists()
+        && let Ok(content) = std::fs::read_to_string(&template_json)
+        && let Ok(json) = serde_json::from_str::<serde_json::Value>(&content)
+        && let Some(desc) = json.get("description").and_then(|v| v.as_str())
+    {
+        return Some(desc.to_string());
     }
 
     // Try README.md - take first non-empty, non-heading line
     let readme = path.join("README.md");
-    if readme.exists() {
-        if let Ok(content) = std::fs::read_to_string(&readme) {
-            for line in content.lines() {
-                let trimmed = line.trim();
-                if !trimmed.is_empty() && !trimmed.starts_with('#') {
-                    return Some(trimmed.to_string());
-                }
+    if readme.exists()
+        && let Ok(content) = std::fs::read_to_string(&readme)
+    {
+        for line in content.lines() {
+            let trimmed = line.trim();
+            if !trimmed.is_empty() && !trimmed.starts_with('#') {
+                return Some(trimmed.to_string());
             }
         }
     }
@@ -170,22 +168,4 @@ pub fn list_templates(
     }
 
     Ok(())
-}
-
-/// Get templates path from environment or default.
-pub fn get_templates_path() -> Option<std::path::PathBuf> {
-    // Check environment variable
-    if let Ok(path) = std::env::var("OCTO_TEMPLATES_PATH") {
-        let expanded = shellexpand::tilde(&path).to_string();
-        return Some(std::path::PathBuf::from(expanded));
-    }
-
-    // Check default location
-    let home = dirs_next::home_dir()?;
-    let default_path = home.join(".local/share/octo/templates");
-    if default_path.exists() {
-        return Some(default_path);
-    }
-
-    None
 }

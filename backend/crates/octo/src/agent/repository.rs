@@ -34,8 +34,6 @@ pub struct AgentRepository {
     pool: SqlitePool,
 }
 
-#[allow(dead_code)]
-
 impl AgentRepository {
     /// Create a new agent repository.
     pub fn new(pool: SqlitePool) -> Self {

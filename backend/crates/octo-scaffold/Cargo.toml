@@ -38,3 +38,6 @@ walkdir.workspace = true
 # Path handling
 shellexpand = "3"
 dirs-next = "2"
+
+[lints]
+workspace = true

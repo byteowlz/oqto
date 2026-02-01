@@ -5,6 +5,7 @@
 
 use anyhow::{Context, Result};
 use log::{debug, info, warn};
+use rustix::process::{geteuid, getuid};
 use serde::{Deserialize, Serialize};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -99,7 +100,7 @@ impl LinuxUsersConfig {
     ) -> Result<(u32, String)> {
         if !self.enabled {
             // Return current user's UID when not enabled
-            return Ok((unsafe { libc::getuid() }, project_id.to_string()));
+            return Ok((getuid().as_raw(), project_id.to_string()));
         }
 
         // Ensure group exists first
@@ -152,7 +153,7 @@ impl LinuxUsersConfig {
         args.push(username.clone());
 
         let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-        run_privileged_command(self.use_sudo, "useradd", &args_refs)
+        run_privileged_command(self.use_sudo, "/usr/sbin/useradd", &args_refs)
             .with_context(|| format!("creating project user '{}'", username))?;
 
         info!("Created Linux user '{}' with UID {}", username, uid);
@@ -222,7 +223,7 @@ impl LinuxUsersConfig {
             return Ok(());
         }
 
-        let is_root = unsafe { libc::geteuid() } == 0;
+        let is_root = geteuid().is_root();
 
         if is_root {
             debug!("Running as root, Linux user management available");
@@ -239,11 +240,11 @@ impl LinuxUsersConfig {
                 .args(["-n", "/usr/sbin/useradd", "--help"])
                 .output();
 
-            if let Ok(out) = output {
-                if out.status.success() {
-                    debug!("Passwordless sudo available for user management helpers");
-                    return Ok(());
-                }
+            if let Ok(out) = output
+                && out.status.success()
+            {
+                debug!("Passwordless sudo available for user management helpers");
+                return Ok(());
             }
 
             // If we can't verify here, rely on operation-time errors.
@@ -271,7 +272,7 @@ impl LinuxUsersConfig {
         }
 
         info!("Creating group '{}'", self.group);
-        run_privileged_command(self.use_sudo, "groupadd", &[&self.group])
+        run_privileged_command(self.use_sudo, "/usr/sbin/groupadd", &[&self.group])
             .context("creating group")?;
 
         Ok(())
@@ -314,19 +315,18 @@ impl LinuxUsersConfig {
             // Check if this Linux username is available
             if let Some(_uid) = get_user_uid(&linux_username)? {
                 // Linux user exists - check if it's ours (shouldn't happen for new registration)
-                if let Some(gecos) = get_user_gecos(&linux_username)? {
-                    if let Some(owner_id) = extract_user_id_from_gecos(&gecos) {
-                        if owner_id == user_id {
-                            // This is our user (idempotent retry) - ID is fine
-                            debug!(
-                                "Linux user '{}' already belongs to user_id '{}' (attempt {})",
-                                linux_username,
-                                user_id,
-                                attempt + 1
-                            );
-                            return Ok(user_id);
-                        }
-                    }
+                if let Some(gecos) = get_user_gecos(&linux_username)?
+                    && let Some(owner_id) = extract_user_id_from_gecos(&gecos)
+                    && owner_id == user_id
+                {
+                    // This is our user (idempotent retry) - ID is fine
+                    debug!(
+                        "Linux user '{}' already belongs to user_id '{}' (attempt {})",
+                        linux_username,
+                        user_id,
+                        attempt + 1
+                    );
+                    return Ok(user_id);
                 }
                 // Collision with different owner - regenerate
                 debug!(
@@ -398,23 +398,23 @@ impl LinuxUsersConfig {
         // Check if user already exists
         if let Some(uid) = get_user_uid(&username)? {
             // SECURITY: Verify this user belongs to the same platform user_id via GECOS
-            if let Some(gecos) = get_user_gecos(&username)? {
-                if let Some(owner_id) = extract_user_id_from_gecos(&gecos) {
-                    if owner_id == user_id {
-                        debug!(
-                            "Linux user '{}' already exists with UID {} and belongs to user_id '{}'",
-                            username, uid, user_id
-                        );
-                        return Ok((uid, username));
-                    }
-                    // SECURITY: Different owner - this should not happen if generate_unique_user_id was used
-                    anyhow::bail!(
-                        "Linux user '{}' belongs to different user_id '{}', expected '{}'",
-                        username,
-                        owner_id,
-                        user_id
+            if let Some(gecos) = get_user_gecos(&username)?
+                && let Some(owner_id) = extract_user_id_from_gecos(&gecos)
+            {
+                if owner_id == user_id {
+                    debug!(
+                        "Linux user '{}' already exists with UID {} and belongs to user_id '{}'",
+                        username, uid, user_id
                     );
+                    return Ok((uid, username));
                 }
+                // SECURITY: Different owner - this should not happen if generate_unique_user_id was used
+                anyhow::bail!(
+                    "Linux user '{}' belongs to different user_id '{}', expected '{}'",
+                    username,
+                    owner_id,
+                    user_id
+                );
             }
             // No GECOS or can't parse - user exists but we can't verify ownership.
             // This could be: a manually created user, a system user, or a race condition.
@@ -471,7 +471,7 @@ impl LinuxUsersConfig {
         args.push(username.to_string());
 
         let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-        run_privileged_command(self.use_sudo, "useradd", &args_refs)
+        run_privileged_command(self.use_sudo, "/usr/sbin/useradd", &args_refs)
             .with_context(|| format!("creating user '{}'", username))?;
 
         info!("Created Linux user '{}' with UID {}", username, uid);
@@ -504,7 +504,7 @@ impl LinuxUsersConfig {
     ) -> Result<(u32, String)> {
         if !self.enabled {
             // Return current user's UID and a placeholder username when not enabled
-            return Ok((unsafe { libc::getuid() }, user_id.to_string()));
+            return Ok((getuid().as_raw(), user_id.to_string()));
         }
 
         // If we have expected values from the DB, verify them first
@@ -793,12 +793,12 @@ WantedBy=default.target
 
         for line in passwd.lines() {
             let parts: Vec<&str> = line.split(':').collect();
-            if parts.len() >= 3 {
-                if let Ok(uid) = parts[2].parse::<u32>() {
-                    if uid >= self.uid_start && uid > max_uid {
-                        max_uid = uid;
-                    }
-                }
+            if parts.len() >= 3
+                && let Ok(uid) = parts[2].parse::<u32>()
+                && uid >= self.uid_start
+                && uid > max_uid
+            {
+                max_uid = uid;
             }
         }
 
@@ -932,12 +932,12 @@ fn get_user_home(username: &str) -> Result<Option<PathBuf>> {
 /// Searches in common locations and PATH.
 fn find_octo_runner_binary() -> Result<PathBuf> {
     // Try `which` first
-    if let Ok(output) = Command::new("which").arg("octo-runner").output() {
-        if output.status.success() {
-            let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if !path.is_empty() {
-                return Ok(PathBuf::from(path));
-            }
+    if let Ok(output) = Command::new("which").arg("octo-runner").output()
+        && output.status.success()
+    {
+        let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !path.is_empty() {
+            return Ok(PathBuf::from(path));
         }
     }
 
@@ -995,7 +995,7 @@ fn extract_user_id_from_gecos(gecos: &str) -> Option<&str> {
 
 /// Run a command with optional sudo.
 fn run_privileged_command(use_sudo: bool, cmd: &str, args: &[&str]) -> Result<()> {
-    let is_root = unsafe { libc::geteuid() } == 0;
+    let is_root = geteuid().is_root();
 
     let output = if use_sudo && !is_root {
         debug!("Running: sudo {} {:?}", cmd, args);
@@ -1037,7 +1037,7 @@ fn run_as_user(
     args: &[&str],
     env: &[(&str, &str)],
 ) -> Result<()> {
-    let is_root = unsafe { libc::geteuid() } == 0;
+    let is_root = geteuid().is_root();
 
     // Build the actual command with environment variables using `env`.
     // Format: sudo/runuser -u user -- env VAR1=val1 VAR2=val2 cmd args...

@@ -15,7 +15,7 @@ use tokio::sync::Mutex;
 use tokio_stream::{StreamExt, wrappers::IntervalStream};
 use tracing::{error, info, instrument, warn};
 
-use crate::auth::{CurrentUser, RequireAdmin};
+use crate::auth::RequireAdmin;
 use crate::observability::{CpuTimes, HostMetrics, read_host_metrics};
 use crate::session::{Session, SessionContainerStats};
 use crate::user::{
@@ -313,8 +313,9 @@ pub async fn create_user(
     }
 
     // Allocate a stable per-user mmry port in local multi-user mode.
-    if state.mmry.enabled && !state.mmry.single_user {
-        if let Err(e) = state
+    if state.mmry.enabled
+        && !state.mmry.single_user
+        && let Err(e) = state
             .users
             .ensure_mmry_port(
                 &user.id,
@@ -322,9 +323,8 @@ pub async fn create_user(
                 state.mmry.user_port_range,
             )
             .await
-        {
-            warn!(user_id = %user.id, error = %e, "Failed to allocate user mmry port");
-        }
+    {
+        warn!(user_id = %user.id, error = %e, "Failed to allocate user mmry port");
     }
 
     info!(user_id = %user.id, "Created new user");

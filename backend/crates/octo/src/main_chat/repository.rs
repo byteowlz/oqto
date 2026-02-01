@@ -4,10 +4,7 @@ use anyhow::{Context, Result};
 use chrono::Utc;
 
 use super::db::MainChatDb;
-use super::models::{
-    ChatMessage, CreateChatMessage, CreateHistoryEntry, CreateSession, HistoryEntry,
-    MainChatSession,
-};
+use super::models::{CreateHistoryEntry, CreateSession, HistoryEntry, MainChatSession};
 
 /// Repository for main chat operations.
 pub struct MainChatRepository<'a> {
@@ -197,135 +194,6 @@ impl<'a> MainChatRepository<'a> {
         .await
         .context("setting config")?;
         Ok(())
-    }
-
-    /// Add a chat message.
-    pub async fn add_message(&self, message: CreateChatMessage) -> Result<ChatMessage> {
-        let timestamp = Utc::now().timestamp_millis();
-        let role = message.role.to_string();
-        let content = message.content.to_string();
-
-        let id = sqlx::query_scalar::<_, i64>(
-            r#"
-            INSERT INTO messages (role, content, pi_session_id, timestamp)
-            VALUES (?, ?, ?, ?)
-            RETURNING id
-            "#,
-        )
-        .bind(&role)
-        .bind(&content)
-        .bind(&message.pi_session_id)
-        .bind(timestamp)
-        .fetch_one(self.db.pool())
-        .await
-        .context("inserting message")?;
-
-        self.get_message_by_id(id).await
-    }
-
-    /// Get a message by ID.
-    pub async fn get_message_by_id(&self, id: i64) -> Result<ChatMessage> {
-        sqlx::query_as::<_, ChatMessage>(
-            "SELECT id, role, content, pi_session_id, timestamp, created_at FROM messages WHERE id = ?",
-        )
-        .bind(id)
-        .fetch_one(self.db.pool())
-        .await
-        .context("fetching message")
-    }
-
-    /// Get all messages (for display history).
-    pub async fn get_all_messages(&self) -> Result<Vec<ChatMessage>> {
-        sqlx::query_as::<_, ChatMessage>(
-            r#"
-            SELECT id, role, content, pi_session_id, timestamp, created_at
-            FROM messages
-            ORDER BY timestamp ASC
-            "#,
-        )
-        .fetch_all(self.db.pool())
-        .await
-        .context("fetching all messages")
-    }
-
-    /// Get messages for a specific session.
-    /// Get messages for a session range (from session start to end/next session).
-    /// This finds all messages from the given session_id until the next separator or end.
-    pub async fn get_messages_for_session_range(
-        &self,
-        session_id: &str,
-    ) -> Result<Vec<ChatMessage>> {
-        // First find the timestamp of any separator or first message with this session_id
-        let session_start = sqlx::query_scalar::<_, i64>(
-            r#"
-            SELECT MIN(timestamp) FROM messages 
-            WHERE pi_session_id = ? OR (role = 'system' AND content LIKE '%"sessionId":"' || ? || '"%')
-            "#,
-        )
-        .bind(session_id)
-        .bind(session_id)
-        .fetch_optional(self.db.pool())
-        .await
-        .context("finding session start")?;
-
-        let Some(start_ts) = session_start else {
-            return Ok(Vec::new());
-        };
-
-        // Find the next separator after this session (if any)
-        let next_separator_ts = sqlx::query_scalar::<_, i64>(
-            r#"
-            SELECT MIN(timestamp) FROM messages 
-            WHERE role = 'system' 
-              AND content LIKE '%separator%'
-              AND timestamp > ?
-            "#,
-        )
-        .bind(start_ts)
-        .fetch_optional(self.db.pool())
-        .await
-        .context("finding next separator")?;
-
-        // Get all messages in this range
-        if let Some(end_ts) = next_separator_ts {
-            sqlx::query_as::<_, ChatMessage>(
-                r#"
-                SELECT id, role, content, pi_session_id, timestamp, created_at
-                FROM messages
-                WHERE timestamp >= ? AND timestamp < ?
-                ORDER BY timestamp ASC
-                "#,
-            )
-            .bind(start_ts)
-            .bind(end_ts)
-            .fetch_all(self.db.pool())
-            .await
-            .context("fetching messages in range")
-        } else {
-            // No next separator - get all messages from start to end
-            sqlx::query_as::<_, ChatMessage>(
-                r#"
-                SELECT id, role, content, pi_session_id, timestamp, created_at
-                FROM messages
-                WHERE timestamp >= ?
-                ORDER BY timestamp ASC
-                "#,
-            )
-            .bind(start_ts)
-            .fetch_all(self.db.pool())
-            .await
-            .context("fetching messages from start")
-        }
-    }
-
-    /// Delete all messages (for new session with fresh history).
-    pub async fn clear_messages(&self) -> Result<i64> {
-        let result = sqlx::query("DELETE FROM messages")
-            .execute(self.db.pool())
-            .await
-            .context("clearing messages")?;
-
-        Ok(result.rows_affected() as i64)
     }
 }
 

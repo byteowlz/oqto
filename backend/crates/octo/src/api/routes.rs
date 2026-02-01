@@ -7,6 +7,7 @@ use axum::{
     routing::{delete, get, post, put},
 };
 use tower_http::cors::{AllowOrigin, CorsLayer};
+use tower_http::set_header::SetResponseHeaderLayer;
 use tower_http::trace::{DefaultMakeSpan, DefaultOnRequest, DefaultOnResponse, TraceLayer};
 use tracing::Level;
 
@@ -16,13 +17,12 @@ use super::a2ui as a2ui_handlers;
 use super::delegate as delegate_handlers;
 use super::handlers;
 use super::main_chat as main_chat_handlers;
-use super::main_chat_files;
 use super::main_chat_pi as main_chat_pi_handlers;
 use super::onboarding_handlers;
 use super::proxy;
 use super::state::AppState;
 use super::ui_control as ui_control_handlers;
-use crate::ws::ws_handler;
+use super::ws_multiplexed;
 
 // Note: handlers module now provides all public handlers via re-exports in handlers/mod.rs
 // Routes continue to use `handlers::function_name` - no changes needed
@@ -44,8 +44,8 @@ pub fn create_router_with_config(state: AppState, max_upload_size_mb: usize) -> 
 
     // Protected routes (require authentication)
     let protected_routes = Router::new()
-        // WebSocket endpoint for real-time communication
-        .route("/ws", get(ws_handler))
+        // Multiplexed WebSocket endpoint for Pi, files, terminal, hstry channels
+        .route("/ws/mux", get(ws_multiplexed::ws_multiplexed_handler))
         // sldr routes
         .route(
             "/sldr",
@@ -67,9 +67,18 @@ pub fn create_router_with_config(state: AppState, max_upload_size_mb: usize) -> 
         .route("/projects", get(handlers::list_workspace_dirs))
         .route("/projects/logo/{*path}", get(handlers::get_project_logo))
         .route(
+            "/projects/locations",
+            get(handlers::list_workspace_locations).post(handlers::upsert_workspace_location),
+        )
+        .route(
+            "/projects/locations/active",
+            post(handlers::set_active_workspace_location),
+        )
+        .route(
             "/projects/templates",
             get(handlers::list_project_templates).post(handlers::create_project_from_template),
         )
+        .route("/feedback", post(handlers::create_feedback))
         // Session management
         .route("/sessions", get(handlers::list_sessions))
         .route("/sessions", post(handlers::create_session))
@@ -128,42 +137,12 @@ pub fn create_router_with_config(state: AppState, max_upload_size_mb: usize) -> 
                 .delete(proxy::proxy_opencode),
         )
         .route(
-            "/sessions/{session_id}/files/{*path}",
-            get(proxy::proxy_fileserver)
-                .post(proxy::proxy_fileserver)
-                .put(proxy::proxy_fileserver)
-                .delete(proxy::proxy_fileserver),
-        )
-        .route(
-            "/session/{session_id}/files/{*path}",
-            get(proxy::proxy_fileserver)
-                .post(proxy::proxy_fileserver)
-                .put(proxy::proxy_fileserver)
-                .delete(proxy::proxy_fileserver),
-        )
-        .route(
-            "/workspace/files/{*path}",
-            get(proxy::proxy_fileserver_for_workspace)
-                .post(proxy::proxy_fileserver_for_workspace)
-                .put(proxy::proxy_fileserver_for_workspace)
-                .delete(proxy::proxy_fileserver_for_workspace),
-        )
-        .route(
-            "/sessions/{session_id}/terminal",
-            get(proxy::proxy_terminal_ws),
-        )
-        .route("/session/{session_id}/term", get(proxy::proxy_terminal_ws))
-        .route(
             "/sessions/{session_id}/browser/stream",
             get(proxy::proxy_browser_stream_ws),
         )
         .route(
             "/session/{session_id}/browser/stream",
             get(proxy::proxy_browser_stream_ws),
-        )
-        .route(
-            "/workspace/term",
-            get(proxy::proxy_terminal_ws_for_workspace),
         )
         // Workspace-based mmry routes (single-user mode)
         .route(
@@ -403,15 +382,7 @@ pub fn create_router_with_config(state: AppState, max_upload_size_mb: usize) -> 
             "/main/pi/stats",
             get(main_chat_pi_handlers::get_session_stats),
         )
-        .route("/main/pi/ws", get(main_chat_pi_handlers::ws_handler))
-        .route(
-            "/main/pi/history",
-            get(main_chat_pi_handlers::get_history).delete(main_chat_pi_handlers::clear_history),
-        )
-        .route(
-            "/main/pi/history/separator",
-            post(main_chat_pi_handlers::add_separator),
-        )
+        .route("/main/pi/history", get(main_chat_pi_handlers::get_history))
         .route(
             "/main/pi/sessions",
             get(main_chat_pi_handlers::list_pi_sessions)
@@ -425,12 +396,17 @@ pub fn create_router_with_config(state: AppState, max_upload_size_mb: usize) -> 
             "/main/pi/sessions/{session_id}",
             get(main_chat_pi_handlers::get_pi_session_messages)
                 .post(main_chat_pi_handlers::resume_pi_session)
-                .patch(main_chat_pi_handlers::update_pi_session),
+                .patch(main_chat_pi_handlers::update_pi_session)
+                .delete(main_chat_pi_handlers::delete_pi_session),
         )
         // Workspace Pi routes (per-workspace Pi sessions)
         .route(
             "/pi/workspace/sessions",
             post(crate::api::workspace_pi::new_workspace_session),
+        )
+        .route(
+            "/pi/workspace/sessions/{session_id}",
+            delete(crate::api::workspace_pi::delete_workspace_session),
         )
         .route(
             "/pi/workspace/sessions/{session_id}/resume",
@@ -456,12 +432,7 @@ pub fn create_router_with_config(state: AppState, max_upload_size_mb: usize) -> 
             "/pi/workspace/model",
             post(crate::api::workspace_pi::set_workspace_model),
         )
-        .route(
-            "/pi/workspace/ws",
-            get(crate::api::workspace_pi::ws_handler),
-        )
-        // Main Chat file access routes
-        .nest("/main/files", main_chat_files::main_chat_file_routes())
+        // Main Chat file access routes now use mux-only file channel
         // HSTRY (chat history) search routes
         .route("/search", get(handlers::search_sessions))
         // Scheduler (skdlr) overview
@@ -470,20 +441,7 @@ pub fn create_router_with_config(state: AppState, max_upload_size_mb: usize) -> 
         .route("/feeds/fetch", get(handlers::fetch_feed))
         // CodexBar usage (optional, requires codexbar on PATH)
         .route("/codexbar/usage", get(handlers::codexbar_usage))
-        // TRX (issue tracking) routes - workspace-based
-        .route(
-            "/workspace/trx/issues",
-            get(handlers::list_trx_issues).post(handlers::create_trx_issue),
-        )
-        .route(
-            "/workspace/trx/issues/{issue_id}",
-            get(handlers::get_trx_issue).put(handlers::update_trx_issue),
-        )
-        .route(
-            "/workspace/trx/issues/{issue_id}/close",
-            post(handlers::close_trx_issue),
-        )
-        .route("/workspace/trx/sync", post(handlers::sync_trx))
+        // TRX (issue tracking) now uses mux-only channel
         // AgentRPC routes (unified backend API)
         .route("/agent/health", get(handlers::agent_health))
         .route(
@@ -586,6 +544,10 @@ pub fn create_router_with_config(state: AppState, max_upload_size_mb: usize) -> 
         )
         .with_state(state);
 
+    let permissions_policy = HeaderValue::from_static(
+        "geolocation=(), microphone=(self), camera=()",
+    );
+
     Router::new()
         .merge(public_routes)
         .merge(protected_routes)
@@ -593,6 +555,10 @@ pub fn create_router_with_config(state: AppState, max_upload_size_mb: usize) -> 
         .merge(test_routes)
         .merge(a2ui_routes)
         .layer(DefaultBodyLimit::max(max_body_size))
+        .layer(SetResponseHeaderLayer::overriding(
+            header::HeaderName::from_static("permissions-policy"),
+            permissions_policy,
+        ))
         .layer(cors)
         .layer(trace_layer)
 }
@@ -664,10 +630,10 @@ fn build_cors_layer(state: &AppState) -> CorsLayer {
                 "http://127.0.0.1:3000",
                 "http://127.0.0.1:3001",
             ] {
-                if let Ok(value) = origin.parse::<HeaderValue>() {
-                    if !origins.contains(&value) {
-                        origins.push(value);
-                    }
+                if let Ok(value) = origin.parse::<HeaderValue>()
+                    && !origins.contains(&value)
+                {
+                    origins.push(value);
                 }
             }
         }

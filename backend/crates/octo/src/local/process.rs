@@ -6,6 +6,7 @@
 
 use anyhow::{Context, Result};
 use log::{debug, error, info, warn};
+use rustix::process::{geteuid, getuid};
 use std::collections::HashMap;
 use std::path::Path;
 use std::process::Stdio;
@@ -296,7 +297,7 @@ impl ProcessManager {
             std::env::var("TMPDIR").unwrap_or_else(|_| "/tmp".to_string())
         } else {
             // Linux: Use XDG_RUNTIME_DIR or fall back to /run/user/$UID
-            let uid = unsafe { libc::getuid() };
+            let uid = getuid().as_raw();
             std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| format!("/run/user/{}", uid))
         };
         std::path::PathBuf::from(runtime_dir).join(format!("octo-ttyd-{}.sock", session_id))
@@ -407,7 +408,7 @@ impl ProcessManager {
     ) -> Result<Child> {
         let child = if let Some(ref username) = run_as.username {
             // Run as a specific user
-            let is_root = unsafe { libc::geteuid() } == 0;
+            let is_root = geteuid().is_root();
 
             if run_as.use_sudo && !is_root {
                 // Use sudo -u to run as the target user
@@ -567,7 +568,7 @@ impl ProcessManager {
                 full_args_refs[..full_args_refs.len().saturating_sub(args.len() + 1)]
                     .iter()
                     .take(10)
-                    .cloned()
+                    .copied()
                     .collect::<Vec<_>>()
                     .join(" "),
                 if full_args_refs.len() > 10 { "..." } else { "" }
@@ -761,20 +762,18 @@ pub fn find_process_on_port(port: u16) -> Option<(u32, String)> {
     // Parse the output to find PID
     // Format: LISTEN 0 4096 0.0.0.0:41820 0.0.0.0:* users:(("opencode",pid=12345,fd=15))
     for line in stdout.lines().skip(1) {
-        if let Some(users_part) = line.split("users:((").nth(1) {
-            if let Some(pid_part) = users_part.split("pid=").nth(1) {
-                if let Some(pid_str) = pid_part.split(',').next() {
-                    if let Ok(pid) = pid_str.parse::<u32>() {
-                        // Extract process name
-                        let name = users_part
-                            .split('"')
-                            .nth(1)
-                            .unwrap_or("unknown")
-                            .to_string();
-                        return Some((pid, name));
-                    }
-                }
-            }
+        if let Some(users_part) = line.split("users:((").nth(1)
+            && let Some(pid_part) = users_part.split("pid=").nth(1)
+            && let Some(pid_str) = pid_part.split(',').next()
+            && let Ok(pid) = pid_str.parse::<u32>()
+        {
+            // Extract process name
+            let name = users_part
+                .split('"')
+                .nth(1)
+                .unwrap_or("unknown")
+                .to_string();
+            return Some((pid, name));
         }
     }
 

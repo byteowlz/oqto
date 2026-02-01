@@ -80,6 +80,13 @@ Per-workspace overrides in `.octo/sandbox.toml` can only ADD restrictions, never
 
 ---
 
+## Recent Architecture Decisions
+
+- Hstry is the canonical chat history store. Single-user main chat reads via hstry ReadService; multi-user reads via octo-runner against per-user hstry.db.
+- Pi sessions rehydrate by rebuilding JSONL from hstry when the session file is missing.
+- Main chat Pi WS connections bind to a specific session_id; runner writer errors trigger a single restart + retry.
+- Provider storage: Pi JSONL stores provider in model_change entries and assistant message payloads; OpenCode stores provider per message as providerID in session message JSON.
+
 ## Memory System (Critical)
 
 **ALWAYS search memories before starting work on unfamiliar areas.** Memories contain architecture decisions, API patterns, and debugging insights that save time.

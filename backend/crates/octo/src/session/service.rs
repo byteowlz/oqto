@@ -26,6 +26,7 @@ use crate::wordlist;
 
 use super::models::{CreateSessionRequest, RuntimeMode, Session, SessionStatus};
 use super::repository::SessionRepository;
+use super::workspace_locations::WorkspaceLocationRepository;
 
 /// Prefix used for container names managed by this orchestrator.
 const CONTAINER_NAME_PREFIX: &str = "octo-";
@@ -308,8 +309,12 @@ impl<'a> UserSessionService<'a> {
         self.svc.ensure_user_mmry_pinned(self.user_id).await
     }
 
-    pub fn validate_workspace_path(&self, path: &str) -> Result<std::path::PathBuf> {
-        self.svc.resolve_workspace_path(self.user_id, path)
+    pub async fn validate_workspace_path(&self, path: &str) -> Result<std::path::PathBuf> {
+        self.svc.resolve_workspace_path(self.user_id, path).await
+    }
+
+    pub fn workspace_locations(&self) -> &WorkspaceLocationRepository {
+        &self.svc.workspace_locations
     }
 }
 
@@ -331,6 +336,7 @@ pub struct ContainerStatsReport {
 #[derive(Clone)]
 pub struct SessionService {
     repo: SessionRepository,
+    workspace_locations: WorkspaceLocationRepository,
     /// Container runtime (used when runtime_mode is Container).
     container_runtime: Option<Arc<dyn ContainerRuntimeApi>>,
     /// Runner client for local mode. All local process spawning goes through
@@ -353,19 +359,25 @@ impl SessionService {
         UserSessionService { svc: self, user_id }
     }
 
+    pub fn workspace_locations(&self) -> &WorkspaceLocationRepository {
+        &self.workspace_locations
+    }
+
     /// Create a new session service with container runtime.
     pub fn new(
         repo: SessionRepository,
         runtime: Arc<dyn ContainerRuntimeApi>,
         config: SessionServiceConfig,
     ) -> Self {
+        let workspace_locations = WorkspaceLocationRepository::new(repo.pool().clone());
         Self {
             repo,
+            workspace_locations,
             container_runtime: Some(runtime),
             runner: None,
             local_runtime: None,
             eavs: None,
-            readiness: Arc::new(HttpSessionReadiness::default()),
+            readiness: Arc::new(HttpSessionReadiness),
             agent_browser: AgentBrowserManager::new(config.agent_browser.clone()),
             config,
             user_mmry: None,
@@ -379,13 +391,15 @@ impl SessionService {
         eavs: Arc<dyn EavsApi>,
         config: SessionServiceConfig,
     ) -> Self {
+        let workspace_locations = WorkspaceLocationRepository::new(repo.pool().clone());
         Self {
             repo,
+            workspace_locations,
             container_runtime: Some(runtime),
             runner: None,
             local_runtime: None,
             eavs: Some(eavs),
-            readiness: Arc::new(HttpSessionReadiness::default()),
+            readiness: Arc::new(HttpSessionReadiness),
             agent_browser: AgentBrowserManager::new(config.agent_browser.clone()),
             config,
             user_mmry: None,
@@ -402,13 +416,15 @@ impl SessionService {
         local_runtime: LocalRuntime,
         config: SessionServiceConfig,
     ) -> Self {
+        let workspace_locations = WorkspaceLocationRepository::new(repo.pool().clone());
         Self {
             repo,
+            workspace_locations,
             container_runtime: None,
             runner: Some(runner),
             local_runtime: Some(Arc::new(local_runtime)),
             eavs: None,
-            readiness: Arc::new(HttpSessionReadiness::default()),
+            readiness: Arc::new(HttpSessionReadiness),
             agent_browser: AgentBrowserManager::new(config.agent_browser.clone()),
             config,
             user_mmry: None,
@@ -423,13 +439,15 @@ impl SessionService {
         eavs: Arc<dyn EavsApi>,
         config: SessionServiceConfig,
     ) -> Self {
+        let workspace_locations = WorkspaceLocationRepository::new(repo.pool().clone());
         Self {
             repo,
+            workspace_locations,
             container_runtime: None,
             runner: Some(runner),
             local_runtime: Some(Arc::new(local_runtime)),
             eavs: Some(eavs),
-            readiness: Arc::new(HttpSessionReadiness::default()),
+            readiness: Arc::new(HttpSessionReadiness),
             agent_browser: AgentBrowserManager::new(config.agent_browser.clone()),
             config,
             user_mmry: None,
@@ -644,7 +662,11 @@ impl SessionService {
         roots
     }
 
-    fn resolve_workspace_path(&self, user_id: &str, path: &str) -> Result<std::path::PathBuf> {
+    async fn resolve_workspace_path(
+        &self,
+        user_id: &str,
+        path: &str,
+    ) -> Result<std::path::PathBuf> {
         let requested = std::path::PathBuf::from(path);
         let resolved = if requested.is_absolute() {
             requested
@@ -653,6 +675,46 @@ impl SessionService {
         };
 
         if !resolved.exists() {
+            if let Some(location) = self
+                .workspace_locations
+                .get_active_location(user_id, path)
+                .await?
+            {
+                if location.kind != "local" {
+                    anyhow::bail!(
+                        "workspace location is remote; select a local location for {}",
+                        path
+                    );
+                }
+                let location_path = std::path::PathBuf::from(&location.path);
+                if !location_path.exists() {
+                    anyhow::bail!(
+                        "workspace location path does not exist: {}",
+                        location_path.display()
+                    );
+                }
+                let canonical = location_path.canonicalize().with_context(|| {
+                    format!("resolving workspace location {}", location_path.display())
+                })?;
+                return Ok(canonical);
+            }
+
+            if let Some(parent) = resolved.parent()
+                && parent.exists()
+            {
+                let canonical_parent = parent.canonicalize().with_context(|| {
+                    format!("resolving workspace parent {}", parent.display())
+                })?;
+                let allowed_roots = self.allowed_workspace_roots(user_id);
+                if !allowed_roots.iter().any(|root| canonical_parent.starts_with(root)) {
+                    anyhow::bail!(
+                        "workspace path {} is outside allowed roots",
+                        resolved.display()
+                    );
+                }
+                return Ok(resolved);
+            }
+
             anyhow::bail!("workspace path does not exist: {}", resolved.display());
         }
 
@@ -871,7 +933,8 @@ impl SessionService {
 
         // Determine user home path - either provided or create per-user home directory.
         let user_home_path = if let Some(path) = request.workspace_path {
-            self.resolve_workspace_path(user_id, &path)?
+            self.resolve_workspace_path(user_id, &path)
+                .await?
                 .to_string_lossy()
                 .to_string()
         } else {
@@ -977,12 +1040,11 @@ impl SessionService {
     /// Check if an error is a retryable unique constraint violation.
     fn is_retryable_unique_violation(error: &anyhow::Error) -> bool {
         for cause in error.chain() {
-            if let Some(sqlx_error) = cause.downcast_ref::<sqlx::Error>() {
-                if let sqlx::Error::Database(db_err) = sqlx_error {
-                    if db_err.is_unique_violation() {
-                        return true;
-                    }
-                }
+            if let Some(sqlx_error) = cause.downcast_ref::<sqlx::Error>()
+                && let sqlx::Error::Database(db_err) = sqlx_error
+                && db_err.is_unique_violation()
+            {
+                return true;
             }
         }
 
@@ -1111,13 +1173,13 @@ impl SessionService {
             let _ = self.repo.mark_failed(&session.id, &e.to_string()).await;
 
             // Best-effort cleanup: revoke EAVS key if we created one.
-            if let (Some(eavs), Some(key_id)) = (&self.eavs, &session.eavs_key_id) {
-                if let Err(revoke_err) = eavs.revoke_key(key_id).await {
-                    warn!(
-                        "Failed to revoke EAVS key {} after startup failure: {:?}",
-                        key_id, revoke_err
-                    );
-                }
+            if let (Some(eavs), Some(key_id)) = (&self.eavs, &session.eavs_key_id)
+                && let Err(revoke_err) = eavs.revoke_key(key_id).await
+            {
+                warn!(
+                    "Failed to revoke EAVS key {} after startup failure: {:?}",
+                    key_id, revoke_err
+                );
             }
 
             return Err(e);
@@ -1505,14 +1567,13 @@ impl SessionService {
         match session.runtime_mode {
             RuntimeMode::Container => {
                 // Stop the container if it exists (but do NOT remove it)
-                if let Some(ref container_id) = session.container_id {
-                    if let Some(runtime) = self.container_runtime() {
-                        if let Err(e) = runtime.stop_container(container_id, Some(10)).await {
-                            warn!("Failed to stop container {}: {:?}", container_id, e);
-                        }
-                    }
-                    // Container is NOT removed - it can be restarted with resume_session()
+                if let Some(ref container_id) = session.container_id
+                    && let Some(runtime) = self.container_runtime()
+                    && let Err(e) = runtime.stop_container(container_id, Some(10)).await
+                {
+                    warn!("Failed to stop container {}: {:?}", container_id, e);
                 }
+                // Container is NOT removed - it can be restarted with resume_session()
             }
             RuntimeMode::Local => {
                 // Stop the local processes via runner (per-user in multi-user mode)
@@ -1528,15 +1589,15 @@ impl SessionService {
                 }
 
                 // Release per-user mmry after stopping session processes.
-                if self.config.mmry_enabled && !self.config.single_user {
-                    if let Some(ref user_mmry) = self.user_mmry {
-                        if let Err(e) = user_mmry.release_user_mmry(&session.user_id).await {
-                            warn!(
-                                "Failed to release per-user mmry for user {}: {:?}",
-                                session.user_id, e
-                            );
-                        }
-                    }
+                if self.config.mmry_enabled
+                    && !self.config.single_user
+                    && let Some(ref user_mmry) = self.user_mmry
+                    && let Err(e) = user_mmry.release_user_mmry(&session.user_id).await
+                {
+                    warn!(
+                        "Failed to release per-user mmry for user {}: {:?}",
+                        session.user_id, e
+                    );
                 }
             }
         }
@@ -1581,14 +1642,14 @@ impl SessionService {
         }
 
         // Check if image has been updated - if so, upgrade instead of resume (container mode only)
-        if session.runtime_mode == RuntimeMode::Container {
-            if let Ok(Some(new_digest)) = self.check_for_image_update(session_id).await {
-                info!(
-                    "Image update detected for session {} (new digest: {}), upgrading instead of resuming",
-                    session_id, new_digest
-                );
-                return self.upgrade_session(session_id).await;
-            }
+        if session.runtime_mode == RuntimeMode::Container
+            && let Ok(Some(new_digest)) = self.check_for_image_update(session_id).await
+        {
+            info!(
+                "Image update detected for session {} (new digest: {}), upgrading instead of resuming",
+                session_id, new_digest
+            );
+            return self.upgrade_session(session_id).await;
         }
 
         info!(
@@ -1839,13 +1900,13 @@ impl SessionService {
 
                 let mut eavs_virtual_key = None;
                 if let Some(eavs) = self.eavs.as_ref() {
-                    if let Some(ref key_id) = session.eavs_key_id {
-                        if let Err(e) = eavs.revoke_key(key_id).await {
-                            warn!(
-                                "Failed to revoke previous EAVS key {} for session {}: {:?}",
-                                key_id, session_id, e
-                            );
-                        }
+                    if let Some(ref key_id) = session.eavs_key_id
+                        && let Err(e) = eavs.revoke_key(key_id).await
+                    {
+                        warn!(
+                            "Failed to revoke previous EAVS key {} for session {}: {:?}",
+                            key_id, session_id, e
+                        );
                     }
 
                     match self.create_eavs_key(session_id).await {
@@ -2052,19 +2113,19 @@ impl SessionService {
         match session.runtime_mode {
             RuntimeMode::Container => {
                 // Remove the container if it exists
-                if let Some(ref container_id) = session.container_id {
-                    if let Some(runtime) = self.container_runtime() {
-                        // Try to stop first (in case it's somehow still running)
-                        let _ = runtime.stop_container(container_id, Some(5)).await;
+                if let Some(ref container_id) = session.container_id
+                    && let Some(runtime) = self.container_runtime()
+                {
+                    // Try to stop first (in case it's somehow still running)
+                    let _ = runtime.stop_container(container_id, Some(5)).await;
 
-                        // Remove the container
-                        if let Err(e) = runtime.remove_container(container_id, true).await {
-                            warn!(
-                                "Failed to remove container {} for session {}: {:?}",
-                                container_id, session_id, e
-                            );
-                            // Continue with deletion even if container removal fails
-                        }
+                    // Remove the container
+                    if let Err(e) = runtime.remove_container(container_id, true).await {
+                        warn!(
+                            "Failed to remove container {} for session {}: {:?}",
+                            container_id, session_id, e
+                        );
+                        // Continue with deletion even if container removal fails
                     }
                 }
             }
@@ -2477,10 +2538,10 @@ impl SessionService {
             return true;
         }
 
-        if let Some(pids) = Self::parse_local_session_pids(session.container_id.as_deref()) {
-            if Self::are_local_session_pids_running(&pids) {
-                return true;
-            }
+        if let Some(pids) = Self::parse_local_session_pids(session.container_id.as_deref())
+            && Self::are_local_session_pids_running(&pids)
+        {
+            return true;
         }
 
         // Fallback: if expected ports are still bound, treat as running.
@@ -2553,16 +2614,15 @@ impl SessionService {
         info!("Running startup cleanup...");
 
         // 0. For local mode: clean up orphan processes on base ports
-        if self.config.runtime_mode == RuntimeMode::Local {
-            if let (Some(local_runtime), Some(local_config)) =
+        if self.config.runtime_mode == RuntimeMode::Local
+            && let (Some(local_runtime), Some(local_config)) =
                 (self.local_runtime(), self.config.local_config.as_ref())
-            {
-                if local_config.cleanup_on_startup {
-                    let base_port = self.config.base_port as u16;
-                    local_runtime.startup_cleanup(base_port);
-                } else {
-                    info!("Skipping local startup cleanup (preserve running sessions)");
-                }
+        {
+            if local_config.cleanup_on_startup {
+                let base_port = self.config.base_port as u16;
+                local_runtime.startup_cleanup(base_port);
+            } else {
+                info!("Skipping local startup cleanup (preserve running sessions)");
             }
         }
 
@@ -3188,7 +3248,7 @@ mod tests {
         let repo = SessionRepository::new(db.pool().clone());
         let fake_runtime = Arc::new(FakeRuntime::default());
         let runtime: Arc<dyn ContainerRuntimeApi> = fake_runtime.clone();
-        let eavs: Arc<dyn EavsApi> = Arc::new(FakeEavs::default());
+        let eavs: Arc<dyn EavsApi> = Arc::new(FakeEavs);
         let workspace_dir = tempfile::tempdir().unwrap();
 
         let config = SessionServiceConfig {
@@ -3211,10 +3271,11 @@ mod tests {
             pi_provider: None,
             pi_model: None,
             agent_browser: AgentBrowserConfig::default(),
+            runner_socket_pattern: None,
         };
 
         let mut service = SessionService::with_eavs(repo.clone(), runtime.clone(), eavs, config);
-        service.readiness = Arc::new(NoopReadiness::default());
+        service.readiness = Arc::new(NoopReadiness);
 
         let session = service
             .for_user("test")
@@ -3322,14 +3383,19 @@ mod tests {
         let user_id = "test-user";
         let resolved = service
             .resolve_workspace_path(user_id, allowed.to_string_lossy().as_ref())
+            .await
             .unwrap();
         assert_eq!(resolved, allowed.canonicalize().unwrap());
 
-        let relative = service.resolve_workspace_path(user_id, "project").unwrap();
+        let relative = service
+            .resolve_workspace_path(user_id, "project")
+            .await
+            .unwrap();
         assert_eq!(relative, allowed.canonicalize().unwrap());
 
         let err = service
             .resolve_workspace_path(user_id, outside.to_string_lossy().as_ref())
+            .await
             .unwrap_err();
         assert!(err.to_string().contains("outside allowed roots"));
     }
@@ -3391,7 +3457,7 @@ mod tests {
         let local_config = LocalRuntimeConfig::default();
         let local_runtime = LocalRuntime::new(local_config);
         let runner = RunnerClient::default();
-        let eavs: Arc<dyn EavsApi> = Arc::new(FakeEavs::default());
+        let eavs: Arc<dyn EavsApi> = Arc::new(FakeEavs);
 
         let config = SessionServiceConfig {
             runtime_mode: RuntimeMode::Local,
@@ -3588,7 +3654,7 @@ mod tests {
         };
 
         let mut service = SessionService::new(repo.clone(), runtime.clone(), config);
-        service.readiness = Arc::new(NoopReadiness::default());
+        service.readiness = Arc::new(NoopReadiness);
 
         // Create a stopped session in the database
         let session = Session {
@@ -3657,7 +3723,7 @@ mod tests {
 
         let mut service = SessionService::new(repo.clone(), runtime.clone(), config);
         // Use failing readiness to simulate timeout
-        service.readiness = Arc::new(FailingReadiness::default());
+        service.readiness = Arc::new(FailingReadiness);
 
         // Create a stopped session
         let session = Session {
@@ -3784,7 +3850,7 @@ mod tests {
         };
 
         let mut service = SessionService::new(repo.clone(), runtime.clone(), config);
-        service.readiness = Arc::new(NoopReadiness::default());
+        service.readiness = Arc::new(NoopReadiness);
 
         // Create a stopped session
         let session = Session {

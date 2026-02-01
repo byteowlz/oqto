@@ -21,6 +21,10 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TEMPLATES_DIR="${SCRIPT_DIR}/templates"
+ONBOARDING_TEMPLATES_REPO_DEFAULT="https://github.com/byteowlz/octo-templates"
+EXTERNAL_REPOS_DIR_DEFAULT="/usr/local/share/octo/external-repos"
+ONBOARDING_TEMPLATES_PATH_DEFAULT="${EXTERNAL_REPOS_DIR_DEFAULT}/octo-templates"
+PROJECT_TEMPLATES_PATH_DEFAULT="${EXTERNAL_REPOS_DIR_DEFAULT}/octo-templates"
 
 # Default values (can be overridden by environment variables)
 : "${OCTO_USER_MODE:=single}"           # single or multi
@@ -458,16 +462,20 @@ install_pi_extensions_for_user() {
     local pi_agent_dir="${user_home}/.pi/agent"
     local extensions_dir="${pi_agent_dir}/extensions"
     local octo_ext_dir="${extensions_dir}/octo"
+    local user_data_dir="${user_home}/.local/share/octo"
+    local data_extensions_dir="${user_data_dir}/extensions"
     
     log_info "Installing Pi extensions to ${extensions_dir}"
     
     # Create extensions directory
     mkdir -p "$octo_ext_dir"
+    mkdir -p "$data_extensions_dir"
     
     # Copy extension files
     # The octo-delegate.ts becomes index.ts in the extension directory
     if [[ -f "${pi_ext_source}/octo-delegate.ts" ]]; then
         cp "${pi_ext_source}/octo-delegate.ts" "${octo_ext_dir}/index.ts"
+        cp "${pi_ext_source}/octo-delegate.ts" "${data_extensions_dir}/octo-delegate.ts"
         log_success "Installed octo-delegate extension"
     fi
     
@@ -476,7 +484,17 @@ install_pi_extensions_for_user() {
         local todos_ext_dir="${extensions_dir}/octo-todos"
         mkdir -p "$todos_ext_dir"
         cp "${pi_ext_source}/octo-todos.ts" "${todos_ext_dir}/index.ts"
+        cp "${pi_ext_source}/octo-todos.ts" "${data_extensions_dir}/octo-todos.ts"
         log_success "Installed octo-todos extension"
+    fi
+
+    # Copy octo-prompts as a separate extension if it exists
+    if [[ -f "${pi_ext_source}/octo-prompts.ts" ]]; then
+        local prompts_ext_dir="${extensions_dir}/octo-prompts"
+        mkdir -p "$prompts_ext_dir"
+        cp "${pi_ext_source}/octo-prompts.ts" "${prompts_ext_dir}/index.ts"
+        cp "${pi_ext_source}/octo-prompts.ts" "${data_extensions_dir}/octo-prompts.ts"
+        log_success "Installed octo-prompts extension"
     fi
     
     # Install dependencies if package.json exists
@@ -499,6 +517,7 @@ Pi (main chat) and Octo (session management).
 
 - **octo/**: Task delegation to OpenCode sessions via Octo backend
 - **octo-todos/**: Todo list management for the Octo UI
+- **octo-prompts/**: Auto-load USER.md and PERSONALITY.md into system prompt
 
 ## Usage
 
@@ -508,6 +527,9 @@ They provide tools like:
 - `octo_session`: Delegate work to an OpenCode session
 - `todowrite`: Write/update the session todo list
 - `todoread`: Read the current session todo list
+
+The prompts extension adds USER.md and PERSONALITY.md from the session directory
+to the system prompt when present.
 
 ## Configuration
 
@@ -813,6 +835,64 @@ install_shell_tools_cargo() {
                 ;;
         esac
     done
+}
+
+setup_onboarding_templates_repo() {
+    local repo_url="${ONBOARDING_TEMPLATES_REPO:-$ONBOARDING_TEMPLATES_REPO_DEFAULT}"
+    local target_path="${ONBOARDING_TEMPLATES_PATH:-$ONBOARDING_TEMPLATES_PATH_DEFAULT}"
+
+    log_step "Setting up onboarding templates repo"
+
+    if command -v git >/dev/null 2>&1; then
+        if [[ -d "$target_path/.git" ]]; then
+            log_info "Updating onboarding templates in $target_path"
+            sudo git -C "$target_path" fetch --all --prune >/dev/null 2>&1 || true
+            sudo git -C "$target_path" reset --hard origin/main >/dev/null 2>&1 || true
+        else
+            log_info "Cloning onboarding templates repo to $target_path"
+            sudo mkdir -p "$(dirname "$target_path")"
+            sudo git clone "$repo_url" "$target_path" >/dev/null 2>&1 || true
+        fi
+        sudo chmod -R a+rX "$target_path" >/dev/null 2>&1 || true
+    else
+        log_warn "git not available; skipping onboarding templates clone"
+    fi
+}
+
+update_external_repos() {
+    local repos_dir="${EXTERNAL_REPOS_DIR:-$EXTERNAL_REPOS_DIR_DEFAULT}"
+
+    log_step "Updating external repos in $repos_dir"
+
+    if [[ ! -d "$repos_dir" ]]; then
+        return 0
+    fi
+
+    if ! command -v git >/dev/null 2>&1; then
+        log_warn "git not available; skipping external repo updates"
+        return 0
+    fi
+
+    local repo
+    for repo in "$repos_dir"/*; do
+        if [[ -d "$repo/.git" ]]; then
+            log_info "Updating $(basename "$repo")"
+            sudo git -C "$repo" fetch --all --prune >/dev/null 2>&1 || true
+            sudo git -C "$repo" reset --hard origin/main >/dev/null 2>&1 || true
+            sudo chmod -R a+rX "$repo" >/dev/null 2>&1 || true
+        fi
+    done
+}
+
+setup_feedback_dirs() {
+    local public_path="${FEEDBACK_PUBLIC_DROPBOX:-/usr/local/share/octo/issues}"
+    local private_path="${FEEDBACK_PRIVATE_ARCHIVE:-/var/lib/octo/issue-archive}"
+
+    log_step "Setting up feedback directories"
+
+    sudo mkdir -p "$public_path" "$private_path" >/dev/null 2>&1 || true
+    sudo chmod 1777 "$public_path" >/dev/null 2>&1 || true
+    sudo chmod 700 "$private_path" >/dev/null 2>&1 || true
 }
 
 # ==============================================================================
@@ -1910,6 +1990,36 @@ default_model = "$default_model"
 runtime_mode = "$pi_runtime_mode"
 EOF
 
+    cat >> "$config_file" << EOF
+
+[onboarding_templates]
+repo_url = "${ONBOARDING_TEMPLATES_REPO:-$ONBOARDING_TEMPLATES_REPO_DEFAULT}"
+cache_path = "${ONBOARDING_TEMPLATES_PATH:-$ONBOARDING_TEMPLATES_PATH_DEFAULT}"
+sync_enabled = true
+sync_interval_seconds = 300
+use_embedded_fallback = true
+branch = "main"
+subdirectory = "onboarding"
+EOF
+
+    cat >> "$config_file" << EOF
+
+[templates]
+repo_path = "${PROJECT_TEMPLATES_PATH:-$PROJECT_TEMPLATES_PATH_DEFAULT}"
+type = "remote"
+sync_on_list = true
+sync_interval_seconds = 120
+EOF
+
+    cat >> "$config_file" << EOF
+
+[feedback]
+public_dropbox = "${FEEDBACK_PUBLIC_DROPBOX:-/usr/local/share/octo/issues}"
+private_archive = "${FEEDBACK_PRIVATE_ARCHIVE:-/var/lib/octo/issue-archive}"
+keep_public = true
+sync_interval_seconds = 60
+EOF
+
     # Add runner socket pattern for multi-user Linux mode
     if [[ "$pi_runtime_mode" == "runner" ]]; then
         cat >> "$config_file" << 'EOF'
@@ -2084,28 +2194,29 @@ Cmnd_Alias OCTO_GROUPADD = /usr/sbin/groupadd ${octo_group}
 # User creation - RESTRICTED to safe UID range and ${user_prefix} prefix
 # Regex matches: -u NNNN -g ${octo_group} -s /bin/bash -m/-M -c COMMENT USERNAME
 # UID must be ${uid_first_digit}000-${uid_first_digit}999, username must start with ${user_prefix}
+# GECOS format: "Octo platform user: <user_id>" - use .* to match including spaces
 Cmnd_Alias OCTO_USERADD = \\
-    /usr/sbin/useradd ^-u [${uid_first_digit}][0-9][0-9][0-9] -g ${octo_group} -s /bin/bash -m -c [^ ]+ ${user_prefix}[a-z0-9_]+\$, \\
-    /usr/sbin/useradd ^-u [${uid_first_digit}][0-9][0-9][0-9] -g ${octo_group} -s /bin/bash -M -c [^ ]+ ${user_prefix}[a-z0-9_]+\$
+    /usr/sbin/useradd ^-u [${uid_first_digit}][0-9][0-9][0-9] -g ${octo_group} -s /bin/bash -m -c .* ${user_prefix}[a-z0-9_-]+\$, \\
+    /usr/sbin/useradd ^-u [${uid_first_digit}][0-9][0-9][0-9] -g ${octo_group} -s /bin/bash -M -c .* ${user_prefix}[a-z0-9_-]+\$
 
 # User deletion - only ${user_prefix} users, no home removal (-r flag not allowed)
-Cmnd_Alias OCTO_USERDEL = /usr/sbin/userdel ^${user_prefix}[a-z0-9_]+\$
+Cmnd_Alias OCTO_USERDEL = /usr/sbin/userdel ^${user_prefix}[a-z0-9_-]+\$
 
 # Directory creation for runner sockets - RESTRICTED path (no path traversal)
-Cmnd_Alias OCTO_MKDIR = /bin/mkdir ^-p /run/octo/runner-sockets/${user_prefix}[a-z0-9_]+\$
+Cmnd_Alias OCTO_MKDIR = /bin/mkdir ^-p /run/octo/runner-sockets/${user_prefix}[a-z0-9_-]+\$
 
 # Runner socket ownership - RESTRICTED to exact paths
 Cmnd_Alias OCTO_CHOWN_RUNNER = \\
-    /usr/bin/chown ^${user_prefix}[a-z0-9_]+\\:${octo_group} /run/octo/runner-sockets/${user_prefix}[a-z0-9_]+\$
+    /usr/bin/chown ^${user_prefix}[a-z0-9_-]+\\:${octo_group} /run/octo/runner-sockets/${user_prefix}[a-z0-9_-]+\$
 
 # Workspace ownership - RESTRICTED to ${user_prefix} user home directories ONLY
 # SECURITY: Only allows chown on /home/${user_prefix}*/... NOT on other users' homes
 # The regex ensures the path starts with /home/${user_prefix} to prevent privilege escalation
 Cmnd_Alias OCTO_CHOWN_WORKSPACE = \\
-    /usr/bin/chown ^-R ${user_prefix}[a-z0-9_]+\\:${octo_group} /home/${user_prefix}[a-z0-9_]+(/[^.][^/]*)*\$
+    /usr/bin/chown ^-R ${user_prefix}[a-z0-9_-]+\\:${octo_group} /home/${user_prefix}[a-z0-9_-]+(/[^.][^/]*)*\$
 
 # Permissions for runner socket directories
-Cmnd_Alias OCTO_CHMOD_RUNNER = /usr/bin/chmod ^2770 /run/octo/runner-sockets/${user_prefix}[a-z0-9_]+\$
+Cmnd_Alias OCTO_CHMOD_RUNNER = /usr/bin/chmod ^2770 /run/octo/runner-sockets/${user_prefix}[a-z0-9_-]+\$
 
 # systemd linger - only for ${user_prefix} users
 Cmnd_Alias OCTO_LINGER = /usr/bin/loginctl ^enable-linger ${user_prefix}[a-z0-9_]+\$
@@ -3295,6 +3406,11 @@ print_summary() {
     else
         echo "  octo-todos: not installed"
     fi
+    if [[ -d "${pi_ext_dir}/octo-prompts" ]]; then
+        echo "  octo-prompts: installed (${pi_ext_dir}/octo-prompts)"
+    else
+        echo "  octo-prompts: not installed"
+    fi
     echo
     
     echo "Next steps:"
@@ -3695,6 +3811,11 @@ main() {
     
     # Generate configuration
     generate_config
+
+    # Setup onboarding templates repository and update shared external repos
+    setup_onboarding_templates_repo
+    update_external_repos
+    setup_feedback_dirs
     
     # Setup Linux user isolation (if enabled)
     setup_linux_user_isolation

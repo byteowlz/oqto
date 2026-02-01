@@ -27,6 +27,7 @@ mod linux_users;
 mod process;
 mod runtime;
 mod sandbox;
+mod user_hstry;
 mod user_mmry;
 mod user_sldr;
 
@@ -37,9 +38,11 @@ pub use process::{
     is_port_available, kill_process,
 };
 pub use runtime::{LocalRuntime, LocalRuntimeConfig};
+#[allow(unused_imports)]
 pub use sandbox::{
     GuardConfig, GuardPolicy, NetworkConfig, NetworkMode, PromptConfig, SandboxConfig,
     SandboxConfigFile, SandboxProfile, SshProxyConfig,
 };
+pub use user_hstry::{UserHstryConfig, UserHstryManager};
 pub use user_mmry::{UserMmryConfig, UserMmryManager};
 pub use user_sldr::{UserSldrConfig, UserSldrManager};

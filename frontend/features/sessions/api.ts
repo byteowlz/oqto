@@ -6,20 +6,16 @@ export {
 	getAuthHeaders,
 	getChatMessages,
 	getFeatures,
-	getMainChatAssistant,
 	getOrCreateSessionForWorkspace,
 	getProjectLogoUrl,
 	getWorkspaceConfig,
-	listMainChatSessions,
 	opencodeProxyBaseUrl,
-	registerMainChatSession,
 	touchSessionActivity,
 	workspaceFileUrl,
 } from "@/lib/control-plane-client";
 
 export type {
 	Features,
-	MainChatSession,
 	Persona,
 	SessionAutoAttachMode,
 } from "@/lib/control-plane-client";

@@ -90,16 +90,16 @@ impl LocalRuntimeConfig {
         // In local multi-user mode, workspaces must be physically separated.
         // Require a per-user placeholder to avoid accidentally sharing the same
         // directory across all users.
-        if self.linux_users.enabled && !self.single_user {
-            if !self.workspace_dir.contains("{user_id}")
-                && !self.workspace_dir.contains("{linux_username}")
-            {
-                anyhow::bail!(
-                    "local.workspace_dir must include '{{user_id}}' or '{{linux_username}}' in multi-user mode (got: {}). \
+        if self.linux_users.enabled
+            && !self.single_user
+            && !self.workspace_dir.contains("{user_id}")
+            && !self.workspace_dir.contains("{linux_username}")
+        {
+            anyhow::bail!(
+                "local.workspace_dir must include '{{user_id}}' or '{{linux_username}}' in multi-user mode (got: {}). \
                      This is required to prevent cross-user filesystem access.",
-                    self.workspace_dir
-                );
-            }
+                self.workspace_dir
+            );
         }
 
         Ok(())
@@ -927,13 +927,13 @@ mod tests {
         let json = serde_json::to_string(&config).unwrap();
         let parsed: LocalRuntimeConfig = serde_json::from_str(&json).unwrap();
 
-        assert_eq!(parsed.linux_users.enabled, true);
+        assert!(parsed.linux_users.enabled);
         assert_eq!(parsed.linux_users.prefix, "ws_");
         assert_eq!(parsed.linux_users.uid_start, 5000);
         assert_eq!(parsed.linux_users.group, "workspace");
         assert_eq!(parsed.linux_users.shell, "/bin/sh");
-        assert_eq!(parsed.linux_users.use_sudo, true);
-        assert_eq!(parsed.linux_users.create_home, true);
+        assert!(parsed.linux_users.use_sudo);
+        assert!(parsed.linux_users.create_home);
     }
 
     #[test]

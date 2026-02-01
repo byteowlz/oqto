@@ -10,6 +10,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 
 use super::protocol::*;
+use crate::pi::PiEvent;
 
 /// Default socket path pattern.
 /// Uses XDG_RUNTIME_DIR if available, otherwise falls back to /tmp.
@@ -31,16 +32,6 @@ impl RunnerClient {
         Self {
             socket_path: socket_path.into(),
         }
-    }
-
-    /// Create a runner client using the default socket path.
-    /// Uses XDG_RUNTIME_DIR if available, otherwise /tmp.
-    ///
-    /// This is for single-user mode where the runner runs as the current user.
-    pub fn default() -> Self {
-        let runtime_dir = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_string());
-        let socket_path = DEFAULT_SOCKET_PATTERN.replace("{runtime_dir}", &runtime_dir);
-        Self::new(socket_path)
     }
 
     /// Create a runner client for a specific Linux user by UID.
@@ -498,6 +489,26 @@ impl RunnerClient {
         }
     }
 
+    /// Get messages from a workspace Pi session (hstry-backed).
+    pub async fn get_workspace_chat_messages(
+        &self,
+        workspace_path: impl Into<String>,
+        session_id: impl Into<String>,
+        limit: Option<usize>,
+    ) -> Result<MainChatMessagesResponse> {
+        let req = RunnerRequest::GetWorkspaceChatMessages(GetWorkspaceChatMessagesRequest {
+            session_id: session_id.into(),
+            workspace_path: workspace_path.into(),
+            limit,
+        });
+
+        let resp = self.request(&req).await?;
+        match resp {
+            RunnerResponse::WorkspaceChatMessages(r) => Ok(r),
+            _ => anyhow::bail!("unexpected response to get_workspace_chat_messages"),
+        }
+    }
+
     // ========================================================================
     // Memory Operations (user-plane)
     // ========================================================================
@@ -633,6 +644,523 @@ impl RunnerClient {
             _ => anyhow::bail!("unexpected response to update_opencode_session"),
         }
     }
+
+    // ========================================================================
+    // Pi Session Operations
+    // ========================================================================
+
+    /// Create or resume a Pi session.
+    pub async fn pi_create_session(
+        &self,
+        req: PiCreateSessionRequest,
+    ) -> Result<PiSessionCreatedResponse> {
+        let resp = self.request(&RunnerRequest::PiCreateSession(req)).await?;
+        match resp {
+            RunnerResponse::PiSessionCreated(r) => Ok(r),
+            _ => anyhow::bail!("unexpected response to pi_create_session"),
+        }
+    }
+
+    /// Send a prompt to a Pi session.
+    pub async fn pi_prompt(&self, session_id: &str, message: &str) -> Result<()> {
+        let req = RunnerRequest::PiPrompt(PiPromptRequest {
+            session_id: session_id.to_string(),
+            message: message.to_string(),
+        });
+
+        let resp = self.request(&req).await?;
+        match resp {
+            RunnerResponse::PiCommandAck { .. } | RunnerResponse::Ok => Ok(()),
+            _ => anyhow::bail!("unexpected response to pi_prompt"),
+        }
+    }
+
+    /// Send a steering message to interrupt a Pi session mid-run.
+    pub async fn pi_steer(&self, session_id: &str, message: &str) -> Result<()> {
+        let req = RunnerRequest::PiSteer(PiSteerRequest {
+            session_id: session_id.to_string(),
+            message: message.to_string(),
+        });
+
+        let resp = self.request(&req).await?;
+        match resp {
+            RunnerResponse::PiCommandAck { .. } | RunnerResponse::Ok => Ok(()),
+            _ => anyhow::bail!("unexpected response to pi_steer"),
+        }
+    }
+
+    /// Queue a follow-up message for after the Pi session finishes.
+    pub async fn pi_follow_up(&self, session_id: &str, message: &str) -> Result<()> {
+        let req = RunnerRequest::PiFollowUp(PiFollowUpRequest {
+            session_id: session_id.to_string(),
+            message: message.to_string(),
+        });
+
+        let resp = self.request(&req).await?;
+        match resp {
+            RunnerResponse::PiCommandAck { .. } | RunnerResponse::Ok => Ok(()),
+            _ => anyhow::bail!("unexpected response to pi_follow_up"),
+        }
+    }
+
+    /// Abort the current Pi session operation.
+    pub async fn pi_abort(&self, session_id: &str) -> Result<()> {
+        let req = RunnerRequest::PiAbort(PiAbortRequest {
+            session_id: session_id.to_string(),
+        });
+
+        let resp = self.request(&req).await?;
+        match resp {
+            RunnerResponse::PiCommandAck { .. } | RunnerResponse::Ok => Ok(()),
+            _ => anyhow::bail!("unexpected response to pi_abort"),
+        }
+    }
+
+    /// Compact a Pi session's conversation.
+    pub async fn pi_compact(&self, session_id: &str, instructions: Option<&str>) -> Result<()> {
+        let req = RunnerRequest::PiCompact(PiCompactRequest {
+            session_id: session_id.to_string(),
+            instructions: instructions.map(|s| s.to_string()),
+        });
+
+        let resp = self.request(&req).await?;
+        match resp {
+            RunnerResponse::PiCommandAck { .. } | RunnerResponse::Ok => Ok(()),
+            _ => anyhow::bail!("unexpected response to pi_compact"),
+        }
+    }
+
+    /// Subscribe to events from a Pi session.
+    /// Returns a subscription that yields Pi events as they arrive.
+    pub async fn pi_subscribe(&self, session_id: &str) -> Result<PiSubscription> {
+        let stream = UnixStream::connect(&self.socket_path)
+            .await
+            .with_context(|| format!("connecting to runner at {:?}", self.socket_path))?;
+
+        let session_id = session_id.to_string();
+        let req = RunnerRequest::PiSubscribe(PiSubscribeRequest {
+            session_id: session_id.clone(),
+        });
+
+        let (reader, mut writer) = stream.into_split();
+
+        // Send subscription request
+        let mut json = serde_json::to_string(&req).context("serializing request")?;
+        json.push('\n');
+        writer
+            .write_all(json.as_bytes())
+            .await
+            .context("writing request")?;
+
+        // Read subscription confirmation
+        let reader = BufReader::new(reader);
+        let mut lines = reader.lines();
+
+        let first_line = lines
+            .next_line()
+            .await
+            .context("reading subscription response")?
+            .ok_or_else(|| anyhow::anyhow!("connection closed"))?;
+
+        let resp: RunnerResponse = serde_json::from_str(&first_line).context("parsing response")?;
+
+        match resp {
+            RunnerResponse::PiSubscribed(_) => Ok(PiSubscription {
+                session_id,
+                lines,
+                _writer: writer,
+            }),
+            RunnerResponse::Error(e) => {
+                anyhow::bail!("runner error ({:?}): {}", e.code, e.message);
+            }
+            _ => anyhow::bail!("unexpected response to pi_subscribe"),
+        }
+    }
+
+    /// Unsubscribe from a Pi session's events.
+    pub async fn pi_unsubscribe(&self, session_id: &str) -> Result<()> {
+        let req = RunnerRequest::PiUnsubscribe(PiUnsubscribeRequest {
+            session_id: session_id.to_string(),
+        });
+
+        let resp = self.request(&req).await?;
+        match resp {
+            RunnerResponse::Ok => Ok(()),
+            _ => anyhow::bail!("unexpected response to pi_unsubscribe"),
+        }
+    }
+
+    /// List all active Pi sessions.
+    pub async fn pi_list_sessions(&self) -> Result<Vec<PiSessionInfo>> {
+        let req = RunnerRequest::PiListSessions;
+
+        let resp = self.request(&req).await?;
+        match resp {
+            RunnerResponse::PiSessionList(r) => Ok(r.sessions),
+            _ => anyhow::bail!("unexpected response to pi_list_sessions"),
+        }
+    }
+
+    /// Get the state of a Pi session.
+    pub async fn pi_get_state(&self, session_id: &str) -> Result<PiStateResponse> {
+        let req = RunnerRequest::PiGetState(PiGetStateRequest {
+            session_id: session_id.to_string(),
+        });
+
+        let resp = self.request(&req).await?;
+        match resp {
+            RunnerResponse::PiState(r) => Ok(r),
+            _ => anyhow::bail!("unexpected response to pi_get_state"),
+        }
+    }
+
+    /// Close a Pi session (stop the process).
+    pub async fn pi_close_session(&self, session_id: &str) -> Result<()> {
+        let req = RunnerRequest::PiCloseSession(PiCloseSessionRequest {
+            session_id: session_id.to_string(),
+        });
+
+        let resp = self.request(&req).await?;
+        match resp {
+            RunnerResponse::PiSessionClosed { .. } | RunnerResponse::Ok => Ok(()),
+            _ => anyhow::bail!("unexpected response to pi_close_session"),
+        }
+    }
+
+    /// Start a new session within existing Pi process.
+    pub async fn pi_new_session(&self, session_id: &str, parent_session: Option<&str>) -> Result<()> {
+        let req = RunnerRequest::PiNewSession(PiNewSessionRequest {
+            session_id: session_id.to_string(),
+            parent_session: parent_session.map(|s| s.to_string()),
+        });
+
+        let resp = self.request(&req).await?;
+        match resp {
+            RunnerResponse::PiCommandAck { .. } | RunnerResponse::Ok => Ok(()),
+            _ => anyhow::bail!("unexpected response to pi_new_session"),
+        }
+    }
+
+    /// Switch to a different session file.
+    pub async fn pi_switch_session(&self, session_id: &str, session_path: &str) -> Result<()> {
+        let req = RunnerRequest::PiSwitchSession(PiSwitchSessionRequest {
+            session_id: session_id.to_string(),
+            session_path: session_path.to_string(),
+        });
+
+        let resp = self.request(&req).await?;
+        match resp {
+            RunnerResponse::PiCommandAck { .. } | RunnerResponse::Ok => Ok(()),
+            _ => anyhow::bail!("unexpected response to pi_switch_session"),
+        }
+    }
+
+    /// Get all messages from a Pi session.
+    pub async fn pi_get_messages(&self, session_id: &str) -> Result<PiMessagesResponse> {
+        let req = RunnerRequest::PiGetMessages(PiGetMessagesRequest {
+            session_id: session_id.to_string(),
+        });
+
+        let resp = self.request(&req).await?;
+        match resp {
+            RunnerResponse::PiMessages(r) => Ok(r),
+            _ => anyhow::bail!("unexpected response to pi_get_messages"),
+        }
+    }
+
+    /// Get session statistics (tokens, cost, etc.).
+    pub async fn pi_get_session_stats(&self, session_id: &str) -> Result<PiSessionStatsResponse> {
+        let req = RunnerRequest::PiGetSessionStats(PiGetSessionStatsRequest {
+            session_id: session_id.to_string(),
+        });
+
+        let resp = self.request(&req).await?;
+        match resp {
+            RunnerResponse::PiSessionStats(r) => Ok(r),
+            _ => anyhow::bail!("unexpected response to pi_get_session_stats"),
+        }
+    }
+
+    /// Get the last assistant message text.
+    pub async fn pi_get_last_assistant_text(&self, session_id: &str) -> Result<PiLastAssistantTextResponse> {
+        let req = RunnerRequest::PiGetLastAssistantText(PiGetLastAssistantTextRequest {
+            session_id: session_id.to_string(),
+        });
+
+        let resp = self.request(&req).await?;
+        match resp {
+            RunnerResponse::PiLastAssistantText(r) => Ok(r),
+            _ => anyhow::bail!("unexpected response to pi_get_last_assistant_text"),
+        }
+    }
+
+    /// Set the model for a Pi session.
+    pub async fn pi_set_model(&self, session_id: &str, provider: &str, model_id: &str) -> Result<PiModelChangedResponse> {
+        let req = RunnerRequest::PiSetModel(PiSetModelRequest {
+            session_id: session_id.to_string(),
+            provider: provider.to_string(),
+            model_id: model_id.to_string(),
+        });
+
+        let resp = self.request(&req).await?;
+        match resp {
+            RunnerResponse::PiModelChanged(r) => Ok(r),
+            _ => anyhow::bail!("unexpected response to pi_set_model"),
+        }
+    }
+
+    /// Cycle to the next available model.
+    pub async fn pi_cycle_model(&self, session_id: &str) -> Result<PiModelChangedResponse> {
+        let req = RunnerRequest::PiCycleModel(PiCycleModelRequest {
+            session_id: session_id.to_string(),
+        });
+
+        let resp = self.request(&req).await?;
+        match resp {
+            RunnerResponse::PiModelChanged(r) => Ok(r),
+            _ => anyhow::bail!("unexpected response to pi_cycle_model"),
+        }
+    }
+
+    /// Get list of available models.
+    pub async fn pi_get_available_models(&self, session_id: &str) -> Result<PiAvailableModelsResponse> {
+        let req = RunnerRequest::PiGetAvailableModels(PiGetAvailableModelsRequest {
+            session_id: session_id.to_string(),
+        });
+
+        let resp = self.request(&req).await?;
+        match resp {
+            RunnerResponse::PiAvailableModels(r) => Ok(r),
+            _ => anyhow::bail!("unexpected response to pi_get_available_models"),
+        }
+    }
+
+    /// Set the thinking/reasoning level.
+    pub async fn pi_set_thinking_level(&self, session_id: &str, level: &str) -> Result<PiThinkingLevelChangedResponse> {
+        let req = RunnerRequest::PiSetThinkingLevel(PiSetThinkingLevelRequest {
+            session_id: session_id.to_string(),
+            level: level.to_string(),
+        });
+
+        let resp = self.request(&req).await?;
+        match resp {
+            RunnerResponse::PiThinkingLevelChanged(r) => Ok(r),
+            _ => anyhow::bail!("unexpected response to pi_set_thinking_level"),
+        }
+    }
+
+    /// Cycle through thinking levels.
+    pub async fn pi_cycle_thinking_level(&self, session_id: &str) -> Result<PiThinkingLevelChangedResponse> {
+        let req = RunnerRequest::PiCycleThinkingLevel(PiCycleThinkingLevelRequest {
+            session_id: session_id.to_string(),
+        });
+
+        let resp = self.request(&req).await?;
+        match resp {
+            RunnerResponse::PiThinkingLevelChanged(r) => Ok(r),
+            _ => anyhow::bail!("unexpected response to pi_cycle_thinking_level"),
+        }
+    }
+
+    /// Enable/disable auto-compaction.
+    pub async fn pi_set_auto_compaction(&self, session_id: &str, enabled: bool) -> Result<()> {
+        let req = RunnerRequest::PiSetAutoCompaction(PiSetAutoCompactionRequest {
+            session_id: session_id.to_string(),
+            enabled,
+        });
+
+        let resp = self.request(&req).await?;
+        match resp {
+            RunnerResponse::PiCommandAck { .. } | RunnerResponse::Ok => Ok(()),
+            _ => anyhow::bail!("unexpected response to pi_set_auto_compaction"),
+        }
+    }
+
+    /// Set steering message delivery mode.
+    pub async fn pi_set_steering_mode(&self, session_id: &str, mode: &str) -> Result<()> {
+        let req = RunnerRequest::PiSetSteeringMode(PiSetSteeringModeRequest {
+            session_id: session_id.to_string(),
+            mode: mode.to_string(),
+        });
+
+        let resp = self.request(&req).await?;
+        match resp {
+            RunnerResponse::PiCommandAck { .. } | RunnerResponse::Ok => Ok(()),
+            _ => anyhow::bail!("unexpected response to pi_set_steering_mode"),
+        }
+    }
+
+    /// Set follow-up message delivery mode.
+    pub async fn pi_set_follow_up_mode(&self, session_id: &str, mode: &str) -> Result<()> {
+        let req = RunnerRequest::PiSetFollowUpMode(PiSetFollowUpModeRequest {
+            session_id: session_id.to_string(),
+            mode: mode.to_string(),
+        });
+
+        let resp = self.request(&req).await?;
+        match resp {
+            RunnerResponse::PiCommandAck { .. } | RunnerResponse::Ok => Ok(()),
+            _ => anyhow::bail!("unexpected response to pi_set_follow_up_mode"),
+        }
+    }
+
+    /// Enable/disable auto-retry on transient errors.
+    pub async fn pi_set_auto_retry(&self, session_id: &str, enabled: bool) -> Result<()> {
+        let req = RunnerRequest::PiSetAutoRetry(PiSetAutoRetryRequest {
+            session_id: session_id.to_string(),
+            enabled,
+        });
+
+        let resp = self.request(&req).await?;
+        match resp {
+            RunnerResponse::PiCommandAck { .. } | RunnerResponse::Ok => Ok(()),
+            _ => anyhow::bail!("unexpected response to pi_set_auto_retry"),
+        }
+    }
+
+    /// Abort an in-progress retry.
+    pub async fn pi_abort_retry(&self, session_id: &str) -> Result<()> {
+        let req = RunnerRequest::PiAbortRetry(PiAbortRetryRequest {
+            session_id: session_id.to_string(),
+        });
+
+        let resp = self.request(&req).await?;
+        match resp {
+            RunnerResponse::PiCommandAck { .. } | RunnerResponse::Ok => Ok(()),
+            _ => anyhow::bail!("unexpected response to pi_abort_retry"),
+        }
+    }
+
+    /// Fork from a previous message.
+    pub async fn pi_fork(&self, session_id: &str, entry_id: &str) -> Result<PiForkResultResponse> {
+        let req = RunnerRequest::PiFork(PiForkRequest {
+            session_id: session_id.to_string(),
+            entry_id: entry_id.to_string(),
+        });
+
+        let resp = self.request(&req).await?;
+        match resp {
+            RunnerResponse::PiForkResult(r) => Ok(r),
+            _ => anyhow::bail!("unexpected response to pi_fork"),
+        }
+    }
+
+    /// Get messages available for forking.
+    pub async fn pi_get_fork_messages(&self, session_id: &str) -> Result<PiForkMessagesResponse> {
+        let req = RunnerRequest::PiGetForkMessages(PiGetForkMessagesRequest {
+            session_id: session_id.to_string(),
+        });
+
+        let resp = self.request(&req).await?;
+        match resp {
+            RunnerResponse::PiForkMessages(r) => Ok(r),
+            _ => anyhow::bail!("unexpected response to pi_get_fork_messages"),
+        }
+    }
+
+    /// Set a display name for the session.
+    pub async fn pi_set_session_name(&self, session_id: &str, name: &str) -> Result<()> {
+        let req = RunnerRequest::PiSetSessionName(PiSetSessionNameRequest {
+            session_id: session_id.to_string(),
+            name: name.to_string(),
+        });
+
+        let resp = self.request(&req).await?;
+        match resp {
+            RunnerResponse::PiCommandAck { .. } | RunnerResponse::Ok => Ok(()),
+            _ => anyhow::bail!("unexpected response to pi_set_session_name"),
+        }
+    }
+
+    /// Export session to HTML.
+    pub async fn pi_export_html(&self, session_id: &str, output_path: Option<&str>) -> Result<PiExportHtmlResultResponse> {
+        let req = RunnerRequest::PiExportHtml(PiExportHtmlRequest {
+            session_id: session_id.to_string(),
+            output_path: output_path.map(|s| s.to_string()),
+        });
+
+        let resp = self.request(&req).await?;
+        match resp {
+            RunnerResponse::PiExportHtmlResult(r) => Ok(r),
+            _ => anyhow::bail!("unexpected response to pi_export_html"),
+        }
+    }
+
+    /// Get available commands (extensions, templates, skills).
+    pub async fn pi_get_commands(&self, session_id: &str) -> Result<PiCommandsResponse> {
+        let req = RunnerRequest::PiGetCommands(PiGetCommandsRequest {
+            session_id: session_id.to_string(),
+        });
+
+        let resp = self.request(&req).await?;
+        match resp {
+            RunnerResponse::PiCommands(r) => Ok(r),
+            _ => anyhow::bail!("unexpected response to pi_get_commands"),
+        }
+    }
+
+    /// Execute a bash command and add output to conversation.
+    pub async fn pi_bash(&self, session_id: &str, command: &str) -> Result<PiBashResultResponse> {
+        let req = RunnerRequest::PiBash(PiBashRequest {
+            session_id: session_id.to_string(),
+            command: command.to_string(),
+        });
+
+        let resp = self.request(&req).await?;
+        match resp {
+            RunnerResponse::PiBashResult(r) => Ok(r),
+            _ => anyhow::bail!("unexpected response to pi_bash"),
+        }
+    }
+
+    /// Abort a running bash command.
+    pub async fn pi_abort_bash(&self, session_id: &str) -> Result<()> {
+        let req = RunnerRequest::PiAbortBash(PiAbortBashRequest {
+            session_id: session_id.to_string(),
+        });
+
+        let resp = self.request(&req).await?;
+        match resp {
+            RunnerResponse::PiCommandAck { .. } | RunnerResponse::Ok => Ok(()),
+            _ => anyhow::bail!("unexpected response to pi_abort_bash"),
+        }
+    }
+
+    /// Send response to an extension UI request.
+    pub async fn pi_extension_ui_response(
+        &self,
+        session_id: &str,
+        request_id: &str,
+        value: Option<&str>,
+        confirmed: Option<bool>,
+        cancelled: Option<bool>,
+    ) -> Result<()> {
+        let req = RunnerRequest::PiExtensionUiResponse(PiExtensionUiResponseRequest {
+            session_id: session_id.to_string(),
+            id: request_id.to_string(),
+            value: value.map(|s| s.to_string()),
+            confirmed,
+            cancelled,
+        });
+
+        let resp = self.request(&req).await?;
+        match resp {
+            RunnerResponse::PiCommandAck { .. } | RunnerResponse::Ok => Ok(()),
+            _ => anyhow::bail!("unexpected response to pi_extension_ui_response"),
+        }
+    }
+}
+
+/// Create a runner client using the default socket path.
+/// Uses XDG_RUNTIME_DIR if available, otherwise /tmp.
+///
+/// This is for single-user mode where the runner runs as the current user.
+impl Default for RunnerClient {
+    fn default() -> Self {
+        let runtime_dir = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_string());
+        let socket_path = DEFAULT_SOCKET_PATTERN.replace("{runtime_dir}", &runtime_dir);
+        Self::new(socket_path)
+    }
 }
 
 /// An active stdout subscription that yields lines as they arrive.
@@ -675,6 +1203,62 @@ pub enum StdoutSubscriptionEvent {
     Line(String),
     /// The subscription ended (process exited).
     End,
+}
+
+/// An active Pi event subscription that yields events as they arrive.
+pub struct PiSubscription {
+    session_id: String,
+    lines: tokio::io::Lines<BufReader<tokio::net::unix::OwnedReadHalf>>,
+    // Keep writer alive to maintain connection
+    _writer: tokio::net::unix::OwnedWriteHalf,
+}
+
+impl PiSubscription {
+    /// Get the session ID this subscription is for.
+    pub fn session_id(&self) -> &str {
+        &self.session_id
+    }
+
+    /// Read the next event from the subscription.
+    /// Returns None when the subscription ends (session closed or connection lost).
+    pub async fn next(&mut self) -> Option<PiSubscriptionEvent> {
+        match self.lines.next_line().await {
+            Ok(Some(line)) => match serde_json::from_str::<RunnerResponse>(&line) {
+                Ok(RunnerResponse::PiEvent(wrapper)) => {
+                    Some(PiSubscriptionEvent::Event(wrapper.event))
+                }
+                Ok(RunnerResponse::PiSubscriptionEnd(end)) => {
+                    Some(PiSubscriptionEvent::End { reason: end.reason })
+                }
+                Ok(RunnerResponse::Error(e)) => Some(PiSubscriptionEvent::Error {
+                    code: e.code,
+                    message: e.message,
+                }),
+                Ok(_) => {
+                    // Unexpected response, skip and continue
+                    None
+                }
+                Err(_) => {
+                    // Parse error, skip and continue
+                    None
+                }
+            },
+            Ok(None) | Err(_) => Some(PiSubscriptionEvent::End {
+                reason: "connection_closed".to_string(),
+            }),
+        }
+    }
+}
+
+/// Event from a Pi subscription.
+#[derive(Debug, Clone)]
+pub enum PiSubscriptionEvent {
+    /// A Pi event from the session.
+    Event(PiEvent),
+    /// The subscription ended.
+    End { reason: String },
+    /// An error occurred.
+    Error { code: ErrorCode, message: String },
 }
 
 impl std::fmt::Debug for RunnerClient {
@@ -851,7 +1435,7 @@ mod security_tests {
         let alice_client = RunnerClient::for_uid(1001);
 
         // Spawn a process that prints its UID
-        let pid = alice_client
+        let _pid = alice_client
             .spawn_rpc_process(
                 "test-whoami",
                 "id",

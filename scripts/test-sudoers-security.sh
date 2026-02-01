@@ -51,16 +51,16 @@ if sudo -l 2>/dev/null | grep -qE "\(ALL\).*ALL|\(ALL : ALL\).*ALL"; then
 fi
 
 # The allowed patterns from our sudoers file (for useradd with -m flag):
-# ^-u [2][0-9][0-9][0-9] -g octo -s /bin/bash -m -c [^ ]+ octo_[a-z0-9_]+$
-USERADD_PATTERN='^-u [2][0-9][0-9][0-9] -g octo -s /bin/bash -m -c [^ ]+ octo_[a-z0-9_]+$'
+# ^-u [2][0-9][0-9][0-9] -g octo -s /bin/bash -m -c [^ ]+ octo_[a-z0-9_-]+$
+USERADD_PATTERN='^-u [2][0-9][0-9][0-9] -g octo -s /bin/bash -m -c [^ ]+ octo_[a-z0-9_-]+$'
 
 # The allowed pattern for chown workspace:
-# ^-R octo_[a-z0-9_]+\:octo /home/octo_[a-z0-9_]+(/[^.][^/]*)*$
-CHOWN_PATTERN='^-R octo_[a-z0-9_]+:octo /home/octo_[a-z0-9_]+(/[^.][^/]*)*$'
+# ^-R octo_[a-z0-9_-]+\:octo /home/octo_[a-z0-9_-]+(/[^.][^/]*)*$
+CHOWN_PATTERN='^-R octo_[a-z0-9_-]+:octo /home/octo_[a-z0-9_-]+(/[^.][^/]*)*$'
 
 # The allowed pattern for mkdir:
-# ^-p /run/octo/runner-sockets/octo_[a-z0-9_]+$
-MKDIR_PATTERN='^-p /run/octo/runner-sockets/octo_[a-z0-9_]+$'
+# ^-p /run/octo/runner-sockets/octo_[a-z0-9_-]+$
+MKDIR_PATTERN='^-p /run/octo/runner-sockets/octo_[a-z0-9_-]+$'
 
 # The allowed pattern for systemctl start:
 # ^start user@[2][0-9][0-9][0-9]\.service$

@@ -1,4 +1,3 @@
-import { MainChatEntry } from "@/components/main-chat";
 import {
 	type AgentFilter,
 	type SearchMode,
@@ -11,6 +10,7 @@ import {
 	ContextMenuSeparator,
 	ContextMenuTrigger,
 } from "@/components/ui/context-menu";
+import { DeleteConfirmDialog } from "@/src/routes/app-shell/dialogs/DeleteConfirmDialog";
 import {
 	DropdownMenu,
 	DropdownMenuContent,
@@ -23,7 +23,10 @@ import type {
 	HstrySearchHit,
 	ProjectLogo,
 } from "@/lib/control-plane-client";
-import { formatSessionDate, resolveReadableId } from "@/lib/session-utils";
+import {
+	formatSessionDate,
+	getReadableIdFromSession,
+} from "@/lib/session-utils";
 import { cn } from "@/lib/utils";
 import {
 	ArrowDown,
@@ -45,7 +48,16 @@ import {
 	Trash2,
 	X,
 } from "lucide-react";
-import { memo, useDeferredValue, useEffect, useState } from "react";
+import {
+	memo,
+	useCallback,
+	useDeferredValue,
+	useEffect,
+	useMemo,
+	useRef,
+	useState,
+} from "react";
+import { Button } from "@/components/ui/button";
 
 export interface SessionsByProject {
 	key: string;
@@ -68,10 +80,6 @@ export interface SidebarSessionsProps {
 	filteredSessions: ChatSession[];
 	selectedChatSessionId: string | null;
 	busySessions: Set<string>;
-	mainChatActive: boolean;
-	mainChatCurrentSessionId: string | null;
-	mainChatNewSessionTrigger: number;
-	mainChatSessionActivityTrigger: number;
 	expandedSessions: Set<string>;
 	toggleSessionExpanded: (sessionId: string) => void;
 	expandedProjects: Set<string>;
@@ -93,12 +101,10 @@ export interface SidebarSessionsProps {
 	onPinSession: (sessionId: string) => void;
 	onRenameSession: (sessionId: string) => void;
 	onDeleteSession: (sessionId: string) => void;
+	onBulkDeleteSessions: (sessionIds: string[]) => Promise<string[] | void>;
 	onPinProject: (projectKey: string) => void;
 	onRenameProject: (projectKey: string, currentName: string) => void;
 	onDeleteProject: (projectKey: string, projectName: string) => void;
-	onMainChatSelect: () => void;
-	onMainChatSessionSelect: (sessionId: string) => void;
-	onMainChatNewSession: () => void;
 	onSearchResultClick: (hit: HstrySearchHit) => void;
 	messageSearchExtraHits: HstrySearchHit[];
 	isMobile?: boolean;
@@ -112,10 +118,6 @@ export const SidebarSessions = memo(function SidebarSessions({
 	filteredSessions,
 	selectedChatSessionId,
 	busySessions,
-	mainChatActive,
-	mainChatCurrentSessionId,
-	mainChatNewSessionTrigger,
-	mainChatSessionActivityTrigger,
 	expandedSessions,
 	toggleSessionExpanded,
 	expandedProjects,
@@ -137,12 +139,10 @@ export const SidebarSessions = memo(function SidebarSessions({
 	onPinSession,
 	onRenameSession,
 	onDeleteSession,
+	onBulkDeleteSessions,
 	onPinProject,
 	onRenameProject,
 	onDeleteProject,
-	onMainChatSelect,
-	onMainChatSessionSelect,
-	onMainChatNewSession,
 	onSearchResultClick,
 	messageSearchExtraHits,
 	isMobile = false,
@@ -152,10 +152,30 @@ export const SidebarSessions = memo(function SidebarSessions({
 	const deferredSearch = useDeferredValue(sessionSearch);
 	const [searchMode, setSearchMode] = useState<SearchMode>("sessions");
 	const [agentFilter, setAgentFilter] = useState<AgentFilter>("all");
-	const [mainChatFilterCount, setMainChatFilterCount] = useState(0);
-	const [mainChatTotalCount, setMainChatTotalCount] = useState(0);
+	const [selectedSessionIds, setSelectedSessionIds] = useState<Set<string>>(
+		() => new Set(),
+	);
+	const [hiddenSessionIds, setHiddenSessionIds] = useState<Set<string>>(
+		() => new Set(),
+	);
+	const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+	const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+	const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+	const [pendingDeleteTitle, setPendingDeleteTitle] = useState("");
+	const lastSelectedIndexRef = useRef<number | null>(null);
 	const isFilteringSessions =
 		searchMode === "sessions" && deferredSearch.trim().length > 0;
+
+	const ensureBaseSelection = useCallback(
+		(prev: Set<string>) => {
+			const next = new Set(prev);
+			if (selectedChatSessionId && !next.has(selectedChatSessionId)) {
+				next.add(selectedChatSessionId);
+			}
+			return next;
+		},
+		[selectedChatSessionId],
+	);
 
 	// Keyboard shortcut: Ctrl+Shift+F to toggle search mode
 	useEffect(() => {
@@ -193,11 +213,189 @@ export const SidebarSessions = memo(function SidebarSessions({
 				buttonSize: "p-1",
 				iconSize: "w-3 h-3",
 				dateText: "text-[9px]",
-			};
+		};
+
+	const visibleSessionIds = useMemo(() => {
+		const ids: string[] = [];
+		for (const project of sessionsByProject) {
+			const isProjectExpanded =
+				deferredSearch.trim().length > 0 || expandedProjects.has(project.key);
+			if (!isProjectExpanded) continue;
+			for (const session of project.sessions) {
+				if (hiddenSessionIds.has(session.id)) continue;
+				ids.push(session.id);
+				const children =
+					sessionHierarchy.childSessionsByParent.get(session.id) || [];
+				const hasChildren = children.length > 0;
+				const isExpanded = expandedSessions.has(session.id);
+				if (hasChildren && isExpanded) {
+					for (const child of children) {
+						if (hiddenSessionIds.has(child.id)) continue;
+						ids.push(child.id);
+					}
+				}
+			}
+		}
+		return ids;
+	}, [
+		deferredSearch,
+		expandedProjects,
+		expandedSessions,
+		hiddenSessionIds,
+		sessionHierarchy.childSessionsByParent,
+		sessionsByProject,
+	]);
+
+	const sessionIndexById = useMemo(() => {
+		const map = new Map<string, number>();
+		visibleSessionIds.forEach((id, idx) => map.set(id, idx));
+		return map;
+	}, [visibleSessionIds]);
+
+	useEffect(() => {
+		setSelectedSessionIds((prev) => {
+			if (prev.size === 0) return prev;
+			const visible = new Set(visibleSessionIds);
+			const next = new Set<string>();
+			for (const id of prev) {
+				if (visible.has(id)) next.add(id);
+			}
+			return next;
+		});
+		lastSelectedIndexRef.current = null;
+	}, [visibleSessionIds]);
+
+	const handleSessionRowClick = (
+		e: React.MouseEvent,
+		sessionId: string,
+	) => {
+		const index = sessionIndexById.get(sessionId);
+		const baseIndex =
+			lastSelectedIndexRef.current ??
+			(selectedChatSessionId
+				? sessionIndexById.get(selectedChatSessionId) ?? null
+				: null);
+		const hasRange = e.shiftKey && baseIndex !== null && index !== undefined;
+		const isToggle = e.metaKey || e.ctrlKey;
+		if (hasRange) {
+			const start = Math.min(baseIndex!, index!);
+			const end = Math.max(baseIndex!, index!);
+			const rangeIds = visibleSessionIds.slice(start, end + 1);
+			setSelectedSessionIds((prev) => {
+				const next = ensureBaseSelection(prev);
+				for (const id of rangeIds) next.add(id);
+				return next;
+			});
+		} else if (isToggle) {
+			setSelectedSessionIds((prev) => {
+				const next = ensureBaseSelection(prev);
+				if (next.has(sessionId)) {
+					next.delete(sessionId);
+				} else {
+					next.add(sessionId);
+				}
+				return next;
+			});
+		} else {
+			if (selectedSessionIds.size > 0) {
+				setSelectedSessionIds(new Set());
+			}
+			onSessionClick(sessionId);
+		}
+
+		if (index !== undefined) {
+			lastSelectedIndexRef.current = index;
+		}
+	};
+
+	const handleBulkDelete = async () => {
+		if (selectedSessionIds.size === 0) return;
+		const ids = Array.from(selectedSessionIds);
+		setSelectedSessionIds(new Set());
+		setHiddenSessionIds((prev) => {
+			const next = new Set(prev);
+			for (const id of ids) next.add(id);
+			return next;
+		});
+		let failed: string[] = [];
+		try {
+			const result = await onBulkDeleteSessions(ids);
+			if (Array.isArray(result)) {
+				failed = result;
+			}
+		} catch {
+			failed = ids;
+		}
+		if (failed.length > 0) {
+			setHiddenSessionIds((prev) => {
+				const next = new Set(prev);
+				for (const id of failed) next.delete(id);
+				return next;
+			});
+		}
+	};
+
+	const handleDeleteSession = async (sessionId: string) => {
+		const session = filteredSessions.find((item) => item.id === sessionId);
+		setPendingDeleteId(sessionId);
+		setPendingDeleteTitle(session?.title ?? "");
+		setDeleteDialogOpen(true);
+	};
+
+	const handleBulkDeleteRequest = () => {
+		if (selectedSessionIds.size === 0) return;
+		setBulkDeleteOpen(true);
+	};
 
 	return (
 		<div className="flex-1 min-h-0 flex flex-col overflow-x-hidden">
-			{/* Sticky header section - Search, Main Chat, Sessions header */}
+			<DeleteConfirmDialog
+				open={deleteDialogOpen}
+				onOpenChange={(open) => {
+					setDeleteDialogOpen(open);
+					if (!open) {
+						setPendingDeleteId(null);
+						setPendingDeleteTitle("");
+					}
+				}}
+				onConfirm={async () => {
+					if (!pendingDeleteId) return;
+					await Promise.resolve(onDeleteSession(pendingDeleteId));
+					setDeleteDialogOpen(false);
+					setPendingDeleteId(null);
+					setPendingDeleteTitle("");
+				}}
+				locale={locale}
+				title={
+					locale === "de"
+						? pendingDeleteTitle
+							? `"${pendingDeleteTitle}" loschen?`
+							: "Chat loschen?"
+						: pendingDeleteTitle
+							? `Delete "${pendingDeleteTitle}"?`
+							: "Delete chat?"
+				}
+			/>
+			<DeleteConfirmDialog
+				open={bulkDeleteOpen}
+				onOpenChange={setBulkDeleteOpen}
+				onConfirm={() => {
+					setBulkDeleteOpen(false);
+					handleBulkDelete();
+				}}
+				locale={locale}
+				title={
+					locale === "de"
+						? `${selectedSessionIds.size} Chats loschen?`
+						: `Delete ${selectedSessionIds.size} chats?`
+				}
+				description={
+					locale === "de"
+						? "Diese Aktion kann nicht ruckgangig gemacht werden. Alle ausgewahlten Chats werden dauerhaft geloscht."
+						: "This action cannot be undone. All selected chats will be permanently deleted."
+				}
+			/>
+			{/* Sticky header section - Search, Default Chat, Sessions header */}
 			<div className="flex-shrink-0 space-y-0.5 px-1">
 				{/* Search input with mode dropdown */}
 				<div className="relative mb-2 px-1">
@@ -246,16 +444,10 @@ export const SidebarSessions = memo(function SidebarSessions({
 										{locale === "de" ? "Alle Agenten" : "All agents"}
 									</DropdownMenuItem>
 									<DropdownMenuItem
-										onClick={() => setAgentFilter("opencode")}
-										className={cn(agentFilter === "opencode" && "bg-accent")}
-									>
-										{locale === "de" ? "Nur OpenCode" : "OpenCode only"}
-									</DropdownMenuItem>
-									<DropdownMenuItem
 										onClick={() => setAgentFilter("pi_agent")}
 										className={cn(agentFilter === "pi_agent" && "bg-accent")}
 									>
-										{locale === "de" ? "Nur Main Chat" : "Main Chat only"}
+										{locale === "de" ? "Nur Chat" : "Chat only"}
 									</DropdownMenuItem>
 								</>
 							)}
@@ -292,6 +484,34 @@ export const SidebarSessions = memo(function SidebarSessions({
 						</button>
 					)}
 				</div>
+				{selectedSessionIds.size > 0 && (
+					<div className="flex items-center gap-2 bg-primary/10 border border-primary/20 rounded px-2 py-1 mx-1 mt-1">
+						<span className="text-xs font-medium text-primary">
+							{selectedSessionIds.size}
+						</span>
+						<div className="flex-1 mr-1" />
+						<Button
+							type="button"
+							variant="ghost"
+							size="sm"
+							onClick={handleBulkDeleteRequest}
+							className="h-6 px-2 text-xs"
+						>
+							<Trash2 className="w-3 h-3 mr-1" />
+							{locale === "de" ? "Loschen" : "Delete"}
+						</Button>
+						<Button
+							type="button"
+							variant="ghost"
+							size="sm"
+							onClick={() => setSelectedSessionIds(new Set())}
+							className="h-6 w-6 p-0"
+							title={locale === "de" ? "Auswahl loschen" : "Clear selection"}
+						>
+							<X className="w-3 h-3" />
+						</Button>
+					</div>
+				)}
 				{/* Sessions header - between search and chat list */}
 				<div className="flex items-center justify-between gap-2 py-1.5 px-1">
 					<div className="flex items-center gap-2">
@@ -310,12 +530,8 @@ export const SidebarSessions = memo(function SidebarSessions({
 							)}
 						>
 							(
-							{isFilteringSessions
-								? filteredSessions.length + mainChatFilterCount
-								: filteredSessions.length}
-							{deferredSearch
-								? `/${chatHistory.length + mainChatTotalCount}`
-								: ""}
+							{filteredSessions.length}
+							{deferredSearch ? `/${chatHistory.length}` : ""}
 							)
 						</span>
 					</div>
@@ -427,23 +643,7 @@ export const SidebarSessions = memo(function SidebarSessions({
 					/>
 				) : (
 					<>
-						{/* Main Chat - shown at top of sessions list */}
-						<MainChatEntry
-							isSelected={mainChatActive}
-							activeSessionId={mainChatActive ? mainChatCurrentSessionId : null}
-							newSessionTrigger={mainChatNewSessionTrigger}
-							sessionActivityTrigger={mainChatSessionActivityTrigger}
-							onSelect={onMainChatSelect}
-							onSessionSelect={onMainChatSessionSelect}
-							onNewSession={onMainChatNewSession}
-							locale={locale}
-							filterQuery={searchMode === "sessions" ? deferredSearch : ""}
-							onFilterCountChange={setMainChatFilterCount}
-							onTotalCountChange={setMainChatTotalCount}
-						/>
-						{filteredSessions.length === 0 &&
-							deferredSearch &&
-							mainChatFilterCount === 0 && (
+						{filteredSessions.length === 0 && deferredSearch && (
 								<div
 									className={cn(
 										"text-muted-foreground/50 text-center py-4",
@@ -585,18 +785,19 @@ export const SidebarSessions = memo(function SidebarSessions({
 									{/* Project sessions */}
 									{isProjectExpanded && (
 										<div className="space-y-0.5 pb-1">
-											{project.sessions.map((session) => {
+											{project.sessions
+												.filter((session) => !hiddenSessionIds.has(session.id))
+												.map((session) => {
 												const isSelected = selectedChatSessionId === session.id;
+												const isMultiSelected =
+													selectedSessionIds.has(session.id);
 												const children =
 													sessionHierarchy.childSessionsByParent.get(
 														session.id,
 													) || [];
 												const hasChildren = children.length > 0;
 												const isExpanded = expandedSessions.has(session.id);
-												const readableId = resolveReadableId(
-													session.id,
-													session.readable_id,
-												);
+												const readableId = getReadableIdFromSession(session);
 												const formattedDate = session.updated_at
 													? formatSessionDate(session.updated_at)
 													: null;
@@ -613,7 +814,9 @@ export const SidebarSessions = memo(function SidebarSessions({
 																		isMobile ? "py-2" : "py-1",
 																		isSelected
 																			? "bg-primary/15 border border-primary text-foreground"
-																			: "text-muted-foreground hover:bg-sidebar-accent border border-transparent",
+																			: isMultiSelected
+																				? "bg-primary/10 border border-primary/50 text-foreground"
+																				: "text-muted-foreground hover:bg-sidebar-accent border border-transparent",
 																	)}
 																>
 																	{hasChildren ? (
@@ -622,6 +825,7 @@ export const SidebarSessions = memo(function SidebarSessions({
 																			onClick={() =>
 																				toggleSessionExpanded(session.id)
 																			}
+																			onMouseDown={(e) => e.stopPropagation()}
 																			className={cn(
 																				"mt-0.5 hover:bg-muted flex-shrink-0 cursor-pointer",
 																				isMobile ? "p-1" : "p-0.5",
@@ -651,7 +855,9 @@ export const SidebarSessions = memo(function SidebarSessions({
 																	)}
 																	<button
 																		type="button"
-																		onClick={() => onSessionClick(session.id)}
+																		onClick={(e) =>
+																			handleSessionRowClick(e, session.id)
+																		}
 																		className="flex-1 min-w-0 text-left"
 																	>
 																		<div className="flex items-center gap-1">
@@ -675,28 +881,30 @@ export const SidebarSessions = memo(function SidebarSessions({
 																				<Loader2 className="w-3 h-3 flex-shrink-0 text-primary animate-spin" />
 																			)}
 																		</div>
-																		{formattedDate && (
-																			<div
-																				className={cn(
-																					"text-muted-foreground mt-0.5",
-																					sizeClasses.dateText,
-																				)}
-																			>
-																				{formattedDate}
-																			</div>
-																		)}
-																	</button>
-																</div>
-															</ContextMenuTrigger>
-															<ContextMenuContent>
-																<ContextMenuItem
-																	onClick={() => {
-																		navigator.clipboard.writeText(readableId);
-																	}}
-																>
-																	<Copy className="w-4 h-4 mr-2" />
-																	{readableId}
-																</ContextMenuItem>
+																	{formattedDate && (
+																		<div
+																			className={cn(
+																				"text-muted-foreground mt-0.5",
+																				sizeClasses.dateText,
+																			)}
+																		>
+																			{formattedDate}
+																		</div>
+																	)}
+																</button>
+															</div>
+														</ContextMenuTrigger>
+														<ContextMenuContent>
+																{readableId && (
+																	<ContextMenuItem
+																		onClick={() => {
+																			navigator.clipboard.writeText(readableId);
+																		}}
+																	>
+																		<Copy className="w-4 h-4 mr-2" />
+																		{readableId}
+																	</ContextMenuItem>
+																)}
 																<ContextMenuItem
 																	onClick={() => {
 																		navigator.clipboard.writeText(session.id);
@@ -727,7 +935,7 @@ export const SidebarSessions = memo(function SidebarSessions({
 																<ContextMenuSeparator />
 																<ContextMenuItem
 																	variant="destructive"
-																	onClick={() => onDeleteSession(session.id)}
+																	onClick={() => handleDeleteSession(session.id)}
 																>
 																	<Trash2 className="w-4 h-4 mr-2" />
 																	{locale === "de" ? "Loschen" : "Delete"}
@@ -742,13 +950,17 @@ export const SidebarSessions = memo(function SidebarSessions({
 																	isMobile ? "ml-6 space-y-1 mt-1" : "ml-4",
 																)}
 															>
-																{children.map((child) => {
+																{children
+																	.filter(
+																		(child) => !hiddenSessionIds.has(child.id),
+																	)
+																	.map((child) => {
 																	const isChildSelected =
 																		selectedChatSessionId === child.id;
-																	const childReadableId = resolveReadableId(
-																		child.id,
-																		child.readable_id,
-																	);
+																	const isChildMultiSelected =
+																		selectedSessionIds.has(child.id);
+																	const childReadableId =
+																		getReadableIdFromSession(child);
 																	const childFormattedDate = child.updated_at
 																		? formatSessionDate(child.updated_at)
 																		: null;
@@ -757,8 +969,8 @@ export const SidebarSessions = memo(function SidebarSessions({
 																			<ContextMenuTrigger className="contents">
 																				<button
 																					type="button"
-																					onClick={() =>
-																						onSessionClick(child.id)
+																					onClick={(e) =>
+																						handleSessionRowClick(e, child.id)
 																					}
 																					className={cn(
 																						"w-full px-2 text-left transition-colors",
@@ -767,7 +979,9 @@ export const SidebarSessions = memo(function SidebarSessions({
 																							: "py-1 text-xs",
 																						isChildSelected
 																							? "bg-primary/15 border border-primary text-foreground"
-																							: "text-muted-foreground hover:bg-sidebar-accent border border-transparent",
+																							: isChildMultiSelected
+																								? "bg-primary/10 border border-primary/50 text-foreground"
+																								: "text-muted-foreground hover:bg-sidebar-accent border border-transparent",
 																					)}
 																				>
 																					<div className="flex items-center gap-1">
@@ -836,7 +1050,7 @@ export const SidebarSessions = memo(function SidebarSessions({
 																				<ContextMenuItem
 																					variant="destructive"
 																					onClick={() =>
-																						onDeleteSession(child.id)
+																						handleDeleteSession(child.id)
 																					}
 																				>
 																					<Trash2 className="w-4 h-4 mr-2" />

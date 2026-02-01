@@ -8,7 +8,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use tokio::process::Command;
-use tracing::{info, instrument, warn};
+use tracing::{info, instrument};
 
 use crate::auth::CurrentUser;
 
@@ -156,60 +156,17 @@ pub struct TrxWorkspaceQuery {
 
 /// Validate and resolve a workspace path, ensuring it's within the allowed workspace root
 /// or is a valid Main Chat workspace path.
-pub fn validate_workspace_path(
+pub async fn validate_workspace_path(
     state: &AppState,
     user_id: &str,
     workspace_path: &str,
 ) -> Result<PathBuf, ApiError> {
-    let workspace_root = state.sessions.for_user(user_id).workspace_root();
-    let canonical_root = workspace_root
-        .canonicalize()
-        .unwrap_or_else(|_| workspace_root.clone());
-
-    let requested = PathBuf::from(workspace_path);
-
-    // Resolve the path - if relative, it's relative to workspace root
-    let resolved = if requested.is_absolute() {
-        requested.clone()
-    } else {
-        workspace_root.join(&requested)
-    };
-
-    // Canonicalize if it exists, otherwise verify parent is valid
-    let canonical = if resolved.exists() {
-        resolved
-            .canonicalize()
-            .map_err(|e| ApiError::bad_request(format!("Invalid workspace path: {}", e)))?
-    } else {
-        // Path doesn't exist yet - verify parent is valid
-        if let Some(parent) = resolved.parent() {
-            if parent.exists() {
-                let canonical_parent = parent
-                    .canonicalize()
-                    .map_err(|e| ApiError::bad_request(format!("Invalid workspace path: {}", e)))?;
-                if !canonical_parent.starts_with(&canonical_root) {
-                    // Check if it's a Main Chat path before rejecting
-                    if !is_main_chat_path(state, &canonical_parent) {
-                        warn!(
-                            "Workspace path parent outside root: {:?} (root: {:?})",
-                            parent, canonical_root
-                        );
-                        return Err(ApiError::bad_request("Workspace path outside allowed root"));
-                    }
-                }
-            }
-        }
-        resolved
-    };
-
-    // Verify the path is under the workspace root or is a Main Chat path
-    if !canonical.starts_with(&canonical_root) && !is_main_chat_path(state, &canonical) {
-        warn!(
-            "Workspace path outside root: {:?} (root: {:?})",
-            canonical, canonical_root
-        );
-        return Err(ApiError::bad_request("Workspace path outside allowed root"));
-    }
+    let canonical = state
+        .sessions
+        .for_user(user_id)
+        .validate_workspace_path(workspace_path)
+        .await
+        .map_err(|e| ApiError::bad_request(format!("Invalid workspace path: {}", e)))?;
 
     Ok(canonical)
 }
@@ -239,7 +196,7 @@ async fn exec_trx_command(
     args: &[&str],
 ) -> Result<String, ApiError> {
     // Validate workspace path before executing command
-    let validated_path = validate_workspace_path(state, user_id, workspace_path)?;
+    let validated_path = validate_workspace_path(state, user_id, workspace_path).await?;
 
     let output = Command::new("trx")
         .args(args)
@@ -424,7 +381,7 @@ pub async fn sync_trx(
     Query(query): Query<TrxWorkspaceQuery>,
 ) -> ApiResult<Json<serde_json::Value>> {
     // Validate workspace path before executing command
-    let validated_path = validate_workspace_path(&state, user.id(), &query.workspace_path)?;
+    let validated_path = validate_workspace_path(&state, user.id(), &query.workspace_path).await?;
 
     // Note: trx sync doesn't have JSON output, so we just check for success
     let output = Command::new("trx")

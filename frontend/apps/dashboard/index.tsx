@@ -25,13 +25,10 @@ function createId(): string {
 export function DashboardApp() {
 	const {
 		locale,
+		chatHistory,
 		workspaceSessions,
-		opencodeSessions,
 		busySessions,
-		opencodeBaseUrl,
-		opencodeDirectory,
 		selectedWorkspaceSession,
-		mainChatWorkspacePath,
 	} = useApp();
 
 	const [rightSidebarCollapsed, setRightSidebarCollapsed] = useState(false);
@@ -40,8 +37,7 @@ export function DashboardApp() {
 	const isMobileLayout = useIsMobile();
 	const [mobileView, setMobileView] = useState<"dashboard" | "cards" | "custom">("dashboard");
 
-	const workspacePath = selectedWorkspaceSession?.workspace_path ?? opencodeDirectory ?? ".";
-	const configWorkspacePath = mainChatWorkspacePath ?? workspacePath;
+	const workspacePath = selectedWorkspaceSession?.workspace_path ?? ".";
 	const t = useMemo(() => getTranslations(locale), [locale]);
 
 	const builtinCards: BuiltinCardDefinition[] = useMemo(
@@ -61,9 +57,7 @@ export function DashboardApp() {
 
 	const data = useDashboardData({
 		workspacePath,
-		configWorkspacePath,
-		opencodeBaseUrl,
-		opencodeDirectory,
+		configWorkspacePath: workspacePath,
 		builtinCards,
 	});
 
@@ -74,8 +68,8 @@ export function DashboardApp() {
 
 	const busyChatSessions = useMemo(() => {
 		if (!busySessions.size) return [];
-		return opencodeSessions.filter((s) => busySessions.has(s.id));
-	}, [busySessions, opencodeSessions]);
+		return chatHistory.filter((s) => busySessions.has(s.id));
+	}, [busySessions, chatHistory]);
 
 	const cardMap = useMemo(() => {
 		const map = new Map<string, BuiltinCardDefinition | DashboardRegistryCard>();

@@ -2,6 +2,47 @@
 
 ## Open
 
+### [octo-1cqd] Normalize chat workspace path and default assistant mapping (P1, task)
+Remove default chat special casing, normalize workspace_path to default assistant path, and make session creation consistent for pi chats.
+
+### [octo-r6pc] Fix chat session normalization and pending IDs (P1, bug)
+Normalize workspace path handling (avoid 'global') and ensure pending session IDs are replaced when Pi assigns real session IDs. Export default chat APIs consistently.
+
+### [octo-xxe2] Per-workspace hstry/mmry stores + sync scoping (P1, task)
+Ensure each workspace has isolated hstry/mmry stores; sync and cache are workspace-scoped with location_id/actor metadata. No cross-workspace leakage.
+
+### [octo-wdkj] Remote runner bootstrap over SSH (P1, task)
+Implement SSH bootstrap: install deps, download runner binaries, configure sandbox, start service, register with hub. Provide fallback to bundle+push.
+
+### [octo-59py] Workspace locations schema + routing (P1, task)
+Add workspace_locations (workspace_id, runner_id, path, kind, repo_fingerprint, active flag) and route requests by selected location. Default to local if present; prompt on failure.
+
+### [octo-pdb4] Shared workspaces with multi-location runners (P1, epic)
+Support team shared workspaces with per-workspace hstry/mmry, local+remote locations, and explicit agent targeting. Includes runner bootstrap over SSH, workspace location routing, UI grouping/merge-split, and security model for remote execution + history sync.
+
+### [octo-1ddx] Move global sandbox config to read-only path (P1, task)
+Global sandbox config must be read-only (not user-writable). Implement loading from system path (e.g., /etc/octo/sandbox.toml) with user config for overrides or removal of user-writable global config. Ensure sandbox.toml itself is protected and update docs/install.
+
+### [octo-t2bf] Multi-Runner & Workspace Sharing (P1, epic)
+Epic for enabling users to connect to multiple runners across different machines (laptop, desktop, cloud) and share workspaces with other users.
+
+## Goals
+
+### Multi-Runner Support
+...
+
+
+### [octo-zjs8.3] Add strict clippy lints to all Cargo.toml files (P1, task)
+Add workspace-level clippy configuration to deny warnings and enforce best practices
+
+### [octo-zjs8.2] Fix clippy warnings in frontend/src-tauri (P1, task)
+Fix unnecessary_lazy_evaluations, manual_flatten, single_match, and manual_strip warnings
+
+### [octo-zjs8.1] Fix all clippy warnings in backend crates (P1, task)
+Fix warnings in octo-files, octo-scaffold, octo-browser, and octo main crate without using #[allow] or other bandaid fixes
+
+### [octo-zqyg] Fix Linux user creation sudo allowlist path mismatch (P1, bug)
+
 ### [octo-qq9y] Security audit sudoers configuration for multi-user mode (P1, task)
 ## Background
 
@@ -92,15 +133,6 @@ Add runner RPC endpoints for per-user session state:
 ...
 
 
-### [octo-y1nq] Opencode agent connection cycling - rapid disconnect/reconnect loop (P1, bug)
-The opencode agent repeatedly disconnects and reconnects in rapid succession (observed 15+ cycles in logs). Pattern observed:
-
-[Event] agent_disconnected
-[Event] agent_reconnecting  
-[Event] agent_connected
-...
-
-
 ### [octo-thhx.2] Onboarding API endpoints (P1, task)
 REST endpoints: GET/PUT /api/onboarding/state, POST /api/onboarding/unlock/{component}, POST /api/onboarding/godmode, POST /api/onboarding/complete
 
@@ -109,9 +141,6 @@ Backend model for tracking onboarding progress, unlocked components, user level,
 
 ### [octo-thhx] Onboarding & Agent UI Control (P1, epic)
 Progressive onboarding experience with agent-driven UI control, spotlight system, and i18n support
-
-### [octo-70pz] Add session naming - auto-generate from first message, allow editing (P1, feature)
-Superseded: Session titles come from Pi session files (first user message) and are cached client-side.
 
 ### [octo-af5j.7.6] Release manifest generator (byt release) (P1, task)
 byt release command that: 1) Reads component list from octo/release.toml, 2) Fetches current version from each repo (Cargo.toml, package.json, go.mod), 3) Generates versions.toml with all pinned versions, 4) Optionally tags all repos with octo-0.2.0 tag
@@ -143,16 +172,142 @@ Implementation:
 ...
 
 
-### [workspace-5pmk.11] Add backend URL configuration to login form (P1, task)
-Add a 'Server URL' field to the login form allowing users to specify the backend URL. Store in localStorage for persistence. Show connection status indicator. Default to current origin for web, require input for mobile apps.
+### [octo-d0a5] Agent targeting for remote locations (P2, task)
+Expose workspace+location targets to agent UI and API. Require explicit selection for remote execution; enforce per-location policies and logging.
+
+### [octo-6nhg] Shared workspace UI grouping + merge/split (P2, task)
+Group sessions by team and workspace, show locations nested. Add merge-by-repo default with split toggle; indicate local/remote and active location.
+
+### [octo-jxn7] Add verbosity setting + persistence (P2, task)
+Expose chat verbosity level (1-3) in frontend settings and persist to localStorage. Default to 3.
+
+### [octo-rpxy] Chat verbosity levels for tool calls (P2, epic)
+Add frontend verbosity levels for chat rendering. Level 3 = current verbose tool cards. Level 2 collapses consecutive tool calls into a single dropdown with tabbed icons and scroll+arrows when overflow. Level 1 TBD (minimal).
+
+### [octo-wah4] Security: Runner authentication and TLS for network endpoints (P2, task)
+Implement runner authentication and TLS for network endpoints:
+
+1. Runner authentication
+   - Token-based auth when runner connects to backend
+   - Runner identity verification
+...
+
+
+### [octo-mj2r] Frontend: Shared workspace UI with owner indicators (P2, task)
+Add shared workspace UI with owner indicators:
+
+1. Workspace list enhancements
+   - Show owner avatar/name for shared workspaces
+   - Show permission level badge (Read/Write/Execute)
+...
+
+
+### [octo-w2zp] Frontend: Runner selector in session management UI (P2, task)
+Add runner selector to session management UI:
+
+1. Runner selector component
+   - Dropdown to select runner for new sessions
+   - Show runner status indicator (online/offline)
+...
+
+
+### [octo-888b] CLI: Workspace permission commands (grant, revoke, list, audit) (P2, task)
+Add workspace permission management CLI commands:
+
+1. octoctl workspace grant-permission
+   - Grant user access to workspace
+   - Options: --workspace, --user, --permission (read/write/execute), --expires
+...
+
+
+### [octo-cddx] CLI: Runner registration commands (register, list, status, unregister) (P2, task)
+Add runner registration CLI commands:
+
+1. octoctl runner register
+   - Register a new runner
+   - Options: --name, --endpoint (socket/address/url), --default
+...
+
+
+### [octo-72xf] Backend: Audit logging for cross-user access (P2, task)
+Implement comprehensive audit logging:
+
+1. Access log model
+   - AccessLog struct (requesting_user, workspace_id, action, granted, timestamp)
+   - DB schema for access_logs table
+...
+
+
+### [octo-cab0] SessionService: Support multi-runner with permission checks (P2, task)
+Extend SessionService for multi-runner and permission checks:
+
+1. Session model updates
+   - Add runner_id to SessionInfo
+   - Add workspace_id and owner_user_id
+...
+
+
+### [octo-3486] WebSocket: Add runner_id and workspace_id to protocol types (P2, task)
+Add runner_id and workspace_id to WebSocket protocol:
+
+1. WsCommand extensions
+   - Add optional runner_id to Subscribe, SendMessage, SendParts, Abort, etc.
+   - Add optional workspace_id for permission tracking
+...
+
+
+### [octo-kc4x] Backend: Extended RunnerClient with network endpoint support (P2, task)
+Extend RunnerClient to support multiple endpoint types:
+
+1. Add endpoint enum
+   - RunnerEndpoint::UnixSocket(PathBuf) - existing local mode
+   - RunnerEndpoint::NetworkAddress(SocketAddr) - new TCP
+...
+
+
+### [octo-b67r] Backend: Workspace permission system with DB schema (P2, task)
+Implement workspace permission system:
+
+1. Database schema
+   - workspaces table (id, path, owner_user_id, runner_id)
+   - workspace_permissions table (workspace_id, granted_user_id, permission, expires_at)
+...
+
+
+### [octo-60b1] Runner registry: Multiple runners per user with registration (P2, task)
+Implement runner registry for managing multiple runners per user:
+
+1. Data model
+   - RunnerRegistration struct (id, user_id, name, endpoint, status, last_seen)
+   - RunnerEndpoint enum (UnixSocket, NetworkAddress, SecureUrl)
+...
+
+
+### [octo-fcs1] Design: Multi-runner architecture and workspace permission model (P2, task)
+Write comprehensive design document covering:
+
+1. Multi-runner architecture
+   - Runner registry data model
+   - Runner registration flow
+...
+
+
+### [octo-7mxb] MCP Apps Support - Interactive UI in Chat (P2, epic)
+Add support for MCP Apps extension to render interactive HTML interfaces (dashboards, forms, visualizations) directly in the chat UI. This enables richer user interactions beyond text/images - file browsers, build output viewers, deployment config forms, live metrics dashboards, etc.
+
+## Phases
+
+### Phase 1: Frontend Host Support
+...
+
+
+### [octo-zjs8.4] Optimize Rust compilation times (P2, task)
+Add .cargo/config.toml with linker optimizations, split-debuginfo, incremental builds, and codegen-units settings
 
 ### [octo-7xx0] Note: octo-ssh-proxy socket path must be mounted or moved for sandbox access (P2, task)
 
 ### [octo-p3n2.6] .ctx file parsing (P2, task)
 Parse .ctx zip files: extract images, text context, metadata. Store temporarily for agent access.
-
-### [octo-p3n2.5] Sessions listing endpoint (P2, task)
-GET /api/v1/sessions - list available sessions for API consumers
 
 ### [octo-p3n2.4] External chat API endpoint (P2, task)
 POST /api/v1/chat - accepts message + optional .ctx file, auto-creates session for workspace, supports stream and fire_and_forget modes
@@ -192,20 +347,7 @@ Keep docker multi-user working:
 
 ### [octo-h0by] add user self-service section in settings (change password etc) (P2, task)
 
-### [octo-f50n] redirect to login for unauthenticated users (P2, task)
-
 ### [octo-85f4] the stop button doesnt seem to stop a running agent response (P2, bug)
-
-### [octo-8pfr] 503 Service Unavailable on /code/ endpoints during agent reconnection (P2, bug)
-Multiple requests to opencode proxy endpoints return 503 Service Unavailable:
-
-- /code/session/{id}/message - fetching messages
-- /code/config/providers - getting provider config  
-- /code/session/{id}/prompt_async - sending prompts
-...
-
-
-### [octo-aexm] message order gets mixed up in opencode session: earlier message shows up as latest message. (P2, bug)
 
 ### [octo-e8q8] There is no way to display closed trx issues (P2, bug)
 
@@ -288,8 +430,6 @@ Support multi-step tours with automatic progression. Agent sends array of steps,
 
 ### [octo-smwr] Add drag an drop capabilities to the file tree, both for dragging in external files and for moving files between dirs  (P2, feature)
 
-### [octo-ze9k] Dashboard with overview of scheduled tasks (skdlr), session information, trx issues etc. Similar to the admin panel but for all users (P2, feature)
-
 ### [octo-s4ez] Define context model and context sources (local + remote) (P2, task)
 ## Goal
 Define what "context" means for agent interactions in Octo, and how it is represented, versioned, and sourced, so features like global agent invoke (`octo-skks`) and agent-driven UI control (`octo-wzvn`) can reliably inject context now and later.
@@ -319,15 +459,6 @@ Server-side browser for AI agent control, rendered in Octo frontend.
 ## Reference Implementations (cloned)
 - ../external-repos/agent-browser - Vercel's CLI browser automation (Apache-2.0)
 - ../external-repos/playwriter - MCP browser extension by remorses (Option A reference)
-...
-
-
-### [octo-9qkv] Improve opencode chat error notifications (top-right toast) (P2, feature)
-Request: Provide clearer, more visible notifications for errors like session disconnect/resume failures, instead of (or in addition to) inline red banners. Prefer a popup/toast in the top-right that matches the app style.
-
-Motivation:
-- Current inline messages (e.g., 'resuming session' red text) can be easy to miss and can overlap UI controls.
-
 ...
 
 
@@ -488,15 +619,6 @@ Implementation:
 ...
 
 
-### [workspace-4eyc] Main Chat: JSONL export and backup (P2, task)
-Export mechanism for Main Chat history:
-
-/export command with options:
-- /export - export full history as JSONL
-- /export --sessions - export session list  
-...
-
-
 ### [workspace-5pmk.9] Configure iOS and Android targets (P2, task)
 Run tauri ios init and tauri android init. Configure permissions (microphone, network), app icons, splash screens, and build settings for both platforms.
 
@@ -506,9 +628,6 @@ Ensure touch targets (44px min), safe areas (notch/home indicator), and gestures
 ### [workspace-5pmk.7] Implement Tauri main with backend startup (P2, task)
 Start Axum backend on app launch, configure webview to load from backend URL. Handle graceful shutdown.
 
-### [workspace-5pmk.6] Create Tauri project structure (P2, task)
-Initialize src-tauri/ directory with Cargo.toml, tauri.conf.json, capabilities, and icons. Configure build commands for Next.js static export.
-
 ### [workspace-5pmk.5] Update voice URL resolution for proxy mode (P2, task)
 Detect Tauri/proxied mode, use relative WebSocket paths (/api/voice/stt, /api/voice/tts) instead of direct URLs from config.
 
@@ -517,9 +636,6 @@ Delete middleware.ts, implement client-side auth guard in app layout. Check auth
 
 ### [workspace-5pmk.3] Configure frontend for static export (P2, task)
 Set output: export in next.config.ts, disable image optimization, remove rewrites (backend handles routing).
-
-### [workspace-5pmk.2] Add voice WebSocket proxies to backend (P2, task)
-Add bidirectional WS proxy routes for eaRS (/api/voice/stt) and kokorox (/api/voice/tts). Simple passthrough, no protocol translation needed.
 
 ### [workspace-5pmk.1] Add static file serving to backend (P2, task)
 Use tower_http::services::ServeDir to serve frontend static export from /, with SPA fallback to index.html. Enables: (1) single-binary deployment without separate web server, (2) webapp mode without Next.js server, (3) simpler CORS since everything is same-origin.
@@ -532,12 +648,6 @@ Build Memories tab with Radix UI components. MemoryList (paginated, sortable), M
 
 ### [workspace-gg16.4] Frontend: React Query hooks for memories API (P2, task)
 Create TanStack Query hooks: useMemories, useMemorySearch, useCreateMemory, useUpdateMemory, useDeleteMemory. Handle pagination, optimistic updates, error states. Type definitions for Memory objects.
-
-### [workspace-gg16.3] Backend: Add mmry proxy API routes (P2, task)
-Add Axum routes to proxy mmry operations to user's instance. Routes: GET/POST /api/sessions/{id}/memories, GET/PUT/DELETE /api/sessions/{id}/memories/{memory_id}, POST /api/sessions/{id}/memories/search. Determine store from session workspace. Handle auth.
-
-### [workspace-gg16.2] Per-user mmry instance management (P2, task)
-Octo backend spawns/manages lean mmry instance per user. Each user gets own SQLite database (~user/.local/share/mmry/ or container volume). Config delegates embeddings to host mmry-service. Track instance lifecycle similar to opencode/fileserver/ttyd.
 
 ### [workspace-x7gm.5] Frontend: Project management UI (P2, task)
 Add UI for:
@@ -704,6 +814,33 @@ Desired behavior: Tool calls hidden by default, toggle to show
 
 ## Closed
 
+- [workspace-gg16.2] Per-user mmry instance management (closed 2026-02-04)
+- [workspace-5pmk.11] Add backend URL configuration to login form (closed 2026-02-04)
+- [octo-3fkc] Use hstry canonical history + Pi export for rehydrate (closed 2026-02-04)
+- [octo-f50n] redirect to login for unauthenticated users (closed 2026-02-04)
+- [octo-ze9k] Dashboard with overview of scheduled tasks (skdlr), session information, trx issues etc. Similar to the admin panel but for all users (closed 2026-02-04)
+- [octo-p3n2.5] Sessions listing endpoint (closed 2026-02-04)
+- [workspace-5pmk.6] Create Tauri project structure (closed 2026-02-04)
+- [workspace-gg16.3] Backend: Add mmry proxy API routes (closed 2026-02-04)
+- [octo-gj7p] Integrate hstry-core for message persistence (closed 2026-02-04)
+- [octo-95x0] Remove main_chat.db and duplicate message types (closed 2026-02-04)
+- [workspace-5pmk.2] Add voice WebSocket proxies to backend (closed 2026-02-04)
+- [workspace-4eyc] Main Chat: JSONL export and backup (closed 2026-02-04)
+- [octo-jwc4] Unify Pi chats (default + workspace) (closed 2026-02-04)
+- [octo-zd43] Collapse consecutive tool calls into tabbed dropdown (closed 2026-02-04)
+- [octo-70pz] Add session naming - auto-generate from first message, allow editing (closed 2026-02-04)
+- [octo-9qkv] Improve opencode chat error notifications (top-right toast) (closed 2026-02-04)
+- [octo-aexm] message order gets mixed up in opencode session: earlier message shows up as latest message. (closed 2026-02-04)
+- [octo-8pfr] 503 Service Unavailable on /code/ endpoints during agent reconnection (closed 2026-02-04)
+- [octo-y1nq] Opencode agent connection cycling - rapid disconnect/reconnect loop (closed 2026-02-04)
+- [octo-cvy0] Configurable chat prefetch limit (closed 2026-02-04)
+- [octo-zjs8] Rust Code Quality & Compilation Optimization (closed 2026-02-04)
+- [octo-qs75] Raw commands like ({"command":"ls -la"}) appear in pi chat messages (closed 2026-02-02)
+- [octo-016a] Full component rerender on key event for trx issue input in sidebar (closed 2026-02-02)
+- [octo-v2d4] Trx sidebar component remounts when adding a new issue in the sidebar (closed 2026-02-02)
+- [octo-jdt5] File attachments don't work in pi chats  (closed 2026-02-02)
+- [octo-p09v] tool calling spinner doesn't stop. all tool calls continue spinning (closed 2026-02-02)
+- [octo-047z] Responses are duplicated in main chat (closed 2026-02-02)
 - [octo-1j5m] Background history refresh races with session switches (closed 2026-01-31)
 - [octo-pwnn] Backend Pi process reuse broadcasts events across sessions (closed 2026-01-31)
 - [octo-dxsg] WebSocket handler swapping causes message leaks (closed 2026-01-31)
@@ -1247,9 +1384,9 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
+- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
 - [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
 - [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
-- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
 - [octo-k8z1.1] Backend: Integrate agent-browser daemon per session (closed )
-- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
 - [octo-k8z1.2] Backend: WebSocket proxy for screencast stream (closed )
+- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )

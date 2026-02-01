@@ -28,3 +28,4 @@ Temporary Items
 # Local binaries / build artifacts
 backend/data/home/default/.opencode/bin/opencode
 fileserver/target/
+nohup.out

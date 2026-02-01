@@ -161,14 +161,17 @@ pub async fn register(
     let user = match if let Some(id) = &user_id {
         state
             .users
-            .create_user_with_id(id, CreateUserRequest {
-                username: request.username.clone(),
-                email: request.email.clone(),
-                password: Some(request.password),
-                display_name: request.display_name,
-                role: None,
-                external_id: None,
-            })
+            .create_user_with_id(
+                id,
+                CreateUserRequest {
+                    username: request.username.clone(),
+                    email: request.email.clone(),
+                    password: Some(request.password),
+                    display_name: request.display_name,
+                    role: None,
+                    external_id: None,
+                },
+            )
             .await
     } else {
         state
@@ -273,8 +276,9 @@ pub async fn register(
     }
 
     // Allocate a stable per-user mmry port in local multi-user mode.
-    if state.mmry.enabled && !state.mmry.single_user {
-        if let Err(e) = state
+    if state.mmry.enabled
+        && !state.mmry.single_user
+        && let Err(e) = state
             .users
             .ensure_mmry_port(
                 &user.id,
@@ -282,9 +286,8 @@ pub async fn register(
                 state.mmry.user_port_range,
             )
             .await
-        {
-            warn!(user_id = %user.id, error = %e, "Failed to allocate user mmry port");
-        }
+    {
+        warn!(user_id = %user.id, error = %e, "Failed to allocate user mmry port");
     }
 
     // Generate JWT token for the new user

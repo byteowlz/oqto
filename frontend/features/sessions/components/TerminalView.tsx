@@ -1,18 +1,13 @@
 "use client";
 
 import {
-	GhosttyTerminal,
 	type GhosttyTerminalHandle,
+	MuxGhosttyTerminal,
 } from "@/components/terminal/ghostty-terminal";
 import { MobileKeyboardToolbar } from "@/components/terminal/mobile-keyboard-toolbar";
 import { useIsMobile } from "@/hooks/use-mobile";
-import {
-	controlPlaneDirectBaseUrl,
-	terminalWorkspaceProxyPath,
-} from "@/lib/control-plane-client";
-import { toAbsoluteWsUrl } from "@/lib/url";
 import { useTheme } from "next-themes";
-import { useCallback, useMemo, useRef } from "react";
+import { useCallback, useRef } from "react";
 
 interface TerminalViewProps {
 	workspacePath?: string | null;
@@ -22,16 +17,6 @@ export function TerminalView({ workspacePath }: TerminalViewProps) {
 	const { resolvedTheme } = useTheme();
 	const isMobile = useIsMobile();
 	const terminalRef = useRef<GhosttyTerminalHandle>(null);
-
-	const wsUrl = useMemo(() => {
-		if (!workspacePath) return "";
-		const directBase = controlPlaneDirectBaseUrl();
-		const proxyPath = terminalWorkspaceProxyPath(workspacePath);
-		if (directBase) {
-			return toAbsoluteWsUrl(`${directBase}${proxyPath}`);
-		}
-		return toAbsoluteWsUrl(`/api${proxyPath}`);
-	}, [workspacePath]);
 
 	// Handle sending keys from the toolbar to the terminal
 	const handleSendKey = useCallback((key: string) => {
@@ -67,10 +52,10 @@ export function TerminalView({ workspacePath }: TerminalViewProps) {
 				onKeyDown={() => terminalRef.current?.focus()}
 				role="presentation"
 			>
-				<GhosttyTerminal
+				<MuxGhosttyTerminal
 					ref={terminalRef}
 					key={`${workspacePath}-${resolvedTheme}`}
-					wsUrl={wsUrl}
+					workspacePath={workspacePath}
 					className="border border-border h-full"
 					theme={resolvedTheme}
 				/>

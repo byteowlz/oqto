@@ -41,4 +41,5 @@
 //! spawn processes that run with that user's privileges.
 
 pub mod client;
+pub mod pi_manager;
 pub mod protocol;

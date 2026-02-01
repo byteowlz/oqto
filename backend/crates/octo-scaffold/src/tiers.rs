@@ -10,7 +10,7 @@ use tracing::{debug, info};
 use crate::Tier;
 
 /// Complete scaffold configuration with all tier definitions.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ScaffoldConfig {
     /// Templates directory path.
     #[serde(default)]
@@ -86,15 +86,6 @@ pub struct ProviderConfig {
     pub whitelist: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub blacklist: Option<Vec<String>>,
-}
-
-impl Default for ScaffoldConfig {
-    fn default() -> Self {
-        Self {
-            templates_path: None,
-            tiers: TierDefinitions::default(),
-        }
-    }
 }
 
 impl Default for TierDefinitions {
@@ -238,11 +229,11 @@ impl ScaffoldConfig {
         }
 
         // Try ~/.config/octo/scaffold.toml
-        if let Some(user_config) = Self::user_config_path() {
-            if user_config.exists() {
-                debug!("Loading user config from {:?}", user_config);
-                config = Self::merge(config, Self::load_file(&user_config)?);
-            }
+        if let Some(user_config) = Self::user_config_path()
+            && user_config.exists()
+        {
+            debug!("Loading user config from {:?}", user_config);
+            config = Self::merge(config, Self::load_file(&user_config)?);
         }
 
         // Try OCTO_SCAFFOLD_CONFIG environment variable (highest priority)

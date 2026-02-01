@@ -31,6 +31,7 @@
 
 use anyhow::{Context, Result};
 use clap::Parser;
+use fork::{Fork, daemon};
 use fuser::{
     FUSE_ROOT_ID, FileAttr, FileType, Filesystem, MountOption, ReplyAttr, ReplyData,
     ReplyDirectory, ReplyEntry, Request,
@@ -38,6 +39,7 @@ use fuser::{
 use glob::Pattern;
 use log::{debug, error, info, warn};
 use octo::local::{GuardConfig, GuardPolicy, SandboxConfig};
+use rustix::process::getuid;
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::os::unix::fs::MetadataExt;
@@ -142,7 +144,9 @@ impl GuardedFs {
         let policy_patterns: Vec<(Pattern, GuardPolicy)> = config
             .policy
             .iter()
-            .filter_map(|(pattern, policy)| Pattern::new(pattern).ok().map(|p| (p, policy.clone())))
+            .filter_map(|(pattern, policy): (&String, &GuardPolicy)| {
+                Pattern::new(pattern).ok().map(|p| (p, policy.clone()))
+            })
             .collect();
 
         let mut fs = Self {
@@ -298,7 +302,7 @@ impl GuardedFs {
         let path_str = path.to_string_lossy();
 
         for (pattern, policy) in &self.policy_patterns {
-            if pattern.matches(&path_str) {
+            if pattern.matches(path_str.as_ref()) {
                 return policy.clone();
             }
         }
@@ -315,10 +319,10 @@ impl GuardedFs {
         };
 
         let approvals = self.approvals.read().unwrap();
-        if let Some(expiry) = approvals.get(&key) {
-            if *expiry > SystemTime::now() {
-                return true;
-            }
+        if let Some(expiry) = approvals.get(&key)
+            && *expiry > SystemTime::now()
+        {
+            return true;
         }
         false
     }
@@ -359,18 +363,17 @@ impl GuardedFs {
                 .await
             {
                 Ok(response) => {
-                    if response.status().is_success() {
-                        if let Ok(result) = response.json::<serde_json::Value>().await {
-                            if let Some(action) = result.get("action").and_then(|a| a.as_str()) {
-                                let approved = action == "allow_once" || action == "allow_session";
+                    if response.status().is_success()
+                        && let Ok(result) = response.json::<serde_json::Value>().await
+                        && let Some(action) = result.get("action").and_then(|a| a.as_str())
+                    {
+                        let approved = action == "allow_once" || action == "allow_session";
 
-                                if approved && action == "allow_session" {
-                                    self.cache_approval(path, operation);
-                                }
-
-                                return approved;
-                            }
+                        if approved && action == "allow_session" {
+                            self.cache_approval(path, operation);
                         }
+
+                        return approved;
                     }
                     false
                 }
@@ -588,10 +591,10 @@ impl Filesystem for GuardedFs {
 
 /// Expand ~ to home directory
 fn expand_home(path: &str) -> PathBuf {
-    if path.starts_with("~/") {
-        if let Some(home) = dirs::home_dir() {
-            return home.join(&path[2..]);
-        }
+    if path.starts_with("~/")
+        && let Some(home) = dirs::home_dir()
+    {
+        return home.join(&path[2..]);
     }
     PathBuf::from(path)
 }
@@ -625,7 +628,7 @@ fn main() -> Result<()> {
 
     // Determine mount point
     let mount_point = args.mount.unwrap_or_else(|| {
-        let uid = unsafe { libc::getuid() };
+        let uid = getuid().as_raw();
         PathBuf::from(format!("/tmp/octo-guard-{}", uid))
     });
 
@@ -665,18 +668,18 @@ fn main() -> Result<()> {
     if args.foreground {
         fuser::mount2(fs, &mount_point, &options)?;
     } else {
-        // Daemonize
-        match unsafe { libc::fork() } {
-            -1 => anyhow::bail!("Fork failed"),
-            0 => {
-                // Child process
-                unsafe { libc::setsid() };
+        // Daemonize using the fork crate (handles fork + setsid properly)
+        // daemon(true, true) = don't chdir to /, don't close stdio (we handle logging)
+        match daemon(true, true) {
+            Ok(Fork::Child) => {
+                // Child process - run the FUSE filesystem
                 fuser::mount2(fs, &mount_point, &options)?;
             }
-            pid => {
+            Ok(Fork::Parent(pid)) => {
                 info!("Daemon started with PID {}", pid);
                 return Ok(());
             }
+            Err(_) => anyhow::bail!("Fork failed"),
         }
     }
 

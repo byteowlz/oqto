@@ -16,7 +16,6 @@ import {
 	formatShortcut,
 	useVoiceCommandEmitter,
 } from "@/hooks/use-voice-commands";
-import { resolveReadableId } from "@/lib/session-utils";
 import {
 	AudioLines,
 	Bot,
@@ -43,9 +42,8 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
 		setActiveAppId,
 		locale,
 		setLocale,
-		opencodeSessions,
 		setSelectedChatSessionId,
-		createNewPiChat,
+		createNewChat,
 	} = useApp();
 
 	const { startConversation, startDictation } = useVoiceCommandEmitter();
@@ -96,10 +94,10 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
 	);
 
 	const handleNewChat = useCallback(async () => {
-		await createNewPiChat();
+		await createNewChat();
 		setActiveAppId("sessions");
 		onOpenChange(false);
-	}, [createNewPiChat, setActiveAppId, onOpenChange]);
+	}, [createNewChat, setActiveAppId, onOpenChange]);
 
 	const handleSelectSession = useCallback(
 		(sessionId: string) => {
@@ -237,29 +235,6 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
 					})}
 				</CommandGroup>
 
-				{opencodeSessions.length > 0 && (
-					<>
-						<CommandSeparator />
-						<CommandGroup
-							heading={locale === "de" ? "Letzte Chats" : "Recent Chats"}
-						>
-							{opencodeSessions.slice(0, 5).map((session) => (
-								<CommandItem
-									key={session.id}
-									onSelect={() => handleSelectSession(session.id)}
-								>
-									<MessageSquare className="mr-2 h-4 w-4" />
-									<span className="truncate">
-										{session.title || "Untitled"}
-									</span>
-									<span className="ml-2 text-xs text-muted-foreground font-mono">
-										{resolveReadableId(session.id, session.readable_id)}
-									</span>
-								</CommandItem>
-							))}
-						</CommandGroup>
-					</>
-				)}
 			</CommandList>
 		</CommandDialog>
 	);

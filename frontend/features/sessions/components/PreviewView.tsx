@@ -1,10 +1,7 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
-import {
-	fileserverWorkspaceBaseUrl,
-	mainChatFilesBaseUrl,
-} from "@/lib/control-plane-client";
+import { downloadFileMux, readFileMux, writeFileMux } from "@/lib/mux-files";
 import { cn } from "@/lib/utils";
 import {
 	Download,
@@ -29,8 +26,8 @@ import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 interface PreviewViewProps {
 	filePath?: string | null;
 	workspacePath?: string | null;
-	/** Whether this is the main chat preview (uses different API) */
-	isMainChat?: boolean;
+	/** Whether this is the default chat preview (uses different API) */
+	isDefaultChat?: boolean;
 	className?: string;
 	onClose?: () => void;
 	onToggleExpand?: () => void;
@@ -121,9 +118,6 @@ const IMAGE_EXTENSIONS = new Set([
 
 // PDF extension
 const PDF_EXTENSIONS = new Set([".pdf"]);
-
-// Typst extension
-const TYPST_EXTENSIONS = new Set([".typ"]);
 
 // Video extensions
 const VIDEO_EXTENSIONS = new Set([
@@ -227,11 +221,6 @@ function isPdf(filename: string): boolean {
 	return PDF_EXTENSIONS.has(ext);
 }
 
-function isTypst(filename: string): boolean {
-	const ext = filename.substring(filename.lastIndexOf(".")).toLowerCase();
-	return TYPST_EXTENSIONS.has(ext);
-}
-
 function isVideo(filename: string): boolean {
 	const ext = filename.substring(filename.lastIndexOf(".")).toLowerCase();
 	return VIDEO_EXTENSIONS.has(ext);
@@ -242,77 +231,54 @@ function isAudio(filename: string): boolean {
 	return AUDIO_EXTENSIONS.has(ext);
 }
 
-function getFileUrl(
-	baseUrl: string,
-	workspacePath: string | null,
-	path: string,
-): string {
-	const url = new URL(`${baseUrl}/file`, window.location.origin);
-	url.searchParams.set("path", path);
-	if (workspacePath) {
-		url.searchParams.set("workspace_path", workspacePath);
-	}
-	return url.toString();
+function guessMimeType(filename: string): string {
+	const ext = filename.substring(filename.lastIndexOf(".")).toLowerCase();
+	if (ext === ".pdf") return "application/pdf";
+	if (ext === ".png") return "image/png";
+	if (ext === ".jpg" || ext === ".jpeg") return "image/jpeg";
+	if (ext === ".gif") return "image/gif";
+	if (ext === ".webp") return "image/webp";
+	if (ext === ".svg") return "image/svg+xml";
+	if (ext === ".bmp") return "image/bmp";
+	if (ext === ".ico") return "image/x-icon";
+	if (ext === ".mp4") return "video/mp4";
+	if (ext === ".webm") return "video/webm";
+	if (ext === ".ogg" || ext === ".ogv") return "video/ogg";
+	if (ext === ".mov") return "video/quicktime";
+	if (ext === ".avi") return "video/x-msvideo";
+	if (ext === ".mkv") return "video/x-matroska";
+	if (ext === ".m4v") return "video/mp4";
+	if (ext === ".mp3") return "audio/mpeg";
+	if (ext === ".wav") return "audio/wav";
+	if (ext === ".flac") return "audio/flac";
+	if (ext === ".aac") return "audio/aac";
+	if (ext === ".m4a") return "audio/mp4";
+	if (ext === ".opus") return "audio/opus";
+	return "application/octet-stream";
 }
 
-// Alias for backward compatibility
-const getImageUrl = getFileUrl;
-
 async function fetchFileContent(
-	baseUrl: string,
-	workspacePath: string | null,
+	workspacePath: string,
 	path: string,
 ): Promise<string> {
-	const url = new URL(`${baseUrl}/file`, window.location.origin);
-	url.searchParams.set("path", path);
-	if (workspacePath) {
-		url.searchParams.set("workspace_path", workspacePath);
-	}
-	const res = await fetch(url.toString(), {
-		cache: "no-store",
-		credentials: "include",
-	});
-	if (!res.ok) {
-		const text = await res.text().catch(() => res.statusText);
-		throw new Error(text || `Unable to fetch ${path}`);
-	}
-	return res.text();
+	const result = await readFileMux(workspacePath, path);
+	const decoder = new TextDecoder("utf-8");
+	return decoder.decode(result.data);
 }
 
 async function saveFileContent(
-	baseUrl: string,
-	workspacePath: string | null,
+	workspacePath: string,
 	path: string,
 	content: string,
 ): Promise<void> {
-	const url = new URL(`${baseUrl}/file`, window.location.origin);
-	url.searchParams.set("path", path);
-	if (workspacePath) {
-		url.searchParams.set("workspace_path", workspacePath);
-	}
-
-	// Create form data with the file content
-	const formData = new FormData();
-	const blob = new Blob([content], { type: "text/plain" });
-	const filename = path.split("/").pop() || "file";
-	formData.append("file", blob, filename);
-
-	const res = await fetch(url.toString(), {
-		method: "POST",
-		credentials: "include",
-		body: formData,
-	});
-
-	if (!res.ok) {
-		const text = await res.text().catch(() => res.statusText);
-		throw new Error(text || `Unable to save ${path}`);
-	}
+	const encoder = new TextEncoder();
+	await writeFileMux(workspacePath, path, encoder.encode(content).buffer, false);
 }
 
 export function PreviewView({
 	filePath,
 	workspacePath,
-	isMainChat = false,
+	isDefaultChat: _isDefaultChat = false,
 	className,
 	onClose,
 	onToggleExpand,
@@ -327,7 +293,10 @@ export function PreviewView({
 	const [error, setError] = useState<string>("");
 	const [isEditing, setIsEditing] = useState(false);
 	const [isDarkMode, setIsDarkMode] = useState(false);
+	const [binaryUrl, setBinaryUrl] = useState<string | null>(null);
+	const [binaryLoading, setBinaryLoading] = useState(false);
 	const loadingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const binaryUrlRef = useRef<string | null>(null);
 
 	// Check mobile at render time (safe because we only use it client-side in effects)
 	const isMobileRef = useRef(false);
@@ -339,19 +308,8 @@ export function PreviewView({
 	const scrollContainerRef = useRef<HTMLDivElement>(null);
 	const savedScrollTopRef = useRef<number>(0);
 
-	// For main chat, use dedicated API that doesn't need workspace_path
-	const fileserverBaseUrl = isMainChat
-		? mainChatFilesBaseUrl()
-		: workspacePath
-			? fileserverWorkspaceBaseUrl()
-			: null;
-
-	// Cache key: main chat uses a fixed key, workspace uses the path
-	const cacheKeyPrefix = isMainChat ? "__main_chat__" : workspacePath;
-	// For API calls: main chat doesn't need workspace_path (null), workspace does
-	const apiWorkspacePath: string | null = isMainChat
-		? null
-		: (workspacePath ?? null);
+	// Cache key: workspace path is sufficient for mux-only file reads
+	const cacheKeyPrefix = workspacePath ?? null;
 
 	// Detect dark mode
 	useEffect(() => {
@@ -376,7 +334,7 @@ export function PreviewView({
 			loadingTimerRef.current = null;
 		}
 
-		if (!filePath || !fileserverBaseUrl || !cacheKeyPrefix) {
+		if (!filePath || !workspacePath || !cacheKeyPrefix) {
 			setContent("");
 			setEditedContent("");
 			setIsEditing(false);
@@ -421,7 +379,7 @@ export function PreviewView({
 		}, 150);
 
 		// Fetch raw content first (for editing)
-		fetchFileContent(fileserverBaseUrl, apiWorkspacePath, filePath)
+		fetchFileContent(workspacePath, filePath)
 			.then((data) => {
 				// Cache and set raw content immediately
 				setCachedContent(cacheKey, data);
@@ -445,20 +403,69 @@ export function PreviewView({
 				loadingTimerRef.current = null;
 			}
 		};
-	}, [filePath, fileserverBaseUrl, cacheKeyPrefix, apiWorkspacePath]);
+	}, [filePath, workspacePath, cacheKeyPrefix]);
+
+	useEffect(() => {
+		if (binaryUrlRef.current) {
+			URL.revokeObjectURL(binaryUrlRef.current);
+			binaryUrlRef.current = null;
+		}
+		setBinaryUrl(null);
+
+		if (!filePath || !workspacePath) {
+			setBinaryLoading(false);
+			return;
+		}
+
+		const filename = filePath.split("/").pop() || filePath;
+		const isBinary =
+			isPdf(filename) || isImage(filename) || isVideo(filename) || isAudio(filename);
+		if (!isBinary) {
+			setBinaryLoading(false);
+			return;
+		}
+
+		let cancelled = false;
+		setBinaryLoading(true);
+		setError("");
+
+		const loadBinary = async () => {
+			try {
+				const result = await readFileMux(workspacePath, filePath);
+				if (cancelled) return;
+				const blob = new Blob([result.data], { type: guessMimeType(filename) });
+				const url = URL.createObjectURL(blob);
+				binaryUrlRef.current = url;
+				setBinaryUrl(url);
+			} catch (err) {
+				if (!cancelled) {
+					setError(err instanceof Error ? err.message : "Failed to load file");
+				}
+			} finally {
+				if (!cancelled) {
+					setBinaryLoading(false);
+				}
+			}
+		};
+
+		void loadBinary();
+
+		return () => {
+			cancelled = true;
+			if (binaryUrlRef.current) {
+				URL.revokeObjectURL(binaryUrlRef.current);
+				binaryUrlRef.current = null;
+			}
+		};
+	}, [filePath, workspacePath]);
 
 	const handleSave = useCallback(async () => {
-		if (!fileserverBaseUrl || !filePath || !cacheKeyPrefix) return;
+		if (!workspacePath || !filePath || !cacheKeyPrefix) return;
 
 		setSaving(true);
 		setError("");
 		try {
-			await saveFileContent(
-				fileserverBaseUrl,
-				apiWorkspacePath,
-				filePath,
-				editedContent,
-			);
+			await saveFileContent(workspacePath, filePath, editedContent);
 			setContent(editedContent);
 			// Update the cache with the new content
 			const cacheKey = `${cacheKeyPrefix}:${filePath}`;
@@ -470,11 +477,10 @@ export function PreviewView({
 			setSaving(false);
 		}
 	}, [
-		fileserverBaseUrl,
+		workspacePath,
 		filePath,
 		editedContent,
 		cacheKeyPrefix,
-		apiWorkspacePath,
 	]);
 
 	const handleCancel = useCallback(() => {
@@ -523,7 +529,7 @@ export function PreviewView({
 	}
 
 	// Loading state (only shown after delay to avoid flicker)
-	if (showLoading) {
+	if (showLoading || binaryLoading) {
 		return (
 			<div
 				className={cn(
@@ -545,17 +551,10 @@ export function PreviewView({
 	const canEdit = isEditable(filename);
 	const isImageFile = isImage(filename);
 	const isPdfFile = isPdf(filename);
-	const isTypstFile = isTypst(filename);
 	const isVideoFile = isVideo(filename);
 	const isAudioFile = isAudio(filename);
-	const fileUrl =
-		fileserverBaseUrl && cacheKeyPrefix
-			? getFileUrl(fileserverBaseUrl, apiWorkspacePath, filePath)
-			: null;
-	const imageUrl =
-		isImageFile && fileserverBaseUrl && cacheKeyPrefix
-			? getImageUrl(fileserverBaseUrl, apiWorkspacePath, filePath)
-			: null;
+	const fileUrl = binaryUrl;
+	const imageUrl = isImageFile ? binaryUrl : null;
 	const ExpandIcon = isExpanded ? Minimize2 : Maximize2;
 	const expandLabel = isExpanded ? "Collapse preview" : "Expand preview";
 
@@ -580,7 +579,11 @@ export function PreviewView({
 								type="button"
 								variant="ghost"
 								size="sm"
-								onClick={() => window.open(fileUrl, "_blank")}
+								onClick={() => {
+									if (fileUrl) {
+										window.open(fileUrl, "_blank", "noopener");
+									}
+								}}
 								className="h-6 px-1.5 text-xs"
 								title="Open in new tab"
 							>
@@ -591,10 +594,8 @@ export function PreviewView({
 								variant="ghost"
 								size="sm"
 								onClick={() => {
-									const link = document.createElement("a");
-									link.href = fileUrl;
-									link.download = filename;
-									link.click();
+									if (!workspacePath) return;
+									void downloadFileMux(workspacePath, filePath, filename);
 								}}
 								className="h-6 px-1.5 text-xs"
 								title="Download"
@@ -719,7 +720,11 @@ export function PreviewView({
 								type="button"
 								variant="ghost"
 								size="sm"
-								onClick={() => window.open(fileUrl, "_blank")}
+								onClick={() => {
+									if (fileUrl) {
+										window.open(fileUrl, "_blank", "noopener");
+									}
+								}}
 								className="h-6 px-1.5 text-xs"
 								title="Open in new tab"
 							>
@@ -730,10 +735,8 @@ export function PreviewView({
 								variant="ghost"
 								size="sm"
 								onClick={() => {
-									const link = document.createElement("a");
-									link.href = fileUrl;
-									link.download = filename;
-									link.click();
+									if (!workspacePath) return;
+									void downloadFileMux(workspacePath, filePath, filename);
 								}}
 								className="h-6 px-1.5 text-xs"
 								title="Download"
@@ -805,7 +808,11 @@ export function PreviewView({
 								type="button"
 								variant="ghost"
 								size="sm"
-								onClick={() => window.open(fileUrl, "_blank")}
+								onClick={() => {
+									if (fileUrl) {
+										window.open(fileUrl, "_blank", "noopener");
+									}
+								}}
 								className="h-6 px-1.5 text-xs"
 								title="Open in new tab"
 							>
@@ -816,10 +823,8 @@ export function PreviewView({
 								variant="ghost"
 								size="sm"
 								onClick={() => {
-									const link = document.createElement("a");
-									link.href = fileUrl;
-									link.download = filename;
-									link.click();
+									if (!workspacePath) return;
+									void downloadFileMux(workspacePath, filePath, filename);
 								}}
 								className="h-6 px-1.5 text-xs"
 								title="Download"

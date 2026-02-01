@@ -227,6 +227,34 @@ sync_on_list = true
 # Minimum seconds between sync attempts.
 sync_interval_seconds = 120
 
+[onboarding_templates]
+# Repository URL for onboarding templates (defaults to octo-templates).
+# repo_url = "https://github.com/byteowlz/octo-templates"
+# Local templates path (overrides repo_url when set).
+# local_path = "/usr/local/share/octo/templates"
+# Cache path for cloned repo (defaults to ~/.local/share/octo/onboarding-templates).
+# cache_path = "/var/lib/octo/onboarding-templates"
+# Sync repository before use.
+sync_enabled = true
+# Minimum seconds between sync attempts.
+sync_interval_seconds = 300
+# Use embedded templates if repo is unavailable.
+use_embedded_fallback = true
+# Branch to use from the repo.
+branch = "main"
+# Subdirectory within repo containing onboarding templates.
+subdirectory = "agents"
+
+[feedback]
+# Public dropbox for issue submissions (readable/writable by all).
+# public_dropbox = "/usr/local/share/octo/issues"
+# Private archive for server owner.
+# private_archive = "/var/lib/octo/issue-archive"
+# Keep public copies after syncing.
+keep_public = true
+# Sync interval in seconds.
+sync_interval_seconds = 60
+
 [scaffold]
 # Agent scaffolding configuration - defines the tool used to create new agent directories
 # from templates. By default uses "byt new" but can be configured for any scaffolding tool.

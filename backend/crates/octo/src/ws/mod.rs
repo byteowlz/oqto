@@ -29,11 +29,11 @@
 //! └───────────────────┘           └───────────────────┘           └───────────────────┘
 //! ```
 
-mod handler;
-mod hub;
+pub mod handler;
+pub mod hub;
 mod opencode_adapter;
-mod types;
+pub mod types;
 
 pub use handler::ws_handler;
 pub use hub::WsHub;
-pub use types::{UiSpotlightStep, WsEvent};
+pub use types::{UiSpotlightStep, WsCommand, WsEvent};

@@ -15,7 +15,7 @@ export function opencodeProxyBaseUrl(sessionId: string) {
 }
 
 export function terminalProxyPath(sessionId: string) {
-	return `/session/${sessionId}/term`;
+	return `/api/session/${sessionId}/term`;
 }
 
 export function fileserverProxyBaseUrl(sessionId: string) {
@@ -26,7 +26,7 @@ export function fileserverWorkspaceBaseUrl() {
 	return controlPlaneApiUrl("/api/workspace/files");
 }
 
-export function mainChatFilesBaseUrl() {
+export function defaultChatFilesBaseUrl() {
 	return controlPlaneApiUrl("/api/main/files");
 }
 
@@ -41,7 +41,7 @@ export function workspaceFileUrl(workspacePath: string, path: string): string {
 }
 
 export function terminalWorkspaceProxyPath(workspacePath: string) {
-	return `/workspace/term?workspace_path=${encodeURIComponent(workspacePath)}`;
+	return `/api/workspace/term?workspace_path=${encodeURIComponent(workspacePath)}`;
 }
 
 export function memoriesWorkspaceBaseUrl(workspacePath: string) {

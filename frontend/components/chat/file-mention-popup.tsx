@@ -1,9 +1,10 @@
 "use client";
 
-import { fileserverWorkspaceBaseUrl } from "@/lib/control-plane-client";
+import { fetchFileTreeMux } from "@/lib/mux-files";
+import { normalizeWorkspacePath } from "@/lib/session-utils";
 import { cn } from "@/lib/utils";
 import { File, Folder, Loader2 } from "lucide-react";
-import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 export interface FileAttachment {
 	id: string;
@@ -24,6 +25,7 @@ interface FileNode {
 	name: string;
 	path: string;
 	type: "file" | "directory";
+	children?: FileNode[];
 }
 
 interface FileMentionPopupProps {
@@ -33,16 +35,6 @@ interface FileMentionPopupProps {
 	onSelect: (file: FileAttachment) => void;
 	onClose: () => void;
 	className?: string;
-}
-
-// Flatten file tree for searching
-function flattenTree(nodes: FileNode[], result: FileNode[] = []): FileNode[] {
-	for (const node of nodes) {
-		if (node.type === "file") {
-			result.push(node);
-		}
-	}
-	return result;
 }
 
 // Simple fuzzy match
@@ -75,26 +67,6 @@ function matchScore(query: string, text: string): number {
 	return 10;
 }
 
-async function fetchAllFiles(
-	baseUrl: string,
-	workspacePath: string,
-): Promise<FileNode[]> {
-	const url = new URL(`${baseUrl}/tree`, window.location.origin);
-	url.searchParams.set("path", ".");
-	url.searchParams.set("workspace_path", workspacePath);
-	url.searchParams.set("recursive", "true");
-
-	const res = await fetch(url.toString(), {
-		credentials: "include",
-	});
-
-	if (!res.ok) {
-		throw new Error("Failed to fetch files");
-	}
-
-	return res.json();
-}
-
 // Recursively collect all files from a tree
 function collectAllFiles(nodes: FileNode[], prefix = ""): FileNode[] {
 	const result: FileNode[] = [];
@@ -104,8 +76,9 @@ function collectAllFiles(nodes: FileNode[], prefix = ""): FileNode[] {
 		if (node.type === "file") {
 			result.push({ ...node, path: fullPath });
 		}
-		// Note: Backend tree endpoint may not return nested children in single call
-		// In that case, files are already flat
+		if (node.children && node.children.length > 0) {
+			result.push(...collectAllFiles(node.children, fullPath));
+		}
 	}
 
 	return result;
@@ -124,12 +97,14 @@ export const FileMentionPopup = memo(function FileMentionPopup({
 	const [error, setError] = useState<string | null>(null);
 	const [selectedIndex, setSelectedIndex] = useState(0);
 	const listRef = useRef<HTMLDivElement>(null);
-
-	const fileserverBaseUrl = workspacePath ? fileserverWorkspaceBaseUrl() : null;
+	const normalizedWorkspacePath = useMemo(
+		() => normalizeWorkspacePath(workspacePath),
+		[workspacePath],
+	);
 
 	// Load files when popup opens
 	useEffect(() => {
-		if (!isOpen || !fileserverBaseUrl || !workspacePath) {
+		if (!isOpen || !normalizedWorkspacePath) {
 			setFiles([]);
 			return;
 		}
@@ -137,7 +112,7 @@ export const FileMentionPopup = memo(function FileMentionPopup({
 		setLoading(true);
 		setError(null);
 
-		fetchAllFiles(fileserverBaseUrl, workspacePath)
+		fetchFileTreeMux(normalizedWorkspacePath, ".", 10, false)
 			.then((data) => {
 				// Flatten and collect all files
 				const allFiles = collectAllFiles(data);
@@ -149,7 +124,7 @@ export const FileMentionPopup = memo(function FileMentionPopup({
 			.finally(() => {
 				setLoading(false);
 			});
-	}, [isOpen, fileserverBaseUrl, workspacePath]);
+	}, [isOpen, workspacePath]);
 
 	// Filter and sort files based on query
 	const filteredFiles = files

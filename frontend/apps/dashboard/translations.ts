@@ -34,7 +34,7 @@ const translations: Record<"de" | "en", DashboardTranslations> = {
 		noFeeds: "Noch keine Feeds.",
 		layout: "Layout",
 		customCards: "Custom Cards",
-		notice: "Config in .octo/ for the Main Chat workspace.",
+		notice: "Config in .octo/ for the Default Chat workspace.",
 	},
 	en: {
 		title: "Dashboard",
@@ -52,7 +52,7 @@ const translations: Record<"de" | "en", DashboardTranslations> = {
 		noFeeds: "No feeds added yet.",
 		layout: "Layout",
 		customCards: "Custom Cards",
-		notice: "Config lives in .octo/ for the Main Chat workspace.",
+		notice: "Config lives in .octo/ for the Default Chat workspace.",
 	},
 };
 

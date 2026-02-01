@@ -41,9 +41,11 @@
 //! ```
 
 use anyhow::{Context, Result};
+use chrono::TimeZone;
 use clap::Parser;
 use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
+use sqlx::Row;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::Stdio;
@@ -55,6 +57,7 @@ use tokio::sync::{Mutex, RwLock, broadcast};
 
 use octo::local::SandboxConfig;
 use octo::runner::client::DEFAULT_SOCKET_PATTERN;
+use octo::runner::pi_manager::{PiManagerConfig, PiSessionManager};
 use octo::runner::protocol::*;
 
 // ============================================================================
@@ -352,6 +355,8 @@ struct Runner {
     binaries: SessionBinaries,
     /// User configuration (paths, etc.)
     user_config: RunnerUserConfig,
+    /// Pi session manager (manages Pi agent processes).
+    pi_manager: Arc<PiSessionManager>,
 }
 
 impl Runner {
@@ -359,6 +364,7 @@ impl Runner {
         sandbox_config: Option<SandboxConfig>,
         binaries: SessionBinaries,
         user_config: RunnerUserConfig,
+        pi_manager: Arc<PiSessionManager>,
     ) -> Self {
         let (shutdown_tx, _) = broadcast::channel(1);
         Self {
@@ -367,6 +373,7 @@ impl Runner {
             sandbox_config,
             binaries,
             user_config,
+            pi_manager,
         }
     }
 
@@ -433,6 +440,7 @@ impl Runner {
             // ================================================================
             RunnerRequest::ListMainChatSessions => self.list_main_chat_sessions().await,
             RunnerRequest::GetMainChatMessages(r) => self.get_main_chat_messages(r).await,
+            RunnerRequest::GetWorkspaceChatMessages(r) => self.get_workspace_chat_messages(r).await,
 
             // ================================================================
             // Memory operations (user-plane)
@@ -450,6 +458,75 @@ impl Runner {
                 self.get_opencode_session_messages(r).await
             }
             RunnerRequest::UpdateOpencodeSession(r) => self.update_opencode_session(r).await,
+
+            // ================================================================
+            // Pi session management operations
+            // ================================================================
+            // Session Lifecycle
+            RunnerRequest::PiCreateSession(r) => self.pi_create_session(r).await,
+            RunnerRequest::PiCloseSession(r) => self.pi_close_session(r).await,
+            RunnerRequest::PiNewSession(r) => self.pi_new_session(r).await,
+            RunnerRequest::PiSwitchSession(r) => self.pi_switch_session(r).await,
+            RunnerRequest::PiListSessions => self.pi_list_sessions().await,
+            RunnerRequest::PiSubscribe(_) => {
+                // Handled specially in handle_connection since it streams
+                error_response(
+                    ErrorCode::Internal,
+                    "PiSubscribe must be handled via streaming",
+                )
+            }
+            RunnerRequest::PiUnsubscribe(r) => self.pi_unsubscribe(r).await,
+
+            // Prompting
+            RunnerRequest::PiPrompt(r) => self.pi_prompt(r).await,
+            RunnerRequest::PiSteer(r) => self.pi_steer(r).await,
+            RunnerRequest::PiFollowUp(r) => self.pi_follow_up(r).await,
+            RunnerRequest::PiAbort(r) => self.pi_abort(r).await,
+
+            // State & Messages
+            RunnerRequest::PiGetState(r) => self.pi_get_state(r).await,
+            RunnerRequest::PiGetMessages(r) => self.pi_get_messages(r).await,
+            RunnerRequest::PiGetSessionStats(r) => self.pi_get_session_stats(r).await,
+            RunnerRequest::PiGetLastAssistantText(r) => self.pi_get_last_assistant_text(r).await,
+
+            // Model Management
+            RunnerRequest::PiSetModel(r) => self.pi_set_model(r).await,
+            RunnerRequest::PiCycleModel(r) => self.pi_cycle_model(r).await,
+            RunnerRequest::PiGetAvailableModels(r) => self.pi_get_available_models(r).await,
+
+            // Thinking Level
+            RunnerRequest::PiSetThinkingLevel(r) => self.pi_set_thinking_level(r).await,
+            RunnerRequest::PiCycleThinkingLevel(r) => self.pi_cycle_thinking_level(r).await,
+
+            // Compaction
+            RunnerRequest::PiCompact(r) => self.pi_compact(r).await,
+            RunnerRequest::PiSetAutoCompaction(r) => self.pi_set_auto_compaction(r).await,
+
+            // Queue Modes
+            RunnerRequest::PiSetSteeringMode(r) => self.pi_set_steering_mode(r).await,
+            RunnerRequest::PiSetFollowUpMode(r) => self.pi_set_follow_up_mode(r).await,
+
+            // Retry
+            RunnerRequest::PiSetAutoRetry(r) => self.pi_set_auto_retry(r).await,
+            RunnerRequest::PiAbortRetry(r) => self.pi_abort_retry(r).await,
+
+            // Forking
+            RunnerRequest::PiFork(r) => self.pi_fork(r).await,
+            RunnerRequest::PiGetForkMessages(r) => self.pi_get_fork_messages(r).await,
+
+            // Session Metadata
+            RunnerRequest::PiSetSessionName(r) => self.pi_set_session_name(r).await,
+            RunnerRequest::PiExportHtml(r) => self.pi_export_html(r).await,
+
+            // Commands/Skills
+            RunnerRequest::PiGetCommands(r) => self.pi_get_commands(r).await,
+
+            // Bash
+            RunnerRequest::PiBash(r) => self.pi_bash(r).await,
+            RunnerRequest::PiAbortBash(r) => self.pi_abort_bash(r).await,
+
+            // Extension UI
+            RunnerRequest::PiExtensionUiResponse(r) => self.pi_extension_ui_response(r).await,
         }
     }
 
@@ -946,15 +1023,14 @@ impl Runner {
         };
 
         // Create parent directories if requested
-        if req.create_parents {
-            if let Some(parent) = path.parent() {
-                if let Err(e) = tokio::fs::create_dir_all(parent).await {
-                    return error_response(
-                        ErrorCode::IoError,
-                        format!("Failed to create parent directories: {}", e),
-                    );
-                }
-            }
+        if req.create_parents
+            && let Some(parent) = path.parent()
+            && let Err(e) = tokio::fs::create_dir_all(parent).await
+        {
+            return error_response(
+                ErrorCode::IoError,
+                format!("Failed to create parent directories: {}", e),
+            );
         }
 
         match tokio::fs::write(path, &content).await {
@@ -1415,19 +1491,409 @@ impl Runner {
     // ========================================================================
 
     async fn list_main_chat_sessions(&self) -> RunnerResponse {
-        // TODO: List Pi session files from ~/.pi/agent/sessions/
-        RunnerResponse::MainChatSessionList(MainChatSessionListResponse {
-            sessions: Vec::new(),
-        })
+        let Some(db_path) = octo::history::hstry_db_path() else {
+            return RunnerResponse::MainChatSessionList(MainChatSessionListResponse {
+                sessions: Vec::new(),
+            });
+        };
+
+        let pool = match octo::history::repository::open_hstry_pool(&db_path).await {
+            Ok(pool) => pool,
+            Err(e) => {
+                return error_response(ErrorCode::IoError, format!("Failed to open hstry DB: {e}"));
+            }
+        };
+
+        let rows = match sqlx::query(
+            r#"
+            SELECT
+              c.id AS id,
+              c.external_id AS external_id,
+              c.title AS title,
+              c.created_at AS created_at,
+              c.updated_at AS updated_at,
+              (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id) AS message_count
+            FROM conversations c
+            WHERE c.source_id = 'pi'
+            ORDER BY COALESCE(c.updated_at, c.created_at) DESC
+            "#,
+        )
+        .fetch_all(&pool)
+        .await
+        {
+            Ok(rows) => rows,
+            Err(e) => {
+                return error_response(
+                    ErrorCode::IoError,
+                    format!("Failed to query hstry conversations: {e}"),
+                );
+            }
+        };
+
+        let mut sessions = Vec::with_capacity(rows.len());
+        for row in rows {
+            let id: String = row.get("id");
+            let external_id: Option<String> = row.get("external_id");
+            let title: Option<String> = row.get("title");
+            let created_at: i64 = row.get("created_at");
+            let updated_at: Option<i64> = row.get("updated_at");
+            let message_count: i64 = row.get("message_count");
+
+            let session_id = external_id.unwrap_or(id);
+            let started_at = chrono::Utc
+                .timestamp_opt(created_at, 0)
+                .single()
+                .map(|dt| dt.to_rfc3339())
+                .unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
+
+            let modified_at = updated_at.unwrap_or(created_at) * 1000;
+
+            sessions.push(MainChatSessionInfo {
+                id: session_id,
+                title,
+                message_count: message_count.max(0) as usize,
+                size: 0,
+                modified_at,
+                started_at,
+            });
+        }
+
+        RunnerResponse::MainChatSessionList(MainChatSessionListResponse { sessions })
     }
 
     async fn get_main_chat_messages(&self, req: GetMainChatMessagesRequest) -> RunnerResponse {
-        // TODO: Parse Pi session .jsonl file
-        let _ = req;
-        error_response(
-            ErrorCode::Internal,
-            "Main chat message retrieval not yet implemented",
+        let Some(db_path) = octo::history::hstry_db_path() else {
+            return RunnerResponse::MainChatMessages(MainChatMessagesResponse {
+                session_id: req.session_id,
+                messages: Vec::new(),
+            });
+        };
+
+        let pool = match octo::history::repository::open_hstry_pool(&db_path).await {
+            Ok(pool) => pool,
+            Err(e) => {
+                return error_response(ErrorCode::IoError, format!("Failed to open hstry DB: {e}"));
+            }
+        };
+
+        let conv_row = match sqlx::query(
+            r#"
+            SELECT id, external_id
+            FROM conversations
+            WHERE source_id = 'pi' AND (external_id = ? OR readable_id = ? OR id = ?)
+            LIMIT 1
+            "#,
         )
+        .bind(&req.session_id)
+        .bind(&req.session_id)
+        .bind(&req.session_id)
+        .fetch_optional(&pool)
+        .await
+        {
+            Ok(row) => row,
+            Err(e) => {
+                return error_response(
+                    ErrorCode::IoError,
+                    format!("Failed to resolve conversation: {e}"),
+                );
+            }
+        };
+
+        let Some(conv_row) = conv_row else {
+            return RunnerResponse::MainChatMessages(MainChatMessagesResponse {
+                session_id: req.session_id,
+                messages: Vec::new(),
+            });
+        };
+
+        let conversation_id: String = match conv_row.try_get("id") {
+            Ok(v) => v,
+            Err(e) => {
+                return error_response(
+                    ErrorCode::IoError,
+                    format!("Failed to read conversation id: {e}"),
+                );
+            }
+        };
+
+        let session_id: String = match conv_row.try_get::<Option<String>, _>("external_id") {
+            Ok(Some(v)) => v,
+            _ => req.session_id.clone(),
+        };
+
+        let rows = if let Some(limit) = req.limit {
+            match sqlx::query(
+                r#"
+                SELECT idx, role, content, created_at, parts_json
+                FROM messages
+                WHERE conversation_id = ?
+                ORDER BY idx DESC
+                LIMIT ?
+                "#,
+            )
+            .bind(&conversation_id)
+            .bind(limit as i64)
+            .fetch_all(&pool)
+            .await
+            {
+                Ok(rows) => {
+                    let mut rows = rows;
+                    rows.reverse();
+                    rows
+                }
+                Err(e) => {
+                    return error_response(
+                        ErrorCode::IoError,
+                        format!("Failed to load messages: {e}"),
+                    );
+                }
+            }
+        } else {
+            match sqlx::query(
+                r#"
+                SELECT idx, role, content, created_at, parts_json
+                FROM messages
+                WHERE conversation_id = ?
+                ORDER BY idx
+                "#,
+            )
+            .bind(&conversation_id)
+            .fetch_all(&pool)
+            .await
+            {
+                Ok(rows) => rows,
+                Err(e) => {
+                    return error_response(
+                        ErrorCode::IoError,
+                        format!("Failed to load messages: {e}"),
+                    );
+                }
+            }
+        };
+
+        let mut messages = Vec::with_capacity(rows.len());
+        for row in rows {
+            let idx: i64 = row.get("idx");
+            let role_raw: String = row.get("role");
+            let content_raw: String = row.get("content");
+            let created_at: i64 = row.get("created_at");
+            let parts_json: Option<String> = row.try_get("parts_json").ok();
+
+            let role = match role_raw.as_str() {
+                "user" => "user",
+                "assistant" => "assistant",
+                "system" => "system",
+                "tool" | "toolResult" => "assistant",
+                _ => "assistant",
+            }
+            .to_string();
+
+            let content = if let Some(parts_json) = parts_json.as_deref()
+                && let Ok(v) = serde_json::from_str::<serde_json::Value>(parts_json)
+                && v.is_array()
+            {
+                v
+            } else if !content_raw.trim().is_empty() {
+                serde_json::json!([{ "type": "text", "text": content_raw }])
+            } else {
+                serde_json::json!([])
+            };
+
+            messages.push(MainChatMessage {
+                id: idx.to_string(),
+                role,
+                content,
+                timestamp: created_at * 1000,
+            });
+        }
+
+        RunnerResponse::MainChatMessages(MainChatMessagesResponse {
+            session_id,
+            messages,
+        })
+    }
+
+    async fn get_workspace_chat_messages(
+        &self,
+        req: GetWorkspaceChatMessagesRequest,
+    ) -> RunnerResponse {
+        let Some(db_path) = octo::history::hstry_db_path() else {
+            return RunnerResponse::WorkspaceChatMessages(MainChatMessagesResponse {
+                session_id: req.session_id,
+                messages: Vec::new(),
+            });
+        };
+
+        let pool = match octo::history::repository::open_hstry_pool(&db_path).await {
+            Ok(pool) => pool,
+            Err(e) => {
+                return error_response(ErrorCode::IoError, format!("Failed to open hstry DB: {e}"));
+            }
+        };
+
+        let conv_row = match sqlx::query(
+            r#"
+            SELECT id, external_id
+            FROM conversations
+            WHERE source_id = 'pi'
+              AND (external_id = ? OR readable_id = ? OR id = ?)
+              AND workspace = ?
+            LIMIT 1
+            "#,
+        )
+        .bind(&req.session_id)
+        .bind(&req.session_id)
+        .bind(&req.session_id)
+        .bind(&req.workspace_path)
+        .fetch_optional(&pool)
+        .await
+        {
+            Ok(row) => row,
+            Err(e) => {
+                return error_response(
+                    ErrorCode::IoError,
+                    format!("Failed to resolve conversation: {e}"),
+                );
+            }
+        };
+
+        let conv_row = if let Some(row) = conv_row {
+            Some(row)
+        } else {
+            match sqlx::query(
+                r#"
+                SELECT id, external_id
+                FROM conversations
+                WHERE source_id = 'pi' AND (external_id = ? OR readable_id = ? OR id = ?)
+                LIMIT 1
+                "#,
+            )
+            .bind(&req.session_id)
+            .bind(&req.session_id)
+            .bind(&req.session_id)
+            .fetch_optional(&pool)
+            .await
+            {
+                Ok(row) => row,
+                Err(e) => {
+                    return error_response(
+                        ErrorCode::IoError,
+                        format!("Failed to resolve conversation: {e}"),
+                    );
+                }
+            }
+        };
+
+        let Some(conv_row) = conv_row else {
+            return RunnerResponse::WorkspaceChatMessages(MainChatMessagesResponse {
+                session_id: req.session_id,
+                messages: Vec::new(),
+            });
+        };
+
+        let conversation_id: String = match conv_row.try_get("id") {
+            Ok(v) => v,
+            Err(e) => {
+                return error_response(
+                    ErrorCode::IoError,
+                    format!("Failed to read conversation id: {e}"),
+                );
+            }
+        };
+
+        let session_id: String = match conv_row.try_get::<Option<String>, _>("external_id") {
+            Ok(Some(v)) => v,
+            _ => req.session_id.clone(),
+        };
+
+        let rows = if let Some(limit) = req.limit {
+            match sqlx::query(
+                r#"
+                SELECT idx, role, content, created_at, parts_json
+                FROM messages
+                WHERE conversation_id = ?
+                ORDER BY idx DESC
+                LIMIT ?
+                "#,
+            )
+            .bind(&conversation_id)
+            .bind(limit as i64)
+            .fetch_all(&pool)
+            .await
+            {
+                Ok(rows) => {
+                    let mut rows = rows;
+                    rows.reverse();
+                    rows
+                }
+                Err(e) => {
+                    return error_response(
+                        ErrorCode::IoError,
+                        format!("Failed to load messages: {e}"),
+                    );
+                }
+            }
+        } else {
+            match sqlx::query(
+                r#"
+                SELECT idx, role, content, created_at, parts_json
+                FROM messages
+                WHERE conversation_id = ?
+                ORDER BY idx
+                "#,
+            )
+            .bind(&conversation_id)
+            .fetch_all(&pool)
+            .await
+            {
+                Ok(rows) => rows,
+                Err(e) => {
+                    return error_response(
+                        ErrorCode::IoError,
+                        format!("Failed to load messages: {e}"),
+                    );
+                }
+            }
+        };
+
+        let mut messages = Vec::with_capacity(rows.len());
+        for row in rows {
+            let idx: i64 = row.get("idx");
+            let role_raw: String = row.get("role");
+            let content_raw: String = row.get("content");
+            let created_at: i64 = row.get("created_at");
+            let parts_json: Option<String> = row.try_get("parts_json").ok();
+
+            let role = match role_raw.as_str() {
+                "user" => "user",
+                "assistant" => "assistant",
+                "system" => "system",
+                "tool" | "toolResult" => "assistant",
+                _ => "assistant",
+            }
+            .to_string();
+
+            let content = if let Some(parts_json) = parts_json.as_deref()
+                && let Ok(v) = serde_json::from_str::<serde_json::Value>(parts_json)
+                && v.is_array()
+            {
+                v
+            } else {
+                serde_json::json!([{ "type": "text", "text": content_raw }])
+            };
+
+            messages.push(MainChatMessage {
+                id: format!("msg_{}", idx),
+                role,
+                content,
+                timestamp: created_at * 1000,
+            });
+        }
+
+        RunnerResponse::WorkspaceChatMessages(MainChatMessagesResponse {
+            session_id,
+            messages,
+        })
     }
 
     // ========================================================================
@@ -1478,10 +1944,10 @@ impl Runner {
                     .into_iter()
                     .filter(|s| {
                         // Filter by workspace if specified
-                        if let Some(ref ws) = req.workspace {
-                            if s.workspace_path != *ws {
-                                return false;
-                            }
+                        if let Some(ref ws) = req.workspace
+                            && s.workspace_path != *ws
+                        {
+                            return false;
                         }
                         // Filter out child sessions unless explicitly included
                         if !req.include_children && s.is_child {
@@ -1650,6 +2116,837 @@ impl Runner {
         }
     }
 
+    // ========================================================================
+    // Pi Session Management Operations
+    // ========================================================================
+
+    /// Create or resume a Pi session.
+    async fn pi_create_session(&self, req: PiCreateSessionRequest) -> RunnerResponse {
+        info!(
+            "pi_create_session: session_id={}, cwd={:?}",
+            req.session_id, req.config.cwd
+        );
+
+        // Convert protocol config to pi_manager config
+        let pi_config = octo::runner::pi_manager::PiSessionConfig {
+            cwd: req.config.cwd,
+            provider: req.config.provider,
+            model: req.config.model,
+            session_file: req.config.session_file,
+            continue_session: req.config.continue_session,
+            system_prompt_files: req.config.system_prompt_files,
+            env: req.config.env,
+        };
+
+        match self
+            .pi_manager
+            .get_or_create_session(&req.session_id, pi_config)
+            .await
+        {
+            Ok(()) => RunnerResponse::PiSessionCreated(PiSessionCreatedResponse {
+                session_id: req.session_id,
+            }),
+            Err(e) => error_response(
+                ErrorCode::Internal,
+                format!("Failed to create Pi session: {}", e),
+            ),
+        }
+    }
+
+    /// Send a prompt to a Pi session.
+    async fn pi_prompt(&self, req: PiPromptRequest) -> RunnerResponse {
+        debug!(
+            "pi_prompt: session_id={}, message_len={}",
+            req.session_id,
+            req.message.len()
+        );
+
+        match self.pi_manager.prompt(&req.session_id, &req.message).await {
+            Ok(()) => RunnerResponse::PiCommandAck {
+                session_id: req.session_id,
+            },
+            Err(e) => error_response(
+                ErrorCode::PiSessionNotFound,
+                format!("Failed to send prompt: {}", e),
+            ),
+        }
+    }
+
+    /// Send a steering message to interrupt a Pi session.
+    async fn pi_steer(&self, req: PiSteerRequest) -> RunnerResponse {
+        debug!(
+            "pi_steer: session_id={}, message_len={}",
+            req.session_id,
+            req.message.len()
+        );
+
+        match self.pi_manager.steer(&req.session_id, &req.message).await {
+            Ok(()) => RunnerResponse::PiCommandAck {
+                session_id: req.session_id,
+            },
+            Err(e) => error_response(
+                ErrorCode::PiSessionNotFound,
+                format!("Failed to send steer: {}", e),
+            ),
+        }
+    }
+
+    /// Queue a follow-up message for a Pi session.
+    async fn pi_follow_up(&self, req: PiFollowUpRequest) -> RunnerResponse {
+        debug!(
+            "pi_follow_up: session_id={}, message_len={}",
+            req.session_id,
+            req.message.len()
+        );
+
+        match self
+            .pi_manager
+            .follow_up(&req.session_id, &req.message)
+            .await
+        {
+            Ok(()) => RunnerResponse::PiCommandAck {
+                session_id: req.session_id,
+            },
+            Err(e) => error_response(
+                ErrorCode::PiSessionNotFound,
+                format!("Failed to send follow_up: {}", e),
+            ),
+        }
+    }
+
+    /// Abort a Pi session's current operation.
+    async fn pi_abort(&self, req: PiAbortRequest) -> RunnerResponse {
+        debug!("pi_abort: session_id={}", req.session_id);
+
+        match self.pi_manager.abort(&req.session_id).await {
+            Ok(()) => RunnerResponse::PiCommandAck {
+                session_id: req.session_id,
+            },
+            Err(e) => error_response(
+                ErrorCode::PiSessionNotFound,
+                format!("Failed to abort: {}", e),
+            ),
+        }
+    }
+
+    /// Compact a Pi session's conversation.
+    async fn pi_compact(&self, req: PiCompactRequest) -> RunnerResponse {
+        debug!(
+            "pi_compact: session_id={}, has_instructions={}",
+            req.session_id,
+            req.instructions.is_some()
+        );
+
+        match self
+            .pi_manager
+            .compact(&req.session_id, req.instructions.as_deref())
+            .await
+        {
+            Ok(()) => RunnerResponse::PiCommandAck {
+                session_id: req.session_id,
+            },
+            Err(e) => error_response(
+                ErrorCode::PiSessionNotFound,
+                format!("Failed to compact: {}", e),
+            ),
+        }
+    }
+
+    /// Unsubscribe from a Pi session's events.
+    /// Note: Actual unsubscription happens when the broadcast receiver is dropped.
+    /// This is just an acknowledgment.
+    async fn pi_unsubscribe(&self, req: PiUnsubscribeRequest) -> RunnerResponse {
+        debug!("pi_unsubscribe: session_id={}", req.session_id);
+        // The actual unsubscription happens when the receiver is dropped on the client side
+        // This just acknowledges the request
+        RunnerResponse::Ok
+    }
+
+    /// List all active Pi sessions.
+    async fn pi_list_sessions(&self) -> RunnerResponse {
+        debug!("pi_list_sessions");
+
+        let sessions = self.pi_manager.list_sessions().await;
+        let sessions: Vec<PiSessionInfo> = sessions
+            .into_iter()
+            .map(|s| PiSessionInfo {
+                session_id: s.session_id,
+                state: match s.state {
+                    octo::runner::pi_manager::PiSessionState::Starting => PiSessionState::Starting,
+                    octo::runner::pi_manager::PiSessionState::Idle => PiSessionState::Idle,
+                    octo::runner::pi_manager::PiSessionState::Streaming => {
+                        PiSessionState::Streaming
+                    }
+                    octo::runner::pi_manager::PiSessionState::Compacting => {
+                        PiSessionState::Compacting
+                    }
+                    octo::runner::pi_manager::PiSessionState::Stopping => PiSessionState::Stopping,
+                },
+                last_activity: s.last_activity,
+                subscriber_count: s.subscriber_count,
+                cwd: PathBuf::new(), // TODO: expose from pi_manager
+                provider: None,
+                model: None,
+            })
+            .collect();
+
+        RunnerResponse::PiSessionList(PiSessionListResponse { sessions })
+    }
+
+    /// Get the state of a Pi session.
+    async fn pi_get_state(&self, req: PiGetStateRequest) -> RunnerResponse {
+        debug!("pi_get_state: session_id={}", req.session_id);
+
+        match self.pi_manager.get_state(&req.session_id).await {
+            Ok(state) => RunnerResponse::PiState(PiStateResponse {
+                session_id: req.session_id,
+                state,
+            }),
+            Err(e) => error_response(
+                ErrorCode::PiSessionNotFound,
+                format!("Failed to get state: {}", e),
+            ),
+        }
+    }
+
+    /// Close a Pi session.
+    async fn pi_close_session(&self, req: PiCloseSessionRequest) -> RunnerResponse {
+        info!("pi_close_session: session_id={}", req.session_id);
+
+        match self.pi_manager.close_session(&req.session_id).await {
+            Ok(()) => RunnerResponse::PiSessionClosed {
+                session_id: req.session_id,
+            },
+            Err(e) => error_response(
+                ErrorCode::PiSessionNotFound,
+                format!("Failed to close session: {}", e),
+            ),
+        }
+    }
+
+    /// Start a new session within existing Pi process.
+    async fn pi_new_session(&self, req: PiNewSessionRequest) -> RunnerResponse {
+        debug!(
+            "pi_new_session: session_id={}, parent={:?}",
+            req.session_id, req.parent_session
+        );
+
+        match self
+            .pi_manager
+            .new_session(&req.session_id, req.parent_session.as_deref())
+            .await
+        {
+            Ok(()) => RunnerResponse::PiCommandAck {
+                session_id: req.session_id,
+            },
+            Err(e) => error_response(
+                ErrorCode::PiSessionNotFound,
+                format!("Failed to create new session: {}", e),
+            ),
+        }
+    }
+
+    /// Switch to a different session file.
+    async fn pi_switch_session(&self, req: PiSwitchSessionRequest) -> RunnerResponse {
+        debug!(
+            "pi_switch_session: session_id={}, path={}",
+            req.session_id, req.session_path
+        );
+
+        match self
+            .pi_manager
+            .switch_session(&req.session_id, &req.session_path)
+            .await
+        {
+            Ok(()) => RunnerResponse::PiCommandAck {
+                session_id: req.session_id,
+            },
+            Err(e) => error_response(
+                ErrorCode::PiSessionNotFound,
+                format!("Failed to switch session: {}", e),
+            ),
+        }
+    }
+
+    /// Get all messages from a Pi session.
+    async fn pi_get_messages(&self, req: PiGetMessagesRequest) -> RunnerResponse {
+        debug!("pi_get_messages: session_id={}", req.session_id);
+
+        match self.pi_manager.get_messages(&req.session_id).await {
+            Ok(messages) => {
+                // Parse JSON response to typed AgentMessage vec
+                let messages_vec: Vec<octo::pi::AgentMessage> = messages
+                    .as_array()
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| serde_json::from_value(v.clone()).ok())
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                RunnerResponse::PiMessages(PiMessagesResponse {
+                    session_id: req.session_id,
+                    messages: messages_vec,
+                })
+            }
+            Err(e) => error_response(
+                ErrorCode::PiSessionNotFound,
+                format!("Failed to get messages: {}", e),
+            ),
+        }
+    }
+
+    /// Get session statistics.
+    async fn pi_get_session_stats(&self, req: PiGetSessionStatsRequest) -> RunnerResponse {
+        debug!("pi_get_session_stats: session_id={}", req.session_id);
+
+        match self.pi_manager.get_session_stats(&req.session_id).await {
+            Ok(stats) => RunnerResponse::PiSessionStats(PiSessionStatsResponse {
+                session_id: req.session_id,
+                stats,
+            }),
+            Err(e) => error_response(
+                ErrorCode::PiSessionNotFound,
+                format!("Failed to get session stats: {}", e),
+            ),
+        }
+    }
+
+    /// Get the last assistant message text.
+    async fn pi_get_last_assistant_text(
+        &self,
+        req: PiGetLastAssistantTextRequest,
+    ) -> RunnerResponse {
+        debug!("pi_get_last_assistant_text: session_id={}", req.session_id);
+
+        match self
+            .pi_manager
+            .get_last_assistant_text(&req.session_id)
+            .await
+        {
+            Ok(text) => RunnerResponse::PiLastAssistantText(PiLastAssistantTextResponse {
+                session_id: req.session_id,
+                text,
+            }),
+            Err(e) => error_response(
+                ErrorCode::PiSessionNotFound,
+                format!("Failed to get last assistant text: {}", e),
+            ),
+        }
+    }
+
+    /// Set the model for a Pi session.
+    async fn pi_set_model(&self, req: PiSetModelRequest) -> RunnerResponse {
+        debug!(
+            "pi_set_model: session_id={}, provider={}, model_id={}",
+            req.session_id, req.provider, req.model_id
+        );
+
+        match self
+            .pi_manager
+            .set_model(&req.session_id, &req.provider, &req.model_id)
+            .await
+        {
+            Ok(()) => RunnerResponse::PiCommandAck {
+                session_id: req.session_id,
+            },
+            Err(e) => error_response(
+                ErrorCode::PiSessionNotFound,
+                format!("Failed to set model: {}", e),
+            ),
+        }
+    }
+
+    /// Cycle to the next available model.
+    async fn pi_cycle_model(&self, req: PiCycleModelRequest) -> RunnerResponse {
+        debug!("pi_cycle_model: session_id={}", req.session_id);
+
+        match self.pi_manager.cycle_model(&req.session_id).await {
+            Ok(()) => RunnerResponse::PiCommandAck {
+                session_id: req.session_id,
+            },
+            Err(e) => error_response(
+                ErrorCode::PiSessionNotFound,
+                format!("Failed to cycle model: {}", e),
+            ),
+        }
+    }
+
+    /// Get available models.
+    async fn pi_get_available_models(&self, req: PiGetAvailableModelsRequest) -> RunnerResponse {
+        debug!("pi_get_available_models: session_id={}", req.session_id);
+
+        match self.pi_manager.get_available_models(&req.session_id).await {
+            Ok(models) => {
+                // Parse JSON response to typed PiModel vec
+                let models_vec: Vec<octo::pi::PiModel> = models
+                    .as_array()
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| serde_json::from_value(v.clone()).ok())
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                RunnerResponse::PiAvailableModels(PiAvailableModelsResponse {
+                    session_id: req.session_id,
+                    models: models_vec,
+                })
+            }
+            Err(e) => error_response(
+                ErrorCode::PiSessionNotFound,
+                format!("Failed to get available models: {}", e),
+            ),
+        }
+    }
+
+    /// Set the thinking level.
+    async fn pi_set_thinking_level(&self, req: PiSetThinkingLevelRequest) -> RunnerResponse {
+        debug!(
+            "pi_set_thinking_level: session_id={}, level={}",
+            req.session_id, req.level
+        );
+
+        match self
+            .pi_manager
+            .set_thinking_level(&req.session_id, &req.level)
+            .await
+        {
+            Ok(()) => RunnerResponse::PiThinkingLevelChanged(PiThinkingLevelChangedResponse {
+                session_id: req.session_id,
+                level: req.level,
+            }),
+            Err(e) => error_response(
+                ErrorCode::PiSessionNotFound,
+                format!("Failed to set thinking level: {}", e),
+            ),
+        }
+    }
+
+    /// Cycle through thinking levels.
+    async fn pi_cycle_thinking_level(&self, req: PiCycleThinkingLevelRequest) -> RunnerResponse {
+        debug!("pi_cycle_thinking_level: session_id={}", req.session_id);
+
+        match self.pi_manager.cycle_thinking_level(&req.session_id).await {
+            Ok(()) => {
+                // The actual new level will come via an event; for now acknowledge
+                RunnerResponse::PiCommandAck {
+                    session_id: req.session_id,
+                }
+            }
+            Err(e) => error_response(
+                ErrorCode::PiSessionNotFound,
+                format!("Failed to cycle thinking level: {}", e),
+            ),
+        }
+    }
+
+    /// Enable/disable auto-compaction.
+    async fn pi_set_auto_compaction(&self, req: PiSetAutoCompactionRequest) -> RunnerResponse {
+        debug!(
+            "pi_set_auto_compaction: session_id={}, enabled={}",
+            req.session_id, req.enabled
+        );
+
+        match self
+            .pi_manager
+            .set_auto_compaction(&req.session_id, req.enabled)
+            .await
+        {
+            Ok(()) => RunnerResponse::PiCommandAck {
+                session_id: req.session_id,
+            },
+            Err(e) => error_response(
+                ErrorCode::PiSessionNotFound,
+                format!("Failed to set auto compaction: {}", e),
+            ),
+        }
+    }
+
+    /// Set steering message delivery mode.
+    async fn pi_set_steering_mode(&self, req: PiSetSteeringModeRequest) -> RunnerResponse {
+        debug!(
+            "pi_set_steering_mode: session_id={}, mode={}",
+            req.session_id, req.mode
+        );
+
+        match self
+            .pi_manager
+            .set_steering_mode(&req.session_id, &req.mode)
+            .await
+        {
+            Ok(()) => RunnerResponse::PiCommandAck {
+                session_id: req.session_id,
+            },
+            Err(e) => error_response(
+                ErrorCode::PiSessionNotFound,
+                format!("Failed to set steering mode: {}", e),
+            ),
+        }
+    }
+
+    /// Set follow-up message delivery mode.
+    async fn pi_set_follow_up_mode(&self, req: PiSetFollowUpModeRequest) -> RunnerResponse {
+        debug!(
+            "pi_set_follow_up_mode: session_id={}, mode={}",
+            req.session_id, req.mode
+        );
+
+        match self
+            .pi_manager
+            .set_follow_up_mode(&req.session_id, &req.mode)
+            .await
+        {
+            Ok(()) => RunnerResponse::PiCommandAck {
+                session_id: req.session_id,
+            },
+            Err(e) => error_response(
+                ErrorCode::PiSessionNotFound,
+                format!("Failed to set follow up mode: {}", e),
+            ),
+        }
+    }
+
+    /// Enable/disable auto-retry.
+    async fn pi_set_auto_retry(&self, req: PiSetAutoRetryRequest) -> RunnerResponse {
+        debug!(
+            "pi_set_auto_retry: session_id={}, enabled={}",
+            req.session_id, req.enabled
+        );
+
+        match self
+            .pi_manager
+            .set_auto_retry(&req.session_id, req.enabled)
+            .await
+        {
+            Ok(()) => RunnerResponse::PiCommandAck {
+                session_id: req.session_id,
+            },
+            Err(e) => error_response(
+                ErrorCode::PiSessionNotFound,
+                format!("Failed to set auto retry: {}", e),
+            ),
+        }
+    }
+
+    /// Abort an in-progress retry.
+    async fn pi_abort_retry(&self, req: PiAbortRetryRequest) -> RunnerResponse {
+        debug!("pi_abort_retry: session_id={}", req.session_id);
+
+        match self.pi_manager.abort_retry(&req.session_id).await {
+            Ok(()) => RunnerResponse::PiCommandAck {
+                session_id: req.session_id,
+            },
+            Err(e) => error_response(
+                ErrorCode::PiSessionNotFound,
+                format!("Failed to abort retry: {}", e),
+            ),
+        }
+    }
+
+    /// Fork from a previous message.
+    async fn pi_fork(&self, req: PiForkRequest) -> RunnerResponse {
+        debug!(
+            "pi_fork: session_id={}, entry_id={}",
+            req.session_id, req.entry_id
+        );
+
+        match self.pi_manager.fork(&req.session_id, &req.entry_id).await {
+            Ok(result) => {
+                // Parse fork result from JSON response
+                let text = result
+                    .get("text")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let cancelled = result
+                    .get("cancelled")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                RunnerResponse::PiForkResult(PiForkResultResponse {
+                    session_id: req.session_id,
+                    text,
+                    cancelled,
+                })
+            }
+            Err(e) => error_response(
+                ErrorCode::PiSessionNotFound,
+                format!("Failed to fork: {}", e),
+            ),
+        }
+    }
+
+    /// Get messages available for forking.
+    async fn pi_get_fork_messages(&self, req: PiGetForkMessagesRequest) -> RunnerResponse {
+        debug!("pi_get_fork_messages: session_id={}", req.session_id);
+
+        match self.pi_manager.get_fork_messages(&req.session_id).await {
+            Ok(messages) => {
+                // Parse JSON response to typed PiForkMessage vec
+                let messages_vec: Vec<PiForkMessage> = messages
+                    .as_array()
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| serde_json::from_value(v.clone()).ok())
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                RunnerResponse::PiForkMessages(PiForkMessagesResponse {
+                    session_id: req.session_id,
+                    messages: messages_vec,
+                })
+            }
+            Err(e) => error_response(
+                ErrorCode::PiSessionNotFound,
+                format!("Failed to get fork messages: {}", e),
+            ),
+        }
+    }
+
+    /// Set a display name for the session.
+    async fn pi_set_session_name(&self, req: PiSetSessionNameRequest) -> RunnerResponse {
+        debug!(
+            "pi_set_session_name: session_id={}, name={}",
+            req.session_id, req.name
+        );
+
+        match self
+            .pi_manager
+            .set_session_name(&req.session_id, &req.name)
+            .await
+        {
+            Ok(()) => RunnerResponse::PiCommandAck {
+                session_id: req.session_id,
+            },
+            Err(e) => error_response(
+                ErrorCode::PiSessionNotFound,
+                format!("Failed to set session name: {}", e),
+            ),
+        }
+    }
+
+    /// Export session to HTML.
+    async fn pi_export_html(&self, req: PiExportHtmlRequest) -> RunnerResponse {
+        debug!(
+            "pi_export_html: session_id={}, path={:?}",
+            req.session_id, req.output_path
+        );
+
+        match self
+            .pi_manager
+            .export_html(&req.session_id, req.output_path.as_deref())
+            .await
+        {
+            Ok(result) => {
+                let path = result
+                    .get("path")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("/tmp/session.html")
+                    .to_string();
+                RunnerResponse::PiExportHtmlResult(PiExportHtmlResultResponse {
+                    session_id: req.session_id,
+                    path,
+                })
+            }
+            Err(e) => error_response(
+                ErrorCode::Internal,
+                format!("Failed to export HTML: {}", e),
+            ),
+        }
+    }
+
+    /// Get available commands.
+    async fn pi_get_commands(&self, req: PiGetCommandsRequest) -> RunnerResponse {
+        debug!("pi_get_commands: session_id={}", req.session_id);
+
+        match self.pi_manager.get_commands(&req.session_id).await {
+            Ok(commands) => {
+                // Parse JSON response to typed PiCommandInfo vec
+                let commands_vec: Vec<PiCommandInfo> = commands
+                    .as_array()
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| serde_json::from_value(v.clone()).ok())
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                RunnerResponse::PiCommands(PiCommandsResponse {
+                    session_id: req.session_id,
+                    commands: commands_vec,
+                })
+            }
+            Err(e) => error_response(
+                ErrorCode::PiSessionNotFound,
+                format!("Failed to get commands: {}", e),
+            ),
+        }
+    }
+
+    /// Execute a bash command.
+    async fn pi_bash(&self, req: PiBashRequest) -> RunnerResponse {
+        debug!(
+            "pi_bash: session_id={}, command={}",
+            req.session_id, req.command
+        );
+
+        match self.pi_manager.bash(&req.session_id, &req.command).await {
+            Ok(result) => {
+                let output = result
+                    .get("output")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let exit_code = result
+                    .get("exit_code")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(0) as i32;
+                let cancelled = result
+                    .get("cancelled")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                let truncated = result
+                    .get("truncated")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                let full_output_path = result
+                    .get("full_output_path")
+                    .and_then(|v| v.as_str())
+                    .map(String::from);
+
+                RunnerResponse::PiBashResult(PiBashResultResponse {
+                    session_id: req.session_id,
+                    output,
+                    exit_code,
+                    cancelled,
+                    truncated,
+                    full_output_path,
+                })
+            }
+            Err(e) => error_response(
+                ErrorCode::PiSessionNotFound,
+                format!("Failed to execute bash: {}", e),
+            ),
+        }
+    }
+
+    /// Abort a running bash command.
+    async fn pi_abort_bash(&self, req: PiAbortBashRequest) -> RunnerResponse {
+        debug!("pi_abort_bash: session_id={}", req.session_id);
+
+        match self.pi_manager.abort_bash(&req.session_id).await {
+            Ok(()) => RunnerResponse::PiCommandAck {
+                session_id: req.session_id,
+            },
+            Err(e) => error_response(
+                ErrorCode::PiSessionNotFound,
+                format!("Failed to abort bash: {}", e),
+            ),
+        }
+    }
+
+    /// Respond to an extension UI prompt.
+    async fn pi_extension_ui_response(&self, req: PiExtensionUiResponseRequest) -> RunnerResponse {
+        debug!(
+            "pi_extension_ui_response: session_id={}, id={}",
+            req.session_id, req.id
+        );
+
+        match self
+            .pi_manager
+            .extension_ui_response(
+                &req.session_id,
+                &req.id,
+                req.value.as_deref(),
+                req.confirmed,
+                req.cancelled,
+            )
+            .await
+        {
+            Ok(()) => RunnerResponse::PiCommandAck {
+                session_id: req.session_id,
+            },
+            Err(e) => error_response(
+                ErrorCode::PiSessionNotFound,
+                format!("Failed to send extension UI response: {}", e),
+            ),
+        }
+    }
+
+    /// Handle Pi subscription streaming.
+    /// Subscribes to the PiSessionManager's broadcast channel and streams events.
+    async fn handle_pi_subscribe(
+        &self,
+        session_id: &str,
+        writer: &mut tokio::net::unix::OwnedWriteHalf,
+    ) -> Result<(), std::io::Error> {
+        info!("handle_pi_subscribe: session_id={}", session_id);
+
+        // Subscribe to the session's event stream
+        let mut rx = match self.pi_manager.subscribe(session_id).await {
+            Ok(rx) => rx,
+            Err(e) => {
+                // Session doesn't exist - send error and end
+                let resp = error_response(
+                    ErrorCode::PiSessionNotFound,
+                    format!("Failed to subscribe: {}", e),
+                );
+                let json = serde_json::to_string(&resp).unwrap();
+                writer.write_all(format!("{}\n", json).as_bytes()).await?;
+                return Ok(());
+            }
+        };
+
+        // Send subscription confirmation
+        let resp = RunnerResponse::PiSubscribed(PiSubscribedResponse {
+            session_id: session_id.to_string(),
+        });
+        let json = serde_json::to_string(&resp).unwrap();
+        writer.write_all(format!("{}\n", json).as_bytes()).await?;
+
+        // Stream events until the session closes or client disconnects
+        loop {
+            match rx.recv().await {
+                Ok(event_wrapper) => {
+                    // Convert pi_manager::PiEventWrapper to protocol::PiEventWrapper
+                    let resp = RunnerResponse::PiEvent(PiEventWrapper {
+                        session_id: event_wrapper.session_id,
+                        event: event_wrapper.event,
+                    });
+                    let json = serde_json::to_string(&resp).unwrap();
+                    if writer
+                        .write_all(format!("{}\n", json).as_bytes())
+                        .await
+                        .is_err()
+                    {
+                        // Client disconnected
+                        debug!("Pi subscription client disconnected: {}", session_id);
+                        break;
+                    }
+                }
+                Err(broadcast::error::RecvError::Lagged(n)) => {
+                    warn!(
+                        "Pi subscription lagged, missed {} events for {}",
+                        n, session_id
+                    );
+                    // Continue receiving
+                }
+                Err(broadcast::error::RecvError::Closed) => {
+                    // Session ended
+                    info!("Pi session closed, ending subscription: {}", session_id);
+                    break;
+                }
+            }
+        }
+
+        // Send subscription end notification
+        let end_resp = RunnerResponse::PiSubscriptionEnd(PiSubscriptionEndResponse {
+            session_id: session_id.to_string(),
+            reason: "session_closed".to_string(),
+        });
+        let json = serde_json::to_string(&end_resp).unwrap();
+        let _ = writer.write_all(format!("{}\n", json).as_bytes()).await;
+
+        Ok(())
+    }
+
     /// Handle a client connection.
     async fn handle_connection(&self, stream: UnixStream) {
         let (reader, mut writer) = stream.into_split();
@@ -1679,6 +2976,17 @@ impl Runner {
                     };
 
                     debug!("Received request: {:?}", req);
+
+                    // Handle PiSubscribe specially since it streams
+                    if let RunnerRequest::PiSubscribe(ref sub_req) = req {
+                        let session_id = sub_req.session_id.clone();
+                        if let Err(e) = self.handle_pi_subscribe(&session_id, &mut writer).await {
+                            error!("Failed to handle Pi subscription: {}", e);
+                            break;
+                        }
+                        // After subscription ends, continue the connection loop
+                        continue;
+                    }
 
                     // Handle SubscribeStdout specially since it streams
                     if let RunnerRequest::SubscribeStdout(ref sub_req) = req {
@@ -1831,6 +3139,7 @@ impl Runner {
                                 sandbox_config: self.sandbox_config.clone(),
                                 binaries: self.binaries.clone(),
                                 user_config: self.user_config.clone(),
+                                pi_manager: Arc::clone(&self.pi_manager),
                             };
                             tokio::spawn(async move {
                                 runner.handle_connection(stream).await;
@@ -1989,7 +3298,27 @@ async fn main() -> Result<()> {
         binaries.opencode, binaries.fileserver, binaries.ttyd
     );
 
-    let runner = Runner::new(sandbox_config, binaries, user_config);
+    // Create PiSessionManager for managing Pi agent processes
+    let pi_config = PiManagerConfig {
+        pi_binary: PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string()))
+            .join(".bun/bin/pi"),
+        default_cwd: user_config.workspace_dir.clone(),
+        idle_timeout_secs: 300, // 5 minutes
+        cleanup_interval_secs: 60,
+        hstry_db_path: octo::history::hstry_db_path(),
+        sandbox_config: sandbox_config.clone(),
+    };
+    let pi_manager = PiSessionManager::new(pi_config);
+
+    // Start the cleanup loop for idle Pi sessions
+    let pi_manager_cleanup = Arc::clone(&pi_manager);
+    tokio::spawn(async move {
+        pi_manager_cleanup.cleanup_loop().await;
+    });
+
+    info!("Pi session manager initialized");
+
+    let runner = Runner::new(sandbox_config, binaries, user_config, pi_manager);
     runner.run(&socket_path).await
 }
 

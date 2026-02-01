@@ -21,10 +21,7 @@ use crate::api::error::{ApiError, ApiResult};
 use crate::api::state::AppState;
 
 // Re-export ask-related types and handlers from agent_ask module
-pub use super::agent_ask::{
-    AgentAskAmbiguousResponse, AgentAskRequest, AgentAskResponse, AgentSessionsQuery, SessionMatch,
-    agents_ask, agents_search_sessions,
-};
+pub use super::agent_ask::{agents_ask, agents_search_sessions};
 
 /// Request to start a new agent session.
 #[derive(Debug, Deserialize)]

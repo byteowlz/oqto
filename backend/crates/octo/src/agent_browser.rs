@@ -141,7 +141,7 @@ impl AgentBrowserManager {
         for b in session_id.bytes() {
             hash = (hash << 5).wrapping_sub(hash).wrapping_add(b as i64);
         }
-        let offset = (hash.abs() as u16) % self.config.stream_port_range;
+        let offset = (hash.unsigned_abs() as u16) % self.config.stream_port_range;
         Ok(self.config.stream_port_base + offset)
     }
 }

@@ -389,11 +389,11 @@ fn path_exists_in_schema(schema: &Value, path: &str) -> bool {
 
     for part in parts {
         // Look for the property in "properties"
-        if let Some(props) = current.get("properties") {
-            if let Some(prop) = props.get(part) {
-                current = prop;
-                continue;
-            }
+        if let Some(props) = current.get("properties")
+            && let Some(prop) = props.get(part)
+        {
+            current = prop;
+            continue;
         }
         // Also check direct object properties
         if let Some(prop) = current.get(part) {
@@ -414,42 +414,42 @@ fn extract_values_with_metadata(
 ) -> HashMap<String, SettingsValue> {
     let mut result = HashMap::new();
 
-    if let Some(props) = schema.get("properties") {
-        if let Value::Object(props_map) = props {
-            for (key, prop_schema) in props_map {
-                let path = if prefix.is_empty() {
-                    key.clone()
-                } else {
-                    format!("{}.{}", prefix, key)
-                };
+    if let Some(props) = schema.get("properties")
+        && let Value::Object(props_map) = props
+    {
+        for (key, prop_schema) in props_map {
+            let path = if prefix.is_empty() {
+                key.clone()
+            } else {
+                format!("{}.{}", prefix, key)
+            };
 
-                // Check if this is a leaf value or a nested object
-                let prop_type = prop_schema.get("type").and_then(|t| t.as_str());
+            // Check if this is a leaf value or a nested object
+            let prop_type = prop_schema.get("type").and_then(|t| t.as_str());
 
-                if prop_type == Some("object") && prop_schema.get("properties").is_some() {
-                    // Nested object - recurse
-                    let nested_values = values.get(key).unwrap_or(&Value::Null);
-                    let nested = extract_values_with_metadata(nested_values, prop_schema, &path);
-                    result.extend(nested);
-                } else {
-                    // Leaf value
-                    let current_value = get_nested_value(values, key);
-                    let default_value = prop_schema.get("default").cloned();
-                    let is_configured = current_value.is_some();
+            if prop_type == Some("object") && prop_schema.get("properties").is_some() {
+                // Nested object - recurse
+                let nested_values = values.get(key).unwrap_or(&Value::Null);
+                let nested = extract_values_with_metadata(nested_values, prop_schema, &path);
+                result.extend(nested);
+            } else {
+                // Leaf value
+                let current_value = get_nested_value(values, key);
+                let default_value = prop_schema.get("default").cloned();
+                let is_configured = current_value.is_some();
 
-                    let value = current_value
-                        .or_else(|| default_value.clone())
-                        .unwrap_or(Value::Null);
+                let value = current_value
+                    .or_else(|| default_value.clone())
+                    .unwrap_or(Value::Null);
 
-                    result.insert(
-                        path,
-                        SettingsValue {
-                            value,
-                            is_configured,
-                            default: default_value,
-                        },
-                    );
-                }
+                result.insert(
+                    path,
+                    SettingsValue {
+                        value,
+                        is_configured,
+                        default: default_value,
+                    },
+                );
             }
         }
     }
@@ -468,6 +468,7 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    #[allow(clippy::approx_constant)]
     fn test_toml_json_roundtrip() {
         let json = json!({
             "string": "hello",

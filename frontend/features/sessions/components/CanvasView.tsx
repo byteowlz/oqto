@@ -1,7 +1,7 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
-import { fileserverWorkspaceBaseUrl } from "@/lib/control-plane-client";
+import { readFileMux, writeFileMux } from "@/lib/mux-files";
 import { cn } from "@/lib/utils";
 import type Konva from "konva";
 import {
@@ -454,6 +454,7 @@ export const CanvasView = memo(function CanvasView({
 	const transformerRef = useRef<Konva.Transformer>(null);
 	const fileInputRef = useRef<HTMLInputElement>(null);
 	const textInputRef = useRef<HTMLInputElement>(null);
+	const backgroundUrlRef = useRef<string | null>(null);
 
 	// Detect dark mode for canvas background
 	// Initialize with SSR-safe check to avoid flash of white
@@ -478,8 +479,6 @@ export const CanvasView = memo(function CanvasView({
 	}, []);
 
 	const canvasBackgroundColor = isDarkMode ? "#2d312f" : "#ffffff"; // --card color for dark
-
-	const fileserverBaseUrl = workspacePath ? fileserverWorkspaceBaseUrl() : null;
 
 	// Detect when initialImagePath changes (e.g., "Open in Canvas" with a new file)
 	// and reset canvas state to load the new image
@@ -506,25 +505,39 @@ export const CanvasView = memo(function CanvasView({
 
 	// Load initial image if provided - this takes priority over cached state
 	useEffect(() => {
-		if (!initialImagePath || !fileserverBaseUrl || !workspacePath) return;
+		if (!initialImagePath || !workspacePath) return;
+		let cancelled = false;
 
-		const url = new URL(`${fileserverBaseUrl}/file`, window.location.origin);
-		url.searchParams.set("path", initialImagePath);
-		url.searchParams.set("workspace_path", workspacePath);
+		const load = async () => {
+			try {
+				const result = await readFileMux(workspacePath, initialImagePath);
+				if (cancelled) return;
+				const blob = new Blob([result.data]);
+				const url = URL.createObjectURL(blob);
+				if (backgroundUrlRef.current?.startsWith("blob:")) {
+					URL.revokeObjectURL(backgroundUrlRef.current);
+				}
+				backgroundUrlRef.current = url;
 
-		const imgSrc = url.toString();
-
-		// Skip if already showing this image
-		if (backgroundImageSrc === imgSrc) return;
-
-		const img = new Image();
-		img.onload = () => {
-			setBackgroundImage(img);
-			setBackgroundImageSrc(imgSrc);
-			setBackgroundSize({ width: img.width, height: img.height });
+				const img = new Image();
+				img.onload = () => {
+					if (cancelled) return;
+					setBackgroundImage(img);
+					setBackgroundImageSrc(url);
+					setBackgroundSize({ width: img.width, height: img.height });
+				};
+				img.src = url;
+			} catch (err) {
+				console.error("Failed to load canvas image:", err);
+			}
 		};
-		img.src = imgSrc;
-	}, [initialImagePath, fileserverBaseUrl, workspacePath, backgroundImageSrc]);
+
+		void load();
+
+		return () => {
+			cancelled = true;
+		};
+	}, [initialImagePath, workspacePath]);
 
 	// Handle paste events for images
 	useEffect(() => {
@@ -918,42 +931,23 @@ export const CanvasView = memo(function CanvasView({
 
 	// Save to workspace - returns the filename if successful
 	const saveToWorkspace = useCallback(async (): Promise<string | null> => {
-		if (!stageRef.current || !fileserverBaseUrl || !workspacePath) return null;
+		if (!stageRef.current || !workspacePath) return null;
 
 		const dataUrl = stageRef.current.toDataURL({ pixelRatio: 2 });
 
-		// Convert data URL to blob
 		const response = await fetch(dataUrl);
-		const blob = await response.blob();
-
-		// Create form data
-		const formData = new FormData();
+		const buffer = await response.arrayBuffer();
 		const filename = `annotated-${Date.now()}.png`;
-		formData.append("file", blob, filename);
-
-		// Upload to workspace
-		const url = new URL(`${fileserverBaseUrl}/file`, window.location.origin);
-		url.searchParams.set("path", filename);
-		url.searchParams.set("workspace_path", workspacePath);
 
 		try {
-			const res = await fetch(url.toString(), {
-				method: "POST",
-				credentials: "include",
-				body: formData,
-			});
-
-			if (!res.ok) {
-				throw new Error("Failed to save image");
-			}
-
+			await writeFileMux(workspacePath, filename, buffer, true);
 			console.log("Saved to workspace:", filename);
 			return filename;
 		} catch (err) {
 			console.error("Failed to save:", err);
 			return null;
 		}
-	}, [fileserverBaseUrl, workspacePath]);
+	}, [workspacePath]);
 
 	// Save and add to chat
 	const saveAndAddToChat = useCallback(async () => {

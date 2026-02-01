@@ -1,8 +1,8 @@
 import type { OpenCodeMessageWithParts } from "./api";
 
-// Extended message type for Main Chat threading - includes session info.
+// Extended message type for Default Chat threading - includes session info.
 export type ThreadedMessage = OpenCodeMessageWithParts & {
-	/** Session ID this message belongs to (for Main Chat threading). */
+	/** Session ID this message belongs to (for Default Chat threading). */
 	_sessionId?: string;
 	/** Session title (for displaying session dividers). */
 	_sessionTitle?: string;
@@ -15,10 +15,10 @@ export type MessageGroup = {
 	role: "user" | "assistant";
 	messages: OpenCodeMessageWithParts[];
 	startIndex: number;
-	/** For Main Chat: session ID this group belongs to. */
+	/** For Default Chat: session ID this group belongs to. */
 	sessionId?: string;
-	/** For Main Chat: whether this group starts a new session. */
+	/** For Default Chat: whether this group starts a new session. */
 	isNewSession?: boolean;
-	/** For Main Chat: session title for divider. */
+	/** For Default Chat: session title for divider. */
 	sessionTitle?: string;
 };

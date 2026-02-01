@@ -42,10 +42,6 @@ export interface MobileMenuProps {
 	selectedChatSessionId: string | null;
 	selectedProjectKey: string | null;
 	busySessions: Set<string>;
-	mainChatActive: boolean;
-	mainChatCurrentSessionId: string | null;
-	mainChatNewSessionTrigger: number;
-	mainChatSessionActivityTrigger: number;
 	expandedSessions: Set<string>;
 	toggleSessionExpanded: (sessionId: string) => void;
 	expandedProjects: Set<string>;
@@ -71,12 +67,10 @@ export interface MobileMenuProps {
 	onPinSession: (sessionId: string) => void;
 	onRenameSession: (sessionId: string) => void;
 	onDeleteSession: (sessionId: string) => void;
+	onBulkDeleteSessions: (sessionIds: string[]) => Promise<string[] | void>;
 	onPinProject: (projectKey: string) => void;
 	onRenameProject: (projectKey: string, currentName: string) => void;
 	onDeleteProject: (projectKey: string, projectName: string) => void;
-	onMainChatSelect: () => void;
-	onMainChatSessionSelect: (sessionId: string) => void;
-	onMainChatNewSession: () => void;
 	onSearchResultClick: (hit: HstrySearchHit) => void;
 	messageSearchExtraHits: HstrySearchHit[];
 	onToggleApp: (appId: string) => void;
@@ -97,10 +91,6 @@ export const MobileMenu = memo(function MobileMenu({
 	selectedChatSessionId,
 	selectedProjectKey,
 	busySessions,
-	mainChatActive,
-	mainChatCurrentSessionId,
-	mainChatNewSessionTrigger,
-	mainChatSessionActivityTrigger,
 	expandedSessions,
 	toggleSessionExpanded,
 	expandedProjects,
@@ -126,12 +116,10 @@ export const MobileMenu = memo(function MobileMenu({
 	onPinSession,
 	onRenameSession,
 	onDeleteSession,
+	onBulkDeleteSessions,
 	onPinProject,
 	onRenameProject,
 	onDeleteProject,
-	onMainChatSelect,
-	onMainChatSessionSelect,
-	onMainChatNewSession,
 	onSearchResultClick,
 	messageSearchExtraHits,
 	onToggleApp,
@@ -182,10 +170,6 @@ export const MobileMenu = memo(function MobileMenu({
 						filteredSessions={filteredSessions}
 						selectedChatSessionId={selectedChatSessionId}
 						busySessions={busySessions}
-						mainChatActive={mainChatActive}
-						mainChatCurrentSessionId={mainChatCurrentSessionId}
-						mainChatNewSessionTrigger={mainChatNewSessionTrigger}
-						mainChatSessionActivityTrigger={mainChatSessionActivityTrigger}
 						expandedSessions={expandedSessions}
 						toggleSessionExpanded={toggleSessionExpanded}
 						expandedProjects={expandedProjects}
@@ -207,12 +191,10 @@ export const MobileMenu = memo(function MobileMenu({
 						onPinSession={onPinSession}
 						onRenameSession={onRenameSession}
 						onDeleteSession={onDeleteSession}
+						onBulkDeleteSessions={onBulkDeleteSessions}
 						onPinProject={onPinProject}
 						onRenameProject={onRenameProject}
 						onDeleteProject={onDeleteProject}
-						onMainChatSelect={onMainChatSelect}
-						onMainChatSessionSelect={onMainChatSessionSelect}
-						onMainChatNewSession={onMainChatNewSession}
 						onSearchResultClick={onSearchResultClick}
 						messageSearchExtraHits={messageSearchExtraHits}
 						isMobile

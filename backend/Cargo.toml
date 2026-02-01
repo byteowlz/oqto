@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/*"]
 
 [workspace.package]
-version = "0.5.2"
+version = "0.6.0"
 edition = "2024"
 license = "MIT"
 authors = ["Octo Team"]
@@ -44,7 +44,7 @@ tokio-util = { version = "0.7", features = ["io"] }
 axum = { version = "0.8", features = ["ws", "macros", "multipart"] }
 axum-extra = { version = "0.10", features = ["typed-header"] }
 tower = { version = "0.5", features = ["util", "timeout"] }
-tower-http = { version = "0.6", features = ["cors", "trace", "fs"] }
+tower-http = { version = "0.6", features = ["cors", "trace", "fs", "set-header"] }
 hyper = { version = "1.8", features = ["full"] }
 hyper-util = { version = "0.1", features = ["client", "client-legacy", "http1", "http2", "tokio"] }
 http-body-util = "0.1"
@@ -81,6 +81,10 @@ once_cell = "1.21"
 urlencoding = "2"
 libc = "0.2"
 
+# Unix system calls (safe wrappers)
+rustix = { version = "1.0", features = ["process"] }
+fork = "0.2"
+
 # File operations
 mime_guess = "2"
 walkdir = "2.5"
@@ -91,7 +95,49 @@ zip = { version = "2.4", default-features = false, features = ["deflate"] }
 tempfile = "3"
 axum-test = "17"
 
+# gRPC
+tonic = "0.12"
+prost = "0.13"
+
+# External crates
+hstry-core = { path = "../../hstry/crates/hstry-core" }
+
 [profile.release]
 lto = true
 codegen-units = 1
 strip = true
+
+# Workspace-wide clippy linting configuration
+# These rules are enforced across all crates to maintain code quality
+[workspace.lints.rust]
+unsafe_code = "warn"
+# These will become errors after all warnings are fixed
+# unused = "deny"
+
+[workspace.lints.clippy]
+# Style and correctness
+collapsible_if = "warn"
+collapsible_else_if = "warn"
+needless_return = "warn"
+needless_borrow = "warn"
+clone_on_copy = "warn"
+single_char_add_str = "warn"
+manual_strip = "warn"
+manual_flatten = "warn"
+unnecessary_lazy_evaluations = "warn"
+unnecessary_map_or = "warn"
+io_other_error = "warn"
+single_match = "warn"
+
+# Performance
+cloned_instead_of_copied = "warn"
+inefficient_to_string = "warn"
+
+# Pedantic (stricter)
+ptr_arg = "warn"
+derivable_impls = "warn"
+
+# These are intentionally allowed
+too_many_arguments = "allow"
+type_complexity = "allow"
+module_inception = "allow"

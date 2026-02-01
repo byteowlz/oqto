@@ -1,15 +1,15 @@
 import {
 	type CodexBarUsagePayload,
 	type SchedulerOverview,
-	controlPlaneApiUrl,
 	fetchFeed,
-	fileserverWorkspaceBaseUrl,
-	getAuthHeaders,
 	getCodexBarUsage,
 	getSchedulerOverview,
 } from "@/lib/control-plane-client";
+import { getWsManager } from "@/lib/ws-manager";
+import type { TrxWsEvent } from "@/lib/ws-mux-types";
 import type { OpenCodeAgent } from "@/lib/opencode-client";
 import { fetchAgents } from "@/lib/opencode-client";
+import { readFileMux, writeFileMux } from "@/lib/mux-files";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
 	BuiltinCardDefinition,
@@ -101,51 +101,42 @@ function parseFeedXml(xml: string): FeedState {
 }
 
 async function fetchTrxIssues(workspacePath: string): Promise<TrxIssue[]> {
-	const res = await fetch(
-		controlPlaneApiUrl(
-			`/api/workspace/trx/issues?workspace_path=${encodeURIComponent(
-				workspacePath,
-			)}`,
-		),
-		{
-			headers: {
-				...getAuthHeaders(),
-			},
-			credentials: "include",
-		},
-	);
-	if (res.status === 404) {
-		return [];
+	const manager = getWsManager();
+	manager.connect();
+	const response = (await manager.sendAndWait({
+		channel: "trx",
+		type: "list",
+		workspace_path: workspacePath,
+	})) as TrxWsEvent;
+
+	if (response.type === "list_result") {
+		return response.issues as TrxIssue[];
 	}
-	if (!res.ok) {
-		const text = await res.text();
-		throw new Error(text || "Failed to fetch TRX issues");
+	if (response.type === "error") {
+		const message = response.error.toLowerCase();
+		if (
+			message.includes("not initialized") ||
+			message.includes("no .trx") ||
+			message.includes("404")
+		) {
+			return [];
+		}
+		throw new Error(response.error);
 	}
-	return res.json();
+	throw new Error("Failed to fetch TRX issues");
 }
 
 async function readWorkspaceFile(
 	workspacePath: string,
 	path: string,
 ): Promise<string | null> {
-	const origin =
-		typeof window !== "undefined" ? window.location.origin : "http://localhost";
-	const url = new URL(`${fileserverWorkspaceBaseUrl()}/file`, origin);
-	url.searchParams.set("workspace_path", workspacePath);
-	url.searchParams.set("path", path);
-	const res = await fetch(url.toString(), {
-		headers: {
-			...getAuthHeaders(),
-		},
-		credentials: "include",
-	});
-	if (res.status === 404 || res.status === 502 || res.status === 503)
+	try {
+		const result = await readFileMux(workspacePath, path);
+		const decoder = new TextDecoder("utf-8");
+		return decoder.decode(result.data);
+	} catch {
 		return null;
-	if (!res.ok) {
-		const text = await res.text();
-		throw new Error(text || `Failed to read ${path}`);
 	}
-	return res.text();
 }
 
 async function writeWorkspaceFile(
@@ -153,25 +144,8 @@ async function writeWorkspaceFile(
 	path: string,
 	content: string,
 ): Promise<void> {
-	const origin =
-		typeof window !== "undefined" ? window.location.origin : "http://localhost";
-	const url = new URL(`${fileserverWorkspaceBaseUrl()}/file`, origin);
-	url.searchParams.set("workspace_path", workspacePath);
-	url.searchParams.set("path", path);
-	url.searchParams.set("mkdir", "true");
-	const res = await fetch(url.toString(), {
-		method: "PUT",
-		body: content,
-		headers: {
-			"Content-Type": "application/json",
-			...getAuthHeaders(),
-		},
-		credentials: "include",
-	});
-	if (!res.ok) {
-		const text = await res.text();
-		throw new Error(text || `Failed to write ${path}`);
-	}
+	const encoder = new TextEncoder();
+	await writeFileMux(workspacePath, path, encoder.encode(content).buffer, true);
 }
 
 function clampSpan(value: number): DashboardCardSpan {

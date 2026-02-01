@@ -90,10 +90,10 @@ impl Claims {
     /// Get the effective role for the user.
     pub fn effective_role(&self) -> Role {
         // Check role field first
-        if let Some(ref role) = self.role {
-            if role.to_lowercase() == "admin" {
-                return Role::Admin;
-            }
+        if let Some(ref role) = self.role
+            && role.to_lowercase() == "admin"
+        {
+            return Role::Admin;
         }
 
         // Check roles array

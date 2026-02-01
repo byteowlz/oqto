@@ -8,8 +8,7 @@ use tokio::sync::RwLock;
 
 use super::db::{MainChatDb, main_chat_db_path, main_chat_dir_path};
 use super::models::{
-    AssistantInfo, ChatMessage, CreateChatMessage, CreateHistoryEntry, CreateSession, HistoryEntry,
-    MainChatSession,
+    AssistantInfo, CreateHistoryEntry, CreateSession, HistoryEntry, MainChatSession,
 };
 use super::repository::MainChatRepository;
 
@@ -23,6 +22,8 @@ pub struct MainChatTemplates {
     pub personality: Option<String>,
     /// ONBOARD.md content.
     pub onboard: Option<String>,
+    /// BOOTSTRAP.md content.
+    pub bootstrap: Option<String>,
     /// USER.md content.
     pub user: Option<String>,
 }
@@ -198,6 +199,15 @@ impl MainChatService {
         std::fs::write(&onboard_path, onboard_template)
             .with_context(|| format!("writing ONBOARD.md: {}", onboard_path.display()))?;
 
+        // Create BOOTSTRAP.md from template (first-run instructions)
+        let bootstrap_template = templates
+            .and_then(|t| t.bootstrap.as_ref())
+            .map(|s| s.as_str())
+            .unwrap_or(include_str!("templates/BOOTSTRAP.md"));
+        let bootstrap_path = main_chat_dir.join("BOOTSTRAP.md");
+        std::fs::write(&bootstrap_path, bootstrap_template)
+            .with_context(|| format!("writing BOOTSTRAP.md: {}", bootstrap_path.display()))?;
+
         // Create USER.md from template
         let user_template = templates
             .and_then(|t| t.user.as_ref())
@@ -247,6 +257,15 @@ impl MainChatService {
         let plugin_path = plugin_dir.join("main-chat.ts");
         std::fs::write(&plugin_path, plugin_content)
             .with_context(|| format!("writing plugin: {}", plugin_path.display()))?;
+
+        // Create .octo directory and workspace metadata
+        let workspace_meta = crate::workspace::WorkspaceMeta {
+            display_name: Some("Main".to_string()),
+            language: Some("en".to_string()),
+            pinned: Some(true),
+            bootstrap_pending: Some(true),
+        };
+        crate::workspace::write_workspace_meta(&main_chat_dir, &workspace_meta)?;
 
         Ok(())
     }
@@ -348,44 +367,6 @@ impl MainChatService {
         let repo = MainChatRepository::new(&db);
         repo.get_latest_session().await
     }
-
-    // ========== Message Operations ==========
-
-    /// Add a chat message.
-    pub async fn add_message(
-        &self,
-        user_id: &str,
-        message: CreateChatMessage,
-    ) -> Result<ChatMessage> {
-        let db = self.get_db(user_id).await?;
-        let repo = MainChatRepository::new(&db);
-        repo.add_message(message).await
-    }
-
-    /// Get all messages (display history).
-    pub async fn get_all_messages(&self, user_id: &str) -> Result<Vec<ChatMessage>> {
-        let db = self.get_db(user_id).await?;
-        let repo = MainChatRepository::new(&db);
-        repo.get_all_messages().await
-    }
-
-    /// Get messages for a specific session (by pi_session_id).
-    pub async fn get_messages_by_session(
-        &self,
-        user_id: &str,
-        session_id: &str,
-    ) -> Result<Vec<ChatMessage>> {
-        let db = self.get_db(user_id).await?;
-        let repo = MainChatRepository::new(&db);
-        repo.get_messages_for_session_range(session_id).await
-    }
-
-    /// Clear all messages (for fresh start).
-    pub async fn clear_messages(&self, user_id: &str) -> Result<i64> {
-        let db = self.get_db(user_id).await?;
-        let repo = MainChatRepository::new(&db);
-        repo.clear_messages().await
-    }
 }
 
 #[cfg(test)]
@@ -413,6 +394,11 @@ mod tests {
         assert!(main_chat_dir.join("opencode.json").exists());
         assert!(main_chat_dir.join("AGENTS.md").exists());
         assert!(main_chat_dir.join("ONBOARD.md").exists());
+        assert!(main_chat_dir.join("BOOTSTRAP.md").exists());
+        assert!(
+            crate::workspace::workspace_meta_path(&main_chat_dir).exists(),
+            "workspace.toml should be created"
+        );
 
         // Check main chat exists
         assert!(service.main_chat_exists("user123"));

@@ -14,11 +14,17 @@
 //! - Sessions: ListSessions, GetSession, CreateSession, StopSession
 //! - Main Chat: ListMainChatSessions, GetMainChatMessages
 //! - Memory: SearchMemories, AddMemory, DeleteMemory
+//!
+//! ### Pi Session Management
+//! - PiCreateSession, PiPrompt, PiSteer, PiFollowUp, PiAbort, PiCompact
+//! - PiSubscribe, PiUnsubscribe, PiListSessions, PiGetState, PiCloseSession
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::path::PathBuf;
+
+use crate::pi::{PiEvent, PiState};
 
 /// Request sent from octo to the runner.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -104,6 +110,8 @@ pub enum RunnerRequest {
 
     /// Get messages from a main chat session.
     GetMainChatMessages(GetMainChatMessagesRequest),
+    /// Get messages from a workspace Pi session (hstry-backed).
+    GetWorkspaceChatMessages(GetWorkspaceChatMessagesRequest),
 
     // ========================================================================
     // OpenCode Chat History (user-plane)
@@ -131,6 +139,147 @@ pub enum RunnerRequest {
 
     /// Delete a memory by ID.
     DeleteMemory(DeleteMemoryRequest),
+
+    // ========================================================================
+    // Pi Session Management
+    // ========================================================================
+    /// Create or resume a Pi session.
+    PiCreateSession(PiCreateSessionRequest),
+
+    /// Close a Pi session (stop the process).
+    PiCloseSession(PiCloseSessionRequest),
+
+    /// Start a new session within existing Pi process.
+    PiNewSession(PiNewSessionRequest),
+
+    /// Switch to a different session file.
+    PiSwitchSession(PiSwitchSessionRequest),
+
+    /// List all active Pi sessions.
+    PiListSessions,
+
+    /// Subscribe to events from a Pi session.
+    PiSubscribe(PiSubscribeRequest),
+
+    /// Unsubscribe from a Pi session's events.
+    PiUnsubscribe(PiUnsubscribeRequest),
+
+    // ========================================================================
+    // Pi Prompting
+    // ========================================================================
+    /// Send a user prompt to a Pi session.
+    PiPrompt(PiPromptRequest),
+
+    /// Send a steering message to interrupt a Pi session mid-run.
+    PiSteer(PiSteerRequest),
+
+    /// Queue a follow-up message for after the Pi session finishes.
+    PiFollowUp(PiFollowUpRequest),
+
+    /// Abort the current Pi session operation.
+    PiAbort(PiAbortRequest),
+
+    // ========================================================================
+    // Pi State & Messages
+    // ========================================================================
+    /// Get the state of a Pi session.
+    PiGetState(PiGetStateRequest),
+
+    /// Get all messages from a Pi session.
+    PiGetMessages(PiGetMessagesRequest),
+
+    /// Get session statistics (tokens, cost, etc.).
+    PiGetSessionStats(PiGetSessionStatsRequest),
+
+    /// Get the last assistant message text.
+    PiGetLastAssistantText(PiGetLastAssistantTextRequest),
+
+    // ========================================================================
+    // Pi Model Management
+    // ========================================================================
+    /// Set the model for a Pi session.
+    PiSetModel(PiSetModelRequest),
+
+    /// Cycle to the next available model.
+    PiCycleModel(PiCycleModelRequest),
+
+    /// Get list of available models.
+    PiGetAvailableModels(PiGetAvailableModelsRequest),
+
+    // ========================================================================
+    // Pi Thinking Level
+    // ========================================================================
+    /// Set the thinking/reasoning level.
+    PiSetThinkingLevel(PiSetThinkingLevelRequest),
+
+    /// Cycle through thinking levels.
+    PiCycleThinkingLevel(PiCycleThinkingLevelRequest),
+
+    // ========================================================================
+    // Pi Compaction
+    // ========================================================================
+    /// Compact the Pi session's conversation.
+    PiCompact(PiCompactRequest),
+
+    /// Enable/disable auto-compaction.
+    PiSetAutoCompaction(PiSetAutoCompactionRequest),
+
+    // ========================================================================
+    // Pi Queue Modes
+    // ========================================================================
+    /// Set steering message delivery mode.
+    PiSetSteeringMode(PiSetSteeringModeRequest),
+
+    /// Set follow-up message delivery mode.
+    PiSetFollowUpMode(PiSetFollowUpModeRequest),
+
+    // ========================================================================
+    // Pi Retry
+    // ========================================================================
+    /// Enable/disable auto-retry on transient errors.
+    PiSetAutoRetry(PiSetAutoRetryRequest),
+
+    /// Abort an in-progress retry.
+    PiAbortRetry(PiAbortRetryRequest),
+
+    // ========================================================================
+    // Pi Forking
+    // ========================================================================
+    /// Fork from a previous message.
+    PiFork(PiForkRequest),
+
+    /// Get messages available for forking.
+    PiGetForkMessages(PiGetForkMessagesRequest),
+
+    // ========================================================================
+    // Pi Session Metadata
+    // ========================================================================
+    /// Set a display name for the session.
+    PiSetSessionName(PiSetSessionNameRequest),
+
+    /// Export session to HTML.
+    PiExportHtml(PiExportHtmlRequest),
+
+    // ========================================================================
+    // Pi Commands/Skills
+    // ========================================================================
+    /// Get available commands (extensions, templates, skills).
+    PiGetCommands(PiGetCommandsRequest),
+
+    // ========================================================================
+    // Pi Bash
+    // ========================================================================
+    /// Execute a bash command and add output to conversation.
+    PiBash(PiBashRequest),
+
+    /// Abort a running bash command.
+    PiAbortBash(PiAbortBashRequest),
+
+    // ========================================================================
+    // Pi Extension UI
+    // ========================================================================
+    /// Send response to an extension UI request.
+    PiExtensionUiResponse(PiExtensionUiResponseRequest),
 }
 
 /// Response from runner to octo.
@@ -217,6 +366,8 @@ pub enum RunnerResponse {
 
     /// Main chat messages.
     MainChatMessages(MainChatMessagesResponse),
+    /// Workspace chat messages.
+    WorkspaceChatMessages(MainChatMessagesResponse),
 
     // ========================================================================
     // OpenCode Chat History Responses
@@ -244,6 +395,75 @@ pub enum RunnerResponse {
 
     /// Memory deleted.
     MemoryDeleted(MemoryDeletedResponse),
+
+    // ========================================================================
+    // Pi Session Responses
+    // ========================================================================
+    /// Pi session created or resumed.
+    PiSessionCreated(PiSessionCreatedResponse),
+
+    /// List of Pi sessions.
+    PiSessionList(PiSessionListResponse),
+
+    /// Pi session state.
+    PiState(PiStateResponse),
+
+    /// Pi session closed.
+    PiSessionClosed {
+        /// The session that was closed.
+        session_id: String,
+    },
+
+    /// Pi event (streamed during subscription).
+    PiEvent(PiEventWrapper),
+
+    /// Command acknowledged (for prompt, steer, follow_up, abort, compact).
+    PiCommandAck {
+        /// The session the command was sent to.
+        session_id: String,
+    },
+
+    /// Pi subscription started.
+    PiSubscribed(PiSubscribedResponse),
+
+    /// Pi subscription ended.
+    PiSubscriptionEnd(PiSubscriptionEndResponse),
+
+    /// Pi messages response.
+    PiMessages(PiMessagesResponse),
+
+    /// Pi session stats response.
+    PiSessionStats(PiSessionStatsResponse),
+
+    /// Pi last assistant text response.
+    PiLastAssistantText(PiLastAssistantTextResponse),
+
+    /// Pi model changed response.
+    PiModelChanged(PiModelChangedResponse),
+
+    /// Pi available models response.
+    PiAvailableModels(PiAvailableModelsResponse),
+
+    /// Pi thinking level changed response.
+    PiThinkingLevelChanged(PiThinkingLevelChangedResponse),
+
+    /// Pi compaction result response.
+    PiCompactionResult(PiCompactionResultResponse),
+
+    /// Pi fork messages response.
+    PiForkMessages(PiForkMessagesResponse),
+
+    /// Pi fork result response.
+    PiForkResult(PiForkResultResponse),
+
+    /// Pi commands response.
+    PiCommands(PiCommandsResponse),
+
+    /// Pi bash result response.
+    PiBashResult(PiBashResultResponse),
+
+    /// Pi export HTML result response.
+    PiExportHtmlResult(PiExportHtmlResultResponse),
 
     // ========================================================================
     // Generic
@@ -463,6 +683,18 @@ pub struct GetMainChatMessagesRequest {
     pub limit: Option<usize>,
 }
 
+/// Request to get messages from a workspace Pi session.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GetWorkspaceChatMessagesRequest {
+    /// Session ID (Pi session file ID).
+    pub session_id: String,
+    /// Workspace path to filter conversations.
+    pub workspace_path: String,
+    /// Optional limit on number of messages.
+    #[serde(default)]
+    pub limit: Option<usize>,
+}
+
 // ============================================================================
 // OpenCode Chat History Request Types
 // ============================================================================
@@ -547,6 +779,330 @@ pub struct AddMemoryRequest {
 pub struct DeleteMemoryRequest {
     /// Memory ID.
     pub memory_id: String,
+}
+
+// ============================================================================
+// Pi Session Request Types
+// ============================================================================
+
+/// Request to create or resume a Pi session.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PiCreateSessionRequest {
+    /// Unique session ID (caller-provided or generated).
+    pub session_id: String,
+    /// Session configuration.
+    pub config: PiSessionConfig,
+}
+
+/// Configuration for a Pi session.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PiSessionConfig {
+    /// Working directory for Pi.
+    pub cwd: PathBuf,
+    /// Provider (anthropic, openai, etc.).
+    #[serde(default)]
+    pub provider: Option<String>,
+    /// Model ID.
+    #[serde(default)]
+    pub model: Option<String>,
+    /// Explicit session file to use (new or resume).
+    #[serde(default)]
+    pub session_file: Option<PathBuf>,
+    /// Session file to continue from.
+    #[serde(default)]
+    pub continue_session: Option<PathBuf>,
+    /// System prompt addition files.
+    #[serde(default)]
+    pub system_prompt_files: Vec<PathBuf>,
+    /// Environment variables for the Pi process.
+    #[serde(default)]
+    pub env: HashMap<String, String>,
+}
+
+impl Default for PiSessionConfig {
+    fn default() -> Self {
+        Self {
+            cwd: PathBuf::from("."),
+            provider: None,
+            model: None,
+            session_file: None,
+            continue_session: None,
+            system_prompt_files: Vec::new(),
+            env: HashMap::new(),
+        }
+    }
+}
+
+/// Request to send a prompt to a Pi session.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PiPromptRequest {
+    /// Session ID.
+    pub session_id: String,
+    /// User message content.
+    pub message: String,
+}
+
+/// Request to send a steering message to a Pi session.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PiSteerRequest {
+    /// Session ID.
+    pub session_id: String,
+    /// Steering message content.
+    pub message: String,
+}
+
+/// Request to abort a Pi session's current operation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PiAbortRequest {
+    /// Session ID.
+    pub session_id: String,
+}
+
+/// Request to compact a Pi session's conversation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PiCompactRequest {
+    /// Session ID.
+    pub session_id: String,
+    /// Optional custom instructions for compaction.
+    #[serde(default)]
+    pub instructions: Option<String>,
+}
+
+/// Request to subscribe to a Pi session's events.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PiSubscribeRequest {
+    /// Session ID to subscribe to.
+    pub session_id: String,
+}
+
+/// Request to unsubscribe from a Pi session's events.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PiUnsubscribeRequest {
+    /// Session ID to unsubscribe from.
+    pub session_id: String,
+}
+
+/// Request to get a Pi session's state.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PiGetStateRequest {
+    /// Session ID.
+    pub session_id: String,
+}
+
+/// Request to close a Pi session.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PiCloseSessionRequest {
+    /// Session ID.
+    pub session_id: String,
+}
+
+/// Request to start a new session within existing Pi process.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PiNewSessionRequest {
+    /// Session ID.
+    pub session_id: String,
+    /// Optional parent session for tracking.
+    #[serde(default)]
+    pub parent_session: Option<String>,
+}
+
+/// Request to switch to a different session file.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PiSwitchSessionRequest {
+    /// Session ID.
+    pub session_id: String,
+    /// Path to the session file to load.
+    pub session_path: String,
+}
+
+/// Request to queue a follow-up message.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PiFollowUpRequest {
+    /// Session ID.
+    pub session_id: String,
+    /// Follow-up message content.
+    pub message: String,
+}
+
+/// Request to get all messages from a Pi session.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PiGetMessagesRequest {
+    /// Session ID.
+    pub session_id: String,
+}
+
+/// Request to get session statistics.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PiGetSessionStatsRequest {
+    /// Session ID.
+    pub session_id: String,
+}
+
+/// Request to get the last assistant message text.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PiGetLastAssistantTextRequest {
+    /// Session ID.
+    pub session_id: String,
+}
+
+/// Request to set the model for a Pi session.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PiSetModelRequest {
+    /// Session ID.
+    pub session_id: String,
+    /// Provider name.
+    pub provider: String,
+    /// Model ID.
+    pub model_id: String,
+}
+
+/// Request to cycle to the next model.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PiCycleModelRequest {
+    /// Session ID.
+    pub session_id: String,
+}
+
+/// Request to get available models.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PiGetAvailableModelsRequest {
+    /// Session ID.
+    pub session_id: String,
+}
+
+/// Request to set the thinking level.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PiSetThinkingLevelRequest {
+    /// Session ID.
+    pub session_id: String,
+    /// Thinking level: off, minimal, low, medium, high, xhigh.
+    pub level: String,
+}
+
+/// Request to cycle through thinking levels.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PiCycleThinkingLevelRequest {
+    /// Session ID.
+    pub session_id: String,
+}
+
+/// Request to enable/disable auto-compaction.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PiSetAutoCompactionRequest {
+    /// Session ID.
+    pub session_id: String,
+    /// Whether auto-compaction is enabled.
+    pub enabled: bool,
+}
+
+/// Request to set steering message delivery mode.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PiSetSteeringModeRequest {
+    /// Session ID.
+    pub session_id: String,
+    /// Mode: "all" or "one-at-a-time".
+    pub mode: String,
+}
+
+/// Request to set follow-up message delivery mode.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PiSetFollowUpModeRequest {
+    /// Session ID.
+    pub session_id: String,
+    /// Mode: "all" or "one-at-a-time".
+    pub mode: String,
+}
+
+/// Request to enable/disable auto-retry.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PiSetAutoRetryRequest {
+    /// Session ID.
+    pub session_id: String,
+    /// Whether auto-retry is enabled.
+    pub enabled: bool,
+}
+
+/// Request to abort an in-progress retry.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PiAbortRetryRequest {
+    /// Session ID.
+    pub session_id: String,
+}
+
+/// Request to fork from a previous message.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PiForkRequest {
+    /// Session ID.
+    pub session_id: String,
+    /// Entry ID of the message to fork from.
+    pub entry_id: String,
+}
+
+/// Request to get messages available for forking.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PiGetForkMessagesRequest {
+    /// Session ID.
+    pub session_id: String,
+}
+
+/// Request to set a display name for the session.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PiSetSessionNameRequest {
+    /// Session ID.
+    pub session_id: String,
+    /// Display name for the session.
+    pub name: String,
+}
+
+/// Request to export session to HTML.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PiExportHtmlRequest {
+    /// Session ID.
+    pub session_id: String,
+    /// Optional output path (default: auto-generated).
+    #[serde(default)]
+    pub output_path: Option<String>,
+}
+
+/// Request to get available commands.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PiGetCommandsRequest {
+    /// Session ID.
+    pub session_id: String,
+}
+
+/// Request to execute a bash command.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PiBashRequest {
+    /// Session ID.
+    pub session_id: String,
+    /// Bash command to execute.
+    pub command: String,
+}
+
+/// Request to abort a running bash command.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PiAbortBashRequest {
+    /// Session ID.
+    pub session_id: String,
+}
+
+/// Request to respond to an extension UI prompt.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PiExtensionUiResponseRequest {
+    /// Session ID.
+    pub session_id: String,
+    /// Request ID from the extension_ui_request event.
+    pub id: String,
+    /// Value for select/input/editor responses.
+    #[serde(default)]
+    pub value: Option<String>,
+    /// Confirmation for confirm responses.
+    #[serde(default)]
+    pub confirmed: Option<bool>,
+    /// Whether the dialog was cancelled.
+    #[serde(default)]
+    pub cancelled: Option<bool>,
 }
 
 // ============================================================================
@@ -1013,6 +1569,243 @@ pub struct MemoryDeletedResponse {
 }
 
 // ============================================================================
+// Pi Session Response Types
+// ============================================================================
+
+/// Response when a Pi session is created.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PiSessionCreatedResponse {
+    /// The session ID.
+    pub session_id: String,
+}
+
+/// Information about a Pi session.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PiSessionInfo {
+    /// Session ID.
+    pub session_id: String,
+    /// Current session state.
+    pub state: PiSessionState,
+    /// Last activity timestamp (Unix ms).
+    pub last_activity: i64,
+    /// Number of subscribers to this session's events.
+    pub subscriber_count: usize,
+    /// Working directory.
+    pub cwd: PathBuf,
+    /// Provider (if set).
+    pub provider: Option<String>,
+    /// Model (if set).
+    pub model: Option<String>,
+}
+
+/// Pi session lifecycle state.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PiSessionState {
+    /// Session is starting up.
+    Starting,
+    /// Session is idle, waiting for input.
+    Idle,
+    /// Session is streaming a response.
+    Streaming,
+    /// Session is compacting its context.
+    Compacting,
+    /// Session is stopping.
+    Stopping,
+}
+
+/// Response with list of Pi sessions.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PiSessionListResponse {
+    /// List of sessions.
+    pub sessions: Vec<PiSessionInfo>,
+}
+
+/// Response with Pi session state.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PiStateResponse {
+    /// Session ID.
+    pub session_id: String,
+    /// Full Pi state from the process.
+    pub state: PiState,
+}
+
+/// Pi event wrapped with session context.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PiEventWrapper {
+    /// Session ID the event belongs to.
+    pub session_id: String,
+    /// The Pi event.
+    pub event: PiEvent,
+}
+
+/// Response confirming Pi subscription started.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PiSubscribedResponse {
+    /// Session ID.
+    pub session_id: String,
+}
+
+/// Response when Pi subscription ends.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PiSubscriptionEndResponse {
+    /// Session ID.
+    pub session_id: String,
+    /// Reason for ending (e.g., "session_closed", "unsubscribed").
+    pub reason: String,
+}
+
+/// Response with Pi session messages.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PiMessagesResponse {
+    /// Session ID.
+    pub session_id: String,
+    /// Messages in the session.
+    pub messages: Vec<crate::pi::AgentMessage>,
+}
+
+/// Response with Pi session statistics.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PiSessionStatsResponse {
+    /// Session ID.
+    pub session_id: String,
+    /// Session statistics.
+    pub stats: crate::pi::SessionStats,
+}
+
+/// Response with last assistant text.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PiLastAssistantTextResponse {
+    /// Session ID.
+    pub session_id: String,
+    /// The text, or None if no assistant messages.
+    pub text: Option<String>,
+}
+
+/// Response when model is changed.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PiModelChangedResponse {
+    /// Session ID.
+    pub session_id: String,
+    /// The new model.
+    pub model: crate::pi::PiModel,
+    /// Current thinking level.
+    pub thinking_level: String,
+    /// Whether this is a scoped model.
+    pub is_scoped: bool,
+}
+
+/// Response with available models.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PiAvailableModelsResponse {
+    /// Session ID.
+    pub session_id: String,
+    /// Available models.
+    pub models: Vec<crate::pi::PiModel>,
+}
+
+/// Response when thinking level is changed.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PiThinkingLevelChangedResponse {
+    /// Session ID.
+    pub session_id: String,
+    /// The new thinking level.
+    pub level: String,
+}
+
+/// Response with compaction result.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PiCompactionResultResponse {
+    /// Session ID.
+    pub session_id: String,
+    /// Compaction result.
+    pub result: crate::pi::CompactionResult,
+}
+
+/// Message available for forking.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PiForkMessage {
+    /// Entry ID.
+    pub entry_id: String,
+    /// Message text.
+    pub text: String,
+}
+
+/// Response with messages available for forking.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PiForkMessagesResponse {
+    /// Session ID.
+    pub session_id: String,
+    /// Messages available for forking.
+    pub messages: Vec<PiForkMessage>,
+}
+
+/// Response with fork result.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PiForkResultResponse {
+    /// Session ID.
+    pub session_id: String,
+    /// The text of the message being forked from.
+    pub text: String,
+    /// Whether an extension cancelled the fork.
+    pub cancelled: bool,
+}
+
+/// Command info (extension, template, or skill).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PiCommandInfo {
+    /// Command name (invoke with /name).
+    pub name: String,
+    /// Human-readable description.
+    #[serde(default)]
+    pub description: Option<String>,
+    /// Source: "extension", "template", or "skill".
+    pub source: String,
+    /// Location: "user", "project", or "path".
+    #[serde(default)]
+    pub location: Option<String>,
+    /// Absolute file path to the command source.
+    #[serde(default)]
+    pub path: Option<String>,
+}
+
+/// Response with available commands.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PiCommandsResponse {
+    /// Session ID.
+    pub session_id: String,
+    /// Available commands.
+    pub commands: Vec<PiCommandInfo>,
+}
+
+/// Response with bash execution result.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PiBashResultResponse {
+    /// Session ID.
+    pub session_id: String,
+    /// Command output.
+    pub output: String,
+    /// Exit code.
+    pub exit_code: i32,
+    /// Whether the command was cancelled.
+    pub cancelled: bool,
+    /// Whether output was truncated.
+    pub truncated: bool,
+    /// Path to full output if truncated.
+    #[serde(default)]
+    pub full_output_path: Option<String>,
+}
+
+/// Response with HTML export result.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PiExportHtmlResultResponse {
+    /// Session ID.
+    pub session_id: String,
+    /// Path to the exported HTML file.
+    pub path: String,
+}
+
+// ============================================================================
 // Error Types
 // ============================================================================
 
@@ -1064,6 +1857,14 @@ pub enum ErrorCode {
     SessionNotRunning,
     /// Session is already running.
     SessionAlreadyRunning,
+
+    // Pi session errors
+    /// Pi session not found.
+    PiSessionNotFound,
+    /// Pi session already exists.
+    PiSessionExists,
+    /// Pi session is not in a valid state for this operation.
+    PiSessionInvalidState,
 
     // Memory errors
     /// Memory not found.
@@ -1154,5 +1955,66 @@ mod tests {
         let resp = RunnerResponse::Pong;
         let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("pong"));
+    }
+
+    #[test]
+    fn test_pi_create_session_request() {
+        let req = RunnerRequest::PiCreateSession(PiCreateSessionRequest {
+            session_id: "ses_123".to_string(),
+            config: PiSessionConfig {
+                cwd: PathBuf::from("/home/user/project"),
+                provider: Some("anthropic".to_string()),
+                model: Some("claude-sonnet-4-20250514".to_string()),
+                session_file: None,
+                continue_session: None,
+                system_prompt_files: vec![],
+                env: HashMap::new(),
+            },
+        });
+
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(json.contains("pi_create_session"));
+        assert!(json.contains("ses_123"));
+        assert!(json.contains("anthropic"));
+
+        let parsed: RunnerRequest = serde_json::from_str(&json).unwrap();
+        match parsed {
+            RunnerRequest::PiCreateSession(p) => {
+                assert_eq!(p.session_id, "ses_123");
+                assert_eq!(p.config.provider.as_deref(), Some("anthropic"));
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn test_pi_event_wrapper() {
+        let wrapper = PiEventWrapper {
+            session_id: "ses_123".to_string(),
+            event: PiEvent::AgentStart,
+        };
+
+        let resp = RunnerResponse::PiEvent(wrapper);
+        let json = serde_json::to_string(&resp).unwrap();
+        assert!(json.contains("pi_event"));
+        assert!(json.contains("ses_123"));
+        assert!(json.contains("agent_start"));
+    }
+
+    #[test]
+    fn test_pi_session_state() {
+        let info = PiSessionInfo {
+            session_id: "ses_123".to_string(),
+            state: PiSessionState::Streaming,
+            last_activity: 1234567890000,
+            subscriber_count: 2,
+            cwd: PathBuf::from("/home/user/project"),
+            provider: Some("anthropic".to_string()),
+            model: Some("claude-sonnet-4-20250514".to_string()),
+        };
+
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains("streaming"));
+        assert!(json.contains("subscriber_count"));
     }
 }

@@ -614,7 +614,7 @@ mod tests {
         assert_eq!(unique_ports.len(), 30, "All ports should be unique");
 
         // Ports should be in range
-        assert!(all_ports.iter().all(|&p| p >= 60000 && p < 60030));
+        assert!(all_ports.iter().all(|&p| (60000..60030).contains(&p)));
     }
 
     // =========================================================================

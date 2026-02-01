@@ -202,19 +202,19 @@ const markdownComponents: Components = {
 		);
 	},
 	ul({ children }) {
-		return (
-			<ul className="list-disc list-inside mb-3 space-y-1 pl-2">{children}</ul>
-		);
+		return <ul className="list-none mb-3 space-y-1 pl-0">{children}</ul>;
 	},
 	ol({ children }) {
-		return (
-			<ol className="list-decimal list-inside mb-3 space-y-1 pl-2">
-				{children}
-			</ol>
-		);
+		return <ol className="list-none mb-3 space-y-1 pl-0">{children}</ol>;
 	},
-	li({ children }) {
-		return <li className="text-foreground">{children}</li>;
+	li({ children, ordered, index }) {
+		const marker = ordered ? `${(index ?? 0) + 1}.` : "•";
+		return (
+			<li className="flex items-start gap-2 text-foreground leading-relaxed">
+				<span className="text-foreground/70 shrink-0">{marker}</span>
+				<span className="[&>p]:m-0 [&>p]:inline">{children}</span>
+			</li>
+		);
 	},
 	blockquote({ children }) {
 		return (

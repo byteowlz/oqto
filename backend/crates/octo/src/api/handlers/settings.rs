@@ -36,7 +36,8 @@ pub async fn get_settings_schema(
     Query(query): Query<SettingsQuery>,
 ) -> ApiResult<Json<serde_json::Value>> {
     let service =
-        resolve_settings_service(&state, &user, &query.app, query.workspace_path.as_deref())?;
+        resolve_settings_service(&state, &user, &query.app, query.workspace_path.as_deref())
+            .await?;
     let scope = user_to_scope(&user);
 
     let schema = service.get_schema(scope);
@@ -53,7 +54,8 @@ pub async fn get_settings_values(
     Query(query): Query<SettingsQuery>,
 ) -> ApiResult<Json<HashMap<String, SettingsValue>>> {
     let service =
-        resolve_settings_service(&state, &user, &query.app, query.workspace_path.as_deref())?;
+        resolve_settings_service(&state, &user, &query.app, query.workspace_path.as_deref())
+            .await?;
     let scope = user_to_scope(&user);
 
     let values = service.get_values(scope).await;
@@ -71,7 +73,8 @@ pub async fn update_settings_values(
     Json(updates): Json<ConfigUpdate>,
 ) -> ApiResult<Json<HashMap<String, SettingsValue>>> {
     let service =
-        resolve_settings_service(&state, &user, &query.app, query.workspace_path.as_deref())?;
+        resolve_settings_service(&state, &user, &query.app, query.workspace_path.as_deref())
+            .await?;
     let scope = user_to_scope(&user);
 
     service
@@ -98,7 +101,8 @@ pub async fn reload_settings(
         &admin.0,
         &query.app,
         query.workspace_path.as_deref(),
-    )?;
+    )
+    .await?;
 
     service
         .reload()
@@ -118,7 +122,7 @@ fn user_to_scope(user: &CurrentUser) -> SettingsScope {
     }
 }
 
-fn resolve_settings_service(
+async fn resolve_settings_service(
     state: &AppState,
     user: &CurrentUser,
     app: &str,
@@ -139,7 +143,7 @@ fn resolve_settings_service(
         }
     }
 
-    let validated = validate_workspace_path(state, user.id(), workspace_path)?;
+    let validated = validate_workspace_path(state, user.id(), workspace_path).await?;
     let config_dir = validated.join(".pi");
     let scoped = service
         .with_config_dir(config_dir)
@@ -253,11 +257,11 @@ fn strip_json_comments(input: &str) -> String {
                             // Multi-line comment: skip until */
                             chars.next(); // consume the '*'
                             while let Some(ch) = chars.next() {
-                                if ch == '*' {
-                                    if let Some(&'/') = chars.peek() {
-                                        chars.next(); // consume the '/'
-                                        break;
-                                    }
+                                if ch == '*'
+                                    && let Some(&'/') = chars.peek()
+                                {
+                                    chars.next(); // consume the '/'
+                                    break;
                                 }
                             }
                         }

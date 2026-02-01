@@ -30,7 +30,7 @@ export type { OpenCodeTokenTotals } from "./OpenCodeTokenTotals";
 export type { OpenCodeTokenCache } from "./OpenCodeTokenCache";
 export type { OpenCodeTokenLimit } from "./OpenCodeTokenLimit";
 
-// Main chat types
+// Default chat types
 export type { AssistantInfo } from "./AssistantInfo";
 export type { HistoryEntryType } from "./HistoryEntryType";
 export type { MessageRole } from "./MessageRole";

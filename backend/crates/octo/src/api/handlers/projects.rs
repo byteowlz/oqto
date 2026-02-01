@@ -17,6 +17,7 @@ use uuid::Uuid;
 
 use crate::auth::CurrentUser;
 use crate::projects::{self, ProjectMetadata};
+use crate::session::WorkspaceLocationInput;
 
 use crate::api::error::{ApiError, ApiResult};
 use crate::api::state::{AppState, TemplatesRepoType};
@@ -73,6 +74,48 @@ pub struct CreateProjectFromTemplateRequest {
     pub project_path: String,
     #[serde(default)]
     pub shared: bool,
+}
+
+/// Query for listing workspace locations.
+#[derive(Debug, Deserialize)]
+pub struct WorkspaceLocationQuery {
+    pub workspace_id: String,
+}
+
+/// Request to upsert a workspace location.
+#[derive(Debug, Deserialize)]
+pub struct UpsertWorkspaceLocationRequest {
+    pub workspace_id: String,
+    pub location_id: String,
+    pub kind: String,
+    pub path: String,
+    #[serde(default)]
+    pub runner_id: Option<String>,
+    #[serde(default)]
+    pub repo_fingerprint: Option<String>,
+    #[serde(default)]
+    pub set_active: Option<bool>,
+}
+
+/// Request to set active workspace location.
+#[derive(Debug, Deserialize)]
+pub struct SetActiveWorkspaceLocationRequest {
+    pub workspace_id: String,
+    pub location_id: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct WorkspaceLocationSummary {
+    pub id: String,
+    pub workspace_id: String,
+    pub location_id: String,
+    pub kind: String,
+    pub path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub runner_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repo_fingerprint: Option<String>,
+    pub is_active: bool,
 }
 
 /// Find the best logo file for a project directory.
@@ -224,10 +267,7 @@ async fn maybe_sync_templates_repo(state: &AppState) -> Result<(), ApiError> {
     }
     let should_sync = {
         let last_sync = state.templates.last_sync.lock().await;
-        match *last_sync {
-            Some(instant) if instant.elapsed() < state.templates.sync_interval => false,
-            _ => true,
-        }
+        !matches!(*last_sync, Some(instant) if instant.elapsed() < state.templates.sync_interval)
     };
     if !should_sync {
         return Ok(());
@@ -500,6 +540,121 @@ pub async fn get_project_logo(
         ],
         contents,
     ))
+}
+
+#[instrument(skip(state, user, query))]
+pub async fn list_workspace_locations(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Query(query): Query<WorkspaceLocationQuery>,
+) -> ApiResult<Json<Vec<WorkspaceLocationSummary>>> {
+    let locations = state
+        .sessions
+        .workspace_locations()
+        .list_locations(user.id(), &query.workspace_id)
+        .await
+        .map_err(|e| ApiError::internal(format!("Failed to list workspace locations: {}", e)))?;
+
+    let summaries = locations
+        .into_iter()
+        .map(|location| WorkspaceLocationSummary {
+            id: location.id,
+            workspace_id: location.workspace_id,
+            location_id: location.location_id,
+            kind: location.kind,
+            path: location.path,
+            runner_id: location.runner_id,
+            repo_fingerprint: location.repo_fingerprint,
+            is_active: location.is_active == 1,
+        })
+        .collect();
+
+    Ok(Json(summaries))
+}
+
+#[instrument(skip(state, user, request))]
+pub async fn upsert_workspace_location(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Json(request): Json<UpsertWorkspaceLocationRequest>,
+) -> ApiResult<Json<WorkspaceLocationSummary>> {
+    let existing = state
+        .sessions
+        .workspace_locations()
+        .get_location(user.id(), &request.workspace_id, &request.location_id)
+        .await
+        .map_err(|e| ApiError::internal(format!("Failed to fetch workspace location: {}", e)))?;
+
+    let id = existing
+        .as_ref()
+        .map(|location| location.id.clone())
+        .unwrap_or_else(|| Uuid::new_v4().to_string());
+    let is_active = request.set_active.unwrap_or(false);
+
+    let input = WorkspaceLocationInput {
+        id: id.clone(),
+        user_id: user.id().to_string(),
+        workspace_id: request.workspace_id.clone(),
+        location_id: request.location_id.clone(),
+        kind: request.kind.clone(),
+        path: request.path.clone(),
+        runner_id: request.runner_id.clone(),
+        repo_fingerprint: request.repo_fingerprint.clone(),
+        is_active: if is_active { 1 } else { 0 },
+    };
+
+    state
+        .sessions
+        .workspace_locations()
+        .upsert_location(&input, is_active)
+        .await
+        .map_err(|e| ApiError::internal(format!("Failed to upsert workspace location: {}", e)))?;
+
+    let summary = WorkspaceLocationSummary {
+        id,
+        workspace_id: request.workspace_id,
+        location_id: request.location_id,
+        kind: request.kind,
+        path: request.path,
+        runner_id: request.runner_id,
+        repo_fingerprint: request.repo_fingerprint,
+        is_active,
+    };
+
+    Ok(Json(summary))
+}
+
+#[instrument(skip(state, user, request))]
+pub async fn set_active_workspace_location(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Json(request): Json<SetActiveWorkspaceLocationRequest>,
+) -> ApiResult<Json<WorkspaceLocationSummary>> {
+    state
+        .sessions
+        .workspace_locations()
+        .set_active_location(user.id(), &request.workspace_id, &request.location_id)
+        .await
+        .map_err(|e| ApiError::internal(format!("Failed to set active location: {}", e)))?;
+
+    let location = state
+        .sessions
+        .workspace_locations()
+        .get_location(user.id(), &request.workspace_id, &request.location_id)
+        .await
+        .map_err(|e| ApiError::internal(format!("Failed to fetch workspace location: {}", e)))?
+        .ok_or_else(|| ApiError::not_found("Workspace location not found".to_string()))?;
+
+    Ok(Json(WorkspaceLocationSummary {
+        id: location.id,
+        workspace_id: location.workspace_id,
+        location_id: location.location_id,
+        kind: location.kind,
+        path: location.path,
+        runner_id: location.runner_id,
+        repo_fingerprint: location.repo_fingerprint,
+        is_active: location.is_active == 1,
+    }))
 }
 
 #[cfg(test)]

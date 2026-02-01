@@ -3,7 +3,10 @@ import type {
 	HstrySearchHit,
 	ProjectLogo,
 } from "@/lib/control-plane-client";
-import { formatSessionDate, resolveReadableId } from "@/lib/session-utils";
+import {
+	formatSessionDate,
+	getReadableIdFromSession,
+} from "@/lib/session-utils";
 import { useCallback, useMemo } from "react";
 import type { SessionHierarchy, SessionsByProject } from "../SidebarSessions";
 import type { WorkspaceDirectory } from "./useProjectActions";
@@ -59,12 +62,23 @@ export function useSessionData({
 	projectSortBy,
 	projectSortAsc,
 }: SessionDataInput): SessionDataOutput {
+	const dedupedChatHistory = useMemo(() => {
+		const byId = new Map<string, ChatSession>();
+		for (const session of chatHistory) {
+			const existing = byId.get(session.id);
+			if (!existing || session.updated_at >= existing.updated_at) {
+				byId.set(session.id, session);
+			}
+		}
+		return Array.from(byId.values());
+	}, [chatHistory]);
+
 	// Build hierarchical session structure
 	const sessionHierarchy: SessionHierarchy = useMemo(() => {
-		const parentSessions = chatHistory.filter((s) => !s.parent_id);
+		const parentSessions = dedupedChatHistory.filter((s) => !s.parent_id);
 		const childSessionsByParent = new Map<string, ChatSession[]>();
 
-		for (const session of chatHistory) {
+		for (const session of dedupedChatHistory) {
 			if (session.parent_id) {
 				const children = childSessionsByParent.get(session.parent_id) || [];
 				children.push(session);
@@ -80,7 +94,7 @@ export function useSessionData({
 		}
 
 		return { parentSessions, childSessionsByParent };
-	}, [chatHistory]);
+	}, [dedupedChatHistory]);
 
 	const projectKeyForSession = useCallback(
 		(
@@ -152,8 +166,10 @@ export function useSessionData({
 		if (searchLower) {
 			sessions = sessions.filter((session) => {
 				if (session.title?.toLowerCase().includes(searchLower)) return true;
-				const readableId = resolveReadableId(session.id, session.readable_id);
-				if (readableId.toLowerCase().includes(searchLower)) return true;
+				const readableId = getReadableIdFromSession(session);
+				if (readableId && readableId.toLowerCase().includes(searchLower)) {
+					return true;
+				}
 				if (session.updated_at) {
 					const dateStr = formatSessionDate(session.updated_at);
 					if (dateStr.toLowerCase().includes(searchLower)) return true;
@@ -194,7 +210,7 @@ export function useSessionData({
 				return session.title.toLowerCase().includes(query);
 			})
 			.map((session) => ({
-				agent: "opencode",
+				agent: "pi",
 				source_path: `title:oc:${session.id}`,
 				session_id: session.id,
 				title: session.title ?? "Untitled",

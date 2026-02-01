@@ -9,7 +9,7 @@
  * - Connection state management
  */
 
-import { getAuthToken, getControlPlaneBaseUrl } from "./control-plane-client";
+import { getWsManager } from "./ws-manager";
 
 function isWsDebugEnabled(): boolean {
 	if (!import.meta.env.DEV) return false;
@@ -21,7 +21,7 @@ function isWsDebugEnabled(): boolean {
 	} catch {
 		// ignore
 	}
-	return false;
+	return import.meta.env.VITE_DEBUG_WS === "1";
 }
 
 // ============================================================================
@@ -272,18 +272,12 @@ export type ConnectionStateHandler = (state: ConnectionState) => void;
 // WebSocket Client
 // ============================================================================
 
-const MAX_RECONNECT_ATTEMPTS = 20;
-const BASE_RECONNECT_DELAY_MS = 1000;
-const MAX_RECONNECT_DELAY_MS = 30000;
-const PING_TIMEOUT_MS = 45000; // If no ping for this long, reconnect
 
 /** Singleton WebSocket client for Octo */
 class OctoWsClient {
-	private ws: WebSocket | null = null;
 	private connectionState: ConnectionState = "disconnected";
-	private reconnectAttempt = 0;
-	private reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
-	private pingTimeout: ReturnType<typeof setTimeout> | null = null;
+	private muxUnsubscribe: (() => void) | null = null;
+	private muxStateUnsubscribe: (() => void) | null = null;
 
 	// Event handlers
 	private eventHandlers: Map<string, Set<WsEventHandler>> = new Map();
@@ -306,35 +300,21 @@ class OctoWsClient {
 
 	/** Connect to the WebSocket server */
 	connect(): void {
-		if (this.ws?.readyState === WebSocket.OPEN) {
-			if (isWsDebugEnabled()) {
-				console.debug("[ws] Already connected");
-			}
-			return;
-		}
-
-		if (this.ws?.readyState === WebSocket.CONNECTING) {
-			if (isWsDebugEnabled()) {
-				console.debug("[ws] Connection already in progress");
-			}
-			return;
-		}
-
-		this.setConnectionState("connecting");
-		this.createWebSocket();
+		this.ensureMuxSubscriptions();
+		getWsManager().connect();
 	}
 
 	/** Disconnect from the WebSocket server */
 	disconnect(): void {
-		this.clearReconnectTimeout();
-		this.clearPingTimeout();
-		this.setConnectionState("disconnected");
-
-		if (this.ws) {
-			this.ws.onclose = null; // Prevent reconnection
-			this.ws.close(1000, "Client disconnect");
-			this.ws = null;
+		if (this.muxUnsubscribe) {
+			this.muxUnsubscribe();
+			this.muxUnsubscribe = null;
 		}
+		if (this.muxStateUnsubscribe) {
+			this.muxStateUnsubscribe();
+			this.muxStateUnsubscribe = null;
+		}
+		this.setConnectionState("disconnected");
 	}
 
 	/** Subscribe to events for a session */
@@ -497,110 +477,21 @@ class OctoWsClient {
 	// Private methods
 	// ========================================================================
 
-	private createWebSocket(): void {
-		const baseUrl = getControlPlaneBaseUrl();
-		let wsUrl: string;
-
-		if (baseUrl) {
-			// Direct connection to control plane
-			wsUrl = `${baseUrl.replace(/^http/, "ws")}/ws`;
-		} else {
-			// Proxied via frontend dev server
-			wsUrl = `${window.location.origin.replace(/^http/, "ws")}/api/ws`;
-		}
-
-		// Add auth token as query parameter for WebSocket auth
-		const token = getAuthToken();
-		if (token) {
-			const separator = wsUrl.includes("?") ? "&" : "?";
-			wsUrl = `${wsUrl}${separator}token=${encodeURIComponent(token)}`;
-		}
-
-		if (isWsDebugEnabled()) {
-			console.debug("[ws] Connecting to", wsUrl);
-		}
-		this.ws = new WebSocket(wsUrl);
-
-		this.ws.onopen = () => {
-			if (isWsDebugEnabled()) {
-				console.debug("[ws] Connected");
-			}
-			this.reconnectAttempt = 0;
-			this.setConnectionState("connected");
-			this.resetPingTimeout();
-
-			// Send pending subscriptions
-			for (const sessionId of this.pendingSubscriptions) {
-				this.send({ type: "subscribe", session_id: sessionId });
-			}
-			this.pendingSubscriptions.clear();
-
-			// Re-subscribe to all sessions
-			for (const sessionId of this.subscribedSessions) {
-				if (!this.pendingSubscriptions.has(sessionId)) {
-					this.send({ type: "subscribe", session_id: sessionId });
-				}
-			}
-		};
-
-		this.ws.onmessage = (event) => {
-			try {
-				const data = JSON.parse(event.data) as WsEvent;
-				// Avoid logging full payloads (can be huge + slow).
-				if (isWsDebugEnabled() && data.type !== "ping") {
-					console.debug("[ws] Received event:", data.type, {
-						session_id: "session_id" in data ? data.session_id : undefined,
-					});
-				}
-				this.handleEvent(data);
-			} catch (err) {
-				console.warn("[ws] Failed to parse message:", err, event.data);
-			}
-		};
-
-		this.ws.onerror = (event) => {
-			console.warn("[ws] WebSocket error:", event);
-		};
-
-		this.ws.onclose = (event) => {
-			if (isWsDebugEnabled()) {
-				console.debug("[ws] Connection closed:", event.code, event.reason);
-			}
-			this.ws = null;
-			this.clearPingTimeout();
-
-			if (event.code !== 1000) {
-				// Abnormal close, attempt reconnection
-				this.scheduleReconnect();
-			} else {
-				this.setConnectionState("disconnected");
-			}
-		};
-	}
-
 	private send(command: WsCommand): void {
-		if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+		const manager = getWsManager();
+		if (!manager.isConnected) {
 			console.warn("[ws] Cannot send, not connected:", command.type);
 			return;
 		}
-
-		try {
-			this.ws.send(JSON.stringify(command));
-		} catch (err) {
-			console.error("[ws] Failed to send command:", err);
-		}
+		manager.send({ channel: "session", ...command } as any);
 	}
 
 	private handleEvent(event: WsEvent): void {
 		// Handle ping
 		if (event.type === "ping") {
 			this.send({ type: "pong" });
-			this.resetPingTimeout();
 			return;
 		}
-
-		// Reset ping timeout on any message
-		this.resetPingTimeout();
 
 		// Debug: log A2UI events (opt-in)
 		if (isWsDebugEnabled() && event.type === "a2ui_surface") {
@@ -654,57 +545,42 @@ class OctoWsClient {
 		}
 	}
 
-	private scheduleReconnect(): void {
-		if (this.reconnectAttempt >= MAX_RECONNECT_ATTEMPTS) {
-			console.error("[ws] Max reconnect attempts reached");
-			this.setConnectionState("failed");
-			return;
-		}
+	private ensureMuxSubscriptions(): void {
+		if (this.muxUnsubscribe) return;
 
-		this.setConnectionState("reconnecting");
-		this.reconnectAttempt++;
+		const manager = getWsManager();
+		this.muxUnsubscribe = manager.subscribe("session", (event) => {
+			const payload = event as unknown as { channel: "session" } & WsEvent;
+			const { channel: _channel, ...legacy } = payload as any;
+			if (isWsDebugEnabled() && (legacy as WsEvent).type !== "ping") {
+				console.debug("[ws] Received event:", (legacy as WsEvent).type, {
+					session_id:
+						"session_id" in legacy ? (legacy as any).session_id : undefined,
+				});
+			}
+			this.handleEvent(legacy as WsEvent);
+		});
 
-		const delay = Math.min(
-			BASE_RECONNECT_DELAY_MS * 2 ** (this.reconnectAttempt - 1),
-			MAX_RECONNECT_DELAY_MS,
-		);
-
-		// Add jitter
-		const jitter = Math.random() * 0.2 * delay;
-		const totalDelay = delay + jitter;
-
-		if (isWsDebugEnabled()) {
-			console.debug(
-				`[ws] Reconnecting in ${Math.round(totalDelay)}ms (attempt ${this.reconnectAttempt})`,
-			);
-		}
-
-		this.reconnectTimeout = setTimeout(() => {
-			this.reconnectTimeout = null;
-			this.createWebSocket();
-		}, totalDelay);
-	}
-
-	private clearReconnectTimeout(): void {
-		if (this.reconnectTimeout) {
-			clearTimeout(this.reconnectTimeout);
-			this.reconnectTimeout = null;
-		}
-	}
-
-	private resetPingTimeout(): void {
-		this.clearPingTimeout();
-		this.pingTimeout = setTimeout(() => {
-			console.warn("[ws] Ping timeout, reconnecting");
-			this.ws?.close(4000, "Ping timeout");
-		}, PING_TIMEOUT_MS);
-	}
-
-	private clearPingTimeout(): void {
-		if (this.pingTimeout) {
-			clearTimeout(this.pingTimeout);
-			this.pingTimeout = null;
-		}
+		this.muxStateUnsubscribe = manager.onConnectionState((state) => {
+			if (state === "connected") {
+				this.setConnectionState("connected");
+				for (const sessionId of this.pendingSubscriptions) {
+					this.send({ type: "subscribe", session_id: sessionId });
+				}
+				this.pendingSubscriptions.clear();
+				for (const sessionId of this.subscribedSessions) {
+					this.send({ type: "subscribe", session_id: sessionId });
+				}
+			} else if (state === "connecting") {
+				this.setConnectionState("connecting");
+			} else if (state === "reconnecting") {
+				this.setConnectionState("reconnecting");
+			} else if (state === "failed") {
+				this.setConnectionState("failed");
+			} else if (state === "disconnected") {
+				this.setConnectionState("disconnected");
+			}
+		});
 	}
 }
 
