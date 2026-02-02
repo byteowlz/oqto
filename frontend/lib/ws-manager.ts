@@ -151,6 +151,9 @@ class WsConnectionManager {
 		}
 
 		try {
+			if (!("id" in command) || command.id === undefined) {
+				command.id = this.nextRequestId();
+			}
 			const json = JSON.stringify(command);
 			console.log("[ws-mux] Sending:", json);
 			this.ws.send(json);

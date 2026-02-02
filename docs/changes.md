@@ -1,5 +1,10 @@
 # Changes
 
+- 2026-02-02: Filter Pi toolcall delta fragments from the multiplexed WS stream to stop duplicate/raw command text in Main Chat output.
+- 2026-02-02: Ensure Pi tool events start a streaming assistant message so tool spinners resolve with tool results.
+- 2026-02-02: Restore Pi file mention popup to HTTP file tree fetches to keep attachments working under WS multiplexing.
+- 2026-02-02: Prevent TRX sidebar search typing from re-rendering the full issue list to avoid remounts.
+- 2026-02-02: Guard terminal IDs and Pi session IDs when crypto.randomUUID is unavailable (mobile).
 - 2026-02-02: Send Main Chat Pi messages with prompt mode by default for the primary send action.
 - 2026-02-02: Prevent multiplexed WS reconnect loops by disabling unused pong timeouts and skipping duplicate session resubscribe sends.
 - 2026-02-02: Queue Pi messages until session_created arrives and scope Main Chat drafts per session to stop cross-chat input bleed.

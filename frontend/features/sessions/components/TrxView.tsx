@@ -723,6 +723,7 @@ export const TrxView = memo(function TrxView({
 	const [filterType, setFilterType] = useState<FilterType>("all");
 	const [hideClosed, setHideClosed] = useState(false);
 	const [searchQuery, setSearchQuery] = useState("");
+	const [searchQueryInput, setSearchQueryInput] = useState("");
 	const deferredSearchQuery = useDeferredValue(searchQuery);
 	const searchInputRef = useRef<HTMLInputElement>(null);
 	const [searchIncludeDescription, setSearchIncludeDescription] =
@@ -730,6 +731,10 @@ export const TrxView = memo(function TrxView({
 	const [selectedIssueIds, setSelectedIssueIds] = useState<Set<string>>(
 		new Set(),
 	);
+
+	useEffect(() => {
+		setSearchQueryInput(searchQuery);
+	}, [searchQuery]);
 
 	const loadIssues = useCallback(async () => {
 		if (!workspacePath) {
@@ -1345,22 +1350,21 @@ export const TrxView = memo(function TrxView({
 
 						<input
 							ref={searchInputRef}
-							defaultValue={searchQuery}
+							value={searchQueryInput}
 							onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-								setSearchQuery(e.target.value)
+								setSearchQueryInput(e.target.value)
 							}
+							onBlur={() => setSearchQuery(searchQueryInput)}
 							placeholder="Search tasks..."
 							className="h-full flex-1 border-none bg-transparent px-2 shadow-none outline-none text-foreground placeholder:text-muted-foreground"
 						/>
 
-						{searchQuery && (
+						{searchQueryInput && (
 							<button
 								type="button"
 								onClick={() => {
 									setSearchQuery("");
-									if (searchInputRef.current) {
-										searchInputRef.current.value = "";
-									}
+									setSearchQueryInput("");
 								}}
 								className="text-muted-foreground hover:text-foreground shrink-0"
 							>

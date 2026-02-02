@@ -632,7 +632,11 @@ export const MuxGhosttyTerminal = forwardRef<
 	const containerRef = useRef<HTMLDivElement | null>(null);
 	const terminalRef = useRef<Terminal | null>(null);
 	const fitAddonRef = useRef<FitAddon | null>(null);
-	const terminalIdRef = useRef<string>(crypto.randomUUID());
+	const terminalIdRef = useRef<string>(
+		typeof crypto !== "undefined" && crypto.randomUUID
+			? crypto.randomUUID()
+			: `terminal-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+	);
 	const isReadyRef = useRef(false);
 	const [status, setStatus] = useState<
 		"waiting" | "connecting" | "connected" | "error"

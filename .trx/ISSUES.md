@@ -2,8 +2,6 @@
 
 ## Open
 
-### [octo-047z] Responses are duplicated in main chat (P1, bug)
-
 ### [octo-t2bf] Multi-Runner & Workspace Sharing (P1, epic)
 Epic for enabling users to connect to multiple runners across different machines (laptop, desktop, cloud) and share workspaces with other users.
 
@@ -175,18 +173,6 @@ Implementation:
 
 ### [workspace-5pmk.11] Add backend URL configuration to login form (P1, task)
 Add a 'Server URL' field to the login form allowing users to specify the backend URL. Store in localStorage for persistence. Show connection status indicator. Default to current origin for web, require input for mobile apps.
-
-### [octo-p09v] tool calling spinner doesn't stop. all tool calls continue spinning (P2, bug)
-Tool calling spinner doesn't stop. All tool calls continue spinning. Attempted fix: updated usePiChatV2.ts to use normalizePiMessages() for history loading. Still broken - tool spinner never stops, no working spinner appears, tool results show as plain text instead of in dropdown. Need to investigate streaming event handlers and rendering logic.
-
-### [octo-jdt5] File attachments don't work in pi chats  (P2, bug)
-
-### [octo-v2d4] Trx sidebar component remounts when adding a new issue in the sidebar (P2, bug)
-
-### [octo-016a] Full component rerender on key event for trx issue input in sidebar (P2, bug)
-
-### [octo-qs75] Raw commands like ({"command":"ls -la"}) appear in pi chat messages (P2, bug)
-Raw commands like ({"command":"ls -la"}) appear in pi chat messages. Attempted fix: added JSON filter in MainChatPiView.tsx. Still broken - raw commands still appear. Need to investigate where these are coming from in the message stream.
 
 ### [octo-wah4] Security: Runner authentication and TLS for network endpoints (P2, task)
 Implement runner authentication and TLS for network endpoints:
@@ -869,6 +855,12 @@ Desired behavior: Tool calls hidden by default, toggle to show
 
 ## Closed
 
+- [octo-qs75] Raw commands like ({"command":"ls -la"}) appear in pi chat messages (closed 2026-02-02)
+- [octo-016a] Full component rerender on key event for trx issue input in sidebar (closed 2026-02-02)
+- [octo-v2d4] Trx sidebar component remounts when adding a new issue in the sidebar (closed 2026-02-02)
+- [octo-jdt5] File attachments don't work in pi chats  (closed 2026-02-02)
+- [octo-p09v] tool calling spinner doesn't stop. all tool calls continue spinning (closed 2026-02-02)
+- [octo-047z] Responses are duplicated in main chat (closed 2026-02-02)
 - [octo-1j5m] Background history refresh races with session switches (closed 2026-01-31)
 - [octo-pwnn] Backend Pi process reuse broadcasts events across sessions (closed 2026-01-31)
 - [octo-dxsg] WebSocket handler swapping causes message leaks (closed 2026-01-31)
@@ -1412,9 +1404,9 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
+- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
+- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
 - [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
+- [octo-k8z1.1] Backend: Integrate agent-browser daemon per session (closed )
 - [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
 - [octo-k8z1.2] Backend: WebSocket proxy for screencast stream (closed )
-- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
-- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
-- [octo-k8z1.1] Backend: Integrate agent-browser daemon per session (closed )

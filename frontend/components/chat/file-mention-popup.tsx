@@ -1,6 +1,6 @@
 "use client";
 
-import { fetchFileTreeMux } from "@/lib/mux-files";
+import { fetchFileTree } from "@/lib/api/files";
 import { cn } from "@/lib/utils";
 import { File, Folder, Loader2 } from "lucide-react";
 import { memo, useCallback, useEffect, useRef, useState } from "react";
@@ -107,7 +107,7 @@ export const FileMentionPopup = memo(function FileMentionPopup({
 		setLoading(true);
 		setError(null);
 
-		fetchFileTreeMux(workspacePath, ".", 10, false)
+		fetchFileTree(workspacePath, ".", 10, false)
 			.then((data) => {
 				// Flatten and collect all files
 				const allFiles = collectAllFiles(data);

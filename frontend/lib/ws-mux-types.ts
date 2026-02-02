@@ -652,7 +652,7 @@ export type TerminalWsEvent =
 			terminal_id: string;
 			data_base64: string;
 	  }
-	| { channel: "terminal"; type: "exit"; terminal_id: string }
+	| ({ channel: "terminal"; type: "exit"; terminal_id: string } & WsEventBase)
 	| ({
 			channel: "terminal";
 			type: "error";

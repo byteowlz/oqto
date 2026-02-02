@@ -30,6 +30,13 @@ import type {
 
 const BATCH_FLUSH_INTERVAL_MS = 50;
 
+function createSessionId(): string {
+	if (typeof crypto !== "undefined" && crypto.randomUUID) {
+		return crypto.randomUUID();
+	}
+	return `pi-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
 function isPiDebugEnabled(): boolean {
 	if (!import.meta.env.DEV) return false;
 	try {
@@ -242,44 +249,64 @@ export function usePiChatV2(options: UsePiChatOptions = {}): UsePiChatReturn {
 				case "tool_use":
 				case "tool_start": {
 					const tool = event.data;
-					const currentMsg = streamingMessageRef.current;
-					if (currentMsg) {
-						const alreadyPresent = currentMsg.parts.some(
-							(p) => p.type === "tool_use" && p.id === tool.id,
-						);
-						if (!alreadyPresent) {
-							currentMsg.parts.push({
-								type: "tool_use",
-								id: tool.id,
-								name: tool.name,
-								input: tool.input,
-							} as PiMessagePart);
-							scheduleStreamingUpdate();
-						}
+					if (!streamingMessageRef.current) {
+						const assistantMessage: PiDisplayMessage = {
+							id: nextMessageId(),
+							role: "assistant",
+							parts: [],
+							timestamp: Date.now(),
+							isStreaming: true,
+						};
+						streamingMessageRef.current = assistantMessage;
+						setMessages((prev) => [...prev, assistantMessage]);
 					}
+					const currentMsg = streamingMessageRef.current;
+					const alreadyPresent = currentMsg.parts.some(
+						(p) => p.type === "tool_use" && p.id === tool.id,
+					);
+					if (!alreadyPresent) {
+						currentMsg.parts.push({
+							type: "tool_use",
+							id: tool.id,
+							name: tool.name,
+							input: tool.input,
+						} as PiMessagePart);
+						scheduleStreamingUpdate();
+					}
+					setIsStreaming(true);
 					break;
 				}
 
 				case "tool_result": {
 					const result = event.data;
-					const currentMsg = streamingMessageRef.current;
-					if (currentMsg) {
-						const matchingToolUse = currentMsg.parts.find(
-							(p) => p.type === "tool_use" && p.id === result.id,
-						);
-						currentMsg.parts.push({
-							type: "tool_result",
-							id: result.id,
-							name:
-								result.name ||
-								(matchingToolUse?.type === "tool_use"
-									? matchingToolUse.name
-									: undefined),
-							content: result.content,
-							isError: result.is_error,
-						} as PiMessagePart);
-						scheduleStreamingUpdate();
+					if (!streamingMessageRef.current) {
+						const assistantMessage: PiDisplayMessage = {
+							id: nextMessageId(),
+							role: "assistant",
+							parts: [],
+							timestamp: Date.now(),
+							isStreaming: true,
+						};
+						streamingMessageRef.current = assistantMessage;
+						setMessages((prev) => [...prev, assistantMessage]);
 					}
+					const currentMsg = streamingMessageRef.current;
+					const matchingToolUse = currentMsg.parts.find(
+						(p) => p.type === "tool_use" && p.id === result.id,
+					);
+					currentMsg.parts.push({
+						type: "tool_result",
+						id: result.id,
+						name:
+							result.name ||
+							(matchingToolUse?.type === "tool_use"
+								? matchingToolUse.name
+								: undefined),
+						content: result.content,
+						isError: result.is_error,
+					} as PiMessagePart);
+					scheduleStreamingUpdate();
+					setIsStreaming(true);
 					break;
 				}
 
@@ -431,7 +458,7 @@ export function usePiChatV2(options: UsePiChatOptions = {}): UsePiChatReturn {
 
 			// Auto-create a session if none exists
 			if (!sessionId) {
-				const newSessionId = crypto.randomUUID();
+				const newSessionId = createSessionId();
 				console.log("[usePiChatV2] send: auto-creating new session", newSessionId, "workspacePath:", workspacePath);
 				
 				// Update the session ID ref immediately
@@ -510,7 +537,7 @@ export function usePiChatV2(options: UsePiChatOptions = {}): UsePiChatReturn {
 	// New session - creates a brand new session with a new UUID
 	const newSession = useCallback(async () => {
 		// Generate a new session ID
-		const newSessionId = crypto.randomUUID();
+		const newSessionId = createSessionId();
 		
 		console.log("[usePiChatV2] newSession: creating new session", newSessionId, "workspacePath:", workspacePath);
 		

@@ -2282,21 +2282,21 @@ fn pi_event_to_ws_event(session_id: &str, event: PiEvent) -> WsEvent {
                         data: String::new(),
                     })
                 }
-                AssistantMessageEvent::TextEnd { content, .. } => WsEvent::Pi(PiWsEvent::Text {
+                AssistantMessageEvent::TextEnd { .. } => WsEvent::Pi(PiWsEvent::Text {
                     session_id: sid,
-                    data: content,
+                    data: String::new(),
                 }),
-                AssistantMessageEvent::ThinkingEnd { content, .. } => {
+                AssistantMessageEvent::ThinkingEnd { .. } => {
                     WsEvent::Pi(PiWsEvent::Thinking {
                         session_id: sid,
-                        data: content,
+                        data: String::new(),
                     })
                 }
-                AssistantMessageEvent::ToolcallDelta { delta, .. } => {
-                    // Tool call deltas are typically JSON fragments, not user-visible
+                AssistantMessageEvent::ToolcallDelta { .. } => {
+                    // Tool call deltas are JSON fragments, not user-visible.
                     WsEvent::Pi(PiWsEvent::Text {
                         session_id: sid,
-                        data: delta,
+                        data: String::new(),
                     })
                 }
                 AssistantMessageEvent::ToolcallEnd { tool_call, .. } => {
