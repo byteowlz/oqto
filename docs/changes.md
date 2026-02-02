@@ -84,3 +84,4 @@
 - 2026-02-02: Parse hstry parts_json payloads and map tool role messages to tool results in Main Chat normalization.
 - 2026-02-02: Strip ANSI escape codes from tool outputs and parse tool-result JSON strings into tool dropdown entries.
 - 2026-02-02: Add list_directory path context to file tree errors for easier debugging.
+- 2026-02-02: Collapse settings sections by default on mobile and memoize JSON value rendering to reduce mobile settings crashes.
