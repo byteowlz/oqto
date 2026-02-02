@@ -28,7 +28,6 @@ use crate::session_ui::SessionAutoAttachMode;
 use crate::settings::SettingsService;
 use crate::templates::OnboardingTemplatesService;
 use crate::user::UserService;
-use crate::user_plane::{DirectUserPlane, RunnerUserPlane, UserPlane};
 use crate::ws::WsHub;
 
 /// Mmry configuration for the API layer.
@@ -205,123 +204,6 @@ impl Default for TemplatesState {
     }
 }
 
-/// Factory for creating per-user UserPlane instances.
-///
-/// In single-user mode, returns a DirectUserPlane.
-/// In multi-user mode, returns a RunnerUserPlane connected to the user's runner socket.
-#[derive(Clone)]
-pub struct UserPlaneFactory {
-    /// Whether multi-user mode is enabled.
-    multi_user_enabled: bool,
-    /// Default workspace root for single-user mode.
-    default_workspace_root: PathBuf,
-    /// Optional runner socket pattern override.
-    runner_socket_pattern: Option<String>,
-}
-
-impl std::fmt::Debug for UserPlaneFactory {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("UserPlaneFactory")
-            .field("multi_user_enabled", &self.multi_user_enabled)
-            .field("default_workspace_root", &self.default_workspace_root)
-            .finish()
-    }
-}
-
-#[allow(dead_code)]
-impl UserPlaneFactory {
-    /// Create a new factory for single-user mode.
-    pub fn single_user(workspace_root: impl Into<PathBuf>) -> Self {
-        Self {
-            multi_user_enabled: false,
-            default_workspace_root: workspace_root.into(),
-            runner_socket_pattern: None,
-        }
-    }
-
-    /// Create a new factory for multi-user mode.
-    pub fn multi_user() -> Self {
-        Self {
-            multi_user_enabled: true,
-            default_workspace_root: PathBuf::from("/tmp"),
-            runner_socket_pattern: None,
-        }
-    }
-
-    /// Check if multi-user mode is enabled.
-    pub fn is_multi_user(&self) -> bool {
-        self.multi_user_enabled
-    }
-
-    /// Create a UserPlane for the given user.
-    ///
-    /// - In single-user mode: returns DirectUserPlane with workspace_root
-    /// - In multi-user mode with linux_username: returns RunnerUserPlane for that user
-    /// - In multi-user mode without linux_username: falls back to DirectUserPlane
-    pub fn for_user(&self, linux_username: Option<&str>) -> Arc<dyn UserPlane> {
-        if self.multi_user_enabled
-            && let Some(username) = linux_username
-        {
-            let plane = if let Some(pattern) = self.runner_socket_pattern.as_deref() {
-                RunnerUserPlane::for_user_with_pattern(username, pattern)
-            } else {
-                RunnerUserPlane::for_user(username)
-            };
-            match plane {
-                Ok(plane) => return Arc::new(plane),
-                Err(e) => {
-                    tracing::warn!(
-                        "Failed to create RunnerUserPlane for {}: {:?}, falling back to direct",
-                        username,
-                        e
-                    );
-                }
-            }
-        }
-        // Fallback to direct access
-        Arc::new(DirectUserPlane::new(&self.default_workspace_root))
-    }
-
-    /// Create a UserPlane using the default runner socket (current user).
-    ///
-    /// This is useful for single-user mode where we still want runner isolation.
-    pub fn for_current_user(&self) -> Arc<dyn UserPlane> {
-        if self.multi_user_enabled {
-            // Use default socket path (current user's XDG_RUNTIME_DIR)
-            if let Some(pattern) = self.runner_socket_pattern.as_deref() {
-                match RunnerUserPlane::for_user_with_pattern(
-                    &std::env::var("USER").unwrap_or_else(|_| "unknown".to_string()),
-                    pattern,
-                ) {
-                    Ok(plane) => Arc::new(plane),
-                    Err(e) => {
-                        tracing::warn!(
-                            "Failed to create RunnerUserPlane for current user: {:?}, falling back to direct",
-                            e
-                        );
-                        Arc::new(DirectUserPlane::new(&self.default_workspace_root))
-                    }
-                }
-            } else {
-                Arc::new(RunnerUserPlane::default())
-            }
-        } else {
-            Arc::new(DirectUserPlane::new(&self.default_workspace_root))
-        }
-    }
-
-    pub fn with_runner_socket_pattern(mut self, pattern: Option<String>) -> Self {
-        self.runner_socket_pattern = pattern;
-        self
-    }
-}
-
-impl Default for UserPlaneFactory {
-    fn default() -> Self {
-        Self::single_user(std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string()))
-    }
-}
-
 /// Application state shared across all handlers.
 #[derive(Clone)]
 pub struct AppState {
@@ -375,8 +257,6 @@ pub struct AppState {
     pub max_proxy_body_bytes: usize,
     /// Linux user isolation configuration (for multi-user mode).
     pub linux_users: Option<LinuxUsersConfig>,
-    /// Factory for creating per-user UserPlane instances.
-    pub user_plane_factory: UserPlaneFactory,
     /// Runner socket pattern for multi-user mode (e.g., "/run/octo/runner-sockets/{user}/octo-runner.sock").
     pub runner_socket_pattern: Option<String>,
     /// hstry client for unified chat history persistence.
@@ -426,7 +306,6 @@ impl AppState {
             pending_a2ui_requests: super::a2ui::new_pending_requests(),
             max_proxy_body_bytes,
             linux_users: None,
-            user_plane_factory: UserPlaneFactory::default(),
             runner_socket_pattern: None,
             hstry: None,
         }
@@ -475,7 +354,6 @@ impl AppState {
             pending_a2ui_requests: super::a2ui::new_pending_requests(),
             max_proxy_body_bytes,
             linux_users: None,
-            user_plane_factory: UserPlaneFactory::default(),
             runner_socket_pattern: None,
             hstry: None,
         }
@@ -509,8 +387,6 @@ impl AppState {
     pub fn with_linux_users(mut self, config: LinuxUsersConfig) -> Self {
         if config.enabled {
             self.linux_users = Some(config);
-            // Enable multi-user mode in the UserPlaneFactory
-            self.user_plane_factory = UserPlaneFactory::multi_user();
         }
         self
     }
@@ -518,13 +394,6 @@ impl AppState {
     /// Set the runner socket pattern for multi-user mode.
     pub fn with_runner_socket_pattern(mut self, pattern: Option<String>) -> Self {
         self.runner_socket_pattern = pattern;
-        self.user_plane_factory = self.user_plane_factory.with_runner_socket_pattern(self.runner_socket_pattern.clone());
-        self
-    }
-
-    /// Set a custom UserPlaneFactory.
-    pub fn with_user_plane_factory(mut self, factory: UserPlaneFactory) -> Self {
-        self.user_plane_factory = factory;
         self
     }
 

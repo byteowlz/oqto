@@ -33,6 +33,7 @@ use crate::pi::{AssistantMessageEvent, PiEvent};
 use crate::runner::client::{PiSubscription, PiSubscriptionEvent, RunnerClient};
 use crate::runner::protocol::{PiCreateSessionRequest, PiSessionConfig as RunnerPiSessionConfig};
 use crate::session::Session;
+use crate::user_plane::{DirectUserPlane, RunnerUserPlane};
 use crate::ws::hub::WsHub;
 use crate::ws::types::{WsCommand as LegacyWsCommand, WsEvent as LegacyWsEvent};
 
@@ -2449,7 +2450,26 @@ async fn handle_files_command(
         }
     };
 
-    let user_plane = state.user_plane_factory.for_user(Some(user_id));
+    let linux_username = state
+        .linux_users
+        .as_ref()
+        .map(|lu| lu.linux_username(user_id))
+        .unwrap_or_else(|| user_id.to_string());
+    let user_plane: Arc<dyn crate::user_plane::UserPlane> =
+        if let Some(pattern) = state.runner_socket_pattern.as_deref() {
+            match RunnerUserPlane::for_user_with_pattern(&linux_username, pattern) {
+                Ok(plane) => Arc::new(plane),
+                Err(err) => {
+                    warn!(
+                        "Failed to create RunnerUserPlane for {}: {:#}, falling back to direct",
+                        linux_username, err
+                    );
+                    Arc::new(DirectUserPlane::new(&workspace_root))
+                }
+            }
+        } else {
+            Arc::new(DirectUserPlane::new(&workspace_root))
+        };
 
     fn build_tree<'a>(
         user_plane: &'a Arc<dyn crate::user_plane::UserPlane>,
