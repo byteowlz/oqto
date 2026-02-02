@@ -2,6 +2,15 @@
 
 ## Open
 
+### [octo-t2bf] Multi-Runner & Workspace Sharing (P1, epic)
+Epic for enabling users to connect to multiple runners across different machines (laptop, desktop, cloud) and share workspaces with other users.
+
+## Goals
+
+### Multi-Runner Support
+...
+
+
 ### [octo-3fkc] Use hstry canonical history + Pi export for rehydrate (P1, task)
 
 ### [octo-gj7p] Integrate hstry-core for message persistence (P1, feature)
@@ -164,6 +173,114 @@ Implementation:
 
 ### [workspace-5pmk.11] Add backend URL configuration to login form (P1, task)
 Add a 'Server URL' field to the login form allowing users to specify the backend URL. Store in localStorage for persistence. Show connection status indicator. Default to current origin for web, require input for mobile apps.
+
+### [octo-wah4] Security: Runner authentication and TLS for network endpoints (P2, task)
+Implement runner authentication and TLS for network endpoints:
+
+1. Runner authentication
+   - Token-based auth when runner connects to backend
+   - Runner identity verification
+...
+
+
+### [octo-mj2r] Frontend: Shared workspace UI with owner indicators (P2, task)
+Add shared workspace UI with owner indicators:
+
+1. Workspace list enhancements
+   - Show owner avatar/name for shared workspaces
+   - Show permission level badge (Read/Write/Execute)
+...
+
+
+### [octo-w2zp] Frontend: Runner selector in session management UI (P2, task)
+Add runner selector to session management UI:
+
+1. Runner selector component
+   - Dropdown to select runner for new sessions
+   - Show runner status indicator (online/offline)
+...
+
+
+### [octo-888b] CLI: Workspace permission commands (grant, revoke, list, audit) (P2, task)
+Add workspace permission management CLI commands:
+
+1. octoctl workspace grant-permission
+   - Grant user access to workspace
+   - Options: --workspace, --user, --permission (read/write/execute), --expires
+...
+
+
+### [octo-cddx] CLI: Runner registration commands (register, list, status, unregister) (P2, task)
+Add runner registration CLI commands:
+
+1. octoctl runner register
+   - Register a new runner
+   - Options: --name, --endpoint (socket/address/url), --default
+...
+
+
+### [octo-72xf] Backend: Audit logging for cross-user access (P2, task)
+Implement comprehensive audit logging:
+
+1. Access log model
+   - AccessLog struct (requesting_user, workspace_id, action, granted, timestamp)
+   - DB schema for access_logs table
+...
+
+
+### [octo-cab0] SessionService: Support multi-runner with permission checks (P2, task)
+Extend SessionService for multi-runner and permission checks:
+
+1. Session model updates
+   - Add runner_id to SessionInfo
+   - Add workspace_id and owner_user_id
+...
+
+
+### [octo-3486] WebSocket: Add runner_id and workspace_id to protocol types (P2, task)
+Add runner_id and workspace_id to WebSocket protocol:
+
+1. WsCommand extensions
+   - Add optional runner_id to Subscribe, SendMessage, SendParts, Abort, etc.
+   - Add optional workspace_id for permission tracking
+...
+
+
+### [octo-kc4x] Backend: Extended RunnerClient with network endpoint support (P2, task)
+Extend RunnerClient to support multiple endpoint types:
+
+1. Add endpoint enum
+   - RunnerEndpoint::UnixSocket(PathBuf) - existing local mode
+   - RunnerEndpoint::NetworkAddress(SocketAddr) - new TCP
+...
+
+
+### [octo-b67r] Backend: Workspace permission system with DB schema (P2, task)
+Implement workspace permission system:
+
+1. Database schema
+   - workspaces table (id, path, owner_user_id, runner_id)
+   - workspace_permissions table (workspace_id, granted_user_id, permission, expires_at)
+...
+
+
+### [octo-60b1] Runner registry: Multiple runners per user with registration (P2, task)
+Implement runner registry for managing multiple runners per user:
+
+1. Data model
+   - RunnerRegistration struct (id, user_id, name, endpoint, status, last_seen)
+   - RunnerEndpoint enum (UnixSocket, NetworkAddress, SecureUrl)
+...
+
+
+### [octo-fcs1] Design: Multi-runner architecture and workspace permission model (P2, task)
+Write comprehensive design document covering:
+
+1. Multi-runner architecture
+   - Runner registry data model
+   - Runner registration flow
+...
+
 
 ### [octo-7mxb] MCP Apps Support - Interactive UI in Chat (P2, epic)
 Add support for MCP Apps extension to render interactive HTML interfaces (dashboards, forms, visualizations) directly in the chat UI. This enables richer user interactions beyond text/images - file browsers, build output viewers, deployment config forms, live metrics dashboards, etc.
@@ -1281,9 +1398,9 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
-- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
-- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
-- [octo-k8z1.2] Backend: WebSocket proxy for screencast stream (closed )
-- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
 - [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
+- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
+- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
 - [octo-k8z1.1] Backend: Integrate agent-browser daemon per session (closed )
+- [octo-k8z1.2] Backend: WebSocket proxy for screencast stream (closed )
+- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
