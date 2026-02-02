@@ -86,3 +86,4 @@
 - 2026-02-02: Add list_directory path context to file tree errors for easier debugging.
 - 2026-02-02: Collapse settings sections by default on mobile and memoize JSON value rendering to reduce mobile settings crashes.
 - 2026-02-02: Auto-recreate missing Pi sessions after runner PiSessionNotFound errors to reduce PWA crashes on resume.
+- 2026-02-02: Use configured runner socket patterns for user-plane file operations to avoid /run/user fallback failures.

@@ -215,6 +215,8 @@ pub struct UserPlaneFactory {
     multi_user_enabled: bool,
     /// Default workspace root for single-user mode.
     default_workspace_root: PathBuf,
+    /// Optional runner socket pattern override.
+    runner_socket_pattern: Option<String>,
 }
 
 impl std::fmt::Debug for UserPlaneFactory {
@@ -233,6 +235,7 @@ impl UserPlaneFactory {
         Self {
             multi_user_enabled: false,
             default_workspace_root: workspace_root.into(),
+            runner_socket_pattern: None,
         }
     }
 
@@ -241,6 +244,7 @@ impl UserPlaneFactory {
         Self {
             multi_user_enabled: true,
             default_workspace_root: PathBuf::from("/tmp"),
+            runner_socket_pattern: None,
         }
     }
 
@@ -258,7 +262,12 @@ impl UserPlaneFactory {
         if self.multi_user_enabled
             && let Some(username) = linux_username
         {
-            match RunnerUserPlane::for_user(username) {
+            let plane = if let Some(pattern) = self.runner_socket_pattern.as_deref() {
+                RunnerUserPlane::for_user_with_pattern(username, pattern)
+            } else {
+                RunnerUserPlane::for_user(username)
+            };
+            match plane {
                 Ok(plane) => return Arc::new(plane),
                 Err(e) => {
                     tracing::warn!(
@@ -279,10 +288,31 @@ impl UserPlaneFactory {
     pub fn for_current_user(&self) -> Arc<dyn UserPlane> {
         if self.multi_user_enabled {
             // Use default socket path (current user's XDG_RUNTIME_DIR)
-            Arc::new(RunnerUserPlane::default())
+            if let Some(pattern) = self.runner_socket_pattern.as_deref() {
+                match RunnerUserPlane::for_user_with_pattern(
+                    &std::env::var("USER").unwrap_or_else(|_| "unknown".to_string()),
+                    pattern,
+                ) {
+                    Ok(plane) => Arc::new(plane),
+                    Err(e) => {
+                        tracing::warn!(
+                            "Failed to create RunnerUserPlane for current user: {:?}, falling back to direct",
+                            e
+                        );
+                        Arc::new(DirectUserPlane::new(&self.default_workspace_root))
+                    }
+                }
+            } else {
+                Arc::new(RunnerUserPlane::default())
+            }
         } else {
             Arc::new(DirectUserPlane::new(&self.default_workspace_root))
         }
+    }
+
+    pub fn with_runner_socket_pattern(mut self, pattern: Option<String>) -> Self {
+        self.runner_socket_pattern = pattern;
+        self
     }
 }
 
@@ -488,6 +518,7 @@ impl AppState {
     /// Set the runner socket pattern for multi-user mode.
     pub fn with_runner_socket_pattern(mut self, pattern: Option<String>) -> Self {
         self.runner_socket_pattern = pattern;
+        self.user_plane_factory = self.user_plane_factory.with_runner_socket_pattern(self.runner_socket_pattern.clone());
         self
     }
 
