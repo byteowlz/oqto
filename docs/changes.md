@@ -1,5 +1,8 @@
 # Changes
 
+- 2026-02-02: Send Main Chat Pi messages with prompt mode by default for the primary send action.
+- 2026-02-02: Prevent multiplexed WS reconnect loops by disabling unused pong timeouts and skipping duplicate session resubscribe sends.
+- 2026-02-02: Queue Pi messages until session_created arrives and scope Main Chat drafts per session to stop cross-chat input bleed.
 - 2026-01-31: Use per-user Linux home directories when resolving Pi session files in main chat and workspace services to restore persistence under runner sandboxing.
 - 2026-01-31: Fix octo-guard policy pattern compilation by adding explicit type annotations for GuardPolicy pattern parsing.
 - 2026-01-31: Read and update Main Chat Pi session files via octo-runner in multi-user mode so sessions persist and titles refresh after reload.
@@ -64,3 +67,7 @@
 - 2026-02-01: Avoid reconnecting the Main Chat WebSocket on session changes to prevent churn and empty responses.
 - 2026-02-01: Unify control-plane routes by always using /api for HTTP and WebSocket endpoints.
 - 2026-02-01: Serve backend API under /api while keeping legacy root paths during transition.
+- 2026-02-02: Queue Pi prompts until session_created and flush when ready to avoid sending before session init.
+- 2026-02-02: Make runner Pi create_session idempotent via get_or_create to support reconnects.
+- 2026-02-02: Route terminal WebSocket URLs through controlPlaneApiUrl so they include /api when a direct base URL is set.
+- 2026-02-02: Prefix terminal proxy paths with /api to keep workspace terminal WebSocket routes valid.

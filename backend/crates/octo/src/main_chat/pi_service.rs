@@ -550,7 +550,14 @@ impl MainChatPiService {
             PiRuntimeMode::Runner => {
                 // Create runner client - uses XDG_RUNTIME_DIR by default
                 let client = if let Some(pattern) = self.config.runner_socket_pattern.as_deref() {
-                    RunnerClient::new(pattern.replace("{user}", user_id))
+                    // Use for_user_with_pattern which handles both {user} and {uid} placeholders
+                    match RunnerClient::for_user_with_pattern(user_id, pattern) {
+                        Ok(c) => c,
+                        Err(e) => {
+                            warn!("Failed to create runner client for user {}: {}", user_id, e);
+                            RunnerClient::default()
+                        }
+                    }
                 } else {
                     RunnerClient::default()
                 };
@@ -945,11 +952,14 @@ impl MainChatPiService {
     fn runner_client_for_user(&self, user_id: &str) -> Option<RunnerClient> {
         self.linux_users.as_ref()?;
         let pattern = self.config.runner_socket_pattern.as_deref()?;
-        let socket_path = pattern.replace("{user}", user_id);
-        if std::path::Path::new(&socket_path).exists() {
-            Some(RunnerClient::new(socket_path))
-        } else {
-            None
+        // Use for_user_with_pattern which handles both {user} and {uid} placeholders
+        match RunnerClient::for_user_with_pattern(user_id, pattern) {
+            Ok(c) if c.socket_path().exists() => Some(c),
+            Ok(_) => None,
+            Err(e) => {
+                warn!("Failed to create runner client for user {}: {}", user_id, e);
+                None
+            }
         }
     }
 
@@ -1750,6 +1760,20 @@ impl MainChatPiService {
         anyhow::bail!("Session not found: {}", session_id)
     }
 
+    /// Get the file path for a session by ID (public wrapper for find_session_file).
+    /// Returns None if the session doesn't exist on disk.
+    pub async fn get_session_file_path(
+        &self,
+        user_id: &str,
+        session_id: &str,
+    ) -> Option<PathBuf> {
+        let work_dir = self.get_main_chat_dir(user_id);
+        let sessions_dir = self.get_pi_sessions_dir(user_id, &work_dir);
+        self.find_session_file(user_id, &sessions_dir, session_id)
+            .await
+            .ok()
+    }
+
     /// Resume a specific Pi session by ID.
     ///
     /// If a Pi process is already running for this session, returns it.
@@ -2347,6 +2371,8 @@ impl UserPiSession {
             .send_command(PiCommand::Prompt {
                 id: None,
                 message: message.to_string(),
+                images: None,
+                streaming_behavior: None,
             })
             .await?;
         Ok(())

@@ -7,12 +7,12 @@ use anyhow::{Context, Result};
 use tokio::sync::RwLock;
 use tonic::transport::Channel;
 
-use hstry_core::service::{ReadServiceClient, WriteServiceClient};
 use hstry_core::service::proto::{
     AppendMessagesRequest, AppendMessagesResponse, Conversation, GetConversationRequest,
     GetMessagesRequest, ListConversationsRequest, Message, UploadAttachmentRequest,
     UploadAttachmentResponse, WriteConversationRequest, WriteConversationResponse,
 };
+use hstry_core::service::{ReadServiceClient, WriteServiceClient};
 
 /// Source ID for Pi sessions (used for deduplication with hstry daemon).
 pub const PI_SOURCE_ID: &str = "pi";

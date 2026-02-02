@@ -627,20 +627,6 @@ export async function closeMainChatPiSession(): Promise<void> {
 	if (!res.ok) throw new Error(await readApiError(res));
 }
 
-/** Create WebSocket connection to Pi for streaming events */
-export function createMainChatPiWebSocket(sessionId: string): WebSocket {
-	let wsUrl = toAbsoluteWsUrl(
-		controlPlaneApiUrl(`/api/main/pi/ws?session_id=${encodeURIComponent(sessionId)}`),
-	);
-	// Add auth token as query parameter for WebSocket auth
-	const token = getAuthToken();
-	if (token) {
-		const separator = wsUrl.includes("?") ? "&" : "?";
-		wsUrl = `${wsUrl}${separator}token=${encodeURIComponent(token)}`;
-	}
-	return new WebSocket(wsUrl);
-}
-
 /** Get persistent chat history from database (survives Pi session restarts) */
 export async function getMainChatPiHistory(
 	sessionId?: string,

@@ -330,7 +330,9 @@ pub async fn auth_middleware(
 ///
 /// WebSocket connections cannot send custom headers after the initial handshake,
 /// so these endpoints accept auth tokens via query parameter as a fallback.
-/// All paths are under /api/* - this is the only routing prefix.
+///
+/// Note: By the time this middleware runs, the `/api` prefix has been stripped
+/// by the router nesting, so we check for paths without the prefix.
 fn is_websocket_auth_path(req: &axum::http::Request<axum::body::Body>) -> bool {
     let path = req.uri().path();
 
@@ -346,16 +348,10 @@ fn is_websocket_auth_path(req: &axum::http::Request<axum::body::Body>) -> bool {
         return false;
     }
 
-    // WebSocket paths that accept query param auth (all under /api/)
-    matches!(
-        path,
-        "/api/ws"
-            | "/api/voice/stt"
-            | "/api/voice/tts"
-            | "/api/main/pi/ws"
-            | "/api/workspace/term"
-    ) || path.starts_with("/api/session/") && (path.ends_with("/term") || path.ends_with("/browser/stream"))
-      || path.starts_with("/api/sessions/") && (path.ends_with("/terminal") || path.ends_with("/browser/stream"))
+    // WebSocket paths that accept query param auth (paths after /api/ prefix is stripped)
+    matches!(path, "/ws/mux" | "/voice/stt" | "/voice/tts")
+        || path.starts_with("/session/") && path.ends_with("/browser/stream")
+        || path.starts_with("/sessions/") && path.ends_with("/browser/stream")
 }
 
 /// Require admin role.

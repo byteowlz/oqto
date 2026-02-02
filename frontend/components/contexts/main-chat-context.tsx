@@ -1,6 +1,6 @@
 "use client";
 
-import { getMainChatAssistant } from "@/lib/control-plane-client";
+import { getMainChatAssistant, listMainChatPiSessions } from "@/lib/control-plane-client";
 import {
 	type ReactNode,
 	createContext,
@@ -9,6 +9,7 @@ import {
 	useContext,
 	useEffect,
 	useMemo,
+	useRef,
 	useState,
 } from "react";
 
@@ -109,9 +110,39 @@ export function MainChatProvider({ children }: { children: ReactNode }) {
 	const [mainChatAssistantName, setMainChatAssistantName] = useState<
 		string | null
 	>(null);
-	const [mainChatCurrentSessionId, setMainChatCurrentSessionId] = useState<
+	
+	// Main chat session ID - restore from localStorage for instant load
+	const [mainChatCurrentSessionId, setMainChatCurrentSessionIdRaw] = useState<
 		string | null
-	>(null);
+	>(() => {
+		if (typeof window !== "undefined") {
+			try {
+				return localStorage.getItem("octo:mainChatCurrentSessionId");
+			} catch {
+				// Ignore localStorage errors
+			}
+		}
+		return null;
+	});
+	
+	// Track if we've attempted to restore the session
+	const sessionRestoreAttempted = useRef(false);
+	
+	// Wrap setter to persist to localStorage
+	const setMainChatCurrentSessionId = useCallback((id: string | null) => {
+		setMainChatCurrentSessionIdRaw(id);
+		if (typeof window !== "undefined") {
+			try {
+				if (id) {
+					localStorage.setItem("octo:mainChatCurrentSessionId", id);
+				} else {
+					localStorage.removeItem("octo:mainChatCurrentSessionId");
+				}
+			} catch {
+				// Ignore localStorage errors
+			}
+		}
+	}, []);
 
 	// Main chat workspace path - cached to localStorage for instant load
 	const [mainChatWorkspacePath, setMainChatWorkspacePathRaw] = useState<
@@ -179,6 +210,41 @@ export function MainChatProvider({ children }: { children: ReactNode }) {
 			cancelled = true;
 		};
 	}, [mainChatActive, mainChatAssistantName, setMainChatWorkspacePath]);
+
+	// Restore last session or fetch the most recent one when main chat becomes active
+	useEffect(() => {
+		if (!mainChatActive || sessionRestoreAttempted.current) {
+			return;
+		}
+		sessionRestoreAttempted.current = true;
+
+		// If we already have a session ID from localStorage, we're done
+		if (mainChatCurrentSessionId) {
+			return;
+		}
+
+		// No stored session - fetch the most recent session from API
+		let cancelled = false;
+		listMainChatPiSessions()
+			.then((sessions) => {
+				if (cancelled) return;
+				if (sessions.length > 0) {
+					// Sort by modified_at descending (it's a timestamp number) and pick the most recent
+					const sorted = [...sessions].sort((a, b) => (b.modified_at || 0) - (a.modified_at || 0));
+					const mostRecent = sorted[0];
+					console.log("[MainChat] Restoring most recent session:", mostRecent.id);
+					setMainChatCurrentSessionId(mostRecent.id);
+				}
+				// If no sessions exist, leave it null - user will start a new session when they send a message
+			})
+			.catch((err) => {
+				console.debug("[MainChat] Failed to list sessions:", err.message);
+			});
+
+		return () => {
+			cancelled = true;
+		};
+	}, [mainChatActive, mainChatCurrentSessionId, setMainChatCurrentSessionId]);
 
 	// Trigger for creating a new Main Chat session
 	const [mainChatNewSessionTrigger, setMainChatNewSessionTrigger] = useState(0);

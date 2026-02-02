@@ -263,7 +263,7 @@ async fn handle_ws_connection(
 }
 
 /// Handle a command from a client.
-async fn handle_command(
+pub async fn handle_command(
     hub: &WsHub,
     state: &AppState,
     user_id: &str,

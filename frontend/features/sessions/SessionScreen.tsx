@@ -71,8 +71,6 @@ import {
 	askAgent,
 	controlPlaneDirectBaseUrl,
 	convertChatMessagesToOpenCode,
-	fileserverWorkspaceBaseUrl,
-	getAuthHeaders,
 	getChatMessages,
 	getFeatures,
 	getMainChatAssistant,
@@ -83,8 +81,13 @@ import {
 	opencodeProxyBaseUrl,
 	registerMainChatSession,
 	touchSessionActivity,
-	workspaceFileUrl,
 } from "@/features/sessions/api";
+import {
+	downloadFileMux,
+	readFileMux,
+	statPathMux,
+	uploadFileMux,
+} from "@/lib/mux-files";
 import {
 	type OpenCodeAssistantMessage,
 	type OpenCodeMessageWithParts,
@@ -1907,36 +1910,17 @@ export const SessionScreen = memo(function SessionScreen() {
 			}
 
 			setIsUploading(true);
-			const uploadedFiles: { name: string; path: string }[] = [];
-			const failedFiles: string[] = [];
+				const uploadedFiles: { name: string; path: string }[] = [];
+				const failedFiles: string[] = [];
 
-			try {
-				const baseUrl = fileserverWorkspaceBaseUrl();
+				try {
+					for (const file of Array.from(files)) {
+						try {
+							const destPath = `uploads/${file.name}`;
+							await uploadFileMux(workspacePath, destPath, file);
 
-				for (const file of Array.from(files)) {
-					try {
-						const destPath = `uploads/${file.name}`;
-						const url = new URL(`${baseUrl}/file`, window.location.origin);
-						url.searchParams.set("path", destPath);
-						url.searchParams.set("mkdir", "true");
-						url.searchParams.set("workspace_path", workspacePath);
-
-						const formData = new FormData();
-						formData.append("file", file);
-
-						const res = await fetch(url.toString(), {
-							method: "POST",
-							credentials: "include",
-							body: formData,
-						});
-
-						if (!res.ok) {
-							const text = await res.text().catch(() => res.statusText);
-							throw new Error(text || `Upload failed (${res.status})`);
-						}
-
-						uploadedFiles.push({ name: file.name, path: destPath });
-					} catch (err) {
+							uploadedFiles.push({ name: file.name, path: destPath });
+						} catch (err) {
 						const message =
 							err instanceof Error ? err.message : "Upload failed";
 						console.warn("Upload failed:", file.name, message);
@@ -6815,60 +6799,84 @@ const FileReferenceCard = memo(function FileReferenceCard({
 	directUrl?: string;
 	label?: string;
 }) {
-	const [isLoading, setIsLoading] = useState(true);
-	const [error, setError] = useState<string | null>(null);
-	const [imageLoaded, setImageLoaded] = useState(false);
-	const [fileExists, setFileExists] = useState<boolean | null>(null);
+		const [isLoading, setIsLoading] = useState(true);
+		const [error, setError] = useState<string | null>(null);
+		const [imageLoaded, setImageLoaded] = useState(false);
+		const [fileExists, setFileExists] = useState<boolean | null>(null);
+		const [fileUrl, setFileUrl] = useState<string | null>(null);
+		const objectUrlRef = useRef<string | null>(null);
 
 	const fileInfo = useMemo(() => getFileTypeInfo(filePath), [filePath]);
 	const isImage = fileInfo.category === "image";
 	const isVideo = fileInfo.category === "video";
 	const fileName = label || filePath.split("/").pop() || filePath;
 
-	// Build the file URL
-	const fileUrl = useMemo(() => {
-		if (directUrl) return directUrl;
-		if (!workspacePath) return null;
-		return workspaceFileUrl(workspacePath, filePath);
-	}, [directUrl, filePath, workspacePath]);
+		useEffect(() => {
+			let cancelled = false;
+			setIsLoading(true);
+			setError(null);
+			setFileExists(null);
+			setImageLoaded(false);
+			setFileUrl(directUrl ?? null);
 
-	// Check if file exists using HEAD request
-	useEffect(() => {
-		if (!fileUrl) {
-			setFileExists(false);
-			return;
-		}
-		let cancelled = false;
-		fetch(fileUrl, {
-			method: "HEAD",
-			credentials: "include",
-			headers: getAuthHeaders(),
-		})
-			.then((res) => {
-				if (!cancelled) {
-					setFileExists(res.ok);
-					if (!res.ok) setIsLoading(false);
-				}
-			})
-			.catch(() => {
-				if (!cancelled) {
+			if (objectUrlRef.current) {
+				URL.revokeObjectURL(objectUrlRef.current);
+				objectUrlRef.current = null;
+			}
+
+			if (!workspacePath && !directUrl) {
+				setFileExists(false);
+				setIsLoading(false);
+				return;
+			}
+
+			const run = async () => {
+				try {
+					if (!directUrl && workspacePath) {
+						await statPathMux(workspacePath, filePath);
+					}
+
+					if (cancelled) return;
+					setFileExists(true);
+
+					if ((isImage || isVideo) && !directUrl && workspacePath) {
+						const result = await readFileMux(workspacePath, filePath);
+						if (cancelled) return;
+						const blob = new Blob([result.data]);
+						const url = URL.createObjectURL(blob);
+						objectUrlRef.current = url;
+						setFileUrl(url);
+					}
+				} catch {
+					if (cancelled) return;
 					setFileExists(false);
+					setError("File not found");
 					setIsLoading(false);
+				} finally {
+					if (!cancelled && (!isImage && !isVideo)) {
+						setIsLoading(false);
+					}
 				}
-			});
-		return () => {
-			cancelled = true;
-		};
-	}, [fileUrl]);
+			};
+
+			void run();
+			return () => {
+				cancelled = true;
+				if (objectUrlRef.current) {
+					URL.revokeObjectURL(objectUrlRef.current);
+					objectUrlRef.current = null;
+				}
+			};
+		}, [directUrl, filePath, isImage, isVideo, workspacePath]);
 
 	// Don't render if file doesn't exist or we're still checking
 	if (fileExists === null || fileExists === false) {
 		return null;
 	}
 
-	if (!fileUrl) {
-		return null;
-	}
+		if ((isImage || isVideo) && !fileUrl) {
+			return null;
+		}
 
 	// For images, render inline preview
 	if (isImage) {
@@ -6889,8 +6897,8 @@ const FileReferenceCard = memo(function FileReferenceCard({
 							{error}
 						</div>
 					) : (
-						<img
-							src={fileUrl}
+							<img
+								src={fileUrl ?? ""}
 							alt={fileName}
 							className={cn(
 								"max-w-full h-auto",
@@ -6919,8 +6927,8 @@ const FileReferenceCard = memo(function FileReferenceCard({
 					<FileVideo className="w-4 h-4 text-muted-foreground" />
 					<span className="text-xs font-medium truncate">{fileName}</span>
 				</div>
-				<video
-					src={fileUrl}
+					<video
+						src={fileUrl ?? ""}
 					controls
 					playsInline
 					className="max-w-full h-auto"
@@ -6938,19 +6946,25 @@ const FileReferenceCard = memo(function FileReferenceCard({
 	}
 
 	// For non-images/videos, render a compact file reference link
-	const FileIcon = fileInfo.category === "code" ? FileCode : FileText;
-	return (
-		<a
-			href={fileUrl}
-			target="_blank"
-			rel="noopener noreferrer"
-			className="inline-flex items-center gap-2 px-3 py-1.5 border border-border bg-muted/20 rounded hover:bg-muted/40 transition-colors text-sm"
-		>
-			<FileIcon className="w-4 h-4 text-muted-foreground" />
-			<span className="font-medium">{fileName}</span>
-			<span className="text-xs text-muted-foreground">{filePath}</span>
-		</a>
-	);
+		const FileIcon = fileInfo.category === "code" ? FileCode : FileText;
+		return (
+			<button
+				type="button"
+				onClick={() => {
+					if (directUrl) {
+						window.open(directUrl, "_blank", "noopener");
+						return;
+					}
+					if (!workspacePath) return;
+					void downloadFileMux(workspacePath, filePath, fileName);
+				}}
+				className="inline-flex items-center gap-2 px-3 py-1.5 border border-border bg-muted/20 rounded hover:bg-muted/40 transition-colors text-sm"
+			>
+				<FileIcon className="w-4 h-4 text-muted-foreground" />
+				<span className="font-medium">{fileName}</span>
+				<span className="text-xs text-muted-foreground">{filePath}</span>
+			</button>
+		);
 });
 
 const TodoListView = memo(function TodoListView({

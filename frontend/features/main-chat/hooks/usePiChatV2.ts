@@ -1,0 +1,667 @@
+"use client";
+
+/**
+ * Pi Chat hook using the multiplexed WebSocket manager.
+ *
+ * This hook provides the same external API as usePiChat but uses the
+ * multiplexed WebSocket connection via WsConnectionManager instead of
+ * per-session WebSocket connections.
+ *
+ * Key differences from usePiChat:
+ * - Uses wsManager.subscribePiSession() for event subscription
+ * - Manages session subscriptions explicitly (subscribe/unsubscribe commands)
+ * - Single WebSocket connection shared across all Pi sessions
+ */
+
+import { getWsManager } from "@/lib/ws-manager";
+import type { PiWsEvent, WsMuxConnectionState } from "@/lib/ws-mux-types";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { readCachedSessionMessages, sanitizeStorageKey } from "./cache";
+import { getMaxPiMessageId, normalizePiContentToParts, normalizePiMessages } from "./message-utils";
+import type {
+	PiDisplayMessage,
+	PiMessagePart,
+	PiSendMode,
+	PiSendOptions,
+	PiState,
+	UsePiChatOptions,
+	UsePiChatReturn,
+} from "./types";
+
+const BATCH_FLUSH_INTERVAL_MS = 50;
+
+function isPiDebugEnabled(): boolean {
+	if (!import.meta.env.DEV) return false;
+	try {
+		if (typeof localStorage !== "undefined") {
+			return localStorage.getItem("debug:pi-v2") === "1";
+		}
+	} catch {
+		// ignore
+	}
+	return import.meta.env.VITE_DEBUG_PI_V2 === "1";
+}
+
+/**
+ * Hook for managing Pi chat using the multiplexed WebSocket.
+ * Provides the same API as usePiChat for easy migration.
+ */
+export function usePiChatV2(options: UsePiChatOptions = {}): UsePiChatReturn {
+	const {
+		autoConnect = true,
+		scope = "main",
+		workspacePath = null,
+		storageKeyPrefix,
+		selectedSessionId,
+		onSelectedSessionIdChange,
+		onMessageComplete,
+		onError,
+	} = options;
+
+	const resolvedStorageKeyPrefix =
+		storageKeyPrefix ??
+		(scope === "main"
+			? "octo:mainChatPi:v2"
+			: `octo:workspacePi:v2:${sanitizeStorageKey(workspacePath ?? "global")}`);
+
+	const activeSessionId = selectedSessionId ?? null;
+	const activeSessionIdRef = useRef(activeSessionId);
+	activeSessionIdRef.current = activeSessionId;
+
+	// State
+	const [state, setState] = useState<PiState | null>(null);
+	const [messages, setMessages] = useState<PiDisplayMessage[]>(
+		activeSessionId
+			? readCachedSessionMessages(activeSessionId, resolvedStorageKeyPrefix)
+			: [],
+	);
+	const [isConnected, setIsConnected] = useState(false);
+	const [isStreaming, setIsStreaming] = useState(false);
+	const [error, setError] = useState<Error | null>(null);
+
+	// Refs
+	const messageIdRef = useRef(getMaxPiMessageId(messages));
+	const streamingMessageRef = useRef<PiDisplayMessage | null>(null);
+	const unsubscribeRef = useRef<(() => void) | null>(null);
+
+	// Batched update state
+	const batchedUpdateRef = useRef({
+		rafId: null as number | null,
+		lastFlushTime: 0,
+		pendingUpdate: false,
+	});
+
+	// Generate unique message ID
+	const nextMessageId = useCallback(() => {
+		messageIdRef.current += 1;
+		return `pi-msg-${messageIdRef.current}`;
+	}, []);
+
+	// Flush batched streaming update
+	const flushStreamingUpdate = useCallback(() => {
+		const batch = batchedUpdateRef.current;
+		batch.rafId = null;
+		batch.pendingUpdate = false;
+
+		const currentMsg = streamingMessageRef.current;
+		if (!currentMsg) return;
+
+		batch.lastFlushTime = Date.now();
+
+		setMessages((prev) => {
+			const idx = prev.findIndex((m) => m.id === currentMsg.id);
+			if (idx >= 0) {
+				const updated = [...prev];
+				updated[idx] = {
+					...currentMsg,
+					parts: currentMsg.parts.map((p) => ({ ...p })),
+				};
+				return updated;
+			}
+			return prev;
+		});
+	}, []);
+
+	// Schedule batched update
+	const scheduleStreamingUpdate = useCallback(() => {
+		const batch = batchedUpdateRef.current;
+		batch.pendingUpdate = true;
+
+		if (batch.rafId !== null) return;
+
+		const elapsed = Date.now() - batch.lastFlushTime;
+		if (elapsed >= BATCH_FLUSH_INTERVAL_MS) {
+			batch.rafId = requestAnimationFrame(flushStreamingUpdate);
+		} else {
+			const delay = BATCH_FLUSH_INTERVAL_MS - elapsed;
+			setTimeout(() => {
+				if (batch.pendingUpdate && batch.rafId === null) {
+					batch.rafId = requestAnimationFrame(flushStreamingUpdate);
+				}
+			}, delay);
+		}
+	}, [flushStreamingUpdate]);
+
+	// Handle Pi WebSocket events
+	const handlePiEvent = useCallback(
+		(event: PiWsEvent) => {
+			// Validate session_id
+			if ("session_id" in event) {
+				const activeId = activeSessionIdRef.current;
+				if (activeId && event.session_id !== activeId) {
+					if (isPiDebugEnabled()) {
+						console.debug(
+							`[usePiChatV2] Ignoring event for session ${event.session_id}, active is ${activeId}`,
+						);
+					}
+					return;
+				}
+			}
+
+			if (isPiDebugEnabled()) {
+				console.debug("[usePiChatV2] Event:", event.type, event);
+			}
+
+			switch (event.type) {
+				case "session_created": {
+					// Session created/resumed - request messages to populate history
+					const manager = getWsManager();
+					manager.send({
+						channel: "pi",
+						type: "get_messages",
+						session_id: event.session_id,
+					});
+					if (isPiDebugEnabled()) {
+						console.debug(
+							"[usePiChatV2] Session created, requesting messages:",
+							event.session_id,
+						);
+					}
+					break;
+				}
+
+				case "state": {
+					const nextState = event.state as PiState;
+					setState(nextState);
+					if (nextState?.is_streaming === false) {
+						setIsStreaming(false);
+						if (streamingMessageRef.current) {
+							streamingMessageRef.current.isStreaming = false;
+							streamingMessageRef.current = null;
+						}
+					}
+					break;
+				}
+
+				case "message_start": {
+					if (!streamingMessageRef.current) {
+						const assistantMessage: PiDisplayMessage = {
+							id: nextMessageId(),
+							role: "assistant",
+							parts: [],
+							timestamp: Date.now(),
+							isStreaming: true,
+						};
+						streamingMessageRef.current = assistantMessage;
+						setMessages((prev) => [...prev, assistantMessage]);
+					}
+					setIsStreaming(true);
+					break;
+				}
+
+				case "text": {
+					const text = event.data;
+					const currentMsg = streamingMessageRef.current;
+					if (currentMsg && text) {
+						const lastPart = currentMsg.parts[currentMsg.parts.length - 1];
+						if (lastPart?.type === "text") {
+							lastPart.content += text;
+						} else {
+							currentMsg.parts.push({ type: "text", content: text });
+						}
+						scheduleStreamingUpdate();
+					}
+					break;
+				}
+
+				case "thinking": {
+					const text = event.data;
+					const currentMsg = streamingMessageRef.current;
+					if (currentMsg && text) {
+						const lastPart = currentMsg.parts[currentMsg.parts.length - 1];
+						if (lastPart?.type === "thinking") {
+							lastPart.content += text;
+						} else {
+							currentMsg.parts.push({ type: "thinking", content: text });
+						}
+						scheduleStreamingUpdate();
+					}
+					break;
+				}
+
+				case "tool_use":
+				case "tool_start": {
+					const tool = event.data;
+					const currentMsg = streamingMessageRef.current;
+					if (currentMsg) {
+						const alreadyPresent = currentMsg.parts.some(
+							(p) => p.type === "tool_use" && p.id === tool.id,
+						);
+						if (!alreadyPresent) {
+							currentMsg.parts.push({
+								type: "tool_use",
+								id: tool.id,
+								name: tool.name,
+								input: tool.input,
+							} as PiMessagePart);
+							scheduleStreamingUpdate();
+						}
+					}
+					break;
+				}
+
+				case "tool_result": {
+					const result = event.data;
+					const currentMsg = streamingMessageRef.current;
+					if (currentMsg) {
+						const matchingToolUse = currentMsg.parts.find(
+							(p) => p.type === "tool_use" && p.id === result.id,
+						);
+						currentMsg.parts.push({
+							type: "tool_result",
+							id: result.id,
+							name:
+								result.name ||
+								(matchingToolUse?.type === "tool_use"
+									? matchingToolUse.name
+									: undefined),
+							content: result.content,
+							isError: result.is_error,
+						} as PiMessagePart);
+						scheduleStreamingUpdate();
+					}
+					break;
+				}
+
+				case "done": {
+					// Cancel pending batched update
+					const batch = batchedUpdateRef.current;
+					if (batch.rafId !== null) {
+						cancelAnimationFrame(batch.rafId);
+						batch.rafId = null;
+					}
+					batch.pendingUpdate = false;
+
+					if (streamingMessageRef.current) {
+						streamingMessageRef.current.isStreaming = false;
+						const completedMessage = {
+							...streamingMessageRef.current,
+							parts: streamingMessageRef.current.parts.map((p) => ({ ...p })),
+						};
+
+						setMessages((prev) => {
+							const idx = prev.findIndex(
+								(m) => m.id === completedMessage.id,
+							);
+							if (idx >= 0) {
+								const updated = [...prev];
+								updated[idx] = completedMessage;
+								return updated;
+							}
+							return prev;
+						});
+
+						onMessageComplete?.(completedMessage);
+						streamingMessageRef.current = null;
+					}
+					setIsStreaming(false);
+					break;
+				}
+
+				case "error": {
+					const errMsg = event.error || "Unknown error";
+					const err = new Error(errMsg);
+					setError(err);
+					onError?.(err);
+					setIsStreaming(false);
+
+					if (streamingMessageRef.current) {
+						streamingMessageRef.current.isStreaming = false;
+						streamingMessageRef.current.parts.push({
+							type: "text",
+							content: `Error: ${errMsg}`,
+						});
+						const completedMessage = {
+							...streamingMessageRef.current,
+							parts: streamingMessageRef.current.parts.map((p) => ({ ...p })),
+						};
+						setMessages((prev) => {
+							const idx = prev.findIndex(
+								(m) => m.id === completedMessage.id,
+							);
+							if (idx >= 0) {
+								const updated = [...prev];
+								updated[idx] = completedMessage;
+								return updated;
+							}
+							return prev;
+						});
+						onMessageComplete?.(completedMessage);
+						streamingMessageRef.current = null;
+					}
+					break;
+				}
+
+				case "persisted": {
+					if (isPiDebugEnabled()) {
+						console.debug(
+							"[usePiChatV2] Persisted:",
+							event.session_id,
+							event.message_count,
+						);
+					}
+					break;
+				}
+
+				case "model_changed": {
+					// Refresh state to get updated model info
+					const manager = getWsManager();
+					manager.piGetState(event.session_id);
+					if (isPiDebugEnabled()) {
+						console.debug(
+							"[usePiChatV2] Model changed:",
+							event.session_id,
+							"provider" in event ? event.provider : "",
+							"model_id" in event ? event.model_id : "",
+						);
+					}
+					break;
+				}
+
+				case "messages": {
+					// Load messages from server response
+					if ("messages" in event && Array.isArray(event.messages)) {
+						// Use normalizePiMessages which properly handles toolResult role messages
+						// by merging tool results with their corresponding tool_use parts
+						const displayMessages = normalizePiMessages(
+							event.messages,
+							`server-${event.session_id}`,
+						);
+
+						if (displayMessages.length > 0) {
+							setMessages(displayMessages);
+							messageIdRef.current = getMaxPiMessageId(displayMessages);
+						}
+
+						if (isPiDebugEnabled()) {
+							console.debug(
+								"[usePiChatV2] Loaded messages:",
+								event.session_id,
+								displayMessages.length,
+							);
+						}
+					}
+					break;
+				}
+			}
+		},
+		[nextMessageId, scheduleStreamingUpdate, onMessageComplete, onError],
+	);
+
+	// Connect to WebSocket manager
+	const connect = useCallback(() => {
+		const manager = getWsManager();
+		manager.connect();
+	}, []);
+
+	// Disconnect from WebSocket manager
+	const disconnect = useCallback(() => {
+		// Unsubscribe from current session
+		if (unsubscribeRef.current) {
+			unsubscribeRef.current();
+			unsubscribeRef.current = null;
+		}
+	}, []);
+
+	// Send message
+	const send = useCallback(
+		async (message: string, options?: PiSendOptions) => {
+			const mode: PiSendMode = options?.mode ?? "prompt";
+			let sessionId = activeSessionIdRef.current;
+
+			// Auto-create a session if none exists
+			if (!sessionId) {
+				const newSessionId = crypto.randomUUID();
+				console.log("[usePiChatV2] send: auto-creating new session", newSessionId, "workspacePath:", workspacePath);
+				
+				// Update the session ID ref immediately
+				activeSessionIdRef.current = newSessionId;
+				sessionId = newSessionId;
+				
+				// Clear local state
+				setMessages([]);
+				streamingMessageRef.current = null;
+				setIsStreaming(false);
+				setError(null);
+				messageIdRef.current = 0;
+				
+				// Subscribe to the new session via ws-manager
+				const manager = getWsManager();
+				const sessionConfig = scope === "main"
+					? { scope: "main" as const }
+					: workspacePath
+						? { scope: "workspace" as const, cwd: workspacePath }
+						: undefined;
+				unsubscribeRef.current = manager.subscribePiSession(
+					newSessionId,
+					handlePiEvent,
+					sessionConfig,
+				);
+				
+				// Notify parent of the new session ID
+				onSelectedSessionIdChange?.(newSessionId);
+			}
+
+			// Add user message to display
+			const userMessage: PiDisplayMessage = {
+				id: nextMessageId(),
+				role: "user",
+				parts: [{ type: "text", content: message }],
+				timestamp: Date.now(),
+			};
+			setMessages((prev) => [...prev, userMessage]);
+			setError(null);
+
+			const manager = getWsManager();
+
+			switch (mode) {
+				case "prompt":
+					manager.piPrompt(sessionId, message);
+					break;
+				case "steer":
+					manager.piSteer(sessionId, message);
+					break;
+				case "follow_up":
+					manager.piFollowUp(sessionId, message);
+					break;
+			}
+		},
+		[nextMessageId, scope, workspacePath, handlePiEvent, onSelectedSessionIdChange],
+	);
+
+	// Abort current stream
+	const abort = useCallback(async () => {
+		const sessionId = activeSessionIdRef.current;
+		if (!sessionId) return;
+
+		const manager = getWsManager();
+		manager.piAbort(sessionId);
+	}, []);
+
+	// Compact session
+	const compact = useCallback(async (customInstructions?: string) => {
+		const sessionId = activeSessionIdRef.current;
+		if (!sessionId) return;
+
+		const manager = getWsManager();
+		manager.piCompact(sessionId, customInstructions);
+	}, []);
+
+	// New session - creates a brand new session with a new UUID
+	const newSession = useCallback(async () => {
+		// Generate a new session ID
+		const newSessionId = crypto.randomUUID();
+		
+		console.log("[usePiChatV2] newSession: creating new session", newSessionId, "workspacePath:", workspacePath);
+		
+		// Clear local state
+		setMessages([]);
+		streamingMessageRef.current = null;
+		setIsStreaming(false);
+		setError(null);
+		messageIdRef.current = 0;
+
+		// Notify parent of the new session ID - this will trigger the useEffect
+		// which calls subscribePiSession, which sends create_session + subscribe
+		onSelectedSessionIdChange?.(newSessionId);
+
+		if (isPiDebugEnabled()) {
+			console.debug("[usePiChatV2] newSession created:", newSessionId);
+		}
+	}, [workspacePath, onSelectedSessionIdChange]);
+
+	// Reset session - closes and recreates
+	const resetSession = useCallback(async () => {
+		const sessionId = activeSessionIdRef.current;
+		if (!sessionId) {
+			console.warn("[usePiChatV2] resetSession: no active session");
+			return;
+		}
+
+		// Clear local state
+		setMessages([]);
+		streamingMessageRef.current = null;
+		setIsStreaming(false);
+		setError(null);
+		messageIdRef.current = 0;
+
+		// Close and recreate session
+		const manager = getWsManager();
+		manager.piCloseSession(sessionId);
+
+		// Small delay then recreate
+		setTimeout(() => {
+			manager.piCreateSession(sessionId);
+		}, 100);
+
+		if (isPiDebugEnabled()) {
+			console.debug("[usePiChatV2] resetSession for:", sessionId);
+		}
+	}, []);
+
+	// Refresh - request current state from backend
+	const refresh = useCallback(async () => {
+		const sessionId = activeSessionIdRef.current;
+		if (!sessionId) return;
+
+		const manager = getWsManager();
+		manager.piGetState(sessionId);
+
+		// Also request messages
+		manager.send({
+			channel: "pi",
+			type: "get_messages",
+			session_id: sessionId,
+		});
+
+		if (isPiDebugEnabled()) {
+			console.debug("[usePiChatV2] refresh requested for:", sessionId);
+		}
+	}, []);
+
+	// Subscribe to connection state
+	useEffect(() => {
+		const manager = getWsManager();
+
+		const unsubscribe = manager.onConnectionState(
+			(connectionState: WsMuxConnectionState) => {
+				setIsConnected(connectionState === "connected");
+			},
+		);
+
+		return unsubscribe;
+	}, []);
+
+	// Subscribe to Pi session when active session changes
+	useEffect(() => {
+		// Unsubscribe from previous session
+		if (unsubscribeRef.current) {
+			unsubscribeRef.current();
+			unsubscribeRef.current = null;
+		}
+
+		if (!activeSessionId) {
+			return;
+		}
+
+		// Load cached messages for this session
+		const cached = readCachedSessionMessages(
+			activeSessionId,
+			resolvedStorageKeyPrefix,
+		);
+		if (cached.length > 0) {
+			setMessages(cached);
+			messageIdRef.current = getMaxPiMessageId(cached);
+		} else {
+			setMessages([]);
+			messageIdRef.current = 0;
+		}
+
+		// Subscribe to the new session (passes scope/cwd for session creation)
+		const manager = getWsManager();
+		const sessionConfig = scope === "main"
+			? { scope: "main" as const }
+			: workspacePath
+				? { scope: "workspace" as const, cwd: workspacePath }
+				: undefined;
+		unsubscribeRef.current = manager.subscribePiSession(
+			activeSessionId,
+			handlePiEvent,
+			sessionConfig,
+		);
+
+		if (isPiDebugEnabled()) {
+			console.debug("[usePiChatV2] Subscribed to session:", activeSessionId, "workspacePath:", workspacePath);
+		}
+
+		return () => {
+			if (unsubscribeRef.current) {
+				unsubscribeRef.current();
+				unsubscribeRef.current = null;
+			}
+		};
+	}, [activeSessionId, resolvedStorageKeyPrefix, handlePiEvent, scope, workspacePath]);
+
+	// Auto-connect on mount
+	useEffect(() => {
+		if (autoConnect && activeSessionId) {
+			connect();
+		}
+	}, [autoConnect, activeSessionId, connect]);
+
+	return {
+		state,
+		messages,
+		isConnected,
+		isStreaming,
+		error,
+		send,
+		abort,
+		compact,
+		newSession,
+		resetSession,
+		refresh,
+		connect,
+		disconnect,
+	};
+}

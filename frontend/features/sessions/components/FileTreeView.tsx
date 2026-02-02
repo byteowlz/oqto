@@ -9,13 +9,20 @@ import {
 	ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import {
-	fileserverWorkspaceBaseUrl,
-	mainChatFilesBaseUrl,
-} from "@/lib/control-plane-client";
+	copyPathMux,
+	createDirectoryMux,
+	deletePathMux,
+	downloadFileMux,
+	fetchFileTreeMux,
+	movePathMux,
+	renamePathMux,
+	uploadFileMux,
+} from "@/lib/mux-files";
 import { cn } from "@/lib/utils";
 import {
 	ChevronDown,
 	ChevronRight,
+	Copy,
 	Download,
 	Folder,
 	FolderPlus,
@@ -24,6 +31,7 @@ import {
 	LayoutGrid,
 	List,
 	Loader2,
+	MoveRight,
 	PaintBucket,
 	Pencil,
 	Trash2,
@@ -73,152 +81,8 @@ function setCachedTree(
 	treeCache.set(key, { data, timestamp: Date.now() });
 }
 
-async function fetchFileTree(
-	baseUrl: string,
-	workspacePath: string | null,
-	path = ".",
-): Promise<FileNode[]> {
-	const url = new URL(`${baseUrl}/tree`, window.location.origin);
-	url.searchParams.set("path", path);
-	// For main chat, workspace_path is determined by the backend from auth
-	if (workspacePath) {
-		url.searchParams.set("workspace_path", workspacePath);
-	}
-	const res = await fetch(url.toString(), {
-		cache: "no-store",
-		credentials: "include",
-	});
-	if (!res.ok) {
-		const text = await res.text().catch(() => res.statusText);
-		throw new Error(text || `File server error (${res.status})`);
-	}
-	return res.json();
-}
-
-async function uploadFile(
-	baseUrl: string,
-	workspacePath: string | null,
-	destPath: string,
-	file: File,
-): Promise<void> {
-	const url = new URL(`${baseUrl}/file`, window.location.origin);
-	url.searchParams.set("path", destPath);
-	url.searchParams.set("mkdir", "true");
-	if (workspacePath) {
-		url.searchParams.set("workspace_path", workspacePath);
-	}
-
-	const formData = new FormData();
-	formData.append("file", file);
-
-	const res = await fetch(url.toString(), {
-		method: "POST",
-		credentials: "include",
-		body: formData,
-	});
-
-	if (!res.ok) {
-		const text = await res.text().catch(() => res.statusText);
-		throw new Error(text || `Upload failed (${res.status})`);
-	}
-}
-
-async function deleteFile(
-	baseUrl: string,
-	workspacePath: string | null,
-	path: string,
-): Promise<void> {
-	const url = new URL(`${baseUrl}/file`, window.location.origin);
-	url.searchParams.set("path", path);
-	if (workspacePath) {
-		url.searchParams.set("workspace_path", workspacePath);
-	}
-
-	const res = await fetch(url.toString(), {
-		method: "DELETE",
-		credentials: "include",
-	});
-
-	if (!res.ok) {
-		const text = await res.text().catch(() => res.statusText);
-		throw new Error(text || `Delete failed (${res.status})`);
-	}
-}
-
-async function createDirectory(
-	baseUrl: string,
-	workspacePath: string | null,
-	path: string,
-): Promise<void> {
-	const url = new URL(`${baseUrl}/mkdir`, window.location.origin);
-	url.searchParams.set("path", path);
-	if (workspacePath) {
-		url.searchParams.set("workspace_path", workspacePath);
-	}
-
-	const res = await fetch(url.toString(), {
-		method: "PUT",
-		credentials: "include",
-	});
-
-	if (!res.ok) {
-		const text = await res.text().catch(() => res.statusText);
-		throw new Error(text || `Create directory failed (${res.status})`);
-	}
-}
-
-async function renameFile(
-	baseUrl: string,
-	workspacePath: string | null,
-	oldPath: string,
-	newPath: string,
-): Promise<void> {
-	const url = new URL(`${baseUrl}/rename`, window.location.origin);
-	url.searchParams.set("old_path", oldPath);
-	url.searchParams.set("new_path", newPath);
-	if (workspacePath) {
-		url.searchParams.set("workspace_path", workspacePath);
-	}
-
-	const res = await fetch(url.toString(), {
-		method: "POST",
-		credentials: "include",
-	});
-
-	if (!res.ok) {
-		const text = await res.text().catch(() => res.statusText);
-		throw new Error(text || `Rename failed (${res.status})`);
-	}
-}
-
-function getDownloadUrl(
-	baseUrl: string,
-	workspacePath: string | null,
-	path: string,
-): string {
-	const url = new URL(`${baseUrl}/download`, window.location.origin);
-	url.searchParams.set("path", path);
-	if (workspacePath) {
-		url.searchParams.set("workspace_path", workspacePath);
-	}
-	return url.toString();
-}
-
-function getDownloadZipUrl(
-	baseUrl: string,
-	workspacePath: string | null,
-	paths: string[],
-	name?: string,
-): string {
-	const url = new URL(`${baseUrl}/download-zip`, window.location.origin);
-	url.searchParams.set("paths", paths.join(","));
-	if (workspacePath) {
-		url.searchParams.set("workspace_path", workspacePath);
-	}
-	if (name) {
-		url.searchParams.set("name", name);
-	}
-	return url.toString();
+async function fetchFileTree(workspacePath: string, path = "."): Promise<FileNode[]> {
+	return fetchFileTreeMux(workspacePath, path, 6, false);
 }
 
 // File extensions that can be previewed
@@ -349,8 +213,6 @@ interface FileTreeViewProps {
 	onPreviewFile?: (filePath: string) => void;
 	onOpenInCanvas?: (filePath: string) => void;
 	workspacePath?: string | null;
-	/** Whether this is the main chat file view (uses different API) */
-	isMainChat?: boolean;
 	/** External state for persistence across view switches */
 	state?: FileTreeState;
 	/** Callback to update external state */
@@ -361,7 +223,6 @@ export function FileTreeView({
 	onPreviewFile,
 	onOpenInCanvas,
 	workspacePath,
-	isMainChat = false,
 	state,
 	onStateChange,
 }: FileTreeViewProps) {
@@ -412,24 +273,11 @@ export function FileTreeView({
 		[onStateChange, state],
 	);
 
-	// For main chat, use dedicated API that doesn't need workspace_path
-	// For workspace sessions, use the workspace files API with workspace_path
-	const fileserverBaseUrl = isMainChat
-		? mainChatFilesBaseUrl()
-		: workspacePath
-			? fileserverWorkspaceBaseUrl()
-			: null;
-
-	// Cache key: main chat uses a fixed key, workspace uses the path
-	const cacheKey = isMainChat ? "__main_chat__" : workspacePath;
-	// For API calls: main chat doesn't need workspace_path (null), workspace does
-	const apiWorkspacePath: string | null = isMainChat
-		? null
-		: (workspacePath ?? null);
+	const cacheKey = workspacePath ?? null;
 
 	const loadTree = useCallback(
 		async (path: string, preserveState = false, skipCache = false) => {
-			if (!fileserverBaseUrl || !cacheKey) return;
+			if (!workspacePath || !cacheKey) return;
 
 			// Check cache first (unless explicitly skipping)
 			if (!skipCache) {
@@ -447,11 +295,7 @@ export function FileTreeView({
 			setLoading(true);
 			setError("");
 			try {
-				const data = await fetchFileTree(
-					fileserverBaseUrl,
-					apiWorkspacePath,
-					path,
-				);
+				const data = await fetchFileTree(workspacePath, path);
 				// Cache the result
 				setCachedTree(cacheKey, path, data);
 				setTree(data);
@@ -466,7 +310,7 @@ export function FileTreeView({
 				setLoading(false);
 			}
 		},
-		[fileserverBaseUrl, updateState, cacheKey, apiWorkspacePath],
+		[workspacePath, updateState, cacheKey],
 	);
 
 	const refreshTree = useCallback(() => {
@@ -475,11 +319,10 @@ export function FileTreeView({
 	}, [loadTree, currentPath]);
 
 	useEffect(() => {
-		// For main chat, always load; for workspace, need workspace path
-		if (!isMainChat && !workspacePath) return;
+		if (!workspacePath) return;
 		// Load tree for current path (uses cache if available)
 		loadTree(currentPath, true);
-	}, [currentPath, loadTree, workspacePath, isMainChat]);
+	}, [currentPath, loadTree, workspacePath]);
 
 	const toggle = (path: string) => {
 		updateState({ expanded: { ...expanded, [path]: !expanded[path] } });
@@ -539,7 +382,7 @@ export function FileTreeView({
 		event: React.ChangeEvent<HTMLInputElement>,
 	) => {
 		const files = event.target.files;
-		if (!files || files.length === 0 || !fileserverBaseUrl || !cacheKey) return;
+		if (!files || files.length === 0 || !workspacePath || !cacheKey) return;
 
 		setUploading(true);
 		setError("");
@@ -548,7 +391,7 @@ export function FileTreeView({
 			for (const file of Array.from(files)) {
 				const destPath =
 					currentPath === "." ? file.name : `${currentPath}/${file.name}`;
-				await uploadFile(fileserverBaseUrl, apiWorkspacePath, destPath, file);
+				await uploadFileMux(workspacePath, destPath, file);
 			}
 			await refreshTree();
 		} catch (err) {
@@ -563,33 +406,30 @@ export function FileTreeView({
 	};
 
 	const handleDownload = (path: string, isDirectory: boolean) => {
-		if (!fileserverBaseUrl || !cacheKey) return;
-		const url = getDownloadUrl(fileserverBaseUrl, apiWorkspacePath, path);
-		window.open(url, "_blank");
+		if (!workspacePath || !cacheKey) return;
+		if (isDirectory) {
+			setError("Directory download is not supported yet.");
+			return;
+		}
+		void downloadFileMux(workspacePath, path);
 	};
 
 	const handleDownloadSelected = () => {
-		if (!fileserverBaseUrl || !cacheKey || selectedFiles.size === 0) return;
+		if (!workspacePath || !cacheKey || selectedFiles.size === 0) return;
 
 		if (selectedFiles.size === 1) {
 			const path = Array.from(selectedFiles)[0];
 			handleDownload(path, false); // We don't know if it's a directory
 		} else {
-			const url = getDownloadZipUrl(
-				fileserverBaseUrl,
-				apiWorkspacePath,
-				Array.from(selectedFiles),
-				"selected-files.zip",
-			);
-			window.open(url, "_blank");
+			setError("Multi-file download is not supported yet.");
 		}
 	};
 
 	const handleDelete = async (path: string) => {
-		if (!fileserverBaseUrl || !cacheKey) return;
+		if (!workspacePath || !cacheKey) return;
 
 		try {
-			await deleteFile(fileserverBaseUrl, apiWorkspacePath, path);
+			await deletePathMux(workspacePath, path, true);
 			await refreshTree();
 			// Clear selection if deleted file was selected
 			if (selectedFiles.has(path)) {
@@ -603,16 +443,42 @@ export function FileTreeView({
 	};
 
 	const handleDeleteSelected = async () => {
-		if (!fileserverBaseUrl || !cacheKey || selectedFiles.size === 0) return;
+		if (!workspacePath || !cacheKey || selectedFiles.size === 0) return;
 
 		try {
 			for (const path of selectedFiles) {
-				await deleteFile(fileserverBaseUrl, apiWorkspacePath, path);
+				await deletePathMux(workspacePath, path, true);
 			}
 			await refreshTree();
 			updateState({ selectedFiles: new Set() });
 		} catch (err) {
 			setError(err instanceof Error ? err.message : "Delete failed");
+		}
+	};
+
+	const handleCopy = async (path: string) => {
+		if (!workspacePath || !cacheKey) return;
+		const target = window.prompt("Copy to path", path);
+		if (!target || target === path) return;
+
+		try {
+			await copyPathMux(workspacePath, path, target, false);
+			await refreshTree();
+		} catch (err) {
+			setError(err instanceof Error ? err.message : "Copy failed");
+		}
+	};
+
+	const handleMove = async (path: string) => {
+		if (!workspacePath || !cacheKey) return;
+		const target = window.prompt("Move to path", path);
+		if (!target || target === path) return;
+
+		try {
+			await movePathMux(workspacePath, path, target, false);
+			await refreshTree();
+		} catch (err) {
+			setError(err instanceof Error ? err.message : "Move failed");
 		}
 	};
 
@@ -622,7 +488,7 @@ export function FileTreeView({
 
 	const handleCreateFolderWithName = useCallback(
 		async (name: string) => {
-			if (!fileserverBaseUrl || !cacheKey || !name) {
+			if (!workspacePath || !cacheKey || !name) {
 				setNewFolderName(null);
 				return;
 			}
@@ -630,7 +496,7 @@ export function FileTreeView({
 			try {
 				const folderPath =
 					currentPath === "." ? name : `${currentPath}/${name}`;
-				await createDirectory(fileserverBaseUrl, apiWorkspacePath, folderPath);
+				await createDirectoryMux(workspacePath, folderPath, true);
 				await refreshTree();
 			} catch (err) {
 				setError(err instanceof Error ? err.message : "Create folder failed");
@@ -638,7 +504,7 @@ export function FileTreeView({
 				setNewFolderName(null);
 			}
 		},
-		[fileserverBaseUrl, cacheKey, apiWorkspacePath, currentPath, refreshTree],
+		[workspacePath, cacheKey, currentPath, refreshTree],
 	);
 
 	const handleStartRename = (path: string, _currentName: string) => {
@@ -651,7 +517,7 @@ export function FileTreeView({
 
 	const handleConfirmRename = useCallback(
 		async (newName: string) => {
-			if (!fileserverBaseUrl || !cacheKey || !renamingPath || !newName) {
+			if (!workspacePath || !cacheKey || !renamingPath || !newName) {
 				setRenamingPath(null);
 				return;
 			}
@@ -670,12 +536,7 @@ export function FileTreeView({
 				pathParts[pathParts.length - 1] = newName;
 				const newPath = pathParts.join("/");
 
-				await renameFile(
-					fileserverBaseUrl,
-					apiWorkspacePath,
-					renamingPath,
-					newPath,
-				);
+				await renamePathMux(workspacePath, renamingPath, newPath);
 				await refreshTree();
 			} catch (err) {
 				setError(err instanceof Error ? err.message : "Rename failed");
@@ -683,7 +544,7 @@ export function FileTreeView({
 				setRenamingPath(null);
 			}
 		},
-		[fileserverBaseUrl, cacheKey, apiWorkspacePath, renamingPath, refreshTree],
+		[workspacePath, cacheKey, renamingPath, refreshTree],
 	);
 
 	const clearSelection = () => {
@@ -704,7 +565,7 @@ export function FileTreeView({
 	};
 
 	// For main chat, we always have access; for workspace, need workspace path
-	if (!isMainChat && !workspacePath) {
+	if (!workspacePath) {
 		return (
 			<div className="h-full flex items-center justify-center p-4 text-sm text-muted-foreground">
 				Select a chat to browse files.
@@ -928,52 +789,55 @@ export function FileTreeView({
 						No files found.
 					</div>
 				) : viewMode === "tree" ? (
-					<TreeView
-						nodes={tree}
-						expanded={expanded}
-						onToggle={toggle}
-						selectedFiles={selectedFiles}
-						onSelectFile={handleSelectFile}
-						onNavigateToFolder={handleNavigateToFolder}
-						onDownload={handleDownload}
-						onDelete={handleDelete}
-						onRename={handleStartRename}
-						renamingPath={renamingPath}
-						onRenameConfirm={handleConfirmRename}
-						onRenameCancel={handleCancelRename}
-						onOpenInCanvas={onOpenInCanvas}
-						fileserverBaseUrl={fileserverBaseUrl}
-					/>
+						<TreeView
+							nodes={tree}
+							expanded={expanded}
+							onToggle={toggle}
+							selectedFiles={selectedFiles}
+							onSelectFile={handleSelectFile}
+							onNavigateToFolder={handleNavigateToFolder}
+							onDownload={handleDownload}
+							onDelete={handleDelete}
+							onRename={handleStartRename}
+							onCopy={handleCopy}
+							onMove={handleMove}
+							renamingPath={renamingPath}
+							onRenameConfirm={handleConfirmRename}
+							onRenameCancel={handleCancelRename}
+							onOpenInCanvas={onOpenInCanvas}
+						/>
 				) : viewMode === "list" ? (
-					<ListView
-						files={tree}
-						selectedFiles={selectedFiles}
-						onSelectFile={handleSelectFile}
-						onNavigateToFolder={handleNavigateToFolder}
-						onDownload={handleDownload}
-						onDelete={handleDelete}
-						onRename={handleStartRename}
-						renamingPath={renamingPath}
-						onRenameConfirm={handleConfirmRename}
-						onRenameCancel={handleCancelRename}
-						onOpenInCanvas={onOpenInCanvas}
-						fileserverBaseUrl={fileserverBaseUrl}
-					/>
+						<ListView
+							files={tree}
+							selectedFiles={selectedFiles}
+							onSelectFile={handleSelectFile}
+							onNavigateToFolder={handleNavigateToFolder}
+							onDownload={handleDownload}
+							onDelete={handleDelete}
+							onRename={handleStartRename}
+							onCopy={handleCopy}
+							onMove={handleMove}
+							renamingPath={renamingPath}
+							onRenameConfirm={handleConfirmRename}
+							onRenameCancel={handleCancelRename}
+							onOpenInCanvas={onOpenInCanvas}
+						/>
 				) : (
-					<GridView
-						files={tree}
-						selectedFiles={selectedFiles}
-						onSelectFile={handleSelectFile}
-						onNavigateToFolder={handleNavigateToFolder}
-						onDownload={handleDownload}
-						onDelete={handleDelete}
-						onRename={handleStartRename}
-						renamingPath={renamingPath}
-						onRenameConfirm={handleConfirmRename}
-						onRenameCancel={handleCancelRename}
-						onOpenInCanvas={onOpenInCanvas}
-						fileserverBaseUrl={fileserverBaseUrl}
-					/>
+						<GridView
+							files={tree}
+							selectedFiles={selectedFiles}
+							onSelectFile={handleSelectFile}
+							onNavigateToFolder={handleNavigateToFolder}
+							onDownload={handleDownload}
+							onDelete={handleDelete}
+							onRename={handleStartRename}
+							onCopy={handleCopy}
+							onMove={handleMove}
+							renamingPath={renamingPath}
+							onRenameConfirm={handleConfirmRename}
+							onRenameCancel={handleCancelRename}
+							onOpenInCanvas={onOpenInCanvas}
+						/>
 				)}
 			</div>
 		</div>
@@ -1075,6 +939,8 @@ function FileContextMenu({
 	onDownload,
 	onDelete,
 	onRename,
+	onCopy,
+	onMove,
 	onOpenInCanvas,
 }: {
 	children: React.ReactNode;
@@ -1082,6 +948,8 @@ function FileContextMenu({
 	onDownload: (path: string, isDirectory: boolean) => void;
 	onDelete: (path: string) => void;
 	onRename: (path: string, currentName: string) => void;
+	onCopy: (path: string) => void;
+	onMove: (path: string) => void;
 	onOpenInCanvas?: (path: string) => void;
 }) {
 	const isImage = node.type === "file" && isImageFile(node.name);
@@ -1102,6 +970,14 @@ function FileContextMenu({
 				<ContextMenuItem onClick={() => onRename(node.path, node.name)}>
 					<Pencil className="w-4 h-4 mr-2" />
 					Rename
+				</ContextMenuItem>
+				<ContextMenuItem onClick={() => onCopy(node.path)}>
+					<Copy className="w-4 h-4 mr-2" />
+					Copy
+				</ContextMenuItem>
+				<ContextMenuItem onClick={() => onMove(node.path)}>
+					<MoveRight className="w-4 h-4 mr-2" />
+					Move
 				</ContextMenuItem>
 				<ContextMenuItem
 					onClick={() => onDownload(node.path, node.type === "directory")}
@@ -1133,11 +1009,12 @@ function TreeView({
 	onDownload,
 	onDelete,
 	onRename,
+	onCopy,
+	onMove,
 	renamingPath,
 	onRenameConfirm,
 	onRenameCancel,
 	onOpenInCanvas,
-	fileserverBaseUrl,
 }: {
 	nodes: FileNode[];
 	expanded: Record<string, boolean>;
@@ -1153,11 +1030,12 @@ function TreeView({
 	onDownload: (path: string, isDirectory: boolean) => void;
 	onDelete: (path: string) => void;
 	onRename: (path: string, currentName: string) => void;
+	onCopy: (path: string) => void;
+	onMove: (path: string) => void;
 	renamingPath: string | null;
 	onRenameConfirm: (newName: string) => void;
 	onRenameCancel: () => void;
 	onOpenInCanvas?: (path: string) => void;
-	fileserverBaseUrl: string | null;
 }) {
 	// Sort: directories first, then files, both alphabetically
 	const sortedNodes = [...nodes].sort((a, b) => {
@@ -1181,6 +1059,8 @@ function TreeView({
 					onDownload={onDownload}
 					onDelete={onDelete}
 					onRename={onRename}
+					onCopy={onCopy}
+					onMove={onMove}
 					renamingPath={renamingPath}
 					onRenameConfirm={onRenameConfirm}
 					onRenameCancel={onRenameCancel}
@@ -1203,6 +1083,8 @@ function TreeRow({
 	onDownload,
 	onDelete,
 	onRename,
+	onCopy,
+	onMove,
 	renamingPath,
 	onRenameConfirm,
 	onRenameCancel,
@@ -1223,6 +1105,8 @@ function TreeRow({
 	onDownload: (path: string, isDirectory: boolean) => void;
 	onDelete: (path: string) => void;
 	onRename: (path: string, currentName: string) => void;
+	onCopy: (path: string) => void;
+	onMove: (path: string) => void;
 	renamingPath: string | null;
 	onRenameConfirm: (newName: string) => void;
 	onRenameCancel: () => void;
@@ -1269,6 +1153,8 @@ function TreeRow({
 				onDownload={onDownload}
 				onDelete={onDelete}
 				onRename={onRename}
+				onCopy={onCopy}
+				onMove={onMove}
 				onOpenInCanvas={onOpenInCanvas}
 			>
 				<button
@@ -1331,6 +1217,8 @@ function TreeRow({
 							onDownload={onDownload}
 							onDelete={onDelete}
 							onRename={onRename}
+							onCopy={onCopy}
+							onMove={onMove}
 							renamingPath={renamingPath}
 							onRenameConfirm={onRenameConfirm}
 							onRenameCancel={onRenameCancel}
@@ -1352,11 +1240,12 @@ function ListView({
 	onDownload,
 	onDelete,
 	onRename,
+	onCopy,
+	onMove,
 	renamingPath,
 	onRenameConfirm,
 	onRenameCancel,
 	onOpenInCanvas,
-	fileserverBaseUrl,
 }: {
 	files: FileNode[];
 	selectedFiles: Set<string>;
@@ -1370,11 +1259,12 @@ function ListView({
 	onDownload: (path: string, isDirectory: boolean) => void;
 	onDelete: (path: string) => void;
 	onRename: (path: string, currentName: string) => void;
+	onCopy: (path: string) => void;
+	onMove: (path: string) => void;
 	renamingPath: string | null;
 	onRenameConfirm: (newName: string) => void;
 	onRenameCancel: () => void;
 	onOpenInCanvas?: (path: string) => void;
-	fileserverBaseUrl: string | null;
 }) {
 	// Sort: directories first, then files
 	const sortedFiles = [...files].sort((a, b) => {
@@ -1405,6 +1295,8 @@ function ListView({
 							onOpenInCanvas={onOpenInCanvas}
 							onDelete={onDelete}
 							onRename={onRename}
+							onCopy={onCopy}
+							onMove={onMove}
 						>
 							<button
 								type="button"
@@ -1477,11 +1369,12 @@ function GridView({
 	onDownload,
 	onDelete,
 	onRename,
+	onCopy,
+	onMove,
 	renamingPath,
 	onRenameConfirm,
 	onRenameCancel,
 	onOpenInCanvas,
-	fileserverBaseUrl,
 }: {
 	files: FileNode[];
 	selectedFiles: Set<string>;
@@ -1495,11 +1388,12 @@ function GridView({
 	onDownload: (path: string, isDirectory: boolean) => void;
 	onDelete: (path: string) => void;
 	onRename: (path: string, currentName: string) => void;
+	onCopy: (path: string) => void;
+	onMove: (path: string) => void;
 	renamingPath: string | null;
 	onRenameConfirm: (newName: string) => void;
 	onRenameCancel: () => void;
 	onOpenInCanvas?: (path: string) => void;
-	fileserverBaseUrl: string | null;
 }) {
 	// Sort: directories first, then files
 	const sortedFiles = [...files].sort((a, b) => {
@@ -1520,6 +1414,8 @@ function GridView({
 						onDownload={onDownload}
 						onDelete={onDelete}
 						onRename={onRename}
+						onCopy={onCopy}
+						onMove={onMove}
 						onOpenInCanvas={onOpenInCanvas}
 					>
 						<button

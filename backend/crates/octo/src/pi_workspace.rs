@@ -174,8 +174,14 @@ impl WorkspacePiService {
             PiRuntimeMode::Local => Arc::new(LocalPiRuntime::new()),
             PiRuntimeMode::Runner => {
                 let client = if let Some(pattern) = &self.config.runner_socket_pattern {
-                    let socket_path = pattern.replace("{user}", user_id);
-                    RunnerClient::new(socket_path)
+                    // Use for_user_with_pattern which handles both {user} and {uid} placeholders
+                    match RunnerClient::for_user_with_pattern(user_id, pattern) {
+                        Ok(c) => c,
+                        Err(e) => {
+                            warn!("Failed to create runner client for user {}: {}", user_id, e);
+                            RunnerClient::default()
+                        }
+                    }
                 } else {
                     RunnerClient::default()
                 };
@@ -223,11 +229,14 @@ impl WorkspacePiService {
     fn runner_client_for_user(&self, user_id: &str) -> Option<RunnerClient> {
         self.linux_users.as_ref()?;
         let pattern = self.config.runner_socket_pattern.as_deref()?;
-        let socket_path = pattern.replace("{user}", user_id);
-        if std::path::Path::new(&socket_path).exists() {
-            Some(RunnerClient::new(socket_path))
-        } else {
-            None
+        // Use for_user_with_pattern which handles both {user} and {uid} placeholders
+        match RunnerClient::for_user_with_pattern(user_id, pattern) {
+            Ok(c) if c.socket_path().exists() => Some(c),
+            Ok(_) => None,
+            Err(e) => {
+                warn!("Failed to create runner client for user {}: {}", user_id, e);
+                None
+            }
         }
     }
 

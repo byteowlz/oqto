@@ -2,7 +2,6 @@ export {
 	abortMainChatPi,
 	compactMainChatPi,
 	createMainChatAssistant,
-	createMainChatPiWebSocket,
 	deleteMainChatAssistant,
 	fileserverWorkspaceBaseUrl,
 	getAuthHeaders,

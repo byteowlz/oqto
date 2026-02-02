@@ -16,13 +16,12 @@ use super::a2ui as a2ui_handlers;
 use super::delegate as delegate_handlers;
 use super::handlers;
 use super::main_chat as main_chat_handlers;
-use super::main_chat_files;
 use super::main_chat_pi as main_chat_pi_handlers;
 use super::onboarding_handlers;
 use super::proxy;
 use super::state::AppState;
 use super::ui_control as ui_control_handlers;
-use crate::ws::ws_handler;
+use super::ws_multiplexed;
 
 // Note: handlers module now provides all public handlers via re-exports in handlers/mod.rs
 // Routes continue to use `handlers::function_name` - no changes needed
@@ -44,8 +43,8 @@ pub fn create_router_with_config(state: AppState, max_upload_size_mb: usize) -> 
 
     // Protected routes (require authentication)
     let protected_routes = Router::new()
-        // WebSocket endpoint for real-time communication
-        .route("/ws", get(ws_handler))
+        // Multiplexed WebSocket endpoint for Pi, files, terminal, hstry channels
+        .route("/ws/mux", get(ws_multiplexed::ws_multiplexed_handler))
         // sldr routes
         .route(
             "/sldr",
@@ -128,42 +127,12 @@ pub fn create_router_with_config(state: AppState, max_upload_size_mb: usize) -> 
                 .delete(proxy::proxy_opencode),
         )
         .route(
-            "/sessions/{session_id}/files/{*path}",
-            get(proxy::proxy_fileserver)
-                .post(proxy::proxy_fileserver)
-                .put(proxy::proxy_fileserver)
-                .delete(proxy::proxy_fileserver),
-        )
-        .route(
-            "/session/{session_id}/files/{*path}",
-            get(proxy::proxy_fileserver)
-                .post(proxy::proxy_fileserver)
-                .put(proxy::proxy_fileserver)
-                .delete(proxy::proxy_fileserver),
-        )
-        .route(
-            "/workspace/files/{*path}",
-            get(proxy::proxy_fileserver_for_workspace)
-                .post(proxy::proxy_fileserver_for_workspace)
-                .put(proxy::proxy_fileserver_for_workspace)
-                .delete(proxy::proxy_fileserver_for_workspace),
-        )
-        .route(
-            "/sessions/{session_id}/terminal",
-            get(proxy::proxy_terminal_ws),
-        )
-        .route("/session/{session_id}/term", get(proxy::proxy_terminal_ws))
-        .route(
             "/sessions/{session_id}/browser/stream",
             get(proxy::proxy_browser_stream_ws),
         )
         .route(
             "/session/{session_id}/browser/stream",
             get(proxy::proxy_browser_stream_ws),
-        )
-        .route(
-            "/workspace/term",
-            get(proxy::proxy_terminal_ws_for_workspace),
         )
         // Workspace-based mmry routes (single-user mode)
         .route(
@@ -403,7 +372,6 @@ pub fn create_router_with_config(state: AppState, max_upload_size_mb: usize) -> 
             "/main/pi/stats",
             get(main_chat_pi_handlers::get_session_stats),
         )
-        .route("/main/pi/ws", get(main_chat_pi_handlers::ws_handler))
         .route("/main/pi/history", get(main_chat_pi_handlers::get_history))
         .route(
             "/main/pi/sessions",
@@ -449,12 +417,7 @@ pub fn create_router_with_config(state: AppState, max_upload_size_mb: usize) -> 
             "/pi/workspace/model",
             post(crate::api::workspace_pi::set_workspace_model),
         )
-        .route(
-            "/pi/workspace/ws",
-            get(crate::api::workspace_pi::ws_handler),
-        )
-        // Main Chat file access routes
-        .nest("/main/files", main_chat_files::main_chat_file_routes())
+        // Main Chat file access routes now use mux-only file channel
         // HSTRY (chat history) search routes
         .route("/search", get(handlers::search_sessions))
         // Scheduler (skdlr) overview
@@ -463,20 +426,7 @@ pub fn create_router_with_config(state: AppState, max_upload_size_mb: usize) -> 
         .route("/feeds/fetch", get(handlers::fetch_feed))
         // CodexBar usage (optional, requires codexbar on PATH)
         .route("/codexbar/usage", get(handlers::codexbar_usage))
-        // TRX (issue tracking) routes - workspace-based
-        .route(
-            "/workspace/trx/issues",
-            get(handlers::list_trx_issues).post(handlers::create_trx_issue),
-        )
-        .route(
-            "/workspace/trx/issues/{issue_id}",
-            get(handlers::get_trx_issue).put(handlers::update_trx_issue),
-        )
-        .route(
-            "/workspace/trx/issues/{issue_id}/close",
-            post(handlers::close_trx_issue),
-        )
-        .route("/workspace/trx/sync", post(handlers::sync_trx))
+        // TRX (issue tracking) now uses mux-only channel
         // AgentRPC routes (unified backend API)
         .route("/agent/health", get(handlers::agent_health))
         .route(

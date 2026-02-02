@@ -9,6 +9,7 @@ import {
 	SlashCommandPopup,
 	ToolCallCard,
 } from "@/components/chat";
+import { toast } from "sonner";
 import { BrailleSpinner } from "@/components/common";
 import {
 	ContextWindowGauge,
@@ -32,16 +33,11 @@ import {
 	type Features,
 	type PiModelInfo,
 	type PiSessionFile,
-	fileserverWorkspaceBaseUrl,
-	getAuthHeaders,
 	getMainChatPiCommands,
 	getMainChatPiModels,
 	getMainChatPiStats,
 	getWorkspacePiModels,
 	listMainChatPiSessions,
-	setMainChatPiModel,
-	setWorkspacePiModel,
-	workspaceFileUrl,
 } from "@/features/main-chat/api";
 import { type A2UISurfaceState, useA2UI } from "@/hooks/use-a2ui";
 import { useDictation } from "@/hooks/use-dictation";
@@ -53,6 +49,13 @@ import {
 	usePiChat,
 } from "@/hooks/usePiChat";
 import { extractFileReferenceDetails, getFileTypeInfo } from "@/lib/file-types";
+import {
+	downloadFileMux,
+	readFileMux,
+	statPathMux,
+	uploadFileMux,
+} from "@/lib/mux-files";
+import { getWsManager } from "@/lib/ws-manager";
 import { formatSessionDate, resolveReadableId } from "@/lib/session-utils";
 import {
 	type SlashCommand,
@@ -173,7 +176,7 @@ export function MainChatPiView({
 					"_",
 				)}`);
 	const draftStorageKey = isMainScope
-		? "octo:mainChatDraft"
+		? `octo:mainChatDraft:${selectedSessionId ?? "none"}`
 		: `${resolvedStorageKeyPrefix}:draft`;
 	const scrollStorageKey = isMainScope
 		? "octo:mainChat:scrollPosition"
@@ -230,20 +233,24 @@ export function MainChatPiView({
 	// Create new session when trigger changes (external request)
 	useEffect(() => {
 		// Skip initial render and only react to actual changes
-		if (
-			newSessionTrigger !== undefined &&
-			newSessionTrigger !== lastNewSessionTriggerRef.current &&
-			lastNewSessionTriggerRef.current !== undefined
-		) {
-			newSession();
-			// Clear the input when starting a new session
-			setInput("");
-			setFileAttachments([]);
-			try {
-				localStorage.removeItem(draftStorageKey);
-			} catch {
-				// Ignore localStorage errors
-			}
+			if (
+				newSessionTrigger !== undefined &&
+				newSessionTrigger !== lastNewSessionTriggerRef.current &&
+				lastNewSessionTriggerRef.current !== undefined
+			) {
+				newSession();
+				// Clear the input when starting a new session
+				setInput("");
+				setFileAttachments([]);
+				if (draftSaveTimeoutRef.current) {
+					clearTimeout(draftSaveTimeoutRef.current);
+					draftSaveTimeoutRef.current = null;
+				}
+				try {
+					localStorage.removeItem(draftStorageKey);
+				} catch {
+					// Ignore localStorage errors
+				}
 		}
 		lastNewSessionTriggerRef.current = newSessionTrigger;
 	}, [draftStorageKey, newSession, newSessionTrigger]);
@@ -792,34 +799,21 @@ export function MainChatPiView({
 	// Handle file upload
 	const handleFileUpload = useCallback(
 		async (files: FileList | null) => {
-			if (!files || files.length === 0 || !workspacePath) return;
+			if (!files || files.length === 0) return;
+			
+			// File attachments require a workspace path to upload to
+			// The path is always available for main chat, but may be loading initially
+			if (!workspacePath) {
+				toast.error("Workspace path is still loading. Please try again in a moment.");
+				return;
+			}
 
 			setIsUploading(true);
-			const baseUrl = fileserverWorkspaceBaseUrl();
 
 			try {
 				for (const file of Array.from(files)) {
 					try {
-						const formData = new FormData();
-						formData.append("file", file);
-
-						const uploadUrl = new URL(
-							`${baseUrl}/file`,
-							window.location.origin,
-						);
-						uploadUrl.searchParams.set("path", file.name);
-						uploadUrl.searchParams.set("workspace_path", workspacePath);
-
-						const res = await fetch(uploadUrl.toString(), {
-							method: "POST",
-							body: formData,
-							credentials: "include",
-						});
-
-						if (!res.ok) {
-							console.error("Failed to upload file:", file.name);
-							continue;
-						}
+						await uploadFileMux(workspacePath, file.name, file);
 
 						const attachment: FileAttachment = {
 							id: `file-${Date.now()}-${Math.random().toString(36).slice(2)}`,
@@ -830,6 +824,9 @@ export function MainChatPiView({
 						setFileAttachments((prev) => [...prev, attachment]);
 					} catch (err) {
 						console.error("Failed to upload file:", err);
+						toast.error(`Failed to upload ${file.name}`, {
+							description: err instanceof Error ? err.message : "Unknown error",
+						});
 					}
 				}
 			} finally {
@@ -854,20 +851,13 @@ export function MainChatPiView({
 			setSelectedModelRef(value);
 			setIsSwitchingModel(true);
 			try {
-				if (isMainScope) {
-					const targetSessionId = selectedSessionId ?? piState?.session_id ?? null;
-					if (!targetSessionId || isPendingSessionId(targetSessionId)) {
-						throw new Error("No active main chat session");
-					}
-					await setMainChatPiModel(targetSessionId, provider, modelId);
-				} else if (selectedSessionId) {
-					await setWorkspacePiModel(
-						workspacePath ?? "global",
-						selectedSessionId,
-						provider,
-						modelId,
-					);
+				const targetSessionId = selectedSessionId ?? piState?.session_id ?? null;
+				if (!targetSessionId || isPendingSessionId(targetSessionId)) {
+					throw new Error("No active session");
 				}
+				// Use WebSocket to set model - works for both main chat and workspace
+				const manager = getWsManager();
+				await manager.piSetModel(targetSessionId, provider, modelId);
 				await refresh();
 			} catch (err) {
 				console.error("Failed to switch model:", err);
@@ -877,11 +867,9 @@ export function MainChatPiView({
 		},
 		[
 			canSwitchModel,
-			isMainScope,
 			piState?.session_id,
 			refresh,
 			selectedSessionId,
-			workspacePath,
 		],
 	);
 
@@ -955,7 +943,7 @@ export function MainChatPiView({
 	);
 
 	const handleSend = useCallback(
-		async (mode: "steer" | "follow_up" = "steer") => {
+		async (mode: "prompt" | "steer" | "follow_up" = "prompt") => {
 			const trimmed = input.trim();
 			if (!trimmed && fileAttachments.length === 0) return;
 
@@ -982,6 +970,11 @@ export function MainChatPiView({
 					);
 					return;
 				}
+			}
+
+			if (draftSaveTimeoutRef.current) {
+				clearTimeout(draftSaveTimeoutRef.current);
+				draftSaveTimeoutRef.current = null;
 			}
 
 			// Check for shell command (starts with "!")
@@ -1047,7 +1040,8 @@ export function MainChatPiView({
 			}
 			if (e.key === "Enter" && !e.shiftKey) {
 				e.preventDefault();
-				handleSend(e.ctrlKey || e.metaKey ? "follow_up" : "steer");
+				// Use prompt for normal messages, follow_up for Ctrl/Cmd+Enter
+				handleSend(e.ctrlKey || e.metaKey ? "follow_up" : "prompt");
 			}
 			if (e.key === "Escape") {
 				setShowFileMentionPopup(false);
@@ -1603,7 +1597,7 @@ export function MainChatPiView({
 					<Button
 						type="button"
 						data-dictation-send
-						onClick={() => handleSend("steer")}
+						onClick={() => handleSend("prompt")}
 						disabled={!input.trim() && fileAttachments.length === 0}
 						className="flex-shrink-0 h-8 px-2 flex items-center justify-center text-muted-foreground hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed transition-colors bg-transparent hover:bg-transparent"
 						variant="ghost"
@@ -1752,10 +1746,19 @@ const PiMessageGroupCard = memo(function PiMessageGroupCard({
 		string,
 		Extract<PiMessagePart, { type: "tool_result" }>
 	>();
+	// Also index by name for fallback matching when IDs don't align
+	const toolResultsByName = new Map<
+		string,
+		Extract<PiMessagePart, { type: "tool_result" }>
+	>();
 	const toolUseIds = new Set<string>();
 	for (const { part } of timedParts) {
 		if (part.type === "tool_result") {
 			toolResults.set(part.id, part);
+			// Index by name for fallback matching
+			if (part.name) {
+				toolResultsByName.set(part.name, part);
+			}
 		}
 		if (part.type === "tool_use") {
 			toolUseIds.add(part.id);
@@ -1783,14 +1786,24 @@ const PiMessageGroupCard = memo(function PiMessageGroupCard({
 		if (part.type === "text") {
 			// Skip empty chunks to match OpenCode feel
 			if (!part.content.trim()) continue;
-			// Skip text that looks like raw question tool JSON output
+			// Skip text that looks like raw tool JSON output
 			const trimmedText = part.content.trim();
+			// Skip question tool JSON
 			const looksLikeQuestionJson =
 				trimmedText.startsWith("{") &&
 				trimmedText.includes('"questions"') &&
 				trimmedText.includes('"header"') &&
 				trimmedText.includes('"options"');
 			if (looksLikeQuestionJson) continue;
+			// Skip raw command JSON like {"command":"ls -la"} or {"filePath":"..."} 
+			const looksLikeCommandJson =
+				trimmedText.startsWith("{") &&
+				trimmedText.endsWith("}") &&
+				(trimmedText.includes('"command"') ||
+				 trimmedText.includes('"filePath"') ||
+				 trimmedText.includes('"pattern"') ||
+				 trimmedText.includes('"content"'));
+			if (looksLikeCommandJson && trimmedText.length < 500) continue;
 			if (!textKey) textKey = key;
 			textBuf.push(part.content);
 			continue;
@@ -1799,11 +1812,13 @@ const PiMessageGroupCard = memo(function PiMessageGroupCard({
 		flushText();
 
 		if (part.type === "tool_use") {
+			// Try to find matching tool_result by ID first, then fallback to name
+			const matchedResult = toolResults.get(part.id) || toolResultsByName.get(part.name);
 			segments.push({
 				key,
 				type: "tool_use",
 				part,
-				toolResult: toolResults.get(part.id),
+				toolResult: matchedResult,
 				timestamp,
 			});
 		} else if (part.type === "tool_result") {
@@ -2335,7 +2350,11 @@ function PiPartRenderer({
 				</details>
 			);
 
-		case "tool_use":
+		case "tool_use": {
+			// Determine status: if we have a toolResult, it's completed.
+			// If no toolResult but output exists in tool_use input (legacy), also treat as completed.
+			const hasResult = Boolean(toolResult);
+			const toolStatus = hasResult ? "completed" : "running";
 			return (
 				<ToolCallCard
 					part={{
@@ -2346,7 +2365,7 @@ function PiPartRenderer({
 						tool: part.name,
 						callID: part.id,
 						state: {
-							status: toolResult ? "completed" : "running",
+							status: toolStatus,
 							input: part.input as Record<string, unknown>,
 							output: toolResult
 								? formatToolResultOutput(toolResult.content)
@@ -2358,6 +2377,7 @@ function PiPartRenderer({
 					hideTodoTools={true}
 				/>
 			);
+		}
 
 		case "tool_result":
 			// Tool results are now rendered together with tool_use
@@ -2448,61 +2468,86 @@ function TextWithFileReferences({
  * Card for displaying a @file reference with preview.
  * Only renders if the file exists on disk.
  */
-export const FileReferenceCard = memo(function FileReferenceCard({
-	filePath,
-	workspacePath,
-	directUrl,
-	label,
+	export const FileReferenceCard = memo(function FileReferenceCard({
+		filePath,
+		workspacePath,
+		directUrl,
+		label,
 }: {
 	filePath: string;
 	workspacePath: string;
 	directUrl?: string;
 	label?: string;
 }) {
-	const [isLoading, setIsLoading] = useState(true);
-	const [error, setError] = useState<string | null>(null);
-	const [imageLoaded, setImageLoaded] = useState(false);
-	const [fileExists, setFileExists] = useState<boolean | null>(null);
+		const [isLoading, setIsLoading] = useState(true);
+		const [error, setError] = useState<string | null>(null);
+		const [imageLoaded, setImageLoaded] = useState(false);
+		const [fileExists, setFileExists] = useState<boolean | null>(null);
+		const [fileUrl, setFileUrl] = useState<string | null>(null);
+		const objectUrlRef = useRef<string | null>(null);
 
-	const fileInfo = useMemo(() => getFileTypeInfo(filePath), [filePath]);
-	const isImage = fileInfo.category === "image";
-	const isVideo = fileInfo.category === "video";
-	const fileName = label || filePath.split("/").pop() || filePath;
+		const fileInfo = useMemo(() => getFileTypeInfo(filePath), [filePath]);
+		const isImage = fileInfo.category === "image";
+		const isVideo = fileInfo.category === "video";
+		const fileName = label || filePath.split("/").pop() || filePath;
 
-	// Build the file URL
-	const fileUrl = useMemo(() => {
-		if (directUrl) return directUrl;
-		return workspaceFileUrl(workspacePath, filePath);
-	}, [directUrl, filePath, workspacePath]);
+		useEffect(() => {
+			let cancelled = false;
+			setIsLoading(true);
+			setError(null);
+			setFileExists(null);
+			setImageLoaded(false);
+			setFileUrl(directUrl ?? null);
 
-	// Check if file exists using HEAD request
-	useEffect(() => {
-		if (!fileUrl) {
-			setFileExists(false);
-			return;
-		}
-		let cancelled = false;
-		fetch(fileUrl, {
-			method: "HEAD",
-			credentials: "include",
-			headers: getAuthHeaders(),
-		})
-			.then((res) => {
-				if (!cancelled) {
-					setFileExists(res.ok);
-					if (!res.ok) setIsLoading(false);
-				}
-			})
-			.catch(() => {
-				if (!cancelled) {
+			if (objectUrlRef.current) {
+				URL.revokeObjectURL(objectUrlRef.current);
+				objectUrlRef.current = null;
+			}
+
+			if (!workspacePath && !directUrl) {
+				setFileExists(false);
+				setIsLoading(false);
+				return;
+			}
+
+			const run = async () => {
+				try {
+					if (!directUrl && workspacePath) {
+						await statPathMux(workspacePath, filePath);
+					}
+
+					if (cancelled) return;
+					setFileExists(true);
+
+					if ((isImage || isVideo) && !directUrl && workspacePath) {
+						const result = await readFileMux(workspacePath, filePath);
+						if (cancelled) return;
+						const blob = new Blob([result.data]);
+						const url = URL.createObjectURL(blob);
+						objectUrlRef.current = url;
+						setFileUrl(url);
+					}
+				} catch {
+					if (cancelled) return;
 					setFileExists(false);
+					setError("File not found");
 					setIsLoading(false);
+				} finally {
+					if (!cancelled && (!isImage && !isVideo)) {
+						setIsLoading(false);
+					}
 				}
-			});
-		return () => {
-			cancelled = true;
-		};
-	}, [fileUrl]);
+			};
+
+			void run();
+			return () => {
+				cancelled = true;
+				if (objectUrlRef.current) {
+					URL.revokeObjectURL(objectUrlRef.current);
+					objectUrlRef.current = null;
+				}
+			};
+		}, [directUrl, filePath, isImage, isVideo, workspacePath]);
 
 	// Don't render anything if file doesn't exist
 	if (fileExists === false) {
@@ -2514,9 +2559,9 @@ export const FileReferenceCard = memo(function FileReferenceCard({
 		return null;
 	}
 
-	if (!fileUrl) {
-		return null;
-	}
+		if ((isImage || isVideo) && !fileUrl) {
+			return null;
+		}
 
 	// For images, render inline preview
 	if (isImage) {
@@ -2538,7 +2583,7 @@ export const FileReferenceCard = memo(function FileReferenceCard({
 						</div>
 					) : (
 						<img
-							src={fileUrl}
+								src={fileUrl ?? ""}
 							alt={fileName}
 							className={cn(
 								"max-w-full h-auto",
@@ -2567,8 +2612,8 @@ export const FileReferenceCard = memo(function FileReferenceCard({
 					<FileVideo className="w-4 h-4 text-muted-foreground" />
 					<span className="text-xs font-medium truncate">{fileName}</span>
 				</div>
-				<video
-					src={fileUrl}
+					<video
+						src={fileUrl ?? ""}
 					controls
 					playsInline
 					className="max-w-full h-auto"
@@ -2586,18 +2631,24 @@ export const FileReferenceCard = memo(function FileReferenceCard({
 	}
 
 	// For non-images/videos, render a compact file reference link
-	const FileIcon = fileInfo.category === "code" ? FileCode : FileText;
-	return (
-		<a
-			href={fileUrl}
-			target="_blank"
-			rel="noopener noreferrer"
-			className="inline-flex items-center gap-2 px-3 py-1.5 border border-border bg-muted/20 rounded hover:bg-muted/40 transition-colors text-sm"
-		>
-			<FileIcon className="w-4 h-4 text-muted-foreground" />
-			<span className="font-medium">{fileName}</span>
-			<span className="text-xs text-muted-foreground">{filePath}</span>
-			<ExternalLink className="w-3 h-3 text-muted-foreground" />
-		</a>
-	);
-});
+		const FileIcon = fileInfo.category === "code" ? FileCode : FileText;
+		return (
+			<button
+				type="button"
+				onClick={() => {
+					if (directUrl) {
+						window.open(directUrl, "_blank", "noopener");
+						return;
+					}
+					if (!workspacePath) return;
+					void downloadFileMux(workspacePath, filePath, fileName);
+				}}
+				className="inline-flex items-center gap-2 px-3 py-1.5 border border-border bg-muted/20 rounded hover:bg-muted/40 transition-colors text-sm"
+			>
+				<FileIcon className="w-4 h-4 text-muted-foreground" />
+				<span className="font-medium">{fileName}</span>
+				<span className="text-xs text-muted-foreground">{filePath}</span>
+				<ExternalLink className="w-3 h-3 text-muted-foreground" />
+			</button>
+		);
+	});

@@ -11,14 +11,22 @@ use serde_json::Value;
 // ============================================================================
 
 /// Base command structure sent to pi.
+/// See: https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/docs/rpc.md
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum PiCommand {
+    // ========================================================================
+    // Prompting
+    // ========================================================================
     /// Send a user prompt to the agent.
     Prompt {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
         message: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        images: Option<Vec<ImageContent>>,
+        #[serde(rename = "streamingBehavior", skip_serializing_if = "Option::is_none")]
+        streaming_behavior: Option<String>, // "steer" or "followUp"
     },
     /// Queue a steering message to interrupt the agent mid-run.
     Steer {
@@ -37,6 +45,10 @@ pub enum PiCommand {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
     },
+
+    // ========================================================================
+    // Session Management
+    // ========================================================================
     /// Start a fresh session.
     NewSession {
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -44,6 +56,30 @@ pub enum PiCommand {
         #[serde(rename = "parentSession", skip_serializing_if = "Option::is_none")]
         parent_session: Option<String>,
     },
+    /// Switch to a different session file.
+    SwitchSession {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        #[serde(rename = "sessionPath")]
+        session_path: String,
+    },
+    /// Set session display name.
+    SetSessionName {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        name: String,
+    },
+    /// Export session to HTML.
+    ExportHtml {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        #[serde(rename = "outputPath", skip_serializing_if = "Option::is_none")]
+        output_path: Option<String>,
+    },
+
+    // ========================================================================
+    // State Queries
+    // ========================================================================
     /// Get current session state.
     GetState {
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -54,6 +90,25 @@ pub enum PiCommand {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
     },
+    /// Get the last assistant message text.
+    GetLastAssistantText {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+    },
+    /// Get token usage and cost statistics.
+    GetSessionStats {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+    },
+    /// Get available commands (extensions, templates, skills).
+    GetCommands {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+    },
+
+    // ========================================================================
+    // Model Configuration
+    // ========================================================================
     /// Switch to a specific model.
     SetModel {
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -62,23 +117,132 @@ pub enum PiCommand {
         #[serde(rename = "modelId")]
         model_id: String,
     },
+    /// Cycle to the next available model.
+    CycleModel {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+    },
     /// List all configured models.
     GetAvailableModels {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
     },
+
+    // ========================================================================
+    // Thinking Configuration
+    // ========================================================================
+    /// Set the reasoning/thinking level.
+    SetThinkingLevel {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        level: String, // "off", "minimal", "low", "medium", "high", "xhigh"
+    },
+    /// Cycle through thinking levels.
+    CycleThinkingLevel {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+    },
+
+    // ========================================================================
+    // Queue Modes
+    // ========================================================================
+    /// Set steering message delivery mode.
+    SetSteeringMode {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        mode: String, // "all" or "one-at-a-time"
+    },
+    /// Set follow-up message delivery mode.
+    SetFollowUpMode {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        mode: String, // "all" or "one-at-a-time"
+    },
+
+    // ========================================================================
+    // Compaction
+    // ========================================================================
     /// Manually compact conversation context.
     Compact {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(rename = "customInstructions", skip_serializing_if = "Option::is_none")]
         custom_instructions: Option<String>,
     },
-    /// Get token usage and cost statistics.
-    GetSessionStats {
+    /// Enable/disable automatic compaction.
+    SetAutoCompaction {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        enabled: bool,
+    },
+
+    // ========================================================================
+    // Retry
+    // ========================================================================
+    /// Enable/disable automatic retry on transient errors.
+    SetAutoRetry {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        enabled: bool,
+    },
+    /// Abort an in-progress retry.
+    AbortRetry {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
     },
+
+    // ========================================================================
+    // Forking
+    // ========================================================================
+    /// Fork from a previous user message.
+    Fork {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        #[serde(rename = "entryId")]
+        entry_id: String,
+    },
+    /// Get user messages available for forking.
+    GetForkMessages {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+    },
+
+    // ========================================================================
+    // Bash Execution
+    // ========================================================================
+    /// Execute a shell command.
+    Bash {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        command: String,
+    },
+    /// Abort a running bash command.
+    AbortBash {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+    },
+
+    // ========================================================================
+    // Extension UI
+    // ========================================================================
+    /// Respond to an extension UI dialog request.
+    ExtensionUiResponse {
+        id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        value: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        confirmed: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cancelled: Option<bool>,
+    },
+}
+
+/// Image content for prompts.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImageContent {
+    #[serde(rename = "type")]
+    pub content_type: String, // "image"
+    pub source: ImageSource,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

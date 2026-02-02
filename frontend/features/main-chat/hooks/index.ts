@@ -1,19 +1,12 @@
 /**
  * Main chat feature hooks.
+ *
+ * As of the Pi session refactor, usePiChat now uses the multiplexed WebSocket
+ * via usePiChatV2. The old per-session WebSocket implementation has been removed.
  */
 
-// Main composition hook
-export { usePiChat } from "./usePiChat";
-
-// Sub-hooks for advanced usage
-export { usePiChatStreaming } from "./usePiChatStreaming";
-export { usePiChatHistory, usePiChatHistoryEffects } from "./usePiChatHistory";
-export {
-	usePiChatCore,
-	usePiChatSessionEffects,
-	usePiChatStreamingFallback,
-	usePiChatInit,
-} from "./usePiChatCore";
+// Main composition hook (uses multiplexed WebSocket)
+export { usePiChatV2 as usePiChat } from "./usePiChatV2";
 
 // Navigation hook
 export { useMainChatNavigation } from "./useMainChatNavigation";

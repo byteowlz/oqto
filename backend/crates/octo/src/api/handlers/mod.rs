@@ -24,7 +24,7 @@ mod misc;
 mod projects;
 mod sessions;
 mod settings;
-mod trx;
+pub mod trx;
 
 // Re-export all public types and handlers
 

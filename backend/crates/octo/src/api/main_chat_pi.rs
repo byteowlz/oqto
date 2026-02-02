@@ -1179,14 +1179,17 @@ pub(crate) async fn handle_ws(
                             messages.last().and_then(|m| m.timestamp).map(|t| t as i64);
 
                         // Extract model from last assistant message
-                        let (model, provider) = messages.iter().rev().find_map(|m| {
-                            if m.role == "assistant" {
-                                Some((m.model.clone(), m.provider.clone()))
-                            } else {
-                                None
-                            }
-                        })
-                        .unwrap_or((None, None));
+                        let (model, provider) = messages
+                            .iter()
+                            .rev()
+                            .find_map(|m| {
+                                if m.role == "assistant" {
+                                    Some((m.model.clone(), m.provider.clone()))
+                                } else {
+                                    None
+                                }
+                            })
+                            .unwrap_or((None, None));
 
                         if let Err(e) = hstry
                             .write_conversation(

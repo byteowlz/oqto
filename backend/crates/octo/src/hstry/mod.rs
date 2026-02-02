@@ -25,5 +25,5 @@ mod convert;
 mod service;
 
 pub use client::HstryClient;
-pub use convert::agent_message_to_proto;
+pub use convert::{agent_message_to_proto, proto_messages_to_serializable, SerializableMessage};
 pub use service::{HstryServiceConfig, HstryServiceManager};

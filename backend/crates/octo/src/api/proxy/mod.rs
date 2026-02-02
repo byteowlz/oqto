@@ -3,7 +3,7 @@
 //! This module provides generic proxy infrastructure and specific handlers
 //! for proxying requests to session services (opencode, fileserver, ttyd, etc.).
 
-mod builder;
+pub mod builder;
 mod handlers;
 mod mmry;
 mod sse;

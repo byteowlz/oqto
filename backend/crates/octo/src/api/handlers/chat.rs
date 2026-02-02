@@ -46,25 +46,34 @@ pub(crate) fn get_runner_for_user(
     // Need runner socket pattern for multi-user mode
     let pattern = state.runner_socket_pattern.as_ref()?;
 
-    // Replace {user} with the user_id (which is the platform user_id, e.g., "wismut")
-    // The socket is named after the platform user, not the linux username
-    let socket_path = pattern.replace("{user}", user_id);
-    let socket = std::path::Path::new(&socket_path);
-
-    if socket.exists() {
-        tracing::debug!(
-            user_id = %user_id,
-            socket = %socket_path,
-            "Using runner for chat history"
-        );
-        Some(crate::runner::client::RunnerClient::new(socket_path))
-    } else {
-        tracing::debug!(
-            user_id = %user_id,
-            socket = %socket_path,
-            "Runner socket not found, using direct access"
-        );
-        None
+    // Use for_user_with_pattern which handles both {user} and {uid} placeholders
+    match crate::runner::client::RunnerClient::for_user_with_pattern(user_id, pattern) {
+        Ok(client) => {
+            let socket_path = client.socket_path();
+            if socket_path.exists() {
+                tracing::debug!(
+                    user_id = %user_id,
+                    socket = %socket_path.display(),
+                    "Using runner for chat history"
+                );
+                Some(client)
+            } else {
+                tracing::debug!(
+                    user_id = %user_id,
+                    socket = %socket_path.display(),
+                    "Runner socket not found, using direct access"
+                );
+                None
+            }
+        }
+        Err(e) => {
+            tracing::warn!(
+                user_id = %user_id,
+                error = %e,
+                "Failed to create runner client"
+            );
+            None
+        }
     }
 }
 

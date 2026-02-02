@@ -1,8 +1,53 @@
 //! Conversions between Octo's Pi types and hstry proto types.
 
 use hstry_core::service::proto::Message as ProtoMessage;
+use serde::Serialize;
 
 use crate::pi::AgentMessage;
+
+/// Serializable message for WebSocket responses.
+#[derive(Debug, Clone, Serialize)]
+pub struct SerializableMessage {
+    pub idx: i32,
+    pub role: String,
+    pub content: String,
+    pub parts_json: String,
+    pub created_at_ms: Option<i64>,
+    pub model: Option<String>,
+    pub tokens: Option<i64>,
+    pub cost_usd: Option<f64>,
+    pub metadata_json: String,
+}
+
+impl From<&ProtoMessage> for SerializableMessage {
+    fn from(msg: &ProtoMessage) -> Self {
+        Self {
+            idx: msg.idx,
+            role: msg.role.clone(),
+            content: msg.content.clone(),
+            parts_json: msg.parts_json.clone(),
+            created_at_ms: msg.created_at_ms,
+            model: msg.model.clone(),
+            tokens: msg.tokens,
+            cost_usd: msg.cost_usd,
+            metadata_json: msg.metadata_json.clone(),
+        }
+    }
+}
+
+impl From<ProtoMessage> for SerializableMessage {
+    fn from(msg: ProtoMessage) -> Self {
+        Self::from(&msg)
+    }
+}
+
+/// Convert proto messages to serializable form.
+pub fn proto_messages_to_serializable(messages: Vec<ProtoMessage>) -> Vec<SerializableMessage> {
+    messages
+        .into_iter()
+        .map(SerializableMessage::from)
+        .collect()
+}
 
 /// Convert a Pi AgentMessage to hstry proto Message.
 ///
