@@ -11,11 +11,66 @@ import type { PiDisplayMessage, PiMessagePart, RawPiMessage } from "./types";
 const PI_MESSAGE_ID_PATTERN = /^pi-msg-(\d+)$/;
 const MESSAGE_MATCH_WINDOW_MS = 120_000;
 
+function coerceToolResultFromValue(value: unknown): PiMessagePart | null {
+	if (!value || typeof value !== "object") return null;
+	const obj = value as Record<string, unknown>;
+	const type = typeof obj.type === "string" ? obj.type : "";
+	const looksLikeToolResult =
+		type === "tool_result" ||
+		type === "toolResult" ||
+		"toolCallId" in obj ||
+		"tool_use_id" in obj ||
+		"toolName" in obj;
+	if (!looksLikeToolResult) return null;
+
+	const id =
+		(typeof obj.tool_use_id === "string" && obj.tool_use_id) ||
+		(typeof obj.toolCallId === "string" && obj.toolCallId) ||
+		(typeof obj.id === "string" && obj.id) ||
+		"";
+	const name =
+		(typeof obj.name === "string" && obj.name) ||
+		(typeof obj.toolName === "string" && obj.toolName) ||
+		undefined;
+	const content =
+		"content" in obj
+			? obj.content
+			: typeof obj.text === "string"
+				? obj.text
+				: obj;
+	const isError = Boolean(obj.is_error ?? obj.isError);
+
+	return {
+		type: "tool_result",
+		id,
+		name,
+		content,
+		isError,
+	};
+}
+
+function parseJsonMaybe(value: string): unknown | null {
+	const trimmed = value.trim();
+	if (!trimmed) return null;
+	if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return null;
+	try {
+		return JSON.parse(trimmed) as unknown;
+	} catch {
+		return null;
+	}
+}
+
 /** Normalize Pi content blocks to display parts */
 export function normalizePiContentToParts(content: unknown): PiMessagePart[] {
 	const parts: PiMessagePart[] = [];
 
 	if (typeof content === "string") {
+		const parsed = parseJsonMaybe(content);
+		const toolResult = parsed ? coerceToolResultFromValue(parsed) : null;
+		if (toolResult) {
+			parts.push(toolResult);
+			return parts;
+		}
 		parts.push({ type: "text", content });
 		return parts;
 	}
@@ -89,6 +144,11 @@ export function normalizePiContentToParts(content: unknown): PiMessagePart[] {
 			parts.push({ type: "text", content: b.text });
 		} else if (b.type === "thinking" && typeof b.thinking === "string") {
 			parts.push({ type: "thinking", content: b.thinking });
+		} else {
+			const toolResult = coerceToolResultFromValue(b);
+			if (toolResult) {
+				parts.push(toolResult);
+			}
 		}
 	}
 
@@ -121,16 +181,28 @@ export function normalizePiMessages(
 
 	for (const [idx, message] of messages.entries()) {
 		const role = message.role;
-		const timestamp = message.timestamp ?? Date.now();
+		const timestamp =
+			message.timestamp ??
+			message.created_at_ms ??
+			message.createdAtMs ??
+			Date.now();
+		const partsJson =
+			typeof message.parts_json === "string"
+				? message.parts_json
+				: typeof message.partsJson === "string"
+					? message.partsJson
+					: null;
+		const parsedParts = partsJson ? parseJsonMaybe(partsJson) : null;
+		const content = parsedParts !== null ? parsedParts : message.content;
 
-		if (role === "toolResult") {
+		if (role === "toolResult" || role === "tool") {
 			const toolCallId =
 				message.toolCallId || message.id || `tool-result-${idx}`;
 			const toolResultPart: PiMessagePart = {
 				type: "tool_result",
 				id: toolCallId,
 				name: message.toolName,
-				content: message.content,
+				content,
 				isError: message.isError,
 			};
 
@@ -155,7 +227,7 @@ export function normalizePiMessages(
 			role === "user" || role === "assistant" || role === "system"
 				? role
 				: "assistant";
-		const parts = normalizePiContentToParts(message.content);
+		const parts = normalizePiContentToParts(content);
 		const displayMessage: PiDisplayMessage = {
 			id: `${idPrefix}-${idx}-${message.id ?? ""}`,
 			role: normalizedRole,

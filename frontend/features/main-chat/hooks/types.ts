@@ -116,6 +116,10 @@ export type RawPiMessage = {
 	role: string;
 	content: unknown;
 	timestamp?: number;
+	created_at_ms?: number;
+	createdAtMs?: number;
+	parts_json?: string;
+	partsJson?: string;
 	usage?: PiAgentMessage["usage"];
 	toolCallId?: string;
 	toolName?: string;

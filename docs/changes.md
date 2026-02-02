@@ -80,3 +80,7 @@
 - 2026-02-02: Make runner Pi create_session idempotent via get_or_create to support reconnects.
 - 2026-02-02: Route terminal WebSocket URLs through controlPlaneApiUrl so they include /api when a direct base URL is set.
 - 2026-02-02: Prefix terminal proxy paths with /api to keep workspace terminal WebSocket routes valid.
+- 2026-02-02: Prefer Main Chat JSONL files when loading messages, with hstry/runner fallback, to preserve tool parts and recent history.
+- 2026-02-02: Parse hstry parts_json payloads and map tool role messages to tool results in Main Chat normalization.
+- 2026-02-02: Strip ANSI escape codes from tool outputs and parse tool-result JSON strings into tool dropdown entries.
+- 2026-02-02: Add list_directory path context to file tree errors for easier debugging.

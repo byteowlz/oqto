@@ -1729,19 +1729,32 @@ async fn handle_pi_command(
             
             // Try to get messages from runner's Pi process first
             let runner_messages = runner.pi_get_messages(&session_id).await;
-            
-            // If runner returned messages, use them
-            if let Ok(ref resp) = runner_messages {
-                if !resp.messages.is_empty() {
-                    return Some(WsEvent::Pi(PiWsEvent::Messages {
-                        id,
-                        session_id,
-                        messages: serde_json::to_value(&resp.messages).unwrap_or_default(),
-                    }));
+
+            // Prefer JSONL session file for main chat history (includes tool parts)
+            if let Some(ref pi_service) = state.main_chat_pi {
+                match pi_service.get_session_messages(user_id, &session_id).await {
+                    Ok(messages) if !messages.is_empty() => {
+                        info!(
+                            "Pi get_messages: loaded {} messages from JSONL file for {}",
+                            messages.len(),
+                            session_id
+                        );
+                        return Some(WsEvent::Pi(PiWsEvent::Messages {
+                            id,
+                            session_id,
+                            messages: serde_json::to_value(&messages).unwrap_or_default(),
+                        }));
+                    }
+                    Ok(_) => {
+                        debug!("Pi get_messages: JSONL file returned empty for {}", session_id);
+                    }
+                    Err(e) => {
+                        debug!("Pi get_messages: JSONL file error for {}: {}", session_id, e);
+                    }
                 }
             }
-            
-            // Runner returned empty - try hstry for historical messages
+
+            // JSONL empty - try hstry for historical messages
             // In multi-user mode, use runner.get_main_chat_messages() to access per-user hstry
             let is_multi_user = state.linux_users.is_some();
             
@@ -1802,32 +1815,13 @@ async fn handle_pi_command(
                 }
             }
             
-            // Final fallback: read directly from session JSONL file
-            if let Some(ref pi_service) = state.main_chat_pi {
-                match pi_service.get_session_messages(user_id, &session_id).await {
-                    Ok(messages) if !messages.is_empty() => {
-                        info!(
-                            "Pi get_messages: loaded {} messages from JSONL file for {}",
-                            messages.len(),
-                            session_id
-                        );
-                        return Some(WsEvent::Pi(PiWsEvent::Messages {
-                            id,
-                            session_id,
-                            messages: serde_json::to_value(&messages).unwrap_or_default(),
-                        }));
-                    }
-                    Ok(_) => {
-                        debug!("Pi get_messages: JSONL file returned empty for {}", session_id);
-                    }
-                    Err(e) => {
-                        debug!("Pi get_messages: JSONL file error for {}: {}", session_id, e);
-                    }
-                }
-            }
-            
             // Return runner result (empty or error)
             match runner_messages {
+                Ok(resp) if !resp.messages.is_empty() => Some(WsEvent::Pi(PiWsEvent::Messages {
+                    id,
+                    session_id,
+                    messages: serde_json::to_value(&resp.messages).unwrap_or_default(),
+                })),
                 Ok(resp) => Some(WsEvent::Pi(PiWsEvent::Messages {
                     id,
                     session_id,
@@ -2469,7 +2463,7 @@ async fn handle_files_command(
             let entries = user_plane
                 .list_directory(&resolved, include_hidden)
                 .await
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| format!("list_directory failed for {}: {:#}", resolved.display(), e))?;
 
             let mut nodes = Vec::new();
             for entry in entries {

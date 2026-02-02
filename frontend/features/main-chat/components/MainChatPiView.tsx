@@ -2297,6 +2297,11 @@ function PiPartRenderer({
 	locale: "en" | "de";
 	workspacePath?: string | null;
 }) {
+	const stripAnsi = (value: string): string =>
+		value
+			.replace(/\u001b\[[0-9;]*m/g, "")
+			.replace(/\u001b\[[0-9;]*[A-Za-z]/g, "");
+
 	const formatToolResultOutput = (content: unknown): string | undefined => {
 		const decodeBytes = (bytes: Uint8Array): string | undefined => {
 			try {
@@ -2315,7 +2320,7 @@ function PiPartRenderer({
 			}
 		};
 
-		if (typeof content === "string") return content;
+		if (typeof content === "string") return stripAnsi(content);
 		if (content instanceof Uint8Array) {
 			return decodeBytes(content) ?? `[binary data: ${content.byteLength} bytes]`;
 		}
@@ -2339,7 +2344,7 @@ function PiPartRenderer({
 				})
 				.filter((text): text is string => Boolean(text));
 			if (textBlocks.length > 0) {
-				return textBlocks.join("\n\n");
+				return stripAnsi(textBlocks.join("\n\n"));
 			}
 		}
 		if (content && typeof content === "object") {
@@ -2364,16 +2369,16 @@ function PiPartRenderer({
 				);
 				return decodeBytes(bytes) ?? `[binary data: ${bytes.byteLength} bytes]`;
 			}
-			if (typeof obj.text === "string") return obj.text;
+			if (typeof obj.text === "string") return stripAnsi(obj.text);
 			if (Array.isArray(obj.content)) {
 				const nestedText = formatToolResultOutput(obj.content);
 				if (nestedText) return nestedText;
 			}
 		}
 		try {
-			return JSON.stringify(content, null, 2);
+			return stripAnsi(JSON.stringify(content, null, 2));
 		} catch {
-			return String(content);
+			return stripAnsi(String(content));
 		}
 	};
 
