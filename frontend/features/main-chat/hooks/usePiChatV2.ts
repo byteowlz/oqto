@@ -91,6 +91,7 @@ export function usePiChatV2(options: UsePiChatOptions = {}): UsePiChatReturn {
 	const streamingMessageRef = useRef<PiDisplayMessage | null>(null);
 	const lastAssistantMessageIdRef = useRef<string | null>(null);
 	const unsubscribeRef = useRef<(() => void) | null>(null);
+	const lastSessionRecoveryRef = useRef(0);
 
 	// Batched update state
 	const batchedUpdateRef = useRef({
@@ -397,6 +398,26 @@ export function usePiChatV2(options: UsePiChatOptions = {}): UsePiChatReturn {
 					setError(err);
 					onError?.(err);
 					setIsStreaming(false);
+					const sessionId = activeSessionIdRef.current;
+					const now = Date.now();
+					const shouldRecover =
+						Boolean(sessionId) &&
+						(errMsg.includes("PiSessionNotFound") ||
+							errMsg.includes("SessionNotFound") ||
+							errMsg.includes("Response channel closed"));
+					if (shouldRecover && now - lastSessionRecoveryRef.current > 5000) {
+						lastSessionRecoveryRef.current = now;
+						const manager = getWsManager();
+						manager.piCreateSession(sessionId as string);
+						setTimeout(() => {
+							manager.piGetState(sessionId as string);
+							manager.send({
+								channel: "pi",
+								type: "get_messages",
+								session_id: sessionId as string,
+							});
+						}, 250);
+					}
 
 					if (streamingMessageRef.current) {
 						streamingMessageRef.current.isStreaming = false;
