@@ -89,6 +89,7 @@ export function usePiChatV2(options: UsePiChatOptions = {}): UsePiChatReturn {
 	// Refs
 	const messageIdRef = useRef(getMaxPiMessageId(messages));
 	const streamingMessageRef = useRef<PiDisplayMessage | null>(null);
+	const lastAssistantMessageIdRef = useRef<string | null>(null);
 	const unsubscribeRef = useRef<(() => void) | null>(null);
 
 	// Batched update state
@@ -103,6 +104,50 @@ export function usePiChatV2(options: UsePiChatOptions = {}): UsePiChatReturn {
 		messageIdRef.current += 1;
 		return `pi-msg-${messageIdRef.current}`;
 	}, []);
+
+	const appendPartToMessage = useCallback(
+		(messageId: string, part: PiMessagePart) => {
+			setMessages((prev) => {
+				const idx = prev.findIndex((m) => m.id === messageId);
+				if (idx < 0) return prev;
+				const message = prev[idx];
+				const updated = [...prev];
+				updated[idx] = {
+					...message,
+					parts: [...message.parts, part],
+				};
+				return updated;
+			});
+		},
+		[],
+	);
+
+	const ensureAssistantMessage = useCallback(
+		(preferStreaming: boolean) => {
+			if (streamingMessageRef.current) return streamingMessageRef.current;
+			const lastId = lastAssistantMessageIdRef.current;
+			if (lastId) {
+				const existing = messages.find((m) => m.id === lastId);
+				if (existing) {
+					return existing;
+				}
+			}
+			const assistantMessage: PiDisplayMessage = {
+				id: nextMessageId(),
+				role: "assistant",
+				parts: [],
+				timestamp: Date.now(),
+				isStreaming: preferStreaming,
+			};
+			if (preferStreaming) {
+				streamingMessageRef.current = assistantMessage;
+			}
+			lastAssistantMessageIdRef.current = assistantMessage.id;
+			setMessages((prev) => [...prev, assistantMessage]);
+			return assistantMessage;
+		},
+		[messages, nextMessageId],
+	);
 
 	// Flush batched streaming update
 	const flushStreamingUpdate = useCallback(() => {
@@ -210,6 +255,7 @@ export function usePiChatV2(options: UsePiChatOptions = {}): UsePiChatReturn {
 							isStreaming: true,
 						};
 						streamingMessageRef.current = assistantMessage;
+						lastAssistantMessageIdRef.current = assistantMessage.id;
 						setMessages((prev) => [...prev, assistantMessage]);
 					}
 					setIsStreaming(true);
@@ -218,60 +264,66 @@ export function usePiChatV2(options: UsePiChatOptions = {}): UsePiChatReturn {
 
 				case "text": {
 					const text = event.data;
-					const currentMsg = streamingMessageRef.current;
-					if (currentMsg && text) {
-						const lastPart = currentMsg.parts[currentMsg.parts.length - 1];
-						if (lastPart?.type === "text") {
-							lastPart.content += text;
-						} else {
-							currentMsg.parts.push({ type: "text", content: text });
+					if (!text) break;
+					const currentMsg = ensureAssistantMessage(true);
+					const lastPart = currentMsg.parts[currentMsg.parts.length - 1];
+					if (lastPart?.type === "text") {
+						if (text === lastPart.content) {
+							break;
 						}
-						scheduleStreamingUpdate();
+						if (text.startsWith(lastPart.content)) {
+							lastPart.content = text;
+						} else {
+							lastPart.content += text;
+						}
+					} else {
+						currentMsg.parts.push({ type: "text", content: text });
 					}
+					scheduleStreamingUpdate();
 					break;
 				}
 
 				case "thinking": {
 					const text = event.data;
-					const currentMsg = streamingMessageRef.current;
-					if (currentMsg && text) {
-						const lastPart = currentMsg.parts[currentMsg.parts.length - 1];
-						if (lastPart?.type === "thinking") {
-							lastPart.content += text;
-						} else {
-							currentMsg.parts.push({ type: "thinking", content: text });
+					if (!text) break;
+					const currentMsg = ensureAssistantMessage(true);
+					const lastPart = currentMsg.parts[currentMsg.parts.length - 1];
+					if (lastPart?.type === "thinking") {
+						if (text === lastPart.content) {
+							break;
 						}
-						scheduleStreamingUpdate();
+						if (text.startsWith(lastPart.content)) {
+							lastPart.content = text;
+						} else {
+							lastPart.content += text;
+						}
+					} else {
+						currentMsg.parts.push({ type: "thinking", content: text });
 					}
+					scheduleStreamingUpdate();
 					break;
 				}
 
 				case "tool_use":
 				case "tool_start": {
 					const tool = event.data;
-					if (!streamingMessageRef.current) {
-						const assistantMessage: PiDisplayMessage = {
-							id: nextMessageId(),
-							role: "assistant",
-							parts: [],
-							timestamp: Date.now(),
-							isStreaming: true,
-						};
-						streamingMessageRef.current = assistantMessage;
-						setMessages((prev) => [...prev, assistantMessage]);
-					}
-					const currentMsg = streamingMessageRef.current;
-					const alreadyPresent = currentMsg.parts.some(
+					const targetMessage = ensureAssistantMessage(true);
+					const alreadyPresent = targetMessage.parts.some(
 						(p) => p.type === "tool_use" && p.id === tool.id,
 					);
 					if (!alreadyPresent) {
-						currentMsg.parts.push({
+						const part: PiMessagePart = {
 							type: "tool_use",
 							id: tool.id,
 							name: tool.name,
 							input: tool.input,
-						} as PiMessagePart);
-						scheduleStreamingUpdate();
+						};
+						if (streamingMessageRef.current?.id === targetMessage.id) {
+							targetMessage.parts.push(part);
+							scheduleStreamingUpdate();
+						} else {
+							appendPartToMessage(targetMessage.id, part);
+						}
 					}
 					setIsStreaming(true);
 					break;
@@ -279,22 +331,11 @@ export function usePiChatV2(options: UsePiChatOptions = {}): UsePiChatReturn {
 
 				case "tool_result": {
 					const result = event.data;
-					if (!streamingMessageRef.current) {
-						const assistantMessage: PiDisplayMessage = {
-							id: nextMessageId(),
-							role: "assistant",
-							parts: [],
-							timestamp: Date.now(),
-							isStreaming: true,
-						};
-						streamingMessageRef.current = assistantMessage;
-						setMessages((prev) => [...prev, assistantMessage]);
-					}
-					const currentMsg = streamingMessageRef.current;
-					const matchingToolUse = currentMsg.parts.find(
+					const targetMessage = ensureAssistantMessage(false);
+					const matchingToolUse = targetMessage.parts.find(
 						(p) => p.type === "tool_use" && p.id === result.id,
 					);
-					currentMsg.parts.push({
+					const part: PiMessagePart = {
 						type: "tool_result",
 						id: result.id,
 						name:
@@ -304,8 +345,13 @@ export function usePiChatV2(options: UsePiChatOptions = {}): UsePiChatReturn {
 								: undefined),
 						content: result.content,
 						isError: result.is_error,
-					} as PiMessagePart);
-					scheduleStreamingUpdate();
+					};
+					if (streamingMessageRef.current?.id === targetMessage.id) {
+						targetMessage.parts.push(part);
+						scheduleStreamingUpdate();
+					} else {
+						appendPartToMessage(targetMessage.id, part);
+					}
 					setIsStreaming(true);
 					break;
 				}
@@ -418,6 +464,10 @@ export function usePiChatV2(options: UsePiChatOptions = {}): UsePiChatReturn {
 						if (displayMessages.length > 0) {
 							setMessages(displayMessages);
 							messageIdRef.current = getMaxPiMessageId(displayMessages);
+							const lastAssistant = [...displayMessages]
+								.reverse()
+								.find((msg) => msg.role === "assistant");
+							lastAssistantMessageIdRef.current = lastAssistant?.id ?? null;
 						}
 
 						if (isPiDebugEnabled()) {
@@ -432,7 +482,14 @@ export function usePiChatV2(options: UsePiChatOptions = {}): UsePiChatReturn {
 				}
 			}
 		},
-		[nextMessageId, scheduleStreamingUpdate, onMessageComplete, onError],
+		[
+			appendPartToMessage,
+			ensureAssistantMessage,
+			nextMessageId,
+			scheduleStreamingUpdate,
+			onMessageComplete,
+			onError,
+		],
 	);
 
 	// Connect to WebSocket manager
@@ -639,9 +696,14 @@ export function usePiChatV2(options: UsePiChatOptions = {}): UsePiChatReturn {
 		if (cached.length > 0) {
 			setMessages(cached);
 			messageIdRef.current = getMaxPiMessageId(cached);
+			const lastAssistant = [...cached]
+				.reverse()
+				.find((msg) => msg.role === "assistant");
+			lastAssistantMessageIdRef.current = lastAssistant?.id ?? null;
 		} else {
 			setMessages([]);
 			messageIdRef.current = 0;
+			lastAssistantMessageIdRef.current = null;
 		}
 
 		// Subscribe to the new session (passes scope/cwd for session creation)

@@ -2282,14 +2282,14 @@ fn pi_event_to_ws_event(session_id: &str, event: PiEvent) -> WsEvent {
                         data: String::new(),
                     })
                 }
-                AssistantMessageEvent::TextEnd { .. } => WsEvent::Pi(PiWsEvent::Text {
+                AssistantMessageEvent::TextEnd { content, .. } => WsEvent::Pi(PiWsEvent::Text {
                     session_id: sid,
-                    data: String::new(),
+                    data: content,
                 }),
-                AssistantMessageEvent::ThinkingEnd { .. } => {
+                AssistantMessageEvent::ThinkingEnd { content, .. } => {
                     WsEvent::Pi(PiWsEvent::Thinking {
                         session_id: sid,
-                        data: String::new(),
+                        data: content,
                     })
                 }
                 AssistantMessageEvent::ToolcallDelta { .. } => {

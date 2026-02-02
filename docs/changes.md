@@ -2,7 +2,11 @@
 
 - 2026-02-02: Filter Pi toolcall delta fragments from the multiplexed WS stream to stop duplicate/raw command text in Main Chat output.
 - 2026-02-02: Ensure Pi tool events start a streaming assistant message so tool spinners resolve with tool results.
-- 2026-02-02: Restore Pi file mention popup to HTTP file tree fetches to keep attachments working under WS multiplexing.
+- 2026-02-02: Fix Pi file mention popup mux import to avoid frontend load errors on mobile.
+- 2026-02-02: Attach Pi tool results to the most recent assistant message so tool dropdowns resolve and spinners stop.
+- 2026-02-02: Decode tool result byte payloads to avoid garbled characters in tool output rendering.
+- 2026-02-02: Treat Pi TextEnd/ThinkingEnd as full content while de-duping in the streaming reducer to avoid empty messages.
+- 2026-02-02: Surface mux file tree errors instead of generic unexpected response messages.
 - 2026-02-02: Prevent TRX sidebar search typing from re-rendering the full issue list to avoid remounts.
 - 2026-02-02: Guard terminal IDs and Pi session IDs when crypto.randomUUID is unavailable (mobile).
 - 2026-02-02: Send Main Chat Pi messages with prompt mode by default for the primary send action.

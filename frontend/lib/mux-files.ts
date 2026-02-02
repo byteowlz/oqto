@@ -39,7 +39,10 @@ export async function fetchFileTreeMux(
 	})) as FilesWsEvent;
 
 	if (response.type !== "tree_result") {
-		throw new Error("Unexpected file tree response");
+		if (response.type === "error") {
+			throw new Error(response.error);
+		}
+		throw new Error(`Unexpected file tree response: ${response.type}`);
 	}
 	return response.entries;
 }

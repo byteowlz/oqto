@@ -2298,8 +2298,37 @@ function PiPartRenderer({
 	workspacePath?: string | null;
 }) {
 	const formatToolResultOutput = (content: unknown): string | undefined => {
+		const decodeBytes = (bytes: Uint8Array): string | undefined => {
+			try {
+				const text = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+				const printable = text
+					.split("")
+					.filter((ch) => ch === "\n" || ch === "\r" || ch === "\t" || ch >= " ")
+					.length;
+				if (text.length === 0) return "";
+				if (printable / text.length < 0.7) {
+					return undefined;
+				}
+				return text;
+			} catch {
+				return undefined;
+			}
+		};
+
 		if (typeof content === "string") return content;
+		if (content instanceof Uint8Array) {
+			return decodeBytes(content) ?? `[binary data: ${content.byteLength} bytes]`;
+		}
 		if (Array.isArray(content)) {
+			const byteArray =
+				content.length > 0 && content.every((item) => typeof item === "number")
+					? new Uint8Array(content as number[])
+					: null;
+			if (byteArray) {
+				return (
+					decodeBytes(byteArray) ?? `[binary data: ${byteArray.byteLength} bytes]`
+				);
+			}
 			const textBlocks = content
 				.map((block) => {
 					if (typeof block === "string") return block;
@@ -2315,6 +2344,26 @@ function PiPartRenderer({
 		}
 		if (content && typeof content === "object") {
 			const obj = content as Record<string, unknown>;
+			const base64 =
+				(typeof obj.data_base64 === "string" && obj.data_base64) ||
+				(typeof obj.content_base64 === "string" && obj.content_base64) ||
+				(typeof obj.stdout_base64 === "string" && obj.stdout_base64) ||
+				(typeof obj.bytes_base64 === "string" && obj.bytes_base64);
+			if (base64) {
+				try {
+					const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+					const decoded = decodeBytes(bytes);
+					return decoded ?? `[binary data: ${bytes.byteLength} bytes]`;
+				} catch {
+					// fall through
+				}
+			}
+			if (Array.isArray(obj.bytes)) {
+				const bytes = new Uint8Array(
+					obj.bytes.filter((item) => typeof item === "number") as number[],
+				);
+				return decodeBytes(bytes) ?? `[binary data: ${bytes.byteLength} bytes]`;
+			}
 			if (typeof obj.text === "string") return obj.text;
 			if (Array.isArray(obj.content)) {
 				const nestedText = formatToolResultOutput(obj.content);
