@@ -1,6 +1,32 @@
 import { getWsManager } from "@/lib/ws-manager";
 import type { FileTreeNode, FilesWsEvent } from "@/lib/ws-mux-types";
 
+const TREE_CACHE_TTL_MS = 10000;
+const treeCache = new Map<
+	string,
+	{ timestamp: number; entries: FileTreeNode[] }
+>();
+const treeInFlight = new Map<string, Promise<FileTreeNode[]>>();
+
+function treeCacheKey(
+	workspacePath: string,
+	path: string,
+	depth: number,
+	includeHidden: boolean,
+) {
+	return `${workspacePath}:${path}:${depth}:${includeHidden ? "1" : "0"}`;
+}
+
+function getCachedTree(key: string): FileTreeNode[] | null {
+	const entry = treeCache.get(key);
+	if (!entry) return null;
+	if (Date.now() - entry.timestamp > TREE_CACHE_TTL_MS) {
+		treeCache.delete(key);
+		return null;
+	}
+	return entry.entries;
+}
+
 function arrayBufferToBase64(buffer: ArrayBuffer): string {
 	let binary = "";
 	const bytes = new Uint8Array(buffer);
@@ -28,23 +54,40 @@ export async function fetchFileTreeMux(
 	depth = 6,
 	includeHidden = false,
 ): Promise<FileTreeNode[]> {
-	const manager = getWsManager();
-	const response = (await manager.sendAndWait({
-		channel: "files",
-		type: "tree",
-		path,
-		depth,
-		include_hidden: includeHidden,
-		workspace_path: workspacePath,
-	})) as FilesWsEvent;
+	const key = treeCacheKey(workspacePath, path, depth, includeHidden);
+	const cached = getCachedTree(key);
+	if (cached) return cached;
 
-	if (response.type !== "tree_result") {
-		if (response.type === "error") {
-			throw new Error(response.error);
+	const inFlight = treeInFlight.get(key);
+	if (inFlight) return inFlight;
+
+	const manager = getWsManager();
+	const request = (async () => {
+		const response = (await manager.sendAndWait({
+			channel: "files",
+			type: "tree",
+			path,
+			depth,
+			include_hidden: includeHidden,
+			workspace_path: workspacePath,
+		})) as FilesWsEvent;
+
+		if (response.type !== "tree_result") {
+			if (response.type === "error") {
+				throw new Error(response.error);
+			}
+			throw new Error(`Unexpected file tree response: ${response.type}`);
 		}
-		throw new Error(`Unexpected file tree response: ${response.type}`);
+		treeCache.set(key, { timestamp: Date.now(), entries: response.entries });
+		return response.entries;
+	})();
+
+	treeInFlight.set(key, request);
+	try {
+		return await request;
+	} finally {
+		treeInFlight.delete(key);
 	}
-	return response.entries;
 }
 
 export async function readFileMux(

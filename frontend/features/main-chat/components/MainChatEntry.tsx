@@ -641,7 +641,7 @@ export function MainChatEntry({
 				const end = Math.max(lastSelectedIndexRef.current!, index);
 				const rangeIds = selectableIds.slice(start, end + 1);
 				setSelectedSessionIds((prev) => {
-					const next = new Set(isToggle ? prev : []);
+					const next = new Set(prev);
 					for (const id of rangeIds) next.add(id);
 					return next;
 				});

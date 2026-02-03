@@ -462,7 +462,7 @@ export function MainChatPiView({
 			{ name: "new", description: "Start a fresh session" },
 			{ name: "reset", description: "Reload personality and user files" },
 			{ name: "abort", description: "Abort current run" },
-			{ name: "steer", description: "Queue a steering message" },
+			{ name: "steer", description: "Send a steering message" },
 			{ name: "followup", description: "Queue a follow-up message" },
 		];
 		if (canSwitchModel) {
@@ -947,7 +947,7 @@ export function MainChatPiView({
 	);
 
 	const handleSend = useCallback(
-		async (mode: "prompt" | "steer" | "follow_up" = "prompt") => {
+		async (mode: "prompt" | "steer" | "follow_up" = "steer") => {
 			const trimmed = input.trim();
 			if (!trimmed && fileAttachments.length === 0) return;
 
@@ -1044,8 +1044,8 @@ export function MainChatPiView({
 			}
 			if (e.key === "Enter" && !e.shiftKey) {
 				e.preventDefault();
-				// Use prompt for normal messages, follow_up for Ctrl/Cmd+Enter
-				handleSend(e.ctrlKey || e.metaKey ? "follow_up" : "prompt");
+				// Steer on Enter, queue on Ctrl/Cmd+Enter
+				handleSend(e.ctrlKey || e.metaKey ? "follow_up" : "steer");
 			}
 			if (e.key === "Escape") {
 				setShowFileMentionPopup(false);
@@ -1108,6 +1108,44 @@ export function MainChatPiView({
 		},
 		[draftStorageKey, dictation.isActive],
 	);
+
+	const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const suppressClickRef = useRef(false);
+
+	const clearLongPress = useCallback(() => {
+		if (longPressTimerRef.current) {
+			clearTimeout(longPressTimerRef.current);
+			longPressTimerRef.current = null;
+		}
+	}, []);
+
+	const handleSendClick = useCallback(() => {
+		if (suppressClickRef.current) {
+			suppressClickRef.current = false;
+			return;
+		}
+		handleSend("steer");
+	}, [handleSend]);
+
+	const handleSendPointerDown = useCallback(
+		(e: React.PointerEvent<HTMLButtonElement>) => {
+			if (e.pointerType !== "touch") return;
+			clearLongPress();
+			longPressTimerRef.current = setTimeout(() => {
+				suppressClickRef.current = true;
+				handleSend("follow_up");
+			}, 450);
+		},
+		[clearLongPress, handleSend],
+	);
+
+	const handleSendPointerUp = useCallback(() => {
+		clearLongPress();
+	}, [clearLongPress]);
+
+	const handleSendPointerLeave = useCallback(() => {
+		clearLongPress();
+	}, [clearLongPress]);
 
 	const handleFileSelect = useCallback((file: FileAttachment) => {
 		setFileAttachments((prev) => [...prev, file]);
@@ -1600,7 +1638,6 @@ export function MainChatPiView({
 
 					{(isStreaming || isAwaitingResponse) && (
 						<div className="flex items-center gap-2 text-xs text-muted-foreground">
-							<BrailleSpinner />
 							<span>{t.agentWorking}</span>
 						</div>
 					)}
@@ -1638,7 +1675,11 @@ export function MainChatPiView({
 					<Button
 						type="button"
 						data-dictation-send
-						onClick={() => handleSend("prompt")}
+						onClick={handleSendClick}
+						onPointerDown={handleSendPointerDown}
+						onPointerUp={handleSendPointerUp}
+						onPointerCancel={handleSendPointerUp}
+						onPointerLeave={handleSendPointerLeave}
 						disabled={!input.trim() && fileAttachments.length === 0}
 						className="flex-shrink-0 h-8 px-2 flex items-center justify-center text-muted-foreground hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed transition-colors bg-transparent hover:bg-transparent"
 						variant="ghost"
@@ -2226,7 +2267,7 @@ const PiMessageGroupCard = memo(function PiMessageGroupCard({
 													<span className="relative inline-flex">
 														{icon}
 														{entry.count > 1 && (
-														<span className="absolute -top-1.5 -right-1.5 w-3 h-3 bg-pink-500 text-white text-[8px] rounded-[2px] flex items-center justify-center border border-background">
+														<span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-pink-500 text-white text-[7px] rounded-[2px] flex items-center justify-center border border-background">
 															{entry.count}
 														</span>
 														)}

@@ -129,3 +129,8 @@
 - 2026-02-03: Auto-load USER.md and PERSONALITY.md via a new Pi prompts extension and install extensions into Octo data dir.
 - 2026-02-03: Cache Pi chat history responses on the multiplexed WebSocket server for faster session loads.
 - 2026-02-03: Store Pi session JSONL files under repo-root session directories (Pi naming scheme) to keep per-repo history isolated.
+- 2026-02-03: Send steer messages on Enter and queue follow-ups on Cmd/Ctrl+Enter; add mobile long-press queue send.
+- 2026-02-03: Remove the footer braille spinner from the chat input and keep status text only.
+- 2026-02-03: Persist Pi message caches continuously for instant session restores.
+- 2026-02-03: Add shared mux file-tree caching to reduce duplicate list_directory traffic.
+- 2026-02-03: Shrink low-verbosity tool badges to avoid covering tool icons.

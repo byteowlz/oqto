@@ -16,7 +16,11 @@
 import { getWsManager } from "@/lib/ws-manager";
 import type { PiWsEvent, WsMuxConnectionState } from "@/lib/ws-mux-types";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { readCachedSessionMessages, sanitizeStorageKey } from "./cache";
+import {
+	readCachedSessionMessages,
+	sanitizeStorageKey,
+	writeCachedSessionMessages,
+} from "./cache";
 import { getMaxPiMessageId, normalizePiContentToParts, normalizePiMessages } from "./message-utils";
 import type {
 	PiDisplayMessage,
@@ -779,6 +783,18 @@ export function usePiChatV2(options: UsePiChatOptions = {}): UsePiChatReturn {
 	useEffect(() => {
 		messagesRef.current = messages;
 	}, [messages]);
+
+	useEffect(() => {
+		if (!activeSessionId) return;
+		// Persist messages for instant session restore.
+		// Use throttled writes during streaming, force write on idle.
+		writeCachedSessionMessages(
+			activeSessionId,
+			messages,
+			resolvedStorageKeyPrefix,
+			!isStreaming,
+		);
+	}, [activeSessionId, isStreaming, messages, resolvedStorageKeyPrefix]);
 
 	return {
 		state,
