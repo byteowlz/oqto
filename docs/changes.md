@@ -109,4 +109,5 @@
 - 2026-02-03: Disable interactions on low-verbosity tool bars and keep per-tool badges visible.
 - 2026-02-03: Only show tool bar scroll arrows when the icon strip overflows.
 - 2026-02-03: Collapse consecutive same-tool icons into a single badge in low verbosity tool bars without losing sequence.
+- 2026-02-03: Match low-verbosity tool badge styling to the todo list badge.
 - 2026-02-03: Cache chat history in localStorage for instant sidebar load before refresh.
