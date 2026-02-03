@@ -2267,7 +2267,7 @@ const PiMessageGroupCard = memo(function PiMessageGroupCard({
 													<span className="relative inline-flex">
 														{icon}
 														{entry.count > 1 && (
-														<span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-pink-500 text-white text-[7px] rounded-[2px] flex items-center justify-center border border-background">
+														<span className="absolute -top-0.5 -right-0.5 w-3 h-3 bg-pink-500 text-white text-[8px] rounded-[2px] flex items-center justify-center border border-background">
 															{entry.count}
 														</span>
 														)}

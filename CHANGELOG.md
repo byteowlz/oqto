@@ -22,6 +22,7 @@ All notable changes to this project will be documented in this file.
 - Replaced cass-backed session search with hstry search and added line-based scroll resolution for search hits.
 - Renamed CASS search types and comments to hstry in the API and frontend.
 - Pi session resolution now de-duplicates JSONL files by session id, prefers the newest file, and persists session metadata into hstry to prevent split chats.
+- Sidebar multi-select now anchors the active session, and minimal tool-call badge sizing matches the compact badge style.
 - Session UI now renders non-OpenCode sessions with the Pi chat view, and new chats default to Pi workspace sessions.
 - Chat history now includes workspace Pi sessions, and the status bar shows the active Pi model for main/workspace chats.
 - Pi model switching is now gated to idle sessions; the model picker and `/model` command are disabled while Pi is streaming or compacting.

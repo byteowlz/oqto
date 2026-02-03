@@ -152,6 +152,18 @@ export const SidebarSessions = memo(function SidebarSessions({
 	const isFilteringSessions =
 		searchMode === "sessions" && deferredSearch.trim().length > 0;
 
+	const ensureBaseSelection = useCallback(
+		(prev: Set<string>) => {
+			if (prev.size > 0) return new Set(prev);
+			const next = new Set(prev);
+			if (selectedChatSessionId) {
+				next.add(selectedChatSessionId);
+			}
+			return next;
+		},
+		[selectedChatSessionId],
+	);
+
 	// Keyboard shortcut: Ctrl+Shift+F to toggle search mode
 	useEffect(() => {
 		const handleKeyDown = (e: KeyboardEvent) => {
@@ -245,20 +257,25 @@ export const SidebarSessions = memo(function SidebarSessions({
 		sessionId: string,
 	) => {
 		const index = sessionIndexById.get(sessionId);
-		const hasRange = e.shiftKey && lastSelectedIndexRef.current !== null;
+		const baseIndex =
+			lastSelectedIndexRef.current ??
+			(selectedChatSessionId
+				? sessionIndexById.get(selectedChatSessionId) ?? null
+				: null);
+		const hasRange = e.shiftKey && baseIndex !== null && index !== undefined;
 		const isToggle = e.metaKey || e.ctrlKey;
-		if (hasRange && index !== undefined) {
-			const start = Math.min(lastSelectedIndexRef.current!, index);
-			const end = Math.max(lastSelectedIndexRef.current!, index);
+		if (hasRange) {
+			const start = Math.min(baseIndex!, index!);
+			const end = Math.max(baseIndex!, index!);
 			const rangeIds = visibleSessionIds.slice(start, end + 1);
 			setSelectedSessionIds((prev) => {
-				const next = new Set(prev);
+				const next = ensureBaseSelection(prev);
 				for (const id of rangeIds) next.add(id);
 				return next;
 			});
 		} else if (isToggle) {
 			setSelectedSessionIds((prev) => {
-				const next = new Set(prev);
+				const next = ensureBaseSelection(prev);
 				if (next.has(sessionId)) {
 					next.delete(sessionId);
 				} else {
@@ -430,6 +447,34 @@ export const SidebarSessions = memo(function SidebarSessions({
 						</button>
 					)}
 				</div>
+				{selectedSessionIds.size > 0 && (
+					<div className="flex items-center gap-2 bg-primary/10 border border-primary/20 rounded px-2 py-1 mx-1 mt-1">
+						<span className="text-xs font-medium text-primary">
+							{selectedSessionIds.size}
+						</span>
+						<div className="flex-1 mr-1" />
+						<Button
+							type="button"
+							variant="ghost"
+							size="sm"
+							onClick={handleBulkDeleteRequest}
+							className="h-6 px-2 text-xs"
+						>
+							<Trash2 className="w-3 h-3 mr-1" />
+							{locale === "de" ? "Loschen" : "Delete"}
+						</Button>
+						<Button
+							type="button"
+							variant="ghost"
+							size="sm"
+							onClick={() => setSelectedSessionIds(new Set())}
+							className="h-6 w-6 p-0"
+							title={locale === "de" ? "Auswahl loschen" : "Clear selection"}
+						>
+							<X className="w-3 h-3" />
+						</Button>
+					</div>
+				)}
 				{/* Sessions header - between search and chat list */}
 				<div className="flex items-center justify-between gap-2 py-1.5 px-1">
 					<div className="flex items-center gap-2">
@@ -561,34 +606,6 @@ export const SidebarSessions = memo(function SidebarSessions({
 					/>
 				) : (
 					<>
-						{selectedSessionIds.size > 0 && (
-							<div className="flex items-center gap-2 bg-primary/10 border border-primary/20 rounded px-2 py-1 mx-1 mt-2">
-								<span className="text-xs font-medium text-primary">
-									{selectedSessionIds.size}
-								</span>
-								<div className="flex-1 mr-1" />
-								<Button
-									type="button"
-									variant="ghost"
-									size="sm"
-									onClick={handleBulkDeleteRequest}
-									className="h-6 px-2 text-xs"
-								>
-									<Trash2 className="w-3 h-3 mr-1" />
-									{locale === "de" ? "Loschen" : "Delete"}
-								</Button>
-								<Button
-									type="button"
-									variant="ghost"
-									size="sm"
-									onClick={() => setSelectedSessionIds(new Set())}
-									className="h-6 w-6 p-0"
-									title={locale === "de" ? "Auswahl loschen" : "Clear selection"}
-								>
-									<X className="w-3 h-3" />
-								</Button>
-							</div>
-						)}
 						{filteredSessions.length === 0 && deferredSearch && (
 								<div
 									className={cn(
