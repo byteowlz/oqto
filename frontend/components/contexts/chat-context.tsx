@@ -76,12 +76,17 @@ const asyncNoopVoid = async () => {};
 const asyncNoopBool = async () => false;
 
 const CHAT_HISTORY_CACHE_KEY = "octo:chatHistoryCache:v1";
+const CHAT_HISTORY_CACHE_MAX_CHARS = 2_000_000;
 
 function readCachedChatHistory(): ChatSession[] {
 	if (typeof window === "undefined") return [];
 	try {
 		const raw = localStorage.getItem(CHAT_HISTORY_CACHE_KEY);
 		if (!raw) return [];
+		if (raw.length > CHAT_HISTORY_CACHE_MAX_CHARS) {
+			localStorage.removeItem(CHAT_HISTORY_CACHE_KEY);
+			return [];
+		}
 		const parsed = JSON.parse(raw) as ChatSession[];
 		return Array.isArray(parsed) ? parsed : [];
 	} catch {
@@ -92,7 +97,12 @@ function readCachedChatHistory(): ChatSession[] {
 function writeCachedChatHistory(history: ChatSession[]) {
 	if (typeof window === "undefined") return;
 	try {
-		localStorage.setItem(CHAT_HISTORY_CACHE_KEY, JSON.stringify(history));
+		const encoded = JSON.stringify(history);
+		if (encoded.length > CHAT_HISTORY_CACHE_MAX_CHARS) {
+			localStorage.removeItem(CHAT_HISTORY_CACHE_KEY);
+			return;
+		}
+		localStorage.setItem(CHAT_HISTORY_CACHE_KEY, encoded);
 	} catch {
 		// ignore storage failures
 	}
