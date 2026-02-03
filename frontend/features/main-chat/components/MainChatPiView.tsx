@@ -1636,12 +1636,6 @@ export function MainChatPiView({
 						)}
 					</div>
 
-					{(isStreaming || isAwaitingResponse) && (
-						<div className="flex items-center gap-2 text-xs text-muted-foreground">
-							<span>{t.agentWorking}</span>
-						</div>
-					)}
-
 					{/* Stop button - only shown when streaming */}
 					{isStreaming && (
 						<Button

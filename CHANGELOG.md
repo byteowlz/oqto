@@ -25,6 +25,7 @@ All notable changes to this project will be documented in this file.
 - Pi session resolution now de-duplicates JSONL files by session id, prefers the newest file, and persists session metadata into hstry to prevent split chats.
 - Sidebar multi-select now anchors the active session, and minimal tool-call badge sizing matches the compact badge style.
 - Sidebar deletes now confirm before removing chats, and file tree refreshes are throttled to reduce backend spam.
+- Chat history cache now updates on every change, and the agent-working indicator is only shown in the message bubble.
 - Session UI now renders non-OpenCode sessions with the Pi chat view, and new chats default to Pi workspace sessions.
 - Chat history now includes workspace Pi sessions, and the status bar shows the active Pi model for main/workspace chats.
 - Pi model switching is now gated to idle sessions; the model picker and `/model` command are disabled while Pi is streaming or compacting.

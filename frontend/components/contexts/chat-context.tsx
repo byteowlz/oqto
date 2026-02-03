@@ -637,6 +637,10 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 	}, [refreshChatHistory]);
 
 	useEffect(() => {
+		writeCachedChatHistory(chatHistory);
+	}, [chatHistory]);
+
+	useEffect(() => {
 		refreshOpencodeSessions();
 	}, [refreshOpencodeSessions]);
 
