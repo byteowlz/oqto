@@ -16,11 +16,14 @@ import {
 	SlashCommandPopup,
 	type TodoItem,
 	ToolCallCard,
+	ToolCallGroup,
+	getToolIcon,
 	UserQuestionBanner,
 	UserQuestionDialog,
 } from "@/components/chat";
 import { BrailleSpinner } from "@/components/common";
 import { useUIControl } from "@/components/contexts/ui-control-context";
+import { useChatVerbosity } from "@/lib/chat-verbosity";
 import {
 	ContextWindowGauge,
 	CopyButton,
@@ -6273,6 +6276,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 	showWorkingIndicator?: boolean;
 }) {
 	const isUser = group.role === "user";
+	const { verbosity } = useChatVerbosity();
 
 	// Get the last message ID in the group (for forking from this point)
 	const lastMessage = group.messages[group.messages.length - 1];
@@ -6384,6 +6388,49 @@ const MessageGroupCard = memo(function MessageGroupCard({
 	// Sort segments by timestamp to interleave A2UI with tool calls
 	segments.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
 
+	type RenderSegment =
+		| Segment
+		| {
+				key: string;
+				type: "tool_group";
+				parts: OpenCodePart[];
+				timestamp?: number;
+		  };
+
+	const renderSegments: RenderSegment[] = (() => {
+		if (verbosity === 1) {
+			return segments.filter((segment) => segment.type !== "tool");
+		}
+		if (verbosity !== 2) return segments;
+		const grouped: RenderSegment[] = [];
+		let buffer: Segment[] = [];
+		const flush = () => {
+			if (buffer.length === 0) return;
+			if (buffer.length === 1) {
+				grouped.push(buffer[0]);
+			} else {
+				grouped.push({
+					key: `tool-group-${buffer[0].key}`,
+					type: "tool_group",
+					parts: buffer.map((item) => (item as Extract<Segment, { type: "tool" }>).part),
+					timestamp: buffer[0].timestamp,
+				});
+			}
+			buffer = [];
+		};
+
+		for (const segment of segments) {
+			if (segment.type === "tool") {
+				buffer.push(segment);
+				continue;
+			}
+			flush();
+			grouped.push(segment);
+		}
+		flush();
+		return grouped;
+	})();
+
 	// Get all text content for copy button
 	const allTextContent = allParts
 		.filter(
@@ -6481,21 +6528,21 @@ const MessageGroupCard = memo(function MessageGroupCard({
 
 			{/* Content - render segments in order */}
 			<div className="px-2 sm:px-4 py-2 sm:py-3 group space-y-3 overflow-hidden">
-				{segments.length === 0 && !isUser && showWorkingIndicator && (
+				{renderSegments.length === 0 && !isUser && showWorkingIndicator && (
 					<div className="flex items-center gap-3 text-muted-foreground text-sm">
 						<BrailleSpinner />
 						<span>Working...</span>
 					</div>
 				)}
-				{segments.length === 0 && isUser && (
+				{renderSegments.length === 0 && isUser && (
 					<span className="text-muted-foreground italic text-sm">
 						No content
 					</span>
 				)}
 
-				{segments.map((segment, idx) => {
+				{renderSegments.map((segment, idx) => {
 					// Add top margin to non-text segments that follow text segments
-					const prevSegment = idx > 0 ? segments[idx - 1] : null;
+					const prevSegment = idx > 0 ? renderSegments[idx - 1] : null;
 					const needsTopMargin =
 						prevSegment?.type === "text" && segment.type !== "text";
 
@@ -6559,6 +6606,36 @@ const MessageGroupCard = memo(function MessageGroupCard({
 									part={segment.part}
 									defaultCollapsed={true}
 									hideTodoTools={true}
+								/>
+							</div>
+						);
+					}
+
+					if (segment.type === "tool_group") {
+						return (
+							<div
+								key={segment.key}
+								className={needsTopMargin ? "mt-3" : undefined}
+							>
+								<ToolCallGroup
+									items={segment.parts.map((part) => {
+										const toolName = part.tool || "tool";
+										const input = part.state?.input as
+											| Record<string, unknown>
+											| undefined;
+										return {
+											id: part.id ?? toolName,
+											label: part.state?.title || toolName,
+											icon: getToolIcon(toolName, input),
+											render: () => (
+												<ToolCallCard
+													part={part}
+													defaultCollapsed={false}
+													hideTodoTools={true}
+												/>
+											),
+										};
+									})}
 								/>
 							</div>
 						);

@@ -97,3 +97,4 @@
 - 2026-02-03: Load Pi history from JSONL/hstry before querying the live runner to make history appear immediately.
 - 2026-02-03: Add soft-delete support for Main Chat and workspace Pi sessions and hide deleted sessions from listings.
 - 2026-02-03: Force immediate Main Chat Pi session list refresh on activity to avoid delayed history updates.
+- 2026-02-03: Add chat verbosity levels and collapse consecutive tool calls into tabbed tool groups at medium verbosity.

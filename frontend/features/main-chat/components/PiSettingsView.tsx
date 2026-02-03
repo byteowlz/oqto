@@ -21,6 +21,10 @@ import {
 	setMainChatPiModel,
 	setWorkspacePiModel,
 } from "@/features/main-chat/api";
+import {
+	type ChatVerbosity,
+	useChatVerbosity,
+} from "@/lib/chat-verbosity";
 import { fuzzyMatch } from "@/lib/slash-commands";
 import { cn } from "@/lib/utils";
 import { Loader2 } from "lucide-react";
@@ -41,6 +45,7 @@ export function PiSettingsView({
 	sessionId,
 	workspacePath,
 }: PiSettingsViewProps) {
+	const { verbosity, setVerbosity } = useChatVerbosity();
 	const [availableModels, setAvailableModels] = useState<PiModelInfo[]>([]);
 	const [selectedModelRef, setSelectedModelRef] = useState<string | null>(null);
 	const [isSwitchingModel, setIsSwitchingModel] = useState(false);
@@ -174,6 +179,13 @@ export function PiSettingsView({
 	}, [availableModels, modelQuery]);
 
 	const isIdle = !(piState?.is_streaming || piState?.is_compacting);
+
+	const verbosityLabel =
+		locale === "de" ? "Chat-Detailgrad" : "Chat verbosity";
+	const verbosityDescription =
+		locale === "de"
+			? "Steuert, wie detailliert Tool-Aufrufe angezeigt werden."
+			: "Controls how detailed tool call rendering is.";
 
 	const handleModelChange = useCallback(
 		async (value: string) => {
@@ -311,6 +323,36 @@ export function PiSettingsView({
 								: "Model switching is only available when Pi is idle."}
 						</p>
 					)}
+				</div>
+
+				<div className="space-y-2">
+					<Label className="text-xs font-medium text-muted-foreground">
+						{verbosityLabel}
+					</Label>
+					<Select
+						value={String(verbosity)}
+						onValueChange={(value) =>
+							setVerbosity(Number(value) as ChatVerbosity)
+						}
+					>
+						<SelectTrigger className="w-full">
+							<SelectValue />
+						</SelectTrigger>
+						<SelectContent>
+							<SelectItem value="1">
+								{locale === "de" ? "Minimal" : "Minimal"}
+							</SelectItem>
+							<SelectItem value="2">
+								{locale === "de" ? "Kompakt" : "Compact"}
+							</SelectItem>
+							<SelectItem value="3">
+								{locale === "de" ? "Ausführlich" : "Verbose"}
+							</SelectItem>
+						</SelectContent>
+					</Select>
+					<p className="text-[10px] text-muted-foreground">
+						{verbosityDescription}
+					</p>
 				</div>
 
 				<div className="space-y-2">

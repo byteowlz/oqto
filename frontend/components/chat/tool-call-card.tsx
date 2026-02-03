@@ -165,7 +165,10 @@ function getPriorityColor(priority: string) {
 }
 
 // Get tool-specific icon
-function getToolIcon(toolName: string, input?: Record<string, unknown>) {
+export function getToolIcon(
+	toolName: string,
+	input?: Record<string, unknown>,
+) {
 	const name = toolName.toLowerCase();
 
 	// Check by tool name first

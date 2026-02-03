@@ -8,9 +8,12 @@ import {
 	ReadAloudButton,
 	SlashCommandPopup,
 	ToolCallCard,
+	ToolCallGroup,
+	getToolIcon,
 } from "@/components/chat";
 import { toast } from "sonner";
 import { BrailleSpinner } from "@/components/common";
+import { useChatVerbosity } from "@/lib/chat-verbosity";
 import {
 	ContextWindowGauge,
 	CopyButton,
@@ -1719,6 +1722,7 @@ const PiMessageGroupCard = memo(function PiMessageGroupCard({
 	showWorkingIndicator?: boolean;
 }) {
 	const isUser = group.role === "user";
+	const { verbosity } = useChatVerbosity();
 	const createdAt = group.messages[0]?.timestamp
 		? new Date(group.messages[0].timestamp)
 		: null;
@@ -1861,6 +1865,56 @@ const PiMessageGroupCard = memo(function PiMessageGroupCard({
 
 	segments.sort((a, b) => a.timestamp - b.timestamp);
 
+	type RenderSegment =
+		| PiSegment
+		| {
+				key: string;
+				type: "tool_group";
+				segments: Array<
+					| Extract<PiSegment, { type: "tool_use" }>
+					| Extract<PiSegment, { type: "tool_result_only" }>
+				>;
+				timestamp: number;
+		  };
+
+	const renderSegments: RenderSegment[] = (() => {
+		if (verbosity === 1) {
+			return segments.filter(
+				(segment) =>
+					segment.type !== "tool_use" &&
+					segment.type !== "tool_result_only",
+			);
+		}
+		if (verbosity !== 2) return segments;
+		const grouped: RenderSegment[] = [];
+		let buffer: RenderSegment["segments"] = [];
+		const flush = () => {
+			if (buffer.length === 0) return;
+			if (buffer.length === 1) {
+				grouped.push(buffer[0]);
+			} else {
+				grouped.push({
+					key: `tool-group-${buffer[0].key}`,
+					type: "tool_group",
+					segments: buffer,
+					timestamp: buffer[0].timestamp,
+				});
+			}
+			buffer = [];
+		};
+
+		for (const segment of segments) {
+			if (segment.type === "tool_use" || segment.type === "tool_result_only") {
+				buffer.push(segment);
+				continue;
+			}
+			flush();
+			grouped.push(segment);
+		}
+		flush();
+		return grouped;
+	})();
+
 	const allTextContent = segments
 		.filter((s): s is Extract<PiSegment, { type: "text" }> => s.type === "text")
 		.map((s) => s.content)
@@ -1939,20 +1993,20 @@ const PiMessageGroupCard = memo(function PiMessageGroupCard({
 			</div>
 
 			<div className="px-2 sm:px-4 py-2 sm:py-3 group space-y-3 overflow-hidden">
-				{segments.length === 0 && !isUser && showWorkingIndicator && (
+				{renderSegments.length === 0 && !isUser && showWorkingIndicator && (
 					<div className="flex items-center gap-3 text-muted-foreground text-sm">
 						<BrailleSpinner />
 						<span>{locale === "de" ? "Arbeitet..." : "Working..."}</span>
 					</div>
 				)}
-				{segments.length === 0 && isUser && (
+				{renderSegments.length === 0 && isUser && (
 					<span className="text-muted-foreground italic text-sm">
 						No content
 					</span>
 				)}
 
-				{segments.map((segment, idx) => {
-					const prevSegment = idx > 0 ? segments[idx - 1] : null;
+				{renderSegments.map((segment, idx) => {
+					const prevSegment = idx > 0 ? renderSegments[idx - 1] : null;
 					const needsTopMargin =
 						prevSegment?.type === "text" && segment.type !== "text";
 
@@ -2020,6 +2074,46 @@ const PiMessageGroupCard = memo(function PiMessageGroupCard({
 								)}
 							>
 								{segment.content}
+							</div>
+						);
+					}
+					if (segment.type === "tool_group") {
+						return (
+							<div
+								key={segment.key}
+								className={needsTopMargin ? "mt-3" : undefined}
+							>
+								<ToolCallGroup
+									items={segment.segments.map((toolSegment) => {
+										const toolName =
+											toolSegment.type === "tool_use"
+												? toolSegment.part.name
+												: toolSegment.part.name || "result";
+										const input =
+											toolSegment.type === "tool_use"
+												? (toolSegment.part.input as
+														| Record<string, unknown>
+														| undefined)
+												: undefined;
+										return {
+											id: toolSegment.key,
+											label: toolName,
+											icon: getToolIcon(toolName, input),
+											render: () => (
+												<PiPartRenderer
+													part={toolSegment.part}
+													toolResult={
+														toolSegment.type === "tool_use"
+															? toolSegment.toolResult
+															: undefined
+													}
+													locale={locale}
+													workspacePath={workspacePath}
+												/>
+											),
+										};
+									})}
+								/>
 							</div>
 						);
 					}
