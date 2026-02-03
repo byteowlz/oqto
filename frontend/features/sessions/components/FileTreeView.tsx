@@ -247,6 +247,7 @@ export function FileTreeView({
 	const [newFolderName, setNewFolderName] = useState<string | null>(null);
 	const [renamingPath, setRenamingPath] = useState<string | null>(null);
 	const fileInputRef = useRef<HTMLInputElement>(null);
+	const lastLoadRef = useRef<{ key: string; ts: number } | null>(null);
 
 	// Use external state if provided, otherwise use internal state
 	const [internalExpanded, setInternalExpanded] = useState<
@@ -292,6 +293,16 @@ export function FileTreeView({
 	const loadTree = useCallback(
 		async (path: string, preserveState = false, skipCache = false) => {
 			if (!workspacePath || !cacheKey) return;
+			const requestKey = getTreeCacheKey(cacheKey, path);
+			const now = Date.now();
+			if (
+				lastLoadRef.current &&
+				lastLoadRef.current.key === requestKey &&
+				now - lastLoadRef.current.ts < 600
+			) {
+				return;
+			}
+			lastLoadRef.current = { key: requestKey, ts: now };
 
 			// Check cache first (unless explicitly skipping)
 			if (!skipCache) {

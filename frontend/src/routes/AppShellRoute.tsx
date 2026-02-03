@@ -141,6 +141,30 @@ const AppShell = memo(function AppShell() {
 		],
 	);
 
+	const handleDeleteSession = useCallback(
+		async (sessionId: string) => {
+			const session = chatHistory.find((s) => s.id === sessionId);
+			const workspacePath = session?.workspace_path;
+			const sourcePath = session?.source_path ?? "";
+			const isWorkspacePi =
+				sourcePath.includes("/.pi/agent/sessions") ||
+				sourcePath.endsWith(".jsonl");
+			let baseUrl: string | null = opencodeBaseUrl;
+
+			if (
+				!isWorkspacePi &&
+				workspacePath &&
+				workspacePath !== "global" &&
+				!baseUrl
+			) {
+				baseUrl = await ensureOpencodeRunning(workspacePath);
+			}
+
+			await deleteChatSession(sessionId, baseUrl ?? undefined);
+		},
+		[chatHistory, deleteChatSession, ensureOpencodeRunning, opencodeBaseUrl],
+	);
+
 	const { open: commandPaletteOpen, setOpen: setCommandPaletteOpen } =
 		useCommandPalette();
 
@@ -657,7 +681,7 @@ const AppShell = memo(function AppShell() {
 						onRenameSession={(id) =>
 							sessionDialogs.handleRenameSession(id, chatHistory)
 						}
-						onDeleteSession={sessionDialogs.handleDeleteSession}
+						onDeleteSession={handleDeleteSession}
 						onBulkDeleteSessions={handleBulkDeleteSessions}
 						onPinProject={sidebarState.togglePinProject}
 						onRenameProject={sessionDialogs.handleRenameProject}
@@ -772,7 +796,7 @@ const AppShell = memo(function AppShell() {
 									onRenameSession={(id) =>
 										sessionDialogs.handleRenameSession(id, chatHistory)
 									}
-									onDeleteSession={sessionDialogs.handleDeleteSession}
+									onDeleteSession={handleDeleteSession}
 									onBulkDeleteSessions={handleBulkDeleteSessions}
 									onPinProject={sidebarState.togglePinProject}
 									onRenameProject={sessionDialogs.handleRenameProject}
@@ -852,20 +876,6 @@ const AppShell = memo(function AppShell() {
 				<CommandPalette
 					open={commandPaletteOpen}
 					onOpenChange={setCommandPaletteOpen}
-				/>
-
-				<DeleteConfirmDialog
-					open={sessionDialogs.deleteDialogOpen}
-					onOpenChange={sessionDialogs.setDeleteDialogOpen}
-					onConfirm={() =>
-						sessionDialogs.handleConfirmDelete(
-							deleteChatSession,
-							chatHistory,
-							opencodeBaseUrl,
-							ensureOpencodeRunning,
-						)
-					}
-					locale={locale}
 				/>
 
 				<RenameSessionDialog

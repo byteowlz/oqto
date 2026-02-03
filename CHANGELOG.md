@@ -10,6 +10,7 @@ All notable changes to this project will be documented in this file.
 - Multi-user sldr: per-user sldr-server instances spawned via octo-runner with `/api/sldr` proxy routing.
 - Install system now installs and publishes `sldr` and `sldr-server` binaries to `/usr/local/bin`.
 - Workspace Pi sessions: per-workspace Pi processes with idle cleanup, API endpoints, and WebSocket streaming.
+- Added `/browser` and `/close-browser` slash commands to toggle the browser stream panel.
 - Added `tools/test-ssh-proxy.sh` helper script to validate octo-sandbox with octo-ssh-proxy.
 - Added workspace locations table to track local/remote workspace roots with active location selection.
 - Added BOOTSTRAP.md onboarding instructions and workspace metadata files for main chat initialization.
@@ -23,6 +24,7 @@ All notable changes to this project will be documented in this file.
 - Renamed CASS search types and comments to hstry in the API and frontend.
 - Pi session resolution now de-duplicates JSONL files by session id, prefers the newest file, and persists session metadata into hstry to prevent split chats.
 - Sidebar multi-select now anchors the active session, and minimal tool-call badge sizing matches the compact badge style.
+- Sidebar deletes now confirm before removing chats, and file tree refreshes are throttled to reduce backend spam.
 - Session UI now renders non-OpenCode sessions with the Pi chat view, and new chats default to Pi workspace sessions.
 - Chat history now includes workspace Pi sessions, and the status bar shows the active Pi model for main/workspace chats.
 - Pi model switching is now gated to idle sessions; the model picker and `/model` command are disabled while Pi is streaming or compacting.

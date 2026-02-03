@@ -148,6 +148,9 @@ export const SidebarSessions = memo(function SidebarSessions({
 		() => new Set(),
 	);
 	const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+	const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+	const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+	const [pendingDeleteTitle, setPendingDeleteTitle] = useState("");
 	const lastSelectedIndexRef = useRef<number | null>(null);
 	const isFilteringSessions =
 		searchMode === "sessions" && deferredSearch.trim().length > 0;
@@ -323,7 +326,10 @@ export const SidebarSessions = memo(function SidebarSessions({
 	};
 
 	const handleDeleteSession = async (sessionId: string) => {
-		await Promise.resolve(onDeleteSession(sessionId));
+		const session = filteredSessions.find((item) => item.id === sessionId);
+		setPendingDeleteId(sessionId);
+		setPendingDeleteTitle(session?.title ?? "");
+		setDeleteDialogOpen(true);
 	};
 
 	const handleBulkDeleteRequest = () => {
@@ -333,6 +339,33 @@ export const SidebarSessions = memo(function SidebarSessions({
 
 	return (
 		<div className="flex-1 min-h-0 flex flex-col overflow-x-hidden">
+			<DeleteConfirmDialog
+				open={deleteDialogOpen}
+				onOpenChange={(open) => {
+					setDeleteDialogOpen(open);
+					if (!open) {
+						setPendingDeleteId(null);
+						setPendingDeleteTitle("");
+					}
+				}}
+				onConfirm={async () => {
+					if (!pendingDeleteId) return;
+					await Promise.resolve(onDeleteSession(pendingDeleteId));
+					setDeleteDialogOpen(false);
+					setPendingDeleteId(null);
+					setPendingDeleteTitle("");
+				}}
+				locale={locale}
+				title={
+					locale === "de"
+						? pendingDeleteTitle
+							? `"${pendingDeleteTitle}" loschen?`
+							: "Chat loschen?"
+						: pendingDeleteTitle
+							? `Delete "${pendingDeleteTitle}"?`
+							: "Delete chat?"
+				}
+			/>
 			<DeleteConfirmDialog
 				open={bulkDeleteOpen}
 				onOpenChange={setBulkDeleteOpen}
