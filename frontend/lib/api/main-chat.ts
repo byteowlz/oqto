@@ -348,6 +348,18 @@ export async function renamePiSession(
 	return res.json();
 }
 
+/** Delete a Pi session (soft delete) */
+export async function deleteMainChatPiSession(sessionId: string): Promise<void> {
+	const res = await authFetch(
+		controlPlaneApiUrl(`/api/main/pi/sessions/${sessionId}`),
+		{
+			method: "DELETE",
+			credentials: "include",
+		},
+	);
+	if (!res.ok) throw new Error(await readApiError(res));
+}
+
 /** Search Main Chat Pi sessions for message content */
 export async function searchMainChatPiSessions(
 	query: string,
@@ -779,6 +791,24 @@ export async function abortWorkspacePiSession(
 
 	const res = await authFetch(url.toString(), {
 		method: "POST",
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+}
+
+/** Delete a workspace Pi session (soft delete) */
+export async function deleteWorkspacePiSession(
+	workspacePath: string,
+	sessionId: string,
+): Promise<void> {
+	const url = new URL(
+		controlPlaneApiUrl(`/api/pi/workspace/sessions/${sessionId}`),
+		window.location.origin,
+	);
+	url.searchParams.set("workspace_path", workspacePath);
+
+	const res = await authFetch(url.toString(), {
+		method: "DELETE",
 		credentials: "include",
 	});
 	if (!res.ok) throw new Error(await readApiError(res));

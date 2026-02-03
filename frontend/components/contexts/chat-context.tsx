@@ -3,6 +3,7 @@
 import {
 	type ChatSession,
 	type ProjectEntry,
+	deleteWorkspacePiSession,
 	listChatHistory,
 	newWorkspacePiSession,
 	updateChatSession,
@@ -465,6 +466,38 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 
 	const deleteChatSession = useCallback(
 		async (sessionId: string, baseUrlOverride?: string): Promise<boolean> => {
+			const historySession = chatHistoryRef.current.find(
+				(session) => session.id === sessionId,
+			);
+			const sourcePath = historySession?.source_path ?? "";
+			const isWorkspacePi =
+				sourcePath.includes("/.pi/agent/sessions") ||
+				sourcePath.endsWith(".jsonl");
+
+			if (isWorkspacePi && historySession) {
+				try {
+					await deleteWorkspacePiSession(
+						historySession.workspace_path,
+						sessionId,
+					);
+					const remaining = chatHistoryRef.current.filter(
+						(s) => s.id !== sessionId,
+					);
+					setChatHistory(remaining);
+					setSelectedChatSessionId((current) => {
+						if (current !== sessionId) return current;
+						return remaining[0]?.id ?? "";
+					});
+					setTimeout(() => {
+						refreshChatHistory();
+					}, 500);
+					return true;
+				} catch (err) {
+					console.error("Failed to delete Pi chat session:", err);
+					return false;
+				}
+			}
+
 			const baseUrl = baseUrlOverride || opencodeBaseUrl;
 			if (!baseUrl) return false;
 			try {

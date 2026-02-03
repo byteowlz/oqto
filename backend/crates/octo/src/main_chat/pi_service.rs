@@ -1293,6 +1293,10 @@ impl MainChatPiService {
             return None;
         }
 
+        if header.get("deleted").and_then(|v| v.as_bool()) == Some(true) {
+            return None;
+        }
+
         let id = header.get("id").and_then(|v| v.as_str())?.to_string();
         let started_at = header
             .get("timestamp")
@@ -1396,6 +1400,64 @@ impl MainChatPiService {
         let file = std::fs::File::open(path).ok()?;
         let reader = std::io::BufReader::new(file);
         Self::parse_session_reader(reader, size, modified_ms)
+    }
+
+    /// Soft-delete a Pi session by marking the JSONL header as deleted.
+    pub async fn delete_session_file(&self, user_id: &str, session_id: &str) -> Result<bool> {
+        use std::io::{BufRead, BufReader};
+
+        let work_dir = self.get_main_chat_dir(user_id);
+        let sessions_dir = self.get_pi_sessions_dir(user_id, &work_dir);
+        let session_path = self
+            .find_session_file(user_id, &sessions_dir, session_id)
+            .await?;
+
+        let mut lines: Vec<String> = if let Some(client) = self.runner_client_for_user(user_id) {
+            let content = client
+                .read_file(&session_path, None, None)
+                .await
+                .context("reading session file via runner")?;
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(content.content_base64)
+                .context("decoding session file base64")?;
+            let reader = BufReader::new(std::io::Cursor::new(bytes));
+            reader.lines().collect::<std::io::Result<_>>()?
+        } else {
+            let file = std::fs::File::open(&session_path).context("opening session file")?;
+            let reader = BufReader::new(file);
+            reader.lines().collect::<std::io::Result<_>>()?
+        };
+
+        if lines.is_empty() {
+            anyhow::bail!("Session file is empty");
+        }
+
+        let mut header: serde_json::Value =
+            serde_json::from_str(&lines[0]).context("parsing session header")?;
+
+        if header.get("type").and_then(|t| t.as_str()) != Some("session") {
+            anyhow::bail!("Invalid session file: missing session header");
+        }
+
+        if header.get("deleted").and_then(|v| v.as_bool()) == Some(true) {
+            return Ok(false);
+        }
+
+        header["deleted"] = serde_json::Value::Bool(true);
+        header["deleted_at"] = serde_json::Value::String(Utc::now().to_rfc3339());
+        lines[0] = serde_json::to_string(&header)?;
+
+        let updated_text = lines.join("\n") + "\n";
+        if let Some(client) = self.runner_client_for_user(user_id) {
+            client
+                .write_file(&session_path, updated_text.as_bytes(), false)
+                .await
+                .context("writing session file via runner")?;
+        } else {
+            std::fs::write(&session_path, updated_text).context("writing session file")?;
+        }
+
+        Ok(true)
     }
 
     /// Resolve a parent session ID from a session file path.

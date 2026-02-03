@@ -386,12 +386,17 @@ pub fn create_router_with_config(state: AppState, max_upload_size_mb: usize) -> 
             "/main/pi/sessions/{session_id}",
             get(main_chat_pi_handlers::get_pi_session_messages)
                 .post(main_chat_pi_handlers::resume_pi_session)
-                .patch(main_chat_pi_handlers::update_pi_session),
+                .patch(main_chat_pi_handlers::update_pi_session)
+                .delete(main_chat_pi_handlers::delete_pi_session),
         )
         // Workspace Pi routes (per-workspace Pi sessions)
         .route(
             "/pi/workspace/sessions",
             post(crate::api::workspace_pi::new_workspace_session),
+        )
+        .route(
+            "/pi/workspace/sessions/{session_id}",
+            delete(crate::api::workspace_pi::delete_workspace_session),
         )
         .route(
             "/pi/workspace/sessions/{session_id}/resume",

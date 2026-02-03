@@ -112,6 +112,7 @@ export {
 	listMainChatSessions,
 	listMainChatPiSessions,
 	renamePiSession,
+	deleteMainChatPiSession,
 	searchMainChatPiSessions,
 	newMainChatPiSessionFile,
 	getMainChatPiSessionMessages,
@@ -142,6 +143,7 @@ export {
 	getWorkspacePiState,
 	getWorkspacePiSessionMessages,
 	abortWorkspacePiSession,
+	deleteWorkspacePiSession,
 	createWorkspacePiWebSocket,
 } from "./main-chat";
 

@@ -23,6 +23,7 @@ import {
 	type PiSessionFile,
 	createMainChatAssistant,
 	deleteMainChatAssistant,
+	deleteMainChatPiSession,
 	getMainChatAssistant,
 	listMainChatAssistants,
 	listMainChatPiSessions,
@@ -206,6 +207,11 @@ export function MainChatEntry({
 	const [renameTitle, setRenameTitle] = useState("");
 	const [renaming, setRenaming] = useState(false);
 	const [renameError, setRenameError] = useState<string | null>(null);
+	const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+	const [deleteSessionId, setDeleteSessionId] = useState<string | null>(null);
+	const [deleteTitle, setDeleteTitle] = useState("");
+	const [deleting, setDeleting] = useState(false);
+	const [deleteError, setDeleteError] = useState<string | null>(null);
 	const lastNewSessionTriggerRef = useRef(newSessionTrigger);
 	const lastActiveSessionIdRef = useRef(activeSessionId);
 	const lastSessionActivityTriggerRef = useRef(sessionActivityTrigger);
@@ -490,6 +496,14 @@ export function MainChatEntry({
 		setShowRenameDialog(true);
 	}, []);
 
+	const handleDeleteSession = useCallback((session: PiSessionFile) => {
+		const display = getDisplayPiTitle(session);
+		setDeleteSessionId(session.id);
+		setDeleteTitle(display || session.id);
+		setDeleteError(null);
+		setShowDeleteDialog(true);
+	}, []);
+
 	async function handleConfirmRename() {
 		if (!renameSessionId || !renameTitle.trim()) return;
 
@@ -513,6 +527,31 @@ export function MainChatEntry({
 			setRenameError(message);
 		} finally {
 			setRenaming(false);
+		}
+	}
+
+	async function handleConfirmDelete() {
+		if (!deleteSessionId) return;
+
+		try {
+			setDeleting(true);
+			setDeleteError(null);
+			await deleteMainChatPiSession(deleteSessionId);
+			setSessions((prev) => prev.filter((s) => s.id !== deleteSessionId));
+			if (activeSessionId === deleteSessionId && assistantName) {
+				const remaining = sessions.filter((s) => s.id !== deleteSessionId);
+				const nextSession = remaining[0]?.id ?? null;
+				onSelect(assistantName, nextSession);
+			}
+			setShowDeleteDialog(false);
+			setDeleteSessionId(null);
+			setDeleteTitle("");
+		} catch (err) {
+			console.error("Failed to delete session:", err);
+			const message = err instanceof Error ? err.message : "Failed to delete";
+			setDeleteError(message);
+		} finally {
+			setDeleting(false);
 		}
 	}
 
@@ -720,6 +759,14 @@ export function MainChatEntry({
 											<Pencil className="w-4 h-4 mr-2" />
 											{locale === "de" ? "Umbenennen" : "Rename"}
 										</ContextMenuItem>
+										<ContextMenuSeparator />
+										<ContextMenuItem
+											onClick={() => handleDeleteSession(session)}
+											className="text-destructive focus:text-destructive"
+										>
+											<Trash2 className="w-4 h-4 mr-2" />
+											{locale === "de" ? "Loschen" : "Delete"}
+										</ContextMenuItem>
 									</ContextMenuContent>
 								</ContextMenu>
 							);
@@ -758,6 +805,15 @@ export function MainChatEntry({
 				onSubmit={handleConfirmRename}
 				loading={renaming}
 				error={renameError}
+				locale={locale}
+			/>
+			<DeleteSessionDialog
+				open={showDeleteDialog}
+				onOpenChange={setShowDeleteDialog}
+				title={deleteTitle}
+				onSubmit={handleConfirmDelete}
+				loading={deleting}
+				error={deleteError}
 				locale={locale}
 			/>
 		</>
@@ -1083,6 +1139,60 @@ function RenameSessionDialog({
 					<Button onClick={onSubmit} disabled={loading || !title.trim()}>
 						{loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
 						{locale === "de" ? "Speichern" : "Save"}
+					</Button>
+				</DialogFooter>
+			</DialogContent>
+		</Dialog>
+	);
+}
+
+function DeleteSessionDialog({
+	open,
+	onOpenChange,
+	title,
+	onSubmit,
+	loading,
+	error,
+	locale,
+}: {
+	open: boolean;
+	onOpenChange: (open: boolean) => void;
+	title: string;
+	onSubmit: () => void;
+	loading: boolean;
+	error: string | null;
+	locale: "en" | "de";
+}) {
+	return (
+		<Dialog open={open} onOpenChange={onOpenChange}>
+			<DialogContent>
+				<DialogHeader>
+					<DialogTitle>
+						{locale === "de" ? "Sitzung loschen" : "Delete Session"}
+					</DialogTitle>
+					<DialogDescription>
+						{locale === "de"
+							? `Diese Sitzung wird entfernt: ${title}`
+							: `This will remove the session: ${title}`}
+					</DialogDescription>
+				</DialogHeader>
+				{error && <div className="text-sm text-destructive">{error}</div>}
+				<DialogFooter>
+					<Button variant="outline" onClick={() => onOpenChange(false)}>
+						{locale === "de" ? "Abbrechen" : "Cancel"}
+					</Button>
+					<Button
+						variant="destructive"
+						onClick={onSubmit}
+						disabled={loading}
+					>
+						{loading
+							? locale === "de"
+								? "Loschen..."
+								: "Deleting..."
+							: locale === "de"
+								? "Loschen"
+								: "Delete"}
 					</Button>
 				</DialogFooter>
 			</DialogContent>

@@ -1000,6 +1000,32 @@ pub async fn update_pi_session(
     }
 }
 
+/// Delete a Pi session (soft delete).
+///
+/// DELETE /api/main/pi/sessions/{session_id}
+pub async fn delete_pi_session(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    axum::extract::Path(session_id): axum::extract::Path<String>,
+) -> ApiResult<StatusCode> {
+    let pi_service = get_pi_service(&state)?;
+
+    let _ = pi_service.close_session(user.id(), &session_id, true).await;
+    match pi_service.delete_session_file(user.id(), &session_id).await {
+        Ok(_) => Ok(StatusCode::NO_CONTENT),
+        Err(err) if err.to_string().contains("Session not found") => {
+            Err(ApiError::not_found(format!(
+                "Session not found: {}",
+                session_id
+            )))
+        }
+        Err(err) => Err(ApiError::internal(format!(
+            "Failed to delete Pi session: {}",
+            err
+        ))),
+    }
+}
+
 /// WebSocket endpoint for streaming Pi events.
 ///
 /// GET /api/main/pi/ws?session_id=...

@@ -304,6 +304,37 @@ pub async fn get_workspace_session_messages(
     Ok(Json(messages))
 }
 
+/// Delete a workspace Pi session (soft delete).
+///
+/// DELETE /api/pi/workspace/sessions/{session_id}?workspace_path=...
+pub async fn delete_workspace_session(
+    State(state): State<AppState>,
+    user: crate::auth::CurrentUser,
+    Path(session_id): Path<String>,
+    Query(query): Query<WorkspaceQuery>,
+) -> ApiResult<StatusCode> {
+    let svc = get_workspace_pi_service(&state)?;
+    let work_dir = validate_workspace_path(&state, user.id(), &query.workspace_path)?;
+
+    let _ = svc.remove_session(user.id(), &work_dir, &session_id).await;
+    match svc
+        .mark_session_deleted(user.id(), &work_dir, &session_id)
+        .await
+    {
+        Ok(_) => Ok(StatusCode::NO_CONTENT),
+        Err(err) if err.to_string().contains("Session not found") => {
+            Err(ApiError::not_found(format!(
+                "Session not found: {}",
+                session_id
+            )))
+        }
+        Err(err) => Err(ApiError::internal(format!(
+            "Failed to delete workspace Pi session: {}",
+            err
+        ))),
+    }
+}
+
 /// Abort a workspace Pi session.
 ///
 /// POST /api/pi/workspace/sessions/{session_id}/abort?workspace_path=...
