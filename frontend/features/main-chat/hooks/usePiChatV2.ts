@@ -84,6 +84,7 @@ export function usePiChatV2(options: UsePiChatOptions = {}): UsePiChatReturn {
 	);
 	const [isConnected, setIsConnected] = useState(false);
 	const [isStreaming, setIsStreaming] = useState(false);
+	const [isAwaitingResponse, setIsAwaitingResponse] = useState(false);
 	const [error, setError] = useState<Error | null>(null);
 
 	// Refs
@@ -249,6 +250,7 @@ export function usePiChatV2(options: UsePiChatOptions = {}): UsePiChatReturn {
 					setState(nextState);
 					if (nextState?.is_streaming === false) {
 						setIsStreaming(false);
+						setIsAwaitingResponse(false);
 						if (streamingMessageRef.current) {
 							streamingMessageRef.current.isStreaming = false;
 							streamingMessageRef.current = null;
@@ -271,6 +273,7 @@ export function usePiChatV2(options: UsePiChatOptions = {}): UsePiChatReturn {
 						setMessages((prev) => [...prev, assistantMessage]);
 					}
 					setIsStreaming(true);
+					setIsAwaitingResponse(false);
 					break;
 				}
 
@@ -292,6 +295,7 @@ export function usePiChatV2(options: UsePiChatOptions = {}): UsePiChatReturn {
 						currentMsg.parts.push({ type: "text", content: text });
 					}
 					scheduleStreamingUpdate();
+					setIsAwaitingResponse(false);
 					break;
 				}
 
@@ -313,6 +317,7 @@ export function usePiChatV2(options: UsePiChatOptions = {}): UsePiChatReturn {
 						currentMsg.parts.push({ type: "thinking", content: text });
 					}
 					scheduleStreamingUpdate();
+					setIsAwaitingResponse(false);
 					break;
 				}
 
@@ -338,6 +343,7 @@ export function usePiChatV2(options: UsePiChatOptions = {}): UsePiChatReturn {
 						}
 					}
 					setIsStreaming(true);
+					setIsAwaitingResponse(false);
 					break;
 				}
 
@@ -365,6 +371,7 @@ export function usePiChatV2(options: UsePiChatOptions = {}): UsePiChatReturn {
 						appendPartToMessage(targetMessage.id, part);
 					}
 					setIsStreaming(true);
+					setIsAwaitingResponse(false);
 					break;
 				}
 
@@ -400,6 +407,7 @@ export function usePiChatV2(options: UsePiChatOptions = {}): UsePiChatReturn {
 						streamingMessageRef.current = null;
 					}
 					setIsStreaming(false);
+					setIsAwaitingResponse(false);
 					break;
 				}
 
@@ -409,6 +417,7 @@ export function usePiChatV2(options: UsePiChatOptions = {}): UsePiChatReturn {
 					setError(err);
 					onError?.(err);
 					setIsStreaming(false);
+					setIsAwaitingResponse(false);
 					const sessionId = activeSessionIdRef.current;
 					const now = Date.now();
 					const shouldRecover =
@@ -584,6 +593,7 @@ export function usePiChatV2(options: UsePiChatOptions = {}): UsePiChatReturn {
 			};
 			setMessages((prev) => [...prev, userMessage]);
 			setError(null);
+			setIsAwaitingResponse(true);
 
 			const manager = getWsManager();
 
@@ -607,6 +617,7 @@ export function usePiChatV2(options: UsePiChatOptions = {}): UsePiChatReturn {
 		const sessionId = activeSessionIdRef.current;
 		if (!sessionId) return;
 
+		setIsAwaitingResponse(false);
 		const manager = getWsManager();
 		manager.piAbort(sessionId);
 	}, []);
@@ -631,6 +642,7 @@ export function usePiChatV2(options: UsePiChatOptions = {}): UsePiChatReturn {
 		setMessages([]);
 		streamingMessageRef.current = null;
 		setIsStreaming(false);
+		setIsAwaitingResponse(false);
 		setError(null);
 		messageIdRef.current = 0;
 
@@ -655,6 +667,7 @@ export function usePiChatV2(options: UsePiChatOptions = {}): UsePiChatReturn {
 		setMessages([]);
 		streamingMessageRef.current = null;
 		setIsStreaming(false);
+		setIsAwaitingResponse(false);
 		setError(null);
 		messageIdRef.current = 0;
 
@@ -772,6 +785,7 @@ export function usePiChatV2(options: UsePiChatOptions = {}): UsePiChatReturn {
 		messages,
 		isConnected,
 		isStreaming,
+		isAwaitingResponse,
 		error,
 		send,
 		abort,

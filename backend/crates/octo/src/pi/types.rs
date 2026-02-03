@@ -5,6 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::HashMap;
 
 // ============================================================================
 // Commands (sent to pi via stdin)
@@ -460,6 +461,15 @@ pub struct AgentMessage {
     pub content: Value,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timestamp: Option<u64>,
+    /// Tool call id for tool-result messages.
+    #[serde(rename = "toolCallId", skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
+    /// Tool name for tool-result messages.
+    #[serde(rename = "toolName", skip_serializing_if = "Option::is_none")]
+    pub tool_name: Option<String>,
+    /// Whether the tool result is an error.
+    #[serde(rename = "isError", skip_serializing_if = "Option::is_none")]
+    pub is_error: Option<bool>,
     // Assistant-specific fields
     #[serde(skip_serializing_if = "Option::is_none")]
     pub api: Option<String>,
@@ -471,6 +481,9 @@ pub struct AgentMessage {
     pub usage: Option<TokenUsage>,
     #[serde(rename = "stopReason", skip_serializing_if = "Option::is_none")]
     pub stop_reason: Option<String>,
+    /// Preserve unknown fields for forward-compatibility.
+    #[serde(flatten, default, skip_serializing_if = "HashMap::is_empty")]
+    pub extra: HashMap<String, Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

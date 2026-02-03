@@ -217,7 +217,7 @@ const markdownComponents: Components = {
 	},
 	li({ children }) {
 		return (
-			<li className="text-foreground leading-relaxed marker:text-foreground/70">
+			<li className="text-foreground leading-relaxed marker:text-foreground/70 [&>p]:m-0 [&>p]:inline">
 				{children}
 			</li>
 		);

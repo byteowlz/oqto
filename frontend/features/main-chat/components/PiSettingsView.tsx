@@ -1,6 +1,5 @@
 "use client";
 
-import { SettingsEditor } from "@/components/settings";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -25,6 +24,7 @@ import {
 	type ChatVerbosity,
 	useChatVerbosity,
 } from "@/lib/chat-verbosity";
+import { updateSettingsValues } from "@/lib/api/settings";
 import { fuzzyMatch } from "@/lib/slash-commands";
 import { cn } from "@/lib/utils";
 import { Loader2 } from "lucide-react";
@@ -217,6 +217,19 @@ export function PiSettingsView({
 						modelId,
 					);
 				}
+				// Persist defaults once the user changes the model.
+				const settingsWorkspacePath =
+					scope === "workspace" ? workspacePath ?? undefined : undefined;
+				await updateSettingsValues(
+					"pi-agent",
+					{
+						values: {
+							defaultProvider: provider,
+							defaultModel: modelId,
+						},
+					},
+					settingsWorkspacePath,
+				);
 			} catch (err) {
 				console.error("Failed to switch model:", err);
 			} finally {
@@ -355,27 +368,6 @@ export function PiSettingsView({
 					</p>
 				</div>
 
-				<div className="space-y-2">
-					<div className="text-xs font-medium text-muted-foreground">
-						{locale === "de" ? "Einstellungen" : "Settings"}
-					</div>
-					<SettingsEditor
-						app="pi-agent"
-						title={locale === "de" ? "Pi Einstellungen" : "Pi Settings"}
-						workspacePath={workspacePath ?? undefined}
-					/>
-				</div>
-
-				<div className="space-y-2">
-					<div className="text-xs font-medium text-muted-foreground">
-						{locale === "de" ? "Modelle" : "Models"}
-					</div>
-					<SettingsEditor
-						app="pi-models"
-						title={locale === "de" ? "Pi Modelle" : "Pi Models"}
-						workspacePath={workspacePath ?? undefined}
-					/>
-				</div>
 			</div>
 		</div>
 	);

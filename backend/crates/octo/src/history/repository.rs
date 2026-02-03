@@ -9,7 +9,7 @@ use sqlx::Row;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use tokio::sync::Mutex;
 
-use crate::wordlist;
+use crate::{wordlist, workspace};
 
 use super::models::{
     ChatMessage, ChatMessagePart, ChatSession, MessageInfo, PartInfo, SessionInfo,
@@ -45,6 +45,12 @@ pub fn hstry_db_path() -> Option<PathBuf> {
 pub fn project_name_from_path(path: &str) -> String {
     if path == "global" || path.is_empty() {
         return "Global".to_string();
+    }
+    let path_buf = Path::new(path);
+    if path_buf.is_dir()
+        && let Some(display_name) = workspace::workspace_display_name(path_buf)
+    {
+        return display_name;
     }
     Path::new(path)
         .file_name()
@@ -262,39 +268,109 @@ fn hstry_parts_to_chat_parts(
 ) -> Vec<ChatMessagePart> {
     let mut parts = Vec::new();
 
-    if let Some(parts_json) = parts_json
-        && let Ok(serde_json::Value::Array(values)) = serde_json::from_str(parts_json)
-    {
-        for (idx, value) in values.iter().enumerate() {
-            let serde_json::Value::Object(obj) = value else {
-                continue;
-            };
-            let part_type = obj
-                .get("type")
-                .and_then(|v| v.as_str())
-                .unwrap_or("text")
-                .to_string();
-            let text = match part_type.as_str() {
-                "text" | "thinking" => obj.get("text").and_then(|v| v.as_str()),
-                "status" | "error" => obj
-                    .get("message")
-                    .or_else(|| obj.get("text"))
-                    .and_then(|v| v.as_str()),
-                _ => None,
-            };
-            if let Some(text) = text {
-                parts.push(ChatMessagePart {
-                    id: format!("{message_id}-part-{idx}"),
-                    part_type,
-                    text: Some(text.to_string()),
-                    text_html: None,
-                    tool_name: None,
-                    tool_input: None,
-                    tool_output: None,
-                    tool_status: None,
-                    tool_title: None,
-                });
+    if let Some(parts_json) = parts_json {
+        if let Ok(canon_parts) =
+            serde_json::from_str::<Vec<crate::canon::CanonPart>>(parts_json)
+        {
+            for (idx, part) in canon_parts.into_iter().enumerate() {
+                let id = format!("{message_id}-part-{idx}");
+                match part {
+                    crate::canon::CanonPart::Text { text, .. } => parts.push(ChatMessagePart {
+                        id,
+                        part_type: "text".to_string(),
+                        text: Some(text),
+                        text_html: None,
+                        tool_name: None,
+                        tool_input: None,
+                        tool_output: None,
+                        tool_status: None,
+                        tool_title: None,
+                    }),
+                    crate::canon::CanonPart::Thinking { text, .. } => parts.push(ChatMessagePart {
+                        id,
+                        part_type: "thinking".to_string(),
+                        text: Some(text),
+                        text_html: None,
+                        tool_name: None,
+                        tool_input: None,
+                        tool_output: None,
+                        tool_status: None,
+                        tool_title: None,
+                    }),
+                    crate::canon::CanonPart::ToolCall {
+                        name, input, status, ..
+                    } => parts.push(ChatMessagePart {
+                        id,
+                        part_type: "tool_call".to_string(),
+                        text: None,
+                        text_html: None,
+                        tool_name: Some(name),
+                        tool_input: input,
+                        tool_output: None,
+                        tool_status: Some(match status {
+                            crate::canon::ToolStatus::Pending => "pending".to_string(),
+                            crate::canon::ToolStatus::Running => "running".to_string(),
+                            crate::canon::ToolStatus::Success => "success".to_string(),
+                            crate::canon::ToolStatus::Error => "error".to_string(),
+                        }),
+                        tool_title: None,
+                    }),
+                    crate::canon::CanonPart::ToolResult {
+                        name,
+                        output,
+                        is_error,
+                        title,
+                        ..
+                    } => parts.push(ChatMessagePart {
+                        id,
+                        part_type: "tool_result".to_string(),
+                        text: None,
+                        text_html: None,
+                        tool_name: name,
+                        tool_input: None,
+                        tool_output: output.as_ref().map(|v| v.to_string()),
+                        tool_status: Some(if is_error { "error" } else { "success" }.to_string()),
+                        tool_title: title,
+                    }),
+                    _ => {}
+                }
             }
+            return parts;
+        }
+
+        if let Ok(serde_json::Value::Array(values)) = serde_json::from_str(parts_json) {
+            for (idx, value) in values.iter().enumerate() {
+                let serde_json::Value::Object(obj) = value else {
+                    continue;
+                };
+                let part_type = obj
+                    .get("type")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("text")
+                    .to_string();
+                let text = match part_type.as_str() {
+                    "text" | "thinking" => obj.get("text").and_then(|v| v.as_str()),
+                    "status" | "error" => obj
+                        .get("message")
+                        .or_else(|| obj.get("text"))
+                        .and_then(|v| v.as_str()),
+                    _ => None,
+                };
+                if let Some(text) = text {
+                    parts.push(ChatMessagePart {
+                        id: format!("{message_id}-part-{idx}"),
+                        part_type,
+                        text: Some(text.to_string()),
+                        text_html: None,
+                        tool_name: None,
+                        tool_input: None,
+                        tool_output: None,
+                        tool_status: None,
+                        tool_title: None,
+                    });
+                }
+            }
+            return parts;
         }
     }
 

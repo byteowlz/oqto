@@ -1777,52 +1777,34 @@ impl PiSessionManager {
 
         // Insert messages
         for msg in messages {
-            let content = match &msg.content {
-                serde_json::Value::String(s) => s.clone(),
-                serde_json::Value::Array(arr) => arr
-                    .iter()
-                    .filter_map(|block| {
-                        if let Some(obj) = block.as_object() {
-                            if obj.get("type").and_then(|t| t.as_str()) == Some("text") {
-                                return obj.get("text").and_then(|t| t.as_str()).map(String::from);
-                            }
-                        }
-                        None
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n"),
-                other => other.to_string(),
-            };
-
+            let canon = crate::canon::pi_message_to_canon(msg, session_id);
             let parts_json =
-                serde_json::to_string(&msg.content).unwrap_or_else(|_| "[]".to_string());
-            let model = match (&msg.provider, &msg.model) {
-                (Some(provider), Some(model)) => Some(format!("{}/{}", provider, model)),
-                (None, Some(model)) => Some(model.clone()),
-                _ => None,
-            };
-            let tokens = msg.usage.as_ref().map(|u| (u.input + u.output) as i64);
-            let cost = msg
-                .usage
+                serde_json::to_string(&canon.parts).unwrap_or_else(|_| "[]".to_string());
+            let metadata_json = canon
+                .metadata
                 .as_ref()
-                .and_then(|u| u.cost.as_ref())
-                .map(|c| c.total);
-            let created_at = msg.timestamp.map(|t| (t / 1000) as i64);
+                .and_then(|m| serde_json::to_string(m).ok())
+                .unwrap_or_default();
+            let model = canon.model.as_ref().map(|m| m.full_id());
+            let tokens = canon.tokens.as_ref().map(|t| t.total());
+            let cost = canon.cost_usd;
+            let created_at = Some(canon.created_at / 1000);
 
             let msg_id = uuid::Uuid::new_v4().to_string();
             sqlx::query(
-                "INSERT INTO messages (id, conversation_id, idx, role, content, parts_json, model, tokens, cost_usd, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO messages (id, conversation_id, idx, role, content, parts_json, model, tokens, cost_usd, created_at, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             )
             .bind(&msg_id)
             .bind(&conversation_id)
             .bind(idx)
-            .bind(&msg.role)
-            .bind(&content)
+            .bind(canon.role.to_string())
+            .bind(&canon.content)
             .bind(&parts_json)
             .bind(&model)
             .bind(tokens)
             .bind(cost)
             .bind(created_at)
+            .bind(&metadata_json)
             .execute(&pool)
             .await?;
 

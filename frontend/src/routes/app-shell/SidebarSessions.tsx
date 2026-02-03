@@ -45,6 +45,7 @@ import {
 	X,
 } from "lucide-react";
 import { memo, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { Button } from "@/components/ui/button";
 
 export interface SessionsByProject {
 	key: string;
@@ -88,6 +89,7 @@ export interface SidebarSessionsProps {
 	onPinSession: (sessionId: string) => void;
 	onRenameSession: (sessionId: string) => void;
 	onDeleteSession: (sessionId: string) => void;
+	onBulkDeleteSessions: (sessionIds: string[]) => Promise<string[] | void>;
 	onPinProject: (projectKey: string) => void;
 	onRenameProject: (projectKey: string, currentName: string) => void;
 	onDeleteProject: (projectKey: string, projectName: string) => void;
@@ -125,6 +127,7 @@ export const SidebarSessions = memo(function SidebarSessions({
 	onPinSession,
 	onRenameSession,
 	onDeleteSession,
+	onBulkDeleteSessions,
 	onPinProject,
 	onRenameProject,
 	onDeleteProject,
@@ -262,6 +265,9 @@ export const SidebarSessions = memo(function SidebarSessions({
 				return next;
 			});
 		} else {
+			if (selectedSessionIds.size > 0) {
+				setSelectedSessionIds(new Set());
+			}
 			onSessionClick(sessionId);
 		}
 
@@ -279,12 +285,15 @@ export const SidebarSessions = memo(function SidebarSessions({
 			for (const id of ids) next.add(id);
 			return next;
 		});
-		const results = await Promise.allSettled(
-			ids.map((id) => Promise.resolve(onDeleteSession(id))),
-		);
-		const failed = results
-			.map((result, idx) => (result.status === "rejected" ? ids[idx] : null))
-			.filter((id): id is string => Boolean(id));
+		let failed: string[] = [];
+		try {
+			const result = await onBulkDeleteSessions(ids);
+			if (Array.isArray(result)) {
+				failed = result;
+			}
+		} catch {
+			failed = ids;
+		}
 		if (failed.length > 0) {
 			setHiddenSessionIds((prev) => {
 				const next = new Set(prev);
@@ -528,22 +537,26 @@ export const SidebarSessions = memo(function SidebarSessions({
 									{selectedSessionIds.size}
 								</span>
 								<div className="flex-1 mr-1" />
-								<button
+								<Button
 									type="button"
+									variant="ghost"
+									size="sm"
 									onClick={handleBulkDelete}
-									className="h-6 px-2 text-xs text-destructive hover:text-destructive flex items-center gap-1"
+									className="h-6 px-2 text-xs text-destructive hover:text-destructive"
 								>
-									<Trash2 className="w-3 h-3" />
+									<Trash2 className="w-3 h-3 mr-1" />
 									{locale === "de" ? "Loschen" : "Delete"}
-								</button>
-								<button
+								</Button>
+								<Button
 									type="button"
+									variant="ghost"
+									size="sm"
 									onClick={() => setSelectedSessionIds(new Set())}
-									className="h-6 w-6 p-0 flex items-center justify-center"
+									className="h-6 w-6 p-0"
 									title={locale === "de" ? "Auswahl loschen" : "Clear selection"}
 								>
 									<X className="w-3 h-3" />
-								</button>
+								</Button>
 							</div>
 						)}
 						{filteredSessions.length === 0 && deferredSearch && (

@@ -19,6 +19,7 @@ mod agent_rpc;
 mod agents;
 mod auth;
 mod chat;
+mod feedback;
 mod invites;
 mod misc;
 mod projects;
@@ -40,12 +41,15 @@ pub use chat::{
     get_chat_messages, get_chat_session, list_chat_history, list_chat_history_grouped,
     update_chat_session,
 };
+pub use feedback::create_feedback;
 
 pub(crate) use chat::get_runner_for_user;
 
 // Project handlers and types
 pub use projects::{
-    create_project_from_template, get_project_logo, list_project_templates, list_workspace_dirs,
+    create_project_from_template, get_project_logo, list_project_templates,
+    list_workspace_dirs, list_workspace_locations, set_active_workspace_location,
+    upsert_workspace_location,
 };
 
 // Admin handlers and types

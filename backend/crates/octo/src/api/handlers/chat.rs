@@ -1,6 +1,8 @@
 //! Chat history handlers.
 
+use std::collections::HashMap;
 use std::collections::HashSet;
+use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 
 use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
@@ -8,11 +10,13 @@ use axum::{
     Json,
     extract::{Path, Query, State},
 };
+use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use tracing::{info, instrument, warn};
 
 use crate::auth::CurrentUser;
 use crate::history::{ChatMessage, ChatSession};
+use crate::pi::AgentMessage;
 use crate::wordlist;
 
 use crate::api::error::{ApiError, ApiResult};
@@ -144,6 +148,146 @@ fn parse_main_chat_timestamp(value: &str) -> Option<i64> {
         return Some(Utc.from_utc_datetime(&parsed).timestamp_millis());
     }
     None
+}
+
+async fn update_pi_session_title(
+    state: &AppState,
+    user_id: &str,
+    session_id: &str,
+    title: &str,
+) -> Option<ChatSession> {
+    if let Some(main_chat_pi) = state.main_chat_pi.as_ref() {
+        let sessions = list_main_chat_sessions(state, user_id).await;
+        if sessions.iter().any(|s| s.id == session_id) {
+            if let Ok(updated) = main_chat_pi.update_session_title(user_id, session_id, title).await
+            {
+                if let Some(main_chat) = state.main_chat.as_ref()
+                    && let Ok(info) = main_chat.get_main_chat_info(user_id).await
+                {
+                    let created_at = parse_main_chat_timestamp(&updated.started_at)
+                        .unwrap_or(updated.modified_at);
+                    let source_path = main_chat_pi
+                        .get_session_file_path(user_id, &updated.id)
+                        .await
+                        .map(|path| path.to_string_lossy().to_string());
+                    return Some(ChatSession {
+                        id: updated.id.clone(),
+                        readable_id: updated.readable_id.unwrap_or_else(|| {
+                            wordlist::readable_id_from_session_id(&updated.id)
+                        }),
+                        title: updated.title,
+                        parent_id: updated.parent_id.clone(),
+                        workspace_path: info.path.clone(),
+                        project_name: info.name.clone(),
+                        created_at,
+                        updated_at: updated.modified_at,
+                        version: None,
+                        is_child: updated.parent_id.is_some(),
+                        source_path,
+                    });
+                }
+            }
+        }
+    }
+
+    if let Some(workspace_pi) = state.workspace_pi.as_ref() {
+        let sessions = list_workspace_pi_sessions(state, user_id);
+        if let Some(session) = sessions.iter().find(|s| s.id == session_id) {
+            let work_dir = PathBuf::from(&session.workspace_path);
+            if let Ok(updated) = workspace_pi
+                .update_session_title(user_id, &work_dir, session_id, title)
+                .await
+            {
+                let project_name = crate::history::project_name_from_path(&updated.workspace_path);
+                return Some(ChatSession {
+                    id: updated.id.clone(),
+                    readable_id: wordlist::readable_id_from_session_id(&updated.id),
+                    title: updated.title,
+                    parent_id: updated.parent_id.clone(),
+                    workspace_path: updated.workspace_path,
+                    project_name,
+                    created_at: updated.created_at,
+                    updated_at: updated.updated_at,
+                    version: updated.version,
+                    is_child: updated.parent_id.is_some(),
+                    source_path: updated.source_path,
+                });
+            }
+        }
+    }
+
+    None
+}
+
+fn merge_duplicate_sessions(mut sessions: Vec<ChatSession>) -> Vec<ChatSession> {
+    // Keep newest sessions first so we can prefer the freshest metadata.
+    sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+
+    let mut by_id: HashMap<String, ChatSession> = HashMap::new();
+    let mut by_key: HashMap<(String, String), String> = HashMap::new();
+    let mut by_readable: HashMap<String, String> = HashMap::new();
+
+    for session in sessions {
+        if by_id.contains_key(&session.id) {
+            continue;
+        }
+
+        let readable = if session.readable_id.trim().is_empty() {
+            wordlist::readable_id_from_session_id(&session.id)
+        } else {
+            session.readable_id.clone()
+        };
+        let normalized_workspace = if session.workspace_path.trim().is_empty() {
+            "global".to_string()
+        } else {
+            session.workspace_path.clone()
+        };
+
+        let key = (normalized_workspace.clone(), readable.clone());
+
+        if let Some(existing_id) = by_key.get(&key).cloned() {
+            if let Some(existing) = by_id.get_mut(&existing_id) {
+                if existing.title.is_none() && session.title.is_some() {
+                    existing.title = session.title;
+                }
+                if session.updated_at > existing.updated_at {
+                    existing.updated_at = session.updated_at;
+                }
+            }
+            continue;
+        }
+
+        if let Some(existing_id) = by_readable.get(&readable).cloned() {
+            if let Some(existing) = by_id.get_mut(&existing_id) {
+                let existing_workspace = if existing.workspace_path.trim().is_empty() {
+                    "global".to_string()
+                } else {
+                    existing.workspace_path.clone()
+                };
+                let prefer_candidate =
+                    existing_workspace == "global" && normalized_workspace != "global";
+                if prefer_candidate {
+                    *existing = session;
+                } else {
+                    if existing.title.is_none() && session.title.is_some() {
+                        existing.title = session.title;
+                    }
+                    if session.updated_at > existing.updated_at {
+                        existing.updated_at = session.updated_at;
+                    }
+                }
+            }
+            continue;
+        }
+
+        by_key.insert(key, session.id.clone());
+        by_readable.insert(readable, session.id.clone());
+        by_id.insert(session.id.clone(), session);
+    }
+
+    let mut merged: Vec<ChatSession> = by_id.into_values().collect();
+    merged.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    merged
 }
 
 async fn list_main_chat_sessions(state: &AppState, user_id: &str) -> Vec<ChatSession> {
@@ -300,8 +444,66 @@ pub async fn list_chat_history(
     }
 
     // SECURITY: Only use direct filesystem access in single-user mode
-    if !multi_user
-        && sessions.is_empty()
+    if !multi_user && sessions.is_empty() {
+        sessions = crate::history::list_sessions()
+            .map_err(|e| ApiError::internal(format!("Failed to list chat history: {}", e)))?;
+        if !sessions.is_empty() {
+            source = "jsonl";
+        }
+    }
+
+    let mut pi_sessions = list_workspace_pi_sessions(&state, user.id());
+    pi_sessions.extend(list_main_chat_sessions(&state, user.id()).await);
+
+    let mut hstry_sessions: Vec<ChatSession> = Vec::new();
+    if !multi_user && let Some(db_path) = crate::history::hstry_db_path() {
+        if let Ok(found) = crate::history::list_sessions_from_hstry(&db_path).await {
+            hstry_sessions = found;
+        }
+    }
+
+    if !hstry_sessions.is_empty() || !pi_sessions.is_empty() {
+        let mut by_id: HashMap<String, ChatSession> =
+            sessions.into_iter().map(|s| (s.id.clone(), s)).collect();
+
+        if !hstry_sessions.is_empty() {
+            for session in &hstry_sessions {
+                by_id.insert(session.id.clone(), session.clone());
+            }
+            source = if source == "direct" { "hstry" } else { "mixed" };
+        }
+
+        let mut missing = Vec::new();
+        for session in pi_sessions {
+            if !by_id.contains_key(&session.id) {
+                missing.push(session.clone());
+                by_id.insert(session.id.clone(), session);
+            }
+        }
+
+        if !missing.is_empty() {
+            let state = state.clone();
+            let user_id = user.id().to_string();
+            tokio::spawn(async move {
+                for session in missing {
+                    if let Err(err) =
+                        backfill_pi_session_to_hstry(&state, &user_id, &session).await
+                    {
+                        tracing::warn!(
+                            session_id = %session.id,
+                            error = %err,
+                            "Failed to backfill Pi session to hstry"
+                        );
+                    }
+                }
+            });
+        }
+
+        sessions = by_id.into_values().collect();
+        if source == "direct" {
+            source = if !hstry_sessions.is_empty() { "hstry" } else { "pi" };
+        }
+    } else if !multi_user && sessions.is_empty()
         && let Some(db_path) = crate::history::hstry_db_path()
     {
         match crate::history::list_sessions_from_hstry(&db_path).await {
@@ -318,13 +520,7 @@ pub async fn list_chat_history(
         }
     }
 
-    if !multi_user && sessions.is_empty() {
-        sessions = crate::history::list_sessions()
-            .map_err(|e| ApiError::internal(format!("Failed to list chat history: {}", e)))?;
-    }
-
-    sessions.extend(list_workspace_pi_sessions(&state, user.id()));
-    sessions.extend(list_main_chat_sessions(&state, user.id()).await);
+    sessions = merge_duplicate_sessions(sessions);
 
     let mut seen = HashSet::new();
     sessions.retain(|session| seen.insert(session.id.clone()));
@@ -491,6 +687,18 @@ pub async fn update_chat_session(
             Err(e) => {
                 // SECURITY: In multi-user mode, do NOT fall back
                 if multi_user {
+                    if let Some(ref title) = request.title {
+                        if let Some(pi_session) =
+                            update_pi_session_title(&state, user.id(), &session_id, title).await
+                        {
+                            info!(
+                                session_id = %session_id,
+                                title = %title,
+                                "Updated Pi session title via runner"
+                            );
+                            return Ok(Json(pi_session));
+                        }
+                    }
                     tracing::error!(
                         user_id = %user.id(),
                         session_id = %session_id,
@@ -510,22 +718,247 @@ pub async fn update_chat_session(
 
     // SECURITY: Only use direct access in single-user mode
     if let Some(title) = request.title {
-        let session = crate::history::update_session_title(&session_id, &title).map_err(|e| {
-            if e.to_string().contains("not found") {
-                ApiError::not_found(format!("Chat session {} not found", session_id))
-            } else {
-                ApiError::internal(format!("Failed to update chat session: {}", e))
+        match crate::history::update_session_title(&session_id, &title) {
+            Ok(session) => {
+                info!(session_id = %session_id, title = %title, "Updated chat session title");
+                return Ok(Json(session));
             }
-        })?;
-
-        info!(session_id = %session_id, title = %title, "Updated chat session title");
-        Ok(Json(session))
+            Err(err) if err.to_string().contains("not found") => {
+                if let Some(pi_session) =
+                    update_pi_session_title(&state, user.id(), &session_id, &title).await
+                {
+                    info!(
+                        session_id = %session_id,
+                        title = %title,
+                        "Updated Pi session title"
+                    );
+                    return Ok(Json(pi_session));
+                }
+                return Err(ApiError::not_found(format!(
+                    "Chat session {} not found",
+                    session_id
+                )));
+            }
+            Err(err) => {
+                return Err(ApiError::internal(format!(
+                    "Failed to update chat session: {}",
+                    err
+                )));
+            }
+        }
     } else {
         // No updates requested - just return the current session
         crate::history::get_session(&session_id)
             .map_err(|e| ApiError::internal(format!("Failed to get chat session: {}", e)))?
             .map(Json)
             .ok_or_else(|| ApiError::not_found(format!("Chat session {} not found", session_id)))
+    }
+}
+
+async fn read_pi_jsonl_messages_from_path(path: &PathBuf) -> anyhow::Result<Vec<AgentMessage>> {
+    let file = std::fs::File::open(path).context("opening pi session jsonl")?;
+    let reader = BufReader::new(file);
+    let mut messages = Vec::new();
+
+    for line in reader.lines().map_while(Result::ok) {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let entry: serde_json::Value = match serde_json::from_str(&line) {
+            Ok(value) => value,
+            Err(_) => continue,
+        };
+        if entry.get("type").and_then(|t| t.as_str()) != Some("message") {
+            continue;
+        }
+        if let Some(msg) = entry.get("message") {
+            if let Ok(agent_msg) = serde_json::from_value::<AgentMessage>(msg.clone()) {
+                messages.push(agent_msg);
+            }
+        }
+    }
+
+    Ok(messages)
+}
+
+async fn read_pi_jsonl_messages(
+    state: &AppState,
+    user_id: &str,
+    session: &ChatSession,
+) -> anyhow::Result<Vec<AgentMessage>> {
+    if let Some(ref source_path) = session.source_path {
+        let path = PathBuf::from(source_path);
+        if path.exists() {
+            return read_pi_jsonl_messages_from_path(&path).await;
+        }
+    }
+
+    if let Some(main_chat_pi) = state.main_chat_pi.as_ref() {
+        if let Some(path) = main_chat_pi.get_session_file_path(user_id, &session.id).await {
+            return read_pi_jsonl_messages_from_path(&path).await;
+        }
+    }
+
+    anyhow::bail!("Pi session file not found for {}", session.id)
+}
+
+async fn backfill_pi_session_to_hstry(
+    state: &AppState,
+    user_id: &str,
+    session: &ChatSession,
+) -> anyhow::Result<()> {
+    let Some(hstry) = state.hstry.as_ref() else {
+        return Ok(());
+    };
+    if !hstry.is_connected().await {
+        let _ = hstry.connect().await;
+    }
+
+    let existing = hstry
+        .get_conversation(&session.id, Some(session.workspace_path.clone()))
+        .await?;
+    if existing.is_some() {
+        return Ok(());
+    }
+
+    let messages = read_pi_jsonl_messages(state, user_id, session).await?;
+    if messages.is_empty() {
+        return Ok(());
+    }
+
+    let proto_messages: Vec<_> = messages
+        .iter()
+        .enumerate()
+        .map(|(idx, msg)| {
+            crate::hstry::agent_message_to_proto(msg, idx as i32, &session.id)
+        })
+        .collect();
+
+    let created_at_ms = session.created_at;
+    let updated_at_ms = Some(session.updated_at);
+
+    let (model, provider) = messages
+        .iter()
+        .rev()
+        .find_map(|m| {
+            if m.role == "assistant" {
+                Some((m.model.clone(), m.provider.clone()))
+            } else {
+                None
+            }
+        })
+        .unwrap_or((None, None));
+
+    hstry
+        .write_conversation(
+            &session.id,
+            session.title.clone(),
+            Some(session.workspace_path.clone()),
+            model,
+            provider,
+            proto_messages,
+            created_at_ms,
+            updated_at_ms,
+        )
+        .await?;
+
+    Ok(())
+}
+
+fn canon_parts_to_chat_parts(
+    message_id: &str,
+    parts: &[crate::canon::CanonPart],
+) -> Vec<crate::history::ChatMessagePart> {
+    parts
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, part)| {
+            let id = format!("{message_id}-part-{idx}");
+            match part {
+                crate::canon::CanonPart::Text { text, .. } => Some(crate::history::ChatMessagePart {
+                    id,
+                    part_type: "text".to_string(),
+                    text: Some(text.clone()),
+                    text_html: None,
+                    tool_name: None,
+                    tool_input: None,
+                    tool_output: None,
+                    tool_status: None,
+                    tool_title: None,
+                }),
+                crate::canon::CanonPart::Thinking { text, .. } => {
+                    Some(crate::history::ChatMessagePart {
+                        id,
+                        part_type: "thinking".to_string(),
+                        text: Some(text.clone()),
+                        text_html: None,
+                        tool_name: None,
+                        tool_input: None,
+                        tool_output: None,
+                        tool_status: None,
+                        tool_title: None,
+                    })
+                }
+                crate::canon::CanonPart::ToolCall { name, input, status, .. } => {
+                    Some(crate::history::ChatMessagePart {
+                        id,
+                        part_type: "tool_call".to_string(),
+                        text: None,
+                        text_html: None,
+                        tool_name: Some(name.clone()),
+                        tool_input: input.clone(),
+                        tool_output: None,
+                        tool_status: Some(match status {
+                            crate::canon::ToolStatus::Pending => "pending".to_string(),
+                            crate::canon::ToolStatus::Running => "running".to_string(),
+                            crate::canon::ToolStatus::Success => "success".to_string(),
+                            crate::canon::ToolStatus::Error => "error".to_string(),
+                        }),
+                        tool_title: None,
+                    })
+                }
+                crate::canon::CanonPart::ToolResult {
+                    name,
+                    output,
+                    is_error,
+                    title,
+                    ..
+                } => Some(crate::history::ChatMessagePart {
+                    id,
+                    part_type: "tool_result".to_string(),
+                    text: None,
+                    text_html: None,
+                    tool_name: name.clone(),
+                    tool_input: None,
+                    tool_output: output.as_ref().map(|v| v.to_string()),
+                    tool_status: Some(if *is_error { "error" } else { "success" }.to_string()),
+                    tool_title: title.clone(),
+                }),
+                _ => None,
+            }
+        })
+        .collect()
+}
+
+fn canon_message_to_chat_message(message: crate::canon::CanonMessage) -> ChatMessage {
+    let tokens = message.tokens.as_ref();
+    let message_id = message.id.clone();
+    ChatMessage {
+        id: message_id.clone(),
+        session_id: message.session_id,
+        role: message.role.to_string(),
+        created_at: message.created_at,
+        completed_at: message.completed_at,
+        parent_id: message.parent_id,
+        model_id: message.model.as_ref().map(|m| m.full_id()),
+        provider_id: None,
+        agent: message.agent,
+        summary_title: None,
+        tokens_input: tokens.and_then(|t| t.input),
+        tokens_output: tokens.and_then(|t| t.output),
+        tokens_reasoning: tokens.and_then(|t| t.reasoning),
+        cost: message.cost_usd,
+        parts: canon_parts_to_chat_parts(&message_id, &message.parts),
     }
 }
 
@@ -592,31 +1025,65 @@ pub async fn list_chat_history_grouped(
     }
 
     // SECURITY: Only use direct access in single-user mode
-    if !multi_user
-        && sessions.is_empty()
-        && let Some(db_path) = crate::history::hstry_db_path()
-    {
-        match crate::history::list_sessions_from_hstry(&db_path).await {
-            Ok(found) => {
-                sessions = found;
-                source = "hstry";
-            }
-            Err(err) => {
-                tracing::warn!(
-                    error = %err,
-                    "Failed to list grouped chat history via hstry, falling back to direct access"
-                );
-            }
-        }
-    }
-
     if !multi_user && sessions.is_empty() {
         sessions = crate::history::list_sessions()
             .map_err(|e| ApiError::internal(format!("Failed to list chat history: {}", e)))?;
     }
 
-    sessions.extend(list_workspace_pi_sessions(&state, user.id()));
-    sessions.extend(list_main_chat_sessions(&state, user.id()).await);
+    let mut pi_sessions = list_workspace_pi_sessions(&state, user.id());
+    pi_sessions.extend(list_main_chat_sessions(&state, user.id()).await);
+
+    let mut hstry_sessions: Vec<ChatSession> = Vec::new();
+    if !multi_user && let Some(db_path) = crate::history::hstry_db_path() {
+        if let Ok(found) = crate::history::list_sessions_from_hstry(&db_path).await {
+            hstry_sessions = found;
+        }
+    }
+
+    if !hstry_sessions.is_empty() || !pi_sessions.is_empty() {
+        let mut by_id: HashMap<String, ChatSession> =
+            sessions.into_iter().map(|s| (s.id.clone(), s)).collect();
+
+        if !hstry_sessions.is_empty() {
+            for session in &hstry_sessions {
+                by_id.insert(session.id.clone(), session.clone());
+            }
+            source = if source == "direct" { "hstry" } else { "mixed" };
+        }
+
+        let mut missing = Vec::new();
+        for session in pi_sessions {
+            if !by_id.contains_key(&session.id) {
+                missing.push(session.clone());
+                by_id.insert(session.id.clone(), session);
+            }
+        }
+
+        if !missing.is_empty() {
+            let state = state.clone();
+            let user_id = user.id().to_string();
+            tokio::spawn(async move {
+                for session in missing {
+                    if let Err(err) =
+                        backfill_pi_session_to_hstry(&state, &user_id, &session).await
+                    {
+                        tracing::warn!(
+                            session_id = %session.id,
+                            error = %err,
+                            "Failed to backfill Pi session to hstry"
+                        );
+                    }
+                }
+            });
+        }
+
+        sessions = by_id.into_values().collect();
+        if source == "direct" {
+            source = if !hstry_sessions.is_empty() { "hstry" } else { "pi" };
+        }
+    }
+
+    sessions = merge_duplicate_sessions(sessions);
 
     let mut seen = HashSet::new();
     sessions.retain(|session| seen.insert(session.id.clone()));
@@ -759,6 +1226,55 @@ pub async fn get_chat_messages(
         return Err(ApiError::internal(
             "Chat history service not configured for this user.",
         ));
+    }
+
+    if !multi_user {
+        let mut pi_sessions = list_workspace_pi_sessions(&state, user.id());
+        pi_sessions.extend(list_main_chat_sessions(&state, user.id()).await);
+        if let Some(pi_session) = pi_sessions.into_iter().find(|s| s.id == session_id) {
+            if let Err(err) = backfill_pi_session_to_hstry(&state, user.id(), &pi_session).await {
+                tracing::warn!(
+                    session_id = %session_id,
+                    error = %err,
+                    "Failed to backfill Pi session before fetching messages"
+                );
+            }
+
+            let messages = if query.render {
+                crate::history::get_session_messages_rendered(&session_id).await
+            } else {
+                crate::history::get_session_messages_async(&session_id).await
+            }
+            .map_err(|e| ApiError::internal(format!("Failed to get chat messages: {}", e)))?;
+
+            if !messages.is_empty() {
+                info!(
+                    session_id = %session_id,
+                    count = messages.len(),
+                    render = query.render,
+                    "Listed chat messages from hstry for Pi session"
+                );
+                return Ok(Json(messages));
+            }
+
+            if let Ok(raw_messages) = read_pi_jsonl_messages(&state, user.id(), &pi_session).await
+            {
+                let canon_messages: Vec<_> = raw_messages
+                    .iter()
+                    .map(|msg| crate::canon::pi_message_to_canon(msg, &session_id))
+                    .collect();
+                let messages: Vec<_> = canon_messages
+                    .into_iter()
+                    .map(canon_message_to_chat_message)
+                    .collect();
+                info!(
+                    session_id = %session_id,
+                    count = messages.len(),
+                    "Listed chat messages from Pi JSONL fallback"
+                );
+                return Ok(Json(messages));
+            }
+        }
     }
 
     // SECURITY: Only use direct access in single-user mode

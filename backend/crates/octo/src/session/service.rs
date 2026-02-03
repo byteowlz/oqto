@@ -26,6 +26,7 @@ use crate::wordlist;
 
 use super::models::{CreateSessionRequest, RuntimeMode, Session, SessionStatus};
 use super::repository::SessionRepository;
+use super::workspace_locations::WorkspaceLocationRepository;
 
 /// Prefix used for container names managed by this orchestrator.
 const CONTAINER_NAME_PREFIX: &str = "octo-";
@@ -308,8 +309,12 @@ impl<'a> UserSessionService<'a> {
         self.svc.ensure_user_mmry_pinned(self.user_id).await
     }
 
-    pub fn validate_workspace_path(&self, path: &str) -> Result<std::path::PathBuf> {
-        self.svc.resolve_workspace_path(self.user_id, path)
+    pub async fn validate_workspace_path(&self, path: &str) -> Result<std::path::PathBuf> {
+        self.svc.resolve_workspace_path(self.user_id, path).await
+    }
+
+    pub fn workspace_locations(&self) -> &WorkspaceLocationRepository {
+        &self.svc.workspace_locations
     }
 }
 
@@ -331,6 +336,7 @@ pub struct ContainerStatsReport {
 #[derive(Clone)]
 pub struct SessionService {
     repo: SessionRepository,
+    workspace_locations: WorkspaceLocationRepository,
     /// Container runtime (used when runtime_mode is Container).
     container_runtime: Option<Arc<dyn ContainerRuntimeApi>>,
     /// Runner client for local mode. All local process spawning goes through
@@ -353,14 +359,20 @@ impl SessionService {
         UserSessionService { svc: self, user_id }
     }
 
+    pub fn workspace_locations(&self) -> &WorkspaceLocationRepository {
+        &self.workspace_locations
+    }
+
     /// Create a new session service with container runtime.
     pub fn new(
         repo: SessionRepository,
         runtime: Arc<dyn ContainerRuntimeApi>,
         config: SessionServiceConfig,
     ) -> Self {
+        let workspace_locations = WorkspaceLocationRepository::new(repo.pool().clone());
         Self {
             repo,
+            workspace_locations,
             container_runtime: Some(runtime),
             runner: None,
             local_runtime: None,
@@ -379,8 +391,10 @@ impl SessionService {
         eavs: Arc<dyn EavsApi>,
         config: SessionServiceConfig,
     ) -> Self {
+        let workspace_locations = WorkspaceLocationRepository::new(repo.pool().clone());
         Self {
             repo,
+            workspace_locations,
             container_runtime: Some(runtime),
             runner: None,
             local_runtime: None,
@@ -402,8 +416,10 @@ impl SessionService {
         local_runtime: LocalRuntime,
         config: SessionServiceConfig,
     ) -> Self {
+        let workspace_locations = WorkspaceLocationRepository::new(repo.pool().clone());
         Self {
             repo,
+            workspace_locations,
             container_runtime: None,
             runner: Some(runner),
             local_runtime: Some(Arc::new(local_runtime)),
@@ -423,8 +439,10 @@ impl SessionService {
         eavs: Arc<dyn EavsApi>,
         config: SessionServiceConfig,
     ) -> Self {
+        let workspace_locations = WorkspaceLocationRepository::new(repo.pool().clone());
         Self {
             repo,
+            workspace_locations,
             container_runtime: None,
             runner: Some(runner),
             local_runtime: Some(Arc::new(local_runtime)),
@@ -644,7 +662,11 @@ impl SessionService {
         roots
     }
 
-    fn resolve_workspace_path(&self, user_id: &str, path: &str) -> Result<std::path::PathBuf> {
+    async fn resolve_workspace_path(
+        &self,
+        user_id: &str,
+        path: &str,
+    ) -> Result<std::path::PathBuf> {
         let requested = std::path::PathBuf::from(path);
         let resolved = if requested.is_absolute() {
             requested
@@ -653,6 +675,46 @@ impl SessionService {
         };
 
         if !resolved.exists() {
+            if let Some(location) = self
+                .workspace_locations
+                .get_active_location(user_id, path)
+                .await?
+            {
+                if location.kind != "local" {
+                    anyhow::bail!(
+                        "workspace location is remote; select a local location for {}",
+                        path
+                    );
+                }
+                let location_path = std::path::PathBuf::from(&location.path);
+                if !location_path.exists() {
+                    anyhow::bail!(
+                        "workspace location path does not exist: {}",
+                        location_path.display()
+                    );
+                }
+                let canonical = location_path.canonicalize().with_context(|| {
+                    format!("resolving workspace location {}", location_path.display())
+                })?;
+                return Ok(canonical);
+            }
+
+            if let Some(parent) = resolved.parent()
+                && parent.exists()
+            {
+                let canonical_parent = parent.canonicalize().with_context(|| {
+                    format!("resolving workspace parent {}", parent.display())
+                })?;
+                let allowed_roots = self.allowed_workspace_roots(user_id);
+                if !allowed_roots.iter().any(|root| canonical_parent.starts_with(root)) {
+                    anyhow::bail!(
+                        "workspace path {} is outside allowed roots",
+                        resolved.display()
+                    );
+                }
+                return Ok(resolved);
+            }
+
             anyhow::bail!("workspace path does not exist: {}", resolved.display());
         }
 
@@ -871,7 +933,8 @@ impl SessionService {
 
         // Determine user home path - either provided or create per-user home directory.
         let user_home_path = if let Some(path) = request.workspace_path {
-            self.resolve_workspace_path(user_id, &path)?
+            self.resolve_workspace_path(user_id, &path)
+                .await?
                 .to_string_lossy()
                 .to_string()
         } else {
@@ -3320,14 +3383,19 @@ mod tests {
         let user_id = "test-user";
         let resolved = service
             .resolve_workspace_path(user_id, allowed.to_string_lossy().as_ref())
+            .await
             .unwrap();
         assert_eq!(resolved, allowed.canonicalize().unwrap());
 
-        let relative = service.resolve_workspace_path(user_id, "project").unwrap();
+        let relative = service
+            .resolve_workspace_path(user_id, "project")
+            .await
+            .unwrap();
         assert_eq!(relative, allowed.canonicalize().unwrap());
 
         let err = service
             .resolve_workspace_path(user_id, outside.to_string_lossy().as_ref())
+            .await
             .unwrap_err();
         assert!(err.to_string().contains("outside allowed roots"));
     }

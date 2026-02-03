@@ -552,6 +552,7 @@ async fn handle_opencode_ask(
             .sessions
             .for_user(user.id())
             .validate_workspace_path(path)
+            .await
             .map_err(|e| ApiError::bad_request(format!("Invalid workspace path: {}", e)))?
             .to_string_lossy()
             .to_string()
@@ -564,6 +565,7 @@ async fn handle_opencode_ask(
             .sessions
             .for_user(user.id())
             .validate_workspace_path(&chat_session.workspace_path)
+            .await
             .map_err(|e| ApiError::bad_request(format!("Invalid workspace path: {}", e)))?
             .to_string_lossy()
             .to_string()

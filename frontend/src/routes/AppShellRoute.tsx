@@ -103,6 +103,44 @@ const AppShell = memo(function AppShell() {
 		projectSortAsc: projectActions.projectSortAsc,
 	});
 
+	const handleBulkDeleteSessions = useCallback(
+		async (sessionIds: string[]) => {
+			const failures: string[] = [];
+			await Promise.all(
+				sessionIds.map(async (sessionId) => {
+					const session = chatHistory.find((s) => s.id === sessionId);
+					const workspacePath = session?.workspace_path;
+					const sourcePath = session?.source_path ?? "";
+					const isWorkspacePi =
+						sourcePath.includes("/.pi/agent/sessions") ||
+						sourcePath.endsWith(".jsonl");
+					let baseUrl: string | null = opencodeBaseUrl;
+
+					if (
+						!isWorkspacePi &&
+						workspacePath &&
+						workspacePath !== "global" &&
+						!baseUrl
+					) {
+						baseUrl = await ensureOpencodeRunning(workspacePath);
+					}
+
+					const ok = await deleteChatSession(sessionId, baseUrl ?? undefined);
+					if (!ok) {
+						failures.push(sessionId);
+					}
+				}),
+			);
+			return failures;
+		},
+		[
+			chatHistory,
+			deleteChatSession,
+			ensureOpencodeRunning,
+			opencodeBaseUrl,
+		],
+	);
+
 	const { open: commandPaletteOpen, setOpen: setCommandPaletteOpen } =
 		useCommandPalette();
 
@@ -620,6 +658,7 @@ const AppShell = memo(function AppShell() {
 							sessionDialogs.handleRenameSession(id, chatHistory)
 						}
 						onDeleteSession={sessionDialogs.handleDeleteSession}
+						onBulkDeleteSessions={handleBulkDeleteSessions}
 						onPinProject={sidebarState.togglePinProject}
 						onRenameProject={sessionDialogs.handleRenameProject}
 						onDeleteProject={sessionDialogs.handleDeleteProject}
@@ -734,6 +773,7 @@ const AppShell = memo(function AppShell() {
 										sessionDialogs.handleRenameSession(id, chatHistory)
 									}
 									onDeleteSession={sessionDialogs.handleDeleteSession}
+									onBulkDeleteSessions={handleBulkDeleteSessions}
 									onPinProject={sidebarState.togglePinProject}
 									onRenameProject={sessionDialogs.handleRenameProject}
 									onDeleteProject={sessionDialogs.handleDeleteProject}

@@ -99,7 +99,7 @@ pub async fn new_workspace_session(
     Json(req): Json<WorkspaceQuery>,
 ) -> ApiResult<Json<PiStateResponse>> {
     let svc = get_workspace_pi_service(&state)?;
-    let work_dir = validate_workspace_path(&state, user.id(), &req.workspace_path)?;
+    let work_dir = validate_workspace_path(&state, user.id(), &req.workspace_path).await?;
     let (_session_id, session) = svc
         .start_new_session(user.id(), &work_dir)
         .await
@@ -121,7 +121,7 @@ pub async fn resume_workspace_session(
     Query(query): Query<WorkspaceQuery>,
 ) -> ApiResult<Json<PiStateResponse>> {
     let svc = get_workspace_pi_service(&state)?;
-    let work_dir = validate_workspace_path(&state, user.id(), &query.workspace_path)?;
+    let work_dir = validate_workspace_path(&state, user.id(), &query.workspace_path).await?;
     let pi_state = with_workspace_session_retry(
         svc,
         user.id(),
@@ -143,7 +143,7 @@ pub async fn get_workspace_session_messages(
     Query(query): Query<WorkspaceQuery>,
 ) -> ApiResult<Json<Vec<crate::pi_workspace::PiSessionMessage>>> {
     let svc = get_workspace_pi_service(&state)?;
-    let work_dir = validate_workspace_path(&state, user.id(), &query.workspace_path)?;
+    let work_dir = validate_workspace_path(&state, user.id(), &query.workspace_path).await?;
 
     let multi_user = state.linux_users.is_some();
     if multi_user {
@@ -314,7 +314,7 @@ pub async fn delete_workspace_session(
     Query(query): Query<WorkspaceQuery>,
 ) -> ApiResult<StatusCode> {
     let svc = get_workspace_pi_service(&state)?;
-    let work_dir = validate_workspace_path(&state, user.id(), &query.workspace_path)?;
+    let work_dir = validate_workspace_path(&state, user.id(), &query.workspace_path).await?;
 
     let _ = svc.remove_session(user.id(), &work_dir, &session_id).await;
     match svc
@@ -345,7 +345,7 @@ pub async fn abort_workspace_session(
     Query(query): Query<WorkspaceQuery>,
 ) -> ApiResult<StatusCode> {
     let svc = get_workspace_pi_service(&state)?;
-    let work_dir = validate_workspace_path(&state, user.id(), &query.workspace_path)?;
+    let work_dir = validate_workspace_path(&state, user.id(), &query.workspace_path).await?;
     let session = svc
         .get_session(user.id(), &work_dir, &session_id)
         .await
@@ -370,7 +370,7 @@ pub async fn get_workspace_state(
         .clone()
         .ok_or_else(|| ApiError::bad_request("session_id is required"))?;
     let svc = get_workspace_pi_service(&state)?;
-    let work_dir = validate_workspace_path(&state, user.id(), &query.workspace_path)?;
+    let work_dir = validate_workspace_path(&state, user.id(), &query.workspace_path).await?;
     let pi_state = with_workspace_session_retry(
         svc,
         user.id(),
@@ -395,7 +395,7 @@ pub async fn get_workspace_models(
         .clone()
         .ok_or_else(|| ApiError::bad_request("session_id is required"))?;
     let svc = get_workspace_pi_service(&state)?;
-    let work_dir = validate_workspace_path(&state, user.id(), &query.workspace_path)?;
+    let work_dir = validate_workspace_path(&state, user.id(), &query.workspace_path).await?;
     let models = with_workspace_session_retry(
         svc,
         user.id(),
@@ -431,7 +431,7 @@ pub async fn set_workspace_model(
         .clone()
         .ok_or_else(|| ApiError::bad_request("session_id is required"))?;
     let svc = get_workspace_pi_service(&state)?;
-    let work_dir = validate_workspace_path(&state, user.id(), &query.workspace_path)?;
+    let work_dir = validate_workspace_path(&state, user.id(), &query.workspace_path).await?;
     let provider = req.provider.clone();
     let model_id = req.model_id.clone();
     let pi_state = with_workspace_session_retry(
@@ -466,7 +466,7 @@ pub async fn ws_handler(
         .clone()
         .ok_or_else(|| ApiError::bad_request("session_id is required"))?;
     let svc = get_workspace_pi_service(&state)?;
-    let work_dir = validate_workspace_path(&state, user.id(), &query.workspace_path)?;
+    let work_dir = validate_workspace_path(&state, user.id(), &query.workspace_path).await?;
     let session = get_or_resume_session(svc, user.id(), &work_dir, &session_id).await?;
 
     let user_id = user.id().to_string();

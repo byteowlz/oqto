@@ -2,6 +2,18 @@
 
 ## Open
 
+### [octo-xxe2] Per-workspace hstry/mmry stores + sync scoping (P1, task)
+Ensure each workspace has isolated hstry/mmry stores; sync and cache are workspace-scoped with location_id/actor metadata. No cross-workspace leakage.
+
+### [octo-wdkj] Remote runner bootstrap over SSH (P1, task)
+Implement SSH bootstrap: install deps, download runner binaries, configure sandbox, start service, register with hub. Provide fallback to bundle+push.
+
+### [octo-59py] Workspace locations schema + routing (P1, task)
+Add workspace_locations (workspace_id, runner_id, path, kind, repo_fingerprint, active flag) and route requests by selected location. Default to local if present; prompt on failure.
+
+### [octo-pdb4] Shared workspaces with multi-location runners (P1, epic)
+Support team shared workspaces with per-workspace hstry/mmry, local+remote locations, and explicit agent targeting. Includes runner bootstrap over SSH, workspace location routing, UI grouping/merge-split, and security model for remote execution + history sync.
+
 ### [octo-1ddx] Move global sandbox config to read-only path (P1, task)
 Global sandbox config must be read-only (not user-writable). Implement loading from system path (e.g., /etc/octo/sandbox.toml) with user config for overrides or removal of user-writable global config. Ensure sandbox.toml itself is protected and update docs/install.
 
@@ -15,6 +27,7 @@ Epic for enabling users to connect to multiple runners across different machines
 
 
 ### [octo-3fkc] Use hstry canonical history + Pi export for rehydrate (P1, task)
+Implement canonical Pi history via hstry: persist canonical parts_json + metadata, backfill JSONL into hstry, and serve chat history from hstry with JSONL fallback. Preserve tool_call/tool_result fidelity and add immediate working indicator.
 
 ### [octo-gj7p] Integrate hstry-core for message persistence (P1, feature)
 Replace Octo's canon module with hstry-core types. On message complete, call hstry daemon's gRPC WriteService instead of writing to main_chat.db. Use source_id=pi and Pi session IDs as external_id for deduplication.
@@ -177,7 +190,11 @@ Implementation:
 ### [workspace-5pmk.11] Add backend URL configuration to login form (P1, task)
 Add a 'Server URL' field to the login form allowing users to specify the backend URL. Store in localStorage for persistence. Show connection status indicator. Default to current origin for web, require input for mobile apps.
 
-Extend EAVS config and proxy to support domain allowlist/denylist for network proxy mode. Include config schema updates, enforcement logic, and tests.
+### [octo-d0a5] Agent targeting for remote locations (P2, task)
+Expose workspace+location targets to agent UI and API. Require explicit selection for remote execution; enforce per-location policies and logging.
+
+### [octo-6nhg] Shared workspace UI grouping + merge/split (P2, task)
+Group sessions by team and workspace, show locations nested. Add merge-by-repo default with split toggle; indicate local/remote and active location.
 
 ### [octo-zd43] Collapse consecutive tool calls into tabbed dropdown (P2, task)
 Implement level-2 tool rendering: consecutive tool calls with no intervening text collapse into a single dropdown with icons as tabs; overflow uses horizontal scroll + left/right arrows.
@@ -190,6 +207,12 @@ Add frontend verbosity levels for chat rendering. Level 3 = current verbose tool
 
 ### [octo-jwc4] Unify Pi chats (default + workspace) (P2, epic)
 Make Pi chat the single system of record. Treat 'main' as default scope. Unify endpoints, state handling, settings, and history loading (prefer Pi JSONL; use hstry for cross-harness search). Remove main-specific abstractions where possible.
+
+Progress (2026-02-03):
+- Added Pi session title updates (main + workspace) via JSONL header edits when /chat-history rename is used.
+- Session list de-duplication now merges by (workspace_path, readable_id) with newest metadata winning.
+...
+
 
 ### [octo-wah4] Security: Runner authentication and TLS for network endpoints (P2, task)
 Implement runner authentication and TLS for network endpoints:
@@ -1421,9 +1444,9 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
-- [octo-k8z1.1] Backend: Integrate agent-browser daemon per session (closed )
 - [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
-- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
 - [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
+- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
+- [octo-k8z1.1] Backend: Integrate agent-browser daemon per session (closed )
 - [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
 - [octo-k8z1.2] Backend: WebSocket proxy for screencast stream (closed )

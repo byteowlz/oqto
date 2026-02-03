@@ -90,6 +90,8 @@ export type UsePiChatReturn = {
 	isConnected: boolean;
 	/** Whether currently streaming a response */
 	isStreaming: boolean;
+	/** Whether awaiting the first response event */
+	isAwaitingResponse: boolean;
 	/** Current error if any */
 	error: Error | null;
 	/** Send a message */

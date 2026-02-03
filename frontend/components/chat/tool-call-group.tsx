@@ -121,7 +121,7 @@ export function ToolCallGroup({
 						size="icon"
 						onClick={() => scrollBy(-120)}
 						disabled={!canScrollLeft || disableInteraction}
-						className={cn("h-6 w-6", mode === "bar" && "h-5 w-5")}
+						className={cn("h-5 w-5", mode === "bar" && "h-4 w-4")}
 					>
 						<ChevronLeft className="h-3 w-3" />
 					</Button>
@@ -141,7 +141,7 @@ export function ToolCallGroup({
 						size="icon"
 						onClick={() => scrollBy(120)}
 						disabled={!canScrollRight || disableInteraction}
-						className={cn("h-6 w-6", mode === "bar" && "h-5 w-5")}
+						className={cn("h-5 w-5", mode === "bar" && "h-4 w-4")}
 					>
 						<ChevronRight className="h-3 w-3" />
 					</Button>

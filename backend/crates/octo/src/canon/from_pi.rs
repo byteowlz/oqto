@@ -3,7 +3,7 @@
 //! Pi uses JSONL files with a specific message format. This module converts
 //! Pi's types to the canonical format for unified handling.
 
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use crate::pi::{
     AgentMessage, AssistantMessageEvent, ContentBlock, PiEvent, PiState, SessionStats, TokenUsage,
@@ -46,11 +46,14 @@ pub fn pi_message_to_canon(msg: &AgentMessage, session_id: &str) -> CanonMessage
             .and_then(|u| u.cost.as_ref().map(|c| c.total)),
         parent_id: None,
         agent: Some("pi".to_string()),
-        metadata: None,
+        metadata: Some(json!({
+            "source": "pi",
+            "raw": msg
+        })),
     };
 
     // Convert content to parts
-    convert_content_to_parts(&msg.content, &mut canon);
+    convert_content_to_parts(msg, &mut canon);
 
     canon
 }
@@ -103,8 +106,8 @@ fn pi_token_usage(usage: &Option<TokenUsage>) -> Option<CanonTokenUsage> {
 }
 
 /// Convert Pi content (string or array) to canonical parts.
-fn convert_content_to_parts(content: &Value, msg: &mut CanonMessage) {
-    match content {
+fn convert_content_to_parts(source: &AgentMessage, msg: &mut CanonMessage) {
+    match &source.content {
         Value::String(text) => {
             msg.content = text.clone();
             msg.parts.push(CanonPart::text(text));
@@ -150,6 +153,47 @@ fn convert_content_to_parts(content: &Value, msg: &mut CanonMessage) {
             }
         }
         _ => {}
+    }
+
+    if msg.role == MessageRole::Tool {
+        let tool_call_id = source
+            .tool_call_id
+            .clone()
+            .unwrap_or_else(|| format!("tool_call_{}", uuid::Uuid::new_v4().simple()));
+        let output = source.content.clone();
+        let text_content = extract_text_from_content(&source.content);
+        if !text_content.is_empty() {
+            msg.content = text_content;
+        }
+        msg.parts.push(CanonPart::ToolResult {
+            id: format!("part_{}", uuid::Uuid::new_v4().simple()),
+            tool_call_id,
+            name: source.tool_name.clone(),
+            output: Some(output),
+            is_error: source.is_error.unwrap_or(false),
+            title: None,
+            duration_ms: None,
+            meta: None,
+        });
+    }
+}
+
+fn extract_text_from_content(content: &Value) -> String {
+    match content {
+        Value::String(text) => text.clone(),
+        Value::Array(blocks) => blocks
+            .iter()
+            .filter_map(|block| {
+                if let Some(obj) = block.as_object() {
+                    if obj.get("type").and_then(|t| t.as_str()) == Some("text") {
+                        return obj.get("text").and_then(|t| t.as_str()).map(String::from);
+                    }
+                }
+                None
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n"),
+        other => other.to_string(),
     }
 }
 
@@ -371,11 +415,15 @@ mod tests {
             role: "user".to_string(),
             content: Value::String("Hello, Pi!".to_string()),
             timestamp: Some(1700000000000),
+            tool_call_id: None,
+            tool_name: None,
+            is_error: None,
             api: None,
             provider: None,
             model: None,
             usage: None,
             stop_reason: None,
+            extra: Default::default(),
         };
 
         let canon = pi_message_to_canon(&msg, "ses_123");
@@ -393,6 +441,9 @@ mod tests {
             role: "assistant".to_string(),
             content: Value::String("Hello!".to_string()),
             timestamp: Some(1700000000000),
+            tool_call_id: None,
+            tool_name: None,
+            is_error: None,
             api: Some("anthropic".to_string()),
             provider: Some("anthropic".to_string()),
             model: Some("claude-3-5-sonnet".to_string()),
@@ -404,6 +455,7 @@ mod tests {
                 cost: None,
             }),
             stop_reason: Some("stop".to_string()),
+            extra: Default::default(),
         };
 
         let canon = pi_message_to_canon(&msg, "ses_123");

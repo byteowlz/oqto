@@ -67,6 +67,7 @@ export interface MobileMenuProps {
 	onPinSession: (sessionId: string) => void;
 	onRenameSession: (sessionId: string) => void;
 	onDeleteSession: (sessionId: string) => void;
+	onBulkDeleteSessions: (sessionIds: string[]) => Promise<string[] | void>;
 	onPinProject: (projectKey: string) => void;
 	onRenameProject: (projectKey: string, currentName: string) => void;
 	onDeleteProject: (projectKey: string, projectName: string) => void;
@@ -115,6 +116,7 @@ export const MobileMenu = memo(function MobileMenu({
 	onPinSession,
 	onRenameSession,
 	onDeleteSession,
+	onBulkDeleteSessions,
 	onPinProject,
 	onRenameProject,
 	onDeleteProject,
@@ -189,6 +191,7 @@ export const MobileMenu = memo(function MobileMenu({
 						onPinSession={onPinSession}
 						onRenameSession={onRenameSession}
 						onDeleteSession={onDeleteSession}
+						onBulkDeleteSessions={onBulkDeleteSessions}
 						onPinProject={onPinProject}
 						onRenameProject={onRenameProject}
 						onDeleteProject={onDeleteProject}

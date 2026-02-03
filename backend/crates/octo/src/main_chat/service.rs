@@ -22,6 +22,8 @@ pub struct MainChatTemplates {
     pub personality: Option<String>,
     /// ONBOARD.md content.
     pub onboard: Option<String>,
+    /// BOOTSTRAP.md content.
+    pub bootstrap: Option<String>,
     /// USER.md content.
     pub user: Option<String>,
 }
@@ -197,6 +199,15 @@ impl MainChatService {
         std::fs::write(&onboard_path, onboard_template)
             .with_context(|| format!("writing ONBOARD.md: {}", onboard_path.display()))?;
 
+        // Create BOOTSTRAP.md from template (first-run instructions)
+        let bootstrap_template = templates
+            .and_then(|t| t.bootstrap.as_ref())
+            .map(|s| s.as_str())
+            .unwrap_or(include_str!("templates/BOOTSTRAP.md"));
+        let bootstrap_path = main_chat_dir.join("BOOTSTRAP.md");
+        std::fs::write(&bootstrap_path, bootstrap_template)
+            .with_context(|| format!("writing BOOTSTRAP.md: {}", bootstrap_path.display()))?;
+
         // Create USER.md from template
         let user_template = templates
             .and_then(|t| t.user.as_ref())
@@ -246,6 +257,15 @@ impl MainChatService {
         let plugin_path = plugin_dir.join("main-chat.ts");
         std::fs::write(&plugin_path, plugin_content)
             .with_context(|| format!("writing plugin: {}", plugin_path.display()))?;
+
+        // Create .octo directory and workspace metadata
+        let workspace_meta = crate::workspace::WorkspaceMeta {
+            display_name: Some("Main".to_string()),
+            language: Some("en".to_string()),
+            pinned: Some(true),
+            bootstrap_pending: Some(true),
+        };
+        crate::workspace::write_workspace_meta(&main_chat_dir, &workspace_meta)?;
 
         Ok(())
     }
@@ -374,6 +394,11 @@ mod tests {
         assert!(main_chat_dir.join("opencode.json").exists());
         assert!(main_chat_dir.join("AGENTS.md").exists());
         assert!(main_chat_dir.join("ONBOARD.md").exists());
+        assert!(main_chat_dir.join("BOOTSTRAP.md").exists());
+        assert!(
+            crate::workspace::workspace_meta_path(&main_chat_dir).exists(),
+            "workspace.toml should be created"
+        );
 
         // Check main chat exists
         assert!(service.main_chat_exists("user123"));

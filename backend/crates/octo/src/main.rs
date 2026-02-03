@@ -25,6 +25,7 @@ mod canon;
 mod container;
 mod db;
 mod eavs;
+mod feedback;
 mod history;
 mod hstry;
 mod invite;
@@ -44,6 +45,7 @@ mod templates;
 mod user;
 mod user_plane;
 mod wordlist;
+mod workspace;
 mod ws;
 
 const APP_NAME: &str = "octo";
@@ -495,6 +497,8 @@ struct AppConfig {
     sldr: SldrConfig,
     /// hstry (chat history) configuration.
     hstry: HstryConfig,
+    /// Feedback collection configuration.
+    feedback: feedback::FeedbackConfig,
 }
 
 /// Server configuration.
@@ -604,6 +608,7 @@ impl Default for AppConfig {
             server: ServerConfig::default(),
             onboarding_templates: templates::OnboardingTemplatesConfig::default(),
             hstry: HstryConfig::default(),
+            feedback: feedback::FeedbackConfig::default(),
         }
     }
 }
@@ -2253,6 +2258,16 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
             max_proxy_body_bytes,
         )
     };
+    state = state.with_feedback_config(ctx.config.feedback.clone());
+
+    if let Err(err) = feedback::ensure_feedback_dirs(&ctx.config.feedback) {
+        warn!("Failed to initialize feedback directories: {}", err);
+    } else {
+        let feedback_config = ctx.config.feedback.clone();
+        tokio::spawn(async move {
+            feedback::sync_feedback_loop(feedback_config).await;
+        });
+    }
 
     // Add settings services to state
     state = state.with_settings_octo(settings_octo);

@@ -66,9 +66,18 @@ pub fn create_router_with_config(state: AppState, max_upload_size_mb: usize) -> 
         .route("/projects", get(handlers::list_workspace_dirs))
         .route("/projects/logo/{*path}", get(handlers::get_project_logo))
         .route(
+            "/projects/locations",
+            get(handlers::list_workspace_locations).post(handlers::upsert_workspace_location),
+        )
+        .route(
+            "/projects/locations/active",
+            post(handlers::set_active_workspace_location),
+        )
+        .route(
             "/projects/templates",
             get(handlers::list_project_templates).post(handlers::create_project_from_template),
         )
+        .route("/feedback", post(handlers::create_feedback))
         // Session management
         .route("/sessions", get(handlers::list_sessions))
         .route("/sessions", post(handlers::create_session))

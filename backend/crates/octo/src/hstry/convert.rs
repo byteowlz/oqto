@@ -4,6 +4,7 @@ use hstry_core::service::proto::Message as ProtoMessage;
 use serde::Serialize;
 
 use crate::pi::AgentMessage;
+use crate::canon::{CanonMessage, ModelInfo, pi_message_to_canon};
 
 /// Serializable message for WebSocket responses.
 #[derive(Debug, Clone, Serialize)]
@@ -49,65 +50,34 @@ pub fn proto_messages_to_serializable(messages: Vec<ProtoMessage>) -> Vec<Serial
         .collect()
 }
 
-/// Convert a Pi AgentMessage to hstry proto Message.
-///
-/// This is used when persisting the full conversation from Pi's AgentEnd event
-/// to the hstry daemon.
-pub fn agent_message_to_proto(msg: &AgentMessage, idx: i32) -> ProtoMessage {
-    // Flatten content to string
-    let content = match &msg.content {
-        serde_json::Value::String(s) => s.clone(),
-        serde_json::Value::Array(arr) => {
-            // Content blocks array - extract text parts
-            arr.iter()
-                .filter_map(|block| {
-                    if let Some(obj) = block.as_object() {
-                        if obj.get("type").and_then(|t| t.as_str()) == Some("text") {
-                            return obj.get("text").and_then(|t| t.as_str()).map(String::from);
-                        }
-                    }
-                    None
-                })
-                .collect::<Vec<_>>()
-                .join("\n")
-        }
-        other => other.to_string(),
-    };
-
-    // Store the original content structure in parts_json
-    let parts_json = serde_json::to_string(&msg.content).unwrap_or_else(|_| "[]".to_string());
-
-    // Extract tokens from usage
-    let tokens = msg.usage.as_ref().map(|u| (u.input + u.output) as i64);
-
-    // Extract cost from usage
-    let cost_usd = msg
-        .usage
+/// Convert a canonical message to hstry proto Message.
+pub fn canon_message_to_proto(msg: &CanonMessage, idx: i32) -> ProtoMessage {
+    let model = msg.model.as_ref().map(ModelInfo::full_id);
+    let tokens = msg.tokens.as_ref().map(|t| t.total());
+    let parts_json = serde_json::to_string(&msg.parts).unwrap_or_else(|_| "[]".to_string());
+    let metadata_json = msg
+        .metadata
         .as_ref()
-        .and_then(|u| u.cost.as_ref())
-        .map(|c| c.total);
-
-    // Build model string
-    let model = match (&msg.provider, &msg.model) {
-        (Some(provider), Some(model)) => Some(format!("{}/{}", provider, model)),
-        (None, Some(model)) => Some(model.clone()),
-        _ => None,
-    };
-
-    // Convert timestamp (milliseconds since epoch)
-    let created_at_ms = msg.timestamp.map(|t| t as i64);
+        .and_then(|m| serde_json::to_string(m).ok())
+        .unwrap_or_default();
 
     ProtoMessage {
         idx,
-        role: msg.role.clone(),
-        content,
+        role: msg.role.to_string(),
+        content: msg.content.clone(),
         parts_json,
-        created_at_ms,
+        created_at_ms: Some(msg.created_at),
         model,
         tokens,
-        cost_usd,
-        metadata_json: String::new(),
+        cost_usd: msg.cost_usd,
+        metadata_json,
     }
+}
+
+/// Convert a Pi AgentMessage to hstry proto Message using canonical conversion.
+pub fn agent_message_to_proto(msg: &AgentMessage, idx: i32, session_id: &str) -> ProtoMessage {
+    let canon = pi_message_to_canon(msg, session_id);
+    canon_message_to_proto(&canon, idx)
 }
 
 #[cfg(test)]
@@ -120,14 +90,18 @@ mod tests {
             role: "user".to_string(),
             content: serde_json::Value::String("Hello".to_string()),
             timestamp: Some(1700000000000),
+            tool_call_id: None,
+            tool_name: None,
+            is_error: None,
             api: None,
             provider: None,
             model: None,
             usage: None,
             stop_reason: None,
+            extra: Default::default(),
         };
 
-        let proto = agent_message_to_proto(&msg, 0);
+        let proto = agent_message_to_proto(&msg, 0, "ses_test");
 
         assert_eq!(proto.idx, 0);
         assert_eq!(proto.role, "user");
@@ -144,14 +118,18 @@ mod tests {
                 {"type": "text", "text": "Line 2"}
             ]),
             timestamp: None,
+            tool_call_id: None,
+            tool_name: None,
+            is_error: None,
             api: None,
             provider: Some("anthropic".to_string()),
             model: Some("claude-3-5-sonnet".to_string()),
             usage: None,
             stop_reason: None,
+            extra: Default::default(),
         };
 
-        let proto = agent_message_to_proto(&msg, 1);
+        let proto = agent_message_to_proto(&msg, 1, "ses_test");
 
         assert_eq!(proto.idx, 1);
         assert_eq!(proto.role, "assistant");

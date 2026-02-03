@@ -213,6 +213,7 @@ export function MainChatPiView({
 		messages,
 		isConnected,
 		isStreaming,
+		isAwaitingResponse,
 		error,
 		send,
 		abort,
@@ -1246,7 +1247,12 @@ export function MainChatPiView({
 					{showSkeleton && ChatSkeleton}
 
 					{!showSkeleton && messages.length === 0 && (
-						<div className="text-sm text-muted-foreground">{t.noMessages}</div>
+						<div className="flex items-center gap-2 text-sm text-muted-foreground">
+							{(isStreaming || isAwaitingResponse) && <BrailleSpinner />}
+							<span>
+								{isStreaming || isAwaitingResponse ? t.agentWorking : t.noMessages}
+							</span>
+						</div>
 					)}
 
 					{/* Load more indicator */}
@@ -1261,7 +1267,29 @@ export function MainChatPiView({
 						(() => {
 							const visibleMessages = messages.slice(-visibleCount);
 							const grouped = groupPiMessages(visibleMessages);
-							return grouped.map((group, groupIndex) => {
+							const lastGroup = grouped[grouped.length - 1];
+							const needsPendingAssistant =
+								(isStreaming || isAwaitingResponse) &&
+								(!lastGroup || lastGroup.role === "user");
+							const groupsToRender = needsPendingAssistant
+								? [
+										...grouped,
+										{
+											role: "assistant" as const,
+											messages: [
+												{
+													id: "pending-assistant",
+													role: "assistant" as const,
+													parts: [],
+													timestamp: Date.now(),
+													isStreaming: true,
+												},
+											],
+										},
+									]
+								: grouped;
+
+							return groupsToRender.map((group, groupIndex) => {
 								const groupSurfaces = group.messages.flatMap(
 									(m) => surfacesByMessageId.get(m.id) ?? [],
 								);
@@ -1269,7 +1297,7 @@ export function MainChatPiView({
 								// Check if this is the last assistant group
 								const isLastAssistantGroup =
 									group.role === "assistant" &&
-									!grouped
+									!groupsToRender
 										.slice(groupIndex + 1)
 										.some((g) => g.role === "assistant");
 								return (
@@ -1277,17 +1305,20 @@ export function MainChatPiView({
 										key={groupMessageId ?? `${group.role}-${groupIndex}`}
 										className={groupIndex > 0 ? "mt-4 sm:mt-6" : ""}
 									>
-										<PiMessageGroupCard
-											group={group}
-											assistantName={assistantName}
-											readableId={readableId}
-											workspacePath={workspacePath}
-											locale={locale}
-											a2uiSurfaces={groupSurfaces}
-											onA2UIAction={handleA2UIAction}
-											messageId={groupMessageId}
-											showWorkingIndicator={isStreaming && isLastAssistantGroup}
-										/>
+											<PiMessageGroupCard
+												group={group}
+												assistantName={assistantName}
+												readableId={readableId}
+												workspacePath={workspacePath}
+												locale={locale}
+												a2uiSurfaces={groupSurfaces}
+												onA2UIAction={handleA2UIAction}
+												messageId={groupMessageId}
+												showWorkingIndicator={
+													(isStreaming || isAwaitingResponse) &&
+													isLastAssistantGroup
+												}
+											/>
 									</div>
 								);
 							});
@@ -1566,6 +1597,13 @@ export function MainChatPiView({
 							/>
 						)}
 					</div>
+
+					{(isStreaming || isAwaitingResponse) && (
+						<div className="flex items-center gap-2 text-xs text-muted-foreground">
+							<BrailleSpinner />
+							<span>{t.agentWorking}</span>
+						</div>
+					)}
 
 					{/* Stop button - only shown when streaming */}
 					{isStreaming && (

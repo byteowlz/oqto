@@ -25,6 +25,7 @@ use anyhow::{Context, Result};
 use base64::Engine;
 use chrono::{TimeZone, Utc};
 use log::{debug, info, warn};
+use rand::Rng;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sqlx::Row;
@@ -43,10 +44,23 @@ use crate::pi::{
     SessionStats,
 };
 use crate::runner::client::RunnerClient;
+use crate::workspace;
 
 /// Session freshness thresholds
 const SESSION_MAX_AGE_HOURS: u64 = 4;
 const SESSION_MAX_SIZE_BYTES: u64 = 500 * 1024; // 500KB
+
+const BOOTSTRAP_MESSAGES_EN: &[&str] = &[
+    "Hello, I'm your new assistant. What would you like to call me, and should we continue in English or German?",
+    "Hi! I'm your new assistant. What name should I use for myself? Also, do you prefer English or German?",
+    "Welcome. I'm your new assistant. Please tell me the name you'd like me to use and whether you want English or German.",
+];
+
+const BOOTSTRAP_MESSAGES_DE: &[&str] = &[
+    "Hallo, ich bin dein neuer Assistent. Wie soll ich heißen, und bevorzugst du Deutsch oder Englisch?",
+    "Hi! Ich bin dein neuer Assistent. Welchen Namen soll ich für mich verwenden? Und möchtest du Deutsch oder Englisch?",
+    "Willkommen. Ich bin dein neuer Assistent. Bitte sag mir, wie ich heißen soll und ob du Deutsch oder Englisch möchtest.",
+];
 
 /// Pi runtime mode determines how Pi processes are spawned and isolated.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -644,13 +658,20 @@ impl MainChatPiService {
         session_id: &str,
     ) -> Result<()> {
         let sessions_dir = self.get_pi_sessions_dir(user_id, work_dir);
+        let bootstrap_jsonl = self
+            .build_bootstrap_session_jsonl(user_id, work_dir, &sessions_dir, session_id)
+            .await?;
         let header = json!({
             "type": "session",
             "id": session_id,
             "timestamp": Utc::now().to_rfc3339(),
             "cwd": work_dir.to_string_lossy(),
         });
-        let content = format!("{}\n", serde_json::to_string(&header)?);
+        let content = if let Some(jsonl) = bootstrap_jsonl {
+            jsonl
+        } else {
+            format!("{}\n", serde_json::to_string(&header)?)
+        };
 
         if let Some(client) = self.runner_client_for_user(user_id) {
             let listing = client.list_directory(&sessions_dir, false).await;
@@ -693,6 +714,111 @@ impl MainChatPiService {
         let path = sessions_dir.join(filename);
         std::fs::write(&path, content).context("writing session file")?;
         Ok(())
+    }
+
+    async fn build_bootstrap_session_jsonl(
+        &self,
+        user_id: &str,
+        work_dir: &Path,
+        sessions_dir: &Path,
+        session_id: &str,
+    ) -> Result<Option<String>> {
+        if !self.bootstrap_file_exists(user_id, work_dir).await {
+            return Ok(None);
+        }
+        if self.sessions_dir_has_jsonl(user_id, sessions_dir).await {
+            return Ok(None);
+        }
+        if let Some(meta) = self.load_workspace_meta_for_user(user_id, work_dir).await {
+            if meta.bootstrap_pending == Some(false) {
+                return Ok(None);
+            }
+        }
+
+        let language = self.bootstrap_language(user_id, work_dir).await;
+        let message = Self::pick_bootstrap_message(&language);
+        let content = json!([{ "type": "text", "text": message }]);
+        let now_ms = Utc::now().timestamp_millis();
+        let jsonl = Self::build_pi_session_jsonl(
+            session_id,
+            &work_dir.to_string_lossy(),
+            now_ms,
+            None,
+            None,
+            vec![("assistant".to_string(), content, now_ms)],
+        );
+        Ok(Some(jsonl))
+    }
+
+    async fn load_workspace_meta_for_user(
+        &self,
+        user_id: &str,
+        work_dir: &Path,
+    ) -> Option<workspace::WorkspaceMeta> {
+        let meta_path = workspace::workspace_meta_path(work_dir);
+
+        if let Some(client) = self.runner_client_for_user(user_id) {
+            let content = client
+                .read_file(meta_path.clone(), None, None)
+                .await
+                .ok()?;
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(content.content_base64)
+                .ok()?;
+            let text = String::from_utf8(bytes).ok()?;
+            return workspace::parse_workspace_meta(&text);
+        }
+
+        workspace::load_workspace_meta(work_dir)
+    }
+
+    async fn bootstrap_file_exists(&self, user_id: &str, work_dir: &Path) -> bool {
+        let path = work_dir.join("BOOTSTRAP.md");
+        if let Some(client) = self.runner_client_for_user(user_id) {
+            return client.stat(path).await.is_ok();
+        }
+        path.exists()
+    }
+
+    async fn sessions_dir_has_jsonl(&self, user_id: &str, sessions_dir: &Path) -> bool {
+        if let Some(client) = self.runner_client_for_user(user_id) {
+            if let Ok(listing) = client.list_directory(sessions_dir, false).await {
+                return listing.entries.iter().any(|entry| entry.name.ends_with(".jsonl"));
+            }
+            return false;
+        }
+
+        let Ok(entries) = std::fs::read_dir(sessions_dir) else {
+            return false;
+        };
+        entries
+            .filter_map(Result::ok)
+            .any(|entry| entry.path().extension().map(|e| e == "jsonl").unwrap_or(false))
+    }
+
+    async fn bootstrap_language(&self, user_id: &str, work_dir: &Path) -> String {
+        let lang = self
+            .load_workspace_meta_for_user(user_id, work_dir)
+            .await
+            .and_then(|meta| meta.language)
+            .unwrap_or_else(|| "en".to_string());
+        let lower = lang.trim().to_lowercase();
+        if lower.starts_with("de") {
+            "de".to_string()
+        } else {
+            "en".to_string()
+        }
+    }
+
+    fn pick_bootstrap_message(language: &str) -> &'static str {
+        let messages = if language == "de" {
+            BOOTSTRAP_MESSAGES_DE
+        } else {
+            BOOTSTRAP_MESSAGES_EN
+        };
+        let mut rng = rand::rng();
+        let idx = rng.random_range(0..messages.len());
+        messages[idx]
     }
 
     fn map_pi_role(role: &str) -> &str {
@@ -1934,6 +2060,10 @@ impl MainChatPiService {
 
         // Build system prompt files
         let mut append_system_prompt = Vec::new();
+        let bootstrap_file = work_dir.join("BOOTSTRAP.md");
+        if bootstrap_file.exists() {
+            append_system_prompt.push(bootstrap_file);
+        }
         let onboard_file = work_dir.join("ONBOARD.md");
         if onboard_file.exists() {
             append_system_prompt.push(onboard_file);
@@ -2624,11 +2754,15 @@ mod tests {
             role: "assistant".to_string(),
             content: Value::Null,
             timestamp: None,
+            tool_call_id: None,
+            tool_name: None,
+            is_error: None,
             api: None,
             provider: None,
             model: None,
             usage: None,
             stop_reason: None,
+            extra: Default::default(),
         }
     }
 

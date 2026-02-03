@@ -685,18 +685,12 @@ impl WorkspacePiService {
         Ok(true)
     }
 
-    fn parse_session_file(&self, path: &Path) -> Option<WorkspacePiSessionSummary> {
-        use std::io::{BufRead, BufReader};
-
-        let file = std::fs::File::open(path).ok()?;
-        let metadata = file.metadata().ok()?;
-        let modified = metadata.modified().ok()?;
-        let modified_ms = modified
-            .duration_since(std::time::UNIX_EPOCH)
-            .ok()?
-            .as_millis() as i64;
-
-        let mut reader = BufReader::new(file);
+    fn parse_session_reader<R: std::io::BufRead>(
+        &self,
+        mut reader: R,
+        modified_ms: i64,
+        source_path: Option<String>,
+    ) -> Option<WorkspacePiSessionSummary> {
         let mut first_line = String::new();
         reader.read_line(&mut first_line).ok()?;
         if first_line.trim().is_empty() {
@@ -773,8 +767,23 @@ impl WorkspacePiService {
             created_at,
             updated_at: modified_ms,
             version,
-            source_path: Some(path.to_string_lossy().to_string()),
+            source_path,
         })
+    }
+
+    fn parse_session_file(&self, path: &Path) -> Option<WorkspacePiSessionSummary> {
+        use std::io::BufReader;
+
+        let file = std::fs::File::open(path).ok()?;
+        let metadata = file.metadata().ok()?;
+        let modified = metadata.modified().ok()?;
+        let modified_ms = modified
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()?
+            .as_millis() as i64;
+
+        let reader = BufReader::new(file);
+        self.parse_session_reader(reader, modified_ms, Some(path.to_string_lossy().to_string()))
     }
 
     fn read_parent_session_id(path: &str) -> Option<String> {
@@ -1101,5 +1110,92 @@ impl WorkspacePiService {
 
         sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
         Ok(sessions)
+    }
+
+    /// Update a workspace Pi session title by editing the JSONL header.
+    pub async fn update_session_title(
+        &self,
+        user_id: &str,
+        work_dir: &Path,
+        session_id: &str,
+        title: &str,
+    ) -> Result<WorkspacePiSessionSummary> {
+        use std::io::{BufRead, BufReader};
+
+        let sessions_dir = self.get_pi_sessions_dir(user_id, work_dir);
+        let title = title.trim();
+        if title.is_empty() {
+            anyhow::bail!("Title cannot be empty");
+        }
+
+        if let Some(client) = self.runner_client_for_user(user_id) {
+            let listing = client
+                .list_directory(&sessions_dir, false)
+                .await
+                .context("listing session directory via runner")?;
+            let entry = listing
+                .entries
+                .iter()
+                .find(|entry| {
+                    !entry.is_dir
+                        && entry.name.ends_with(".jsonl")
+                        && entry.name.contains(session_id)
+                })
+                .ok_or_else(|| anyhow::anyhow!("Session not found: {}", session_id))?;
+            let session_path = sessions_dir.join(&entry.name);
+
+            let content = client
+                .read_file(&session_path, None, None)
+                .await
+                .context("reading session file via runner")?;
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(content.content_base64)
+                .context("decoding session file base64")?;
+            let reader = BufReader::new(std::io::Cursor::new(bytes));
+            let mut lines: Vec<String> = reader.lines().collect::<std::io::Result<_>>()?;
+            if lines.is_empty() {
+                anyhow::bail!("Session file is empty");
+            }
+
+            let mut header: Value =
+                serde_json::from_str(&lines[0]).context("parsing session header")?;
+            if header.get("type").and_then(|t| t.as_str()) != Some("session") {
+                anyhow::bail!("Invalid session file: missing session header");
+            }
+            header["title"] = Value::String(title.to_string());
+            lines[0] = serde_json::to_string(&header)?;
+            let updated_text = lines.join("\n") + "\n";
+            client
+                .write_file(&session_path, updated_text.as_bytes(), false)
+                .await
+                .context("writing session file via runner")?;
+
+            let modified_ms = Utc::now().timestamp_millis();
+            let reader = BufReader::new(std::io::Cursor::new(updated_text.into_bytes()));
+            return self
+                .parse_session_reader(reader, modified_ms, None)
+                .ok_or_else(|| anyhow::anyhow!("Failed to parse updated session"));
+        }
+
+        let session_path = self.find_session_file(&sessions_dir, session_id)?;
+        let file = std::fs::File::open(&session_path).context("opening session file")?;
+        let reader = BufReader::new(file);
+        let mut lines: Vec<String> = reader.lines().collect::<std::io::Result<_>>()?;
+        if lines.is_empty() {
+            anyhow::bail!("Session file is empty");
+        }
+
+        let mut header: Value =
+            serde_json::from_str(&lines[0]).context("parsing session header")?;
+        if header.get("type").and_then(|t| t.as_str()) != Some("session") {
+            anyhow::bail!("Invalid session file: missing session header");
+        }
+        header["title"] = Value::String(title.to_string());
+        lines[0] = serde_json::to_string(&header)?;
+        let updated_text = lines.join("\n") + "\n";
+        std::fs::write(&session_path, updated_text).context("writing session file")?;
+
+        self.parse_session_file(&session_path)
+            .ok_or_else(|| anyhow::anyhow!("Failed to parse updated session"))
     }
 }

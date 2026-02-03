@@ -1188,7 +1188,13 @@ pub(crate) async fn handle_ws(
                         let proto_messages: Vec<_> = messages
                             .iter()
                             .enumerate()
-                            .map(|(idx, msg)| crate::hstry::agent_message_to_proto(msg, idx as i32))
+                            .map(|(idx, msg)| {
+                                crate::hstry::agent_message_to_proto(
+                                    msg,
+                                    idx as i32,
+                                    session_id,
+                                )
+                            })
                             .collect();
 
                         // Get timestamp from first/last message or use current time

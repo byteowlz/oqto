@@ -493,7 +493,7 @@ function TabButton({
 				<span className="hidden sm:inline ml-1 text-xs">{label}</span>
 			)}
 			{badge !== undefined && badge > 0 && (
-				<span className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-pink-500 text-white text-[9px] rounded-full flex items-center justify-center">
+				<span className="absolute -top-0.5 -right-0.5 w-4 h-4 bg-pink-500 text-white text-[10px] rounded-full flex items-center justify-center border-2 border-background">
 					{badge}
 				</span>
 			)}
@@ -531,7 +531,7 @@ function CollapsedTabButton({
 		>
 			<Icon className="w-4 h-4" />
 			{badge !== undefined && badge > 0 && (
-				<span className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-pink-500 text-white text-[9px] rounded-full flex items-center justify-center">
+				<span className="absolute -top-0.5 -right-0.5 w-4 h-4 bg-pink-500 text-white text-[10px] rounded-full flex items-center justify-center border-2 border-background">
 					{badge}
 				</span>
 			)}
@@ -5181,7 +5181,7 @@ export const SessionScreen = memo(function SessionScreen() {
 
 	// Clean up session title - remove ISO timestamp suffix if present (e.g., "New session - 2025-12-18T07:46:58.478Z")
 	const cleanSessionTitle = (() => {
-		const title = selectedChatSession?.title;
+		const title = selectedChatSession?.title ?? selectedChatFromHistory?.title;
 		if (!title) return null;
 		// Remove " - YYYY-MM-DDTHH:MM:SS.sssZ" pattern from the end
 		return (

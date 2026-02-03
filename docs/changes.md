@@ -12,6 +12,7 @@
 - 2026-02-02: Send Main Chat Pi messages with prompt mode by default for the primary send action.
 - 2026-02-02: Prevent multiplexed WS reconnect loops by disabling unused pong timeouts and skipping duplicate session resubscribe sends.
 - 2026-02-02: Queue Pi messages until session_created arrives and scope Main Chat drafts per session to stop cross-chat input bleed.
+- 2026-02-03: Allow hyphens in octo_* sudoers regex patterns so linux user creation succeeds for generated user IDs.
 - 2026-01-31: Use per-user Linux home directories when resolving Pi session files in main chat and workspace services to restore persistence under runner sandboxing.
 - 2026-01-31: Fix octo-guard policy pattern compilation by adding explicit type annotations for GuardPolicy pattern parsing.
 - 2026-01-31: Read and update Main Chat Pi session files via octo-runner in multi-user mode so sessions persist and titles refresh after reload.

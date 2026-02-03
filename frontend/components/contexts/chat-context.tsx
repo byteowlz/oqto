@@ -529,24 +529,28 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 				sourcePath.endsWith(".jsonl");
 
 			if (isWorkspacePi && historySession) {
+				const previousHistory = chatHistoryRef.current;
+				const previousSelection = selectedChatSessionId;
+				const remaining = previousHistory.filter((s) => s.id !== sessionId);
+				setChatHistory(remaining);
+				setSelectedChatSessionId((current) => {
+					if (current !== sessionId) return current;
+					return remaining[0]?.id ?? "";
+				});
 				try {
 					await deleteWorkspacePiSession(
 						historySession.workspace_path,
 						sessionId,
 					);
-					const remaining = chatHistoryRef.current.filter(
-						(s) => s.id !== sessionId,
-					);
-					setChatHistory(remaining);
-					setSelectedChatSessionId((current) => {
-						if (current !== sessionId) return current;
-						return remaining[0]?.id ?? "";
-					});
 					setTimeout(() => {
 						refreshChatHistory();
 					}, 500);
 					return true;
 				} catch (err) {
+					setChatHistory(previousHistory);
+					if (previousSelection) {
+						setSelectedChatSessionId(previousSelection);
+					}
 					console.error("Failed to delete Pi chat session:", err);
 					return false;
 				}
@@ -554,21 +558,27 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 
 			const baseUrl = baseUrlOverride || opencodeBaseUrl;
 			if (!baseUrl) return false;
+			const previousOpencode = opencodeSessions;
+			const previousSelection = selectedChatSessionId;
 			try {
-				await deleteSession(baseUrl, sessionId, {
-					directory: opencodeDirectory,
-				});
 				setOpencodeSessions((prev) => prev.filter((s) => s.id !== sessionId));
 				setSelectedChatSessionId((current) => {
 					if (current !== sessionId) return current;
-					const remaining = opencodeSessions.filter((s) => s.id !== sessionId);
+					const remaining = previousOpencode.filter((s) => s.id !== sessionId);
 					return remaining.length > 0 ? remaining[0].id : "";
+				});
+				await deleteSession(baseUrl, sessionId, {
+					directory: opencodeDirectory,
 				});
 				setTimeout(() => {
 					refreshChatHistory();
 				}, 500);
 				return true;
 			} catch (err) {
+				setOpencodeSessions(previousOpencode);
+				if (previousSelection) {
+					setSelectedChatSessionId(previousSelection);
+				}
 				console.error("Failed to delete chat session:", err);
 				return false;
 			}
@@ -578,6 +588,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 			opencodeDirectory,
 			opencodeSessions,
 			refreshChatHistory,
+			selectedChatSessionId,
 			setSelectedChatSessionId,
 		],
 	);

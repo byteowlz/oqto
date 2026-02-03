@@ -261,6 +261,8 @@ pub struct AppState {
     pub runner_socket_pattern: Option<String>,
     /// hstry client for unified chat history persistence.
     pub hstry: Option<HstryClient>,
+    /// Feedback configuration.
+    pub feedback: crate::feedback::FeedbackConfig,
 }
 
 impl AppState {
@@ -308,6 +310,7 @@ impl AppState {
             linux_users: None,
             runner_socket_pattern: None,
             hstry: None,
+            feedback: crate::feedback::FeedbackConfig::default(),
         }
     }
 
@@ -356,7 +359,13 @@ impl AppState {
             linux_users: None,
             runner_socket_pattern: None,
             hstry: None,
+            feedback: crate::feedback::FeedbackConfig::default(),
         }
+    }
+
+    pub fn with_feedback_config(mut self, config: crate::feedback::FeedbackConfig) -> Self {
+        self.feedback = config;
+        self
     }
 
     /// Set the octo settings service.
