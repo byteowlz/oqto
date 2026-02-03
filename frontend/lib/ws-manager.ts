@@ -20,6 +20,7 @@ import { toAbsoluteWsUrl } from "./url";
 import type {
 	Channel,
 	ConnectionStateHandler,
+	PiSessionConfig,
 	PiWsEvent,
 	WsCommand,
 	WsEvent,
@@ -251,7 +252,7 @@ class WsConnectionManager {
 	subscribePiSession(
 		sessionId: string,
 		handler: WsEventHandler<PiWsEvent>,
-		config?: { scope?: "main" | "workspace"; cwd?: string; provider?: string; model?: string },
+		config?: PiSessionConfig,
 	): () => void {
 		console.log("[ws-mux] subscribePiSession:", sessionId, "config:", config, "isConnected:", this.isConnected);
 		
@@ -368,14 +369,15 @@ class WsConnectionManager {
 	 */
 	piCreateSession(
 		sessionId: string,
-		config?: { cwd?: string; provider?: string; model?: string },
+		config?: PiSessionConfig,
 		id?: string,
 	): void {
+		const resolvedConfig = config ?? this.subscribedSessions.get(sessionId);
 		this.send({
 			channel: "pi",
 			type: "create_session",
 			session_id: sessionId,
-			config,
+			config: resolvedConfig,
 			id,
 		});
 	}

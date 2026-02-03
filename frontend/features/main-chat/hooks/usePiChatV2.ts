@@ -105,7 +105,17 @@ export function usePiChatV2(options: UsePiChatOptions = {}): UsePiChatReturn {
 	const nextMessageId = useCallback(() => {
 		messageIdRef.current += 1;
 		return `pi-msg-${messageIdRef.current}`;
-	}, []);
+	}, [getSessionConfig]);
+
+	const getSessionConfig = useCallback(() => {
+		if (scope === "main") {
+			return { scope: "main" as const };
+		}
+		if (workspacePath) {
+			return { scope: "workspace" as const, cwd: workspacePath };
+		}
+		return undefined;
+	}, [scope, workspacePath]);
 
 	const appendPartToMessage = useCallback(
 		(messageId: string, part: PiMessagePart) => {
@@ -409,7 +419,7 @@ export function usePiChatV2(options: UsePiChatOptions = {}): UsePiChatReturn {
 					if (shouldRecover && now - lastSessionRecoveryRef.current > 5000) {
 						lastSessionRecoveryRef.current = now;
 						const manager = getWsManager();
-						manager.piCreateSession(sessionId as string);
+						manager.piCreateSession(sessionId as string, getSessionConfig());
 						setTimeout(() => {
 							manager.piGetState(sessionId as string);
 							manager.send({
@@ -511,6 +521,7 @@ export function usePiChatV2(options: UsePiChatOptions = {}): UsePiChatReturn {
 			scheduleStreamingUpdate,
 			onMessageComplete,
 			onError,
+			getSessionConfig,
 		],
 	);
 
@@ -553,11 +564,7 @@ export function usePiChatV2(options: UsePiChatOptions = {}): UsePiChatReturn {
 				
 				// Subscribe to the new session via ws-manager
 				const manager = getWsManager();
-				const sessionConfig = scope === "main"
-					? { scope: "main" as const }
-					: workspacePath
-						? { scope: "workspace" as const, cwd: workspacePath }
-						: undefined;
+				const sessionConfig = getSessionConfig();
 				unsubscribeRef.current = manager.subscribePiSession(
 					newSessionId,
 					handlePiEvent,
@@ -592,7 +599,7 @@ export function usePiChatV2(options: UsePiChatOptions = {}): UsePiChatReturn {
 					break;
 			}
 		},
-		[nextMessageId, scope, workspacePath, handlePiEvent, onSelectedSessionIdChange],
+		[nextMessageId, getSessionConfig, handlePiEvent, onSelectedSessionIdChange],
 	);
 
 	// Abort current stream
@@ -657,7 +664,7 @@ export function usePiChatV2(options: UsePiChatOptions = {}): UsePiChatReturn {
 
 		// Small delay then recreate
 		setTimeout(() => {
-			manager.piCreateSession(sessionId);
+			manager.piCreateSession(sessionId, getSessionConfig());
 		}, 100);
 
 		if (isPiDebugEnabled()) {
@@ -730,11 +737,7 @@ export function usePiChatV2(options: UsePiChatOptions = {}): UsePiChatReturn {
 
 		// Subscribe to the new session (passes scope/cwd for session creation)
 		const manager = getWsManager();
-		const sessionConfig = scope === "main"
-			? { scope: "main" as const }
-			: workspacePath
-				? { scope: "workspace" as const, cwd: workspacePath }
-				: undefined;
+		const sessionConfig = getSessionConfig();
 		unsubscribeRef.current = manager.subscribePiSession(
 			activeSessionId,
 			handlePiEvent,
@@ -751,7 +754,7 @@ export function usePiChatV2(options: UsePiChatOptions = {}): UsePiChatReturn {
 				unsubscribeRef.current = null;
 			}
 		};
-	}, [activeSessionId, resolvedStorageKeyPrefix, handlePiEvent, scope, workspacePath]);
+	}, [activeSessionId, resolvedStorageKeyPrefix, handlePiEvent, getSessionConfig]);
 
 	// Auto-connect on mount
 	useEffect(() => {

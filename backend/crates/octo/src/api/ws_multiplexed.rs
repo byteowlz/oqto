@@ -1047,8 +1047,16 @@ struct WsConnectionState {
     event_tx: mpsc::UnboundedSender<WsEvent>,
     /// Active Pi subscriptions (keyed by session_id).
     pi_subscriptions: HashSet<String>,
+    /// Metadata for Pi sessions created via this connection.
+    pi_session_meta: HashMap<String, PiSessionMeta>,
     /// Active terminal sessions keyed by terminal_id.
     terminal_sessions: HashMap<String, TerminalSession>,
+}
+
+#[derive(Clone, Debug)]
+struct PiSessionMeta {
+    scope: Option<String>,
+    cwd: Option<std::path::PathBuf>,
 }
 
 struct TerminalSession {
@@ -1084,6 +1092,7 @@ async fn handle_multiplexed_ws(socket: WebSocket, state: AppState, user_id: Stri
         subscribed_sessions: HashSet::new(),
         event_tx: event_tx.clone(),
         pi_subscriptions: HashSet::new(),
+        pi_session_meta: HashMap::new(),
         terminal_sessions: HashMap::new(),
     }));
 
@@ -1416,6 +1425,17 @@ async fn handle_pi_command(
                 (cwd, vec![])
             };
 
+            {
+                let mut state_guard = conn_state.lock().await;
+                state_guard.pi_session_meta.insert(
+                    session_id.clone(),
+                    PiSessionMeta {
+                        scope: Some(if is_main_chat { "main".to_string() } else { "workspace".to_string() }),
+                        cwd: if is_main_chat { None } else { Some(cwd.clone()) },
+                    },
+                );
+            }
+
             // Resolve continue_session: use explicit path if provided, otherwise
             // auto-resolve from session_id for main chat sessions
             let continue_session = if let Some(path) = config
@@ -1731,8 +1751,68 @@ async fn handle_pi_command(
             // Try to get messages from runner's Pi process first
             let runner_messages = runner.pi_get_messages(&session_id).await;
 
-            // Prefer JSONL session file for main chat history (includes tool parts)
-            if let Some(ref pi_service) = state.main_chat_pi {
+            let session_meta = {
+                let state_guard = conn_state.lock().await;
+                state_guard.pi_session_meta.get(&session_id).cloned()
+            };
+
+            if let Some(meta) = session_meta {
+                if meta.scope.as_deref() == Some("workspace") {
+                    if let (Some(work_dir), Some(workspace_pi)) =
+                        (meta.cwd.as_ref(), state.workspace_pi.as_ref())
+                    {
+                        match workspace_pi.get_session_messages(user_id, work_dir, &session_id) {
+                            Ok(messages) if !messages.is_empty() => {
+                                info!(
+                                    "Pi get_messages: loaded {} messages from workspace JSONL for {}",
+                                    messages.len(),
+                                    session_id
+                                );
+                                return Some(WsEvent::Pi(PiWsEvent::Messages {
+                                    id,
+                                    session_id,
+                                    messages: serde_json::to_value(&messages).unwrap_or_default(),
+                                }));
+                            }
+                            Ok(_) => {
+                                debug!(
+                                    "Pi get_messages: workspace JSONL returned empty for {}",
+                                    session_id
+                                );
+                            }
+                            Err(e) => {
+                                debug!(
+                                    "Pi get_messages: workspace JSONL error for {}: {}",
+                                    session_id, e
+                                );
+                            }
+                        }
+                    } else {
+                        debug!("Pi get_messages: workspace metadata missing for {}", session_id);
+                    }
+                } else if let Some(ref pi_service) = state.main_chat_pi {
+                    match pi_service.get_session_messages(user_id, &session_id).await {
+                        Ok(messages) if !messages.is_empty() => {
+                            info!(
+                                "Pi get_messages: loaded {} messages from JSONL file for {}",
+                                messages.len(),
+                                session_id
+                            );
+                            return Some(WsEvent::Pi(PiWsEvent::Messages {
+                                id,
+                                session_id,
+                                messages: serde_json::to_value(&messages).unwrap_or_default(),
+                            }));
+                        }
+                        Ok(_) => {
+                            debug!("Pi get_messages: JSONL file returned empty for {}", session_id);
+                        }
+                        Err(e) => {
+                            debug!("Pi get_messages: JSONL file error for {}: {}", session_id, e);
+                        }
+                    }
+                }
+            } else if let Some(ref pi_service) = state.main_chat_pi {
                 match pi_service.get_session_messages(user_id, &session_id).await {
                     Ok(messages) if !messages.is_empty() => {
                         info!(
@@ -1751,67 +1831,6 @@ async fn handle_pi_command(
                     }
                     Err(e) => {
                         debug!("Pi get_messages: JSONL file error for {}: {}", session_id, e);
-                    }
-                }
-            }
-
-            // JSONL empty - try hstry for historical messages
-            // In multi-user mode, use runner.get_main_chat_messages() to access per-user hstry
-            let is_multi_user = state.linux_users.is_some();
-            
-            if is_multi_user {
-                // Multi-user mode: use runner to access per-user hstry.db
-                match runner.get_main_chat_messages(&session_id, None).await {
-                    Ok(resp) if !resp.messages.is_empty() => {
-                        info!(
-                            "Pi get_messages: loaded {} messages from hstry (via runner) for {}",
-                            resp.messages.len(),
-                            session_id
-                        );
-                        // Convert runner messages to the expected format
-                        let messages: Vec<serde_json::Value> = resp.messages
-                            .into_iter()
-                            .map(|m| serde_json::json!({
-                                "id": m.id,
-                                "role": m.role,
-                                "content": m.content,
-                                "timestamp": m.timestamp,
-                            }))
-                            .collect();
-                        return Some(WsEvent::Pi(PiWsEvent::Messages {
-                            id,
-                            session_id,
-                            messages: serde_json::Value::Array(messages),
-                        }));
-                    }
-                    Ok(_) => {
-                        debug!("Pi get_messages: hstry (via runner) returned empty for {}", session_id);
-                    }
-                    Err(e) => {
-                        debug!("Pi get_messages: hstry (via runner) error for {}: {}", session_id, e);
-                    }
-                }
-            } else if let Some(hstry_client) = state.hstry.as_ref() {
-                // Single-user mode: use hstry client directly
-                match hstry_client.get_messages(&session_id, None, None).await {
-                    Ok(hstry_messages) if !hstry_messages.is_empty() => {
-                        info!(
-                            "Pi get_messages: loaded {} messages from hstry for {}",
-                            hstry_messages.len(),
-                            session_id
-                        );
-                        let serializable = crate::hstry::proto_messages_to_serializable(hstry_messages);
-                        return Some(WsEvent::Pi(PiWsEvent::Messages {
-                            id,
-                            session_id,
-                            messages: serde_json::to_value(&serializable).unwrap_or_default(),
-                        }));
-                    }
-                    Ok(_) => {
-                        debug!("Pi get_messages: hstry returned empty for {}", session_id);
-                    }
-                    Err(e) => {
-                        debug!("Pi get_messages: hstry error for {}: {}", session_id, e);
                     }
                 }
             }
