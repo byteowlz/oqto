@@ -6700,6 +6700,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 								className={needsTopMargin ? "mt-3" : undefined}
 							>
 								<ToolCallGroup
+									key={`${segment.key}-verbosity-${verbosity}`}
 									mode={verbosity === 1 ? "bar" : "tabs"}
 									items={toolItems}
 									disableInteraction={verbosity === 1}
