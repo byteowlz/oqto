@@ -2163,14 +2163,60 @@ const PiMessageGroupCard = memo(function PiMessageGroupCard({
 						);
 					}
 					if (segment.type === "tool_group") {
-						return (
-							<div
-								key={segment.key}
-								className={needsTopMargin ? "mt-3" : undefined}
-							>
-								<ToolCallGroup
-									mode={verbosity === 1 ? "bar" : "tabs"}
-									items={segment.segments.map((toolSegment) => {
+						const toolItems =
+							verbosity === 1
+								? Array.from(
+										segment.segments.reduce(
+											(map, toolSegment) => {
+												const toolName =
+													toolSegment.type === "tool_use"
+														? toolSegment.part.name
+														: toolSegment.part.name || "result";
+												const entry = map.get(toolName) ?? {
+													toolName,
+													count: 0,
+													input:
+														toolSegment.type === "tool_use"
+															? (toolSegment.part.input as
+																	| Record<string, unknown>
+																	| undefined)
+															: undefined,
+												};
+												entry.count += 1;
+												map.set(toolName, entry);
+												return map;
+											},
+											new Map<
+												string,
+												{
+													toolName: string;
+													count: number;
+													input?: Record<string, unknown>;
+												}
+											>(),
+										),
+									).map((entry) => {
+										const icon = getToolIcon(entry.toolName, entry.input);
+										return {
+											id: entry.toolName,
+											label:
+												entry.count > 1
+													? `${entry.toolName} (${entry.count})`
+													: entry.toolName,
+											icon: (
+												<span className="relative inline-flex">
+													{icon}
+													{entry.count > 1 && (
+														<span className="absolute -top-1 -right-1 rounded-full bg-primary text-primary-foreground text-[9px] leading-none px-1">
+															{entry.count}
+														</span>
+													)}
+												</span>
+											),
+											render: () => null,
+										};
+									})
+								: segment.segments.map((toolSegment) => {
 										const toolName =
 											toolSegment.type === "tool_use"
 												? toolSegment.part.name
@@ -2200,7 +2246,15 @@ const PiMessageGroupCard = memo(function PiMessageGroupCard({
 													/>
 												),
 										};
-									})}
+									});
+						return (
+							<div
+								key={segment.key}
+								className={needsTopMargin ? "mt-3" : undefined}
+							>
+								<ToolCallGroup
+									mode={verbosity === 1 ? "bar" : "tabs"}
+									items={toolItems}
 								/>
 							</div>
 						);
