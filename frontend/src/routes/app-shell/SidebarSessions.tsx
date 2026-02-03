@@ -10,6 +10,7 @@ import {
 	ContextMenuSeparator,
 	ContextMenuTrigger,
 } from "@/components/ui/context-menu";
+import { DeleteConfirmDialog } from "@/src/routes/app-shell/dialogs/DeleteConfirmDialog";
 import {
 	DropdownMenu,
 	DropdownMenuContent,
@@ -146,6 +147,7 @@ export const SidebarSessions = memo(function SidebarSessions({
 	const [hiddenSessionIds, setHiddenSessionIds] = useState<Set<string>>(
 		() => new Set(),
 	);
+	const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
 	const lastSelectedIndexRef = useRef<number | null>(null);
 	const isFilteringSessions =
 		searchMode === "sessions" && deferredSearch.trim().length > 0;
@@ -307,8 +309,32 @@ export const SidebarSessions = memo(function SidebarSessions({
 		await Promise.resolve(onDeleteSession(sessionId));
 	};
 
+	const handleBulkDeleteRequest = () => {
+		if (selectedSessionIds.size === 0) return;
+		setBulkDeleteOpen(true);
+	};
+
 	return (
 		<div className="flex-1 min-h-0 flex flex-col overflow-x-hidden">
+			<DeleteConfirmDialog
+				open={bulkDeleteOpen}
+				onOpenChange={setBulkDeleteOpen}
+				onConfirm={() => {
+					setBulkDeleteOpen(false);
+					handleBulkDelete();
+				}}
+				locale={locale}
+				title={
+					locale === "de"
+						? `${selectedSessionIds.size} Chats loschen?`
+						: `Delete ${selectedSessionIds.size} chats?`
+				}
+				description={
+					locale === "de"
+						? "Diese Aktion kann nicht ruckgangig gemacht werden. Alle ausgewahlten Chats werden dauerhaft geloscht."
+						: "This action cannot be undone. All selected chats will be permanently deleted."
+				}
+			/>
 			{/* Sticky header section - Search, Main Chat, Sessions header */}
 			<div className="flex-shrink-0 space-y-0.5 px-1">
 				{/* Search input with mode dropdown */}
@@ -545,7 +571,7 @@ export const SidebarSessions = memo(function SidebarSessions({
 									type="button"
 									variant="ghost"
 									size="sm"
-									onClick={handleBulkDelete}
+									onClick={handleBulkDeleteRequest}
 									className="h-6 px-2 text-xs"
 								>
 									<Trash2 className="w-3 h-3 mr-1" />
