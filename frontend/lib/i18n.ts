@@ -7,7 +7,7 @@ import enMessages from "@/messages/en.json";
 export type Locale = "en" | "de";
 
 export const locales: Locale[] = ["en", "de"];
-export const defaultLocale: Locale = "de";
+export const defaultLocale: Locale = "en";
 export const LOCALE_STORAGE_KEY = "locale";
 
 export const i18n = i18next;

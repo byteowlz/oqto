@@ -2,6 +2,9 @@
 
 ## Open
 
+### [octo-1ddx] Move global sandbox config to read-only path (P1, task)
+Global sandbox config must be read-only (not user-writable). Implement loading from system path (e.g., /etc/octo/sandbox.toml) with user config for overrides or removal of user-writable global config. Ensure sandbox.toml itself is protected and update docs/install.
+
 ### [octo-t2bf] Multi-Runner & Workspace Sharing (P1, epic)
 Epic for enabling users to connect to multiple runners across different machines (laptop, desktop, cloud) and share workspaces with other users.
 
@@ -173,6 +176,9 @@ Implementation:
 
 ### [workspace-5pmk.11] Add backend URL configuration to login form (P1, task)
 Add a 'Server URL' field to the login form allowing users to specify the backend URL. Store in localStorage for persistence. Show connection status indicator. Default to current origin for web, require input for mobile apps.
+
+### [octo-jwc4] Unify Pi chats (default + workspace) (P2, epic)
+Make Pi chat the single system of record. Treat 'main' as default scope. Unify endpoints, state handling, settings, and history loading (prefer Pi JSONL; use hstry for cross-harness search). Remove main-specific abstractions where possible.
 
 ### [octo-wah4] Security: Runner authentication and TLS for network endpoints (P2, task)
 Implement runner authentication and TLS for network endpoints:
@@ -1405,8 +1411,8 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
 - [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
-- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
-- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
-- [octo-k8z1.1] Backend: Integrate agent-browser daemon per session (closed )
 - [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
+- [octo-k8z1.1] Backend: Integrate agent-browser daemon per session (closed )
 - [octo-k8z1.2] Backend: WebSocket proxy for screencast stream (closed )
+- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
+- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )

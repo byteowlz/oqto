@@ -45,7 +45,7 @@ const defaultUIContext: UIContextValue = {
 const UIContext = createContext<UIContextValue>(defaultUIContext);
 
 export function UIProvider({ children }: { children: ReactNode }) {
-	const [locale, setLocaleState] = useState<Locale>("de");
+	const [locale, setLocaleState] = useState<Locale>("en");
 	const apps = useMemo(() => appRegistry.getAllApps(), []);
 	// Always start with sessions app - last active chat is restored by SessionContext
 	const [activeAppId, setActiveAppIdRaw] = useState(() => {
