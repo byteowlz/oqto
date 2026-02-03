@@ -22,6 +22,7 @@ use tokio::sync::{RwLock, broadcast, mpsc, oneshot};
 
 use crate::local::SandboxConfig;
 use crate::pi::{AgentMessage, PiCommand, PiEvent, PiMessage, PiResponse, PiState, SessionStats};
+use crate::wordlist;
 
 // ============================================================================
 // Configuration
@@ -501,6 +502,7 @@ impl PiSessionManager {
             let state = Arc::clone(&state);
             let last_activity = Arc::clone(&last_activity);
             let hstry_db_path = self.config.hstry_db_path.clone();
+            let work_dir = config.cwd.clone();
             let pending_responses = Arc::clone(&pending_responses);
 
             tokio::spawn(async move {
@@ -512,6 +514,7 @@ impl PiSessionManager {
                     state,
                     last_activity,
                     hstry_db_path,
+                    work_dir,
                     pending_responses,
                 )
                 .await;
@@ -1317,6 +1320,7 @@ impl PiSessionManager {
         state: Arc<RwLock<PiSessionState>>,
         last_activity: Arc<RwLock<Instant>>,
         hstry_db_path: Option<PathBuf>,
+        work_dir: PathBuf,
         pending_responses: PendingResponses,
     ) {
         // Read stderr in a separate task (for debugging)
@@ -1425,7 +1429,8 @@ impl PiSessionManager {
             if matches!(event, PiEvent::AgentEnd { .. }) && !pending_messages.is_empty() {
                 if let Some(ref db_path) = hstry_db_path {
                     if let Err(e) =
-                        Self::persist_to_hstry(&session_id, &pending_messages, db_path).await
+                        Self::persist_to_hstry(&session_id, &pending_messages, db_path, &work_dir)
+                            .await
                     {
                         warn!("Pi[{}] failed to persist to hstry: {}", session_id, e);
                     } else {
@@ -1705,6 +1710,7 @@ impl PiSessionManager {
         session_id: &str,
         messages: &[AgentMessage],
         db_path: &PathBuf,
+        work_dir: &PathBuf,
     ) -> Result<()> {
         use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 
@@ -1742,10 +1748,18 @@ impl PiSessionManager {
                 .fetch_optional(&pool)
                 .await?;
 
+        let metadata_json = serde_json::json!({
+            "canonical_id": session_id,
+            "readable_id": wordlist::readable_id_from_session_id(session_id),
+            "workdir": work_dir.to_string_lossy(),
+        })
+        .to_string();
+
         let conversation_id = if let Some((id,)) = existing {
             // Update timestamp
-            sqlx::query("UPDATE conversations SET updated_at = ? WHERE id = ?")
+            sqlx::query("UPDATE conversations SET updated_at = ?, metadata_json = ? WHERE id = ?")
                 .bind(now_secs)
+                .bind(&metadata_json)
                 .bind(&id)
                 .execute(&pool)
                 .await?;
@@ -1754,13 +1768,14 @@ impl PiSessionManager {
             // Create new conversation
             let id = uuid::Uuid::new_v4().to_string();
             sqlx::query(
-                "INSERT INTO conversations (id, source_id, external_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+                "INSERT INTO conversations (id, source_id, external_id, created_at, updated_at, metadata_json) VALUES (?, ?, ?, ?, ?, ?)",
             )
             .bind(&id)
             .bind(source_id)
             .bind(external_id)
             .bind(now_secs)
             .bind(now_secs)
+            .bind(&metadata_json)
             .execute(&pool)
             .await?;
             id

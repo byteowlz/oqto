@@ -849,6 +849,13 @@ async fn backfill_pi_session_to_hstry(
         })
         .unwrap_or((None, None));
 
+    let metadata_json = serde_json::json!({
+        "canonical_id": session.id,
+        "readable_id": session.readable_id,
+        "workdir": session.workspace_path,
+    })
+    .to_string();
+
     hstry
         .write_conversation(
             &session.id,
@@ -856,6 +863,7 @@ async fn backfill_pi_session_to_hstry(
             Some(session.workspace_path.clone()),
             model,
             provider,
+            Some(metadata_json),
             proto_messages,
             created_at_ms,
             updated_at_ms,

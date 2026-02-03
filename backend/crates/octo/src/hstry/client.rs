@@ -95,6 +95,7 @@ impl HstryClient {
         workspace: Option<String>,
         model: Option<String>,
         provider: Option<String>,
+        metadata_json: Option<String>,
         messages: Vec<Message>,
         created_at_ms: i64,
         updated_at_ms: Option<i64>,
@@ -114,7 +115,7 @@ impl HstryClient {
                 tokens_in: None,
                 tokens_out: None,
                 cost_usd: None,
-                metadata_json: String::new(),
+                metadata_json: metadata_json.unwrap_or_default(),
             }),
             messages,
         };

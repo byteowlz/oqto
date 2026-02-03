@@ -27,6 +27,7 @@ use crate::main_chat::{
     MainChatPiService, MainChatService, PiSessionFile, PiSessionMessage, UserPiSession,
 };
 use crate::pi::{AgentMessage, AssistantMessageEvent, CompactionResult, PiEvent, PiState};
+use crate::wordlist;
 
 use super::error::{ApiError, ApiResult};
 use super::state::AppState;
@@ -1223,6 +1224,18 @@ pub(crate) async fn handle_ws(
                             })
                             .unwrap_or((None, None));
 
+                        let metadata_json = pi_service_for_events.as_ref().map(|svc| {
+                            let work_dir = svc.main_chat_dir(&user_id_for_events);
+                            let sessions_dir = svc.sessions_dir_for_workdir(&user_id_for_events, &work_dir);
+                            serde_json::json!({
+                                "canonical_id": session_id,
+                                "readable_id": wordlist::readable_id_from_session_id(session_id),
+                                "workdir": work_dir.to_string_lossy(),
+                                "session_dir": sessions_dir.to_string_lossy(),
+                            })
+                            .to_string()
+                        });
+
                         if let Err(e) = hstry
                             .write_conversation(
                                 session_id,
@@ -1230,6 +1243,7 @@ pub(crate) async fn handle_ws(
                                 None, // workspace - Main Chat doesn't have a workspace path
                                 model,
                                 provider,
+                                metadata_json,
                                 proto_messages,
                                 created_at_ms,
                                 updated_at_ms,

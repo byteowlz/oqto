@@ -20,6 +20,7 @@ use crate::local::LinuxUsersConfig;
 use crate::main_chat::{MainChatPiServiceConfig, PiRuntimeMode, UserPiSession};
 use crate::pi::{ContainerPiRuntime, LocalPiRuntime, PiRuntime, PiSpawnConfig, RunnerPiRuntime};
 use crate::runner::client::RunnerClient;
+use crate::wordlist;
 
 /// How often to run the cleanup task (1 minute).
 const CLEANUP_INTERVAL_SECS: u64 = 60;
@@ -555,6 +556,9 @@ impl WorkspacePiService {
 
     fn ensure_session_file(&self, user_id: &str, work_dir: &Path, session_id: &str) -> Result<()> {
         let sessions_dir = self.get_pi_sessions_dir(user_id, work_dir);
+        if self.find_session_file_anywhere(session_id).is_ok() {
+            return Ok(());
+        }
         if !sessions_dir.exists() {
             std::fs::create_dir_all(&sessions_dir).context("creating sessions directory")?;
         } else if let Ok(entries) = std::fs::read_dir(&sessions_dir) {
@@ -574,6 +578,8 @@ impl WorkspacePiService {
             "id": session_id,
             "timestamp": Utc::now().to_rfc3339(),
             "cwd": work_dir.to_string_lossy(),
+            "readable_id": wordlist::readable_id_from_session_id(session_id),
+            "session_dir": sessions_dir.to_string_lossy(),
         });
         let content = format!("{}\n", serde_json::to_string(&header)?);
         let filename = format!("{}_{}.jsonl", Utc::now().timestamp_millis(), session_id);
@@ -589,14 +595,76 @@ impl WorkspacePiService {
         }
 
         let entries = std::fs::read_dir(sessions_dir).context("reading sessions directory")?;
+        let mut best: Option<(i64, PathBuf)> = None;
         for entry in entries.filter_map(|e| e.ok()) {
             let path = entry.path();
             if path.extension().map(|e| e == "jsonl").unwrap_or(false) {
                 let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
                 if filename.contains(session_id) {
-                    return Ok(path);
+                    let modified_at = entry
+                        .metadata()
+                        .ok()
+                        .and_then(|m| m.modified().ok())
+                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                        .map(|d| d.as_millis() as i64)
+                        .unwrap_or(0);
+                    match best {
+                        Some((best_ts, _)) if modified_at <= best_ts => {}
+                        _ => best = Some((modified_at, path)),
+                    }
                 }
             }
+        }
+
+        if let Some((_, path)) = best {
+            return Ok(path);
+        }
+
+        anyhow::bail!("Session not found: {}", session_id)
+    }
+
+    fn find_session_file_anywhere(&self, session_id: &str) -> Result<PathBuf> {
+        let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
+        let sessions_root = home.join(".pi").join("agent").join("sessions");
+        if !sessions_root.exists() {
+            anyhow::bail!("Sessions root not found");
+        }
+
+        let mut best: Option<(i64, PathBuf)> = None;
+        let roots = std::fs::read_dir(&sessions_root)
+            .with_context(|| format!("reading Pi sessions root: {:?}", sessions_root))?;
+        for root in roots.filter_map(|e| e.ok()) {
+            let root_path = root.path();
+            if !root_path.is_dir() {
+                continue;
+            }
+            let entries = match std::fs::read_dir(&root_path) {
+                Ok(entries) => entries,
+                Err(_) => continue,
+            };
+            for entry in entries.filter_map(|e| e.ok()) {
+                let path = entry.path();
+                if path.extension().map(|e| e == "jsonl").unwrap_or(false) {
+                    let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                    if filename.contains(session_id) {
+                        let modified_at = entry
+                            .metadata()
+                            .ok()
+                            .and_then(|m| m.modified().ok())
+                            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                            .map(|d| d.as_millis() as i64)
+                            .unwrap_or(0);
+                        match best {
+                            Some((best_ts, _)) if modified_at <= best_ts => {}
+                            _ => best = Some((modified_at, path)),
+                        }
+                    }
+                }
+            }
+        }
+
+        if let Some((_, path)) = best {
+            return Ok(path);
         }
 
         anyhow::bail!("Session not found: {}", session_id)
@@ -1083,7 +1151,8 @@ impl WorkspacePiService {
             return Ok(Vec::new());
         }
 
-        let mut sessions = Vec::new();
+        let mut sessions_by_id: std::collections::HashMap<String, WorkspacePiSessionSummary> =
+            std::collections::HashMap::new();
         let roots = std::fs::read_dir(&sessions_root)
             .with_context(|| format!("reading Pi sessions root: {:?}", sessions_root))?;
 
@@ -1103,11 +1172,20 @@ impl WorkspacePiService {
                 if path.extension().map(|e| e == "jsonl").unwrap_or(false)
                     && let Some(session) = self.parse_session_file(&path)
                 {
-                    sessions.push(session);
+                    sessions_by_id
+                        .entry(session.id.clone())
+                        .and_modify(|existing| {
+                            if session.updated_at > existing.updated_at {
+                                *existing = session.clone();
+                            }
+                        })
+                        .or_insert(session);
                 }
             }
         }
 
+        let mut sessions: Vec<WorkspacePiSessionSummary> =
+            sessions_by_id.into_values().collect();
         sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
         Ok(sessions)
     }
