@@ -114,16 +114,18 @@ export function ToolCallGroup({
 			)}
 		>
 			<div className={cn("flex items-center gap-1", mode !== "bar" && "px-2 py-2")}>
-				<Button
-					type="button"
-					variant="ghost"
-					size="icon"
-					onClick={() => scrollBy(-120)}
-					disabled={!canScrollLeft || disableInteraction}
-					className={cn("h-6 w-6", mode === "bar" && "h-5 w-5")}
-				>
-					<ChevronLeft className="h-3 w-3" />
-				</Button>
+				{(canScrollLeft || canScrollRight) && (
+					<Button
+						type="button"
+						variant="ghost"
+						size="icon"
+						onClick={() => scrollBy(-120)}
+						disabled={!canScrollLeft || disableInteraction}
+						className={cn("h-6 w-6", mode === "bar" && "h-5 w-5")}
+					>
+						<ChevronLeft className="h-3 w-3" />
+					</Button>
+				)}
 				<div className="flex-1 overflow-hidden">
 					<div
 						ref={scrollRef}
@@ -132,16 +134,18 @@ export function ToolCallGroup({
 						{iconButtons}
 					</div>
 				</div>
-				<Button
-					type="button"
-					variant="ghost"
-					size="icon"
-					onClick={() => scrollBy(120)}
-					disabled={!canScrollRight || disableInteraction}
-					className={cn("h-6 w-6", mode === "bar" && "h-5 w-5")}
-				>
-					<ChevronRight className="h-3 w-3" />
-				</Button>
+				{(canScrollLeft || canScrollRight) && (
+					<Button
+						type="button"
+						variant="ghost"
+						size="icon"
+						onClick={() => scrollBy(120)}
+						disabled={!canScrollRight || disableInteraction}
+						className={cn("h-6 w-6", mode === "bar" && "h-5 w-5")}
+					>
+						<ChevronRight className="h-3 w-3" />
+					</Button>
+				)}
 			</div>
 			{mode !== "bar" && !disableInteraction && isOpen && activeItem && (
 				<div className="border-t border-border px-3 py-2">

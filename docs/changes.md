@@ -107,3 +107,4 @@
 - 2026-02-03: Normalize medium verbosity ordering to show collapsed thinking before grouped tool calls.
 - 2026-02-03: Guard tool icon lookup when the tool name is missing.
 - 2026-02-03: Disable interactions on low-verbosity tool bars and keep per-tool badges visible.
+- 2026-02-03: Only show tool bar scroll arrows when the icon strip overflows.
