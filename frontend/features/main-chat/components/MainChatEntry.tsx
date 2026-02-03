@@ -357,12 +357,17 @@ export function MainChatEntry({
 	function cacheKeySessions(name: string) {
 		return `octo:mainChatPi:${name}:sessions:v1`;
 	}
+	const SESSION_LIST_CACHE_MAX_CHARS = 1_000_000;
 
 	function readCachedSessions(name: string): PiSessionFile[] {
 		if (typeof window === "undefined") return [];
 		try {
 			const raw = localStorage.getItem(cacheKeySessions(name));
 			if (!raw) return [];
+			if (raw.length > SESSION_LIST_CACHE_MAX_CHARS) {
+				localStorage.removeItem(cacheKeySessions(name));
+				return [];
+			}
 			const parsed = JSON.parse(raw) as PiSessionFile[];
 			return Array.isArray(parsed) ? parsed : [];
 		} catch {
@@ -373,7 +378,12 @@ export function MainChatEntry({
 	function writeCachedSessions(name: string, sessions: PiSessionFile[]) {
 		if (typeof window === "undefined") return;
 		try {
-			localStorage.setItem(cacheKeySessions(name), JSON.stringify(sessions));
+			const encoded = JSON.stringify(sessions);
+			if (encoded.length > SESSION_LIST_CACHE_MAX_CHARS) {
+				localStorage.removeItem(cacheKeySessions(name));
+				return;
+			}
+			localStorage.setItem(cacheKeySessions(name), encoded);
 		} catch {
 			// ignore
 		}

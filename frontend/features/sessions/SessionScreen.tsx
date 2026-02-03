@@ -169,6 +169,7 @@ import {
 	FileText,
 	FileVideo,
 	GitBranch,
+	Globe,
 	ListTodo,
 	Loader2,
 	Maximize2,
@@ -247,6 +248,11 @@ const CanvasView = lazy(() =>
 		default: mod.CanvasView,
 	})),
 );
+const BrowserView = lazy(() =>
+	import("@/features/sessions/components/BrowserView").then((mod) => ({
+		default: mod.BrowserView,
+	})),
+);
 
 // ThreadedMessage and MessageGroup live in features/sessions/types.
 
@@ -258,7 +264,8 @@ type ActiveView =
 	| "memories"
 	| "voice"
 	| "settings"
-	| "canvas";
+	| "canvas"
+	| "browser";
 
 type ExpandedView = "preview" | "canvas" | "memories" | "terminal" | null;
 type TasksSubTab = "todos" | "planner";
@@ -1159,6 +1166,7 @@ export const SessionScreen = memo(function SessionScreen() {
 		  };
 
 	const SESSION_MESSAGE_CACHE_KEY = "octo:sessionMessagesCache:v1";
+	const SESSION_MESSAGE_CACHE_MAX_CHARS = 2_000_000;
 
 	type SessionMessageCacheEntry = {
 		sessionId: string;
@@ -1172,6 +1180,10 @@ export const SessionScreen = memo(function SessionScreen() {
 			try {
 				const raw = localStorage.getItem(SESSION_MESSAGE_CACHE_KEY);
 				if (!raw) return [];
+				if (raw.length > SESSION_MESSAGE_CACHE_MAX_CHARS) {
+					localStorage.removeItem(SESSION_MESSAGE_CACHE_KEY);
+					return [];
+				}
 				const parsed = JSON.parse(raw) as SessionMessageCacheEntry[];
 				if (!Array.isArray(parsed)) return [];
 				const entry = parsed.find((item) => item.sessionId === sessionId);
@@ -1207,7 +1219,12 @@ export const SessionScreen = memo(function SessionScreen() {
 				]
 					.sort((a, b) => b.updatedAt - a.updatedAt)
 					.slice(0, 20);
-				localStorage.setItem(SESSION_MESSAGE_CACHE_KEY, JSON.stringify(next));
+				const encoded = JSON.stringify(next);
+				if (encoded.length > SESSION_MESSAGE_CACHE_MAX_CHARS) {
+					localStorage.removeItem(SESSION_MESSAGE_CACHE_KEY);
+					return;
+				}
+				localStorage.setItem(SESSION_MESSAGE_CACHE_KEY, encoded);
 			} catch {
 				// ignore cache errors
 			}
@@ -1333,6 +1350,7 @@ export const SessionScreen = memo(function SessionScreen() {
 	const [messagesLoading, setMessagesLoading] = useState(false);
 	const [showTimeoutError, setShowTimeoutError] = useState(false);
 	const [activeView, setActiveView] = useState<ActiveView>("chat");
+	const [browserVisible, setBrowserVisible] = useState(false);
 	const [tasksSubTab, setTasksSubTab] = useState<TasksSubTab>("todos");
 	const [mainChatTodos, setMainChatTodos] = useState<TodoItem[]>([]);
 	const [workspacePiTodos, setWorkspacePiTodos] = useState<TodoItem[]>([]);
@@ -1559,7 +1577,15 @@ export const SessionScreen = memo(function SessionScreen() {
 
 		fetchCommands(opencodeBaseUrl, opencodeRequestOptions)
 			.then((commands) => {
-				setSlashCommands(commandInfoToSlashCommands(commands));
+				const merged = [...builtInCommands];
+				const seen = new Set(merged.map((cmd) => cmd.name));
+				for (const cmd of commandInfoToSlashCommands(commands)) {
+					if (!seen.has(cmd.name)) {
+						merged.push(cmd);
+						seen.add(cmd.name);
+					}
+				}
+				setSlashCommands(merged);
 			})
 			.catch(() => {
 				// Fall back to built-in commands
@@ -2157,6 +2183,9 @@ export const SessionScreen = memo(function SessionScreen() {
 		? (mainChatWorkspacePath ?? undefined)
 		: (selectedChatFromHistory?.workspace_path ??
 			selectedWorkspaceSession?.workspace_path);
+	const browserSessionId = mainChatActive
+		? mainChatCurrentSessionId
+		: selectedChatSessionId;
 	const canResumeWithoutMessage = useMemo(() => {
 		if (!selectedChatSessionId) return false;
 		if (!resumeWorkspacePath) return false;
@@ -3398,6 +3427,62 @@ export const SessionScreen = memo(function SessionScreen() {
 		return [];
 	}, [messages]);
 
+	const lastBrowserCommandRef = useRef<string | null>(null);
+	const clearInputAfterCommand = useCallback(() => {
+		// Set flag to ignore stale onChange events that may fire after clearing
+		ignoringInputRef.current = true;
+		messageInputRef.current = "";
+		if (selectedChatSessionId) {
+			setDraft(selectedChatSessionId, "");
+		}
+		if (chatInputRef.current) {
+			chatInputRef.current.value = "";
+			chatInputRef.current.style.height = "36px";
+		}
+		syncInputToState("");
+		setChatInputMountKey((k) => k + 1);
+		queueMicrotask(() => {
+			ignoringInputRef.current = false;
+		});
+	}, [selectedChatSessionId, setDraft, syncInputToState]);
+
+	const runBrowserCommand = useCallback(
+		(command: string) => {
+			const normalized = command.trim().toLowerCase();
+			if (normalized === "browser") {
+				setBrowserVisible(true);
+				setActiveView("browser");
+				setRightSidebarCollapsed(false);
+				return true;
+			}
+			if (normalized === "close-browser") {
+				setBrowserVisible(false);
+				if (activeView === "browser") {
+					setActiveView("chat");
+				}
+				return true;
+			}
+			return false;
+		},
+		[activeView],
+	);
+
+	useEffect(() => {
+		const lastAssistant = [...messages]
+			.reverse()
+			.find((message) => message.info.role === "assistant");
+		if (!lastAssistant) return;
+		if (lastAssistant.info.id === lastBrowserCommandRef.current) return;
+		const text = getMessageText(lastAssistant.parts).trim();
+		if (text === "/browser") {
+			lastBrowserCommandRef.current = lastAssistant.info.id;
+			runBrowserCommand("browser");
+		} else if (text === "/close-browser") {
+			lastBrowserCommandRef.current = lastAssistant.info.id;
+			runBrowserCommand("close-browser");
+		}
+	}, [messages, runBrowserCommand]);
+
 	// Use Pi todos for main chat/workspace Pi, otherwise use opencode todos
 	const latestTodos = mainChatActive
 		? mainChatTodos
@@ -3410,24 +3495,13 @@ export const SessionScreen = memo(function SessionScreen() {
 		async (cmd: SlashCommand) => {
 			setShowSlashPopup(false);
 
+			clearInputAfterCommand();
+			if (runBrowserCommand(cmd.name)) {
+				return;
+			}
+
 			// Send opencode command (e.g., /init, /undo, /redo, or custom commands)
 			if (!selectedChatSessionId || !opencodeBaseUrl) return;
-
-			// Set flag to ignore stale onChange events
-			ignoringInputRef.current = true;
-
-			// Clear input
-			messageInputRef.current = "";
-			if (chatInputRef.current) {
-				chatInputRef.current.value = "";
-				chatInputRef.current.style.height = "36px";
-			}
-			syncInputToState("");
-
-			// Reset flag after a microtask
-			queueMicrotask(() => {
-				ignoringInputRef.current = false;
-			});
 
 			try {
 				// Command name without slash, args separately
@@ -3449,8 +3523,9 @@ export const SessionScreen = memo(function SessionScreen() {
 			selectedChatSessionId,
 			opencodeBaseUrl,
 			opencodeRequestOptions,
+			clearInputAfterCommand,
+			runBrowserCommand,
 			slashQuery.args,
-			syncInputToState,
 		],
 	);
 
@@ -3654,6 +3729,19 @@ export const SessionScreen = memo(function SessionScreen() {
 		setShowSlashPopup(false);
 		setShowFileMentionPopup(false);
 		setShowAgentMentionPopup(false);
+
+		const slashInput = parseSlashInput(currentInput);
+		const canHandleLocalSlash =
+			slashInput.isSlash &&
+			!slashInput.args.trim() &&
+			pendingUploads.length === 0 &&
+			fileAttachments.length === 0 &&
+			issueAttachments.length === 0;
+		if (canHandleLocalSlash && runBrowserCommand(slashInput.command)) {
+			clearInputAfterCommand();
+			setChatState("idle");
+			return;
+		}
 
 		// Capture agent target before clearing
 		const currentAgentTarget = agentTarget;
@@ -5519,6 +5607,15 @@ export const SessionScreen = memo(function SessionScreen() {
 							icon={Terminal}
 							label={t.terminal}
 						/>
+						{browserVisible && (
+							<TabButton
+								activeView={activeView}
+								onSelect={setActiveView}
+								view="browser"
+								icon={Globe}
+								label="Browser"
+							/>
+						)}
 						<TabButton
 							activeView={activeView}
 							onSelect={setActiveView}
@@ -5740,6 +5837,16 @@ export const SessionScreen = memo(function SessionScreen() {
 							</div>
 						</div>
 					)}
+					{activeView === "browser" && (
+						<div className="h-full">
+							<Suspense fallback={viewLoadingFallback}>
+								<BrowserView
+									sessionId={browserSessionId}
+									className="h-full"
+								/>
+							</Suspense>
+						</div>
+					)}
 					{/* Only mount the terminal when visible (terminal rendering is expensive). */}
 					{isMobileLayout && activeView === "terminal" && (
 						<div className="h-full">
@@ -5897,6 +6004,18 @@ export const SessionScreen = memo(function SessionScreen() {
 								icon={Terminal}
 								label={t.terminal}
 							/>
+							{browserVisible && (
+								<CollapsedTabButton
+									activeView={activeView}
+									onSelect={(view) => {
+										setActiveView(view);
+										setRightSidebarCollapsed(false);
+									}}
+									view="browser"
+									icon={Globe}
+									label="Browser"
+								/>
+							)}
 							{voiceMode.isActive && features.voice && (
 								<CollapsedTabButton
 									activeView={activeView}
@@ -6010,6 +6129,16 @@ export const SessionScreen = memo(function SessionScreen() {
 											label={t.terminal}
 											hideLabel
 										/>
+										{browserVisible && (
+											<TabButton
+												activeView={activeView}
+												onSelect={setActiveView}
+												view="browser"
+												icon={Globe}
+												label="Browser"
+												hideLabel
+											/>
+										)}
 										{voiceMode.isActive && features.voice && (
 											<TabButton
 												activeView={activeView}
@@ -6240,6 +6369,34 @@ export const SessionScreen = memo(function SessionScreen() {
 															workspacePath={resumeWorkspacePath}
 															initialImagePath={previewFilePath}
 															onSaveAndAddToChat={handleCanvasSaveAndAddToChat}
+														/>
+													</Suspense>
+												</div>
+											</div>
+										)}
+										{activeView === "browser" && (
+											<div className="flex flex-col h-full overflow-hidden">
+												<div className="flex items-center justify-between px-2 py-1 border-b border-border bg-muted/30">
+													<span className="text-xs text-muted-foreground">
+														Browser
+													</span>
+													<button
+														type="button"
+														onClick={() => {
+															setBrowserVisible(false);
+															setActiveView("chat");
+														}}
+														className="p-1 text-muted-foreground hover:text-foreground hover:bg-muted/50"
+														aria-label="Close browser"
+													>
+														<X className="w-3.5 h-3.5" />
+													</button>
+												</div>
+												<div className="flex-1 min-h-0">
+													<Suspense fallback={viewLoadingFallback}>
+														<BrowserView
+															sessionId={browserSessionId}
+															className="h-full"
 														/>
 													</Suspense>
 												</div>

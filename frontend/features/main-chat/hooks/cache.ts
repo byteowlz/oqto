@@ -14,6 +14,7 @@ import type {
 // Constants
 export const CACHE_WRITE_THROTTLE_MS = 2000; // Write to localStorage at most every 2s during streaming
 export const SESSION_CACHE_VERSION = 2;
+const SESSION_CACHE_MAX_CHARS = 2_000_000;
 const DEFAULT_SCROLL_STORAGE_KEY = "octo:mainChat:scrollPosition";
 
 // Global WebSocket connection cache - survives component remounts
@@ -86,6 +87,10 @@ export function readCachedSessionMessages(
 			cacheKeyMessages(sessionId, storageKeyPrefix),
 		);
 		if (!raw) return [];
+		if (raw.length > SESSION_CACHE_MAX_CHARS) {
+			localStorage.removeItem(cacheKeyMessages(sessionId, storageKeyPrefix));
+			return [];
+		}
 		const parsed = JSON.parse(raw) as SessionMessageCacheEntry;
 		if (!parsed || !Array.isArray(parsed.messages)) return [];
 		if (parsed.version !== SESSION_CACHE_VERSION) return [];
@@ -150,9 +155,16 @@ export function writeCachedSessionMessages(
 		sessionMessageCache.lastWriteTime.set(cacheKey, Date.now());
 		queueMicrotask(() => {
 			try {
+				const encoded = JSON.stringify(entry);
+				if (encoded.length > SESSION_CACHE_MAX_CHARS) {
+					localStorage.removeItem(
+						cacheKeyMessages(sessionId, storageKeyPrefix),
+					);
+					return;
+				}
 				localStorage.setItem(
 					cacheKeyMessages(sessionId, storageKeyPrefix),
-					JSON.stringify(entry),
+					encoded,
 				);
 			} catch {
 				// ignore
