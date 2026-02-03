@@ -1156,7 +1156,64 @@ export const SessionScreen = memo(function SessionScreen() {
 		| {
 				text: string;
 				updatedAt: number;
-			};
+		  };
+
+	const SESSION_MESSAGE_CACHE_KEY = "octo:sessionMessagesCache:v1";
+
+	type SessionMessageCacheEntry = {
+		sessionId: string;
+		messages: OpenCodeMessageWithParts[];
+		updatedAt: number;
+	};
+
+	const readCachedSessionMessages = useCallback(
+		(sessionId: string): OpenCodeMessageWithParts[] => {
+			if (typeof window === "undefined") return [];
+			try {
+				const raw = localStorage.getItem(SESSION_MESSAGE_CACHE_KEY);
+				if (!raw) return [];
+				const parsed = JSON.parse(raw) as SessionMessageCacheEntry[];
+				if (!Array.isArray(parsed)) return [];
+				const entry = parsed.find((item) => item.sessionId === sessionId);
+				return Array.isArray(entry?.messages) ? entry?.messages ?? [] : [];
+			} catch {
+				return [];
+			}
+		},
+		[],
+	);
+
+	const writeCachedSessionMessages = useCallback(
+		(sessionId: string, messages: OpenCodeMessageWithParts[]) => {
+			if (typeof window === "undefined") return;
+			try {
+				const raw = localStorage.getItem(SESSION_MESSAGE_CACHE_KEY);
+				const parsed = raw
+					? (JSON.parse(raw) as SessionMessageCacheEntry[])
+					: [];
+				const entries = Array.isArray(parsed) ? parsed : [];
+				const capped =
+					messages.length > 200
+						? messages.slice(messages.length - 200)
+						: messages;
+				const updated: SessionMessageCacheEntry = {
+					sessionId,
+					messages: capped,
+					updatedAt: Date.now(),
+				};
+				const next = [
+					updated,
+					...entries.filter((item) => item.sessionId !== sessionId),
+				]
+					.sort((a, b) => b.updatedAt - a.updatedAt)
+					.slice(0, 20);
+				localStorage.setItem(SESSION_MESSAGE_CACHE_KEY, JSON.stringify(next));
+			} catch {
+				// ignore cache errors
+			}
+		},
+		[],
+	);
 
 	const getDraft = useCallback((sessionId: string): string => {
 		if (typeof window === "undefined") return "";
@@ -2301,7 +2358,15 @@ export const SessionScreen = memo(function SessionScreen() {
 			const targetSessionId = selectedChatSessionId;
 			loadingSessionIdRef.current = targetSessionId;
 			const requestId = ++loadRequestCounterRef.current;
-			setMessagesLoading(true);
+			const cachedMessages = readCachedSessionMessages(targetSessionId);
+			const hasCached = cachedMessages.length > 0;
+			if (hasCached) {
+				sessionsWithMessagesRef.current.add(targetSessionId);
+				startTransition(() => {
+					setMessages((prev) => mergeMessages(prev, cachedMessages));
+				});
+			}
+			setMessagesLoading(!hasCached);
 
 			try {
 				let loadedMessages: OpenCodeMessageWithParts[] = [];
@@ -2349,6 +2414,7 @@ export const SessionScreen = memo(function SessionScreen() {
 				// Track that this session has messages (for skeleton display logic)
 				if (loadedMessages.length > 0) {
 					sessionsWithMessagesRef.current.add(targetSessionId);
+					writeCachedSessionMessages(targetSessionId, loadedMessages);
 				}
 
 				// Use merge to prevent flickering when updating
@@ -2369,6 +2435,8 @@ export const SessionScreen = memo(function SessionScreen() {
 			selectedChatSessionId,
 			isHistoryOnlySession,
 			mergeMessages,
+			readCachedSessionMessages,
+			writeCachedSessionMessages,
 		],
 	);
 

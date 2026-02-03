@@ -2,6 +2,9 @@
 
 - 2026-02-03: Make chat sidebar deletes optimistic for single sessions to avoid UI stalls.
 - 2026-02-03: Use square pink badges for todo counts and low-verbosity tool grouping.
+- 2026-02-03: Avoid duplicate file tree fetches by coalescing in-flight requests.
+- 2026-02-03: Keep shift-range selection additive in the chat sidebar.
+- 2026-02-03: Cache session messages locally so chat history renders immediately on switch.
 - 2026-02-02: Filter Pi toolcall delta fragments from the multiplexed WS stream to stop duplicate/raw command text in Main Chat output.
 - 2026-02-02: Ensure Pi tool events start a streaming assistant message so tool spinners resolve with tool results.
 - 2026-02-02: Fix Pi file mention popup mux import to avoid frontend load errors on mobile.

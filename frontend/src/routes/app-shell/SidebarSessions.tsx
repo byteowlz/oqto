@@ -250,7 +250,7 @@ export const SidebarSessions = memo(function SidebarSessions({
 			const end = Math.max(lastSelectedIndexRef.current!, index);
 			const rangeIds = visibleSessionIds.slice(start, end + 1);
 			setSelectedSessionIds((prev) => {
-				const next = new Set(isToggle ? prev : []);
+				const next = new Set(prev);
 				for (const id of rangeIds) next.add(id);
 				return next;
 			});
@@ -304,20 +304,7 @@ export const SidebarSessions = memo(function SidebarSessions({
 	};
 
 	const handleDeleteSession = async (sessionId: string) => {
-		setHiddenSessionIds((prev) => {
-			const next = new Set(prev);
-			next.add(sessionId);
-			return next;
-		});
-		try {
-			await Promise.resolve(onDeleteSession(sessionId));
-		} catch {
-			setHiddenSessionIds((prev) => {
-				const next = new Set(prev);
-				next.delete(sessionId);
-				return next;
-			});
-		}
+		await Promise.resolve(onDeleteSession(sessionId));
 	};
 
 	return (

@@ -51,6 +51,7 @@ export type FileNode = {
 // Cache for file tree data
 const treeCache = new Map<string, { data: FileNode[]; timestamp: number }>();
 const TREE_CACHE_TTL_MS = 10000; // 10 seconds - shorter TTL since tree can change
+const treeInFlight = new Map<string, Promise<FileNode[]>>();
 
 function getTreeCacheKey(workspaceKey: string, path: string): string {
 	return `${workspaceKey}:${path}`;
@@ -82,7 +83,20 @@ function setCachedTree(
 }
 
 async function fetchFileTree(workspacePath: string, path = "."): Promise<FileNode[]> {
-	return fetchFileTreeMux(workspacePath, path, 6, false);
+	const key = getTreeCacheKey(workspacePath, path);
+	const existing = treeInFlight.get(key);
+	if (existing) return existing;
+
+	const request = fetchFileTreeMux(workspacePath, path, 6, false)
+		.then((result) => {
+			return result;
+		})
+		.finally(() => {
+			treeInFlight.delete(key);
+		});
+
+	treeInFlight.set(key, request);
+	return request;
 }
 
 // File extensions that can be previewed
