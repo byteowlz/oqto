@@ -112,3 +112,4 @@
 - 2026-02-03: Match low-verbosity tool badge styling to the todo list badge.
 - 2026-02-03: Cache chat history in localStorage for instant sidebar load before refresh.
 - 2026-02-03: Remount tool call groups on verbosity changes so past chats keep tool bars visible.
+- 2026-02-03: Add multi-select chat deletion with shift/cmd in the Main Chat sidebar and make deletes optimistic.

@@ -174,6 +174,18 @@ export function MainChatEntry({
 		}
 	}, [isSelected, sessions.length]);
 	useEffect(() => {
+		setSelectedSessionIds((prev) => {
+			if (prev.size === 0) return prev;
+			const valid = new Set(sessions.map((s) => s.id));
+			const next = new Set<string>();
+			for (const id of prev) {
+				if (valid.has(id)) next.add(id);
+			}
+			return next;
+		});
+		lastSelectedIndexRef.current = null;
+	}, [sessions]);
+	useEffect(() => {
 		if (!filterLower) return;
 		setExpanded(filteredSessions.length > 0);
 	}, [filterLower, filteredSessions.length]);
@@ -198,6 +210,13 @@ export function MainChatEntry({
 	const [resetName, setResetName] = useState("");
 	const [resetting, setResetting] = useState(false);
 	const [resetError, setResetError] = useState<string | null>(null);
+	const [selectedSessionIds, setSelectedSessionIds] = useState<Set<string>>(
+		() => new Set(),
+	);
+	const lastSelectedIndexRef = useRef<number | null>(null);
+	const [showBulkDeleteDialog, setShowBulkDeleteDialog] = useState(false);
+	const [bulkDeleteError, setBulkDeleteError] = useState<string | null>(null);
+	const [bulkDeleting, setBulkDeleting] = useState(false);
 	const resetNameIsValid = useMemo(() => {
 		return Boolean(resetName.trim().match(/^[A-Za-z0-9_-]+$/));
 	}, [resetName]);
@@ -533,27 +552,117 @@ export function MainChatEntry({
 	async function handleConfirmDelete() {
 		if (!deleteSessionId) return;
 
+		const previous = sessions;
+		const remaining = previous.filter((s) => s.id !== deleteSessionId);
+		setSessions(remaining);
+		setLatestSessionId(remaining[0]?.id ?? null);
+		setSelectedSessionIds((prev) => {
+			if (!prev.has(deleteSessionId)) return prev;
+			const next = new Set(prev);
+			next.delete(deleteSessionId);
+			return next;
+		});
+		if (activeSessionId === deleteSessionId && assistantName) {
+			const nextSession = remaining[0]?.id ?? null;
+			onSelect(assistantName, nextSession);
+		}
+		setShowDeleteDialog(false);
+		setDeleteSessionId(null);
+		setDeleteTitle("");
 		try {
 			setDeleting(true);
 			setDeleteError(null);
 			await deleteMainChatPiSession(deleteSessionId);
-			setSessions((prev) => prev.filter((s) => s.id !== deleteSessionId));
-			if (activeSessionId === deleteSessionId && assistantName) {
-				const remaining = sessions.filter((s) => s.id !== deleteSessionId);
-				const nextSession = remaining[0]?.id ?? null;
-				onSelect(assistantName, nextSession);
-			}
-			setShowDeleteDialog(false);
-			setDeleteSessionId(null);
-			setDeleteTitle("");
 		} catch (err) {
 			console.error("Failed to delete session:", err);
 			const message = err instanceof Error ? err.message : "Failed to delete";
 			setDeleteError(message);
+			setSessions(previous);
+			setLatestSessionId(previous[0]?.id ?? null);
 		} finally {
 			setDeleting(false);
 		}
 	}
+
+	async function handleConfirmBulkDelete() {
+		if (selectedSessionIds.size === 0) return;
+
+		const ids = Array.from(selectedSessionIds);
+		const previous = sessions;
+		const remaining = previous.filter((s) => !selectedSessionIds.has(s.id));
+		setSessions(remaining);
+		setLatestSessionId(remaining[0]?.id ?? null);
+		setSelectedSessionIds(new Set());
+		setShowBulkDeleteDialog(false);
+		setBulkDeleteError(null);
+
+		if (
+			activeSessionId &&
+			selectedSessionIds.has(activeSessionId) &&
+			assistantName
+		) {
+			onSelect(assistantName, remaining[0]?.id ?? null);
+		}
+
+		try {
+			setBulkDeleting(true);
+			const results = await Promise.allSettled(
+				ids.map((id) => deleteMainChatPiSession(id)),
+			);
+			const failures = results.filter((r) => r.status === "rejected");
+			if (failures.length > 0) {
+				console.error("Failed to delete some sessions:", failures);
+				setBulkDeleteError(
+					locale === "de"
+						? "Einige Sitzungen konnten nicht geloscht werden."
+						: "Some sessions failed to delete.",
+				);
+				setSessions(previous);
+				setLatestSessionId(previous[0]?.id ?? null);
+			}
+		} finally {
+			setBulkDeleting(false);
+		}
+	}
+
+	const handleSessionRowClick = useCallback(
+		(
+			e: React.MouseEvent,
+			sessionId: string,
+			index: number,
+			selectableIds: string[],
+		) => {
+			const hasRange =
+				e.shiftKey && lastSelectedIndexRef.current !== null;
+			const isToggle = e.metaKey || e.ctrlKey;
+			if (hasRange) {
+				const start = Math.min(lastSelectedIndexRef.current!, index);
+				const end = Math.max(lastSelectedIndexRef.current!, index);
+				const rangeIds = selectableIds.slice(start, end + 1);
+				setSelectedSessionIds((prev) => {
+					const next = new Set(isToggle ? prev : []);
+					for (const id of rangeIds) next.add(id);
+					return next;
+				});
+			} else if (isToggle) {
+				setSelectedSessionIds((prev) => {
+					const next = new Set(prev);
+					if (next.has(sessionId)) {
+						next.delete(sessionId);
+					} else {
+						next.add(sessionId);
+					}
+					return next;
+				});
+			} else {
+				setSelectedSessionIds(new Set([sessionId]));
+				handleTimelineSessionClick(sessionId);
+			}
+
+			lastSelectedIndexRef.current = index;
+		},
+		[handleTimelineSessionClick],
+	);
 
 	// Loading state - show placeholder
 	if (loading) {
@@ -689,9 +798,43 @@ export function MainChatEntry({
 				{/* Session history list - shown when expanded */}
 				{expanded && hasSessions && (
 					<div className="space-y-0.5 pb-1">
-						{flattenedSessions.map(({ session, depth }) => {
+						{(() => {
+							const selectableIds = flattenedSessions.map(
+								(entry) => entry.session.id,
+							);
+							return (
+								<>
+						{selectedSessionIds.size > 0 && (
+							<div className="flex items-center justify-between px-3 py-1 text-xs text-muted-foreground">
+								<span>
+									{selectedSessionIds.size}{" "}
+									{locale === "de" ? "ausgewahlt" : "selected"}
+								</span>
+								<div className="flex items-center gap-2">
+									<button
+										type="button"
+										onClick={() => setSelectedSessionIds(new Set())}
+										className="text-muted-foreground hover:text-foreground"
+									>
+										{locale === "de" ? "Auswahl loschen" : "Clear"}
+									</button>
+									<Button
+										type="button"
+										variant="ghost"
+										size="sm"
+										onClick={() => setShowBulkDeleteDialog(true)}
+										className="h-6 px-2 text-destructive hover:text-destructive"
+									>
+										<Trash2 className="w-3 h-3 mr-1" />
+										{locale === "de" ? "Loschen" : "Delete"}
+									</Button>
+								</div>
+							</div>
+						)}
+						{flattenedSessions.map(({ session, depth }, index) => {
 							const isActive =
 								session.id === (activeSessionId ?? latestSessionId);
+							const isSelectedRow = selectedSessionIds.has(session.id);
 
 							// Parse auto-generated title to extract clean title and readable ID
 							const parsed = session.title
@@ -721,12 +864,21 @@ export function MainChatEntry({
 										<div className={cn("ml-3", isChild && "ml-6")}>
 											<button
 												type="button"
-												onClick={() => handleTimelineSessionClick(session.id)}
+												onClick={(e) =>
+													handleSessionRowClick(
+														e,
+														session.id,
+														index,
+														selectableIds,
+													)
+												}
 												className={cn(
 													"w-full px-2 py-1 text-left transition-colors flex items-start gap-1.5 rounded-sm border",
 													isActive
 														? "bg-primary/15 border-primary text-foreground"
-														: "text-muted-foreground hover:bg-sidebar-accent border-transparent",
+														: isSelectedRow
+															? "bg-primary/10 border-primary/50 text-foreground"
+															: "text-muted-foreground hover:bg-sidebar-accent border-transparent",
 												)}
 											>
 												{isChild ? (
@@ -771,6 +923,9 @@ export function MainChatEntry({
 								</ContextMenu>
 							);
 						})}
+								</>
+							);
+						})()}
 					</div>
 				)}
 			</div>
@@ -816,6 +971,50 @@ export function MainChatEntry({
 				error={deleteError}
 				locale={locale}
 			/>
+			<Dialog
+				open={showBulkDeleteDialog}
+				onOpenChange={setShowBulkDeleteDialog}
+			>
+				<DialogContent>
+					<DialogHeader>
+						<DialogTitle>
+							{locale === "de"
+								? "Mehrere Sitzungen loschen"
+								: "Delete multiple sessions"}
+						</DialogTitle>
+						<DialogDescription>
+							{locale === "de"
+								? `Mochtest du ${selectedSessionIds.size} Sitzungen loschen?`
+								: `Delete ${selectedSessionIds.size} sessions?`}
+						</DialogDescription>
+					</DialogHeader>
+					{bulkDeleteError && (
+						<div className="text-sm text-destructive">{bulkDeleteError}</div>
+					)}
+					<DialogFooter>
+						<Button
+							type="button"
+							variant="ghost"
+							onClick={() => setShowBulkDeleteDialog(false)}
+						>
+							{locale === "de" ? "Abbrechen" : "Cancel"}
+						</Button>
+						<Button
+							type="button"
+							variant="destructive"
+							onClick={handleConfirmBulkDelete}
+							disabled={bulkDeleting}
+						>
+							{bulkDeleting ? (
+								<Loader2 className="w-4 h-4 mr-2 animate-spin" />
+							) : (
+								<Trash2 className="w-4 h-4 mr-2" />
+							)}
+							{locale === "de" ? "Loschen" : "Delete"}
+						</Button>
+					</DialogFooter>
+				</DialogContent>
+			</Dialog>
 		</>
 	);
 }
