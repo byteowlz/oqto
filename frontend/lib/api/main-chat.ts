@@ -54,6 +54,8 @@ export type PiSessionFile = {
 	readable_id?: string;
 	parent_id?: string;
 	message_count: number;
+	workspace_path?: string;
+	session_dir?: string;
 };
 
 /** Message loaded from a Pi session JSONL file */

@@ -68,6 +68,8 @@ import {
 import { cn } from "@/lib/utils";
 import {
 	Bot,
+	ArrowDown,
+	ArrowUp,
 	Check,
 	Copy,
 	ExternalLink,
@@ -79,6 +81,7 @@ import {
 	Paperclip,
 	Send,
 	StopCircle,
+	Trash2,
 	User,
 } from "lucide-react";
 import {
@@ -100,6 +103,11 @@ export interface TodoItem {
 	status: "pending" | "in_progress" | "completed" | "cancelled";
 	priority: "high" | "medium" | "low";
 }
+
+type QueuedMessage = {
+	id: string;
+	text: string;
+};
 
 export interface MainChatPiViewProps {
 	/** Current locale */
@@ -237,24 +245,25 @@ export function MainChatPiView({
 	// Create new session when trigger changes (external request)
 	useEffect(() => {
 		// Skip initial render and only react to actual changes
-			if (
-				newSessionTrigger !== undefined &&
-				newSessionTrigger !== lastNewSessionTriggerRef.current &&
-				lastNewSessionTriggerRef.current !== undefined
-			) {
-				newSession();
-				// Clear the input when starting a new session
-				setInput("");
-				setFileAttachments([]);
-				if (draftSaveTimeoutRef.current) {
-					clearTimeout(draftSaveTimeoutRef.current);
-					draftSaveTimeoutRef.current = null;
-				}
-				try {
-					localStorage.removeItem(draftStorageKey);
-				} catch {
-					// Ignore localStorage errors
-				}
+		if (
+			newSessionTrigger !== undefined &&
+			newSessionTrigger !== lastNewSessionTriggerRef.current &&
+			lastNewSessionTriggerRef.current !== undefined
+		) {
+			newSession();
+			// Clear the input when starting a new session
+			setInput("");
+			setFileAttachments([]);
+			setQueuedMessages([]);
+			if (draftSaveTimeoutRef.current) {
+				clearTimeout(draftSaveTimeoutRef.current);
+				draftSaveTimeoutRef.current = null;
+			}
+			try {
+				localStorage.removeItem(draftStorageKey);
+			} catch {
+				// Ignore localStorage errors
+			}
 		}
 		lastNewSessionTriggerRef.current = newSessionTrigger;
 	}, [draftStorageKey, newSession, newSessionTrigger]);
@@ -276,7 +285,16 @@ export function MainChatPiView({
 			setInput("");
 		}
 	}, [draftStorageKey]);
+	useEffect(() => {
+		setQueuedMessages([]);
+	}, [selectedSessionId]);
+	useEffect(() => {
+		if (isStreaming || isAwaitingResponse) {
+			setSendPending(false);
+		}
+	}, [isAwaitingResponse, isStreaming]);
 	const [fileAttachments, setFileAttachments] = useState<FileAttachment[]>([]);
+	const [queuedMessages, setQueuedMessages] = useState<QueuedMessage[]>([]);
 	const [showFileMentionPopup, setShowFileMentionPopup] = useState(false);
 	const [fileMentionQuery, setFileMentionQuery] = useState("");
 	const [showSlashPopup, setShowSlashPopup] = useState(false);
@@ -292,11 +310,14 @@ export function MainChatPiView({
 		input: number;
 		output: number;
 	} | null>(null);
+	const [sendPending, setSendPending] = useState(false);
 
 	const messagesEndRef = useRef<HTMLDivElement>(null);
 	const messagesContainerRef = useRef<HTMLDivElement>(null);
 	const inputRef = useRef<HTMLTextAreaElement>(null);
 	const fileInputRef = useRef<HTMLInputElement>(null);
+	const queueSendInFlightRef = useRef(false);
+	const queueCooldownRef = useRef<number | null>(null);
 	const draftSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
 		null,
 	);
@@ -456,6 +477,56 @@ export function MainChatPiView({
 		</div>
 	);
 	const slashQuery = useMemo(() => parseSlashInput(input), [input]);
+
+	const enqueueMessage = useCallback(
+		(rawText?: string) => {
+			const trimmed = (rawText ?? input).trim();
+			if (!trimmed) return;
+
+			if (fileAttachments.length > 0) {
+				toast.error("Queued messages do not support file attachments yet.");
+				return;
+			}
+
+			if (draftSaveTimeoutRef.current) {
+				clearTimeout(draftSaveTimeoutRef.current);
+				draftSaveTimeoutRef.current = null;
+			}
+
+			const isShellCommand = trimmed.startsWith("!");
+			const shellCommand = isShellCommand ? trimmed.slice(1).trim() : "";
+			let message = trimmed;
+			if (isShellCommand && shellCommand) {
+				message = `Run this shell command and show me the output:\n\`\`\`bash\n${shellCommand}\n\`\`\``;
+			}
+
+			const id =
+				typeof crypto !== "undefined" && "randomUUID" in crypto
+					? crypto.randomUUID()
+					: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+			setQueuedMessages((prev) => [...prev, { id, text: message }]);
+			setInput("");
+			setFileAttachments([]);
+			setShowSlashPopup(false);
+			setCommandError(null);
+			try {
+				localStorage.removeItem(draftStorageKey);
+			} catch {
+				// Ignore localStorage errors
+			}
+			if (inputRef.current) {
+				inputRef.current.style.height = "auto";
+			}
+		},
+		[
+			draftStorageKey,
+			fileAttachments.length,
+			input,
+			setCommandError,
+			setShowSlashPopup,
+		],
+	);
 	const builtInCommands = useMemo<SlashCommand[]>(() => {
 		const commands: SlashCommand[] = [
 			{ name: "compact", description: "Summarize context" },
@@ -911,7 +982,7 @@ export function MainChatPiView({
 					return { handled: true, clearInput: true };
 				}
 				case "followup": {
-					await send(trimmedArgs, { mode: "follow_up" });
+					enqueueMessage(trimmedArgs);
 					return { handled: true, clearInput: true };
 				}
 				case "model": {
@@ -938,6 +1009,7 @@ export function MainChatPiView({
 			abort,
 			canSwitchModel,
 			compact,
+			enqueueMessage,
 			handleModelChange,
 			newSession,
 			refresh,
@@ -1007,9 +1079,15 @@ export function MainChatPiView({
 			if (inputRef.current) {
 				inputRef.current.style.height = "auto";
 			}
-			await send(message, { mode });
-			// Notify that a message was sent (for sidebar refresh)
-			onMessageSent?.();
+			setSendPending(true);
+			try {
+				await send(message, { mode });
+				// Notify that a message was sent (for sidebar refresh)
+				onMessageSent?.();
+			} catch {
+				setSendPending(false);
+				toast.error("Failed to send message.");
+			}
 		},
 		[
 			builtInCommandNames,
@@ -1018,12 +1096,91 @@ export function MainChatPiView({
 			input,
 			onMessageSent,
 			runSlashCommand,
+			setSendPending,
 			send,
 			slashQuery.command,
 			slashQuery.args,
 			slashQuery.isSlash,
 		],
 	);
+
+	const handleQueueIntent = useCallback(() => {
+		if (slashQuery.isSlash && builtInCommandNames.has(slashQuery.command)) {
+			handleSend("steer");
+			return;
+		}
+		enqueueMessage();
+	}, [
+		builtInCommandNames,
+		enqueueMessage,
+		handleSend,
+		slashQuery.command,
+		slashQuery.isSlash,
+	]);
+
+	useEffect(() => {
+		if (queuedMessages.length === 0) return;
+		if (isStreaming || isAwaitingResponse) return;
+		if (queueSendInFlightRef.current) return;
+
+		const now = Date.now();
+		if (queueCooldownRef.current && now - queueCooldownRef.current < 2000) {
+			return;
+		}
+
+		const next = queuedMessages[0];
+		if (!next?.text) return;
+
+		queueSendInFlightRef.current = true;
+		setSendPending(true);
+		send(next.text, { mode: "follow_up" })
+			.then(() => {
+				setQueuedMessages((prev) => prev.slice(1));
+				onMessageSent?.();
+			})
+			.catch(() => {
+				queueCooldownRef.current = Date.now();
+				setSendPending(false);
+				toast.error("Failed to send queued message.");
+			})
+			.finally(() => {
+				queueSendInFlightRef.current = false;
+			});
+	}, [
+		isAwaitingResponse,
+		isStreaming,
+		onMessageSent,
+		queuedMessages,
+		send,
+		setSendPending,
+	]);
+
+	const handleQueueEdit = useCallback((id: string, text: string) => {
+		setQueuedMessages((prev) =>
+			prev.map((item) => (item.id === id ? { ...item, text } : item)),
+		);
+	}, []);
+
+	const handleQueueRemove = useCallback((id: string) => {
+		setQueuedMessages((prev) => prev.filter((item) => item.id !== id));
+	}, []);
+
+	const handleQueueMove = useCallback((id: string, direction: -1 | 1) => {
+		setQueuedMessages((prev) => {
+			const index = prev.findIndex((item) => item.id === id);
+			if (index < 0) return prev;
+			const targetIndex = index + direction;
+			if (targetIndex < 0 || targetIndex >= prev.length) return prev;
+			const next = [...prev];
+			const [item] = next.splice(index, 1);
+			next.splice(targetIndex, 0, item);
+			return next;
+		});
+	}, []);
+
+	const handleQueueClear = useCallback(() => {
+		setQueuedMessages([]);
+	}, []);
 
 	const handleKeyDown = useCallback(
 		(e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -1045,14 +1202,24 @@ export function MainChatPiView({
 			if (e.key === "Enter" && !e.shiftKey) {
 				e.preventDefault();
 				// Steer on Enter, queue on Ctrl/Cmd+Enter
-				handleSend(e.ctrlKey || e.metaKey ? "follow_up" : "steer");
+				if (e.ctrlKey || e.metaKey) {
+					handleQueueIntent();
+				} else {
+					handleSend("steer");
+				}
 			}
 			if (e.key === "Escape") {
 				setShowFileMentionPopup(false);
 				setShowSlashPopup(false);
 			}
 		},
-		[handleSend, showFileMentionPopup, showSlashPopup, slashQuery],
+		[
+			handleQueueIntent,
+			handleSend,
+			showFileMentionPopup,
+			showSlashPopup,
+			slashQuery,
+		],
 	);
 
 	const handleInputChange = useCallback(
@@ -1133,10 +1300,10 @@ export function MainChatPiView({
 			clearLongPress();
 			longPressTimerRef.current = setTimeout(() => {
 				suppressClickRef.current = true;
-				handleSend("follow_up");
+				handleQueueIntent();
 			}, 450);
 		},
-		[clearLongPress, handleSend],
+		[clearLongPress, handleQueueIntent],
 	);
 
 	const handleSendPointerUp = useCallback(() => {
@@ -1306,9 +1473,10 @@ export function MainChatPiView({
 							const visibleMessages = messages.slice(-visibleCount);
 							const grouped = groupPiMessages(visibleMessages);
 							const lastGroup = grouped[grouped.length - 1];
+							const isWorking =
+								isStreaming || isAwaitingResponse || sendPending;
 							const needsPendingAssistant =
-								(isStreaming || isAwaitingResponse) &&
-								(!lastGroup || lastGroup.role === "user");
+								isWorking && (!lastGroup || lastGroup.role === "user");
 							const groupsToRender = needsPendingAssistant
 								? [
 										...grouped,
@@ -1352,10 +1520,7 @@ export function MainChatPiView({
 												a2uiSurfaces={groupSurfaces}
 												onA2UIAction={handleA2UIAction}
 												messageId={groupMessageId}
-												showWorkingIndicator={
-													(isStreaming || isAwaitingResponse) &&
-													isLastAssistantGroup
-												}
+												showWorkingIndicator={isWorking && isLastAssistantGroup}
 											/>
 									</div>
 								);
@@ -1494,6 +1659,79 @@ export function MainChatPiView({
 								setFileMentionQuery("");
 							}}
 						/>
+
+						{queuedMessages.length > 0 && (
+							<div className="mb-2 rounded-md border border-border/60 bg-muted/20 p-2">
+								<div className="flex items-center justify-between text-xs text-muted-foreground mb-2">
+									<span>Queued messages</span>
+									<Button
+										type="button"
+										variant="ghost"
+										size="sm"
+										className="h-6 px-2 text-xs text-muted-foreground hover:text-foreground"
+										onClick={handleQueueClear}
+									>
+										Clear
+									</Button>
+								</div>
+								<div className="space-y-1 max-h-32 overflow-y-auto pr-1">
+									{queuedMessages.map((item, index) => (
+										<div
+											key={item.id}
+											className="flex items-start gap-2 rounded-md bg-muted/30 p-1.5"
+										>
+											<span className="mt-1 text-[10px] text-muted-foreground w-4 text-right">
+												{index + 1}
+											</span>
+											<textarea
+												value={item.text}
+												onChange={(e) =>
+													handleQueueEdit(item.id, e.target.value)
+												}
+												onInput={(e) => {
+													const el = e.currentTarget;
+													el.style.height = "auto";
+													el.style.height = `${Math.min(el.scrollHeight, 120)}px`;
+												}}
+												rows={1}
+												className="flex-1 bg-transparent text-xs leading-4 resize-none outline-none"
+											/>
+											<div className="flex flex-col gap-1">
+												<Button
+													type="button"
+													variant="ghost"
+													size="icon"
+													className="h-6 w-6 text-muted-foreground hover:text-foreground"
+													disabled={index === 0}
+													onClick={() => handleQueueMove(item.id, -1)}
+												>
+													<ArrowUp className="h-3 w-3" />
+												</Button>
+												<Button
+													type="button"
+													variant="ghost"
+													size="icon"
+													className="h-6 w-6 text-muted-foreground hover:text-foreground"
+													disabled={index === queuedMessages.length - 1}
+													onClick={() => handleQueueMove(item.id, 1)}
+												>
+													<ArrowDown className="h-3 w-3" />
+												</Button>
+												<Button
+													type="button"
+													variant="ghost"
+													size="icon"
+													className="h-6 w-6 text-muted-foreground hover:text-foreground"
+													onClick={() => handleQueueRemove(item.id)}
+												>
+													<Trash2 className="h-3 w-3" />
+												</Button>
+											</div>
+										</div>
+									))}
+								</div>
+							</div>
+						)}
 
 						{/* File attachment chips */}
 						{fileAttachments.length > 0 && (

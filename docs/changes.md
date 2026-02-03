@@ -134,3 +134,6 @@
 - 2026-02-03: Persist Pi message caches continuously for instant session restores.
 - 2026-02-03: Add shared mux file-tree caching to reduce duplicate list_directory traffic.
 - 2026-02-03: Shrink low-verbosity tool badges to avoid covering tool icons.
+- 2026-02-03: Add an editable queued-message tray and auto-send queued follow-ups when Pi is idle.
+- 2026-02-03: Resolve Pi sessions via JSONL header workdir and scan all session dirs to prevent split session entries.
+- 2026-02-03: Show the assistant working spinner immediately after send until streaming starts.

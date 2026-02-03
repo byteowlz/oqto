@@ -30,6 +30,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sqlx::Row;
 use std::collections::HashMap;
+use std::io::BufRead;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -166,6 +167,12 @@ pub struct PiSessionFile {
     pub parent_id: Option<String>,
     /// Number of messages in session
     pub message_count: usize,
+    /// Workspace path (cwd stored in JSONL header)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace_path: Option<String>,
+    /// Session directory (JSONL header)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_dir: Option<String>,
 }
 
 /// A message from a Pi session file.
@@ -1170,6 +1177,66 @@ impl MainChatPiService {
         Ok(entries)
     }
 
+    async fn list_all_session_entries(&self, user_id: &str) -> Result<Vec<(PathBuf, u64, i64)>> {
+        let sessions_root = self.get_pi_agent_dir(user_id).join("sessions");
+        let mut entries: Vec<(PathBuf, u64, i64)> = Vec::new();
+
+        if let Some(client) = self.runner_client_for_user(user_id) {
+            let listing = client.list_directory(&sessions_root, false).await?;
+            for entry in listing.entries.iter().filter(|e| e.is_dir) {
+                let dir_path = sessions_root.join(&entry.name);
+                let sub = client.list_directory(&dir_path, false).await?;
+                for file in sub.entries.iter() {
+                    if file.is_dir || !file.name.ends_with(".jsonl") {
+                        continue;
+                    }
+                    entries.push((
+                        dir_path.join(&file.name),
+                        file.size,
+                        file.modified_at,
+                    ));
+                }
+            }
+            return Ok(entries);
+        }
+
+        if !sessions_root.exists() {
+            return Ok(entries);
+        }
+
+        let roots = std::fs::read_dir(&sessions_root)
+            .context("reading sessions root directory")?;
+        for root in roots.filter_map(|e| e.ok()) {
+            let root_path = root.path();
+            if !root_path.is_dir() {
+                continue;
+            }
+            let dir_entries = std::fs::read_dir(&root_path)
+                .context("reading sessions directory")?;
+            for entry in dir_entries.filter_map(|e| e.ok()) {
+                let path = entry.path();
+                if !path
+                    .extension()
+                    .map(|e| e == "jsonl")
+                    .unwrap_or(false)
+                {
+                    continue;
+                }
+                let modified_at = entry
+                    .metadata()
+                    .ok()
+                    .and_then(|m| m.modified().ok())
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_millis() as i64)
+                    .unwrap_or(0);
+                let size = entry.metadata().ok().map(|m| m.len()).unwrap_or(0);
+                entries.push((path, size, modified_at));
+            }
+        }
+
+        Ok(entries)
+    }
+
     /// Find the most recent Pi session file for a directory.
     async fn find_last_session(
         &self,
@@ -1198,12 +1265,9 @@ impl MainChatPiService {
 
     /// List all Pi sessions for a user.
     pub async fn list_sessions(&self, user_id: &str) -> Result<Vec<PiSessionFile>> {
-        let work_dir = self.get_main_chat_dir(user_id);
-        let sessions_dir = self.get_pi_sessions_dir(user_id, &work_dir);
-
         let mut sessions_by_id: std::collections::HashMap<String, PiSessionFile> =
             std::collections::HashMap::new();
-        let entries = self.list_session_entries(user_id, &sessions_dir).await?;
+        let entries = self.list_all_session_entries(user_id).await?;
 
         if let Some(client) = self.runner_client_for_user(user_id) {
             for (path, size, modified_at) in entries {
@@ -1285,12 +1349,8 @@ impl MainChatPiService {
     ) -> Result<PiSessionFile> {
         use std::io::{BufRead, BufReader, Write};
 
-        let work_dir = self.get_main_chat_dir(user_id);
-        let sessions_dir = self.get_pi_sessions_dir(user_id, &work_dir);
-
-        // Find session file - filename format is {timestamp}_{session_id}.jsonl
         let session_path = self
-            .find_session_file(user_id, &sessions_dir, session_id)
+            .resolve_session_file_path(user_id, session_id)
             .await?;
 
         let mut lines: Vec<String> = if let Some(client) = self.runner_client_for_user(user_id) {
@@ -1478,6 +1538,14 @@ impl MainChatPiService {
             .get("timestamp")
             .and_then(|v| v.as_str())?
             .to_string();
+        let workspace_path = header
+            .get("cwd")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let session_dir = header
+            .get("session_dir")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
 
         // Check for explicit title in header first (set via rename)
         let mut title = header
@@ -1565,6 +1633,8 @@ impl MainChatPiService {
             readable_id,
             parent_id,
             message_count,
+            workspace_path,
+            session_dir,
         })
     }
 
@@ -1582,10 +1652,8 @@ impl MainChatPiService {
     pub async fn delete_session_file(&self, user_id: &str, session_id: &str) -> Result<bool> {
         use std::io::{BufRead, BufReader};
 
-        let work_dir = self.get_main_chat_dir(user_id);
-        let sessions_dir = self.get_pi_sessions_dir(user_id, &work_dir);
         let session_path = self
-            .find_session_file(user_id, &sessions_dir, session_id)
+            .resolve_session_file_path(user_id, session_id)
             .await?;
 
         let mut lines: Vec<String> = if let Some(client) = self.runner_client_for_user(user_id) {
@@ -1694,25 +1762,9 @@ impl MainChatPiService {
     ) -> Result<Vec<PiSessionMessage>> {
         use std::io::{BufRead, BufReader};
 
-        let work_dir = self.get_main_chat_dir(user_id);
-        let sessions_dir = self.get_pi_sessions_dir(user_id, &work_dir);
-
-        // Find the session file by ID
-        let session_file = match self
-            .find_session_file(user_id, &sessions_dir, session_id)
-            .await
-        {
-            Ok(path) => path,
-            Err(err) if err.to_string().contains("Session not found") => {
-                if let Ok(Some(path)) = self.rehydrate_session_from_hstry(user_id, session_id).await
-                {
-                    path
-                } else {
-                    return Err(err);
-                }
-            }
-            Err(err) => return Err(err),
-        };
+        let session_file = self
+            .resolve_session_file_path(user_id, session_id)
+            .await?;
 
         let reader: Box<dyn BufRead> = if let Some(client) = self.runner_client_for_user(user_id) {
             let content = client
@@ -2074,6 +2126,53 @@ impl MainChatPiService {
         best.map(|(_, path)| path)
     }
 
+    async fn read_session_header(
+        &self,
+        user_id: &str,
+        session_path: &std::path::Path,
+    ) -> Result<Value> {
+        if let Some(client) = self.runner_client_for_user(user_id) {
+            let content = client
+                .read_file(session_path, None, None)
+                .await
+                .context("reading session file via runner")?;
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(content.content_base64)
+                .context("decoding session file base64")?;
+            let mut reader = std::io::BufReader::new(std::io::Cursor::new(bytes));
+            let mut first_line = String::new();
+            reader.read_line(&mut first_line).context("reading header line")?;
+            return serde_json::from_str(&first_line).context("parsing session header");
+        }
+
+        let file = std::fs::File::open(session_path).context("opening session file")?;
+        let mut reader = std::io::BufReader::new(file);
+        let mut first_line = String::new();
+        reader.read_line(&mut first_line).context("reading header line")?;
+        serde_json::from_str(&first_line).context("parsing session header")
+    }
+
+    fn work_dir_from_header(header: &Value) -> Option<PathBuf> {
+        header
+            .get("cwd")
+            .and_then(|v| v.as_str())
+            .map(PathBuf::from)
+    }
+
+    async fn resolve_session_file_path(
+        &self,
+        user_id: &str,
+        session_id: &str,
+    ) -> Result<PathBuf> {
+        if let Some(path) = self.find_session_file_anywhere(user_id, session_id).await {
+            return Ok(path);
+        }
+        if let Ok(Some(path)) = self.rehydrate_session_from_hstry(user_id, session_id).await {
+            return Ok(path);
+        }
+        anyhow::bail!("Session not found: {}", session_id)
+    }
+
     /// Get the file path for a session by ID (public wrapper for find_session_file).
     /// Returns None if the session doesn't exist on disk.
     pub async fn get_session_file_path(
@@ -2081,12 +2180,7 @@ impl MainChatPiService {
         user_id: &str,
         session_id: &str,
     ) -> Option<PathBuf> {
-        let work_dir = self.get_main_chat_dir(user_id);
-        let sessions_dir = self.get_pi_sessions_dir(user_id, &work_dir);
-        match self.find_session_file(user_id, &sessions_dir, session_id).await {
-            Ok(path) => Some(path),
-            Err(_) => self.find_session_file_anywhere(user_id, session_id).await,
-        }
+        self.find_session_file_anywhere(user_id, session_id).await
     }
 
     /// Resume a specific Pi session by ID.
@@ -2113,14 +2207,17 @@ impl MainChatPiService {
             }
         }
 
-        let work_dir = self.get_main_chat_dir(user_id);
-        let sessions_dir = self.get_pi_sessions_dir(user_id, &work_dir);
-
-        // Verify session exists on disk for cold resume.
+        // Resolve the session file (any workspace) and work dir from header.
         let session_file = self
-            .find_session_file(user_id, &sessions_dir, session_id)
+            .resolve_session_file_path(user_id, session_id)
             .await?;
-        info!("Resuming Pi session {} from {:?}", session_id, session_file);
+        let header = self.read_session_header(user_id, &session_file).await?;
+        let work_dir = Self::work_dir_from_header(&header)
+            .unwrap_or_else(|| self.get_main_chat_dir(user_id));
+        info!(
+            "Resuming Pi session {} from {:?} (cwd={:?})",
+            session_id, session_file, work_dir
+        );
 
         // Spawn a new process for this session
         info!(
@@ -2129,7 +2226,12 @@ impl MainChatPiService {
         );
 
         let session = self
-            .create_session_with_resume(user_id, Some(session_id))
+            .create_session_with_resume(
+                user_id,
+                Some(session_id),
+                Some(session_file),
+                Some(work_dir),
+            )
             .await?;
         let session = Arc::new(session);
 
@@ -2151,8 +2253,10 @@ impl MainChatPiService {
         &self,
         user_id: &str,
         resume_session_id: Option<&str>,
+        resume_session_file: Option<PathBuf>,
+        work_dir_override: Option<PathBuf>,
     ) -> Result<UserPiSession> {
-        let work_dir = self.get_main_chat_dir(user_id);
+        let work_dir = work_dir_override.unwrap_or_else(|| self.get_main_chat_dir(user_id));
 
         if !work_dir.exists() {
             anyhow::bail!("Main Chat directory does not exist for user: {}", user_id);
@@ -2191,25 +2295,13 @@ impl MainChatPiService {
         // If starting fresh via this path, skip injection here and rely on the normal create_session() flow.
 
         // Find session file if resuming
-        let session_file = if let Some(session_id) = resume_session_id {
-            let sessions_dir = self.get_pi_sessions_dir(user_id, &work_dir);
-            let path = match self
-                .find_session_file(user_id, &sessions_dir, session_id)
-                .await
-            {
-                Ok(path) => path,
-                Err(err) if err.to_string().contains("Session not found") => {
-                    if let Ok(Some(path)) =
-                        self.rehydrate_session_from_hstry(user_id, session_id).await
-                    {
-                        path
-                    } else {
-                        return Err(err);
-                    }
-                }
-                Err(err) => return Err(err),
-            };
-            Some(path)
+        let session_file = if resume_session_id.is_some() {
+            if let Some(path) = resume_session_file {
+                Some(path)
+            } else {
+                let session_id = resume_session_id.expect("resume session id");
+                Some(self.resolve_session_file_path(user_id, session_id).await?)
+            }
         } else {
             None
         };
