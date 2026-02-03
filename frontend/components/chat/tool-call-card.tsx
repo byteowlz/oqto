@@ -34,6 +34,7 @@ interface ToolCallCardProps {
 	defaultCollapsed?: boolean;
 	hideTodoTools?: boolean;
 	collapsible?: boolean;
+	hideHeader?: boolean;
 }
 
 // Todo item structure from todowrite tool
@@ -853,6 +854,7 @@ export function ToolCallCard({
 	defaultCollapsed = true,
 	hideTodoTools = false,
 	collapsible = true,
+	hideHeader = false,
 }: ToolCallCardProps) {
 	const [isOpen, setIsOpen] = useState(!defaultCollapsed);
 	const { tool, state } = part;
@@ -883,6 +885,10 @@ export function ToolCallCard({
 	const hasContent = hasInput || hasOutput;
 	const resolvedOpen = collapsible ? isOpen : true;
 
+	if (hideHeader && !hasContent) {
+		return null;
+	}
+
 	return (
 		<div
 			className={cn(
@@ -890,43 +896,50 @@ export function ToolCallCard({
 				getStatusClasses(status, output),
 			)}
 		>
-			<button
-				type="button"
-				onClick={() =>
-					collapsible && hasContent && setIsOpen(!isOpen)
-				}
-				disabled={!hasContent || !collapsible}
-				className={cn(
-					"w-full flex items-center gap-2 px-3 py-2 text-left",
-					collapsible && hasContent && "cursor-pointer hover:bg-muted/50",
-					!hasContent && "cursor-default",
-				)}
-			>
-				{collapsible && hasContent && (
-					<ChevronRight
-						className={cn(
-							"w-4 h-4 text-muted-foreground transition-transform duration-200 flex-shrink-0",
-							resolvedOpen && "rotate-90",
-						)}
-					/>
-				)}
-				{(!collapsible || !hasContent) && <div className="w-4" />}
+			{!hideHeader && (
+				<button
+					type="button"
+					onClick={() =>
+						collapsible && hasContent && setIsOpen(!isOpen)
+					}
+					disabled={!hasContent || !collapsible}
+					className={cn(
+						"w-full flex items-center gap-2 px-3 py-2 text-left",
+						collapsible && hasContent && "cursor-pointer hover:bg-muted/50",
+						!hasContent && "cursor-default",
+					)}
+				>
+					{collapsible && hasContent && (
+						<ChevronRight
+							className={cn(
+								"w-4 h-4 text-muted-foreground transition-transform duration-200 flex-shrink-0",
+								resolvedOpen && "rotate-90",
+							)}
+						/>
+					)}
+					{(!collapsible || !hasContent) && <div className="w-4" />}
 
-				{getStatusIcon(status, toolName, input, output)}
+					{getStatusIcon(status, toolName, input, output)}
 
-				<span className="flex-1 text-sm font-medium text-foreground truncate">
-					{title}
-				</span>
-
-				{duration && (
-					<span className="text-xs text-foreground/60 dark:text-muted-foreground flex-shrink-0">
-						{duration}
+					<span className="flex-1 text-sm font-medium text-foreground truncate">
+						{title}
 					</span>
-				)}
-			</button>
+
+					{duration && (
+						<span className="text-xs text-foreground/60 dark:text-muted-foreground flex-shrink-0">
+							{duration}
+						</span>
+					)}
+				</button>
+			)}
 
 			{resolvedOpen && hasContent && (
-				<div className="px-3 pb-3 space-y-2 border-t border-border pt-2">
+				<div
+					className={cn(
+						"px-3 pb-3 space-y-2",
+						hideHeader ? "pt-3" : "border-t border-border pt-2",
+					)}
+				>
 					{input && Object.keys(input).length > 0 && (
 						<div>
 							{/* Render input based on tool type */}

@@ -6690,6 +6690,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 													defaultCollapsed={false}
 													hideTodoTools={true}
 													collapsible={false}
+													hideHeader={verbosity === 2}
 												/>
 											),
 										};

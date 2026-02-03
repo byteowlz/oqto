@@ -203,18 +203,24 @@ const markdownComponents: Components = {
 	},
 	ul({ children }) {
 		return (
-			<ul className="list-disc list-inside mb-3 space-y-1 pl-2">{children}</ul>
+			<ul className="list-disc list-inside mb-3 space-y-1 pl-0">
+				{children}
+			</ul>
 		);
 	},
 	ol({ children }) {
 		return (
-			<ol className="list-decimal list-inside mb-3 space-y-1 pl-2">
+			<ol className="list-decimal list-inside mb-3 space-y-1 pl-0">
 				{children}
 			</ol>
 		);
 	},
 	li({ children }) {
-		return <li className="text-foreground">{children}</li>;
+		return (
+			<li className="text-foreground leading-relaxed marker:text-foreground/70">
+				{children}
+			</li>
+		);
 	},
 	blockquote({ children }) {
 		return (
