@@ -2633,7 +2633,7 @@ function PiPartRenderer({
 		case "thinking":
 			return (
 				<details className="text-xs text-muted-foreground border-l-2 border-muted pl-2 my-2">
-					<summary className="cursor-pointer hover:text-foreground">
+					<summary className="cursor-pointer hover:text-foreground list-none [&::-webkit-details-marker]:hidden">
 						{locale === "de" ? "Gedanken" : "Thinking"}
 					</summary>
 					<pre className="mt-1 whitespace-pre-wrap font-mono text-xs">
