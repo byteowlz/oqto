@@ -89,3 +89,4 @@
 - 2026-02-02: Use configured runner socket patterns for user-plane file operations to avoid /run/user fallback failures.
 - 2026-02-02: Simplify user-plane creation by removing the factory and using runner sockets directly with direct fallback.
 - 2026-02-02: Stabilize Pi WS subscription handler to prevent subscribe/unsubscribe loops that crash the UI.
+- 2026-02-03: Auto-start Main Chat Pi session when settings views poll a missing session to avoid repeated 500s.

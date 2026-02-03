@@ -14,6 +14,7 @@ import {
 	type PiState,
 	getMainChatPiModels,
 	getMainChatPiState,
+	startMainChatPiSession,
 	setMainChatPiModel,
 } from "@/features/main-chat/api";
 import { fuzzyMatch } from "@/lib/slash-commands";
@@ -78,13 +79,22 @@ export function MainChatSettingsView({
 			if (!active) return;
 			try {
 				if (!piState?.session_id) {
-					if (active) setPiState(null);
+					const nextState = await startMainChatPiSession();
+					if (active) setPiState(nextState);
 					return;
 				}
 				const nextState = await getMainChatPiState(piState.session_id);
 				if (active) setPiState(nextState);
 			} catch {
-				if (active) setPiState(null);
+				if (active) {
+					try {
+						const nextState = await startMainChatPiSession();
+						if (active) setPiState(nextState);
+						return;
+					} catch {
+						setPiState(null);
+					}
+				}
 			} finally {
 				if (active) setLoadingState(false);
 			}

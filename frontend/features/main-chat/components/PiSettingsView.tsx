@@ -15,6 +15,7 @@ import {
 	type PiState,
 	getMainChatPiModels,
 	getMainChatPiState,
+	startMainChatPiSession,
 	getWorkspacePiModels,
 	getWorkspacePiState,
 	setMainChatPiModel,
@@ -47,11 +48,18 @@ export function PiSettingsView({
 	const [loadingModels, setLoadingModels] = useState(false);
 	const [piState, setPiState] = useState<PiState | null>(null);
 	const [loadingState, setLoadingState] = useState(false);
+	const [effectiveSessionId, setEffectiveSessionId] = useState<string | null>(
+		sessionId ?? null,
+	);
+
+	useEffect(() => {
+		setEffectiveSessionId(sessionId ?? null);
+	}, [sessionId]);
 
 	const modelStorageKey = useMemo(() => {
-		if (!sessionId) return null;
-		return `octo:chatModel:${sessionId}`;
-	}, [sessionId]);
+		if (!effectiveSessionId) return null;
+		return `octo:chatModel:${effectiveSessionId}`;
+	}, [effectiveSessionId]);
 
 	useEffect(() => {
 		if (!modelStorageKey) {
@@ -68,12 +76,15 @@ export function PiSettingsView({
 
 	useEffect(() => {
 		let active = true;
-		if (!sessionId) return undefined;
+		if (!effectiveSessionId) return undefined;
 		setLoadingModels(true);
 		const fetchModels =
 			scope === "main"
-				? getMainChatPiModels(sessionId)
-				: getWorkspacePiModels(workspacePath ?? "global", sessionId ?? "");
+				? getMainChatPiModels(effectiveSessionId)
+				: getWorkspacePiModels(
+						workspacePath ?? "global",
+						effectiveSessionId ?? "",
+					);
 		fetchModels
 			.then((models) => {
 				if (!active) return;
@@ -92,7 +103,7 @@ export function PiSettingsView({
 		return () => {
 			active = false;
 		};
-	}, [scope, sessionId, workspacePath, selectedModelRef]);
+	}, [scope, effectiveSessionId, workspacePath, selectedModelRef]);
 
 	useEffect(() => {
 		let active = true;
@@ -102,18 +113,39 @@ export function PiSettingsView({
 			try {
 				const nextState =
 					scope === "main"
-						? await getMainChatPiState(sessionId ?? "")
-						: sessionId
-							? await getWorkspacePiState(workspacePath ?? "global", sessionId)
+						? effectiveSessionId
+							? await getMainChatPiState(effectiveSessionId)
+							: await startMainChatPiSession()
+						: effectiveSessionId
+							? await getWorkspacePiState(
+									workspacePath ?? "global",
+									effectiveSessionId,
+								)
 							: null;
-				if (active) setPiState(nextState);
+				if (active) {
+					setPiState(nextState);
+					if (scope === "main" && nextState?.session_id) {
+						setEffectiveSessionId(nextState.session_id);
+					}
+				}
 			} catch {
+				if (scope === "main" && active) {
+					try {
+						const nextState = await startMainChatPiSession();
+						if (!active) return;
+						setPiState(nextState);
+						setEffectiveSessionId(nextState.session_id);
+						return;
+					} catch {
+						// fall through to null state
+					}
+				}
 				if (active) setPiState(null);
 			} finally {
 				if (active) setLoadingState(false);
 			}
 		};
-		if (sessionId) {
+		if (effectiveSessionId || scope === "main") {
 			setLoadingState(true);
 			void fetchState();
 			intervalId = setInterval(fetchState, 2000);
@@ -125,7 +157,7 @@ export function PiSettingsView({
 			active = false;
 			if (intervalId) clearInterval(intervalId);
 		};
-	}, [scope, sessionId, workspacePath]);
+	}, [scope, effectiveSessionId, workspacePath]);
 
 	const filteredModels = useMemo(() => {
 		const query = modelQuery.trim();
@@ -157,12 +189,18 @@ export function PiSettingsView({
 			setIsSwitchingModel(true);
 			try {
 				if (scope === "main") {
-					if (!sessionId) throw new Error("No active main chat session");
-					await setMainChatPiModel(sessionId, provider, modelId);
-				} else if (sessionId) {
+					if (!effectiveSessionId) {
+						const nextState = await startMainChatPiSession();
+						setEffectiveSessionId(nextState.session_id);
+					}
+					if (!effectiveSessionId) {
+						throw new Error("No active main chat session");
+					}
+					await setMainChatPiModel(effectiveSessionId, provider, modelId);
+				} else if (effectiveSessionId) {
 					await setWorkspacePiModel(
 						workspacePath ?? "global",
-						sessionId,
+						effectiveSessionId,
 						provider,
 						modelId,
 					);
@@ -173,7 +211,7 @@ export function PiSettingsView({
 				setIsSwitchingModel(false);
 			}
 		},
-		[isIdle, scope, sessionId, workspacePath],
+		[isIdle, scope, effectiveSessionId, workspacePath],
 	);
 
 	return (
