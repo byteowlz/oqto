@@ -6655,6 +6655,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 														part={part}
 														defaultCollapsed={false}
 														hideTodoTools={true}
+														collapsible={false}
 													/>
 												),
 										};

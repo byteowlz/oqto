@@ -101,3 +101,4 @@
 - 2026-02-03: Use a slim, uncollapsible tool bar for consecutive tool calls at low verbosity.
 - 2026-02-03: Collapse thinking blocks around consecutive Pi tool calls into a single thinking section at medium verbosity.
 - 2026-02-03: Collapse thinking blocks and tool calls into ordered groups at low verbosity (thinking block followed by tool bar).
+- 2026-02-03: Avoid nested tool-call collapsibles in grouped tool views by rendering expanded cards directly.

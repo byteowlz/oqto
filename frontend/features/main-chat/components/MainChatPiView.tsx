@@ -2196,6 +2196,7 @@ const PiMessageGroupCard = memo(function PiMessageGroupCard({
 														}
 														locale={locale}
 														workspacePath={workspacePath}
+														collapsible={false}
 													/>
 												),
 										};
@@ -2466,6 +2467,7 @@ function PiPartRenderer({
 	toolResult,
 	locale,
 	workspacePath,
+	collapsible = true,
 }: {
 	part: PiMessagePart;
 	toolResult?: {
@@ -2477,6 +2479,7 @@ function PiPartRenderer({
 	};
 	locale: "en" | "de";
 	workspacePath?: string | null;
+	collapsible?: boolean;
 }) {
 	const stripAnsi = (value: string): string =>
 		value
@@ -2610,6 +2613,7 @@ function PiPartRenderer({
 					}}
 					defaultCollapsed={true}
 					hideTodoTools={true}
+					collapsible={collapsible}
 				/>
 			);
 		}
@@ -2634,6 +2638,7 @@ function PiPartRenderer({
 					}}
 					defaultCollapsed={true}
 					hideTodoTools={true}
+					collapsible={collapsible}
 				/>
 			);
 

@@ -33,6 +33,7 @@ interface ToolCallCardProps {
 	part: OpenCodePart;
 	defaultCollapsed?: boolean;
 	hideTodoTools?: boolean;
+	collapsible?: boolean;
 }
 
 // Todo item structure from todowrite tool
@@ -850,6 +851,7 @@ export function ToolCallCard({
 	part,
 	defaultCollapsed = true,
 	hideTodoTools = false,
+	collapsible = true,
 }: ToolCallCardProps) {
 	const [isOpen, setIsOpen] = useState(!defaultCollapsed);
 	const { tool, state } = part;
@@ -878,6 +880,7 @@ export function ToolCallCard({
 	const hasInput = input && Object.keys(input).length > 0;
 	const hasOutput = output && output.trim().length > 0;
 	const hasContent = hasInput || hasOutput;
+	const resolvedOpen = collapsible ? isOpen : true;
 
 	return (
 		<div
@@ -888,23 +891,25 @@ export function ToolCallCard({
 		>
 			<button
 				type="button"
-				onClick={() => hasContent && setIsOpen(!isOpen)}
-				disabled={!hasContent}
+				onClick={() =>
+					collapsible && hasContent && setIsOpen(!isOpen)
+				}
+				disabled={!hasContent || !collapsible}
 				className={cn(
 					"w-full flex items-center gap-2 px-3 py-2 text-left",
-					hasContent && "cursor-pointer hover:bg-muted/50",
+					collapsible && hasContent && "cursor-pointer hover:bg-muted/50",
 					!hasContent && "cursor-default",
 				)}
 			>
-				{hasContent && (
+				{collapsible && hasContent && (
 					<ChevronRight
 						className={cn(
 							"w-4 h-4 text-muted-foreground transition-transform duration-200 flex-shrink-0",
-							isOpen && "rotate-90",
+							resolvedOpen && "rotate-90",
 						)}
 					/>
 				)}
-				{!hasContent && <div className="w-4" />}
+				{(!collapsible || !hasContent) && <div className="w-4" />}
 
 				{getStatusIcon(status, toolName, input, output)}
 
@@ -919,7 +924,7 @@ export function ToolCallCard({
 				)}
 			</button>
 
-			{isOpen && hasContent && (
+			{resolvedOpen && hasContent && (
 				<div className="px-3 pb-3 space-y-2 border-t border-border pt-2">
 					{input && Object.keys(input).length > 0 && (
 						<div>
