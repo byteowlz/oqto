@@ -5398,6 +5398,7 @@ export const SessionScreen = memo(function SessionScreen() {
 	const app = (
 		<div className="flex flex-col h-full min-h-0 p-1 sm:p-4 md:p-6 gap-1 sm:gap-4">
 			{/* Mobile layout: single panel with tabs */}
+			{isMobileLayout && (
 			<div className="flex-1 min-h-0 flex flex-col lg:hidden">
 				{/* Mobile tabs - sticky at top */}
 				<div className="sticky top-0 z-10 bg-card border border-border rounded-t-xl overflow-hidden">
@@ -5678,8 +5679,10 @@ export const SessionScreen = memo(function SessionScreen() {
 					)}
 				</div>
 			</div>
+			)}
 
 			{/* Desktop layout: side by side */}
+			{!isMobileLayout && (
 			<div className="hidden lg:flex flex-1 min-h-0 gap-4 items-start">
 				{/* Chat panel */}
 				<div className="flex-[3] min-w-0 bg-card border border-border p-4 xl:p-6 flex flex-col min-h-0 h-full relative">
@@ -6213,6 +6216,7 @@ export const SessionScreen = memo(function SessionScreen() {
 					)}
 				</div>
 			</div>
+			)}
 
 			{/* Permission dialog */}
 			<PermissionDialog

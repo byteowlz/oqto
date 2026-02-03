@@ -93,3 +93,4 @@
 - 2026-02-03: Default UI locale to English while still persisting user language selection in localStorage.
 - 2026-02-03: Prefer Pi JSONL history for workspace sessions in the multiplexed WS and reuse scope/cwd when recreating Pi sessions.
 - 2026-02-03: Fix Pi chat hook crash by restoring stable message id callback initialization.
+- 2026-02-03: Mount only the active layout to avoid duplicate Main Chat Pi subscriptions.
