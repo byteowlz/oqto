@@ -114,3 +114,4 @@
 - 2026-02-03: Remount tool call groups on verbosity changes so past chats keep tool bars visible.
 - 2026-02-03: Add multi-select chat deletion with shift/cmd in the Main Chat sidebar and make deletes optimistic.
 - 2026-02-03: Hide compact tool headers when uncollapsing tabbed tools and flatten list indentation in chat markdown.
+- 2026-02-03: Make chat sidebar multi-select require modifier keys and match the trx selection bar styling.

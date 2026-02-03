@@ -49,6 +49,7 @@ import {
 	Plus,
 	Settings,
 	Trash2,
+	X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -655,7 +656,6 @@ export function MainChatEntry({
 					return next;
 				});
 			} else {
-				setSelectedSessionIds(new Set([sessionId]));
 				handleTimelineSessionClick(sessionId);
 			}
 
@@ -805,30 +805,31 @@ export function MainChatEntry({
 							return (
 								<>
 						{selectedSessionIds.size > 0 && (
-							<div className="flex items-center justify-between px-3 py-1 text-xs text-muted-foreground">
-								<span>
-									{selectedSessionIds.size}{" "}
-									{locale === "de" ? "ausgewahlt" : "selected"}
+							<div className="flex items-center gap-2 bg-primary/10 border border-primary/20 rounded px-2 py-1 mx-3">
+								<span className="text-xs font-medium text-primary">
+									{selectedSessionIds.size}
 								</span>
-								<div className="flex items-center gap-2">
-									<button
-										type="button"
-										onClick={() => setSelectedSessionIds(new Set())}
-										className="text-muted-foreground hover:text-foreground"
-									>
-										{locale === "de" ? "Auswahl loschen" : "Clear"}
-									</button>
-									<Button
-										type="button"
-										variant="ghost"
-										size="sm"
-										onClick={() => setShowBulkDeleteDialog(true)}
-										className="h-6 px-2 text-destructive hover:text-destructive"
-									>
-										<Trash2 className="w-3 h-3 mr-1" />
-										{locale === "de" ? "Loschen" : "Delete"}
-									</Button>
-								</div>
+								<div className="flex-1 mr-1" />
+								<Button
+									type="button"
+									variant="ghost"
+									size="sm"
+									onClick={() => setShowBulkDeleteDialog(true)}
+									className="h-6 px-2 text-xs text-destructive hover:text-destructive"
+								>
+									<Trash2 className="w-3 h-3 mr-1" />
+									{locale === "de" ? "Loschen" : "Delete"}
+								</Button>
+								<Button
+									type="button"
+									variant="ghost"
+									size="sm"
+									onClick={() => setSelectedSessionIds(new Set())}
+									className="h-6 w-6 p-0"
+									title={locale === "de" ? "Auswahl loschen" : "Clear selection"}
+								>
+									<X className="w-3 h-3" />
+								</Button>
 							</div>
 						)}
 						{flattenedSessions.map(({ session, depth }, index) => {
