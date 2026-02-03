@@ -45,7 +45,7 @@ import {
 	Trash2,
 	X,
 } from "lucide-react";
-import { memo, useDeferredValue, useEffect, useState } from "react";
+import { memo, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 
 export interface SessionsByProject {
 	key: string;
@@ -154,6 +154,13 @@ export const SidebarSessions = memo(function SidebarSessions({
 	const [agentFilter, setAgentFilter] = useState<AgentFilter>("all");
 	const [mainChatFilterCount, setMainChatFilterCount] = useState(0);
 	const [mainChatTotalCount, setMainChatTotalCount] = useState(0);
+	const [selectedSessionIds, setSelectedSessionIds] = useState<Set<string>>(
+		() => new Set(),
+	);
+	const [hiddenSessionIds, setHiddenSessionIds] = useState<Set<string>>(
+		() => new Set(),
+	);
+	const lastSelectedIndexRef = useRef<number | null>(null);
 	const isFilteringSessions =
 		searchMode === "sessions" && deferredSearch.trim().length > 0;
 
@@ -193,7 +200,116 @@ export const SidebarSessions = memo(function SidebarSessions({
 				buttonSize: "p-1",
 				iconSize: "w-3 h-3",
 				dateText: "text-[9px]",
-			};
+		};
+
+	const visibleSessionIds = useMemo(() => {
+		const ids: string[] = [];
+		for (const project of sessionsByProject) {
+			const isProjectExpanded =
+				deferredSearch.trim().length > 0 || expandedProjects.has(project.key);
+			if (!isProjectExpanded) continue;
+			for (const session of project.sessions) {
+				if (hiddenSessionIds.has(session.id)) continue;
+				ids.push(session.id);
+				const children =
+					sessionHierarchy.childSessionsByParent.get(session.id) || [];
+				const hasChildren = children.length > 0;
+				const isExpanded = expandedSessions.has(session.id);
+				if (hasChildren && isExpanded) {
+					for (const child of children) {
+						if (hiddenSessionIds.has(child.id)) continue;
+						ids.push(child.id);
+					}
+				}
+			}
+		}
+		return ids;
+	}, [
+		deferredSearch,
+		expandedProjects,
+		expandedSessions,
+		hiddenSessionIds,
+		sessionHierarchy.childSessionsByParent,
+		sessionsByProject,
+	]);
+
+	const sessionIndexById = useMemo(() => {
+		const map = new Map<string, number>();
+		visibleSessionIds.forEach((id, idx) => map.set(id, idx));
+		return map;
+	}, [visibleSessionIds]);
+
+	useEffect(() => {
+		setSelectedSessionIds((prev) => {
+			if (prev.size === 0) return prev;
+			const visible = new Set(visibleSessionIds);
+			const next = new Set<string>();
+			for (const id of prev) {
+				if (visible.has(id)) next.add(id);
+			}
+			return next;
+		});
+		lastSelectedIndexRef.current = null;
+	}, [visibleSessionIds]);
+
+	const handleSessionRowClick = (
+		e: React.MouseEvent,
+		sessionId: string,
+	) => {
+		const index = sessionIndexById.get(sessionId);
+		const hasRange = e.shiftKey && lastSelectedIndexRef.current !== null;
+		const isToggle = e.metaKey || e.ctrlKey;
+		if (hasRange && index !== undefined) {
+			const start = Math.min(lastSelectedIndexRef.current!, index);
+			const end = Math.max(lastSelectedIndexRef.current!, index);
+			const rangeIds = visibleSessionIds.slice(start, end + 1);
+			setSelectedSessionIds((prev) => {
+				const next = new Set(isToggle ? prev : []);
+				for (const id of rangeIds) next.add(id);
+				return next;
+			});
+		} else if (isToggle) {
+			setSelectedSessionIds((prev) => {
+				const next = new Set(prev);
+				if (next.has(sessionId)) {
+					next.delete(sessionId);
+				} else {
+					next.add(sessionId);
+				}
+				return next;
+			});
+		} else {
+			onSessionClick(sessionId);
+		}
+
+		if (index !== undefined) {
+			lastSelectedIndexRef.current = index;
+		}
+	};
+
+	const handleBulkDelete = async () => {
+		if (selectedSessionIds.size === 0) return;
+		const ids = Array.from(selectedSessionIds);
+		setSelectedSessionIds(new Set());
+		setHiddenSessionIds((prev) => {
+			const next = new Set(prev);
+			for (const id of ids) next.add(id);
+			return next;
+		});
+		const results = await Promise.allSettled(
+			ids.map((id) => Promise.resolve(onDeleteSession(id))),
+		);
+		const failed = results
+			.map((result, idx) => (result.status === "rejected" ? ids[idx] : null))
+			.filter((id): id is string => Boolean(id));
+		if (failed.length > 0) {
+			setHiddenSessionIds((prev) => {
+				const next = new Set(prev);
+				for (const id of failed) next.delete(id);
+				return next;
+			});
+		}
+	};
 
 	return (
 		<div className="flex-1 min-h-0 flex flex-col overflow-x-hidden">
@@ -441,6 +557,30 @@ export const SidebarSessions = memo(function SidebarSessions({
 							onFilterCountChange={setMainChatFilterCount}
 							onTotalCountChange={setMainChatTotalCount}
 						/>
+						{selectedSessionIds.size > 0 && (
+							<div className="flex items-center gap-2 bg-primary/10 border border-primary/20 rounded px-2 py-1 mx-1 mt-2">
+								<span className="text-xs font-medium text-primary">
+									{selectedSessionIds.size}
+								</span>
+								<div className="flex-1 mr-1" />
+								<button
+									type="button"
+									onClick={handleBulkDelete}
+									className="h-6 px-2 text-xs text-destructive hover:text-destructive flex items-center gap-1"
+								>
+									<Trash2 className="w-3 h-3" />
+									{locale === "de" ? "Loschen" : "Delete"}
+								</button>
+								<button
+									type="button"
+									onClick={() => setSelectedSessionIds(new Set())}
+									className="h-6 w-6 p-0 flex items-center justify-center"
+									title={locale === "de" ? "Auswahl loschen" : "Clear selection"}
+								>
+									<X className="w-3 h-3" />
+								</button>
+							</div>
+						)}
 						{filteredSessions.length === 0 &&
 							deferredSearch &&
 							mainChatFilterCount === 0 && (
@@ -585,8 +725,12 @@ export const SidebarSessions = memo(function SidebarSessions({
 									{/* Project sessions */}
 									{isProjectExpanded && (
 										<div className="space-y-0.5 pb-1">
-											{project.sessions.map((session) => {
+											{project.sessions
+												.filter((session) => !hiddenSessionIds.has(session.id))
+												.map((session) => {
 												const isSelected = selectedChatSessionId === session.id;
+												const isMultiSelected =
+													selectedSessionIds.has(session.id);
 												const children =
 													sessionHierarchy.childSessionsByParent.get(
 														session.id,
@@ -613,7 +757,9 @@ export const SidebarSessions = memo(function SidebarSessions({
 																		isMobile ? "py-2" : "py-1",
 																		isSelected
 																			? "bg-primary/15 border border-primary text-foreground"
-																			: "text-muted-foreground hover:bg-sidebar-accent border border-transparent",
+																			: isMultiSelected
+																				? "bg-primary/10 border border-primary/50 text-foreground"
+																				: "text-muted-foreground hover:bg-sidebar-accent border border-transparent",
 																	)}
 																>
 																	{hasChildren ? (
@@ -622,6 +768,7 @@ export const SidebarSessions = memo(function SidebarSessions({
 																			onClick={() =>
 																				toggleSessionExpanded(session.id)
 																			}
+																			onMouseDown={(e) => e.stopPropagation()}
 																			className={cn(
 																				"mt-0.5 hover:bg-muted flex-shrink-0 cursor-pointer",
 																				isMobile ? "p-1" : "p-0.5",
@@ -651,7 +798,9 @@ export const SidebarSessions = memo(function SidebarSessions({
 																	)}
 																	<button
 																		type="button"
-																		onClick={() => onSessionClick(session.id)}
+																		onClick={(e) =>
+																			handleSessionRowClick(e, session.id)
+																		}
 																		className="flex-1 min-w-0 text-left"
 																	>
 																		<div className="flex items-center gap-1">
@@ -675,20 +824,20 @@ export const SidebarSessions = memo(function SidebarSessions({
 																				<Loader2 className="w-3 h-3 flex-shrink-0 text-primary animate-spin" />
 																			)}
 																		</div>
-																		{formattedDate && (
-																			<div
-																				className={cn(
-																					"text-muted-foreground mt-0.5",
-																					sizeClasses.dateText,
-																				)}
-																			>
-																				{formattedDate}
-																			</div>
-																		)}
-																	</button>
-																</div>
-															</ContextMenuTrigger>
-															<ContextMenuContent>
+																	{formattedDate && (
+																		<div
+																			className={cn(
+																				"text-muted-foreground mt-0.5",
+																				sizeClasses.dateText,
+																			)}
+																		>
+																			{formattedDate}
+																		</div>
+																	)}
+																</button>
+															</div>
+														</ContextMenuTrigger>
+														<ContextMenuContent>
 																<ContextMenuItem
 																	onClick={() => {
 																		navigator.clipboard.writeText(readableId);
@@ -742,9 +891,15 @@ export const SidebarSessions = memo(function SidebarSessions({
 																	isMobile ? "ml-6 space-y-1 mt-1" : "ml-4",
 																)}
 															>
-																{children.map((child) => {
+																{children
+																	.filter(
+																		(child) => !hiddenSessionIds.has(child.id),
+																	)
+																	.map((child) => {
 																	const isChildSelected =
 																		selectedChatSessionId === child.id;
+																	const isChildMultiSelected =
+																		selectedSessionIds.has(child.id);
 																	const childReadableId = resolveReadableId(
 																		child.id,
 																		child.readable_id,
@@ -757,8 +912,8 @@ export const SidebarSessions = memo(function SidebarSessions({
 																			<ContextMenuTrigger className="contents">
 																				<button
 																					type="button"
-																					onClick={() =>
-																						onSessionClick(child.id)
+																					onClick={(e) =>
+																						handleSessionRowClick(e, child.id)
 																					}
 																					className={cn(
 																						"w-full px-2 text-left transition-colors",
@@ -767,7 +922,9 @@ export const SidebarSessions = memo(function SidebarSessions({
 																							: "py-1 text-xs",
 																						isChildSelected
 																							? "bg-primary/15 border border-primary text-foreground"
-																							: "text-muted-foreground hover:bg-sidebar-accent border border-transparent",
+																							: isChildMultiSelected
+																								? "bg-primary/10 border border-primary/50 text-foreground"
+																								: "text-muted-foreground hover:bg-sidebar-accent border border-transparent",
 																					)}
 																				>
 																					<div className="flex items-center gap-1">

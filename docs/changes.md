@@ -115,3 +115,4 @@
 - 2026-02-03: Add multi-select chat deletion with shift/cmd in the Main Chat sidebar and make deletes optimistic.
 - 2026-02-03: Hide compact tool headers when uncollapsing tabbed tools and flatten list indentation in chat markdown.
 - 2026-02-03: Make chat sidebar multi-select require modifier keys and match the trx selection bar styling.
+- 2026-02-03: Add modifier-only multi-select with bulk delete for workspace session lists in the app shell sidebar.
