@@ -328,11 +328,11 @@ export function MainChatEntry({
 			lastSessionActivityTriggerRef.current = sessionActivityTrigger;
 			return;
 		}
-		if (sessionActivityTrigger !== lastSessionActivityTriggerRef.current) {
-			lastSessionActivityTriggerRef.current = sessionActivityTrigger;
-			refreshSessionsUnconditional();
-		}
-	}, [assistantName, sessionActivityTrigger, refreshSessionsUnconditional]);
+	if (sessionActivityTrigger !== lastSessionActivityTriggerRef.current) {
+		lastSessionActivityTriggerRef.current = sessionActivityTrigger;
+		refreshSessionsUnconditional(true);
+	}
+}, [assistantName, sessionActivityTrigger, refreshSessionsUnconditional]);
 
 	function cacheKeySessions(name: string) {
 		return `octo:mainChatPi:${name}:sessions:v1`;
