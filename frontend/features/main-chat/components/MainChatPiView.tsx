@@ -1904,31 +1904,74 @@ const PiMessageGroupCard = memo(function PiMessageGroupCard({
 		}
 		if (verbosity !== 2) return segments;
 		const grouped: RenderSegment[] = [];
-		let buffer: RenderSegment["segments"] = [];
-		const flush = () => {
-			if (buffer.length === 0) return;
-			if (buffer.length === 1) {
-				grouped.push(buffer[0]);
+		let toolBuffer: RenderSegment["segments"] = [];
+		let thinkingBuffer: string[] = [];
+		let thinkingKey: string | null = null;
+		let thinkingTimestamp = 0;
+		let runOrder: Array<"thinking" | "tool"> = [];
+
+		const registerRunOrder = (next: "thinking" | "tool") => {
+			if (!runOrder.includes(next)) runOrder.push(next);
+		};
+
+		const flushThinking = () => {
+			if (thinkingBuffer.length === 0) return;
+			grouped.push({
+				key: thinkingKey ?? `thinking-${grouped.length}`,
+				type: "thinking",
+				content: thinkingBuffer.join("\n\n"),
+				timestamp: thinkingTimestamp,
+			});
+			thinkingBuffer = [];
+			thinkingKey = null;
+			thinkingTimestamp = 0;
+		};
+
+		const flushTools = () => {
+			if (toolBuffer.length === 0) return;
+			if (toolBuffer.length === 1) {
+				grouped.push(toolBuffer[0]);
 			} else {
 				grouped.push({
-					key: `tool-group-${buffer[0].key}`,
+					key: `tool-group-${toolBuffer[0].key}`,
 					type: "tool_group",
-					segments: buffer,
-					timestamp: buffer[0].timestamp,
+					segments: toolBuffer,
+					timestamp: toolBuffer[0].timestamp,
 				});
 			}
-			buffer = [];
+			toolBuffer = [];
+		};
+
+		const flushRun = () => {
+			for (const entry of runOrder) {
+				if (entry === "thinking") {
+					flushThinking();
+				} else {
+					flushTools();
+				}
+			}
+			runOrder = [];
 		};
 
 		for (const segment of segments) {
 			if (segment.type === "tool_use" || segment.type === "tool_result_only") {
-				buffer.push(segment);
+				registerRunOrder("tool");
+				toolBuffer.push(segment);
 				continue;
 			}
-			flush();
+			if (segment.type === "thinking") {
+				registerRunOrder("thinking");
+				if (thinkingBuffer.length === 0) {
+					thinkingKey = segment.key;
+					thinkingTimestamp = segment.timestamp;
+				}
+				thinkingBuffer.push(segment.content);
+				continue;
+			}
+			flushRun();
 			grouped.push(segment);
 		}
-		flush();
+		flushRun();
 		return grouped;
 	})();
 

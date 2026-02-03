@@ -99,3 +99,4 @@
 - 2026-02-03: Force immediate Main Chat Pi session list refresh on activity to avoid delayed history updates.
 - 2026-02-03: Add chat verbosity levels and collapse consecutive tool calls into tabbed tool groups at medium verbosity.
 - 2026-02-03: Use a slim, uncollapsible tool bar for consecutive tool calls at low verbosity.
+- 2026-02-03: Collapse thinking blocks around consecutive Pi tool calls into a single thinking section at medium verbosity.
