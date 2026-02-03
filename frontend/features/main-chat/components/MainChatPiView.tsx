@@ -1933,11 +1933,6 @@ const PiMessageGroupCard = memo(function PiMessageGroupCard({
 		let thinkingBuffer: string[] = [];
 		let thinkingKey: string | null = null;
 		let thinkingTimestamp = 0;
-		let runOrder: Array<"thinking" | "tool"> = [];
-
-		const registerRunOrder = (next: "thinking" | "tool") => {
-			if (!runOrder.includes(next)) runOrder.push(next);
-		};
 
 		const flushThinking = () => {
 			if (thinkingBuffer.length === 0) return;
@@ -1968,24 +1963,16 @@ const PiMessageGroupCard = memo(function PiMessageGroupCard({
 		};
 
 		const flushRun = () => {
-			for (const entry of runOrder) {
-				if (entry === "thinking") {
-					flushThinking();
-				} else {
-					flushTools();
-				}
-			}
-			runOrder = [];
+			flushThinking();
+			flushTools();
 		};
 
 		for (const segment of segments) {
 			if (segment.type === "tool_use" || segment.type === "tool_result_only") {
-				registerRunOrder("tool");
 				toolBuffer.push(segment);
 				continue;
 			}
 			if (segment.type === "thinking") {
-				registerRunOrder("thinking");
 				if (thinkingBuffer.length === 0) {
 					thinkingKey = segment.key;
 					thinkingTimestamp = segment.timestamp;
