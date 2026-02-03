@@ -105,7 +105,7 @@ export function usePiChatV2(options: UsePiChatOptions = {}): UsePiChatReturn {
 	const nextMessageId = useCallback(() => {
 		messageIdRef.current += 1;
 		return `pi-msg-${messageIdRef.current}`;
-	}, [getSessionConfig]);
+	}, []);
 
 	const getSessionConfig = useCallback(() => {
 		if (scope === "main") {

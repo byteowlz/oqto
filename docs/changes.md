@@ -92,3 +92,4 @@
 - 2026-02-03: Auto-start Main Chat Pi session when settings views poll a missing session to avoid repeated 500s.
 - 2026-02-03: Default UI locale to English while still persisting user language selection in localStorage.
 - 2026-02-03: Prefer Pi JSONL history for workspace sessions in the multiplexed WS and reuse scope/cwd when recreating Pi sessions.
+- 2026-02-03: Fix Pi chat hook crash by restoring stable message id callback initialization.
