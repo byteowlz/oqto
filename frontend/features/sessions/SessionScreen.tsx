@@ -6399,7 +6399,28 @@ const MessageGroupCard = memo(function MessageGroupCard({
 
 	const renderSegments: RenderSegment[] = (() => {
 		if (verbosity === 1) {
-			return segments.filter((segment) => segment.type !== "tool");
+			const grouped: RenderSegment[] = [];
+			let buffer: Segment[] = [];
+			const flush = () => {
+				if (buffer.length === 0) return;
+				grouped.push({
+					key: `tool-group-${buffer[0].key}`,
+					type: "tool_group",
+					parts: buffer.map((item) => (item as Extract<Segment, { type: "tool" }>).part),
+					timestamp: buffer[0].timestamp,
+				});
+				buffer = [];
+			};
+			for (const segment of segments) {
+				if (segment.type === "tool") {
+					buffer.push(segment);
+					continue;
+				}
+				flush();
+				grouped.push(segment);
+			}
+			flush();
+			return grouped;
 		}
 		if (verbosity !== 2) return segments;
 		const grouped: RenderSegment[] = [];
@@ -6618,6 +6639,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 								className={needsTopMargin ? "mt-3" : undefined}
 							>
 								<ToolCallGroup
+									mode={verbosity === 1 ? "bar" : "tabs"}
 									items={segment.parts.map((part) => {
 										const toolName = part.tool || "tool";
 										const input = part.state?.input as
@@ -6627,13 +6649,14 @@ const MessageGroupCard = memo(function MessageGroupCard({
 											id: part.id ?? toolName,
 											label: part.state?.title || toolName,
 											icon: getToolIcon(toolName, input),
-											render: () => (
-												<ToolCallCard
-													part={part}
-													defaultCollapsed={false}
-													hideTodoTools={true}
-												/>
-											),
+											render: () =>
+												verbosity === 1 ? null : (
+													<ToolCallCard
+														part={part}
+														defaultCollapsed={false}
+														hideTodoTools={true}
+													/>
+												),
 										};
 									})}
 								/>

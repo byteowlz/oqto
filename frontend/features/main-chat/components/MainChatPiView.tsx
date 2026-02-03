@@ -1879,11 +1879,28 @@ const PiMessageGroupCard = memo(function PiMessageGroupCard({
 
 	const renderSegments: RenderSegment[] = (() => {
 		if (verbosity === 1) {
-			return segments.filter(
-				(segment) =>
-					segment.type !== "tool_use" &&
-					segment.type !== "tool_result_only",
-			);
+			const grouped: RenderSegment[] = [];
+			let buffer: RenderSegment["segments"] = [];
+			const flush = () => {
+				if (buffer.length === 0) return;
+				grouped.push({
+					key: `tool-group-${buffer[0].key}`,
+					type: "tool_group",
+					segments: buffer,
+					timestamp: buffer[0].timestamp,
+				});
+				buffer = [];
+			};
+			for (const segment of segments) {
+				if (segment.type === "tool_use" || segment.type === "tool_result_only") {
+					buffer.push(segment);
+					continue;
+				}
+				flush();
+				grouped.push(segment);
+			}
+			flush();
+			return grouped;
 		}
 		if (verbosity !== 2) return segments;
 		const grouped: RenderSegment[] = [];
@@ -2084,6 +2101,7 @@ const PiMessageGroupCard = memo(function PiMessageGroupCard({
 								className={needsTopMargin ? "mt-3" : undefined}
 							>
 								<ToolCallGroup
+									mode={verbosity === 1 ? "bar" : "tabs"}
 									items={segment.segments.map((toolSegment) => {
 										const toolName =
 											toolSegment.type === "tool_use"
@@ -2099,18 +2117,19 @@ const PiMessageGroupCard = memo(function PiMessageGroupCard({
 											id: toolSegment.key,
 											label: toolName,
 											icon: getToolIcon(toolName, input),
-											render: () => (
-												<PiPartRenderer
-													part={toolSegment.part}
-													toolResult={
-														toolSegment.type === "tool_use"
-															? toolSegment.toolResult
-															: undefined
-													}
-													locale={locale}
-													workspacePath={workspacePath}
-												/>
-											),
+											render: () =>
+												verbosity === 1 ? null : (
+													<PiPartRenderer
+														part={toolSegment.part}
+														toolResult={
+															toolSegment.type === "tool_use"
+																? toolSegment.toolResult
+																: undefined
+														}
+														locale={locale}
+														workspacePath={workspacePath}
+													/>
+												),
 										};
 									})}
 								/>

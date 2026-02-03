@@ -21,9 +21,11 @@ export type ToolCallGroupItem = {
 
 export function ToolCallGroup({
 	items,
+	mode = "tabs",
 	className,
 }: {
 	items: ToolCallGroupItem[];
+	mode?: "tabs" | "bar";
 	className?: string;
 }) {
 	const [activeIndex, setActiveIndex] = useState(0);
@@ -58,6 +60,7 @@ export function ToolCallGroup({
 
 	const handleIconClick = useCallback(
 		(index: number) => {
+			if (mode === "bar") return;
 			if (index === activeIndex && isOpen) {
 				setIsOpen(false);
 				return;
@@ -65,7 +68,7 @@ export function ToolCallGroup({
 			setActiveIndex(index);
 			setIsOpen(true);
 		},
-		[activeIndex, isOpen],
+		[activeIndex, isOpen, mode],
 	);
 
 	const scrollBy = useCallback((delta: number) => {
@@ -99,15 +102,21 @@ export function ToolCallGroup({
 	}
 
 	return (
-		<div className={cn("rounded-lg border border-border bg-card", className)}>
-			<div className="flex items-center gap-1 px-2 py-2">
+		<div
+			className={cn(
+				"rounded-lg border border-border bg-card",
+				mode === "bar" && "px-2 py-1",
+				className,
+			)}
+		>
+			<div className={cn("flex items-center gap-1", mode !== "bar" && "px-2 py-2")}>
 				<Button
 					type="button"
 					variant="ghost"
 					size="icon"
 					onClick={() => scrollBy(-120)}
 					disabled={!canScrollLeft}
-					className="h-6 w-6"
+					className={cn("h-6 w-6", mode === "bar" && "h-5 w-5")}
 				>
 					<ChevronLeft className="h-3 w-3" />
 				</Button>
@@ -125,12 +134,12 @@ export function ToolCallGroup({
 					size="icon"
 					onClick={() => scrollBy(120)}
 					disabled={!canScrollRight}
-					className="h-6 w-6"
+					className={cn("h-6 w-6", mode === "bar" && "h-5 w-5")}
 				>
 					<ChevronRight className="h-3 w-3" />
 				</Button>
 			</div>
-			{isOpen && activeItem && (
+			{mode !== "bar" && isOpen && activeItem && (
 				<div className="border-t border-border px-3 py-2">
 					{activeItem.render()}
 				</div>
