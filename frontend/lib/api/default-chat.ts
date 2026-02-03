@@ -1,6 +1,6 @@
 /**
- * Main Chat API
- * Pi agent runtime for Main Chat, assistants, history, streaming
+ * Default Chat API
+ * Pi agent runtime for Default Chat, assistants, history, streaming
  */
 
 import {
@@ -12,29 +12,29 @@ import {
 import { toAbsoluteWsUrl } from "@/lib/url";
 
 // ============================================================================
-// Main Chat Types
+// Default Chat Types
 // ============================================================================
 
 /** History entry type */
-export type MainChatHistoryType =
+export type DefaultChatHistoryType =
 	| "summary"
 	| "decision"
 	| "handoff"
 	| "insight";
 
-/** History entry from Main Chat */
-export type MainChatHistoryEntry = {
+/** History entry from Default Chat */
+export type DefaultChatHistoryEntry = {
 	id: number;
 	ts: string;
-	type: MainChatHistoryType;
+	type: DefaultChatHistoryType;
 	content: string;
 	session_id?: string;
 	meta?: Record<string, unknown>;
 	created_at: string;
 };
 
-/** Main Chat session (legacy DB-backed, kept for history/exports) */
-export type MainChatSession = {
+/** Default Chat session (legacy DB-backed, kept for history/exports) */
+export type DefaultChatSession = {
 	id: number;
 	session_id: string;
 	title?: string;
@@ -43,7 +43,7 @@ export type MainChatSession = {
 	message_count: number;
 };
 
-/** Pi session file entry (disk-backed; used for Main Chat sessions list) */
+/** Pi session file entry (disk-backed; used for Default Chat sessions list) */
 export type PiSessionFile = {
 	id: string;
 	started_at: string;
@@ -70,8 +70,8 @@ export type PiSessionMessage = {
 	usage?: unknown;
 };
 
-/** Main Chat assistant info */
-export type MainChatAssistantInfo = {
+/** Default Chat assistant info */
+export type DefaultChatAssistantInfo = {
 	name: string;
 	user_id: string;
 	path: string;
@@ -81,7 +81,7 @@ export type MainChatAssistantInfo = {
 };
 
 /** Pi session status */
-export type MainChatPiStatus = {
+export type DefaultChatPiStatus = {
 	exists: boolean;
 	session_active: boolean;
 };
@@ -161,7 +161,7 @@ export type PiCompactionResult = {
 };
 
 /** Chat message stored in main_chat.db for persistent display history */
-export type MainChatDbMessage = {
+export type DefaultChatDbMessage = {
 	id: number;
 	role: "user" | "assistant" | "system";
 	/** JSON array of message parts (text, thinking, tool_use, tool_result) */
@@ -210,11 +210,11 @@ export type InSessionSearchResult = {
 };
 
 // ============================================================================
-// Main Chat Assistant API
+// Default Chat Assistant API
 // ============================================================================
 
-/** List all Main Chat assistants for the current user */
-export async function listMainChatAssistants(): Promise<string[]> {
+/** List all Default Chat assistants for the current user */
+export async function listDefaultChatAssistants(): Promise<string[]> {
 	const res = await authFetch(controlPlaneApiUrl("/api/main"), {
 		credentials: "include",
 	});
@@ -227,24 +227,24 @@ export async function listMainChatAssistants(): Promise<string[]> {
 }
 
 /** Get info about a specific assistant */
-export async function getMainChatAssistant(
+export async function getDefaultChatAssistant(
 	name: string,
-): Promise<MainChatAssistantInfo> {
+): Promise<DefaultChatAssistantInfo> {
 	const res = await authFetch(controlPlaneApiUrl("/api/main"), {
 		credentials: "include",
 	});
 	if (!res.ok) throw new Error(await readApiError(res));
 	const data = await res.json();
 	if (!data.exists || !data.info) {
-		throw new Error("Main Chat not found");
+		throw new Error("Default Chat not found");
 	}
 	return data.info;
 }
 
-/** Create a new Main Chat assistant */
-export async function createMainChatAssistant(
+/** Create a new Default Chat assistant */
+export async function createDefaultChatAssistant(
 	name: string,
-): Promise<MainChatAssistantInfo> {
+): Promise<DefaultChatAssistantInfo> {
 	const res = await authFetch(controlPlaneApiUrl("/api/main"), {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
@@ -255,10 +255,10 @@ export async function createMainChatAssistant(
 	return res.json();
 }
 
-/** Update the Main Chat assistant name */
-export async function updateMainChatAssistant(
+/** Update the Default Chat assistant name */
+export async function updateDefaultChatAssistant(
 	name: string,
-): Promise<MainChatAssistantInfo> {
+): Promise<DefaultChatAssistantInfo> {
 	const res = await authFetch(controlPlaneApiUrl("/api/main"), {
 		method: "PATCH",
 		headers: { "Content-Type": "application/json" },
@@ -269,8 +269,8 @@ export async function updateMainChatAssistant(
 	return res.json();
 }
 
-/** Delete a Main Chat assistant */
-export async function deleteMainChatAssistant(name: string): Promise<void> {
+/** Delete a Default Chat assistant */
+export async function deleteDefaultChatAssistant(name: string): Promise<void> {
 	const res = await authFetch(controlPlaneApiUrl("/api/main"), {
 		method: "DELETE",
 		credentials: "include",
@@ -280,10 +280,10 @@ export async function deleteMainChatAssistant(name: string): Promise<void> {
 }
 
 /** Get recent history for an assistant */
-export async function getMainChatHistory(
+export async function getDefaultChatHistory(
 	name: string,
 	limit = 20,
-): Promise<MainChatHistoryEntry[]> {
+): Promise<DefaultChatHistoryEntry[]> {
 	const res = await authFetch(
 		controlPlaneApiUrl(`/api/main/history?limit=${limit}`),
 		{ credentials: "include" },
@@ -293,15 +293,15 @@ export async function getMainChatHistory(
 }
 
 /** Add a history entry */
-export async function addMainChatHistory(
+export async function addDefaultChatHistory(
 	name: string,
 	entry: {
-		type: MainChatHistoryType;
+		type: DefaultChatHistoryType;
 		content: string;
 		session_id?: string;
 		meta?: Record<string, unknown>;
 	},
-): Promise<MainChatHistoryEntry> {
+): Promise<DefaultChatHistoryEntry> {
 	const res = await authFetch(controlPlaneApiUrl("/api/main/history"), {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
@@ -313,9 +313,9 @@ export async function addMainChatHistory(
 }
 
 /** List sessions for an assistant (legacy DB-backed sessions table) */
-export async function listMainChatSessions(
+export async function listDefaultChatSessions(
 	name: string,
-): Promise<MainChatSession[]> {
+): Promise<DefaultChatSession[]> {
 	const res = await authFetch(controlPlaneApiUrl("/api/main/sessions"), {
 		credentials: "include",
 	});
@@ -323,8 +323,8 @@ export async function listMainChatSessions(
 	return res.json();
 }
 
-/** List Pi sessions from disk (used for Main Chat sessions list) */
-export async function listMainChatPiSessions(): Promise<PiSessionFile[]> {
+/** List Pi sessions from disk (used for Default Chat sessions list) */
+export async function listDefaultChatPiSessions(): Promise<PiSessionFile[]> {
 	const res = await authFetch(controlPlaneApiUrl("/api/main/pi/sessions"), {
 		credentials: "include",
 	});
@@ -351,7 +351,7 @@ export async function renamePiSession(
 }
 
 /** Delete a Pi session (soft delete) */
-export async function deleteMainChatPiSession(sessionId: string): Promise<void> {
+export async function deleteDefaultChatPiSession(sessionId: string): Promise<void> {
 	const res = await authFetch(
 		controlPlaneApiUrl(`/api/main/pi/sessions/${sessionId}`),
 		{
@@ -362,8 +362,8 @@ export async function deleteMainChatPiSession(sessionId: string): Promise<void> 
 	if (!res.ok) throw new Error(await readApiError(res));
 }
 
-/** Search Main Chat Pi sessions for message content */
-export async function searchMainChatPiSessions(
+/** Search Default Chat Pi sessions for message content */
+export async function searchDefaultChatPiSessions(
 	query: string,
 	limit = 50,
 ): Promise<PiSearchResponse> {
@@ -381,7 +381,7 @@ export async function searchMainChatPiSessions(
 }
 
 /** Start a brand new Pi session (creates new session file) */
-export async function newMainChatPiSessionFile(): Promise<PiState> {
+export async function newDefaultChatPiSessionFile(): Promise<PiState> {
 	const res = await authFetch(controlPlaneApiUrl("/api/main/pi/sessions"), {
 		method: "POST",
 		credentials: "include",
@@ -391,7 +391,7 @@ export async function newMainChatPiSessionFile(): Promise<PiState> {
 }
 
 /** Load messages from a specific Pi session file */
-export async function getMainChatPiSessionMessages(
+export async function getDefaultChatPiSessionMessages(
 	sessionId: string,
 ): Promise<PiSessionMessage[]> {
 	const res = await authFetch(
@@ -405,7 +405,7 @@ export async function getMainChatPiSessionMessages(
 }
 
 /** Resume/switch the active Pi session */
-export async function resumeMainChatPiSession(
+export async function resumeDefaultChatPiSession(
 	sessionId: string,
 ): Promise<PiState> {
 	const res = await authFetch(
@@ -441,10 +441,10 @@ export async function searchInPiSession(
 }
 
 /** Register a new session with the assistant */
-export async function registerMainChatSession(
+export async function registerDefaultChatSession(
 	name: string,
 	session: { session_id: string; title?: string },
-): Promise<MainChatSession> {
+): Promise<DefaultChatSession> {
 	const res = await authFetch(controlPlaneApiUrl("/api/main/sessions"), {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
@@ -456,9 +456,9 @@ export async function registerMainChatSession(
 }
 
 /** Get the latest session for an assistant */
-export async function getLatestMainChatSession(
+export async function getLatestDefaultChatSession(
 	name: string,
-): Promise<MainChatSession | null> {
+): Promise<DefaultChatSession | null> {
 	const res = await authFetch(controlPlaneApiUrl("/api/main/sessions/latest"), {
 		credentials: "include",
 	});
@@ -467,7 +467,7 @@ export async function getLatestMainChatSession(
 }
 
 /** Export history as JSONL */
-export async function exportMainChatHistory(name: string): Promise<string> {
+export async function exportDefaultChatHistory(name: string): Promise<string> {
 	const res = await authFetch(controlPlaneApiUrl("/api/main/export"), {
 		credentials: "include",
 	});
@@ -477,11 +477,11 @@ export async function exportMainChatHistory(name: string): Promise<string> {
 }
 
 // ============================================================================
-// Main Chat Pi API (Pi agent runtime for Main Chat)
+// Default Chat Pi API (Pi agent runtime for Default Chat)
 // ============================================================================
 
 /** Check Pi session status */
-export async function getMainChatPiStatus(): Promise<MainChatPiStatus> {
+export async function getDefaultChatPiStatus(): Promise<DefaultChatPiStatus> {
 	const res = await authFetch(controlPlaneApiUrl("/api/main/pi/status"), {
 		credentials: "include",
 	});
@@ -490,7 +490,7 @@ export async function getMainChatPiStatus(): Promise<MainChatPiStatus> {
 }
 
 /** Start or get Pi session */
-export async function startMainChatPiSession(): Promise<PiState> {
+export async function startDefaultChatPiSession(): Promise<PiState> {
 	const res = await authFetch(controlPlaneApiUrl("/api/main/pi/session"), {
 		method: "POST",
 		credentials: "include",
@@ -507,7 +507,7 @@ function mainPiUrl(path: string, sessionId: string): string {
 	return url.toString();
 }
 
-export async function getMainChatPiState(sessionId: string): Promise<PiState> {
+export async function getDefaultChatPiState(sessionId: string): Promise<PiState> {
 	const res = await authFetch(mainPiUrl("/api/main/pi/state", sessionId), {
 		credentials: "include",
 	});
@@ -516,7 +516,7 @@ export async function getMainChatPiState(sessionId: string): Promise<PiState> {
 }
 
 /** Send a prompt to Pi */
-export async function sendMainChatPiPrompt(
+export async function sendDefaultChatPiPrompt(
 	sessionId: string,
 	message: string,
 ): Promise<void> {
@@ -530,7 +530,7 @@ export async function sendMainChatPiPrompt(
 }
 
 /** Abort current Pi operation */
-export async function abortMainChatPi(sessionId: string): Promise<void> {
+export async function abortDefaultChatPi(sessionId: string): Promise<void> {
 	const res = await authFetch(mainPiUrl("/api/main/pi/abort", sessionId), {
 		method: "POST",
 		credentials: "include",
@@ -539,7 +539,7 @@ export async function abortMainChatPi(sessionId: string): Promise<void> {
 }
 
 /** Get Pi messages */
-export async function getMainChatPiMessages(
+export async function getDefaultChatPiMessages(
 	sessionId: string,
 ): Promise<PiAgentMessage[]> {
 	const res = await authFetch(mainPiUrl("/api/main/pi/messages", sessionId), {
@@ -551,7 +551,7 @@ export async function getMainChatPiMessages(
 
 /** Compact Pi session */
 
-export async function compactMainChatPi(
+export async function compactDefaultChatPi(
 	sessionId: string,
 	customInstructions?: string,
 ): Promise<PiCompactionResult> {
@@ -566,7 +566,7 @@ export async function compactMainChatPi(
 }
 
 /** Set Pi session model */
-export async function setMainChatPiModel(
+export async function setDefaultChatPiModel(
 	sessionId: string,
 	provider: string,
 	modelId: string,
@@ -582,7 +582,7 @@ export async function setMainChatPiModel(
 }
 
 /** Get available Pi models */
-export async function getMainChatPiModels(sessionId: string): Promise<PiModelInfo[]> {
+export async function getDefaultChatPiModels(sessionId: string): Promise<PiModelInfo[]> {
 	const res = await authFetch(mainPiUrl("/api/main/pi/models", sessionId), {
 		credentials: "include",
 	});
@@ -592,7 +592,7 @@ export async function getMainChatPiModels(sessionId: string): Promise<PiModelInf
 }
 
 /** Get available Pi prompt commands (slash templates). */
-export async function getMainChatPiCommands(
+export async function getDefaultChatPiCommands(
 	sessionId: string,
 ): Promise<PiPromptCommandInfo[]> {
 	const res = await authFetch(mainPiUrl("/api/main/pi/commands", sessionId), {
@@ -604,7 +604,7 @@ export async function getMainChatPiCommands(
 }
 
 /** Start new Pi session (clear history) */
-export async function newMainChatPiSession(): Promise<PiState> {
+export async function newDefaultChatPiSession(): Promise<PiState> {
 	const res = await authFetch(controlPlaneApiUrl("/api/main/pi/new"), {
 		method: "POST",
 		credentials: "include",
@@ -614,7 +614,7 @@ export async function newMainChatPiSession(): Promise<PiState> {
 }
 
 /** Reset Pi session - restarts the process to reload PERSONALITY.md and USER.md */
-export async function resetMainChatPiSession(sessionId: string): Promise<PiState> {
+export async function resetDefaultChatPiSession(sessionId: string): Promise<PiState> {
 	const res = await authFetch(mainPiUrl("/api/main/pi/reset", sessionId), {
 		method: "POST",
 		credentials: "include",
@@ -624,7 +624,7 @@ export async function resetMainChatPiSession(sessionId: string): Promise<PiState
 }
 
 /** Get Pi session stats */
-export async function getMainChatPiStats(sessionId: string): Promise<PiSessionStats> {
+export async function getDefaultChatPiStats(sessionId: string): Promise<PiSessionStats> {
 	const res = await authFetch(mainPiUrl("/api/main/pi/stats", sessionId), {
 		credentials: "include",
 	});
@@ -633,7 +633,7 @@ export async function getMainChatPiStats(sessionId: string): Promise<PiSessionSt
 }
 
 /** Close Pi session */
-export async function closeMainChatPiSession(): Promise<void> {
+export async function closeDefaultChatPiSession(): Promise<void> {
 	const res = await authFetch(controlPlaneApiUrl("/api/main/pi/session"), {
 		method: "DELETE",
 		credentials: "include",
@@ -642,9 +642,9 @@ export async function closeMainChatPiSession(): Promise<void> {
 }
 
 /** Get persistent chat history from database (survives Pi session restarts) */
-export async function getMainChatPiHistory(
+export async function getDefaultChatPiHistory(
 	sessionId?: string,
-): Promise<MainChatDbMessage[]> {
+): Promise<DefaultChatDbMessage[]> {
 	const url = sessionId
 		? controlPlaneApiUrl(
 				`/api/main/pi/history?session_id=${encodeURIComponent(sessionId)}`,

@@ -1,7 +1,7 @@
 /**
  * Dictation Overlay - input replacement UI.
  *
- * Dictation can produce frequent updates. Resizing the main chat textarea or
+ * Dictation can produce frequent updates. Resizing the default chat textarea or
  * updating placeholder text on every word tends to cause forced reflows and UI jitter.
  * This overlay provides a fixed-height textarea while dictation is active.
  */

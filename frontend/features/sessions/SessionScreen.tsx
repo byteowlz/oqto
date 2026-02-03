@@ -30,11 +30,7 @@ import {
 	MarkdownRenderer,
 	ProviderIcon,
 } from "@/components/data-display";
-import {
-	ChatSearchBar,
-	MainChatPiView,
-	PiSettingsView,
-} from "@/components/main-chat";
+import { ChatSearchBar, ChatView, PiSettingsView } from "@/features/chat";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -65,10 +61,10 @@ import {
 	getWorkspacePiModels,
 	getWorkspacePiState,
 	setWorkspacePiModel,
-} from "@/features/main-chat/api";
+} from "@/features/chat/api";
 import {
 	type Features,
-	type MainChatSession,
+	type DefaultChatSession,
 	type Persona,
 	type SessionAutoAttachMode,
 	askAgent,
@@ -76,13 +72,13 @@ import {
 	convertChatMessagesToOpenCode,
 	getChatMessages,
 	getFeatures,
-	getMainChatAssistant,
+	getDefaultChatAssistant,
 	getOrCreateSessionForWorkspace,
 	getProjectLogoUrl,
 	getWorkspaceConfig,
-	listMainChatSessions,
+	listDefaultChatSessions,
 	opencodeProxyBaseUrl,
-	registerMainChatSession,
+	registerDefaultChatSession,
 	touchSessionActivity,
 } from "@/features/sessions/api";
 import {
@@ -123,7 +119,7 @@ import {
 	initialFileTreeState,
 } from "@/features/sessions/components/FileTreeView";
 import type { MessageGroup, ThreadedMessage } from "@/features/sessions/types";
-import { fetchMainChatThreadedMessages } from "@/features/sessions/utils/fetchMainChatThreadedMessages";
+import { fetchDefaultChatThreadedMessages } from "@/features/sessions/utils/fetchDefaultChatThreadedMessages";
 import { groupMessages } from "@/features/sessions/utils/groupMessages";
 import { mergeSessionMessages } from "@/features/sessions/utils/mergeSessionMessages";
 import { type A2UISurfaceState, useA2UI } from "@/hooks/use-a2ui";
@@ -411,7 +407,7 @@ const ChatMessagesPane = memo(function ChatMessagesPane({
 							}
 							className={groupIndex > 0 ? "mt-4 sm:mt-6" : ""}
 						>
-							{/* Session divider for Main Chat threaded view */}
+							{/* Session divider for Default Chat threaded view */}
 							{group.isNewSession && group.sessionTitle && (
 								<SessionDivider title={group.sessionTitle} />
 							)}
@@ -452,7 +448,7 @@ const ChatMessagesPane = memo(function ChatMessagesPane({
 
 // groupMessages moved to features/sessions/utils/groupMessages.
 
-// Session divider for Main Chat threaded view
+// Session divider for Default Chat threaded view
 function SessionDivider({ title }: { title: string }) {
 	return (
 		<div className="flex items-center gap-3 py-3 px-2">
@@ -625,15 +621,15 @@ export const SessionScreen = memo(function SessionScreen() {
 		projects,
 		startProjectSession,
 		setSessionBusy,
-		mainChatActive,
-		mainChatAssistantName,
-		mainChatCurrentSessionId,
-		setMainChatCurrentSessionId,
-		mainChatWorkspacePath,
-		setMainChatWorkspacePath,
-		mainChatNewSessionTrigger,
-		mainChatSessionActivityTrigger,
-		notifyMainChatSessionActivity,
+		replaceOptimisticChatSession,
+		defaultChatActive,
+		defaultChatAssistantName,
+		defaultChatCurrentSessionId,
+		setDefaultChatCurrentSessionId,
+		defaultChatWorkspacePath,
+		setDefaultChatWorkspacePath,
+		sessionActivityTrigger,
+		notifySessionActivity,
 		scrollToMessageId,
 		setScrollToMessageId,
 	} = useApp();
@@ -642,6 +638,25 @@ export const SessionScreen = memo(function SessionScreen() {
 	const [chatInputMountKey, setChatInputMountKey] = useState(0);
 	const lastActiveChatSessionRef = useRef<string | null>(null);
 	const lastActiveOpencodeBaseUrlRef = useRef<string>("");
+	const handleDefaultChatSessionIdChange = useCallback(
+		(sessionId: string | null) => {
+			const previousId = defaultChatCurrentSessionId;
+			if (
+				previousId &&
+				isPendingSessionId(previousId) &&
+				sessionId &&
+				!isPendingSessionId(sessionId)
+			) {
+				replaceOptimisticChatSession(previousId, sessionId);
+			}
+			setDefaultChatCurrentSessionId(sessionId);
+		},
+		[
+			defaultChatCurrentSessionId,
+			replaceOptimisticChatSession,
+			setDefaultChatCurrentSessionId,
+		],
+	);
 	// Ref to track messages for A2UI anchoring
 	const messagesRef = useRef(messages);
 	useEffect(() => {
@@ -743,16 +758,16 @@ export const SessionScreen = memo(function SessionScreen() {
 		[syncInputToState],
 	);
 
-	const [mainChatBaseUrl, setMainChatBaseUrl] = useState("");
+	const [defaultChatBaseUrl, setDefaultChatBaseUrl] = useState("");
 	const opencodeDirectory = useMemo(() => {
-		if (mainChatActive) return mainChatWorkspacePath ?? undefined;
+		if (defaultChatActive) return defaultChatWorkspacePath ?? undefined;
 		return (
 			selectedChatFromHistory?.workspace_path ??
 			selectedWorkspaceSession?.workspace_path
 		);
 	}, [
-		mainChatActive,
-		mainChatWorkspacePath,
+		defaultChatActive,
+		defaultChatWorkspacePath,
 		selectedChatFromHistory,
 		selectedWorkspaceSession,
 	]);
@@ -761,9 +776,9 @@ export const SessionScreen = memo(function SessionScreen() {
 		[opencodeDirectory],
 	);
 	const effectiveOpencodeBaseUrl = useMemo(() => {
-		if (mainChatActive && mainChatBaseUrl) return mainChatBaseUrl;
+		if (defaultChatActive && defaultChatBaseUrl) return defaultChatBaseUrl;
 		return opencodeBaseUrl;
-	}, [mainChatActive, mainChatBaseUrl, opencodeBaseUrl]);
+	}, [defaultChatActive, defaultChatBaseUrl, opencodeBaseUrl]);
 	useEffect(() => {
 		if (effectiveOpencodeBaseUrl) {
 			lastActiveOpencodeBaseUrlRef.current = effectiveOpencodeBaseUrl;
@@ -785,9 +800,9 @@ export const SessionScreen = memo(function SessionScreen() {
 	const [piIsSwitchingModel, setPiIsSwitchingModel] = useState(false);
 	const [piState, setPiState] = useState<PiState | null>(null);
 	const modelStorageKey = useMemo(() => {
-		if (!selectedChatSessionId || mainChatActive) return null;
+		if (!selectedChatSessionId || defaultChatActive) return null;
 		return `octo:chatModel:${selectedChatSessionId}`;
-	}, [selectedChatSessionId, mainChatActive]);
+	}, [selectedChatSessionId, defaultChatActive]);
 
 	// Track previous storage key to avoid saving stale model to new session
 	const prevModelStorageKeyRef = useRef<string | null>(null);
@@ -862,7 +877,7 @@ export const SessionScreen = memo(function SessionScreen() {
 	}, [modelStorageKey, selectedModelRef]);
 
 	useEffect(() => {
-		if (!effectiveOpencodeBaseUrl || mainChatActive) {
+		if (!effectiveOpencodeBaseUrl || defaultChatActive) {
 			if (!effectiveOpencodeBaseUrl) {
 				console.debug("[Models] No opencode URL, clearing model options");
 			}
@@ -903,10 +918,10 @@ export const SessionScreen = memo(function SessionScreen() {
 		return () => {
 			active = false;
 		};
-	}, [effectiveOpencodeBaseUrl, opencodeDirectory, mainChatActive]);
+	}, [effectiveOpencodeBaseUrl, opencodeDirectory, defaultChatActive]);
 
-	// Main chat token usage (for mobile gauge)
-	const [mainChatTokenUsage, setMainChatTokenUsage] = useState<{
+	// Default chat token usage (for mobile gauge)
+	const [defaultChatTokenUsage, setDefaultChatTokenUsage] = useState<{
 		inputTokens: number;
 		outputTokens: number;
 		maxTokens: number;
@@ -922,15 +937,15 @@ export const SessionScreen = memo(function SessionScreen() {
 	const [chatStates, setChatStates] = useState<Map<string, "idle" | "sending">>(
 		new Map(),
 	);
-	// In Main Chat mode, use mainChatCurrentSessionId; otherwise use selectedChatSessionId
-	const activeSessionId = mainChatActive
-		? mainChatCurrentSessionId
+	// In Default Chat mode, use defaultChatCurrentSessionId; otherwise use selectedChatSessionId
+	const activeSessionId = defaultChatActive
+		? defaultChatCurrentSessionId
 		: selectedChatSessionId;
 	const chatState = activeSessionId
 		? chatStates.get(activeSessionId) || "idle"
 		: "idle";
 	const isWorkspacePiSession =
-		!mainChatActive &&
+		!defaultChatActive &&
 		!!selectedChatSessionId &&
 		!selectedChatSessionId.startsWith("ses_");
 	const workspacePiPath = useMemo(() => {
@@ -1100,8 +1115,8 @@ export const SessionScreen = memo(function SessionScreen() {
 	);
 	const setChatState = useCallback(
 		(state: "idle" | "sending") => {
-			const sessionId = mainChatActive
-				? mainChatCurrentSessionId
+			const sessionId = defaultChatActive
+				? defaultChatCurrentSessionId
 				: selectedChatSessionId;
 			if (!sessionId) return;
 			setChatStates((prev) => {
@@ -1114,39 +1129,39 @@ export const SessionScreen = memo(function SessionScreen() {
 		},
 		[
 			selectedChatSessionId,
-			mainChatActive,
-			mainChatCurrentSessionId,
+			defaultChatActive,
+			defaultChatCurrentSessionId,
 			setSessionBusy,
 		],
 	);
 
 	useEffect(() => {
-		if (!mainChatActive && mainChatBaseUrl) {
-			setMainChatBaseUrl("");
+		if (!defaultChatActive && defaultChatBaseUrl) {
+			setDefaultChatBaseUrl("");
 		}
-	}, [mainChatActive, mainChatBaseUrl]);
+	}, [defaultChatActive, defaultChatBaseUrl]);
 
 	useEffect(() => {
-		if (!mainChatActive || !mainChatAssistantName || mainChatWorkspacePath)
+		if (!defaultChatActive || !defaultChatAssistantName || defaultChatWorkspacePath)
 			return;
 		let cancelled = false;
-		getMainChatAssistant(mainChatAssistantName)
+		getDefaultChatAssistant(defaultChatAssistantName)
 			.then((info) => {
 				if (!cancelled) {
-					setMainChatWorkspacePath(info.path);
+					setDefaultChatWorkspacePath(info.path);
 				}
 			})
 			.catch((err) => {
-				console.error("Failed to load Main Chat workspace path:", err);
+				console.error("Failed to load Default Chat workspace path:", err);
 			});
 		return () => {
 			cancelled = true;
 		};
 	}, [
-		mainChatActive,
-		mainChatAssistantName,
-		mainChatWorkspacePath,
-		setMainChatWorkspacePath,
+		defaultChatActive,
+		defaultChatAssistantName,
+		defaultChatWorkspacePath,
+		setDefaultChatWorkspacePath,
 	]);
 
 	// Per-chat draft text cache (persists across session switches AND component remounts via localStorage)
@@ -1353,7 +1368,7 @@ export const SessionScreen = memo(function SessionScreen() {
 	const [activeView, setActiveView] = useState<ActiveView>("chat");
 	const [browserVisible, setBrowserVisible] = useState(false);
 	const [tasksSubTab, setTasksSubTab] = useState<TasksSubTab>("todos");
-	const [mainChatTodos, setMainChatTodos] = useState<TodoItem[]>([]);
+	const [defaultChatTodos, setDefaultChatTodos] = useState<TodoItem[]>([]);
 	const [workspacePiTodos, setWorkspacePiTodos] = useState<TodoItem[]>([]);
 	const [expandedView, setExpandedView] = useState<ExpandedView>(null);
 	const [rightSidebarCollapsed, setRightSidebarCollapsed] = useState(false);
@@ -1514,13 +1529,13 @@ export const SessionScreen = memo(function SessionScreen() {
 	});
 
 	useEffect(() => {
-		// Reset compaction marker when switching between Main Chat and session view.
-		if (mainChatActive) {
+		// Reset compaction marker when switching between Default Chat and session view.
+		if (defaultChatActive) {
 			setLastCompactionAt(null);
 		} else {
 			setLastCompactionAt(null);
 		}
-	}, [mainChatActive]);
+	}, [defaultChatActive]);
 
 	// Track if we're on mobile layout (below lg breakpoint = 1024px)
 	const isMobileLayout = useIsMobile();
@@ -1891,7 +1906,7 @@ export const SessionScreen = memo(function SessionScreen() {
 
 	const lastPreviewSessionKeyRef = useRef<string | null>(null);
 	useEffect(() => {
-		const nextKey = mainChatActive ? "main" : selectedChatSessionId || "none";
+		const nextKey = defaultChatActive ? "default" : selectedChatSessionId || "none";
 		if (lastPreviewSessionKeyRef.current === null) {
 			lastPreviewSessionKeyRef.current = nextKey;
 			return;
@@ -1902,7 +1917,7 @@ export const SessionScreen = memo(function SessionScreen() {
 				setPreviewFilePath(null);
 			}
 		}
-	}, [mainChatActive, previewFilePath, selectedChatSessionId]);
+	}, [defaultChatActive, previewFilePath, selectedChatSessionId]);
 
 	// Handler for opening a file in canvas from FileTreeView
 	const handleOpenInCanvas = useCallback((filePath: string) => {
@@ -2180,12 +2195,12 @@ export const SessionScreen = memo(function SessionScreen() {
 		[locale],
 	);
 
-	const resumeWorkspacePath = mainChatActive
-		? (mainChatWorkspacePath ?? undefined)
+	const resumeWorkspacePath = defaultChatActive
+		? (defaultChatWorkspacePath ?? undefined)
 		: (selectedChatFromHistory?.workspace_path ??
 			selectedWorkspaceSession?.workspace_path);
-	const browserSessionId = mainChatActive
-		? mainChatCurrentSessionId
+	const browserSessionId = defaultChatActive
+		? defaultChatCurrentSessionId
 		: selectedChatSessionId;
 	const canResumeWithoutMessage = useMemo(() => {
 		if (!selectedChatSessionId) return false;
@@ -2362,23 +2377,23 @@ export const SessionScreen = memo(function SessionScreen() {
 	// Merge messages to prevent flickering - preserves optimistic (temp-*) messages.
 	const mergeMessages = useCallback(mergeSessionMessages, []);
 
-	// Load messages for Main Chat threaded view (all sessions combined)
-	const loadMainChatThreadedMessages = useCallback(async () => {
-		if (!mainChatAssistantName) return [];
+	// Load messages for Default Chat threaded view (all sessions combined)
+	const loadDefaultChatThreadedMessages = useCallback(async () => {
+		if (!defaultChatAssistantName) return [];
 		try {
-			return await fetchMainChatThreadedMessages(mainChatAssistantName);
+			return await fetchDefaultChatThreadedMessages(defaultChatAssistantName);
 		} catch (err) {
-			console.error("Failed to load Main Chat threaded messages:", err);
+			console.error("Failed to load Default Chat threaded messages:", err);
 			return [];
 		}
-	}, [mainChatAssistantName]);
+	}, [defaultChatAssistantName]);
 
 	const loadMessages = useCallback(
 		async (options?: { forceFresh?: boolean }) => {
-			// Main Chat Pi view handles its own messages via usePiChat - skip loading here
-			if (mainChatActive || isWorkspacePiSession) {
-				loadingSessionIdRef.current = "main-chat";
-				// Don't load messages - MainChatPiView has its own cached message loading
+			// Chat view handles its own messages via useChat - skip loading here
+			if (defaultChatActive || isWorkspacePiSession) {
+				loadingSessionIdRef.current = "default-chat";
+				// Don't load messages - DefaultChatPiView has its own cached message loading
 				return;
 			}
 
@@ -2402,7 +2417,7 @@ export const SessionScreen = memo(function SessionScreen() {
 				let loadedMessages: OpenCodeMessageWithParts[] = [];
 
 				// Only fetch from opencode if we have a valid opencode session ID (starts with "ses_")
-				// Main Chat sessions (pending-*, pi-*, etc.) should not be sent to opencode
+				// Default Chat sessions (pending-*, pi-*, etc.) should not be sent to opencode
 				const isOpencodeSession = targetSessionId.startsWith("ses_");
 
 				if (opencodeBaseUrl && !isHistoryOnlySession && isOpencodeSession) {
@@ -2458,7 +2473,7 @@ export const SessionScreen = memo(function SessionScreen() {
 			}
 		},
 		[
-			mainChatActive,
+			defaultChatActive,
 			isWorkspacePiSession,
 			opencodeBaseUrl,
 			opencodeDirectory,
@@ -2904,7 +2919,7 @@ export const SessionScreen = memo(function SessionScreen() {
 				setChatState("sending");
 				if (
 					event.session_id === selectedChatSessionId ||
-					event.session_id === mainChatCurrentSessionId
+					event.session_id === defaultChatCurrentSessionId
 				) {
 					lastActiveChatSessionRef.current = event.session_id;
 				}
@@ -3072,7 +3087,7 @@ export const SessionScreen = memo(function SessionScreen() {
 			opencodeDirectory,
 			activeSessionId,
 			selectedChatSessionId,
-			mainChatCurrentSessionId,
+			defaultChatCurrentSessionId,
 			selectedChatFromHistory,
 			resumeWorkspacePath,
 			locale,
@@ -3086,14 +3101,14 @@ export const SessionScreen = memo(function SessionScreen() {
 	);
 
 	// Subscribe to session events (uses WebSocket when enabled, SSE otherwise)
-	// Disabled when Main Chat is active - MainChatPiView handles its own events
+	// Disabled when Default Chat is active - ChatView handles its own events
 	const { transportMode: sessionTransportMode } = useSessionEvents(
 		handleSessionEvent,
 		{
 			useWebSocket: true,
 			workspaceSessionId: selectedWorkspaceSessionId,
 			enabled:
-				!mainChatActive && !!effectiveOpencodeBaseUrl && !!activeSessionId,
+				!defaultChatActive && !!effectiveOpencodeBaseUrl && !!activeSessionId,
 		},
 	);
 
@@ -3106,10 +3121,10 @@ export const SessionScreen = memo(function SessionScreen() {
 
 	// Poll for message updates while assistant is working.
 	// This runs regardless of SSE status since SSE is unreliable through the proxy.
-	// Disabled when Main Chat is active - MainChatPiView handles its own polling.
+	// Disabled when Default Chat is active - ChatView handles its own polling.
 	useEffect(() => {
 		if (
-			mainChatActive ||
+			defaultChatActive ||
 			chatState !== "sending" ||
 			!effectiveOpencodeBaseUrl ||
 			!activeSessionId
@@ -3172,7 +3187,7 @@ export const SessionScreen = memo(function SessionScreen() {
 			if (timer) window.clearTimeout(timer);
 		};
 	}, [
-		mainChatActive,
+		defaultChatActive,
 		chatState,
 		effectiveOpencodeBaseUrl,
 		opencodeDirectory,
@@ -3377,7 +3392,7 @@ export const SessionScreen = memo(function SessionScreen() {
 		200000, // Default fallback
 	);
 	const displayTokenUsage = useMemo(() => {
-		if (mainChatActive) return mainChatTokenUsage;
+		if (defaultChatActive) return defaultChatTokenUsage;
 		if (isWorkspacePiSession) return workspacePiTokenUsage;
 		return {
 			inputTokens: tokenUsage.inputTokens,
@@ -3387,8 +3402,8 @@ export const SessionScreen = memo(function SessionScreen() {
 	}, [
 		contextLimit,
 		isWorkspacePiSession,
-		mainChatActive,
-		mainChatTokenUsage,
+		defaultChatActive,
+		defaultChatTokenUsage,
 		tokenUsage.inputTokens,
 		tokenUsage.outputTokens,
 		workspacePiTokenUsage,
@@ -3396,13 +3411,13 @@ export const SessionScreen = memo(function SessionScreen() {
 	const displayContextLimit = displayTokenUsage.maxTokens || contextLimit;
 
 	useEffect(() => {
-		if (mainChatActive) return;
+		if (defaultChatActive) return;
 		if (selectedModelRef) return;
 		if (tokenUsage.providerID && tokenUsage.modelID) {
 			setSelectedModelRef(`${tokenUsage.providerID}/${tokenUsage.modelID}`);
 		}
 	}, [
-		mainChatActive,
+		defaultChatActive,
 		selectedModelRef,
 		tokenUsage.providerID,
 		tokenUsage.modelID,
@@ -3484,9 +3499,9 @@ export const SessionScreen = memo(function SessionScreen() {
 		}
 	}, [messages, runBrowserCommand]);
 
-	// Use Pi todos for main chat/workspace Pi, otherwise use opencode todos
-	const latestTodos = mainChatActive
-		? mainChatTodos
+	// Use Pi todos for default chat/workspace Pi, otherwise use opencode todos
+	const latestTodos = defaultChatActive
+		? defaultChatTodos
 		: isWorkspacePiSession
 			? workspacePiTodos
 			: opencodeTodos;
@@ -3706,9 +3721,9 @@ export const SessionScreen = memo(function SessionScreen() {
 	);
 
 	const handleSend = async () => {
-		// In Main Chat mode, we might need to create a session first
+		// In Default Chat mode, we might need to create a session first
 		// In regular mode, we need a session ID
-		if (!mainChatActive && !selectedChatSessionId) return;
+		if (!defaultChatActive && !selectedChatSessionId) return;
 
 		// Use the ref value directly to avoid race conditions with debounced state sync.
 		// The user may type and press Enter before the 100ms debounce fires.
@@ -3835,12 +3850,12 @@ export const SessionScreen = memo(function SessionScreen() {
 						: `Asking ${currentAgentTarget.name}...`,
 				);
 				// Build target string based on type
-				// - main-chat: "main-chat"
+				// - default-chat: "default-chat"
 				// - new-session: create session first, then ask
 				// - session (OpenCode): "opencode:<id>:<workspace_path>" or "opencode:<id>"
 				let targetString: string;
-				if (currentAgentTarget.type === "main-chat") {
-					targetString = "main-chat";
+				if (currentAgentTarget.type === "default-chat") {
+					targetString = "default-chat";
 				} else if (currentAgentTarget.type === "new-session") {
 					// Create a new session for the workspace path first
 					if (!currentAgentTarget.workspace_path) {
@@ -3910,26 +3925,26 @@ export const SessionScreen = memo(function SessionScreen() {
 			let effectiveDirectory = opencodeDirectory;
 			let targetSessionId: string;
 
-			// Main Chat mode: get workspace path from assistant info
-			if (mainChatActive && mainChatAssistantName) {
-				const assistantInfo = await getMainChatAssistant(mainChatAssistantName);
+			// Default Chat mode: get workspace path from assistant info
+			if (defaultChatActive && defaultChatAssistantName) {
+				const assistantInfo = await getDefaultChatAssistant(defaultChatAssistantName);
 				const workspacePath = assistantInfo.path;
 				effectiveDirectory = workspacePath;
-				setMainChatWorkspacePath(workspacePath);
+				setDefaultChatWorkspacePath(workspacePath);
 
 				setStatus(
-					locale === "de" ? "Starte Main Chat..." : "Starting Main Chat...",
+					locale === "de" ? "Starte Default Chat..." : "Starting Default Chat...",
 				);
 				const url = await ensureOpencodeRunning();
 				if (!url) {
-					throw new Error("Failed to start Main Chat session");
+					throw new Error("Failed to start Default Chat session");
 				}
 				effectiveBaseUrl = url;
-				setMainChatBaseUrl(url);
+				setDefaultChatBaseUrl(url);
 
 				// If no current session, create one with a title prefix
-				let resolvedMainChatSessionId = mainChatCurrentSessionId;
-				if (resolvedMainChatSessionId) {
+				let resolvedDefaultChatSessionId = defaultChatCurrentSessionId;
+				if (resolvedDefaultChatSessionId) {
 					const sessions = await fetchSessions(effectiveBaseUrl, {
 						directory: effectiveDirectory,
 					});
@@ -3937,27 +3952,27 @@ export const SessionScreen = memo(function SessionScreen() {
 						(session) => session.directory === effectiveDirectory,
 					);
 					const matched = mainSessions.find(
-						(session) => session.id === resolvedMainChatSessionId,
+						(session) => session.id === resolvedDefaultChatSessionId,
 					);
 					const readableMatch = mainSessions.find(
 						(session) =>
 							resolveReadableId(session.id, session.readable_id) ===
-							resolvedMainChatSessionId,
+							resolvedDefaultChatSessionId,
 					);
 					const resolved = matched ?? readableMatch;
 					if (resolved) {
-						if (resolved.id !== resolvedMainChatSessionId) {
-							setMainChatCurrentSessionId(resolved.id);
+						if (resolved.id !== resolvedDefaultChatSessionId) {
+							setDefaultChatCurrentSessionId(resolved.id);
 						}
-						resolvedMainChatSessionId = resolved.id;
+						resolvedDefaultChatSessionId = resolved.id;
 					} else {
-						resolvedMainChatSessionId = null;
-						setMainChatCurrentSessionId(null);
+						resolvedDefaultChatSessionId = null;
+						setDefaultChatCurrentSessionId(null);
 					}
 				}
 
-				if (!resolvedMainChatSessionId) {
-					const sessionTitle = `[${mainChatAssistantName}] ${new Date().toLocaleDateString()}`;
+				if (!resolvedDefaultChatSessionId) {
+					const sessionTitle = `[${defaultChatAssistantName}] ${new Date().toLocaleDateString()}`;
 					const newSession = await createSession(
 						effectiveBaseUrl,
 						sessionTitle,
@@ -3965,17 +3980,17 @@ export const SessionScreen = memo(function SessionScreen() {
 						{ directory: effectiveDirectory },
 					);
 
-					// Register with Main Chat backend
-					await registerMainChatSession(mainChatAssistantName, {
+					// Register with Default Chat backend
+					await registerDefaultChatSession(defaultChatAssistantName, {
 						session_id: newSession.id,
 						title: sessionTitle,
 					});
 
 					// Update the current session ID
-					setMainChatCurrentSessionId(newSession.id);
+					setDefaultChatCurrentSessionId(newSession.id);
 					targetSessionId = newSession.id;
 				} else {
-					targetSessionId = resolvedMainChatSessionId;
+					targetSessionId = resolvedDefaultChatSessionId;
 				}
 				setStatus("");
 			} else if (isHistoryOnlySession) {
@@ -4328,7 +4343,7 @@ export const SessionScreen = memo(function SessionScreen() {
 					await loadMessages();
 				}
 			} else {
-				// Non-opencode session (Main Chat, etc.) - load from history
+				// Non-opencode session (Default Chat, etc.) - load from history
 				await loadMessages();
 			}
 
@@ -4357,7 +4372,7 @@ export const SessionScreen = memo(function SessionScreen() {
 		if (chatState !== "sending") return;
 		const sessionId =
 			lastActiveChatSessionRef.current ??
-			(mainChatActive ? mainChatCurrentSessionId : selectedChatSessionId);
+			(defaultChatActive ? defaultChatCurrentSessionId : selectedChatSessionId);
 		const baseUrl =
 			lastActiveOpencodeBaseUrlRef.current ||
 			effectiveOpencodeBaseUrl ||
@@ -4680,7 +4695,7 @@ export const SessionScreen = memo(function SessionScreen() {
 	const renderChatContent = (allowExpanded: boolean) => {
 		if (isWorkspacePiSession) {
 			return (
-				<MainChatPiView
+				<ChatView
 					locale={locale}
 					className="flex-1"
 					features={features}
@@ -4961,8 +4976,8 @@ export const SessionScreen = memo(function SessionScreen() {
 							<AgentMentionPopup
 								query={agentMentionQuery}
 								isOpen={showAgentMentionPopup}
-								mainChatName={mainChatAssistantName}
-								mainChatWorkspacePath={mainChatWorkspacePath}
+								defaultChatName={defaultChatAssistantName}
+								defaultChatWorkspacePath={defaultChatWorkspacePath}
 								sessions={chatHistory.map((s) => ({
 									id: s.id,
 									title: s.title,
@@ -5303,7 +5318,7 @@ export const SessionScreen = memo(function SessionScreen() {
 					onPreviewFile={handlePreviewFile}
 					onOpenInCanvas={handleOpenInCanvas}
 					workspacePath={resumeWorkspacePath}
-					isMainChat={mainChatActive}
+					isDefaultChat={defaultChatActive}
 					state={fileTreeState}
 					onStateChange={handleFileTreeStateChange}
 				/>
@@ -5314,7 +5329,7 @@ export const SessionScreen = memo(function SessionScreen() {
 						<PreviewView
 							filePath={previewFilePath}
 							workspacePath={resumeWorkspacePath}
-							isMainChat={mainChatActive}
+							isDefaultChat={defaultChatActive}
 							onClose={closePreview}
 							onToggleExpand={() => toggleExpandedView("preview")}
 							isExpanded={expandedView === "preview"}
@@ -5350,7 +5365,7 @@ export const SessionScreen = memo(function SessionScreen() {
 
 	// Session header component for reuse
 	const showOpencodeModelSwitcher =
-		!mainChatActive &&
+		!defaultChatActive &&
 		!isWorkspacePiSession &&
 		!!effectiveOpencodeBaseUrl &&
 		!!activeSessionId;
@@ -5643,23 +5658,22 @@ export const SessionScreen = memo(function SessionScreen() {
 					)}
 				>
 					{activeView === "chat" &&
-						(mainChatActive ? (
-							<MainChatPiView
+						(defaultChatActive ? (
+							<ChatView
 								locale={locale}
 								className="flex-1"
 								features={features}
-								workspacePath={mainChatWorkspacePath}
-								assistantName={mainChatAssistantName}
+								workspacePath={defaultChatWorkspacePath}
+								assistantName={defaultChatAssistantName}
 								hideHeader
-								onTokenUsageChange={setMainChatTokenUsage}
-								selectedSessionId={mainChatCurrentSessionId}
-								onSelectedSessionIdChange={setMainChatCurrentSessionId}
+								onTokenUsageChange={setDefaultChatTokenUsage}
+								selectedSessionId={defaultChatCurrentSessionId}
+								onSelectedSessionIdChange={handleDefaultChatSessionIdChange}
 								scrollToMessageId={scrollToMessageId}
 								onScrollToMessageComplete={() => setScrollToMessageId(null)}
-								newSessionTrigger={mainChatNewSessionTrigger}
-								onMessageSent={notifyMainChatSessionActivity}
-								onMessageComplete={notifyMainChatSessionActivity}
-								onTodosChange={setMainChatTodos}
+								onMessageSent={notifySessionActivity}
+								onMessageComplete={notifySessionActivity}
+								onTodosChange={setDefaultChatTodos}
 							/>
 						) : (
 							renderChatContent(true)
@@ -5781,17 +5795,17 @@ export const SessionScreen = memo(function SessionScreen() {
 					)}
 					{activeView === "settings" && (
 						<Suspense fallback={viewLoadingFallback}>
-							{mainChatActive || isWorkspacePiSession ? (
+							{defaultChatActive || isWorkspacePiSession ? (
 								<PiSettingsView
 									locale={locale}
-									scope={mainChatActive ? "main" : "workspace"}
+									scope={defaultChatActive ? "default" : "workspace"}
 									sessionId={
-										mainChatActive
-											? mainChatCurrentSessionId
+										defaultChatActive
+											? defaultChatCurrentSessionId
 											: selectedChatSessionId
 									}
 									workspacePath={
-										mainChatActive ? mainChatWorkspacePath : workspacePiPath
+										defaultChatActive ? defaultChatWorkspacePath : workspacePiPath
 									}
 								/>
 							) : (
@@ -5899,8 +5913,8 @@ export const SessionScreen = memo(function SessionScreen() {
 						<div className="mb-3 pr-16">
 							<ChatSearchBar
 								sessionId={
-									mainChatActive
-										? mainChatCurrentSessionId
+									defaultChatActive
+										? defaultChatCurrentSessionId
 										: selectedChatSessionId
 								}
 								onResultSelect={handleSearchResult}
@@ -5911,26 +5925,25 @@ export const SessionScreen = memo(function SessionScreen() {
 							/>
 						</div>
 					)}
-					{!mainChatActive && SessionHeader}
-					{mainChatActive ? (
+					{!defaultChatActive && SessionHeader}
+					{defaultChatActive ? (
 						expandedView ? (
 							expandedPanel
 						) : (
-							<MainChatPiView
+							<ChatView
 								locale={locale}
 								className="flex-1"
 								features={features}
-								workspacePath={mainChatWorkspacePath}
-								assistantName={mainChatAssistantName}
-								onTokenUsageChange={setMainChatTokenUsage}
-								selectedSessionId={mainChatCurrentSessionId}
-								onSelectedSessionIdChange={setMainChatCurrentSessionId}
+								workspacePath={defaultChatWorkspacePath}
+								assistantName={defaultChatAssistantName}
+								onTokenUsageChange={setDefaultChatTokenUsage}
+								selectedSessionId={defaultChatCurrentSessionId}
+								onSelectedSessionIdChange={handleDefaultChatSessionIdChange}
 								scrollToMessageId={scrollToMessageId}
 								onScrollToMessageComplete={() => setScrollToMessageId(null)}
-								newSessionTrigger={mainChatNewSessionTrigger}
-								onMessageSent={notifyMainChatSessionActivity}
-								onMessageComplete={notifyMainChatSessionActivity}
-								onTodosChange={setMainChatTodos}
+								onMessageSent={notifySessionActivity}
+								onMessageComplete={notifySessionActivity}
+								onTodosChange={setDefaultChatTodos}
 							/>
 						)
 					) : chatInSidebar ? (
@@ -6059,25 +6072,24 @@ export const SessionScreen = memo(function SessionScreen() {
 										</button>
 									</div>
 									<div className="sidebar-chat flex-1 min-h-0 overflow-hidden flex flex-col">
-										{mainChatActive ? (
-											<MainChatPiView
+										{defaultChatActive ? (
+											<ChatView
 												locale={locale}
 												className="flex-1"
 												features={features}
-												workspacePath={mainChatWorkspacePath}
-												assistantName={mainChatAssistantName}
+												workspacePath={defaultChatWorkspacePath}
+												assistantName={defaultChatAssistantName}
 												hideHeader
-												onTokenUsageChange={setMainChatTokenUsage}
-												selectedSessionId={mainChatCurrentSessionId}
-												onSelectedSessionIdChange={setMainChatCurrentSessionId}
+												onTokenUsageChange={setDefaultChatTokenUsage}
+												selectedSessionId={defaultChatCurrentSessionId}
+												onSelectedSessionIdChange={handleDefaultChatSessionIdChange}
 												scrollToMessageId={scrollToMessageId}
 												onScrollToMessageComplete={() =>
 													setScrollToMessageId(null)
 												}
-												newSessionTrigger={mainChatNewSessionTrigger}
-												onMessageSent={notifyMainChatSessionActivity}
-												onMessageComplete={notifyMainChatSessionActivity}
-												onTodosChange={setMainChatTodos}
+												onMessageSent={notifySessionActivity}
+												onMessageComplete={notifySessionActivity}
+												onTodosChange={setDefaultChatTodos}
 											/>
 										) : (
 											renderChatContent(false)
@@ -6314,18 +6326,18 @@ export const SessionScreen = memo(function SessionScreen() {
 										)}
 										{activeView === "settings" && (
 											<Suspense fallback={viewLoadingFallback}>
-												{mainChatActive || isWorkspacePiSession ? (
+												{defaultChatActive || isWorkspacePiSession ? (
 													<PiSettingsView
 														locale={locale}
-														scope={mainChatActive ? "main" : "workspace"}
+														scope={defaultChatActive ? "default" : "workspace"}
 														sessionId={
-															mainChatActive
-																? mainChatCurrentSessionId
+															defaultChatActive
+																? defaultChatCurrentSessionId
 																: selectedChatSessionId
 														}
 														workspacePath={
-															mainChatActive
-																? mainChatWorkspacePath
+															defaultChatActive
+																? defaultChatWorkspacePath
 																: workspacePiPath
 														}
 													/>

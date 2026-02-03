@@ -18,14 +18,14 @@ const t = {
 		sessions: "Sessions",
 		messages: "Messages",
 		all: "All",
-		mainChat: "Main",
+		defaultChat: "Main",
 		opencode: "Code",
 	},
 	de: {
 		sessions: "Sitzungen",
 		messages: "Nachrichten",
 		all: "Alle",
-		mainChat: "Haupt",
+		defaultChat: "Haupt",
 		opencode: "Code",
 	},
 };
@@ -97,7 +97,7 @@ export function SearchModeToggle({
 								: "text-muted-foreground hover:text-foreground hover:bg-sidebar-accent",
 						)}
 					>
-						{t[locale].mainChat}
+						{t[locale].defaultChat}
 					</button>
 					<button
 						type="button"

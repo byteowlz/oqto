@@ -27,7 +27,7 @@ import {
 	useRef,
 	useState,
 } from "react";
-import { useMainChatContext } from "./main-chat-context";
+import { useDefaultChatContext } from "./default-chat-context";
 import { useLocale } from "./ui-context";
 import { useWorkspaceContext } from "./workspace-context";
 
@@ -51,12 +51,17 @@ export interface ChatContextValue {
 	createOptimisticChatSession: (workspacePath?: string) => string;
 	/** Remove a placeholder chat session. */
 	clearOptimisticChatSession: (sessionId: string) => void;
+	/** Replace a placeholder chat session with the real session id. */
+	replaceOptimisticChatSession: (
+		optimisticId: string,
+		sessionId: string,
+	) => void;
 	createNewChat: (
 		baseUrlOverride?: string,
 		directoryOverride?: string,
 		options?: { optimisticId?: string },
 	) => Promise<OpenCodeSession | null>;
-	createNewPiChat: (
+	createNewChat: (
 		workspacePath?: string,
 		options?: { optimisticId?: string },
 	) => Promise<string | null>;
@@ -121,8 +126,9 @@ const defaultChatContext: ChatContextValue = {
 	refreshOpencodeSessions: asyncNoopVoid,
 	createOptimisticChatSession: () => "",
 	clearOptimisticChatSession: noop,
+	replaceOptimisticChatSession: noop,
 	createNewChat: asyncNoop,
-	createNewPiChat: asyncNoop,
+	createNewChat: asyncNoop,
 	deleteChatSession: asyncNoopBool,
 	renameChatSession: asyncNoopBool,
 	opencodeDirectory: undefined,
@@ -133,12 +139,12 @@ const ChatContext = createContext<ChatContextValue>(defaultChatContext);
 export function ChatProvider({ children }: { children: ReactNode }) {
 	const { locale } = useLocale();
 	const {
-		mainChatActive,
-		setMainChatActive,
-		mainChatCurrentSessionId,
-		setMainChatCurrentSessionId,
-		mainChatWorkspacePath,
-	} = useMainChatContext();
+		defaultChatActive,
+		setDefaultChatActive,
+		defaultChatCurrentSessionId,
+		setDefaultChatCurrentSessionId,
+		defaultChatWorkspacePath,
+	} = useDefaultChatContext();
 	const { opencodeBaseUrl, selectedWorkspaceSession, projects } =
 		useWorkspaceContext();
 
@@ -224,25 +230,25 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 	}, [chatHistory, selectedChatSessionId]);
 
 	useEffect(() => {
-		if (!selectedChatFromHistory || !mainChatWorkspacePath) return;
-		const isMainChatSession =
-			selectedChatFromHistory.workspace_path === mainChatWorkspacePath;
+		if (!selectedChatFromHistory || !defaultChatWorkspacePath) return;
+		const isDefaultChatSession =
+			selectedChatFromHistory.workspace_path === defaultChatWorkspacePath;
 
-		if (isMainChatSession) {
-			if (!mainChatActive) setMainChatActive(true);
-			if (mainChatCurrentSessionId !== selectedChatFromHistory.id) {
-				setMainChatCurrentSessionId(selectedChatFromHistory.id);
+		if (isDefaultChatSession) {
+			if (!defaultChatActive) setDefaultChatActive(true);
+			if (defaultChatCurrentSessionId !== selectedChatFromHistory.id) {
+				setDefaultChatCurrentSessionId(selectedChatFromHistory.id);
 			}
-		} else if (mainChatActive) {
-			setMainChatActive(false);
+		} else if (defaultChatActive) {
+			setDefaultChatActive(false);
 		}
 	}, [
-		mainChatActive,
-		mainChatCurrentSessionId,
-		mainChatWorkspacePath,
+		defaultChatActive,
+		defaultChatCurrentSessionId,
+		defaultChatWorkspacePath,
 		selectedChatFromHistory,
-		setMainChatActive,
-		setMainChatCurrentSessionId,
+		setDefaultChatActive,
+		setDefaultChatCurrentSessionId,
 	]);
 
 	const opencodeDirectory = useMemo(() => {
@@ -356,7 +362,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 						: history,
 				);
 
-				if (history.length > 0 && !mainChatActive) {
+				if (history.length > 0 && !defaultChatActive) {
 					setSelectedChatSessionId((current) => {
 						// Don't override selection for recently created sessions
 						if (current && current === recentlyCreatedSessionRef.current) {
@@ -377,7 +383,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 		} catch (err) {
 			console.error("Failed to load chat history:", err);
 		}
-	}, [mainChatActive, opencodeSessions, setSelectedChatSessionId]);
+	}, [defaultChatActive, opencodeSessions, setSelectedChatSessionId]);
 
 	const refreshOpencodeSessions = useCallback(async () => {
 		if (!opencodeBaseUrl) return;
@@ -387,7 +393,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 			});
 			setOpencodeSessions(sessions);
 			const history = chatHistoryRef.current;
-			if (sessions.length > 0 && !mainChatActive) {
+			if (sessions.length > 0 && !defaultChatActive) {
 				const sorted = [...sessions].sort(
 					(a, b) => b.time.updated - a.time.updated,
 				);
@@ -402,7 +408,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 					return sorted[0].id;
 				});
 			} else {
-				if (!mainChatActive) {
+				if (!defaultChatActive) {
 					setSelectedChatSessionId((current) => {
 						if (current && history.some((s) => s.id === current)) {
 							return current;
@@ -410,7 +416,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 						return current;
 					});
 				}
-				if (history.length === 0 && !mainChatActive) {
+				if (history.length === 0 && !defaultChatActive) {
 					const created = await createSession(
 						opencodeBaseUrl,
 						undefined,
@@ -425,7 +431,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 			console.error("Failed to load opencode sessions:", err);
 		}
 	}, [
-		mainChatActive,
+		defaultChatActive,
 		opencodeBaseUrl,
 		opencodeDirectory,
 		setSelectedChatSessionId,
@@ -478,12 +484,12 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 		],
 	);
 
-	const createNewPiChat = useCallback(
+	const createNewChat = useCallback(
 		async (
 			workspacePathOverride?: string,
 			options?: { optimisticId?: string },
 		): Promise<string | null> => {
-			setMainChatActive(false);
+			setDefaultChatActive(false);
 			const resolvedPath =
 				workspacePathOverride?.trim() ||
 				opencodeDirectory ||
@@ -524,7 +530,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 			refreshChatHistory,
 			selectedChatFromHistory,
 			setSelectedChatSessionId,
-			setMainChatActive,
+			setDefaultChatActive,
 		],
 	);
 
@@ -668,8 +674,9 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 			refreshOpencodeSessions,
 			createOptimisticChatSession,
 			clearOptimisticChatSession,
+			replaceOptimisticChatSession,
 			createNewChat,
-			createNewPiChat,
+			createNewChat,
 			deleteChatSession,
 			renameChatSession,
 			opencodeDirectory,
@@ -687,8 +694,9 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 			refreshOpencodeSessions,
 			createOptimisticChatSession,
 			clearOptimisticChatSession,
+			replaceOptimisticChatSession,
 			createNewChat,
-			createNewPiChat,
+			createNewChat,
 			deleteChatSession,
 			renameChatSession,
 			opencodeDirectory,

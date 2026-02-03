@@ -589,7 +589,7 @@ export function FileTreeView({
 		return breadcrumbs;
 	};
 
-	// For main chat, we always have access; for workspace, need workspace path
+	// For default chat, we always have access; for workspace, need workspace path
 	if (!workspacePath) {
 		return (
 			<div className="h-full flex items-center justify-center p-4 text-sm text-muted-foreground">

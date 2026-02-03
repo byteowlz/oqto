@@ -31,7 +31,7 @@ export function DashboardApp() {
 		opencodeBaseUrl,
 		opencodeDirectory,
 		selectedWorkspaceSession,
-		mainChatWorkspacePath,
+		defaultChatWorkspacePath,
 	} = useApp();
 
 	const [rightSidebarCollapsed, setRightSidebarCollapsed] = useState(false);
@@ -41,7 +41,7 @@ export function DashboardApp() {
 	const [mobileView, setMobileView] = useState<"dashboard" | "cards" | "custom">("dashboard");
 
 	const workspacePath = selectedWorkspaceSession?.workspace_path ?? opencodeDirectory ?? ".";
-	const configWorkspacePath = mainChatWorkspacePath ?? workspacePath;
+	const configWorkspacePath = defaultChatWorkspacePath ?? workspacePath;
 	const t = useMemo(() => getTranslations(locale), [locale]);
 
 	const builtinCards: BuiltinCardDefinition[] = useMemo(

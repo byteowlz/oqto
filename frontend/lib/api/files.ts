@@ -26,7 +26,7 @@ export function fileserverWorkspaceBaseUrl() {
 	return controlPlaneApiUrl("/api/workspace/files");
 }
 
-export function mainChatFilesBaseUrl() {
+export function defaultChatFilesBaseUrl() {
 	return controlPlaneApiUrl("/api/main/files");
 }
 

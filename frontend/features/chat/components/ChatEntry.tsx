@@ -19,17 +19,17 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
-	type MainChatAssistantInfo,
+	type DefaultChatAssistantInfo,
 	type PiSessionFile,
-	createMainChatAssistant,
-	deleteMainChatAssistant,
-	deleteMainChatPiSession,
-	getMainChatAssistant,
-	listMainChatAssistants,
-	listMainChatPiSessions,
+	createDefaultChatAssistant,
+	deleteDefaultChatAssistant,
+	deleteDefaultChatPiSession,
+	getDefaultChatAssistant,
+	listDefaultChatAssistants,
+	listDefaultChatPiSessions,
 	renamePiSession,
-	updateMainChatAssistant,
-} from "@/features/main-chat/api";
+	updateDefaultChatAssistant,
+} from "@/features/chat/api";
 import {
 	formatSessionDate,
 	getDisplayPiTitle,
@@ -53,7 +53,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-export interface MainChatEntryProps {
+export interface DefaultChatEntryProps {
 	/** Whether this entry is currently selected */
 	isSelected: boolean;
 	/** Currently active session ID (for timeline highlighting) */
@@ -79,11 +79,11 @@ export interface MainChatEntryProps {
 }
 
 /**
- * Main Chat entry component for the sidebar.
- * Shows a pinned entry for the user's main chat assistant.
+ * Default Chat entry component for the sidebar.
+ * Shows a pinned entry for the user's default chat assistant.
  * If no assistant exists, shows a setup prompt.
  */
-export function MainChatEntry({
+export function DefaultChatEntry({
 	isSelected,
 	activeSessionId,
 	newSessionTrigger,
@@ -95,10 +95,10 @@ export function MainChatEntry({
 	filterQuery,
 	onFilterCountChange,
 	onTotalCountChange,
-}: MainChatEntryProps) {
+}: DefaultChatEntryProps) {
 	const [assistantName, setAssistantName] = useState<string | null>(null);
 	const [assistantInfo, setAssistantInfo] =
-		useState<MainChatAssistantInfo | null>(null);
+		useState<DefaultChatAssistantInfo | null>(null);
 	const [sessions, setSessions] = useState<PiSessionFile[]>([]);
 	const [latestSessionId, setLatestSessionId] = useState<string | null>(null);
 	const [loading, setLoading] = useState(true);
@@ -168,7 +168,7 @@ export function MainChatEntry({
 		return result;
 	}, [filterLower, visibleSessions]);
 
-	// Auto-expand when Main Chat is selected so sessions are visible.
+	// Auto-expand when Default Chat is selected so sessions are visible.
 	useEffect(() => {
 		if (isSelected && sessions.length > 0) {
 			setExpanded(true);
@@ -256,7 +256,7 @@ export function MainChatEntry({
 
 		const doRefresh = () => {
 			lastRefreshTimeRef.current = Date.now();
-			listMainChatPiSessions()
+			listDefaultChatPiSessions()
 				.then((sessionList) => {
 					const sorted = [...sessionList].sort(
 						(a, b) => b.modified_at - a.modified_at,
@@ -355,7 +355,7 @@ export function MainChatEntry({
 }, [assistantName, sessionActivityTrigger, refreshSessionsUnconditional]);
 
 	function cacheKeySessions(name: string) {
-		return `octo:mainChatPi:${name}:sessions:v1`;
+		return `octo:defaultChatPi:${name}:sessions:v1`;
 	}
 	const SESSION_LIST_CACHE_MAX_CHARS = 1_000_000;
 
@@ -392,7 +392,7 @@ export function MainChatEntry({
 	async function loadAssistant() {
 		try {
 			setLoading(true);
-			const assistants = await listMainChatAssistants();
+			const assistants = await listDefaultChatAssistants();
 
 			if (assistants.length > 0) {
 				// Use the first assistant (users typically have one)
@@ -407,8 +407,8 @@ export function MainChatEntry({
 				}
 
 				const [info, sessionList] = await Promise.all([
-					getMainChatAssistant(name),
-					listMainChatPiSessions(),
+					getDefaultChatAssistant(name),
+					listDefaultChatPiSessions(),
 				]);
 
 				setAssistantInfo(info);
@@ -421,7 +421,7 @@ export function MainChatEntry({
 				writeCachedSessions(name, sorted);
 			}
 		} catch (err) {
-			console.error("Failed to load main chat assistant:", err);
+			console.error("Failed to load default chat assistant:", err);
 		} finally {
 			setLoading(false);
 		}
@@ -434,8 +434,8 @@ export function MainChatEntry({
 			setCreating(true);
 			setError(null);
 			const info = assistantName
-				? await updateMainChatAssistant(newName.trim())
-				: await createMainChatAssistant(newName.trim());
+				? await updateDefaultChatAssistant(newName.trim())
+				: await createDefaultChatAssistant(newName.trim());
 			setAssistantName(info.name);
 			setAssistantInfo(info);
 			setShowCreateDialog(false);
@@ -469,8 +469,8 @@ export function MainChatEntry({
 		try {
 			setResetting(true);
 			setResetError(null);
-			await deleteMainChatAssistant(resetName.trim());
-			const info = await createMainChatAssistant(resetName.trim());
+			await deleteDefaultChatAssistant(resetName.trim());
+			const info = await createDefaultChatAssistant(resetName.trim());
 			setAssistantName(info.name);
 			setAssistantInfo(info);
 			setSessions([]);
@@ -479,7 +479,7 @@ export function MainChatEntry({
 			setResetName("");
 			await loadAssistant();
 		} catch (err) {
-			console.error("Failed to reset main chat:", err);
+			console.error("Failed to reset default chat:", err);
 			const message = err instanceof Error ? err.message : "Failed to reset";
 			setResetError(message);
 		} finally {
@@ -583,7 +583,7 @@ export function MainChatEntry({
 		try {
 			setDeleting(true);
 			setDeleteError(null);
-			await deleteMainChatPiSession(deleteSessionId);
+			await deleteDefaultChatPiSession(deleteSessionId);
 		} catch (err) {
 			console.error("Failed to delete session:", err);
 			const message = err instanceof Error ? err.message : "Failed to delete";
@@ -618,7 +618,7 @@ export function MainChatEntry({
 		try {
 			setBulkDeleting(true);
 			const results = await Promise.allSettled(
-				ids.map((id) => deleteMainChatPiSession(id)),
+				ids.map((id) => deleteDefaultChatPiSession(id)),
 			);
 			const failures = results.filter((r) => r.status === "rejected");
 			if (failures.length > 0) {
@@ -701,7 +701,7 @@ export function MainChatEntry({
 				>
 					<Plus className="w-4 h-4" />
 					<span className="text-sm">
-						{locale === "de" ? "Hauptchat einrichten" : "Set up Main Chat"}
+						{locale === "de" ? "Standardchat einrichten" : "Set up Default Chat"}
 					</span>
 				</button>
 
@@ -732,7 +732,7 @@ export function MainChatEntry({
 			<div className="border-b border-sidebar-border/50">
 				<ContextMenu>
 					<ContextMenuTrigger className="contents">
-						{/* Main Chat header - styled like workspace project headers */}
+						{/* Default Chat header - styled like workspace project headers */}
 						<div className="flex items-center gap-1 px-1 py-1.5 group">
 							<button
 								type="button"
@@ -1231,22 +1231,22 @@ function ResetAssistantDialog({
 			<DialogContent>
 				<DialogHeader>
 					<DialogTitle>
-						{locale === "de" ? "Hauptchat zurucksetzen" : "Reset Main Chat"}
+						{locale === "de" ? "Standardchat zurucksetzen" : "Reset Default Chat"}
 					</DialogTitle>
 					<DialogDescription>
 						{locale === "de"
-							? "Dies loscht alle Main-Chat-Daten und startet frisch. Geben Sie einen neuen Namen ein."
-							: "This deletes all Main Chat data and starts fresh. Enter a new name."}
+							? "Dies loscht alle Standardchat-Daten und startet frisch. Geben Sie einen neuen Namen ein."
+							: "This deletes all Default Chat data and starts fresh. Enter a new name."}
 					</DialogDescription>
 				</DialogHeader>
 
 				<div className="grid gap-4 py-4">
 					<div className="grid gap-2">
-						<Label htmlFor="main-chat-reset-name">
+						<Label htmlFor="default-chat-reset-name">
 							{locale === "de" ? "Neuer Name" : "New Name"}
 						</Label>
 						<Input
-							id="main-chat-reset-name"
+							id="default-chat-reset-name"
 							value={name}
 							onChange={(e) => onNameChange(e.target.value)}
 							placeholder={locale === "de" ? "Name" : "Name"}

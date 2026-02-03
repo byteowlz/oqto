@@ -36,12 +36,12 @@ import {
 	type Features,
 	type PiModelInfo,
 	type PiSessionFile,
-	getMainChatPiCommands,
-	getMainChatPiModels,
-	getMainChatPiStats,
+	getDefaultChatPiCommands,
+	getDefaultChatPiModels,
+	getDefaultChatPiStats,
 	getWorkspacePiModels,
-	listMainChatPiSessions,
-} from "@/features/main-chat/api";
+	listDefaultChatPiSessions,
+} from "@/features/chat/api";
 import { type A2UISurfaceState, useA2UI } from "@/hooks/use-a2ui";
 import { useDictation } from "@/hooks/use-dictation";
 import {
@@ -49,8 +49,8 @@ import {
 	type PiMessagePart,
 	getCachedScrollPosition,
 	setCachedScrollPosition,
-	usePiChat,
-} from "@/hooks/usePiChat";
+	useChat,
+} from "@/hooks/useChat";
 import { extractFileReferenceDetails, getFileTypeInfo } from "@/lib/file-types";
 import {
 	downloadFileMux,
@@ -109,20 +109,20 @@ type QueuedMessage = {
 	text: string;
 };
 
-export interface MainChatPiViewProps {
+export interface ChatViewProps {
 	/** Current locale */
 	locale?: "en" | "de";
 	/** Class name for container */
 	className?: string;
 	/** Scope for Pi sessions */
-	scope?: "main" | "workspace";
+	scope?: "default" | "workspace";
 	/** Storage key prefix for cached messages */
 	storageKeyPrefix?: string;
 	/** Features config (for voice settings) */
 	features?: Features | null;
 	/** Workspace path for file operations */
 	workspacePath?: string | null;
-	/** Assistant name to display (user-configured main chat name) */
+	/** Assistant name to display (user-configured default chat name) */
 	assistantName?: string | null;
 	/** Hide the internal header (used when embedded in sessions app with external header) */
 	hideHeader?: boolean;
@@ -140,8 +140,6 @@ export interface MainChatPiViewProps {
 	scrollToMessageId?: string | null;
 	/** Callback when scroll target is reached (to clear the target) */
 	onScrollToMessageComplete?: () => void;
-	/** Trigger to create a new session - increment to trigger */
-	newSessionTrigger?: number;
 	/** Callback when a message is sent (for sidebar refresh) */
 	onMessageSent?: () => void;
 	/** Callback when an assistant message completes (for sidebar refresh) */
@@ -155,13 +153,13 @@ function isPendingSessionId(id: string | null | undefined): boolean {
 }
 
 /**
- * Main Chat view using Pi agent runtime.
+ * Default Chat view using Pi agent runtime.
  * Styled to match OpenCode chat UI exactly.
  */
-export function MainChatPiView({
+export function ChatView({
 	locale = "en",
 	className,
-	scope = "main",
+	scope = "default",
 	storageKeyPrefix,
 	features,
 	workspacePath,
@@ -172,25 +170,33 @@ export function MainChatPiView({
 	onSelectedSessionIdChange,
 	scrollToMessageId,
 	onScrollToMessageComplete,
-	newSessionTrigger,
 	onMessageSent,
 	onMessageComplete,
 	onTodosChange,
-}: MainChatPiViewProps) {
-	const isMainScope = scope === "main";
+}: ChatViewProps) {
+	const [sendPending, setSendPending] = useState(false);
+	const [sendPendingSessionId, setSendPendingSessionId] = useState<
+		string | null
+	>(null);
+	const sendPendingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
+		null,
+	);
+	const pendingSendKeyRef = useRef<string | null>(null);
+
+	const isMainScope = scope === "default";
 	const resolvedStorageKeyPrefix =
 		storageKeyPrefix ??
 		(isMainScope
-			? "octo:mainChatPi"
+			? "octo:defaultChatPi"
 			: `octo:workspacePi:${(workspacePath ?? "global").replace(
 					/[^a-zA-Z0-9._-]+/g,
 					"_",
 				)}`);
 	const draftStorageKey = isMainScope
-		? `octo:mainChatDraft:${selectedSessionId ?? "none"}`
+		? `octo:defaultChatDraft:${selectedSessionId ?? "none"}`
 		: `${resolvedStorageKeyPrefix}:draft`;
 	const scrollStorageKey = isMainScope
-		? "octo:mainChat:scrollPosition"
+		? "octo:defaultChat:scrollPosition"
 		: `${resolvedStorageKeyPrefix}:scrollPosition`;
 	const [sessionMeta, setSessionMeta] = useState<PiSessionFile | null>(null);
 	const refreshSessionMeta = useCallback(() => {
@@ -199,7 +205,7 @@ export function MainChatPiView({
 			return;
 		}
 		let cancelled = false;
-		listMainChatPiSessions()
+		listDefaultChatPiSessions()
 			.then((sessions) => {
 				if (cancelled) return;
 				setSessionMeta(
@@ -230,7 +236,7 @@ export function MainChatPiView({
 		resetSession,
 		state: piState,
 		refresh,
-	} = usePiChat({
+	} = useChat({
 		scope,
 		workspacePath,
 		storageKeyPrefix: resolvedStorageKeyPrefix,
@@ -238,35 +244,6 @@ export function MainChatPiView({
 		onSelectedSessionIdChange,
 		onMessageComplete: handleMessageComplete,
 	});
-
-	// Track the last trigger value to detect changes
-	const lastNewSessionTriggerRef = useRef(newSessionTrigger);
-
-	// Create new session when trigger changes (external request)
-	useEffect(() => {
-		// Skip initial render and only react to actual changes
-		if (
-			newSessionTrigger !== undefined &&
-			newSessionTrigger !== lastNewSessionTriggerRef.current &&
-			lastNewSessionTriggerRef.current !== undefined
-		) {
-			newSession();
-			// Clear the input when starting a new session
-			setInput("");
-			setFileAttachments([]);
-			setQueuedMessages([]);
-			if (draftSaveTimeoutRef.current) {
-				clearTimeout(draftSaveTimeoutRef.current);
-				draftSaveTimeoutRef.current = null;
-			}
-			try {
-				localStorage.removeItem(draftStorageKey);
-			} catch {
-				// Ignore localStorage errors
-			}
-		}
-		lastNewSessionTriggerRef.current = newSessionTrigger;
-	}, [draftStorageKey, newSession, newSessionTrigger]);
 
 	// Draft persistence - restore from localStorage on mount
 	const [input, setInput] = useState(() => {
@@ -277,6 +254,17 @@ export function MainChatPiView({
 			return "";
 		}
 	});
+	const [fileAttachments, setFileAttachments] = useState<FileAttachment[]>([]);
+	const [queuedMessages, setQueuedMessages] = useState<QueuedMessage[]>([]);
+	const messagesEndRef = useRef<HTMLDivElement>(null);
+	const messagesContainerRef = useRef<HTMLDivElement>(null);
+	const inputRef = useRef<HTMLTextAreaElement>(null);
+	const fileInputRef = useRef<HTMLInputElement>(null);
+	const queueSendInFlightRef = useRef(false);
+	const queueCooldownRef = useRef<number | null>(null);
+	const draftSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const initialScrollDoneRef = useRef(false);
+
 	useEffect(() => {
 		if (typeof window === "undefined") return;
 		try {
@@ -287,13 +275,17 @@ export function MainChatPiView({
 	}, [draftStorageKey]);
 	useEffect(() => {
 		setQueuedMessages([]);
-		setSendPending(false);
-		setSendPendingSessionId(null);
+		// Keep pending state tied to the original session key; don't remap on switch.
+		if (!sendPending) {
+			setSendPendingSessionId(null);
+			pendingSendKeyRef.current = null;
+		}
 	}, [selectedSessionId]);
 	useEffect(() => {
 		if (isStreaming || isAwaitingResponse) {
 			setSendPending(false);
 			setSendPendingSessionId(null);
+			pendingSendKeyRef.current = null;
 		}
 	}, [isAwaitingResponse, isStreaming]);
 	useEffect(() => {
@@ -304,13 +296,13 @@ export function MainChatPiView({
 			}
 			return;
 		}
-		if (sendPendingTimeoutRef.current) {
-			clearTimeout(sendPendingTimeoutRef.current);
+		if (!sendPendingTimeoutRef.current) {
+			sendPendingTimeoutRef.current = setTimeout(() => {
+				setSendPending(false);
+				setSendPendingSessionId(null);
+				pendingSendKeyRef.current = null;
+			}, 8000);
 		}
-		sendPendingTimeoutRef.current = setTimeout(() => {
-			setSendPending(false);
-			setSendPendingSessionId(null);
-		}, 8000);
 		return () => {
 			if (sendPendingTimeoutRef.current) {
 				clearTimeout(sendPendingTimeoutRef.current);
@@ -318,8 +310,6 @@ export function MainChatPiView({
 			}
 		};
 	}, [isAwaitingResponse, isStreaming, sendPending]);
-	const [fileAttachments, setFileAttachments] = useState<FileAttachment[]>([]);
-	const [queuedMessages, setQueuedMessages] = useState<QueuedMessage[]>([]);
 	const [showFileMentionPopup, setShowFileMentionPopup] = useState(false);
 	const [fileMentionQuery, setFileMentionQuery] = useState("");
 	const [showSlashPopup, setShowSlashPopup] = useState(false);
@@ -335,24 +325,6 @@ export function MainChatPiView({
 		input: number;
 		output: number;
 	} | null>(null);
-	const [sendPending, setSendPending] = useState(false);
-	const [sendPendingSessionId, setSendPendingSessionId] = useState<
-		string | null
-	>(null);
-
-	const messagesEndRef = useRef<HTMLDivElement>(null);
-	const messagesContainerRef = useRef<HTMLDivElement>(null);
-	const inputRef = useRef<HTMLTextAreaElement>(null);
-	const fileInputRef = useRef<HTMLInputElement>(null);
-	const queueSendInFlightRef = useRef(false);
-	const queueCooldownRef = useRef<number | null>(null);
-	const sendPendingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
-		null,
-	);
-	const draftSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
-		null,
-	);
-	const initialScrollDoneRef = useRef(false);
 	// Initialize from cached scroll position - null means bottom
 	const [isUserScrolled, setIsUserScrolled] = useState(
 		() => getCachedScrollPosition(scrollStorageKey) !== null,
@@ -680,7 +652,7 @@ export function MainChatPiView({
 		if (!targetSessionId || isPendingSessionId(targetSessionId)) return;
 		let active = true;
 		const fetchModels = isMainScope
-			? getMainChatPiModels(targetSessionId)
+			? getDefaultChatPiModels(targetSessionId)
 			: getWorkspacePiModels(
 					workspacePath ?? "global",
 					targetSessionId,
@@ -704,7 +676,7 @@ export function MainChatPiView({
 		const targetSessionId = selectedSessionId ?? piState.session_id ?? null;
 		if (!targetSessionId || isPendingSessionId(targetSessionId)) return;
 		let active = true;
-		getMainChatPiCommands(targetSessionId)
+		getDefaultChatPiCommands(targetSessionId)
 			.then((commands) => {
 				if (!active) return;
 				setCustomCommands(
@@ -727,7 +699,7 @@ export function MainChatPiView({
 		const targetSessionId = selectedSessionId ?? piState?.session_id ?? null;
 		if (!targetSessionId || isPendingSessionId(targetSessionId)) return;
 		try {
-			const stats = await getMainChatPiStats(targetSessionId);
+			const stats = await getDefaultChatPiStats(targetSessionId);
 			if (stats.tokens) {
 				setSessionTokens({
 					input: stats.tokens.input ?? 0,
@@ -908,7 +880,7 @@ export function MainChatPiView({
 			if (!files || files.length === 0) return;
 			
 			// File attachments require a workspace path to upload to
-			// The path is always available for main chat, but may be loading initially
+			// The path is always available for default chat, but may be loading initially
 			if (!workspacePath) {
 				toast.error("Workspace path is still loading. Please try again in a moment.");
 				return;
@@ -961,7 +933,7 @@ export function MainChatPiView({
 				if (!targetSessionId || isPendingSessionId(targetSessionId)) {
 					throw new Error("No active session");
 				}
-				// Use WebSocket to set model - works for both main chat and workspace
+				// Use WebSocket to set model - works for both default chat and workspace
 				const manager = getWsManager();
 				await manager.piSetModel(targetSessionId, provider, modelId);
 				await refresh();
@@ -1107,27 +1079,48 @@ export function MainChatPiView({
 				// Ignore localStorage errors
 			}
 			// Reset textarea height
-			if (inputRef.current) {
-				inputRef.current.style.height = "auto";
-			}
-			setSendPending(true);
-			setSendPendingSessionId(selectedSessionId ?? null);
-			try {
-				await send(message, { mode });
-				// Notify that a message was sent (for sidebar refresh)
-				onMessageSent?.();
-			} catch {
-				setSendPending(false);
-				setSendPendingSessionId(null);
-				toast.error("Failed to send message.");
-			}
-		},
+				if (inputRef.current) {
+					inputRef.current.style.height = "auto";
+				}
+				const hasHistory =
+					messages.length > 0 || (piState?.messageCount ?? 0) > 0;
+				const effectiveMode =
+					mode === "follow_up" || mode === "steer"
+						? hasHistory
+							? mode
+							: "prompt"
+						: mode;
+
+				setSendPending(true);
+				if (!selectedSessionId) {
+					if (!pendingSendKeyRef.current) {
+						pendingSendKeyRef.current = `pending-${Date.now()}-${Math.random()
+							.toString(36)
+							.slice(2)}`;
+					}
+				}
+				setSendPendingSessionId(
+					selectedSessionId ?? pendingSendKeyRef.current ?? null,
+				);
+				try {
+					await send(message, { mode: effectiveMode });
+					// Notify that a message was sent (for sidebar refresh)
+					onMessageSent?.();
+				} catch {
+					setSendPending(false);
+					setSendPendingSessionId(null);
+					pendingSendKeyRef.current = null;
+					toast.error("Failed to send message.");
+				}
+			},
 		[
 			builtInCommandNames,
 			draftStorageKey,
 			fileAttachments,
 			input,
+			messages.length,
 			onMessageSent,
+			piState?.messageCount,
 			runSlashCommand,
 			selectedSessionId,
 			send,
@@ -1164,20 +1157,33 @@ export function MainChatPiView({
 		const next = queuedMessages[0];
 		if (!next?.text) return;
 
-		queueSendInFlightRef.current = true;
-		setSendPending(true);
-		setSendPendingSessionId(selectedSessionId ?? null);
-		send(next.text, { mode: "follow_up" })
-			.then(() => {
-				setQueuedMessages((prev) => prev.slice(1));
-				onMessageSent?.();
-			})
-			.catch(() => {
-				queueCooldownRef.current = Date.now();
-				setSendPending(false);
-				setSendPendingSessionId(null);
-				toast.error("Failed to send queued message.");
-			})
+			queueSendInFlightRef.current = true;
+			setSendPending(true);
+			if (!selectedSessionId) {
+				if (!pendingSendKeyRef.current) {
+					pendingSendKeyRef.current = `pending-${Date.now()}-${Math.random()
+						.toString(36)
+						.slice(2)}`;
+				}
+			}
+			setSendPendingSessionId(
+				selectedSessionId ?? pendingSendKeyRef.current ?? null,
+			);
+		const hasHistory =
+			messages.length > 0 || (piState?.messageCount ?? 0) > 0;
+		const queueMode = hasHistory ? "follow_up" : "prompt";
+		send(next.text, { mode: queueMode })
+				.then(() => {
+					setQueuedMessages((prev) => prev.slice(1));
+					onMessageSent?.();
+				})
+				.catch(() => {
+					queueCooldownRef.current = Date.now();
+					setSendPending(false);
+					setSendPendingSessionId(null);
+					pendingSendKeyRef.current = null;
+					toast.error("Failed to send queued message.");
+				})
 			.finally(() => {
 				queueSendInFlightRef.current = false;
 			});
@@ -1419,7 +1425,7 @@ export function MainChatPiView({
 	const sessionTitle =
 		sessionMeta?.title?.trim() ||
 		assistantName?.trim() ||
-		(locale === "de" ? "Hauptchat" : "Main Chat");
+		(locale === "de" ? "Standardchat" : "Default Chat");
 
 	const SessionHeader = (
 		<div className="pb-3 mb-3 border-b border-border pr-10">
@@ -1486,14 +1492,15 @@ export function MainChatPiView({
 				>
 					{showSkeleton && ChatSkeleton}
 
-					{!showSkeleton && messages.length === 0 && (
-						<div className="flex items-center gap-2 text-sm text-muted-foreground">
-							{(isStreaming || isAwaitingResponse) && <BrailleSpinner />}
-							<span>
-								{isStreaming || isAwaitingResponse ? t.agentWorking : t.noMessages}
-							</span>
-						</div>
-					)}
+						{!showSkeleton &&
+							messages.length === 0 &&
+							!sendPending &&
+							!isStreaming &&
+							!isAwaitingResponse && (
+								<div className="flex items-center gap-2 text-sm text-muted-foreground">
+									<span>{t.noMessages}</span>
+								</div>
+							)}
 
 					{/* Load more indicator */}
 					{messages.length > visibleCount && (
@@ -1505,14 +1512,18 @@ export function MainChatPiView({
 					{/* Only render the last visibleCount messages for performance */}
 					{!showSkeleton &&
 						(() => {
-							const visibleMessages = messages.slice(-visibleCount);
-							const grouped = groupPiMessages(visibleMessages);
-							const lastGroup = grouped[grouped.length - 1];
-							const isWorking =
-								isStreaming ||
-								isAwaitingResponse ||
-								(sendPending &&
-									sendPendingSessionId === (selectedSessionId ?? null));
+								const visibleMessages = messages.slice(-visibleCount);
+								const grouped = groupPiMessages(visibleMessages);
+								const lastGroup = grouped[grouped.length - 1];
+								const activeSessionKey =
+									sendPendingSessionId ??
+									selectedSessionId ??
+									pendingSendKeyRef.current ??
+									null;
+								const isWorking =
+									isStreaming ||
+									isAwaitingResponse ||
+									(sendPending && sendPendingSessionId === activeSessionKey);
 							const needsPendingAssistant =
 								isWorking && (!lastGroup || lastGroup.role === "user");
 							const groupsToRender = needsPendingAssistant

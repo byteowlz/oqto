@@ -15,8 +15,8 @@ export interface MobileHeaderProps {
 	resolveText: (text: string | { en: string; de: string }) => string;
 	selectedChatFromHistory: ChatSession | null;
 	opencodeDirectory: string | null;
-	mainChatActive: boolean;
-	mainChatAssistantName: string | null;
+	defaultChatActive: boolean;
+	defaultChatAssistantName: string | null;
 	onMenuOpen: () => void;
 	onNewChat: () => void;
 }
@@ -29,8 +29,8 @@ export const MobileHeader = memo(function MobileHeader({
 	resolveText,
 	selectedChatFromHistory,
 	opencodeDirectory,
-	mainChatActive,
-	mainChatAssistantName,
+	defaultChatActive,
+	defaultChatAssistantName,
 	onMenuOpen,
 	onNewChat,
 }: MobileHeaderProps) {
@@ -83,14 +83,14 @@ export const MobileHeader = memo(function MobileHeader({
 							)}
 						</div>
 					</div>
-				) : mainChatActive ? (
+				) : defaultChatActive ? (
 					<div className="flex-1 min-w-0 px-3 text-center">
 						<div className="text-sm font-medium text-foreground truncate">
-							{mainChatAssistantName ||
-								(locale === "de" ? "Hauptchat" : "Main Chat")}
+							{defaultChatAssistantName ||
+								(locale === "de" ? "Standardchat" : "Default Chat")}
 						</div>
 						<div className="text-[10px] text-muted-foreground truncate">
-							{locale === "de" ? "Hauptchat" : "Main Chat"}
+							{locale === "de" ? "Standardchat" : "Default Chat"}
 						</div>
 					</div>
 				) : (

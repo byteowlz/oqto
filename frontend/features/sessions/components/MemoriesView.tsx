@@ -90,7 +90,7 @@ interface MemoriesViewProps {
 	className?: string;
 	/** Workspace path for memory API calls */
 	workspacePath?: string | null;
-	/** Optional store override (e.g., main chat assistant name) */
+	/** Optional store override (e.g., default chat assistant name) */
 	storeName?: string | null;
 }
 

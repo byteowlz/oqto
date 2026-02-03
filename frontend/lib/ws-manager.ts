@@ -76,6 +76,7 @@ class WsConnectionManager {
 		new Map();
 	// Track sessions that have completed create_session
 	private piSessionReady: Set<string> = new Set();
+	private piSessionReadyWaiters: Map<string, Set<() => void>> = new Map();
 	// Pending Pi messages to send once session is ready
 	private pendingPiMessages: Map<
 		string,
@@ -482,6 +483,41 @@ class WsConnectionManager {
 		});
 	}
 
+	async ensureConnected(timeoutMs = 4000): Promise<void> {
+		return this.waitForConnected(timeoutMs);
+	}
+
+	async waitForPiSessionReady(sessionId: string, timeoutMs = 4000): Promise<void> {
+		if (this.piSessionReady.has(sessionId)) return;
+		return new Promise<void>((resolve, reject) => {
+			let done = false;
+			const waiters = this.piSessionReadyWaiters.get(sessionId) ?? new Set();
+			const onReady = () => {
+				if (done) return;
+				done = true;
+				clearTimeout(timeout);
+				const current = this.piSessionReadyWaiters.get(sessionId);
+				if (current) {
+					current.delete(onReady);
+					if (current.size === 0) this.piSessionReadyWaiters.delete(sessionId);
+				}
+				resolve();
+			};
+			waiters.add(onReady);
+			this.piSessionReadyWaiters.set(sessionId, waiters);
+			const timeout = setTimeout(() => {
+				if (done) return;
+				done = true;
+				const current = this.piSessionReadyWaiters.get(sessionId);
+				if (current) {
+					current.delete(onReady);
+					if (current.size === 0) this.piSessionReadyWaiters.delete(sessionId);
+				}
+				reject(new Error("Pi session did not become ready in time"));
+			}, timeoutMs);
+		});
+	}
+
 	private createWebSocket(): void {
 		let wsUrl = toAbsoluteWsUrl(controlPlaneApiUrl("/api/ws/mux"));
 
@@ -584,6 +620,13 @@ class WsConnectionManager {
 			const sessionId = (event as PiWsEvent).session_id;
 			console.log("[ws-mux] Received session_created for:", sessionId);
 			this.piSessionReady.add(sessionId);
+			const waiters = this.piSessionReadyWaiters.get(sessionId);
+			if (waiters) {
+				for (const waiter of waiters) {
+					waiter();
+				}
+				this.piSessionReadyWaiters.delete(sessionId);
+			}
 
 			// Request initial state (includes model info)
 			this.send({

@@ -2,8 +2,8 @@
 
 import {
 	type PiSessionFile,
-	listMainChatPiSessions,
-} from "@/features/main-chat/api";
+	listDefaultChatPiSessions,
+} from "@/features/chat/api";
 import {
 	formatSessionDate,
 	getDisplayPiTitle,
@@ -13,7 +13,7 @@ import {
 import { cn } from "@/lib/utils";
 import { useCallback, useEffect, useRef, useState } from "react";
 
-export interface MainChatTimelineProps {
+export interface DefaultChatTimelineProps {
 	/** Assistant name */
 	assistantName: string;
 	/** Currently active session ID (the one visible at top of viewport) */
@@ -25,15 +25,15 @@ export interface MainChatTimelineProps {
 }
 
 /**
- * Vertical timeline showing Main Chat sessions as connected dots.
+ * Vertical timeline showing Default Chat sessions as connected dots.
  * The active session (visible at top of viewport) is highlighted.
  */
-export function MainChatTimeline({
+export function DefaultChatTimeline({
 	assistantName,
 	activeSessionId,
 	onSessionClick,
 	onSessionsLoaded,
-}: MainChatTimelineProps) {
+}: DefaultChatTimelineProps) {
 	const [sessions, setSessions] = useState<PiSessionFile[]>([]);
 	const [loading, setLoading] = useState(true);
 
@@ -42,7 +42,7 @@ export function MainChatTimeline({
 		if (!assistantName) return;
 
 		setLoading(true);
-		listMainChatPiSessions()
+		listDefaultChatPiSessions()
 			.then((data) => {
 				// Sort by started_at ascending (oldest first, so timeline goes top to bottom)
 				const sorted = [...data].sort(
@@ -53,7 +53,7 @@ export function MainChatTimeline({
 				onSessionsLoaded?.(sorted);
 			})
 			.catch((err) => {
-				console.error("Failed to load main chat sessions:", err);
+				console.error("Failed to load default chat sessions:", err);
 				setSessions([]);
 			})
 			.finally(() => setLoading(false));

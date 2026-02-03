@@ -12,8 +12,8 @@ export type MessageNavigationTarget = {
 	lineNumber?: number;
 	/** Session ID if navigating to a different session */
 	sessionId?: string;
-	/** Whether this is a Main Chat (Pi) session */
-	isMainChat?: boolean;
+	/** Whether this is a Default Chat (Pi) session */
+	isDefaultChat?: boolean;
 };
 
 export type UseMessageNavigationOptions = {

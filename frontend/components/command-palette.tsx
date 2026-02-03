@@ -45,7 +45,7 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
 		setLocale,
 		opencodeSessions,
 		setSelectedChatSessionId,
-		createNewPiChat,
+		createNewChat,
 	} = useApp();
 
 	const { startConversation, startDictation } = useVoiceCommandEmitter();
@@ -96,10 +96,10 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
 	);
 
 	const handleNewChat = useCallback(async () => {
-		await createNewPiChat();
+		await createNewChat();
 		setActiveAppId("sessions");
 		onOpenChange(false);
-	}, [createNewPiChat, setActiveAppId, onOpenChange]);
+	}, [createNewChat, setActiveAppId, onOpenChange]);
 
 	const handleSelectSession = useCallback(
 		(sessionId: string) => {

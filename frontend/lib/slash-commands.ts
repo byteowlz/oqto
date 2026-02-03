@@ -15,10 +15,15 @@ const knownIcons: Record<string, string> = {
 	review: "Eye",
 	inbox: "Inbox",
 	mail: "Mail",
+	browser: "Globe",
+	"close-browser": "X",
 };
 
-// Empty list shown when opencode is not connected
-export const builtInCommands: SlashCommand[] = [];
+// Built-in UI commands shown alongside opencode commands.
+export const builtInCommands: SlashCommand[] = [
+	{ name: "browser", description: "Show the browser stream" },
+	{ name: "close-browser", description: "Hide the browser stream" },
+];
 
 // Convert opencode command list to SlashCommand format
 // Only shows commands that are available via the /command API

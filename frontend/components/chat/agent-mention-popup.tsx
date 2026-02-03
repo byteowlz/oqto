@@ -20,7 +20,7 @@ function expandPath(path: string): string {
 export interface AgentTarget {
 	id: string;
 	name: string;
-	type: "main-chat" | "session" | "new-session";
+	type: "default-chat" | "session" | "new-session";
 	title?: string;
 	description?: string;
 	/** Workspace path for filtering or for new session creation */
@@ -39,9 +39,9 @@ interface SessionInfo {
 interface AgentMentionPopupProps {
 	query: string;
 	isOpen: boolean;
-	mainChatName?: string;
-	/** Main Chat workspace path (for filtering Main Chat by path) */
-	mainChatWorkspacePath?: string;
+	defaultChatName?: string;
+	/** Default Chat workspace path (for filtering Default Chat by path) */
+	defaultChatWorkspacePath?: string;
 	sessions?: SessionInfo[];
 	onSelect: (target: AgentTarget) => void;
 	onClose: () => void;
@@ -77,8 +77,8 @@ function matchScore(query: string, text: string): number {
 export const AgentMentionPopup = memo(function AgentMentionPopup({
 	query,
 	isOpen,
-	mainChatName,
-	mainChatWorkspacePath,
+	defaultChatName,
+	defaultChatWorkspacePath,
 	sessions = [],
 	onSelect,
 	onClose,
@@ -109,33 +109,33 @@ export const AgentMentionPopup = memo(function AgentMentionPopup({
 	const filteredTargets = (() => {
 		const targets: AgentTarget[] = [];
 
-		// Add main chat as first option (if it matches query or no query)
-		if (mainChatName) {
-			const mainChatTarget: AgentTarget = {
-				id: "main-chat",
-				name: mainChatName,
-				type: "main-chat",
-				title: "Main Chat",
+		// Add default chat as first option (if it matches query or no query)
+		if (defaultChatName) {
+			const defaultChatTarget: AgentTarget = {
+				id: "default-chat",
+				name: defaultChatName,
+				type: "default-chat",
+				title: "Default Chat",
 				description:
-					mainChatWorkspacePath?.split("/").pop() ||
-					"Ask the main chat assistant",
-				workspace_path: mainChatWorkspacePath,
+					defaultChatWorkspacePath?.split("/").pop() ||
+					"Ask the default chat assistant",
+				workspace_path: defaultChatWorkspacePath,
 			};
 
-			const mainChatFields = [
-				mainChatName,
+			const defaultChatFields = [
+				defaultChatName,
 				"main",
-				"main-chat",
-				mainChatWorkspacePath?.split("/").pop() || "",
+				"default-chat",
+				defaultChatWorkspacePath?.split("/").pop() || "",
 			];
 
-			if (!query || mainChatFields.some((f) => fuzzyMatch(query, f))) {
-				targets.push(mainChatTarget);
+			if (!query || defaultChatFields.some((f) => fuzzyMatch(query, f))) {
+				targets.push(defaultChatTarget);
 			}
 		}
 
 		if (!query) {
-			// No query - show main chat + one entry per unique project (most recent session)
+			// No query - show default chat + one entry per unique project (most recent session)
 			const seenProjects = new Set<string>();
 			for (const t of sessionTargets) {
 				const key = t.workspace_path || t.id;
@@ -322,7 +322,7 @@ export const AgentMentionPopup = memo(function AgentMentionPopup({
 								: "hover:bg-muted",
 						)}
 					>
-						{target.type === "main-chat" ? (
+						{target.type === "default-chat" ? (
 							<Bot className="w-4 h-4 text-primary shrink-0" />
 						) : target.type === "new-session" ? (
 							<FolderPlus className="w-4 h-4 text-green-500 shrink-0" />
@@ -342,7 +342,7 @@ export const AgentMentionPopup = memo(function AgentMentionPopup({
 							)}
 						</div>
 						<span className="text-xs text-muted-foreground shrink-0">
-							{target.type === "main-chat"
+							{target.type === "default-chat"
 								? "Main"
 								: target.type === "new-session"
 									? target.title
@@ -385,7 +385,7 @@ export const AgentTargetChip = memo(function AgentTargetChip({
 					: `Enter: ask and inject reply | ${modKey}+Enter: ask without reply`
 			}
 		>
-			{target.type === "main-chat" ? (
+			{target.type === "default-chat" ? (
 				<Bot className="w-3 h-3" />
 			) : target.type === "new-session" ? (
 				<FolderPlus className="w-3 h-3" />

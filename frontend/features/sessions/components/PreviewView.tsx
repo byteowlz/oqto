@@ -26,8 +26,8 @@ import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 interface PreviewViewProps {
 	filePath?: string | null;
 	workspacePath?: string | null;
-	/** Whether this is the main chat preview (uses different API) */
-	isMainChat?: boolean;
+	/** Whether this is the default chat preview (uses different API) */
+	isDefaultChat?: boolean;
 	className?: string;
 	onClose?: () => void;
 	onToggleExpand?: () => void;
@@ -278,7 +278,7 @@ async function saveFileContent(
 export function PreviewView({
 	filePath,
 	workspacePath,
-	isMainChat: _isMainChat = false,
+	isDefaultChat: _isDefaultChat = false,
 	className,
 	onClose,
 	onToggleExpand,

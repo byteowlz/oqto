@@ -3,16 +3,17 @@
 /**
  * Pi Chat hook using the multiplexed WebSocket manager.
  *
- * This hook provides the same external API as usePiChat but uses the
+ * This hook provides the same external API as the legacy hook but uses the
  * multiplexed WebSocket connection via WsConnectionManager instead of
  * per-session WebSocket connections.
  *
- * Key differences from usePiChat:
+ * Key differences from the legacy hook:
  * - Uses wsManager.subscribePiSession() for event subscription
  * - Manages session subscriptions explicitly (subscribe/unsubscribe commands)
  * - Single WebSocket connection shared across all Pi sessions
  */
 
+import { newWorkspacePiSession } from "@/lib/api/default-chat";
 import { getWsManager } from "@/lib/ws-manager";
 import type { PiWsEvent, WsMuxConnectionState } from "@/lib/ws-mux-types";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -55,12 +56,12 @@ function isPiDebugEnabled(): boolean {
 
 /**
  * Hook for managing Pi chat using the multiplexed WebSocket.
- * Provides the same API as usePiChat for easy migration.
+ * Provides the same API as the legacy hook for easy migration.
  */
-export function usePiChatV2(options: UsePiChatOptions = {}): UsePiChatReturn {
+export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 	const {
 		autoConnect = true,
-		scope = "main",
+		scope = "default",
 		workspacePath = null,
 		storageKeyPrefix,
 		selectedSessionId,
@@ -71,8 +72,8 @@ export function usePiChatV2(options: UsePiChatOptions = {}): UsePiChatReturn {
 
 	const resolvedStorageKeyPrefix =
 		storageKeyPrefix ??
-		(scope === "main"
-			? "octo:mainChatPi:v2"
+		(scope === "default"
+			? "octo:defaultChatPi:v2"
 			: `octo:workspacePi:v2:${sanitizeStorageKey(workspacePath ?? "global")}`);
 
 	const activeSessionId = selectedSessionId ?? null;
@@ -113,7 +114,7 @@ export function usePiChatV2(options: UsePiChatOptions = {}): UsePiChatReturn {
 	}, []);
 
 	const getSessionConfig = useCallback(() => {
-		if (scope === "main") {
+		if (scope === "default") {
 			return { scope: "main" as const };
 		}
 		if (workspacePath) {
@@ -220,7 +221,7 @@ export function usePiChatV2(options: UsePiChatOptions = {}): UsePiChatReturn {
 				if (activeId && event.session_id !== activeId) {
 					if (isPiDebugEnabled()) {
 						console.debug(
-							`[usePiChatV2] Ignoring event for session ${event.session_id}, active is ${activeId}`,
+							`[useChat] Ignoring event for session ${event.session_id}, active is ${activeId}`,
 						);
 					}
 					return;
@@ -228,7 +229,7 @@ export function usePiChatV2(options: UsePiChatOptions = {}): UsePiChatReturn {
 			}
 
 			if (isPiDebugEnabled()) {
-				console.debug("[usePiChatV2] Event:", event.type, event);
+				console.debug("[useChat] Event:", event.type, event);
 			}
 
 			switch (event.type) {
@@ -242,7 +243,7 @@ export function usePiChatV2(options: UsePiChatOptions = {}): UsePiChatReturn {
 					});
 					if (isPiDebugEnabled()) {
 						console.debug(
-							"[usePiChatV2] Session created, requesting messages:",
+							"[useChat] Session created, requesting messages:",
 							event.session_id,
 						);
 					}
@@ -473,7 +474,7 @@ export function usePiChatV2(options: UsePiChatOptions = {}): UsePiChatReturn {
 				case "persisted": {
 					if (isPiDebugEnabled()) {
 						console.debug(
-							"[usePiChatV2] Persisted:",
+							"[useChat] Persisted:",
 							event.session_id,
 							event.message_count,
 						);
@@ -487,7 +488,7 @@ export function usePiChatV2(options: UsePiChatOptions = {}): UsePiChatReturn {
 					manager.piGetState(event.session_id);
 					if (isPiDebugEnabled()) {
 						console.debug(
-							"[usePiChatV2] Model changed:",
+							"[useChat] Model changed:",
 							event.session_id,
 							"provider" in event ? event.provider : "",
 							"model_id" in event ? event.model_id : "",
@@ -517,7 +518,7 @@ export function usePiChatV2(options: UsePiChatOptions = {}): UsePiChatReturn {
 
 						if (isPiDebugEnabled()) {
 							console.debug(
-								"[usePiChatV2] Loaded messages:",
+							"[useChat] Loaded messages:",
 								event.session_id,
 								displayMessages.length,
 							);
@@ -553,39 +554,43 @@ export function usePiChatV2(options: UsePiChatOptions = {}): UsePiChatReturn {
 		}
 	}, []);
 
+	const ensureSession = useCallback(async (): Promise<string> => {
+		let sessionId = activeSessionIdRef.current;
+		if (sessionId) return sessionId;
+
+		const targetWorkspace = workspacePath?.trim() || "global";
+		const newState = await newWorkspacePiSession(targetWorkspace);
+		if (!newState.session_id) {
+			throw new Error("Pi session id missing");
+		}
+		sessionId = newState.session_id;
+		activeSessionIdRef.current = sessionId;
+		onSelectedSessionIdChange?.(sessionId);
+
+		const manager = getWsManager();
+		const sessionConfig = getSessionConfig();
+		unsubscribeRef.current?.();
+		unsubscribeRef.current = manager.subscribePiSession(
+			sessionId,
+			handlePiEvent,
+			sessionConfig,
+		);
+		return sessionId;
+	}, [getSessionConfig, handlePiEvent, onSelectedSessionIdChange, workspacePath]);
+
 	// Send message
 	const send = useCallback(
 		async (message: string, options?: PiSendOptions) => {
 			const mode: PiSendMode = options?.mode ?? "prompt";
 			let sessionId = activeSessionIdRef.current;
-
-			// Auto-create a session if none exists
 			if (!sessionId) {
-				const newSessionId = createSessionId();
-				console.log("[usePiChatV2] send: auto-creating new session", newSessionId, "workspacePath:", workspacePath);
-				
-				// Update the session ID ref immediately
-				activeSessionIdRef.current = newSessionId;
-				sessionId = newSessionId;
-				
-				// Clear local state
+				// Clear local state for the new session.
 				setMessages([]);
 				streamingMessageRef.current = null;
 				setIsStreaming(false);
 				setError(null);
 				messageIdRef.current = 0;
-				
-				// Subscribe to the new session via ws-manager
-				const manager = getWsManager();
-				const sessionConfig = getSessionConfig();
-				unsubscribeRef.current = manager.subscribePiSession(
-					newSessionId,
-					handlePiEvent,
-					sessionConfig,
-				);
-				
-				// Notify parent of the new session ID
-				onSelectedSessionIdChange?.(newSessionId);
+				sessionId = await ensureSession();
 			}
 
 			// Add user message to display
@@ -600,6 +605,16 @@ export function usePiChatV2(options: UsePiChatOptions = {}): UsePiChatReturn {
 			setIsAwaitingResponse(true);
 
 			const manager = getWsManager();
+			try {
+				await manager.ensureConnected(4000);
+				await manager.waitForPiSessionReady(sessionId, 4000);
+			} catch (err) {
+				const error =
+					err instanceof Error ? err : new Error("WebSocket not ready");
+				setIsAwaitingResponse(false);
+				setError(error);
+				throw error;
+			}
 
 			switch (mode) {
 				case "prompt":
@@ -613,7 +628,7 @@ export function usePiChatV2(options: UsePiChatOptions = {}): UsePiChatReturn {
 					break;
 			}
 		},
-		[nextMessageId, getSessionConfig, handlePiEvent, onSelectedSessionIdChange],
+		[ensureSession, getSessionConfig, handlePiEvent, nextMessageId, onSelectedSessionIdChange],
 	);
 
 	// Abort current stream
@@ -637,11 +652,6 @@ export function usePiChatV2(options: UsePiChatOptions = {}): UsePiChatReturn {
 
 	// New session - creates a brand new session with a new UUID
 	const newSession = useCallback(async () => {
-		// Generate a new session ID
-		const newSessionId = createSessionId();
-		
-		console.log("[usePiChatV2] newSession: creating new session", newSessionId, "workspacePath:", workspacePath);
-		
 		// Clear local state
 		setMessages([]);
 		streamingMessageRef.current = null;
@@ -649,21 +659,14 @@ export function usePiChatV2(options: UsePiChatOptions = {}): UsePiChatReturn {
 		setIsAwaitingResponse(false);
 		setError(null);
 		messageIdRef.current = 0;
-
-		// Notify parent of the new session ID - this will trigger the useEffect
-		// which calls subscribePiSession, which sends create_session + subscribe
-		onSelectedSessionIdChange?.(newSessionId);
-
-		if (isPiDebugEnabled()) {
-			console.debug("[usePiChatV2] newSession created:", newSessionId);
-		}
-	}, [workspacePath, onSelectedSessionIdChange]);
+		await ensureSession();
+	}, [ensureSession]);
 
 	// Reset session - closes and recreates
 	const resetSession = useCallback(async () => {
 		const sessionId = activeSessionIdRef.current;
 		if (!sessionId) {
-			console.warn("[usePiChatV2] resetSession: no active session");
+			console.warn("[useChat] resetSession: no active session");
 			return;
 		}
 
@@ -685,7 +688,7 @@ export function usePiChatV2(options: UsePiChatOptions = {}): UsePiChatReturn {
 		}, 100);
 
 		if (isPiDebugEnabled()) {
-			console.debug("[usePiChatV2] resetSession for:", sessionId);
+			console.debug("[useChat] resetSession for:", sessionId);
 		}
 	}, []);
 
@@ -705,7 +708,7 @@ export function usePiChatV2(options: UsePiChatOptions = {}): UsePiChatReturn {
 		});
 
 		if (isPiDebugEnabled()) {
-			console.debug("[usePiChatV2] refresh requested for:", sessionId);
+			console.debug("[useChat] refresh requested for:", sessionId);
 		}
 	}, []);
 
@@ -751,6 +754,10 @@ export function usePiChatV2(options: UsePiChatOptions = {}): UsePiChatReturn {
 			messageIdRef.current = 0;
 			lastAssistantMessageIdRef.current = null;
 		}
+		streamingMessageRef.current = null;
+		setIsStreaming(false);
+		setIsAwaitingResponse(false);
+		setError(null);
 
 		// Subscribe to the new session (passes scope/cwd for session creation)
 		const manager = getWsManager();
@@ -762,7 +769,7 @@ export function usePiChatV2(options: UsePiChatOptions = {}): UsePiChatReturn {
 		);
 
 		if (isPiDebugEnabled()) {
-			console.debug("[usePiChatV2] Subscribed to session:", activeSessionId, "workspacePath:", workspacePath);
+			console.debug("[useChat] Subscribed to session:", activeSessionId, "workspacePath:", workspacePath);
 		}
 
 		return () => {

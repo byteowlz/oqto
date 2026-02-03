@@ -27,7 +27,7 @@ const t = {
 		noResults: "No results found",
 		searching: "Searching...",
 		opencode: "OpenCode",
-		piAgent: "Main Chat",
+		piAgent: "Default Chat",
 		user: "User",
 		assistant: "Assistant",
 		error: "Search failed",

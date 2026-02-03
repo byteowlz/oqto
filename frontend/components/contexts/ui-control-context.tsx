@@ -76,9 +76,9 @@ export function UIControlProvider({
 		locale,
 		setActiveAppId,
 		setSelectedChatSessionId,
-		setMainChatActive,
-		setMainChatCurrentSessionId,
-		createNewPiChat,
+		setDefaultChatActive,
+		setDefaultChatCurrentSessionId,
+		createNewChat,
 		setLocale,
 	} = useApp();
 	const sessionControlsRef = useRef<SessionUiControls | null>(null);
@@ -123,17 +123,17 @@ export function UIControlProvider({
 			const effectiveMode = mode ?? "opencode";
 			setActiveAppId("sessions");
 			if (effectiveMode === "main" || effectiveMode === "pi") {
-				setMainChatActive(true);
-				setMainChatCurrentSessionId(sessionId);
+				setDefaultChatActive(true);
+				setDefaultChatCurrentSessionId(sessionId);
 			} else {
-				setMainChatActive(false);
+				setDefaultChatActive(false);
 				setSelectedChatSessionId(sessionId);
 			}
 		},
 		[
 			setActiveAppId,
-			setMainChatActive,
-			setMainChatCurrentSessionId,
+			setDefaultChatActive,
+			setDefaultChatCurrentSessionId,
 			setSelectedChatSessionId,
 		],
 	);
@@ -185,7 +185,7 @@ export function UIControlProvider({
 		async (command: string, args?: Record<string, unknown>) => {
 			switch (command) {
 				case "new_chat":
-					await createNewPiChat();
+					await createNewChat();
 					setActiveAppId("sessions");
 					return;
 				case "toggle_theme": {
@@ -227,7 +227,7 @@ export function UIControlProvider({
 			}
 		},
 		[
-			createNewPiChat,
+			createNewChat,
 			locale,
 			setActiveAppId,
 			setLocale,

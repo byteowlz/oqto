@@ -12,25 +12,25 @@ import {
 import {
 	type PiModelInfo,
 	type PiState,
-	getMainChatPiModels,
-	getMainChatPiState,
-	startMainChatPiSession,
-	setMainChatPiModel,
-} from "@/features/main-chat/api";
+	getDefaultChatPiModels,
+	getDefaultChatPiState,
+	startDefaultChatPiSession,
+	setDefaultChatPiModel,
+} from "@/features/chat/api";
 import { fuzzyMatch } from "@/lib/slash-commands";
 import { cn } from "@/lib/utils";
 import { Loader2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-interface MainChatSettingsViewProps {
+interface ChatSettingsViewProps {
 	className?: string;
 	locale?: "en" | "de";
 }
 
-export function MainChatSettingsView({
+export function ChatSettingsView({
 	className,
 	locale = "en",
-}: MainChatSettingsViewProps) {
+}: ChatSettingsViewProps) {
 	const [availableModels, setAvailableModels] = useState<PiModelInfo[]>([]);
 	const [selectedModelRef, setSelectedModelRef] = useState<string | null>(null);
 	const [isSwitchingModel, setIsSwitchingModel] = useState(false);
@@ -50,7 +50,7 @@ export function MainChatSettingsView({
 				active = false;
 			};
 		}
-		getMainChatPiModels(piState.session_id)
+		getDefaultChatPiModels(piState.session_id)
 			.then((models) => {
 				if (active) {
 					setAvailableModels(models);
@@ -79,16 +79,16 @@ export function MainChatSettingsView({
 			if (!active) return;
 			try {
 				if (!piState?.session_id) {
-					const nextState = await startMainChatPiSession();
+					const nextState = await startDefaultChatPiSession();
 					if (active) setPiState(nextState);
 					return;
 				}
-				const nextState = await getMainChatPiState(piState.session_id);
+				const nextState = await getDefaultChatPiState(piState.session_id);
 				if (active) setPiState(nextState);
 			} catch {
 				if (active) {
 					try {
-						const nextState = await startMainChatPiSession();
+						const nextState = await startDefaultChatPiSession();
 						if (active) setPiState(nextState);
 						return;
 					} catch {
@@ -134,8 +134,8 @@ export function MainChatSettingsView({
 			setSelectedModelRef(value);
 			setIsSwitchingModel(true);
 			try {
-				if (!piState?.session_id) throw new Error("No active main chat session");
-				await setMainChatPiModel(piState.session_id, provider, modelId);
+				if (!piState?.session_id) throw new Error("No active default chat session");
+				await setDefaultChatPiModel(piState.session_id, provider, modelId);
 			} catch (err) {
 				console.error("Failed to switch model:", err);
 			} finally {
@@ -160,7 +160,7 @@ export function MainChatSettingsView({
 			{/* Header */}
 			<div className="flex items-center justify-between p-3 border-b border-border">
 				<span className="text-sm font-medium">
-					{locale === "de" ? "Hauptchat Einstellungen" : "Main Chat Settings"}
+					{locale === "de" ? "Standardchat Einstellungen" : "Default Chat Settings"}
 				</span>
 			</div>
 
@@ -241,8 +241,8 @@ export function MainChatSettingsView({
 					</Select>
 					<p className="text-[10px] text-muted-foreground">
 						{locale === "de"
-							? "Provider/Modell fur den Hauptchat"
-							: "Provider/model for the main chat"}
+							? "Provider/Modell fur den Standardchat"
+							: "Provider/model for the default chat"}
 					</p>
 					{!isIdle && (
 						<p className="text-[10px] text-muted-foreground">

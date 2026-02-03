@@ -9,7 +9,7 @@
  *
  * - workspace-context.tsx: Workspace session management
  * - chat-context.tsx: Chat session management
- * - main-chat-context.tsx: Main Chat Pi state
+ * - default-chat-context.tsx: Default chat Pi state
  */
 
 import type {
@@ -29,11 +29,11 @@ import {
 
 // Re-export individual context providers and hooks
 export {
-	MainChatProvider,
-	useMainChatContext,
-	useMainChat,
-	type MainChatContextValue,
-} from "./main-chat-context";
+	DefaultChatProvider,
+	useDefaultChatContext,
+	useDefaultChat,
+	type DefaultChatContextValue,
+} from "./default-chat-context";
 
 export {
 	WorkspaceProvider,
@@ -53,7 +53,7 @@ export {
 
 // Import for internal use
 import { useChatContext } from "./chat-context";
-import { useMainChatContext } from "./main-chat-context";
+import { useDefaultChatContext } from "./default-chat-context";
 import { useWorkspaceContext } from "./workspace-context";
 
 /**
@@ -93,12 +93,16 @@ export interface SessionContextValue {
 	refreshOpencodeSessions: () => Promise<void>;
 	createOptimisticChatSession: (workspacePath?: string) => string;
 	clearOptimisticChatSession: (sessionId: string) => void;
+	replaceOptimisticChatSession: (
+		optimisticId: string,
+		sessionId: string,
+	) => void;
 	createNewChat: (
 		baseUrlOverride?: string,
 		directoryOverride?: string,
 		options?: { optimisticId?: string },
 	) => Promise<OpenCodeSession | null>;
-	createNewPiChat: (
+	createNewChat: (
 		workspacePath?: string,
 		options?: { optimisticId?: string },
 	) => Promise<string | null>;
@@ -108,19 +112,17 @@ export interface SessionContextValue {
 	) => Promise<boolean>;
 	renameChatSession: (sessionId: string, title: string) => Promise<boolean>;
 
-	// Main Chat state
-	mainChatActive: boolean;
-	setMainChatActive: (active: boolean) => void;
-	mainChatAssistantName: string | null;
-	setMainChatAssistantName: (name: string | null) => void;
-	mainChatCurrentSessionId: string | null;
-	setMainChatCurrentSessionId: (id: string | null) => void;
-	mainChatWorkspacePath: string | null;
-	setMainChatWorkspacePath: (path: string | null) => void;
-	mainChatNewSessionTrigger: number;
-	requestNewMainChatSession: () => void;
-	mainChatSessionActivityTrigger: number;
-	notifyMainChatSessionActivity: () => void;
+	// Default Chat state
+	defaultChatActive: boolean;
+	setDefaultChatActive: (active: boolean) => void;
+	defaultChatAssistantName: string | null;
+	setDefaultChatAssistantName: (name: string | null) => void;
+	defaultChatCurrentSessionId: string | null;
+	setDefaultChatCurrentSessionId: (id: string | null) => void;
+	defaultChatWorkspacePath: string | null;
+	setDefaultChatWorkspacePath: (path: string | null) => void;
+	sessionActivityTrigger: number;
+	notifySessionActivity: () => void;
 	scrollToMessageId: string | null;
 	setScrollToMessageId: (id: string | null) => void;
 }
@@ -162,24 +164,23 @@ const defaultSessionContext: SessionContextValue = {
 	refreshOpencodeSessions: asyncNoopVoid,
 	createOptimisticChatSession: () => "",
 	clearOptimisticChatSession: noop,
+	replaceOptimisticChatSession: noop,
 	createNewChat: asyncNoop,
-	createNewPiChat: asyncNoop,
+	createNewChat: asyncNoop,
 	deleteChatSession: asyncNoopBool,
 	renameChatSession: asyncNoopBool,
 
-	// Main Chat defaults
-	mainChatActive: false,
-	setMainChatActive: noop,
-	mainChatAssistantName: null,
-	setMainChatAssistantName: noop,
-	mainChatCurrentSessionId: null,
-	setMainChatCurrentSessionId: noop,
-	mainChatWorkspacePath: null,
-	setMainChatWorkspacePath: noop,
-	mainChatNewSessionTrigger: 0,
-	requestNewMainChatSession: noop,
-	mainChatSessionActivityTrigger: 0,
-	notifyMainChatSessionActivity: noop,
+	// Default Chat defaults
+	defaultChatActive: false,
+	setDefaultChatActive: noop,
+	defaultChatAssistantName: null,
+	setDefaultChatAssistantName: noop,
+	defaultChatCurrentSessionId: null,
+	setDefaultChatCurrentSessionId: noop,
+	defaultChatWorkspacePath: null,
+	setDefaultChatWorkspacePath: noop,
+	sessionActivityTrigger: 0,
+	notifySessionActivity: noop,
 	scrollToMessageId: null,
 	setScrollToMessageId: noop,
 };
@@ -190,7 +191,7 @@ const SessionContext = createContext<SessionContextValue>(
 
 import { ChatProvider } from "./chat-context";
 // Import providers for nesting
-import { MainChatProvider } from "./main-chat-context";
+import { DefaultChatProvider } from "./default-chat-context";
 import { WorkspaceProvider } from "./workspace-context";
 
 /**
@@ -198,20 +199,20 @@ import { WorkspaceProvider } from "./workspace-context";
  *
  * Provides the combined SessionContextValue for backward compatibility.
  * The individual providers are nested in order:
- * 1. MainChatProvider (no dependencies)
+ * 1. DefaultChatProvider (no dependencies)
  * 2. WorkspaceProvider (no dependencies)
- * 3. ChatProvider (depends on MainChatContext, WorkspaceContext)
+ * 3. ChatProvider (depends on DefaultChatContext, WorkspaceContext)
  * 4. SessionContextComposer (combines all for backward compatibility)
  */
 export function SessionProvider({ children }: { children: ReactNode }) {
 	return (
-		<MainChatProvider>
+		<DefaultChatProvider>
 			<WorkspaceProvider>
 				<ChatProvider>
 					<SessionContextComposer>{children}</SessionContextComposer>
 				</ChatProvider>
 			</WorkspaceProvider>
-		</MainChatProvider>
+		</DefaultChatProvider>
 	);
 }
 
@@ -222,7 +223,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 function SessionContextComposer({ children }: { children: ReactNode }) {
 	const workspace = useWorkspaceContext();
 	const chat = useChatContext();
-	const mainChat = useMainChatContext();
+	const defaultChat = useDefaultChatContext();
 
 	const value = useMemo<SessionContextValue>(
 		() => ({
@@ -256,28 +257,27 @@ function SessionContextComposer({ children }: { children: ReactNode }) {
 			refreshOpencodeSessions: chat.refreshOpencodeSessions,
 			createOptimisticChatSession: chat.createOptimisticChatSession,
 			clearOptimisticChatSession: chat.clearOptimisticChatSession,
+			replaceOptimisticChatSession: chat.replaceOptimisticChatSession,
 			createNewChat: chat.createNewChat,
-			createNewPiChat: chat.createNewPiChat,
+			createNewChat: chat.createNewChat,
 			deleteChatSession: chat.deleteChatSession,
 			renameChatSession: chat.renameChatSession,
 
-			// Main Chat state
-			mainChatActive: mainChat.mainChatActive,
-			setMainChatActive: mainChat.setMainChatActive,
-			mainChatAssistantName: mainChat.mainChatAssistantName,
-			setMainChatAssistantName: mainChat.setMainChatAssistantName,
-			mainChatCurrentSessionId: mainChat.mainChatCurrentSessionId,
-			setMainChatCurrentSessionId: mainChat.setMainChatCurrentSessionId,
-			mainChatWorkspacePath: mainChat.mainChatWorkspacePath,
-			setMainChatWorkspacePath: mainChat.setMainChatWorkspacePath,
-			mainChatNewSessionTrigger: mainChat.mainChatNewSessionTrigger,
-			requestNewMainChatSession: mainChat.requestNewMainChatSession,
-			mainChatSessionActivityTrigger: mainChat.mainChatSessionActivityTrigger,
-			notifyMainChatSessionActivity: mainChat.notifyMainChatSessionActivity,
-			scrollToMessageId: mainChat.scrollToMessageId,
-			setScrollToMessageId: mainChat.setScrollToMessageId,
+			// Default Chat state
+			defaultChatActive: defaultChat.defaultChatActive,
+			setDefaultChatActive: defaultChat.setDefaultChatActive,
+			defaultChatAssistantName: defaultChat.defaultChatAssistantName,
+			setDefaultChatAssistantName: defaultChat.setDefaultChatAssistantName,
+			defaultChatCurrentSessionId: defaultChat.defaultChatCurrentSessionId,
+			setDefaultChatCurrentSessionId: defaultChat.setDefaultChatCurrentSessionId,
+			defaultChatWorkspacePath: defaultChat.defaultChatWorkspacePath,
+			setDefaultChatWorkspacePath: defaultChat.setDefaultChatWorkspacePath,
+			sessionActivityTrigger: defaultChat.sessionActivityTrigger,
+			notifySessionActivity: defaultChat.notifySessionActivity,
+			scrollToMessageId: defaultChat.scrollToMessageId,
+			setScrollToMessageId: defaultChat.setScrollToMessageId,
 		}),
-		[workspace, chat, mainChat],
+		[workspace, chat, defaultChat],
 	);
 
 	return (
@@ -291,7 +291,7 @@ function SessionContextComposer({ children }: { children: ReactNode }) {
  * For better performance, prefer using the focused hooks:
  * - useWorkspaceContext() / useWorkspaceSessions()
  * - useChatContext() / useChatHistory() / useSelectedChat() / useBusySessions()
- * - useMainChatContext() / useMainChat()
+ * - useDefaultChatContext() / useDefaultChat()
  */
 export function useSessionContext() {
 	return useContext(SessionContext);

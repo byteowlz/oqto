@@ -1,15 +1,15 @@
 import {
 	convertChatMessagesToOpenCode,
 	getChatMessages,
-	listMainChatSessions,
+	listDefaultChatSessions,
 } from "@/features/sessions/api";
 import type { ThreadedMessage } from "@/features/sessions/types";
 import { formatSessionDate } from "@/lib/session-utils";
 
-export async function fetchMainChatThreadedMessages(
-	mainChatAssistantName: string,
+export async function fetchDefaultChatThreadedMessages(
+	defaultChatAssistantName: string,
 ): Promise<ThreadedMessage[]> {
-	const sessions = await listMainChatSessions(mainChatAssistantName);
+	const sessions = await listDefaultChatSessions(defaultChatAssistantName);
 	if (sessions.length === 0) return [];
 
 	const sortedSessions = [...sessions].sort(

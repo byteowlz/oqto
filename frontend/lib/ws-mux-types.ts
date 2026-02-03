@@ -203,7 +203,7 @@ export type PiWsCommand =
 
 /** Pi session configuration */
 export type PiSessionConfig = {
-	/** Session scope: "main" for main chat, "workspace" for workspace sessions */
+	/** Session scope: "main" for default chat, "workspace" for workspace sessions */
 	scope?: "main" | "workspace";
 	/** Working directory for Pi (ignored if scope="main") */
 	cwd?: string;

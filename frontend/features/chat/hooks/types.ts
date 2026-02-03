@@ -65,12 +65,12 @@ export type UsePiChatOptions = {
 	/** Auto-connect on mount */
 	autoConnect?: boolean;
 	/** Scope for Pi sessions */
-	scope?: "main" | "workspace";
+	scope?: "default" | "workspace";
 	/** Workspace path (required for workspace scope) */
 	workspacePath?: string | null;
 	/** Storage key prefix for cached messages */
 	storageKeyPrefix?: string;
-	/** Selected Pi session ID (disk-backed Main Chat session) */
+	/** Selected Pi session ID (disk-backed Default Chat session) */
 	selectedSessionId?: string | null;
 	/** Notify when a new session becomes active (e.g. /new) */
 	onSelectedSessionIdChange?: (id: string | null) => void;

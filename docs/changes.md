@@ -137,3 +137,14 @@
 - 2026-02-03: Add an editable queued-message tray and auto-send queued follow-ups when Pi is idle.
 - 2026-02-03: Resolve Pi sessions via JSONL header workdir and scan all session dirs to prevent split session entries.
 - 2026-02-03: Show the assistant working spinner immediately after send until streaming starts.
+- 2026-02-03: Wrap the sessions app in UI control provider to prevent startup crashes.
+- 2026-02-03: Reorder MainChatPiView state/refs to avoid initialization errors at startup.
+- 2026-02-03: Move sendPending state above early hooks to prevent TDZ errors on refresh.
+- 2026-02-03: Stop sendPending timers from resetting on every render and scope pending spinners to session keys.
+- 2026-02-03: Force initial Pi send to use prompt mode and keep pending spinners tied to original sessions.
+- 2026-02-03: Use pending session keys when deciding whether to show the assistant working spinner.
+- 2026-02-03: Wait for ws-mux connection and Pi session readiness before sending messages; surface errors instead of hanging.
+- 2026-02-03: Auto-rename extension now names sessions on first prompt send (before agent response).
+- 2026-02-03: Rename main chat UI to default chat and move chat feature code under features/chat.
+- 2026-02-03: Replace pending chat session IDs with real Pi session IDs to avoid duplicate sessions.
+- 2026-02-03: Reset streaming/awaiting state on session switch to stop spinners bleeding across chats.

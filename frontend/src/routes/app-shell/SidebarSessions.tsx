@@ -392,7 +392,7 @@ export const SidebarSessions = memo(function SidebarSessions({
 						: "This action cannot be undone. All selected chats will be permanently deleted."
 				}
 			/>
-			{/* Sticky header section - Search, Main Chat, Sessions header */}
+			{/* Sticky header section - Search, Default Chat, Sessions header */}
 			<div className="flex-shrink-0 space-y-0.5 px-1">
 				{/* Search input with mode dropdown */}
 				<div className="relative mb-2 px-1">
@@ -450,7 +450,7 @@ export const SidebarSessions = memo(function SidebarSessions({
 										onClick={() => setAgentFilter("pi_agent")}
 										className={cn(agentFilter === "pi_agent" && "bg-accent")}
 									>
-										{locale === "de" ? "Nur Main Chat" : "Main Chat only"}
+										{locale === "de" ? "Nur Default Chat" : "Default Chat only"}
 									</DropdownMenuItem>
 								</>
 							)}

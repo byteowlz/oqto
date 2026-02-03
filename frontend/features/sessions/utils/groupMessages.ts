@@ -1,7 +1,7 @@
 import type { OpenCodeMessageWithParts } from "@/features/sessions/api";
 import type { MessageGroup } from "@/features/sessions/types";
 
-// Group consecutive messages from the same role (and session for main chat threads).
+// Group consecutive messages from the same role (and session for default chat threads).
 export function groupMessages(
 	messages: OpenCodeMessageWithParts[],
 ): MessageGroup[] {

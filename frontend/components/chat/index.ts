@@ -10,3 +10,4 @@ export * from "./agent-mention-popup";
 export * from "./file-mention-popup";
 export * from "./slash-command-popup";
 export * from "./read-aloud-button";
+export * from "../../features/chat/components/ChatSearchBar";
