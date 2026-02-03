@@ -91,6 +91,7 @@ export function usePiChatV2(options: UsePiChatOptions = {}): UsePiChatReturn {
 	const streamingMessageRef = useRef<PiDisplayMessage | null>(null);
 	const lastAssistantMessageIdRef = useRef<string | null>(null);
 	const unsubscribeRef = useRef<(() => void) | null>(null);
+	const messagesRef = useRef(messages);
 	const lastSessionRecoveryRef = useRef(0);
 
 	// Batched update state
@@ -128,7 +129,7 @@ export function usePiChatV2(options: UsePiChatOptions = {}): UsePiChatReturn {
 			if (streamingMessageRef.current) return streamingMessageRef.current;
 			const lastId = lastAssistantMessageIdRef.current;
 			if (lastId) {
-				const existing = messages.find((m) => m.id === lastId);
+				const existing = messagesRef.current.find((m) => m.id === lastId);
 				if (existing) {
 					return existing;
 				}
@@ -147,7 +148,7 @@ export function usePiChatV2(options: UsePiChatOptions = {}): UsePiChatReturn {
 			setMessages((prev) => [...prev, assistantMessage]);
 			return assistantMessage;
 		},
-		[messages, nextMessageId],
+		[nextMessageId],
 	);
 
 	// Flush batched streaming update
@@ -758,6 +759,10 @@ export function usePiChatV2(options: UsePiChatOptions = {}): UsePiChatReturn {
 			connect();
 		}
 	}, [autoConnect, activeSessionId, connect]);
+
+	useEffect(() => {
+		messagesRef.current = messages;
+	}, [messages]);
 
 	return {
 		state,
