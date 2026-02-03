@@ -1748,15 +1748,12 @@ async fn handle_pi_command(
         PiWsCommand::GetMessages { id, session_id } => {
             debug!("Pi get_messages: user={}, session_id={}", user_id, session_id);
             
-            // Try to get messages from runner's Pi process first
-            let runner_messages = runner.pi_get_messages(&session_id).await;
-
             let session_meta = {
                 let state_guard = conn_state.lock().await;
                 state_guard.pi_session_meta.get(&session_id).cloned()
             };
 
-            if let Some(meta) = session_meta {
+            if let Some(ref meta) = session_meta {
                 if meta.scope.as_deref() == Some("workspace") {
                     if let (Some(work_dir), Some(workspace_pi)) =
                         (meta.cwd.as_ref(), state.workspace_pi.as_ref())
@@ -1834,7 +1831,159 @@ async fn handle_pi_command(
                     }
                 }
             }
-            
+
+            // JSONL empty - try hstry for historical messages
+            // In multi-user mode, use runner.get_*_chat_messages() to access per-user hstry
+            let is_multi_user = state.linux_users.is_some();
+
+            if let Some(meta) = session_meta.as_ref()
+                && meta.scope.as_deref() == Some("workspace")
+                && let Some(work_dir) = meta.cwd.as_ref()
+            {
+                if is_multi_user {
+                    match runner
+                        .get_workspace_chat_messages(
+                            work_dir.to_string_lossy().to_string(),
+                            session_id.clone(),
+                            None,
+                        )
+                        .await
+                    {
+                        Ok(resp) if !resp.messages.is_empty() => {
+                            info!(
+                                "Pi get_messages: loaded {} messages from hstry (workspace via runner) for {}",
+                                resp.messages.len(),
+                                session_id
+                            );
+                            let messages: Vec<serde_json::Value> = resp
+                                .messages
+                                .into_iter()
+                                .map(|m| {
+                                    serde_json::json!({
+                                        "id": m.id,
+                                        "role": m.role,
+                                        "content": m.content,
+                                        "timestamp": m.timestamp,
+                                    })
+                                })
+                                .collect();
+                            return Some(WsEvent::Pi(PiWsEvent::Messages {
+                                id,
+                                session_id,
+                                messages: serde_json::Value::Array(messages),
+                            }));
+                        }
+                        Ok(_) => {
+                            debug!(
+                                "Pi get_messages: hstry (workspace via runner) returned empty for {}",
+                                session_id
+                            );
+                        }
+                        Err(e) => {
+                            debug!(
+                                "Pi get_messages: hstry (workspace via runner) error for {}: {}",
+                                session_id, e
+                            );
+                        }
+                    }
+                } else if let Some(hstry_client) = state.hstry.as_ref() {
+                    match hstry_client.get_messages(&session_id, None, None).await {
+                        Ok(hstry_messages) if !hstry_messages.is_empty() => {
+                            info!(
+                                "Pi get_messages: loaded {} messages from hstry (workspace) for {}",
+                                hstry_messages.len(),
+                                session_id
+                            );
+                            let serializable =
+                                crate::hstry::proto_messages_to_serializable(hstry_messages);
+                            return Some(WsEvent::Pi(PiWsEvent::Messages {
+                                id,
+                                session_id,
+                                messages: serde_json::to_value(&serializable)
+                                    .unwrap_or_default(),
+                            }));
+                        }
+                        Ok(_) => {
+                            debug!(
+                                "Pi get_messages: hstry (workspace) returned empty for {}",
+                                session_id
+                            );
+                        }
+                        Err(e) => {
+                            debug!(
+                                "Pi get_messages: hstry (workspace) error for {}: {}",
+                                session_id, e
+                            );
+                        }
+                    }
+                }
+            } else if is_multi_user {
+                match runner.get_main_chat_messages(&session_id, None).await {
+                    Ok(resp) if !resp.messages.is_empty() => {
+                        info!(
+                            "Pi get_messages: loaded {} messages from hstry (via runner) for {}",
+                            resp.messages.len(),
+                            session_id
+                        );
+                        let messages: Vec<serde_json::Value> = resp
+                            .messages
+                            .into_iter()
+                            .map(|m| {
+                                serde_json::json!({
+                                    "id": m.id,
+                                    "role": m.role,
+                                    "content": m.content,
+                                    "timestamp": m.timestamp,
+                                })
+                            })
+                            .collect();
+                        return Some(WsEvent::Pi(PiWsEvent::Messages {
+                            id,
+                            session_id,
+                            messages: serde_json::Value::Array(messages),
+                        }));
+                    }
+                    Ok(_) => {
+                        debug!(
+                            "Pi get_messages: hstry (via runner) returned empty for {}",
+                            session_id
+                        );
+                    }
+                    Err(e) => {
+                        debug!(
+                            "Pi get_messages: hstry (via runner) error for {}: {}",
+                            session_id, e
+                        );
+                    }
+                }
+            } else if let Some(hstry_client) = state.hstry.as_ref() {
+                match hstry_client.get_messages(&session_id, None, None).await {
+                    Ok(hstry_messages) if !hstry_messages.is_empty() => {
+                        info!(
+                            "Pi get_messages: loaded {} messages from hstry for {}",
+                            hstry_messages.len(),
+                            session_id
+                        );
+                        let serializable =
+                            crate::hstry::proto_messages_to_serializable(hstry_messages);
+                        return Some(WsEvent::Pi(PiWsEvent::Messages {
+                            id,
+                            session_id,
+                            messages: serde_json::to_value(&serializable).unwrap_or_default(),
+                        }));
+                    }
+                    Ok(_) => {
+                        debug!("Pi get_messages: hstry returned empty for {}", session_id);
+                    }
+                    Err(e) => {
+                        debug!("Pi get_messages: hstry error for {}: {}", session_id, e);
+                    }
+                }
+            }
+
+            // Try to get messages from runner's Pi process last
+            let runner_messages = runner.pi_get_messages(&session_id).await;
+
             // Return runner result (empty or error)
             match runner_messages {
                 Ok(resp) if !resp.messages.is_empty() => Some(WsEvent::Pi(PiWsEvent::Messages {
