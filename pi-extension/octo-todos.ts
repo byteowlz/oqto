@@ -8,6 +8,9 @@
 
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 
 interface TodoItem {
   id: string;
@@ -23,8 +26,44 @@ interface TodoDetails {
 export default function (pi: ExtensionAPI) {
   let todos: TodoItem[] = [];
 
-  const reconstructState = (ctx: ExtensionContext) => {
+  const getTodoPath = (ctx: ExtensionContext) => {
+    const sessionFile = ctx.sessionManager.getSessionFile?.();
+    if (!sessionFile) return null;
+    const baseDir = path.join(os.homedir(), ".pi", "agent", "todos");
+    const sessionBase = path.basename(sessionFile, path.extname(sessionFile));
+    return path.join(baseDir, `${sessionBase}.json`);
+  };
+
+  const loadTodosFromDisk = async (ctx: ExtensionContext) => {
+    const todoPath = getTodoPath(ctx);
+    if (!todoPath) return;
+    try {
+      const raw = await fs.readFile(todoPath, "utf8");
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        todos = parsed as TodoItem[];
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") {
+        // Ignore read errors to avoid breaking tool execution.
+      }
+    }
+  };
+
+  const persistTodos = async (ctx: ExtensionContext) => {
+    const todoPath = getTodoPath(ctx);
+    if (!todoPath) return;
+    try {
+      await fs.mkdir(path.dirname(todoPath), { recursive: true });
+      await fs.writeFile(todoPath, JSON.stringify(todos, null, 2), "utf8");
+    } catch {
+      // Ignore write errors to avoid breaking tool execution.
+    }
+  };
+
+  const reconstructState = async (ctx: ExtensionContext) => {
     todos = [];
+    await loadTodosFromDisk(ctx);
 
     for (const entry of ctx.sessionManager.getBranch()) {
       if (entry.type !== "message") continue;
@@ -37,6 +76,8 @@ export default function (pi: ExtensionAPI) {
         todos = details.todos;
       }
     }
+
+    await persistTodos(ctx);
   };
 
   pi.on("session_start", async (_event, ctx) => reconstructState(ctx));
@@ -90,6 +131,8 @@ Mark tasks complete immediately after finishing. Only have one task in_progress 
     async execute(toolCallId, params, onUpdate, ctx, signal) {
       const { todos: nextTodos } = params;
       todos = Array.isArray(nextTodos) ? [...nextTodos] : [];
+
+      await persistTodos(ctx);
 
       // Count by status
       const pending = todos.filter((t) => t.status === "pending").length;
