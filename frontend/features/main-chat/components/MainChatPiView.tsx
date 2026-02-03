@@ -287,12 +287,37 @@ export function MainChatPiView({
 	}, [draftStorageKey]);
 	useEffect(() => {
 		setQueuedMessages([]);
+		setSendPending(false);
+		setSendPendingSessionId(null);
 	}, [selectedSessionId]);
 	useEffect(() => {
 		if (isStreaming || isAwaitingResponse) {
 			setSendPending(false);
+			setSendPendingSessionId(null);
 		}
 	}, [isAwaitingResponse, isStreaming]);
+	useEffect(() => {
+		if (!sendPending || isStreaming || isAwaitingResponse) {
+			if (sendPendingTimeoutRef.current) {
+				clearTimeout(sendPendingTimeoutRef.current);
+				sendPendingTimeoutRef.current = null;
+			}
+			return;
+		}
+		if (sendPendingTimeoutRef.current) {
+			clearTimeout(sendPendingTimeoutRef.current);
+		}
+		sendPendingTimeoutRef.current = setTimeout(() => {
+			setSendPending(false);
+			setSendPendingSessionId(null);
+		}, 8000);
+		return () => {
+			if (sendPendingTimeoutRef.current) {
+				clearTimeout(sendPendingTimeoutRef.current);
+				sendPendingTimeoutRef.current = null;
+			}
+		};
+	}, [isAwaitingResponse, isStreaming, sendPending]);
 	const [fileAttachments, setFileAttachments] = useState<FileAttachment[]>([]);
 	const [queuedMessages, setQueuedMessages] = useState<QueuedMessage[]>([]);
 	const [showFileMentionPopup, setShowFileMentionPopup] = useState(false);
@@ -311,6 +336,9 @@ export function MainChatPiView({
 		output: number;
 	} | null>(null);
 	const [sendPending, setSendPending] = useState(false);
+	const [sendPendingSessionId, setSendPendingSessionId] = useState<
+		string | null
+	>(null);
 
 	const messagesEndRef = useRef<HTMLDivElement>(null);
 	const messagesContainerRef = useRef<HTMLDivElement>(null);
@@ -318,6 +346,9 @@ export function MainChatPiView({
 	const fileInputRef = useRef<HTMLInputElement>(null);
 	const queueSendInFlightRef = useRef(false);
 	const queueCooldownRef = useRef<number | null>(null);
+	const sendPendingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
+		null,
+	);
 	const draftSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
 		null,
 	);
@@ -1080,12 +1111,14 @@ export function MainChatPiView({
 				inputRef.current.style.height = "auto";
 			}
 			setSendPending(true);
+			setSendPendingSessionId(selectedSessionId ?? null);
 			try {
 				await send(message, { mode });
 				// Notify that a message was sent (for sidebar refresh)
 				onMessageSent?.();
 			} catch {
 				setSendPending(false);
+				setSendPendingSessionId(null);
 				toast.error("Failed to send message.");
 			}
 		},
@@ -1096,7 +1129,7 @@ export function MainChatPiView({
 			input,
 			onMessageSent,
 			runSlashCommand,
-			setSendPending,
+			selectedSessionId,
 			send,
 			slashQuery.command,
 			slashQuery.args,
@@ -1133,6 +1166,7 @@ export function MainChatPiView({
 
 		queueSendInFlightRef.current = true;
 		setSendPending(true);
+		setSendPendingSessionId(selectedSessionId ?? null);
 		send(next.text, { mode: "follow_up" })
 			.then(() => {
 				setQueuedMessages((prev) => prev.slice(1));
@@ -1141,6 +1175,7 @@ export function MainChatPiView({
 			.catch(() => {
 				queueCooldownRef.current = Date.now();
 				setSendPending(false);
+				setSendPendingSessionId(null);
 				toast.error("Failed to send queued message.");
 			})
 			.finally(() => {
@@ -1151,8 +1186,8 @@ export function MainChatPiView({
 		isStreaming,
 		onMessageSent,
 		queuedMessages,
+		selectedSessionId,
 		send,
-		setSendPending,
 	]);
 
 	const handleQueueEdit = useCallback((id: string, text: string) => {
@@ -1474,7 +1509,10 @@ export function MainChatPiView({
 							const grouped = groupPiMessages(visibleMessages);
 							const lastGroup = grouped[grouped.length - 1];
 							const isWorking =
-								isStreaming || isAwaitingResponse || sendPending;
+								isStreaming ||
+								isAwaitingResponse ||
+								(sendPending &&
+									sendPendingSessionId === (selectedSessionId ?? null));
 							const needsPendingAssistant =
 								isWorking && (!lastGroup || lastGroup.role === "user");
 							const groupsToRender = needsPendingAssistant

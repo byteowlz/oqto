@@ -165,9 +165,8 @@ export const SidebarSessions = memo(function SidebarSessions({
 
 	const ensureBaseSelection = useCallback(
 		(prev: Set<string>) => {
-			if (prev.size > 0) return new Set(prev);
 			const next = new Set(prev);
-			if (selectedChatSessionId) {
+			if (selectedChatSessionId && !next.has(selectedChatSessionId)) {
 				next.add(selectedChatSessionId);
 			}
 			return next;
