@@ -6635,51 +6635,46 @@ const MessageGroupCard = memo(function MessageGroupCard({
 					if (segment.type === "tool_group") {
 						const toolItems =
 							verbosity === 1
-								? Array.from(
-										segment.parts.reduce(
-											(map, part) => {
-												const toolName = part.tool || "tool";
-												const entry = map.get(toolName) ?? {
-													toolName,
-													count: 0,
-													input: part.state?.input as
-														| Record<string, unknown>
-														| undefined,
-												};
-												entry.count += 1;
-												map.set(toolName, entry);
-												return map;
-											},
-											new Map<
-												string,
-												{
-													toolName: string;
-													count: number;
-													input?: Record<string, unknown>;
-												}
-											>(),
-										),
-									).map((entry) => {
-										const icon = getToolIcon(entry.toolName, entry.input);
-										return {
-											id: entry.toolName,
-											label:
-												entry.count > 1
-													? `${entry.toolName} (${entry.count})`
-													: entry.toolName,
-											icon: (
-												<span className="relative inline-flex">
-													{icon}
-													{entry.count > 1 && (
-														<span className="absolute -top-1 -right-1 rounded-full bg-primary text-primary-foreground text-[9px] leading-none px-1">
-															{entry.count}
-														</span>
-													)}
-												</span>
-											),
-											render: () => null,
-										};
-									})
+								? (() => {
+										const collapsed: Array<{
+											toolName: string;
+											count: number;
+											input?: Record<string, unknown>;
+										}> = [];
+										for (const part of segment.parts) {
+											const toolName = part.tool || "tool";
+											const input = part.state?.input as
+												| Record<string, unknown>
+												| undefined;
+											const last = collapsed[collapsed.length - 1];
+											if (last && last.toolName === toolName) {
+												last.count += 1;
+												continue;
+											}
+											collapsed.push({ toolName, count: 1, input });
+										}
+										return collapsed.map((entry, index) => {
+											const icon = getToolIcon(entry.toolName, entry.input);
+											return {
+												id: `${entry.toolName}-${index}`,
+												label:
+													entry.count > 1
+														? `${entry.toolName} (${entry.count})`
+														: entry.toolName,
+												icon: (
+													<span className="relative inline-flex">
+														{icon}
+														{entry.count > 1 && (
+															<span className="absolute -top-1 -right-1 rounded-full bg-primary text-primary-foreground text-[9px] leading-none px-1">
+																{entry.count}
+															</span>
+														)}
+													</span>
+												),
+												render: () => null,
+											};
+										});
+									})()
 								: segment.parts.map((part) => {
 										const toolName = part.tool || "tool";
 										const input = part.state?.input as
