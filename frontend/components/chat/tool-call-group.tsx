@@ -22,10 +22,12 @@ export type ToolCallGroupItem = {
 export function ToolCallGroup({
 	items,
 	mode = "tabs",
+	disableInteraction = false,
 	className,
 }: {
 	items: ToolCallGroupItem[];
 	mode?: "tabs" | "bar";
+	disableInteraction?: boolean;
 	className?: string;
 }) {
 	const [activeIndex, setActiveIndex] = useState(0);
@@ -60,7 +62,7 @@ export function ToolCallGroup({
 
 	const handleIconClick = useCallback(
 		(index: number) => {
-			if (mode === "bar") return;
+			if (mode === "bar" || disableInteraction) return;
 			if (index === activeIndex && isOpen) {
 				setIsOpen(false);
 				return;
@@ -68,7 +70,7 @@ export function ToolCallGroup({
 			setActiveIndex(index);
 			setIsOpen(true);
 		},
-		[activeIndex, isOpen, mode],
+		[activeIndex, disableInteraction, isOpen, mode],
 	);
 
 	const scrollBy = useCallback((delta: number) => {
@@ -86,15 +88,17 @@ export function ToolCallGroup({
 					title={item.label}
 					className={cn(
 						"p-1 rounded-md transition-colors border",
-						isOpen && index === activeIndex
+						disableInteraction && "pointer-events-none",
+						isOpen && index === activeIndex && !disableInteraction
 							? "border-primary/50 bg-primary/10"
-							: "border-transparent hover:bg-muted/50",
+							: "border-transparent",
+						!disableInteraction && "hover:bg-muted/50",
 					)}
 				>
 					{item.icon}
 				</button>
 			)),
-		[activeIndex, handleIconClick, isOpen, items],
+		[activeIndex, disableInteraction, handleIconClick, isOpen, items],
 	);
 
 	if (items.length === 0) {
@@ -115,7 +119,7 @@ export function ToolCallGroup({
 					variant="ghost"
 					size="icon"
 					onClick={() => scrollBy(-120)}
-					disabled={!canScrollLeft}
+					disabled={!canScrollLeft || disableInteraction}
 					className={cn("h-6 w-6", mode === "bar" && "h-5 w-5")}
 				>
 					<ChevronLeft className="h-3 w-3" />
@@ -133,13 +137,13 @@ export function ToolCallGroup({
 					variant="ghost"
 					size="icon"
 					onClick={() => scrollBy(120)}
-					disabled={!canScrollRight}
+					disabled={!canScrollRight || disableInteraction}
 					className={cn("h-6 w-6", mode === "bar" && "h-5 w-5")}
 				>
 					<ChevronRight className="h-3 w-3" />
 				</Button>
 			</div>
-			{mode !== "bar" && isOpen && activeItem && (
+			{mode !== "bar" && !disableInteraction && isOpen && activeItem && (
 				<div className="border-t border-border px-3 py-2">
 					{activeItem.render()}
 				</div>

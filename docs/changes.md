@@ -106,3 +106,4 @@
 - 2026-02-03: Remove the default disclosure arrow from Pi thinking blocks.
 - 2026-02-03: Normalize medium verbosity ordering to show collapsed thinking before grouped tool calls.
 - 2026-02-03: Guard tool icon lookup when the tool name is missing.
+- 2026-02-03: Disable interactions on low-verbosity tool bars and keep per-tool badges visible.

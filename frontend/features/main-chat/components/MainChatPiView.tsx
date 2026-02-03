@@ -2242,6 +2242,7 @@ const PiMessageGroupCard = memo(function PiMessageGroupCard({
 								<ToolCallGroup
 									mode={verbosity === 1 ? "bar" : "tabs"}
 									items={toolItems}
+									disableInteraction={verbosity === 1}
 								/>
 							</div>
 						);
