@@ -75,6 +75,29 @@ const asyncNoop = async () => null;
 const asyncNoopVoid = async () => {};
 const asyncNoopBool = async () => false;
 
+const CHAT_HISTORY_CACHE_KEY = "octo:chatHistoryCache:v1";
+
+function readCachedChatHistory(): ChatSession[] {
+	if (typeof window === "undefined") return [];
+	try {
+		const raw = localStorage.getItem(CHAT_HISTORY_CACHE_KEY);
+		if (!raw) return [];
+		const parsed = JSON.parse(raw) as ChatSession[];
+		return Array.isArray(parsed) ? parsed : [];
+	} catch {
+		return [];
+	}
+}
+
+function writeCachedChatHistory(history: ChatSession[]) {
+	if (typeof window === "undefined") return;
+	try {
+		localStorage.setItem(CHAT_HISTORY_CACHE_KEY, JSON.stringify(history));
+	} catch {
+		// ignore storage failures
+	}
+}
+
 const defaultChatContext: ChatContextValue = {
 	chatHistory: [],
 	opencodeSessions: [],
@@ -104,7 +127,9 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 		useWorkspaceContext();
 
 	// Chat history from disk (no running opencode needed)
-	const [chatHistory, setChatHistory] = useState<ChatSession[]>([]);
+	const [chatHistory, setChatHistory] = useState<ChatSession[]>(() =>
+		readCachedChatHistory(),
+	);
 	const chatHistoryRef = useRef<ChatSession[]>([]);
 	const optimisticChatSessionsRef = useRef<Map<string, ChatSession>>(new Map());
 	const optimisticSelectionRef = useRef<Map<string, string>>(new Map());
@@ -282,6 +307,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 	const refreshChatHistory = useCallback(async () => {
 		try {
 			const history = await listChatHistory({ include_children: true });
+			writeCachedChatHistory(history);
 			startTransition(() => {
 				const optimisticSessions = Array.from(
 					optimisticChatSessionsRef.current.values(),

@@ -6665,9 +6665,9 @@ const MessageGroupCard = memo(function MessageGroupCard({
 													<span className="relative inline-flex">
 														{icon}
 														{entry.count > 1 && (
-															<span className="absolute -top-1 -right-1 rounded-full bg-primary text-primary-foreground text-[9px] leading-none px-1">
-																{entry.count}
-															</span>
+														<span className="absolute -top-1 -right-1 rounded-[3px] bg-destructive text-destructive-foreground text-[9px] leading-none px-1">
+															{entry.count}
+														</span>
 														)}
 													</span>
 												),
