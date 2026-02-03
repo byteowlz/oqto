@@ -2226,7 +2226,7 @@ const PiMessageGroupCard = memo(function PiMessageGroupCard({
 													<span className="relative inline-flex">
 														{icon}
 														{entry.count > 1 && (
-														<span className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-pink-500 text-white text-[9px] rounded-full flex items-center justify-center">
+														<span className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-pink-500 text-white text-[9px] rounded-[2px] flex items-center justify-center border border-background">
 															{entry.count}
 														</span>
 														)}
@@ -2658,7 +2658,7 @@ function PiPartRenderer({
 		case "thinking":
 			return (
 				<details className="text-xs text-muted-foreground border-l-2 border-muted pl-2 my-2">
-					<summary className="cursor-pointer hover:text-foreground list-none [&::-webkit-details-marker]:hidden">
+					<summary className="cursor-pointer hover:text-foreground list-none [&::-webkit-details-marker]:hidden [&::marker]:content-['']">
 						{locale === "de" ? "Gedanken" : "Thinking"}
 					</summary>
 					<pre className="mt-1 whitespace-pre-wrap font-mono text-xs">

@@ -303,6 +303,23 @@ export const SidebarSessions = memo(function SidebarSessions({
 		}
 	};
 
+	const handleDeleteSession = async (sessionId: string) => {
+		setHiddenSessionIds((prev) => {
+			const next = new Set(prev);
+			next.add(sessionId);
+			return next;
+		});
+		try {
+			await Promise.resolve(onDeleteSession(sessionId));
+		} catch {
+			setHiddenSessionIds((prev) => {
+				const next = new Set(prev);
+				next.delete(sessionId);
+				return next;
+			});
+		}
+	};
+
 	return (
 		<div className="flex-1 min-h-0 flex flex-col overflow-x-hidden">
 			{/* Sticky header section - Search, Main Chat, Sessions header */}
@@ -542,7 +559,7 @@ export const SidebarSessions = memo(function SidebarSessions({
 									variant="ghost"
 									size="sm"
 									onClick={handleBulkDelete}
-									className="h-6 px-2 text-xs text-destructive hover:text-destructive"
+									className="h-6 px-2 text-xs"
 								>
 									<Trash2 className="w-3 h-3 mr-1" />
 									{locale === "de" ? "Loschen" : "Delete"}
@@ -852,7 +869,7 @@ export const SidebarSessions = memo(function SidebarSessions({
 																<ContextMenuSeparator />
 																<ContextMenuItem
 																	variant="destructive"
-																	onClick={() => onDeleteSession(session.id)}
+																	onClick={() => handleDeleteSession(session.id)}
 																>
 																	<Trash2 className="w-4 h-4 mr-2" />
 																	{locale === "de" ? "Loschen" : "Delete"}
@@ -969,7 +986,7 @@ export const SidebarSessions = memo(function SidebarSessions({
 																				<ContextMenuItem
 																					variant="destructive"
 																					onClick={() =>
-																						onDeleteSession(child.id)
+																						handleDeleteSession(child.id)
 																					}
 																				>
 																					<Trash2 className="w-4 h-4 mr-2" />
