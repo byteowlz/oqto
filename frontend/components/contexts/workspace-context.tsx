@@ -103,6 +103,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 			const stored = localStorage.getItem("octo:projectDefaultAgents");
 			return stored ? JSON.parse(stored) : {};
 		} catch {
+			localStorage.removeItem("octo:projectDefaultAgents");
 			return {};
 		}
 	});

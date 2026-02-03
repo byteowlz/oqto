@@ -80,7 +80,8 @@ export function MainChatProvider({ children }: { children: ReactNode }) {
 					return false;
 				}
 			} catch {
-				// Ignore localStorage errors
+				localStorage.removeItem("octo:lastChatSessionId");
+				localStorage.removeItem("octo:lastMainChatActive");
 			}
 		}
 		// Default to main chat if nothing stored
@@ -119,7 +120,7 @@ export function MainChatProvider({ children }: { children: ReactNode }) {
 			try {
 				return localStorage.getItem("octo:mainChatCurrentSessionId");
 			} catch {
-				// Ignore localStorage errors
+				localStorage.removeItem("octo:mainChatCurrentSessionId");
 			}
 		}
 		return null;
@@ -139,7 +140,7 @@ export function MainChatProvider({ children }: { children: ReactNode }) {
 					localStorage.removeItem("octo:mainChatCurrentSessionId");
 				}
 			} catch {
-				// Ignore localStorage errors
+				localStorage.removeItem("octo:mainChatCurrentSessionId");
 			}
 		}
 	}, []);
@@ -160,7 +161,7 @@ export function MainChatProvider({ children }: { children: ReactNode }) {
 					localStorage.removeItem("mainChatWorkspacePath");
 				}
 			} catch {
-				// Ignore localStorage errors
+				localStorage.removeItem("mainChatWorkspacePath");
 			}
 		}
 	}, []);
@@ -179,7 +180,7 @@ export function MainChatProvider({ children }: { children: ReactNode }) {
 					setMainChatWorkspacePathRaw(cached);
 				}
 			} catch {
-				// Ignore localStorage errors
+				localStorage.removeItem("mainChatWorkspacePath");
 			}
 		}
 

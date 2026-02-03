@@ -1245,6 +1245,7 @@ export const SessionScreen = memo(function SessionScreen() {
 			}
 			return "";
 		} catch {
+			localStorage.removeItem("octo:chatDrafts");
 			return "";
 		}
 	}, []);
@@ -1285,7 +1286,7 @@ export const SessionScreen = memo(function SessionScreen() {
 
 			localStorage.setItem("octo:chatDrafts", JSON.stringify(pruned));
 		} catch {
-			// Ignore localStorage errors
+			localStorage.removeItem("octo:chatDrafts");
 		}
 	}, []);
 

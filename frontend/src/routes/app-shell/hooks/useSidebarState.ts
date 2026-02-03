@@ -36,6 +36,7 @@ export function useSidebarState(): SidebarState {
 			const stored = localStorage.getItem("octo:pinnedSessions");
 			return stored ? new Set(JSON.parse(stored)) : new Set();
 		} catch {
+			localStorage.removeItem("octo:pinnedSessions");
 			return new Set();
 		}
 	});
@@ -60,6 +61,7 @@ export function useSidebarState(): SidebarState {
 			const stored = localStorage.getItem("octo:pinnedProjects");
 			return stored ? JSON.parse(stored) : [];
 		} catch {
+			localStorage.removeItem("octo:pinnedProjects");
 			return [];
 		}
 	});
