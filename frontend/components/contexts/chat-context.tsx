@@ -122,7 +122,13 @@ const ChatContext = createContext<ChatContextValue>(defaultChatContext);
 
 export function ChatProvider({ children }: { children: ReactNode }) {
 	const { locale } = useLocale();
-	const { mainChatActive, setMainChatActive } = useMainChatContext();
+	const {
+		mainChatActive,
+		setMainChatActive,
+		mainChatCurrentSessionId,
+		setMainChatCurrentSessionId,
+		mainChatWorkspacePath,
+	} = useMainChatContext();
 	const { opencodeBaseUrl, selectedWorkspaceSession, projects } =
 		useWorkspaceContext();
 
@@ -206,6 +212,28 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 	const selectedChatFromHistory = useMemo(() => {
 		return chatHistory.find((s) => s.id === selectedChatSessionId);
 	}, [chatHistory, selectedChatSessionId]);
+
+	useEffect(() => {
+		if (!selectedChatFromHistory || !mainChatWorkspacePath) return;
+		const isMainChatSession =
+			selectedChatFromHistory.workspace_path === mainChatWorkspacePath;
+
+		if (isMainChatSession) {
+			if (!mainChatActive) setMainChatActive(true);
+			if (mainChatCurrentSessionId !== selectedChatFromHistory.id) {
+				setMainChatCurrentSessionId(selectedChatFromHistory.id);
+			}
+		} else if (mainChatActive) {
+			setMainChatActive(false);
+		}
+	}, [
+		mainChatActive,
+		mainChatCurrentSessionId,
+		mainChatWorkspacePath,
+		selectedChatFromHistory,
+		setMainChatActive,
+		setMainChatCurrentSessionId,
+	]);
 
 	const opencodeDirectory = useMemo(() => {
 		return (

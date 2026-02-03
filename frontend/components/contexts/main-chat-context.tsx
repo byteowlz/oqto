@@ -169,15 +169,8 @@ export function MainChatProvider({ children }: { children: ReactNode }) {
 		null,
 	);
 
-	// Initialize main chat workspace path when mainChatActive becomes true
-	// Use localStorage cache for instant load, then refresh from API
+	// Keep main chat info available even when not active.
 	useEffect(() => {
-		if (!mainChatActive) {
-			// Clear workspace path when leaving main chat mode
-			setMainChatWorkspacePathRaw(null);
-			return;
-		}
-
 		// Try to load from cache first for instant display
 		if (typeof window !== "undefined") {
 			try {
@@ -190,26 +183,22 @@ export function MainChatProvider({ children }: { children: ReactNode }) {
 			}
 		}
 
-		// Then fetch fresh data from API
 		let cancelled = false;
 		getMainChatAssistant("default")
 			.then((info) => {
 				if (!cancelled) {
 					setMainChatWorkspacePath(info.path);
-					if (!mainChatAssistantName) {
-						setMainChatAssistantName(info.name);
-					}
+					setMainChatAssistantName(info.name);
 				}
 			})
 			.catch((err) => {
 				console.debug("[MainChat] No main chat configured:", err.message);
-				// Clear cached path if main chat is not configured
 				setMainChatWorkspacePath(null);
 			});
 		return () => {
 			cancelled = true;
 		};
-	}, [mainChatActive, mainChatAssistantName, setMainChatWorkspacePath]);
+	}, [setMainChatWorkspacePath, setMainChatAssistantName]);
 
 	// Restore last session or fetch the most recent one when main chat becomes active
 	useEffect(() => {

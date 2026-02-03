@@ -1,7 +1,9 @@
 //! Chat history handlers.
 
+use std::collections::HashSet;
 use std::path::PathBuf;
 
+use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
 use axum::{
     Json,
     extract::{Path, Query, State},
@@ -134,6 +136,102 @@ fn list_workspace_pi_sessions(state: &AppState, user_id: &str) -> Vec<ChatSessio
         .collect()
 }
 
+fn parse_main_chat_timestamp(value: &str) -> Option<i64> {
+    if let Ok(parsed) = DateTime::parse_from_rfc3339(value) {
+        return Some(parsed.with_timezone(&Utc).timestamp_millis());
+    }
+    if let Ok(parsed) = NaiveDateTime::parse_from_str(value, "%Y-%m-%d %H:%M:%S") {
+        return Some(Utc.from_utc_datetime(&parsed).timestamp_millis());
+    }
+    None
+}
+
+async fn list_main_chat_sessions(state: &AppState, user_id: &str) -> Vec<ChatSession> {
+    let Some(main_chat) = state.main_chat.as_ref() else {
+        return Vec::new();
+    };
+
+    let info = match main_chat.get_main_chat_info(user_id).await {
+        Ok(info) => info,
+        Err(err) => {
+            warn!(user_id = %user_id, error = %err, "Failed to load main chat info");
+            return Vec::new();
+        }
+    };
+
+    let workspace_path = info.path.clone();
+    let project_name = info.name.clone();
+    let mut sessions = Vec::new();
+
+    if let Some(main_chat_pi) = state.main_chat_pi.as_ref() {
+        match main_chat_pi.list_sessions(user_id).await {
+            Ok(pi_sessions) => {
+                for session in pi_sessions {
+                    let created_at = parse_main_chat_timestamp(&session.started_at)
+                        .unwrap_or(session.modified_at);
+                    let source_path = main_chat_pi
+                        .get_session_file_path(user_id, &session.id)
+                        .await
+                        .map(|path| path.to_string_lossy().to_string());
+                    sessions.push(ChatSession {
+                        id: session.id.clone(),
+                        readable_id: session.readable_id.unwrap_or_else(|| {
+                            wordlist::readable_id_from_session_id(&session.id)
+                        }),
+                        title: session.title,
+                        parent_id: session.parent_id.clone(),
+                        workspace_path: workspace_path.clone(),
+                        project_name: project_name.clone(),
+                        created_at,
+                        updated_at: session.modified_at,
+                        version: None,
+                        is_child: session.parent_id.is_some(),
+                        source_path,
+                    });
+                }
+                return sessions;
+            }
+            Err(err) => {
+                warn!(user_id = %user_id, error = %err, "Failed to list main chat Pi sessions");
+            }
+        }
+    }
+
+    match main_chat.list_sessions(user_id).await {
+        Ok(db_sessions) => {
+            for session in db_sessions {
+                let created_at =
+                    parse_main_chat_timestamp(&session.started_at).unwrap_or_else(|| {
+                        Utc::now().timestamp_millis()
+                    });
+                let updated_at = session
+                    .ended_at
+                    .as_deref()
+                    .and_then(parse_main_chat_timestamp)
+                    .unwrap_or(created_at);
+                sessions.push(ChatSession {
+                    id: session.session_id.clone(),
+                    readable_id: wordlist::readable_id_from_session_id(&session.session_id),
+                    title: session.title,
+                    parent_id: None,
+                    workspace_path: workspace_path.clone(),
+                    project_name: project_name.clone(),
+                    created_at,
+                    updated_at,
+                    version: None,
+                    is_child: false,
+                    source_path: None,
+                });
+            }
+        }
+        Err(err) => {
+            warn!(user_id = %user_id, error = %err, "Failed to list main chat sessions");
+        }
+    }
+
+    sessions
+}
+
 /// List all chat sessions from OpenCode history.
 ///
 /// In multi-user mode, this uses the runner to read from the user's home directory.
@@ -226,6 +324,10 @@ pub async fn list_chat_history(
     }
 
     sessions.extend(list_workspace_pi_sessions(&state, user.id()));
+    sessions.extend(list_main_chat_sessions(&state, user.id()).await);
+
+    let mut seen = HashSet::new();
+    sessions.retain(|session| seen.insert(session.id.clone()));
 
     if let Some(ref ws) = query.workspace {
         sessions.retain(|s| s.workspace_path == *ws);
@@ -275,13 +377,6 @@ pub async fn get_chat_session(
                         source_path: None,
                     }));
                 }
-                // Session not found via runner
-                if multi_user {
-                    return Err(ApiError::not_found(format!(
-                        "Chat session {} not found",
-                        session_id
-                    )));
-                }
             }
             Err(e) => {
                 // SECURITY: In multi-user mode, do NOT fall back
@@ -295,6 +390,21 @@ pub async fn get_chat_session(
                     return Err(ApiError::internal("Chat history service unavailable."));
                 }
             }
+        }
+
+        if let Some(main_chat_session) = list_main_chat_sessions(&state, user.id())
+            .await
+            .into_iter()
+            .find(|session| session.id == session_id)
+        {
+            return Ok(Json(main_chat_session));
+        }
+
+        if multi_user {
+            return Err(ApiError::not_found(format!(
+                "Chat session {} not found",
+                session_id
+            )));
         }
     } else if multi_user {
         // SECURITY: Multi-user mode requires runner
@@ -319,6 +429,14 @@ pub async fn get_chat_session(
     }
 
     // Single-user mode: direct access
+    if let Some(main_chat_session) = list_main_chat_sessions(&state, user.id())
+        .await
+        .into_iter()
+        .find(|session| session.id == session_id)
+    {
+        return Ok(Json(main_chat_session));
+    }
+
     crate::history::get_session(&session_id)
         .map_err(|e| ApiError::internal(format!("Failed to get chat session: {}", e)))?
         .map(Json)
@@ -498,6 +616,10 @@ pub async fn list_chat_history_grouped(
     }
 
     sessions.extend(list_workspace_pi_sessions(&state, user.id()));
+    sessions.extend(list_main_chat_sessions(&state, user.id()).await);
+
+    let mut seen = HashSet::new();
+    sessions.retain(|session| seen.insert(session.id.clone()));
 
     if let Some(ref ws) = query.workspace {
         sessions.retain(|s| s.workspace_path == *ws);

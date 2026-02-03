@@ -1,4 +1,3 @@
-import { MainChatEntry } from "@/components/main-chat";
 import {
 	type AgentFilter,
 	type SearchMode,
@@ -68,10 +67,6 @@ export interface SidebarSessionsProps {
 	filteredSessions: ChatSession[];
 	selectedChatSessionId: string | null;
 	busySessions: Set<string>;
-	mainChatActive: boolean;
-	mainChatCurrentSessionId: string | null;
-	mainChatNewSessionTrigger: number;
-	mainChatSessionActivityTrigger: number;
 	expandedSessions: Set<string>;
 	toggleSessionExpanded: (sessionId: string) => void;
 	expandedProjects: Set<string>;
@@ -96,9 +91,6 @@ export interface SidebarSessionsProps {
 	onPinProject: (projectKey: string) => void;
 	onRenameProject: (projectKey: string, currentName: string) => void;
 	onDeleteProject: (projectKey: string, projectName: string) => void;
-	onMainChatSelect: () => void;
-	onMainChatSessionSelect: (sessionId: string) => void;
-	onMainChatNewSession: () => void;
 	onSearchResultClick: (hit: HstrySearchHit) => void;
 	messageSearchExtraHits: HstrySearchHit[];
 	isMobile?: boolean;
@@ -112,10 +104,6 @@ export const SidebarSessions = memo(function SidebarSessions({
 	filteredSessions,
 	selectedChatSessionId,
 	busySessions,
-	mainChatActive,
-	mainChatCurrentSessionId,
-	mainChatNewSessionTrigger,
-	mainChatSessionActivityTrigger,
 	expandedSessions,
 	toggleSessionExpanded,
 	expandedProjects,
@@ -140,9 +128,6 @@ export const SidebarSessions = memo(function SidebarSessions({
 	onPinProject,
 	onRenameProject,
 	onDeleteProject,
-	onMainChatSelect,
-	onMainChatSessionSelect,
-	onMainChatNewSession,
 	onSearchResultClick,
 	messageSearchExtraHits,
 	isMobile = false,
@@ -152,8 +137,6 @@ export const SidebarSessions = memo(function SidebarSessions({
 	const deferredSearch = useDeferredValue(sessionSearch);
 	const [searchMode, setSearchMode] = useState<SearchMode>("sessions");
 	const [agentFilter, setAgentFilter] = useState<AgentFilter>("all");
-	const [mainChatFilterCount, setMainChatFilterCount] = useState(0);
-	const [mainChatTotalCount, setMainChatTotalCount] = useState(0);
 	const [selectedSessionIds, setSelectedSessionIds] = useState<Set<string>>(
 		() => new Set(),
 	);
@@ -426,12 +409,8 @@ export const SidebarSessions = memo(function SidebarSessions({
 							)}
 						>
 							(
-							{isFilteringSessions
-								? filteredSessions.length + mainChatFilterCount
-								: filteredSessions.length}
-							{deferredSearch
-								? `/${chatHistory.length + mainChatTotalCount}`
-								: ""}
+							{filteredSessions.length}
+							{deferredSearch ? `/${chatHistory.length}` : ""}
 							)
 						</span>
 					</div>
@@ -543,20 +522,6 @@ export const SidebarSessions = memo(function SidebarSessions({
 					/>
 				) : (
 					<>
-						{/* Main Chat - shown at top of sessions list */}
-						<MainChatEntry
-							isSelected={mainChatActive}
-							activeSessionId={mainChatActive ? mainChatCurrentSessionId : null}
-							newSessionTrigger={mainChatNewSessionTrigger}
-							sessionActivityTrigger={mainChatSessionActivityTrigger}
-							onSelect={onMainChatSelect}
-							onSessionSelect={onMainChatSessionSelect}
-							onNewSession={onMainChatNewSession}
-							locale={locale}
-							filterQuery={searchMode === "sessions" ? deferredSearch : ""}
-							onFilterCountChange={setMainChatFilterCount}
-							onTotalCountChange={setMainChatTotalCount}
-						/>
 						{selectedSessionIds.size > 0 && (
 							<div className="flex items-center gap-2 bg-primary/10 border border-primary/20 rounded px-2 py-1 mx-1 mt-2">
 								<span className="text-xs font-medium text-primary">
@@ -581,9 +546,7 @@ export const SidebarSessions = memo(function SidebarSessions({
 								</button>
 							</div>
 						)}
-						{filteredSessions.length === 0 &&
-							deferredSearch &&
-							mainChatFilterCount === 0 && (
+						{filteredSessions.length === 0 && deferredSearch && (
 								<div
 									className={cn(
 										"text-muted-foreground/50 text-center py-4",

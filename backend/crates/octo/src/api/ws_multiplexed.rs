@@ -9,6 +9,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use axum::{
     extract::{
@@ -18,6 +19,7 @@ use axum::{
     response::Response,
 };
 use futures::{SinkExt, StreamExt};
+use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::mpsc;
@@ -38,6 +40,40 @@ use crate::ws::hub::WsHub;
 use crate::ws::types::{WsCommand as LegacyWsCommand, WsEvent as LegacyWsEvent};
 
 use super::error::ApiError;
+
+const PI_MESSAGES_CACHE_TTL: Duration = Duration::from_secs(30);
+
+struct CachedPiMessages {
+    cached_at: Instant,
+    messages: Value,
+}
+
+static PI_MESSAGES_CACHE: Lazy<tokio::sync::RwLock<HashMap<String, CachedPiMessages>>> =
+    Lazy::new(|| tokio::sync::RwLock::new(HashMap::new()));
+
+async fn cache_pi_messages(user_id: &str, session_id: &str, messages: &Value) {
+    let key = format!("{}:{}", user_id, session_id);
+    let mut cache = PI_MESSAGES_CACHE.write().await;
+    cache.insert(
+        key,
+        CachedPiMessages {
+            cached_at: Instant::now(),
+            messages: messages.clone(),
+        },
+    );
+}
+
+async fn get_cached_pi_messages(user_id: &str, session_id: &str) -> Option<Value> {
+    let key = format!("{}:{}", user_id, session_id);
+    let cache = PI_MESSAGES_CACHE.read().await;
+    cache.get(&key).and_then(|entry| {
+        if entry.cached_at.elapsed() <= PI_MESSAGES_CACHE_TTL {
+            Some(entry.messages.clone())
+        } else {
+            None
+        }
+    })
+}
 use super::handlers::trx::{
     CloseTrxIssueRequest, CreateTrxIssueRequest, TrxWorkspaceQuery, UpdateTrxIssueRequest,
 };
@@ -1748,10 +1784,23 @@ async fn handle_pi_command(
         PiWsCommand::GetMessages { id, session_id } => {
             debug!("Pi get_messages: user={}, session_id={}", user_id, session_id);
             
-            let session_meta = {
+            let (session_meta, is_active) = {
                 let state_guard = conn_state.lock().await;
-                state_guard.pi_session_meta.get(&session_id).cloned()
+                (
+                    state_guard.pi_session_meta.get(&session_id).cloned(),
+                    state_guard.pi_subscriptions.contains(&session_id),
+                )
             };
+
+            if !is_active {
+                if let Some(cached) = get_cached_pi_messages(&user_id, &session_id).await {
+                    return Some(WsEvent::Pi(PiWsEvent::Messages {
+                        id,
+                        session_id,
+                        messages: cached,
+                    }));
+                }
+            }
 
             if let Some(ref meta) = session_meta {
                 if meta.scope.as_deref() == Some("workspace") {
@@ -1765,10 +1814,13 @@ async fn handle_pi_command(
                                     messages.len(),
                                     session_id
                                 );
+                                let messages_value =
+                                    serde_json::to_value(&messages).unwrap_or_default();
+                                cache_pi_messages(&user_id, &session_id, &messages_value).await;
                                 return Some(WsEvent::Pi(PiWsEvent::Messages {
                                     id,
                                     session_id,
-                                    messages: serde_json::to_value(&messages).unwrap_or_default(),
+                                    messages: messages_value,
                                 }));
                             }
                             Ok(_) => {
@@ -1795,10 +1847,13 @@ async fn handle_pi_command(
                                 messages.len(),
                                 session_id
                             );
+                            let messages_value =
+                                serde_json::to_value(&messages).unwrap_or_default();
+                            cache_pi_messages(&user_id, &session_id, &messages_value).await;
                             return Some(WsEvent::Pi(PiWsEvent::Messages {
                                 id,
                                 session_id,
-                                messages: serde_json::to_value(&messages).unwrap_or_default(),
+                                messages: messages_value,
                             }));
                         }
                         Ok(_) => {
@@ -1817,10 +1872,12 @@ async fn handle_pi_command(
                             messages.len(),
                             session_id
                         );
+                        let messages_value = serde_json::to_value(&messages).unwrap_or_default();
+                        cache_pi_messages(&user_id, &session_id, &messages_value).await;
                         return Some(WsEvent::Pi(PiWsEvent::Messages {
                             id,
                             session_id,
-                            messages: serde_json::to_value(&messages).unwrap_or_default(),
+                            messages: messages_value,
                         }));
                     }
                     Ok(_) => {
@@ -1867,10 +1924,12 @@ async fn handle_pi_command(
                                     })
                                 })
                                 .collect();
+                            let messages_value = serde_json::Value::Array(messages);
+                            cache_pi_messages(&user_id, &session_id, &messages_value).await;
                             return Some(WsEvent::Pi(PiWsEvent::Messages {
                                 id,
                                 session_id,
-                                messages: serde_json::Value::Array(messages),
+                                messages: messages_value,
                             }));
                         }
                         Ok(_) => {
@@ -1896,11 +1955,13 @@ async fn handle_pi_command(
                             );
                             let serializable =
                                 crate::hstry::proto_messages_to_serializable(hstry_messages);
+                            let messages_value =
+                                serde_json::to_value(&serializable).unwrap_or_default();
+                            cache_pi_messages(&user_id, &session_id, &messages_value).await;
                             return Some(WsEvent::Pi(PiWsEvent::Messages {
                                 id,
                                 session_id,
-                                messages: serde_json::to_value(&serializable)
-                                    .unwrap_or_default(),
+                                messages: messages_value,
                             }));
                         }
                         Ok(_) => {
@@ -1937,10 +1998,12 @@ async fn handle_pi_command(
                                 })
                             })
                             .collect();
+                        let messages_value = serde_json::Value::Array(messages);
+                        cache_pi_messages(&user_id, &session_id, &messages_value).await;
                         return Some(WsEvent::Pi(PiWsEvent::Messages {
                             id,
                             session_id,
-                            messages: serde_json::Value::Array(messages),
+                            messages: messages_value,
                         }));
                     }
                     Ok(_) => {
@@ -1966,10 +2029,13 @@ async fn handle_pi_command(
                         );
                         let serializable =
                             crate::hstry::proto_messages_to_serializable(hstry_messages);
+                        let messages_value =
+                            serde_json::to_value(&serializable).unwrap_or_default();
+                        cache_pi_messages(&user_id, &session_id, &messages_value).await;
                         return Some(WsEvent::Pi(PiWsEvent::Messages {
                             id,
                             session_id,
-                            messages: serde_json::to_value(&serializable).unwrap_or_default(),
+                            messages: messages_value,
                         }));
                     }
                     Ok(_) => {
@@ -1986,16 +2052,26 @@ async fn handle_pi_command(
 
             // Return runner result (empty or error)
             match runner_messages {
-                Ok(resp) if !resp.messages.is_empty() => Some(WsEvent::Pi(PiWsEvent::Messages {
-                    id,
-                    session_id,
-                    messages: serde_json::to_value(&resp.messages).unwrap_or_default(),
-                })),
-                Ok(resp) => Some(WsEvent::Pi(PiWsEvent::Messages {
-                    id,
-                    session_id,
-                    messages: serde_json::to_value(&resp.messages).unwrap_or_default(),
-                })),
+                Ok(resp) if !resp.messages.is_empty() => {
+                    let messages_value =
+                        serde_json::to_value(&resp.messages).unwrap_or_default();
+                    cache_pi_messages(&user_id, &session_id, &messages_value).await;
+                    Some(WsEvent::Pi(PiWsEvent::Messages {
+                        id,
+                        session_id,
+                        messages: messages_value,
+                    }))
+                }
+                Ok(resp) => {
+                    let messages_value =
+                        serde_json::to_value(&resp.messages).unwrap_or_default();
+                    cache_pi_messages(&user_id, &session_id, &messages_value).await;
+                    Some(WsEvent::Pi(PiWsEvent::Messages {
+                        id,
+                        session_id,
+                        messages: messages_value,
+                    }))
+                }
                 Err(e) => Some(WsEvent::Pi(PiWsEvent::Error {
                     id,
                     session_id,

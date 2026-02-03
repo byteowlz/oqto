@@ -458,16 +458,20 @@ install_pi_extensions_for_user() {
     local pi_agent_dir="${user_home}/.pi/agent"
     local extensions_dir="${pi_agent_dir}/extensions"
     local octo_ext_dir="${extensions_dir}/octo"
+    local user_data_dir="${user_home}/.local/share/octo"
+    local data_extensions_dir="${user_data_dir}/extensions"
     
     log_info "Installing Pi extensions to ${extensions_dir}"
     
     # Create extensions directory
     mkdir -p "$octo_ext_dir"
+    mkdir -p "$data_extensions_dir"
     
     # Copy extension files
     # The octo-delegate.ts becomes index.ts in the extension directory
     if [[ -f "${pi_ext_source}/octo-delegate.ts" ]]; then
         cp "${pi_ext_source}/octo-delegate.ts" "${octo_ext_dir}/index.ts"
+        cp "${pi_ext_source}/octo-delegate.ts" "${data_extensions_dir}/octo-delegate.ts"
         log_success "Installed octo-delegate extension"
     fi
     
@@ -476,7 +480,17 @@ install_pi_extensions_for_user() {
         local todos_ext_dir="${extensions_dir}/octo-todos"
         mkdir -p "$todos_ext_dir"
         cp "${pi_ext_source}/octo-todos.ts" "${todos_ext_dir}/index.ts"
+        cp "${pi_ext_source}/octo-todos.ts" "${data_extensions_dir}/octo-todos.ts"
         log_success "Installed octo-todos extension"
+    fi
+
+    # Copy octo-prompts as a separate extension if it exists
+    if [[ -f "${pi_ext_source}/octo-prompts.ts" ]]; then
+        local prompts_ext_dir="${extensions_dir}/octo-prompts"
+        mkdir -p "$prompts_ext_dir"
+        cp "${pi_ext_source}/octo-prompts.ts" "${prompts_ext_dir}/index.ts"
+        cp "${pi_ext_source}/octo-prompts.ts" "${data_extensions_dir}/octo-prompts.ts"
+        log_success "Installed octo-prompts extension"
     fi
     
     # Install dependencies if package.json exists
@@ -499,6 +513,7 @@ Pi (main chat) and Octo (session management).
 
 - **octo/**: Task delegation to OpenCode sessions via Octo backend
 - **octo-todos/**: Todo list management for the Octo UI
+- **octo-prompts/**: Auto-load USER.md and PERSONALITY.md into system prompt
 
 ## Usage
 
@@ -508,6 +523,9 @@ They provide tools like:
 - `octo_session`: Delegate work to an OpenCode session
 - `todowrite`: Write/update the session todo list
 - `todoread`: Read the current session todo list
+
+The prompts extension adds USER.md and PERSONALITY.md from the session directory
+to the system prompt when present.
 
 ## Configuration
 
@@ -3295,6 +3313,11 @@ print_summary() {
         echo "  octo-todos: installed (${pi_ext_dir}/octo-todos)"
     else
         echo "  octo-todos: not installed"
+    fi
+    if [[ -d "${pi_ext_dir}/octo-prompts" ]]; then
+        echo "  octo-prompts: installed (${pi_ext_dir}/octo-prompts)"
+    else
+        echo "  octo-prompts: not installed"
     fi
     echo
     

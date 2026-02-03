@@ -605,10 +605,27 @@ impl MainChatPiService {
             .unwrap_or_else(|| PathBuf::from("/nonexistent/.pi/agent"))
     }
 
+    /// Resolve the repo root for a working directory (fallbacks to the directory itself).
+    fn resolve_repo_root(&self, work_dir: &Path) -> PathBuf {
+        let mut current = work_dir;
+        loop {
+            if current.join(".git").exists() {
+                return current.to_path_buf();
+            }
+            match current.parent() {
+                Some(parent) => current = parent,
+                None => break,
+            }
+        }
+        work_dir.to_path_buf()
+    }
+
     /// Get the Pi sessions directory for a working directory.
-    /// Pi stores sessions in ~/.pi/agent/sessions/{escaped-path}/
+    /// Pi stores sessions in ~/.pi/agent/sessions/--<path>--/
+    /// We scope to repo root when available to avoid per-workspace collisions.
     fn get_pi_sessions_dir(&self, user_id: &str, work_dir: &Path) -> PathBuf {
-        let escaped_path = work_dir
+        let repo_root = self.resolve_repo_root(work_dir);
+        let escaped_path = repo_root
             .to_string_lossy()
             .replace('/', "-")
             .trim_start_matches('-')

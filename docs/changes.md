@@ -116,3 +116,8 @@
 - 2026-02-03: Hide compact tool headers when uncollapsing tabbed tools and flatten list indentation in chat markdown.
 - 2026-02-03: Make chat sidebar multi-select require modifier keys and match the trx selection bar styling.
 - 2026-02-03: Add modifier-only multi-select with bulk delete for workspace session lists in the app shell sidebar.
+- 2026-02-03: Include Main Chat Pi sessions in chat history listings and resolve them via standard session lookups.
+- 2026-02-03: Unify session listing UX by removing the pinned Main Chat entry and relying on the shared session list.
+- 2026-02-03: Auto-load USER.md and PERSONALITY.md via a new Pi prompts extension and install extensions into Octo data dir.
+- 2026-02-03: Cache Pi chat history responses on the multiplexed WebSocket server for faster session loads.
+- 2026-02-03: Store Pi session JSONL files under repo-root session directories (Pi naming scheme) to keep per-repo history isolated.
