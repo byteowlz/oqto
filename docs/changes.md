@@ -148,3 +148,5 @@
 - 2026-02-03: Rename main chat UI to default chat and move chat feature code under features/chat.
 - 2026-02-03: Replace pending chat session IDs with real Pi session IDs to avoid duplicate sessions.
 - 2026-02-03: Reset streaming/awaiting state on session switch to stop spinners bleeding across chats.
+- 2026-02-03: Treat pending session IDs as placeholders and replace them with real Pi session IDs on first send.
+- 2026-02-03: Route steer-mode sends through prompt dispatch to ensure responses for normal chat messages.

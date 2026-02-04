@@ -138,7 +138,11 @@ import { extractFileReferences, getFileTypeInfo } from "@/lib/file-types";
 import { getMessageText } from "@/lib/message-text";
 import { type ModelOption, filterModelOptions } from "@/lib/model-filter";
 import { normalizePermissionEvent } from "@/lib/session-events";
-import { formatSessionDate, resolveReadableId } from "@/lib/session-utils";
+import {
+	formatSessionDate,
+	resolveReadableId,
+	isPendingSessionId,
+} from "@/lib/session-utils";
 import {
 	type SlashCommand,
 	builtInCommands,
@@ -597,10 +601,6 @@ function parseModelRef(
 	};
 }
 
-function isPendingSessionId(id: string | null | undefined): boolean {
-	return !!id && id.startsWith("pending-");
-}
-
 export const SessionScreen = memo(function SessionScreen() {
 	const {
 		locale,
@@ -969,10 +969,23 @@ export const SessionScreen = memo(function SessionScreen() {
 	const handleWorkspacePiSessionChange = useCallback(
 		(id: string | null) => {
 			if (!id) return;
+			const previousId = selectedChatSessionId;
+			if (
+				previousId &&
+				isPendingSessionId(previousId) &&
+				!isPendingSessionId(id)
+			) {
+				replaceOptimisticChatSession(previousId, id);
+			}
 			setSelectedChatSessionId(id);
 			refreshChatHistory();
 		},
-		[refreshChatHistory, setSelectedChatSessionId],
+		[
+			refreshChatHistory,
+			replaceOptimisticChatSession,
+			selectedChatSessionId,
+			setSelectedChatSessionId,
+		],
 	);
 
 	useEffect(() => {

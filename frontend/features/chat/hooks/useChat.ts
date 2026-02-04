@@ -14,6 +14,7 @@
  */
 
 import { newWorkspacePiSession } from "@/lib/api/default-chat";
+import { isPendingSessionId } from "@/lib/session-utils";
 import { getWsManager } from "@/lib/ws-manager";
 import type { PiWsEvent, WsMuxConnectionState } from "@/lib/ws-mux-types";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -556,6 +557,10 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 
 	const ensureSession = useCallback(async (): Promise<string> => {
 		let sessionId = activeSessionIdRef.current;
+		if (sessionId && isPendingSessionId(sessionId)) {
+			sessionId = null;
+			activeSessionIdRef.current = null;
+		}
 		if (sessionId) return sessionId;
 
 		const targetWorkspace = workspacePath?.trim() || "global";
@@ -621,7 +626,7 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 					manager.piPrompt(sessionId, message);
 					break;
 				case "steer":
-					manager.piSteer(sessionId, message);
+					manager.piPrompt(sessionId, message);
 					break;
 				case "follow_up":
 					manager.piFollowUp(sessionId, message);

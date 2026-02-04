@@ -1840,6 +1840,10 @@ export function resolveReadableId(
 	return generateReadableId(sessionId);
 }
 
+export function isPendingSessionId(id: string | null | undefined): boolean {
+	return !!id && id.startsWith("pending-");
+}
+
 /**
  * Format a timestamp as YYYY/MM/DD - HH:MM
  */
