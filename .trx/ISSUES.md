@@ -312,9 +312,6 @@ Add .cargo/config.toml with linker optimizations, split-debuginfo, incremental b
 ### [octo-p3n2.6] .ctx file parsing (P2, task)
 Parse .ctx zip files: extract images, text context, metadata. Store temporarily for agent access.
 
-### [octo-p3n2.5] Sessions listing endpoint (P2, task)
-GET /api/v1/sessions - list available sessions for API consumers
-
 ### [octo-p3n2.4] External chat API endpoint (P2, task)
 POST /api/v1/chat - accepts message + optional .ctx file, auto-creates session for workspace, supports stream and fire_and_forget modes
 
@@ -437,8 +434,6 @@ Three.js or CSS animated word cloud showing 'Click me' in multiple languages. CR
 Support multi-step tours with automatic progression. Agent sends array of steps, frontend advances on user click or timeout. Include progress indicator and skip button.
 
 ### [octo-smwr] Add drag an drop capabilities to the file tree, both for dragging in external files and for moving files between dirs  (P2, feature)
-
-### [octo-ze9k] Dashboard with overview of scheduled tasks (skdlr), session information, trx issues etc. Similar to the admin panel but for all users (P2, feature)
 
 ### [octo-s4ez] Define context model and context sources (local + remote) (P2, task)
 ## Goal
@@ -827,6 +822,8 @@ Desired behavior: Tool calls hidden by default, toggle to show
 
 ## Closed
 
+- [octo-ze9k] Dashboard with overview of scheduled tasks (skdlr), session information, trx issues etc. Similar to the admin panel but for all users (closed 2026-02-04)
+- [octo-p3n2.5] Sessions listing endpoint (closed 2026-02-04)
 - [workspace-5pmk.6] Create Tauri project structure (closed 2026-02-04)
 - [workspace-gg16.3] Backend: Add mmry proxy API routes (closed 2026-02-04)
 - [octo-gj7p] Integrate hstry-core for message persistence (closed 2026-02-04)
@@ -1391,9 +1388,9 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
-- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
 - [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
+- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
 - [octo-k8z1.2] Backend: WebSocket proxy for screencast stream (closed )
 - [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
+- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
 - [octo-k8z1.1] Backend: Integrate agent-browser daemon per session (closed )
-- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
