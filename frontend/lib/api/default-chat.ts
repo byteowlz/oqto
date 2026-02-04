@@ -107,6 +107,7 @@ export type PiState = {
 	is_streaming: boolean;
 	is_compacting: boolean;
 	session_id: string | null;
+	session_name?: string | null;
 	message_count: number;
 	auto_compaction_enabled: boolean;
 };

@@ -39,7 +39,8 @@ export type PiMessagePart =
 			isError?: boolean;
 	  }
 	| { type: "thinking"; content: string }
-	| { type: "compaction"; content: string };
+	| { type: "compaction"; content: string }
+	| { type: "error"; content: string };
 
 /** Display message with parts */
 export type PiDisplayMessage = {
@@ -58,6 +59,8 @@ export type PiSendMode = "prompt" | "steer" | "follow_up";
 export type PiSendOptions = {
 	mode?: PiSendMode;
 	queueIfStreaming?: boolean;
+	/** Force a specific session id (used to bind a pending chat to a real session). */
+	sessionId?: string;
 };
 
 /** Hook options */
@@ -96,6 +99,8 @@ export type UsePiChatReturn = {
 	error: Error | null;
 	/** Send a message */
 	send: (message: string, options?: PiSendOptions) => Promise<void>;
+	/** Append a local assistant message (no Pi call) */
+	appendLocalAssistantMessage: (content: string) => void;
 	/** Abort current stream */
 	abort: () => Promise<void>;
 	/** Compact the session context */

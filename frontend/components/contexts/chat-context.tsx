@@ -56,6 +56,8 @@ export interface ChatContextValue {
 		optimisticId: string,
 		sessionId: string,
 	) => void;
+	/** Update a chat session title locally without triggering backend rename. */
+	updateChatSessionTitleLocal: (sessionId: string, title: string) => void;
 	createNewChat: (
 		workspacePath?: string,
 		options?: { optimisticId?: string },
@@ -122,6 +124,7 @@ const defaultChatContext: ChatContextValue = {
 	createOptimisticChatSession: () => "",
 	clearOptimisticChatSession: noop,
 	replaceOptimisticChatSession: noop,
+	updateChatSessionTitleLocal: noop,
 	createNewChat: asyncNoop,
 	deleteChatSession: asyncNoopBool,
 	renameChatSession: asyncNoopBool,
@@ -594,6 +597,19 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 		[opencodeBaseUrl, opencodeDirectory],
 	);
 
+	const updateChatSessionTitleLocal = useCallback(
+		(sessionId: string, title: string) => {
+			if (!title.trim()) return;
+			setChatHistory((prev) =>
+				prev.map((s) => (s.id === sessionId ? { ...s, title } : s)),
+			);
+			setOpencodeSessions((prev) =>
+				prev.map((s) => (s.id === sessionId ? { ...s, title } : s)),
+			);
+		},
+		[],
+	);
+
 	// Initial load
 	useEffect(() => {
 		refreshChatHistory();
@@ -622,6 +638,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 			createOptimisticChatSession,
 			clearOptimisticChatSession,
 			replaceOptimisticChatSession,
+			updateChatSessionTitleLocal,
 			createNewChat,
 			deleteChatSession,
 			renameChatSession,
@@ -641,6 +658,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 			createOptimisticChatSession,
 			clearOptimisticChatSession,
 			replaceOptimisticChatSession,
+			updateChatSessionTitleLocal,
 			createNewChat,
 			deleteChatSession,
 			renameChatSession,

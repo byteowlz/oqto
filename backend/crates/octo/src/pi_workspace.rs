@@ -801,30 +801,47 @@ impl WorkspacePiService {
             Some(Value::Number(n)) => Some(n.to_string()),
             _ => None,
         };
+        let mut session_info_name: Option<String> = None;
 
-        if title.is_none() {
-            for line in reader.lines().map_while(Result::ok) {
-                if line.is_empty() {
-                    continue;
-                }
-
-                let entry: Value = match serde_json::from_str(&line) {
-                    Ok(v) => v,
-                    Err(_) => continue,
-                };
-
-                if entry.get("type").and_then(|t| t.as_str()) != Some("message") {
-                    continue;
-                }
-
-                if let Some(msg) = entry.get("message")
-                    && msg.get("role").and_then(|r| r.as_str()) == Some("user")
-                    && let Some(content) = msg.get("content")
-                {
-                    title = Self::extract_title_from_content(content);
-                    break;
-                }
+        for line in reader.lines().map_while(Result::ok) {
+            if line.is_empty() {
+                continue;
             }
+
+            let entry: Value = match serde_json::from_str(&line) {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+
+            if entry.get("type").and_then(|t| t.as_str()) == Some("session_info") {
+                if let Some(name) = entry.get("name").and_then(|v| v.as_str()) {
+                    let trimmed = name.trim();
+                    if !trimmed.is_empty() {
+                        session_info_name = Some(trimmed.to_string());
+                    }
+                }
+                continue;
+            }
+
+            if title.is_some() {
+                continue;
+            }
+
+            if entry.get("type").and_then(|t| t.as_str()) != Some("message") {
+                continue;
+            }
+
+            if let Some(msg) = entry.get("message")
+                && msg.get("role").and_then(|r| r.as_str()) == Some("user")
+                && let Some(content) = msg.get("content")
+            {
+                title = Self::extract_title_from_content(content);
+                break;
+            }
+        }
+
+        if let Some(info_name) = session_info_name {
+            title = Some(info_name);
         }
 
         Some(WorkspacePiSessionSummary {
@@ -978,6 +995,13 @@ impl WorkspacePiService {
         let mut sessions = self.sessions.write().await;
         sessions.insert(key, Arc::clone(&session));
 
+        if let Err(err) = session.set_auto_retry(true).await {
+            warn!(
+                "Failed to enable auto-retry for workspace session {}: {}",
+                session_id, err
+            );
+        }
+
         Ok((session_id, session))
     }
 
@@ -1046,6 +1070,13 @@ impl WorkspacePiService {
                 .create_session(user_id, work_dir, Some(session_file))
                 .await?;
             let session = Arc::new(session);
+
+            if let Err(err) = session.set_auto_retry(true).await {
+                warn!(
+                    "Failed to enable auto-retry for workspace session {}: {}",
+                    session_id, err
+                );
+            }
 
             let mut sessions = self.sessions.write().await;
             sessions.insert(key.clone(), Arc::clone(&session));

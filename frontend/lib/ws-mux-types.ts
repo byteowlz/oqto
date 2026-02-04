@@ -463,6 +463,12 @@ export type ToolResultData = {
 	is_error?: boolean;
 };
 
+export type PiCommandInfo = {
+	name: string;
+	description?: string | null;
+	type: string;
+};
+
 /** Pi session info */
 export type PiSessionInfo = {
 	session_id: string;
@@ -534,6 +540,12 @@ export type PiWsEvent =
 			type: "stats";
 			session_id: string;
 			stats: unknown;
+	  } & WsEventBase)
+	| ({
+			channel: "pi";
+			type: "commands";
+			session_id: string;
+			commands: PiCommandInfo[];
 	  } & WsEventBase)
 	| ({
 			channel: "pi";

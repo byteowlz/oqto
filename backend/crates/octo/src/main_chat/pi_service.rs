@@ -2425,7 +2425,14 @@ impl MainChatPiService {
         }
         {
             let mut active = self.active_session.write().await;
-            active.insert(user_id.to_string(), session_id);
+            active.insert(user_id.to_string(), session_id.clone());
+        }
+
+        if let Err(err) = session.set_auto_retry(true).await {
+            warn!(
+                "Failed to enable auto-retry for session {}: {}",
+                session_id, err
+            );
         }
 
         Ok(session)
@@ -2909,6 +2916,18 @@ impl UserPiSession {
                 id: None,
                 provider: provider.to_string(),
                 model_id: model_id.to_string(),
+            })
+            .await?;
+        Ok(())
+    }
+
+    /// Enable or disable auto-retry.
+    pub async fn set_auto_retry(&self, enabled: bool) -> Result<()> {
+        let process = self.process.read().await;
+        process
+            .send_command(PiCommand::SetAutoRetry {
+                id: None,
+                enabled,
             })
             .await?;
         Ok(())

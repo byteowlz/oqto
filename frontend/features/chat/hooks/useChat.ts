@@ -84,7 +84,7 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 	// State
 	const [state, setState] = useState<PiState | null>(null);
 	const [messages, setMessages] = useState<PiDisplayMessage[]>(
-		activeSessionId
+		activeSessionId && !isPendingSessionId(activeSessionId)
 			? readCachedSessionMessages(activeSessionId, resolvedStorageKeyPrefix)
 			: [],
 	);
@@ -113,6 +113,21 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 		messageIdRef.current += 1;
 		return `pi-msg-${messageIdRef.current}`;
 	}, []);
+
+	const appendLocalAssistantMessage = useCallback(
+		(content: string) => {
+			const assistantMessage: PiDisplayMessage = {
+				id: nextMessageId(),
+				role: "assistant",
+				parts: [{ type: "text", content }],
+				timestamp: Date.now(),
+			};
+			setMessages((prev) => [...prev, assistantMessage]);
+			lastAssistantMessageIdRef.current = assistantMessage.id;
+			onMessageComplete?.(assistantMessage);
+		},
+		[nextMessageId, onMessageComplete],
+	);
 
 	const getSessionConfig = useCallback(() => {
 		if (scope === "default") {
@@ -448,8 +463,8 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 					if (streamingMessageRef.current) {
 						streamingMessageRef.current.isStreaming = false;
 						streamingMessageRef.current.parts.push({
-							type: "text",
-							content: `Error: ${errMsg}`,
+							type: "error",
+							content: errMsg,
 						});
 						const completedMessage = {
 							...streamingMessageRef.current,
@@ -468,6 +483,16 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 						});
 						onMessageComplete?.(completedMessage);
 						streamingMessageRef.current = null;
+					} else {
+						const errorMessage: PiDisplayMessage = {
+							id: nextMessageId(),
+							role: "assistant",
+							parts: [{ type: "error", content: errMsg }],
+							timestamp: Date.now(),
+							isStreaming: false,
+						};
+						setMessages((prev) => [...prev, errorMessage]);
+						onMessageComplete?.(errorMessage);
 					}
 					break;
 				}
@@ -587,7 +612,19 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 	const send = useCallback(
 		async (message: string, options?: PiSendOptions) => {
 			const mode: PiSendMode = options?.mode ?? "prompt";
-			let sessionId = activeSessionIdRef.current;
+			let sessionId = options?.sessionId ?? activeSessionIdRef.current;
+			if (options?.sessionId && options.sessionId !== activeSessionIdRef.current) {
+				activeSessionIdRef.current = options.sessionId;
+				onSelectedSessionIdChange?.(options.sessionId);
+				const manager = getWsManager();
+				const sessionConfig = getSessionConfig();
+				unsubscribeRef.current?.();
+				unsubscribeRef.current = manager.subscribePiSession(
+					options.sessionId,
+					handlePiEvent,
+					sessionConfig,
+				);
+			}
 			if (!sessionId) {
 				// Clear local state for the new session.
 				setMessages([]);
@@ -741,6 +778,12 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 		if (!activeSessionId) {
 			return;
 		}
+		if (isPendingSessionId(activeSessionId)) {
+			setMessages([]);
+			messageIdRef.current = 0;
+			lastAssistantMessageIdRef.current = null;
+			return;
+		}
 
 		// Load cached messages for this session
 		const cached = readCachedSessionMessages(
@@ -816,6 +859,7 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 		isAwaitingResponse,
 		error,
 		send,
+		appendLocalAssistantMessage,
 		abort,
 		compact,
 		newSession,

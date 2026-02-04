@@ -60,6 +60,7 @@ import {
 	type PiState,
 	getWorkspacePiModels,
 	getWorkspacePiState,
+	newWorkspacePiSession,
 	setWorkspacePiModel,
 } from "@/features/chat/api";
 import {
@@ -621,7 +622,9 @@ export const SessionScreen = memo(function SessionScreen() {
 		projects,
 		startProjectSession,
 		setSessionBusy,
+		createNewChat,
 		replaceOptimisticChatSession,
+		clearOptimisticChatSession,
 		defaultChatActive,
 		defaultChatAssistantName,
 		defaultChatCurrentSessionId,
@@ -656,6 +659,94 @@ export const SessionScreen = memo(function SessionScreen() {
 			replaceOptimisticChatSession,
 			setDefaultChatCurrentSessionId,
 		],
+	);
+
+	const pendingEnsureRef = useRef<Map<string, Promise<string | null>>>(
+		new Map(),
+	);
+
+	const ensureDefaultChatSession = useCallback(
+		async (workspacePath: string | null, optimisticId: string | null) => {
+			const resolvedPath =
+				workspacePath ?? defaultChatWorkspacePath ?? "global";
+			const key = optimisticId
+				? `default:${resolvedPath}:${optimisticId}`
+				: `default:${resolvedPath}:${Date.now()}:${Math.random()}`;
+			if (optimisticId) {
+				const existing = pendingEnsureRef.current.get(key);
+				if (existing) return existing;
+			}
+			const promise = (async () => {
+				const state = await newWorkspacePiSession(resolvedPath);
+				const sessionId = state.session_id;
+				if (!sessionId) throw new Error("Pi session id missing");
+				if (optimisticId && isPendingSessionId(optimisticId)) {
+					replaceOptimisticChatSession(optimisticId, sessionId);
+				}
+				setDefaultChatCurrentSessionId(sessionId);
+				refreshChatHistory();
+				return sessionId;
+			})()
+				.catch((err) => {
+					if (optimisticId) {
+						clearOptimisticChatSession(optimisticId);
+					}
+					console.error("Failed to create default chat session:", err);
+					return null;
+				})
+				.finally(() => {
+					if (optimisticId) {
+						pendingEnsureRef.current.delete(key);
+					}
+				});
+			if (optimisticId) {
+				pendingEnsureRef.current.set(key, promise);
+			}
+			return promise;
+		},
+		[
+			clearOptimisticChatSession,
+			defaultChatWorkspacePath,
+			refreshChatHistory,
+			replaceOptimisticChatSession,
+			setDefaultChatCurrentSessionId,
+		],
+	);
+
+	const ensureWorkspaceChatSession = useCallback(
+		async (workspacePath: string | null, optimisticId: string | null) => {
+			const resolvedPath = workspacePath ?? "global";
+			const key = optimisticId
+				? `workspace:${resolvedPath}:${optimisticId}`
+				: `workspace:${resolvedPath}:${Date.now()}:${Math.random()}`;
+			if (optimisticId) {
+				const existing = pendingEnsureRef.current.get(key);
+				if (existing) return existing;
+			}
+			const promise = (async () => {
+				const sessionId = await createNewChat(resolvedPath, {
+					optimisticId: optimisticId ?? undefined,
+				});
+				return sessionId;
+			})()
+				.catch((err) => {
+					if (optimisticId) {
+						clearOptimisticChatSession(optimisticId);
+					}
+					console.error("Failed to create workspace chat session:", err);
+					return null;
+				})
+				.finally(() => {
+					if (optimisticId) {
+						pendingEnsureRef.current.delete(key);
+					}
+				});
+			if (optimisticId) {
+				pendingEnsureRef.current.set(key, promise);
+			}
+			return promise;
+		},
+		[clearOptimisticChatSession, createNewChat],
 	);
 	// Ref to track messages for A2UI anchoring
 	const messagesRef = useRef(messages);
@@ -4718,6 +4809,7 @@ export const SessionScreen = memo(function SessionScreen() {
 					storageKeyPrefix={workspacePiStorageKeyPrefix}
 					selectedSessionId={selectedChatSessionId}
 					onSelectedSessionIdChange={handleWorkspacePiSessionChange}
+					onEnsureSession={ensureWorkspaceChatSession}
 					scrollToMessageId={scrollToMessageId}
 					onScrollToMessageComplete={() => setScrollToMessageId(null)}
 					onTokenUsageChange={setWorkspacePiTokenUsage}
@@ -5682,6 +5774,7 @@ export const SessionScreen = memo(function SessionScreen() {
 								onTokenUsageChange={setDefaultChatTokenUsage}
 								selectedSessionId={defaultChatCurrentSessionId}
 								onSelectedSessionIdChange={handleDefaultChatSessionIdChange}
+								onEnsureSession={ensureDefaultChatSession}
 								scrollToMessageId={scrollToMessageId}
 								onScrollToMessageComplete={() => setScrollToMessageId(null)}
 								onMessageSent={notifySessionActivity}
@@ -5952,6 +6045,7 @@ export const SessionScreen = memo(function SessionScreen() {
 								onTokenUsageChange={setDefaultChatTokenUsage}
 								selectedSessionId={defaultChatCurrentSessionId}
 								onSelectedSessionIdChange={handleDefaultChatSessionIdChange}
+								onEnsureSession={ensureDefaultChatSession}
 								scrollToMessageId={scrollToMessageId}
 								onScrollToMessageComplete={() => setScrollToMessageId(null)}
 								onMessageSent={notifySessionActivity}
@@ -6096,6 +6190,7 @@ export const SessionScreen = memo(function SessionScreen() {
 												onTokenUsageChange={setDefaultChatTokenUsage}
 												selectedSessionId={defaultChatCurrentSessionId}
 												onSelectedSessionIdChange={handleDefaultChatSessionIdChange}
+												onEnsureSession={ensureDefaultChatSession}
 												scrollToMessageId={scrollToMessageId}
 												onScrollToMessageComplete={() =>
 													setScrollToMessageId(null)

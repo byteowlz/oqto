@@ -7,6 +7,10 @@
 - 2026-02-03: Cache session messages locally so chat history renders immediately on switch.
 - 2026-02-03: Require confirmation before bulk deleting chats from the sidebar.
 - 2026-02-03: Reduce minimal tool-call badge size to avoid covering icons.
+- 2026-02-03: Prefer Pi session_info names when listing workspace Pi sessions so auto-renames show up without extra sessions.
+- 2026-02-03: Update chat titles locally from Pi session_name state to reflect auto-renames instantly.
+- 2026-02-03: Enable Pi auto-retry by default for main and workspace sessions.
+- 2026-02-03: Render Pi error events as red assistant-width error bars in chat messages.
 - 2026-02-02: Filter Pi toolcall delta fragments from the multiplexed WS stream to stop duplicate/raw command text in Main Chat output.
 - 2026-02-02: Ensure Pi tool events start a streaming assistant message so tool spinners resolve with tool results.
 - 2026-02-02: Fix Pi file mention popup mux import to avoid frontend load errors on mobile.
@@ -149,4 +153,9 @@
 - 2026-02-03: Replace pending chat session IDs with real Pi session IDs to avoid duplicate sessions.
 - 2026-02-03: Reset streaming/awaiting state on session switch to stop spinners bleeding across chats.
 - 2026-02-03: Treat pending session IDs as placeholders and replace them with real Pi session IDs on first send.
+- 2026-02-03: Resolve pending chat sessions to real Pi session IDs before sending so first prompts and queued messages never split sessions.
 - 2026-02-03: Route steer-mode sends through prompt dispatch to ensure responses for normal chat messages.
+- 2026-02-04: List Pi sessions uniformly by removing Main Chat filtering and avoiding duplicate entries in chat history.
+- 2026-02-04: Fetch Pi slash commands over ws-mux for all sessions and surface them in the slash picker.
+- 2026-02-04: Add `/stats` slash command to render Pi session stats as an assistant message.
+- 2026-02-04: Refresh token gauge stats via ws-mux session stats for all scopes.

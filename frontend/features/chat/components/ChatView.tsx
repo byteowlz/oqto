@@ -32,13 +32,12 @@ import {
 	VoiceMenuButton,
 	type VoiceMode,
 } from "@/components/voice/VoiceMenuButton";
+import { useChatContext } from "@/components/contexts/chat-context";
 import {
 	type Features,
 	type PiModelInfo,
 	type PiSessionFile,
-	getDefaultChatPiCommands,
 	getDefaultChatPiModels,
-	getDefaultChatPiStats,
 	getWorkspacePiModels,
 	listDefaultChatPiSessions,
 } from "@/features/chat/api";
@@ -146,6 +145,11 @@ export interface ChatViewProps {
 	onMessageComplete?: () => void;
 	/** Callback when todos change (extracted from Pi todowrite tool calls) */
 	onTodosChange?: (todos: TodoItem[]) => void;
+	/** Ensure a real Pi session exists (used to resolve pending sessions) */
+	onEnsureSession?: (
+		workspacePath: string | null,
+		optimisticId: string | null,
+	) => Promise<string | null>;
 }
 
 function isPendingSessionId(id: string | null | undefined): boolean {
@@ -173,6 +177,7 @@ export function ChatView({
 	onMessageSent,
 	onMessageComplete,
 	onTodosChange,
+	onEnsureSession,
 }: ChatViewProps) {
 	const [sendPending, setSendPending] = useState(false);
 	const [sendPendingSessionId, setSendPendingSessionId] = useState<
@@ -230,6 +235,7 @@ export function ChatView({
 		isAwaitingResponse,
 		error,
 		send,
+		appendLocalAssistantMessage,
 		abort,
 		compact,
 		newSession,
@@ -244,6 +250,19 @@ export function ChatView({
 		onSelectedSessionIdChange,
 		onMessageComplete: handleMessageComplete,
 	});
+	const { updateChatSessionTitleLocal } = useChatContext();
+
+	const ensureRealSessionId = useCallback(async (): Promise<string | null> => {
+		if (selectedSessionId && !isPendingSessionId(selectedSessionId)) {
+			return selectedSessionId;
+		}
+		if (!onEnsureSession) return selectedSessionId ?? null;
+		const optimisticId =
+			selectedSessionId ??
+			pendingSendKeyRef.current ??
+			(null as string | null);
+		return onEnsureSession(workspacePath ?? null, optimisticId);
+	}, [onEnsureSession, selectedSessionId, workspacePath]);
 
 	// Draft persistence - restore from localStorage on mount
 	const [input, setInput] = useState(() => {
@@ -281,6 +300,10 @@ export function ChatView({
 			pendingSendKeyRef.current = null;
 		}
 	}, [selectedSessionId]);
+	useEffect(() => {
+		if (!selectedSessionId || !piState?.session_name) return;
+		updateChatSessionTitleLocal(selectedSessionId, piState.session_name);
+	}, [piState?.session_name, selectedSessionId, updateChatSessionTitleLocal]);
 	useEffect(() => {
 		if (isStreaming || isAwaitingResponse) {
 			setSendPending(false);
@@ -536,6 +559,7 @@ export function ChatView({
 			{ name: "new", description: "Start a fresh session" },
 			{ name: "reset", description: "Reload personality and user files" },
 			{ name: "abort", description: "Abort current run" },
+			{ name: "stats", description: "Show session stats" },
 			{ name: "steer", description: "Send a steering message" },
 			{ name: "followup", description: "Queue a follow-up message" },
 		];
@@ -671,18 +695,19 @@ export function ChatView({
 
 	useEffect(() => {
 		// Only fetch commands once session is active (piState available)
-		if (!isMainScope) return;
 		if (!isConnected || !piState) return;
 		const targetSessionId = selectedSessionId ?? piState.session_id ?? null;
 		if (!targetSessionId || isPendingSessionId(targetSessionId)) return;
 		let active = true;
-		getDefaultChatPiCommands(targetSessionId)
+		const manager = getWsManager();
+		manager
+			.piGetCommands(targetSessionId)
 			.then((commands) => {
 				if (!active) return;
 				setCustomCommands(
 					commands.map((cmd) => ({
 						name: cmd.name,
-						description: cmd.description,
+						description: cmd.description ?? undefined,
 					})),
 				);
 			})
@@ -692,24 +717,27 @@ export function ChatView({
 		return () => {
 			active = false;
 		};
-	}, [isConnected, isMainScope, piState, selectedSessionId]);
+	}, [isConnected, piState, selectedSessionId]);
 
 	const refreshStats = useCallback(async () => {
-		if (!isMainScope) return;
 		const targetSessionId = selectedSessionId ?? piState?.session_id ?? null;
 		if (!targetSessionId || isPendingSessionId(targetSessionId)) return;
 		try {
-			const stats = await getDefaultChatPiStats(targetSessionId);
-			if (stats.tokens) {
+			const stats = await getWsManager().piGetSessionStats(targetSessionId);
+			const tokens =
+				stats && typeof stats === "object" && "tokens" in stats
+					? (stats as { tokens?: { input?: number; output?: number } }).tokens
+					: null;
+			if (tokens) {
 				setSessionTokens({
-					input: stats.tokens.input ?? 0,
-					output: stats.tokens.output ?? 0,
+					input: tokens.input ?? 0,
+					output: tokens.output ?? 0,
 				});
 			}
 		} catch {
 			// Ignore stats errors; token gauge will fall back to message usage.
 		}
-	}, [isMainScope, piState?.session_id, selectedSessionId]);
+	}, [piState?.session_id, selectedSessionId]);
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: messages.length triggers refresh when message count changes
 	useEffect(() => {
@@ -980,6 +1008,65 @@ export function ChatView({
 					await abort();
 					return { handled: true, clearInput: true };
 				}
+				case "stats": {
+					const targetSessionId =
+						selectedSessionId ?? piState?.session_id ?? null;
+					if (!targetSessionId || isPendingSessionId(targetSessionId)) {
+						throw new Error("No active session");
+					}
+					const stats = await getWsManager().piGetSessionStats(targetSessionId);
+					const safeStats = stats && typeof stats === "object" ? stats : null;
+					const tokens =
+						safeStats && "tokens" in safeStats
+							? (safeStats as {
+									tokens?: {
+										input?: number;
+										output?: number;
+										cache_read?: number;
+										cache_write?: number;
+										total?: number;
+									};
+								}).tokens
+							: null;
+					const text = [
+						"Session stats",
+						`- user_messages: ${
+							typeof (safeStats as { user_messages?: number })?.user_messages ===
+							"number"
+								? (safeStats as { user_messages?: number }).user_messages
+								: 0
+						}`,
+						`- assistant_messages: ${
+							typeof (safeStats as { assistant_messages?: number })
+								?.assistant_messages === "number"
+								? (safeStats as { assistant_messages?: number })
+										.assistant_messages
+								: 0
+						}`,
+						`- tool_calls: ${
+							typeof (safeStats as { tool_calls?: number })?.tool_calls ===
+							"number"
+								? (safeStats as { tool_calls?: number }).tool_calls
+								: 0
+						}`,
+						`- total_messages: ${
+							typeof (safeStats as { total_messages?: number })
+								?.total_messages === "number"
+								? (safeStats as { total_messages?: number })
+										.total_messages
+								: 0
+						}`,
+						tokens
+							? `- tokens: in ${tokens.input ?? 0}, out ${
+									tokens.output ?? 0
+								}, cache read ${tokens.cache_read ?? 0}, cache write ${
+									tokens.cache_write ?? 0
+								}, total ${tokens.total ?? 0}`
+							: "- tokens: 0",
+					].join("\n");
+					appendLocalAssistantMessage(text);
+					return { handled: true, clearInput: true };
+				}
 				case "steer": {
 					await send(trimmedArgs, { mode: "steer" });
 					return { handled: true, clearInput: true };
@@ -1010,13 +1097,16 @@ export function ChatView({
 		},
 		[
 			abort,
+			appendLocalAssistantMessage,
 			canSwitchModel,
 			compact,
 			enqueueMessage,
 			handleModelChange,
 			newSession,
+			piState?.session_id,
 			refresh,
 			resetSession,
+			selectedSessionId,
 			send,
 		],
 	);
@@ -1099,11 +1189,21 @@ export function ChatView({
 							.slice(2)}`;
 					}
 				}
-				setSendPendingSessionId(
-					selectedSessionId ?? pendingSendKeyRef.current ?? null,
-				);
+				let resolvedSessionId =
+					selectedSessionId ?? pendingSendKeyRef.current ?? null;
+				if (!resolvedSessionId || isPendingSessionId(resolvedSessionId)) {
+					resolvedSessionId = await ensureRealSessionId();
+				}
+				if (!resolvedSessionId) {
+					setSendPending(false);
+					setSendPendingSessionId(null);
+					pendingSendKeyRef.current = null;
+					toast.error("Failed to create a chat session.");
+					return;
+				}
+				setSendPendingSessionId(resolvedSessionId);
 				try {
-					await send(message, { mode: effectiveMode });
+					await send(message, { mode: effectiveMode, sessionId: resolvedSessionId });
 					// Notify that a message was sent (for sidebar refresh)
 					onMessageSent?.();
 				} catch {
@@ -1116,11 +1216,12 @@ export function ChatView({
 		[
 			builtInCommandNames,
 			draftStorageKey,
-			fileAttachments,
-			input,
-			messages.length,
-			onMessageSent,
-			piState?.messageCount,
+		fileAttachments,
+		input,
+		ensureRealSessionId,
+		messages.length,
+		onMessageSent,
+		piState?.messageCount,
 			runSlashCommand,
 			selectedSessionId,
 			send,
@@ -1158,38 +1259,57 @@ export function ChatView({
 		if (!next?.text) return;
 
 			queueSendInFlightRef.current = true;
-			setSendPending(true);
-			if (!selectedSessionId) {
-				if (!pendingSendKeyRef.current) {
-					pendingSendKeyRef.current = `pending-${Date.now()}-${Math.random()
-						.toString(36)
-						.slice(2)}`;
+			(async () => {
+				setSendPending(true);
+				if (!selectedSessionId) {
+					if (!pendingSendKeyRef.current) {
+						pendingSendKeyRef.current = `pending-${Date.now()}-${Math.random()
+							.toString(36)
+							.slice(2)}`;
+					}
 				}
-			}
-			setSendPendingSessionId(
-				selectedSessionId ?? pendingSendKeyRef.current ?? null,
-			);
-		const hasHistory =
-			messages.length > 0 || (piState?.messageCount ?? 0) > 0;
-		const queueMode = hasHistory ? "follow_up" : "prompt";
-		send(next.text, { mode: queueMode })
-				.then(() => {
-					setQueuedMessages((prev) => prev.slice(1));
-					onMessageSent?.();
-				})
-				.catch(() => {
-					queueCooldownRef.current = Date.now();
+				let resolvedSessionId =
+					selectedSessionId ?? pendingSendKeyRef.current ?? null;
+				if (!resolvedSessionId || isPendingSessionId(resolvedSessionId)) {
+					resolvedSessionId = await ensureRealSessionId();
+				}
+				if (!resolvedSessionId) {
 					setSendPending(false);
 					setSendPendingSessionId(null);
 					pendingSendKeyRef.current = null;
-					toast.error("Failed to send queued message.");
-				})
-			.finally(() => {
+					toast.error("Failed to create a chat session.");
+					return;
+				}
+				setSendPendingSessionId(resolvedSessionId);
+				const hasHistory =
+					messages.length > 0 || (piState?.messageCount ?? 0) > 0;
+				const queueMode = hasHistory ? "follow_up" : "prompt";
+				send(next.text, { mode: queueMode, sessionId: resolvedSessionId })
+					.then(() => {
+						setQueuedMessages((prev) => prev.slice(1));
+						onMessageSent?.();
+					})
+					.catch(() => {
+						queueCooldownRef.current = Date.now();
+						setSendPending(false);
+						setSendPendingSessionId(null);
+						pendingSendKeyRef.current = null;
+						toast.error("Failed to send queued message.");
+					})
+					.finally(() => {
+						queueSendInFlightRef.current = false;
+					});
+			})().catch(() => {
 				queueSendInFlightRef.current = false;
+				setSendPending(false);
+				setSendPendingSessionId(null);
+				pendingSendKeyRef.current = null;
+				toast.error("Failed to send queued message.");
 			});
 	}, [
 		isAwaitingResponse,
 		isStreaming,
+		ensureRealSessionId,
 		onMessageSent,
 		queuedMessages,
 		selectedSessionId,
@@ -2053,6 +2173,7 @@ type PiSegment =
 	  }
 	| { key: string; type: "thinking"; content: string; timestamp: number }
 	| { key: string; type: "compaction"; content: string; timestamp: number }
+	| { key: string; type: "error"; content: string; timestamp: number }
 	| {
 			key: string;
 			type: "a2ui";
@@ -2200,6 +2321,13 @@ const PiMessageGroupCard = memo(function PiMessageGroupCard({
 			segments.push({
 				key,
 				type: "thinking",
+				content: part.content,
+				timestamp,
+			});
+		} else if (part.type === "error") {
+			segments.push({
+				key,
+				type: "error",
 				content: part.content,
 				timestamp,
 			});
@@ -2493,6 +2621,19 @@ const PiMessageGroupCard = memo(function PiMessageGroupCard({
 									locale={locale}
 									workspacePath={workspacePath}
 								/>
+							</div>
+						);
+					}
+					if (segment.type === "error") {
+						return (
+							<div
+								key={segment.key}
+								className={cn(
+									"rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-600",
+									needsTopMargin && "mt-3",
+								)}
+							>
+								{segment.content}
 							</div>
 						);
 					}

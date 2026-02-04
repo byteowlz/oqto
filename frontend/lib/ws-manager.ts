@@ -20,6 +20,7 @@ import { toAbsoluteWsUrl } from "./url";
 import type {
 	Channel,
 	ConnectionStateHandler,
+	PiCommandInfo,
 	PiSessionConfig,
 	PiWsEvent,
 	WsCommand,
@@ -105,6 +106,30 @@ class WsConnectionManager {
 	/** Get the current connection state */
 	get state(): WsMuxConnectionState {
 		return this.connectionState;
+	}
+
+	async piGetCommands(sessionId: string): Promise<PiCommandInfo[]> {
+		const event = await this.sendAndWait({
+			channel: "pi",
+			type: "get_commands",
+			session_id: sessionId,
+		});
+		if (event.channel === "pi" && event.type === "commands") {
+			return event.commands ?? [];
+		}
+		throw new Error("Unexpected response to get_commands");
+	}
+
+	async piGetSessionStats(sessionId: string): Promise<unknown> {
+		const event = await this.sendAndWait({
+			channel: "pi",
+			type: "get_session_stats",
+			session_id: sessionId,
+		});
+		if (event.channel === "pi" && event.type === "stats") {
+			return event.stats;
+		}
+		throw new Error("Unexpected response to get_session_stats");
 	}
 
 	/** Check if connected */
