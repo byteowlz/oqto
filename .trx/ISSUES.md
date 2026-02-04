@@ -41,9 +41,6 @@ Fix unnecessary_lazy_evaluations, manual_flatten, single_match, and manual_strip
 ### [octo-zjs8.1] Fix all clippy warnings in backend crates (P1, task)
 Fix warnings in octo-files, octo-scaffold, octo-browser, and octo main crate without using #[allow] or other bandaid fixes
 
-### [octo-zjs8] Rust Code Quality & Compilation Optimization (P1, epic)
-Fix all clippy warnings properly (no bandaid fixes), add strict linting rules, and optimize compilation times
-
 ### [octo-zqyg] Fix Linux user creation sudo allowlist path mismatch (P1, bug)
 
 ### [octo-qq9y] Security audit sudoers configuration for multi-user mode (P1, task)
@@ -895,6 +892,8 @@ Desired behavior: Tool calls hidden by default, toggle to show
 
 ## Closed
 
+- [octo-cvy0] Configurable chat prefetch limit (closed 2026-02-04)
+- [octo-zjs8] Rust Code Quality & Compilation Optimization (closed 2026-02-04)
 - [octo-qs75] Raw commands like ({"command":"ls -la"}) appear in pi chat messages (closed 2026-02-02)
 - [octo-016a] Full component rerender on key event for trx issue input in sidebar (closed 2026-02-02)
 - [octo-v2d4] Trx sidebar component remounts when adding a new issue in the sidebar (closed 2026-02-02)
@@ -1446,7 +1445,7 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
 - [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
 - [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
-- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
+- [octo-k8z1.2] Backend: WebSocket proxy for screencast stream (closed )
 - [octo-k8z1.1] Backend: Integrate agent-browser daemon per session (closed )
 - [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
-- [octo-k8z1.2] Backend: WebSocket proxy for screencast stream (closed )
+- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
