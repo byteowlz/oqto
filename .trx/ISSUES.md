@@ -136,15 +136,6 @@ Add runner RPC endpoints for per-user session state:
 ...
 
 
-### [octo-y1nq] Opencode agent connection cycling - rapid disconnect/reconnect loop (P1, bug)
-The opencode agent repeatedly disconnects and reconnects in rapid succession (observed 15+ cycles in logs). Pattern observed:
-
-[Event] agent_disconnected
-[Event] agent_reconnecting  
-[Event] agent_connected
-...
-
-
 ### [octo-thhx.2] Onboarding API endpoints (P1, task)
 REST endpoints: GET/PUT /api/onboarding/state, POST /api/onboarding/unlock/{component}, POST /api/onboarding/godmode, POST /api/onboarding/complete
 
@@ -386,17 +377,6 @@ Keep docker multi-user working:
 ### [octo-f50n] redirect to login for unauthenticated users (P2, task)
 
 ### [octo-85f4] the stop button doesnt seem to stop a running agent response (P2, bug)
-
-### [octo-8pfr] 503 Service Unavailable on /code/ endpoints during agent reconnection (P2, bug)
-Multiple requests to opencode proxy endpoints return 503 Service Unavailable:
-
-- /code/session/{id}/message - fetching messages
-- /code/config/providers - getting provider config  
-- /code/session/{id}/prompt_async - sending prompts
-...
-
-
-### [octo-aexm] message order gets mixed up in opencode session: earlier message shows up as latest message. (P2, bug)
 
 ### [octo-e8q8] There is no way to display closed trx issues (P2, bug)
 
@@ -895,6 +875,9 @@ Desired behavior: Tool calls hidden by default, toggle to show
 
 ## Closed
 
+- [octo-aexm] message order gets mixed up in opencode session: earlier message shows up as latest message. (closed 2026-02-04)
+- [octo-8pfr] 503 Service Unavailable on /code/ endpoints during agent reconnection (closed 2026-02-04)
+- [octo-y1nq] Opencode agent connection cycling - rapid disconnect/reconnect loop (closed 2026-02-04)
 - [octo-cvy0] Configurable chat prefetch limit (closed 2026-02-04)
 - [octo-zjs8] Rust Code Quality & Compilation Optimization (closed 2026-02-04)
 - [octo-qs75] Raw commands like ({"command":"ls -la"}) appear in pi chat messages (closed 2026-02-02)
@@ -1446,9 +1429,9 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
-- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
-- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
-- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
 - [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
-- [octo-k8z1.2] Backend: WebSocket proxy for screencast stream (closed )
+- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
 - [octo-k8z1.1] Backend: Integrate agent-browser daemon per session (closed )
+- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
+- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
+- [octo-k8z1.2] Backend: WebSocket proxy for screencast stream (closed )
