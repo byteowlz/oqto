@@ -2,6 +2,7 @@
 
 import {
 	type ChatSession,
+	deleteDefaultChatPiSession,
 	deleteWorkspacePiSession,
 	listChatHistory,
 	updateChatSession,
@@ -304,7 +305,12 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 
 	const deleteChatSession = useCallback(async (sessionId: string) => {
 		try {
-			await deleteWorkspacePiSession(sessionId);
+			const session = chatHistoryRef.current.find((s) => s.id === sessionId);
+			if (session?.workspace_path) {
+				await deleteWorkspacePiSession(session.workspace_path, sessionId);
+			} else {
+				await deleteDefaultChatPiSession(sessionId);
+			}
 			setChatHistory((prev) => prev.filter((s) => s.id !== sessionId));
 			if (selectedChatSessionId === sessionId) {
 				setSelectedChatSessionId(null);

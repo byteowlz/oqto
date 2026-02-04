@@ -56,9 +56,6 @@ const AppShell = memo(function AppShell() {
 		deleteChatSession,
 		renameChatSession,
 		busySessions,
-		workspaceSessions,
-		selectedWorkspaceSession,
-		setSelectedWorkspaceSessionId,
 		projectDefaultAgents,
 		setProjectDefaultAgents,
 		setScrollToMessageId,
@@ -259,26 +256,13 @@ const AppShell = memo(function AppShell() {
 			setActiveAppId("sessions");
 			if (sessionsRoute) navigate(sessionsRoute);
 			sidebarState.setMobileMenuOpen(false);
-
-			const selectedSession = chatHistory.find((s) => s.id === sessionId);
-			if (selectedSession?.workspace_path) {
-				const matchingWorkspaceSession = workspaceSessions.find(
-					(ws) => ws.workspace_path === selectedSession.workspace_path,
-				);
-				if (matchingWorkspaceSession) {
-					setSelectedWorkspaceSessionId(matchingWorkspaceSession.id);
-				}
-			}
 		},
 		[
-			chatHistory,
 			navigate,
 			sessionsRoute,
 			setActiveAppId,
 			setSelectedChatSessionId,
-			setSelectedWorkspaceSessionId,
 			sidebarState,
-			workspaceSessions,
 		],
 	);
 
@@ -319,14 +303,6 @@ const AppShell = memo(function AppShell() {
 				await createNewChat(project.directory);
 				return;
 			}
-		}
-
-		if (selectedWorkspaceSession) {
-			setActiveAppId("sessions");
-			await createNewChat(
-				selectedWorkspaceSession.workspace_path ?? undefined,
-			);
-			return;
 		}
 
 		const currentWorkspacePath = selectedChatFromHistory?.workspace_path;
