@@ -29,9 +29,6 @@ Epic for enabling users to connect to multiple runners across different machines
 ...
 
 
-### [octo-3fkc] Use hstry canonical history + Pi export for rehydrate (P1, task)
-Implement canonical Pi history via hstry: persist canonical parts_json + metadata, backfill JSONL into hstry, and serve chat history from hstry with JSONL fallback. Preserve tool_call/tool_result fidelity and add immediate working indicator.
-
 ### [octo-zjs8.3] Add strict clippy lints to all Cargo.toml files (P1, task)
 Add workspace-level clippy configuration to deny warnings and enforce best practices
 
@@ -349,8 +346,6 @@ Keep docker multi-user working:
 
 
 ### [octo-h0by] add user self-service section in settings (change password etc) (P2, task)
-
-### [octo-f50n] redirect to login for unauthenticated users (P2, task)
 
 ### [octo-85f4] the stop button doesnt seem to stop a running agent response (P2, bug)
 
@@ -822,6 +817,8 @@ Desired behavior: Tool calls hidden by default, toggle to show
 
 ## Closed
 
+- [octo-3fkc] Use hstry canonical history + Pi export for rehydrate (closed 2026-02-04)
+- [octo-f50n] redirect to login for unauthenticated users (closed 2026-02-04)
 - [octo-ze9k] Dashboard with overview of scheduled tasks (skdlr), session information, trx issues etc. Similar to the admin panel but for all users (closed 2026-02-04)
 - [octo-p3n2.5] Sessions listing endpoint (closed 2026-02-04)
 - [workspace-5pmk.6] Create Tauri project structure (closed 2026-02-04)
@@ -1388,9 +1385,9 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
+- [octo-k8z1.1] Backend: Integrate agent-browser daemon per session (closed )
+- [octo-k8z1.2] Backend: WebSocket proxy for screencast stream (closed )
+- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
+- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
 - [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
 - [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
-- [octo-k8z1.2] Backend: WebSocket proxy for screencast stream (closed )
-- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
-- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
-- [octo-k8z1.1] Backend: Integrate agent-browser daemon per session (closed )
