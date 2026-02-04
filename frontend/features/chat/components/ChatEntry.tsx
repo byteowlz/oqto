@@ -83,7 +83,7 @@ export interface DefaultChatEntryProps {
  * Shows a pinned entry for the user's default chat assistant.
  * If no assistant exists, shows a setup prompt.
  */
-export function DefaultChatEntry({
+export function ChatEntry({
 	isSelected,
 	activeSessionId,
 	newSessionTrigger,

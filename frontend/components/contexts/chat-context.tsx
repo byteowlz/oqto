@@ -57,11 +57,6 @@ export interface ChatContextValue {
 		sessionId: string,
 	) => void;
 	createNewChat: (
-		baseUrlOverride?: string,
-		directoryOverride?: string,
-		options?: { optimisticId?: string },
-	) => Promise<OpenCodeSession | null>;
-	createNewChat: (
 		workspacePath?: string,
 		options?: { optimisticId?: string },
 	) => Promise<string | null>;
@@ -127,7 +122,6 @@ const defaultChatContext: ChatContextValue = {
 	createOptimisticChatSession: () => "",
 	clearOptimisticChatSession: noop,
 	replaceOptimisticChatSession: noop,
-	createNewChat: asyncNoop,
 	createNewChat: asyncNoop,
 	deleteChatSession: asyncNoopBool,
 	renameChatSession: asyncNoopBool,
@@ -439,53 +433,6 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 
 	const createNewChat = useCallback(
 		async (
-			baseUrlOverride?: string,
-			directoryOverride?: string,
-			options?: { optimisticId?: string },
-		): Promise<OpenCodeSession | null> => {
-			const baseUrl = baseUrlOverride || opencodeBaseUrl;
-			if (!baseUrl) return null;
-			try {
-				const directory = directoryOverride || opencodeDirectory;
-				const created = await createSession(baseUrl, undefined, undefined, {
-					directory,
-				});
-				if (options?.optimisticId) {
-					clearOptimisticChatSession(options.optimisticId);
-				}
-				setOpencodeSessions((prev) => [created, ...prev]);
-				// Mark as recently created to prevent refresh from overriding selection
-				recentlyCreatedSessionRef.current = created.id;
-				setSelectedChatSessionId(created.id);
-				setTimeout(() => {
-					refreshChatHistory();
-					// Clear the recently created flag after refresh completes
-					setTimeout(() => {
-						if (recentlyCreatedSessionRef.current === created.id) {
-							recentlyCreatedSessionRef.current = null;
-						}
-					}, 100);
-				}, 500);
-				return created;
-			} catch (err) {
-				if (options?.optimisticId) {
-					clearOptimisticChatSession(options.optimisticId);
-				}
-				console.error("Failed to create new chat session:", err);
-				return null;
-			}
-		},
-		[
-			opencodeBaseUrl,
-			opencodeDirectory,
-			refreshChatHistory,
-			clearOptimisticChatSession,
-			setSelectedChatSessionId,
-		],
-	);
-
-	const createNewChat = useCallback(
-		async (
 			workspacePathOverride?: string,
 			options?: { optimisticId?: string },
 		): Promise<string | null> => {
@@ -676,7 +623,6 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 			clearOptimisticChatSession,
 			replaceOptimisticChatSession,
 			createNewChat,
-			createNewChat,
 			deleteChatSession,
 			renameChatSession,
 			opencodeDirectory,
@@ -695,7 +641,6 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 			createOptimisticChatSession,
 			clearOptimisticChatSession,
 			replaceOptimisticChatSession,
-			createNewChat,
 			createNewChat,
 			deleteChatSession,
 			renameChatSession,

@@ -28,7 +28,7 @@ export interface DefaultChatTimelineProps {
  * Vertical timeline showing Default Chat sessions as connected dots.
  * The active session (visible at top of viewport) is highlighted.
  */
-export function DefaultChatTimeline({
+export function ChatTimeline({
 	assistantName,
 	activeSessionId,
 	onSessionClick,

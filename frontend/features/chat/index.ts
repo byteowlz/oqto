@@ -19,6 +19,8 @@ export type { ChatEntryProps } from "./components/ChatEntry";
 export { ChatView } from "./components/ChatView";
 export type { ChatViewProps } from "./components/ChatView";
 export { ChatSettingsView } from "./components/ChatSettingsView";
+export { PiSettingsView } from "./components/PiSettingsView";
+export type { PiSettingsViewProps } from "./components/PiSettingsView";
 export {
 	ChatTimeline,
 	useActiveSessionTracker,
