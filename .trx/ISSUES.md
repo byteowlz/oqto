@@ -32,9 +32,6 @@ Epic for enabling users to connect to multiple runners across different machines
 ### [octo-3fkc] Use hstry canonical history + Pi export for rehydrate (P1, task)
 Implement canonical Pi history via hstry: persist canonical parts_json + metadata, backfill JSONL into hstry, and serve chat history from hstry with JSONL fallback. Preserve tool_call/tool_result fidelity and add immediate working indicator.
 
-### [octo-gj7p] Integrate hstry-core for message persistence (P1, feature)
-Replace Octo's canon module with hstry-core types. On message complete, call hstry daemon's gRPC WriteService instead of writing to main_chat.db. Use source_id=pi and Pi session IDs as external_id for deduplication.
-
 ### [octo-zjs8.3] Add strict clippy lints to all Cargo.toml files (P1, task)
 Add workspace-level clippy configuration to deny warnings and enforce best practices
 
@@ -145,9 +142,6 @@ Backend model for tracking onboarding progress, unlocked components, user level,
 ### [octo-thhx] Onboarding & Agent UI Control (P1, epic)
 Progressive onboarding experience with agent-driven UI control, spotlight system, and i18n support
 
-### [octo-70pz] Add session naming - auto-generate from first message, allow editing (P1, feature)
-Superseded: Session titles come from Pi session files (first user message) and are cached client-side.
-
 ### [octo-af5j.7.6] Release manifest generator (byt release) (P1, task)
 byt release command that: 1) Reads component list from octo/release.toml, 2) Fetches current version from each repo (Cargo.toml, package.json, go.mod), 3) Generates versions.toml with all pinned versions, 4) Optionally tags all repos with octo-0.2.0 tag
 
@@ -187,23 +181,11 @@ Expose workspace+location targets to agent UI and API. Require explicit selectio
 ### [octo-6nhg] Shared workspace UI grouping + merge/split (P2, task)
 Group sessions by team and workspace, show locations nested. Add merge-by-repo default with split toggle; indicate local/remote and active location.
 
-### [octo-zd43] Collapse consecutive tool calls into tabbed dropdown (P2, task)
-Implement level-2 tool rendering: consecutive tool calls with no intervening text collapse into a single dropdown with icons as tabs; overflow uses horizontal scroll + left/right arrows.
-
 ### [octo-jxn7] Add verbosity setting + persistence (P2, task)
 Expose chat verbosity level (1-3) in frontend settings and persist to localStorage. Default to 3.
 
 ### [octo-rpxy] Chat verbosity levels for tool calls (P2, epic)
 Add frontend verbosity levels for chat rendering. Level 3 = current verbose tool cards. Level 2 collapses consecutive tool calls into a single dropdown with tabbed icons and scroll+arrows when overflow. Level 1 TBD (minimal).
-
-### [octo-jwc4] Unify Pi chats (default + workspace) (P2, epic)
-Make Pi chat the single system of record. Treat 'main' as default scope. Unify endpoints, state handling, settings, and history loading (prefer Pi JSONL; use hstry for cross-harness search). Remove main-specific abstractions where possible.
-
-Progress (2026-02-03):
-- Added Pi session title updates (main + workspace) via JSONL header edits when /chat-history rename is used.
-- Session list de-duplication now merges by (workspace_path, readable_id) with newest metadata winning.
-...
-
 
 ### [octo-wah4] Security: Runner authentication and TLS for network endpoints (P2, task)
 Implement runner authentication and TLS for network endpoints:
@@ -321,9 +303,6 @@ Add support for MCP Apps extension to render interactive HTML interfaces (dashbo
 ### Phase 1: Frontend Host Support
 ...
 
-
-### [octo-95x0] Remove main_chat.db and duplicate message types (P2, chore)
-After hstry integration, remove: main_chat.db, canon/ module, ChatMessage/ChatMessagePart from history/models.rs, duplicate Message types from agent_rpc/types.rs. Use hstry-core types everywhere.
 
 ### [octo-zjs8.4] Optimize Rust compilation times (P2, task)
 Add .cargo/config.toml with linker optimizations, split-debuginfo, incremental builds, and codegen-units settings
@@ -650,15 +629,6 @@ Implementation:
 ...
 
 
-### [workspace-4eyc] Main Chat: JSONL export and backup (P2, task)
-Export mechanism for Main Chat history:
-
-/export command with options:
-- /export - export full history as JSONL
-- /export --sessions - export session list  
-...
-
-
 ### [workspace-5pmk.9] Configure iOS and Android targets (P2, task)
 Run tauri ios init and tauri android init. Configure permissions (microphone, network), app icons, splash screens, and build settings for both platforms.
 
@@ -680,9 +650,6 @@ Delete middleware.ts, implement client-side auth guard in app layout. Check auth
 ### [workspace-5pmk.3] Configure frontend for static export (P2, task)
 Set output: export in next.config.ts, disable image optimization, remove rewrites (backend handles routing).
 
-### [workspace-5pmk.2] Add voice WebSocket proxies to backend (P2, task)
-Add bidirectional WS proxy routes for eaRS (/api/voice/stt) and kokorox (/api/voice/tts). Simple passthrough, no protocol translation needed.
-
 ### [workspace-5pmk.1] Add static file serving to backend (P2, task)
 Use tower_http::services::ServeDir to serve frontend static export from /, with SPA fallback to index.html. Enables: (1) single-binary deployment without separate web server, (2) webapp mode without Next.js server, (3) simpler CORS since everything is same-origin.
 
@@ -694,9 +661,6 @@ Build Memories tab with Radix UI components. MemoryList (paginated, sortable), M
 
 ### [workspace-gg16.4] Frontend: React Query hooks for memories API (P2, task)
 Create TanStack Query hooks: useMemories, useMemorySearch, useCreateMemory, useUpdateMemory, useDeleteMemory. Handle pagination, optimistic updates, error states. Type definitions for Memory objects.
-
-### [workspace-gg16.3] Backend: Add mmry proxy API routes (P2, task)
-Add Axum routes to proxy mmry operations to user's instance. Routes: GET/POST /api/sessions/{id}/memories, GET/PUT/DELETE /api/sessions/{id}/memories/{memory_id}, POST /api/sessions/{id}/memories/search. Determine store from session workspace. Handle auth.
 
 ### [workspace-gg16.2] Per-user mmry instance management (P2, task)
 Octo backend spawns/manages lean mmry instance per user. Each user gets own SQLite database (~user/.local/share/mmry/ or container volume). Config delegates embeddings to host mmry-service. Track instance lifecycle similar to opencode/fileserver/ttyd.
@@ -866,6 +830,14 @@ Desired behavior: Tool calls hidden by default, toggle to show
 
 ## Closed
 
+- [workspace-gg16.3] Backend: Add mmry proxy API routes (closed 2026-02-04)
+- [octo-gj7p] Integrate hstry-core for message persistence (closed 2026-02-04)
+- [octo-95x0] Remove main_chat.db and duplicate message types (closed 2026-02-04)
+- [workspace-5pmk.2] Add voice WebSocket proxies to backend (closed 2026-02-04)
+- [workspace-4eyc] Main Chat: JSONL export and backup (closed 2026-02-04)
+- [octo-jwc4] Unify Pi chats (default + workspace) (closed 2026-02-04)
+- [octo-zd43] Collapse consecutive tool calls into tabbed dropdown (closed 2026-02-04)
+- [octo-70pz] Add session naming - auto-generate from first message, allow editing (closed 2026-02-04)
 - [octo-9qkv] Improve opencode chat error notifications (top-right toast) (closed 2026-02-04)
 - [octo-aexm] message order gets mixed up in opencode session: earlier message shows up as latest message. (closed 2026-02-04)
 - [octo-8pfr] 503 Service Unavailable on /code/ endpoints during agent reconnection (closed 2026-02-04)
@@ -1421,9 +1393,9 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
+- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
 - [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
 - [octo-k8z1.2] Backend: WebSocket proxy for screencast stream (closed )
-- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
 - [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
-- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
 - [octo-k8z1.1] Backend: Integrate agent-browser daemon per session (closed )
+- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
