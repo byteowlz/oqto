@@ -752,6 +752,8 @@ struct SessionUiConfig {
     idle_timeout_minutes: i64,
     /// Idle cleanup check interval in seconds.
     idle_check_interval_seconds: u64,
+    /// Number of recent sessions to prefetch chat messages for.
+    chat_prefetch_limit: usize,
 }
 
 impl Default for SessionUiConfig {
@@ -762,6 +764,7 @@ impl Default for SessionUiConfig {
             max_concurrent_sessions: session::SessionService::DEFAULT_MAX_CONCURRENT_SESSIONS,
             idle_timeout_minutes: session::SessionService::DEFAULT_IDLE_TIMEOUT_MINUTES,
             idle_check_interval_seconds: 5 * 60,
+            chat_prefetch_limit: 8,
         }
     }
 }

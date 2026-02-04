@@ -6,6 +6,7 @@ import { useApp } from "@/hooks/use-app";
 import { useCommandPalette } from "@/hooks/use-command-palette";
 import type { HstrySearchHit } from "@/lib/control-plane-client";
 import { getSettingsValues } from "@/lib/control-plane-client";
+import { setChatPrefetchLimit } from "@/lib/app-settings";
 import { type OpenCodeAgent, fetchAgents } from "@/lib/opencode-client";
 import { cn } from "@/lib/utils";
 import { Clock, PanelLeftClose, PanelRightClose } from "lucide-react";
@@ -279,8 +280,11 @@ const AppShell = memo(function AppShell() {
 				if (!mounted) return;
 				const raw = values["sessions.max_concurrent_sessions"]?.value;
 				// Session limit unused but kept for future use
+				setChatPrefetchLimit(values["sessions.chat_prefetch_limit"]?.value);
 			})
-			.catch(() => {});
+			.catch(() => {
+				setChatPrefetchLimit(null);
+			});
 		return () => {
 			mounted = false;
 		};

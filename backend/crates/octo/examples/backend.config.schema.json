@@ -599,6 +599,12 @@
           "description": "Idle cleanup check interval in seconds",
           "minimum": 10,
           "default": 300
+        },
+        "chat_prefetch_limit": {
+          "type": "integer",
+          "description": "Number of recent chat sessions to prefetch messages for",
+          "minimum": 0,
+          "default": 8
         }
       },
       "additionalProperties": false

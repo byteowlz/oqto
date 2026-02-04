@@ -21,6 +21,7 @@ import {
 	resolveReadableId,
 } from "@/lib/session-utils";
 import { getWsManager } from "@/lib/ws-manager";
+import { getChatPrefetchLimit } from "@/lib/app-settings";
 import {
 	type ReactNode,
 	createContext,
@@ -84,7 +85,6 @@ const asyncNoopBool = async () => false;
 
 const CHAT_HISTORY_CACHE_KEY = "octo:chatHistoryCache:v1";
 const CHAT_HISTORY_CACHE_MAX_CHARS = 2_000_000;
-const CHAT_HISTORY_PREFETCH_LIMIT = 8;
 const CHAT_HISTORY_PREFETCH_DEBOUNCE_MS = 2000;
 
 function readCachedChatHistory(): ChatSession[] {
@@ -359,9 +359,10 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 			const manager = getWsManager();
 			await manager.ensureConnected().catch(() => {});
 
+			const limit = getChatPrefetchLimit();
 			const candidates = sessions
 				.filter((s) => !isPendingSessionId(s.id))
-				.slice(0, CHAT_HISTORY_PREFETCH_LIMIT);
+				.slice(0, limit);
 
 			for (const session of candidates) {
 				manager.send({

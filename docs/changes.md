@@ -164,3 +164,4 @@
 - 2026-02-04: Scope pending working spinners to the active session and show them immediately after send.
 - 2026-02-04: Add an LRU Pi message cache in ws-mux (per-user memory caps, last-N messages) to make past chats load instantly.
 - 2026-02-04: Prefetch recent chat messages after history refresh to warm the ws-mux cache.
+- 2026-02-04: Add configurable chat history prefetch limit to global settings.
