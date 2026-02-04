@@ -169,9 +169,6 @@ Implementation:
 ...
 
 
-### [workspace-5pmk.11] Add backend URL configuration to login form (P1, task)
-Add a 'Server URL' field to the login form allowing users to specify the backend URL. Store in localStorage for persistence. Show connection status indicator. Default to current origin for web, require input for mobile apps.
-
 ### [octo-d0a5] Agent targeting for remote locations (P2, task)
 Expose workspace+location targets to agent UI and API. Require explicit selection for remote execution; enforce per-location policies and logging.
 
@@ -649,9 +646,6 @@ Build Memories tab with Radix UI components. MemoryList (paginated, sortable), M
 ### [workspace-gg16.4] Frontend: React Query hooks for memories API (P2, task)
 Create TanStack Query hooks: useMemories, useMemorySearch, useCreateMemory, useUpdateMemory, useDeleteMemory. Handle pagination, optimistic updates, error states. Type definitions for Memory objects.
 
-### [workspace-gg16.2] Per-user mmry instance management (P2, task)
-Octo backend spawns/manages lean mmry instance per user. Each user gets own SQLite database (~user/.local/share/mmry/ or container volume). Config delegates embeddings to host mmry-service. Track instance lifecycle similar to opencode/fileserver/ttyd.
-
 ### [workspace-x7gm.5] Frontend: Project management UI (P2, task)
 Add UI for:
 - Creating and managing projects
@@ -817,6 +811,8 @@ Desired behavior: Tool calls hidden by default, toggle to show
 
 ## Closed
 
+- [workspace-gg16.2] Per-user mmry instance management (closed 2026-02-04)
+- [workspace-5pmk.11] Add backend URL configuration to login form (closed 2026-02-04)
 - [octo-3fkc] Use hstry canonical history + Pi export for rehydrate (closed 2026-02-04)
 - [octo-f50n] redirect to login for unauthenticated users (closed 2026-02-04)
 - [octo-ze9k] Dashboard with overview of scheduled tasks (skdlr), session information, trx issues etc. Similar to the admin panel but for all users (closed 2026-02-04)
@@ -1386,8 +1382,8 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
 - [octo-k8z1.1] Backend: Integrate agent-browser daemon per session (closed )
-- [octo-k8z1.2] Backend: WebSocket proxy for screencast stream (closed )
-- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
 - [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
-- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
 - [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
+- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
+- [octo-k8z1.2] Backend: WebSocket proxy for screencast stream (closed )
+- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
