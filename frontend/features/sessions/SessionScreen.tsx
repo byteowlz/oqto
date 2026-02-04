@@ -235,7 +235,6 @@ export const SessionScreen = memo(function SessionScreen() {
 		selectedChatSessionId,
 		setSelectedChatSessionId,
 		selectedChatFromHistory,
-		defaultChatWorkspacePath,
 		createNewChat,
 		replaceOptimisticChatSession,
 		clearOptimisticChatSession,
@@ -259,18 +258,14 @@ export const SessionScreen = memo(function SessionScreen() {
 	const [expandedView, setExpandedView] = useState<ViewKey | null>(null);
 
 	const normalizedWorkspacePath = useMemo(
-		() =>
-			normalizeWorkspacePath(selectedChatFromHistory?.workspace_path) ??
-			defaultChatWorkspacePath,
-		[selectedChatFromHistory?.workspace_path, defaultChatWorkspacePath],
+		() => normalizeWorkspacePath(selectedChatFromHistory?.workspace_path),
+		[selectedChatFromHistory?.workspace_path],
 	);
-	const chatScope: "workspace" = "workspace";
 
 	const handleEnsureSession = useCallback(
 		async (workspacePath: string | null, optimisticId: string | null) => {
 			try {
-				const resolvedPath =
-					normalizeWorkspacePath(workspacePath) ?? defaultChatWorkspacePath;
+				const resolvedPath = normalizeWorkspacePath(workspacePath);
 				if (!resolvedPath) {
 					return null;
 				}
@@ -298,7 +293,6 @@ export const SessionScreen = memo(function SessionScreen() {
 		},
 		[
 			clearOptimisticChatSession,
-			defaultChatWorkspacePath,
 			refreshChatHistory,
 			replaceOptimisticChatSession,
 			setSelectedChatSessionId,
@@ -306,13 +300,10 @@ export const SessionScreen = memo(function SessionScreen() {
 	);
 
 	const handleNewChat = useCallback(async () => {
-		const id = await createNewChat(
-			normalizedWorkspacePath ?? defaultChatWorkspacePath ?? undefined,
-		);
+		const id = await createNewChat(normalizedWorkspacePath ?? undefined);
 		if (id) setSelectedChatSessionId(id);
 	}, [
 		createNewChat,
-		defaultChatWorkspacePath,
 		normalizedWorkspacePath,
 		setSelectedChatSessionId,
 	]);
@@ -351,7 +342,6 @@ export const SessionScreen = memo(function SessionScreen() {
 			locale={locale}
 			className="flex-1"
 			features={features}
-			scope={chatScope}
 			workspacePath={normalizedWorkspacePath}
 			selectedSessionId={selectedChatSessionId}
 			onSelectedSessionIdChange={setSelectedChatSessionId}
@@ -633,7 +623,6 @@ export const SessionScreen = memo(function SessionScreen() {
 							<Suspense fallback={viewLoadingFallback}>
 								<PiSettingsView
 									locale={locale}
-									scope={chatScope}
 									sessionId={selectedChatSessionId}
 									workspacePath={normalizedWorkspacePath}
 								/>
@@ -948,7 +937,6 @@ export const SessionScreen = memo(function SessionScreen() {
 										<Suspense fallback={viewLoadingFallback}>
 											<PiSettingsView
 												locale={locale}
-												scope={chatScope}
 												sessionId={selectedChatSessionId}
 												workspacePath={normalizedWorkspacePath}
 											/>

@@ -80,7 +80,6 @@ export interface SessionContextValue {
 	createNewChat: (workspacePath?: string) => Promise<string | null>;
 	deleteChatSession: (sessionId: string) => Promise<boolean>;
 	renameChatSession: (sessionId: string, title: string) => Promise<boolean>;
-	defaultChatWorkspacePath: string | null;
 }
 
 const noop = () => {};
@@ -116,7 +115,6 @@ const defaultSessionContext: SessionContextValue = {
 	createNewChat: asyncNoop,
 	deleteChatSession: asyncNoopBool,
 	renameChatSession: asyncNoopBool,
-	defaultChatWorkspacePath: null,
 };
 
 const SessionContext = createContext<SessionContextValue>(
@@ -166,7 +164,6 @@ function SessionContextComposer({ children }: { children: ReactNode }) {
 			createNewChat: chat.createNewChat,
 			deleteChatSession: chat.deleteChatSession,
 			renameChatSession: chat.renameChatSession,
-			defaultChatWorkspacePath: chat.defaultChatWorkspacePath,
 		}),
 		[workspace, chat],
 	);

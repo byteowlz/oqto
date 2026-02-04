@@ -1835,7 +1835,8 @@ export function normalizeWorkspacePath(
 ): string | null {
 	if (!workspacePath) return null;
 	const trimmed = workspacePath.trim();
-	if (!trimmed || trimmed === "global") return null;
+	if (!trimmed) return null;
+	if (trimmed === "global" || trimmed.startsWith("global/")) return null;
 	return trimmed;
 }
 

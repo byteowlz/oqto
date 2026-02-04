@@ -11,7 +11,7 @@ import type {
 import { authFetch, controlPlaneApiUrl, readApiError } from "./client";
 
 const normalizeWorkspacePathValue = (path?: string | null): string | null => {
-	if (!path || path === "global") return null;
+	if (!path || path === "global" || path.startsWith("global/")) return null;
 	return path;
 };
 

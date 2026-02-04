@@ -3,7 +3,6 @@
 import {
 	type ChatSession,
 	deleteWorkspacePiSession,
-	getDefaultChatAssistant,
 	listChatHistory,
 	updateChatSession,
 } from "@/lib/api";
@@ -57,8 +56,6 @@ export interface ChatContextValue {
 	) => Promise<string | null>;
 	deleteChatSession: (sessionId: string) => Promise<boolean>;
 	renameChatSession: (sessionId: string, title: string) => Promise<boolean>;
-	/** Resolved default chat workspace path, if available. */
-	defaultChatWorkspacePath: string | null;
 }
 
 const noop = () => {};
@@ -80,7 +77,11 @@ function readCachedChatHistory(): ChatSession[] {
 			return [];
 		}
 		const parsed = JSON.parse(raw) as ChatSession[];
-		return Array.isArray(parsed) ? parsed : [];
+		if (!Array.isArray(parsed)) return [];
+		return parsed.map((session) => ({
+			...session,
+			workspace_path: normalizeWorkspacePath(session.workspace_path),
+		}));
 	} catch {
 		return [];
 	}
@@ -115,7 +116,6 @@ const defaultChatContext: ChatContextValue = {
 	createNewChat: asyncNoop,
 	deleteChatSession: asyncNoopBool,
 	renameChatSession: asyncNoopBool,
-	defaultChatWorkspacePath: null,
 };
 
 const ChatContext = createContext<ChatContextValue>(defaultChatContext);
@@ -126,18 +126,6 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 	const [chatHistory, setChatHistory] = useState<ChatSession[]>(() =>
 		readCachedChatHistory(),
 	);
-	const [defaultChatWorkspacePath, setDefaultChatWorkspacePath] = useState<
-		string | null
-	>(() => {
-		if (typeof window === "undefined") return null;
-		try {
-			return normalizeWorkspacePath(
-				localStorage.getItem("defaultChatWorkspacePath"),
-			);
-		} catch {
-			return null;
-		}
-	});
 	const chatHistoryRef = useRef<ChatSession[]>([]);
 	const optimisticChatSessionsRef = useRef<Map<string, ChatSession>>(new Map());
 	const optimisticSelectionRef = useRef<Map<string, string | null>>(new Map());
@@ -214,22 +202,15 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 		[],
 	);
 
-	const normalizeHistory = useCallback(
-		(history: ChatSession[]) => {
-			if (!defaultChatWorkspacePath) return history;
-			return history.map((session) => {
-				const normalized = normalizeWorkspacePath(session.workspace_path);
-				if (!normalized) {
-					return {
-						...session,
-						workspace_path: defaultChatWorkspacePath,
-					};
-				}
-				return session;
-			});
-		},
-		[defaultChatWorkspacePath],
-	);
+	const normalizeHistory = useCallback((history: ChatSession[]) => {
+		return history.map((session) => {
+			const normalized = normalizeWorkspacePath(session.workspace_path);
+			return {
+				...session,
+				workspace_path: normalized ?? null,
+			};
+		});
+	}, []);
 
 	const refreshChatHistory = useCallback(async () => {
 		const prefetchLimit = getChatPrefetchLimit();
@@ -257,42 +238,13 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 		refreshChatHistory();
 	}, [refreshChatHistory]);
 
-	useEffect(() => {
-		let cancelled = false;
-		getDefaultChatAssistant("default")
-			.then((info) => {
-				if (cancelled) return;
-				const normalized = normalizeWorkspacePath(info.path);
-				setDefaultChatWorkspacePath(normalized);
-				try {
-					if (normalized) {
-						localStorage.setItem("defaultChatWorkspacePath", normalized);
-					} else {
-						localStorage.removeItem("defaultChatWorkspacePath");
-					}
-				} catch {
-					// ignore storage failures
-				}
-				if (normalized) {
-					setChatHistory((prev) => normalizeHistory(prev));
-				}
-			})
-			.catch(() => {
-				if (!cancelled) setDefaultChatWorkspacePath(null);
-			});
-		return () => {
-			cancelled = true;
-		};
-	}, [normalizeHistory]);
-
 	const createOptimisticChatSession = useCallback(
 		(sessionId: string, workspacePath?: string) => {
 			const optimisticId = sessionId;
 			if (optimisticChatSessionsRef.current.has(optimisticId)) {
 				return optimisticId;
 			}
-			const resolvedPath =
-				normalizeWorkspacePath(workspacePath) ?? defaultChatWorkspacePath;
+			const resolvedPath = normalizeWorkspacePath(workspacePath);
 			const session: ChatSession = {
 				id: optimisticId,
 				readable_id: null,
@@ -313,7 +265,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 			});
 			return optimisticId;
 		},
-		[defaultChatWorkspacePath, locale, selectedChatSessionId],
+		[locale, selectedChatSessionId],
 	);
 
 	const clearOptimisticChatSession = useCallback((sessionId: string) => {
@@ -358,28 +310,20 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 
 	const createNewChat = useCallback(
 		async (workspacePath?: string) => {
-			const resolvedPath =
-				normalizeWorkspacePath(workspacePath) ?? defaultChatWorkspacePath ?? null;
+			const resolvedPath = normalizeWorkspacePath(workspacePath) ?? null;
 			const sessionId = createPendingSessionId();
 			createOptimisticChatSession(sessionId, resolvedPath);
 			setSelectedChatSessionId(sessionId);
 			void refreshChatHistory();
 			return sessionId;
 		},
-		[
-			createOptimisticChatSession,
-			defaultChatWorkspacePath,
-			refreshChatHistory,
-			setSelectedChatSessionId,
-		],
+		[createOptimisticChatSession, refreshChatHistory, setSelectedChatSessionId],
 	);
 
 	const deleteChatSession = useCallback(async (sessionId: string) => {
 		try {
 			const session = chatHistoryRef.current.find((s) => s.id === sessionId);
-			const resolvedPath =
-				normalizeWorkspacePath(session?.workspace_path) ??
-				defaultChatWorkspacePath;
+			const resolvedPath = normalizeWorkspacePath(session?.workspace_path);
 			if (resolvedPath) {
 				await deleteWorkspacePiSession(resolvedPath, sessionId);
 			}
@@ -391,7 +335,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 		} catch {
 			return false;
 		}
-	}, [defaultChatWorkspacePath, selectedChatSessionId, setSelectedChatSessionId]);
+	}, [selectedChatSessionId, setSelectedChatSessionId]);
 
 	const renameChatSession = useCallback(
 		async (sessionId: string, title: string): Promise<boolean> => {
@@ -416,7 +360,6 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 			selectedChatSessionId,
 			setSelectedChatSessionId,
 			selectedChatFromHistory,
-			defaultChatWorkspacePath,
 			busySessions,
 			setSessionBusy,
 			refreshChatHistory,
@@ -433,7 +376,6 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 			selectedChatSessionId,
 			setSelectedChatSessionId,
 			selectedChatFromHistory,
-			defaultChatWorkspacePath,
 			busySessions,
 			setSessionBusy,
 			refreshChatHistory,

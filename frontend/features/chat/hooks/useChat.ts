@@ -59,7 +59,6 @@ function isPiDebugEnabled(): boolean {
 export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 	const {
 		autoConnect = true,
-		scope = "default",
 		workspacePath = null,
 		storageKeyPrefix,
 		selectedSessionId,
@@ -69,15 +68,11 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 	} = options;
 
 	const normalizedWorkspacePath = normalizeWorkspacePath(workspacePath);
-	const effectiveScope =
-		scope === "workspace" && !normalizedWorkspacePath ? "default" : scope;
 	const resolvedStorageKeyPrefix =
 		storageKeyPrefix ??
-		(effectiveScope === "default"
-			? "octo:defaultChatPi:v2"
-			: `octo:workspacePi:v2:${sanitizeStorageKey(
-					normalizedWorkspacePath ?? "unknown",
-				)}`);
+		`octo:workspacePi:v2:${sanitizeStorageKey(
+			normalizedWorkspacePath ?? "unknown",
+		)}`;
 
 	const activeSessionId = selectedSessionId ?? null;
 	const activeSessionIdRef = useRef(activeSessionId);

@@ -306,16 +306,10 @@ const AppShell = memo(function AppShell() {
 		}
 
 		const currentWorkspacePath = selectedChatFromHistory?.workspace_path;
-		if (currentWorkspacePath && currentWorkspacePath !== "global") {
-			setActiveAppId("sessions");
-			await createNewChat(currentWorkspacePath);
-			return;
-		}
 
 		setActiveAppId("sessions");
-		await createNewChat(undefined);
+		await createNewChat(currentWorkspacePath ?? undefined);
 	}, [
-		selectedWorkspaceSession,
 		selectedChatFromHistory,
 		selectedProjectKey,
 		sessionData.projectSummaries,

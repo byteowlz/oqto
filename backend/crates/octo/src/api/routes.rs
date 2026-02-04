@@ -545,7 +545,7 @@ pub fn create_router_with_config(state: AppState, max_upload_size_mb: usize) -> 
         .with_state(state);
 
     let permissions_policy = HeaderValue::from_static(
-        "geolocation=(), microphone=(), camera=()",
+        "geolocation=(), microphone=(self), camera=()",
     );
 
     Router::new()

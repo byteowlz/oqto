@@ -89,6 +89,10 @@ fn list_workspace_pi_sessions(state: &AppState, user_id: &str) -> Vec<ChatSessio
     let canonical_root = workspace_root
         .canonicalize()
         .unwrap_or_else(|_| workspace_root.clone());
+    let main_chat_dir = state
+        .main_chat
+        .as_ref()
+        .map(|main_chat| main_chat.get_main_chat_dir(user_id));
 
     let sessions = match workspace_pi.list_sessions_for_user(user_id) {
         Ok(sessions) => sessions,
@@ -101,8 +105,14 @@ fn list_workspace_pi_sessions(state: &AppState, user_id: &str) -> Vec<ChatSessio
     sessions
         .into_iter()
         .filter_map(|session| {
-            let workspace_path = session.workspace_path.clone();
-            if workspace_path != "global" && !workspace_path.is_empty() {
+            let mut workspace_path = session.workspace_path.clone();
+            if workspace_path.is_empty() || workspace_path == "global" {
+                if let Some(ref main_chat_dir) = main_chat_dir {
+                    workspace_path = main_chat_dir.to_string_lossy().to_string();
+                }
+            }
+
+            if !workspace_path.is_empty() {
                 let path = PathBuf::from(&workspace_path);
                 let canonical = if path.exists() {
                     path.canonicalize().unwrap_or(path.clone())
@@ -110,10 +120,15 @@ fn list_workspace_pi_sessions(state: &AppState, user_id: &str) -> Vec<ChatSessio
                     path.clone()
                 };
 
-                if !canonical.starts_with(&canonical_root) {
+                let allowed = canonical.starts_with(&canonical_root)
+                    || main_chat_dir
+                        .as_ref()
+                        .map(|dir| canonical.starts_with(dir))
+                        .unwrap_or(false);
+
+                if !allowed {
                     return None;
                 }
-
             }
 
             let project_name = crate::history::project_name_from_path(&workspace_path);

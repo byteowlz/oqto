@@ -67,9 +67,7 @@ export type PiSendOptions = {
 export type UsePiChatOptions = {
 	/** Auto-connect on mount */
 	autoConnect?: boolean;
-	/** Scope for Pi sessions */
-	scope?: "default" | "workspace";
-	/** Workspace path (required for workspace scope) */
+	/** Workspace path */
 	workspacePath?: string | null;
 	/** Storage key prefix for cached messages */
 	storageKeyPrefix?: string;

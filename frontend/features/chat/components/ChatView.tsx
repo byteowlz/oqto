@@ -36,7 +36,6 @@ import { useChatContext } from "@/components/contexts/chat-context";
 import {
 	type Features,
 	type PiModelInfo,
-	getDefaultChatPiModels,
 	getWorkspacePiModels,
 } from "@/features/chat/api";
 import { type A2UISurfaceState, useA2UI } from "@/hooks/use-a2ui";
@@ -116,8 +115,6 @@ export interface ChatViewProps {
 	locale?: "en" | "de";
 	/** Class name for container */
 	className?: string;
-	/** Scope for Pi sessions */
-	scope?: "default" | "workspace";
 	/** Storage key prefix for cached messages */
 	storageKeyPrefix?: string;
 	/** Features config (for voice settings) */
@@ -161,7 +158,6 @@ export interface ChatViewProps {
 export function ChatView({
 	locale = "en",
 	className,
-	scope = "default",
 	storageKeyPrefix,
 	features,
 	workspacePath,
@@ -189,21 +185,14 @@ export function ChatView({
 		[workspacePath],
 	);
 
-	const isMainScope = scope === "default";
 	const resolvedStorageKeyPrefix =
 		storageKeyPrefix ??
-		(isMainScope
-			? "octo:defaultChatPi"
-			: `octo:workspacePi:${(normalizedWorkspacePath ?? "default").replace(
-					/[^a-zA-Z0-9._-]+/g,
-					"_",
-				)}`);
-	const draftStorageKey = isMainScope
-		? `octo:defaultChatDraft:${selectedSessionId ?? "none"}`
-		: `${resolvedStorageKeyPrefix}:draft`;
-	const scrollStorageKey = isMainScope
-		? "octo:defaultChat:scrollPosition"
-		: `${resolvedStorageKeyPrefix}:scrollPosition`;
+		`octo:workspacePi:${(normalizedWorkspacePath ?? "default").replace(
+			/[^a-zA-Z0-9._-]+/g,
+			"_",
+		)}`;
+	const draftStorageKey = `${resolvedStorageKeyPrefix}:draft`;
+	const scrollStorageKey = `${resolvedStorageKeyPrefix}:scrollPosition`;
 	const { updateChatSessionTitleLocal, selectedChatFromHistory } =
 		useChatContext();
 	const sessionMeta = selectedChatFromHistory ?? null;
@@ -225,7 +214,6 @@ export function ChatView({
 		state: piState,
 		refresh,
 	} = useChat({
-		scope,
 		workspacePath: normalizedWorkspacePath,
 		storageKeyPrefix: resolvedStorageKeyPrefix,
 		selectedSessionId,
@@ -653,11 +641,9 @@ export function ChatView({
 		const targetSessionId = selectedSessionId ?? piState.session_id ?? null;
 		if (!targetSessionId) return;
 		let active = true;
-		const fetchModels = isMainScope
-			? getDefaultChatPiModels(targetSessionId)
-			: normalizedWorkspacePath
-				? getWorkspacePiModels(normalizedWorkspacePath, targetSessionId)
-				: Promise.resolve([]);
+		const fetchModels = normalizedWorkspacePath
+			? getWorkspacePiModels(normalizedWorkspacePath, targetSessionId)
+			: Promise.resolve([]);
 		fetchModels
 			.then((models) => {
 				if (active) setAvailableModels(models);
@@ -670,7 +656,6 @@ export function ChatView({
 		};
 	}, [
 		isConnected,
-		isMainScope,
 		piState,
 		selectedSessionId,
 		normalizedWorkspacePath,

@@ -1,4 +1,5 @@
 import type { ChatSession } from "@/lib/control-plane-client";
+import { normalizeWorkspacePath } from "@/lib/session-utils";
 import { useCallback, useState } from "react";
 
 export interface SessionDialogsState {
@@ -132,9 +133,10 @@ export function useSessionDialogs(): SessionDialogsState {
 		) => {
 			if (targetProjectKey) {
 				const sessionsToDelete = chatHistory.filter((s) => {
-					const key = s.workspace_path
-						? s.workspace_path.split("/").filter(Boolean).pop() || "global"
-						: "global";
+					const normalizedPath = normalizeWorkspacePath(s.workspace_path);
+					if (!normalizedPath) return false;
+					const key =
+						normalizedPath.split("/").filter(Boolean).pop() || normalizedPath;
 					return key === targetProjectKey;
 				});
 
