@@ -155,22 +155,24 @@ const TabButton = memo(function TabButton({
 	badge?: number;
 	hideLabel?: boolean;
 }) {
-	const isActive = activeView === view;
 	return (
 		<button
 			type="button"
 			onClick={() => onSelect(view)}
 			className={cn(
-				"flex-1 flex items-center justify-center gap-2 px-3 py-2 text-xs font-medium transition-colors rounded",
-				isActive
-					? "bg-background text-foreground"
-					: "text-muted-foreground hover:text-foreground hover:bg-muted/50",
+				"flex-1 flex items-center justify-center px-1.5 py-1 relative transition-colors",
+				activeView === view
+					? "bg-primary/15 text-foreground border border-primary"
+					: "text-muted-foreground border border-transparent hover:border-border hover:bg-muted/50",
 			)}
+			title={label}
 		>
 			<Icon className="w-4 h-4" />
-			{!hideLabel && <span className="truncate">{label}</span>}
-			{typeof badge === "number" && badge > 0 && (
-				<span className="text-[10px] px-1.5 py-0.5 bg-muted rounded-full">
+			{!hideLabel && (
+				<span className="hidden sm:inline ml-1 text-xs">{label}</span>
+			)}
+			{badge !== undefined && badge > 0 && (
+				<span className="absolute -top-0.5 -right-0.5 w-4 h-4 bg-pink-500 text-white text-[10px] rounded-[2px] flex items-center justify-center border-2 border-background">
 					{badge}
 				</span>
 			)}
@@ -193,22 +195,21 @@ const CollapsedTabButton = memo(function CollapsedTabButton({
 	label: string;
 	badge?: number;
 }) {
-	const isActive = activeView === view;
 	return (
 		<button
 			type="button"
 			onClick={() => onSelect(view)}
 			className={cn(
-				"relative p-2 rounded transition-colors",
-				isActive
-					? "bg-muted text-foreground"
-					: "text-muted-foreground hover:text-foreground hover:bg-muted/50",
+				"w-8 h-8 flex items-center justify-center relative transition-colors rounded",
+				activeView === view
+					? "bg-primary/15 text-foreground border border-primary"
+					: "text-muted-foreground border border-transparent hover:border-border hover:bg-muted/50",
 			)}
 			title={label}
 		>
 			<Icon className="w-4 h-4" />
-			{typeof badge === "number" && badge > 0 && (
-				<span className="absolute -top-1 -right-1 text-[10px] px-1 py-0.5 bg-muted rounded-full">
+			{badge !== undefined && badge > 0 && (
+				<span className="absolute -top-0.5 -right-0.5 w-4 h-4 bg-pink-500 text-white text-[10px] rounded-[2px] flex items-center justify-center border-2 border-background">
 					{badge}
 				</span>
 			)}
@@ -352,6 +353,7 @@ export const SessionScreen = memo(function SessionScreen() {
 			onTodosChange={setLatestTodos}
 			onMessageSent={refreshChatHistory}
 			onMessageComplete={refreshChatHistory}
+			hideHeader
 		/>
 	) : (
 		<EmptyWorkspacePanel
