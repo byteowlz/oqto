@@ -162,3 +162,5 @@
 - 2026-02-04: Parse auto-renamed Pi titles to extract readable IDs and clean titles for workspace sessions.
 - 2026-02-04: Update chat history and headers with parsed readable IDs once session names arrive.
 - 2026-02-04: Scope pending working spinners to the active session and show them immediately after send.
+- 2026-02-04: Add an LRU Pi message cache in ws-mux (per-user memory caps, last-N messages) to make past chats load instantly.
+- 2026-02-04: Prefetch recent chat messages after history refresh to warm the ws-mux cache.

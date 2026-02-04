@@ -41,38 +41,107 @@ use crate::ws::types::{WsCommand as LegacyWsCommand, WsEvent as LegacyWsEvent};
 
 use super::error::ApiError;
 
-const PI_MESSAGES_CACHE_TTL: Duration = Duration::from_secs(30);
+const PI_MESSAGES_CACHE_TTL: Duration = Duration::from_secs(15 * 60);
+const PI_MESSAGES_CACHE_MAX_BYTES_PER_USER: usize = 100 * 1024 * 1024;
+const PI_MESSAGES_CACHE_MAX_MESSAGES_PER_SESSION: usize = 200;
 
 struct CachedPiMessages {
     cached_at: Instant,
+    last_access: Instant,
     messages: Value,
+    size_bytes: usize,
 }
 
-static PI_MESSAGES_CACHE: Lazy<tokio::sync::RwLock<HashMap<String, CachedPiMessages>>> =
+struct CachedPiUserMessages {
+    total_bytes: usize,
+    entries: HashMap<String, CachedPiMessages>,
+}
+
+static PI_MESSAGES_CACHE: Lazy<tokio::sync::RwLock<HashMap<String, CachedPiUserMessages>>> =
     Lazy::new(|| tokio::sync::RwLock::new(HashMap::new()));
 
-async fn cache_pi_messages(user_id: &str, session_id: &str, messages: &Value) {
-    let key = format!("{}:{}", user_id, session_id);
-    let mut cache = PI_MESSAGES_CACHE.write().await;
-    cache.insert(
-        key,
-        CachedPiMessages {
-            cached_at: Instant::now(),
-            messages: messages.clone(),
-        },
-    );
+fn trim_messages_for_cache(messages: &Value) -> Value {
+    match messages {
+        Value::Array(items) => {
+            if items.len() <= PI_MESSAGES_CACHE_MAX_MESSAGES_PER_SESSION {
+                Value::Array(items.clone())
+            } else {
+                let start = items.len() - PI_MESSAGES_CACHE_MAX_MESSAGES_PER_SESSION;
+                Value::Array(items[start..].to_vec())
+            }
+        }
+        _ => messages.clone(),
+    }
 }
 
-async fn get_cached_pi_messages(user_id: &str, session_id: &str) -> Option<Value> {
-    let key = format!("{}:{}", user_id, session_id);
-    let cache = PI_MESSAGES_CACHE.read().await;
-    cache.get(&key).and_then(|entry| {
-        if entry.cached_at.elapsed() <= PI_MESSAGES_CACHE_TTL {
-            Some(entry.messages.clone())
+fn estimate_messages_size(messages: &Value) -> usize {
+    serde_json::to_string(messages).map(|s| s.len()).unwrap_or(0)
+}
+
+async fn cache_pi_messages(user_id: &str, session_id: &str, messages: &Value) {
+    let trimmed = trim_messages_for_cache(messages);
+    let size_bytes = estimate_messages_size(&trimmed);
+    let now = Instant::now();
+    let mut cache = PI_MESSAGES_CACHE.write().await;
+    let user_cache = cache
+        .entry(user_id.to_string())
+        .or_insert_with(|| CachedPiUserMessages {
+            total_bytes: 0,
+            entries: HashMap::new(),
+        });
+
+    if let Some(existing) = user_cache.entries.remove(session_id) {
+        user_cache.total_bytes = user_cache.total_bytes.saturating_sub(existing.size_bytes);
+    }
+
+    user_cache.total_bytes = user_cache.total_bytes.saturating_add(size_bytes);
+    user_cache.entries.insert(
+        session_id.to_string(),
+        CachedPiMessages {
+            cached_at: now,
+            last_access: now,
+            messages: trimmed,
+            size_bytes,
+        },
+    );
+
+    while user_cache.total_bytes > PI_MESSAGES_CACHE_MAX_BYTES_PER_USER {
+        if let Some((oldest_key, oldest_entry)) = user_cache
+            .entries
+            .iter()
+            .min_by_key(|(_, entry)| entry.last_access)
+            .map(|(k, v)| (k.clone(), v.size_bytes))
+        {
+            user_cache.entries.remove(&oldest_key);
+            user_cache.total_bytes = user_cache.total_bytes.saturating_sub(oldest_entry);
         } else {
-            None
+            break;
         }
-    })
+    }
+}
+
+struct CachedPiMessagesSnapshot {
+    messages: Value,
+    age: Duration,
+}
+
+async fn get_cached_pi_messages(user_id: &str, session_id: &str) -> Option<CachedPiMessagesSnapshot> {
+    let mut cache = PI_MESSAGES_CACHE.write().await;
+    let user_cache = cache.get_mut(user_id)?;
+    if let Some(entry) = user_cache.entries.get_mut(session_id) {
+        let age = entry.cached_at.elapsed();
+        if age <= PI_MESSAGES_CACHE_TTL {
+            entry.last_access = Instant::now();
+            return Some(CachedPiMessagesSnapshot {
+                messages: entry.messages.clone(),
+                age,
+            });
+        }
+        let size = entry.size_bytes;
+        user_cache.entries.remove(session_id);
+        user_cache.total_bytes = user_cache.total_bytes.saturating_sub(size);
+    }
+    None
 }
 use super::handlers::trx::{
     CloseTrxIssueRequest, CreateTrxIssueRequest, TrxWorkspaceQuery, UpdateTrxIssueRequest,
@@ -1792,12 +1861,13 @@ async fn handle_pi_command(
                 )
             };
 
-            if !is_active {
-                if let Some(cached) = get_cached_pi_messages(&user_id, &session_id).await {
+            if let Some(cached) = get_cached_pi_messages(&user_id, &session_id).await {
+                let use_cached = !is_active || cached.age <= Duration::from_secs(2);
+                if use_cached {
                     return Some(WsEvent::Pi(PiWsEvent::Messages {
                         id,
                         session_id,
-                        messages: cached,
+                        messages: cached.messages,
                     }));
                 }
             }
