@@ -638,9 +638,6 @@ Ensure touch targets (44px min), safe areas (notch/home indicator), and gestures
 ### [workspace-5pmk.7] Implement Tauri main with backend startup (P2, task)
 Start Axum backend on app launch, configure webview to load from backend URL. Handle graceful shutdown.
 
-### [workspace-5pmk.6] Create Tauri project structure (P2, task)
-Initialize src-tauri/ directory with Cargo.toml, tauri.conf.json, capabilities, and icons. Configure build commands for Next.js static export.
-
 ### [workspace-5pmk.5] Update voice URL resolution for proxy mode (P2, task)
 Detect Tauri/proxied mode, use relative WebSocket paths (/api/voice/stt, /api/voice/tts) instead of direct URLs from config.
 
@@ -830,6 +827,7 @@ Desired behavior: Tool calls hidden by default, toggle to show
 
 ## Closed
 
+- [workspace-5pmk.6] Create Tauri project structure (closed 2026-02-04)
 - [workspace-gg16.3] Backend: Add mmry proxy API routes (closed 2026-02-04)
 - [octo-gj7p] Integrate hstry-core for message persistence (closed 2026-02-04)
 - [octo-95x0] Remove main_chat.db and duplicate message types (closed 2026-02-04)
@@ -1393,9 +1391,9 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
-- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
+- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
 - [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
 - [octo-k8z1.2] Backend: WebSocket proxy for screencast stream (closed )
 - [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
 - [octo-k8z1.1] Backend: Integrate agent-browser daemon per session (closed )
-- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
+- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
