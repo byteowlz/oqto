@@ -493,15 +493,6 @@ Server-side browser for AI agent control, rendered in Octo frontend.
 ...
 
 
-### [octo-9qkv] Improve opencode chat error notifications (top-right toast) (P2, feature)
-Request: Provide clearer, more visible notifications for errors like session disconnect/resume failures, instead of (or in addition to) inline red banners. Prefer a popup/toast in the top-right that matches the app style.
-
-Motivation:
-- Current inline messages (e.g., 'resuming session' red text) can be easy to miss and can overlap UI controls.
-
-...
-
-
 ### [octo-2r4f] Add slug field to session model and API responses (P2, task)
 
 ### [octo-6pkd] Left sidebar: '+' next to SESSIONS should create session in current project; add separate 'new directory/project' button (P2, feature)
@@ -875,6 +866,7 @@ Desired behavior: Tool calls hidden by default, toggle to show
 
 ## Closed
 
+- [octo-9qkv] Improve opencode chat error notifications (top-right toast) (closed 2026-02-04)
 - [octo-aexm] message order gets mixed up in opencode session: earlier message shows up as latest message. (closed 2026-02-04)
 - [octo-8pfr] 503 Service Unavailable on /code/ endpoints during agent reconnection (closed 2026-02-04)
 - [octo-y1nq] Opencode agent connection cycling - rapid disconnect/reconnect loop (closed 2026-02-04)
@@ -1429,9 +1421,9 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
-- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
-- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
-- [octo-k8z1.1] Backend: Integrate agent-browser daemon per session (closed )
 - [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
-- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
 - [octo-k8z1.2] Backend: WebSocket proxy for screencast stream (closed )
+- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
+- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
+- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
+- [octo-k8z1.1] Backend: Integrate agent-browser daemon per session (closed )
