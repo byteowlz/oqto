@@ -159,3 +159,6 @@
 - 2026-02-04: Fetch Pi slash commands over ws-mux for all sessions and surface them in the slash picker.
 - 2026-02-04: Add `/stats` slash command to render Pi session stats as an assistant message.
 - 2026-02-04: Refresh token gauge stats via ws-mux session stats for all scopes.
+- 2026-02-04: Parse auto-renamed Pi titles to extract readable IDs and clean titles for workspace sessions.
+- 2026-02-04: Update chat history and headers with parsed readable IDs once session names arrive.
+- 2026-02-04: Scope pending working spinners to the active session and show them immediately after send.

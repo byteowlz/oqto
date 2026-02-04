@@ -1189,6 +1189,9 @@ export function ChatView({
 							.slice(2)}`;
 					}
 				}
+				setSendPendingSessionId(
+					selectedSessionId ?? pendingSendKeyRef.current ?? null,
+				);
 				let resolvedSessionId =
 					selectedSessionId ?? pendingSendKeyRef.current ?? null;
 				if (!resolvedSessionId || isPendingSessionId(resolvedSessionId)) {
@@ -1268,6 +1271,9 @@ export function ChatView({
 							.slice(2)}`;
 					}
 				}
+				setSendPendingSessionId(
+					selectedSessionId ?? pendingSendKeyRef.current ?? null,
+				);
 				let resolvedSessionId =
 					selectedSessionId ?? pendingSendKeyRef.current ?? null;
 				if (!resolvedSessionId || isPendingSessionId(resolvedSessionId)) {
@@ -1635,15 +1641,12 @@ export function ChatView({
 								const visibleMessages = messages.slice(-visibleCount);
 								const grouped = groupPiMessages(visibleMessages);
 								const lastGroup = grouped[grouped.length - 1];
-								const activeSessionKey =
-									sendPendingSessionId ??
-									selectedSessionId ??
-									pendingSendKeyRef.current ??
-									null;
-								const isWorking =
-									isStreaming ||
-									isAwaitingResponse ||
-									(sendPending && sendPendingSessionId === activeSessionKey);
+							const activeSessionKey =
+								selectedSessionId ?? pendingSendKeyRef.current ?? null;
+							const isWorking =
+								isStreaming ||
+								isAwaitingResponse ||
+								(sendPending && !!sendPendingSessionId && sendPendingSessionId === activeSessionKey);
 							const needsPendingAssistant =
 								isWorking && (!lastGroup || lastGroup.role === "user");
 							const groupsToRender = needsPendingAssistant

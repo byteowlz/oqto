@@ -77,6 +77,7 @@ pub struct PiSessionMessage {
 pub struct WorkspacePiSessionSummary {
     pub id: String,
     pub title: Option<String>,
+    pub readable_id: Option<String>,
     pub parent_id: Option<String>,
     pub workspace_path: String,
     pub created_at: i64,
@@ -801,6 +802,10 @@ impl WorkspacePiService {
             Some(Value::Number(n)) => Some(n.to_string()),
             _ => None,
         };
+        let header_readable_id = header
+            .get("readable_id")
+            .and_then(|v| v.as_str())
+            .map(|v| v.to_string());
         let mut session_info_name: Option<String> = None;
 
         for line in reader.lines().map_while(Result::ok) {
@@ -844,9 +849,22 @@ impl WorkspacePiService {
             title = Some(info_name);
         }
 
+        let mut readable_id = header_readable_id;
+        if let Some(current_title) = title.as_deref() {
+            let parsed = crate::pi::session_parser::ParsedTitle::parse(current_title);
+            if let Some(parsed_readable) = parsed.readable_id.clone() {
+                readable_id = Some(parsed_readable);
+            }
+            let cleaned = parsed.display_title().trim();
+            if !cleaned.is_empty() {
+                title = Some(cleaned.to_string());
+            }
+        }
+
         Some(WorkspacePiSessionSummary {
             id,
             title,
+            readable_id,
             parent_id,
             workspace_path,
             created_at,

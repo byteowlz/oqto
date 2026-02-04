@@ -141,6 +141,7 @@ import { type ModelOption, filterModelOptions } from "@/lib/model-filter";
 import { normalizePermissionEvent } from "@/lib/session-events";
 import {
 	formatSessionDate,
+	getDisplayPiTitle,
 	resolveReadableId,
 	isPendingSessionId,
 } from "@/lib/session-utils";
@@ -5458,8 +5459,9 @@ export const SessionScreen = memo(function SessionScreen() {
 
 	// Clean up session title - remove ISO timestamp suffix if present (e.g., "New session - 2025-12-18T07:46:58.478Z")
 	const cleanSessionTitle = (() => {
-		const title = selectedChatSession?.title ?? selectedChatFromHistory?.title;
-		if (!title) return null;
+		const titleSource = selectedChatSession?.title ?? selectedChatFromHistory?.title;
+		if (!titleSource) return null;
+		const title = getDisplayPiTitle({ title: titleSource });
 		// Remove " - YYYY-MM-DDTHH:MM:SS.sssZ" pattern from the end
 		return (
 			title

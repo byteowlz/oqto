@@ -118,9 +118,13 @@ fn list_workspace_pi_sessions(state: &AppState, user_id: &str) -> Vec<ChatSessio
             }
 
             let project_name = crate::history::project_name_from_path(&workspace_path);
+            let readable_id = session
+                .readable_id
+                .clone()
+                .unwrap_or_else(|| wordlist::readable_id_from_session_id(&session.id));
             Some(ChatSession {
                 id: session.id.clone(),
-                readable_id: wordlist::readable_id_from_session_id(&session.id),
+                readable_id,
                 title: session.title,
                 parent_id: session.parent_id.clone(),
                 workspace_path,
@@ -150,9 +154,13 @@ async fn update_pi_session_title(
                 .await
             {
                 let project_name = crate::history::project_name_from_path(&updated.workspace_path);
+                let readable_id = updated
+                    .readable_id
+                    .clone()
+                    .unwrap_or_else(|| wordlist::readable_id_from_session_id(&updated.id));
                 return Some(ChatSession {
                     id: updated.id.clone(),
-                    readable_id: wordlist::readable_id_from_session_id(&updated.id),
+                    readable_id,
                     title: updated.title,
                     parent_id: updated.parent_id.clone(),
                     workspace_path: updated.workspace_path,
