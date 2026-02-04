@@ -1,6 +1,7 @@
 "use client";
 
-import { getDefaultChatAssistant, listDefaultChatPiSessions } from "@/lib/control-plane-client";
+import { getDefaultChatAssistant, listDefaultChatPiSessions } from "@/lib/api";
+import { normalizeWorkspacePath } from "@/lib/session-utils";
 import {
 	type ReactNode,
 	createContext,
@@ -146,11 +147,12 @@ export function DefaultChatProvider({ children }: { children: ReactNode }) {
 
 	// Wrap setter to also cache to localStorage
 	const setDefaultChatWorkspacePath = useCallback((path: string | null) => {
-		setDefaultChatWorkspacePathRaw(path);
+		const normalized = normalizeWorkspacePath(path);
+		setDefaultChatWorkspacePathRaw(normalized);
 		if (typeof window !== "undefined") {
 			try {
-				if (path) {
-					localStorage.setItem("defaultChatWorkspacePath", path);
+				if (normalized) {
+					localStorage.setItem("defaultChatWorkspacePath", normalized);
 				} else {
 					localStorage.removeItem("defaultChatWorkspacePath");
 				}
@@ -169,10 +171,10 @@ export function DefaultChatProvider({ children }: { children: ReactNode }) {
 		// Try to load from cache first for instant display
 		if (typeof window !== "undefined") {
 			try {
-				const cached = localStorage.getItem("defaultChatWorkspacePath");
-				if (cached) {
-					setDefaultChatWorkspacePathRaw(cached);
-				}
+				const cached = normalizeWorkspacePath(
+					localStorage.getItem("defaultChatWorkspacePath"),
+				);
+				if (cached) setDefaultChatWorkspacePathRaw(cached);
 			} catch {
 				localStorage.removeItem("defaultChatWorkspacePath");
 			}

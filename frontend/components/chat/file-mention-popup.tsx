@@ -1,9 +1,10 @@
 "use client";
 
 import { fetchFileTreeMux } from "@/lib/mux-files";
+import { normalizeWorkspacePath } from "@/lib/session-utils";
 import { cn } from "@/lib/utils";
 import { File, Folder, Loader2 } from "lucide-react";
-import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 export interface FileAttachment {
 	id: string;
@@ -96,10 +97,14 @@ export const FileMentionPopup = memo(function FileMentionPopup({
 	const [error, setError] = useState<string | null>(null);
 	const [selectedIndex, setSelectedIndex] = useState(0);
 	const listRef = useRef<HTMLDivElement>(null);
+	const normalizedWorkspacePath = useMemo(
+		() => normalizeWorkspacePath(workspacePath),
+		[workspacePath],
+	);
 
 	// Load files when popup opens
 	useEffect(() => {
-		if (!isOpen || !workspacePath) {
+		if (!isOpen || !normalizedWorkspacePath) {
 			setFiles([]);
 			return;
 		}
@@ -107,7 +112,7 @@ export const FileMentionPopup = memo(function FileMentionPopup({
 		setLoading(true);
 		setError(null);
 
-		fetchFileTreeMux(workspacePath, ".", 10, false)
+		fetchFileTreeMux(normalizedWorkspacePath, ".", 10, false)
 			.then((data) => {
 				// Flatten and collect all files
 				const allFiles = collectAllFiles(data);

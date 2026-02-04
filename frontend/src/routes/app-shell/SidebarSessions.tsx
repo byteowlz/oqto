@@ -23,7 +23,10 @@ import type {
 	HstrySearchHit,
 	ProjectLogo,
 } from "@/lib/control-plane-client";
-import { formatSessionDate, resolveReadableId } from "@/lib/session-utils";
+import {
+	formatSessionDate,
+	getReadableIdFromSession,
+} from "@/lib/session-utils";
 import { cn } from "@/lib/utils";
 import {
 	ArrowDown,
@@ -441,16 +444,10 @@ export const SidebarSessions = memo(function SidebarSessions({
 										{locale === "de" ? "Alle Agenten" : "All agents"}
 									</DropdownMenuItem>
 									<DropdownMenuItem
-										onClick={() => setAgentFilter("opencode")}
-										className={cn(agentFilter === "opencode" && "bg-accent")}
-									>
-										{locale === "de" ? "Nur OpenCode" : "OpenCode only"}
-									</DropdownMenuItem>
-									<DropdownMenuItem
 										onClick={() => setAgentFilter("pi_agent")}
 										className={cn(agentFilter === "pi_agent" && "bg-accent")}
 									>
-										{locale === "de" ? "Nur Default Chat" : "Default Chat only"}
+										{locale === "de" ? "Nur Chat" : "Chat only"}
 									</DropdownMenuItem>
 								</>
 							)}
@@ -800,10 +797,7 @@ export const SidebarSessions = memo(function SidebarSessions({
 													) || [];
 												const hasChildren = children.length > 0;
 												const isExpanded = expandedSessions.has(session.id);
-												const readableId = resolveReadableId(
-													session.id,
-													session.readable_id,
-												);
+												const readableId = getReadableIdFromSession(session);
 												const formattedDate = session.updated_at
 													? formatSessionDate(session.updated_at)
 													: null;
@@ -901,14 +895,16 @@ export const SidebarSessions = memo(function SidebarSessions({
 															</div>
 														</ContextMenuTrigger>
 														<ContextMenuContent>
-																<ContextMenuItem
-																	onClick={() => {
-																		navigator.clipboard.writeText(readableId);
-																	}}
-																>
-																	<Copy className="w-4 h-4 mr-2" />
-																	{readableId}
-																</ContextMenuItem>
+																{readableId && (
+																	<ContextMenuItem
+																		onClick={() => {
+																			navigator.clipboard.writeText(readableId);
+																		}}
+																	>
+																		<Copy className="w-4 h-4 mr-2" />
+																		{readableId}
+																	</ContextMenuItem>
+																)}
 																<ContextMenuItem
 																	onClick={() => {
 																		navigator.clipboard.writeText(session.id);
@@ -963,10 +959,8 @@ export const SidebarSessions = memo(function SidebarSessions({
 																		selectedChatSessionId === child.id;
 																	const isChildMultiSelected =
 																		selectedSessionIds.has(child.id);
-																	const childReadableId = resolveReadableId(
-																		child.id,
-																		child.readable_id,
-																	);
+																	const childReadableId =
+																		getReadableIdFromSession(child);
 																	const childFormattedDate = child.updated_at
 																		? formatSessionDate(child.updated_at)
 																		: null;

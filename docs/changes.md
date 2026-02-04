@@ -1,5 +1,8 @@
 # Changes
 
+- 2026-02-04: Normalize default chat workspace paths to avoid invalid "global" workspace lookups.
+- 2026-02-04: Use pending session IDs for optimistic chats and replace them when Pi sessions are created.
+- 2026-02-04: Normalize workspace-scoped API calls to avoid accidental workspace Pi requests without a path.
 - 2026-02-03: Make chat sidebar deletes optimistic for single sessions to avoid UI stalls.
 - 2026-02-03: Use square pink badges for todo counts and low-verbosity tool grouping.
 - 2026-02-03: Avoid duplicate file tree fetches by coalescing in-flight requests.
@@ -109,6 +112,7 @@
 - 2026-02-03: Load Pi history from JSONL/hstry before querying the live runner to make history appear immediately.
 - 2026-02-03: Add soft-delete support for Main Chat and workspace Pi sessions and hide deleted sessions from listings.
 - 2026-02-03: Force immediate Main Chat Pi session list refresh on activity to avoid delayed history updates.
+- 2026-02-04: List chat history from Pi session JSONL only; OpenCode/hstry sessions are no longer shown in the UI.
 - 2026-02-03: Add chat verbosity levels and collapse consecutive tool calls into tabbed tool groups at medium verbosity.
 - 2026-02-03: Use a slim, uncollapsible tool bar for consecutive tool calls at low verbosity.
 - 2026-02-03: Collapse thinking blocks around consecutive Pi tool calls into a single thinking section at medium verbosity.
@@ -124,6 +128,7 @@
 - 2026-02-03: Match low-verbosity tool badge styling to the todo list badge.
 - 2026-02-03: Cache chat history in localStorage for instant sidebar load before refresh.
 - 2026-02-03: Remount tool call groups on verbosity changes so past chats keep tool bars visible.
+- 2026-02-04: Show a skeleton loader in Pi chat when history exists but messages have not loaded yet.
 - 2026-02-03: Add multi-select chat deletion with shift/cmd in the Main Chat sidebar and make deletes optimistic.
 - 2026-02-03: Hide compact tool headers when uncollapsing tabbed tools and flatten list indentation in chat markdown.
 - 2026-02-03: Make chat sidebar multi-select require modifier keys and match the trx selection bar styling.
@@ -165,3 +170,9 @@
 - 2026-02-04: Add an LRU Pi message cache in ws-mux (per-user memory caps, last-N messages) to make past chats load instantly.
 - 2026-02-04: Prefetch recent chat messages after history refresh to warm the ws-mux cache.
 - 2026-02-04: Add configurable chat history prefetch limit to global settings.
+- 2026-02-04: Stop generating readable IDs for Pi sessions in backend/frontend; only use extension-provided IDs.
+- 2026-02-04: Create real Pi session IDs before first send and register them in chat history to prevent rename-induced duplication.
+- 2026-02-04: Normalize chat selection to null (no empty-string IDs), remove pending session placeholders, and stop frontend title parsing for readable IDs.
+- 2026-02-04: Pass explicit Pi session files through ws-mux/runner (session_file + ensured session dir) to keep Pi session IDs stable and avoid duplicate sessions.
+- 2026-02-04: Deduplicate Pi chat history entries by JSONL source path to avoid rename-induced duplicates.
+- 2026-02-04: Re-export Pi chat API helpers in control-plane client to fix Vite missing-export crashes.

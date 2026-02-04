@@ -27,23 +27,19 @@ export interface SessionDialogsState {
 	handleDeleteSession: (sessionId: string) => void;
 	handleRenameSession: (sessionId: string, chatHistory: ChatSession[]) => void;
 	handleConfirmDelete: (
-		deleteChatSession: (sessionId: string, baseUrl: string) => Promise<void>,
+		deleteChatSession: (sessionId: string) => Promise<boolean>,
 		chatHistory: ChatSession[],
-		opencodeBaseUrl: string | null,
-		ensureOpencodeRunning: (workspacePath: string) => Promise<string | null>,
 	) => Promise<void>;
 	handleConfirmRename: (
 		newTitle: string,
-		renameChatSession: (sessionId: string, title: string) => Promise<void>,
+		renameChatSession: (sessionId: string, title: string) => Promise<boolean>,
 	) => Promise<void>;
 
 	handleDeleteProject: (projectKey: string, projectName: string) => void;
 	handleRenameProject: (projectKey: string, currentName: string) => void;
 	handleConfirmDeleteProject: (
 		chatHistory: ChatSession[],
-		deleteChatSession: (sessionId: string, baseUrl: string) => Promise<void>,
-		opencodeBaseUrl: string | null,
-		ensureOpencodeRunning: (workspacePath: string) => Promise<string | null>,
+		deleteChatSession: (sessionId: string) => Promise<boolean>,
 	) => Promise<void>;
 	handleConfirmRenameProject: (newName: string) => Promise<void>;
 }
@@ -84,24 +80,11 @@ export function useSessionDialogs(): SessionDialogsState {
 
 	const handleConfirmDelete = useCallback(
 		async (
-			deleteChatSession: (sessionId: string, baseUrl: string) => Promise<void>,
+			deleteChatSession: (sessionId: string) => Promise<boolean>,
 			chatHistory: ChatSession[],
-			opencodeBaseUrl: string | null,
-			ensureOpencodeRunning: (workspacePath: string) => Promise<string | null>,
 		) => {
 			if (targetSessionId) {
-				const session = chatHistory.find((s) => s.id === targetSessionId);
-				const workspacePath = session?.workspace_path;
-
-				let baseUrl: string | null = opencodeBaseUrl;
-
-				if (workspacePath && workspacePath !== "global" && !baseUrl) {
-					baseUrl = await ensureOpencodeRunning(workspacePath);
-				}
-
-				if (baseUrl) {
-					await deleteChatSession(targetSessionId, baseUrl);
-				}
+				await deleteChatSession(targetSessionId);
 			}
 			setDeleteDialogOpen(false);
 			setTargetSessionId("");
@@ -112,7 +95,7 @@ export function useSessionDialogs(): SessionDialogsState {
 	const handleConfirmRename = useCallback(
 		async (
 			newTitle: string,
-			renameChatSession: (sessionId: string, title: string) => Promise<void>,
+			renameChatSession: (sessionId: string, title: string) => Promise<boolean>,
 		) => {
 			if (targetSessionId && newTitle.trim()) {
 				await renameChatSession(targetSessionId, newTitle.trim());
@@ -145,9 +128,7 @@ export function useSessionDialogs(): SessionDialogsState {
 	const handleConfirmDeleteProject = useCallback(
 		async (
 			chatHistory: ChatSession[],
-			deleteChatSession: (sessionId: string, baseUrl: string) => Promise<void>,
-			opencodeBaseUrl: string | null,
-			ensureOpencodeRunning: (workspacePath: string) => Promise<string | null>,
+			deleteChatSession: (sessionId: string) => Promise<boolean>,
 		) => {
 			if (targetProjectKey) {
 				const sessionsToDelete = chatHistory.filter((s) => {
@@ -158,16 +139,7 @@ export function useSessionDialogs(): SessionDialogsState {
 				});
 
 				for (const session of sessionsToDelete) {
-					const workspacePath = session.workspace_path;
-					let baseUrl: string | null = opencodeBaseUrl;
-
-					if (workspacePath && workspacePath !== "global" && !baseUrl) {
-						baseUrl = await ensureOpencodeRunning(workspacePath);
-					}
-
-					if (baseUrl) {
-						await deleteChatSession(session.id, baseUrl);
-					}
+					await deleteChatSession(session.id);
 				}
 			}
 			setDeleteProjectDialogOpen(false);

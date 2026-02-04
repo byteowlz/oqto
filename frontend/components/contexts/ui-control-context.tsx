@@ -76,8 +76,6 @@ export function UIControlProvider({
 		locale,
 		setActiveAppId,
 		setSelectedChatSessionId,
-		setDefaultChatActive,
-		setDefaultChatCurrentSessionId,
 		createNewChat,
 		setLocale,
 	} = useApp();
@@ -119,23 +117,11 @@ export function UIControlProvider({
 	);
 
 	const switchSession = useCallback(
-		(sessionId: string, mode?: "main" | "opencode" | "pi") => {
-			const effectiveMode = mode ?? "opencode";
+		(sessionId: string, _mode?: "main" | "opencode" | "pi") => {
 			setActiveAppId("sessions");
-			if (effectiveMode === "main" || effectiveMode === "pi") {
-				setDefaultChatActive(true);
-				setDefaultChatCurrentSessionId(sessionId);
-			} else {
-				setDefaultChatActive(false);
-				setSelectedChatSessionId(sessionId);
-			}
+			setSelectedChatSessionId(sessionId);
 		},
-		[
-			setActiveAppId,
-			setDefaultChatActive,
-			setDefaultChatCurrentSessionId,
-			setSelectedChatSessionId,
-		],
+		[setActiveAppId, setSelectedChatSessionId],
 	);
 
 	const switchView = useCallback(

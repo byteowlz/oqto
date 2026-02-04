@@ -117,8 +117,7 @@ pub async fn list_sessions_from_hstry(db_path: &Path) -> Result<Vec<ChatSession>
         let session_id = external_id.clone().unwrap_or_else(|| id.clone());
         let workspace_path = workspace.unwrap_or_else(|| "global".to_string());
         let project_name = project_name_from_path(&workspace_path);
-        let readable_id =
-            readable_id.unwrap_or_else(|| wordlist::readable_id_from_session_id(&session_id));
+        let readable_id = readable_id.unwrap_or_default();
 
         sessions.push(ChatSession {
             id: session_id,
@@ -172,8 +171,7 @@ pub async fn get_session_from_hstry(
     let session_id = external_id.clone().unwrap_or_else(|| id.clone());
     let workspace_path = workspace.unwrap_or_else(|| "global".to_string());
     let project_name = project_name_from_path(&workspace_path);
-    let readable_id =
-        readable_id.unwrap_or_else(|| wordlist::readable_id_from_session_id(&session_id));
+    let readable_id = readable_id.unwrap_or_default();
 
     Ok(Some(ChatSession {
         id: session_id,

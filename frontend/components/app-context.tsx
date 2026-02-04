@@ -10,7 +10,6 @@
  * - useChatHistory() - for chat history only
  * - useSelectedChat() - for selected chat only
  * - useWorkspaceSessions() - for workspace sessions only
- * - useDefaultChat() - for default chat state only
  * - useSessionContext() - for all session-related state
  * - useUIContext() - for all UI-related state
  * - useOnboarding() - for onboarding state and progressive unlock
@@ -49,7 +48,6 @@ export {
 	useChatHistory,
 	useSelectedChat,
 	useWorkspaceSessions,
-	useDefaultChat,
 	// Onboarding hooks
 	useOnboarding,
 	useIsUnlocked,

@@ -45,7 +45,6 @@ use crate::pi::{
     SessionStats,
 };
 use crate::runner::client::RunnerClient;
-use crate::wordlist;
 use crate::workspace;
 
 /// Session freshness thresholds
@@ -687,7 +686,7 @@ impl MainChatPiService {
             "id": session_id,
             "timestamp": Utc::now().to_rfc3339(),
             "cwd": work_dir.to_string_lossy(),
-            "readable_id": wordlist::readable_id_from_session_id(session_id),
+            "readable_id": serde_json::Value::Null,
             "session_dir": sessions_dir.to_string_lossy(),
         });
         let content = if let Some(jsonl) = bootstrap_jsonl {

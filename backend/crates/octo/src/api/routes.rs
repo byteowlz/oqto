@@ -7,6 +7,7 @@ use axum::{
     routing::{delete, get, post, put},
 };
 use tower_http::cors::{AllowOrigin, CorsLayer};
+use tower_http::set_header::SetResponseHeaderLayer;
 use tower_http::trace::{DefaultMakeSpan, DefaultOnRequest, DefaultOnResponse, TraceLayer};
 use tracing::Level;
 
@@ -543,6 +544,10 @@ pub fn create_router_with_config(state: AppState, max_upload_size_mb: usize) -> 
         )
         .with_state(state);
 
+    let permissions_policy = HeaderValue::from_static(
+        "geolocation=(), microphone=(), camera=()",
+    );
+
     Router::new()
         .merge(public_routes)
         .merge(protected_routes)
@@ -550,6 +555,10 @@ pub fn create_router_with_config(state: AppState, max_upload_size_mb: usize) -> 
         .merge(test_routes)
         .merge(a2ui_routes)
         .layer(DefaultBodyLimit::max(max_body_size))
+        .layer(SetResponseHeaderLayer::overriding(
+            header::HeaderName::from_static("permissions-policy"),
+            permissions_policy,
+        ))
         .layer(cors)
         .layer(trace_layer)
 }

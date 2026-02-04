@@ -7,7 +7,7 @@ type ChatNavigationOptions = {
 	setDefaultChatAssistantName: (name: string | null) => void;
 	setDefaultChatActive: (active: boolean) => void;
 	setDefaultChatCurrentSessionId: (sessionId: string | null) => void;
-	setSelectedChatSessionId: (sessionId: string) => void;
+	setSelectedChatSessionId: (sessionId: string | null) => void;
 	setActiveAppId: (appId: string) => void;
 	setMobileMenuOpen: (open: boolean) => void;
 	setDefaultChatWorkspacePath: (path: string | null) => void;
@@ -39,7 +39,7 @@ export function useChatNavigation({
 			setDefaultChatAssistantName(assistantName);
 			setDefaultChatActive(true);
 			setDefaultChatCurrentSessionId(sessionId);
-			setSelectedChatSessionId("");
+			setSelectedChatSessionId(null);
 			setActiveAppId("sessions");
 			setMobileMenuOpen(false);
 			hydrateWorkspacePath(assistantName);
@@ -60,7 +60,7 @@ export function useChatNavigation({
 			setDefaultChatAssistantName(assistantName);
 			setDefaultChatActive(true);
 			setDefaultChatCurrentSessionId(sessionId);
-			setSelectedChatSessionId("");
+			setSelectedChatSessionId(null);
 			setActiveAppId("sessions");
 			setMobileMenuOpen(false);
 			hydrateWorkspacePath(assistantName);
@@ -82,7 +82,7 @@ export function useChatNavigation({
 			setDefaultChatActive(true);
 			// Clear current session to indicate new session is being created
 			setDefaultChatCurrentSessionId(null);
-			setSelectedChatSessionId("");
+			setSelectedChatSessionId(null);
 			setActiveAppId("sessions");
 			setMobileMenuOpen(false);
 			hydrateWorkspacePath(assistantName);

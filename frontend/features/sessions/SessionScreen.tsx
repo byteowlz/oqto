@@ -60,12 +60,12 @@ import {
 	type PiState,
 	getWorkspacePiModels,
 	getWorkspacePiState,
+	startDefaultChatPiSession,
 	newWorkspacePiSession,
 	setWorkspacePiModel,
 } from "@/features/chat/api";
 import {
 	type Features,
-	type DefaultChatSession,
 	type Persona,
 	type SessionAutoAttachMode,
 	askAgent,
@@ -77,7 +77,6 @@ import {
 	getOrCreateSessionForWorkspace,
 	getProjectLogoUrl,
 	getWorkspaceConfig,
-	listDefaultChatSessions,
 	opencodeProxyBaseUrl,
 	registerDefaultChatSession,
 	touchSessionActivity,
@@ -144,6 +143,7 @@ import {
 	getDisplayPiTitle,
 	resolveReadableId,
 	isPendingSessionId,
+	normalizeWorkspacePath,
 } from "@/lib/session-utils";
 import {
 	type SlashCommand,
@@ -233,11 +233,6 @@ const TerminalView = lazy(() =>
 const MemoriesView = lazy(() =>
 	import("@/features/sessions/components/MemoriesView").then((mod) => ({
 		default: mod.MemoriesView,
-	})),
-);
-const AgentSettingsView = lazy(() =>
-	import("@/features/sessions/components/AgentSettingsView").then((mod) => ({
-		default: mod.AgentSettingsView,
 	})),
 );
 const TrxView = lazy(() =>
@@ -668,17 +663,20 @@ export const SessionScreen = memo(function SessionScreen() {
 
 	const ensureDefaultChatSession = useCallback(
 		async (workspacePath: string | null, optimisticId: string | null) => {
-			const resolvedPath =
-				workspacePath ?? defaultChatWorkspacePath ?? "global";
+			const resolvedPath = normalizeWorkspacePath(
+				workspacePath ?? defaultChatWorkspacePath,
+			);
 			const key = optimisticId
-				? `default:${resolvedPath}:${optimisticId}`
-				: `default:${resolvedPath}:${Date.now()}:${Math.random()}`;
+				? `default:${resolvedPath ?? "default"}:${optimisticId}`
+				: `default:${resolvedPath ?? "default"}:${Date.now()}:${Math.random()}`;
 			if (optimisticId) {
 				const existing = pendingEnsureRef.current.get(key);
 				if (existing) return existing;
 			}
 			const promise = (async () => {
-				const state = await newWorkspacePiSession(resolvedPath);
+				const state = resolvedPath
+					? await newWorkspacePiSession(resolvedPath)
+					: await startDefaultChatPiSession();
 				const sessionId = state.session_id;
 				if (!sessionId) throw new Error("Pi session id missing");
 				if (optimisticId && isPendingSessionId(optimisticId)) {
@@ -716,15 +714,18 @@ export const SessionScreen = memo(function SessionScreen() {
 
 	const ensureWorkspaceChatSession = useCallback(
 		async (workspacePath: string | null, optimisticId: string | null) => {
-			const resolvedPath = workspacePath ?? "global";
+			const resolvedPath = normalizeWorkspacePath(workspacePath);
 			const key = optimisticId
-				? `workspace:${resolvedPath}:${optimisticId}`
-				: `workspace:${resolvedPath}:${Date.now()}:${Math.random()}`;
+				? `workspace:${resolvedPath ?? "unknown"}:${optimisticId}`
+				: `workspace:${resolvedPath ?? "unknown"}:${Date.now()}:${Math.random()}`;
 			if (optimisticId) {
 				const existing = pendingEnsureRef.current.get(key);
 				if (existing) return existing;
 			}
 			const promise = (async () => {
+				if (!resolvedPath) {
+					return await ensureDefaultChatSession(null, optimisticId);
+				}
 				const sessionId = await createNewChat(resolvedPath, {
 					optimisticId: optimisticId ?? undefined,
 				});
@@ -851,16 +852,20 @@ export const SessionScreen = memo(function SessionScreen() {
 	);
 
 	const [defaultChatBaseUrl, setDefaultChatBaseUrl] = useState("");
+	const selectedChatWorkspacePath = useMemo(
+		() => normalizeWorkspacePath(selectedChatFromHistory?.workspace_path),
+		[selectedChatFromHistory],
+	);
 	const opencodeDirectory = useMemo(() => {
 		if (defaultChatActive) return defaultChatWorkspacePath ?? undefined;
 		return (
-			selectedChatFromHistory?.workspace_path ??
+			selectedChatWorkspacePath ??
 			selectedWorkspaceSession?.workspace_path
 		);
 	}, [
 		defaultChatActive,
 		defaultChatWorkspacePath,
-		selectedChatFromHistory,
+		selectedChatWorkspacePath,
 		selectedWorkspaceSession,
 	]);
 	const opencodeRequestOptions = useMemo(
@@ -1036,26 +1041,32 @@ export const SessionScreen = memo(function SessionScreen() {
 	const chatState = activeSessionId
 		? chatStates.get(activeSessionId) || "idle"
 		: "idle";
+	const resolvedWorkspacePath = useMemo(() => {
+		return normalizeWorkspacePath(
+			selectedChatWorkspacePath ??
+				selectedWorkspaceSession?.workspace_path ??
+				opencodeDirectory ??
+				null,
+		);
+	}, [
+		opencodeDirectory,
+		selectedChatWorkspacePath,
+		selectedWorkspaceSession,
+	]);
 	const isWorkspacePiSession =
 		!defaultChatActive &&
 		!!selectedChatSessionId &&
-		!selectedChatSessionId.startsWith("ses_");
+		!selectedChatSessionId.startsWith("ses_") &&
+		!!resolvedWorkspacePath;
 	const workspacePiPath = useMemo(() => {
 		if (!isWorkspacePiSession) return null;
-		return (
-			selectedChatFromHistory?.workspace_path ??
-			selectedWorkspaceSession?.workspace_path ??
-			opencodeDirectory ??
-			null
-		);
+		return resolvedWorkspacePath;
 	}, [
 		isWorkspacePiSession,
-		opencodeDirectory,
-		selectedChatFromHistory,
-		selectedWorkspaceSession,
+		resolvedWorkspacePath,
 	]);
 	const workspacePiStorageKeyPrefix = useMemo(() => {
-		if (!workspacePiPath) return "octo:workspacePi:global";
+		if (!workspacePiPath) return "octo:workspacePi:default";
 		return `octo:workspacePi:${workspacePiPath.replace(/[^a-zA-Z0-9._-]+/g, "_")}`;
 	}, [workspacePiPath]);
 	const handleWorkspacePiSessionChange = useCallback(
@@ -2105,7 +2116,7 @@ export const SessionScreen = memo(function SessionScreen() {
 		async (files: FileList | null) => {
 			if (!files || files.length === 0) return;
 			const workspacePath =
-				selectedChatFromHistory?.workspace_path ??
+				selectedChatWorkspacePath ??
 				selectedWorkspaceSession?.workspace_path;
 			if (!workspacePath) {
 				setStatus(
@@ -2300,10 +2311,13 @@ export const SessionScreen = memo(function SessionScreen() {
 		[locale],
 	);
 
-	const resumeWorkspacePath = defaultChatActive
-		? (defaultChatWorkspacePath ?? undefined)
-		: (selectedChatFromHistory?.workspace_path ??
-			selectedWorkspaceSession?.workspace_path);
+	const resumeWorkspacePath = normalizeWorkspacePath(
+		defaultChatActive
+			? defaultChatWorkspacePath ?? null
+			: selectedChatWorkspacePath ??
+					selectedWorkspaceSession?.workspace_path ??
+					null,
+	);
 	const browserSessionId = defaultChatActive
 		? defaultChatCurrentSessionId
 		: selectedChatSessionId;
@@ -2370,9 +2384,9 @@ export const SessionScreen = memo(function SessionScreen() {
 		if (isWorkspacePiSession) return;
 		if (!selectedChatSessionId || !isHistoryOnlySession) return;
 		if (autoAttachMode === "off") return;
-		if (!selectedChatFromHistory?.workspace_path) return;
+		if (!selectedChatWorkspacePath) return;
 
-		const workspacePath = selectedChatFromHistory.workspace_path;
+		const workspacePath = selectedChatWorkspacePath;
 		const runningSessions = workspaceSessions.filter(
 			(session) =>
 				session.status === "running" &&
@@ -2946,7 +2960,7 @@ export const SessionScreen = memo(function SessionScreen() {
 				};
 
 				const resumePath =
-					selectedChatFromHistory?.workspace_path ?? resumeWorkspacePath;
+					selectedChatWorkspacePath ?? resumeWorkspacePath;
 
 				// Extract disconnect reason if available
 				const disconnectReason =
@@ -4100,7 +4114,7 @@ export const SessionScreen = memo(function SessionScreen() {
 				setStatus("");
 			} else if (isHistoryOnlySession) {
 				// Regular session: history-only, need to resume
-				const workspacePath = selectedChatFromHistory?.workspace_path;
+				const workspacePath = selectedChatWorkspacePath;
 				if (!workspacePath) {
 					throw new Error("Cannot resume session: no workspace path found");
 				}
@@ -4120,7 +4134,7 @@ export const SessionScreen = memo(function SessionScreen() {
 				setStatus("");
 			} else if (!effectiveBaseUrl) {
 				// Get workspace path from history session
-				const workspacePath = selectedChatFromHistory?.workspace_path;
+				const workspacePath = selectedChatWorkspacePath;
 				if (!workspacePath) {
 					throw new Error("Cannot resume session: no workspace path found");
 				}
@@ -5903,27 +5917,18 @@ export const SessionScreen = memo(function SessionScreen() {
 					)}
 					{activeView === "settings" && (
 						<Suspense fallback={viewLoadingFallback}>
-							{defaultChatActive || isWorkspacePiSession ? (
-								<PiSettingsView
-									locale={locale}
-									scope={defaultChatActive ? "default" : "workspace"}
-									sessionId={
-										defaultChatActive
-											? defaultChatCurrentSessionId
-											: selectedChatSessionId
-									}
-									workspacePath={
-										defaultChatActive ? defaultChatWorkspacePath : workspacePiPath
-									}
-								/>
-							) : (
-								<AgentSettingsView
-									modelOptions={opencodeModelOptions}
-									selectedModelRef={selectedModelRef}
-									onModelChange={setSelectedModelRef}
-									isModelLoading={isModelLoading}
-								/>
-							)}
+							<PiSettingsView
+								locale={locale}
+								scope={defaultChatActive ? "default" : "workspace"}
+								sessionId={
+									defaultChatActive
+										? defaultChatCurrentSessionId
+										: selectedChatSessionId
+								}
+								workspacePath={
+									defaultChatActive ? defaultChatWorkspacePath : workspacePiPath
+								}
+							/>
 						</Suspense>
 					)}
 					{activeView === "canvas" && (
@@ -6436,29 +6441,20 @@ export const SessionScreen = memo(function SessionScreen() {
 										)}
 										{activeView === "settings" && (
 											<Suspense fallback={viewLoadingFallback}>
-												{defaultChatActive || isWorkspacePiSession ? (
-													<PiSettingsView
-														locale={locale}
-														scope={defaultChatActive ? "default" : "workspace"}
-														sessionId={
-															defaultChatActive
-																? defaultChatCurrentSessionId
-																: selectedChatSessionId
-														}
-														workspacePath={
-															defaultChatActive
-																? defaultChatWorkspacePath
-																: workspacePiPath
-														}
-													/>
-												) : (
-													<AgentSettingsView
-														modelOptions={opencodeModelOptions}
-														selectedModelRef={selectedModelRef}
-														onModelChange={setSelectedModelRef}
-														isModelLoading={isModelLoading}
-													/>
-												)}
+												<PiSettingsView
+													locale={locale}
+													scope={defaultChatActive ? "default" : "workspace"}
+													sessionId={
+														defaultChatActive
+															? defaultChatCurrentSessionId
+															: selectedChatSessionId
+													}
+													workspacePath={
+														defaultChatActive
+															? defaultChatWorkspacePath
+															: workspacePiPath
+													}
+												/>
 											</Suspense>
 										)}
 										{activeView === "canvas" && (

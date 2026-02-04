@@ -13,14 +13,18 @@
  * - Single WebSocket connection shared across all Pi sessions
  */
 
-import { newWorkspacePiSession } from "@/lib/api/default-chat";
-import { isPendingSessionId } from "@/lib/session-utils";
+import {
+	createPiSessionId,
+	isPendingSessionId,
+	normalizeWorkspacePath,
+} from "@/lib/session-utils";
 import { getWsManager } from "@/lib/ws-manager";
 import type { PiWsEvent, WsMuxConnectionState } from "@/lib/ws-mux-types";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
 	readCachedSessionMessages,
 	sanitizeStorageKey,
+	transferCachedSessionMessages,
 	writeCachedSessionMessages,
 } from "./cache";
 import { getMaxPiMessageId, normalizePiContentToParts, normalizePiMessages } from "./message-utils";
@@ -35,13 +39,6 @@ import type {
 } from "./types";
 
 const BATCH_FLUSH_INTERVAL_MS = 50;
-
-function createSessionId(): string {
-	if (typeof crypto !== "undefined" && crypto.randomUUID) {
-		return crypto.randomUUID();
-	}
-	return `pi-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-}
 
 function isPiDebugEnabled(): boolean {
 	if (!import.meta.env.DEV) return false;
@@ -71,20 +68,26 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 		onError,
 	} = options;
 
+	const normalizedWorkspacePath = normalizeWorkspacePath(workspacePath);
+	const effectiveScope =
+		scope === "workspace" && !normalizedWorkspacePath ? "default" : scope;
 	const resolvedStorageKeyPrefix =
 		storageKeyPrefix ??
-		(scope === "default"
+		(effectiveScope === "default"
 			? "octo:defaultChatPi:v2"
-			: `octo:workspacePi:v2:${sanitizeStorageKey(workspacePath ?? "global")}`);
+			: `octo:workspacePi:v2:${sanitizeStorageKey(
+					normalizedWorkspacePath ?? "unknown",
+				)}`);
 
 	const activeSessionId = selectedSessionId ?? null;
 	const activeSessionIdRef = useRef(activeSessionId);
 	activeSessionIdRef.current = activeSessionId;
+	const lastActiveSessionIdRef = useRef<string | null>(null);
 
 	// State
 	const [state, setState] = useState<PiState | null>(null);
 	const [messages, setMessages] = useState<PiDisplayMessage[]>(
-		activeSessionId && !isPendingSessionId(activeSessionId)
+		activeSessionId
 			? readCachedSessionMessages(activeSessionId, resolvedStorageKeyPrefix)
 			: [],
 	);
@@ -130,14 +133,11 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 	);
 
 	const getSessionConfig = useCallback(() => {
-		if (scope === "default") {
-			return { scope: "main" as const };
-		}
-		if (workspacePath) {
-			return { scope: "workspace" as const, cwd: workspacePath };
+		if (normalizedWorkspacePath) {
+			return { scope: "workspace" as const, cwd: normalizedWorkspacePath };
 		}
 		return undefined;
-	}, [scope, workspacePath]);
+	}, [normalizedWorkspacePath]);
 
 	const appendPartToMessage = useCallback(
 		(messageId: string, part: PiMessagePart) => {
@@ -582,21 +582,11 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 
 	const ensureSession = useCallback(async (): Promise<string> => {
 		let sessionId = activeSessionIdRef.current;
-		if (sessionId && isPendingSessionId(sessionId)) {
-			sessionId = null;
-			activeSessionIdRef.current = null;
+		if (!sessionId) {
+			sessionId = createPiSessionId();
+			activeSessionIdRef.current = sessionId;
+			onSelectedSessionIdChange?.(sessionId);
 		}
-		if (sessionId) return sessionId;
-
-		const targetWorkspace = workspacePath?.trim() || "global";
-		const newState = await newWorkspacePiSession(targetWorkspace);
-		if (!newState.session_id) {
-			throw new Error("Pi session id missing");
-		}
-		sessionId = newState.session_id;
-		activeSessionIdRef.current = sessionId;
-		onSelectedSessionIdChange?.(sessionId);
-
 		const manager = getWsManager();
 		const sessionConfig = getSessionConfig();
 		unsubscribeRef.current?.();
@@ -605,8 +595,12 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 			handlePiEvent,
 			sessionConfig,
 		);
+
+		await manager.ensureConnected(4000);
+		manager.piCreateSession(sessionId, sessionConfig);
+		await manager.waitForPiSessionReady(sessionId, 4000);
 		return sessionId;
-	}, [getSessionConfig, handlePiEvent, onSelectedSessionIdChange, workspacePath]);
+	}, [getSessionConfig, handlePiEvent, onSelectedSessionIdChange]);
 
 	// Send message
 	const send = useCallback(
@@ -670,7 +664,13 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 					break;
 			}
 		},
-		[ensureSession, getSessionConfig, handlePiEvent, nextMessageId, onSelectedSessionIdChange],
+		[
+			ensureSession,
+			getSessionConfig,
+			handlePiEvent,
+			nextMessageId,
+			onSelectedSessionIdChange,
+		],
 	);
 
 	// Abort current stream
@@ -778,13 +778,27 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 		if (!activeSessionId) {
 			return;
 		}
-		if (isPendingSessionId(activeSessionId)) {
-			setMessages([]);
-			messageIdRef.current = 0;
-			lastAssistantMessageIdRef.current = null;
-			return;
+		// If we just transitioned from a pending ID to a real session ID,
+		// migrate cached messages so the first message doesn't disappear.
+		const previousId = lastActiveSessionIdRef.current;
+		if (
+			previousId &&
+			previousId !== activeSessionId &&
+			isPendingSessionId(previousId) &&
+			!isPendingSessionId(activeSessionId)
+		) {
+			const existing = readCachedSessionMessages(
+				activeSessionId,
+				resolvedStorageKeyPrefix,
+			);
+			if (existing.length === 0) {
+				transferCachedSessionMessages(
+					previousId,
+					activeSessionId,
+					resolvedStorageKeyPrefix,
+				);
+			}
 		}
-
 		// Load cached messages for this session
 		const cached = readCachedSessionMessages(
 			activeSessionId,
@@ -819,6 +833,7 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 		if (isPiDebugEnabled()) {
 			console.debug("[useChat] Subscribed to session:", activeSessionId, "workspacePath:", workspacePath);
 		}
+		lastActiveSessionIdRef.current = activeSessionId;
 
 		return () => {
 			if (unsubscribeRef.current) {

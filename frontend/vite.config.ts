@@ -65,6 +65,9 @@ export default defineConfig(({ mode }) => {
 			exclude: ["ghostty-web"],
 		},
 		server: {
+			headers: {
+				"Permissions-Policy": "geolocation=(), microphone=(self), camera=()",
+			},
 			host: true,
 			port: 3000,
 			allowedHosts: ["archlinux"],

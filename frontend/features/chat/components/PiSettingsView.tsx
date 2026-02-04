@@ -20,6 +20,7 @@ import {
 	setDefaultChatPiModel,
 	setWorkspacePiModel,
 } from "@/features/chat/api";
+import { normalizeWorkspacePath } from "@/lib/session-utils";
 import {
 	type ChatVerbosity,
 	useChatVerbosity,
@@ -56,6 +57,10 @@ export function PiSettingsView({
 	const [effectiveSessionId, setEffectiveSessionId] = useState<string | null>(
 		sessionId ?? null,
 	);
+	const normalizedWorkspacePath = useMemo(
+		() => normalizeWorkspacePath(workspacePath),
+		[workspacePath],
+	);
 
 	useEffect(() => {
 		setEffectiveSessionId(sessionId ?? null);
@@ -86,10 +91,12 @@ export function PiSettingsView({
 		const fetchModels =
 			scope === "default"
 				? getDefaultChatPiModels(effectiveSessionId)
-				: getWorkspacePiModels(
-						workspacePath ?? "global",
-						effectiveSessionId ?? "",
-					);
+				: normalizedWorkspacePath
+					? getWorkspacePiModels(
+							normalizedWorkspacePath,
+							effectiveSessionId ?? "",
+						)
+					: Promise.resolve([]);
 		fetchModels
 			.then((models) => {
 				if (!active) return;
@@ -121,9 +128,9 @@ export function PiSettingsView({
 						? effectiveSessionId
 							? await getDefaultChatPiState(effectiveSessionId)
 							: await startDefaultChatPiSession()
-						: effectiveSessionId
+						: normalizedWorkspacePath && effectiveSessionId
 							? await getWorkspacePiState(
-									workspacePath ?? "global",
+									normalizedWorkspacePath,
 									effectiveSessionId,
 								)
 							: null;
@@ -162,7 +169,7 @@ export function PiSettingsView({
 			active = false;
 			if (intervalId) clearInterval(intervalId);
 		};
-	}, [scope, effectiveSessionId, workspacePath]);
+	}, [scope, effectiveSessionId, normalizedWorkspacePath]);
 
 	const filteredModels = useMemo(() => {
 		const query = modelQuery.trim();
@@ -209,9 +216,9 @@ export function PiSettingsView({
 						throw new Error("No active default chat session");
 					}
 					await setDefaultChatPiModel(effectiveSessionId, provider, modelId);
-				} else if (effectiveSessionId) {
+				} else if (effectiveSessionId && normalizedWorkspacePath) {
 					await setWorkspacePiModel(
-						workspacePath ?? "global",
+						normalizedWorkspacePath,
 						effectiveSessionId,
 						provider,
 						modelId,

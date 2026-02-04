@@ -11,6 +11,11 @@ import {
 } from "./client";
 import { toAbsoluteWsUrl } from "@/lib/url";
 
+const normalizeWorkspacePathValue = (path?: string | null): string | null => {
+	if (!path || path === "global") return null;
+	return path;
+};
+
 // ============================================================================
 // Default Chat Types
 // ============================================================================
@@ -239,7 +244,10 @@ export async function getDefaultChatAssistant(
 	if (!data.exists || !data.info) {
 		throw new Error("Default Chat not found");
 	}
-	return data.info;
+	return {
+		...data.info,
+		path: normalizeWorkspacePathValue(data.info.path),
+	};
 }
 
 /** Create a new Default Chat assistant */
@@ -330,7 +338,11 @@ export async function listDefaultChatPiSessions(): Promise<PiSessionFile[]> {
 		credentials: "include",
 	});
 	if (!res.ok) throw new Error(await readApiError(res));
-	return res.json();
+	const data = await res.json();
+	return data.map((session: PiSessionFile) => ({
+		...session,
+		workspace_path: normalizeWorkspacePathValue(session.workspace_path),
+	}));
 }
 
 /** Rename a Pi session (update title) */

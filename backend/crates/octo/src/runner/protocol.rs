@@ -805,6 +805,9 @@ pub struct PiSessionConfig {
     /// Model ID.
     #[serde(default)]
     pub model: Option<String>,
+    /// Explicit session file to use (new or resume).
+    #[serde(default)]
+    pub session_file: Option<PathBuf>,
     /// Session file to continue from.
     #[serde(default)]
     pub continue_session: Option<PathBuf>,
@@ -822,6 +825,7 @@ impl Default for PiSessionConfig {
             cwd: PathBuf::from("."),
             provider: None,
             model: None,
+            session_file: None,
             continue_session: None,
             system_prompt_files: Vec::new(),
             env: HashMap::new(),
@@ -1961,6 +1965,7 @@ mod tests {
                 cwd: PathBuf::from("/home/user/project"),
                 provider: Some("anthropic".to_string()),
                 model: Some("claude-sonnet-4-20250514".to_string()),
+                session_file: None,
                 continue_session: None,
                 system_prompt_files: vec![],
                 env: HashMap::new(),

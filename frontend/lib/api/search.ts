@@ -10,13 +10,13 @@ import { authFetch, controlPlaneApiUrl, readApiError } from "./client";
 // ============================================================================
 
 /** Agent filter for search */
-export type HstryAgentFilter = "all" | "pi_agent" | "opencode" | string;
+export type HstryAgentFilter = "all" | "pi_agent" | string;
 
 /** Search query parameters */
 export type HstrySearchQuery = {
 	/** Search query string */
 	q: string;
-	/** Agent filter: "all", "pi_agent", "opencode", or comma-separated */
+	/** Agent filter: "all", "pi_agent", or comma-separated */
 	agents?: HstryAgentFilter;
 	/** Maximum results to return */
 	limit?: number;

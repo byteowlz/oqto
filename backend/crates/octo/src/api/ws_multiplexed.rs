@@ -462,6 +462,9 @@ pub struct PiSessionConfig {
     /// Model ID
     #[serde(default)]
     pub model: Option<String>,
+    /// Explicit session file to use
+    #[serde(default)]
+    pub session_file: Option<String>,
     /// Session file to continue from
     #[serde(default)]
     pub continue_session: Option<String>,
@@ -1474,106 +1477,147 @@ async fn handle_pi_command(
             session_id,
             config,
         } => {
-            let is_main_chat = config
-                .as_ref()
-                .and_then(|c| c.scope.as_deref())
-                .map(|s| s == "main")
-                .unwrap_or(false);
-
             info!(
-                "Pi create_session: user={}, session_id={}, scope={}",
-                user_id, session_id, if is_main_chat { "main" } else { "workspace" }
+                "Pi create_session: user={}, session_id={}",
+                user_id, session_id
             );
 
-            // For main chat, use the main chat directory and system prompt files
-            let (cwd, system_prompt_files) = if is_main_chat {
-                if let Some(main_chat) = state.main_chat.as_ref() {
-                    let main_chat_dir = main_chat.get_main_chat_dir(user_id);
-                    
-                    // Build system prompt files list
-                    let mut prompt_files = Vec::new();
-                    let onboard_file = main_chat_dir.join("ONBOARD.md");
-                    if onboard_file.exists() {
-                        prompt_files.push(onboard_file);
-                    }
-                    let personality_file = main_chat_dir.join("PERSONALITY.md");
-                    if personality_file.exists() {
-                        prompt_files.push(personality_file);
-                    }
-                    let user_file = main_chat_dir.join("USER.md");
-                    if user_file.exists() {
-                        prompt_files.push(user_file);
-                    }
-                    
-                    info!(
-                        "Main chat session: cwd={}, system_prompt_files={:?}",
-                        main_chat_dir.display(),
-                        prompt_files.iter().map(|p| p.file_name().unwrap_or_default()).collect::<Vec<_>>()
-                    );
-                    
-                    (main_chat_dir, prompt_files)
-                } else {
-                    error!("Main chat requested but MainChatService not available");
-                    return Some(WsEvent::Pi(PiWsEvent::Error {
-                        id,
-                        session_id,
-                        error: "Main chat service not configured".into(),
-                    }));
-                }
-            } else {
-                // Workspace session - use provided cwd
-                let cwd = config
-                    .as_ref()
-                    .and_then(|c| c.cwd.as_ref())
-                    .map(std::path::PathBuf::from)
-                    .unwrap_or_else(|| std::path::PathBuf::from("/"));
-                (cwd, vec![])
-            };
+            let cwd = config
+                .as_ref()
+                .and_then(|c| c.cwd.as_ref())
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|| std::path::PathBuf::from("/"));
+
+            // Build system prompt files list from cwd
+            let mut system_prompt_files = Vec::new();
+            let onboard_file = cwd.join("ONBOARD.md");
+            if onboard_file.exists() {
+                system_prompt_files.push(onboard_file);
+            }
+            let personality_file = cwd.join("PERSONALITY.md");
+            if personality_file.exists() {
+                system_prompt_files.push(personality_file);
+            }
+            let user_file = cwd.join("USER.md");
+            if user_file.exists() {
+                system_prompt_files.push(user_file);
+            }
 
             {
                 let mut state_guard = conn_state.lock().await;
                 state_guard.pi_session_meta.insert(
                     session_id.clone(),
                     PiSessionMeta {
-                        scope: Some(if is_main_chat { "main".to_string() } else { "workspace".to_string() }),
-                        cwd: if is_main_chat { None } else { Some(cwd.clone()) },
+                        scope: config
+                            .as_ref()
+                            .and_then(|c| c.scope.as_ref())
+                            .cloned()
+                            .or_else(|| Some("workspace".to_string())),
+                        cwd: Some(cwd.clone()),
                     },
                 );
             }
 
             // Resolve continue_session: use explicit path if provided, otherwise
-            // auto-resolve from session_id for main chat sessions
-            let continue_session = if let Some(path) = config
+            // ensure a session file exists for this session ID.
+            let session_file = if let Some(path) = config
+                .as_ref()
+                .and_then(|c| c.session_file.as_ref())
+            {
+                Some(std::path::PathBuf::from(path))
+            } else if let Some(path) = config
                 .as_ref()
                 .and_then(|c| c.continue_session.as_ref())
             {
-                // Explicit path provided
                 Some(std::path::PathBuf::from(path))
-            } else if is_main_chat {
-                // For main chat, try to find existing session file by ID
-                if let Some(ref pi_service) = state.main_chat_pi {
-                    if let Some(session_path) = pi_service.get_session_file_path(user_id, &session_id).await {
-                        info!(
-                            "Auto-resolved main chat session file for {}: {:?}",
-                            session_id, session_path
-                        );
-                        Some(session_path)
-                    } else {
-                        debug!("No existing session file found for {}, starting new", session_id);
-                        None
+            } else {
+                let home_dir = if let Some(linux_users) = state.linux_users.as_ref() {
+                    linux_users
+                        .get_home_dir(user_id)
+                        .ok()
+                        .flatten()
+                } else {
+                    dirs::home_dir()
+                };
+
+                let sessions_dir = home_dir.map(|home| {
+                    let safe_path = cwd
+                        .to_string_lossy()
+                        .trim_start_matches(&['/', '\\'][..])
+                        .replace('/', "-")
+                        .replace('\\', "-")
+                        .replace(':', "-");
+                    home.join(".pi")
+                        .join("agent")
+                        .join("sessions")
+                        .join(format!("--{}--", safe_path))
+                });
+
+                let existing = sessions_dir.as_ref().and_then(|dir| {
+                    if let Ok(entries) = std::fs::read_dir(dir) {
+                        for entry in entries.flatten() {
+                            let path = entry.path();
+                            if path.extension().map(|e| e == "jsonl").unwrap_or(false)
+                                && path
+                                    .file_name()
+                                    .and_then(|n| n.to_str())
+                                    .map(|name| name.contains(&session_id))
+                                    .unwrap_or(false)
+                            {
+                                return Some(path);
+                            }
+                        }
                     }
+                    None
+                });
+
+                if let Some(path) = existing {
+                    Some(path)
+                } else if let Some(dir) = sessions_dir {
+                    if let Err(err) = runner.create_directory(&dir, true).await {
+                        error!("Failed to create Pi sessions dir {:?}: {}", dir, err);
+                        return Some(WsEvent::Pi(PiWsEvent::Error {
+                            id,
+                            session_id,
+                            error: format!("Failed to create session dir: {}", err),
+                        }));
+                    }
+                    let header = serde_json::json!({
+                        "type": "session",
+                        "version": 3,
+                        "id": session_id,
+                        "timestamp": Utc::now().to_rfc3339(),
+                        "cwd": cwd.to_string_lossy(),
+                    });
+                    let content = format!(
+                        "{}\n",
+                        serde_json::to_string(&header).unwrap_or_else(|_| "{}".to_string())
+                    );
+                    let filename =
+                        format!("{}_{}.jsonl", Utc::now().timestamp_millis(), session_id);
+                    let path = dir.join(filename);
+
+                    if let Err(err) = runner.write_file(&path, content.as_bytes(), true).await {
+                        error!("Failed to seed Pi session file {:?}: {}", path, err);
+                        return Some(WsEvent::Pi(PiWsEvent::Error {
+                            id,
+                            session_id,
+                            error: format!("Failed to seed session file: {}", err),
+                        }));
+                    }
+
+                    Some(path)
                 } else {
                     None
                 }
-            } else {
-                None
             };
 
             let pi_config = RunnerPiSessionConfig {
                 cwd,
                 provider: config.as_ref().and_then(|c| c.provider.clone()),
                 model: config.as_ref().and_then(|c| c.model.clone()),
-                continue_session,
+                session_file: session_file.clone(),
+                continue_session: session_file,
                 system_prompt_files,
                 env: std::collections::HashMap::new(),
             };

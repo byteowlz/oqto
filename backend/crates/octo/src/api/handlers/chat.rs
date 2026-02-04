@@ -16,7 +16,6 @@ use tracing::{info, instrument, warn};
 use crate::auth::CurrentUser;
 use crate::history::{ChatMessage, ChatSession};
 use crate::pi::AgentMessage;
-use crate::wordlist;
 
 use crate::api::error::{ApiError, ApiResult};
 use crate::api::state::AppState;
@@ -118,13 +117,10 @@ fn list_workspace_pi_sessions(state: &AppState, user_id: &str) -> Vec<ChatSessio
             }
 
             let project_name = crate::history::project_name_from_path(&workspace_path);
-            let readable_id = session
-                .readable_id
-                .clone()
-                .unwrap_or_else(|| wordlist::readable_id_from_session_id(&session.id));
+            let readable_id = session.readable_id.clone().unwrap_or_default();
             Some(ChatSession {
                 id: session.id.clone(),
-                readable_id,
+                readable_id: if readable_id.is_empty() { String::new() } else { readable_id },
                 title: session.title,
                 parent_id: session.parent_id.clone(),
                 workspace_path,
@@ -154,10 +150,7 @@ async fn update_pi_session_title(
                 .await
             {
                 let project_name = crate::history::project_name_from_path(&updated.workspace_path);
-                let readable_id = updated
-                    .readable_id
-                    .clone()
-                    .unwrap_or_else(|| wordlist::readable_id_from_session_id(&updated.id));
+                let readable_id = updated.readable_id.clone().unwrap_or_default();
                 return Some(ChatSession {
                     id: updated.id.clone(),
                     readable_id,
@@ -183,51 +176,45 @@ fn merge_duplicate_sessions(mut sessions: Vec<ChatSession>) -> Vec<ChatSession> 
     sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
 
     let mut by_id: HashMap<String, ChatSession> = HashMap::new();
+    let mut by_source: HashMap<String, String> = HashMap::new();
     let mut by_key: HashMap<(String, String), String> = HashMap::new();
     let mut by_readable: HashMap<String, String> = HashMap::new();
 
     for session in sessions {
+        if let Some(source) = session.source_path.clone() {
+            if let Some(existing_id) = by_source.get(&source).cloned() {
+                if let Some(existing) = by_id.get_mut(&existing_id) {
+                    if session.updated_at > existing.updated_at {
+                        *existing = session;
+                    } else {
+                        if existing.title.is_none() && session.title.is_some() {
+                            existing.title = session.title;
+                        }
+                        if existing.readable_id.is_empty() && !session.readable_id.is_empty() {
+                            existing.readable_id = session.readable_id;
+                        }
+                    }
+                }
+                continue;
+            }
+            by_source.insert(source, session.id.clone());
+        }
+
         if by_id.contains_key(&session.id) {
             continue;
         }
 
-        let readable = if session.readable_id.trim().is_empty() {
-            wordlist::readable_id_from_session_id(&session.id)
-        } else {
-            session.readable_id.clone()
-        };
+        let readable = session.readable_id.trim().to_string();
         let normalized_workspace = if session.workspace_path.trim().is_empty() {
             "global".to_string()
         } else {
             session.workspace_path.clone()
         };
 
-        let key = (normalized_workspace.clone(), readable.clone());
-
-        if let Some(existing_id) = by_key.get(&key).cloned() {
-            if let Some(existing) = by_id.get_mut(&existing_id) {
-                if existing.title.is_none() && session.title.is_some() {
-                    existing.title = session.title;
-                }
-                if session.updated_at > existing.updated_at {
-                    existing.updated_at = session.updated_at;
-                }
-            }
-            continue;
-        }
-
-        if let Some(existing_id) = by_readable.get(&readable).cloned() {
-            if let Some(existing) = by_id.get_mut(&existing_id) {
-                let existing_workspace = if existing.workspace_path.trim().is_empty() {
-                    "global".to_string()
-                } else {
-                    existing.workspace_path.clone()
-                };
-                let prefer_candidate =
-                    existing_workspace == "global" && normalized_workspace != "global";
-                if prefer_candidate {
-                    *existing = session;
-                } else {
+        if !readable.is_empty() {
+            let key = (normalized_workspace.clone(), readable.clone());
+            if let Some(existing_id) = by_key.get(&key).cloned() {
+                if let Some(existing) = by_id.get_mut(&existing_id) {
                     if existing.title.is_none() && session.title.is_some() {
                         existing.title = session.title;
                     }
@@ -235,12 +222,35 @@ fn merge_duplicate_sessions(mut sessions: Vec<ChatSession>) -> Vec<ChatSession> 
                         existing.updated_at = session.updated_at;
                     }
                 }
+                continue;
             }
-            continue;
+
+            if let Some(existing_id) = by_readable.get(&readable).cloned() {
+                if let Some(existing) = by_id.get_mut(&existing_id) {
+                    let existing_workspace = if existing.workspace_path.trim().is_empty() {
+                        "global".to_string()
+                    } else {
+                        existing.workspace_path.clone()
+                    };
+                    let prefer_candidate =
+                        existing_workspace == "global" && normalized_workspace != "global";
+                    if prefer_candidate {
+                        *existing = session;
+                    } else {
+                        if existing.title.is_none() && session.title.is_some() {
+                            existing.title = session.title;
+                        }
+                        if session.updated_at > existing.updated_at {
+                            existing.updated_at = session.updated_at;
+                        }
+                    }
+                }
+                continue;
+            }
+            by_key.insert(key, session.id.clone());
+            by_readable.insert(readable, session.id.clone());
         }
 
-        by_key.insert(key, session.id.clone());
-        by_readable.insert(readable, session.id.clone());
         by_id.insert(session.id.clone(), session);
     }
 
@@ -263,134 +273,8 @@ pub async fn list_chat_history(
     user: CurrentUser,
     Query(query): Query<ChatHistoryQuery>,
 ) -> ApiResult<Json<Vec<ChatSession>>> {
-    let mut sessions: Vec<ChatSession> = Vec::new();
-    let mut source = "direct";
-    let multi_user = is_multi_user_mode(&state);
-
-    // In multi-user mode, use runner to access user's home directory
-    if let Some(runner) = get_runner_for_user(&state, user.id()) {
-        match runner.list_opencode_sessions(None, true, None).await {
-            Ok(response) => {
-                sessions = response
-                    .sessions
-                    .into_iter()
-                    .map(|s| ChatSession {
-                        id: s.id,
-                        readable_id: s.readable_id,
-                        title: s.title,
-                        parent_id: s.parent_id,
-                        workspace_path: s.workspace_path,
-                        project_name: s.project_name,
-                        created_at: s.created_at,
-                        updated_at: s.updated_at,
-                        version: s.version,
-                        is_child: s.is_child,
-                        source_path: None,
-                    })
-                    .collect();
-                source = "runner";
-            }
-            Err(e) => {
-                // SECURITY: In multi-user mode, do NOT fall back to direct access
-                if multi_user {
-                    tracing::error!(
-                        user_id = %user.id(),
-                        error = %e,
-                        "Runner failed in multi-user mode, cannot fall back to direct access"
-                    );
-                    return Err(ApiError::internal(
-                        "Chat history service unavailable. Please try again later.",
-                    ));
-                }
-                tracing::warn!(user_id = %user.id(), error = %e, "Runner failed, falling back to direct access");
-            }
-        }
-    } else if multi_user {
-        // SECURITY: Multi-user mode requires runner, but none available
-        tracing::error!(
-            user_id = %user.id(),
-            "No runner available in multi-user mode"
-        );
-        return Err(ApiError::internal(
-            "Chat history service not configured for this user.",
-        ));
-    }
-
-    // SECURITY: Only use direct filesystem access in single-user mode
-    if !multi_user && sessions.is_empty() {
-        sessions = crate::history::list_sessions()
-            .map_err(|e| ApiError::internal(format!("Failed to list chat history: {}", e)))?;
-        if !sessions.is_empty() {
-            source = "jsonl";
-        }
-    }
-
-    let pi_sessions = list_workspace_pi_sessions(&state, user.id());
-
-    let mut hstry_sessions: Vec<ChatSession> = Vec::new();
-    if !multi_user && let Some(db_path) = crate::history::hstry_db_path() {
-        if let Ok(found) = crate::history::list_sessions_from_hstry(&db_path).await {
-            hstry_sessions = found;
-        }
-    }
-
-    if !hstry_sessions.is_empty() || !pi_sessions.is_empty() {
-        let mut by_id: HashMap<String, ChatSession> =
-            sessions.into_iter().map(|s| (s.id.clone(), s)).collect();
-
-        if !hstry_sessions.is_empty() {
-            for session in &hstry_sessions {
-                by_id.insert(session.id.clone(), session.clone());
-            }
-            source = if source == "direct" { "hstry" } else { "mixed" };
-        }
-
-        let mut missing = Vec::new();
-        for session in pi_sessions {
-            if !by_id.contains_key(&session.id) {
-                missing.push(session.clone());
-                by_id.insert(session.id.clone(), session);
-            }
-        }
-
-        if !missing.is_empty() {
-            let state = state.clone();
-            let user_id = user.id().to_string();
-            tokio::spawn(async move {
-                for session in missing {
-                    if let Err(err) =
-                        backfill_pi_session_to_hstry(&state, &user_id, &session).await
-                    {
-                        tracing::warn!(
-                            session_id = %session.id,
-                            error = %err,
-                            "Failed to backfill Pi session to hstry"
-                        );
-                    }
-                }
-            });
-        }
-
-        sessions = by_id.into_values().collect();
-        if source == "direct" {
-            source = if !hstry_sessions.is_empty() { "hstry" } else { "pi" };
-        }
-    } else if !multi_user && sessions.is_empty()
-        && let Some(db_path) = crate::history::hstry_db_path()
-    {
-        match crate::history::list_sessions_from_hstry(&db_path).await {
-            Ok(found) => {
-                sessions = found;
-                source = "hstry";
-            }
-            Err(err) => {
-                tracing::warn!(
-                    error = %err,
-                    "Failed to list chat history via hstry, falling back to direct access"
-                );
-            }
-        }
-    }
+    let mut sessions = list_workspace_pi_sessions(&state, user.id());
+    let source = "pi";
 
     sessions = merge_duplicate_sessions(sessions);
 
@@ -842,58 +726,9 @@ pub async fn list_chat_history_grouped(
     user: CurrentUser,
     Query(query): Query<ChatHistoryQuery>,
 ) -> ApiResult<Json<Vec<GroupedChatHistory>>> {
-    let mut sessions: Vec<ChatSession> = Vec::new();
-    let mut source = "direct";
+    let mut sessions = list_workspace_pi_sessions(&state, user.id());
+    let mut source = "pi";
     let multi_user = is_multi_user_mode(&state);
-
-    if let Some(runner) = get_runner_for_user(&state, user.id()) {
-        match runner.list_opencode_sessions(None, true, None).await {
-            Ok(response) => {
-                sessions = response
-                    .sessions
-                    .into_iter()
-                    .map(|s| ChatSession {
-                        id: s.id,
-                        readable_id: s.readable_id,
-                        title: s.title,
-                        parent_id: s.parent_id,
-                        workspace_path: s.workspace_path,
-                        project_name: s.project_name,
-                        created_at: s.created_at,
-                        updated_at: s.updated_at,
-                        version: s.version,
-                        is_child: s.is_child,
-                        source_path: None,
-                    })
-                    .collect();
-                source = "runner";
-            }
-            Err(e) => {
-                // SECURITY: In multi-user mode, do NOT fall back
-                if multi_user {
-                    tracing::error!(
-                        user_id = %user.id(),
-                        error = %e,
-                        "Runner failed in multi-user mode"
-                    );
-                    return Err(ApiError::internal("Chat history service unavailable."));
-                }
-            }
-        }
-    } else if multi_user {
-        // SECURITY: Multi-user mode requires runner
-        return Err(ApiError::internal(
-            "Chat history service not configured for this user.",
-        ));
-    }
-
-    // SECURITY: Only use direct access in single-user mode
-    if !multi_user && sessions.is_empty() {
-        sessions = crate::history::list_sessions()
-            .map_err(|e| ApiError::internal(format!("Failed to list chat history: {}", e)))?;
-    }
-
-    let pi_sessions = list_workspace_pi_sessions(&state, user.id());
 
     let mut hstry_sessions: Vec<ChatSession> = Vec::new();
     if !multi_user && let Some(db_path) = crate::history::hstry_db_path() {
@@ -902,7 +737,7 @@ pub async fn list_chat_history_grouped(
         }
     }
 
-    if !hstry_sessions.is_empty() || !pi_sessions.is_empty() {
+    if !hstry_sessions.is_empty() {
         let mut by_id: HashMap<String, ChatSession> =
             sessions.into_iter().map(|s| (s.id.clone(), s)).collect();
 
@@ -910,39 +745,10 @@ pub async fn list_chat_history_grouped(
             for session in &hstry_sessions {
                 by_id.insert(session.id.clone(), session.clone());
             }
-            source = if source == "direct" { "hstry" } else { "mixed" };
-        }
-
-        let mut missing = Vec::new();
-        for session in pi_sessions {
-            if !by_id.contains_key(&session.id) {
-                missing.push(session.clone());
-                by_id.insert(session.id.clone(), session);
-            }
-        }
-
-        if !missing.is_empty() {
-            let state = state.clone();
-            let user_id = user.id().to_string();
-            tokio::spawn(async move {
-                for session in missing {
-                    if let Err(err) =
-                        backfill_pi_session_to_hstry(&state, &user_id, &session).await
-                    {
-                        tracing::warn!(
-                            session_id = %session.id,
-                            error = %err,
-                            "Failed to backfill Pi session to hstry"
-                        );
-                    }
-                }
-            });
+            source = "mixed";
         }
 
         sessions = by_id.into_values().collect();
-        if source == "direct" {
-            source = if !hstry_sessions.is_empty() { "hstry" } else { "pi" };
-        }
     }
 
     sessions = merge_duplicate_sessions(sessions);

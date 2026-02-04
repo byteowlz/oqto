@@ -12,10 +12,9 @@ import {
 import {
 	type PiModelInfo,
 	type PiState,
-	getDefaultChatPiModels,
-	getDefaultChatPiState,
-	startDefaultChatPiSession,
-	setDefaultChatPiModel,
+	getWorkspacePiModels,
+	getWorkspacePiState,
+	setWorkspacePiModel,
 } from "@/features/chat/api";
 import { fuzzyMatch } from "@/lib/slash-commands";
 import { cn } from "@/lib/utils";
@@ -25,11 +24,15 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 interface ChatSettingsViewProps {
 	className?: string;
 	locale?: "en" | "de";
+	sessionId: string | null;
+	workspacePath: string | null;
 }
 
 export function ChatSettingsView({
 	className,
 	locale = "en",
+	sessionId,
+	workspacePath,
 }: ChatSettingsViewProps) {
 	const [availableModels, setAvailableModels] = useState<PiModelInfo[]>([]);
 	const [selectedModelRef, setSelectedModelRef] = useState<string | null>(null);
@@ -43,14 +46,14 @@ export function ChatSettingsView({
 	useEffect(() => {
 		let active = true;
 		setLoading(true);
-		if (!piState?.session_id) {
+		if (!sessionId || !workspacePath) {
 			setAvailableModels([]);
 			setLoading(false);
 			return () => {
 				active = false;
 			};
 		}
-		getDefaultChatPiModels(piState.session_id)
+		getWorkspacePiModels(workspacePath, sessionId)
 			.then((models) => {
 				if (active) {
 					setAvailableModels(models);
@@ -74,39 +77,32 @@ export function ChatSettingsView({
 
 	useEffect(() => {
 		let active = true;
-		let intervalId: ReturnType<typeof setInterval> | null = null;
 		const fetchState = async () => {
 			if (!active) return;
 			try {
-				if (!piState?.session_id) {
-					const nextState = await startDefaultChatPiSession();
-					if (active) setPiState(nextState);
+				if (!sessionId || !workspacePath) {
+					setPiState(null);
 					return;
 				}
-				const nextState = await getDefaultChatPiState(piState.session_id);
+				const nextState = await getWorkspacePiState(workspacePath, sessionId);
 				if (active) setPiState(nextState);
 			} catch {
-				if (active) {
-					try {
-						const nextState = await startDefaultChatPiSession();
-						if (active) setPiState(nextState);
-						return;
-					} catch {
-						setPiState(null);
-					}
-				}
+				if (active) setPiState(null);
 			} finally {
 				if (active) setLoadingState(false);
 			}
 		};
 		setLoadingState(true);
 		void fetchState();
-		intervalId = setInterval(fetchState, 2000);
 		return () => {
 			active = false;
-			if (intervalId) clearInterval(intervalId);
 		};
-	}, [piState?.session_id]);
+	}, [sessionId, workspacePath]);
+
+	useEffect(() => {
+		if (!piState?.model) return;
+		setSelectedModelRef(`${piState.model.provider}/${piState.model.id}`);
+	}, [piState?.model]);
 
 	const filteredModels = useMemo(() => {
 		const query = modelQuery.trim();
@@ -134,15 +130,17 @@ export function ChatSettingsView({
 			setSelectedModelRef(value);
 			setIsSwitchingModel(true);
 			try {
-				if (!piState?.session_id) throw new Error("No active default chat session");
-				await setDefaultChatPiModel(piState.session_id, provider, modelId);
+				if (!sessionId || !workspacePath) {
+					throw new Error("No active chat session");
+				}
+				await setWorkspacePiModel(workspacePath, sessionId, provider, modelId);
 			} catch (err) {
 				console.error("Failed to switch model:", err);
 			} finally {
 				setIsSwitchingModel(false);
 			}
 		},
-		[isIdle, piState?.session_id],
+		[isIdle, sessionId, workspacePath],
 	);
 
 	if (loading) {
@@ -160,7 +158,7 @@ export function ChatSettingsView({
 			{/* Header */}
 			<div className="flex items-center justify-between p-3 border-b border-border">
 				<span className="text-sm font-medium">
-					{locale === "de" ? "Standardchat Einstellungen" : "Default Chat Settings"}
+					{locale === "de" ? "Chat Einstellungen" : "Chat Settings"}
 				</span>
 			</div>
 

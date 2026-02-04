@@ -7,7 +7,6 @@ import { useCommandPalette } from "@/hooks/use-command-palette";
 import type { HstrySearchHit } from "@/lib/control-plane-client";
 import { getSettingsValues } from "@/lib/control-plane-client";
 import { setChatPrefetchLimit } from "@/lib/app-settings";
-import { type OpenCodeAgent, fetchAgents } from "@/lib/opencode-client";
 import { cn } from "@/lib/utils";
 import { Clock, PanelLeftClose, PanelRightClose } from "lucide-react";
 import { useTheme } from "next-themes";
@@ -48,14 +47,9 @@ const AppShell = memo(function AppShell() {
 		setLocale,
 		resolveText,
 		chatHistory,
-		opencodeSessions,
 		selectedChatSessionId,
 		setSelectedChatSessionId,
 		selectedChatFromHistory,
-		selectedWorkspaceSession,
-		opencodeBaseUrl,
-		opencodeDirectory,
-		ensureOpencodeRunning,
 		createOptimisticChatSession,
 		clearOptimisticChatSession,
 		createNewChat,
@@ -63,15 +57,10 @@ const AppShell = memo(function AppShell() {
 		renameChatSession,
 		busySessions,
 		workspaceSessions,
+		selectedWorkspaceSession,
 		setSelectedWorkspaceSessionId,
 		projectDefaultAgents,
 		setProjectDefaultAgents,
-		defaultChatActive,
-		defaultChatAssistantName,
-		setDefaultChatAssistantName,
-		defaultChatCurrentSessionId,
-		setDefaultChatCurrentSessionId,
-		defaultChatWorkspacePath,
 		setScrollToMessageId,
 	} = useApp();
 
@@ -83,7 +72,6 @@ const AppShell = memo(function AppShell() {
 	const [selectedProjectKey, setSelectedProjectKey] = useState<string | null>(
 		null,
 	);
-	const [availableAgents, setAvailableAgents] = useState<OpenCodeAgent[]>([]);
 	const [sessionSearch, setSessionSearch] = useState("");
 	const deferredSearch = useDeferredValue(sessionSearch);
 
@@ -108,24 +96,7 @@ const AppShell = memo(function AppShell() {
 			const failures: string[] = [];
 			await Promise.all(
 				sessionIds.map(async (sessionId) => {
-					const session = chatHistory.find((s) => s.id === sessionId);
-					const workspacePath = session?.workspace_path;
-					const sourcePath = session?.source_path ?? "";
-					const isWorkspacePi =
-						sourcePath.includes("/.pi/agent/sessions") ||
-						sourcePath.endsWith(".jsonl");
-					let baseUrl: string | null = opencodeBaseUrl;
-
-					if (
-						!isWorkspacePi &&
-						workspacePath &&
-						workspacePath !== "global" &&
-						!baseUrl
-					) {
-						baseUrl = await ensureOpencodeRunning(workspacePath);
-					}
-
-					const ok = await deleteChatSession(sessionId, baseUrl ?? undefined);
+					const ok = await deleteChatSession(sessionId);
 					if (!ok) {
 						failures.push(sessionId);
 					}
@@ -133,36 +104,14 @@ const AppShell = memo(function AppShell() {
 			);
 			return failures;
 		},
-		[
-			chatHistory,
-			deleteChatSession,
-			ensureOpencodeRunning,
-			opencodeBaseUrl,
-		],
+		[deleteChatSession],
 	);
 
 	const handleDeleteSession = useCallback(
 		async (sessionId: string) => {
-			const session = chatHistory.find((s) => s.id === sessionId);
-			const workspacePath = session?.workspace_path;
-			const sourcePath = session?.source_path ?? "";
-			const isWorkspacePi =
-				sourcePath.includes("/.pi/agent/sessions") ||
-				sourcePath.endsWith(".jsonl");
-			let baseUrl: string | null = opencodeBaseUrl;
-
-			if (
-				!isWorkspacePi &&
-				workspacePath &&
-				workspacePath !== "global" &&
-				!baseUrl
-			) {
-				baseUrl = await ensureOpencodeRunning(workspacePath);
-			}
-
-			await deleteChatSession(sessionId, baseUrl ?? undefined);
+			await deleteChatSession(sessionId);
 		},
-		[chatHistory, deleteChatSession, ensureOpencodeRunning, opencodeBaseUrl],
+		[deleteChatSession],
 	);
 
 	const { open: commandPaletteOpen, setOpen: setCommandPaletteOpen } =
@@ -264,13 +213,7 @@ const AppShell = memo(function AppShell() {
 		return () => document.removeEventListener("keydown", handleKeyDown);
 	}, [activateGodmode, onboardingState.completed, onboardingState.godmode]);
 
-	// Fetch agents
-	useEffect(() => {
-		if (!opencodeBaseUrl) return;
-		fetchAgents(opencodeBaseUrl, { directory: opencodeDirectory })
-			.then(setAvailableAgents)
-			.catch(() => setAvailableAgents([]));
-	}, [opencodeBaseUrl, opencodeDirectory]);
+	const _availableAgents = useMemo(() => [], []);
 
 	// Load settings
 	useEffect(() => {
@@ -353,16 +296,6 @@ const AppShell = memo(function AppShell() {
 				}
 				setActiveAppId("sessions");
 				if (sessionsRoute) navigate(sessionsRoute);
-			} else if (hit.agent === "opencode" || hit.agent === "claude_code") {
-				const sessionId =
-					hit.session_id ||
-					hit.source_path.match(/ses_[a-zA-Z0-9]+/)?.[0] ||
-					"";
-				if (sessionId) {
-					setSelectedChatSessionId(sessionId);
-					setActiveAppId("sessions");
-					if (sessionsRoute) navigate(sessionsRoute);
-				}
 			}
 			sidebarState.setMobileMenuOpen(false);
 		},
@@ -377,78 +310,40 @@ const AppShell = memo(function AppShell() {
 	);
 
 	const handleNewChat = useCallback(async () => {
-		const isDefaultChatSelected =
-			!!selectedChatFromHistory?.workspace_path &&
-			selectedChatFromHistory.workspace_path === defaultChatWorkspacePath;
-
-		if (isDefaultChatSelected) {
-			setActiveAppId("sessions");
-			// Provide immediate UI feedback and ensure we don't keep rendering the old
-			// session while a new one is being created.
-			setSelectedChatSessionId("");
-			const workspacePath = defaultChatWorkspacePath ?? "global";
-			const optimisticId = createOptimisticChatSession(workspacePath);
-			setDefaultChatCurrentSessionId(optimisticId);
-			sidebarState.setMobileMenuOpen(false);
-			return;
-		}
-
 		if (selectedProjectKey) {
 			const project = sessionData.projectSummaries.find(
 				(p) => p.key === selectedProjectKey,
 			);
 			if (project?.directory) {
 				setActiveAppId("sessions");
-				const optimisticId = createOptimisticChatSession(project.directory);
-				const created = await createNewChat(project.directory, {
-					optimisticId,
-				});
-				if (created) return;
-				clearOptimisticChatSession(optimisticId);
+				await createNewChat(project.directory);
+				return;
 			}
 		}
 
 		if (selectedWorkspaceSession) {
 			setActiveAppId("sessions");
-			const workspacePath =
-				selectedWorkspaceSession.workspace_path ??
-				opencodeDirectory ??
-				"global";
-			const optimisticId = createOptimisticChatSession(workspacePath);
-			const created = await createNewChat(workspacePath, { optimisticId });
-			if (created) return;
-			clearOptimisticChatSession(optimisticId);
+			await createNewChat(
+				selectedWorkspaceSession.workspace_path ?? undefined,
+			);
 			return;
 		}
 
 		const currentWorkspacePath = selectedChatFromHistory?.workspace_path;
 		if (currentWorkspacePath && currentWorkspacePath !== "global") {
 			setActiveAppId("sessions");
-			const optimisticId = createOptimisticChatSession(currentWorkspacePath);
-			const created = await createNewChat(currentWorkspacePath, {
-				optimisticId,
-			});
-			if (created) return;
-			clearOptimisticChatSession(optimisticId);
+			await createNewChat(currentWorkspacePath);
+			return;
 		}
 
 		setActiveAppId("sessions");
-		const fallbackPath = defaultChatWorkspacePath ?? "global";
-		const optimisticId = createOptimisticChatSession(fallbackPath);
-		setDefaultChatCurrentSessionId(optimisticId);
+		await createNewChat(undefined);
 	}, [
-		defaultChatWorkspacePath,
-		sidebarState,
-		setDefaultChatCurrentSessionId,
-		setSelectedChatSessionId,
 		selectedWorkspaceSession,
-		opencodeDirectory,
 		selectedChatFromHistory,
 		selectedProjectKey,
 		sessionData.projectSummaries,
 		createNewChat,
-		createOptimisticChatSession,
-		clearOptimisticChatSession,
 		setActiveAppId,
 	]);
 
@@ -456,15 +351,10 @@ const AppShell = memo(function AppShell() {
 		async (directory: string) => {
 			setActiveAppId("sessions");
 			sidebarState.setMobileMenuOpen(false);
-			const optimisticId = createOptimisticChatSession(directory);
-			const created = await createNewChat(directory, { optimisticId });
-			if (created) return;
-			clearOptimisticChatSession(optimisticId);
+			await createNewChat(directory);
 		},
 		[
 			createNewChat,
-			createOptimisticChatSession,
-			clearOptimisticChatSession,
 			setActiveAppId,
 			sidebarState,
 		],
@@ -639,9 +529,6 @@ const AppShell = memo(function AppShell() {
 					activeApp={activeApp}
 					resolveText={resolveText}
 					selectedChatFromHistory={selectedChatFromHistory}
-					opencodeDirectory={opencodeDirectory}
-					defaultChatActive={defaultChatActive}
-					defaultChatAssistantName={defaultChatAssistantName}
 					onMenuOpen={() => sidebarState.setMobileMenuOpen(true)}
 					onNewChat={handleNewChat}
 				/>
@@ -673,7 +560,7 @@ const AppShell = memo(function AppShell() {
 						selectedProjectLabel={sessionData.selectedProjectLabel}
 						projectSummaries={sessionData.projectSummaries}
 						projectDefaultAgents={projectDefaultAgents}
-						availableAgents={availableAgents}
+						availableAgents={_availableAgents}
 						onClose={() => sidebarState.setMobileMenuOpen(false)}
 						onNewChat={handleNewChat}
 						onNewProject={() => projectActions.setNewProjectDialogOpen(true)}
@@ -811,8 +698,7 @@ const AppShell = memo(function AppShell() {
 						</>
 					)}
 
-					{sidebarState.sidebarCollapsed &&
-						(chatHistory.length > 0 || opencodeSessions.length > 0) && (
+					{sidebarState.sidebarCollapsed && chatHistory.length > 0 && (
 							<div className="w-full px-2 mt-4">
 								<div className="pt-2">
 									<button
@@ -898,8 +784,6 @@ const AppShell = memo(function AppShell() {
 						sessionDialogs.handleConfirmDeleteProject(
 							chatHistory,
 							deleteChatSession,
-							opencodeBaseUrl,
-							ensureOpencodeRunning,
 						)
 					}
 					locale={locale}

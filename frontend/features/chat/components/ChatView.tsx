@@ -36,10 +36,8 @@ import { useChatContext } from "@/components/contexts/chat-context";
 import {
 	type Features,
 	type PiModelInfo,
-	type PiSessionFile,
 	getDefaultChatPiModels,
 	getWorkspacePiModels,
-	listDefaultChatPiSessions,
 } from "@/features/chat/api";
 import { type A2UISurfaceState, useA2UI } from "@/hooks/use-a2ui";
 import { useDictation } from "@/hooks/use-dictation";
@@ -58,7 +56,12 @@ import {
 	uploadFileMux,
 } from "@/lib/mux-files";
 import { getWsManager } from "@/lib/ws-manager";
-import { formatSessionDate, resolveReadableId } from "@/lib/session-utils";
+import {
+	formatSessionDate,
+	getReadableIdFromSession,
+	isPendingSessionId,
+	normalizeWorkspacePath,
+} from "@/lib/session-utils";
 import {
 	type SlashCommand,
 	fuzzyMatch,
@@ -152,13 +155,8 @@ export interface ChatViewProps {
 	) => Promise<string | null>;
 }
 
-function isPendingSessionId(id: string | null | undefined): boolean {
-	return !!id && id.startsWith("pending-");
-}
-
 /**
- * Default Chat view using Pi agent runtime.
- * Styled to match OpenCode chat UI exactly.
+ * Chat view using Pi agent runtime.
  */
 export function ChatView({
 	locale = "en",
@@ -186,14 +184,17 @@ export function ChatView({
 	const sendPendingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
 		null,
 	);
-	const pendingSendKeyRef = useRef<string | null>(null);
+	const normalizedWorkspacePath = useMemo(
+		() => normalizeWorkspacePath(workspacePath),
+		[workspacePath],
+	);
 
 	const isMainScope = scope === "default";
 	const resolvedStorageKeyPrefix =
 		storageKeyPrefix ??
 		(isMainScope
 			? "octo:defaultChatPi"
-			: `octo:workspacePi:${(workspacePath ?? "global").replace(
+			: `octo:workspacePi:${(normalizedWorkspacePath ?? "default").replace(
 					/[^a-zA-Z0-9._-]+/g,
 					"_",
 				)}`);
@@ -203,31 +204,12 @@ export function ChatView({
 	const scrollStorageKey = isMainScope
 		? "octo:defaultChat:scrollPosition"
 		: `${resolvedStorageKeyPrefix}:scrollPosition`;
-	const [sessionMeta, setSessionMeta] = useState<PiSessionFile | null>(null);
-	const refreshSessionMeta = useCallback(() => {
-		if (!selectedSessionId || !isMainScope) {
-			setSessionMeta(null);
-			return;
-		}
-		let cancelled = false;
-		listDefaultChatPiSessions()
-			.then((sessions) => {
-				if (cancelled) return;
-				setSessionMeta(
-					sessions.find((s) => s.id === selectedSessionId) ?? null,
-				);
-			})
-			.catch(() => {
-				// ignore
-			});
-		return () => {
-			cancelled = true;
-		};
-	}, [isMainScope, selectedSessionId]);
+	const { updateChatSessionTitleLocal, selectedChatFromHistory } =
+		useChatContext();
+	const sessionMeta = selectedChatFromHistory ?? null;
 	const handleMessageComplete = useCallback(() => {
 		onMessageComplete?.();
-		refreshSessionMeta();
-	}, [onMessageComplete, refreshSessionMeta]);
+	}, [onMessageComplete]);
 	const {
 		messages,
 		isConnected,
@@ -244,25 +226,22 @@ export function ChatView({
 		refresh,
 	} = useChat({
 		scope,
-		workspacePath,
+		workspacePath: normalizedWorkspacePath,
 		storageKeyPrefix: resolvedStorageKeyPrefix,
 		selectedSessionId,
 		onSelectedSessionIdChange,
 		onMessageComplete: handleMessageComplete,
 	});
-	const { updateChatSessionTitleLocal } = useChatContext();
-
 	const ensureRealSessionId = useCallback(async (): Promise<string | null> => {
 		if (selectedSessionId && !isPendingSessionId(selectedSessionId)) {
 			return selectedSessionId;
 		}
-		if (!onEnsureSession) return selectedSessionId ?? null;
-		const optimisticId =
-			selectedSessionId ??
-			pendingSendKeyRef.current ??
-			(null as string | null);
-		return onEnsureSession(workspacePath ?? null, optimisticId);
-	}, [onEnsureSession, selectedSessionId, workspacePath]);
+		if (!onEnsureSession) return null;
+		return onEnsureSession(
+			normalizedWorkspacePath ?? null,
+			selectedSessionId ?? null,
+		);
+	}, [onEnsureSession, selectedSessionId, normalizedWorkspacePath]);
 
 	// Draft persistence - restore from localStorage on mount
 	const [input, setInput] = useState(() => {
@@ -294,10 +273,8 @@ export function ChatView({
 	}, [draftStorageKey]);
 	useEffect(() => {
 		setQueuedMessages([]);
-		// Keep pending state tied to the original session key; don't remap on switch.
 		if (!sendPending) {
 			setSendPendingSessionId(null);
-			pendingSendKeyRef.current = null;
 		}
 	}, [selectedSessionId]);
 	useEffect(() => {
@@ -308,7 +285,6 @@ export function ChatView({
 		if (isStreaming || isAwaitingResponse) {
 			setSendPending(false);
 			setSendPendingSessionId(null);
-			pendingSendKeyRef.current = null;
 		}
 	}, [isAwaitingResponse, isStreaming]);
 	useEffect(() => {
@@ -323,7 +299,6 @@ export function ChatView({
 			sendPendingTimeoutRef.current = setTimeout(() => {
 				setSendPending(false);
 				setSendPendingSessionId(null);
-				pendingSendKeyRef.current = null;
 			}, 8000);
 		}
 		return () => {
@@ -481,7 +456,10 @@ export function ChatView({
 	}, [currentModelRef, modelStorageKey, selectedModelRef]);
 
 	const displayError = commandError ?? error;
-	const showSkeleton = messages.length === 0 && !isConnected && !displayError;
+	const historyPending =
+		messages.length === 0 && (piState?.messageCount ?? 0) > 0;
+	const showSkeleton =
+		messages.length === 0 && !displayError && (!isConnected || historyPending);
 
 	const ChatSkeleton = (
 		<div className="flex-1 flex flex-col gap-4 min-h-0 animate-pulse">
@@ -673,14 +651,13 @@ export function ChatView({
 		// Only fetch models once session is active (piState available)
 		if (!isConnected || !piState) return;
 		const targetSessionId = selectedSessionId ?? piState.session_id ?? null;
-		if (!targetSessionId || isPendingSessionId(targetSessionId)) return;
+		if (!targetSessionId) return;
 		let active = true;
 		const fetchModels = isMainScope
 			? getDefaultChatPiModels(targetSessionId)
-			: getWorkspacePiModels(
-					workspacePath ?? "global",
-					targetSessionId,
-				);
+			: normalizedWorkspacePath
+				? getWorkspacePiModels(normalizedWorkspacePath, targetSessionId)
+				: Promise.resolve([]);
 		fetchModels
 			.then((models) => {
 				if (active) setAvailableModels(models);
@@ -691,13 +668,19 @@ export function ChatView({
 		return () => {
 			active = false;
 		};
-	}, [isConnected, isMainScope, piState, selectedSessionId, workspacePath]);
+	}, [
+		isConnected,
+		isMainScope,
+		piState,
+		selectedSessionId,
+		normalizedWorkspacePath,
+	]);
 
 	useEffect(() => {
 		// Only fetch commands once session is active (piState available)
 		if (!isConnected || !piState) return;
 		const targetSessionId = selectedSessionId ?? piState.session_id ?? null;
-		if (!targetSessionId || isPendingSessionId(targetSessionId)) return;
+		if (!targetSessionId) return;
 		let active = true;
 		const manager = getWsManager();
 		manager
@@ -721,7 +704,7 @@ export function ChatView({
 
 	const refreshStats = useCallback(async () => {
 		const targetSessionId = selectedSessionId ?? piState?.session_id ?? null;
-		if (!targetSessionId || isPendingSessionId(targetSessionId)) return;
+		if (!targetSessionId) return;
 		try {
 			const stats = await getWsManager().piGetSessionStats(targetSessionId);
 			const tokens =
@@ -909,7 +892,7 @@ export function ChatView({
 			
 			// File attachments require a workspace path to upload to
 			// The path is always available for default chat, but may be loading initially
-			if (!workspacePath) {
+			if (!normalizedWorkspacePath) {
 				toast.error("Workspace path is still loading. Please try again in a moment.");
 				return;
 			}
@@ -919,7 +902,10 @@ export function ChatView({
 			try {
 				for (const file of Array.from(files)) {
 					try {
-						await uploadFileMux(workspacePath, file.name, file);
+						if (!normalizedWorkspacePath) {
+							throw new Error("Workspace path is still loading");
+						}
+						await uploadFileMux(normalizedWorkspacePath, file.name, file);
 
 						const attachment: FileAttachment = {
 							id: `file-${Date.now()}-${Math.random().toString(36).slice(2)}`,
@@ -958,7 +944,7 @@ export function ChatView({
 			setIsSwitchingModel(true);
 			try {
 				const targetSessionId = selectedSessionId ?? piState?.session_id ?? null;
-				if (!targetSessionId || isPendingSessionId(targetSessionId)) {
+				if (!targetSessionId) {
 					throw new Error("No active session");
 				}
 				// Use WebSocket to set model - works for both default chat and workspace
@@ -1011,7 +997,7 @@ export function ChatView({
 				case "stats": {
 					const targetSessionId =
 						selectedSessionId ?? piState?.session_id ?? null;
-					if (!targetSessionId || isPendingSessionId(targetSessionId)) {
+					if (!targetSessionId) {
 						throw new Error("No active session");
 					}
 					const stats = await getWsManager().piGetSessionStats(targetSessionId);
@@ -1169,53 +1155,41 @@ export function ChatView({
 				// Ignore localStorage errors
 			}
 			// Reset textarea height
-				if (inputRef.current) {
-					inputRef.current.style.height = "auto";
-				}
-				const hasHistory =
-					messages.length > 0 || (piState?.messageCount ?? 0) > 0;
-				const effectiveMode =
-					mode === "follow_up" || mode === "steer"
-						? hasHistory
-							? mode
-							: "prompt"
-						: mode;
+			if (inputRef.current) {
+				inputRef.current.style.height = "auto";
+			}
+			const hasHistory =
+				messages.length > 0 || (piState?.messageCount ?? 0) > 0;
+			const effectiveMode =
+				mode === "follow_up" || mode === "steer"
+					? hasHistory
+						? mode
+						: "prompt"
+					: mode;
 
-				setSendPending(true);
-				if (!selectedSessionId) {
-					if (!pendingSendKeyRef.current) {
-						pendingSendKeyRef.current = `pending-${Date.now()}-${Math.random()
-							.toString(36)
-							.slice(2)}`;
-					}
-				}
-				setSendPendingSessionId(
-					selectedSessionId ?? pendingSendKeyRef.current ?? null,
-				);
-				let resolvedSessionId =
-					selectedSessionId ?? pendingSendKeyRef.current ?? null;
-				if (!resolvedSessionId || isPendingSessionId(resolvedSessionId)) {
-					resolvedSessionId = await ensureRealSessionId();
-				}
-				if (!resolvedSessionId) {
-					setSendPending(false);
-					setSendPendingSessionId(null);
-					pendingSendKeyRef.current = null;
-					toast.error("Failed to create a chat session.");
-					return;
-				}
-				setSendPendingSessionId(resolvedSessionId);
-				try {
-					await send(message, { mode: effectiveMode, sessionId: resolvedSessionId });
-					// Notify that a message was sent (for sidebar refresh)
-					onMessageSent?.();
-				} catch {
-					setSendPending(false);
-					setSendPendingSessionId(null);
-					pendingSendKeyRef.current = null;
-					toast.error("Failed to send message.");
-				}
-			},
+			setSendPending(true);
+			setSendPendingSessionId(selectedSessionId ?? null);
+			let resolvedSessionId = selectedSessionId ?? null;
+			if (!resolvedSessionId) {
+				resolvedSessionId = await ensureRealSessionId();
+			}
+			if (!resolvedSessionId) {
+				setSendPending(false);
+				setSendPendingSessionId(null);
+				toast.error("Failed to create a chat session.");
+				return;
+			}
+			setSendPendingSessionId(resolvedSessionId);
+			try {
+				await send(message, { mode: effectiveMode, sessionId: resolvedSessionId });
+				// Notify that a message was sent (for sidebar refresh)
+				onMessageSent?.();
+			} catch {
+				setSendPending(false);
+				setSendPendingSessionId(null);
+				toast.error("Failed to send message.");
+			}
+		},
 		[
 			builtInCommandNames,
 			draftStorageKey,
@@ -1261,57 +1235,44 @@ export function ChatView({
 		const next = queuedMessages[0];
 		if (!next?.text) return;
 
-			queueSendInFlightRef.current = true;
-			(async () => {
-				setSendPending(true);
-				if (!selectedSessionId) {
-					if (!pendingSendKeyRef.current) {
-						pendingSendKeyRef.current = `pending-${Date.now()}-${Math.random()
-							.toString(36)
-							.slice(2)}`;
-					}
-				}
-				setSendPendingSessionId(
-					selectedSessionId ?? pendingSendKeyRef.current ?? null,
-				);
-				let resolvedSessionId =
-					selectedSessionId ?? pendingSendKeyRef.current ?? null;
-				if (!resolvedSessionId || isPendingSessionId(resolvedSessionId)) {
-					resolvedSessionId = await ensureRealSessionId();
-				}
-				if (!resolvedSessionId) {
-					setSendPending(false);
-					setSendPendingSessionId(null);
-					pendingSendKeyRef.current = null;
-					toast.error("Failed to create a chat session.");
-					return;
-				}
-				setSendPendingSessionId(resolvedSessionId);
-				const hasHistory =
-					messages.length > 0 || (piState?.messageCount ?? 0) > 0;
-				const queueMode = hasHistory ? "follow_up" : "prompt";
-				send(next.text, { mode: queueMode, sessionId: resolvedSessionId })
-					.then(() => {
-						setQueuedMessages((prev) => prev.slice(1));
-						onMessageSent?.();
-					})
-					.catch(() => {
-						queueCooldownRef.current = Date.now();
-						setSendPending(false);
-						setSendPendingSessionId(null);
-						pendingSendKeyRef.current = null;
-						toast.error("Failed to send queued message.");
-					})
-					.finally(() => {
-						queueSendInFlightRef.current = false;
-					});
-			})().catch(() => {
-				queueSendInFlightRef.current = false;
+		queueSendInFlightRef.current = true;
+		(async () => {
+			setSendPending(true);
+			setSendPendingSessionId(selectedSessionId ?? null);
+			let resolvedSessionId = selectedSessionId ?? null;
+			if (!resolvedSessionId) {
+				resolvedSessionId = await ensureRealSessionId();
+			}
+			if (!resolvedSessionId) {
 				setSendPending(false);
 				setSendPendingSessionId(null);
-				pendingSendKeyRef.current = null;
-				toast.error("Failed to send queued message.");
-			});
+				toast.error("Failed to create a chat session.");
+				return;
+			}
+			setSendPendingSessionId(resolvedSessionId);
+			const hasHistory =
+				messages.length > 0 || (piState?.messageCount ?? 0) > 0;
+			const queueMode = hasHistory ? "follow_up" : "prompt";
+			send(next.text, { mode: queueMode, sessionId: resolvedSessionId })
+				.then(() => {
+					setQueuedMessages((prev) => prev.slice(1));
+					onMessageSent?.();
+				})
+				.catch(() => {
+					queueCooldownRef.current = Date.now();
+					setSendPending(false);
+					setSendPendingSessionId(null);
+					toast.error("Failed to send queued message.");
+				})
+				.finally(() => {
+					queueSendInFlightRef.current = false;
+				});
+		})().catch(() => {
+			queueSendInFlightRef.current = false;
+			setSendPending(false);
+			setSendPendingSessionId(null);
+			toast.error("Failed to send queued message.");
+		});
 	}, [
 		isAwaitingResponse,
 		isStreaming,
@@ -1537,21 +1498,17 @@ export function ChatView({
 		[locale],
 	);
 
-	useEffect(() => {
-		return refreshSessionMeta();
-	}, [refreshSessionMeta]);
-
-	const readableId = selectedSessionId
-		? resolveReadableId(selectedSessionId, null)
-		: null;
-	const formattedDate = sessionMeta?.started_at
-		? formatSessionDate(new Date(sessionMeta.started_at).getTime())
-		: null;
+	const readableId = sessionMeta ? getReadableIdFromSession(sessionMeta) : null;
+	const formattedDate = sessionMeta?.updated_at
+		? formatSessionDate(sessionMeta.updated_at)
+		: sessionMeta?.created_at
+			? formatSessionDate(sessionMeta.created_at)
+			: null;
 
 	const sessionTitle =
 		sessionMeta?.title?.trim() ||
 		assistantName?.trim() ||
-		(locale === "de" ? "Standardchat" : "Default Chat");
+		(locale === "de" ? "Chat" : "Chat");
 
 	const SessionHeader = (
 		<div className="pb-3 mb-3 border-b border-border pr-10">
@@ -1618,15 +1575,15 @@ export function ChatView({
 				>
 					{showSkeleton && ChatSkeleton}
 
-						{!showSkeleton &&
-							messages.length === 0 &&
-							!sendPending &&
-							!isStreaming &&
-							!isAwaitingResponse && (
-								<div className="flex items-center gap-2 text-sm text-muted-foreground">
-									<span>{t.noMessages}</span>
-								</div>
-							)}
+					{!showSkeleton &&
+						messages.length === 0 &&
+						!sendPending &&
+						!isStreaming &&
+						!isAwaitingResponse && (
+							<div className="flex items-center gap-2 text-sm text-muted-foreground">
+								<span>{t.noMessages}</span>
+							</div>
+						)}
 
 					{/* Load more indicator */}
 					{messages.length > visibleCount && (
@@ -1638,15 +1595,16 @@ export function ChatView({
 					{/* Only render the last visibleCount messages for performance */}
 					{!showSkeleton &&
 						(() => {
-								const visibleMessages = messages.slice(-visibleCount);
-								const grouped = groupPiMessages(visibleMessages);
-								const lastGroup = grouped[grouped.length - 1];
-							const activeSessionKey =
-								selectedSessionId ?? pendingSendKeyRef.current ?? null;
+							const visibleMessages = messages.slice(-visibleCount);
+							const grouped = groupPiMessages(visibleMessages);
+							const lastGroup = grouped[grouped.length - 1];
+							const activeSessionKey = selectedSessionId ?? null;
 							const isWorking =
 								isStreaming ||
 								isAwaitingResponse ||
-								(sendPending && !!sendPendingSessionId && sendPendingSessionId === activeSessionKey);
+								(sendPending &&
+									!!sendPendingSessionId &&
+									sendPendingSessionId === activeSessionKey);
 							const needsPendingAssistant =
 								isWorking && (!lastGroup || lastGroup.role === "user");
 							const groupsToRender = needsPendingAssistant

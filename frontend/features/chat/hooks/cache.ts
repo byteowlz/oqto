@@ -45,11 +45,6 @@ export function sanitizeStorageKey(value: string): string {
 	return value.replace(/[^a-zA-Z0-9._-]+/g, "_");
 }
 
-/** Check if a session ID is a pending/optimistic placeholder */
-export function isPendingSessionId(id: string | null | undefined): boolean {
-	return !!id && id.startsWith("pending-");
-}
-
 /** Get the cache entry key for a session */
 function cacheEntryKey(sessionId: string, storageKeyPrefix: string) {
 	return `${storageKeyPrefix}:${sessionId}`;
@@ -201,6 +196,42 @@ export function clearCachedSessionMessages(
 		localStorage.removeItem(cacheKeyMessages(sessionId, storageKeyPrefix));
 	} catch {
 		// Ignore storage errors.
+	}
+}
+
+/** Move cached session messages from one session ID to another */
+export function transferCachedSessionMessages(
+	fromSessionId: string,
+	toSessionId: string,
+	storageKeyPrefix: string,
+) {
+	if (fromSessionId === toSessionId) return;
+	const fromKey = cacheEntryKey(fromSessionId, storageKeyPrefix);
+	const toKey = cacheEntryKey(toSessionId, storageKeyPrefix);
+	const entry = sessionMessageCache.messagesBySession.get(fromKey);
+	if (entry) {
+		sessionMessageCache.messagesBySession.set(toKey, entry);
+	}
+	const pending = sessionMessageCache.pendingWrite.get(fromKey);
+	if (pending) {
+		clearTimeout(pending);
+		sessionMessageCache.pendingWrite.delete(fromKey);
+	}
+	sessionMessageCache.lastWriteTime.delete(fromKey);
+	if (typeof window === "undefined") return;
+	try {
+		const raw = localStorage.getItem(
+			cacheKeyMessages(fromSessionId, storageKeyPrefix),
+		);
+		if (raw) {
+			localStorage.setItem(
+				cacheKeyMessages(toSessionId, storageKeyPrefix),
+				raw,
+			);
+		}
+		localStorage.removeItem(cacheKeyMessages(fromSessionId, storageKeyPrefix));
+	} catch {
+		// ignore
 	}
 }
 

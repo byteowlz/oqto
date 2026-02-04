@@ -27,7 +27,6 @@ use crate::main_chat::{
     MainChatPiService, MainChatService, PiSessionFile, PiSessionMessage, UserPiSession,
 };
 use crate::pi::{AgentMessage, AssistantMessageEvent, CompactionResult, PiEvent, PiState};
-use crate::wordlist;
 
 use super::error::{ApiError, ApiResult};
 use super::state::AppState;
@@ -1229,7 +1228,7 @@ pub(crate) async fn handle_ws(
                             let sessions_dir = svc.sessions_dir_for_workdir(&user_id_for_events, &work_dir);
                             serde_json::json!({
                                 "canonical_id": session_id,
-                                "readable_id": wordlist::readable_id_from_session_id(session_id),
+                                "readable_id": serde_json::Value::Null,
                                 "workdir": work_dir.to_string_lossy(),
                                 "session_dir": sessions_dir.to_string_lossy(),
                             })

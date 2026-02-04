@@ -20,7 +20,6 @@ use crate::local::LinuxUsersConfig;
 use crate::main_chat::{MainChatPiServiceConfig, PiRuntimeMode, UserPiSession};
 use crate::pi::{ContainerPiRuntime, LocalPiRuntime, PiRuntime, PiSpawnConfig, RunnerPiRuntime};
 use crate::runner::client::RunnerClient;
-use crate::wordlist;
 
 /// How often to run the cleanup task (1 minute).
 const CLEANUP_INTERVAL_SECS: u64 = 60;
@@ -216,31 +215,15 @@ impl WorkspacePiService {
             .unwrap_or_else(|| PathBuf::from("/nonexistent/.pi/agent"))
     }
 
-    /// Resolve the repo root for a working directory (fallbacks to the directory itself).
-    fn resolve_repo_root(&self, work_dir: &Path) -> PathBuf {
-        let mut current = work_dir;
-        loop {
-            if current.join(".git").exists() {
-                return current.to_path_buf();
-            }
-            match current.parent() {
-                Some(parent) => current = parent,
-                None => break,
-            }
-        }
-        work_dir.to_path_buf()
-    }
-
     /// Get the Pi sessions directory for a working directory.
-    /// Pi stores sessions in ~/.pi/agent/sessions/--<path>--/
-    /// We scope to repo root when available to avoid per-workspace collisions.
+    /// Pi stores sessions in ~/.pi/agent/sessions/--<cwd>--/
     fn get_pi_sessions_dir(&self, user_id: &str, work_dir: &Path) -> PathBuf {
-        let repo_root = self.resolve_repo_root(work_dir);
-        let escaped_path = repo_root
+        let escaped_path = work_dir
             .to_string_lossy()
+            .trim_start_matches(&['/', '\\'][..])
             .replace('/', "-")
-            .trim_start_matches('-')
-            .to_string();
+            .replace('\\', "-")
+            .replace(':', "-");
         self.get_pi_agent_dir(user_id)
             .join("sessions")
             .join(format!("--{}--", escaped_path))
@@ -555,38 +538,41 @@ impl WorkspacePiService {
         Ok(Some(path))
     }
 
-    fn ensure_session_file(&self, user_id: &str, work_dir: &Path, session_id: &str) -> Result<()> {
+    async fn ensure_session_file(
+        &self,
+        user_id: &str,
+        work_dir: &Path,
+        session_id: &str,
+    ) -> Result<PathBuf> {
         let sessions_dir = self.get_pi_sessions_dir(user_id, work_dir);
-        if self.find_session_file_anywhere(session_id).is_ok() {
-            return Ok(());
-        }
-        if !sessions_dir.exists() {
-            std::fs::create_dir_all(&sessions_dir).context("creating sessions directory")?;
-        } else if let Ok(entries) = std::fs::read_dir(&sessions_dir) {
-            for entry in entries.filter_map(Result::ok) {
-                let path = entry.path();
-                if path.extension().map(|e| e == "jsonl").unwrap_or(false) {
-                    let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                    if filename.contains(session_id) {
-                        return Ok(());
-                    }
-                }
-            }
+        if let Ok(existing) = self.find_session_file_anywhere(session_id) {
+            return Ok(existing);
         }
 
         let header = serde_json::json!({
             "type": "session",
+            "version": 3,
             "id": session_id,
             "timestamp": Utc::now().to_rfc3339(),
             "cwd": work_dir.to_string_lossy(),
-            "readable_id": wordlist::readable_id_from_session_id(session_id),
-            "session_dir": sessions_dir.to_string_lossy(),
         });
         let content = format!("{}\n", serde_json::to_string(&header)?);
         let filename = format!("{}_{}.jsonl", Utc::now().timestamp_millis(), session_id);
         let path = sessions_dir.join(filename);
+
+        if let Some(client) = self.runner_client_for_user(user_id) {
+            client
+                .write_file(&path, content.as_bytes(), true)
+                .await
+                .context("writing session file via runner")?;
+            return Ok(path);
+        }
+
+        if !sessions_dir.exists() {
+            std::fs::create_dir_all(&sessions_dir).context("creating sessions directory")?;
+        }
         std::fs::write(&path, content).context("writing session file")?;
-        Ok(())
+        Ok(path)
     }
 
     /// Find a Pi session file by ID (.jsonl format).
@@ -774,7 +760,15 @@ impl WorkspacePiService {
             return None;
         }
 
-        let id = header.get("id").and_then(|v| v.as_str())?.to_string();
+        let header_id = header.get("id").and_then(|v| v.as_str())?.to_string();
+        let path_id = source_path
+            .as_deref()
+            .and_then(Self::session_id_from_path)
+            .filter(|id| !id.is_empty());
+        let id = match path_id {
+            Some(path_id) if path_id != header_id => path_id,
+            _ => header_id,
+        };
         let timestamp = header
             .get("timestamp")
             .and_then(|v| v.as_str())
@@ -889,6 +883,19 @@ impl WorkspacePiService {
         self.parse_session_reader(reader, modified_ms, Some(path.to_string_lossy().to_string()))
     }
 
+    fn session_id_from_path(path: &str) -> Option<String> {
+        let stem = std::path::Path::new(path)
+            .file_stem()?
+            .to_string_lossy();
+        let mut parts = stem.rsplitn(2, '_');
+        let id = parts.next()?.trim();
+        if id.is_empty() {
+            None
+        } else {
+            Some(id.to_string())
+        }
+    }
+
     fn read_parent_session_id(path: &str) -> Option<String> {
         use std::io::{BufRead, BufReader};
 
@@ -990,19 +997,24 @@ impl WorkspacePiService {
         user_id: &str,
         work_dir: &Path,
     ) -> Result<(String, Arc<UserPiSession>)> {
-        let session = self.create_session(user_id, work_dir, None).await?;
+        let session_id = Uuid::new_v4().to_string();
+        let session_file = self
+            .ensure_session_file(user_id, work_dir, &session_id)
+            .await?;
+        let session = self
+            .create_session(user_id, work_dir, Some(session_file))
+            .await?;
         let session = Arc::new(session);
 
-        let state = session.get_state().await?;
-        let session_id = state
-            .session_id
-            .ok_or_else(|| anyhow::anyhow!("Pi session_id missing from state"))?;
-
-        if let Err(err) = self.ensure_session_file(user_id, work_dir, &session_id) {
-            warn!(
-                "Failed to create Pi session file for {}: {}",
-                session_id, err
-            );
+        if let Ok(state) = session.get_state().await {
+            if let Some(actual_id) = state.session_id
+                && actual_id != session_id
+            {
+                warn!(
+                    "Pi session_id mismatch (requested {}, got {}). Using requested id for tracking.",
+                    session_id, actual_id
+                );
+            }
         }
 
         let key = (

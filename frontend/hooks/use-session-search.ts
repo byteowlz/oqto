@@ -5,7 +5,7 @@
 import {
 	type InSessionSearchResult,
 	searchInPiSession,
-} from "@/lib/control-plane-client";
+} from "@/lib/api";
 import { useCallback, useMemo, useState } from "react";
 
 export type UseSessionSearchOptions = {

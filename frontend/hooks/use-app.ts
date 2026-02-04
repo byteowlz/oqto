@@ -15,7 +15,7 @@ import { useMemo } from "react";
  * - useChatHistory() - for chat history
  * - useSelectedChat() - for selected chat
  * - useWorkspaceSessions() - for workspace sessions
- * - useDefaultChat() - for default chat state
+ * - useDefaultChat() - deprecated
  */
 export function useApp() {
 	const ui = useUIContext();
@@ -36,23 +36,18 @@ export function useApp() {
 			selectedWorkspaceSessionId: session.selectedWorkspaceSessionId,
 			setSelectedWorkspaceSessionId: session.setSelectedWorkspaceSessionId,
 			selectedWorkspaceSession: session.selectedWorkspaceSession,
-			opencodeBaseUrl: session.opencodeBaseUrl,
-			opencodeDirectory: session.opencodeDirectory,
 			chatHistory: session.chatHistory,
-			opencodeSessions: session.opencodeSessions,
 			selectedChatSessionId: session.selectedChatSessionId,
 			setSelectedChatSessionId: session.setSelectedChatSessionId,
-			selectedChatSession: session.selectedChatSession,
 			selectedChatFromHistory: session.selectedChatFromHistory,
 			busySessions: session.busySessions,
 			setSessionBusy: session.setSessionBusy,
 			refreshWorkspaceSessions: session.refreshWorkspaceSessions,
 			refreshChatHistory: session.refreshChatHistory,
-			refreshOpencodeSessions: session.refreshOpencodeSessions,
 			createOptimisticChatSession: session.createOptimisticChatSession,
 			clearOptimisticChatSession: session.clearOptimisticChatSession,
 			replaceOptimisticChatSession: session.replaceOptimisticChatSession,
-			ensureOpencodeRunning: session.ensureOpencodeRunning,
+			ensureWorkspaceRunning: session.ensureWorkspaceRunning,
 			createNewChat: session.createNewChat,
 			deleteChatSession: session.deleteChatSession,
 			renameChatSession: session.renameChatSession,
@@ -63,14 +58,6 @@ export function useApp() {
 			startProjectSession: session.startProjectSession,
 			projectDefaultAgents: session.projectDefaultAgents,
 			setProjectDefaultAgents: session.setProjectDefaultAgents,
-			defaultChatActive: session.defaultChatActive,
-			setDefaultChatActive: session.setDefaultChatActive,
-			defaultChatAssistantName: session.defaultChatAssistantName,
-			setDefaultChatAssistantName: session.setDefaultChatAssistantName,
-			defaultChatCurrentSessionId: session.defaultChatCurrentSessionId,
-			setDefaultChatCurrentSessionId: session.setDefaultChatCurrentSessionId,
-			defaultChatWorkspacePath: session.defaultChatWorkspacePath,
-			setDefaultChatWorkspacePath: session.setDefaultChatWorkspacePath,
 			scrollToMessageId: session.scrollToMessageId,
 			setScrollToMessageId: session.setScrollToMessageId,
 		}),
@@ -86,5 +73,4 @@ export {
 	useChatHistory,
 	useSelectedChat,
 	useWorkspaceSessions,
-	useDefaultChat,
 } from "@/components/contexts";

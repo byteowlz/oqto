@@ -2,162 +2,141 @@
 
 ## Open
 
-### [octo-xxe2] Per-workspace hstry/mmry stores + sync scoping (P1, task)
+### [octo-r6pc] Fix chat session normalization and pending IDs (P1, bug)
+Normalize workspace path handling (avoid 'global') and ensure pending session IDs are replaced when Pi assigns real session IDs. Export default chat APIs consistently.
 
+### [octo-xxe2] Per-workspace hstry/mmry stores + sync scoping (P1, task)
 Ensure each workspace has isolated hstry/mmry stores; sync and cache are workspace-scoped with location_id/actor metadata. No cross-workspace leakage.
 
 ### [octo-wdkj] Remote runner bootstrap over SSH (P1, task)
-
 Implement SSH bootstrap: install deps, download runner binaries, configure sandbox, start service, register with hub. Provide fallback to bundle+push.
 
 ### [octo-59py] Workspace locations schema + routing (P1, task)
-
 Add workspace_locations (workspace_id, runner_id, path, kind, repo_fingerprint, active flag) and route requests by selected location. Default to local if present; prompt on failure.
 
 ### [octo-pdb4] Shared workspaces with multi-location runners (P1, epic)
-
 Support team shared workspaces with per-workspace hstry/mmry, local+remote locations, and explicit agent targeting. Includes runner bootstrap over SSH, workspace location routing, UI grouping/merge-split, and security model for remote execution + history sync.
 
 ### [octo-1ddx] Move global sandbox config to read-only path (P1, task)
-
 Global sandbox config must be read-only (not user-writable). Implement loading from system path (e.g., /etc/octo/sandbox.toml) with user config for overrides or removal of user-writable global config. Ensure sandbox.toml itself is protected and update docs/install.
 
 ### [octo-t2bf] Multi-Runner & Workspace Sharing (P1, epic)
-
 Epic for enabling users to connect to multiple runners across different machines (laptop, desktop, cloud) and share workspaces with other users.
 
 ## Goals
 
 ### Multi-Runner Support
-
 ...
 
-### [octo-3fkc] Use hstry canonical history + Pi export for rehydrate (P1, task)
 
+### [octo-3fkc] Use hstry canonical history + Pi export for rehydrate (P1, task)
 Implement canonical Pi history via hstry: persist canonical parts_json + metadata, backfill JSONL into hstry, and serve chat history from hstry with JSONL fallback. Preserve tool_call/tool_result fidelity and add immediate working indicator.
 
 ### [octo-gj7p] Integrate hstry-core for message persistence (P1, feature)
-
 Replace Octo's canon module with hstry-core types. On message complete, call hstry daemon's gRPC WriteService instead of writing to main_chat.db. Use source_id=pi and Pi session IDs as external_id for deduplication.
 
 ### [octo-zjs8.3] Add strict clippy lints to all Cargo.toml files (P1, task)
-
 Add workspace-level clippy configuration to deny warnings and enforce best practices
 
 ### [octo-zjs8.2] Fix clippy warnings in frontend/src-tauri (P1, task)
-
 Fix unnecessary_lazy_evaluations, manual_flatten, single_match, and manual_strip warnings
 
 ### [octo-zjs8.1] Fix all clippy warnings in backend crates (P1, task)
-
 Fix warnings in octo-files, octo-scaffold, octo-browser, and octo main crate without using #[allow] or other bandaid fixes
 
 ### [octo-zqyg] Fix Linux user creation sudo allowlist path mismatch (P1, bug)
 
 ### [octo-qq9y] Security audit sudoers configuration for multi-user mode (P1, task)
-
 ## Background
 
 The sudoers configuration in setup.sh had critical security vulnerabilities that could allow privilege escalation. These have been fixed.
 
 ### Vulnerabilities Found and Fixed
-
 ...
 
-### [octo-p3n2] API Key Authentication & External Integration (P1, epic)
 
+### [octo-p3n2] API Key Authentication & External Integration (P1, epic)
 Enable external apps (omni, ctx) to integrate with Octo via API keys. Support fire-and-forget and streaming responses, .ctx context files, auto-session creation.
 
 ### [octo-9bqx] Add limits to zip download endpoints to prevent disk/CPU exhaustion (P1, bug)
-
 Zip creation for /download and /download-zip has no caps on total size, file count, or path count; a single request can create huge archives and fill disk/CPU. Add configurable limits (max total bytes, max entries, max depth) and fail early. Consider streaming without temp files or rejecting large directories. Affected: backend/crates/octo-files/src/handlers.rs (download, download_zip, create_zip_file_from_paths, create_zip_tempfile_blocking).
 
 ### [octo-k9sp] Restrict token query auth to WebSocket-only paths (P1, bug)
-
 Auth middleware accepts a token from the query string for all requests (not just WS upgrades). This risks leaking tokens via logs/referrers and enables accidental use on normal HTTP endpoints. Consider restricting query-token auth to Upgrade: websocket requests or specific WS routes, or require the auth_token cookie instead. Affected: backend/crates/octo/src/auth/middleware.rs (query_token parsing and selection).
 
 ### [octo-xjs5.10] Test plan: isolation matrix (P1, task)
-
 Add automated tests / manual checklist for:
-
 - local single-user
 - local linux multi-user (2 users) verifying no cross access to sessions/files/memories/main chat
 - container multi-user
 
 ...
 
+
 ### [octo-xjs5.7] Local linux provisioning: non-interactive sudo + tmpfiles (P1, task)
-
 Make user provisioning deterministic and non-interactive:
-
 - ensure /run/octo/runner-sockets exists via tmpfiles
 - ensure per-user runner directories (2770, setgid) are created at user creation
 - ensure linger + octo-runner user unit enabled
 - verify runner socket reachable after provisioning
 ...
 
+
 ### [octo-xjs5.6] Security: runner socket authz + strict path guards (P1, task)
-
 Harden the runner boundary:
-
 - unix socket permissions via /run/octo/runner-sockets/<linux_username>/octo-runner.sock (group octo)
 - runner validates every request against its own user roots
 - deny dangerous env vars, validate binary allowlist
 - ensure backend cannot ask runner to read outside workspace/main-chat dirs
 ...
 
+
 ### [octo-xjs5.5] Backend: route all user operations through runner (P1, task)
-
 Refactor backend handlers/proxies so all user-plane operations are served via runner:
-
 - sessions list/create/resume/stop
 - terminal + opencode process lifecycle
 - workspace file viewer
 - memories (mmry target resolution)
 ...
 
+
 ### [octo-xjs5.4] Runner API: main chat storage ownership (P1, task)
-
 Make main chat data physically per-user:
-
 - move main chat DB + session files into linux user's home dir
 - runner provides APIs for main chat list/create/load/save
 - migrate existing shared main chat data into per-user location
 
 ...
 
+
 ### [octo-xjs5.3] Runner API: per-user mmry lifecycle (P1, task)
-
 Move mmry lifecycle/port ownership fully into runner:
-
 - allocate stable per-user mmry port (persisted in per-user db)
 - spawn/stop/pin mmry process for that linux user
 - health check + log capture
 - expose mmry external_api URL for backend proxy
 ...
 
+
 ### [octo-xjs5.2] Runner API: per-user file operations (P1, task)
-
 Define + implement runner-side filesystem API used by the backend:
-
 - list tree, read file, write file, mkdir, stat
 - path validation against per-user workspace roots (no traversal)
 - optional read/write quotas
 
 ...
 
+
 ### [octo-xjs5.1] Runner API: user-plane session registry (P1, task)
-
 Add runner RPC endpoints for per-user session state:
-
 - create/get/list/stop/resume/delete sessions (local runtime)
 - persist session metadata in per-user store (DB or JSON) owned by the linux user
 - include workspace path validation against runner-owned workspace roots
 - return ports + status + errors
 ...
 
-### [octo-y1nq] Opencode agent connection cycling - rapid disconnect/reconnect loop (P1, bug)
 
+### [octo-y1nq] Opencode agent connection cycling - rapid disconnect/reconnect loop (P1, bug)
 The opencode agent repeatedly disconnects and reconnects in rapid succession (observed 15+ cycles in logs). Pattern observed:
 
 [Event] agent_disconnected
@@ -165,52 +144,41 @@ The opencode agent repeatedly disconnects and reconnects in rapid succession (ob
 [Event] agent_connected
 ...
 
-### [octo-thhx.2] Onboarding API endpoints (P1, task)
 
+### [octo-thhx.2] Onboarding API endpoints (P1, task)
 REST endpoints: GET/PUT /api/onboarding/state, POST /api/onboarding/unlock/{component}, POST /api/onboarding/godmode, POST /api/onboarding/complete
 
 ### [octo-thhx.1] Onboarding state model and database schema (P1, task)
-
 Backend model for tracking onboarding progress, unlocked components, user level, and language preference. Store in user preferences table or dedicated onboarding_state table.
 
 ### [octo-thhx] Onboarding & Agent UI Control (P1, epic)
-
 Progressive onboarding experience with agent-driven UI control, spotlight system, and i18n support
 
 ### [octo-70pz] Add session naming - auto-generate from first message, allow editing (P1, feature)
-
 Superseded: Session titles come from Pi session files (first user message) and are cached client-side.
 
 ### [octo-af5j.7.6] Release manifest generator (byt release) (P1, task)
-
 byt release command that: 1) Reads component list from octo/release.toml, 2) Fetches current version from each repo (Cargo.toml, package.json, go.mod), 3) Generates versions.toml with all pinned versions, 4) Optionally tags all repos with octo-0.2.0 tag
 
 ### [octo-af5j.7.1] Version manifest file format (P1, task)
-
 Define versions.toml or versions.json schema that lists all component versions for a release. Embedded in binary or fetched at runtime.
 
 ### [octo-af5j.7] Dependency version pinning and compatibility matrix (P1, feature)
-
 Pin versions of opencode, pi, mmry, fileserver, ttyd, and other dependencies for each Octo release. Ensure all components are tested together. Include in release artifacts.
 
 ### [octo-af5j.3] Self-Update Command (P1, feature)
-
 octoctl self-update command that downloads latest binary, verifies checksum, replaces current binary, and restarts service. Support for update channels (stable/beta).
 
 ### [octo-af5j.2] Template Repository & Versioning (P1, feature)
-
 Separate templates into dedicated repo with version control. Enable template updates independent of binary releases. Track installed template versions per-agent.
 
 ### [octo-af5j.1] Binary Release Pipeline (P1, feature)
-
 Build and distribute pre-compiled binaries for Linux (x86_64, arm64) and macOS (Intel, Apple Silicon). Eliminates need for Rust toolchain on user machines.
 
 ### [octo-af5j] Release & Update System (P1, epic)
-
 Comprehensive system for distributing Octo releases, managing updates in the field, and expanding runtime options including Proxmox LXC support.
 
 ### [workspace-jux6.1] Lazy load main app components (P1, task)
-
 Convert synchronous imports in apps/index.ts to React.lazy() imports. Currently SessionsApp, AgentsApp, ProjectsApp, SettingsApp, AdminApp are all bundled together. This blocks initial render with unused code.
 
 Location: frontend/apps/index.ts:1-56
@@ -218,42 +186,35 @@ Location: frontend/apps/index.ts:1-56
 Implementation:
 ...
 
-### [workspace-5pmk.11] Add backend URL configuration to login form (P1, task)
 
+### [workspace-5pmk.11] Add backend URL configuration to login form (P1, task)
 Add a 'Server URL' field to the login form allowing users to specify the backend URL. Store in localStorage for persistence. Show connection status indicator. Default to current origin for web, require input for mobile apps.
 
 ### [octo-d0a5] Agent targeting for remote locations (P2, task)
-
 Expose workspace+location targets to agent UI and API. Require explicit selection for remote execution; enforce per-location policies and logging.
 
 ### [octo-6nhg] Shared workspace UI grouping + merge/split (P2, task)
-
 Group sessions by team and workspace, show locations nested. Add merge-by-repo default with split toggle; indicate local/remote and active location.
 
 ### [octo-zd43] Collapse consecutive tool calls into tabbed dropdown (P2, task)
-
 Implement level-2 tool rendering: consecutive tool calls with no intervening text collapse into a single dropdown with icons as tabs; overflow uses horizontal scroll + left/right arrows.
 
 ### [octo-jxn7] Add verbosity setting + persistence (P2, task)
-
 Expose chat verbosity level (1-3) in frontend settings and persist to localStorage. Default to 3.
 
 ### [octo-rpxy] Chat verbosity levels for tool calls (P2, epic)
-
 Add frontend verbosity levels for chat rendering. Level 3 = current verbose tool cards. Level 2 collapses consecutive tool calls into a single dropdown with tabbed icons and scroll+arrows when overflow. Level 1 TBD (minimal).
 
 ### [octo-jwc4] Unify Pi chats (default + workspace) (P2, epic)
-
 Make Pi chat the single system of record. Treat 'main' as default scope. Unify endpoints, state handling, settings, and history loading (prefer Pi JSONL; use hstry for cross-harness search). Remove main-specific abstractions where possible.
 
 Progress (2026-02-03):
-
 - Added Pi session title updates (main + workspace) via JSONL header edits when /chat-history rename is used.
 - Session list de-duplication now merges by (workspace_path, readable_id) with newest metadata winning.
 ...
 
-### [octo-wah4] Security: Runner authentication and TLS for network endpoints (P2, task)
 
+### [octo-wah4] Security: Runner authentication and TLS for network endpoints (P2, task)
 Implement runner authentication and TLS for network endpoints:
 
 1. Runner authentication
@@ -261,8 +222,8 @@ Implement runner authentication and TLS for network endpoints:
    - Runner identity verification
 ...
 
-### [octo-mj2r] Frontend: Shared workspace UI with owner indicators (P2, task)
 
+### [octo-mj2r] Frontend: Shared workspace UI with owner indicators (P2, task)
 Add shared workspace UI with owner indicators:
 
 1. Workspace list enhancements
@@ -270,8 +231,8 @@ Add shared workspace UI with owner indicators:
    - Show permission level badge (Read/Write/Execute)
 ...
 
-### [octo-w2zp] Frontend: Runner selector in session management UI (P2, task)
 
+### [octo-w2zp] Frontend: Runner selector in session management UI (P2, task)
 Add runner selector to session management UI:
 
 1. Runner selector component
@@ -279,8 +240,8 @@ Add runner selector to session management UI:
    - Show runner status indicator (online/offline)
 ...
 
-### [octo-888b] CLI: Workspace permission commands (grant, revoke, list, audit) (P2, task)
 
+### [octo-888b] CLI: Workspace permission commands (grant, revoke, list, audit) (P2, task)
 Add workspace permission management CLI commands:
 
 1. octoctl workspace grant-permission
@@ -288,8 +249,8 @@ Add workspace permission management CLI commands:
    - Options: --workspace, --user, --permission (read/write/execute), --expires
 ...
 
-### [octo-cddx] CLI: Runner registration commands (register, list, status, unregister) (P2, task)
 
+### [octo-cddx] CLI: Runner registration commands (register, list, status, unregister) (P2, task)
 Add runner registration CLI commands:
 
 1. octoctl runner register
@@ -297,8 +258,8 @@ Add runner registration CLI commands:
    - Options: --name, --endpoint (socket/address/url), --default
 ...
 
-### [octo-72xf] Backend: Audit logging for cross-user access (P2, task)
 
+### [octo-72xf] Backend: Audit logging for cross-user access (P2, task)
 Implement comprehensive audit logging:
 
 1. Access log model
@@ -306,8 +267,8 @@ Implement comprehensive audit logging:
    - DB schema for access_logs table
 ...
 
-### [octo-cab0] SessionService: Support multi-runner with permission checks (P2, task)
 
+### [octo-cab0] SessionService: Support multi-runner with permission checks (P2, task)
 Extend SessionService for multi-runner and permission checks:
 
 1. Session model updates
@@ -315,8 +276,8 @@ Extend SessionService for multi-runner and permission checks:
    - Add workspace_id and owner_user_id
 ...
 
-### [octo-3486] WebSocket: Add runner_id and workspace_id to protocol types (P2, task)
 
+### [octo-3486] WebSocket: Add runner_id and workspace_id to protocol types (P2, task)
 Add runner_id and workspace_id to WebSocket protocol:
 
 1. WsCommand extensions
@@ -324,8 +285,8 @@ Add runner_id and workspace_id to WebSocket protocol:
    - Add optional workspace_id for permission tracking
 ...
 
-### [octo-kc4x] Backend: Extended RunnerClient with network endpoint support (P2, task)
 
+### [octo-kc4x] Backend: Extended RunnerClient with network endpoint support (P2, task)
 Extend RunnerClient to support multiple endpoint types:
 
 1. Add endpoint enum
@@ -333,8 +294,8 @@ Extend RunnerClient to support multiple endpoint types:
    - RunnerEndpoint::NetworkAddress(SocketAddr) - new TCP
 ...
 
-### [octo-b67r] Backend: Workspace permission system with DB schema (P2, task)
 
+### [octo-b67r] Backend: Workspace permission system with DB schema (P2, task)
 Implement workspace permission system:
 
 1. Database schema
@@ -342,8 +303,8 @@ Implement workspace permission system:
    - workspace_permissions table (workspace_id, granted_user_id, permission, expires_at)
 ...
 
-### [octo-60b1] Runner registry: Multiple runners per user with registration (P2, task)
 
+### [octo-60b1] Runner registry: Multiple runners per user with registration (P2, task)
 Implement runner registry for managing multiple runners per user:
 
 1. Data model
@@ -351,8 +312,8 @@ Implement runner registry for managing multiple runners per user:
    - RunnerEndpoint enum (UnixSocket, NetworkAddress, SecureUrl)
 ...
 
-### [octo-fcs1] Design: Multi-runner architecture and workspace permission model (P2, task)
 
+### [octo-fcs1] Design: Multi-runner architecture and workspace permission model (P2, task)
 Write comprehensive design document covering:
 
 1. Multi-runner architecture
@@ -360,78 +321,65 @@ Write comprehensive design document covering:
    - Runner registration flow
 ...
 
-### [octo-7mxb] MCP Apps Support - Interactive UI in Chat (P2, epic)
 
+### [octo-7mxb] MCP Apps Support - Interactive UI in Chat (P2, epic)
 Add support for MCP Apps extension to render interactive HTML interfaces (dashboards, forms, visualizations) directly in the chat UI. This enables richer user interactions beyond text/images - file browsers, build output viewers, deployment config forms, live metrics dashboards, etc.
 
 ## Phases
 
 ### Phase 1: Frontend Host Support
-
 ...
 
-### [octo-95x0] Remove main_chat.db and duplicate message types (P2, chore)
 
+### [octo-95x0] Remove main_chat.db and duplicate message types (P2, chore)
 After hstry integration, remove: main_chat.db, canon/ module, ChatMessage/ChatMessagePart from history/models.rs, duplicate Message types from agent_rpc/types.rs. Use hstry-core types everywhere.
 
 ### [octo-zjs8.4] Optimize Rust compilation times (P2, task)
-
 Add .cargo/config.toml with linker optimizations, split-debuginfo, incremental builds, and codegen-units settings
 
 ### [octo-7xx0] Note: octo-ssh-proxy socket path must be mounted or moved for sandbox access (P2, task)
 
 ### [octo-p3n2.6] .ctx file parsing (P2, task)
-
 Parse .ctx zip files: extract images, text context, metadata. Store temporarily for agent access.
 
 ### [octo-p3n2.5] Sessions listing endpoint (P2, task)
-
 GET /api/v1/sessions - list available sessions for API consumers
 
 ### [octo-p3n2.4] External chat API endpoint (P2, task)
-
 POST /api/v1/chat - accepts message + optional .ctx file, auto-creates session for workspace, supports stream and fire_and_forget modes
 
 ### [octo-p3n2.3] Key management endpoints (P2, task)
-
 POST /api/keys (create), GET /api/keys (list), DELETE /api/keys/{id} (revoke)
 
 ### [octo-p3n2.2] API key generation and validation (P2, task)
-
 Generate prefixed keys (octo_sk_...), hash storage, validation in auth middleware alongside JWT
 
 ### [octo-p3n2.1] Database migration for api_keys table (P2, task)
-
 Create SQLite migration with: id, user_id, name, key_prefix, key_hash, scopes, last_used_at, expires_at, created_at, revoked_at
 
 ### [octo-8erz] Prevent template copy from following symlinks (P2, bug)
-
 copy_template_dir uses fs::copy on DirEntry paths without checking for symlinks; on most platforms this follows symlinks and can copy arbitrary files outside the template repo into the new project. This is a security risk if template repos are user-supplied. Use symlink_metadata to detect symlinks and either skip, copy as symlink, or enforce that resolved targets stay within the template repo. Affected: backend/crates/octo/src/api/handlers.rs::copy_template_dir.
 
 ### [octo-015j] Move blocking filesystem work out of async request handlers (P2, task)
-
 Several async handlers call std::fs synchronously (read_dir/read_to_string/copy), which can block the Tokio runtime under load. Convert to tokio::fs or wrap in spawn_blocking. Examples: backend/crates/octo/src/api/main_chat_pi.rs::get_prompt_commands (read_dir/read_to_string), backend/crates/octo/src/api/handlers.rs::list_workspace_dirs (read_dir), list_project_templates (read_dir), find_project_logo (read_dir), copy_template_dir (read_dir/fs::copy).
 
 ### [octo-fmxv] Invalid `boundary` for `multipart/form-data` request when trying to save a file after editing it in the sidebar. (P2, bug)
 
 ### [octo-xjs5.9] Observability: runner logs + health endpoints (P2, task)
-
 Add runner health + diagnostics:
-
 - ping/status endpoint
 - per-process status + stdout/stderr tail
 - structured events for start/stop/crash
 - backend exposes aggregated diagnostics for admins
 
 ### [octo-xjs5.8] Compatibility: container mode runner adapter (P2, task)
-
 Keep docker multi-user working:
-
 - define how runner API maps to container runtime
 - either run runner inside container, or implement a backend adapter that satisfies runner interface using container APIs
 - ensure streaming still works
 
 ...
+
 
 ### [octo-h0by] add user self-service section in settings (change password etc) (P2, task)
 
@@ -440,13 +388,13 @@ Keep docker multi-user working:
 ### [octo-85f4] the stop button doesnt seem to stop a running agent response (P2, bug)
 
 ### [octo-8pfr] 503 Service Unavailable on /code/ endpoints during agent reconnection (P2, bug)
-
 Multiple requests to opencode proxy endpoints return 503 Service Unavailable:
 
 - /code/session/{id}/message - fetching messages
 - /code/config/providers - getting provider config  
 - /code/session/{id}/prompt_async - sending prompts
 ...
+
 
 ### [octo-aexm] message order gets mixed up in opencode session: earlier message shows up as latest message. (P2, bug)
 
@@ -455,95 +403,78 @@ Multiple requests to opencode proxy endpoints return 503 Service Unavailable:
 ### [octo-w85q] When adding an image to the canvas, we need to automatically fit the canvas to the image size. And the default canvas size should be 1280x1280 with a properly sized default font size (P2, bug)
 
 ### [octo-vbzq] Add Edit button to file viewer toolbar (P2, feature)
-
 Add an Edit button with pencil icon to the file viewer toolbar, alongside the existing expand/collapse, search, and close panel buttons. The Edit button should open the file for editing.
 
 ### [octo-58xa.3] WebView: MCP tool for opening webviews (P2, task)
-
 Add MCP tool for agents to open webviews.
 
 ## Tool: webview_open
-
 Parameters:
-
-- url: string (required) - localhost:PORT or path
+  - url: string (required) - localhost:PORT or path
 ...
 
-### [octo-58xa.2] WebView: Frontend iframe component (P2, task)
 
+### [octo-58xa.2] WebView: Frontend iframe component (P2, task)
 Create WebView React component for displaying agent web apps.
 
 ## Component: WebView
-
 Props:
-
-- url: string
+  - url: string
 ...
 
-### [octo-58xa.1] WebView: Backend proxy for localhost servers (P2, task)
 
+### [octo-58xa.1] WebView: Backend proxy for localhost servers (P2, task)
 Create proxy endpoint for agent-spawned web servers.
 
 ## Endpoint
-
 GET/POST /api/session/{id}/webview/proxy
 Query params:
 ...
 
-### [octo-58xa] Agent WebView: Iframe embed for agent-spawned web apps (P2, feature)
 
+### [octo-58xa] Agent WebView: Iframe embed for agent-spawned web apps (P2, feature)
 Allow agents to spawn custom web apps and display them in Octo's UI with sidebars visible.
 
 ## Use Cases
-
 - Agent creates a data visualization dashboard
 - Agent builds a custom form/wizard for user input
 ...
 
-### [octo-k8z1.13] Browser: User interaction handoff mode (OAuth, captcha, 2FA) (P2, task)
 
+### [octo-k8z1.13] Browser: User interaction handoff mode (OAuth, captcha, 2FA) (P2, task)
 When agent encounters OAuth, captcha, or 2FA, it needs to hand control to user.
 
 ## Flow
-
 1. Agent detects auth page or blocker
 2. Agent calls: browser_request_user_action({ reason: 'Please log in to GitHub' })
 ...
 
-### [octo-thhx.16] Tutorial script using spotlight and A2UI (P2, task)
 
+### [octo-thhx.16] Tutorial script using spotlight and A2UI (P2, task)
 Agent script/prompts for guided tutorial: introduce chat, unlock sidebar, show file tree, demonstrate command palette, explain todos, create first workspace, delegate task to opencode session.
 
 ### [octo-thhx.15] Profile and personality setup conversation (P2, task)
-
 Agent-driven A2UI conversation to fill USER.md (name, timezone, preferences) and PERSONALITY.md (assistant name, signature). Use TextField, MultipleChoice components.
 
 ### [octo-thhx.14] Provider setup wizard via A2UI (P2, task)
-
 A2UI flow for connecting providers. If EAVS pre-configured by admin, skip. Otherwise: show provider options, collect API key via TextField, test connection, store in EAVS or user config.
 
 ### [octo-thhx.13] i18n AGENTS.md translations (P2, task)
-
 Prepare AGENTS.md in multiple languages: en, de, es, fr, pl, etc. Either use symlinks (AGENTS.md -> AGENTS.{lang}.md) or dynamic injection based on user language preference.
 
 ### [octo-thhx.12] Progressive UI unlock system (P2, task)
-
 Extend Features API with unlocked_components map. Components check unlock state before rendering. Unlock triggers: first message, tutorial progression, technical detection.
 
 ### [octo-thhx.11] Godmode command to skip onboarding (P2, task)
-
 Implement /godmode slash command, Ctrl+Shift+G shortcut, and ?godmode=true URL param. Unlocks all UI components, marks onboarding complete, sets user level to technical.
 
 ### [octo-thhx.10] Onboarding route and flow controller (P2, task)
-
 Dedicated /onboarding route that orchestrates: language selection -> provider setup -> profile conversation -> tutorial. Redirects new users here, remembers progress.
 
 ### [octo-thhx.9] Language selection word cloud with CRT shader (P2, task)
-
 Three.js or CSS animated word cloud showing 'Click me' in multiple languages. CRT post-processing effect (scanlines, chromatic aberration, flicker). Click detection triggers language selection.
 
 ### [octo-thhx.8] Tour mode for sequential spotlights (P2, task)
-
 Support multi-step tours with automatic progression. Agent sends array of steps, frontend advances on user click or timeout. Include progress indicator and skip button.
 
 ### [octo-smwr] Add drag an drop capabilities to the file tree, both for dragging in external files and for moving files between dirs  (P2, feature)
@@ -551,232 +482,186 @@ Support multi-step tours with automatic progression. Agent sends array of steps,
 ### [octo-ze9k] Dashboard with overview of scheduled tasks (skdlr), session information, trx issues etc. Similar to the admin panel but for all users (P2, feature)
 
 ### [octo-s4ez] Define context model and context sources (local + remote) (P2, task)
-
 ## Goal
-
 Define what "context" means for agent interactions in Octo, and how it is represented, versioned, and sourced, so features like global agent invoke (`octo-skks`) and agent-driven UI control (`octo-wzvn`) can reliably inject context now and later.
 
 ## Context Model (Proposed)
-
 A versioned envelope composed of multiple context "sources".
 ...
 
-### [octo-skks] Global main agent invoke with context injection (P2, feature)
 
-## Problem\nUsers want to invoke the Main Agent from any page in the web app, and have the agent automatically receive UI/runtime context (current page/route, active app/view, selected agent/persona if applicable, selected workspace directory/project, current session IDs).\n\n## Proposed Feature\nAdd a globally-available Main Agent entrypoint (e.g., hotkey + floating button + command palette action) that opens the Main Chat/agent panel. When the user sends a message, inject a structured context block into the message/system prompt containing:\n- Current route/pathname\n- Active app/view (e.g. sessions/settings/admin)\n- Active agent/persona (if any)\n- Current workspace directory / project key\n- Current workspace session ID + current chat session ID (if available)\n\n## Acceptance Criteria\n- Main Agent can be opened from any page without navigation side effects.\n- Sent messages include the context injection reliably and deterministically.\n- Context injection is visible in logs/devtools (or can be toggled) for debugging.\n- Works when OpenCode is not running (falls back to disk/history context).\n- No regression to existing Main Chat / Sessions flows.\n\n## Notes\nImplementation likely touches: app shell routing, global UI overlay, and the message send pipeline (control-plane / opencode proxy headers)
+### [octo-skks] Global main agent invoke with context injection (P2, feature)
+## Problem\nUsers want to invoke the Main Agent from any page in the web app, and have the agent automatically receive UI/runtime context (current page/route, active app/view, selected agent/persona if applicable, selected workspace directory/project, current session IDs).\n\n## Proposed Feature\nAdd a globally-available Main Agent entrypoint (e.g., hotkey + floating button + command palette action) that opens the Main Chat/agent panel. When the user sends a message, inject a structured context block into the message/system prompt containing:\n- Current route/pathname\n- Active app/view (e.g. sessions/settings/admin)\n- Active agent/persona (if any)\n- Current workspace directory / project key\n- Current workspace session ID + current chat session ID (if available)\n\n## Acceptance Criteria\n- Main Agent can be opened from any page without navigation side effects.\n- Sent messages include the context injection reliably and deterministically.\n- Context injection is visible in logs/devtools (or can be toggled) for debugging.\n- Works when OpenCode is not running (falls back to disk/history context).\n- No regression to existing Main Chat / Sessions flows.\n\n## Notes\nImplementation likely touches: app shell routing, global UI overlay, and the message send pipeline (control-plane / opencode proxy headers).
 
 ### [octo-k8z1.8] Session management: Browser lifecycle (start/stop with session) (P2, task)
 
 ### [octo-k8z1.5] Frontend: Add browser tab to central pane view switcher (P2, task)
-
 Wire BrowserView into SessionScreen.tsx:
-
 1. Add 'browser' to ActiveView type union
 2. Add browser tab to TabButton row
 3. Import and render BrowserView when activeView === 'browser'
 4. Add keyboard shortcut for browser tab
 ...
 
-### [octo-k8z1] Add server-side browser feature (Option B) using agent-browser (P2, feature)
 
+### [octo-k8z1] Add server-side browser feature (Option B) using agent-browser (P2, feature)
 Server-side browser for AI agent control, rendered in Octo frontend.
 
 ## Reference Implementations (cloned)
-
 - ../external-repos/agent-browser - Vercel's CLI browser automation (Apache-2.0)
 - ../external-repos/playwriter - MCP browser extension by remorses (Option A reference)
 ...
 
-### [octo-9qkv] Improve opencode chat error notifications (top-right toast) (P2, feature)
 
+### [octo-9qkv] Improve opencode chat error notifications (top-right toast) (P2, feature)
 Request: Provide clearer, more visible notifications for errors like session disconnect/resume failures, instead of (or in addition to) inline red banners. Prefer a popup/toast in the top-right that matches the app style.
 
 Motivation:
-
 - Current inline messages (e.g., 'resuming session' red text) can be easy to miss and can overlap UI controls.
 
 ...
 
+
 ### [octo-2r4f] Add slug field to session model and API responses (P2, task)
 
 ### [octo-6pkd] Left sidebar: '+' next to SESSIONS should create session in current project; add separate 'new directory/project' button (P2, feature)
-
 UX change request:
-
 - The "+" button next to "SESSIONS" in the left sidebar should open/create a new session/chat within the project the user is currently in.
 - Add a separate "new dir" button for the existing create project functionality to make the distinction clearer.
 
 Confirmed behavior:
 ...
 
-### [octo-af5j.7.5] LXC template version tags (P2, task)
 
+### [octo-af5j.7.5] LXC template version tags (P2, task)
 Same as container images but for LXC templates. octo-agent-0.2.0.tar.zst with pinned components.
 
 ### [octo-af5j.7.4] Container image version tags (P2, task)
-
 Tag container images with Octo release version. octo-agent:0.2.0 contains exact pinned versions. Latest tag follows stable channel.
 
 ### [octo-af5j.7.3] Bundled component downloads (P2, task)
-
 Release artifacts include or reference exact versions of opencode, pi, mmry, fileserver. Self-update fetches matching versions.
 
 ### [octo-af5j.7.2] Component version checking at startup (P2, task)
-
 On startup, verify installed component versions match expected. Warn on mismatch, offer to update. Block startup on critical incompatibility.
 
 ### [octo-4me3] Security/perf/idiomatic audit fixes (P2, epic)
-
 Bundle of findings from the comprehensive review; child issues are linked as blockers.
 
 ### [octo-af5j.4.7.5] LXC template download and preparation (P2, task)
-
 Download octo-agent LXC template to local storage. Or build from Dockerfile equivalent. Pre-warm template cache.
 
 ### [octo-af5j.4.7.4] Octo backend installation on Proxmox host (P2, task)
-
 Install octo binary, configure for Proxmox runtime mode, create API token for LXC management, set up systemd service.
 
 ### [octo-af5j.4.7.3] Storage configuration (P2, task)
-
 Set up local-lvm or ZFS pool for container storage. Configure template storage location. Optional: add NFS/Ceph for shared storage.
 
 ### [octo-af5j.4.7.2] Network configuration for Proxmox (P2, task)
-
 Configure vmbr0 bridge, optional NAT for agent containers, firewall rules. Support single NIC and multi-NIC setups.
 
 ### [octo-af5j.4.7.1] Proxmox VE installation automation (P2, task)
-
 Add Proxmox repo to Debian, install pve-manager, configure grub for IOMMU if needed. Handle both fresh Debian and Proxmox ISO scenarios.
 
 ### [octo-af5j.4.7] Proxmox automated installer (P2, feature)
-
 Script that takes a fresh Debian/bare-metal system, installs Proxmox VE, configures networking, and bootstraps Octo with LXC runtime. Single command to go from bare metal to running Octo instance.
 
 ### [octo-af5j.6.2] Platform detection and binary selection (P2, task)
-
 Detect OS (Linux/macOS), arch (x86_64/arm64), libc (glibc/musl). Download matching binary. Fallback to source build if no binary.
 
 ### [octo-af5j.6.1] One-liner install command (P2, task)
-
-curl -fsSL <https://octo.ai/install.sh> | sh - Downloads binary, adds to PATH, runs initial setup wizard.
+curl -fsSL https://octo.ai/install.sh | sh - Downloads binary, adds to PATH, runs initial setup wizard.
 
 ### [octo-af5j.5.2] Migration scripts framework (P2, task)
-
 Embedded migration functions (v0->v1, v1->v2, etc). Apply in order. Track applied migrations.
 
 ### [octo-af5j.5.1] Config version detection (P2, task)
-
 Add version field to config.toml. Detect missing version as v0. Warn on unknown version.
 
 ### [octo-af5j.6] Installation Script Overhaul (P2, feature)
-
 Rewrite setup.sh to download pre-built binaries instead of compiling. Detect platform, fetch correct binary, install to PATH. One-liner install like rustup.
 
 ### [octo-af5j.5] Config Migration System (P2, feature)
-
 Detect config.toml version, apply migrations for breaking changes. Backup before migrating. Support dry-run mode.
 
 ### [octo-af5j.4.3] RuntimeBackend trait implementation for Proxmox (P2, task)
-
 Implement create/start/stop/exec/logs for LXC. Map agent sessions to VMID range. Handle networking (bridge, NAT, port forwarding).
 
 ### [octo-af5j.4.2] LXC template for agent containers (P2, task)
-
 Minimal LXC template with opencode, fileserver, ttyd pre-installed. Based on Arch or Alpine. Published to Proxmox template storage.
 
 ### [octo-af5j.4.1] Proxmox API client (P2, task)
-
 Rust client for Proxmox REST API. Authentication (API tokens), node discovery, LXC CRUD operations, exec/console access.
 
 ### [octo-af5j.3.3] Service restart orchestration (P2, task)
-
 Gracefully stop running sessions, replace binary, restart systemd/launchd service. Handle in-flight requests. Rollback on failure.
 
 ### [octo-af5j.3.2] Binary download and verification (P2, task)
-
 Download correct platform binary, verify SHA256 checksum, optionally verify GPG signature. Atomic replacement of current binary.
 
 ### [octo-af5j.3.1] Update check endpoint (P2, task)
-
 GitHub API or dedicated endpoint to check latest version. Compare with installed version. Cache results to avoid rate limits.
 
 ### [octo-af5j.2.4] Agent template version tracking (P2, task)
-
 Store template version used when creating agent. Enable 'octoctl agent update-templates' to upgrade individual agents.
 
 ### [octo-af5j.2.3] octoctl templates command (P2, task)
-
 CLI for template management: list, install, update, diff. Track installed versions in ~/.config/octo/templates.lock
 
 ### [octo-af5j.2.2] Template manifest format (P2, task)
-
 Define manifest.json schema: template metadata, version, compatibility range, variables/placeholders, dependencies between templates.
 
 ### [octo-af5j.2.1] Create octo-templates repository (P2, task)
-
 New repo with versioned templates: AGENTS.md variants, opencode.json presets, plugins, scaffold templates. Semantic versioning independent of octo core.
 
 ### [octo-af5j.1.4] Version embedding in binaries (P2, task)
-
 Embed git tag/commit in binaries at build time. octo --version shows semver + commit hash.
 
 ### [octo-af5j.1.3] GitHub Releases integration (P2, task)
-
 Automate publishing to GitHub Releases on tag push. Generate changelog from commits. Upload all platform artifacts.
 
 ### [octo-af5j.1.2] Release artifact packaging (P2, task)
-
 Package binaries as tarballs with install script, checksums (SHA256), and signatures. Include octo, octoctl, fileserver binaries.
 
 ### [octo-af5j.1.1] GitHub Actions workflow for cross-compilation (P2, task)
-
 CI workflow using cross-rs or native runners to build for linux-x86_64, linux-arm64, darwin-x86_64, darwin-arm64
 
 ### [octo-af5j.4] Proxmox LXC Runtime (P2, feature)
-
 New runtime backend using Proxmox API to provision LXC containers for agent sessions. Stronger isolation than Docker, native systemd support, persistent containers with snapshots.
 
 ### [octo-fxhc] Stream zip downloads to avoid large in-memory buffers (P2, task)
-
 fileserver/src/handlers.rs: create_zip_from_paths reads entire files and builds zip data in a Vec<u8>, which can exhaust memory for large files/directories. Consider streaming zip output or enforcing a size limit with early abort.
 
 ### [octo-1rb4.1] Make turn taking more robust (P2, task)
 
 ### [octo-wmrf.5] MCP Tool: a2ui_surface (P2, task)
-
 Create MCP tool for agents to emit A2UI surfaces. Parameters: surface_id, messages (A2UI JSON), blocking (bool). Non-blocking returns immediately, blocking waits for userAction response. Works for OpenCode agents, Pi agent, and future CLI agents.
 
 ### [octo-374f] Cache-aware conversation compaction for Main Chat (P2, feature)
-
 Implement smart compaction that preserves LLM cache benefits. Key strategies: 1) Hide tool calls in UI but keep in API payload, 2) Tiered compaction (hot/warm/cold zones), 3) Append-only summarization at checkpoints, 4) Provider-aware caching (OpenAI auto vs Anthropic explicit). UI shows collapsed/expandable tool calls. Research needed on optimal checkpoint intervals and summary strategies.
 
 ### [octo-jrya] Notification system for agents and external events (P2, feature)
-
 Add a notification system to Octo that agents can push to via HTTP API. Includes: SQLite storage, REST API (POST /api/notify, GET /api/notifications, etc.), WebSocket broadcast to frontend, right sidebar tab with notification list, optional popup toasts, ntfy.sh integration for external push. CLI: curl-based for agents. Config in octo settings for ntfy URL/token.
 
 ### [octo-7fms] Main Chat: Enhanced compaction (observation masking, 8-section summary) (P2, task)
-
 Enhance Main Chat compaction with two-phase approach:
 
 Phase 1: Observation Masking (cheap, zero tokens)
-
 - Replace old tool results with placeholder: [Previous output elided for brevity]
 - Preserves: system prompt, recent N messages, file state
 ...
 
-### [workspace-jux6.5] Add service worker for static asset caching (P2, task)
 
+### [workspace-jux6.5] Add service worker for static asset caching (P2, task)
 No service worker exists. Static assets (JS/CSS bundles) are re-fetched on every visit.
 
 Implementation:
-
 - Add vite-plugin-pwa dependency
 - Configure workbox to cache static assets
 ...
 
-### [workspace-jux6.4] Prefetch critical data during idle time (P2, task)
 
+### [workspace-jux6.4] Prefetch critical data during idle time (P2, task)
 Critical data like workspace sessions and chat history is fetched on-demand, causing delays when navigating.
 
 Location: frontend/components/app-context.tsx
@@ -784,8 +669,8 @@ Location: frontend/components/app-context.tsx
 Implementation:
 ...
 
-### [workspace-jux6.3] Add manual chunks to Vite build config (P2, task)
 
+### [workspace-jux6.3] Add manual chunks to Vite build config (P2, task)
 No explicit chunking strategy exists. Vite bundles everything with default splitting which is suboptimal.
 
 Location: frontend/vite.config.ts
@@ -793,136 +678,111 @@ Location: frontend/vite.config.ts
 Implementation:
 ...
 
-### [workspace-4eyc] Main Chat: JSONL export and backup (P2, task)
 
+### [workspace-4eyc] Main Chat: JSONL export and backup (P2, task)
 Export mechanism for Main Chat history:
 
 /export command with options:
-
 - /export - export full history as JSONL
 - /export --sessions - export session list  
 ...
 
-### [workspace-5pmk.9] Configure iOS and Android targets (P2, task)
 
+### [workspace-5pmk.9] Configure iOS and Android targets (P2, task)
 Run tauri ios init and tauri android init. Configure permissions (microphone, network), app icons, splash screens, and build settings for both platforms.
 
 ### [workspace-5pmk.8] Add mobile-responsive UI adjustments (P2, task)
-
 Ensure touch targets (44px min), safe areas (notch/home indicator), and gestures work on mobile. Test terminal and voice mode UX on touch devices.
 
 ### [workspace-5pmk.7] Implement Tauri main with backend startup (P2, task)
-
 Start Axum backend on app launch, configure webview to load from backend URL. Handle graceful shutdown.
 
 ### [workspace-5pmk.6] Create Tauri project structure (P2, task)
-
 Initialize src-tauri/ directory with Cargo.toml, tauri.conf.json, capabilities, and icons. Configure build commands for Next.js static export.
 
 ### [workspace-5pmk.5] Update voice URL resolution for proxy mode (P2, task)
-
 Detect Tauri/proxied mode, use relative WebSocket paths (/api/voice/stt, /api/voice/tts) instead of direct URLs from config.
 
 ### [workspace-5pmk.4] Remove server-side auth from frontend (P2, task)
-
 Delete middleware.ts, implement client-side auth guard in app layout. Check auth_token cookie on mount, redirect to /login if invalid.
 
 ### [workspace-5pmk.3] Configure frontend for static export (P2, task)
-
 Set output: export in next.config.ts, disable image optimization, remove rewrites (backend handles routing).
 
 ### [workspace-5pmk.2] Add voice WebSocket proxies to backend (P2, task)
-
 Add bidirectional WS proxy routes for eaRS (/api/voice/stt) and kokorox (/api/voice/tts). Simple passthrough, no protocol translation needed.
 
 ### [workspace-5pmk.1] Add static file serving to backend (P2, task)
-
 Use tower_http::services::ServeDir to serve frontend static export from /, with SPA fallback to index.html. Enables: (1) single-binary deployment without separate web server, (2) webapp mode without Next.js server, (3) simpler CORS since everything is same-origin.
 
 ### [workspace-gg16.7] Local mode: Per-user mmry service management (P2, task)
-
 For local mode, spawn mmry service per Linux user (similar to opencode). Use user's home directory for database. Generate user-specific config with remote embedding delegation. Add to session lifecycle (start/stop).
 
 ### [workspace-gg16.5] Frontend: Memories tab UI components (P2, task)
-
 Build Memories tab with Radix UI components. MemoryList (paginated, sortable), MemorySearch (query input, mode selector, rerank toggle), MemoryCard (content, category, tags, importance, date), MemoryEditor (add/edit form with validation), StoreSelector (per-repo stores).
 
 ### [workspace-gg16.4] Frontend: React Query hooks for memories API (P2, task)
-
 Create TanStack Query hooks: useMemories, useMemorySearch, useCreateMemory, useUpdateMemory, useDeleteMemory. Handle pagination, optimistic updates, error states. Type definitions for Memory objects.
 
 ### [workspace-gg16.3] Backend: Add mmry proxy API routes (P2, task)
-
 Add Axum routes to proxy mmry operations to user's instance. Routes: GET/POST /api/sessions/{id}/memories, GET/PUT/DELETE /api/sessions/{id}/memories/{memory_id}, POST /api/sessions/{id}/memories/search. Determine store from session workspace. Handle auth.
 
 ### [workspace-gg16.2] Per-user mmry instance management (P2, task)
-
 Octo backend spawns/manages lean mmry instance per user. Each user gets own SQLite database (~user/.local/share/mmry/ or container volume). Config delegates embeddings to host mmry-service. Track instance lifecycle similar to opencode/fileserver/ttyd.
 
 ### [workspace-x7gm.5] Frontend: Project management UI (P2, task)
-
 Add UI for:
-
 - Creating and managing projects
 - Inviting users to projects
 - Switching between personal workspaces and shared projects
 
 ### [workspace-x7gm.4] Update AgentBackend to support project-based sessions (P2, task)
-
 Modify LocalBackend and ContainerBackend to:
-
 1. Check if workspace path belongs to a project
 2. Use project's Linux user instead of platform user's Linux user
 3. Store session data under project user's directory
 
 ### [workspace-x7gm.3] Add project management API endpoints (P2, task)
-
 API endpoints:
-
 - POST /projects - Create project
 - GET /projects - List user's projects
 - GET /projects/{id} - Get project details
 - PUT /projects/{id} - Update project
 ...
 
-### [workspace-x7gm.2] Implement Project service and repository (P2, task)
 
+### [workspace-x7gm.2] Implement Project service and repository (P2, task)
 Create ProjectRepository and ProjectService for CRUD operations on projects and memberships.
 
 ### [workspace-x7gm.1] Add projects and project_members tables to database (P2, task)
-
 Create migrations for projects and project_members tables as defined in the epic.
 
 ### [workspace-x7gm] Shared Projects: Multi-user access to same project/workspace (P2, epic)
-
 Enable multiple platform users to access the same project/workspace with proper isolation.
 
 ## Design
 
 ### Core Concept
-
 ...
 
-### [octo-mxd8.4] macOS fallback: socket broker for guarded paths (P3, feature)
 
+### [octo-mxd8.4] macOS fallback: socket broker for guarded paths (P3, feature)
 Implement a non-FUSE fallback for macOS that provides similar functionality to octo-guard using a socket-based broker.
 
 ## Overview
-
 Since FUSE on macOS is problematic (kext deprecation, SIP issues), implement a simpler socket+copy approach.
 
 ...
 
-### [octo-xncy.7] Android: UI exploration mode (DroidBot-style UTG crawler) (P3, task)
 
+### [octo-xncy.7] Android: UI exploration mode (DroidBot-style UTG crawler) (P3, task)
 Build UI exploration/crawling mode for unknown apps.
 
 ## Approach
-
 DroidBot-style UI Transition Graph (UTG) crawler:
-
 1. Systematically explore app screens
 ...
+
 
 ### [octo-xncy.6] Android: MCP tools for agent control (snapshot, tap, type, scroll) (P3, task)
 
@@ -931,33 +791,27 @@ DroidBot-style UI Transition Graph (UTG) crawler:
 ### [octo-xncy.4] Android: Screencast streaming to frontend (reuse BrowserView pattern) (P3, task)
 
 ### [octo-xncy] Android Emulator: Agent-controlled Android environment (P3, epic)
-
 -
 
 ### [octo-mbeh] Deduplicate and centralize path sanitization logic (P3, task)
-
 There are multiple path sanitization/validation implementations with overlapping intent (e.g., sanitize_relative_path in API handlers vs resolve_path/resolve_and_verify_path in the file server). This risks divergence and inconsistent security rules. Consider centralizing into a shared utility with shared tests. Affected: backend/crates/octo/src/api/handlers.rs::sanitize_relative_path, backend/crates/octo-files/src/handlers.rs::resolve_path/resolve_and_verify_path.
 
 ### [octo-a256] Consolidate CopyButton implementations and handle clipboard failures consistently (P3, task)
-
 CopyButton logic is duplicated across multiple components with inconsistent error handling and timer cleanup (e.g., missing try/catch and no timeout cleanup on unmount). Consider a shared CopyButton component/hook with fallback copy logic and timeout cleanup. Affected: frontend/components/ui/markdown-renderer.tsx, frontend/components/ui/code-viewer.tsx, frontend/components/ui/typst-viewer.tsx, frontend/apps/admin/InviteCodesPanel.tsx, frontend/features/sessions/SessionScreen.tsx, frontend/features/main-chat/components/MainChatPiView.tsx.
 
 ### [octo-3trr] Add browser extension mode (Option A) - fork Playwriter (P3, feature)
-
 Browser extension mode for controlling user's existing browser.
 
 ## Reference Implementation
-
 - ../external-repos/playwriter - Fork this for Octo extension
 - ../external-repos/clawdbot/src/browser/extension-relay.ts - CDP relay pattern
 ...
 
-### [octo-thhx.18] Multi-lingual user support (P3, task)
 
+### [octo-thhx.18] Multi-lingual user support (P3, task)
 Support users who speak multiple languages. Store languages array in USER.md. Agent can switch language based on context or explicit request. UI for managing language preferences.
 
 ### [octo-thhx.17] Technical user detection for terminal unlock (P3, task)
-
 Subtle detection: profile questions about work, A2UI choice between visual vs command options, detection of shell-like input in chat. Unlocks terminal for technical users.
 
 ### [octo-k8z1.12] Documentation: Browser feature usage guide (P3, chore)
@@ -969,35 +823,27 @@ Subtle detection: profile questions about work, A2UI choice between visual vs co
 ### [octo-k8z1.9] Credential vault: UI for storing encrypted credentials (P3, task)
 
 ### [octo-af5j.4.7.6] First-run wizard for Proxmox+Octo (P3, task)
-
 Interactive or config-file based wizard: set admin password, configure EAVS API keys, set resource limits, create first user/agent.
 
 ### [octo-af5j.4.6] GPU passthrough for LXC (P3, task)
-
 Pass NVIDIA GPU to LXC containers for local LLM inference. Share GPU across multiple containers.
 
 ### [octo-af5j.4.5] Proxmox cluster support (P3, task)
-
 Distribute agent containers across cluster nodes. Handle migration. Resource balancing.
 
 ### [octo-af5j.4.4] LXC snapshot support (P3, task)
-
 Create snapshots before risky operations. Rollback on failure. Scheduled snapshots for long-running agents.
 
 ### [octo-af5j.3.4] Update channels (stable/beta/nightly) (P3, task)
-
 Support multiple release channels. Config option to set preferred channel. Beta gets release candidates, nightly gets every commit.
 
 ### [octo-vne5] Move simple tree file walk off the async runtime (P3, task)
-
 fileserver/src/handlers.rs: get_simple_file_list uses WalkDir synchronously on the async thread. On large directories this can block the runtime and slow all requests. Run this in spawn_blocking or switch to an async walker.
 
 ### [octo-wmrf.7] A2UI Custom Components Catalog (P3, task)
-
 Define Octo-specific A2UI component catalog extending standard catalog. Custom components: CodeBlock (syntax highlighted), DiffView, FileTree, ProgressBar, Terminal, MarkdownView. Register with renderer, document for agent use.
 
 ### [octo-a9ds] Main Chat: Agent coordination via mailz (P3, task)
-
 Enable agent coordination for Main Chat:
 
 1. mailz integration (messaging only):
@@ -1005,8 +851,8 @@ Enable agent coordination for Main Chat:
    - Send messages to other agents (e.g., govnr)
 ...
 
-### [octo-a9mc] Main Chat: skdlr heartbeat integration (P3, task)
 
+### [octo-a9mc] Main Chat: skdlr heartbeat integration (P3, task)
 Integrate skdlr for periodic heartbeats in Main Chat:
 
 1. skdlr schedule configuration:
@@ -1014,12 +860,11 @@ Integrate skdlr for periodic heartbeats in Main Chat:
    - Command: octo main-chat heartbeat
 ...
 
-### [workspace-ufvs] Integrate qmd for document search (P3, task)
 
+### [workspace-ufvs] Integrate qmd for document search (P3, task)
 Add qmd (tobi/qmd) as optional document search backend. qmd excels at hybrid search (BM25 + Vector + Query Expansion + Re-ranking) for existing knowledge bases, meeting notes, docs. Complementary to mmry which handles agent memories. Consider: MCP server integration, collection management, hybrid with mmry for different use cases.
 
 ### [workspace-jux6.6] Make i18n loading async (P3, task)
-
 initI18n() is called synchronously in main.tsx:8, blocking React render until translations load.
 
 Location: frontend/src/main.tsx:8
@@ -1027,28 +872,26 @@ Location: frontend/src/main.tsx:8
 Implementation:
 ...
 
-### [workspace-5pmk.10] Add platform-specific native features (P3, task)
 
+### [workspace-5pmk.10] Add platform-specific native features (P3, task)
 Desktop: window management, system tray, keyboard shortcuts. Mobile: haptic feedback, safe area insets, native share. Use Tauri plugins and conditional compilation.
 
 ### [octo-xncy.9] Android: Vision fallback with OmniParser/grounding model (P4, task)
 
 ### [octo-gpj7] Avoid unwrap on WS event serialization (P4, chore)
-
 backend/src/ws/handler.rs and backend/src/ws/types.rs use serde_json::to_string(...).unwrap(). A serialization failure would panic the server. Use map_err/Result and return an error response instead, even if failure is unlikely.
 
 ### [octo-92yw] Deduplicate mmry proxy session checks (P4, chore)
-
 backend/src/api/proxy.rs: proxy_mmry_* handlers repeat the same session lookup + active check + target/store resolution. Factor into a helper to reduce duplication and keep behavior consistent when rules change.
 
 ### [octo-h975] Main Chat: Message visibility filtering (hide tools by default) (P4, task)
-
 Filter message visibility in Main Chat to show cleaner output:
 
 Current behavior: All messages (including tool calls) visible in chat
 Desired behavior: Tool calls hidden by default, toggle to show
 
 ...
+
 
 ## Closed
 
@@ -1604,8 +1447,8 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
 - [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
+- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
+- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
 - [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
 - [octo-k8z1.2] Backend: WebSocket proxy for screencast stream (closed )
 - [octo-k8z1.1] Backend: Integrate agent-browser daemon per session (closed )
-- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
-- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )

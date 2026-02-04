@@ -9,7 +9,6 @@
 export { useChat } from "./useChat";
 
 // Navigation hook
-export { useChatNavigation } from "./useChatNavigation";
 
 // Cache utilities
 export {

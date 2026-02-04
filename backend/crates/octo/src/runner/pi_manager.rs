@@ -22,7 +22,6 @@ use tokio::sync::{RwLock, broadcast, mpsc, oneshot};
 
 use crate::local::SandboxConfig;
 use crate::pi::{AgentMessage, PiCommand, PiEvent, PiMessage, PiResponse, PiState, SessionStats};
-use crate::wordlist;
 
 // ============================================================================
 // Configuration
@@ -78,6 +77,9 @@ pub struct PiSessionConfig {
     /// Model ID.
     #[serde(default)]
     pub model: Option<String>,
+    /// Explicit session file to use (new or resume).
+    #[serde(default)]
+    pub session_file: Option<PathBuf>,
     /// Session file to continue from.
     #[serde(default)]
     pub continue_session: Option<PathBuf>,
@@ -96,6 +98,7 @@ impl Default for PiSessionConfig {
             cwd: PathBuf::from(home).join("projects"),
             provider: None,
             model: None,
+            session_file: None,
             continue_session: None,
             system_prompt_files: Vec::new(),
             env: HashMap::new(),
@@ -386,8 +389,12 @@ impl PiSessionManager {
             pi_args.push("--model".to_string());
             pi_args.push(model.clone());
         }
-        if let Some(ref session_file) = config.continue_session {
-            pi_args.push("--continue".to_string());
+        let session_file = config
+            .session_file
+            .as_ref()
+            .or(config.continue_session.as_ref());
+        if let Some(session_file) = session_file {
+            pi_args.push("--session".to_string());
             pi_args.push(session_file.to_string_lossy().to_string());
         }
         for prompt_file in &config.system_prompt_files {
@@ -1750,7 +1757,7 @@ impl PiSessionManager {
 
         let metadata_json = serde_json::json!({
             "canonical_id": session_id,
-            "readable_id": wordlist::readable_id_from_session_id(session_id),
+            "readable_id": serde_json::Value::Null,
             "workdir": work_dir.to_string_lossy(),
         })
         .to_string();

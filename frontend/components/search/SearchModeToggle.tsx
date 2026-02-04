@@ -18,15 +18,13 @@ const t = {
 		sessions: "Sessions",
 		messages: "Messages",
 		all: "All",
-		defaultChat: "Main",
-		opencode: "Code",
+		defaultChat: "Chat",
 	},
 	de: {
 		sessions: "Sitzungen",
 		messages: "Nachrichten",
 		all: "Alle",
-		defaultChat: "Haupt",
-		opencode: "Code",
+		defaultChat: "Chat",
 	},
 };
 
@@ -98,18 +96,6 @@ export function SearchModeToggle({
 						)}
 					>
 						{t[locale].defaultChat}
-					</button>
-					<button
-						type="button"
-						onClick={() => onAgentFilterChange("opencode")}
-						className={cn(
-							"px-2 py-1 text-xs font-medium rounded transition-colors",
-							agentFilter === "opencode"
-								? "bg-blue-500/30 text-blue-400 shadow-sm"
-								: "text-muted-foreground hover:text-foreground hover:bg-sidebar-accent",
-						)}
-					>
-						{t[locale].opencode}
 					</button>
 				</div>
 			)}

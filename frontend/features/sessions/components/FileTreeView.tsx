@@ -18,6 +18,7 @@ import {
 	renamePathMux,
 	uploadFileMux,
 } from "@/lib/mux-files";
+import { normalizeWorkspacePath } from "@/lib/session-utils";
 import { cn } from "@/lib/utils";
 import {
 	ChevronDown,
@@ -37,7 +38,7 @@ import {
 	Trash2,
 	Upload,
 } from "lucide-react";
-import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 export type FileNode = {
 	name: string;
@@ -240,6 +241,10 @@ export function FileTreeView({
 	state,
 	onStateChange,
 }: FileTreeViewProps) {
+	const normalizedWorkspacePath = useMemo(
+		() => normalizeWorkspacePath(workspacePath ?? null),
+		[workspacePath],
+	);
 	const [tree, setTree] = useState<FileNode[]>([]);
 	const [error, setError] = useState<string>("");
 	const [loading, setLoading] = useState(false);
@@ -288,11 +293,11 @@ export function FileTreeView({
 		[onStateChange, state],
 	);
 
-	const cacheKey = workspacePath ?? null;
+	const cacheKey = normalizedWorkspacePath ?? null;
 
 	const loadTree = useCallback(
 		async (path: string, preserveState = false, skipCache = false) => {
-			if (!workspacePath || !cacheKey) return;
+			if (!normalizedWorkspacePath || !cacheKey) return;
 			const requestKey = getTreeCacheKey(cacheKey, path);
 			const now = Date.now();
 			if (
@@ -320,7 +325,7 @@ export function FileTreeView({
 			setLoading(true);
 			setError("");
 			try {
-				const data = await fetchFileTree(workspacePath, path);
+				const data = await fetchFileTree(normalizedWorkspacePath, path);
 				// Cache the result
 				setCachedTree(cacheKey, path, data);
 				setTree(data);
@@ -335,7 +340,7 @@ export function FileTreeView({
 				setLoading(false);
 			}
 		},
-		[workspacePath, updateState, cacheKey],
+		[normalizedWorkspacePath, updateState, cacheKey],
 	);
 
 	const refreshTree = useCallback(() => {
@@ -344,10 +349,10 @@ export function FileTreeView({
 	}, [loadTree, currentPath]);
 
 	useEffect(() => {
-		if (!workspacePath) return;
+		if (!normalizedWorkspacePath) return;
 		// Load tree for current path (uses cache if available)
 		loadTree(currentPath, true);
-	}, [currentPath, loadTree, workspacePath]);
+	}, [currentPath, loadTree, normalizedWorkspacePath]);
 
 	const toggle = (path: string) => {
 		updateState({ expanded: { ...expanded, [path]: !expanded[path] } });
@@ -407,7 +412,7 @@ export function FileTreeView({
 		event: React.ChangeEvent<HTMLInputElement>,
 	) => {
 		const files = event.target.files;
-		if (!files || files.length === 0 || !workspacePath || !cacheKey) return;
+		if (!files || files.length === 0 || !normalizedWorkspacePath || !cacheKey) return;
 
 		setUploading(true);
 		setError("");
@@ -416,7 +421,7 @@ export function FileTreeView({
 			for (const file of Array.from(files)) {
 				const destPath =
 					currentPath === "." ? file.name : `${currentPath}/${file.name}`;
-				await uploadFileMux(workspacePath, destPath, file);
+				await uploadFileMux(normalizedWorkspacePath, destPath, file);
 			}
 			await refreshTree();
 		} catch (err) {
@@ -431,16 +436,16 @@ export function FileTreeView({
 	};
 
 	const handleDownload = (path: string, isDirectory: boolean) => {
-		if (!workspacePath || !cacheKey) return;
+		if (!normalizedWorkspacePath || !cacheKey) return;
 		if (isDirectory) {
 			setError("Directory download is not supported yet.");
 			return;
 		}
-		void downloadFileMux(workspacePath, path);
+		void downloadFileMux(normalizedWorkspacePath, path);
 	};
 
 	const handleDownloadSelected = () => {
-		if (!workspacePath || !cacheKey || selectedFiles.size === 0) return;
+		if (!normalizedWorkspacePath || !cacheKey || selectedFiles.size === 0) return;
 
 		if (selectedFiles.size === 1) {
 			const path = Array.from(selectedFiles)[0];
@@ -451,10 +456,10 @@ export function FileTreeView({
 	};
 
 	const handleDelete = async (path: string) => {
-		if (!workspacePath || !cacheKey) return;
+		if (!normalizedWorkspacePath || !cacheKey) return;
 
 		try {
-			await deletePathMux(workspacePath, path, true);
+			await deletePathMux(normalizedWorkspacePath, path, true);
 			await refreshTree();
 			// Clear selection if deleted file was selected
 			if (selectedFiles.has(path)) {
@@ -468,11 +473,11 @@ export function FileTreeView({
 	};
 
 	const handleDeleteSelected = async () => {
-		if (!workspacePath || !cacheKey || selectedFiles.size === 0) return;
+		if (!normalizedWorkspacePath || !cacheKey || selectedFiles.size === 0) return;
 
 		try {
 			for (const path of selectedFiles) {
-				await deletePathMux(workspacePath, path, true);
+				await deletePathMux(normalizedWorkspacePath, path, true);
 			}
 			await refreshTree();
 			updateState({ selectedFiles: new Set() });
@@ -482,12 +487,12 @@ export function FileTreeView({
 	};
 
 	const handleCopy = async (path: string) => {
-		if (!workspacePath || !cacheKey) return;
+		if (!normalizedWorkspacePath || !cacheKey) return;
 		const target = window.prompt("Copy to path", path);
 		if (!target || target === path) return;
 
 		try {
-			await copyPathMux(workspacePath, path, target, false);
+			await copyPathMux(normalizedWorkspacePath, path, target, false);
 			await refreshTree();
 		} catch (err) {
 			setError(err instanceof Error ? err.message : "Copy failed");
@@ -495,12 +500,12 @@ export function FileTreeView({
 	};
 
 	const handleMove = async (path: string) => {
-		if (!workspacePath || !cacheKey) return;
+		if (!normalizedWorkspacePath || !cacheKey) return;
 		const target = window.prompt("Move to path", path);
 		if (!target || target === path) return;
 
 		try {
-			await movePathMux(workspacePath, path, target, false);
+			await movePathMux(normalizedWorkspacePath, path, target, false);
 			await refreshTree();
 		} catch (err) {
 			setError(err instanceof Error ? err.message : "Move failed");
@@ -513,7 +518,7 @@ export function FileTreeView({
 
 	const handleCreateFolderWithName = useCallback(
 		async (name: string) => {
-			if (!workspacePath || !cacheKey || !name) {
+			if (!normalizedWorkspacePath || !cacheKey || !name) {
 				setNewFolderName(null);
 				return;
 			}
@@ -521,7 +526,7 @@ export function FileTreeView({
 			try {
 				const folderPath =
 					currentPath === "." ? name : `${currentPath}/${name}`;
-				await createDirectoryMux(workspacePath, folderPath, true);
+				await createDirectoryMux(normalizedWorkspacePath, folderPath, true);
 				await refreshTree();
 			} catch (err) {
 				setError(err instanceof Error ? err.message : "Create folder failed");
@@ -529,7 +534,7 @@ export function FileTreeView({
 				setNewFolderName(null);
 			}
 		},
-		[workspacePath, cacheKey, currentPath, refreshTree],
+		[normalizedWorkspacePath, cacheKey, currentPath, refreshTree],
 	);
 
 	const handleStartRename = (path: string, _currentName: string) => {
@@ -542,7 +547,7 @@ export function FileTreeView({
 
 	const handleConfirmRename = useCallback(
 		async (newName: string) => {
-			if (!workspacePath || !cacheKey || !renamingPath || !newName) {
+			if (!normalizedWorkspacePath || !cacheKey || !renamingPath || !newName) {
 				setRenamingPath(null);
 				return;
 			}
@@ -561,7 +566,7 @@ export function FileTreeView({
 				pathParts[pathParts.length - 1] = newName;
 				const newPath = pathParts.join("/");
 
-				await renamePathMux(workspacePath, renamingPath, newPath);
+				await renamePathMux(normalizedWorkspacePath, renamingPath, newPath);
 				await refreshTree();
 			} catch (err) {
 				setError(err instanceof Error ? err.message : "Rename failed");
@@ -569,7 +574,7 @@ export function FileTreeView({
 				setRenamingPath(null);
 			}
 		},
-		[workspacePath, cacheKey, renamingPath, refreshTree],
+		[normalizedWorkspacePath, cacheKey, renamingPath, refreshTree],
 	);
 
 	const clearSelection = () => {
@@ -590,7 +595,7 @@ export function FileTreeView({
 	};
 
 	// For default chat, we always have access; for workspace, need workspace path
-	if (!workspacePath) {
+	if (!normalizedWorkspacePath) {
 		return (
 			<div className="h-full flex items-center justify-center p-4 text-sm text-muted-foreground">
 				Select a chat to browse files.
