@@ -6,7 +6,6 @@ import {
 	type Features,
 	getFeatures,
 	newWorkspacePiSession,
-	startDefaultChatPiSession,
 } from "@/features/chat/api";
 import { useApp } from "@/hooks/use-app";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -236,6 +235,7 @@ export const SessionScreen = memo(function SessionScreen() {
 		selectedChatSessionId,
 		setSelectedChatSessionId,
 		selectedChatFromHistory,
+		defaultChatWorkspacePath,
 		createNewChat,
 		replaceOptimisticChatSession,
 		clearOptimisticChatSession,
@@ -259,18 +259,22 @@ export const SessionScreen = memo(function SessionScreen() {
 	const [expandedView, setExpandedView] = useState<ViewKey | null>(null);
 
 	const normalizedWorkspacePath = useMemo(
-		() => normalizeWorkspacePath(selectedChatFromHistory?.workspace_path),
-		[selectedChatFromHistory?.workspace_path],
+		() =>
+			normalizeWorkspacePath(selectedChatFromHistory?.workspace_path) ??
+			defaultChatWorkspacePath,
+		[selectedChatFromHistory?.workspace_path, defaultChatWorkspacePath],
 	);
-	const chatScope = normalizedWorkspacePath ? "workspace" : "default";
+	const chatScope: "workspace" = "workspace";
 
 	const handleEnsureSession = useCallback(
 		async (workspacePath: string | null, optimisticId: string | null) => {
 			try {
-				const resolvedPath = normalizeWorkspacePath(workspacePath);
-				const state = resolvedPath
-					? await newWorkspacePiSession(resolvedPath)
-					: await startDefaultChatPiSession();
+				const resolvedPath =
+					normalizeWorkspacePath(workspacePath) ?? defaultChatWorkspacePath;
+				if (!resolvedPath) {
+					return null;
+				}
+				const state = await newWorkspacePiSession(resolvedPath);
 				if (state.session_id) {
 					if (
 						optimisticId &&
@@ -294,6 +298,7 @@ export const SessionScreen = memo(function SessionScreen() {
 		},
 		[
 			clearOptimisticChatSession,
+			defaultChatWorkspacePath,
 			refreshChatHistory,
 			replaceOptimisticChatSession,
 			setSelectedChatSessionId,
@@ -301,9 +306,16 @@ export const SessionScreen = memo(function SessionScreen() {
 	);
 
 	const handleNewChat = useCallback(async () => {
-		const id = await createNewChat(normalizedWorkspacePath ?? undefined);
+		const id = await createNewChat(
+			normalizedWorkspacePath ?? defaultChatWorkspacePath ?? undefined,
+		);
 		if (id) setSelectedChatSessionId(id);
-	}, [createNewChat, normalizedWorkspacePath, setSelectedChatSessionId]);
+	}, [
+		createNewChat,
+		defaultChatWorkspacePath,
+		normalizedWorkspacePath,
+		setSelectedChatSessionId,
+	]);
 
 	useEffect(() => {
 		let mounted = true;
@@ -334,7 +346,7 @@ export const SessionScreen = memo(function SessionScreen() {
 			)
 		: null;
 
-	const chatPanel = (
+	const chatPanel = normalizedWorkspacePath ? (
 		<ChatView
 			locale={locale}
 			className="flex-1"
@@ -350,6 +362,10 @@ export const SessionScreen = memo(function SessionScreen() {
 			onTodosChange={setLatestTodos}
 			onMessageSent={refreshChatHistory}
 			onMessageComplete={refreshChatHistory}
+		/>
+	) : (
+		<EmptyWorkspacePanel
+			label={locale === "de" ? "Lade Chat..." : "Loading chat..."}
 		/>
 	);
 
