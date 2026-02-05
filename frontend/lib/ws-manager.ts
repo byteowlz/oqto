@@ -315,7 +315,10 @@ class WsConnectionManager {
 			console.log("[ws-mux] Already subscribed to session:", sessionId);
 		}
 
-		// Return unsubscribe function
+		// Return unsubscribe function.
+		// Note: this only removes the local event handler. It does NOT close the
+		// session on the backend -- the runner session stays alive for reconnection.
+		// Use agentCloseSession() explicitly to destroy a session.
 		return () => {
 			handlers?.delete(handler);
 			if (handlers?.size === 0) {
@@ -324,14 +327,6 @@ class WsConnectionManager {
 				this.pendingSubscriptions.delete(sessionId);
 				this.sessionReady.delete(sessionId);
 				this.pendingMessages.delete(sessionId);
-
-				if (this.isConnected) {
-					this.send({
-						channel: "agent",
-						session_id: sessionId,
-						cmd: "session.close",
-					});
-				}
 			}
 		};
 	}
@@ -538,12 +533,21 @@ class WsConnectionManager {
 		});
 	}
 
-	/** Extract CommandResponse from an agent event (for sendAndWait results). */
+	/** Extract CommandResponse from an agent event (for sendAndWait results).
+	 *  CommandResponse fields (id, cmd, success, data, error) are flattened
+	 *  into the top-level event object by serde, not nested under "response".
+	 */
 	private extractCommandResponse(event: WsEvent): CommandResponse | null {
 		if (event.channel !== "agent") return null;
 		const agentEvent = event as AgentWsEvent;
 		if (agentEvent.event === "response") {
-			return agentEvent.response as CommandResponse;
+			return {
+				id: agentEvent.id as string,
+				cmd: agentEvent.cmd as string,
+				success: agentEvent.success as boolean,
+				data: agentEvent.data as unknown,
+				error: agentEvent.error as string | undefined,
+			};
 		}
 		return null;
 	}
@@ -642,10 +646,13 @@ class WsConnectionManager {
 		if (event.channel === "agent") {
 			const agentEvent = event as AgentWsEvent;
 
-			// Check if this is a successful session.create response
+			// Check if this is a successful session.create response.
+			// CommandResponse fields are flattened into the top-level event:
+			//   { event: "response", id, cmd, success, data?, error?, session_id, ... }
 			if (agentEvent.event === "response") {
-				const resp = agentEvent.response as CommandResponse | undefined;
-				if (resp?.cmd === "session.create" && resp.success) {
+				const cmd = agentEvent.cmd as string | undefined;
+				const success = agentEvent.success as boolean | undefined;
+				if (cmd === "session.create" && success) {
 					const sessionId = agentEvent.session_id;
 					console.log("[ws-mux] Session created (response) for:", sessionId);
 					this.sessionReady.add(sessionId);
@@ -704,17 +711,12 @@ class WsConnectionManager {
 			return;
 		}
 
-		// Check for correlated response (agent events carry id in the response object)
+		// Check for correlated response.
+		// Agent response events have `id` flattened at top level (from CommandResponse).
+		// Other channels may have `id` directly on the event.
 		let id: string | undefined;
-		if (event.channel === "agent") {
-			const agentEvent = event as AgentWsEvent;
-			if (agentEvent.event === "response") {
-				const resp = agentEvent.response as CommandResponse | undefined;
-				id = resp?.id;
-			}
-		}
-		if (!id) {
-			id = "id" in event ? (event as { id?: string }).id : undefined;
+		if ("id" in event) {
+			id = (event as { id?: string }).id;
 		}
 		if (id && this.pendingRequests.has(id)) {
 			const callback = this.pendingRequests.get(id);

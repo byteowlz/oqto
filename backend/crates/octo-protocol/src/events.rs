@@ -459,6 +459,38 @@ mod tests {
     }
 
     #[test]
+    fn test_command_response_event_serialization() {
+        // Verify that CommandResponse fields are flattened into the event
+        // (not nested under a "response" key). This is the wire format the
+        // frontend relies on.
+        let event = Event {
+            session_id: "ses_abc".to_string(),
+            runner_id: "local".to_string(),
+            ts: 1738764000000,
+            payload: EventPayload::Response(CommandResponse {
+                id: "req-1".to_string(),
+                cmd: "session.create".to_string(),
+                success: true,
+                data: Some(serde_json::json!({"session_id": "ses_abc"})),
+                error: None,
+            }),
+        };
+
+        let json = serde_json::to_string(&event).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(parsed["event"], "response");
+        assert_eq!(parsed["session_id"], "ses_abc");
+        // CommandResponse fields must be at top level, not nested
+        assert_eq!(parsed["id"], "req-1");
+        assert_eq!(parsed["cmd"], "session.create");
+        assert_eq!(parsed["success"], true);
+        assert!(parsed.get("data").is_some());
+        // Must NOT have a "response" wrapper object
+        assert!(parsed.get("response").is_none());
+    }
+
+    #[test]
     fn test_input_request_serialization() {
         let req = InputRequest::Select {
             request_id: "req-1".to_string(),

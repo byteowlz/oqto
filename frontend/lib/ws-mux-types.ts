@@ -296,7 +296,8 @@ export type WsEventBase = {
  *
  * These are canonical events from the agent runtime (Pi, Claude Code, etc.)
  * The `event` field discriminates the event type.
- * Command responses have `event: "response"` with a nested `response` object.
+ * Command responses have `event: "response"` with CommandResponse fields
+ * flattened into the top level (id, cmd, success, data?, error?).
  */
 export type AgentWsEvent = {
 	channel: "agent";

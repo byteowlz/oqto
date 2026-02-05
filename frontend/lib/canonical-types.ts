@@ -281,8 +281,8 @@ export type EventPayload =
 	// Messages sync
 	| { event: "messages"; messages: Message[] }
 	| { event: "persisted"; message_count: number }
-	// Command response
-	| { event: "response"; response: CommandResponse };
+	// Command response (fields are flattened, not nested under "response")
+	| ({ event: "response" } & CommandResponse);
 
 /** A canonical event with routing metadata. */
 export type Event = {

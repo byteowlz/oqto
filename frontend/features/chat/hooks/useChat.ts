@@ -623,8 +623,19 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 				}
 
 				// -- Command response (replaces old Pi command-response events) --
+				// CommandResponse fields are flattened into the top-level event by serde:
+				//   { event: "response", id, cmd, success, data?, error?, session_id, ... }
 				case "response": {
-					const resp = event.response as CommandResponse | undefined;
+					const resp: CommandResponse | undefined =
+						typeof event.cmd === "string"
+							? {
+									id: event.id as string,
+									cmd: event.cmd as string,
+									success: event.success as boolean,
+									data: event.data as unknown,
+									error: event.error as string | undefined,
+								}
+							: undefined;
 					if (!resp) break;
 
 					if (isPiDebugEnabled()) {
