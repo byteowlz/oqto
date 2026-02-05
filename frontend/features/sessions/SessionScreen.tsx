@@ -463,13 +463,13 @@ export const SessionScreen = memo(function SessionScreen() {
 						</h1>
 					</div>
 					<div className="flex items-center gap-2 text-xs text-foreground/60 dark:text-muted-foreground">
-						{(workspaceName || readableId) && (
+						{workspaceName && (
 							<span className="font-mono truncate">
 								{workspaceName}
 								{readableId && ` [${readableId}]`}
 							</span>
 						)}
-						{(workspaceName || readableId) && formattedDate && (
+						{workspaceName && readableId && formattedDate && (
 							<span className="opacity-50">|</span>
 						)}
 						{formattedDate && (
