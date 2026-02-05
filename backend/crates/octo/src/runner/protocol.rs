@@ -24,7 +24,7 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use crate::pi::{PiEvent, PiState};
+use crate::pi::PiState;
 
 /// Request sent from octo to the runner.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -811,9 +811,6 @@ pub struct PiSessionConfig {
     /// Session file to continue from.
     #[serde(default)]
     pub continue_session: Option<PathBuf>,
-    /// System prompt addition files.
-    #[serde(default)]
-    pub system_prompt_files: Vec<PathBuf>,
     /// Environment variables for the Pi process.
     #[serde(default)]
     pub env: HashMap<String, String>,
@@ -827,7 +824,6 @@ impl Default for PiSessionConfig {
             model: None,
             session_file: None,
             continue_session: None,
-            system_prompt_files: Vec::new(),
             env: HashMap::new(),
         }
     }
@@ -1630,14 +1626,11 @@ pub struct PiStateResponse {
     pub state: PiState,
 }
 
-/// Pi event wrapped with session context.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PiEventWrapper {
-    /// Session ID the event belongs to.
-    pub session_id: String,
-    /// The Pi event.
-    pub event: PiEvent,
-}
+/// Canonical event wrapper for the runner IPC protocol.
+///
+/// Carries a canonical event from the runner to clients over Unix socket.
+/// The pi_manager translates native Pi events before broadcasting.
+pub type PiEventWrapper = octo_protocol::events::Event;
 
 /// Response confirming Pi subscription started.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1967,7 +1960,6 @@ mod tests {
                 model: Some("claude-sonnet-4-20250514".to_string()),
                 session_file: None,
                 continue_session: None,
-                system_prompt_files: vec![],
                 env: HashMap::new(),
             },
         });
@@ -1989,16 +1981,23 @@ mod tests {
 
     #[test]
     fn test_pi_event_wrapper() {
-        let wrapper = PiEventWrapper {
+        use octo_protocol::events::{AgentPhase, EventPayload};
+
+        let canonical_event = PiEventWrapper {
             session_id: "ses_123".to_string(),
-            event: PiEvent::AgentStart,
+            runner_id: "local".to_string(),
+            ts: 1738764000000,
+            payload: EventPayload::AgentWorking {
+                phase: AgentPhase::Generating,
+                detail: None,
+            },
         };
 
-        let resp = RunnerResponse::PiEvent(wrapper);
+        let resp = RunnerResponse::PiEvent(canonical_event);
         let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("pi_event"));
         assert!(json.contains("ses_123"));
-        assert!(json.contains("agent_start"));
+        assert!(json.contains("agent.working"));
     }
 
     #[test]

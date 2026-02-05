@@ -2134,7 +2134,6 @@ impl Runner {
             model: req.config.model,
             session_file: req.config.session_file,
             continue_session: req.config.continue_session,
-            system_prompt_files: req.config.system_prompt_files,
             env: req.config.env,
         };
 
@@ -2905,11 +2904,8 @@ impl Runner {
         loop {
             match rx.recv().await {
                 Ok(event_wrapper) => {
-                    // Convert pi_manager::PiEventWrapper to protocol::PiEventWrapper
-                    let resp = RunnerResponse::PiEvent(PiEventWrapper {
-                        session_id: event_wrapper.session_id,
-                        event: event_wrapper.event,
-                    });
+                    // Forward canonical event directly (pi_manager already translated)
+                    let resp = RunnerResponse::PiEvent(event_wrapper);
                     let json = serde_json::to_string(&resp).unwrap();
                     if writer
                         .write_all(format!("{}\n", json).as_bytes())

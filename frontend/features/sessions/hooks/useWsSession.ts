@@ -122,9 +122,6 @@ export type SessionEventCallback = (event: SessionEvent) => void;
 /**
  * Hook to subscribe to events for a specific session via WebSocket.
  *
- * Replaces the SSE-based subscribeToEvents pattern with a more reliable
- * WebSocket connection managed by the backend.
- *
  * @param sessionId - The workspace session ID to subscribe to
  * @param onEvent - Callback for session events
  * @param options - Configuration options
@@ -396,10 +393,6 @@ function mapWsEventToSessionEvent(
 				};
 			}
 			return null;
-
-		case "opencode_event":
-			// Pass through raw OpenCode events for components that need them
-			return { type: "raw", event };
 
 		case "a2ui_surface":
 			if ("surface_id" in event && "messages" in event) {

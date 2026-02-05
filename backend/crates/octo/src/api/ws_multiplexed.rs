@@ -31,8 +31,8 @@ use base64::Engine;
 
 use crate::auth::{Claims, CurrentUser};
 use crate::local::ProcessManager;
-use crate::pi::{AssistantMessageEvent, PiEvent};
-use crate::runner::client::{PiSubscription, PiSubscriptionEvent, RunnerClient};
+
+use crate::runner::client::{PiSubscriptionEvent, RunnerClient};
 use crate::runner::protocol::{PiCreateSessionRequest, PiSessionConfig as RunnerPiSessionConfig};
 use crate::session::Session;
 use crate::user_plane::{DirectUserPlane, RunnerUserPlane};
@@ -156,7 +156,7 @@ use super::state::AppState;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Channel {
-    Pi,
+    Agent,
     Files,
     Terminal,
     Hstry,
@@ -173,7 +173,7 @@ pub enum Channel {
 #[derive(Debug, Deserialize)]
 #[serde(tag = "channel", rename_all = "snake_case")]
 pub enum WsCommand {
-    Pi(PiWsCommand),
+    Agent(octo_protocol::commands::Command),
     Files(FilesWsCommand),
     Terminal(TerminalWsCommand),
     Hstry(HstryWsCommand),
@@ -181,296 +181,7 @@ pub enum WsCommand {
     Session(SessionWsCommand),
 }
 
-/// Pi channel commands.
-#[derive(Debug, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum PiWsCommand {
-    // === Session Lifecycle ===
-    /// Create or resume a Pi session
-    CreateSession {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        id: Option<String>,
-        session_id: String,
-        #[serde(default)]
-        config: Option<PiSessionConfig>,
-    },
-    /// Close session (stop Pi process)
-    CloseSession {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        id: Option<String>,
-        session_id: String,
-    },
-    /// Start a new session within existing Pi process
-    NewSession {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        id: Option<String>,
-        session_id: String,
-        #[serde(default)]
-        parent_session: Option<String>,
-    },
-    /// Switch to a different session file
-    SwitchSession {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        id: Option<String>,
-        session_id: String,
-        session_path: String,
-    },
-    /// List all sessions
-    ListSessions {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        id: Option<String>,
-    },
-    /// Start receiving events for session
-    Subscribe {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        id: Option<String>,
-        session_id: String,
-    },
-    /// Stop receiving events for session
-    Unsubscribe {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        id: Option<String>,
-        session_id: String,
-    },
-
-    // === Prompting ===
-    /// Send prompt to session
-    Prompt {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        id: Option<String>,
-        session_id: String,
-        message: String,
-    },
-    /// Steering message (interrupt mid-run)
-    Steer {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        id: Option<String>,
-        session_id: String,
-        message: String,
-    },
-    /// Follow-up message (queue for after completion)
-    FollowUp {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        id: Option<String>,
-        session_id: String,
-        message: String,
-    },
-    /// Abort current operation
-    Abort {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        id: Option<String>,
-        session_id: String,
-    },
-
-    // === State & Messages ===
-    /// Get session state
-    GetState {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        id: Option<String>,
-        session_id: String,
-    },
-    /// Get all messages from session
-    GetMessages {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        id: Option<String>,
-        session_id: String,
-    },
-    /// Get session statistics
-    GetSessionStats {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        id: Option<String>,
-        session_id: String,
-    },
-    /// Get last assistant response text
-    GetLastAssistantText {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        id: Option<String>,
-        session_id: String,
-    },
-
-    // === Model Management ===
-    /// Set the model for a session
-    SetModel {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        id: Option<String>,
-        session_id: String,
-        provider: String,
-        model_id: String,
-    },
-    /// Cycle to next model
-    CycleModel {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        id: Option<String>,
-        session_id: String,
-    },
-    /// Get available models
-    GetAvailableModels {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        id: Option<String>,
-        session_id: String,
-    },
-
-    // === Thinking Level ===
-    /// Set thinking/reasoning level
-    SetThinkingLevel {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        id: Option<String>,
-        session_id: String,
-        level: String,
-    },
-    /// Cycle through thinking levels
-    CycleThinkingLevel {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        id: Option<String>,
-        session_id: String,
-    },
-
-    // === Compaction ===
-    /// Compact conversation
-    Compact {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        id: Option<String>,
-        session_id: String,
-        #[serde(default)]
-        instructions: Option<String>,
-    },
-    /// Enable/disable auto-compaction
-    SetAutoCompaction {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        id: Option<String>,
-        session_id: String,
-        enabled: bool,
-    },
-
-    // === Queue Modes ===
-    /// Set steering message delivery mode
-    SetSteeringMode {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        id: Option<String>,
-        session_id: String,
-        mode: String, // "all" | "one-at-a-time"
-    },
-    /// Set follow-up message delivery mode
-    SetFollowUpMode {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        id: Option<String>,
-        session_id: String,
-        mode: String, // "all" | "one-at-a-time"
-    },
-
-    // === Retry ===
-    /// Enable/disable auto-retry
-    SetAutoRetry {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        id: Option<String>,
-        session_id: String,
-        enabled: bool,
-    },
-    /// Abort in-progress retry
-    AbortRetry {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        id: Option<String>,
-        session_id: String,
-    },
-
-    // === Forking ===
-    /// Fork from a previous message
-    Fork {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        id: Option<String>,
-        session_id: String,
-        entry_id: String,
-    },
-    /// Get messages available for forking
-    GetForkMessages {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        id: Option<String>,
-        session_id: String,
-    },
-
-    // === Session Metadata ===
-    /// Set session display name
-    SetSessionName {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        id: Option<String>,
-        session_id: String,
-        name: String,
-    },
-    /// Export session to HTML
-    ExportHtml {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        id: Option<String>,
-        session_id: String,
-        #[serde(default)]
-        output_path: Option<String>,
-    },
-
-    // === Commands/Skills ===
-    /// Get available commands
-    GetCommands {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        id: Option<String>,
-        session_id: String,
-    },
-
-    // === Bash ===
-    /// Execute bash command
-    Bash {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        id: Option<String>,
-        session_id: String,
-        command: String,
-    },
-    /// Abort running bash command
-    AbortBash {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        id: Option<String>,
-        session_id: String,
-    },
-
-    // === Extension UI ===
-    /// Send response to extension UI request
-    ExtensionUiResponse {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        id: Option<String>,
-        session_id: String,
-        request_id: String,
-        #[serde(default)]
-        value: Option<String>,
-        #[serde(default)]
-        confirmed: Option<bool>,
-        #[serde(default)]
-        cancelled: Option<bool>,
-    },
-}
-
-/// Pi session configuration for create_session command.
-#[derive(Debug, Clone, Default, Deserialize, Serialize)]
-pub struct PiSessionConfig {
-    /// Session scope: "main" for main chat, "workspace" for workspace sessions.
-    /// When "main", the backend will:
-    /// - Use the main chat directory as cwd
-    /// - Add PERSONALITY.md, USER.md, ONBOARD.md as system_prompt_files
-    #[serde(default)]
-    pub scope: Option<String>,
-    /// Working directory for Pi (ignored if scope="main")
-    #[serde(default)]
-    pub cwd: Option<String>,
-    /// Provider (anthropic, openai, etc.)
-    #[serde(default)]
-    pub provider: Option<String>,
-    /// Model ID
-    #[serde(default)]
-    pub model: Option<String>,
-    /// Explicit session file to use
-    #[serde(default)]
-    pub session_file: Option<String>,
-    /// Session file to continue from
-    #[serde(default)]
-    pub continue_session: Option<String>,
-}
-
-/// Files channel commands (placeholder for future implementation).
+/// Files channel commands.
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum FilesWsCommand {
@@ -689,225 +400,22 @@ pub struct TrxIssueUpdate {
 // ============================================================================
 
 /// Events sent from backend to frontend over WebSocket.
+///
+/// All agent events (streaming, command responses, lifecycle) flow through
+/// `WsEvent::Agent` as canonical `octo_protocol::events::Event` values.
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "channel", rename_all = "snake_case")]
 pub enum WsEvent {
-    Pi(PiWsEvent),
+    /// Canonical agent events (streaming, state, command responses, delegation, etc.).
+    /// Serializes as `{"channel": "agent", "session_id": ..., "event": ..., ...}`.
+    #[serde(rename = "agent")]
+    Agent(octo_protocol::events::Event),
     Files(FilesWsEvent),
     Terminal(TerminalWsEvent),
     Hstry(HstryWsEvent),
     Trx(TrxWsEvent),
     Session(LegacyWsEvent),
     System(SystemWsEvent),
-}
-
-/// Pi channel events.
-#[derive(Debug, Clone, Serialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum PiWsEvent {
-    /// Session created/resumed
-    SessionCreated {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        id: Option<String>,
-        session_id: String,
-    },
-    /// Session closed
-    SessionClosed {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        id: Option<String>,
-        session_id: String,
-    },
-    /// Session list
-    Sessions {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        id: Option<String>,
-        sessions: Vec<PiSessionInfo>,
-    },
-    /// Session state
-    State {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        id: Option<String>,
-        session_id: String,
-        state: Value,
-    },
-    /// Message start (streaming)
-    MessageStart { session_id: String, role: String },
-    /// Text delta (streaming)
-    Text { session_id: String, data: String },
-    /// Thinking delta (streaming)
-    Thinking { session_id: String, data: String },
-    /// Tool use event
-    ToolUse {
-        session_id: String,
-        data: ToolUseData,
-    },
-    /// Tool start event
-    ToolStart {
-        session_id: String,
-        data: ToolUseData,
-    },
-    /// Tool result event
-    ToolResult {
-        session_id: String,
-        data: ToolResultData,
-    },
-    /// Stream complete
-    Done { session_id: String },
-    /// Error event
-    Error {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        id: Option<String>,
-        session_id: String,
-        error: String,
-    },
-    /// Persistence confirmation
-    Persisted {
-        session_id: String,
-        message_count: u64,
-    },
-    /// Command acknowledgement
-    CommandAck {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        id: Option<String>,
-        session_id: String,
-        command: String,
-    },
-    /// Messages response
-    Messages {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        id: Option<String>,
-        session_id: String,
-        messages: Value,
-    },
-    /// Stats response
-    Stats {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        id: Option<String>,
-        session_id: String,
-        stats: Value,
-    },
-    /// Last assistant text response
-    LastAssistantText {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        id: Option<String>,
-        session_id: String,
-        text: Option<String>,
-    },
-    /// Model changed response
-    ModelChanged {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        id: Option<String>,
-        session_id: String,
-        provider: String,
-        model_id: String,
-    },
-    /// Available models response
-    AvailableModels {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        id: Option<String>,
-        session_id: String,
-        models: Value,
-    },
-    /// Thinking level changed response
-    ThinkingLevelChanged {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        id: Option<String>,
-        session_id: String,
-        level: String,
-    },
-    /// Fork messages response
-    ForkMessages {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        id: Option<String>,
-        session_id: String,
-        messages: Vec<ForkMessageInfo>,
-    },
-    /// Fork result response
-    ForkResult {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        id: Option<String>,
-        session_id: String,
-        /// The text of the message being forked from.
-        text: String,
-        /// Whether an extension cancelled the fork.
-        cancelled: bool,
-    },
-    /// Commands response
-    Commands {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        id: Option<String>,
-        session_id: String,
-        commands: Vec<CommandInfo>,
-    },
-    /// Bash result response
-    BashResult {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        id: Option<String>,
-        session_id: String,
-        /// Command output.
-        output: String,
-        /// Exit code.
-        exit_code: i32,
-        /// Whether the command was cancelled.
-        cancelled: bool,
-        /// Whether output was truncated.
-        truncated: bool,
-        /// Path to full output if truncated.
-        #[serde(skip_serializing_if = "Option::is_none")]
-        full_output_path: Option<String>,
-    },
-    /// Export HTML result response
-    ExportHtmlResult {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        id: Option<String>,
-        session_id: String,
-        path: String,
-    },
-}
-
-/// Session info for list response.
-#[derive(Debug, Clone, Serialize)]
-pub struct PiSessionInfo {
-    pub session_id: String,
-    pub state: String,
-    pub last_activity: i64,
-    pub subscriber_count: usize,
-}
-
-/// Tool use event data.
-#[derive(Debug, Clone, Serialize)]
-pub struct ToolUseData {
-    pub id: String,
-    pub name: String,
-    pub input: Value,
-}
-
-/// Tool result event data.
-#[derive(Debug, Clone, Serialize)]
-pub struct ToolResultData {
-    pub id: String,
-    pub name: Option<String>,
-    pub content: Value,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub is_error: Option<bool>,
-}
-
-/// Fork message info.
-#[derive(Debug, Clone, Serialize)]
-pub struct ForkMessageInfo {
-    pub entry_id: String,
-    pub role: String,
-    pub preview: String,
-    pub timestamp: Option<i64>,
-}
-
-/// Command info.
-#[derive(Debug, Clone, Serialize)]
-pub struct CommandInfo {
-    pub name: String,
-    pub description: Option<String>,
-    #[serde(rename = "type")]
-    pub command_type: String,
 }
 
 /// Files channel events (placeholder).
@@ -1332,8 +840,8 @@ async fn handle_ws_command(
     conn_state: Arc<tokio::sync::Mutex<WsConnectionState>>,
 ) -> Option<WsEvent> {
     match cmd {
-        WsCommand::Pi(pi_cmd) => {
-            handle_pi_command(pi_cmd, user_id, state, runner_client, conn_state).await
+        WsCommand::Agent(agent_cmd) => {
+            handle_agent_command(agent_cmd, user_id, state, runner_client, conn_state).await
         }
         WsCommand::Files(files_cmd) => handle_files_command(files_cmd, user_id, state).await,
         WsCommand::Terminal(term_cmd) => {
@@ -1347,278 +855,89 @@ async fn handle_ws_command(
     }
 }
 
-/// Helper to extract id and session_id from a Pi command for error responses.
-fn extract_pi_command_ids(cmd: &PiWsCommand) -> (Option<String>, String) {
-    match cmd {
-        // Session lifecycle
-        PiWsCommand::CreateSession { id, session_id, .. } => (id.clone(), session_id.clone()),
-        PiWsCommand::CloseSession { id, session_id } => (id.clone(), session_id.clone()),
-        PiWsCommand::NewSession { id, session_id, .. } => (id.clone(), session_id.clone()),
-        PiWsCommand::SwitchSession { id, session_id, .. } => (id.clone(), session_id.clone()),
-        PiWsCommand::ListSessions { id } => (id.clone(), "".to_string()),
-        PiWsCommand::Subscribe { id, session_id } => (id.clone(), session_id.clone()),
-        PiWsCommand::Unsubscribe { id, session_id } => (id.clone(), session_id.clone()),
-        // Prompting
-        PiWsCommand::Prompt { id, session_id, .. } => (id.clone(), session_id.clone()),
-        PiWsCommand::Steer { id, session_id, .. } => (id.clone(), session_id.clone()),
-        PiWsCommand::FollowUp { id, session_id, .. } => (id.clone(), session_id.clone()),
-        PiWsCommand::Abort { id, session_id } => (id.clone(), session_id.clone()),
-        // State & Messages
-        PiWsCommand::GetState { id, session_id } => (id.clone(), session_id.clone()),
-        PiWsCommand::GetMessages { id, session_id } => (id.clone(), session_id.clone()),
-        PiWsCommand::GetSessionStats { id, session_id } => (id.clone(), session_id.clone()),
-        PiWsCommand::GetLastAssistantText { id, session_id } => (id.clone(), session_id.clone()),
-        // Model
-        PiWsCommand::SetModel { id, session_id, .. } => (id.clone(), session_id.clone()),
-        PiWsCommand::CycleModel { id, session_id } => (id.clone(), session_id.clone()),
-        PiWsCommand::GetAvailableModels { id, session_id } => (id.clone(), session_id.clone()),
-        // Thinking
-        PiWsCommand::SetThinkingLevel { id, session_id, .. } => (id.clone(), session_id.clone()),
-        PiWsCommand::CycleThinkingLevel { id, session_id } => (id.clone(), session_id.clone()),
-        // Compaction
-        PiWsCommand::Compact { id, session_id, .. } => (id.clone(), session_id.clone()),
-        PiWsCommand::SetAutoCompaction { id, session_id, .. } => (id.clone(), session_id.clone()),
-        // Queue modes
-        PiWsCommand::SetSteeringMode { id, session_id, .. } => (id.clone(), session_id.clone()),
-        PiWsCommand::SetFollowUpMode { id, session_id, .. } => (id.clone(), session_id.clone()),
-        // Retry
-        PiWsCommand::SetAutoRetry { id, session_id, .. } => (id.clone(), session_id.clone()),
-        PiWsCommand::AbortRetry { id, session_id } => (id.clone(), session_id.clone()),
-        // Forking
-        PiWsCommand::Fork { id, session_id, .. } => (id.clone(), session_id.clone()),
-        PiWsCommand::GetForkMessages { id, session_id } => (id.clone(), session_id.clone()),
-        // Metadata
-        PiWsCommand::SetSessionName { id, session_id, .. } => (id.clone(), session_id.clone()),
-        PiWsCommand::ExportHtml { id, session_id, .. } => (id.clone(), session_id.clone()),
-        // Commands
-        PiWsCommand::GetCommands { id, session_id } => (id.clone(), session_id.clone()),
-        // Bash
-        PiWsCommand::Bash { id, session_id, .. } => (id.clone(), session_id.clone()),
-        PiWsCommand::AbortBash { id, session_id } => (id.clone(), session_id.clone()),
-        // Extension UI
-        PiWsCommand::ExtensionUiResponse { id, session_id, .. } => (id.clone(), session_id.clone()),
-    }
+/// Build a canonical `CommandResponse` event wrapped in `WsEvent::Agent`.
+fn agent_response(
+    session_id: &str,
+    id: Option<String>,
+    cmd: &str,
+    result: Result<Option<Value>, String>,
+) -> WsEvent {
+    let (success, data, error) = match result {
+        Ok(data) => (true, data, None),
+        Err(e) => (false, None, Some(e)),
+    };
+    WsEvent::Agent(octo_protocol::events::Event {
+        session_id: session_id.to_string(),
+        runner_id: "local".to_string(),
+        ts: Utc::now().timestamp_millis(),
+        payload: octo_protocol::events::EventPayload::Response(
+            octo_protocol::events::CommandResponse {
+                id: id.unwrap_or_default(),
+                cmd: cmd.to_string(),
+                success,
+                data,
+                error,
+            },
+        ),
+    })
 }
 
-/// Handle Pi channel commands.
-async fn handle_pi_command(
-    cmd: PiWsCommand,
+/// Handle canonical agent commands.
+///
+/// Every command gets a `CommandResponse` event back (or `None` for fire-and-forget
+/// commands like prompt/steer/abort where streaming events are the real response).
+async fn handle_agent_command(
+    cmd: octo_protocol::commands::Command,
     user_id: &str,
     state: &AppState,
     runner_client: Option<&RunnerClient>,
     conn_state: Arc<tokio::sync::Mutex<WsConnectionState>>,
 ) -> Option<WsEvent> {
-    // Special case: ListSessions doesn't need a session_id
-    if matches!(cmd, PiWsCommand::ListSessions { .. }) {
-        if let Some(runner) = runner_client {
-            match runner.pi_list_sessions().await {
-                Ok(sessions) => {
-                    let session_infos: Vec<PiSessionInfo> = sessions
-                        .into_iter()
-                        .map(|s| PiSessionInfo {
-                            session_id: s.session_id,
-                            state: format!("{:?}", s.state),
-                            last_activity: s.last_activity,
-                            subscriber_count: s.subscriber_count,
-                        })
-                        .collect();
-                    let id = if let PiWsCommand::ListSessions { id } = &cmd {
-                        id.clone()
-                    } else {
-                        None
-                    };
-                    return Some(WsEvent::Pi(PiWsEvent::Sessions {
-                        id,
-                        sessions: session_infos,
-                    }));
-                }
-                Err(e) => {
-                    error!("Failed to list Pi sessions: {:?}", e);
-                    let id = if let PiWsCommand::ListSessions { id } = &cmd {
-                        id.clone()
-                    } else {
-                        None
-                    };
-                    return Some(WsEvent::Pi(PiWsEvent::Sessions {
-                        id,
-                        sessions: vec![],
-                    }));
-                }
-            }
-        } else {
-            let id = if let PiWsCommand::ListSessions { id } = &cmd {
-                id.clone()
-            } else {
-                None
-            };
-            return Some(WsEvent::Pi(PiWsEvent::Sessions {
-                id,
-                sessions: vec![],
-            }));
-        }
-    }
+    use octo_protocol::commands::CommandPayload;
+
+    let id = cmd.id.clone();
+    let session_id = cmd.session_id.clone();
 
     // Check if runner is available
     let runner = match runner_client {
         Some(r) => r,
         None => {
-            let (id, session_id) = extract_pi_command_ids(&cmd);
-            return Some(WsEvent::Pi(PiWsEvent::Error {
+            return Some(agent_response(
+                &session_id,
                 id,
-                session_id,
-                error: "Runner not available".into(),
-            }));
+                "error",
+                Err("Runner not available".into()),
+            ));
         }
     };
 
-    match cmd {
-        PiWsCommand::CreateSession {
-            id,
-            session_id,
-            config,
-        } => {
-            info!(
-                "Pi create_session: user={}, session_id={}",
-                user_id, session_id
-            );
+    match cmd.payload {
+        CommandPayload::SessionCreate { config } => {
+            info!("agent session.create: user={}, session_id={}", user_id, session_id);
 
             let cwd = config
+                .cwd
                 .as_ref()
-                .and_then(|c| c.cwd.as_ref())
-                .map(std::path::PathBuf::from)
+                .map(|s| std::path::PathBuf::from(s))
                 .unwrap_or_else(|| std::path::PathBuf::from("/"));
-
-            // Build system prompt files list from cwd
-            let mut system_prompt_files = Vec::new();
-            let onboard_file = cwd.join("ONBOARD.md");
-            if onboard_file.exists() {
-                system_prompt_files.push(onboard_file);
-            }
-            let personality_file = cwd.join("PERSONALITY.md");
-            if personality_file.exists() {
-                system_prompt_files.push(personality_file);
-            }
-            let user_file = cwd.join("USER.md");
-            if user_file.exists() {
-                system_prompt_files.push(user_file);
-            }
 
             {
                 let mut state_guard = conn_state.lock().await;
                 state_guard.pi_session_meta.insert(
                     session_id.clone(),
                     PiSessionMeta {
-                        scope: config
-                            .as_ref()
-                            .and_then(|c| c.scope.as_ref())
-                            .cloned()
-                            .or_else(|| Some("workspace".to_string())),
+                        scope: Some(config.harness.clone()),
                         cwd: Some(cwd.clone()),
                     },
                 );
             }
 
-            // Resolve continue_session: use explicit path if provided, otherwise
-            // ensure a session file exists for this session ID.
-            let session_file = if let Some(path) = config
-                .as_ref()
-                .and_then(|c| c.session_file.as_ref())
-            {
-                Some(std::path::PathBuf::from(path))
-            } else if let Some(path) = config
-                .as_ref()
-                .and_then(|c| c.continue_session.as_ref())
-            {
-                Some(std::path::PathBuf::from(path))
-            } else {
-                let home_dir = if let Some(linux_users) = state.linux_users.as_ref() {
-                    linux_users
-                        .get_home_dir(user_id)
-                        .ok()
-                        .flatten()
-                } else {
-                    dirs::home_dir()
-                };
-
-                let sessions_dir = home_dir.map(|home| {
-                    let safe_path = cwd
-                        .to_string_lossy()
-                        .trim_start_matches(&['/', '\\'][..])
-                        .replace('/', "-")
-                        .replace('\\', "-")
-                        .replace(':', "-");
-                    home.join(".pi")
-                        .join("agent")
-                        .join("sessions")
-                        .join(format!("--{}--", safe_path))
-                });
-
-                let existing = sessions_dir.as_ref().and_then(|dir| {
-                    if let Ok(entries) = std::fs::read_dir(dir) {
-                        for entry in entries.flatten() {
-                            let path = entry.path();
-                            if path.extension().map(|e| e == "jsonl").unwrap_or(false)
-                                && path
-                                    .file_name()
-                                    .and_then(|n| n.to_str())
-                                    .map(|name| name.contains(&session_id))
-                                    .unwrap_or(false)
-                            {
-                                return Some(path);
-                            }
-                        }
-                    }
-                    None
-                });
-
-                if let Some(path) = existing {
-                    Some(path)
-                } else if let Some(dir) = sessions_dir {
-                    if let Err(err) = runner.create_directory(&dir, true).await {
-                        error!("Failed to create Pi sessions dir {:?}: {}", dir, err);
-                        return Some(WsEvent::Pi(PiWsEvent::Error {
-                            id,
-                            session_id,
-                            error: format!("Failed to create session dir: {}", err),
-                        }));
-                    }
-                    let header = serde_json::json!({
-                        "type": "session",
-                        "version": 3,
-                        "id": session_id,
-                        "timestamp": Utc::now().to_rfc3339(),
-                        "cwd": cwd.to_string_lossy(),
-                    });
-                    let content = format!(
-                        "{}\n",
-                        serde_json::to_string(&header).unwrap_or_else(|_| "{}".to_string())
-                    );
-                    let filename =
-                        format!("{}_{}.jsonl", Utc::now().timestamp_millis(), session_id);
-                    let path = dir.join(filename);
-
-                    if let Err(err) = runner.write_file(&path, content.as_bytes(), true).await {
-                        error!("Failed to seed Pi session file {:?}: {}", path, err);
-                        return Some(WsEvent::Pi(PiWsEvent::Error {
-                            id,
-                            session_id,
-                            error: format!("Failed to seed session file: {}", err),
-                        }));
-                    }
-
-                    Some(path)
-                } else {
-                    None
-                }
-            };
-
             let pi_config = RunnerPiSessionConfig {
                 cwd,
-                provider: config.as_ref().and_then(|c| c.provider.clone()),
-                model: config.as_ref().and_then(|c| c.model.clone()),
-                session_file: session_file.clone(),
-                continue_session: session_file,
-                system_prompt_files,
+                provider: config.provider,
+                model: config.model,
+                session_file: None,
+                continue_session: config.continue_session.map(std::path::PathBuf::from),
                 env: std::collections::HashMap::new(),
             };
 
@@ -1628,921 +947,608 @@ async fn handle_pi_command(
             };
 
             match runner.pi_create_session(req).await {
-                Ok(_) => Some(WsEvent::Pi(PiWsEvent::SessionCreated { id, session_id })),
-                Err(e) => {
-                    error!("Failed to create Pi session: {:?}", e);
-                    Some(WsEvent::Pi(PiWsEvent::Error {
+                Ok(_) => {
+                    // Auto-subscribe to events for the new session
+                    let mut state_guard = conn_state.lock().await;
+                    if !state_guard.pi_subscriptions.contains(&session_id) {
+                        state_guard.subscribed_sessions.insert(session_id.clone());
+                        state_guard.pi_subscriptions.insert(session_id.clone());
+                        let event_tx = state_guard.event_tx.clone();
+                        let runner = runner.clone();
+                        let sid = session_id.clone();
+                        tokio::spawn(async move {
+                            if let Err(e) = forward_pi_events(&runner, &sid, event_tx).await {
+                                error!("Event forwarding error for session {}: {:?}", sid, e);
+                            }
+                        });
+                    }
+                    drop(state_guard);
+
+                    Some(agent_response(
+                        &session_id,
                         id,
-                        session_id,
-                        error: format!("Failed to create session: {}", e),
-                    }))
+                        "session.create",
+                        Ok(Some(serde_json::json!({ "session_id": session_id }))),
+                    ))
                 }
+                Err(e) => Some(agent_response(
+                    &session_id,
+                    id,
+                    "session.create",
+                    Err(format!("Failed to create session: {}", e)),
+                )),
             }
         }
 
-        PiWsCommand::Prompt {
-            id,
-            session_id,
-            message,
-        } => {
-            info!(
-                "Pi prompt: user={}, session_id={}, message_len={}",
-                user_id,
-                session_id,
-                message.len()
-            );
+        CommandPayload::SessionClose => {
+            info!("agent session.close: user={}, session_id={}", user_id, session_id);
 
+            let mut state_guard = conn_state.lock().await;
+            state_guard.subscribed_sessions.remove(&session_id);
+            state_guard.pi_subscriptions.remove(&session_id);
+            drop(state_guard);
+
+            match runner.pi_close_session(&session_id).await {
+                Ok(()) => Some(agent_response(
+                    &session_id,
+                    id,
+                    "session.close",
+                    Ok(None),
+                )),
+                Err(e) => Some(agent_response(
+                    &session_id,
+                    id,
+                    "session.close",
+                    Err(e.to_string()),
+                )),
+            }
+        }
+
+        CommandPayload::SessionNew { parent_session } => {
+            debug!("agent session.new: user={}, session_id={}", user_id, session_id);
+            match runner.pi_new_session(&session_id, parent_session.as_deref()).await {
+                Ok(()) => Some(agent_response(
+                    &session_id,
+                    id,
+                    "session.new",
+                    Ok(Some(serde_json::json!({ "session_id": session_id }))),
+                )),
+                Err(e) => Some(agent_response(
+                    &session_id,
+                    id,
+                    "session.new",
+                    Err(e.to_string()),
+                )),
+            }
+        }
+
+        CommandPayload::SessionSwitch { session_path } => {
+            debug!("agent session.switch: user={}, session_id={}, path={}", user_id, session_id, session_path);
+            match runner.pi_switch_session(&session_id, &session_path).await {
+                Ok(()) => Some(agent_response(
+                    &session_id,
+                    id,
+                    "session.switch",
+                    Ok(Some(serde_json::json!({ "session_id": session_id }))),
+                )),
+                Err(e) => Some(agent_response(
+                    &session_id,
+                    id,
+                    "session.switch",
+                    Err(e.to_string()),
+                )),
+            }
+        }
+
+        CommandPayload::Prompt { message, .. } => {
+            info!("agent prompt: user={}, session_id={}, len={}", user_id, session_id, message.len());
             match runner.pi_prompt(&session_id, &message).await {
-                Ok(()) => None, // Events will stream via subscription
-                Err(e) => {
-                    error!("Failed to send Pi prompt: {:?}", e);
-                    Some(WsEvent::Pi(PiWsEvent::Error {
-                        id,
-                        session_id,
-                        error: format!("Failed to send prompt: {}", e),
-                    }))
-                }
+                Ok(()) => None, // Streaming events are the response
+                Err(e) => Some(agent_response(
+                    &session_id,
+                    id,
+                    "prompt",
+                    Err(format!("Failed to send prompt: {}", e)),
+                )),
             }
         }
 
-        PiWsCommand::Steer {
-            id,
-            session_id,
-            message,
-        } => {
-            info!(
-                "Pi steer: user={}, session_id={}, message_len={}",
-                user_id,
-                session_id,
-                message.len()
-            );
-
+        CommandPayload::Steer { message } => {
+            info!("agent steer: user={}, session_id={}, len={}", user_id, session_id, message.len());
             match runner.pi_steer(&session_id, &message).await {
                 Ok(()) => None,
-                Err(e) => {
-                    error!("Failed to send Pi steer: {:?}", e);
-                    Some(WsEvent::Pi(PiWsEvent::Error {
-                        id,
-                        session_id,
-                        error: format!("Failed to send steer: {}", e),
-                    }))
-                }
+                Err(e) => Some(agent_response(
+                    &session_id,
+                    id,
+                    "steer",
+                    Err(format!("Failed to send steer: {}", e)),
+                )),
             }
         }
 
-        PiWsCommand::FollowUp {
-            id,
-            session_id,
-            message,
-        } => {
-            info!(
-                "Pi follow_up: user={}, session_id={}, message_len={}",
-                user_id,
-                session_id,
-                message.len()
-            );
-
+        CommandPayload::FollowUp { message } => {
+            info!("agent follow_up: user={}, session_id={}, len={}", user_id, session_id, message.len());
             match runner.pi_follow_up(&session_id, &message).await {
                 Ok(()) => None,
-                Err(e) => {
-                    error!("Failed to send Pi follow_up: {:?}", e);
-                    Some(WsEvent::Pi(PiWsEvent::Error {
-                        id,
-                        session_id,
-                        error: format!("Failed to send follow_up: {}", e),
-                    }))
-                }
+                Err(e) => Some(agent_response(
+                    &session_id,
+                    id,
+                    "follow_up",
+                    Err(format!("Failed to send follow_up: {}", e)),
+                )),
             }
         }
 
-        PiWsCommand::Abort { id, session_id } => {
-            info!("Pi abort: user={}, session_id={}", user_id, session_id);
-
+        CommandPayload::Abort => {
+            info!("agent abort: user={}, session_id={}", user_id, session_id);
             match runner.pi_abort(&session_id).await {
                 Ok(()) => None,
-                Err(e) => {
-                    error!("Failed to abort Pi session: {:?}", e);
-                    Some(WsEvent::Pi(PiWsEvent::Error {
-                        id,
-                        session_id,
-                        error: format!("Failed to abort: {}", e),
-                    }))
-                }
+                Err(e) => Some(agent_response(
+                    &session_id,
+                    id,
+                    "abort",
+                    Err(format!("Failed to abort: {}", e)),
+                )),
             }
         }
 
-        PiWsCommand::Compact {
-            id,
-            session_id,
-            instructions,
-        } => {
-            info!("Pi compact: user={}, session_id={}", user_id, session_id);
-
-            match runner.pi_compact(&session_id, instructions.as_deref()).await {
-                Ok(()) => None,
-                Err(e) => {
-                    error!("Failed to compact Pi session: {:?}", e);
-                    Some(WsEvent::Pi(PiWsEvent::Error {
-                        id,
-                        session_id,
-                        error: format!("Failed to compact: {}", e),
-                    }))
-                }
+        CommandPayload::InputResponse { request_id, value, confirmed, cancelled } => {
+            debug!("agent input_response: user={}, session_id={}, req={}", user_id, session_id, request_id);
+            match runner.pi_extension_ui_response(&session_id, &request_id, value.as_deref(), confirmed, cancelled).await {
+                Ok(()) => Some(agent_response(
+                    &session_id,
+                    id,
+                    "input_response",
+                    Ok(None),
+                )),
+                Err(e) => Some(agent_response(
+                    &session_id,
+                    id,
+                    "input_response",
+                    Err(e.to_string()),
+                )),
             }
         }
 
-        PiWsCommand::Subscribe { id: _, session_id } => {
-            info!("Pi subscribe: user={}, session_id={}", user_id, session_id);
-
-            let mut state = conn_state.lock().await;
-            state.subscribed_sessions.insert(session_id.clone());
-
-            // Start subscription to runner if not already subscribed
-            if !state.pi_subscriptions.contains(&session_id) {
-                state.pi_subscriptions.insert(session_id.clone());
-                let event_tx = state.event_tx.clone();
-                let runner = runner.clone();
-                let sid = session_id.clone();
-
-                // Spawn task to forward Pi events from runner to WebSocket
-                tokio::spawn(async move {
-                    if let Err(e) = forward_pi_events(&runner, &sid, event_tx).await {
-                        error!("Pi event forwarding error for session {}: {:?}", sid, e);
-                    }
-                });
-            }
-
-            None
-        }
-
-        PiWsCommand::Unsubscribe { id: _, session_id } => {
-            info!(
-                "Pi unsubscribe: user={}, session_id={}",
-                user_id, session_id
-            );
-            let mut state = conn_state.lock().await;
-            state.subscribed_sessions.remove(&session_id);
-            // Note: We don't stop the subscription task - it will clean up when runner disconnects
-            None
-        }
-
-        PiWsCommand::ListSessions { id } => {
-            info!("Pi list_sessions: user={}", user_id);
-
-            match runner.pi_list_sessions().await {
-                Ok(sessions) => {
-                    let session_infos: Vec<PiSessionInfo> = sessions
-                        .into_iter()
-                        .map(|s| PiSessionInfo {
-                            session_id: s.session_id,
-                            state: format!("{:?}", s.state),
-                            last_activity: s.last_activity,
-                            subscriber_count: s.subscriber_count,
-                        })
-                        .collect();
-                    Some(WsEvent::Pi(PiWsEvent::Sessions {
-                        id,
-                        sessions: session_infos,
-                    }))
-                }
-                Err(e) => {
-                    error!("Failed to list Pi sessions: {:?}", e);
-                    Some(WsEvent::Pi(PiWsEvent::Sessions {
-                        id,
-                        sessions: vec![],
-                    }))
-                }
-            }
-        }
-
-        PiWsCommand::GetState { id, session_id } => {
-            info!("Pi get_state: user={}, session_id={}", user_id, session_id);
-
+        CommandPayload::GetState => {
+            debug!("agent get_state: user={}, session_id={}", user_id, session_id);
             match runner.pi_get_state(&session_id).await {
                 Ok(resp) => {
                     let state_value = serde_json::to_value(&resp.state).unwrap_or(Value::Null);
-                    Some(WsEvent::Pi(PiWsEvent::State {
-                        id,
-                        session_id,
-                        state: state_value,
-                    }))
+                    Some(agent_response(&session_id, id, "get_state", Ok(Some(state_value))))
                 }
-                Err(e) => {
-                    error!("Failed to get Pi state: {:?}", e);
-                    Some(WsEvent::Pi(PiWsEvent::Error {
-                        id,
-                        session_id,
-                        error: format!("Failed to get state: {}", e),
-                    }))
-                }
+                Err(e) => Some(agent_response(&session_id, id, "get_state", Err(e.to_string()))),
             }
         }
 
-        PiWsCommand::CloseSession { id, session_id } => {
-            info!(
-                "Pi close_session: user={}, session_id={}",
-                user_id, session_id
-            );
-
-            let mut state = conn_state.lock().await;
-            state.subscribed_sessions.remove(&session_id);
-            state.pi_subscriptions.remove(&session_id);
-            drop(state);
-
-            match runner.pi_close_session(&session_id).await {
-                Ok(()) => Some(WsEvent::Pi(PiWsEvent::SessionClosed { id, session_id })),
-                Err(e) => {
-                    error!("Failed to close Pi session: {:?}", e);
-                    Some(WsEvent::Pi(PiWsEvent::Error {
-                        id,
-                        session_id,
-                        error: format!("Failed to close session: {}", e),
-                    }))
-                }
-            }
+        CommandPayload::GetMessages => {
+            debug!("agent get_messages: user={}, session_id={}", user_id, session_id);
+            handle_get_messages(id, &session_id, user_id, state, runner, conn_state).await
         }
 
-        // === Session Lifecycle ===
-        PiWsCommand::NewSession { id, session_id, parent_session } => {
-            debug!("Pi new_session: user={}, session_id={}", user_id, session_id);
-            match runner.pi_new_session(&session_id, parent_session.as_deref()).await {
-                Ok(()) => Some(WsEvent::Pi(PiWsEvent::SessionCreated {
-                    id,
-                    session_id,
-                })),
-                Err(e) => Some(WsEvent::Pi(PiWsEvent::Error {
-                    id,
-                    session_id,
-                    error: e.to_string(),
-                }))
-            }
-        }
-
-        PiWsCommand::SwitchSession { id, session_id, session_path } => {
-            debug!("Pi switch_session: user={}, session_id={}, path={}", user_id, session_id, session_path);
-            match runner.pi_switch_session(&session_id, &session_path).await {
-                Ok(()) => Some(WsEvent::Pi(PiWsEvent::SessionCreated {
-                    id,
-                    session_id,
-                })),
-                Err(e) => Some(WsEvent::Pi(PiWsEvent::Error {
-                    id,
-                    session_id,
-                    error: e.to_string(),
-                }))
-            }
-        }
-
-        // === State & Messages ===
-        PiWsCommand::GetMessages { id, session_id } => {
-            debug!("Pi get_messages: user={}, session_id={}", user_id, session_id);
-            
-            let (session_meta, is_active) = {
-                let state_guard = conn_state.lock().await;
-                (
-                    state_guard.pi_session_meta.get(&session_id).cloned(),
-                    state_guard.pi_subscriptions.contains(&session_id),
-                )
-            };
-
-            if let Some(cached) = get_cached_pi_messages(&user_id, &session_id).await {
-                let use_cached = !is_active || cached.age <= Duration::from_secs(2);
-                if use_cached {
-                    return Some(WsEvent::Pi(PiWsEvent::Messages {
-                        id,
-                        session_id,
-                        messages: cached.messages,
-                    }));
-                }
-            }
-
-            if let Some(ref meta) = session_meta {
-                if meta.scope.as_deref() == Some("workspace") {
-                    if let (Some(work_dir), Some(workspace_pi)) =
-                        (meta.cwd.as_ref(), state.workspace_pi.as_ref())
-                    {
-                        match workspace_pi.get_session_messages(user_id, work_dir, &session_id) {
-                            Ok(messages) if !messages.is_empty() => {
-                                info!(
-                                    "Pi get_messages: loaded {} messages from workspace JSONL for {}",
-                                    messages.len(),
-                                    session_id
-                                );
-                                let messages_value =
-                                    serde_json::to_value(&messages).unwrap_or_default();
-                                cache_pi_messages(&user_id, &session_id, &messages_value).await;
-                                return Some(WsEvent::Pi(PiWsEvent::Messages {
-                                    id,
-                                    session_id,
-                                    messages: messages_value,
-                                }));
-                            }
-                            Ok(_) => {
-                                debug!(
-                                    "Pi get_messages: workspace JSONL returned empty for {}",
-                                    session_id
-                                );
-                            }
-                            Err(e) => {
-                                debug!(
-                                    "Pi get_messages: workspace JSONL error for {}: {}",
-                                    session_id, e
-                                );
-                            }
-                        }
-                    } else {
-                        debug!("Pi get_messages: workspace metadata missing for {}", session_id);
-                    }
-                } else if let Some(ref pi_service) = state.main_chat_pi {
-                    match pi_service.get_session_messages(user_id, &session_id).await {
-                        Ok(messages) if !messages.is_empty() => {
-                            info!(
-                                "Pi get_messages: loaded {} messages from JSONL file for {}",
-                                messages.len(),
-                                session_id
-                            );
-                            let messages_value =
-                                serde_json::to_value(&messages).unwrap_or_default();
-                            cache_pi_messages(&user_id, &session_id, &messages_value).await;
-                            return Some(WsEvent::Pi(PiWsEvent::Messages {
-                                id,
-                                session_id,
-                                messages: messages_value,
-                            }));
-                        }
-                        Ok(_) => {
-                            debug!("Pi get_messages: JSONL file returned empty for {}", session_id);
-                        }
-                        Err(e) => {
-                            debug!("Pi get_messages: JSONL file error for {}: {}", session_id, e);
-                        }
-                    }
-                }
-            } else if let Some(ref pi_service) = state.main_chat_pi {
-                match pi_service.get_session_messages(user_id, &session_id).await {
-                    Ok(messages) if !messages.is_empty() => {
-                        info!(
-                            "Pi get_messages: loaded {} messages from JSONL file for {}",
-                            messages.len(),
-                            session_id
-                        );
-                        let messages_value = serde_json::to_value(&messages).unwrap_or_default();
-                        cache_pi_messages(&user_id, &session_id, &messages_value).await;
-                        return Some(WsEvent::Pi(PiWsEvent::Messages {
-                            id,
-                            session_id,
-                            messages: messages_value,
-                        }));
-                    }
-                    Ok(_) => {
-                        debug!("Pi get_messages: JSONL file returned empty for {}", session_id);
-                    }
-                    Err(e) => {
-                        debug!("Pi get_messages: JSONL file error for {}: {}", session_id, e);
-                    }
-                }
-            }
-
-            // JSONL empty - try hstry for historical messages
-            // In multi-user mode, use runner.get_*_chat_messages() to access per-user hstry
-            let is_multi_user = state.linux_users.is_some();
-
-            if let Some(meta) = session_meta.as_ref()
-                && meta.scope.as_deref() == Some("workspace")
-                && let Some(work_dir) = meta.cwd.as_ref()
-            {
-                if is_multi_user {
-                    match runner
-                        .get_workspace_chat_messages(
-                            work_dir.to_string_lossy().to_string(),
-                            session_id.clone(),
-                            None,
-                        )
-                        .await
-                    {
-                        Ok(resp) if !resp.messages.is_empty() => {
-                            info!(
-                                "Pi get_messages: loaded {} messages from hstry (workspace via runner) for {}",
-                                resp.messages.len(),
-                                session_id
-                            );
-                            let messages: Vec<serde_json::Value> = resp
-                                .messages
-                                .into_iter()
-                                .map(|m| {
-                                    serde_json::json!({
-                                        "id": m.id,
-                                        "role": m.role,
-                                        "content": m.content,
-                                        "timestamp": m.timestamp,
-                                    })
-                                })
-                                .collect();
-                            let messages_value = serde_json::Value::Array(messages);
-                            cache_pi_messages(&user_id, &session_id, &messages_value).await;
-                            return Some(WsEvent::Pi(PiWsEvent::Messages {
-                                id,
-                                session_id,
-                                messages: messages_value,
-                            }));
-                        }
-                        Ok(_) => {
-                            debug!(
-                                "Pi get_messages: hstry (workspace via runner) returned empty for {}",
-                                session_id
-                            );
-                        }
-                        Err(e) => {
-                            debug!(
-                                "Pi get_messages: hstry (workspace via runner) error for {}: {}",
-                                session_id, e
-                            );
-                        }
-                    }
-                } else if let Some(hstry_client) = state.hstry.as_ref() {
-                    match hstry_client.get_messages(&session_id, None, None).await {
-                        Ok(hstry_messages) if !hstry_messages.is_empty() => {
-                            info!(
-                                "Pi get_messages: loaded {} messages from hstry (workspace) for {}",
-                                hstry_messages.len(),
-                                session_id
-                            );
-                            let serializable =
-                                crate::hstry::proto_messages_to_serializable(hstry_messages);
-                            let messages_value =
-                                serde_json::to_value(&serializable).unwrap_or_default();
-                            cache_pi_messages(&user_id, &session_id, &messages_value).await;
-                            return Some(WsEvent::Pi(PiWsEvent::Messages {
-                                id,
-                                session_id,
-                                messages: messages_value,
-                            }));
-                        }
-                        Ok(_) => {
-                            debug!(
-                                "Pi get_messages: hstry (workspace) returned empty for {}",
-                                session_id
-                            );
-                        }
-                        Err(e) => {
-                            debug!(
-                                "Pi get_messages: hstry (workspace) error for {}: {}",
-                                session_id, e
-                            );
-                        }
-                    }
-                }
-            } else if is_multi_user {
-                match runner.get_main_chat_messages(&session_id, None).await {
-                    Ok(resp) if !resp.messages.is_empty() => {
-                        info!(
-                            "Pi get_messages: loaded {} messages from hstry (via runner) for {}",
-                            resp.messages.len(),
-                            session_id
-                        );
-                        let messages: Vec<serde_json::Value> = resp
-                            .messages
-                            .into_iter()
-                            .map(|m| {
-                                serde_json::json!({
-                                    "id": m.id,
-                                    "role": m.role,
-                                    "content": m.content,
-                                    "timestamp": m.timestamp,
-                                })
-                            })
-                            .collect();
-                        let messages_value = serde_json::Value::Array(messages);
-                        cache_pi_messages(&user_id, &session_id, &messages_value).await;
-                        return Some(WsEvent::Pi(PiWsEvent::Messages {
-                            id,
-                            session_id,
-                            messages: messages_value,
-                        }));
-                    }
-                    Ok(_) => {
-                        debug!(
-                            "Pi get_messages: hstry (via runner) returned empty for {}",
-                            session_id
-                        );
-                    }
-                    Err(e) => {
-                        debug!(
-                            "Pi get_messages: hstry (via runner) error for {}: {}",
-                            session_id, e
-                        );
-                    }
-                }
-            } else if let Some(hstry_client) = state.hstry.as_ref() {
-                match hstry_client.get_messages(&session_id, None, None).await {
-                    Ok(hstry_messages) if !hstry_messages.is_empty() => {
-                        info!(
-                            "Pi get_messages: loaded {} messages from hstry for {}",
-                            hstry_messages.len(),
-                            session_id
-                        );
-                        let serializable =
-                            crate::hstry::proto_messages_to_serializable(hstry_messages);
-                        let messages_value =
-                            serde_json::to_value(&serializable).unwrap_or_default();
-                        cache_pi_messages(&user_id, &session_id, &messages_value).await;
-                        return Some(WsEvent::Pi(PiWsEvent::Messages {
-                            id,
-                            session_id,
-                            messages: messages_value,
-                        }));
-                    }
-                    Ok(_) => {
-                        debug!("Pi get_messages: hstry returned empty for {}", session_id);
-                    }
-                    Err(e) => {
-                        debug!("Pi get_messages: hstry error for {}: {}", session_id, e);
-                    }
-                }
-            }
-
-            // Try to get messages from runner's Pi process last
-            let runner_messages = runner.pi_get_messages(&session_id).await;
-
-            // Return runner result (empty or error)
-            match runner_messages {
-                Ok(resp) if !resp.messages.is_empty() => {
-                    let messages_value =
-                        serde_json::to_value(&resp.messages).unwrap_or_default();
-                    cache_pi_messages(&user_id, &session_id, &messages_value).await;
-                    Some(WsEvent::Pi(PiWsEvent::Messages {
-                        id,
-                        session_id,
-                        messages: messages_value,
-                    }))
-                }
-                Ok(resp) => {
-                    let messages_value =
-                        serde_json::to_value(&resp.messages).unwrap_or_default();
-                    cache_pi_messages(&user_id, &session_id, &messages_value).await;
-                    Some(WsEvent::Pi(PiWsEvent::Messages {
-                        id,
-                        session_id,
-                        messages: messages_value,
-                    }))
-                }
-                Err(e) => Some(WsEvent::Pi(PiWsEvent::Error {
-                    id,
-                    session_id,
-                    error: e.to_string(),
-                }))
-            }
-        }
-
-        PiWsCommand::GetSessionStats { id, session_id } => {
-            debug!("Pi get_session_stats: user={}, session_id={}", user_id, session_id);
+        CommandPayload::GetStats => {
+            debug!("agent get_stats: user={}, session_id={}", user_id, session_id);
             match runner.pi_get_session_stats(&session_id).await {
-                Ok(resp) => Some(WsEvent::Pi(PiWsEvent::Stats {
+                Ok(resp) => Some(agent_response(
+                    &session_id,
                     id,
-                    session_id,
-                    stats: serde_json::to_value(&resp.stats).unwrap_or_default(),
-                })),
-                Err(e) => Some(WsEvent::Pi(PiWsEvent::Error {
-                    id,
-                    session_id,
-                    error: e.to_string(),
-                }))
+                    "get_stats",
+                    Ok(Some(serde_json::to_value(&resp.stats).unwrap_or_default())),
+                )),
+                Err(e) => Some(agent_response(&session_id, id, "get_stats", Err(e.to_string()))),
             }
         }
 
-        PiWsCommand::GetLastAssistantText { id, session_id } => {
-            debug!("Pi get_last_assistant_text: user={}, session_id={}", user_id, session_id);
-            match runner.pi_get_last_assistant_text(&session_id).await {
-                Ok(resp) => Some(WsEvent::Pi(PiWsEvent::LastAssistantText {
-                    id,
-                    session_id,
-                    text: resp.text,
-                })),
-                Err(e) => Some(WsEvent::Pi(PiWsEvent::Error {
-                    id,
-                    session_id,
-                    error: e.to_string(),
-                }))
-            }
-        }
-
-        // === Model Management ===
-        PiWsCommand::SetModel { id, session_id, provider, model_id } => {
-            debug!("Pi set_model: user={}, session_id={}, provider={}, model={}", user_id, session_id, provider, model_id);
-            match runner.pi_set_model(&session_id, &provider, &model_id).await {
-                Ok(resp) => Some(WsEvent::Pi(PiWsEvent::ModelChanged {
-                    id,
-                    session_id,
-                    provider: resp.model.provider.clone(),
-                    model_id: resp.model.id.clone(),
-                })),
-                Err(e) => Some(WsEvent::Pi(PiWsEvent::Error {
-                    id,
-                    session_id,
-                    error: e.to_string(),
-                }))
-            }
-        }
-
-        PiWsCommand::CycleModel { id, session_id } => {
-            debug!("Pi cycle_model: user={}, session_id={}", user_id, session_id);
-            match runner.pi_cycle_model(&session_id).await {
-                Ok(resp) => Some(WsEvent::Pi(PiWsEvent::ModelChanged {
-                    id,
-                    session_id,
-                    provider: resp.model.provider.clone(),
-                    model_id: resp.model.id.clone(),
-                })),
-                Err(e) => Some(WsEvent::Pi(PiWsEvent::Error {
-                    id,
-                    session_id,
-                    error: e.to_string(),
-                }))
-            }
-        }
-
-        PiWsCommand::GetAvailableModels { id, session_id } => {
-            debug!("Pi get_available_models: user={}, session_id={}", user_id, session_id);
+        CommandPayload::GetModels => {
+            debug!("agent get_models: user={}, session_id={}", user_id, session_id);
             match runner.pi_get_available_models(&session_id).await {
-                Ok(resp) => Some(WsEvent::Pi(PiWsEvent::AvailableModels {
+                Ok(resp) => Some(agent_response(
+                    &session_id,
                     id,
-                    session_id,
-                    models: serde_json::to_value(&resp.models).unwrap_or_default(),
-                })),
-                Err(e) => Some(WsEvent::Pi(PiWsEvent::Error {
-                    id,
-                    session_id,
-                    error: e.to_string(),
-                }))
+                    "get_models",
+                    Ok(Some(serde_json::to_value(&resp.models).unwrap_or_default())),
+                )),
+                Err(e) => Some(agent_response(&session_id, id, "get_models", Err(e.to_string()))),
             }
         }
 
-        // === Thinking Level ===
-        PiWsCommand::SetThinkingLevel { id, session_id, level } => {
-            debug!("Pi set_thinking_level: user={}, session_id={}, level={}", user_id, session_id, level);
-            match runner.pi_set_thinking_level(&session_id, &level).await {
-                Ok(resp) => Some(WsEvent::Pi(PiWsEvent::ThinkingLevelChanged {
-                    id,
-                    session_id,
-                    level: resp.level,
-                })),
-                Err(e) => Some(WsEvent::Pi(PiWsEvent::Error {
-                    id,
-                    session_id,
-                    error: e.to_string(),
-                }))
-            }
-        }
-
-        PiWsCommand::CycleThinkingLevel { id, session_id } => {
-            debug!("Pi cycle_thinking_level: user={}, session_id={}", user_id, session_id);
-            match runner.pi_cycle_thinking_level(&session_id).await {
-                Ok(resp) => Some(WsEvent::Pi(PiWsEvent::ThinkingLevelChanged {
-                    id,
-                    session_id,
-                    level: resp.level,
-                })),
-                Err(e) => Some(WsEvent::Pi(PiWsEvent::Error {
-                    id,
-                    session_id,
-                    error: e.to_string(),
-                }))
-            }
-        }
-
-        // === Compaction ===
-        PiWsCommand::SetAutoCompaction { id, session_id, enabled } => {
-            debug!("Pi set_auto_compaction: user={}, session_id={}, enabled={}", user_id, session_id, enabled);
-            match runner.pi_set_auto_compaction(&session_id, enabled).await {
-                Ok(()) => Some(WsEvent::Pi(PiWsEvent::CommandAck {
-                    id,
-                    session_id,
-                    command: "set_auto_compaction".into(),
-                })),
-                Err(e) => Some(WsEvent::Pi(PiWsEvent::Error {
-                    id,
-                    session_id,
-                    error: e.to_string(),
-                }))
-            }
-        }
-
-        // === Queue Modes ===
-        PiWsCommand::SetSteeringMode { id, session_id, mode } => {
-            debug!("Pi set_steering_mode: user={}, session_id={}, mode={}", user_id, session_id, mode);
-            match runner.pi_set_steering_mode(&session_id, &mode).await {
-                Ok(()) => Some(WsEvent::Pi(PiWsEvent::CommandAck {
-                    id,
-                    session_id,
-                    command: "set_steering_mode".into(),
-                })),
-                Err(e) => Some(WsEvent::Pi(PiWsEvent::Error {
-                    id,
-                    session_id,
-                    error: e.to_string(),
-                }))
-            }
-        }
-
-        PiWsCommand::SetFollowUpMode { id, session_id, mode } => {
-            debug!("Pi set_follow_up_mode: user={}, session_id={}, mode={}", user_id, session_id, mode);
-            match runner.pi_set_follow_up_mode(&session_id, &mode).await {
-                Ok(()) => Some(WsEvent::Pi(PiWsEvent::CommandAck {
-                    id,
-                    session_id,
-                    command: "set_follow_up_mode".into(),
-                })),
-                Err(e) => Some(WsEvent::Pi(PiWsEvent::Error {
-                    id,
-                    session_id,
-                    error: e.to_string(),
-                }))
-            }
-        }
-
-        // === Retry ===
-        PiWsCommand::SetAutoRetry { id, session_id, enabled } => {
-            debug!("Pi set_auto_retry: user={}, session_id={}, enabled={}", user_id, session_id, enabled);
-            match runner.pi_set_auto_retry(&session_id, enabled).await {
-                Ok(()) => Some(WsEvent::Pi(PiWsEvent::CommandAck {
-                    id,
-                    session_id,
-                    command: "set_auto_retry".into(),
-                })),
-                Err(e) => Some(WsEvent::Pi(PiWsEvent::Error {
-                    id,
-                    session_id,
-                    error: e.to_string(),
-                }))
-            }
-        }
-
-        PiWsCommand::AbortRetry { id, session_id } => {
-            debug!("Pi abort_retry: user={}, session_id={}", user_id, session_id);
-            match runner.pi_abort_retry(&session_id).await {
-                Ok(()) => Some(WsEvent::Pi(PiWsEvent::CommandAck {
-                    id,
-                    session_id,
-                    command: "abort_retry".into(),
-                })),
-                Err(e) => Some(WsEvent::Pi(PiWsEvent::Error {
-                    id,
-                    session_id,
-                    error: e.to_string(),
-                }))
-            }
-        }
-
-        // === Forking ===
-        PiWsCommand::Fork { id, session_id, entry_id } => {
-            debug!("Pi fork: user={}, session_id={}, entry_id={}", user_id, session_id, entry_id);
-            match runner.pi_fork(&session_id, &entry_id).await {
-                Ok(resp) => Some(WsEvent::Pi(PiWsEvent::ForkResult {
-                    id,
-                    session_id,
-                    text: resp.text,
-                    cancelled: resp.cancelled,
-                })),
-                Err(e) => Some(WsEvent::Pi(PiWsEvent::Error {
-                    id,
-                    session_id,
-                    error: e.to_string(),
-                }))
-            }
-        }
-
-        PiWsCommand::GetForkMessages { id, session_id } => {
-            debug!("Pi get_fork_messages: user={}, session_id={}", user_id, session_id);
-            match runner.pi_get_fork_messages(&session_id).await {
-                Ok(resp) => Some(WsEvent::Pi(PiWsEvent::ForkMessages {
-                    id,
-                    session_id,
-                    messages: resp.messages.into_iter().map(|m| ForkMessageInfo {
-                        entry_id: m.entry_id,
-                        role: "user".to_string(), // PiForkMessage only contains user messages for forking
-                        preview: m.text,
-                        timestamp: None,
-                    }).collect(),
-                })),
-                Err(e) => Some(WsEvent::Pi(PiWsEvent::Error {
-                    id,
-                    session_id,
-                    error: e.to_string(),
-                }))
-            }
-        }
-
-        // === Session Metadata ===
-        PiWsCommand::SetSessionName { id, session_id, name } => {
-            debug!("Pi set_session_name: user={}, session_id={}, name={}", user_id, session_id, name);
-            match runner.pi_set_session_name(&session_id, &name).await {
-                Ok(()) => Some(WsEvent::Pi(PiWsEvent::CommandAck {
-                    id,
-                    session_id,
-                    command: "set_session_name".into(),
-                })),
-                Err(e) => Some(WsEvent::Pi(PiWsEvent::Error {
-                    id,
-                    session_id,
-                    error: e.to_string(),
-                }))
-            }
-        }
-
-        PiWsCommand::ExportHtml { id, session_id, output_path } => {
-            debug!("Pi export_html: user={}, session_id={}", user_id, session_id);
-            match runner.pi_export_html(&session_id, output_path.as_deref()).await {
-                Ok(resp) => Some(WsEvent::Pi(PiWsEvent::ExportHtmlResult {
-                    id,
-                    session_id,
-                    path: resp.path,
-                })),
-                Err(e) => Some(WsEvent::Pi(PiWsEvent::Error {
-                    id,
-                    session_id,
-                    error: e.to_string(),
-                }))
-            }
-        }
-
-        // === Commands/Skills ===
-        PiWsCommand::GetCommands { id, session_id } => {
-            debug!("Pi get_commands: user={}, session_id={}", user_id, session_id);
+        CommandPayload::GetCommands => {
+            debug!("agent get_commands: user={}, session_id={}", user_id, session_id);
             match runner.pi_get_commands(&session_id).await {
-                Ok(resp) => Some(WsEvent::Pi(PiWsEvent::Commands {
-                    id,
-                    session_id,
-                    commands: resp.commands.into_iter().map(|c| CommandInfo {
-                        name: c.name,
-                        description: c.description,
-                        command_type: c.source,
-                    }).collect(),
-                })),
-                Err(e) => Some(WsEvent::Pi(PiWsEvent::Error {
-                    id,
-                    session_id,
-                    error: e.to_string(),
-                }))
+                Ok(resp) => {
+                    let commands: Vec<Value> = resp.commands.into_iter().map(|c| {
+                        serde_json::json!({
+                            "name": c.name,
+                            "description": c.description,
+                            "type": c.source,
+                        })
+                    }).collect();
+                    Some(agent_response(
+                        &session_id,
+                        id,
+                        "get_commands",
+                        Ok(Some(Value::Array(commands))),
+                    ))
+                }
+                Err(e) => Some(agent_response(&session_id, id, "get_commands", Err(e.to_string()))),
             }
         }
 
-        // === Bash ===
-        PiWsCommand::Bash { id, session_id, command } => {
-            debug!("Pi bash: user={}, session_id={}, command={}", user_id, session_id, command);
-            match runner.pi_bash(&session_id, &command).await {
-                Ok(resp) => Some(WsEvent::Pi(PiWsEvent::BashResult {
-                    id,
-                    session_id,
-                    output: resp.output,
-                    exit_code: resp.exit_code,
-                    cancelled: resp.cancelled,
-                    truncated: resp.truncated,
-                    full_output_path: resp.full_output_path,
-                })),
-                Err(e) => Some(WsEvent::Pi(PiWsEvent::Error {
-                    id,
-                    session_id,
-                    error: e.to_string(),
-                }))
+        CommandPayload::GetForkPoints => {
+            debug!("agent get_fork_points: user={}, session_id={}", user_id, session_id);
+            match runner.pi_get_fork_messages(&session_id).await {
+                Ok(resp) => {
+                    let messages: Vec<Value> = resp.messages.into_iter().map(|m| {
+                        serde_json::json!({
+                            "entry_id": m.entry_id,
+                            "role": "user",
+                            "preview": m.text,
+                        })
+                    }).collect();
+                    Some(agent_response(
+                        &session_id,
+                        id,
+                        "get_fork_points",
+                        Ok(Some(Value::Array(messages))),
+                    ))
+                }
+                Err(e) => Some(agent_response(&session_id, id, "get_fork_points", Err(e.to_string()))),
             }
         }
 
-        PiWsCommand::AbortBash { id, session_id } => {
-            debug!("Pi abort_bash: user={}, session_id={}", user_id, session_id);
-            match runner.pi_abort_bash(&session_id).await {
-                Ok(()) => Some(WsEvent::Pi(PiWsEvent::CommandAck {
+        CommandPayload::SetModel { provider, model_id } => {
+            debug!("agent set_model: user={}, session_id={}, {}:{}", user_id, session_id, provider, model_id);
+            match runner.pi_set_model(&session_id, &provider, &model_id).await {
+                Ok(resp) => Some(agent_response(
+                    &session_id,
                     id,
-                    session_id,
-                    command: "abort_bash".into(),
-                })),
-                Err(e) => Some(WsEvent::Pi(PiWsEvent::Error {
-                    id,
-                    session_id,
-                    error: e.to_string(),
-                }))
+                    "set_model",
+                    Ok(Some(serde_json::json!({
+                        "provider": resp.model.provider,
+                        "model_id": resp.model.id,
+                    }))),
+                )),
+                Err(e) => Some(agent_response(&session_id, id, "set_model", Err(e.to_string()))),
             }
         }
 
-        // === Extension UI ===
-        PiWsCommand::ExtensionUiResponse { id, session_id, request_id, value, confirmed, cancelled } => {
-            debug!("Pi extension_ui_response: user={}, session_id={}, request_id={}", user_id, session_id, request_id);
-            match runner.pi_extension_ui_response(&session_id, &request_id, value.as_deref(), confirmed, cancelled).await {
-                Ok(()) => Some(WsEvent::Pi(PiWsEvent::CommandAck {
+        CommandPayload::CycleModel => {
+            debug!("agent cycle_model: user={}, session_id={}", user_id, session_id);
+            match runner.pi_cycle_model(&session_id).await {
+                Ok(resp) => Some(agent_response(
+                    &session_id,
                     id,
-                    session_id,
-                    command: "extension_ui_response".into(),
-                })),
-                Err(e) => Some(WsEvent::Pi(PiWsEvent::Error {
-                    id,
-                    session_id,
-                    error: e.to_string(),
-                }))
+                    "cycle_model",
+                    Ok(Some(serde_json::json!({
+                        "provider": resp.model.provider,
+                        "model_id": resp.model.id,
+                    }))),
+                )),
+                Err(e) => Some(agent_response(&session_id, id, "cycle_model", Err(e.to_string()))),
             }
+        }
+
+        CommandPayload::SetThinkingLevel { level } => {
+            debug!("agent set_thinking_level: user={}, session_id={}, level={}", user_id, session_id, level);
+            match runner.pi_set_thinking_level(&session_id, &level).await {
+                Ok(resp) => Some(agent_response(
+                    &session_id,
+                    id,
+                    "set_thinking_level",
+                    Ok(Some(serde_json::json!({ "level": resp.level }))),
+                )),
+                Err(e) => Some(agent_response(&session_id, id, "set_thinking_level", Err(e.to_string()))),
+            }
+        }
+
+        CommandPayload::CycleThinkingLevel => {
+            debug!("agent cycle_thinking_level: user={}, session_id={}", user_id, session_id);
+            match runner.pi_cycle_thinking_level(&session_id).await {
+                Ok(resp) => Some(agent_response(
+                    &session_id,
+                    id,
+                    "cycle_thinking_level",
+                    Ok(Some(serde_json::json!({ "level": resp.level }))),
+                )),
+                Err(e) => Some(agent_response(&session_id, id, "cycle_thinking_level", Err(e.to_string()))),
+            }
+        }
+
+        CommandPayload::SetAutoCompaction { enabled } => {
+            debug!("agent set_auto_compaction: user={}, session_id={}, enabled={}", user_id, session_id, enabled);
+            match runner.pi_set_auto_compaction(&session_id, enabled).await {
+                Ok(()) => Some(agent_response(&session_id, id, "set_auto_compaction", Ok(None))),
+                Err(e) => Some(agent_response(&session_id, id, "set_auto_compaction", Err(e.to_string()))),
+            }
+        }
+
+        CommandPayload::SetAutoRetry { enabled } => {
+            debug!("agent set_auto_retry: user={}, session_id={}, enabled={}", user_id, session_id, enabled);
+            match runner.pi_set_auto_retry(&session_id, enabled).await {
+                Ok(()) => Some(agent_response(&session_id, id, "set_auto_retry", Ok(None))),
+                Err(e) => Some(agent_response(&session_id, id, "set_auto_retry", Err(e.to_string()))),
+            }
+        }
+
+        CommandPayload::Compact { instructions } => {
+            info!("agent compact: user={}, session_id={}", user_id, session_id);
+            match runner.pi_compact(&session_id, instructions.as_deref()).await {
+                Ok(()) => None, // Compaction events stream via subscription
+                Err(e) => Some(agent_response(
+                    &session_id,
+                    id,
+                    "compact",
+                    Err(format!("Failed to compact: {}", e)),
+                )),
+            }
+        }
+
+        CommandPayload::AbortRetry => {
+            debug!("agent abort_retry: user={}, session_id={}", user_id, session_id);
+            match runner.pi_abort_retry(&session_id).await {
+                Ok(()) => Some(agent_response(&session_id, id, "abort_retry", Ok(None))),
+                Err(e) => Some(agent_response(&session_id, id, "abort_retry", Err(e.to_string()))),
+            }
+        }
+
+        CommandPayload::SetSessionName { name } => {
+            debug!("agent set_session_name: user={}, session_id={}, name={}", user_id, session_id, name);
+            match runner.pi_set_session_name(&session_id, &name).await {
+                Ok(()) => Some(agent_response(&session_id, id, "set_session_name", Ok(None))),
+                Err(e) => Some(agent_response(&session_id, id, "set_session_name", Err(e.to_string()))),
+            }
+        }
+
+        CommandPayload::Fork { entry_id } => {
+            debug!("agent fork: user={}, session_id={}, entry_id={}", user_id, session_id, entry_id);
+            match runner.pi_fork(&session_id, &entry_id).await {
+                Ok(resp) => Some(agent_response(
+                    &session_id,
+                    id,
+                    "fork",
+                    Ok(Some(serde_json::json!({
+                        "text": resp.text,
+                        "cancelled": resp.cancelled,
+                    }))),
+                )),
+                Err(e) => Some(agent_response(&session_id, id, "fork", Err(e.to_string()))),
+            }
+        }
+
+        CommandPayload::Delegate(_) | CommandPayload::DelegateCancel(_) => {
+            // Delegation not yet implemented
+            Some(agent_response(
+                &session_id,
+                id,
+                "delegate",
+                Err("Delegation not yet implemented".into()),
+            ))
         }
     }
 }
 
-/// Forward Pi events from runner subscription to WebSocket.
+/// Handle get_messages command with multi-source message loading.
+///
+/// Tries sources in order: cache, workspace JSONL, main chat JSONL,
+/// hstry (via runner or direct), then runner's live Pi process.
+async fn handle_get_messages(
+    id: Option<String>,
+    session_id: &str,
+    user_id: &str,
+    state: &AppState,
+    runner: &RunnerClient,
+    conn_state: Arc<tokio::sync::Mutex<WsConnectionState>>,
+) -> Option<WsEvent> {
+    let (session_meta, is_active) = {
+        let state_guard = conn_state.lock().await;
+        (
+            state_guard.pi_session_meta.get(session_id).cloned(),
+            state_guard.pi_subscriptions.contains(session_id),
+        )
+    };
+
+    // Check cache
+    if let Some(cached) = get_cached_pi_messages(user_id, session_id).await {
+        let use_cached = !is_active || cached.age <= Duration::from_secs(2);
+        if use_cached {
+            return Some(agent_response(
+                session_id,
+                id,
+                "get_messages",
+                Ok(Some(serde_json::json!({ "messages": cached.messages }))),
+            ));
+        }
+    }
+
+    // Try workspace JSONL or main chat JSONL
+    if let Some(ref meta) = session_meta {
+        if meta.scope.as_deref() == Some("workspace") || meta.scope.as_deref() == Some("pi") {
+            if let (Some(work_dir), Some(workspace_pi)) =
+                (meta.cwd.as_ref(), state.workspace_pi.as_ref())
+            {
+                match workspace_pi.get_session_messages(user_id, work_dir, session_id) {
+                    Ok(messages) if !messages.is_empty() => {
+                        info!(
+                            "get_messages: loaded {} messages from workspace JSONL for {}",
+                            messages.len(), session_id
+                        );
+                        let messages_value = serde_json::to_value(&messages).unwrap_or_default();
+                        cache_pi_messages(user_id, session_id, &messages_value).await;
+                        return Some(agent_response(
+                            session_id,
+                            id,
+                            "get_messages",
+                            Ok(Some(serde_json::json!({ "messages": messages_value }))),
+                        ));
+                    }
+                    Ok(_) => {}
+                    Err(e) => {
+                        debug!("get_messages: workspace JSONL error for {}: {}", session_id, e);
+                    }
+                }
+            }
+        } else if let Some(ref pi_service) = state.main_chat_pi {
+            match pi_service.get_session_messages(user_id, session_id).await {
+                Ok(messages) if !messages.is_empty() => {
+                    info!(
+                        "get_messages: loaded {} messages from JSONL file for {}",
+                        messages.len(), session_id
+                    );
+                    let messages_value = serde_json::to_value(&messages).unwrap_or_default();
+                    cache_pi_messages(user_id, session_id, &messages_value).await;
+                    return Some(agent_response(
+                        session_id,
+                        id,
+                        "get_messages",
+                        Ok(Some(serde_json::json!({ "messages": messages_value }))),
+                    ));
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    debug!("get_messages: JSONL file error for {}: {}", session_id, e);
+                }
+            }
+        }
+    } else if let Some(ref pi_service) = state.main_chat_pi {
+        match pi_service.get_session_messages(user_id, session_id).await {
+            Ok(messages) if !messages.is_empty() => {
+                let messages_value = serde_json::to_value(&messages).unwrap_or_default();
+                cache_pi_messages(user_id, session_id, &messages_value).await;
+                return Some(agent_response(
+                    session_id,
+                    id,
+                    "get_messages",
+                    Ok(Some(serde_json::json!({ "messages": messages_value }))),
+                ));
+            }
+            Ok(_) => {}
+            Err(e) => {
+                debug!("get_messages: JSONL file error for {}: {}", session_id, e);
+            }
+        }
+    }
+
+    // Try hstry for historical messages
+    let is_multi_user = state.linux_users.is_some();
+
+    if let Some(meta) = session_meta.as_ref()
+        && (meta.scope.as_deref() == Some("workspace") || meta.scope.as_deref() == Some("pi"))
+        && let Some(work_dir) = meta.cwd.as_ref()
+    {
+        if is_multi_user {
+            match runner
+                .get_workspace_chat_messages(
+                    work_dir.to_string_lossy().to_string(),
+                    session_id.to_string(),
+                    None,
+                )
+                .await
+            {
+                Ok(resp) if !resp.messages.is_empty() => {
+                    let messages: Vec<serde_json::Value> = resp
+                        .messages
+                        .into_iter()
+                        .map(|m| serde_json::json!({
+                            "id": m.id, "role": m.role, "content": m.content, "timestamp": m.timestamp,
+                        }))
+                        .collect();
+                    let messages_value = serde_json::Value::Array(messages);
+                    cache_pi_messages(user_id, session_id, &messages_value).await;
+                    return Some(agent_response(
+                        session_id,
+                        id,
+                        "get_messages",
+                        Ok(Some(serde_json::json!({ "messages": messages_value }))),
+                    ));
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    debug!("get_messages: hstry (workspace via runner) error for {}: {}", session_id, e);
+                }
+            }
+        } else if let Some(hstry_client) = state.hstry.as_ref() {
+            match hstry_client.get_messages(session_id, None, None).await {
+                Ok(hstry_messages) if !hstry_messages.is_empty() => {
+                    let serializable = crate::hstry::proto_messages_to_serializable(hstry_messages);
+                    let messages_value = serde_json::to_value(&serializable).unwrap_or_default();
+                    cache_pi_messages(user_id, session_id, &messages_value).await;
+                    return Some(agent_response(
+                        session_id,
+                        id,
+                        "get_messages",
+                        Ok(Some(serde_json::json!({ "messages": messages_value }))),
+                    ));
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    debug!("get_messages: hstry (workspace) error for {}: {}", session_id, e);
+                }
+            }
+        }
+    } else if is_multi_user {
+        match runner.get_main_chat_messages(session_id, None).await {
+            Ok(resp) if !resp.messages.is_empty() => {
+                let messages: Vec<serde_json::Value> = resp
+                    .messages
+                    .into_iter()
+                    .map(|m| serde_json::json!({
+                        "id": m.id, "role": m.role, "content": m.content, "timestamp": m.timestamp,
+                    }))
+                    .collect();
+                let messages_value = serde_json::Value::Array(messages);
+                cache_pi_messages(user_id, session_id, &messages_value).await;
+                return Some(agent_response(
+                    session_id,
+                    id,
+                    "get_messages",
+                    Ok(Some(serde_json::json!({ "messages": messages_value }))),
+                ));
+            }
+            Ok(_) => {}
+            Err(e) => {
+                debug!("get_messages: hstry (via runner) error for {}: {}", session_id, e);
+            }
+        }
+    } else if let Some(hstry_client) = state.hstry.as_ref() {
+        match hstry_client.get_messages(session_id, None, None).await {
+            Ok(hstry_messages) if !hstry_messages.is_empty() => {
+                let serializable = crate::hstry::proto_messages_to_serializable(hstry_messages);
+                let messages_value = serde_json::to_value(&serializable).unwrap_or_default();
+                cache_pi_messages(user_id, session_id, &messages_value).await;
+                return Some(agent_response(
+                    session_id,
+                    id,
+                    "get_messages",
+                    Ok(Some(serde_json::json!({ "messages": messages_value }))),
+                ));
+            }
+            Ok(_) => {}
+            Err(e) => {
+                debug!("get_messages: hstry error for {}: {}", session_id, e);
+            }
+        }
+    }
+
+    // Last resort: try runner's live Pi process
+    match runner.pi_get_messages(session_id).await {
+        Ok(resp) => {
+            let messages_value = serde_json::to_value(&resp.messages).unwrap_or_default();
+            cache_pi_messages(user_id, session_id, &messages_value).await;
+            Some(agent_response(
+                session_id,
+                id,
+                "get_messages",
+                Ok(Some(serde_json::json!({ "messages": messages_value }))),
+            ))
+        }
+        Err(e) => Some(agent_response(session_id, id, "get_messages", Err(e.to_string()))),
+    }
+}
+
+/// Forward canonical events from runner subscription to WebSocket.
+///
+/// The runner's PiTranslator has already converted native Pi events to
+/// canonical format. We just wrap them as `WsEvent::Agent` and send.
 async fn forward_pi_events(
     runner: &RunnerClient,
     session_id: &str,
@@ -2552,9 +1558,8 @@ async fn forward_pi_events(
 
     loop {
         match subscription.next().await {
-            Some(PiSubscriptionEvent::Event(pi_event)) => {
-                let ws_event = pi_event_to_ws_event(session_id, pi_event);
-                if event_tx.send(ws_event).is_err() {
+            Some(PiSubscriptionEvent::Event(canonical_event)) => {
+                if event_tx.send(WsEvent::Agent(canonical_event)).is_err() {
                     // WebSocket closed
                     break;
                 }
@@ -2571,11 +1576,18 @@ async fn forward_pi_events(
                     "Pi subscription error for session {}: {:?} - {}",
                     session_id, code, message
                 );
-                let _ = event_tx.send(WsEvent::Pi(PiWsEvent::Error {
-                    id: None,
+                // Emit error as canonical agent.error event
+                let error_event = octo_protocol::events::Event {
                     session_id: session_id.to_string(),
-                    error: message,
-                }));
+                    runner_id: "local".to_string(),
+                    ts: chrono::Utc::now().timestamp_millis(),
+                    payload: octo_protocol::events::EventPayload::AgentError {
+                        error: format!("Subscription error ({:?}): {}", code, message),
+                        recoverable: false,
+                        phase: None,
+                    },
+                };
+                let _ = event_tx.send(WsEvent::Agent(error_event));
                 break;
             }
             None => {
@@ -2588,186 +1600,9 @@ async fn forward_pi_events(
     Ok(())
 }
 
-/// Convert a Pi event to a WebSocket event.
-fn pi_event_to_ws_event(session_id: &str, event: PiEvent) -> WsEvent {
-    let sid = session_id.to_string();
-
-    match event {
-        PiEvent::AgentStart => WsEvent::Pi(PiWsEvent::MessageStart {
-            session_id: sid,
-            role: "assistant".to_string(),
-        }),
-        PiEvent::AgentEnd { .. } => WsEvent::Pi(PiWsEvent::Done { session_id: sid }),
-        PiEvent::TurnStart => WsEvent::Pi(PiWsEvent::MessageStart {
-            session_id: sid,
-            role: "assistant".to_string(),
-        }),
-        PiEvent::TurnEnd { .. } => WsEvent::Pi(PiWsEvent::Done { session_id: sid }),
-        PiEvent::MessageStart { message } => {
-            WsEvent::Pi(PiWsEvent::MessageStart {
-                session_id: sid,
-                role: message.role.clone(),
-            })
-        }
-        PiEvent::MessageUpdate {
-            assistant_message_event,
-            ..
-        } => {
-            // Convert AssistantMessageEvent to appropriate WS event
-            match assistant_message_event {
-                AssistantMessageEvent::TextDelta { delta, .. } => WsEvent::Pi(PiWsEvent::Text {
-                    session_id: sid,
-                    data: delta,
-                }),
-                AssistantMessageEvent::ThinkingDelta { delta, .. } => {
-                    WsEvent::Pi(PiWsEvent::Thinking {
-                        session_id: sid,
-                        data: delta,
-                    })
-                }
-                AssistantMessageEvent::TextStart { .. }
-                | AssistantMessageEvent::ThinkingStart { .. }
-                | AssistantMessageEvent::ToolcallStart { .. }
-                | AssistantMessageEvent::Start { .. } => {
-                    // These don't produce visible output, skip
-                    WsEvent::Pi(PiWsEvent::Text {
-                        session_id: sid,
-                        data: String::new(),
-                    })
-                }
-                AssistantMessageEvent::TextEnd { content, .. } => WsEvent::Pi(PiWsEvent::Text {
-                    session_id: sid,
-                    data: content,
-                }),
-                AssistantMessageEvent::ThinkingEnd { content, .. } => {
-                    WsEvent::Pi(PiWsEvent::Thinking {
-                        session_id: sid,
-                        data: content,
-                    })
-                }
-                AssistantMessageEvent::ToolcallDelta { .. } => {
-                    // Tool call deltas are JSON fragments, not user-visible.
-                    WsEvent::Pi(PiWsEvent::Text {
-                        session_id: sid,
-                        data: String::new(),
-                    })
-                }
-                AssistantMessageEvent::ToolcallEnd { tool_call, .. } => {
-                    WsEvent::Pi(PiWsEvent::ToolUse {
-                        session_id: sid,
-                        data: ToolUseData {
-                            id: tool_call.id.clone(),
-                            name: tool_call.name.clone(),
-                            input: tool_call.arguments.clone(),
-                        },
-                    })
-                }
-                AssistantMessageEvent::Done { .. } => {
-                    WsEvent::Pi(PiWsEvent::Done { session_id: sid })
-                }
-                AssistantMessageEvent::Error { reason, error } => {
-                    let error_str = error
-                        .as_ref()
-                        .and_then(|m| serde_json::to_string(m).ok())
-                        .unwrap_or_else(|| reason.clone());
-                    WsEvent::Pi(PiWsEvent::Error {
-                        id: None,
-                        session_id: sid,
-                        error: error_str,
-                    })
-                }
-                AssistantMessageEvent::Unknown => {
-                    // Unknown event type, skip
-                    WsEvent::Pi(PiWsEvent::Text {
-                        session_id: sid,
-                        data: String::new(),
-                    })
-                }
-            }
-        }
-        PiEvent::MessageEnd { .. } => WsEvent::Pi(PiWsEvent::Done { session_id: sid }),
-        PiEvent::ToolExecutionStart {
-            tool_call_id,
-            tool_name,
-            args,
-        } => WsEvent::Pi(PiWsEvent::ToolStart {
-            session_id: sid,
-            data: ToolUseData {
-                id: tool_call_id,
-                name: tool_name,
-                input: args,
-            },
-        }),
-        PiEvent::ToolExecutionUpdate {
-            tool_call_id,
-            tool_name,
-            partial_result,
-            ..
-        } => WsEvent::Pi(PiWsEvent::ToolUse {
-            session_id: sid,
-            data: ToolUseData {
-                id: tool_call_id,
-                name: tool_name,
-                input: serde_json::to_value(&partial_result).unwrap_or(Value::Null),
-            },
-        }),
-        PiEvent::ToolExecutionEnd {
-            tool_call_id,
-            tool_name,
-            result,
-            is_error,
-        } => WsEvent::Pi(PiWsEvent::ToolResult {
-            session_id: sid,
-            data: ToolResultData {
-                id: tool_call_id,
-                name: Some(tool_name),
-                content: serde_json::to_value(&result).unwrap_or(Value::Null),
-                is_error: Some(is_error),
-            },
-        }),
-        PiEvent::AutoCompactionStart { .. } => WsEvent::Pi(PiWsEvent::State {
-            id: None,
-            session_id: sid,
-            state: serde_json::json!({"compacting": true}),
-        }),
-        PiEvent::AutoCompactionEnd { .. } => WsEvent::Pi(PiWsEvent::State {
-            id: None,
-            session_id: sid,
-            state: serde_json::json!({"compacting": false}),
-        }),
-        PiEvent::AutoRetryStart { .. } => WsEvent::Pi(PiWsEvent::State {
-            id: None,
-            session_id: sid,
-            state: serde_json::json!({"retrying": true}),
-        }),
-        PiEvent::AutoRetryEnd { .. } => WsEvent::Pi(PiWsEvent::State {
-            id: None,
-            session_id: sid,
-            state: serde_json::json!({"retrying": false}),
-        }),
-        PiEvent::ExtensionUiRequest(_) => {
-            // Extension UI requests need special handling - for now just acknowledge
-            WsEvent::Pi(PiWsEvent::State {
-                id: None,
-                session_id: sid,
-                state: serde_json::json!({"extension_ui_request": true}),
-            })
-        }
-        PiEvent::HookError { error, .. } => WsEvent::Pi(PiWsEvent::Error {
-            id: None,
-            session_id: sid,
-            error,
-        }),
-        PiEvent::Unknown => {
-            debug!("Received unknown Pi event type");
-            WsEvent::Pi(PiWsEvent::State {
-                id: None,
-                session_id: sid,
-                state: Value::Null,
-            })
-        }
-    }
-}
+// NOTE: The old pi_event_to_ws_event() function has been removed.
+// Streaming events now flow as canonical events through the PiTranslator
+// in pi_manager.rs and are forwarded directly via WsEvent::Agent.
 
 /// Handle Files channel commands.
 async fn handle_files_command(
@@ -3938,44 +2773,59 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_parse_pi_prompt_command() {
-        let json = r#"{"channel":"pi","type":"prompt","session_id":"ses_123","message":"hello"}"#;
+    fn test_parse_agent_prompt_command() {
+        let json = r#"{"channel":"agent","session_id":"ses_123","cmd":"prompt","message":"hello"}"#;
         let cmd: WsCommand = serde_json::from_str(json).unwrap();
         match cmd {
-            WsCommand::Pi(PiWsCommand::Prompt {
+            WsCommand::Agent(octo_protocol::commands::Command {
                 session_id,
-                message,
+                payload: octo_protocol::commands::CommandPayload::Prompt { message, .. },
                 ..
             }) => {
                 assert_eq!(session_id, "ses_123");
                 assert_eq!(message, "hello");
             }
-            _ => panic!("Expected Pi Prompt command"),
+            _ => panic!("Expected Agent Prompt command"),
         }
     }
 
     #[test]
-    fn test_parse_pi_subscribe_command() {
-        let json = r#"{"channel":"pi","type":"subscribe","session_id":"ses_456"}"#;
+    fn test_parse_agent_get_state_command() {
+        let json = r#"{"channel":"agent","session_id":"ses_456","cmd":"get_state"}"#;
         let cmd: WsCommand = serde_json::from_str(json).unwrap();
         match cmd {
-            WsCommand::Pi(PiWsCommand::Subscribe { session_id, .. }) => {
+            WsCommand::Agent(octo_protocol::commands::Command {
+                session_id,
+                payload: octo_protocol::commands::CommandPayload::GetState,
+                ..
+            }) => {
                 assert_eq!(session_id, "ses_456");
             }
-            _ => panic!("Expected Pi Subscribe command"),
+            _ => panic!("Expected Agent GetState command"),
         }
     }
 
     #[test]
-    fn test_serialize_pi_event() {
-        let event = WsEvent::Pi(PiWsEvent::Text {
+    fn test_serialize_agent_command_response() {
+        use octo_protocol::events::{CommandResponse, EventPayload};
+
+        let event = WsEvent::Agent(octo_protocol::events::Event {
             session_id: "ses_123".into(),
-            data: "Hello world".into(),
+            runner_id: "local".into(),
+            ts: 1738764000000,
+            payload: EventPayload::Response(CommandResponse {
+                id: "req-1".into(),
+                cmd: "session.create".into(),
+                success: true,
+                data: None,
+                error: None,
+            }),
         });
         let json = serde_json::to_string(&event).unwrap();
-        assert!(json.contains(r#""channel":"pi""#));
-        assert!(json.contains(r#""type":"text""#));
+        assert!(json.contains(r#""channel":"agent""#));
+        assert!(json.contains(r#""event":"response""#));
         assert!(json.contains(r#""session_id":"ses_123""#));
+        assert!(json.contains(r#""cmd":"session.create""#));
     }
 
     #[test]
@@ -3984,5 +2834,41 @@ mod tests {
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains(r#""channel":"system""#));
         assert!(json.contains(r#""type":"connected""#));
+    }
+
+    #[test]
+    fn test_serialize_canonical_agent_event() {
+        use octo_protocol::events::{AgentPhase, EventPayload};
+
+        let event = WsEvent::Agent(octo_protocol::events::Event {
+            session_id: "ses_abc".into(),
+            runner_id: "local".into(),
+            ts: 1738764000000,
+            payload: EventPayload::StreamTextDelta {
+                message_id: "msg-1".into(),
+                delta: "Hello".into(),
+                content_index: 0,
+            },
+        });
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains(r#""channel":"agent""#));
+        assert!(json.contains(r#""event":"stream.text_delta""#));
+        assert!(json.contains(r#""session_id":"ses_abc""#));
+        assert!(json.contains(r#""delta":"Hello""#));
+    }
+
+    #[test]
+    fn test_serialize_canonical_agent_idle() {
+        use octo_protocol::events::EventPayload;
+
+        let event = WsEvent::Agent(octo_protocol::events::Event {
+            session_id: "ses_abc".into(),
+            runner_id: "local".into(),
+            ts: 1738764000000,
+            payload: EventPayload::AgentIdle,
+        });
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains(r#""channel":"agent""#));
+        assert!(json.contains(r#""event":"agent.idle""#));
     }
 }

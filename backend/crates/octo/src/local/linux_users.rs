@@ -103,67 +103,78 @@ impl LinuxUsersConfig {
             return Ok((getuid().as_raw(), project_id.to_string()));
         }
 
-        // Ensure group exists first
-        self.ensure_group()?;
+	// Note: There is intentionally no "fast path" optimization here.
+	// User creation is a rare operation (happens once per user per device).
+	// Always run through the full setup to ensure correctness and avoid race conditions.
+	// - Always ensure group exists
+	// - Always create the Linux user
+	// - Always set up project directory ownership
+	// - Always ensure octo-runner is running
+	// The expensive sudo operations are acceptable for this infrequent operation.
 
-        let username = self.project_username(project_id);
+	// Ensure group exists first
+	self.ensure_group()?;
 
-        // Check if user already exists
-        if let Some(uid) = get_user_uid(&username)? {
-            debug!(
-                "Project user '{}' already exists with UID {}",
-                username, uid
-            );
-            // Ensure directory ownership is correct
-            self.chown_directory_to_user(project_path, &username)?;
-            return Ok((uid, username));
-        }
+	let username = self.project_username(project_id);
 
-        // Find next available UID
-        let uid = self.find_next_uid()?;
+	// Check if user already exists
+	if let Some(uid) = get_user_uid(&username)? {
+		debug!(
+			"Project user '{}' already exists with UID {}",
+			username, uid
+		);
 
-        info!(
-            "Creating Linux user '{}' with UID {} for project '{}'",
-            username, uid, project_id
-        );
+		// Ensure directory ownership is correct
+		self.chown_directory_to_user(project_path, &username)?;
+		return Ok((uid, username));
+	}
 
-        // Build useradd command
-        let mut args = vec![
-            "-u".to_string(),
-            uid.to_string(),
-            "-g".to_string(),
-            self.group.clone(),
-            "-s".to_string(),
-            self.shell.clone(),
-        ];
+	// Find next available UID
+	let uid = self.find_next_uid()?;
 
-        if self.create_home {
-            args.push("-m".to_string());
-        } else {
-            args.push("-M".to_string());
-        }
+	info!(
+		"Creating Linux user '{}' with UID {} for project '{}'",
+		username, uid, project_id
+	);
 
-        // Add comment with project ID for reference (sanitize for useradd compat)
-        args.push("-c".to_string());
-        args.push(sanitize_gecos(&format!(
-            "Octo shared project: {}",
-            project_id
-        )));
+	// Build useradd command
+	let mut args = vec![
+		"-u".to_string(),
+		uid.to_string(),
+		"-g".to_string(),
+		self.group.clone(),
+		"-s".to_string(),
+		self.shell.clone(),
+	];
 
-        args.push(username.clone());
+	if self.create_home {
+		args.push("-m".to_string());
+	} else {
+		args.push("-M".to_string());
+	}
 
-        let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-        run_privileged_command(self.use_sudo, "/usr/sbin/useradd", &args_refs)
-            .with_context(|| format!("creating project user '{}'", username))?;
+	// Add comment with project ID for reference (sanitize for useradd compat)
+	args.push("-c".to_string());
+	args.push(sanitize_gecos(&format!(
+		"Octo shared project: {}",
+		project_id
+	)));
 
-        info!("Created Linux user '{}' with UID {}", username, uid);
+	args.push(username.clone());
 
-        // Set up project directory with correct ownership
-        std::fs::create_dir_all(project_path)
-            .with_context(|| format!("creating project directory: {:?}", project_path))?;
-        self.chown_directory_to_user(project_path, &username)?;
+	let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
 
-        Ok((uid, username))
+	run_privileged_command(self.use_sudo, "/usr/sbin/useradd", &args_refs)
+		.with_context(|| format!("creating project user '{}'", username))?;
+
+	info!("Created Linux user '{}' with UID {}", username, uid);
+
+	// Set up project directory with correct ownership
+	std::fs::create_dir_all(project_path)
+		.with_context(|| format!("creating project directory: {:?}", project_path))?;
+	self.chown_directory_to_user(project_path, &username)?;
+
+	Ok((uid, username))
     }
 
     /// Set ownership of a directory to a specific Linux username.
@@ -530,8 +541,16 @@ impl LinuxUsersConfig {
         // Best-effort: ensure the per-user octo-runner daemon is enabled and started.
         // This is required for multi-user components that must run as the target Linux user
         // (e.g. per-user mmry instances, Pi runner mode).
-        self.ensure_octo_runner_running(&username, uid)
-            .with_context(|| format!("ensuring octo-runner for user '{}'", username))?;
+        // During user creation, we don't fail if the runner can't start -- the runner will
+        // be retried on first session/connection. This prevents user creation from being
+        // blocked by transient systemd issues, sudo misconfigurations, etc.
+        if let Err(e) = self.ensure_octo_runner_running(&username, uid) {
+            warn!(
+                "Failed to start octo-runner for user '{}' (uid={}): {:?}. \
+                 Will retry on first session.",
+                username, uid, e
+            );
+        }
 
         Ok((uid, username))
     }
@@ -845,6 +864,14 @@ fn sanitize_username(user_id: &str) -> String {
         result.push_str("user");
     }
 
+    while result.ends_with('-') && !result.is_empty() {
+        result.pop();
+    }
+
+    if result.is_empty() {
+        result.push_str("user");
+    }
+
     result
 }
 
@@ -1116,6 +1143,13 @@ mod tests {
         assert_eq!(sanitize_username("user@domain"), "user_domain");
         assert_eq!(sanitize_username("user.name"), "user_name");
         assert_eq!(sanitize_username("user name"), "user_name");
+    }
+
+    #[test]
+    fn test_sanitize_username_trailing_hyphen() {
+        assert_eq!(sanitize_username("user-"), "user");
+        assert_eq!(sanitize_username("tamara-WCC-"), "tamara-wcc");
+        assert_eq!(sanitize_username("name-123-"), "name-123");
     }
 
     #[test]

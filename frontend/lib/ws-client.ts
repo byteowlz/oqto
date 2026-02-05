@@ -135,12 +135,6 @@ export type WsEvent =
 	| { type: "compaction_start"; session_id: string; reason?: string }
 	| { type: "compaction_end"; session_id: string; success: boolean }
 	| {
-			type: "opencode_event";
-			session_id: string;
-			event_type: string;
-			data: unknown;
-	  }
-	| {
 			type: "a2ui_surface";
 			session_id: string;
 			surface_id: string;

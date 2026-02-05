@@ -23,6 +23,7 @@ import {
 	PaintBucket,
 	PanelLeftClose,
 	PanelRightClose,
+	Plus,
 	Search,
 	Settings,
 	Terminal,
@@ -67,6 +68,11 @@ const TerminalView = lazy(() =>
 const TrxView = lazy(() =>
 	import("@/features/sessions/components/TrxView").then((mod) => ({
 		default: mod.TrxView,
+	})),
+);
+const PreviewView = lazy(() =>
+	import("@/features/sessions/components/PreviewView").then((mod) => ({
+		default: mod.PreviewView,
 	})),
 );
 
@@ -257,6 +263,15 @@ export const SessionScreen = memo(function SessionScreen() {
 		maxTokens: 0,
 	});
 	const [expandedView, setExpandedView] = useState<ViewKey | null>(null);
+	const [previewFilePath, setPreviewFilePath] = useState<string | null>(null);
+
+	const handlePreviewFile = useCallback((filePath: string) => {
+		setPreviewFilePath(filePath);
+	}, []);
+
+	const handleClosePreview = useCallback(() => {
+		setPreviewFilePath(null);
+	}, []);
 
 	const normalizedWorkspacePath = useMemo(
 		() => normalizeWorkspacePath(selectedChatFromHistory?.workspace_path),
@@ -325,6 +340,12 @@ export const SessionScreen = memo(function SessionScreen() {
 			mounted = false;
 		};
 	}, []);
+
+	// Clear file preview when session changes
+	// biome-ignore lint/correctness/useExhaustiveDependencies: intentionally reset on session change
+	useEffect(() => {
+		setPreviewFilePath(null);
+	}, [selectedChatSessionId]);
 
 	const headerTitle =
 		selectedChatFromHistory?.title ??
@@ -434,36 +455,27 @@ export const SessionScreen = memo(function SessionScreen() {
 	);
 
 	const sessionHeader = (
-		<div className="pb-3 mb-3 border-b border-border pr-10">
-			<div className="flex items-center justify-between">
-				<div className="min-w-0 flex-1">
-					<div className="flex items-center gap-2">
-						<h1 className="text-base sm:text-lg font-semibold text-foreground tracking-wider truncate">
-							{headerTitle}
-						</h1>
-					</div>
-					<div className="flex items-center gap-2 text-xs text-foreground/60 dark:text-muted-foreground">
-						{(workspaceName || readableId) && (
-							<span className="font-mono truncate">
-								{workspaceName}
-								{readableId && ` [${readableId}]`}
-							</span>
-						)}
-						{(workspaceName || readableId) && formattedDate && (
-							<span className="opacity-50">|</span>
-						)}
-						{formattedDate && (
-							<span className="flex-shrink-0">{formattedDate}</span>
-						)}
-					</div>
+		<div className="pb-3 mb-3 border-b border-border pr-20">
+			<div className="min-w-0">
+				<div className="flex items-center gap-2">
+					<h1 className="text-base sm:text-lg font-semibold text-foreground tracking-wider truncate">
+						{headerTitle}
+					</h1>
 				</div>
-				<button
-					type="button"
-					onClick={handleNewChat}
-					className="text-xs text-muted-foreground hover:text-foreground"
-				>
-					{locale === "de" ? "Neue Sitzung" : "New chat"}
-				</button>
+				<div className="flex items-center gap-2 text-xs text-foreground/60 dark:text-muted-foreground">
+					{workspaceName && (
+						<span className="font-mono truncate">
+							{workspaceName}
+							{readableId && ` [${readableId}]`}
+						</span>
+					)}
+					{workspaceName && readableId && formattedDate && (
+						<span className="opacity-50">|</span>
+					)}
+					{formattedDate && (
+						<span className="flex-shrink-0">{formattedDate}</span>
+					)}
+				</div>
 			</div>
 			<div className="mt-2">
 				<ContextWindowGauge
@@ -563,10 +575,22 @@ export const SessionScreen = memo(function SessionScreen() {
 						)}
 					>
 						{activeView === "chat" && chatPanel}
-						<div className={cn("h-full", activeView !== "files" && "hidden")}>
-							{normalizedWorkspacePath ? (
+						<div className={cn("h-full flex flex-col", activeView !== "files" && "hidden")}>
+							{previewFilePath ? (
 								<Suspense fallback={viewLoadingFallback}>
-									<FileTreeView workspacePath={normalizedWorkspacePath} />
+									<PreviewView
+										filePath={previewFilePath}
+										workspacePath={normalizedWorkspacePath}
+										onClose={handleClosePreview}
+										showHeader
+									/>
+								</Suspense>
+							) : normalizedWorkspacePath ? (
+								<Suspense fallback={viewLoadingFallback}>
+									<FileTreeView
+										workspacePath={normalizedWorkspacePath}
+										onPreviewFile={handlePreviewFile}
+									/>
 								</Suspense>
 							) : (
 								<EmptyWorkspacePanel
@@ -639,6 +663,14 @@ export const SessionScreen = memo(function SessionScreen() {
 				<div className="hidden lg:flex flex-1 min-h-0 gap-4 items-start">
 					<div className="flex-[3] min-w-0 bg-card border border-border p-4 xl:p-6 flex flex-col min-h-0 h-full relative">
 						<div className="absolute top-4 right-4 xl:top-6 xl:right-6 flex items-center gap-1 z-10">
+							<button
+								type="button"
+								onClick={handleNewChat}
+								className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted/50 rounded transition-colors"
+								title={locale === "de" ? "Neue Sitzung" : "New chat"}
+							>
+								<Plus className="w-4 h-4" />
+							</button>
 							<button
 								type="button"
 								onClick={() => setIsSearchOpen((prev) => !prev)}
@@ -844,11 +876,21 @@ export const SessionScreen = memo(function SessionScreen() {
 								<div className="flex-1 min-h-0 overflow-hidden">
 									{activeView === "tasks" && tasksPanel}
 									{activeView === "files" && (
-										<div className="h-full">
-											{normalizedWorkspacePath ? (
+										<div className="h-full flex flex-col">
+											{previewFilePath ? (
+												<Suspense fallback={viewLoadingFallback}>
+													<PreviewView
+														filePath={previewFilePath}
+														workspacePath={normalizedWorkspacePath}
+														onClose={handleClosePreview}
+														showHeader
+													/>
+												</Suspense>
+											) : normalizedWorkspacePath ? (
 												<Suspense fallback={viewLoadingFallback}>
 													<FileTreeView
 														workspacePath={normalizedWorkspacePath}
+														onPreviewFile={handlePreviewFile}
 													/>
 												</Suspense>
 											) : (

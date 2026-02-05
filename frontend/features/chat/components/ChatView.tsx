@@ -669,7 +669,7 @@ export function ChatView({
 		let active = true;
 		const manager = getWsManager();
 		manager
-			.piGetCommands(targetSessionId)
+			.agentGetCommands(targetSessionId)
 			.then((commands) => {
 				if (!active) return;
 				setCustomCommands(
@@ -691,7 +691,7 @@ export function ChatView({
 		const targetSessionId = selectedSessionId ?? piState?.session_id ?? null;
 		if (!targetSessionId) return;
 		try {
-			const stats = await getWsManager().piGetSessionStats(targetSessionId);
+			const stats = await getWsManager().agentGetSessionStats(targetSessionId);
 			const tokens =
 				stats && typeof stats === "object" && "tokens" in stats
 					? (stats as { tokens?: { input?: number; output?: number } }).tokens
@@ -934,7 +934,7 @@ export function ChatView({
 				}
 				// Use WebSocket to set model - works for both default chat and workspace
 				const manager = getWsManager();
-				await manager.piSetModel(targetSessionId, provider, modelId);
+				await manager.agentSetModel(targetSessionId, provider, modelId);
 				await refresh();
 			} catch (err) {
 				console.error("Failed to switch model:", err);
@@ -985,7 +985,7 @@ export function ChatView({
 					if (!targetSessionId) {
 						throw new Error("No active session");
 					}
-					const stats = await getWsManager().piGetSessionStats(targetSessionId);
+					const stats = await getWsManager().agentGetSessionStats(targetSessionId);
 					const safeStats = stats && typeof stats === "object" ? stats : null;
 					const tokens =
 						safeStats && "tokens" in safeStats
@@ -1155,7 +1155,7 @@ export function ChatView({
 			setSendPending(true);
 			setSendPendingSessionId(selectedSessionId ?? null);
 			let resolvedSessionId = selectedSessionId ?? null;
-			if (!resolvedSessionId) {
+			if (!resolvedSessionId || isPendingSessionId(resolvedSessionId)) {
 				resolvedSessionId = await ensureRealSessionId();
 			}
 			if (!resolvedSessionId) {
@@ -1225,7 +1225,7 @@ export function ChatView({
 			setSendPending(true);
 			setSendPendingSessionId(selectedSessionId ?? null);
 			let resolvedSessionId = selectedSessionId ?? null;
-			if (!resolvedSessionId) {
+			if (!resolvedSessionId || isPendingSessionId(resolvedSessionId)) {
 				resolvedSessionId = await ensureRealSessionId();
 			}
 			if (!resolvedSessionId) {
@@ -3131,6 +3131,25 @@ function PiPartRenderer({
 					hideHeader={hideHeader}
 				/>
 			);
+
+		case "image": {
+			const imgPart = part as Extract<
+				typeof part,
+				{ type: "image" }
+			>;
+			const src = imgPart.data
+				? `data:${imgPart.mimeType ?? "image/png"};base64,${imgPart.data}`
+				: imgPart.url ?? "";
+			if (!src) return null;
+			return (
+				<img
+					src={src}
+					alt="Attached content"
+					className="max-w-[300px] max-h-[300px] rounded-md border border-border object-contain"
+					loading="lazy"
+				/>
+			);
+		}
 
 		default: {
 			console.warn("Unknown Pi message part type:", part);

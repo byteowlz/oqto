@@ -174,6 +174,7 @@ pub fn create_router_with_config(state: AppState, max_upload_size_mb: usize) -> 
         // User profile routes (authenticated users)
         .route("/me", get(handlers::get_me))
         .route("/me", put(handlers::update_me))
+        .route("/auth/change-password", post(handlers::change_password))
         // UI control routes (agent-driven UI control)
         .route("/ui/navigate", post(ui_control_handlers::navigate))
         .route("/ui/session", post(ui_control_handlers::session))

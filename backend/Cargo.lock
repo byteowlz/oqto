@@ -1664,7 +1664,7 @@ dependencies = [
 
 [[package]]
 name = "hstry-core"
-version = "0.2.16"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2660,6 +2660,7 @@ dependencies = [
  "nanoid",
  "notify-rust",
  "octo-files",
+ "octo-protocol",
  "once_cell",
  "prost",
  "rand 0.9.2",
@@ -2725,6 +2726,15 @@ dependencies = [
  "tracing-subscriber",
  "walkdir",
  "zip",
+]
+
+[[package]]
+name = "octo-protocol"
+version = "0.6.0"
+dependencies = [
+ "hstry-core",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
