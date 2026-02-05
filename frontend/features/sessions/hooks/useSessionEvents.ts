@@ -6,7 +6,7 @@ import type { WsEvent } from "@/lib/ws-client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useWsSessionEvents } from "./useWsSession";
 
-export type TransportMode = "sse" | "polling" | "ws" | "reconnecting";
+export type TransportMode = "ws" | "reconnecting";
 
 export type UseSessionEventsOptions = {
 	/** Whether WebSocket events are enabled (from features.websocket_events) */
