@@ -23,6 +23,7 @@ import {
 	PaintBucket,
 	PanelLeftClose,
 	PanelRightClose,
+	Plus,
 	Search,
 	Settings,
 	Terminal,
@@ -454,36 +455,27 @@ export const SessionScreen = memo(function SessionScreen() {
 	);
 
 	const sessionHeader = (
-		<div className="pb-3 mb-3 border-b border-border pr-10">
-			<div className="flex items-center justify-between">
-				<div className="min-w-0 flex-1">
-					<div className="flex items-center gap-2">
-						<h1 className="text-base sm:text-lg font-semibold text-foreground tracking-wider truncate">
-							{headerTitle}
-						</h1>
-					</div>
-					<div className="flex items-center gap-2 text-xs text-foreground/60 dark:text-muted-foreground">
-						{workspaceName && (
-							<span className="font-mono truncate">
-								{workspaceName}
-								{readableId && ` [${readableId}]`}
-							</span>
-						)}
-						{workspaceName && readableId && formattedDate && (
-							<span className="opacity-50">|</span>
-						)}
-						{formattedDate && (
-							<span className="flex-shrink-0">{formattedDate}</span>
-						)}
-					</div>
+		<div className="pb-3 mb-3 border-b border-border pr-20">
+			<div className="min-w-0">
+				<div className="flex items-center gap-2">
+					<h1 className="text-base sm:text-lg font-semibold text-foreground tracking-wider truncate">
+						{headerTitle}
+					</h1>
 				</div>
-				<button
-					type="button"
-					onClick={handleNewChat}
-					className="text-xs text-muted-foreground hover:text-foreground"
-				>
-					{locale === "de" ? "Neue Sitzung" : "New chat"}
-				</button>
+				<div className="flex items-center gap-2 text-xs text-foreground/60 dark:text-muted-foreground">
+					{workspaceName && (
+						<span className="font-mono truncate">
+							{workspaceName}
+							{readableId && ` [${readableId}]`}
+						</span>
+					)}
+					{workspaceName && readableId && formattedDate && (
+						<span className="opacity-50">|</span>
+					)}
+					{formattedDate && (
+						<span className="flex-shrink-0">{formattedDate}</span>
+					)}
+				</div>
 			</div>
 			<div className="mt-2">
 				<ContextWindowGauge
@@ -671,6 +663,14 @@ export const SessionScreen = memo(function SessionScreen() {
 				<div className="hidden lg:flex flex-1 min-h-0 gap-4 items-start">
 					<div className="flex-[3] min-w-0 bg-card border border-border p-4 xl:p-6 flex flex-col min-h-0 h-full relative">
 						<div className="absolute top-4 right-4 xl:top-6 xl:right-6 flex items-center gap-1 z-10">
+							<button
+								type="button"
+								onClick={handleNewChat}
+								className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted/50 rounded transition-colors"
+								title={locale === "de" ? "Neue Sitzung" : "New chat"}
+							>
+								<Plus className="w-4 h-4" />
+							</button>
 							<button
 								type="button"
 								onClick={() => setIsSearchOpen((prev) => !prev)}

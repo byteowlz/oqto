@@ -2152,6 +2152,7 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
         ctx.config.templates.sync_on_list,
         Duration::from_secs(ctx.config.templates.sync_interval_seconds),
     );
+    templates_state.start_background_sync();
 
     let max_proxy_body_bytes = ctx
         .config

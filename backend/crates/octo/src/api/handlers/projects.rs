@@ -2,7 +2,6 @@
 
 use std::fs;
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
 
 use anyhow::Context;
 use axum::{
@@ -12,7 +11,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use tokio::process::Command;
-use tracing::{instrument, warn};
+use tracing::instrument;
 use uuid::Uuid;
 
 use crate::auth::CurrentUser;
@@ -254,83 +253,6 @@ fn copy_template_dir(src: &std::path::Path, dest: &std::path::Path) -> Result<()
     Ok(())
 }
 
-async fn maybe_sync_templates_repo(state: &AppState) -> Result<(), ApiError> {
-    let repo_path = match state.templates.repo_path.as_ref() {
-        Some(path) => path.clone(),
-        None => return Ok(()),
-    };
-    if state.templates.repo_type == TemplatesRepoType::Local {
-        return Ok(());
-    }
-    if !state.templates.sync_on_list {
-        return Ok(());
-    }
-    let should_sync = {
-        let last_sync = state.templates.last_sync.lock().await;
-        !matches!(*last_sync, Some(instant) if instant.elapsed() < state.templates.sync_interval)
-    };
-    if !should_sync {
-        return Ok(());
-    }
-    if !repo_path.join(".git").exists() {
-        return Err(ApiError::internal("templates repo is not a git repository"));
-    }
-
-    // Spawn the git pull process with a timeout to prevent hanging on network issues
-    // (e.g. SSH key prompts, unreachable remotes, DNS timeouts).
-    let mut child = Command::new("git")
-        .arg("-C")
-        .arg(&repo_path)
-        .arg("pull")
-        .arg("--ff-only")
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .map_err(|e| ApiError::internal(format!("Failed to run git pull: {}", e)))?;
-
-    const GIT_PULL_TIMEOUT: Duration = Duration::from_secs(15);
-    let result = tokio::time::timeout(GIT_PULL_TIMEOUT, child.wait()).await;
-
-    match result {
-        Ok(Ok(status)) => {
-            if !status.success() {
-                // Read stderr for the error message (child stdout/stderr are still available)
-                let stderr_msg = if let Some(mut stderr) = child.stderr.take() {
-                    let mut buf = String::new();
-                    use tokio::io::AsyncReadExt;
-                    let _ = stderr.read_to_string(&mut buf).await;
-                    buf
-                } else {
-                    String::new()
-                };
-                return Err(ApiError::internal(format!(
-                    "Failed to sync templates repo: {}",
-                    stderr_msg.trim()
-                )));
-            }
-        }
-        Ok(Err(e)) => {
-            return Err(ApiError::internal(format!(
-                "Failed to sync templates repo: {}",
-                e
-            )));
-        }
-        Err(_) => {
-            // Timeout: kill the stuck process and proceed with stale data
-            let _ = child.kill().await;
-            warn!(
-                "git pull timed out after {}s for templates repo at {:?}, serving stale templates",
-                GIT_PULL_TIMEOUT.as_secs(),
-                repo_path,
-            );
-        }
-    }
-
-    let mut last_sync = state.templates.last_sync.lock().await;
-    *last_sync = Some(Instant::now());
-    Ok(())
-}
-
 /// List directories under the workspace root (projects view).
 #[instrument(skip(state))]
 pub async fn list_workspace_dirs(
@@ -396,7 +318,7 @@ pub async fn list_project_templates(
         }
     };
 
-    maybe_sync_templates_repo(&state).await?;
+    // Template sync is handled by a background task; no blocking sync here.
 
     let entries = fs::read_dir(&repo_path)
         .with_context(|| format!("reading templates directory {:?}", repo_path))
@@ -446,7 +368,7 @@ pub async fn create_project_from_template(
         .clone()
         .ok_or_else(|| ApiError::bad_request("templates repo not configured"))?;
 
-    maybe_sync_templates_repo(&state).await?;
+    // Template sync is handled by a background task; no blocking sync here.
 
     let template_rel = sanitize_relative_path(&request.template_path)?;
     let template_dir = repo_path.join(&template_rel);

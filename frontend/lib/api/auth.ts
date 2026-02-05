@@ -128,6 +128,28 @@ export async function getCurrentUser(): Promise<UserInfo | null> {
 	return res.json();
 }
 
+export async function changePassword(
+	currentPassword: string,
+	newPassword: string,
+): Promise<void> {
+	const res = await authFetch(
+		controlPlaneApiUrl("/api/auth/change-password"),
+		{
+			method: "POST",
+			headers: {
+				...getAuthHeaders(),
+				"Content-Type": "application/json",
+			},
+			body: JSON.stringify({
+				current_password: currentPassword,
+				new_password: newPassword,
+			}),
+			credentials: "include",
+		},
+	);
+	if (!res.ok) throw new Error(await readApiError(res));
+}
+
 /** @deprecated Use login() instead */
 export async function devLogin(): Promise<boolean> {
 	try {

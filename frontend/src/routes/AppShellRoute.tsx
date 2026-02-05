@@ -3,6 +3,7 @@ import { CommandPalette } from "@/components/command-palette";
 import { StatusBar } from "@/components/status-bar";
 import { Button } from "@/components/ui/button";
 import { useApp } from "@/hooks/use-app";
+import { useCurrentUser, useLogout } from "@/hooks/use-auth";
 import { useCommandPalette } from "@/hooks/use-command-palette";
 import type { HstrySearchHit } from "@/lib/control-plane-client";
 import { getSettingsValues } from "@/lib/control-plane-client";
@@ -71,6 +72,10 @@ const AppShell = memo(function AppShell() {
 	);
 	const [sessionSearch, setSessionSearch] = useState("");
 	const deferredSearch = useDeferredValue(sessionSearch);
+
+	const { mutate: handleLogout } = useLogout();
+	const { data: currentUser } = useCurrentUser();
+	const isAdmin = currentUser?.role === "admin";
 
 	// Use extracted hooks
 	const sidebarState = useSidebarState();
@@ -508,6 +513,7 @@ const AppShell = memo(function AppShell() {
 						locale={locale}
 						isDark={isDark}
 						activeAppId={activeAppId}
+						isAdmin={isAdmin}
 						chatHistory={chatHistory}
 						sessionHierarchy={sessionData.sessionHierarchy}
 						sessionsByProject={sessionData.sessionsByProject}
@@ -551,6 +557,7 @@ const AppShell = memo(function AppShell() {
 						onToggleApp={handleMobileToggleClick}
 						onToggleLocale={toggleLocale}
 						onToggleTheme={toggleTheme}
+						onLogout={handleLogout}
 						onProjectSelect={handleProjectSelect}
 						onProjectDefaultAgentChange={handleProjectDefaultAgentChange}
 					/>
@@ -685,14 +692,16 @@ const AppShell = memo(function AppShell() {
 							</div>
 						)}
 
-					<SidebarNav
-						activeAppId={activeAppId}
-						sidebarCollapsed={sidebarState.sidebarCollapsed}
-						isDark={isDark}
-						onToggleApp={toggleApp}
-						onToggleLocale={toggleLocale}
-						onToggleTheme={toggleTheme}
-					/>
+				<SidebarNav
+					activeAppId={activeAppId}
+					sidebarCollapsed={sidebarState.sidebarCollapsed}
+					isDark={isDark}
+					isAdmin={isAdmin}
+					onToggleApp={toggleApp}
+					onToggleLocale={toggleLocale}
+					onToggleTheme={toggleTheme}
+					onLogout={handleLogout}
+				/>
 				</aside>
 
 				<div

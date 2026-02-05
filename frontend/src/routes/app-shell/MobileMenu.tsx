@@ -8,6 +8,7 @@ import {
 	FolderKanban,
 	Globe2,
 	LayoutDashboard,
+	LogOut,
 	MoonStar,
 	Settings,
 	Shield,
@@ -73,9 +74,11 @@ export interface MobileMenuProps {
 	onDeleteProject: (projectKey: string, projectName: string) => void;
 	onSearchResultClick: (hit: HstrySearchHit) => void;
 	messageSearchExtraHits: HstrySearchHit[];
+	isAdmin?: boolean;
 	onToggleApp: (appId: string) => void;
 	onToggleLocale: () => void;
 	onToggleTheme: () => void;
+	onLogout: () => void;
 	onProjectSelect: (projectKey: string) => void;
 	onProjectDefaultAgentChange: (projectKey: string, agentId: string) => void;
 }
@@ -122,9 +125,11 @@ export const MobileMenu = memo(function MobileMenu({
 	onDeleteProject,
 	onSearchResultClick,
 	messageSearchExtraHits,
+	isAdmin,
 	onToggleApp,
 	onToggleLocale,
 	onToggleTheme,
+	onLogout,
 	onProjectSelect,
 	onProjectDefaultAgentChange,
 }: MobileMenuProps) {
@@ -366,6 +371,7 @@ export const MobileMenu = memo(function MobileMenu({
 					>
 						<Settings className="w-5 h-5" />
 					</Button>
+				{isAdmin && (
 					<Button
 						type="button"
 						variant="ghost"
@@ -382,6 +388,7 @@ export const MobileMenu = memo(function MobileMenu({
 					>
 						<Shield className="w-5 h-5" />
 					</Button>
+				)}
 					<Button
 						type="button"
 						variant="ghost"
@@ -407,6 +414,17 @@ export const MobileMenu = memo(function MobileMenu({
 						) : (
 							<MoonStar className="w-5 h-5" />
 						)}
+					</Button>
+					<Button
+						type="button"
+						variant="ghost"
+						size="icon"
+						rounded="full"
+						onClick={onLogout}
+						aria-label="Logout"
+						className="text-muted-foreground hover:text-primary hover:bg-sidebar-accent"
+					>
+						<LogOut className="w-5 h-5" />
 					</Button>
 				</div>
 			</div>

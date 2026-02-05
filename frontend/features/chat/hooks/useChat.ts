@@ -102,6 +102,9 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 	const isStreamingRef = useRef(false);
 	// Deferred server messages received while streaming (applied on agent.idle)
 	const deferredServerMessagesRef = useRef<unknown[] | null>(null);
+	// Stable ref for the agent event handler so the subscription effect doesn't
+	// re-run when callback identity changes (which would reset streaming state).
+	const handleAgentEventRef = useRef<((event: AgentWsEvent) => void) | null>(null);
 
 	// Batched update state
 	const batchedUpdateRef = useRef({
@@ -915,6 +918,9 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 		[handleCanonicalEvent],
 	);
 
+	// Keep the ref in sync so the subscription effect can use a stable wrapper.
+	handleAgentEventRef.current = handleAgentEvent;
+
 	// Connect to WebSocket manager
 	const connect = useCallback(() => {
 		const manager = getWsManager();
@@ -939,10 +945,15 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 		}
 		const manager = getWsManager();
 		const sessionConfig = getSessionConfig();
+		// Use the stable ref wrapper so this callback doesn't depend on
+		// handleAgentEvent identity (which changes frequently).
+		const stableHandler = (event: AgentWsEvent) => {
+			handleAgentEventRef.current?.(event);
+		};
 		unsubscribeRef.current?.();
 		unsubscribeRef.current = manager.subscribeAgentSession(
 			sessionId,
-			handleAgentEvent,
+			stableHandler,
 			sessionConfig,
 		);
 
@@ -950,7 +961,7 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 		manager.agentCreateSession(sessionId, sessionConfig);
 		await manager.waitForSessionReady(sessionId, 4000);
 		return sessionId;
-	}, [getSessionConfig, handleAgentEvent, onSelectedSessionIdChange]);
+	}, [getSessionConfig, onSelectedSessionIdChange]);
 
 	// Send message
 	const send = useCallback(
@@ -962,10 +973,13 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 				onSelectedSessionIdChange?.(options.sessionId);
 				const manager = getWsManager();
 				const sessionConfig = getSessionConfig();
+				const stableHandler = (event: AgentWsEvent) => {
+					handleAgentEventRef.current?.(event);
+				};
 				unsubscribeRef.current?.();
 				unsubscribeRef.current = manager.subscribeAgentSession(
 					options.sessionId,
-					handleAgentEvent,
+					stableHandler,
 					sessionConfig,
 				);
 			}
@@ -974,10 +988,17 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 				setMessages([]);
 				streamingMessageRef.current = null;
 				setIsStreaming(false);
+				isStreamingRef.current = false;
 				setError(null);
 				messageIdRef.current = 0;
 				sessionId = await ensureSession();
 			}
+
+			// Mark as streaming IMMEDIATELY so that any server messages
+			// (from get_messages, messages events, etc.) arriving between now
+			// and stream.message_start are deferred instead of overwriting
+			// the optimistic user message.
+			isStreamingRef.current = true;
 
 			// Add user message to display
 			const userMessage: PiDisplayMessage = {
@@ -998,6 +1019,7 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 			} catch (err) {
 				const error =
 					err instanceof Error ? err : new Error("WebSocket not ready");
+				isStreamingRef.current = false;
 				setIsAwaitingResponse(false);
 				setError(error);
 				throw error;
@@ -1018,7 +1040,6 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 		[
 			ensureSession,
 			getSessionConfig,
-			handleAgentEvent,
 			nextMessageId,
 			onSelectedSessionIdChange,
 		],
@@ -1112,7 +1133,11 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 		return unsubscribe;
 	}, []);
 
-	// Subscribe to Pi session when active session changes
+	// Subscribe to Pi session when active session changes.
+	// IMPORTANT: This effect must NOT depend on handleAgentEvent or other
+	// frequently-changing callback refs. We use handleAgentEventRef (a stable
+	// ref) to dispatch events. This prevents the effect from re-running during
+	// streaming (which would reset streamingMessageRef and lose the user message).
 	useEffect(() => {
 		// Unsubscribe from previous session
 		if (unsubscribeRef.current) {
@@ -1123,12 +1148,15 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 		if (!activeSessionId) {
 			return;
 		}
+
+		const previousId = lastActiveSessionIdRef.current;
+		const sessionActuallyChanged = previousId !== activeSessionId;
+
 		// If we just transitioned from a pending ID to a real session ID,
 		// migrate cached messages so the first message doesn't disappear.
-		const previousId = lastActiveSessionIdRef.current;
 		if (
 			previousId &&
-			previousId !== activeSessionId &&
+			sessionActuallyChanged &&
 			isPendingSessionId(previousId) &&
 			!isPendingSessionId(activeSessionId)
 		) {
@@ -1144,37 +1172,51 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 				);
 			}
 		}
-		// Load cached messages for this session — skip if we're actively
-		// streaming to avoid overwriting in-progress content.
-		if (!streamingMessageRef.current && !isStreamingRef.current) {
-			const cached = readCachedSessionMessages(
-				activeSessionId,
-				resolvedStorageKeyPrefix,
-			);
-			if (cached.length > 0) {
-				setMessages(cached);
-				messageIdRef.current = getMaxPiMessageId(cached);
-				const lastAssistant = [...cached]
-					.reverse()
-					.find((msg) => msg.role === "assistant");
-				lastAssistantMessageIdRef.current = lastAssistant?.id ?? null;
-			} else {
-				setMessages([]);
-				messageIdRef.current = 0;
-				lastAssistantMessageIdRef.current = null;
+
+		// Only reset state when the session ID actually changed.
+		// Skipping this when only the effect deps changed (but session is the
+		// same) prevents clobbering in-flight streaming and the optimistic user
+		// message.
+		if (sessionActuallyChanged) {
+			// Load cached messages for this session -- skip if we're actively
+			// streaming to avoid overwriting in-progress content.
+			if (!streamingMessageRef.current && !isStreamingRef.current) {
+				const cached = readCachedSessionMessages(
+					activeSessionId,
+					resolvedStorageKeyPrefix,
+				);
+				if (cached.length > 0) {
+					setMessages(cached);
+					messageIdRef.current = getMaxPiMessageId(cached);
+					const lastAssistant = [...cached]
+						.reverse()
+						.find((msg) => msg.role === "assistant");
+					lastAssistantMessageIdRef.current = lastAssistant?.id ?? null;
+				} else {
+					setMessages([]);
+					messageIdRef.current = 0;
+					lastAssistantMessageIdRef.current = null;
+				}
 			}
+			streamingMessageRef.current = null;
+			setIsStreaming(false);
+			isStreamingRef.current = false;
+			setIsAwaitingResponse(false);
+			setError(null);
 		}
-		streamingMessageRef.current = null;
-		setIsStreaming(false);
-		setIsAwaitingResponse(false);
-		setError(null);
+
+		// Use a stable wrapper that delegates to the latest handleAgentEvent
+		// via ref. This avoids putting handleAgentEvent in the deps array.
+		const stableHandler = (event: AgentWsEvent) => {
+			handleAgentEventRef.current?.(event);
+		};
 
 		// Subscribe to the new session (passes harness/cwd for session creation)
 		const manager = getWsManager();
 		const sessionConfig = getSessionConfig();
 		unsubscribeRef.current = manager.subscribeAgentSession(
 			activeSessionId,
-			handleAgentEvent,
+			stableHandler,
 			sessionConfig,
 		);
 
@@ -1189,7 +1231,8 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 				unsubscribeRef.current = null;
 			}
 		};
-	}, [activeSessionId, resolvedStorageKeyPrefix, handleAgentEvent, getSessionConfig]);
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [activeSessionId, resolvedStorageKeyPrefix, getSessionConfig]);
 
 	// Auto-connect on mount
 	useEffect(() => {

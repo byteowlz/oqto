@@ -65,7 +65,7 @@ pub use admin::{
 };
 
 // Auth handlers and types
-pub use auth::{dev_login, get_me, login, logout, register, update_me};
+pub use auth::{change_password, dev_login, get_me, login, logout, register, update_me};
 
 // Settings handlers and types
 pub use settings::{

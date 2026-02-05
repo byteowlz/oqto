@@ -473,6 +473,49 @@ pub async fn update_me(
     Ok(Json(updated.into()))
 }
 
+/// Request body for changing own password.
+#[derive(Debug, Deserialize)]
+pub struct ChangePasswordRequest {
+    pub current_password: String,
+    pub new_password: String,
+}
+
+/// Change current user's password (self-service).
+#[instrument(skip(state, user, request))]
+pub async fn change_password(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Json(request): Json<ChangePasswordRequest>,
+) -> ApiResult<StatusCode> {
+    // Look up the user to get their username for credential verification.
+    let db_user = state
+        .users
+        .get_user(user.id())
+        .await?
+        .ok_or_else(|| ApiError::not_found("User not found"))?;
+
+    // Verify the current password.
+    let verified = state
+        .users
+        .verify_credentials(&db_user.username, &request.current_password)
+        .await?;
+
+    if verified.is_none() {
+        return Err(ApiError::unauthorized("Current password is incorrect"));
+    }
+
+    // Update to new password (service layer handles validation + hashing).
+    let update = UpdateUserRequest {
+        password: Some(request.new_password),
+        ..Default::default()
+    };
+
+    state.users.update_user(user.id(), update).await?;
+    info!(user_id = %user.id(), "User changed their password");
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
 // Helper to convert auth Role to user Role
 impl From<crate::auth::Role> for crate::user::UserRole {
     fn from(role: crate::auth::Role) -> Self {
