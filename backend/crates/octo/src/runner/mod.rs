@@ -42,4 +42,5 @@
 
 pub mod client;
 pub mod pi_manager;
+pub mod pi_translator;
 pub mod protocol;

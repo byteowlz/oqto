@@ -22,6 +22,8 @@ use tokio::sync::{RwLock, broadcast, mpsc, oneshot};
 
 use crate::local::SandboxConfig;
 use crate::pi::{AgentMessage, PiCommand, PiEvent, PiMessage, PiResponse, PiState, SessionStats};
+use crate::runner::pi_translator::PiTranslator;
+use octo_protocol::events::Event as CanonicalEvent;
 
 // ============================================================================
 // Configuration
@@ -282,14 +284,12 @@ pub enum PiSessionCommand {
 // Event Wrapper
 // ============================================================================
 
-/// Pi event wrapped with session context.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PiEventWrapper {
-    /// Session ID this event belongs to.
-    pub session_id: String,
-    /// The actual event.
-    pub event: PiEvent,
-}
+/// Canonical event wrapper for the broadcast channel.
+///
+/// The pi_manager translates native Pi events into canonical events using
+/// `PiTranslator` and broadcasts them. One native Pi event may produce
+/// multiple canonical events, so each is broadcast individually.
+pub type PiEventWrapper = CanonicalEvent;
 
 // ============================================================================
 // Internal Session Structure
@@ -1346,9 +1346,14 @@ impl PiSessionManager {
         // Read stdout
         let mut reader = BufReader::new(stdout).lines();
         let mut pending_messages: Vec<AgentMessage> = Vec::new();
+        let mut translator = PiTranslator::new();
 
         // Mark as Idle after first successful read (Pi is ready)
         let mut first_event_seen = false;
+
+        // Runner ID for canonical event envelopes.
+        // TODO: pass actual runner_id from config
+        let runner_id = "local".to_string();
 
         while let Ok(Some(line)) = reader.next_line().await {
             if line.trim().is_empty() {
@@ -1371,7 +1376,7 @@ impl PiSessionManager {
             };
 
             // Handle responses vs events
-            let event = match msg {
+            let pi_event = match msg {
                 PiMessage::Event(e) => e,
                 PiMessage::Response(response) => {
                     debug!("Pi[{}] response: {:?}", session_id, response);
@@ -1386,8 +1391,8 @@ impl PiSessionManager {
                 }
             };
 
-            // Update state based on event
-            let new_state = match &event {
+            // Update internal state based on Pi event
+            let new_state = match &pi_event {
                 PiEvent::AgentStart => {
                     debug!("Pi[{}] AgentStart", session_id);
                     Some(PiSessionState::Streaming)
@@ -1425,15 +1430,21 @@ impl PiSessionManager {
                 }
             }
 
-            // Broadcast the event
-            let wrapped = PiEventWrapper {
-                session_id: session_id.clone(),
-                event: event.clone(),
-            };
-            let _ = event_tx.send(wrapped);
+            // Translate Pi event to canonical events and broadcast each one
+            let canonical_payloads = translator.translate(&pi_event);
+            let ts = chrono::Utc::now().timestamp_millis();
+            for payload in canonical_payloads {
+                let canonical_event = CanonicalEvent {
+                    session_id: session_id.clone(),
+                    runner_id: runner_id.clone(),
+                    ts,
+                    payload,
+                };
+                let _ = event_tx.send(canonical_event);
+            }
 
             // Persist to hstry on AgentEnd
-            if matches!(event, PiEvent::AgentEnd { .. }) && !pending_messages.is_empty() {
+            if matches!(pi_event, PiEvent::AgentEnd { .. }) && !pending_messages.is_empty() {
                 if let Some(ref db_path) = hstry_db_path {
                     if let Err(e) =
                         Self::persist_to_hstry(&session_id, &pending_messages, db_path, &work_dir)
@@ -1452,8 +1463,18 @@ impl PiSessionManager {
             }
         }
 
-        // Process exited
+        // Process exited -- broadcast error event
         info!("Pi[{}] stdout reader finished (process exited)", session_id);
+        let exit_event = translator.state.on_process_exit(
+            "Agent process exited".to_string(),
+        );
+        let canonical_event = CanonicalEvent {
+            session_id: session_id.clone(),
+            runner_id,
+            ts: chrono::Utc::now().timestamp_millis(),
+            payload: exit_event,
+        };
+        let _ = event_tx.send(canonical_event);
         *state.write().await = PiSessionState::Stopping;
     }
 

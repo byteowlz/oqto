@@ -12,6 +12,7 @@
 /** Supported channels for multiplexed WebSocket */
 export type Channel =
 	| "pi"
+	| "agent"
 	| "files"
 	| "terminal"
 	| "hstry"
@@ -448,21 +449,6 @@ export type WsEventBase = {
 	id?: string;
 };
 
-/** Tool use event data */
-export type ToolUseData = {
-	id: string;
-	name: string;
-	input: unknown;
-};
-
-/** Tool result event data */
-export type ToolResultData = {
-	id: string;
-	name?: string;
-	content: unknown;
-	is_error?: boolean;
-};
-
 export type PiCommandInfo = {
 	name: string;
 	description?: string | null;
@@ -477,7 +463,12 @@ export type PiSessionInfo = {
 	subscriber_count: number;
 };
 
-/** Pi channel events */
+/**
+ * Pi channel events (command responses only).
+ *
+ * Streaming events now flow through the "agent" channel as canonical events.
+ * This type only contains command-response variants used by handle_pi_command.
+ */
 export type PiWsEvent =
 	| ({ channel: "pi"; type: "session_created"; session_id: string } & WsEventBase)
 	| ({ channel: "pi"; type: "session_closed"; session_id: string } & WsEventBase)
@@ -492,30 +483,18 @@ export type PiWsEvent =
 			session_id: string;
 			state: unknown;
 	  } & WsEventBase)
-	| { channel: "pi"; type: "message_start"; session_id: string; role: string }
-	| { channel: "pi"; type: "text"; session_id: string; data: string }
-	| { channel: "pi"; type: "thinking"; session_id: string; data: string }
-	| { channel: "pi"; type: "tool_use"; session_id: string; data: ToolUseData }
-	| { channel: "pi"; type: "tool_start"; session_id: string; data: ToolUseData }
-	| {
-			channel: "pi";
-			type: "tool_result";
-			session_id: string;
-			data: ToolResultData;
-	  }
-	| { channel: "pi"; type: "done"; session_id: string }
 	| ({
 			channel: "pi";
 			type: "error";
 			session_id: string;
 			error: string;
 	  } & WsEventBase)
-	| {
+	| ({
 			channel: "pi";
-			type: "persisted";
+			type: "command_ack";
 			session_id: string;
-			message_count: number;
-	  }
+			command: string;
+	  } & WsEventBase)
 	| ({
 			channel: "pi";
 			type: "model_changed";
@@ -561,10 +540,48 @@ export type PiWsEvent =
 	  } & WsEventBase)
 	| ({
 			channel: "pi";
+			type: "fork_result";
+			session_id: string;
+			text: string;
+			cancelled: boolean;
+	  } & WsEventBase)
+	| ({
+			channel: "pi";
 			type: "thinking_level_changed";
 			session_id: string;
 			level: string;
+	  } & WsEventBase)
+	| ({
+			channel: "pi";
+			type: "bash_result";
+			session_id: string;
+			output: string;
+			exit_code: number;
+			cancelled: boolean;
+			truncated: boolean;
+			full_output_path?: string;
+	  } & WsEventBase)
+	| ({
+			channel: "pi";
+			type: "export_html_result";
+			session_id: string;
+			path: string;
 	  } & WsEventBase);
+
+/**
+ * Agent channel events (canonical protocol).
+ *
+ * These are canonical events from the agent runtime (Pi, Claude Code, etc.)
+ * The `event` field discriminates the event type.
+ */
+export type AgentWsEvent = {
+	channel: "agent";
+	session_id: string;
+	runner_id: string;
+	ts: number;
+	event: string;
+	[key: string]: unknown;
+};
 
 export type DirEntry = {
 	name: string;
@@ -722,6 +739,7 @@ export type SystemWsEvent =
 /** All possible WebSocket events */
 export type WsEvent =
 	| PiWsEvent
+	| AgentWsEvent
 	| FilesWsEvent
 	| TerminalWsEvent
 	| HstryWsEvent

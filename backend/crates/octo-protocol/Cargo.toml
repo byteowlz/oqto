@@ -1,0 +1,15 @@
+[package]
+name = "octo-protocol"
+description = "Canonical protocol types for Octo agent communication"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+hstry-core = { workspace = true }
+
+[lints]
+workspace = true

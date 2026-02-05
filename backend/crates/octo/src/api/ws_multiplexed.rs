@@ -31,8 +31,8 @@ use base64::Engine;
 
 use crate::auth::{Claims, CurrentUser};
 use crate::local::ProcessManager;
-use crate::pi::{AssistantMessageEvent, PiEvent};
-use crate::runner::client::{PiSubscription, PiSubscriptionEvent, RunnerClient};
+
+use crate::runner::client::{PiSubscriptionEvent, RunnerClient};
 use crate::runner::protocol::{PiCreateSessionRequest, PiSessionConfig as RunnerPiSessionConfig};
 use crate::session::Session;
 use crate::user_plane::{DirectUserPlane, RunnerUserPlane};
@@ -693,6 +693,10 @@ pub struct TrxIssueUpdate {
 #[serde(tag = "channel", rename_all = "snake_case")]
 pub enum WsEvent {
     Pi(PiWsEvent),
+    /// Canonical agent events (streaming, state, delegation, etc.).
+    /// Serializes as `{"channel": "agent", "session_id": ..., "event": ..., ...}`.
+    #[serde(rename = "agent")]
+    Agent(octo_protocol::events::Event),
     Files(FilesWsEvent),
     Terminal(TerminalWsEvent),
     Hstry(HstryWsEvent),
@@ -701,7 +705,10 @@ pub enum WsEvent {
     System(SystemWsEvent),
 }
 
-/// Pi channel events.
+/// Pi channel events (command responses only).
+///
+/// Streaming events now flow through `WsEvent::Agent` as canonical events.
+/// This enum only contains command-response variants used by `handle_pi_command`.
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum PiWsEvent {
@@ -730,40 +737,12 @@ pub enum PiWsEvent {
         session_id: String,
         state: Value,
     },
-    /// Message start (streaming)
-    MessageStart { session_id: String, role: String },
-    /// Text delta (streaming)
-    Text { session_id: String, data: String },
-    /// Thinking delta (streaming)
-    Thinking { session_id: String, data: String },
-    /// Tool use event
-    ToolUse {
-        session_id: String,
-        data: ToolUseData,
-    },
-    /// Tool start event
-    ToolStart {
-        session_id: String,
-        data: ToolUseData,
-    },
-    /// Tool result event
-    ToolResult {
-        session_id: String,
-        data: ToolResultData,
-    },
-    /// Stream complete
-    Done { session_id: String },
     /// Error event
     Error {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
         session_id: String,
         error: String,
-    },
-    /// Persistence confirmation
-    Persisted {
-        session_id: String,
-        message_count: u64,
     },
     /// Command acknowledgement
     CommandAck {
@@ -872,24 +851,6 @@ pub struct PiSessionInfo {
     pub state: String,
     pub last_activity: i64,
     pub subscriber_count: usize,
-}
-
-/// Tool use event data.
-#[derive(Debug, Clone, Serialize)]
-pub struct ToolUseData {
-    pub id: String,
-    pub name: String,
-    pub input: Value,
-}
-
-/// Tool result event data.
-#[derive(Debug, Clone, Serialize)]
-pub struct ToolResultData {
-    pub id: String,
-    pub name: Option<String>,
-    pub content: Value,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub is_error: Option<bool>,
 }
 
 /// Fork message info.
@@ -2542,7 +2503,10 @@ async fn handle_pi_command(
     }
 }
 
-/// Forward Pi events from runner subscription to WebSocket.
+/// Forward canonical events from runner subscription to WebSocket.
+///
+/// The runner's PiTranslator has already converted native Pi events to
+/// canonical format. We just wrap them as `WsEvent::Agent` and send.
 async fn forward_pi_events(
     runner: &RunnerClient,
     session_id: &str,
@@ -2552,9 +2516,8 @@ async fn forward_pi_events(
 
     loop {
         match subscription.next().await {
-            Some(PiSubscriptionEvent::Event(pi_event)) => {
-                let ws_event = pi_event_to_ws_event(session_id, pi_event);
-                if event_tx.send(ws_event).is_err() {
+            Some(PiSubscriptionEvent::Event(canonical_event)) => {
+                if event_tx.send(WsEvent::Agent(canonical_event)).is_err() {
                     // WebSocket closed
                     break;
                 }
@@ -2571,11 +2534,18 @@ async fn forward_pi_events(
                     "Pi subscription error for session {}: {:?} - {}",
                     session_id, code, message
                 );
-                let _ = event_tx.send(WsEvent::Pi(PiWsEvent::Error {
-                    id: None,
+                // Emit error as canonical agent.error event
+                let error_event = octo_protocol::events::Event {
                     session_id: session_id.to_string(),
-                    error: message,
-                }));
+                    runner_id: "local".to_string(),
+                    ts: chrono::Utc::now().timestamp_millis(),
+                    payload: octo_protocol::events::EventPayload::AgentError {
+                        error: format!("Subscription error ({:?}): {}", code, message),
+                        recoverable: false,
+                        phase: None,
+                    },
+                };
+                let _ = event_tx.send(WsEvent::Agent(error_event));
                 break;
             }
             None => {
@@ -2588,186 +2558,9 @@ async fn forward_pi_events(
     Ok(())
 }
 
-/// Convert a Pi event to a WebSocket event.
-fn pi_event_to_ws_event(session_id: &str, event: PiEvent) -> WsEvent {
-    let sid = session_id.to_string();
-
-    match event {
-        PiEvent::AgentStart => WsEvent::Pi(PiWsEvent::MessageStart {
-            session_id: sid,
-            role: "assistant".to_string(),
-        }),
-        PiEvent::AgentEnd { .. } => WsEvent::Pi(PiWsEvent::Done { session_id: sid }),
-        PiEvent::TurnStart => WsEvent::Pi(PiWsEvent::MessageStart {
-            session_id: sid,
-            role: "assistant".to_string(),
-        }),
-        PiEvent::TurnEnd { .. } => WsEvent::Pi(PiWsEvent::Done { session_id: sid }),
-        PiEvent::MessageStart { message } => {
-            WsEvent::Pi(PiWsEvent::MessageStart {
-                session_id: sid,
-                role: message.role.clone(),
-            })
-        }
-        PiEvent::MessageUpdate {
-            assistant_message_event,
-            ..
-        } => {
-            // Convert AssistantMessageEvent to appropriate WS event
-            match assistant_message_event {
-                AssistantMessageEvent::TextDelta { delta, .. } => WsEvent::Pi(PiWsEvent::Text {
-                    session_id: sid,
-                    data: delta,
-                }),
-                AssistantMessageEvent::ThinkingDelta { delta, .. } => {
-                    WsEvent::Pi(PiWsEvent::Thinking {
-                        session_id: sid,
-                        data: delta,
-                    })
-                }
-                AssistantMessageEvent::TextStart { .. }
-                | AssistantMessageEvent::ThinkingStart { .. }
-                | AssistantMessageEvent::ToolcallStart { .. }
-                | AssistantMessageEvent::Start { .. } => {
-                    // These don't produce visible output, skip
-                    WsEvent::Pi(PiWsEvent::Text {
-                        session_id: sid,
-                        data: String::new(),
-                    })
-                }
-                AssistantMessageEvent::TextEnd { content, .. } => WsEvent::Pi(PiWsEvent::Text {
-                    session_id: sid,
-                    data: content,
-                }),
-                AssistantMessageEvent::ThinkingEnd { content, .. } => {
-                    WsEvent::Pi(PiWsEvent::Thinking {
-                        session_id: sid,
-                        data: content,
-                    })
-                }
-                AssistantMessageEvent::ToolcallDelta { .. } => {
-                    // Tool call deltas are JSON fragments, not user-visible.
-                    WsEvent::Pi(PiWsEvent::Text {
-                        session_id: sid,
-                        data: String::new(),
-                    })
-                }
-                AssistantMessageEvent::ToolcallEnd { tool_call, .. } => {
-                    WsEvent::Pi(PiWsEvent::ToolUse {
-                        session_id: sid,
-                        data: ToolUseData {
-                            id: tool_call.id.clone(),
-                            name: tool_call.name.clone(),
-                            input: tool_call.arguments.clone(),
-                        },
-                    })
-                }
-                AssistantMessageEvent::Done { .. } => {
-                    WsEvent::Pi(PiWsEvent::Done { session_id: sid })
-                }
-                AssistantMessageEvent::Error { reason, error } => {
-                    let error_str = error
-                        .as_ref()
-                        .and_then(|m| serde_json::to_string(m).ok())
-                        .unwrap_or_else(|| reason.clone());
-                    WsEvent::Pi(PiWsEvent::Error {
-                        id: None,
-                        session_id: sid,
-                        error: error_str,
-                    })
-                }
-                AssistantMessageEvent::Unknown => {
-                    // Unknown event type, skip
-                    WsEvent::Pi(PiWsEvent::Text {
-                        session_id: sid,
-                        data: String::new(),
-                    })
-                }
-            }
-        }
-        PiEvent::MessageEnd { .. } => WsEvent::Pi(PiWsEvent::Done { session_id: sid }),
-        PiEvent::ToolExecutionStart {
-            tool_call_id,
-            tool_name,
-            args,
-        } => WsEvent::Pi(PiWsEvent::ToolStart {
-            session_id: sid,
-            data: ToolUseData {
-                id: tool_call_id,
-                name: tool_name,
-                input: args,
-            },
-        }),
-        PiEvent::ToolExecutionUpdate {
-            tool_call_id,
-            tool_name,
-            partial_result,
-            ..
-        } => WsEvent::Pi(PiWsEvent::ToolUse {
-            session_id: sid,
-            data: ToolUseData {
-                id: tool_call_id,
-                name: tool_name,
-                input: serde_json::to_value(&partial_result).unwrap_or(Value::Null),
-            },
-        }),
-        PiEvent::ToolExecutionEnd {
-            tool_call_id,
-            tool_name,
-            result,
-            is_error,
-        } => WsEvent::Pi(PiWsEvent::ToolResult {
-            session_id: sid,
-            data: ToolResultData {
-                id: tool_call_id,
-                name: Some(tool_name),
-                content: serde_json::to_value(&result).unwrap_or(Value::Null),
-                is_error: Some(is_error),
-            },
-        }),
-        PiEvent::AutoCompactionStart { .. } => WsEvent::Pi(PiWsEvent::State {
-            id: None,
-            session_id: sid,
-            state: serde_json::json!({"compacting": true}),
-        }),
-        PiEvent::AutoCompactionEnd { .. } => WsEvent::Pi(PiWsEvent::State {
-            id: None,
-            session_id: sid,
-            state: serde_json::json!({"compacting": false}),
-        }),
-        PiEvent::AutoRetryStart { .. } => WsEvent::Pi(PiWsEvent::State {
-            id: None,
-            session_id: sid,
-            state: serde_json::json!({"retrying": true}),
-        }),
-        PiEvent::AutoRetryEnd { .. } => WsEvent::Pi(PiWsEvent::State {
-            id: None,
-            session_id: sid,
-            state: serde_json::json!({"retrying": false}),
-        }),
-        PiEvent::ExtensionUiRequest(_) => {
-            // Extension UI requests need special handling - for now just acknowledge
-            WsEvent::Pi(PiWsEvent::State {
-                id: None,
-                session_id: sid,
-                state: serde_json::json!({"extension_ui_request": true}),
-            })
-        }
-        PiEvent::HookError { error, .. } => WsEvent::Pi(PiWsEvent::Error {
-            id: None,
-            session_id: sid,
-            error,
-        }),
-        PiEvent::Unknown => {
-            debug!("Received unknown Pi event type");
-            WsEvent::Pi(PiWsEvent::State {
-                id: None,
-                session_id: sid,
-                state: Value::Null,
-            })
-        }
-    }
-}
+// NOTE: The old pi_event_to_ws_event() function has been removed.
+// Streaming events now flow as canonical events through the PiTranslator
+// in pi_manager.rs and are forwarded directly via WsEvent::Agent.
 
 /// Handle Files channel commands.
 async fn handle_files_command(
@@ -3967,14 +3760,14 @@ mod tests {
     }
 
     #[test]
-    fn test_serialize_pi_event() {
-        let event = WsEvent::Pi(PiWsEvent::Text {
+    fn test_serialize_pi_command_response() {
+        let event = WsEvent::Pi(PiWsEvent::SessionCreated {
+            id: Some("req-1".into()),
             session_id: "ses_123".into(),
-            data: "Hello world".into(),
         });
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains(r#""channel":"pi""#));
-        assert!(json.contains(r#""type":"text""#));
+        assert!(json.contains(r#""type":"session_created""#));
         assert!(json.contains(r#""session_id":"ses_123""#));
     }
 
@@ -3984,5 +3777,41 @@ mod tests {
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains(r#""channel":"system""#));
         assert!(json.contains(r#""type":"connected""#));
+    }
+
+    #[test]
+    fn test_serialize_canonical_agent_event() {
+        use octo_protocol::events::{AgentPhase, EventPayload};
+
+        let event = WsEvent::Agent(octo_protocol::events::Event {
+            session_id: "ses_abc".into(),
+            runner_id: "local".into(),
+            ts: 1738764000000,
+            payload: EventPayload::StreamTextDelta {
+                message_id: "msg-1".into(),
+                delta: "Hello".into(),
+                content_index: 0,
+            },
+        });
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains(r#""channel":"agent""#));
+        assert!(json.contains(r#""event":"stream.text_delta""#));
+        assert!(json.contains(r#""session_id":"ses_abc""#));
+        assert!(json.contains(r#""delta":"Hello""#));
+    }
+
+    #[test]
+    fn test_serialize_canonical_agent_idle() {
+        use octo_protocol::events::EventPayload;
+
+        let event = WsEvent::Agent(octo_protocol::events::Event {
+            session_id: "ses_abc".into(),
+            runner_id: "local".into(),
+            ts: 1738764000000,
+            payload: EventPayload::AgentIdle,
+        });
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains(r#""channel":"agent""#));
+        assert!(json.contains(r#""event":"agent.idle""#));
     }
 }

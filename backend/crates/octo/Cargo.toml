@@ -125,6 +125,9 @@ prost.workspace = true
 # Chat history (unified with hstry)
 hstry-core.workspace = true
 
+# Canonical protocol types
+octo-protocol = { path = "../octo-protocol" }
+
 [dev-dependencies]
 tower = { workspace = true, features = ["util"] }
 axum-test.workspace = true

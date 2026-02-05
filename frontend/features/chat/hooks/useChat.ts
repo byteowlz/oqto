@@ -19,7 +19,7 @@ import {
 	normalizeWorkspacePath,
 } from "@/lib/session-utils";
 import { getWsManager } from "@/lib/ws-manager";
-import type { PiWsEvent, WsMuxConnectionState } from "@/lib/ws-mux-types";
+import type { AgentWsEvent, PiWsEvent, WsMuxConnectionState } from "@/lib/ws-mux-types";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
 	readCachedSessionMessages,
@@ -223,16 +223,469 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 		}
 	}, [flushStreamingUpdate]);
 
-	// Handle Pi WebSocket events
+	// ========================================================================
+	// Canonical agent event handler
+	// ========================================================================
+
+	/**
+	 * Handle canonical protocol events from the "agent" channel.
+	 *
+	 * These events are produced by PiTranslator on the backend and carry
+	 * incremental deltas (not cumulative content like the old Pi events).
+	 */
+	const handleCanonicalEvent = useCallback(
+		(event: AgentWsEvent) => {
+			const eventType = event.event;
+
+			if (isPiDebugEnabled()) {
+				console.debug("[useChat] Canonical event:", eventType, event);
+			}
+
+			switch (eventType) {
+				// -- Streaming lifecycle --
+				case "stream.message_start": {
+					if (!streamingMessageRef.current) {
+						const assistantMessage: PiDisplayMessage = {
+							id: nextMessageId(),
+							role: "assistant",
+							parts: [],
+							timestamp: Date.now(),
+							isStreaming: true,
+						};
+						streamingMessageRef.current = assistantMessage;
+						lastAssistantMessageIdRef.current = assistantMessage.id;
+						setMessages((prev) => [...prev, assistantMessage]);
+					}
+					setIsStreaming(true);
+					setIsAwaitingResponse(false);
+					break;
+				}
+
+				// -- Text delta (incremental) --
+				case "stream.text_delta": {
+					const delta = event.delta as string | undefined;
+					if (!delta) break;
+					const currentMsg = ensureAssistantMessage(true);
+					const lastPart = currentMsg.parts[currentMsg.parts.length - 1];
+					if (lastPart?.type === "text") {
+						lastPart.content += delta;
+					} else {
+						currentMsg.parts.push({ type: "text", content: delta });
+					}
+					scheduleStreamingUpdate();
+					setIsAwaitingResponse(false);
+					break;
+				}
+
+				// -- Thinking delta (incremental) --
+				case "stream.thinking_delta": {
+					const delta = event.delta as string | undefined;
+					if (!delta) break;
+					const currentMsg = ensureAssistantMessage(true);
+					const lastPart = currentMsg.parts[currentMsg.parts.length - 1];
+					if (lastPart?.type === "thinking") {
+						lastPart.content += delta;
+					} else {
+						currentMsg.parts.push({ type: "thinking", content: delta });
+					}
+					scheduleStreamingUpdate();
+					setIsAwaitingResponse(false);
+					break;
+				}
+
+				// -- Tool call being assembled by LLM --
+				case "stream.tool_call_start": {
+					const toolCallId = event.tool_call_id as string;
+					const name = event.name as string;
+					const targetMessage = ensureAssistantMessage(true);
+					const alreadyPresent = targetMessage.parts.some(
+						(p) => p.type === "tool_use" && p.id === toolCallId,
+					);
+					if (!alreadyPresent) {
+						const part: PiMessagePart = {
+							type: "tool_use",
+							id: toolCallId,
+							name,
+							input: undefined,
+						};
+						if (streamingMessageRef.current?.id === targetMessage.id) {
+							targetMessage.parts.push(part);
+							scheduleStreamingUpdate();
+						} else {
+							appendPartToMessage(targetMessage.id, part);
+						}
+					}
+					setIsStreaming(true);
+					setIsAwaitingResponse(false);
+					break;
+				}
+
+				// -- Tool call finalized (LLM produced final input) --
+				case "stream.tool_call_end": {
+					const toolCall = event.tool_call as
+						| { id: string; name: string; input: unknown }
+						| undefined;
+					if (!toolCall) break;
+					const targetMessage = ensureAssistantMessage(true);
+					const existingPart = targetMessage.parts.find(
+						(p) => p.type === "tool_use" && p.id === toolCall.id,
+					);
+					if (existingPart && existingPart.type === "tool_use") {
+						existingPart.input = toolCall.input;
+						scheduleStreamingUpdate();
+					}
+					break;
+				}
+
+				// -- Tool execution started --
+				case "tool.start": {
+					const toolCallId = event.tool_call_id as string;
+					const name = event.name as string;
+					const input = event.input;
+					// Ensure there's a tool_use part for this tool (in case we missed
+					// stream.tool_call_start, e.g. on reconnect)
+					const targetMessage = ensureAssistantMessage(true);
+					const existing = targetMessage.parts.find(
+						(p) => p.type === "tool_use" && p.id === toolCallId,
+					);
+					if (!existing) {
+						const part: PiMessagePart = {
+							type: "tool_use",
+							id: toolCallId,
+							name,
+							input,
+						};
+						if (streamingMessageRef.current?.id === targetMessage.id) {
+							targetMessage.parts.push(part);
+							scheduleStreamingUpdate();
+						} else {
+							appendPartToMessage(targetMessage.id, part);
+						}
+					}
+					setIsStreaming(true);
+					setIsAwaitingResponse(false);
+					break;
+				}
+
+				// -- Tool execution completed --
+				case "tool.end": {
+					const toolCallId = event.tool_call_id as string;
+					const name = event.name as string;
+					const output = event.output;
+					const isError = event.is_error as boolean;
+					const targetMessage = ensureAssistantMessage(false);
+					const matchingToolUse = targetMessage.parts.find(
+						(p) => p.type === "tool_use" && p.id === toolCallId,
+					);
+					const part: PiMessagePart = {
+						type: "tool_result",
+						id: toolCallId,
+						name:
+							name ||
+							(matchingToolUse?.type === "tool_use"
+								? matchingToolUse.name
+								: undefined),
+						content: output,
+						isError,
+					};
+					if (streamingMessageRef.current?.id === targetMessage.id) {
+						targetMessage.parts.push(part);
+						scheduleStreamingUpdate();
+					} else {
+						appendPartToMessage(targetMessage.id, part);
+					}
+					setIsStreaming(true);
+					setIsAwaitingResponse(false);
+					break;
+				}
+
+				// -- Stream complete --
+				case "stream.done": {
+					// Cancel pending batched update
+					const batch = batchedUpdateRef.current;
+					if (batch.rafId !== null) {
+						cancelAnimationFrame(batch.rafId);
+						batch.rafId = null;
+					}
+					batch.pendingUpdate = false;
+
+					if (streamingMessageRef.current) {
+						streamingMessageRef.current.isStreaming = false;
+						const completedMessage = {
+							...streamingMessageRef.current,
+							parts: streamingMessageRef.current.parts.map((p) => ({
+								...p,
+							})),
+						};
+
+						setMessages((prev) => {
+							const idx = prev.findIndex(
+								(m) => m.id === completedMessage.id,
+							);
+							if (idx >= 0) {
+								const updated = [...prev];
+								updated[idx] = completedMessage;
+								return updated;
+							}
+							return prev;
+						});
+
+						onMessageComplete?.(completedMessage);
+						streamingMessageRef.current = null;
+					}
+					setIsStreaming(false);
+					setIsAwaitingResponse(false);
+					break;
+				}
+
+				// -- Agent idle (streaming ended) --
+				case "agent.idle": {
+					setIsStreaming(false);
+					setIsAwaitingResponse(false);
+					if (streamingMessageRef.current) {
+						streamingMessageRef.current.isStreaming = false;
+						streamingMessageRef.current = null;
+					}
+					break;
+				}
+
+				// -- Agent working (streaming started) --
+				case "agent.working": {
+					setIsAwaitingResponse(false);
+					break;
+				}
+
+				// -- Agent error --
+				case "agent.error": {
+					const errMsg = (event.error as string) || "Unknown error";
+					const recoverable = event.recoverable as boolean;
+					const err = new Error(errMsg);
+					setError(err);
+					onError?.(err);
+					setIsStreaming(false);
+					setIsAwaitingResponse(false);
+
+					// Auto-recover for session-not-found errors
+					const sessionId = activeSessionIdRef.current;
+					const now = Date.now();
+					const shouldRecover =
+						Boolean(sessionId) &&
+						!recoverable &&
+						(errMsg.includes("PiSessionNotFound") ||
+							errMsg.includes("SessionNotFound") ||
+							errMsg.includes("Response channel closed"));
+					if (shouldRecover && now - lastSessionRecoveryRef.current > 5000) {
+						lastSessionRecoveryRef.current = now;
+						const manager = getWsManager();
+						manager.piCreateSession(
+							sessionId as string,
+							getSessionConfig(),
+						);
+						setTimeout(() => {
+							manager.piGetState(sessionId as string);
+							manager.send({
+								channel: "pi",
+								type: "get_messages",
+								session_id: sessionId as string,
+							});
+						}, 250);
+					}
+
+					if (streamingMessageRef.current) {
+						streamingMessageRef.current.isStreaming = false;
+						streamingMessageRef.current.parts.push({
+							type: "error",
+							content: errMsg,
+						});
+						const completedMessage = {
+							...streamingMessageRef.current,
+							parts: streamingMessageRef.current.parts.map((p) => ({
+								...p,
+							})),
+						};
+						setMessages((prev) => {
+							const idx = prev.findIndex(
+								(m) => m.id === completedMessage.id,
+							);
+							if (idx >= 0) {
+								const updated = [...prev];
+								updated[idx] = completedMessage;
+								return updated;
+							}
+							return prev;
+						});
+						onMessageComplete?.(completedMessage);
+						streamingMessageRef.current = null;
+					} else {
+						const errorMessage: PiDisplayMessage = {
+							id: nextMessageId(),
+							role: "assistant",
+							parts: [{ type: "error", content: errMsg }],
+							timestamp: Date.now(),
+							isStreaming: false,
+						};
+						setMessages((prev) => [...prev, errorMessage]);
+						onMessageComplete?.(errorMessage);
+					}
+					break;
+				}
+
+				// -- Compaction --
+				case "compact.start": {
+					const currentMsg = ensureAssistantMessage(false);
+					const part: PiMessagePart = {
+						type: "compaction",
+						content: "Compacting context...",
+					};
+					if (streamingMessageRef.current?.id === currentMsg.id) {
+						currentMsg.parts.push(part);
+						scheduleStreamingUpdate();
+					} else {
+						appendPartToMessage(currentMsg.id, part);
+					}
+					break;
+				}
+
+				case "compact.end": {
+					const success = event.success as boolean;
+					if (!success) {
+						const errText =
+							(event.error as string) || "Compaction failed";
+						const currentMsg = ensureAssistantMessage(false);
+						const part: PiMessagePart = {
+							type: "error",
+							content: errText,
+						};
+						if (streamingMessageRef.current?.id === currentMsg.id) {
+							currentMsg.parts.push(part);
+							scheduleStreamingUpdate();
+						} else {
+							appendPartToMessage(currentMsg.id, part);
+						}
+					}
+					break;
+				}
+
+				// -- Config changes --
+				case "config.model_changed": {
+					const sessionId = event.session_id;
+					const manager = getWsManager();
+					manager.piGetState(sessionId);
+					if (isPiDebugEnabled()) {
+						console.debug(
+							"[useChat] Model changed:",
+							sessionId,
+							event.provider,
+							event.model_id,
+						);
+					}
+					break;
+				}
+
+				// -- Messages sync --
+				case "messages": {
+					const msgs = event.messages;
+					if (Array.isArray(msgs)) {
+						const displayMessages = normalizePiMessages(
+							msgs,
+							`server-${event.session_id}`,
+						);
+
+						if (displayMessages.length > 0) {
+							setMessages(displayMessages);
+							messageIdRef.current =
+								getMaxPiMessageId(displayMessages);
+							const lastAssistant = [...displayMessages]
+								.reverse()
+								.find((msg) => msg.role === "assistant");
+							lastAssistantMessageIdRef.current =
+								lastAssistant?.id ?? null;
+						}
+
+						if (isPiDebugEnabled()) {
+							console.debug(
+								"[useChat] Loaded messages:",
+								event.session_id,
+								displayMessages.length,
+							);
+						}
+					}
+					break;
+				}
+
+				// -- Persisted --
+				case "persisted": {
+					if (isPiDebugEnabled()) {
+						console.debug(
+							"[useChat] Persisted:",
+							event.session_id,
+							event.message_count,
+						);
+					}
+					break;
+				}
+
+				default: {
+					if (isPiDebugEnabled()) {
+						console.debug(
+							"[useChat] Unhandled canonical event:",
+							eventType,
+						);
+					}
+				}
+			}
+		},
+		[
+			appendPartToMessage,
+			ensureAssistantMessage,
+			nextMessageId,
+			scheduleStreamingUpdate,
+			onMessageComplete,
+			onError,
+			getSessionConfig,
+		],
+	);
+
+	// ========================================================================
+	// Pi command-response + agent event dispatcher
+	// ========================================================================
+
+	/**
+	 * Handle events dispatched by ws-manager's piSessionHandlers.
+	 *
+	 * Events come from two channels:
+	 * - "pi": command responses (session_created, state, error, messages, etc.)
+	 * - "agent": canonical streaming/lifecycle events from PiTranslator
+	 *
+	 * ws-manager casts agent events to PiWsEvent for the handler signature,
+	 * so we check event.channel to disambiguate.
+	 */
 	const handlePiEvent = useCallback(
 		(event: PiWsEvent) => {
-			// Validate session_id
+			// Route agent channel events to the canonical handler
+			if ("channel" in event && (event as unknown as AgentWsEvent).channel === "agent") {
+				const agentEvent = event as unknown as AgentWsEvent;
+				// Validate session_id
+				const activeId = activeSessionIdRef.current;
+				if (activeId && agentEvent.session_id !== activeId) {
+					if (isPiDebugEnabled()) {
+						console.debug(
+							`[useChat] Ignoring agent event for session ${agentEvent.session_id}, active is ${activeId}`,
+						);
+					}
+					return;
+				}
+				handleCanonicalEvent(agentEvent);
+				return;
+			}
+
+			// Pi command-response events
 			if ("session_id" in event) {
 				const activeId = activeSessionIdRef.current;
 				if (activeId && event.session_id !== activeId) {
 					if (isPiDebugEnabled()) {
 						console.debug(
-							`[useChat] Ignoring event for session ${event.session_id}, active is ${activeId}`,
+							`[useChat] Ignoring Pi event for session ${event.session_id}, active is ${activeId}`,
 						);
 					}
 					return;
@@ -240,12 +693,11 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 			}
 
 			if (isPiDebugEnabled()) {
-				console.debug("[useChat] Event:", event.type, event);
+				console.debug("[useChat] Pi event:", event.type, event);
 			}
 
 			switch (event.type) {
 				case "session_created": {
-					// Session created/resumed - request messages to populate history
 					const manager = getWsManager();
 					manager.send({
 						channel: "pi",
@@ -275,158 +727,6 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 					break;
 				}
 
-				case "message_start": {
-					if (!streamingMessageRef.current) {
-						const assistantMessage: PiDisplayMessage = {
-							id: nextMessageId(),
-							role: "assistant",
-							parts: [],
-							timestamp: Date.now(),
-							isStreaming: true,
-						};
-						streamingMessageRef.current = assistantMessage;
-						lastAssistantMessageIdRef.current = assistantMessage.id;
-						setMessages((prev) => [...prev, assistantMessage]);
-					}
-					setIsStreaming(true);
-					setIsAwaitingResponse(false);
-					break;
-				}
-
-				case "text": {
-					const text = event.data;
-					if (!text) break;
-					const currentMsg = ensureAssistantMessage(true);
-					const lastPart = currentMsg.parts[currentMsg.parts.length - 1];
-					if (lastPart?.type === "text") {
-						if (text === lastPart.content) {
-							break;
-						}
-						if (text.startsWith(lastPart.content)) {
-							lastPart.content = text;
-						} else {
-							lastPart.content += text;
-						}
-					} else {
-						currentMsg.parts.push({ type: "text", content: text });
-					}
-					scheduleStreamingUpdate();
-					setIsAwaitingResponse(false);
-					break;
-				}
-
-				case "thinking": {
-					const text = event.data;
-					if (!text) break;
-					const currentMsg = ensureAssistantMessage(true);
-					const lastPart = currentMsg.parts[currentMsg.parts.length - 1];
-					if (lastPart?.type === "thinking") {
-						if (text === lastPart.content) {
-							break;
-						}
-						if (text.startsWith(lastPart.content)) {
-							lastPart.content = text;
-						} else {
-							lastPart.content += text;
-						}
-					} else {
-						currentMsg.parts.push({ type: "thinking", content: text });
-					}
-					scheduleStreamingUpdate();
-					setIsAwaitingResponse(false);
-					break;
-				}
-
-				case "tool_use":
-				case "tool_start": {
-					const tool = event.data;
-					const targetMessage = ensureAssistantMessage(true);
-					const alreadyPresent = targetMessage.parts.some(
-						(p) => p.type === "tool_use" && p.id === tool.id,
-					);
-					if (!alreadyPresent) {
-						const part: PiMessagePart = {
-							type: "tool_use",
-							id: tool.id,
-							name: tool.name,
-							input: tool.input,
-						};
-						if (streamingMessageRef.current?.id === targetMessage.id) {
-							targetMessage.parts.push(part);
-							scheduleStreamingUpdate();
-						} else {
-							appendPartToMessage(targetMessage.id, part);
-						}
-					}
-					setIsStreaming(true);
-					setIsAwaitingResponse(false);
-					break;
-				}
-
-				case "tool_result": {
-					const result = event.data;
-					const targetMessage = ensureAssistantMessage(false);
-					const matchingToolUse = targetMessage.parts.find(
-						(p) => p.type === "tool_use" && p.id === result.id,
-					);
-					const part: PiMessagePart = {
-						type: "tool_result",
-						id: result.id,
-						name:
-							result.name ||
-							(matchingToolUse?.type === "tool_use"
-								? matchingToolUse.name
-								: undefined),
-						content: result.content,
-						isError: result.is_error,
-					};
-					if (streamingMessageRef.current?.id === targetMessage.id) {
-						targetMessage.parts.push(part);
-						scheduleStreamingUpdate();
-					} else {
-						appendPartToMessage(targetMessage.id, part);
-					}
-					setIsStreaming(true);
-					setIsAwaitingResponse(false);
-					break;
-				}
-
-				case "done": {
-					// Cancel pending batched update
-					const batch = batchedUpdateRef.current;
-					if (batch.rafId !== null) {
-						cancelAnimationFrame(batch.rafId);
-						batch.rafId = null;
-					}
-					batch.pendingUpdate = false;
-
-					if (streamingMessageRef.current) {
-						streamingMessageRef.current.isStreaming = false;
-						const completedMessage = {
-							...streamingMessageRef.current,
-							parts: streamingMessageRef.current.parts.map((p) => ({ ...p })),
-						};
-
-						setMessages((prev) => {
-							const idx = prev.findIndex(
-								(m) => m.id === completedMessage.id,
-							);
-							if (idx >= 0) {
-								const updated = [...prev];
-								updated[idx] = completedMessage;
-								return updated;
-							}
-							return prev;
-						});
-
-						onMessageComplete?.(completedMessage);
-						streamingMessageRef.current = null;
-					}
-					setIsStreaming(false);
-					setIsAwaitingResponse(false);
-					break;
-				}
-
 				case "error": {
 					const errMsg = event.error || "Unknown error";
 					const err = new Error(errMsg);
@@ -434,6 +734,7 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 					onError?.(err);
 					setIsStreaming(false);
 					setIsAwaitingResponse(false);
+
 					const sessionId = activeSessionIdRef.current;
 					const now = Date.now();
 					const shouldRecover =
@@ -441,10 +742,16 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 						(errMsg.includes("PiSessionNotFound") ||
 							errMsg.includes("SessionNotFound") ||
 							errMsg.includes("Response channel closed"));
-					if (shouldRecover && now - lastSessionRecoveryRef.current > 5000) {
+					if (
+						shouldRecover &&
+						now - lastSessionRecoveryRef.current > 5000
+					) {
 						lastSessionRecoveryRef.current = now;
 						const manager = getWsManager();
-						manager.piCreateSession(sessionId as string, getSessionConfig());
+						manager.piCreateSession(
+							sessionId as string,
+							getSessionConfig(),
+						);
 						setTimeout(() => {
 							manager.piGetState(sessionId as string);
 							manager.send({
@@ -463,7 +770,9 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 						});
 						const completedMessage = {
 							...streamingMessageRef.current,
-							parts: streamingMessageRef.current.parts.map((p) => ({ ...p })),
+							parts: streamingMessageRef.current.parts.map((p) => ({
+								...p,
+							})),
 						};
 						setMessages((prev) => {
 							const idx = prev.findIndex(
@@ -492,19 +801,7 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 					break;
 				}
 
-				case "persisted": {
-					if (isPiDebugEnabled()) {
-						console.debug(
-							"[useChat] Persisted:",
-							event.session_id,
-							event.message_count,
-						);
-					}
-					break;
-				}
-
 				case "model_changed": {
-					// Refresh state to get updated model info
 					const manager = getWsManager();
 					manager.piGetState(event.session_id);
 					if (isPiDebugEnabled()) {
@@ -519,10 +816,7 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 				}
 
 				case "messages": {
-					// Load messages from server response
 					if ("messages" in event && Array.isArray(event.messages)) {
-						// Use normalizePiMessages which properly handles toolResult role messages
-						// by merging tool results with their corresponding tool_use parts
 						const displayMessages = normalizePiMessages(
 							event.messages,
 							`server-${event.session_id}`,
@@ -530,16 +824,18 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 
 						if (displayMessages.length > 0) {
 							setMessages(displayMessages);
-							messageIdRef.current = getMaxPiMessageId(displayMessages);
+							messageIdRef.current =
+								getMaxPiMessageId(displayMessages);
 							const lastAssistant = [...displayMessages]
 								.reverse()
 								.find((msg) => msg.role === "assistant");
-							lastAssistantMessageIdRef.current = lastAssistant?.id ?? null;
+							lastAssistantMessageIdRef.current =
+								lastAssistant?.id ?? null;
 						}
 
 						if (isPiDebugEnabled()) {
 							console.debug(
-							"[useChat] Loaded messages:",
+								"[useChat] Loaded messages:",
 								event.session_id,
 								displayMessages.length,
 							);
@@ -550,10 +846,8 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 			}
 		},
 		[
-			appendPartToMessage,
-			ensureAssistantMessage,
+			handleCanonicalEvent,
 			nextMessageId,
-			scheduleStreamingUpdate,
 			onMessageComplete,
 			onError,
 			getSessionConfig,

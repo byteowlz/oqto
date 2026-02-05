@@ -18,6 +18,7 @@
 import { controlPlaneApiUrl, getAuthToken } from "./control-plane-client";
 import { toAbsoluteWsUrl } from "./url";
 import type {
+	AgentWsEvent,
 	Channel,
 	ConnectionStateHandler,
 	PiCommandInfo,
@@ -728,6 +729,29 @@ class WsConnectionManager {
 						} catch (err) {
 							console.error(
 								"[ws-mux] Error in Pi session event handler:",
+								err,
+							);
+						}
+					}
+				}
+			}
+		}
+
+		// Dispatch agent channel events to session-specific handlers.
+		// Agent events carry canonical protocol events (streaming, state, etc.)
+		// and are routed to the same Pi session handlers by session_id.
+		if (event.channel === "agent") {
+			const agentEvent = event as AgentWsEvent;
+			const sessionId = agentEvent.session_id;
+			if (sessionId) {
+				const sessionHandlers = this.piSessionHandlers.get(sessionId);
+				if (sessionHandlers) {
+					for (const handler of sessionHandlers) {
+						try {
+							handler(agentEvent as unknown as PiWsEvent);
+						} catch (err) {
+							console.error(
+								"[ws-mux] Error in agent session event handler:",
 								err,
 							);
 						}
