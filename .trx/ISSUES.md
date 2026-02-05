@@ -2,6 +2,15 @@
 
 ## Open
 
+### [octo-z5dx] Update octo-protocol to re-export Sender from hstry-core (P1, task)
+The Sender/SenderType types are now available in hstry-core::parts. Update octo-protocol to:
+1. Remove duplicate Sender/SenderType definitions from octo-protocol/src/messages.rs
+2. Re-export from hstry_core: pub use hstry_core::parts::{Sender, SenderType}
+3. Update Message to use the re-exported types
+4. Run cargo check, cargo test
+...
+
+
 ### [octo-1cqd] Normalize chat workspace path and default assistant mapping (P1, task)
 Remove default chat special casing, normalize workspace_path to default assistant path, and make session creation consistent for pi chats.
 
@@ -10,6 +19,8 @@ Normalize workspace path handling (avoid 'global') and ensure pending session ID
 
 ### [octo-xxe2] Per-workspace hstry/mmry stores + sync scoping (P1, task)
 Ensure each workspace has isolated hstry/mmry stores; sync and cache are workspace-scoped with location_id/actor metadata. No cross-workspace leakage.
+
+Note: hstry-core now has Sender/SenderType types in parts.rs (see hstry trx-7fh3, completed) for message attribution. This can be used for multi-user workspace scenarios.
 
 ### [octo-wdkj] Remote runner bootstrap over SSH (P1, task)
 Implement SSH bootstrap: install deps, download runner binaries, configure sandbox, start service, register with hub. Provide fallback to bundle+push.
@@ -1384,9 +1395,9 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
-- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
 - [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
-- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
-- [octo-k8z1.1] Backend: Integrate agent-browser daemon per session (closed )
-- [octo-k8z1.2] Backend: WebSocket proxy for screencast stream (closed )
 - [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
+- [octo-k8z1.2] Backend: WebSocket proxy for screencast stream (closed )
+- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
+- [octo-k8z1.1] Backend: Integrate agent-browser daemon per session (closed )
+- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
