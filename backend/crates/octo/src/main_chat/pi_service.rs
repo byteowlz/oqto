@@ -52,15 +52,15 @@ const SESSION_MAX_AGE_HOURS: u64 = 4;
 const SESSION_MAX_SIZE_BYTES: u64 = 500 * 1024; // 500KB
 
 const BOOTSTRAP_MESSAGES_EN: &[&str] = &[
-    "Hello, I'm your new assistant. What would you like to call me, and should we continue in English or German?",
-    "Hi! I'm your new assistant. What name should I use for myself? Also, do you prefer English or German?",
-    "Welcome. I'm your new assistant. Please tell me the name you'd like me to use and whether you want English or German.",
+    "Hello, I'm your new assistant. What would you like to call me, and what language should we use?",
+    "Hi! I'm your new assistant. What name should I use for myself? Also, what's your preferred language?",
+    "Welcome. I'm your new assistant. Please tell me the name you'd like me to use and your preferred language.",
 ];
 
 const BOOTSTRAP_MESSAGES_DE: &[&str] = &[
-    "Hallo, ich bin dein neuer Assistent. Wie soll ich heißen, und bevorzugst du Deutsch oder Englisch?",
-    "Hi! Ich bin dein neuer Assistent. Welchen Namen soll ich für mich verwenden? Und möchtest du Deutsch oder Englisch?",
-    "Willkommen. Ich bin dein neuer Assistent. Bitte sag mir, wie ich heißen soll und ob du Deutsch oder Englisch möchtest.",
+    "Hallo, ich bin dein neuer Assistent. Wie soll ich heißen, und welche Sprache bevorzugst du?",
+    "Hi! Ich bin dein neuer Assistent. Welchen Namen soll ich verwenden? Und in welcher Sprache sollen wir kommunizieren?",
+    "Willkommen. Ich bin dein neuer Assistent. Bitte sag mir, wie ich heißen soll und welche Sprache du bevorzugst.",
 ];
 
 /// Pi runtime mode determines how Pi processes are spawned and isolated.
@@ -819,21 +819,15 @@ impl MainChatPiService {
     }
 
     async fn bootstrap_language(&self, user_id: &str, work_dir: &Path) -> String {
-        let lang = self
-            .load_workspace_meta_for_user(user_id, work_dir)
+        self.load_workspace_meta_for_user(user_id, work_dir)
             .await
             .and_then(|meta| meta.language)
-            .unwrap_or_else(|| "en".to_string());
-        let lower = lang.trim().to_lowercase();
-        if lower.starts_with("de") {
-            "de".to_string()
-        } else {
-            "en".to_string()
-        }
+            .map(|l| l.trim().to_lowercase())
+            .unwrap_or_else(|| "en".to_string())
     }
 
     fn pick_bootstrap_message(language: &str) -> &'static str {
-        let messages = if language == "de" {
+        let messages = if language.starts_with("de") {
             BOOTSTRAP_MESSAGES_DE
         } else {
             BOOTSTRAP_MESSAGES_EN

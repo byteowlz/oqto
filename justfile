@@ -100,8 +100,8 @@ install-system:
     sudo groupadd -f octo || true
     sudo usermod -a -G octo "$(id -un)" || true
 
-    sudo install -Dm644 systemd/octo-runner.service /usr/lib/systemd/user/octo-runner.service
-    sudo install -Dm644 systemd/octo-runner.tmpfiles.conf /usr/lib/tmpfiles.d/octo-runner.conf
+    sudo install -Dm644 deploy/systemd/octo-runner.service /usr/lib/systemd/user/octo-runner.service
+    sudo install -Dm644 deploy/systemd/octo-runner.tmpfiles.conf /usr/lib/tmpfiles.d/octo-runner.conf
     sudo systemd-tmpfiles --create /usr/lib/tmpfiles.d/octo-runner.conf || true
     sudo systemctl daemon-reload || true
 

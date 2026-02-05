@@ -12,7 +12,7 @@ import type { WorkspaceSession } from "@/lib/workspace-session";
 import { cn } from "@/lib/utils";
 import { Bot } from "lucide-react";
 import { memo } from "react";
-import type { OpenCodeSession } from "@/lib/opencode-client";
+import type { ChatSession } from "@/lib/control-plane-client";
 
 function StatusPill({ status }: { status: string }) {
 	const normalized = status.toLowerCase();
@@ -42,7 +42,7 @@ export type ActiveAgentsCardProps = {
 	title: string;
 	noAgentsLabel: string;
 	runningSessions: WorkspaceSession[];
-	busyChatSessions: OpenCodeSession[];
+	busyChatSessions: ChatSession[];
 	agents: OpenCodeAgent[];
 };
 

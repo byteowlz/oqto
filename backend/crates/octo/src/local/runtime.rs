@@ -132,15 +132,16 @@ impl LocalRuntimeConfig {
     }
 
     /// Get the workspace directory for a specific user.
-    /// Expands environment variables and replaces {user_id} placeholder.
+    /// Expands environment variables and replaces {user_id} and {linux_username} placeholders.
     pub fn workspace_for_user(&self, user_id: &str) -> std::path::PathBuf {
         // First expand environment variables
         let expanded = shellexpand::env(&self.workspace_dir)
             .unwrap_or_else(|_| std::borrow::Cow::Borrowed(&self.workspace_dir));
-        // Replace placeholders.
-        // NOTE: by default linux_username == user_id (recommended), but the config supports both.
+        // {linux_username} maps to the actual Linux username (with prefix + sanitization),
+        // while {user_id} maps to the platform user ID directly.
+        let linux_username = self.linux_users.linux_username(user_id);
         let path_str = expanded
-            .replace("{linux_username}", user_id)
+            .replace("{linux_username}", &linux_username)
             .replace("{user_id}", user_id);
         std::path::PathBuf::from(path_str)
     }

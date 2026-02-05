@@ -1,0 +1,14 @@
+# Octo workspace metadata
+# The agent fills in these fields during bootstrap.
+
+# Display name shown in the sidebar and chat headers.
+display_name = "Main"
+
+# Preferred language as ISO 639-1 code (e.g. en, de, fr, es, ja, zh).
+language = "en"
+
+# Pin this workspace to the top of the sidebar.
+pinned = true
+
+# Set to false once bootstrap is complete.
+bootstrap_pending = true

@@ -42,11 +42,11 @@ export const SidebarNav = memo(function SidebarNav({
 }: SidebarNavProps) {
 	return (
 		<div
-			className={`w-full ${sidebarCollapsed ? "px-2 pb-3" : "px-4 pb-4"} mt-auto pt-3`}
+			className={`w-full ${sidebarCollapsed ? "px-2 pb-3" : "px-5 pb-4"} mt-auto pt-3`}
 		>
 			<div className="h-px w-full bg-primary/50 mb-3" />
 			<div
-				className={`flex items-center ${sidebarCollapsed ? "flex-col gap-2" : "justify-center gap-2"}`}
+				className={`flex items-center ${sidebarCollapsed ? "flex-col gap-2" : `justify-center ${isAdmin ? "gap-1" : "gap-2"}`}`}
 			>
 				<Button
 					type="button"

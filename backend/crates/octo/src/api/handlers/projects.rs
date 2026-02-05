@@ -273,6 +273,16 @@ pub async fn list_workspace_dirs(
     }
 
     let target = root.join(&rel_path);
+
+    // Auto-create workspace root for the user if it doesn't exist yet.
+    if !target.exists() {
+        if let Err(e) = std::fs::create_dir_all(&target) {
+            tracing::warn!("Could not create workspace directory {:?}: {}", target, e);
+            // Return empty list instead of 500 when the directory can't be created.
+            return Ok(Json(Vec::new()));
+        }
+    }
+
     let entries = std::fs::read_dir(&target)
         .with_context(|| format!("reading workspace directory {:?}", target))
         .map_err(|e| ApiError::internal(format!("Failed to list workspace directories: {}", e)))?;
@@ -385,6 +395,17 @@ pub async fn create_project_from_template(
     }
 
     let workspace_root = state.sessions.for_user(user.id()).workspace_root();
+
+    // Auto-create workspace root for the user if it doesn't exist yet.
+    if !workspace_root.exists() {
+        fs::create_dir_all(&workspace_root).map_err(|e| {
+            ApiError::internal(format!(
+                "Failed to create workspace directory {:?}: {}",
+                workspace_root, e
+            ))
+        })?;
+    }
+
     let target_dir = workspace_root.join(&project_rel);
     if target_dir.exists() {
         return Err(ApiError::bad_request("project path already exists"));
