@@ -3,6 +3,7 @@
 import { SettingsEditor } from "@/components/settings";
 import { Button } from "@/components/ui/button";
 import { useApp } from "@/hooks/use-app";
+import { changePassword } from "@/lib/api/auth";
 import { cn } from "@/lib/utils";
 import {
 	Brain,
@@ -12,10 +13,11 @@ import {
 	PanelLeftClose,
 	PanelRightClose,
 	Settings,
+	User,
 	X,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 function SettingsHelpPanel({ locale }: { locale: "en" | "de" }) {
@@ -155,13 +157,143 @@ function TabButton({ active, onClick, icon: Icon, label }: TabButtonProps) {
 	);
 }
 
+function AccountPanel({ locale }: { locale: "en" | "de" }) {
+	const [currentPassword, setCurrentPassword] = useState("");
+	const [newPassword, setNewPassword] = useState("");
+	const [confirmPassword, setConfirmPassword] = useState("");
+	const [error, setError] = useState<string | null>(null);
+	const [success, setSuccess] = useState(false);
+	const [loading, setLoading] = useState(false);
+
+	const t = {
+		en: {
+			title: "Change Password",
+			current: "Current password",
+			new: "New password",
+			confirm: "Confirm new password",
+			submit: "Change password",
+			mismatch: "Passwords do not match",
+			tooShort: "Password must be at least 8 characters",
+			success: "Password changed successfully",
+		},
+		de: {
+			title: "Passwort andern",
+			current: "Aktuelles Passwort",
+			new: "Neues Passwort",
+			confirm: "Neues Passwort bestatigen",
+			submit: "Passwort andern",
+			mismatch: "Passworter stimmen nicht uberein",
+			tooShort: "Passwort muss mindestens 8 Zeichen lang sein",
+			success: "Passwort erfolgreich geandert",
+		},
+	}[locale];
+
+	const handleSubmit = useCallback(
+		async (e: React.FormEvent) => {
+			e.preventDefault();
+			setError(null);
+			setSuccess(false);
+
+			if (newPassword !== confirmPassword) {
+				setError(t.mismatch);
+				return;
+			}
+			if (newPassword.length < 8) {
+				setError(t.tooShort);
+				return;
+			}
+
+			setLoading(true);
+			try {
+				await changePassword(currentPassword, newPassword);
+				setSuccess(true);
+				setCurrentPassword("");
+				setNewPassword("");
+				setConfirmPassword("");
+			} catch (err) {
+				setError(err instanceof Error ? err.message : "Failed to change password");
+			} finally {
+				setLoading(false);
+			}
+		},
+		[currentPassword, newPassword, confirmPassword, t.mismatch, t.tooShort],
+	);
+
+	return (
+		<div className="h-full overflow-y-auto p-4 space-y-6">
+			<div>
+				<h3 className="text-sm font-semibold mb-4">{t.title}</h3>
+				<form onSubmit={handleSubmit} className="space-y-3 max-w-sm">
+					<div>
+						<label htmlFor="current-password" className="text-xs text-muted-foreground block mb-1">
+							{t.current}
+						</label>
+						<input
+							id="current-password"
+							type="password"
+							value={currentPassword}
+							onChange={(e) => setCurrentPassword(e.target.value)}
+							className="w-full px-3 py-1.5 text-sm bg-background border border-border rounded focus:outline-none focus:ring-1 focus:ring-primary"
+							required
+							autoComplete="current-password"
+						/>
+					</div>
+					<div>
+						<label htmlFor="new-password" className="text-xs text-muted-foreground block mb-1">
+							{t.new}
+						</label>
+						<input
+							id="new-password"
+							type="password"
+							value={newPassword}
+							onChange={(e) => setNewPassword(e.target.value)}
+							className="w-full px-3 py-1.5 text-sm bg-background border border-border rounded focus:outline-none focus:ring-1 focus:ring-primary"
+							required
+							minLength={8}
+							autoComplete="new-password"
+						/>
+					</div>
+					<div>
+						<label htmlFor="confirm-password" className="text-xs text-muted-foreground block mb-1">
+							{t.confirm}
+						</label>
+						<input
+							id="confirm-password"
+							type="password"
+							value={confirmPassword}
+							onChange={(e) => setConfirmPassword(e.target.value)}
+							className="w-full px-3 py-1.5 text-sm bg-background border border-border rounded focus:outline-none focus:ring-1 focus:ring-primary"
+							required
+							minLength={8}
+							autoComplete="new-password"
+						/>
+					</div>
+					{error && (
+						<p className="text-xs text-destructive">{error}</p>
+					)}
+					{success && (
+						<p className="text-xs text-primary">{t.success}</p>
+					)}
+					<button
+						type="submit"
+						disabled={loading}
+						className="px-4 py-1.5 text-sm bg-primary text-primary-foreground rounded hover:bg-primary/90 disabled:opacity-50 transition-colors"
+					>
+						{loading ? "..." : t.submit}
+					</button>
+				</form>
+			</div>
+		</div>
+	);
+}
+
 export function SettingsApp() {
 	const { locale, setActiveAppId } = useApp();
 	const navigate = useNavigate();
-	const [mainTab, setMainTab] = useState<"octo" | "mmry">("octo");
+	const [mainTab, setMainTab] = useState<"octo" | "mmry" | "account">("octo");
 	const [sidebarTab, setSidebarTab] = useState<"help" | "shortcuts">("help");
 	const [mobileView, setMobileView] = useState<
-		"octo" | "mmry" | "help" | "shortcuts"
+		"octo" | "mmry" | "account" | "help" | "shortcuts"
 	>("octo");
 	const [rightSidebarCollapsed, setRightSidebarCollapsed] = useState(false);
 
@@ -177,6 +309,7 @@ export function SettingsApp() {
 		en: {
 			octoTab: "Octo",
 			mmryTab: "Memory",
+			accountTab: "Account",
 			help: "Help",
 			shortcuts: "Keys",
 			close: "Close",
@@ -184,6 +317,7 @@ export function SettingsApp() {
 		de: {
 			octoTab: "Octo",
 			mmryTab: "Speicher",
+			accountTab: "Konto",
 			help: "Hilfe",
 			shortcuts: "Tasten",
 			close: "Schliessen",
@@ -213,6 +347,15 @@ export function SettingsApp() {
 							}}
 							icon={Brain}
 							label={t.mmryTab}
+						/>
+						<TabButton
+							active={mobileView === "account"}
+							onClick={() => {
+								setMobileView("account");
+								setMainTab("account");
+							}}
+							icon={User}
+							label={t.accountTab}
 						/>
 						<TabButton
 							active={mobileView === "help"}
@@ -256,6 +399,11 @@ export function SettingsApp() {
 						{mobileView === "mmry" && (
 							<div className="sm:max-w-3xl sm:mx-auto">
 								<SettingsEditor app="mmry" isAdmin={isAdmin} />
+							</div>
+						)}
+						{mobileView === "account" && (
+							<div className="sm:max-w-3xl sm:mx-auto">
+								<AccountPanel locale={locale} />
 							</div>
 						)}
 						{mobileView === "help" && <SettingsHelpPanel locale={locale} />}
@@ -320,6 +468,12 @@ export function SettingsApp() {
 							icon={Brain}
 							label={t.mmryTab}
 						/>
+						<TabButton
+							active={mainTab === "account"}
+							onClick={() => setMainTab("account")}
+							icon={User}
+							label={t.accountTab}
+						/>
 					</div>
 
 					<div className="flex-1 min-h-0 overflow-y-auto scrollbar-hide mt-4">
@@ -331,6 +485,11 @@ export function SettingsApp() {
 						{mainTab === "mmry" && (
 							<div className="max-w-3xl">
 								<SettingsEditor app="mmry" isAdmin={isAdmin} />
+							</div>
+						)}
+						{mainTab === "account" && (
+							<div className="max-w-3xl">
+								<AccountPanel locale={locale} />
 							</div>
 						)}
 					</div>

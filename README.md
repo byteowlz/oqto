@@ -2,77 +2,100 @@
 
 # octo
 
-Self-hosted platform for AI coding agents. Run OpenCode instances in isolated containers or native processes with web UI, terminal access, and file management.
-
-## What it does
-
-- Spawns and manages OpenCode AI agent sessions
-- Provides web UI for chat, file browsing, and terminal
-- Supports container mode (Docker/Podman) or local mode (native processes)
-- Multi-user with JWT auth and invite codes
-- Voice mode (STT/TTS) via eaRS and kokorox
-- Agent tools for memory and task tracking (agntz, mmry, trx)
+Self-hosted platform for managing AI coding agents. Supports local mode (via octo-runner) and container mode (Docker/Podman) with web UI for chat, file browsing, terminal access, canvas, memory, and task tracking.
 
 ## Architecture
 
-```
-                    ┌─────────────────────────────────────┐
-                    │            Octo Backend             │
-                    │  (octo, octoctl, octo-runner, pi)   │
-                    ├─────────────────────────────────────┤
-  Browser/App ───►  │  REST API · WebSocket · SSE Proxy   │
-                    └──────────────┬──────────────────────┘
-                                   │
-           ┌───────────────────────┼────────────────────┐
-           ▼                       ▼                    ▼
-   ┌──────────────┐       ┌──────────────┐       ┌──────────────┐
-   │   Session    │       │   Session    │       │   Session    │
-   │  Container   │       │  Container   │       │   (Local)    │
-   │              │       │              │       │              │
-   │  · opencode  │       │  · opencode  │       │  · opencode  │
-   │  · fileserver│       │  · fileserver│       │  · fileserver│
-   │  · ttyd      │       │  · ttyd      │       │  · ttyd      │
-   │  · pi        │       │  · pi        │       │  · pi        │
-   └──────────────┘       └──────────────┘       └──────────────┘
+The backend never spawns agents directly. All agent processes go through `octo-runner`.
 
-Agent Tools (CLI):
-  agntz   - Memory, issues, mail, reservations
-  mmry    - Memory system (optional, integrated)
-  trx     - Task tracking (optional, integrated)
-  mailz   - Agent messaging (optional)
 ```
+Frontend <--[WS: mux]--> Backend (octo) <--[Unix socket]--> octo-runner <--[stdin/stdout]--> Agent
+```
+
+The frontend speaks a canonical agent protocol over a multiplexed WebSocket (`/api/ws/mux`). It is agent-runtime agnostic -- the backend translates between the canonical protocol and agent-specific protocols.
+
+---
+
+### Agent runtimes
+
+**pi** -- Lightweight AI coding assistant CLI used for Main Chat. Runs in RPC mode with JSON over stdin/stdout. Supports multiple providers (anthropic, openai, google), extensions, skills, and session compaction.
+
+**Claude Code** -- Full-featured coding agent used for per-workspace coding sessions. Runs in HTTP server mode.
+
+---
+
+### Key binaries
+
+| Binary | Purpose |
+|--------|---------|
+| `octo` | Main backend server |
+| `octoctl` | CLI for server management |
+| `octo-runner` | Multi-user process daemon (Linux only) |
+| `octo-sandbox` | Sandbox wrapper using bwrap/sandbox-exec |
+| `pi-bridge` | HTTP/WebSocket bridge for Pi in containers |
+| `octo-files` | File access server for workspaces |
+
+---
+
+### Backend crates
+
+| Crate | Purpose |
+|-------|---------|
+| `octo` | Main server (API, sessions, runner, auth) |
+| `octo-protocol` | Canonical agent protocol types (events, commands, messages) |
+| `octo-files` | File server for workspace access |
+| `octo-browser` | Browser automation |
+| `octo-scaffold` | Project scaffolding |
+
+---
+
+### Runtime modes
+
+| Mode | Description | Use Case |
+|------|-------------|----------|
+| `local` | Via `octo-runner` daemon | Single-user and multi-user Linux |
+| `container` | Inside Docker/Podman | Full container isolation |
+
+Even in local mode, agents are spawned through octo-runner, never directly by the backend.
+
+---
+
+### Integrate with services
+
+| Service | Purpose |
+|---------|---------|
+| `hstry` | Chat history storage (per-user SQLite) |
+| `mmry` | Memory system (semantic search, embeddings) |
+| `trx` | Issue/task tracking |
+| `eavs` | LLM API proxy |
+
+---
+
+### Support multiple users
+
+In multi-user mode each platform user maps to a Linux user (`octo_{username}`). Per-user octo-runner daemons manage agent processes and per-user mmry instances provide memory via HTTP API.
+
+Auth uses JWT with invite codes. A progressive onboarding system with agent-driven UI unlock guides new users.
 
 ## Quick Start
 
-### Automated Setup (Recommended)
-
-For a complete setup experience with all prerequisites handled automatically:
+### Use automated setup (recommended)
 
 ```bash
 ./setup.sh
 ```
 
-The interactive script will guide you through:
+The interactive script handles user mode selection, backend mode, dependency installation, building, configuration, and optional systemd services. See [SETUP.md](./SETUP.md) for full details.
 
-- User mode selection (single-user or multi-user)
-- Backend mode selection (local processes or containers)
-- Installing all dependencies (Rust, Bun, agent tools, shell tools)
-- Building Octo components
-- Generating configuration files
-- Installing system services (optional)
+---
 
-For detailed manual setup instructions and prerequisite documentation, see [SETUP.md](./SETUP.md).
+### Set up manually
 
-### Manual Setup
-
-If you prefer to install components manually:
-
-1. Install core dependencies (Rust, Bun, Docker/Podman)
-2. Build the backend and fileserver:
+1. Install Rust and Bun
+2. Build the backend:
 
    ```bash
-   cargo install --path backend
-   cargo install --path fileserver
+   cargo install --path backend/crates/octo
    ```
 
 3. Build the frontend:
@@ -81,73 +104,84 @@ If you prefer to install components manually:
    cd frontend && bun install && bun run build
    ```
 
-4. Install agent tools (opencode, ttyd, agntz, byt)
+4. Install agent tools (pi, agntz, byt)
 5. Configure `~/.config/octo/config.toml`
 6. Start services:
 
    ```bash
-   # Backend
    octo serve
-
-   # Frontend (development)
    cd frontend && bun dev
    ```
 
-Open `http://localhost:3000`. Default dev login: check backend logs for credentials.
+Open `http://localhost:3000`. Check backend logs for dev credentials.
 
-### Container mode
+---
+
+### Use container mode
 
 ```bash
-# Build the agent container image
 docker build -t octo-dev:latest -f container/Dockerfile .
+```
 
-# Configure backend to use containers
-# Edit ~/.config/octo/config.toml:
-#   [container]
-#   runtime = "docker"
-#   default_image = "octo-dev:latest"
+Configure the backend to use containers in `~/.config/octo/config.toml`:
+
+```toml
+[container]
+runtime = "docker"
+default_image = "octo-dev:latest"
 ```
 
 ## Project Structure
 
 ```
-backend/        Rust API server, session orchestration, auth
-frontend/       React UI (chat, files, terminal, settings)
-fileserver/     Rust file server for workspace access
-container/      Dockerfile for agent runtime containers
-browser-tools/  Browser automation scripts
+backend/          Rust backend (API, sessions, auth, runner)
+  crates/
+    octo/         Main server crate
+    octo-protocol/ Canonical agent protocol types
+    octo-files/   File server
+    octo-browser/ Browser automation
+    octo-scaffold/ Project scaffolding
+frontend/         React/TypeScript UI (chat, files, terminal, canvas, memory)
+deploy/           Systemd service configs, deployment scripts
+docs/             Architecture docs, design specs
+scripts/          Build and utility scripts
+tools/            CLI tools and utilities
 ```
 
 ## Configuration
 
-For complete configuration options, see [backend/examples/config.toml](./backend/examples/config.toml).
+See [backend/examples/config.toml](./backend/examples/config.toml) for the full reference.
 
-### Backend (`~/.config/octo/config.toml`)
+### Edit the config file (`~/.config/octo/config.toml`)
 
-```toml[server]
+```toml
+[server]
 port = 8080
 
-[container]
-runtime = "docker"  # or "podman"
-default_image = "octo-dev:latest"
-
 [local]
-enabled = false  # Set to true for local mode
-opencode_binary = "opencode"
-fileserver_binary = "fileserver"
-ttyd_binary = "ttyd"
+enabled = true
+single_user = false  # true for single-user, false for multi-user
 
-[auth]
-dev_mode = true  # enables dev users
-# jwt_secret = "change-me"  # Required when dev_mode = false
+[local.linux_users]
+enabled = true       # multi-user Linux isolation
 
 [pi]
 enabled = true
 executable = "pi"
 default_provider = "anthropic"
+
+[mmry]
+enabled = true
+local_service_url = "http://localhost:8081"
+
+[hstry]
+enabled = true
+
+[auth]
+dev_mode = true
 ```
 
-### Frontend (`.env.local`)
+### Set frontend environment (`.env.local`)
 
 ```bash
 VITE_CONTROL_PLANE_URL=http://localhost:8080
@@ -155,13 +189,33 @@ VITE_CONTROL_PLANE_URL=http://localhost:8080
 
 Run `./setup.sh` to generate configuration files automatically.
 
+## API
+
+The primary interface is WebSocket-based via `/api/ws/mux` (multiplexed WebSocket). The frontend communicates over two channels:
+
+- `agent` -- Canonical agent protocol (commands + events)
+- `system` -- System notifications
+
+---
+
+### Use REST endpoints
+
+| Endpoint | Description |
+|----------|-------------|
+| `POST /api/sessions` | Create session |
+| `GET /api/sessions` | List sessions |
+| `DELETE /api/sessions/:id` | Delete session |
+| `GET /api/workspace/memories` | List memories |
+| `POST /api/workspace/memories/search` | Search memories |
+| `GET /api/onboarding` | Get onboarding state |
+| `POST /api/admin/users` | Create user (admin) |
+
 ## Development
 
-| Component  | Build           | Lint                                | Test           |
-| ---------- | --------------- | ----------------------------------- | -------------- |
-| backend    | `cargo build`   | `cargo clippy && cargo fmt --check` | `cargo test`   |
-| fileserver | `cargo build`   | `cargo clippy && cargo fmt --check` | `cargo test`   |
-| frontend   | `bun run build` | `bun run lint`                      | `bun run test` |
+| Component | Build | Lint | Test |
+|-----------|-------|------|------|
+| backend | `cargo build` | `cargo clippy && cargo fmt --check` | `cargo test` |
+| frontend | `bun run build` | `bun run lint` | `bun run test` |
 
 ## CLI
 
@@ -169,38 +223,29 @@ Run `./setup.sh` to generate configuration files automatically.
 # Server
 octo serve                    # Start API server
 octo config show              # Show configuration
-octo invite-codes generate    # Generate invite codes
 
 # Control
 octoctl status                # Check server health
 octoctl session list          # List sessions
-octoctl image build           # Build container image
 ```
 
-## API
+---
 
-| Endpoint                   | Description           |
-| -------------------------- | --------------------- |
-| `POST /api/sessions`       | Create session        |
-| `GET /api/sessions`        | List sessions         |
-| `DELETE /api/sessions/:id` | Delete session        |
-| `/session/:id/code/*`      | Proxy to OpenCode     |
-| `/session/:id/files/*`     | Proxy to fileserver   |
-| `/session/:id/term`        | WebSocket to terminal |
-| `/session/:id/code/event`  | SSE event stream      |
+### Use agent tools
+
+| Tool | Purpose |
+|------|---------|
+| `agntz` | Memory, issues, mail, file reservations |
+| `byt` | Cross-repo governance (catalog, schemas, releases) |
+| `sx` | External searches via SearXNG |
 
 ## Documentation
 
-- [SETUP.md](./SETUP.md) - Comprehensive setup and installation guide
-- [AGENTS.md](./AGENTS.md) - Agent development guidelines
-- [backend/README.md](./backend/README.md) - Backend documentation
-- [frontend/README.md](./frontend/README.md) - Frontend documentation
-- [deploy/systemd/README.md](./deploy/systemd/README.md) - Systemd service setup
-- [backend/examples/config.toml](./backend/examples/config.toml) - Full configuration reference
-
-## Roadmap
-
-See [TAURI.md](./TAURI.md) for desktop/mobile app plans.
+- [SETUP.md](./SETUP.md) -- Installation guide
+- [AGENTS.md](./AGENTS.md) -- Agent development guidelines
+- [docs/design/canonical-protocol.md](./docs/design/canonical-protocol.md) -- Canonical agent protocol spec
+- [deploy/systemd/README.md](./deploy/systemd/README.md) -- Systemd service setup
+- [backend/examples/config.toml](./backend/examples/config.toml) -- Full configuration reference
 
 ## License
 

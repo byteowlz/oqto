@@ -3,7 +3,6 @@
 import { MarkdownRenderer } from "@/components/data-display";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { controlPlaneDirectBaseUrl } from "@/lib/control-plane-client";
 import {
 	type OpenCodeMessageWithParts,
 	type OpenCodeSession,
@@ -12,7 +11,6 @@ import {
 	fetchSessions,
 	invalidateMessageCache,
 	sendMessageAsync,
-	subscribeToEvents,
 } from "@/lib/opencode-client";
 import { cn } from "@/lib/utils";
 import { Bot, Loader2, MessageSquare, Plus, Send, User } from "lucide-react";
@@ -92,34 +90,13 @@ export function PersonaBuilderChat({
 		loadMessages();
 	}, [loadMessages]);
 
-	// Subscribe to SSE events
+	// Poll for message updates (replaces legacy SSE subscription)
 	useEffect(() => {
-		if (!opencodeBaseUrl) return;
-		const unsubscribe = subscribeToEvents(
-			opencodeBaseUrl,
-			(event) => {
-				const eventType = event.type as string;
-				if (eventType === "session.idle") {
-					setChatState("idle");
-					if (opencodeBaseUrl && selectedSessionId) {
-						invalidateMessageCache(opencodeBaseUrl, selectedSessionId);
-					}
-					loadMessages();
-					// Check for new persona created (look for file writes to ~/octo/personas/)
-					// This is a simple heuristic - could be improved
-				} else if (eventType === "session.busy") {
-					setChatState("sending");
-				}
-				if (eventType?.startsWith("message")) {
-					if (opencodeBaseUrl && selectedSessionId) {
-						invalidateMessageCache(opencodeBaseUrl, selectedSessionId);
-					}
-					loadMessages();
-				}
-			},
-			controlPlaneDirectBaseUrl(),
-		);
-		return unsubscribe;
+		if (!opencodeBaseUrl || !selectedSessionId) return;
+		const interval = setInterval(() => {
+			loadMessages();
+		}, 3000);
+		return () => clearInterval(interval);
 	}, [opencodeBaseUrl, selectedSessionId, loadMessages]);
 
 	// Scroll to bottom when messages change

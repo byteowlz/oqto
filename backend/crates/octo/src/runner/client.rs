@@ -10,7 +10,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 
 use super::protocol::*;
-use crate::pi::PiEvent;
+
 
 /// Default socket path pattern.
 /// Uses XDG_RUNTIME_DIR if available, otherwise falls back to /tmp.
@@ -1224,8 +1224,8 @@ impl PiSubscription {
     pub async fn next(&mut self) -> Option<PiSubscriptionEvent> {
         match self.lines.next_line().await {
             Ok(Some(line)) => match serde_json::from_str::<RunnerResponse>(&line) {
-                Ok(RunnerResponse::PiEvent(wrapper)) => {
-                    Some(PiSubscriptionEvent::Event(wrapper.event))
+                Ok(RunnerResponse::PiEvent(canonical_event)) => {
+                    Some(PiSubscriptionEvent::Event(canonical_event))
                 }
                 Ok(RunnerResponse::PiSubscriptionEnd(end)) => {
                     Some(PiSubscriptionEvent::End { reason: end.reason })
@@ -1253,8 +1253,8 @@ impl PiSubscription {
 /// Event from a Pi subscription.
 #[derive(Debug, Clone)]
 pub enum PiSubscriptionEvent {
-    /// A Pi event from the session.
-    Event(PiEvent),
+    /// A canonical event from the session (translated from Pi native events).
+    Event(octo_protocol::events::Event),
     /// The subscription ended.
     End { reason: String },
     /// An error occurred.

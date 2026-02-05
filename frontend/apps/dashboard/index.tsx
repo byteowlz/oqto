@@ -190,7 +190,7 @@ export function DashboardApp() {
 				runningSessions={runningSessions}
 				workspaceSessions={workspaceSessions}
 				busyChatSessions={busyChatSessions}
-				opencodeSessions={opencodeSessions}
+				totalChatCount={chatHistory.length}
 				scheduleList={scheduleList}
 				scheduleStats={data.scheduleStats}
 				schedulerError={data.schedulerError}
@@ -211,7 +211,7 @@ export function DashboardApp() {
 				onRefreshFeeds={data.handleRefreshFeeds}
 			/>
 		),
-		[locale, t, runningSessions, workspaceSessions, busyChatSessions, opencodeSessions, scheduleList, data, feedUrls, handleAddFeed, handleRemoveFeed],
+		[locale, t, runningSessions, workspaceSessions, busyChatSessions, chatHistory.length, scheduleList, data, feedUrls, handleAddFeed, handleRemoveFeed],
 	);
 
 	const renderCustomCard = useCallback((card: DashboardRegistryCard) => {

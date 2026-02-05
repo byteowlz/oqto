@@ -60,6 +60,96 @@ function parseJsonMaybe(value: string): unknown | null {
 	}
 }
 
+/**
+ * Convert canonical Part objects (from octo-protocol Message.parts) to display parts.
+ * Canonical parts have a `type` field with values like "text", "image", "thinking",
+ * "tool_call", "tool_result".
+ */
+function canonicalPartsToPiParts(parts: unknown[]): PiMessagePart[] {
+	const result: PiMessagePart[] = [];
+	for (const part of parts) {
+		if (!part || typeof part !== "object") continue;
+		const p = part as Record<string, unknown>;
+		const partType = typeof p.type === "string" ? p.type : "";
+		switch (partType) {
+			case "text":
+				if (typeof p.text === "string" && p.text.trim()) {
+					result.push({ type: "text", content: p.text });
+				}
+				break;
+			case "thinking":
+				if (typeof p.text === "string" && p.text.trim()) {
+					result.push({ type: "thinking", content: p.text });
+				}
+				break;
+			case "tool_call": {
+				const id =
+					(typeof p.tool_call_id === "string" && p.tool_call_id) ||
+					(typeof p.id === "string" && p.id) ||
+					"";
+				const name =
+					(typeof p.name === "string" && p.name) ||
+					"unknown";
+				result.push({
+					type: "tool_use",
+					id,
+					name,
+					input: p.input ?? p.arguments,
+				});
+				break;
+			}
+			case "tool_result": {
+				const id =
+					(typeof p.tool_call_id === "string" && p.tool_call_id) ||
+					(typeof p.id === "string" && p.id) ||
+					"";
+				result.push({
+					type: "tool_result",
+					id,
+					name: typeof p.name === "string" ? p.name : undefined,
+					content: p.output ?? p.content ?? p.text,
+					isError: Boolean(p.is_error ?? p.isError),
+				});
+				break;
+			}
+			case "image": {
+				const id =
+					(typeof p.id === "string" && p.id) || `img_${result.length}`;
+				const source = p.source as
+					| Record<string, unknown>
+					| undefined;
+				if (source && typeof source === "object") {
+					result.push({
+						type: "image",
+						id,
+						source:
+							typeof source.type === "string"
+								? source.type
+								: "base64",
+						data: typeof source.data === "string"
+							? source.data
+							: undefined,
+						url: typeof source.url === "string"
+							? source.url
+							: undefined,
+						mimeType:
+							typeof source.media_type === "string"
+								? source.media_type
+								: typeof source.mediaType === "string"
+									? source.mediaType
+									: undefined,
+					});
+				}
+				break;
+			}
+			default:
+				// Unknown part type -- skip silently
+				break;
+		}
+	}
+	return result;
+}
+
 /** Normalize Pi content blocks to display parts */
 export function normalizePiContentToParts(content: unknown): PiMessagePart[] {
 	const parts: PiMessagePart[] = [];
@@ -133,6 +223,36 @@ export function normalizePiContentToParts(content: unknown): PiMessagePart[] {
 								: b,
 					isError: Boolean(b.is_error ?? b.isError),
 				});
+				continue;
+			}
+			if (blockType === "image") {
+				const id =
+					(typeof b.id === "string" && b.id) || `img_${parts.length}`;
+				const source = b.source as Record<string, unknown> | undefined;
+				if (source && typeof source === "object") {
+					parts.push({
+						type: "image",
+						id,
+						source:
+							typeof source.type === "string"
+								? source.type
+								: "base64",
+						data:
+							typeof source.data === "string"
+								? source.data
+								: undefined,
+						url:
+							typeof source.url === "string"
+								? source.url
+								: undefined,
+						mimeType:
+							typeof source.media_type === "string"
+								? source.media_type
+								: typeof source.mediaType === "string"
+									? source.mediaType
+									: undefined,
+					});
+				}
 			}
 		}
 		return parts;
@@ -183,6 +303,7 @@ export function normalizePiMessages(
 		const role = message.role;
 		const timestamp =
 			message.timestamp ??
+			message.created_at ??
 			message.created_at_ms ??
 			message.createdAtMs ??
 			Date.now();
@@ -193,22 +314,33 @@ export function normalizePiMessages(
 					? message.partsJson
 					: null;
 		const parsedParts = partsJson ? parseJsonMaybe(partsJson) : null;
-		const content = parsedParts !== null ? parsedParts : message.content;
+		// Canonical messages (from octo-protocol) use `parts` (array of Part objects),
+		// while legacy Pi messages use `content` or `parts_json`.
+		const canonicalParts =
+			Array.isArray(message.parts) && message.parts.length > 0
+				? message.parts
+				: null;
+		const content =
+			parsedParts !== null
+				? parsedParts
+				: canonicalParts !== null
+					? canonicalParts
+					: message.content;
 
 		if (role === "toolResult" || role === "tool") {
 			const toolCallId =
-				message.toolCallId || message.id || `tool-result-${idx}`;
+				message.toolCallId || message.tool_call_id || message.id || `tool-result-${idx}`;
 			const toolResultPart: PiMessagePart = {
 				type: "tool_result",
 				id: toolCallId,
-				name: message.toolName,
+				name: message.toolName ?? message.tool_name,
 				content,
-				isError: message.isError,
+				isError: message.isError ?? message.is_error,
 			};
 
-			const targetIndex = message.toolCallId
-				? toolUseIndexById.get(message.toolCallId)
-				: resolvePendingByName(message.toolName);
+			const targetIndex = (message.toolCallId || message.tool_call_id)
+				? toolUseIndexById.get(toolCallId)
+				: resolvePendingByName(message.toolName ?? message.tool_name);
 
 			if (targetIndex !== undefined) {
 				display[targetIndex].parts.push(toolResultPart);
@@ -226,8 +358,14 @@ export function normalizePiMessages(
 		const normalizedRole =
 			role === "user" || role === "assistant" || role === "system"
 				? role
-				: "assistant";
-		const parts = normalizePiContentToParts(content);
+				: role === "tool"
+					? "assistant"
+					: "assistant";
+		// Use canonical parts directly when available, otherwise fall back
+		// to the legacy Pi content normalization.
+		const parts = canonicalParts
+			? canonicalPartsToPiParts(canonicalParts)
+			: normalizePiContentToParts(content);
 		const displayMessage: PiDisplayMessage = {
 			id: `${idPrefix}-${idx}-${message.id ?? ""}`,
 			role: normalizedRole,

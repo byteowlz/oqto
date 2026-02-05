@@ -3,8 +3,8 @@
 use hstry_core::service::proto::Message as ProtoMessage;
 use serde::Serialize;
 
+use crate::canon::{pi_message_to_canon, CanonMessage, ModelInfo};
 use crate::pi::AgentMessage;
-use crate::canon::{CanonMessage, ModelInfo, pi_message_to_canon};
 
 /// Serializable message for WebSocket responses.
 #[derive(Debug, Clone, Serialize)]
@@ -71,6 +71,8 @@ pub fn canon_message_to_proto(msg: &CanonMessage, idx: i32) -> ProtoMessage {
         tokens,
         cost_usd: msg.cost_usd,
         metadata_json,
+        sender_json: String::new(),
+        provider: None,
     }
 }
 

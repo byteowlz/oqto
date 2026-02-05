@@ -100,8 +100,8 @@ install-system:
     sudo groupadd -f octo || true
     sudo usermod -a -G octo "$(id -un)" || true
 
-    sudo install -Dm644 systemd/octo-runner.service /usr/lib/systemd/user/octo-runner.service
-    sudo install -Dm644 systemd/octo-runner.tmpfiles.conf /usr/lib/tmpfiles.d/octo-runner.conf
+    sudo install -Dm644 deploy/systemd/octo-runner.service /usr/lib/systemd/user/octo-runner.service
+    sudo install -Dm644 deploy/systemd/octo-runner.tmpfiles.conf /usr/lib/tmpfiles.d/octo-runner.conf
     sudo systemd-tmpfiles --create /usr/lib/tmpfiles.d/octo-runner.conf || true
     sudo systemctl daemon-reload || true
 
@@ -201,7 +201,6 @@ bump version:
     
     # Update package.json files
     cd "$ROOT/frontend" && bun pm pkg set version="$new_version"
-    cd "$ROOT/pi-extension" && bun pm pkg set version="$new_version"
     
     # Update tauri.conf.json
     jq --arg v "$new_version" '.version = $v' "$ROOT/frontend/src-tauri/tauri.conf.json" > "$ROOT/frontend/src-tauri/tauri.conf.json.tmp" \

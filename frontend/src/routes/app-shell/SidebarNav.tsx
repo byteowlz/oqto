@@ -2,6 +2,7 @@ import { Button } from "@/components/ui/button";
 import {
 	Globe2,
 	LayoutDashboard,
+	LogOut,
 	MoonStar,
 	Settings,
 	Shield,
@@ -13,9 +14,11 @@ export interface SidebarNavProps {
 	activeAppId: string;
 	sidebarCollapsed: boolean;
 	isDark: boolean;
+	isAdmin?: boolean;
 	onToggleApp: (appId: string) => void;
 	onToggleLocale: () => void;
 	onToggleTheme: () => void;
+	onLogout: () => void;
 }
 
 // Style constants
@@ -31,17 +34,19 @@ export const SidebarNav = memo(function SidebarNav({
 	activeAppId,
 	sidebarCollapsed,
 	isDark,
+	isAdmin,
 	onToggleApp,
 	onToggleLocale,
 	onToggleTheme,
+	onLogout,
 }: SidebarNavProps) {
 	return (
 		<div
-			className={`w-full ${sidebarCollapsed ? "px-2 pb-3" : "px-4 pb-4"} mt-auto pt-3`}
+			className={`w-full ${sidebarCollapsed ? "px-2 pb-3" : "px-5 pb-4"} mt-auto pt-3`}
 		>
 			<div className="h-px w-full bg-primary/50 mb-3" />
 			<div
-				className={`flex items-center ${sidebarCollapsed ? "flex-col gap-2" : "justify-center gap-2"}`}
+				className={`flex items-center ${sidebarCollapsed ? "flex-col gap-2" : `justify-center ${isAdmin ? "gap-1" : "gap-2"}`}`}
 			>
 				<Button
 					type="button"
@@ -106,6 +111,7 @@ export const SidebarNav = memo(function SidebarNav({
 				>
 					<Settings className="w-4 h-4" />
 				</Button>
+			{isAdmin && (
 				<Button
 					type="button"
 					variant="ghost"
@@ -137,6 +143,7 @@ export const SidebarNav = memo(function SidebarNav({
 				>
 					<Shield className="w-4 h-4" />
 				</Button>
+			)}
 				<Button
 					type="button"
 					variant="ghost"
@@ -188,6 +195,30 @@ export const SidebarNav = memo(function SidebarNav({
 					) : (
 						<MoonStar className="w-4 h-4" />
 					)}
+				</Button>
+				<Button
+					type="button"
+					variant="ghost"
+					size="icon"
+					rounded="full"
+					onClick={onLogout}
+					aria-label="Logout"
+					className="w-9 h-9 flex items-center justify-center transition-colors"
+					style={{
+						backgroundColor: navIdle,
+						border: "1px solid transparent",
+						color: navText,
+					}}
+					onMouseEnter={(e) => {
+						e.currentTarget.style.backgroundColor = sidebarHover;
+						e.currentTarget.style.border = `1px solid ${sidebarHoverBorder}`;
+					}}
+					onMouseLeave={(e) => {
+						e.currentTarget.style.backgroundColor = navIdle;
+						e.currentTarget.style.border = "1px solid transparent";
+					}}
+				>
+					<LogOut className="w-4 h-4" />
 				</Button>
 			</div>
 		</div>

@@ -132,41 +132,6 @@ export async function discoverServers(): Promise<DiscoveredServer[]> {
 }
 
 /**
- * Start listening to an SSE stream via native Tauri HTTP
- * Returns an unlisten function to stop the stream
- */
-export async function startSseStream(
-	url: string,
-	eventName: string,
-	onMessage: (data: string) => void,
-	onError?: (error: string) => void,
-): Promise<UnlistenFn> {
-	if (!isTauri()) {
-		// Fallback to EventSource for non-Tauri environments
-		const eventSource = new EventSource(url);
-		eventSource.onmessage = (event) => onMessage(event.data);
-		eventSource.onerror = () => onError?.("EventSource error");
-		return () => eventSource.close();
-	}
-
-	const unlistenMessage = await listen<string>(eventName, (event) => {
-		onMessage(event.payload);
-	});
-
-	const unlistenError = await listen<string>(`${eventName}-error`, (event) => {
-		onError?.(event.payload);
-	});
-
-	// Start the stream
-	await invoke("start_sse_stream", { url, eventName });
-
-	return () => {
-		unlistenMessage();
-		unlistenError();
-	};
-}
-
-/**
  * HTTP client object with all methods
  */
 export const tauriHttp = {
@@ -176,7 +141,6 @@ export const tauriHttp = {
 	patch: httpPatch,
 	delete: httpDelete,
 	discoverServers,
-	startSseStream,
 	isTauri,
 };
 

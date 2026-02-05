@@ -258,14 +258,13 @@ impl MainChatService {
         std::fs::write(&plugin_path, plugin_content)
             .with_context(|| format!("writing plugin: {}", plugin_path.display()))?;
 
-        // Create .octo directory and workspace metadata
-        let workspace_meta = crate::workspace::WorkspaceMeta {
-            display_name: Some("Main".to_string()),
-            language: Some("en".to_string()),
-            pinned: Some(true),
-            bootstrap_pending: Some(true),
-        };
-        crate::workspace::write_workspace_meta(&main_chat_dir, &workspace_meta)?;
+        // Create .octo directory and workspace metadata template
+        let octo_dir = main_chat_dir.join(".octo");
+        std::fs::create_dir_all(&octo_dir)?;
+        let workspace_toml = include_str!("templates/workspace.toml");
+        let workspace_toml_path = octo_dir.join("workspace.toml");
+        std::fs::write(&workspace_toml_path, workspace_toml)
+            .with_context(|| format!("writing {}", workspace_toml_path.display()))?;
 
         Ok(())
     }

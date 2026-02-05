@@ -1,4 +1,4 @@
-import type { OpenCodeAgent, OpenCodeSession } from "@/lib/opencode-client";
+import type { OpenCodeAgent } from "@/lib/opencode-client";
 import type { WorkspaceSession } from "@/lib/workspace-session";
 import { Activity, CalendarClock, Flame, ListTodo } from "lucide-react";
 import { memo } from "react";
@@ -37,8 +37,8 @@ export type BuiltinCardRendererProps = {
 	// Session data
 	runningSessions: WorkspaceSession[];
 	workspaceSessions: WorkspaceSession[];
-	busyChatSessions: OpenCodeSession[];
-	opencodeSessions: OpenCodeSession[];
+	busyChatSessions: { id: string }[];
+	totalChatCount: number;
 	// Scheduler data
 	scheduleList: ScheduleItem[];
 	scheduleStats: { total: number; enabled: number; disabled: number };
@@ -76,7 +76,7 @@ export const BuiltinCardRenderer = memo(function BuiltinCardRenderer({
 	runningSessions,
 	workspaceSessions,
 	busyChatSessions,
-	opencodeSessions,
+	totalChatCount,
 	scheduleList,
 	scheduleStats,
 	schedulerError,
@@ -112,7 +112,7 @@ export const BuiltinCardRenderer = memo(function BuiltinCardRenderer({
 				<StatCard
 					label="Busy Chats"
 					value={busyChatSessions.length}
-					subValue={`${opencodeSessions.length} total chats`}
+					subValue={`${totalChatCount} total chats`}
 					Icon={Flame}
 					accent="border-rose-500/30 text-rose-300"
 				/>

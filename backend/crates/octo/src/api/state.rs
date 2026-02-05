@@ -5,11 +5,12 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use axum::body::Body;
-use hyper_util::client::legacy::Client;
 use hyper_util::client::legacy::connect::HttpConnector;
+use hyper_util::client::legacy::Client;
 use hyper_util::rt::TokioExecutor;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
+use tracing::{debug, warn};
 
 use crate::hstry::HstryClient;
 use crate::local::UserSldrManager;
@@ -190,6 +191,69 @@ impl TemplatesState {
             sync_interval,
             last_sync: Arc::new(Mutex::new(None)),
         }
+    }
+}
+
+impl TemplatesState {
+    /// Spawn a background task that periodically syncs the templates repo via
+    /// `git pull`. This replaces the previous approach of blocking the request
+    /// that triggered the sync.
+    pub fn start_background_sync(&self) {
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => return,
+        };
+        if self.repo_type == TemplatesRepoType::Local {
+            return;
+        }
+        if !self.sync_on_list {
+            return;
+        }
+
+        let interval = self.sync_interval;
+        let last_sync = Arc::clone(&self.last_sync);
+
+        tokio::spawn(async move {
+            loop {
+                // Wait for the configured interval before the first/next sync.
+                tokio::time::sleep(interval).await;
+
+                if !repo_path.join(".git").exists() {
+                    debug!(
+                        "Templates repo at {:?} is not a git repo, skipping background sync",
+                        repo_path
+                    );
+                    continue;
+                }
+
+                let result = tokio::process::Command::new("git")
+                    .arg("-C")
+                    .arg(&repo_path)
+                    .arg("pull")
+                    .arg("--ff-only")
+                    .stdout(std::process::Stdio::piped())
+                    .stderr(std::process::Stdio::piped())
+                    .output()
+                    .await;
+
+                match result {
+                    Ok(output) if output.status.success() => {
+                        debug!("Background templates sync completed");
+                        *last_sync.lock().await = Some(Instant::now());
+                    }
+                    Ok(output) => {
+                        let stderr = String::from_utf8_lossy(&output.stderr);
+                        warn!(
+                            "Background templates sync failed: {}",
+                            stderr.trim()
+                        );
+                    }
+                    Err(e) => {
+                        warn!("Background templates sync error: {}", e);
+                    }
+                }
+            }
+        });
     }
 }
 

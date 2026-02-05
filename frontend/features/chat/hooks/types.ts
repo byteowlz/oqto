@@ -40,7 +40,15 @@ export type PiMessagePart =
 	  }
 	| { type: "thinking"; content: string }
 	| { type: "compaction"; content: string }
-	| { type: "error"; content: string };
+	| { type: "error"; content: string }
+	| {
+			type: "image";
+			id: string;
+			source: string;
+			data?: string;
+			url?: string;
+			mimeType?: string;
+	  };
 
 /** Display message with parts */
 export type PiDisplayMessage = {
@@ -120,15 +128,21 @@ export type RawPiMessage = {
 	id?: string;
 	role: string;
 	content: unknown;
+	/** Canonical message parts (array of Part objects from octo-protocol). */
+	parts?: unknown[];
 	timestamp?: number;
+	created_at?: number;
 	created_at_ms?: number;
 	createdAtMs?: number;
 	parts_json?: string;
 	partsJson?: string;
 	usage?: PiAgentMessage["usage"];
 	toolCallId?: string;
+	tool_call_id?: string;
 	toolName?: string;
+	tool_name?: string;
 	isError?: boolean;
+	is_error?: boolean;
 };
 
 /** Batched update state for token streaming - reduces per-token React updates */

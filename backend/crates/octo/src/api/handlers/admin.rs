@@ -288,10 +288,11 @@ pub async fn create_user(
                 );
             }
             Err(e) => {
-                // This shouldn't happen since we pre-checked, but handle it safely
+                // This shouldn't happen since we pre-checked, but handle it safely.
+                // Use {:?} to log the full anyhow error chain (context + root cause).
                 error!(
                     user_id = %user.id,
-                    error = %e,
+                    error = ?e,
                     "Failed to create Linux user - rolling back user creation"
                 );
 
@@ -299,13 +300,13 @@ pub async fn create_user(
                 if let Err(delete_err) = state.users.delete_user(&user.id).await {
                     error!(
                         user_id = %user.id,
-                        error = %delete_err,
+                        error = ?delete_err,
                         "Failed to delete user after Linux user creation failure"
                     );
                 }
 
                 return Err(ApiError::internal(format!(
-                    "Failed to create Linux user for isolation: {}",
+                    "Failed to create Linux user for isolation: {:?}",
                     e
                 )));
             }

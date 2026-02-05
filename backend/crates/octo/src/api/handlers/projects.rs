@@ -2,7 +2,6 @@
 
 use std::fs;
 use std::path::PathBuf;
-use std::time::Instant;
 
 use anyhow::Context;
 use axum::{
@@ -254,47 +253,6 @@ fn copy_template_dir(src: &std::path::Path, dest: &std::path::Path) -> Result<()
     Ok(())
 }
 
-async fn maybe_sync_templates_repo(state: &AppState) -> Result<(), ApiError> {
-    let repo_path = match state.templates.repo_path.as_ref() {
-        Some(path) => path.clone(),
-        None => return Ok(()),
-    };
-    if state.templates.repo_type == TemplatesRepoType::Local {
-        return Ok(());
-    }
-    if !state.templates.sync_on_list {
-        return Ok(());
-    }
-    let should_sync = {
-        let last_sync = state.templates.last_sync.lock().await;
-        !matches!(*last_sync, Some(instant) if instant.elapsed() < state.templates.sync_interval)
-    };
-    if !should_sync {
-        return Ok(());
-    }
-    if !repo_path.join(".git").exists() {
-        return Err(ApiError::internal("templates repo is not a git repository"));
-    }
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(&repo_path)
-        .arg("pull")
-        .arg("--ff-only")
-        .output()
-        .await
-        .map_err(|e| ApiError::internal(format!("Failed to run git pull: {}", e)))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(ApiError::internal(format!(
-            "Failed to sync templates repo: {}",
-            stderr.trim()
-        )));
-    }
-    let mut last_sync = state.templates.last_sync.lock().await;
-    *last_sync = Some(Instant::now());
-    Ok(())
-}
-
 /// List directories under the workspace root (projects view).
 #[instrument(skip(state))]
 pub async fn list_workspace_dirs(
@@ -315,6 +273,16 @@ pub async fn list_workspace_dirs(
     }
 
     let target = root.join(&rel_path);
+
+    // Auto-create workspace root for the user if it doesn't exist yet.
+    if !target.exists() {
+        if let Err(e) = std::fs::create_dir_all(&target) {
+            tracing::warn!("Could not create workspace directory {:?}: {}", target, e);
+            // Return empty list instead of 500 when the directory can't be created.
+            return Ok(Json(Vec::new()));
+        }
+    }
+
     let entries = std::fs::read_dir(&target)
         .with_context(|| format!("reading workspace directory {:?}", target))
         .map_err(|e| ApiError::internal(format!("Failed to list workspace directories: {}", e)))?;
@@ -360,7 +328,7 @@ pub async fn list_project_templates(
         }
     };
 
-    maybe_sync_templates_repo(&state).await?;
+    // Template sync is handled by a background task; no blocking sync here.
 
     let entries = fs::read_dir(&repo_path)
         .with_context(|| format!("reading templates directory {:?}", repo_path))
@@ -410,7 +378,7 @@ pub async fn create_project_from_template(
         .clone()
         .ok_or_else(|| ApiError::bad_request("templates repo not configured"))?;
 
-    maybe_sync_templates_repo(&state).await?;
+    // Template sync is handled by a background task; no blocking sync here.
 
     let template_rel = sanitize_relative_path(&request.template_path)?;
     let template_dir = repo_path.join(&template_rel);
@@ -427,6 +395,17 @@ pub async fn create_project_from_template(
     }
 
     let workspace_root = state.sessions.for_user(user.id()).workspace_root();
+
+    // Auto-create workspace root for the user if it doesn't exist yet.
+    if !workspace_root.exists() {
+        fs::create_dir_all(&workspace_root).map_err(|e| {
+            ApiError::internal(format!(
+                "Failed to create workspace directory {:?}: {}",
+                workspace_root, e
+            ))
+        })?;
+    }
+
     let target_dir = workspace_root.join(&project_rel);
     if target_dir.exists() {
         return Err(ApiError::bad_request("project path already exists"));

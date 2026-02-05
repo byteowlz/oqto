@@ -2,14 +2,10 @@
 
 ## Open
 
-### [octo-1cqd] Normalize chat workspace path and default assistant mapping (P1, task)
-Remove default chat special casing, normalize workspace_path to default assistant path, and make session creation consistent for pi chats.
-
-### [octo-r6pc] Fix chat session normalization and pending IDs (P1, bug)
-Normalize workspace path handling (avoid 'global') and ensure pending session IDs are replaced when Pi assigns real session IDs. Export default chat APIs consistently.
-
 ### [octo-xxe2] Per-workspace hstry/mmry stores + sync scoping (P1, task)
 Ensure each workspace has isolated hstry/mmry stores; sync and cache are workspace-scoped with location_id/actor metadata. No cross-workspace leakage.
+
+Note: hstry-core now has Sender/SenderType types in parts.rs (see hstry trx-7fh3, completed) for message attribution. This can be used for multi-user workspace scenarios.
 
 ### [octo-wdkj] Remote runner bootstrap over SSH (P1, task)
 Implement SSH bootstrap: install deps, download runner binaries, configure sandbox, start service, register with hub. Provide fallback to bundle+push.
@@ -172,6 +168,12 @@ Implementation:
 ...
 
 
+### [octo-vrzt] Remove MainChatPiService legacy code (P2, task)
+MainChatPiService in src/main_chat/pi_service.rs is legacy. Everything now goes through the runner path. Has deep tendrils: used by ws_multiplexed.rs (get_messages), api/handlers/chat.rs, api/main_chat_pi.rs (REST handlers), api/routes.rs, api/state.rs, api/handlers/agent_ask.rs, api/handlers/agent_rpc.rs, pi_workspace.rs. Need to migrate all callers to use runner client.
+
+### [octo-mkvc] Remove legacy canon/ module (from_pi, from_hstry, from_opencode) (P2, task)
+The old canon/ module (src/canon/{mod,types,from_pi,from_hstry,from_opencode}.rs) is only used by hstry/convert.rs which imports pi_message_to_canon, CanonMessage, ModelInfo. Either inline those conversions into hstry/convert.rs or keep a minimal version. The canonical protocol now lives in octo-protocol crate.
+
 ### [octo-d0a5] Agent targeting for remote locations (P2, task)
 Expose workspace+location targets to agent UI and API. Require explicit selection for remote execution; enforce per-location policies and logging.
 
@@ -244,15 +246,6 @@ Extend SessionService for multi-runner and permission checks:
 1. Session model updates
    - Add runner_id to SessionInfo
    - Add workspace_id and owner_user_id
-...
-
-
-### [octo-3486] WebSocket: Add runner_id and workspace_id to protocol types (P2, task)
-Add runner_id and workspace_id to WebSocket protocol:
-
-1. WsCommand extensions
-   - Add optional runner_id to Subscribe, SendMessage, SendParts, Abort, etc.
-   - Add optional workspace_id for permission tracking
 ...
 
 
@@ -814,6 +807,10 @@ Desired behavior: Tool calls hidden by default, toggle to show
 
 ## Closed
 
+- [octo-z5dx] Update octo-protocol to re-export Sender from hstry-core (closed 2026-02-05)
+- [octo-3486] WebSocket: Add runner_id and workspace_id to protocol types (closed 2026-02-05)
+- [octo-r6pc] Fix chat session normalization and pending IDs (closed 2026-02-05)
+- [octo-1cqd] Normalize chat workspace path and default assistant mapping (closed 2026-02-05)
 - [workspace-gg16.2] Per-user mmry instance management (closed 2026-02-04)
 - [workspace-5pmk.11] Add backend URL configuration to login form (closed 2026-02-04)
 - [octo-3fkc] Use hstry canonical history + Pi export for rehydrate (closed 2026-02-04)
@@ -1384,9 +1381,9 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
+- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
 - [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
 - [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
-- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
-- [octo-k8z1.1] Backend: Integrate agent-browser daemon per session (closed )
 - [octo-k8z1.2] Backend: WebSocket proxy for screencast stream (closed )
+- [octo-k8z1.1] Backend: Integrate agent-browser daemon per session (closed )
 - [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
