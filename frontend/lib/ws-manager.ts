@@ -21,14 +21,12 @@ import type {
 	AgentWsEvent,
 	Channel,
 	ConnectionStateHandler,
-	PiCommandInfo,
-	PiSessionConfig,
-	PiWsEvent,
 	WsCommand,
 	WsEvent,
 	WsEventHandler,
 	WsMuxConnectionState,
 } from "./ws-mux-types";
+import type { CommandResponse, SessionConfig } from "./canonical-types";
 
 function isWsMuxDebugEnabled(): boolean {
 	if (!import.meta.env.DEV) return false;
@@ -73,27 +71,21 @@ class WsConnectionManager {
 	// Connection state handlers
 	private connectionStateHandlers: Set<ConnectionStateHandler> = new Set();
 
-	// Pi session subscriptions (session_id -> handlers)
-	private piSessionHandlers: Map<string, Set<WsEventHandler<PiWsEvent>>> =
+	// Agent session subscriptions (session_id -> handlers)
+	private agentSessionHandlers: Map<string, Set<WsEventHandler<AgentWsEvent>>> =
 		new Map();
-	// Track sessions that have completed create_session
-	private piSessionReady: Set<string> = new Set();
-	private piSessionReadyWaiters: Map<string, Set<() => void>> = new Map();
-	// Pending Pi messages to send once session is ready
-	private pendingPiMessages: Map<
+	// Track sessions that have completed session.create
+	private sessionReady: Set<string> = new Set();
+	private sessionReadyWaiters: Map<string, Set<() => void>> = new Map();
+	// Pending messages to send once session is ready
+	private pendingMessages: Map<
 		string,
-		Array<{ type: "prompt" | "steer" | "follow_up"; message: string; id?: string }>
+		Array<{ cmd: "prompt" | "steer" | "follow_up"; message: string; id?: string }>
 	> = new Map();
 	// Track which sessions we're subscribed to (with their configs for reconnection)
-	private subscribedSessions: Map<
-		string,
-		{ scope?: "main" | "workspace"; cwd?: string; provider?: string; model?: string } | undefined
-	> = new Map();
+	private subscribedSessions: Map<string, SessionConfig | undefined> = new Map();
 	// Pending subscriptions (to send after connect, with configs)
-	private pendingSubscriptions: Map<
-		string,
-		{ scope?: "main" | "workspace"; cwd?: string; provider?: string; model?: string } | undefined
-	> = new Map();
+	private pendingSubscriptions: Map<string, SessionConfig | undefined> = new Map();
 
 	// Request ID counter for correlation
 	private requestIdCounter = 0;
@@ -109,28 +101,31 @@ class WsConnectionManager {
 		return this.connectionState;
 	}
 
-	async piGetCommands(sessionId: string): Promise<PiCommandInfo[]> {
+	async agentGetCommands(sessionId: string): Promise<unknown[]> {
 		const event = await this.sendAndWait({
-			channel: "pi",
-			type: "get_commands",
+			channel: "agent",
 			session_id: sessionId,
+			cmd: "get_commands",
 		});
-		if (event.channel === "pi" && event.type === "commands") {
-			return event.commands ?? [];
+		const resp = this.extractCommandResponse(event);
+		if (resp?.success && resp.data) {
+			const data = resp.data as { commands?: unknown[] };
+			return data.commands ?? [];
 		}
-		throw new Error("Unexpected response to get_commands");
+		throw new Error(resp?.error ?? "Unexpected response to get_commands");
 	}
 
-	async piGetSessionStats(sessionId: string): Promise<unknown> {
+	async agentGetSessionStats(sessionId: string): Promise<unknown> {
 		const event = await this.sendAndWait({
-			channel: "pi",
-			type: "get_session_stats",
+			channel: "agent",
 			session_id: sessionId,
+			cmd: "get_stats",
 		});
-		if (event.channel === "pi" && event.type === "stats") {
-			return event.stats;
+		const resp = this.extractCommandResponse(event);
+		if (resp?.success && resp.data) {
+			return resp.data;
 		}
-		throw new Error("Unexpected response to get_session_stats");
+		throw new Error(resp?.error ?? "Unexpected response to get_stats");
 	}
 
 	/** Check if connected */
@@ -204,10 +199,12 @@ class WsConnectionManager {
 		const id = this.nextRequestId();
 		const commandWithId = { ...command, id } as WsCommand;
 
+		const label = "cmd" in command ? command.cmd : ("type" in command ? (command as { type?: string }).type : command.channel);
+
 		return new Promise<WsEvent>((resolve, reject) => {
 			const timeout = setTimeout(() => {
 				this.pendingRequests.delete(id);
-				reject(new Error(`Request timeout: ${command.type}`));
+				reject(new Error(`Request timeout: ${label}`));
 			}, timeoutMs);
 
 			this.pendingRequests.set(id, (event) => {
@@ -265,29 +262,29 @@ class WsConnectionManager {
 	}
 
 	// ========================================================================
-	// Pi Channel Helpers
+	// Agent Channel Helpers
 	// ========================================================================
 
 	/**
-	 * Subscribe to a Pi session's events.
-	 * Creates the session in the runner if needed, then subscribes to events.
+	 * Subscribe to an agent session's events.
+	 * Creates the session in the runner if needed (auto-subscribes to events).
 	 * @param sessionId The session ID to subscribe to
-	 * @param handler Handler for Pi events for this session
-	 * @param config Optional session config (cwd, provider, model)
+	 * @param handler Handler for agent events for this session
+	 * @param config Optional session config (harness, cwd, provider, model)
 	 * @returns Unsubscribe function
 	 */
-	subscribePiSession(
+	subscribeAgentSession(
 		sessionId: string,
-		handler: WsEventHandler<PiWsEvent>,
-		config?: PiSessionConfig,
+		handler: WsEventHandler<AgentWsEvent>,
+		config?: SessionConfig,
 	): () => void {
-		console.log("[ws-mux] subscribePiSession:", sessionId, "config:", config, "isConnected:", this.isConnected);
+		console.log("[ws-mux] subscribeAgentSession:", sessionId, "config:", config, "isConnected:", this.isConnected);
 		
 		// Add handler locally
-		let handlers = this.piSessionHandlers.get(sessionId);
+		let handlers = this.agentSessionHandlers.get(sessionId);
 		if (!handlers) {
 			handlers = new Set();
-			this.piSessionHandlers.set(sessionId, handlers);
+			this.agentSessionHandlers.set(sessionId, handlers);
 		}
 		handlers.add(handler);
 
@@ -296,20 +293,14 @@ class WsConnectionManager {
 			this.subscribedSessions.set(sessionId, config);
 
 			if (this.isConnected) {
-				console.log("[ws-mux] Sending create_session + subscribe for:", sessionId);
-				// Create session first (idempotent - will resume if exists)
-				this.piSessionReady.delete(sessionId);
+				console.log("[ws-mux] Sending session.create for:", sessionId);
+				// Create session (backend auto-subscribes to events)
+				this.sessionReady.delete(sessionId);
 				this.send({
-					channel: "pi",
-					type: "create_session",
+					channel: "agent",
 					session_id: sessionId,
-					config,
-				});
-				// Then subscribe to events
-				this.send({
-					channel: "pi",
-					type: "subscribe",
-					session_id: sessionId,
+					cmd: "session.create",
+					config: config ?? {},
 				});
 			} else {
 				console.log("[ws-mux] Not connected, queueing subscription for:", sessionId);
@@ -328,17 +319,17 @@ class WsConnectionManager {
 		return () => {
 			handlers?.delete(handler);
 			if (handlers?.size === 0) {
-				this.piSessionHandlers.delete(sessionId);
+				this.agentSessionHandlers.delete(sessionId);
 				this.subscribedSessions.delete(sessionId);
 				this.pendingSubscriptions.delete(sessionId);
-				this.piSessionReady.delete(sessionId);
-				this.pendingPiMessages.delete(sessionId);
+				this.sessionReady.delete(sessionId);
+				this.pendingMessages.delete(sessionId);
 
 				if (this.isConnected) {
 					this.send({
-						channel: "pi",
-						type: "unsubscribe",
+						channel: "agent",
 						session_id: sessionId,
+						cmd: "session.close",
 					});
 				}
 			}
@@ -346,134 +337,137 @@ class WsConnectionManager {
 	}
 
 	/**
-	 * Send a prompt to a Pi session.
+	 * Send a prompt to an agent session.
 	 */
-	piPrompt(sessionId: string, message: string, id?: string): void {
-		this.enqueueOrSendPiMessage(sessionId, "prompt", message, id);
+	agentPrompt(sessionId: string, message: string, id?: string): void {
+		this.enqueueOrSendAgentMessage(sessionId, "prompt", message, id);
 	}
 
 	/**
-	 * Send a steering message to a Pi session.
+	 * Send a steering message to an agent session.
 	 */
-	piSteer(sessionId: string, message: string, id?: string): void {
-		this.enqueueOrSendPiMessage(sessionId, "steer", message, id);
+	agentSteer(sessionId: string, message: string, id?: string): void {
+		this.enqueueOrSendAgentMessage(sessionId, "steer", message, id);
 	}
 
 	/**
-	 * Send a follow-up message to a Pi session.
+	 * Send a follow-up message to an agent session.
 	 */
-	piFollowUp(sessionId: string, message: string, id?: string): void {
-		this.enqueueOrSendPiMessage(sessionId, "follow_up", message, id);
+	agentFollowUp(sessionId: string, message: string, id?: string): void {
+		this.enqueueOrSendAgentMessage(sessionId, "follow_up", message, id);
 	}
 
 	/**
-	 * Abort a Pi session's current operation.
+	 * Abort an agent session's current operation.
 	 */
-	piAbort(sessionId: string, id?: string): void {
+	agentAbort(sessionId: string, id?: string): void {
 		this.send({
-			channel: "pi",
-			type: "abort",
+			channel: "agent",
 			session_id: sessionId,
+			cmd: "abort",
 			id,
 		});
 	}
 
 	/**
-	 * Compact a Pi session's context.
+	 * Compact an agent session's context.
 	 */
-	piCompact(sessionId: string, instructions?: string, id?: string): void {
+	agentCompact(sessionId: string, instructions?: string, id?: string): void {
 		this.send({
-			channel: "pi",
-			type: "compact",
+			channel: "agent",
 			session_id: sessionId,
+			cmd: "compact",
 			instructions,
 			id,
 		});
 	}
 
 	/**
-	 * Create or resume a Pi session.
+	 * Create or resume an agent session.
 	 */
-	piCreateSession(
+	agentCreateSession(
 		sessionId: string,
-		config?: PiSessionConfig,
+		config?: SessionConfig,
 		id?: string,
 	): void {
-		const resolvedConfig = config ?? this.subscribedSessions.get(sessionId);
+		const resolvedConfig = config ?? this.subscribedSessions.get(sessionId) ?? {};
 		this.send({
-			channel: "pi",
-			type: "create_session",
+			channel: "agent",
 			session_id: sessionId,
+			cmd: "session.create",
 			config: resolvedConfig,
 			id,
 		});
 	}
 
 	/**
-	 * Close a Pi session.
+	 * Close an agent session.
 	 */
-	piCloseSession(sessionId: string, id?: string): void {
+	agentCloseSession(sessionId: string, id?: string): void {
 		this.send({
-			channel: "pi",
-			type: "close_session",
+			channel: "agent",
 			session_id: sessionId,
+			cmd: "session.close",
 			id,
 		});
 	}
 
 	/**
-	 * Get Pi session state.
+	 * Get agent session state.
 	 */
-	piGetState(sessionId: string, id?: string): void {
+	agentGetState(sessionId: string, id?: string): void {
 		this.send({
-			channel: "pi",
-			type: "get_state",
+			channel: "agent",
 			session_id: sessionId,
+			cmd: "get_state",
 			id,
 		});
 	}
 
 	/**
-	 * List Pi sessions.
+	 * Get messages for a session.
 	 */
-	piListSessions(id?: string): void {
+	agentGetMessages(sessionId: string, id?: string): void {
 		this.send({
-			channel: "pi",
-			type: "list_sessions",
+			channel: "agent",
+			session_id: sessionId,
+			cmd: "get_messages",
 			id,
 		});
 	}
 
 	/**
-	 * Set model for a Pi session.
+	 * Set model for an agent session.
 	 */
-	async piSetModel(
+	async agentSetModel(
 		sessionId: string,
 		provider: string,
 		modelId: string,
 	): Promise<void> {
 		await this.sendAndWait({
-			channel: "pi",
-			type: "set_model",
+			channel: "agent",
 			session_id: sessionId,
+			cmd: "set_model",
 			provider,
 			model_id: modelId,
 		});
 	}
 
 	/**
-	 * Get available models for a Pi session.
+	 * Get available models for an agent session.
 	 */
-	async piGetAvailableModels(sessionId: string): Promise<unknown> {
-		const response = await this.sendAndWait({
-			channel: "pi",
-			type: "get_available_models",
+	async agentGetAvailableModels(sessionId: string): Promise<unknown> {
+		const event = await this.sendAndWait({
+			channel: "agent",
 			session_id: sessionId,
+			cmd: "get_models",
 		});
-		if (response.type === "available_models" && "models" in response) {
-			return response.models;
+		const resp = this.extractCommandResponse(event);
+		if (resp?.success && resp.data) {
+			const data = resp.data as { models?: unknown[] };
+			return data.models;
 		}
-		throw new Error("Unexpected response type");
+		throw new Error(resp?.error ?? "Unexpected response type");
 	}
 
 	// ========================================================================
@@ -513,35 +507,45 @@ class WsConnectionManager {
 		return this.waitForConnected(timeoutMs);
 	}
 
-	async waitForPiSessionReady(sessionId: string, timeoutMs = 4000): Promise<void> {
-		if (this.piSessionReady.has(sessionId)) return;
+	async waitForSessionReady(sessionId: string, timeoutMs = 4000): Promise<void> {
+		if (this.sessionReady.has(sessionId)) return;
 		return new Promise<void>((resolve, reject) => {
 			let done = false;
-			const waiters = this.piSessionReadyWaiters.get(sessionId) ?? new Set();
+			const waiters = this.sessionReadyWaiters.get(sessionId) ?? new Set();
 			const onReady = () => {
 				if (done) return;
 				done = true;
 				clearTimeout(timeout);
-				const current = this.piSessionReadyWaiters.get(sessionId);
+				const current = this.sessionReadyWaiters.get(sessionId);
 				if (current) {
 					current.delete(onReady);
-					if (current.size === 0) this.piSessionReadyWaiters.delete(sessionId);
+					if (current.size === 0) this.sessionReadyWaiters.delete(sessionId);
 				}
 				resolve();
 			};
 			waiters.add(onReady);
-			this.piSessionReadyWaiters.set(sessionId, waiters);
+			this.sessionReadyWaiters.set(sessionId, waiters);
 			const timeout = setTimeout(() => {
 				if (done) return;
 				done = true;
-				const current = this.piSessionReadyWaiters.get(sessionId);
+				const current = this.sessionReadyWaiters.get(sessionId);
 				if (current) {
 					current.delete(onReady);
-					if (current.size === 0) this.piSessionReadyWaiters.delete(sessionId);
+					if (current.size === 0) this.sessionReadyWaiters.delete(sessionId);
 				}
-				reject(new Error("Pi session did not become ready in time"));
+				reject(new Error("Agent session did not become ready in time"));
 			}, timeoutMs);
 		});
+	}
+
+	/** Extract CommandResponse from an agent event (for sendAndWait results). */
+	private extractCommandResponse(event: WsEvent): CommandResponse | null {
+		if (event.channel !== "agent") return null;
+		const agentEvent = event as AgentWsEvent;
+		if (agentEvent.event === "response") {
+			return agentEvent.response as CommandResponse;
+		}
+		return null;
 	}
 
 	private createWebSocket(): void {
@@ -568,44 +572,34 @@ class WsConnectionManager {
 			console.log("[ws-mux] Processing subscribed sessions:", this.subscribedSessions.size);
 
 			const pendingSessionIds = new Set(this.pendingSubscriptions.keys());
-			// Send pending subscriptions (create session first, then subscribe)
+			// Send pending subscriptions (session.create auto-subscribes)
 			for (const [sessionId, config] of this.pendingSubscriptions) {
-				this.piSessionReady.delete(sessionId);
+				this.sessionReady.delete(sessionId);
 				this.send({
-					channel: "pi",
-					type: "create_session",
+					channel: "agent",
 					session_id: sessionId,
-					config,
-				});
-				this.send({
-					channel: "pi",
-					type: "subscribe",
-					session_id: sessionId,
+					cmd: "session.create",
+					config: config ?? {},
 				});
 			}
 			this.pendingSubscriptions.clear();
 
-			// Re-subscribe to all tracked sessions (create session first for reconnect)
+			// Re-subscribe to all tracked sessions (session.create for reconnect)
 			for (const [sessionId, config] of this.subscribedSessions) {
 				if (pendingSessionIds.has(sessionId)) continue;
-				this.piSessionReady.delete(sessionId);
+				this.sessionReady.delete(sessionId);
 				this.send({
-					channel: "pi",
-					type: "create_session",
+					channel: "agent",
 					session_id: sessionId,
-					config,
-				});
-				this.send({
-					channel: "pi",
-					type: "subscribe",
-					session_id: sessionId,
+					cmd: "session.create",
+					config: config ?? {},
 				});
 			}
 
-			if (this.pendingPiMessages.size > 0 && isWsMuxDebugEnabled()) {
+			if (this.pendingMessages.size > 0 && isWsMuxDebugEnabled()) {
 				console.debug(
-					"[ws-mux] Pending Pi messages queued until session_ready:",
-					this.pendingPiMessages.size,
+					"[ws-mux] Pending messages queued until session_ready:",
+					this.pendingMessages.size,
 				);
 			}
 		};
@@ -613,8 +607,11 @@ class WsConnectionManager {
 		this.ws.onmessage = (event) => {
 			try {
 				const data = JSON.parse(event.data) as WsEvent;
-				if (isWsMuxDebugEnabled() && data.type !== "ping") {
-					console.debug("[ws-mux] Received:", data);
+				if (isWsMuxDebugEnabled()) {
+					const eventType = "type" in data ? (data as { type?: string }).type : ("event" in data ? (data as { event?: string }).event : "");
+					if (eventType !== "ping") {
+						console.debug("[ws-mux] Received:", data);
+					}
 				}
 				this.handleEvent(data);
 			} catch (err) {
@@ -641,52 +638,84 @@ class WsConnectionManager {
 	}
 
 	private handleEvent(event: WsEvent): void {
-		// Track Pi session readiness and flush queued messages
-		if (event.channel === "pi" && event.type === "session_created") {
-			const sessionId = (event as PiWsEvent).session_id;
-			console.log("[ws-mux] Received session_created for:", sessionId);
-			this.piSessionReady.add(sessionId);
-			const waiters = this.piSessionReadyWaiters.get(sessionId);
-			if (waiters) {
-				for (const waiter of waiters) {
-					waiter();
+		// Track agent session readiness via response to session.create command
+		if (event.channel === "agent") {
+			const agentEvent = event as AgentWsEvent;
+
+			// Check if this is a successful session.create response
+			if (agentEvent.event === "response") {
+				const resp = agentEvent.response as CommandResponse | undefined;
+				if (resp?.cmd === "session.create" && resp.success) {
+					const sessionId = agentEvent.session_id;
+					console.log("[ws-mux] Session created (response) for:", sessionId);
+					this.sessionReady.add(sessionId);
+					const waiters = this.sessionReadyWaiters.get(sessionId);
+					if (waiters) {
+						for (const waiter of waiters) {
+							waiter();
+						}
+						this.sessionReadyWaiters.delete(sessionId);
+					}
+
+					// Request initial state (includes model info)
+					this.send({
+						channel: "agent",
+						session_id: sessionId,
+						cmd: "get_state",
+					});
+
+					const pending = this.pendingMessages.get(sessionId);
+					console.log("[ws-mux] Pending messages for session:", sessionId, pending?.length ?? 0);
+					if (pending?.length) {
+						for (const entry of pending) {
+							console.log("[ws-mux] Flushing queued message:", entry.cmd, "for session:", sessionId);
+							this.send({
+								channel: "agent",
+								session_id: sessionId,
+								cmd: entry.cmd,
+								message: entry.message,
+								id: entry.id,
+							});
+						}
+						this.pendingMessages.delete(sessionId);
+					}
 				}
-				this.piSessionReadyWaiters.delete(sessionId);
 			}
 
-			// Request initial state (includes model info)
-			this.send({
-				channel: "pi",
-				type: "get_state",
-				session_id: sessionId,
-			});
-
-			const pending = this.pendingPiMessages.get(sessionId);
-			console.log("[ws-mux] Pending messages for session:", sessionId, pending?.length ?? 0);
-			if (pending?.length) {
-				for (const entry of pending) {
-					console.log("[ws-mux] Flushing queued message:", entry.type, "for session:", sessionId);
-					this.send({
-						channel: "pi",
-						type: entry.type,
-						session_id: sessionId,
-						message: entry.message,
-						id: entry.id,
-					});
+			// Also mark session ready on session.created event (from runner)
+			if (agentEvent.event === "session.created") {
+				const sessionId = agentEvent.session_id;
+				if (!this.sessionReady.has(sessionId)) {
+					console.log("[ws-mux] Session created (event) for:", sessionId);
+					this.sessionReady.add(sessionId);
+					const waiters = this.sessionReadyWaiters.get(sessionId);
+					if (waiters) {
+						for (const waiter of waiters) {
+							waiter();
+						}
+						this.sessionReadyWaiters.delete(sessionId);
+					}
 				}
-				this.pendingPiMessages.delete(sessionId);
 			}
 		}
 
 		// Handle system pings
 		if (event.channel === "system" && event.type === "ping") {
-			// Respond with any message to keep connection alive
-			// (Backend uses the message to detect liveness)
 			return;
 		}
 
-		// Check for correlated response
-		const id = "id" in event ? event.id : undefined;
+		// Check for correlated response (agent events carry id in the response object)
+		let id: string | undefined;
+		if (event.channel === "agent") {
+			const agentEvent = event as AgentWsEvent;
+			if (agentEvent.event === "response") {
+				const resp = agentEvent.response as CommandResponse | undefined;
+				id = resp?.id;
+			}
+		}
+		if (!id) {
+			id = "id" in event ? (event as { id?: string }).id : undefined;
+		}
 		if (id && this.pendingRequests.has(id)) {
 			const callback = this.pendingRequests.get(id);
 			if (callback) {
@@ -715,40 +744,16 @@ class WsConnectionManager {
 			}
 		}
 
-		// Dispatch Pi events to session-specific handlers
-		if (event.channel === "pi") {
-			const piEvent = event as PiWsEvent;
-			const sessionId =
-				"session_id" in piEvent ? piEvent.session_id : undefined;
-			if (sessionId) {
-				const sessionHandlers = this.piSessionHandlers.get(sessionId);
-				if (sessionHandlers) {
-					for (const handler of sessionHandlers) {
-						try {
-							handler(piEvent);
-						} catch (err) {
-							console.error(
-								"[ws-mux] Error in Pi session event handler:",
-								err,
-							);
-						}
-					}
-				}
-			}
-		}
-
-		// Dispatch agent channel events to session-specific handlers.
-		// Agent events carry canonical protocol events (streaming, state, etc.)
-		// and are routed to the same Pi session handlers by session_id.
+		// Dispatch agent channel events to session-specific handlers
 		if (event.channel === "agent") {
 			const agentEvent = event as AgentWsEvent;
 			const sessionId = agentEvent.session_id;
 			if (sessionId) {
-				const sessionHandlers = this.piSessionHandlers.get(sessionId);
+				const sessionHandlers = this.agentSessionHandlers.get(sessionId);
 				if (sessionHandlers) {
 					for (const handler of sessionHandlers) {
 						try {
-							handler(agentEvent as unknown as PiWsEvent);
+							handler(agentEvent);
 						} catch (err) {
 							console.error(
 								"[ws-mux] Error in agent session event handler:",
@@ -761,27 +766,27 @@ class WsConnectionManager {
 		}
 	}
 
-	private enqueueOrSendPiMessage(
+	private enqueueOrSendAgentMessage(
 		sessionId: string,
-		type: "prompt" | "steer" | "follow_up",
+		cmd: "prompt" | "steer" | "follow_up",
 		message: string,
 		id?: string,
 	): void {
 		if (!this.isConnected) {
-			const pending = this.pendingPiMessages.get(sessionId) ?? [];
-			pending.push({ type, message, id });
-			this.pendingPiMessages.set(sessionId, pending);
+			const pending = this.pendingMessages.get(sessionId) ?? [];
+			pending.push({ cmd, message, id });
+			this.pendingMessages.set(sessionId, pending);
 			return;
 		}
 
-		if (!this.piSessionReady.has(sessionId)) {
-			const pending = this.pendingPiMessages.get(sessionId) ?? [];
-			pending.push({ type, message, id });
-			this.pendingPiMessages.set(sessionId, pending);
+		if (!this.sessionReady.has(sessionId)) {
+			const pending = this.pendingMessages.get(sessionId) ?? [];
+			pending.push({ cmd, message, id });
+			this.pendingMessages.set(sessionId, pending);
 			console.log(
-				"[ws-mux] Queued Pi message until session is ready:",
+				"[ws-mux] Queued agent message until session is ready:",
 				sessionId,
-				type,
+				cmd,
 				"queue size:",
 				pending.length,
 			);
@@ -789,9 +794,9 @@ class WsConnectionManager {
 		}
 
 		this.send({
-			channel: "pi",
-			type,
+			channel: "agent",
 			session_id: sessionId,
+			cmd,
 			message,
 			id,
 		});

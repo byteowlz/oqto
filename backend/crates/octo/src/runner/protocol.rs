@@ -811,9 +811,6 @@ pub struct PiSessionConfig {
     /// Session file to continue from.
     #[serde(default)]
     pub continue_session: Option<PathBuf>,
-    /// System prompt addition files.
-    #[serde(default)]
-    pub system_prompt_files: Vec<PathBuf>,
     /// Environment variables for the Pi process.
     #[serde(default)]
     pub env: HashMap<String, String>,
@@ -827,7 +824,6 @@ impl Default for PiSessionConfig {
             model: None,
             session_file: None,
             continue_session: None,
-            system_prompt_files: Vec::new(),
             env: HashMap::new(),
         }
     }
@@ -1964,7 +1960,6 @@ mod tests {
                 model: Some("claude-sonnet-4-20250514".to_string()),
                 session_file: None,
                 continue_session: None,
-                system_prompt_files: vec![],
                 env: HashMap::new(),
             },
         });

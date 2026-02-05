@@ -2134,7 +2134,6 @@ impl Runner {
             model: req.config.model,
             session_file: req.config.session_file,
             continue_session: req.config.continue_session,
-            system_prompt_files: req.config.system_prompt_files,
             env: req.config.env,
         };
 

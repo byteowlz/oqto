@@ -14,6 +14,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
+use chrono::Utc;
 use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -85,9 +86,6 @@ pub struct PiSessionConfig {
     /// Session file to continue from.
     #[serde(default)]
     pub continue_session: Option<PathBuf>,
-    /// System prompt additions.
-    #[serde(default)]
-    pub system_prompt_files: Vec<PathBuf>,
     /// Environment variables.
     #[serde(default)]
     pub env: HashMap<String, String>,
@@ -102,7 +100,6 @@ impl Default for PiSessionConfig {
             model: None,
             session_file: None,
             continue_session: None,
-            system_prompt_files: Vec::new(),
             env: HashMap::new(),
         }
     }
@@ -362,6 +359,81 @@ impl PiSessionManager {
         })
     }
 
+    /// Resolve or create a session file for the given session_id and cwd.
+    ///
+    /// Looks in `~/.pi/agent/sessions/--{safe_cwd}--/` for an existing JSONL file
+    /// matching the session_id. If not found, creates a new one with a session header.
+    /// Returns `None` only if the home directory can't be determined.
+    fn resolve_session_file(&self, session_id: &str, cwd: &std::path::Path) -> Option<PathBuf> {
+        let home = std::env::var("HOME")
+            .ok()
+            .map(PathBuf::from)
+            .or_else(dirs::home_dir)?;
+
+        let safe_path = cwd
+            .to_string_lossy()
+            .trim_start_matches(&['/', '\\'][..])
+            .replace('/', "-")
+            .replace('\\', "-")
+            .replace(':', "-");
+        let sessions_dir = home
+            .join(".pi")
+            .join("agent")
+            .join("sessions")
+            .join(format!("--{}--", safe_path));
+
+        // Check for existing session file matching this session_id
+        if let Ok(entries) = std::fs::read_dir(&sessions_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().map(|e| e == "jsonl").unwrap_or(false)
+                    && path
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .map(|name| name.contains(session_id))
+                        .unwrap_or(false)
+                {
+                    return Some(path);
+                }
+            }
+        }
+
+        // Create new session file
+        if let Err(err) = std::fs::create_dir_all(&sessions_dir) {
+            error!(
+                "Failed to create Pi sessions dir {:?}: {}",
+                sessions_dir, err
+            );
+            return None;
+        }
+
+        let header = serde_json::json!({
+            "type": "session",
+            "version": 3,
+            "id": session_id,
+            "timestamp": chrono::Utc::now().to_rfc3339(),
+            "cwd": cwd.to_string_lossy(),
+        });
+        let content = format!(
+            "{}\n",
+            serde_json::to_string(&header).unwrap_or_else(|_| "{}".to_string())
+        );
+        let filename = format!(
+            "{}_{}.jsonl",
+            chrono::Utc::now().timestamp_millis(),
+            session_id
+        );
+        let path = sessions_dir.join(filename);
+
+        match std::fs::write(&path, content) {
+            Ok(()) => Some(path),
+            Err(err) => {
+                error!("Failed to seed Pi session file {:?}: {}", path, err);
+                None
+            }
+        }
+    }
+
     /// Create a new session.
     pub async fn create_session(
         self: &Arc<Self>,
@@ -378,6 +450,15 @@ impl PiSessionManager {
 
         info!("Creating Pi session '{}' in {:?}", session_id, config.cwd);
 
+        // Resolve session file: use explicit path if provided, otherwise
+        // discover or create one based on session_id and cwd.
+        let session_file = config
+            .session_file
+            .as_ref()
+            .or(config.continue_session.as_ref())
+            .cloned()
+            .or_else(|| self.resolve_session_file(&session_id, &config.cwd));
+
         // Build Pi arguments
         let mut pi_args: Vec<String> = vec!["--mode".to_string(), "rpc".to_string()];
 
@@ -389,19 +470,10 @@ impl PiSessionManager {
             pi_args.push("--model".to_string());
             pi_args.push(model.clone());
         }
-        let session_file = config
-            .session_file
-            .as_ref()
-            .or(config.continue_session.as_ref());
-        if let Some(session_file) = session_file {
+        if let Some(ref session_file) = session_file {
             pi_args.push("--session".to_string());
             pi_args.push(session_file.to_string_lossy().to_string());
         }
-        for prompt_file in &config.system_prompt_files {
-            pi_args.push("--system-prompt-file".to_string());
-            pi_args.push(prompt_file.to_string_lossy().to_string());
-        }
-
         // Build command - either direct or via bwrap sandbox
         let mut cmd = if let Some(ref sandbox_config) = self.config.sandbox_config {
             if sandbox_config.enabled {
@@ -1891,7 +1963,6 @@ mod tests {
         assert!(config.provider.is_none());
         assert!(config.model.is_none());
         assert!(config.continue_session.is_none());
-        assert!(config.system_prompt_files.is_empty());
         assert!(config.env.is_empty());
     }
 

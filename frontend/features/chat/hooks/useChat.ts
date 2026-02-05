@@ -8,9 +8,9 @@
  * per-session WebSocket connections.
  *
  * Key differences from the legacy hook:
- * - Uses wsManager.subscribePiSession() for event subscription
- * - Manages session subscriptions explicitly (subscribe/unsubscribe commands)
- * - Single WebSocket connection shared across all Pi sessions
+ * - Uses wsManager.subscribeAgentSession() for event subscription
+ * - Uses canonical protocol (agent channel) for all communication
+ * - Single WebSocket connection shared across all agent sessions
  */
 
 import {
@@ -19,7 +19,8 @@ import {
 	normalizeWorkspacePath,
 } from "@/lib/session-utils";
 import { getWsManager } from "@/lib/ws-manager";
-import type { AgentWsEvent, PiWsEvent, WsMuxConnectionState } from "@/lib/ws-mux-types";
+import type { AgentWsEvent, WsMuxConnectionState } from "@/lib/ws-mux-types";
+import type { CommandResponse, SessionConfig } from "@/lib/canonical-types";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
 	readCachedSessionMessages,
@@ -127,11 +128,11 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 		[nextMessageId, onMessageComplete],
 	);
 
-	const getSessionConfig = useCallback(() => {
+	const getSessionConfig = useCallback((): SessionConfig | undefined => {
 		if (normalizedWorkspacePath) {
-			return { scope: "workspace" as const, cwd: normalizedWorkspacePath };
+			return { harness: "pi", cwd: normalizedWorkspacePath };
 		}
-		return undefined;
+		return { harness: "pi" };
 	}, [normalizedWorkspacePath]);
 
 	const appendPartToMessage = useCallback(
@@ -477,17 +478,13 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 					if (shouldRecover && now - lastSessionRecoveryRef.current > 5000) {
 						lastSessionRecoveryRef.current = now;
 						const manager = getWsManager();
-						manager.piCreateSession(
+						manager.agentCreateSession(
 							sessionId as string,
 							getSessionConfig(),
 						);
 						setTimeout(() => {
-							manager.piGetState(sessionId as string);
-							manager.send({
-								channel: "pi",
-								type: "get_messages",
-								session_id: sessionId as string,
-							});
+							manager.agentGetState(sessionId as string);
+							manager.agentGetMessages(sessionId as string);
 						}, 250);
 					}
 
@@ -570,7 +567,7 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 				case "config.model_changed": {
 					const sessionId = event.session_id;
 					const manager = getWsManager();
-					manager.piGetState(sessionId);
+					manager.agentGetState(sessionId);
 					if (isPiDebugEnabled()) {
 						console.debug(
 							"[useChat] Model changed:",
@@ -625,6 +622,118 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 					break;
 				}
 
+				// -- Command response (replaces old Pi command-response events) --
+				case "response": {
+					const resp = event.response as CommandResponse | undefined;
+					if (!resp) break;
+
+					if (isPiDebugEnabled()) {
+						console.debug("[useChat] Command response:", resp.cmd, resp);
+					}
+
+					switch (resp.cmd) {
+						case "session.create": {
+							if (resp.success) {
+								// Session created, request messages
+								const manager = getWsManager();
+								manager.agentGetMessages(event.session_id);
+								if (isPiDebugEnabled()) {
+									console.debug(
+										"[useChat] Session created, requesting messages:",
+										event.session_id,
+									);
+								}
+							} else {
+								const errMsg = resp.error || "Failed to create session";
+								const err = new Error(errMsg);
+								setError(err);
+								onError?.(err);
+							}
+							break;
+						}
+
+						case "get_state": {
+							if (resp.success && resp.data) {
+								const nextState = resp.data as PiState;
+								setState(nextState);
+								if (nextState?.is_streaming === false) {
+									setIsStreaming(false);
+									setIsAwaitingResponse(false);
+									if (streamingMessageRef.current) {
+										streamingMessageRef.current.isStreaming = false;
+										streamingMessageRef.current = null;
+									}
+								}
+							}
+							break;
+						}
+
+						case "get_messages": {
+							if (resp.success && resp.data) {
+								const data = resp.data as { messages?: unknown[] };
+								const msgs = data.messages;
+								if (Array.isArray(msgs)) {
+									const displayMessages = normalizePiMessages(
+										msgs,
+										`server-${event.session_id}`,
+									);
+									if (displayMessages.length > 0) {
+										setMessages(displayMessages);
+										messageIdRef.current =
+											getMaxPiMessageId(displayMessages);
+										const lastAssistant = [...displayMessages]
+											.reverse()
+											.find((msg) => msg.role === "assistant");
+										lastAssistantMessageIdRef.current =
+											lastAssistant?.id ?? null;
+									}
+									if (isPiDebugEnabled()) {
+										console.debug(
+											"[useChat] Loaded messages:",
+											event.session_id,
+											displayMessages.length,
+										);
+									}
+								}
+							}
+							break;
+						}
+
+						default: {
+							if (!resp.success && resp.error) {
+								// Generic command error
+								const errMsg = resp.error;
+								const err = new Error(errMsg);
+								setError(err);
+								onError?.(err);
+
+								// Auto-recover for session-not-found errors
+								const sessionId = activeSessionIdRef.current;
+								const now = Date.now();
+								const shouldRecover =
+									Boolean(sessionId) &&
+									(errMsg.includes("PiSessionNotFound") ||
+										errMsg.includes("SessionNotFound") ||
+										errMsg.includes("Response channel closed"));
+								if (shouldRecover && now - lastSessionRecoveryRef.current > 5000) {
+									lastSessionRecoveryRef.current = now;
+									const manager = getWsManager();
+									manager.agentCreateSession(
+										sessionId as string,
+										getSessionConfig(),
+									);
+									setTimeout(() => {
+										manager.agentGetState(sessionId as string);
+										manager.agentGetMessages(sessionId as string);
+									}, 250);
+								}
+							}
+							break;
+						}
+					}
+					break;
+				}
+
 				default: {
 					if (isPiDebugEnabled()) {
 						console.debug(
@@ -647,211 +756,29 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 	);
 
 	// ========================================================================
-	// Pi command-response + agent event dispatcher
+	// Agent event handler (canonical protocol, single handler for all events)
 	// ========================================================================
 
 	/**
-	 * Handle events dispatched by ws-manager's piSessionHandlers.
+	 * Handle all agent channel events.
 	 *
-	 * Events come from two channels:
-	 * - "pi": command responses (session_created, state, error, messages, etc.)
-	 * - "agent": canonical streaming/lifecycle events from PiTranslator
-	 *
-	 * ws-manager casts agent events to PiWsEvent for the handler signature,
-	 * so we check event.channel to disambiguate.
+	 * Validates session_id before dispatching to handleCanonicalEvent.
+	 * This is the single entry point for all agent events from ws-manager.
 	 */
-	const handlePiEvent = useCallback(
-		(event: PiWsEvent) => {
-			// Route agent channel events to the canonical handler
-			if ("channel" in event && (event as unknown as AgentWsEvent).channel === "agent") {
-				const agentEvent = event as unknown as AgentWsEvent;
-				// Validate session_id
-				const activeId = activeSessionIdRef.current;
-				if (activeId && agentEvent.session_id !== activeId) {
-					if (isPiDebugEnabled()) {
-						console.debug(
-							`[useChat] Ignoring agent event for session ${agentEvent.session_id}, active is ${activeId}`,
-						);
-					}
-					return;
+	const handleAgentEvent = useCallback(
+		(event: AgentWsEvent) => {
+			const activeId = activeSessionIdRef.current;
+			if (activeId && event.session_id !== activeId) {
+				if (isPiDebugEnabled()) {
+					console.debug(
+						`[useChat] Ignoring agent event for session ${event.session_id}, active is ${activeId}`,
+					);
 				}
-				handleCanonicalEvent(agentEvent);
 				return;
 			}
-
-			// Pi command-response events
-			if ("session_id" in event) {
-				const activeId = activeSessionIdRef.current;
-				if (activeId && event.session_id !== activeId) {
-					if (isPiDebugEnabled()) {
-						console.debug(
-							`[useChat] Ignoring Pi event for session ${event.session_id}, active is ${activeId}`,
-						);
-					}
-					return;
-				}
-			}
-
-			if (isPiDebugEnabled()) {
-				console.debug("[useChat] Pi event:", event.type, event);
-			}
-
-			switch (event.type) {
-				case "session_created": {
-					const manager = getWsManager();
-					manager.send({
-						channel: "pi",
-						type: "get_messages",
-						session_id: event.session_id,
-					});
-					if (isPiDebugEnabled()) {
-						console.debug(
-							"[useChat] Session created, requesting messages:",
-							event.session_id,
-						);
-					}
-					break;
-				}
-
-				case "state": {
-					const nextState = event.state as PiState;
-					setState(nextState);
-					if (nextState?.is_streaming === false) {
-						setIsStreaming(false);
-						setIsAwaitingResponse(false);
-						if (streamingMessageRef.current) {
-							streamingMessageRef.current.isStreaming = false;
-							streamingMessageRef.current = null;
-						}
-					}
-					break;
-				}
-
-				case "error": {
-					const errMsg = event.error || "Unknown error";
-					const err = new Error(errMsg);
-					setError(err);
-					onError?.(err);
-					setIsStreaming(false);
-					setIsAwaitingResponse(false);
-
-					const sessionId = activeSessionIdRef.current;
-					const now = Date.now();
-					const shouldRecover =
-						Boolean(sessionId) &&
-						(errMsg.includes("PiSessionNotFound") ||
-							errMsg.includes("SessionNotFound") ||
-							errMsg.includes("Response channel closed"));
-					if (
-						shouldRecover &&
-						now - lastSessionRecoveryRef.current > 5000
-					) {
-						lastSessionRecoveryRef.current = now;
-						const manager = getWsManager();
-						manager.piCreateSession(
-							sessionId as string,
-							getSessionConfig(),
-						);
-						setTimeout(() => {
-							manager.piGetState(sessionId as string);
-							manager.send({
-								channel: "pi",
-								type: "get_messages",
-								session_id: sessionId as string,
-							});
-						}, 250);
-					}
-
-					if (streamingMessageRef.current) {
-						streamingMessageRef.current.isStreaming = false;
-						streamingMessageRef.current.parts.push({
-							type: "error",
-							content: errMsg,
-						});
-						const completedMessage = {
-							...streamingMessageRef.current,
-							parts: streamingMessageRef.current.parts.map((p) => ({
-								...p,
-							})),
-						};
-						setMessages((prev) => {
-							const idx = prev.findIndex(
-								(m) => m.id === completedMessage.id,
-							);
-							if (idx >= 0) {
-								const updated = [...prev];
-								updated[idx] = completedMessage;
-								return updated;
-							}
-							return prev;
-						});
-						onMessageComplete?.(completedMessage);
-						streamingMessageRef.current = null;
-					} else {
-						const errorMessage: PiDisplayMessage = {
-							id: nextMessageId(),
-							role: "assistant",
-							parts: [{ type: "error", content: errMsg }],
-							timestamp: Date.now(),
-							isStreaming: false,
-						};
-						setMessages((prev) => [...prev, errorMessage]);
-						onMessageComplete?.(errorMessage);
-					}
-					break;
-				}
-
-				case "model_changed": {
-					const manager = getWsManager();
-					manager.piGetState(event.session_id);
-					if (isPiDebugEnabled()) {
-						console.debug(
-							"[useChat] Model changed:",
-							event.session_id,
-							"provider" in event ? event.provider : "",
-							"model_id" in event ? event.model_id : "",
-						);
-					}
-					break;
-				}
-
-				case "messages": {
-					if ("messages" in event && Array.isArray(event.messages)) {
-						const displayMessages = normalizePiMessages(
-							event.messages,
-							`server-${event.session_id}`,
-						);
-
-						if (displayMessages.length > 0) {
-							setMessages(displayMessages);
-							messageIdRef.current =
-								getMaxPiMessageId(displayMessages);
-							const lastAssistant = [...displayMessages]
-								.reverse()
-								.find((msg) => msg.role === "assistant");
-							lastAssistantMessageIdRef.current =
-								lastAssistant?.id ?? null;
-						}
-
-						if (isPiDebugEnabled()) {
-							console.debug(
-								"[useChat] Loaded messages:",
-								event.session_id,
-								displayMessages.length,
-							);
-						}
-					}
-					break;
-				}
-			}
+			handleCanonicalEvent(event);
 		},
-		[
-			handleCanonicalEvent,
-			nextMessageId,
-			onMessageComplete,
-			onError,
-			getSessionConfig,
-		],
+		[handleCanonicalEvent],
 	);
 
 	// Connect to WebSocket manager
@@ -879,17 +806,17 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 		const manager = getWsManager();
 		const sessionConfig = getSessionConfig();
 		unsubscribeRef.current?.();
-		unsubscribeRef.current = manager.subscribePiSession(
+		unsubscribeRef.current = manager.subscribeAgentSession(
 			sessionId,
-			handlePiEvent,
+			handleAgentEvent,
 			sessionConfig,
 		);
 
 		await manager.ensureConnected(4000);
-		manager.piCreateSession(sessionId, sessionConfig);
-		await manager.waitForPiSessionReady(sessionId, 4000);
+		manager.agentCreateSession(sessionId, sessionConfig);
+		await manager.waitForSessionReady(sessionId, 4000);
 		return sessionId;
-	}, [getSessionConfig, handlePiEvent, onSelectedSessionIdChange]);
+	}, [getSessionConfig, handleAgentEvent, onSelectedSessionIdChange]);
 
 	// Send message
 	const send = useCallback(
@@ -902,9 +829,9 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 				const manager = getWsManager();
 				const sessionConfig = getSessionConfig();
 				unsubscribeRef.current?.();
-				unsubscribeRef.current = manager.subscribePiSession(
+				unsubscribeRef.current = manager.subscribeAgentSession(
 					options.sessionId,
-					handlePiEvent,
+					handleAgentEvent,
 					sessionConfig,
 				);
 			}
@@ -932,7 +859,7 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 			const manager = getWsManager();
 			try {
 				await manager.ensureConnected(4000);
-				await manager.waitForPiSessionReady(sessionId, 4000);
+				await manager.waitForSessionReady(sessionId, 4000);
 			} catch (err) {
 				const error =
 					err instanceof Error ? err : new Error("WebSocket not ready");
@@ -943,20 +870,20 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 
 			switch (mode) {
 				case "prompt":
-					manager.piPrompt(sessionId, message);
+					manager.agentPrompt(sessionId, message);
 					break;
 				case "steer":
-					manager.piPrompt(sessionId, message);
+					manager.agentSteer(sessionId, message);
 					break;
 				case "follow_up":
-					manager.piFollowUp(sessionId, message);
+					manager.agentFollowUp(sessionId, message);
 					break;
 			}
 		},
 		[
 			ensureSession,
 			getSessionConfig,
-			handlePiEvent,
+			handleAgentEvent,
 			nextMessageId,
 			onSelectedSessionIdChange,
 		],
@@ -969,7 +896,7 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 
 		setIsAwaitingResponse(false);
 		const manager = getWsManager();
-		manager.piAbort(sessionId);
+		manager.agentAbort(sessionId);
 	}, []);
 
 	// Compact session
@@ -978,7 +905,7 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 		if (!sessionId) return;
 
 		const manager = getWsManager();
-		manager.piCompact(sessionId, customInstructions);
+		manager.agentCompact(sessionId, customInstructions);
 	}, []);
 
 	// New session - creates a brand new session with a new UUID
@@ -1011,17 +938,17 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 
 		// Close and recreate session
 		const manager = getWsManager();
-		manager.piCloseSession(sessionId);
+		manager.agentCloseSession(sessionId);
 
 		// Small delay then recreate
 		setTimeout(() => {
-			manager.piCreateSession(sessionId, getSessionConfig());
+			manager.agentCreateSession(sessionId, getSessionConfig());
 		}, 100);
 
 		if (isPiDebugEnabled()) {
 			console.debug("[useChat] resetSession for:", sessionId);
 		}
-	}, []);
+	}, [getSessionConfig]);
 
 	// Refresh - request current state from backend
 	const refresh = useCallback(async () => {
@@ -1029,14 +956,8 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 		if (!sessionId) return;
 
 		const manager = getWsManager();
-		manager.piGetState(sessionId);
-
-		// Also request messages
-		manager.send({
-			channel: "pi",
-			type: "get_messages",
-			session_id: sessionId,
-		});
+		manager.agentGetState(sessionId);
+		manager.agentGetMessages(sessionId);
 
 		if (isPiDebugEnabled()) {
 			console.debug("[useChat] refresh requested for:", sessionId);
@@ -1110,12 +1031,12 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 		setIsAwaitingResponse(false);
 		setError(null);
 
-		// Subscribe to the new session (passes scope/cwd for session creation)
+		// Subscribe to the new session (passes harness/cwd for session creation)
 		const manager = getWsManager();
 		const sessionConfig = getSessionConfig();
-		unsubscribeRef.current = manager.subscribePiSession(
+		unsubscribeRef.current = manager.subscribeAgentSession(
 			activeSessionId,
-			handlePiEvent,
+			handleAgentEvent,
 			sessionConfig,
 		);
 
@@ -1130,7 +1051,7 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 				unsubscribeRef.current = null;
 			}
 		};
-	}, [activeSessionId, resolvedStorageKeyPrefix, handlePiEvent, getSessionConfig]);
+	}, [activeSessionId, resolvedStorageKeyPrefix, handleAgentEvent, getSessionConfig]);
 
 	// Auto-connect on mount
 	useEffect(() => {
