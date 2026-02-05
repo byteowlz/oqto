@@ -2,7 +2,7 @@
 
 use std::fs;
 use std::path::PathBuf;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use anyhow::Context;
 use axum::{
@@ -12,7 +12,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use tokio::process::Command;
-use tracing::instrument;
+use tracing::{instrument, warn};
 use uuid::Uuid;
 
 use crate::auth::CurrentUser;
@@ -275,21 +275,57 @@ async fn maybe_sync_templates_repo(state: &AppState) -> Result<(), ApiError> {
     if !repo_path.join(".git").exists() {
         return Err(ApiError::internal("templates repo is not a git repository"));
     }
-    let output = Command::new("git")
+
+    // Spawn the git pull process with a timeout to prevent hanging on network issues
+    // (e.g. SSH key prompts, unreachable remotes, DNS timeouts).
+    let mut child = Command::new("git")
         .arg("-C")
         .arg(&repo_path)
         .arg("pull")
         .arg("--ff-only")
-        .output()
-        .await
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
         .map_err(|e| ApiError::internal(format!("Failed to run git pull: {}", e)))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(ApiError::internal(format!(
-            "Failed to sync templates repo: {}",
-            stderr.trim()
-        )));
+
+    const GIT_PULL_TIMEOUT: Duration = Duration::from_secs(15);
+    let result = tokio::time::timeout(GIT_PULL_TIMEOUT, child.wait()).await;
+
+    match result {
+        Ok(Ok(status)) => {
+            if !status.success() {
+                // Read stderr for the error message (child stdout/stderr are still available)
+                let stderr_msg = if let Some(mut stderr) = child.stderr.take() {
+                    let mut buf = String::new();
+                    use tokio::io::AsyncReadExt;
+                    let _ = stderr.read_to_string(&mut buf).await;
+                    buf
+                } else {
+                    String::new()
+                };
+                return Err(ApiError::internal(format!(
+                    "Failed to sync templates repo: {}",
+                    stderr_msg.trim()
+                )));
+            }
+        }
+        Ok(Err(e)) => {
+            return Err(ApiError::internal(format!(
+                "Failed to sync templates repo: {}",
+                e
+            )));
+        }
+        Err(_) => {
+            // Timeout: kill the stuck process and proceed with stale data
+            let _ = child.kill().await;
+            warn!(
+                "git pull timed out after {}s for templates repo at {:?}, serving stale templates",
+                GIT_PULL_TIMEOUT.as_secs(),
+                repo_path,
+            );
+        }
     }
+
     let mut last_sync = state.templates.last_sync.lock().await;
     *last_sync = Some(Instant::now());
     Ok(())

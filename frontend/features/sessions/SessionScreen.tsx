@@ -69,6 +69,11 @@ const TrxView = lazy(() =>
 		default: mod.TrxView,
 	})),
 );
+const PreviewView = lazy(() =>
+	import("@/features/sessions/components/PreviewView").then((mod) => ({
+		default: mod.PreviewView,
+	})),
+);
 
 type ViewKey =
 	| "chat"
@@ -257,6 +262,15 @@ export const SessionScreen = memo(function SessionScreen() {
 		maxTokens: 0,
 	});
 	const [expandedView, setExpandedView] = useState<ViewKey | null>(null);
+	const [previewFilePath, setPreviewFilePath] = useState<string | null>(null);
+
+	const handlePreviewFile = useCallback((filePath: string) => {
+		setPreviewFilePath(filePath);
+	}, []);
+
+	const handleClosePreview = useCallback(() => {
+		setPreviewFilePath(null);
+	}, []);
 
 	const normalizedWorkspacePath = useMemo(
 		() => normalizeWorkspacePath(selectedChatFromHistory?.workspace_path),
@@ -325,6 +339,12 @@ export const SessionScreen = memo(function SessionScreen() {
 			mounted = false;
 		};
 	}, []);
+
+	// Clear file preview when session changes
+	// biome-ignore lint/correctness/useExhaustiveDependencies: intentionally reset on session change
+	useEffect(() => {
+		setPreviewFilePath(null);
+	}, [selectedChatSessionId]);
 
 	const headerTitle =
 		selectedChatFromHistory?.title ??
@@ -563,10 +583,22 @@ export const SessionScreen = memo(function SessionScreen() {
 						)}
 					>
 						{activeView === "chat" && chatPanel}
-						<div className={cn("h-full", activeView !== "files" && "hidden")}>
-							{normalizedWorkspacePath ? (
+						<div className={cn("h-full flex flex-col", activeView !== "files" && "hidden")}>
+							{previewFilePath ? (
 								<Suspense fallback={viewLoadingFallback}>
-									<FileTreeView workspacePath={normalizedWorkspacePath} />
+									<PreviewView
+										filePath={previewFilePath}
+										workspacePath={normalizedWorkspacePath}
+										onClose={handleClosePreview}
+										showHeader
+									/>
+								</Suspense>
+							) : normalizedWorkspacePath ? (
+								<Suspense fallback={viewLoadingFallback}>
+									<FileTreeView
+										workspacePath={normalizedWorkspacePath}
+										onPreviewFile={handlePreviewFile}
+									/>
 								</Suspense>
 							) : (
 								<EmptyWorkspacePanel
@@ -844,11 +876,21 @@ export const SessionScreen = memo(function SessionScreen() {
 								<div className="flex-1 min-h-0 overflow-hidden">
 									{activeView === "tasks" && tasksPanel}
 									{activeView === "files" && (
-										<div className="h-full">
-											{normalizedWorkspacePath ? (
+										<div className="h-full flex flex-col">
+											{previewFilePath ? (
+												<Suspense fallback={viewLoadingFallback}>
+													<PreviewView
+														filePath={previewFilePath}
+														workspacePath={normalizedWorkspacePath}
+														onClose={handleClosePreview}
+														showHeader
+													/>
+												</Suspense>
+											) : normalizedWorkspacePath ? (
 												<Suspense fallback={viewLoadingFallback}>
 													<FileTreeView
 														workspacePath={normalizedWorkspacePath}
+														onPreviewFile={handlePreviewFile}
 													/>
 												</Suspense>
 											) : (

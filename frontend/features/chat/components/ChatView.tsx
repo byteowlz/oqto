@@ -1155,7 +1155,7 @@ export function ChatView({
 			setSendPending(true);
 			setSendPendingSessionId(selectedSessionId ?? null);
 			let resolvedSessionId = selectedSessionId ?? null;
-			if (!resolvedSessionId) {
+			if (!resolvedSessionId || isPendingSessionId(resolvedSessionId)) {
 				resolvedSessionId = await ensureRealSessionId();
 			}
 			if (!resolvedSessionId) {
@@ -1225,7 +1225,7 @@ export function ChatView({
 			setSendPending(true);
 			setSendPendingSessionId(selectedSessionId ?? null);
 			let resolvedSessionId = selectedSessionId ?? null;
-			if (!resolvedSessionId) {
+			if (!resolvedSessionId || isPendingSessionId(resolvedSessionId)) {
 				resolvedSessionId = await ensureRealSessionId();
 			}
 			if (!resolvedSessionId) {
@@ -3131,6 +3131,25 @@ function PiPartRenderer({
 					hideHeader={hideHeader}
 				/>
 			);
+
+		case "image": {
+			const imgPart = part as Extract<
+				typeof part,
+				{ type: "image" }
+			>;
+			const src = imgPart.data
+				? `data:${imgPart.mimeType ?? "image/png"};base64,${imgPart.data}`
+				: imgPart.url ?? "";
+			if (!src) return null;
+			return (
+				<img
+					src={src}
+					alt="Attached content"
+					className="max-w-[300px] max-h-[300px] rounded-md border border-border object-contain"
+					loading="lazy"
+				/>
+			);
+		}
 
 		default: {
 			console.warn("Unknown Pi message part type:", part);

@@ -288,10 +288,18 @@ class WsConnectionManager {
 		}
 		handlers.add(handler);
 
-		// Track subscription (store config for reconnection)
-		if (!this.subscribedSessions.has(sessionId)) {
-			this.subscribedSessions.set(sessionId, config);
+		// Track subscription (store config for reconnection).
+		// If this session is already tracked AND ready, we skip sending another
+		// session.create — this handles React StrictMode double-invoke and HMR
+		// re-renders that unsubscribe + re-subscribe in quick succession.
+		const alreadyTracked = this.subscribedSessions.has(sessionId);
+		const alreadyReady = this.sessionReady.has(sessionId);
 
+		this.subscribedSessions.set(sessionId, config);
+
+		if (alreadyTracked && alreadyReady) {
+			console.log("[ws-mux] Session already tracked and ready, skipping session.create:", sessionId);
+		} else if (!alreadyTracked) {
 			if (this.isConnected) {
 				console.log("[ws-mux] Sending session.create for:", sessionId);
 				// Create session (backend auto-subscribes to events)
@@ -311,22 +319,25 @@ class WsConnectionManager {
 					this.connect();
 				}
 			}
-		} else {
-			console.log("[ws-mux] Already subscribed to session:", sessionId);
 		}
 
 		// Return unsubscribe function.
 		// Note: this only removes the local event handler. It does NOT close the
 		// session on the backend -- the runner session stays alive for reconnection.
 		// Use agentCloseSession() explicitly to destroy a session.
+		//
+		// We intentionally keep subscribedSessions and sessionReady intact even
+		// when the last handler is removed. This prevents React StrictMode
+		// double-invoke and HMR from triggering redundant session.create calls
+		// (old effect cleanup removes handler, new effect re-subscribes and would
+		// see the session as new if we cleared these maps).
 		return () => {
 			handlers?.delete(handler);
 			if (handlers?.size === 0) {
 				this.agentSessionHandlers.delete(sessionId);
-				this.subscribedSessions.delete(sessionId);
-				this.pendingSubscriptions.delete(sessionId);
-				this.sessionReady.delete(sessionId);
-				this.pendingMessages.delete(sessionId);
+				// Don't clear subscribedSessions/sessionReady — the session
+				// stays alive on the backend and we want to reuse it on
+				// re-subscription. Only agentCloseSession clears these.
 			}
 		};
 	}
@@ -397,8 +408,15 @@ class WsConnectionManager {
 
 	/**
 	 * Close an agent session.
+	 * This is the only way to fully clean up a session's tracking state.
 	 */
 	agentCloseSession(sessionId: string, id?: string): void {
+		this.subscribedSessions.delete(sessionId);
+		this.sessionReady.delete(sessionId);
+		this.pendingSubscriptions.delete(sessionId);
+		this.pendingMessages.delete(sessionId);
+		this.agentSessionHandlers.delete(sessionId);
+
 		this.send({
 			channel: "agent",
 			session_id: sessionId,
@@ -881,21 +899,28 @@ class WsConnectionManager {
 // Singleton Instance
 // ============================================================================
 
-let instance: WsConnectionManager | null = null;
+// Store the singleton on globalThis so it survives Vite HMR module reloads.
+// Without this, every HMR update creates a new WsConnectionManager, losing all
+// tracked sessions, subscriptions, and readiness state — which triggers redundant
+// session.create calls and the associated get_messages clobbering.
+const WS_MANAGER_KEY = "__octo_ws_manager__" as const;
 
 /** Get the singleton WebSocket manager instance */
 export function getWsManager(): WsConnectionManager {
-	if (!instance) {
-		instance = new WsConnectionManager();
+	const g = globalThis as unknown as Record<string, WsConnectionManager | undefined>;
+	if (!g[WS_MANAGER_KEY]) {
+		g[WS_MANAGER_KEY] = new WsConnectionManager();
 	}
-	return instance;
+	return g[WS_MANAGER_KEY] as WsConnectionManager;
 }
 
 /** Destroy the singleton instance (for cleanup in tests) */
 export function destroyWsManager(): void {
+	const g = globalThis as unknown as Record<string, WsConnectionManager | undefined>;
+	const instance = g[WS_MANAGER_KEY];
 	if (instance) {
 		instance.disconnect();
-		instance = null;
+		g[WS_MANAGER_KEY] = undefined;
 	}
 }
 

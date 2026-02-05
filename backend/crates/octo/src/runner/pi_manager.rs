@@ -1570,16 +1570,46 @@ impl PiSessionManager {
                     Self::write_command(&mut stdin, &pi_cmd).await
                 }
                 PiSessionCommand::Steer(msg) => {
-                    let pi_cmd = PiCommand::Steer {
-                        id: None,
-                        message: msg,
+                    // The runner decides how to deliver based on session state:
+                    // - Streaming: send as steer (interrupt mid-run)
+                    // - Idle: send as prompt (new turn)
+                    // - Other states: send as steer and let Pi handle it
+                    let current_state = *state.read().await;
+                    let pi_cmd = if current_state == PiSessionState::Idle {
+                        debug!("Session '{}' is idle, routing steer as prompt", session_id);
+                        PiCommand::Prompt {
+                            id: None,
+                            message: msg,
+                            images: None,
+                            streaming_behavior: None,
+                        }
+                    } else {
+                        PiCommand::Steer {
+                            id: None,
+                            message: msg,
+                        }
                     };
                     Self::write_command(&mut stdin, &pi_cmd).await
                 }
                 PiSessionCommand::FollowUp(msg) => {
-                    let pi_cmd = PiCommand::FollowUp {
-                        id: None,
-                        message: msg,
+                    // The runner decides how to deliver based on session state:
+                    // - Streaming: send as follow_up (queued until done)
+                    // - Idle: send as prompt (new turn)
+                    // - Other states: send as follow_up and let Pi handle it
+                    let current_state = *state.read().await;
+                    let pi_cmd = if current_state == PiSessionState::Idle {
+                        debug!("Session '{}' is idle, routing follow_up as prompt", session_id);
+                        PiCommand::Prompt {
+                            id: None,
+                            message: msg,
+                            images: None,
+                            streaming_behavior: None,
+                        }
+                    } else {
+                        PiCommand::FollowUp {
+                            id: None,
+                            message: msg,
+                        }
                     };
                     Self::write_command(&mut stdin, &pi_cmd).await
                 }

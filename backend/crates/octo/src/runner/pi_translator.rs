@@ -197,15 +197,12 @@ impl PiTranslator {
                 content_index: *content_index,
             }],
 
-            AssistantMessageEvent::ToolcallStart { content_index, .. } => {
-                // We don't have the tool info yet, just the index.
-                // The real info comes in ToolcallEnd. Emit a placeholder start.
-                vec![EventPayload::StreamToolCallStart {
-                    message_id: msg_id,
-                    tool_call_id: String::new(),
-                    name: String::new(),
-                    content_index: *content_index,
-                }]
+            AssistantMessageEvent::ToolcallStart { .. } => {
+                // We don't have the tool info yet (name, id) -- just the index.
+                // The real info comes in ToolcallEnd. Suppress this placeholder
+                // to avoid creating an "Unknown Tool" card on the frontend that
+                // can never be matched to the real tool call.
+                vec![]
             }
 
             AssistantMessageEvent::ToolcallDelta {
@@ -522,10 +519,41 @@ impl PiTranslator {
 // ============================================================================
 
 /// Translate a Pi command response into a canonical CommandResponse event.
+///
+/// Special handling for commands that emit config events:
+/// - `set_model` -> `ConfigModelChanged` event
+/// - `set_thinking_level` -> `ConfigThinkingLevelChanged` event
 pub fn pi_response_to_canonical(
     pi_response: &crate::pi::PiResponse,
     cmd_name: &str,
 ) -> EventPayload {
+    // Special case: set_thinking_level emits ConfigThinkingLevelChanged event
+    if cmd_name == "set_thinking_level" {
+        if let Some(data) = &pi_response.data {
+            if let Some(level) = data.get("level") {
+                let level_str = level.as_str().unwrap_or("").to_string();
+                return EventPayload::ConfigThinkingLevelChanged { level: level_str };
+            }
+        }
+    }
+
+    // Special case: set_model emits ConfigModelChanged event
+    if cmd_name == "set_model" {
+        if let Some(data) = &pi_response.data {
+            if let Some(model) = data.get("model") {
+                if let Some(provider) = data.get("provider") {
+                    let model_id = model.as_str().unwrap_or("").to_string();
+                    let provider_str = provider.as_str().unwrap_or("").to_string();
+                    return EventPayload::ConfigModelChanged {
+                        provider: provider_str,
+                        model_id: model_id,
+                    };
+                }
+            }
+        }
+    }
+
+    // Default: wrap as CommandResponse
     EventPayload::Response(CommandResponse {
         id: pi_response.id.clone().unwrap_or_default(),
         cmd: cmd_name.to_string(),

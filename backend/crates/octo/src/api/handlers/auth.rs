@@ -233,10 +233,11 @@ pub async fn register(
                 );
             }
             Err(e) => {
-                // This shouldn't happen since we pre-checked, but handle it safely
+                // This shouldn't happen since we pre-checked, but handle it safely.
+                // Use {:?} to log the full anyhow error chain (context + root cause).
                 error!(
                     user_id = %user.id,
-                    error = %e,
+                    error = ?e,
                     "Failed to create Linux user - deleting database user"
                 );
 
@@ -244,7 +245,7 @@ pub async fn register(
                 if let Err(delete_err) = state.users.delete_user(&user.id).await {
                     error!(
                         user_id = %user.id,
-                        error = %delete_err,
+                        error = ?delete_err,
                         "Failed to delete user after Linux user creation failure"
                     );
                 }
@@ -258,7 +259,7 @@ pub async fn register(
                 }
 
                 return Err(ApiError::internal(format!(
-                    "Failed to create user account: {}. Please contact an administrator.",
+                    "Failed to create user account: {:?}. Please contact an administrator.",
                     e
                 )));
             }
