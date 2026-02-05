@@ -669,7 +669,7 @@ export function ChatView({
 		let active = true;
 		const manager = getWsManager();
 		manager
-			.piGetCommands(targetSessionId)
+			.agentGetCommands(targetSessionId)
 			.then((commands) => {
 				if (!active) return;
 				setCustomCommands(
@@ -691,7 +691,7 @@ export function ChatView({
 		const targetSessionId = selectedSessionId ?? piState?.session_id ?? null;
 		if (!targetSessionId) return;
 		try {
-			const stats = await getWsManager().piGetSessionStats(targetSessionId);
+			const stats = await getWsManager().agentGetSessionStats(targetSessionId);
 			const tokens =
 				stats && typeof stats === "object" && "tokens" in stats
 					? (stats as { tokens?: { input?: number; output?: number } }).tokens
@@ -934,7 +934,7 @@ export function ChatView({
 				}
 				// Use WebSocket to set model - works for both default chat and workspace
 				const manager = getWsManager();
-				await manager.piSetModel(targetSessionId, provider, modelId);
+				await manager.agentSetModel(targetSessionId, provider, modelId);
 				await refresh();
 			} catch (err) {
 				console.error("Failed to switch model:", err);
@@ -985,7 +985,7 @@ export function ChatView({
 					if (!targetSessionId) {
 						throw new Error("No active session");
 					}
-					const stats = await getWsManager().piGetSessionStats(targetSessionId);
+					const stats = await getWsManager().agentGetSessionStats(targetSessionId);
 					const safeStats = stats && typeof stats === "object" ? stats : null;
 					const tokens =
 						safeStats && "tokens" in safeStats
