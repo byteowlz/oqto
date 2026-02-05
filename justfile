@@ -201,7 +201,6 @@ bump version:
     
     # Update package.json files
     cd "$ROOT/frontend" && bun pm pkg set version="$new_version"
-    cd "$ROOT/pi-extension" && bun pm pkg set version="$new_version"
     
     # Update tauri.conf.json
     jq --arg v "$new_version" '.version = $v' "$ROOT/frontend/src-tauri/tauri.conf.json" > "$ROOT/frontend/src-tauri/tauri.conf.json.tmp" \
