@@ -7,7 +7,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use hstry_core::parts::Part;
+use hstry_core::parts::{Part, Sender, SenderType};
 
 /// A conversation message. Stored in hstry, rendered by the frontend.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -72,59 +72,8 @@ pub struct Message {
     pub metadata: Option<Value>,
 }
 
-// ============================================================================
-// Identity types
-// ============================================================================
-
-/// Who produced a message. Used for multi-user workspaces and delegation.
-///
-/// In single-user mode, most messages omit this (sender is implied by role).
-/// When present, the frontend renders a labeled bubble with the sender's name
-/// and a distinct color. For the LLM, the backend inlines identity as
-/// `[name]: content` in the user message text so the agent understands
-/// who is speaking without protocol changes.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Sender {
-    /// What kind of participant this is.
-    #[serde(rename = "type")]
-    pub sender_type: SenderType,
-
-    /// Stable identifier: user ID for humans, session ID for agents.
-    pub id: String,
-
-    /// Human-readable display name (e.g. "Alice", "pi:ses_abc").
-    pub name: String,
-
-    /// Which runner the sender is on (agents only).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub runner_id: Option<String>,
-
-    /// Which session the sender is from (agents only, for delegation).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub session_id: Option<String>,
-}
-
-/// The type of message sender.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum SenderType {
-    /// A human user.
-    User,
-    /// An AI agent (from another session/runner).
-    Agent,
-    /// System-generated (compaction summaries, notifications, etc.).
-    System,
-}
-
-impl std::fmt::Display for SenderType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::User => write!(f, "user"),
-            Self::Agent => write!(f, "agent"),
-            Self::System => write!(f, "system"),
-        }
-    }
-}
+// Sender and SenderType are re-exported from hstry_core::parts via lib.rs.
+// They are imported above for use in Message.
 
 // ============================================================================
 // Message metadata types

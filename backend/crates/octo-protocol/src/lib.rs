@@ -29,4 +29,4 @@ pub mod messages;
 pub mod runner;
 
 // Re-export hstry-core part types as the canonical content unit.
-pub use hstry_core::parts::{FileRange, MediaSource, Part, ToolStatus};
+pub use hstry_core::parts::{FileRange, MediaSource, Part, Sender, SenderType, ToolStatus};

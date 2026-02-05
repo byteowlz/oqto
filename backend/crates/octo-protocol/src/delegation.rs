@@ -38,7 +38,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::messages::{Message, Sender};
+use crate::messages::Message;
+use crate::Sender;
 
 // ============================================================================
 // Delegation commands
