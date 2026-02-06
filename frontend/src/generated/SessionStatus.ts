@@ -3,4 +3,10 @@
 /**
  * Session status.
  */
-export type SessionStatus = "pending" | "starting" | "running" | "stopping" | "stopped" | "failed";
+export type SessionStatus =
+	| "pending"
+	| "starting"
+	| "running"
+	| "stopping"
+	| "stopped"
+	| "failed";

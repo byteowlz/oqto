@@ -9,4 +9,50 @@ import type { ToolStatus } from "./ToolStatus";
  *
  * Used for real-time updates via WebSocket.
  */
-export type StreamEvent = { "type": "agent_start", sessionId: string, } | { "type": "message_start", sessionId: string, messageId: string, role: MessageRole, } | { "type": "text_delta", sessionId: string, messageId: string, delta: string, } | { "type": "thinking_delta", sessionId: string, messageId: string, delta: string, } | { "type": "tool_call_start", sessionId: string, messageId: string, toolCallId: string, name: string, input: JsonValue | null, } | { "type": "tool_call_update", sessionId: string, toolCallId: string, status: ToolStatus, title: string | null, } | { "type": "tool_call_end", sessionId: string, toolCallId: string, output: JsonValue | null, isError: boolean, duration_ms: bigint | null, } | { "type": "message_end", sessionId: string, messageId: string, tokens: TokenUsage | null, cost_usd: number | null, } | { "type": "agent_end", sessionId: string, reason: string | null, } | { "type": "error", sessionId: string, error: string, code: string | null, };
+export type StreamEvent =
+	| { type: "agent_start"; sessionId: string }
+	| {
+			type: "message_start";
+			sessionId: string;
+			messageId: string;
+			role: MessageRole;
+	  }
+	| { type: "text_delta"; sessionId: string; messageId: string; delta: string }
+	| {
+			type: "thinking_delta";
+			sessionId: string;
+			messageId: string;
+			delta: string;
+	  }
+	| {
+			type: "tool_call_start";
+			sessionId: string;
+			messageId: string;
+			toolCallId: string;
+			name: string;
+			input: JsonValue | null;
+	  }
+	| {
+			type: "tool_call_update";
+			sessionId: string;
+			toolCallId: string;
+			status: ToolStatus;
+			title: string | null;
+	  }
+	| {
+			type: "tool_call_end";
+			sessionId: string;
+			toolCallId: string;
+			output: JsonValue | null;
+			isError: boolean;
+			duration_ms: bigint | null;
+	  }
+	| {
+			type: "message_end";
+			sessionId: string;
+			messageId: string;
+			tokens: TokenUsage | null;
+			cost_usd: number | null;
+	  }
+	| { type: "agent_end"; sessionId: string; reason: string | null }
+	| { type: "error"; sessionId: string; error: string; code: string | null };

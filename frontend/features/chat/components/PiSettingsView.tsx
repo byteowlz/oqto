@@ -9,22 +9,13 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from "@/components/ui/select";
-import {
-	type PiModelInfo,
-	type PiState,
-	getWorkspacePiModels,
-	getWorkspacePiState,
-	setWorkspacePiModel,
-	newWorkspacePiSession,
-} from "@/features/chat/api";
-import { normalizeWorkspacePath } from "@/lib/session-utils";
-import {
-	type ChatVerbosity,
-	useChatVerbosity,
-} from "@/lib/chat-verbosity";
+import type { AgentState, PiModelInfo } from "@/features/chat/api";
 import { updateSettingsValues } from "@/lib/api/settings";
+import { type ChatVerbosity, useChatVerbosity } from "@/lib/chat-verbosity";
+import { normalizeWorkspacePath } from "@/lib/session-utils";
 import { fuzzyMatch } from "@/lib/slash-commands";
 import { cn } from "@/lib/utils";
+import { getWsManager } from "@/lib/ws-manager";
 import { Loader2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
@@ -47,7 +38,7 @@ export function PiSettingsView({
 	const [isSwitchingModel, setIsSwitchingModel] = useState(false);
 	const [modelQuery, setModelQuery] = useState("");
 	const [loadingModels, setLoadingModels] = useState(false);
-	const [piState, setPiState] = useState<PiState | null>(null);
+	const [piState, setPiState] = useState<AgentState | null>(null);
 	const [loadingState, setLoadingState] = useState(false);
 	const [effectiveSessionId, setEffectiveSessionId] = useState<string | null>(
 		sessionId ?? null,
@@ -83,12 +74,11 @@ export function PiSettingsView({
 		let active = true;
 		if (!effectiveSessionId) return undefined;
 		setLoadingModels(true);
-		const fetchModels = normalizedWorkspacePath
-			? getWorkspacePiModels(normalizedWorkspacePath, effectiveSessionId ?? "")
-			: Promise.resolve([]);
-		fetchModels
-			.then((models) => {
+		getWsManager()
+			.agentGetAvailableModels(effectiveSessionId)
+			.then((result) => {
 				if (!active) return;
+				const models = (result as PiModelInfo[]) ?? [];
 				setAvailableModels(models);
 				if (!selectedModelRef && models.length > 0) {
 					const first = models[0];
@@ -104,7 +94,7 @@ export function PiSettingsView({
 		return () => {
 			active = false;
 		};
-	}, [effectiveSessionId, workspacePath, selectedModelRef]);
+	}, [effectiveSessionId, selectedModelRef]);
 
 	useEffect(() => {
 		let active = true;
@@ -112,13 +102,11 @@ export function PiSettingsView({
 		const fetchState = async () => {
 			if (!active) return;
 			try {
-				const nextState =
-					normalizedWorkspacePath && effectiveSessionId
-						? await getWorkspacePiState(
-								normalizedWorkspacePath,
-								effectiveSessionId,
-							)
-						: null;
+				const nextState = effectiveSessionId
+					? ((await getWsManager().agentGetStateWait(
+							effectiveSessionId,
+						)) as AgentState | null)
+					: null;
 				if (active) {
 					setPiState(nextState);
 				}
@@ -128,7 +116,7 @@ export function PiSettingsView({
 				if (active) setLoadingState(false);
 			}
 		};
-		if (effectiveSessionId && normalizedWorkspacePath) {
+		if (effectiveSessionId) {
 			setLoadingState(true);
 			void fetchState();
 			intervalId = setInterval(fetchState, 2000);
@@ -140,7 +128,7 @@ export function PiSettingsView({
 			active = false;
 			if (intervalId) clearInterval(intervalId);
 		};
-	}, [effectiveSessionId, normalizedWorkspacePath]);
+	}, [effectiveSessionId]);
 
 	const filteredModels = useMemo(() => {
 		const query = modelQuery.trim();
@@ -156,10 +144,9 @@ export function PiSettingsView({
 		});
 	}, [availableModels, modelQuery]);
 
-	const isIdle = !(piState?.is_streaming || piState?.is_compacting);
+	const isIdle = !(piState?.isStreaming || piState?.isCompacting);
 
-	const verbosityLabel =
-		locale === "de" ? "Chat-Detailgrad" : "Chat verbosity";
+	const verbosityLabel = locale === "de" ? "Chat-Detailgrad" : "Chat verbosity";
 	const verbosityDescription =
 		locale === "de"
 			? "Steuert, wie detailliert Tool-Aufrufe angezeigt werden."
@@ -178,24 +165,11 @@ export function PiSettingsView({
 			setSelectedModelRef(value);
 			setIsSwitchingModel(true);
 			try {
-				if (!normalizedWorkspacePath) {
-					throw new Error("No workspace selected");
-				}
-				let sessionId = effectiveSessionId;
+				const sessionId = effectiveSessionId;
 				if (!sessionId) {
-					const nextState = await newWorkspacePiSession(normalizedWorkspacePath);
-					sessionId = nextState.session_id ?? null;
-					if (sessionId) setEffectiveSessionId(sessionId);
+					throw new Error("No active chat session -- send a message first");
 				}
-				if (!sessionId) {
-					throw new Error("No active chat session");
-				}
-				await setWorkspacePiModel(
-					normalizedWorkspacePath,
-					sessionId,
-					provider,
-					modelId,
-				);
+				await getWsManager().agentSetModel(sessionId, provider, modelId);
 				// Persist defaults once the user changes the model.
 				const settingsWorkspacePath = workspacePath ?? undefined;
 				await updateSettingsValues(
@@ -214,7 +188,7 @@ export function PiSettingsView({
 				setIsSwitchingModel(false);
 			}
 		},
-		[isIdle, effectiveSessionId, workspacePath, normalizedWorkspacePath],
+		[isIdle, effectiveSessionId, workspacePath],
 	);
 
 	return (
@@ -345,7 +319,6 @@ export function PiSettingsView({
 						{verbosityDescription}
 					</p>
 				</div>
-
 			</div>
 		</div>
 	);

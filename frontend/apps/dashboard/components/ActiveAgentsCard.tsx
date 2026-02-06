@@ -6,13 +6,13 @@ import {
 	CardHeader,
 	CardTitle,
 } from "@/components/ui/card";
+import type { ChatSession } from "@/lib/control-plane-client";
 import type { OpenCodeAgent } from "@/lib/opencode-client";
 import { formatSessionDate } from "@/lib/session-utils";
-import type { WorkspaceSession } from "@/lib/workspace-session";
 import { cn } from "@/lib/utils";
+import type { WorkspaceSession } from "@/lib/workspace-session";
 import { Bot } from "lucide-react";
 import { memo } from "react";
-import type { ChatSession } from "@/lib/control-plane-client";
 
 function StatusPill({ status }: { status: string }) {
 	const normalized = status.toLowerCase();

@@ -10,6 +10,7 @@
  */
 
 import { getWsManager } from "./ws-manager";
+import type { SessionWsCommand } from "./ws-mux-types";
 
 function isWsDebugEnabled(): boolean {
 	if (!import.meta.env.DEV) return false;
@@ -266,7 +267,6 @@ export type ConnectionStateHandler = (state: ConnectionState) => void;
 // WebSocket Client
 // ============================================================================
 
-
 /** Singleton WebSocket client for Octo */
 class OctoWsClient {
 	private connectionState: ConnectionState = "disconnected";
@@ -477,7 +477,7 @@ class OctoWsClient {
 			console.warn("[ws] Cannot send, not connected:", command.type);
 			return;
 		}
-		manager.send({ channel: "session", ...command } as any);
+		manager.send({ channel: "session", ...command } as SessionWsCommand);
 	}
 
 	private handleEvent(event: WsEvent): void {
@@ -545,14 +545,20 @@ class OctoWsClient {
 		const manager = getWsManager();
 		this.muxUnsubscribe = manager.subscribe("session", (event) => {
 			const payload = event as unknown as { channel: "session" } & WsEvent;
-			const { channel: _channel, ...legacy } = payload as any;
-			if (isWsDebugEnabled() && (legacy as WsEvent).type !== "ping") {
-				console.debug("[ws] Received event:", (legacy as WsEvent).type, {
+			const {
+				channel: _channel,
+				...legacy
+			}: { channel: string } & Record<string, unknown> = payload;
+			const wsEvent = legacy as unknown as WsEvent;
+			if (isWsDebugEnabled() && wsEvent.type !== "ping") {
+				console.debug("[ws] Received event:", wsEvent.type, {
 					session_id:
-						"session_id" in legacy ? (legacy as any).session_id : undefined,
+						"session_id" in wsEvent
+							? (wsEvent as WsEvent & { session_id?: string }).session_id
+							: undefined,
 				});
 			}
-			this.handleEvent(legacy as WsEvent);
+			this.handleEvent(wsEvent);
 		});
 
 		this.muxStateUnsubscribe = manager.onConnectionState((state) => {

@@ -3,24 +3,25 @@
 /**
  * Token usage statistics.
  */
-export type TokenUsage = { 
-/**
- * Input tokens.
- */
-input: bigint | null, 
-/**
- * Output tokens.
- */
-output: bigint | null, 
-/**
- * Reasoning tokens (extended thinking).
- */
-reasoning: bigint | null, 
-/**
- * Cache read tokens.
- */
-cache_read: bigint | null, 
-/**
- * Cache write tokens.
- */
-cache_write: bigint | null, };
+export type TokenUsage = {
+	/**
+	 * Input tokens.
+	 */
+	input: bigint | null;
+	/**
+	 * Output tokens.
+	 */
+	output: bigint | null;
+	/**
+	 * Reasoning tokens (extended thinking).
+	 */
+	reasoning: bigint | null;
+	/**
+	 * Cache read tokens.
+	 */
+	cache_read: bigint | null;
+	/**
+	 * Cache write tokens.
+	 */
+	cache_write: bigint | null;
+};

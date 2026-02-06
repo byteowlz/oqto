@@ -42,7 +42,7 @@ import {
 } from "react";
 
 // Import types from ghostty-web (types only, not runtime code)
-import type { Terminal, FitAddon } from "ghostty-web";
+import type { FitAddon, Terminal } from "ghostty-web";
 
 type SessionConnection = {
 	socket: WebSocket | null;
@@ -97,7 +97,8 @@ let ghosttyInitPromise: Promise<void> | null = null;
 
 async function ensureGhosttyInit(): Promise<void> {
 	if (ghosttyInitialized) return;
-	if (ghosttyInitFailed) throw new Error("Ghostty initialization previously failed");
+	if (ghosttyInitFailed)
+		throw new Error("Ghostty initialization previously failed");
 	if (!ghosttyInitPromise) {
 		ghosttyInitPromise = loadGhostty()
 			.then((mod) => mod.init())
@@ -628,235 +629,275 @@ interface MuxGhosttyTerminalProps {
 export const MuxGhosttyTerminal = forwardRef<
 	GhosttyTerminalHandle,
 	MuxGhosttyTerminalProps
->(({ workspacePath, fontFamily = "JetBrainsMono Nerd Font", fontSize = 14, className, theme }, ref) => {
-	const containerRef = useRef<HTMLDivElement | null>(null);
-	const terminalRef = useRef<Terminal | null>(null);
-	const fitAddonRef = useRef<FitAddon | null>(null);
-	const terminalIdRef = useRef<string>(
-		typeof crypto !== "undefined" && crypto.randomUUID
-			? crypto.randomUUID()
-			: `terminal-${Date.now()}-${Math.random().toString(16).slice(2)}`,
-	);
-	const isReadyRef = useRef(false);
-	const [status, setStatus] = useState<
-		"waiting" | "connecting" | "connected" | "error"
-	>("connecting");
-
-	useImperativeHandle(ref, () => ({
-		focus: () => terminalRef.current?.focus(),
-		blur: () => terminalRef.current?.blur(),
-		sendKey: (key: string) => {
-			if (!isReadyRef.current) return;
-			getWsManager().send({
-				channel: "terminal",
-				type: "input",
-				terminal_id: terminalIdRef.current,
-				data: key,
-			});
+>(
+	(
+		{
+			workspacePath,
+			fontFamily = "JetBrainsMono Nerd Font",
+			fontSize = 14,
+			className,
+			theme,
 		},
-	}));
+		ref,
+	) => {
+		const containerRef = useRef<HTMLDivElement | null>(null);
+		const terminalRef = useRef<Terminal | null>(null);
+		const fitAddonRef = useRef<FitAddon | null>(null);
+		const terminalIdRef = useRef<string>(
+			typeof crypto !== "undefined" && crypto.randomUUID
+				? crypto.randomUUID()
+				: `terminal-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+		);
+		const isReadyRef = useRef(false);
+		const [status, setStatus] = useState<
+			"waiting" | "connecting" | "connected" | "error"
+		>("connecting");
 
-	useEffect(() => {
-		let mounted = true;
+		useImperativeHandle(ref, () => ({
+			focus: () => terminalRef.current?.focus(),
+			blur: () => terminalRef.current?.blur(),
+			sendKey: (key: string) => {
+				if (!isReadyRef.current) return;
+				getWsManager().send({
+					channel: "terminal",
+					type: "input",
+					terminal_id: terminalIdRef.current,
+					data: key,
+				});
+			},
+		}));
 
-		const initTerminal = async () => {
-			let ghostty: GhosttyModule;
-			try {
-				await ensureGhosttyInit();
-				ghostty = await loadGhostty();
-			} catch (err) {
-				console.error("[MuxTerminal] Failed to initialize ghostty:", err);
-				if (mounted) setStatus("error");
-				return;
-			}
-			if (!mounted || !containerRef.current) return;
+		// Capture props as local constants so biome sees them as valid effect deps
+		const currentTheme = theme;
+		const currentWorkspacePath = workspacePath;
+		useEffect(() => {
+			// theme and workspacePath trigger terminal recreation for proper theme/session
+			void currentTheme;
+			void currentWorkspacePath;
 
-			if (terminalRef.current) {
+			let mounted = true;
+
+			const initTerminal = async () => {
+				let ghostty: GhosttyModule;
 				try {
-					terminalRef.current.dispose();
-				} catch {
-					// ignore dispose errors
+					await ensureGhosttyInit();
+					ghostty = await loadGhostty();
+				} catch (err) {
+					console.error("[MuxTerminal] Failed to initialize ghostty:", err);
+					if (mounted) setStatus("error");
+					return;
 				}
-			}
+				if (!mounted || !containerRef.current) return;
 
-			try {
-				const computedStyle = getComputedStyle(document.documentElement);
-				const terminalBg =
-					computedStyle.getPropertyValue("--terminal-bg").trim() || "#0b0d12";
-				const terminalFg =
-					computedStyle.getPropertyValue("--terminal-fg").trim() || "#f5f5f5";
-
-				const terminal = new ghostty.Terminal({
-					fontFamily,
-					fontSize,
-					cursorBlink: true,
-					convertEol: true,
-					theme: {
-						background: terminalBg,
-						foreground: terminalFg,
-					},
-				});
-				terminalRef.current = terminal;
-
-				const fitAddon = new ghostty.FitAddon();
-				fitAddonRef.current = fitAddon;
-				terminal.loadAddon(fitAddon);
-				terminal.open(containerRef.current);
-				fitAddon.fit();
-
-				terminal.onData((data) => {
-					if (!isReadyRef.current) return;
-					getWsManager().send({
-						channel: "terminal",
-						type: "input",
-						terminal_id: terminalIdRef.current,
-						data,
-					});
-				});
-
-				terminal.onResize(({ cols, rows }) => {
-					if (!isReadyRef.current) return;
-					getWsManager().send({
-						channel: "terminal",
-						type: "resize",
-						terminal_id: terminalIdRef.current,
-						cols,
-						rows,
-					});
-				});
-			} catch (err) {
-				console.error("[MuxTerminal] Failed to create terminal:", err);
-				if (mounted) setStatus("error");
-			}
-		};
-
-		void initTerminal();
-
-		return () => {
-			mounted = false;
-			if (terminalRef.current) {
-				try {
-					terminalRef.current.dispose();
-				} catch {
-					// ignore dispose errors
-				}
-				terminalRef.current = null;
-			}
-			fitAddonRef.current = null;
-		};
-		// theme and workspacePath trigger terminal recreation for proper theme/session
-		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [fontFamily, fontSize, theme, workspacePath]);
-
-	useEffect(() => {
-		const manager = getWsManager();
-		isReadyRef.current = false;
-		setStatus("connecting");
-		manager.connect();
-		console.log("[MuxTerminal] Effect triggered, workspacePath:", workspacePath);
-
-		const sendOpen = () => {
-			const terminal = terminalRef.current;
-			console.log("[MuxTerminal] sendOpen called, terminal:", !!terminal, "workspacePath:", workspacePath);
-			if (!terminal) {
-				console.log("[MuxTerminal] No terminal ref, scheduling retry in 100ms");
-				// Terminal not ready yet, retry after a short delay
-				setTimeout(sendOpen, 100);
-				return;
-			}
-			const { cols, rows } = terminal;
-			console.log("[MuxTerminal] Sending terminal open:", { terminal_id: terminalIdRef.current, workspacePath, cols, rows });
-			manager.send({
-				channel: "terminal",
-				type: "open",
-				terminal_id: terminalIdRef.current,
-				workspace_path: workspacePath,
-				cols,
-				rows,
-			});
-		};
-
-		if (manager.isConnected) {
-			console.log("[MuxTerminal] Manager already connected, calling sendOpen");
-			sendOpen();
-		}
-		const unsubscribeState = manager.onConnectionState((state) => {
-			console.log("[MuxTerminal] Connection state changed:", state);
-			if (state === "connected") {
-				sendOpen();
-			}
-		});
-
-		const unsubscribe = manager.subscribe("terminal", (event) => {
-			const terminalEvent = event as TerminalWsEvent;
-			console.log("[MuxTerminal] Received terminal event:", terminalEvent.type, "terminal_id:", terminalEvent.terminal_id);
-			if (terminalEvent.terminal_id !== terminalIdRef.current) {
-				console.log("[MuxTerminal] Event for different terminal, ignoring");
-				return;
-			}
-
-			switch (terminalEvent.type) {
-				case "opened":
-					console.log("[MuxTerminal] Terminal opened!");
-					isReadyRef.current = true;
-					setStatus("connected");
-					if (fitAddonRef.current) {
-						fitAddonRef.current.fit();
+				if (terminalRef.current) {
+					try {
+						terminalRef.current.dispose();
+					} catch {
+						// ignore dispose errors
 					}
-					break;
-				case "output": {
-					if (!terminalRef.current) return;
-					const data = base64ToUint8Array(terminalEvent.data_base64);
-					terminalRef.current.write(data);
-					break;
 				}
-				case "exit":
-					console.log("[MuxTerminal] Terminal exited");
-					isReadyRef.current = false;
-					setStatus("error");
-					break;
-				case "error":
-					console.log("[MuxTerminal] Terminal error:", terminalEvent);
-					isReadyRef.current = false;
-					setStatus("error");
-					break;
-			}
-		});
 
-		return () => {
-			unsubscribe();
-			unsubscribeState();
-			if (isReadyRef.current) {
+				try {
+					const computedStyle = getComputedStyle(document.documentElement);
+					const terminalBg =
+						computedStyle.getPropertyValue("--terminal-bg").trim() || "#0b0d12";
+					const terminalFg =
+						computedStyle.getPropertyValue("--terminal-fg").trim() || "#f5f5f5";
+
+					const terminal = new ghostty.Terminal({
+						fontFamily,
+						fontSize,
+						cursorBlink: true,
+						convertEol: true,
+						theme: {
+							background: terminalBg,
+							foreground: terminalFg,
+						},
+					});
+					terminalRef.current = terminal;
+
+					const fitAddon = new ghostty.FitAddon();
+					fitAddonRef.current = fitAddon;
+					terminal.loadAddon(fitAddon);
+					terminal.open(containerRef.current);
+					fitAddon.fit();
+
+					terminal.onData((data) => {
+						if (!isReadyRef.current) return;
+						getWsManager().send({
+							channel: "terminal",
+							type: "input",
+							terminal_id: terminalIdRef.current,
+							data,
+						});
+					});
+
+					terminal.onResize(({ cols, rows }) => {
+						if (!isReadyRef.current) return;
+						getWsManager().send({
+							channel: "terminal",
+							type: "resize",
+							terminal_id: terminalIdRef.current,
+							cols,
+							rows,
+						});
+					});
+				} catch (err) {
+					console.error("[MuxTerminal] Failed to create terminal:", err);
+					if (mounted) setStatus("error");
+				}
+			};
+
+			void initTerminal();
+
+			return () => {
+				mounted = false;
+				if (terminalRef.current) {
+					try {
+						terminalRef.current.dispose();
+					} catch {
+						// ignore dispose errors
+					}
+					terminalRef.current = null;
+				}
+				fitAddonRef.current = null;
+			};
+		}, [fontFamily, fontSize, currentTheme, currentWorkspacePath]);
+
+		useEffect(() => {
+			const manager = getWsManager();
+			isReadyRef.current = false;
+			setStatus("connecting");
+			manager.connect();
+			console.log(
+				"[MuxTerminal] Effect triggered, workspacePath:",
+				workspacePath,
+			);
+
+			const sendOpen = () => {
+				const terminal = terminalRef.current;
+				console.log(
+					"[MuxTerminal] sendOpen called, terminal:",
+					!!terminal,
+					"workspacePath:",
+					workspacePath,
+				);
+				if (!terminal) {
+					console.log(
+						"[MuxTerminal] No terminal ref, scheduling retry in 100ms",
+					);
+					// Terminal not ready yet, retry after a short delay
+					setTimeout(sendOpen, 100);
+					return;
+				}
+				const { cols, rows } = terminal;
+				console.log("[MuxTerminal] Sending terminal open:", {
+					terminal_id: terminalIdRef.current,
+					workspacePath,
+					cols,
+					rows,
+				});
 				manager.send({
 					channel: "terminal",
-					type: "close",
+					type: "open",
 					terminal_id: terminalIdRef.current,
+					workspace_path: workspacePath,
+					cols,
+					rows,
 				});
-			}
-			isReadyRef.current = false;
-		};
-	}, [workspacePath]);
+			};
 
-	return (
-		<div
-			className={`relative h-full w-full rounded ${className ?? ""}`}
-			style={{ backgroundColor: "var(--terminal-bg)", padding: "8px 12px" }}
-		>
+			if (manager.isConnected) {
+				console.log(
+					"[MuxTerminal] Manager already connected, calling sendOpen",
+				);
+				sendOpen();
+			}
+			const unsubscribeState = manager.onConnectionState((state) => {
+				console.log("[MuxTerminal] Connection state changed:", state);
+				if (state === "connected") {
+					sendOpen();
+				}
+			});
+
+			const unsubscribe = manager.subscribe("terminal", (event) => {
+				const terminalEvent = event as TerminalWsEvent;
+				console.log(
+					"[MuxTerminal] Received terminal event:",
+					terminalEvent.type,
+					"terminal_id:",
+					terminalEvent.terminal_id,
+				);
+				if (terminalEvent.terminal_id !== terminalIdRef.current) {
+					console.log("[MuxTerminal] Event for different terminal, ignoring");
+					return;
+				}
+
+				switch (terminalEvent.type) {
+					case "opened":
+						console.log("[MuxTerminal] Terminal opened!");
+						isReadyRef.current = true;
+						setStatus("connected");
+						if (fitAddonRef.current) {
+							fitAddonRef.current.fit();
+						}
+						break;
+					case "output": {
+						if (!terminalRef.current) return;
+						const data = base64ToUint8Array(terminalEvent.data_base64);
+						terminalRef.current.write(data);
+						break;
+					}
+					case "exit":
+						console.log("[MuxTerminal] Terminal exited");
+						isReadyRef.current = false;
+						setStatus("error");
+						break;
+					case "error":
+						console.log("[MuxTerminal] Terminal error:", terminalEvent);
+						isReadyRef.current = false;
+						setStatus("error");
+						break;
+				}
+			});
+
+			return () => {
+				unsubscribe();
+				unsubscribeState();
+				if (isReadyRef.current) {
+					manager.send({
+						channel: "terminal",
+						type: "close",
+						terminal_id: terminalIdRef.current,
+					});
+				}
+				isReadyRef.current = false;
+			};
+		}, [workspacePath]);
+
+		return (
 			<div
-				ref={containerRef}
-				className="h-full w-full"
-				style={{
-					// Hide terminal canvas until connected to avoid ghost cursor at 0,0
-					visibility: status === "connected" ? "visible" : "hidden",
-				}}
-			/>
-			{status !== "connected" && (
-				<div className="absolute inset-0 flex items-center justify-center text-xs font-mono text-muted-foreground pointer-events-none">
-					{status === "error" ? "Terminal disconnected" : "Connecting terminal..."}
-				</div>
-			)}
-		</div>
-	);
-});
+				className={`relative h-full w-full rounded ${className ?? ""}`}
+				style={{ backgroundColor: "var(--terminal-bg)", padding: "8px 12px" }}
+			>
+				<div
+					ref={containerRef}
+					className="h-full w-full"
+					style={{
+						// Hide terminal canvas until connected to avoid ghost cursor at 0,0
+						visibility: status === "connected" ? "visible" : "hidden",
+					}}
+				/>
+				{status !== "connected" && (
+					<div className="absolute inset-0 flex items-center justify-center text-xs font-mono text-muted-foreground pointer-events-none">
+						{status === "error"
+							? "Terminal disconnected"
+							: "Connecting terminal..."}
+					</div>
+				)}
+			</div>
+		);
+	},
+);
 
 GhosttyTerminal.displayName = "GhosttyTerminal";

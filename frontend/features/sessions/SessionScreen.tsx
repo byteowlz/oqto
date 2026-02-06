@@ -2,14 +2,14 @@
 
 import { ContextWindowGauge } from "@/components/data-display";
 import { ChatSearchBar, ChatView, PiSettingsView } from "@/features/chat";
-import {
-	type Features,
-	getFeatures,
-	newWorkspacePiSession,
-} from "@/features/chat/api";
+import { type Features, getFeatures } from "@/features/chat/api";
 import { useApp } from "@/hooks/use-app";
 import { useIsMobile } from "@/hooks/use-mobile";
-import { isPendingSessionId, normalizeWorkspacePath } from "@/lib/session-utils";
+import {
+	getDisplayPiTitle,
+	getReadableIdFromSession,
+	normalizeWorkspacePath,
+} from "@/lib/session-utils";
 import { cn } from "@/lib/utils";
 import {
 	Brain,
@@ -30,10 +30,10 @@ import {
 	X,
 } from "lucide-react";
 import {
+	type ComponentType,
 	Suspense,
 	lazy,
 	memo,
-	type ComponentType,
 	useCallback,
 	useEffect,
 	useMemo,
@@ -278,51 +278,10 @@ export const SessionScreen = memo(function SessionScreen() {
 		[selectedChatFromHistory?.workspace_path],
 	);
 
-	const handleEnsureSession = useCallback(
-		async (workspacePath: string | null, optimisticId: string | null) => {
-			try {
-				const resolvedPath = normalizeWorkspacePath(workspacePath);
-				if (!resolvedPath) {
-					return null;
-				}
-				const state = await newWorkspacePiSession(resolvedPath);
-				if (state.session_id) {
-					if (
-						optimisticId &&
-						optimisticId !== state.session_id &&
-						isPendingSessionId(optimisticId)
-					) {
-						replaceOptimisticChatSession(optimisticId, state.session_id);
-					}
-					setSelectedChatSessionId(state.session_id);
-					refreshChatHistory();
-					return state.session_id;
-				}
-				return null;
-			} catch (err) {
-				if (optimisticId) {
-					clearOptimisticChatSession(optimisticId);
-				}
-				console.error("Failed to ensure Pi session:", err);
-				return null;
-			}
-		},
-		[
-			clearOptimisticChatSession,
-			refreshChatHistory,
-			replaceOptimisticChatSession,
-			setSelectedChatSessionId,
-		],
-	);
-
 	const handleNewChat = useCallback(async () => {
 		const id = await createNewChat(normalizedWorkspacePath ?? undefined);
 		if (id) setSelectedChatSessionId(id);
-	}, [
-		createNewChat,
-		normalizedWorkspacePath,
-		setSelectedChatSessionId,
-	]);
+	}, [createNewChat, normalizedWorkspacePath, setSelectedChatSessionId]);
 
 	useEffect(() => {
 		let mounted = true;
@@ -347,10 +306,14 @@ export const SessionScreen = memo(function SessionScreen() {
 		setPreviewFilePath(null);
 	}, [selectedChatSessionId]);
 
-	const headerTitle =
-		selectedChatFromHistory?.title ??
-		(locale === "de" ? "Chat" : "Chat");
-	const readableId = selectedChatFromHistory?.readable_id ?? null;
+	const headerTitle = selectedChatFromHistory
+		? getDisplayPiTitle(selectedChatFromHistory)
+		: locale === "de"
+			? "Chat"
+			: "Chat";
+	const readableId = selectedChatFromHistory
+		? getReadableIdFromSession(selectedChatFromHistory)
+		: null;
 	const workspaceName =
 		normalizedWorkspacePath?.split("/").filter(Boolean).pop() ?? null;
 	const formattedDate = selectedChatFromHistory?.created_at
@@ -367,7 +330,6 @@ export const SessionScreen = memo(function SessionScreen() {
 			workspacePath={normalizedWorkspacePath}
 			selectedSessionId={selectedChatSessionId}
 			onSelectedSessionIdChange={setSelectedChatSessionId}
-			onEnsureSession={handleEnsureSession}
 			scrollToMessageId={scrollToMessageId}
 			onScrollToMessageComplete={() => setScrollToMessageId(null)}
 			onTokenUsageChange={setTokenUsage}
@@ -575,7 +537,12 @@ export const SessionScreen = memo(function SessionScreen() {
 						)}
 					>
 						{activeView === "chat" && chatPanel}
-						<div className={cn("h-full flex flex-col", activeView !== "files" && "hidden")}>
+						<div
+							className={cn(
+								"h-full flex flex-col",
+								activeView !== "files" && "hidden",
+							)}
+						>
 							{previewFilePath ? (
 								<Suspense fallback={viewLoadingFallback}>
 									<PreviewView
@@ -717,9 +684,7 @@ export const SessionScreen = memo(function SessionScreen() {
 						{sessionHeader}
 						{showEmptyChat ? (
 							<div className="flex-1 flex items-center justify-center text-sm text-muted-foreground">
-								{locale === "de"
-									? "Keine Sitzungen"
-									: "No sessions yet"}
+								{locale === "de" ? "Keine Sitzungen" : "No sessions yet"}
 							</div>
 						) : (
 							chatPanel
@@ -933,9 +898,7 @@ export const SessionScreen = memo(function SessionScreen() {
 											</div>
 											<div className="flex-1 min-h-0">
 												<Suspense fallback={viewLoadingFallback}>
-													<CanvasView
-														workspacePath={normalizedWorkspacePath}
-													/>
+													<CanvasView workspacePath={normalizedWorkspacePath} />
 												</Suspense>
 											</div>
 										</div>

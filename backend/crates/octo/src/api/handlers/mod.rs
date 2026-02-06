@@ -47,9 +47,8 @@ pub(crate) use chat::get_runner_for_user;
 
 // Project handlers and types
 pub use projects::{
-    create_project_from_template, get_project_logo, list_project_templates,
-    list_workspace_dirs, list_workspace_locations, set_active_workspace_location,
-    upsert_workspace_location,
+    create_project_from_template, get_project_logo, list_project_templates, list_workspace_dirs,
+    list_workspace_locations, set_active_workspace_location, upsert_workspace_location,
 };
 
 // Admin handlers and types

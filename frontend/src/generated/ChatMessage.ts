@@ -4,8 +4,23 @@ import type { ChatMessagePart } from "./ChatMessagePart";
 /**
  * A chat message with its content parts.
  */
-export type ChatMessage = { id: string, session_id: string, role: string, created_at: bigint, completed_at: bigint | null, parent_id: string | null, model_id: string | null, provider_id: string | null, agent: string | null, summary_title: string | null, tokens_input: bigint | null, tokens_output: bigint | null, tokens_reasoning: bigint | null, cost: number | null, 
-/**
- * Message content parts
- */
-parts: Array<ChatMessagePart>, };
+export type ChatMessage = {
+	id: string;
+	session_id: string;
+	role: string;
+	created_at: bigint;
+	completed_at: bigint | null;
+	parent_id: string | null;
+	model_id: string | null;
+	provider_id: string | null;
+	agent: string | null;
+	summary_title: string | null;
+	tokens_input: bigint | null;
+	tokens_output: bigint | null;
+	tokens_reasoning: bigint | null;
+	cost: number | null;
+	/**
+	 * Message content parts
+	 */
+	parts: Array<ChatMessagePart>;
+};

@@ -5,11 +5,11 @@ import {
 	getCodexBarUsage,
 	getSchedulerOverview,
 } from "@/lib/control-plane-client";
-import { getWsManager } from "@/lib/ws-manager";
-import type { TrxWsEvent } from "@/lib/ws-mux-types";
+import { readFileMux, writeFileMux } from "@/lib/mux-files";
 import type { OpenCodeAgent } from "@/lib/opencode-client";
 import { fetchAgents } from "@/lib/opencode-client";
-import { readFileMux, writeFileMux } from "@/lib/mux-files";
+import { getWsManager } from "@/lib/ws-manager";
+import type { TrxWsEvent } from "@/lib/ws-mux-types";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
 	BuiltinCardDefinition,
@@ -190,7 +190,10 @@ function normalizeLayout(
 		}
 	}
 
-	const nextCards: Record<string, { visible: boolean; span: DashboardCardSpan }> = {
+	const nextCards: Record<
+		string,
+		{ visible: boolean; span: DashboardCardSpan }
+	> = {
 		...layout.cards,
 	};
 	for (const id of cardIds) {
@@ -262,7 +265,9 @@ export type UseDashboardDataReturn = {
 	) => void;
 	registryCards: DashboardRegistryCard[];
 	persistRegistry: (next: DashboardRegistryCard[]) => Promise<void>;
-	setRegistryCards: React.Dispatch<React.SetStateAction<DashboardRegistryCard[]>>;
+	setRegistryCards: React.Dispatch<
+		React.SetStateAction<DashboardRegistryCard[]>
+	>;
 	registryRef: React.MutableRefObject<DashboardRegistryCard[]>;
 };
 

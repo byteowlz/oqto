@@ -5,8 +5,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use axum::body::Body;
-use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::client::legacy::Client;
+use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::rt::TokioExecutor;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
@@ -21,9 +21,8 @@ use crate::agent_rpc::AgentBackend;
 use crate::auth::AuthState;
 use crate::invite::InviteCodeRepository;
 use crate::local::LinuxUsersConfig;
-use crate::main_chat::{MainChatPiService, MainChatService};
 use crate::onboarding::OnboardingService;
-use crate::pi_workspace::WorkspacePiService;
+
 use crate::session::SessionService;
 use crate::session_ui::SessionAutoAttachMode;
 use crate::settings::SettingsService;
@@ -243,10 +242,7 @@ impl TemplatesState {
                     }
                     Ok(output) => {
                         let stderr = String::from_utf8_lossy(&output.stderr);
-                        warn!(
-                            "Background templates sync failed: {}",
-                            stderr.trim()
-                        );
+                        warn!("Background templates sync failed: {}", stderr.trim());
                     }
                     Err(e) => {
                         warn!("Background templates sync error: {}", e);
@@ -303,12 +299,6 @@ pub struct AppState {
     pub settings_pi_agent: Option<Arc<SettingsService>>,
     /// Settings service for Pi agent models.json.
     pub settings_pi_models: Option<Arc<SettingsService>>,
-    /// Main Chat service for persistent assistants.
-    pub main_chat: Option<Arc<MainChatService>>,
-    /// Main Chat Pi service for managing Pi subprocesses.
-    pub main_chat_pi: Option<Arc<MainChatPiService>>,
-    /// Workspace Pi service for per-workspace Pi sessions.
-    pub workspace_pi: Option<Arc<WorkspacePiService>>,
     /// Onboarding service for user setup flow.
     pub onboarding: Option<Arc<OnboardingService>>,
     /// Onboarding templates service for Main Chat initialization.
@@ -363,9 +353,6 @@ impl AppState {
             settings_mmry: None,
             settings_pi_agent: None,
             settings_pi_models: None,
-            main_chat: None,
-            main_chat_pi: None,
-            workspace_pi: None,
             onboarding: None,
             onboarding_templates: None,
             ws_hub: Arc::new(WsHub::new()),
@@ -412,9 +399,6 @@ impl AppState {
             settings_mmry: None,
             settings_pi_agent: None,
             settings_pi_models: None,
-            main_chat: None,
-            main_chat_pi: None,
-            workspace_pi: None,
             onboarding: None,
             onboarding_templates: None,
             ws_hub: Arc::new(WsHub::new()),
@@ -467,24 +451,6 @@ impl AppState {
     /// Set the runner socket pattern for multi-user mode.
     pub fn with_runner_socket_pattern(mut self, pattern: Option<String>) -> Self {
         self.runner_socket_pattern = pattern;
-        self
-    }
-
-    /// Set the main chat service.
-    pub fn with_main_chat(mut self, service: MainChatService) -> Self {
-        self.main_chat = Some(Arc::new(service));
-        self
-    }
-
-    /// Set the main chat Pi service from an existing Arc.
-    pub fn with_main_chat_pi_arc(mut self, service: Arc<MainChatPiService>) -> Self {
-        self.main_chat_pi = Some(service);
-        self
-    }
-
-    /// Attach WorkspacePiService to application state.
-    pub fn with_workspace_pi_arc(mut self, service: Arc<WorkspacePiService>) -> Self {
-        self.workspace_pi = Some(service);
         self
     }
 

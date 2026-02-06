@@ -5,9 +5,9 @@ import { Button } from "@/components/ui/button";
 import { useApp } from "@/hooks/use-app";
 import { useCurrentUser, useLogout } from "@/hooks/use-auth";
 import { useCommandPalette } from "@/hooks/use-command-palette";
+import { setChatPrefetchLimit } from "@/lib/app-settings";
 import type { HstrySearchHit } from "@/lib/control-plane-client";
 import { getSettingsValues } from "@/lib/control-plane-client";
-import { setChatPrefetchLimit } from "@/lib/app-settings";
 import { cn } from "@/lib/utils";
 import { Clock, PanelLeftClose, PanelRightClose } from "lucide-react";
 import { useTheme } from "next-themes";
@@ -328,11 +328,7 @@ const AppShell = memo(function AppShell() {
 			sidebarState.setMobileMenuOpen(false);
 			await createNewChat(directory);
 		},
-		[
-			createNewChat,
-			setActiveAppId,
-			sidebarState,
-		],
+		[createNewChat, setActiveAppId, sidebarState],
 	);
 
 	const handleProjectDefaultAgentChange = useCallback(
@@ -676,32 +672,30 @@ const AppShell = memo(function AppShell() {
 					)}
 
 					{sidebarState.sidebarCollapsed && chatHistory.length > 0 && (
-							<div className="w-full px-2 mt-4">
-								<div className="pt-2">
-									<button
-										type="button"
-										onClick={() => sidebarState.setSidebarCollapsed(false)}
-										className="w-full p-2 text-muted-foreground hover:text-foreground transition-colors"
-										title={
-											locale === "de" ? "Verlauf anzeigen" : "Show history"
-										}
-									>
-										<Clock className="w-4 h-4 mx-auto" />
-									</button>
-								</div>
+						<div className="w-full px-2 mt-4">
+							<div className="pt-2">
+								<button
+									type="button"
+									onClick={() => sidebarState.setSidebarCollapsed(false)}
+									className="w-full p-2 text-muted-foreground hover:text-foreground transition-colors"
+									title={locale === "de" ? "Verlauf anzeigen" : "Show history"}
+								>
+									<Clock className="w-4 h-4 mx-auto" />
+								</button>
 							</div>
-						)}
+						</div>
+					)}
 
-				<SidebarNav
-					activeAppId={activeAppId}
-					sidebarCollapsed={sidebarState.sidebarCollapsed}
-					isDark={isDark}
-					isAdmin={isAdmin}
-					onToggleApp={toggleApp}
-					onToggleLocale={toggleLocale}
-					onToggleTheme={toggleTheme}
-					onLogout={handleLogout}
-				/>
+					<SidebarNav
+						activeAppId={activeAppId}
+						sidebarCollapsed={sidebarState.sidebarCollapsed}
+						isDark={isDark}
+						isAdmin={isAdmin}
+						onToggleApp={toggleApp}
+						onToggleLocale={toggleLocale}
+						onToggleTheme={toggleTheme}
+						onLogout={handleLogout}
+					/>
 				</aside>
 
 				<div

@@ -211,7 +211,9 @@ function AccountPanel({ locale }: { locale: "en" | "de" }) {
 				setNewPassword("");
 				setConfirmPassword("");
 			} catch (err) {
-				setError(err instanceof Error ? err.message : "Failed to change password");
+				setError(
+					err instanceof Error ? err.message : "Failed to change password",
+				);
 			} finally {
 				setLoading(false);
 			}
@@ -225,7 +227,10 @@ function AccountPanel({ locale }: { locale: "en" | "de" }) {
 				<h3 className="text-sm font-semibold mb-4">{t.title}</h3>
 				<form onSubmit={handleSubmit} className="space-y-3 max-w-sm">
 					<div>
-						<label htmlFor="current-password" className="text-xs text-muted-foreground block mb-1">
+						<label
+							htmlFor="current-password"
+							className="text-xs text-muted-foreground block mb-1"
+						>
 							{t.current}
 						</label>
 						<input
@@ -239,7 +244,10 @@ function AccountPanel({ locale }: { locale: "en" | "de" }) {
 						/>
 					</div>
 					<div>
-						<label htmlFor="new-password" className="text-xs text-muted-foreground block mb-1">
+						<label
+							htmlFor="new-password"
+							className="text-xs text-muted-foreground block mb-1"
+						>
 							{t.new}
 						</label>
 						<input
@@ -254,7 +262,10 @@ function AccountPanel({ locale }: { locale: "en" | "de" }) {
 						/>
 					</div>
 					<div>
-						<label htmlFor="confirm-password" className="text-xs text-muted-foreground block mb-1">
+						<label
+							htmlFor="confirm-password"
+							className="text-xs text-muted-foreground block mb-1"
+						>
 							{t.confirm}
 						</label>
 						<input
@@ -268,12 +279,8 @@ function AccountPanel({ locale }: { locale: "en" | "de" }) {
 							autoComplete="new-password"
 						/>
 					</div>
-					{error && (
-						<p className="text-xs text-destructive">{error}</p>
-					)}
-					{success && (
-						<p className="text-xs text-primary">{t.success}</p>
-					)}
+					{error && <p className="text-xs text-destructive">{error}</p>}
+					{success && <p className="text-xs text-primary">{t.success}</p>}
 					<button
 						type="submit"
 						disabled={loading}

@@ -2,10 +2,7 @@
  * Hook for searching within a specific Pi session using hstry.
  */
 
-import {
-	type InSessionSearchResult,
-	searchInPiSession,
-} from "@/lib/api";
+import { type InSessionSearchResult, searchInPiSession } from "@/lib/api";
 import { useCallback, useMemo, useState } from "react";
 
 export type UseSessionSearchOptions = {

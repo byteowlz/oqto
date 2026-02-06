@@ -91,7 +91,10 @@ export function DefaultChatProvider({ children }: { children: ReactNode }) {
 					// Persist to localStorage
 					if (typeof window !== "undefined") {
 						try {
-							localStorage.setItem("octo:lastDefaultChatActive", String(newValue));
+							localStorage.setItem(
+								"octo:lastDefaultChatActive",
+								String(newValue),
+							);
 						} catch {
 							// Ignore localStorage errors
 						}
@@ -106,24 +109,23 @@ export function DefaultChatProvider({ children }: { children: ReactNode }) {
 	const [defaultChatAssistantName, setDefaultChatAssistantName] = useState<
 		string | null
 	>(null);
-	
+
 	// Default chat session ID - restore from localStorage for instant load
-	const [defaultChatCurrentSessionId, setDefaultChatCurrentSessionIdRaw] = useState<
-		string | null
-	>(() => {
-		if (typeof window !== "undefined") {
-			try {
-				return localStorage.getItem("octo:defaultChatCurrentSessionId");
-			} catch {
-				localStorage.removeItem("octo:defaultChatCurrentSessionId");
+	const [defaultChatCurrentSessionId, setDefaultChatCurrentSessionIdRaw] =
+		useState<string | null>(() => {
+			if (typeof window !== "undefined") {
+				try {
+					return localStorage.getItem("octo:defaultChatCurrentSessionId");
+				} catch {
+					localStorage.removeItem("octo:defaultChatCurrentSessionId");
+				}
 			}
-		}
-		return null;
-	});
-	
+			return null;
+		});
+
 	// Track if we've attempted to restore the session
 	const sessionRestoreAttempted = useRef(false);
-	
+
 	// Wrap setter to persist to localStorage
 	const setDefaultChatCurrentSessionId = useCallback((id: string | null) => {
 		setDefaultChatCurrentSessionIdRaw(id);
@@ -195,7 +197,7 @@ export function DefaultChatProvider({ children }: { children: ReactNode }) {
 		return () => {
 			cancelled = true;
 		};
-	}, [setDefaultChatWorkspacePath, setDefaultChatAssistantName]);
+	}, [setDefaultChatWorkspacePath]);
 
 	// Restore last session or fetch the most recent one when default chat becomes active
 	useEffect(() => {
@@ -216,9 +218,14 @@ export function DefaultChatProvider({ children }: { children: ReactNode }) {
 				if (cancelled) return;
 				if (sessions.length > 0) {
 					// Sort by modified_at descending (it's a timestamp number) and pick the most recent
-					const sorted = [...sessions].sort((a, b) => (b.modified_at || 0) - (a.modified_at || 0));
+					const sorted = [...sessions].sort(
+						(a, b) => (b.modified_at || 0) - (a.modified_at || 0),
+					);
 					const mostRecent = sorted[0];
-					console.log("[DefaultChat] Restoring most recent session:", mostRecent.id);
+					console.log(
+						"[DefaultChat] Restoring most recent session:",
+						mostRecent.id,
+					);
 					setDefaultChatCurrentSessionId(mostRecent.id);
 				}
 				// If no sessions exist, leave it null - user will start a new session when they send a message
@@ -230,7 +237,11 @@ export function DefaultChatProvider({ children }: { children: ReactNode }) {
 		return () => {
 			cancelled = true;
 		};
-	}, [defaultChatActive, defaultChatCurrentSessionId, setDefaultChatCurrentSessionId]);
+	}, [
+		defaultChatActive,
+		defaultChatCurrentSessionId,
+		setDefaultChatCurrentSessionId,
+	]);
 
 	// Trigger for Default Chat session activity (message sent)
 	const [sessionActivityTrigger, setSessionActivityTrigger] = useState(0);
@@ -260,6 +271,7 @@ export function DefaultChatProvider({ children }: { children: ReactNode }) {
 			setDefaultChatActive,
 			defaultChatAssistantName,
 			defaultChatCurrentSessionId,
+			setDefaultChatCurrentSessionId,
 			defaultChatWorkspacePath,
 			setDefaultChatWorkspacePath,
 			sessionActivityTrigger,

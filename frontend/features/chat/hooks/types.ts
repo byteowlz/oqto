@@ -2,7 +2,7 @@
  * Shared types for Pi chat hooks.
  */
 
-import type { PiAgentMessage, PiState } from "@/lib/control-plane-client";
+import type { AgentState, PiAgentMessage } from "@/lib/control-plane-client";
 
 /** Pi streaming event types */
 export type PiEventType =
@@ -58,6 +58,9 @@ export type PiDisplayMessage = {
 	timestamp: number;
 	isStreaming?: boolean;
 	usage?: PiAgentMessage["usage"];
+	/** Client-generated ID for optimistic message matching.
+	 * Used to correlate frontend optimistic messages with server-confirmed versions. */
+	clientId?: string;
 };
 
 /** Send mode for messages */
@@ -92,7 +95,7 @@ export type UsePiChatOptions = {
 /** Hook return type */
 export type UsePiChatReturn = {
 	/** Current Pi state */
-	state: PiState | null;
+	state: AgentState | null;
 	/** Display messages */
 	messages: PiDisplayMessage[];
 	/** Whether connected to WebSocket */
@@ -143,6 +146,9 @@ export type RawPiMessage = {
 	tool_name?: string;
 	isError?: boolean;
 	is_error?: boolean;
+	/** Client-generated ID for optimistic message matching */
+	client_id?: string;
+	clientId?: string;
 };
 
 /** Batched update state for token streaming - reduces per-token React updates */
@@ -164,7 +170,7 @@ export type WsConnectionState = {
 	ws: WebSocket | null;
 	isConnected: boolean;
 	sessionStarted: boolean;
-	mainSessionInit: Promise<PiState | null> | null;
+	mainSessionInit: Promise<AgentState | null> | null;
 	listeners: Set<(connected: boolean) => void>;
 };
 
@@ -182,5 +188,5 @@ export type SessionMessageCache = {
 	pendingWrite: Map<string, ReturnType<typeof setTimeout>>;
 };
 
-// Re-export PiState for convenience
-export type { PiState } from "@/lib/control-plane-client";
+// Re-export AgentState for convenience
+export type { AgentState } from "@/lib/control-plane-client";

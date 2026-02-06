@@ -13,6 +13,12 @@
 		}
 	},
 	"files": {
-		"ignore": [".next", "dist", "node_modules", "src-tauri/gen"]
+		"ignore": [
+			".next",
+			"dist",
+			"node_modules",
+			"src-tauri/gen",
+			"src-tauri/target"
+		]
 	}
 }

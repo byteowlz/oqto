@@ -224,68 +224,71 @@ export function ChatEntry({
 
 	// Unconditional refresh - always fetches sessions regardless of selection state
 	// Now with throttling to avoid excessive refreshes
-	const refreshSessionsUnconditional = useCallback((force = false) => {
-		if (!assistantName) return;
+	const refreshSessionsUnconditional = useCallback(
+		(force = false) => {
+			if (!assistantName) return;
 
-		const now = Date.now();
-		const elapsed = now - lastRefreshTimeRef.current;
+			const now = Date.now();
+			const elapsed = now - lastRefreshTimeRef.current;
 
-		// Clear any pending refresh
-		if (pendingRefreshRef.current) {
-			clearTimeout(pendingRefreshRef.current);
-			pendingRefreshRef.current = null;
-		}
+			// Clear any pending refresh
+			if (pendingRefreshRef.current) {
+				clearTimeout(pendingRefreshRef.current);
+				pendingRefreshRef.current = null;
+			}
 
-		const doRefresh = () => {
-			lastRefreshTimeRef.current = Date.now();
-			listDefaultChatPiSessions()
-				.then((sessionList) => {
-					const sorted = [...sessionList].sort(
-						(a, b) => b.modified_at - a.modified_at,
-					);
-					// Only update state if data actually changed
-					setSessions((prev) => {
-						if (prev.length !== sorted.length) {
-							writeCachedSessions(assistantName, sorted);
-							return sorted;
-						}
-						// Check if any session changed
-						let changed = false;
-						for (let i = 0; i < prev.length; i++) {
-							if (
-								prev[i].id !== sorted[i].id ||
-								prev[i].modified_at !== sorted[i].modified_at ||
-								prev[i].title !== sorted[i].title
-							) {
-								changed = true;
-								break;
+			const doRefresh = () => {
+				lastRefreshTimeRef.current = Date.now();
+				listDefaultChatPiSessions()
+					.then((sessionList) => {
+						const sorted = [...sessionList].sort(
+							(a, b) => b.modified_at - a.modified_at,
+						);
+						// Only update state if data actually changed
+						setSessions((prev) => {
+							if (prev.length !== sorted.length) {
+								writeCachedSessions(assistantName, sorted);
+								return sorted;
 							}
-						}
-						if (changed) {
-							writeCachedSessions(assistantName, sorted);
-							return sorted;
-						}
-						return prev;
+							// Check if any session changed
+							let changed = false;
+							for (let i = 0; i < prev.length; i++) {
+								if (
+									prev[i].id !== sorted[i].id ||
+									prev[i].modified_at !== sorted[i].modified_at ||
+									prev[i].title !== sorted[i].title
+								) {
+									changed = true;
+									break;
+								}
+							}
+							if (changed) {
+								writeCachedSessions(assistantName, sorted);
+								return sorted;
+							}
+							return prev;
+						});
+						setLatestSessionId((prev) => {
+							const newLatest = sorted[0]?.id ?? null;
+							return prev === newLatest ? prev : newLatest;
+						});
+					})
+					.catch(() => {
+						// ignore
 					});
-					setLatestSessionId((prev) => {
-						const newLatest = sorted[0]?.id ?? null;
-						return prev === newLatest ? prev : newLatest;
-					});
-				})
-				.catch(() => {
-					// ignore
-				});
-		};
+			};
 
-		if (force || elapsed >= REFRESH_THROTTLE_MS) {
-			// Enough time has passed, refresh immediately
-			doRefresh();
-		} else {
-			// Schedule refresh after throttle interval
-			const delay = REFRESH_THROTTLE_MS - elapsed;
-			pendingRefreshRef.current = setTimeout(doRefresh, delay);
-		}
-	}, [assistantName]);
+			if (force || elapsed >= REFRESH_THROTTLE_MS) {
+				// Enough time has passed, refresh immediately
+				doRefresh();
+			} else {
+				// Schedule refresh after throttle interval
+				const delay = REFRESH_THROTTLE_MS - elapsed;
+				pendingRefreshRef.current = setTimeout(doRefresh, delay);
+			}
+		},
+		[assistantName],
+	);
 
 	const refreshSessions = useCallback(() => {
 		if (!isSelected) return;
@@ -320,7 +323,12 @@ export function ChatEntry({
 			lastNewSessionTriggerRef.current = newSessionTrigger;
 			refreshSessionsUnconditional(true);
 		}
-	}, [assistantName, isSelected, newSessionTrigger, refreshSessionsUnconditional]);
+	}, [
+		assistantName,
+		isSelected,
+		newSessionTrigger,
+		refreshSessionsUnconditional,
+	]);
 
 	// Refresh when session activity trigger changes (message sent) - always refresh
 	useEffect(() => {
@@ -330,11 +338,11 @@ export function ChatEntry({
 			lastSessionActivityTriggerRef.current = sessionActivityTrigger;
 			return;
 		}
-	if (sessionActivityTrigger !== lastSessionActivityTriggerRef.current) {
-		lastSessionActivityTriggerRef.current = sessionActivityTrigger;
-		refreshSessionsUnconditional(true);
-	}
-}, [assistantName, sessionActivityTrigger, refreshSessionsUnconditional]);
+		if (sessionActivityTrigger !== lastSessionActivityTriggerRef.current) {
+			lastSessionActivityTriggerRef.current = sessionActivityTrigger;
+			refreshSessionsUnconditional(true);
+		}
+	}, [assistantName, sessionActivityTrigger, refreshSessionsUnconditional]);
 
 	function cacheKeySessions(name: string) {
 		return `octo:defaultChatPi:${name}:sessions:v1`;
@@ -625,12 +633,12 @@ export function ChatEntry({
 			index: number,
 			selectableIds: string[],
 		) => {
-			const hasRange =
-				e.shiftKey && lastSelectedIndexRef.current !== null;
+			const hasRange = e.shiftKey && lastSelectedIndexRef.current !== null;
 			const isToggle = e.metaKey || e.ctrlKey;
 			if (hasRange) {
-				const start = Math.min(lastSelectedIndexRef.current!, index);
-				const end = Math.max(lastSelectedIndexRef.current!, index);
+				const lastIndex = lastSelectedIndexRef.current ?? index;
+				const start = Math.min(lastIndex, index);
+				const end = Math.max(lastIndex, index);
 				const rangeIds = selectableIds.slice(start, end + 1);
 				setSelectedSessionIds((prev) => {
 					const next = new Set(prev);
@@ -683,7 +691,9 @@ export function ChatEntry({
 				>
 					<Plus className="w-4 h-4" />
 					<span className="text-sm">
-						{locale === "de" ? "Standardchat einrichten" : "Set up Default Chat"}
+						{locale === "de"
+							? "Standardchat einrichten"
+							: "Set up Default Chat"}
 					</span>
 				</button>
 
@@ -796,118 +806,124 @@ export function ChatEntry({
 							);
 							return (
 								<>
-						{selectedSessionIds.size > 0 && (
-							<div className="flex items-center gap-2 bg-primary/10 border border-primary/20 rounded px-2 py-1 mx-3">
-								<span className="text-xs font-medium text-primary">
-									{selectedSessionIds.size}
-								</span>
-								<div className="flex-1 mr-1" />
-								<Button
-									type="button"
-									variant="ghost"
-									size="sm"
-									onClick={() => setShowBulkDeleteDialog(true)}
-									className="h-6 px-2 text-xs text-destructive hover:text-destructive"
-								>
-									<Trash2 className="w-3 h-3 mr-1" />
-									{locale === "de" ? "Loschen" : "Delete"}
-								</Button>
-								<Button
-									type="button"
-									variant="ghost"
-									size="sm"
-									onClick={() => setSelectedSessionIds(new Set())}
-									className="h-6 w-6 p-0"
-									title={locale === "de" ? "Auswahl loschen" : "Clear selection"}
-								>
-									<X className="w-3 h-3" />
-								</Button>
-							</div>
-						)}
-						{flattenedSessions.map(({ session, depth }, index) => {
-							const isActive =
-								session.id === (activeSessionId ?? latestSessionId);
-							const isSelectedRow = selectedSessionIds.has(session.id);
-
-							const emptyTitle =
-								locale === "de" ? "Neue Sitzung" : "New Chat";
-							const displayTitle =
-								session.title ||
-								(session.message_count === 0 ? emptyTitle : "Untitled");
-
-							const readableId = session.readable_id ?? null;
-
-							const formattedDate = formatSessionDate(
-								new Date(session.started_at).getTime(),
-							);
-
-							const isChild = depth > 0;
-
-							return (
-								<ContextMenu key={session.id}>
-									<ContextMenuTrigger className="contents">
-										<div className={cn("ml-3", isChild && "ml-6")}>
-											<button
+									{selectedSessionIds.size > 0 && (
+										<div className="flex items-center gap-2 bg-primary/10 border border-primary/20 rounded px-2 py-1 mx-3">
+											<span className="text-xs font-medium text-primary">
+												{selectedSessionIds.size}
+											</span>
+											<div className="flex-1 mr-1" />
+											<Button
 												type="button"
-												onClick={(e) =>
-													handleSessionRowClick(
-														e,
-														session.id,
-														index,
-														selectableIds,
-													)
-												}
-												className={cn(
-													"w-full px-2 py-1 text-left transition-colors flex items-start gap-1.5 rounded-sm border",
-													isActive
-														? "bg-primary/15 border-primary text-foreground"
-														: isSelectedRow
-															? "bg-primary/10 border-primary/50 text-foreground"
-															: "text-muted-foreground hover:bg-sidebar-accent border-transparent",
-												)}
+												variant="ghost"
+												size="sm"
+												onClick={() => setShowBulkDeleteDialog(true)}
+												className="h-6 px-2 text-xs text-destructive hover:text-destructive"
 											>
-												{isChild ? (
-													<CornerDownRight className="w-3 h-3 mt-0.5 text-muted-foreground/70 flex-shrink-0" />
-												) : (
-													<MessageSquare className="w-3 h-3 mt-0.5 text-primary/70 flex-shrink-0" />
-												)}
-												<div className="flex-1 min-w-0">
-													<div className="text-xs font-medium truncate">
-														{displayTitle}
-													</div>
-													<div className="text-[9px] text-muted-foreground/50 mt-0.5">
-														{formattedDate}
-													</div>
-												</div>
-											</button>
+												<Trash2 className="w-3 h-3 mr-1" />
+												{locale === "de" ? "Loschen" : "Delete"}
+											</Button>
+											<Button
+												type="button"
+												variant="ghost"
+												size="sm"
+												onClick={() => setSelectedSessionIds(new Set())}
+												className="h-6 w-6 p-0"
+												title={
+													locale === "de"
+														? "Auswahl loschen"
+														: "Clear selection"
+												}
+											>
+												<X className="w-3 h-3" />
+											</Button>
 										</div>
-									</ContextMenuTrigger>
-									<ContextMenuContent>
-										<ContextMenuItem
-											onClick={() => navigator.clipboard.writeText(readableId)}
-										>
-											<Copy className="w-4 h-4 mr-2" />
-											{readableId}
-										</ContextMenuItem>
-										<ContextMenuSeparator />
-										<ContextMenuItem
-											onClick={() => handleRenameSession(session)}
-										>
-											<Pencil className="w-4 h-4 mr-2" />
-											{locale === "de" ? "Umbenennen" : "Rename"}
-										</ContextMenuItem>
-										<ContextMenuSeparator />
-										<ContextMenuItem
-											onClick={() => handleDeleteSession(session)}
-											className="text-destructive focus:text-destructive"
-										>
-											<Trash2 className="w-4 h-4 mr-2" />
-											{locale === "de" ? "Loschen" : "Delete"}
-										</ContextMenuItem>
-									</ContextMenuContent>
-								</ContextMenu>
-							);
-						})}
+									)}
+									{flattenedSessions.map(({ session, depth }, index) => {
+										const isActive =
+											session.id === (activeSessionId ?? latestSessionId);
+										const isSelectedRow = selectedSessionIds.has(session.id);
+
+										const emptyTitle =
+											locale === "de" ? "Neue Sitzung" : "New Chat";
+										const displayTitle =
+											session.title ||
+											(session.message_count === 0 ? emptyTitle : "Untitled");
+
+										const readableId = session.readable_id ?? null;
+
+										const formattedDate = formatSessionDate(
+											new Date(session.started_at).getTime(),
+										);
+
+										const isChild = depth > 0;
+
+										return (
+											<ContextMenu key={session.id}>
+												<ContextMenuTrigger className="contents">
+													<div className={cn("ml-3", isChild && "ml-6")}>
+														<button
+															type="button"
+															onClick={(e) =>
+																handleSessionRowClick(
+																	e,
+																	session.id,
+																	index,
+																	selectableIds,
+																)
+															}
+															className={cn(
+																"w-full px-2 py-1 text-left transition-colors flex items-start gap-1.5 rounded-sm border",
+																isActive
+																	? "bg-primary/15 border-primary text-foreground"
+																	: isSelectedRow
+																		? "bg-primary/10 border-primary/50 text-foreground"
+																		: "text-muted-foreground hover:bg-sidebar-accent border-transparent",
+															)}
+														>
+															{isChild ? (
+																<CornerDownRight className="w-3 h-3 mt-0.5 text-muted-foreground/70 flex-shrink-0" />
+															) : (
+																<MessageSquare className="w-3 h-3 mt-0.5 text-primary/70 flex-shrink-0" />
+															)}
+															<div className="flex-1 min-w-0">
+																<div className="text-xs font-medium truncate">
+																	{displayTitle}
+																</div>
+																<div className="text-[9px] text-muted-foreground/50 mt-0.5">
+																	{formattedDate}
+																</div>
+															</div>
+														</button>
+													</div>
+												</ContextMenuTrigger>
+												<ContextMenuContent>
+													<ContextMenuItem
+														onClick={() =>
+															navigator.clipboard.writeText(readableId)
+														}
+													>
+														<Copy className="w-4 h-4 mr-2" />
+														{readableId}
+													</ContextMenuItem>
+													<ContextMenuSeparator />
+													<ContextMenuItem
+														onClick={() => handleRenameSession(session)}
+													>
+														<Pencil className="w-4 h-4 mr-2" />
+														{locale === "de" ? "Umbenennen" : "Rename"}
+													</ContextMenuItem>
+													<ContextMenuSeparator />
+													<ContextMenuItem
+														onClick={() => handleDeleteSession(session)}
+														className="text-destructive focus:text-destructive"
+													>
+														<Trash2 className="w-4 h-4 mr-2" />
+														{locale === "de" ? "Loschen" : "Delete"}
+													</ContextMenuItem>
+												</ContextMenuContent>
+											</ContextMenu>
+										);
+									})}
 								</>
 							);
 						})()}
@@ -1197,7 +1213,9 @@ function ResetAssistantDialog({
 			<DialogContent>
 				<DialogHeader>
 					<DialogTitle>
-						{locale === "de" ? "Standardchat zurucksetzen" : "Reset Default Chat"}
+						{locale === "de"
+							? "Standardchat zurucksetzen"
+							: "Reset Default Chat"}
 					</DialogTitle>
 					<DialogDescription>
 						{locale === "de"
@@ -1357,11 +1375,7 @@ function DeleteSessionDialog({
 					<Button variant="outline" onClick={() => onOpenChange(false)}>
 						{locale === "de" ? "Abbrechen" : "Cancel"}
 					</Button>
-					<Button
-						variant="destructive"
-						onClick={onSubmit}
-						disabled={loading}
-					>
+					<Button variant="destructive" onClick={onSubmit} disabled={loading}>
 						{loading
 							? locale === "de"
 								? "Loschen..."

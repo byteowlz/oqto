@@ -3,22 +3,23 @@
 /**
  * Request to create a new session.
  */
-export type CreateSessionRequest = { 
-/**
- * Path to the workspace directory.
- */
-workspace_path: string | null, 
-/**
- * Container image to use (optional, defaults to octo-dev).
- */
-image: string | null, 
-/**
- * Agent name to use with opencode (passed via --agent flag).
- * Agents are defined in opencode's global config or the workspace's
- * opencode.json / .opencode/agents/ directory.
- */
-agent: string | null, 
-/**
- * Environment variables to inject.
- */
-env: { [key in string]?: string }, };
+export type CreateSessionRequest = {
+	/**
+	 * Path to the workspace directory.
+	 */
+	workspace_path: string | null;
+	/**
+	 * Container image to use (optional, defaults to octo-dev).
+	 */
+	image: string | null;
+	/**
+	 * Agent name to use with opencode (passed via --agent flag).
+	 * Agents are defined in opencode's global config or the workspace's
+	 * opencode.json / .opencode/agents/ directory.
+	 */
+	agent: string | null;
+	/**
+	 * Environment variables to inject.
+	 */
+	env: { [key in string]?: string };
+};

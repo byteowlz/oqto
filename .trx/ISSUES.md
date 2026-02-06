@@ -2,6 +2,12 @@
 
 ## Open
 
+### [octo-wg67] Implement @@ cross-agent routing in runner (P1, task)
+
+### [octo-1hbb] Define runner session state machine and command dispatch (P1, task)
+
+### [octo-y5r3] Octo migration: replace all direct SQLite access with hstry gRPC client calls (P1, epic)
+
 ### [octo-xxe2] Per-workspace hstry/mmry stores + sync scoping (P1, task)
 Ensure each workspace has isolated hstry/mmry stores; sync and cache are workspace-scoped with location_id/actor metadata. No cross-workspace leakage.
 
@@ -167,6 +173,8 @@ Location: frontend/apps/index.ts:1-56
 Implementation:
 ...
 
+
+### [octo-3d6q] Slash command popup driven by get_commands (P2, task)
 
 ### [octo-vrzt] Remove MainChatPiService legacy code (P2, task)
 MainChatPiService in src/main_chat/pi_service.rs is legacy. Everything now goes through the runner path. Has deep tendrils: used by ws_multiplexed.rs (get_messages), api/handlers/chat.rs, api/main_chat_pi.rs (REST handlers), api/routes.rs, api/state.rs, api/handlers/agent_ask.rs, api/handlers/agent_rpc.rs, pi_workspace.rs. Need to migrate all callers to use runner client.
@@ -807,6 +815,9 @@ Desired behavior: Tool calls hidden by default, toggle to show
 
 ## Closed
 
+- [octo-nsjj] Unable to switch models in chat session (closed 2026-02-07)
+- [octo-f6yn] User message echoed in agent's streaming response bubble (closed 2026-02-07)
+- [octo-xpb8] Remove legacy main_chat module - full removal from main.rs, state.rs, and handlers (closed 2026-02-07)
 - [octo-z5dx] Update octo-protocol to re-export Sender from hstry-core (closed 2026-02-05)
 - [octo-3486] WebSocket: Add runner_id and workspace_id to protocol types (closed 2026-02-05)
 - [octo-r6pc] Fix chat session normalization and pending IDs (closed 2026-02-05)
@@ -1382,8 +1393,8 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
 - [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
-- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
-- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
-- [octo-k8z1.2] Backend: WebSocket proxy for screencast stream (closed )
 - [octo-k8z1.1] Backend: Integrate agent-browser daemon per session (closed )
+- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
 - [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
+- [octo-k8z1.2] Backend: WebSocket proxy for screencast stream (closed )
+- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )

@@ -16,8 +16,6 @@ use crate::auth::auth_middleware;
 use super::a2ui as a2ui_handlers;
 use super::delegate as delegate_handlers;
 use super::handlers;
-use super::main_chat as main_chat_handlers;
-use super::main_chat_pi as main_chat_pi_handlers;
 use super::onboarding_handlers;
 use super::proxy;
 use super::state::AppState;
@@ -329,111 +327,8 @@ pub fn create_router_with_config(state: AppState, max_upload_size_mb: usize) -> 
             "/opencode/config",
             get(handlers::get_global_opencode_config),
         )
-        // Main Chat routes (single persistent cross-project assistant per user)
-        .route(
-            "/main",
-            get(main_chat_handlers::get_main_chat)
-                .post(main_chat_handlers::initialize_main_chat)
-                .patch(main_chat_handlers::update_main_chat)
-                .delete(main_chat_handlers::delete_main_chat),
-        )
-        .route(
-            "/main/history",
-            get(main_chat_handlers::get_history).post(main_chat_handlers::add_history),
-        )
-        .route("/main/export", get(main_chat_handlers::export_history))
-        .route(
-            "/main/sessions",
-            get(main_chat_handlers::list_sessions).post(main_chat_handlers::register_session),
-        )
-        .route(
-            "/main/sessions/latest",
-            get(main_chat_handlers::get_latest_session),
-        )
-        // Main Chat Pi routes (Pi agent runtime for Main Chat)
-        .route("/main/pi/status", get(main_chat_pi_handlers::get_pi_status))
-        .route(
-            "/main/pi/session",
-            post(main_chat_pi_handlers::start_pi_session)
-                .delete(main_chat_pi_handlers::close_session),
-        )
-        .route("/main/pi/state", get(main_chat_pi_handlers::get_pi_state))
-        .route("/main/pi/prompt", post(main_chat_pi_handlers::send_prompt))
-        .route("/main/pi/abort", post(main_chat_pi_handlers::abort_pi))
-        .route(
-            "/main/pi/messages",
-            get(main_chat_pi_handlers::get_messages),
-        )
-        .route(
-            "/main/pi/compact",
-            post(main_chat_pi_handlers::compact_session),
-        )
-        .route("/main/pi/model", post(main_chat_pi_handlers::set_model))
-        .route(
-            "/main/pi/models",
-            get(main_chat_pi_handlers::get_available_models),
-        )
-        .route(
-            "/main/pi/commands",
-            get(main_chat_pi_handlers::get_prompt_commands),
-        )
-        .route("/main/pi/new", post(main_chat_pi_handlers::new_session))
-        .route("/main/pi/reset", post(main_chat_pi_handlers::reset_session))
-        .route(
-            "/main/pi/stats",
-            get(main_chat_pi_handlers::get_session_stats),
-        )
-        .route("/main/pi/history", get(main_chat_pi_handlers::get_history))
-        .route(
-            "/main/pi/sessions",
-            get(main_chat_pi_handlers::list_pi_sessions)
-                .post(main_chat_pi_handlers::new_pi_session),
-        )
-        .route(
-            "/main/pi/sessions/search",
-            get(main_chat_pi_handlers::search_pi_sessions),
-        )
-        .route(
-            "/main/pi/sessions/{session_id}",
-            get(main_chat_pi_handlers::get_pi_session_messages)
-                .post(main_chat_pi_handlers::resume_pi_session)
-                .patch(main_chat_pi_handlers::update_pi_session)
-                .delete(main_chat_pi_handlers::delete_pi_session),
-        )
-        // Workspace Pi routes (per-workspace Pi sessions)
-        .route(
-            "/pi/workspace/sessions",
-            post(crate::api::workspace_pi::new_workspace_session),
-        )
-        .route(
-            "/pi/workspace/sessions/{session_id}",
-            delete(crate::api::workspace_pi::delete_workspace_session),
-        )
-        .route(
-            "/pi/workspace/sessions/{session_id}/resume",
-            post(crate::api::workspace_pi::resume_workspace_session),
-        )
-        .route(
-            "/pi/workspace/sessions/{session_id}/messages",
-            get(crate::api::workspace_pi::get_workspace_session_messages),
-        )
-        .route(
-            "/pi/workspace/sessions/{session_id}/abort",
-            post(crate::api::workspace_pi::abort_workspace_session),
-        )
-        .route(
-            "/pi/workspace/state",
-            get(crate::api::workspace_pi::get_workspace_state),
-        )
-        .route(
-            "/pi/workspace/models",
-            get(crate::api::workspace_pi::get_workspace_models),
-        )
-        .route(
-            "/pi/workspace/model",
-            post(crate::api::workspace_pi::set_workspace_model),
-        )
-        // Main Chat file access routes now use mux-only file channel
+        // Legacy Main Chat routes removed -- all communication now goes through
+        // the multiplexed WebSocket (agent channel)
         // HSTRY (chat history) search routes
         .route("/search", get(handlers::search_sessions))
         // Scheduler (skdlr) overview
@@ -545,9 +440,8 @@ pub fn create_router_with_config(state: AppState, max_upload_size_mb: usize) -> 
         )
         .with_state(state);
 
-    let permissions_policy = HeaderValue::from_static(
-        "geolocation=(), microphone=(self), camera=()",
-    );
+    let permissions_policy =
+        HeaderValue::from_static("geolocation=(), microphone=(self), camera=()");
 
     Router::new()
         .merge(public_routes)

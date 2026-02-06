@@ -1,9 +1,9 @@
+import type { ThreadedMessage } from "@/features/sessions/types";
 import {
 	convertChatMessagesToOpenCode,
 	getChatMessages,
 	listDefaultChatPiSessions,
 } from "@/lib/api";
-import type { ThreadedMessage } from "@/features/sessions/types";
 import { formatSessionDate } from "@/lib/session-utils";
 
 export async function fetchDefaultChatThreadedMessages(
@@ -13,7 +13,8 @@ export async function fetchDefaultChatThreadedMessages(
 	if (sessions.length === 0) return [];
 
 	const sortedSessions = [...sessions].sort(
-		(a, b) => new Date(a.started_at).getTime() - new Date(b.started_at).getTime(),
+		(a, b) =>
+			new Date(a.started_at).getTime() - new Date(b.started_at).getTime(),
 	);
 
 	const allMessages: ThreadedMessage[] = [];

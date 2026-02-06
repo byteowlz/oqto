@@ -786,5 +786,3 @@ export async function rejectQuestion(
 		throw new Error(text || `Request failed with ${res.status}`);
 	}
 }
-
-

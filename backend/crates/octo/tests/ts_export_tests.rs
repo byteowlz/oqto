@@ -12,8 +12,8 @@ use octo::agent::{
     OpenCodeTokenTotals,
 };
 use octo::canon::MessageRole;
-use octo::history::{ChatMessage, ChatMessagePart, ChatSession};
-use octo::main_chat::{AssistantInfo, HistoryEntryType};
+use octo::history::{ChatMessage, ChatMessagePart, ChatSession, ChatSessionStats};
+
 use octo::session::{
     CreateSessionRequest, RuntimeMode, Session, SessionResponse, SessionStatus, SessionUrls,
 };
@@ -35,6 +35,7 @@ fn export_typescript_bindings() {
 
     // History types
     ChatSession::export_all().expect("Failed to export ChatSession");
+    ChatSessionStats::export_all().expect("Failed to export ChatSessionStats");
     ChatMessage::export_all().expect("Failed to export ChatMessage");
     ChatMessagePart::export_all().expect("Failed to export ChatMessagePart");
 
@@ -50,10 +51,8 @@ fn export_typescript_bindings() {
     OpenCodeTokenCache::export_all().expect("Failed to export OpenCodeTokenCache");
     OpenCodeTokenLimit::export_all().expect("Failed to export OpenCodeTokenLimit");
 
-    // Main chat types
-    HistoryEntryType::export_all().expect("Failed to export HistoryEntryType");
+    // Canonical types
     MessageRole::export_all().expect("Failed to export MessageRole");
-    AssistantInfo::export_all().expect("Failed to export AssistantInfo");
 
     println!("TypeScript bindings exported to frontend/src/generated/");
 }

@@ -103,78 +103,78 @@ impl LinuxUsersConfig {
             return Ok((getuid().as_raw(), project_id.to_string()));
         }
 
-	// Note: There is intentionally no "fast path" optimization here.
-	// User creation is a rare operation (happens once per user per device).
-	// Always run through the full setup to ensure correctness and avoid race conditions.
-	// - Always ensure group exists
-	// - Always create the Linux user
-	// - Always set up project directory ownership
-	// - Always ensure octo-runner is running
-	// The expensive sudo operations are acceptable for this infrequent operation.
+        // Note: There is intentionally no "fast path" optimization here.
+        // User creation is a rare operation (happens once per user per device).
+        // Always run through the full setup to ensure correctness and avoid race conditions.
+        // - Always ensure group exists
+        // - Always create the Linux user
+        // - Always set up project directory ownership
+        // - Always ensure octo-runner is running
+        // The expensive sudo operations are acceptable for this infrequent operation.
 
-	// Ensure group exists first
-	self.ensure_group()?;
+        // Ensure group exists first
+        self.ensure_group()?;
 
-	let username = self.project_username(project_id);
+        let username = self.project_username(project_id);
 
-	// Check if user already exists
-	if let Some(uid) = get_user_uid(&username)? {
-		debug!(
-			"Project user '{}' already exists with UID {}",
-			username, uid
-		);
+        // Check if user already exists
+        if let Some(uid) = get_user_uid(&username)? {
+            debug!(
+                "Project user '{}' already exists with UID {}",
+                username, uid
+            );
 
-		// Ensure directory ownership is correct
-		self.chown_directory_to_user(project_path, &username)?;
-		return Ok((uid, username));
-	}
+            // Ensure directory ownership is correct
+            self.chown_directory_to_user(project_path, &username)?;
+            return Ok((uid, username));
+        }
 
-	// Find next available UID
-	let uid = self.find_next_uid()?;
+        // Find next available UID
+        let uid = self.find_next_uid()?;
 
-	info!(
-		"Creating Linux user '{}' with UID {} for project '{}'",
-		username, uid, project_id
-	);
+        info!(
+            "Creating Linux user '{}' with UID {} for project '{}'",
+            username, uid, project_id
+        );
 
-	// Build useradd command
-	let mut args = vec![
-		"-u".to_string(),
-		uid.to_string(),
-		"-g".to_string(),
-		self.group.clone(),
-		"-s".to_string(),
-		self.shell.clone(),
-	];
+        // Build useradd command
+        let mut args = vec![
+            "-u".to_string(),
+            uid.to_string(),
+            "-g".to_string(),
+            self.group.clone(),
+            "-s".to_string(),
+            self.shell.clone(),
+        ];
 
-	if self.create_home {
-		args.push("-m".to_string());
-	} else {
-		args.push("-M".to_string());
-	}
+        if self.create_home {
+            args.push("-m".to_string());
+        } else {
+            args.push("-M".to_string());
+        }
 
-	// Add comment with project ID for reference (sanitize for useradd compat)
-	args.push("-c".to_string());
-	args.push(sanitize_gecos(&format!(
-		"Octo shared project: {}",
-		project_id
-	)));
+        // Add comment with project ID for reference (sanitize for useradd compat)
+        args.push("-c".to_string());
+        args.push(sanitize_gecos(&format!(
+            "Octo shared project: {}",
+            project_id
+        )));
 
-	args.push(username.clone());
+        args.push(username.clone());
 
-	let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
 
-	run_privileged_command(self.use_sudo, "/usr/sbin/useradd", &args_refs)
-		.with_context(|| format!("creating project user '{}'", username))?;
+        run_privileged_command(self.use_sudo, "/usr/sbin/useradd", &args_refs)
+            .with_context(|| format!("creating project user '{}'", username))?;
 
-	info!("Created Linux user '{}' with UID {}", username, uid);
+        info!("Created Linux user '{}' with UID {}", username, uid);
 
-	// Set up project directory with correct ownership
-	std::fs::create_dir_all(project_path)
-		.with_context(|| format!("creating project directory: {:?}", project_path))?;
-	self.chown_directory_to_user(project_path, &username)?;
+        // Set up project directory with correct ownership
+        std::fs::create_dir_all(project_path)
+            .with_context(|| format!("creating project directory: {:?}", project_path))?;
+        self.chown_directory_to_user(project_path, &username)?;
 
-	Ok((uid, username))
+        Ok((uid, username))
     }
 
     /// Set ownership of a directory to a specific Linux username.

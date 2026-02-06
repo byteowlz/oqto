@@ -21,6 +21,11 @@ pub struct Message {
     /// Message role.
     pub role: Role,
 
+    /// Client-generated ID for optimistic message matching.
+    /// Allows frontend to correlate provisional messages with persisted versions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_id: Option<String>,
+
     /// Who produced this message.
     ///
     /// Omitted for simple single-user conversations where the sender is
@@ -143,6 +148,7 @@ mod tests {
             id: "msg-1".to_string(),
             idx: 0,
             role: Role::Assistant,
+            client_id: None,
             sender: None,
             parts: vec![Part::text("Hello, world!")],
             created_at: 1738764000000,
@@ -177,6 +183,7 @@ mod tests {
             id: "msg-2".to_string(),
             idx: 1,
             role: Role::Tool,
+            client_id: None,
             sender: None,
             parts: vec![Part::tool_result(
                 "call_123",
@@ -205,6 +212,7 @@ mod tests {
             id: "msg-3".to_string(),
             idx: 2,
             role: Role::Assistant,
+            client_id: None,
             sender: Some(Sender {
                 sender_type: SenderType::Agent,
                 id: "ses_xyz".to_string(),
@@ -241,6 +249,7 @@ mod tests {
             id: "msg-4".to_string(),
             idx: 0,
             role: Role::User,
+            client_id: None,
             sender: None,
             parts: vec![Part::text("Hello")],
             created_at: 1738764000000,

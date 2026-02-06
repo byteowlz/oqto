@@ -836,6 +836,9 @@ pub struct PiPromptRequest {
     pub session_id: String,
     /// User message content.
     pub message: String,
+    /// Client-generated ID for optimistic message matching.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_id: Option<String>,
 }
 
 /// Request to send a steering message to a Pi session.
@@ -1606,6 +1609,8 @@ pub enum PiSessionState {
     Streaming,
     /// Session is compacting its context.
     Compacting,
+    /// Session is aborting a running turn.
+    Aborting,
     /// Session is stopping.
     Stopping,
 }

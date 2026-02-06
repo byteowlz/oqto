@@ -1,3 +1,4 @@
+import { MarkdownRenderer } from "@/components/data-display";
 import {
 	Card,
 	CardContent,
@@ -5,7 +6,6 @@ import {
 	CardHeader,
 	CardTitle,
 } from "@/components/ui/card";
-import { MarkdownRenderer } from "@/components/data-display";
 import { memo } from "react";
 
 export type CustomMarkdownCardProps = {

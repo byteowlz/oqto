@@ -40,5 +40,5 @@ export type {
 	BatchedUpdateState,
 	SessionMessageCacheEntry,
 	WsConnectionState,
-	PiState,
+	AgentState,
 } from "./types";

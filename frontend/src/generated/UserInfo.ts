@@ -4,4 +4,14 @@ import type { UserRole } from "./UserRole";
 /**
  * Public user info (safe to return to clients).
  */
-export type UserInfo = { id: string, username: string, email: string, display_name: string, avatar_url: string | null, role: UserRole, is_active: boolean, created_at: string, last_login_at: string | null, };
+export type UserInfo = {
+	id: string;
+	username: string;
+	email: string;
+	display_name: string;
+	avatar_url: string | null;
+	role: UserRole;
+	is_active: boolean;
+	created_at: string;
+	last_login_at: string | null;
+};

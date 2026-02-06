@@ -5,44 +5,45 @@ import type { AgentStatus } from "./AgentStatus";
 /**
  * Information about an agent.
  */
-export type AgentInfo = { 
-/**
- * Agent ID (directory name, or "main" for workspace root).
- */
-id: string, 
-/**
- * Human-readable name (derived from id).
- */
-name: string, 
-/**
- * Directory path inside the container.
- */
-directory: string, 
-/**
- * Internal port (inside container, None if stopped).
- */
-port: number | null, 
-/**
- * External port (mapped to host, for clients to connect to).
- */
-external_port: number | null, 
-/**
- * Current status.
- */
-status: AgentStatus, 
-/**
- * Whether the directory has an AGENTS.md file.
- */
-has_agents_md: boolean, 
-/**
- * Whether the directory is a git repository.
- */
-has_git: boolean, 
-/**
- * Color for UI (derived from name hash).
- */
-color: string, 
-/**
- * Optional runtime details from the agent engine (opencode).
- */
-runtime: AgentRuntimeInfo | null, };
+export type AgentInfo = {
+	/**
+	 * Agent ID (directory name, or "main" for workspace root).
+	 */
+	id: string;
+	/**
+	 * Human-readable name (derived from id).
+	 */
+	name: string;
+	/**
+	 * Directory path inside the container.
+	 */
+	directory: string;
+	/**
+	 * Internal port (inside container, None if stopped).
+	 */
+	port: number | null;
+	/**
+	 * External port (mapped to host, for clients to connect to).
+	 */
+	external_port: number | null;
+	/**
+	 * Current status.
+	 */
+	status: AgentStatus;
+	/**
+	 * Whether the directory has an AGENTS.md file.
+	 */
+	has_agents_md: boolean;
+	/**
+	 * Whether the directory is a git repository.
+	 */
+	has_git: boolean;
+	/**
+	 * Color for UI (derived from name hash).
+	 */
+	color: string;
+	/**
+	 * Optional runtime details from the agent engine (opencode).
+	 */
+	runtime: AgentRuntimeInfo | null;
+};

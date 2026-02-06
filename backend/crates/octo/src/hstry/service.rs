@@ -1,15 +1,12 @@
 //! hstry service manager for auto-starting the hstry daemon.
 //!
-//! In single-user mode, Octo automatically starts the hstry daemon if it's not
-//! already running. The daemon runs in the background and persists until stopped.
+//! Uses `hstry service start` which properly daemonizes (double-fork, PID file).
+//! The daemon persists across Octo restarts. If already running, start is a no-op.
 
-use std::process::Stdio;
-use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use tokio::process::{Child, Command};
-use tokio::sync::Mutex;
+use tokio::process::Command;
 use tracing::{debug, info, warn};
 
 /// Configuration for the hstry service manager.
@@ -33,34 +30,25 @@ impl Default for HstryServiceConfig {
     }
 }
 
-/// Manages the hstry daemon lifecycle for single-user mode.
-#[derive(Clone)]
+/// Manages the hstry daemon lifecycle.
+#[derive(Clone, Debug)]
 pub struct HstryServiceManager {
     config: HstryServiceConfig,
-    /// Child process handle (if we spawned it).
-    child: Arc<Mutex<Option<Child>>>,
 }
 
 impl HstryServiceManager {
     /// Create a new service manager.
     pub fn new(config: HstryServiceConfig) -> Self {
-        Self {
-            config,
-            child: Arc::new(Mutex::new(None)),
-        }
+        Self { config }
     }
 
     /// Check if the hstry daemon is already running.
-    ///
-    /// Checks for the port file or Unix socket that hstry creates when running.
     pub fn is_running(&self) -> bool {
-        // Check Unix socket first (preferred)
         let socket_path = hstry_core::paths::service_socket_path();
         if socket_path.exists() {
             return true;
         }
 
-        // Check TCP port file
         let port_path = hstry_core::paths::service_port_path();
         if port_path.exists() {
             if let Ok(content) = std::fs::read_to_string(&port_path) {
@@ -75,8 +63,9 @@ impl HstryServiceManager {
 
     /// Ensure the hstry daemon is running.
     ///
-    /// If already running, returns immediately.
-    /// If not running and auto_start is enabled, spawns the daemon.
+    /// Uses `hstry service start` which is a proper daemonizing command.
+    /// If already running, this is a no-op (the command returns an error
+    /// which we treat as success).
     pub async fn ensure_running(&self) -> Result<()> {
         if self.is_running() {
             debug!("hstry daemon already running");
@@ -93,42 +82,38 @@ impl HstryServiceManager {
         self.start().await
     }
 
-    /// Start the hstry daemon.
+    /// Start the hstry daemon via `hstry service start`.
     async fn start(&self) -> Result<()> {
-        info!("Starting hstry daemon...");
+        info!("Starting hstry daemon via `{} service start`...", self.config.binary);
 
-        let mut cmd = Command::new(&self.config.binary);
-        cmd.args(["service", "run"])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
+        let output = Command::new(&self.config.binary)
+            .args(["service", "start"])
+            .output()
+            .await
+            .context("Failed to run hstry service start")?;
 
-        // Spawn as a detached process
-        #[cfg(unix)]
-        {
-            use std::os::unix::process::CommandExt;
-            // Create new process group so it survives parent exit
-            unsafe {
-                cmd.pre_exec(|| {
-                    libc::setsid();
-                    Ok(())
-                });
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+
+        if !output.status.success() {
+            // "already running" is fine
+            let combined = format!("{}{}", stdout, stderr);
+            if combined.contains("already running") {
+                debug!("hstry daemon was already running");
+                return Ok(());
             }
+            anyhow::bail!(
+                "hstry service start failed (exit {}): {}{}",
+                output.status,
+                stdout,
+                stderr
+            );
         }
 
-        let child = cmd.spawn().context("Failed to spawn hstry daemon")?;
-
-        let pid = child.id();
-        info!("hstry daemon spawned with PID {:?}", pid);
-
-        // Store the child handle
-        *self.child.lock().await = Some(child);
+        info!("hstry service start succeeded: {}", stdout.trim());
 
         // Wait for the daemon to become ready
-        self.wait_for_ready().await?;
-
-        info!("hstry daemon is ready");
-        Ok(())
+        self.wait_for_ready().await
     }
 
     /// Wait for the daemon to become ready (socket/port file exists).
@@ -147,29 +132,6 @@ impl HstryServiceManager {
             "hstry daemon did not become ready within {:?}",
             self.config.startup_timeout
         )
-    }
-
-    /// Stop the hstry daemon if we started it.
-    pub async fn stop(&self) -> Result<()> {
-        let mut guard = self.child.lock().await;
-        if let Some(mut child) = guard.take() {
-            info!("Stopping hstry daemon...");
-            child.kill().await.context("Failed to kill hstry daemon")?;
-            child
-                .wait()
-                .await
-                .context("Failed to wait for hstry daemon")?;
-            info!("hstry daemon stopped");
-        }
-        Ok(())
-    }
-}
-
-impl Drop for HstryServiceManager {
-    fn drop(&mut self) {
-        // Note: We don't stop the daemon on drop because it should persist
-        // across Octo restarts. The daemon manages its own lifecycle.
-        // Use stop() explicitly if needed.
     }
 }
 

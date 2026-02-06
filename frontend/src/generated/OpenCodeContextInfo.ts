@@ -2,4 +2,13 @@
 import type { OpenCodeTokenLimit } from "./OpenCodeTokenLimit";
 import type { OpenCodeTokenTotals } from "./OpenCodeTokenTotals";
 
-export type OpenCodeContextInfo = { session_id: string, session_title: string, model_id: string, provider_id: string, current_tokens: bigint, total_tokens: OpenCodeTokenTotals, limit: OpenCodeTokenLimit, usage: bigint, };
+export type OpenCodeContextInfo = {
+	session_id: string;
+	session_title: string;
+	model_id: string;
+	provider_id: string;
+	current_tokens: bigint;
+	total_tokens: OpenCodeTokenTotals;
+	limit: OpenCodeTokenLimit;
+	usage: bigint;
+};

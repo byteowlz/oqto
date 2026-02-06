@@ -11,9 +11,8 @@ import {
 	ToolCallGroup,
 	getToolIcon,
 } from "@/components/chat";
-import { toast } from "sonner";
 import { BrailleSpinner } from "@/components/common";
-import { useChatVerbosity } from "@/lib/chat-verbosity";
+import { useChatContext } from "@/components/contexts/chat-context";
 import {
 	ContextWindowGauge,
 	CopyButton,
@@ -32,12 +31,7 @@ import {
 	VoiceMenuButton,
 	type VoiceMode,
 } from "@/components/voice/VoiceMenuButton";
-import { useChatContext } from "@/components/contexts/chat-context";
-import {
-	type Features,
-	type PiModelInfo,
-	getWorkspacePiModels,
-} from "@/features/chat/api";
+import type { Features, PiModelInfo } from "@/features/chat/api";
 import { type A2UISurfaceState, useA2UI } from "@/hooks/use-a2ui";
 import { useDictation } from "@/hooks/use-dictation";
 import {
@@ -47,6 +41,7 @@ import {
 	setCachedScrollPosition,
 	useChat,
 } from "@/hooks/useChat";
+import { useChatVerbosity } from "@/lib/chat-verbosity";
 import { extractFileReferenceDetails, getFileTypeInfo } from "@/lib/file-types";
 import {
 	downloadFileMux,
@@ -54,11 +49,9 @@ import {
 	statPathMux,
 	uploadFileMux,
 } from "@/lib/mux-files";
-import { getWsManager } from "@/lib/ws-manager";
 import {
 	formatSessionDate,
 	getReadableIdFromSession,
-	isPendingSessionId,
 	normalizeWorkspacePath,
 } from "@/lib/session-utils";
 import {
@@ -67,10 +60,11 @@ import {
 	parseSlashInput,
 } from "@/lib/slash-commands";
 import { cn } from "@/lib/utils";
+import { getWsManager } from "@/lib/ws-manager";
 import {
-	Bot,
 	ArrowDown,
 	ArrowUp,
+	Bot,
 	Check,
 	Copy,
 	ExternalLink,
@@ -96,6 +90,13 @@ import {
 	useRef,
 	useState,
 } from "react";
+import { toast } from "sonner";
+
+// ANSI escape sequence patterns (module-level to avoid regex-in-loop overhead
+// and biome/oxlint control-character-in-regex warnings)
+const ANSI_ESC = String.fromCharCode(0x1b);
+const ANSI_SGR_RE = new RegExp(`${ANSI_ESC}\\[[0-9;]*m`, "g");
+const ANSI_CSI_RE = new RegExp(`${ANSI_ESC}\\[[0-9;]*[A-Za-z]`, "g");
 
 /** Todo item structure (matching OpenCode's todowrite tool) */
 export interface TodoItem {
@@ -145,11 +146,6 @@ export interface ChatViewProps {
 	onMessageComplete?: () => void;
 	/** Callback when todos change (extracted from Pi todowrite tool calls) */
 	onTodosChange?: (todos: TodoItem[]) => void;
-	/** Ensure a real Pi session exists (used to resolve pending sessions) */
-	onEnsureSession?: (
-		workspacePath: string | null,
-		optimisticId: string | null,
-	) => Promise<string | null>;
 }
 
 /**
@@ -171,7 +167,6 @@ export function ChatView({
 	onMessageSent,
 	onMessageComplete,
 	onTodosChange,
-	onEnsureSession,
 }: ChatViewProps) {
 	const [sendPending, setSendPending] = useState(false);
 	const [sendPendingSessionId, setSendPendingSessionId] = useState<
@@ -220,17 +215,6 @@ export function ChatView({
 		onSelectedSessionIdChange,
 		onMessageComplete: handleMessageComplete,
 	});
-	const ensureRealSessionId = useCallback(async (): Promise<string | null> => {
-		if (selectedSessionId && !isPendingSessionId(selectedSessionId)) {
-			return selectedSessionId;
-		}
-		if (!onEnsureSession) return null;
-		return onEnsureSession(
-			normalizedWorkspacePath ?? null,
-			selectedSessionId ?? null,
-		);
-	}, [onEnsureSession, selectedSessionId, normalizedWorkspacePath]);
-
 	// Draft persistence - restore from localStorage on mount
 	const [input, setInput] = useState(() => {
 		if (typeof window === "undefined") return "";
@@ -248,7 +232,9 @@ export function ChatView({
 	const fileInputRef = useRef<HTMLInputElement>(null);
 	const queueSendInFlightRef = useRef(false);
 	const queueCooldownRef = useRef<number | null>(null);
-	const draftSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const draftSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
+		null,
+	);
 	const initialScrollDoneRef = useRef(false);
 
 	useEffect(() => {
@@ -259,16 +245,20 @@ export function ChatView({
 			setInput("");
 		}
 	}, [draftStorageKey]);
+	const sendPendingRef = useRef(sendPending);
+	sendPendingRef.current = sendPending;
 	useEffect(() => {
+		// Reset queue when session changes; use void to reference the dep
+		void selectedSessionId;
 		setQueuedMessages([]);
-		if (!sendPending) {
+		if (!sendPendingRef.current) {
 			setSendPendingSessionId(null);
 		}
 	}, [selectedSessionId]);
 	useEffect(() => {
-		if (!selectedSessionId || !piState?.session_name) return;
-		updateChatSessionTitleLocal(selectedSessionId, piState.session_name);
-	}, [piState?.session_name, selectedSessionId, updateChatSessionTitleLocal]);
+		if (!selectedSessionId || !piState?.sessionName) return;
+		updateChatSessionTitleLocal(selectedSessionId, piState.sessionName);
+	}, [piState?.sessionName, selectedSessionId, updateChatSessionTitleLocal]);
 	useEffect(() => {
 		if (isStreaming || isAwaitingResponse) {
 			setSendPending(false);
@@ -400,7 +390,7 @@ export function ChatView({
 		return `${piState.model.provider}/${piState.model.id}`;
 	}, [piState?.model]);
 	const canSwitchModel = Boolean(
-		piState && !piState.is_streaming && !piState.is_compacting && !isStreaming,
+		piState && !piState.isStreaming && !piState.isCompacting && !isStreaming,
 	);
 	const currentModelInfo = useMemo(() => {
 		if (piState?.model) {
@@ -511,13 +501,7 @@ export function ChatView({
 				inputRef.current.style.height = "auto";
 			}
 		},
-		[
-			draftStorageKey,
-			fileAttachments.length,
-			input,
-			setCommandError,
-			setShowSlashPopup,
-		],
+		[draftStorageKey, fileAttachments.length, input],
 	);
 	const builtInCommands = useMemo<SlashCommand[]>(() => {
 		const commands: SlashCommand[] = [
@@ -638,15 +622,13 @@ export function ChatView({
 	useEffect(() => {
 		// Only fetch models once session is active (piState available)
 		if (!isConnected || !piState) return;
-		const targetSessionId = selectedSessionId ?? piState.session_id ?? null;
+		const targetSessionId = selectedSessionId ?? piState.sessionId ?? null;
 		if (!targetSessionId) return;
 		let active = true;
-		const fetchModels = normalizedWorkspacePath
-			? getWorkspacePiModels(normalizedWorkspacePath, targetSessionId)
-			: Promise.resolve([]);
-		fetchModels
-			.then((models) => {
-				if (active) setAvailableModels(models);
+		getWsManager()
+			.agentGetAvailableModels(targetSessionId)
+			.then((result) => {
+				if (active) setAvailableModels((result as PiModelInfo[]) ?? []);
 			})
 			.catch(() => {
 				if (active) setAvailableModels([]);
@@ -654,17 +636,12 @@ export function ChatView({
 		return () => {
 			active = false;
 		};
-	}, [
-		isConnected,
-		piState,
-		selectedSessionId,
-		normalizedWorkspacePath,
-	]);
+	}, [isConnected, piState, selectedSessionId]);
 
 	useEffect(() => {
 		// Only fetch commands once session is active (piState available)
 		if (!isConnected || !piState) return;
-		const targetSessionId = selectedSessionId ?? piState.session_id ?? null;
+		const targetSessionId = selectedSessionId ?? piState.sessionId ?? null;
 		if (!targetSessionId) return;
 		let active = true;
 		const manager = getWsManager();
@@ -688,14 +665,20 @@ export function ChatView({
 	}, [isConnected, piState, selectedSessionId]);
 
 	const refreshStats = useCallback(async () => {
-		const targetSessionId = selectedSessionId ?? piState?.session_id ?? null;
+		const targetSessionId = selectedSessionId ?? piState?.sessionId ?? null;
 		if (!targetSessionId) return;
 		try {
 			const stats = await getWsManager().agentGetSessionStats(targetSessionId);
+			const fallbackStats = sessionMeta?.stats ?? null;
 			const tokens =
 				stats && typeof stats === "object" && "tokens" in stats
 					? (stats as { tokens?: { input?: number; output?: number } }).tokens
-					: null;
+					: fallbackStats
+						? {
+								input: fallbackStats.tokens_in,
+								output: fallbackStats.tokens_out,
+							}
+						: null;
 			if (tokens) {
 				setSessionTokens({
 					input: tokens.input ?? 0,
@@ -705,7 +688,7 @@ export function ChatView({
 		} catch {
 			// Ignore stats errors; token gauge will fall back to message usage.
 		}
-	}, [piState?.session_id, selectedSessionId]);
+	}, [piState?.sessionId, selectedSessionId, sessionMeta?.stats]);
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: messages.length triggers refresh when message count changes
 	useEffect(() => {
@@ -874,11 +857,13 @@ export function ChatView({
 	const handleFileUpload = useCallback(
 		async (files: FileList | null) => {
 			if (!files || files.length === 0) return;
-			
+
 			// File attachments require a workspace path to upload to
 			// The path is always available for default chat, but may be loading initially
 			if (!normalizedWorkspacePath) {
-				toast.error("Workspace path is still loading. Please try again in a moment.");
+				toast.error(
+					"Workspace path is still loading. Please try again in a moment.",
+				);
 				return;
 			}
 
@@ -913,7 +898,7 @@ export function ChatView({
 				}
 			}
 		},
-		[workspacePath],
+		[normalizedWorkspacePath],
 	);
 
 	const handleModelChange = useCallback(
@@ -928,7 +913,7 @@ export function ChatView({
 			setSelectedModelRef(value);
 			setIsSwitchingModel(true);
 			try {
-				const targetSessionId = selectedSessionId ?? piState?.session_id ?? null;
+				const targetSessionId = selectedSessionId ?? piState?.sessionId ?? null;
 				if (!targetSessionId) {
 					throw new Error("No active session");
 				}
@@ -942,12 +927,7 @@ export function ChatView({
 				setIsSwitchingModel(false);
 			}
 		},
-		[
-			canSwitchModel,
-			piState?.session_id,
-			refresh,
-			selectedSessionId,
-		],
+		[canSwitchModel, piState?.sessionId, refresh, selectedSessionId],
 	);
 
 	const runSlashCommand = useCallback(
@@ -981,29 +961,45 @@ export function ChatView({
 				}
 				case "stats": {
 					const targetSessionId =
-						selectedSessionId ?? piState?.session_id ?? null;
+						selectedSessionId ?? piState?.sessionId ?? null;
 					if (!targetSessionId) {
 						throw new Error("No active session");
 					}
-					const stats = await getWsManager().agentGetSessionStats(targetSessionId);
+					const stats =
+						await getWsManager().agentGetSessionStats(targetSessionId);
 					const safeStats = stats && typeof stats === "object" ? stats : null;
+					const fallbackStats = sessionMeta?.stats ?? null;
 					const tokens =
 						safeStats && "tokens" in safeStats
-							? (safeStats as {
-									tokens?: {
-										input?: number;
-										output?: number;
-										cache_read?: number;
-										cache_write?: number;
-										total?: number;
-									};
-								}).tokens
-							: null;
+							? (
+									safeStats as {
+										tokens?: {
+											input?: number;
+											output?: number;
+											cache_read?: number;
+											cache_write?: number;
+											total?: number;
+										};
+									}
+								).tokens
+							: fallbackStats
+								? {
+										input: fallbackStats.tokens_in,
+										output: fallbackStats.tokens_out,
+										cache_read: fallbackStats.cache_read,
+										cache_write: fallbackStats.cache_write,
+										total:
+											fallbackStats.tokens_in +
+											fallbackStats.tokens_out +
+											fallbackStats.cache_read +
+											fallbackStats.cache_write,
+									}
+								: null;
 					const text = [
 						"Session stats",
 						`- user_messages: ${
-							typeof (safeStats as { user_messages?: number })?.user_messages ===
-							"number"
+							typeof (safeStats as { user_messages?: number })
+								?.user_messages === "number"
 								? (safeStats as { user_messages?: number }).user_messages
 								: 0
 						}`,
@@ -1023,8 +1019,7 @@ export function ChatView({
 						`- total_messages: ${
 							typeof (safeStats as { total_messages?: number })
 								?.total_messages === "number"
-								? (safeStats as { total_messages?: number })
-										.total_messages
+								? (safeStats as { total_messages?: number }).total_messages
 								: 0
 						}`,
 						tokens
@@ -1074,11 +1069,12 @@ export function ChatView({
 			enqueueMessage,
 			handleModelChange,
 			newSession,
-			piState?.session_id,
+			piState?.sessionId,
 			refresh,
 			resetSession,
 			selectedSessionId,
 			send,
+			sessionMeta?.stats,
 		],
 	);
 
@@ -1153,20 +1149,18 @@ export function ChatView({
 					: mode;
 
 			setSendPending(true);
-			setSendPendingSessionId(selectedSessionId ?? null);
-			let resolvedSessionId = selectedSessionId ?? null;
-			if (!resolvedSessionId || isPendingSessionId(resolvedSessionId)) {
-				resolvedSessionId = await ensureRealSessionId();
-			}
+			const resolvedSessionId = selectedSessionId ?? null;
 			if (!resolvedSessionId) {
 				setSendPending(false);
-				setSendPendingSessionId(null);
-				toast.error("Failed to create a chat session.");
+				toast.error("No active chat session.");
 				return;
 			}
 			setSendPendingSessionId(resolvedSessionId);
 			try {
-				await send(message, { mode: effectiveMode, sessionId: resolvedSessionId });
+				await send(message, {
+					mode: effectiveMode,
+					sessionId: resolvedSessionId,
+				});
 				// Notify that a message was sent (for sidebar refresh)
 				onMessageSent?.();
 			} catch {
@@ -1178,12 +1172,11 @@ export function ChatView({
 		[
 			builtInCommandNames,
 			draftStorageKey,
-		fileAttachments,
-		input,
-		ensureRealSessionId,
-		messages.length,
-		onMessageSent,
-		piState?.messageCount,
+			fileAttachments,
+			input,
+			messages.length,
+			onMessageSent,
+			piState?.messageCount,
 			runSlashCommand,
 			selectedSessionId,
 			send,
@@ -1207,6 +1200,10 @@ export function ChatView({
 		slashQuery.isSlash,
 	]);
 
+	const messagesRef = useRef(messages);
+	messagesRef.current = messages;
+	const piStateRef = useRef(piState);
+	piStateRef.current = piState;
 	useEffect(() => {
 		if (queuedMessages.length === 0) return;
 		if (isStreaming || isAwaitingResponse) return;
@@ -1223,20 +1220,16 @@ export function ChatView({
 		queueSendInFlightRef.current = true;
 		(async () => {
 			setSendPending(true);
-			setSendPendingSessionId(selectedSessionId ?? null);
-			let resolvedSessionId = selectedSessionId ?? null;
-			if (!resolvedSessionId || isPendingSessionId(resolvedSessionId)) {
-				resolvedSessionId = await ensureRealSessionId();
-			}
+			const resolvedSessionId = selectedSessionId ?? null;
 			if (!resolvedSessionId) {
 				setSendPending(false);
-				setSendPendingSessionId(null);
-				toast.error("Failed to create a chat session.");
+				toast.error("No active chat session.");
 				return;
 			}
 			setSendPendingSessionId(resolvedSessionId);
 			const hasHistory =
-				messages.length > 0 || (piState?.messageCount ?? 0) > 0;
+				messagesRef.current.length > 0 ||
+				(piStateRef.current?.messageCount ?? 0) > 0;
 			const queueMode = hasHistory ? "follow_up" : "prompt";
 			send(next.text, { mode: queueMode, sessionId: resolvedSessionId })
 				.then(() => {
@@ -1261,7 +1254,6 @@ export function ChatView({
 	}, [
 		isAwaitingResponse,
 		isStreaming,
-		ensureRealSessionId,
 		onMessageSent,
 		queuedMessages,
 		selectedSessionId,
@@ -1495,6 +1487,19 @@ export function ChatView({
 		assistantName?.trim() ||
 		(locale === "de" ? "Chat" : "Chat");
 
+	const modelLabel = currentModelInfo
+		? currentModelInfo.name?.trim() ||
+			`${currentModelInfo.provider}/${currentModelInfo.id}`
+		: (currentModelRef ?? selectedModelRef ?? null);
+	const isWorking = isStreaming || isAwaitingResponse;
+	const statusLabel = isWorking
+		? locale === "de"
+			? "Arbeitet"
+			: "Working"
+		: locale === "de"
+			? "Bereit"
+			: "Idle";
+
 	const SessionHeader = (
 		<div className="pb-3 mb-3 border-b border-border pr-10">
 			<div className="flex items-center justify-between">
@@ -1522,6 +1527,17 @@ export function ChatView({
 							)}
 							{formattedDate && (
 								<span className="flex-shrink-0">{formattedDate}</span>
+							)}
+							{(modelLabel || statusLabel) &&
+								(workspacePath || readableId || formattedDate) && (
+									<span className="opacity-50">|</span>
+								)}
+							{modelLabel && <span className="truncate">{modelLabel}</span>}
+							{modelLabel && statusLabel && (
+								<span className="opacity-50">|</span>
+							)}
+							{statusLabel && (
+								<span className="flex-shrink-0">{statusLabel}</span>
 							)}
 						</div>
 					</div>
@@ -1626,17 +1642,17 @@ export function ChatView({
 										key={groupMessageId ?? `${group.role}-${groupIndex}`}
 										className={groupIndex > 0 ? "mt-4 sm:mt-6" : ""}
 									>
-											<PiMessageGroupCard
-												group={group}
-												assistantName={assistantName}
-												readableId={readableId}
-												workspacePath={workspacePath}
-												locale={locale}
-												a2uiSurfaces={groupSurfaces}
-												onA2UIAction={handleA2UIAction}
-												messageId={groupMessageId}
-												showWorkingIndicator={isWorking && isLastAssistantGroup}
-											/>
+										<PiMessageGroupCard
+											group={group}
+											assistantName={assistantName}
+											readableId={readableId}
+											workspacePath={workspacePath}
+											locale={locale}
+											a2uiSurfaces={groupSurfaces}
+											onA2UIAction={handleA2UIAction}
+											messageId={groupMessageId}
+											showWorkingIndicator={isWorking && isLastAssistantGroup}
+										/>
 									</div>
 								);
 							});
@@ -2226,14 +2242,14 @@ const PiMessageGroupCard = memo(function PiMessageGroupCard({
 				trimmedText.includes('"header"') &&
 				trimmedText.includes('"options"');
 			if (looksLikeQuestionJson) continue;
-			// Skip raw command JSON like {"command":"ls -la"} or {"filePath":"..."} 
+			// Skip raw command JSON like {"command":"ls -la"} or {"filePath":"..."}
 			const looksLikeCommandJson =
 				trimmedText.startsWith("{") &&
 				trimmedText.endsWith("}") &&
 				(trimmedText.includes('"command"') ||
-				 trimmedText.includes('"filePath"') ||
-				 trimmedText.includes('"pattern"') ||
-				 trimmedText.includes('"content"'));
+					trimmedText.includes('"filePath"') ||
+					trimmedText.includes('"pattern"') ||
+					trimmedText.includes('"content"'));
 			if (looksLikeCommandJson && trimmedText.length < 500) continue;
 			if (!textKey) textKey = key;
 			textBuf.push(part.content);
@@ -2244,7 +2260,8 @@ const PiMessageGroupCard = memo(function PiMessageGroupCard({
 
 		if (part.type === "tool_use") {
 			// Try to find matching tool_result by ID first, then fallback to name
-			const matchedResult = toolResults.get(part.id) || toolResultsByName.get(part.name);
+			const matchedResult =
+				toolResults.get(part.id) || toolResultsByName.get(part.name);
 			segments.push({
 				key,
 				type: "tool_use",
@@ -2351,7 +2368,10 @@ const PiMessageGroupCard = memo(function PiMessageGroupCard({
 					thinkingBuffer.push(segment.content);
 					continue;
 				}
-				if (segment.type === "tool_use" || segment.type === "tool_result_only") {
+				if (
+					segment.type === "tool_use" ||
+					segment.type === "tool_result_only"
+				) {
 					toolBuffer.push(segment);
 					continue;
 				}
@@ -2635,9 +2655,9 @@ const PiMessageGroupCard = memo(function PiMessageGroupCard({
 													<span className="relative inline-flex">
 														{icon}
 														{entry.count > 1 && (
-														<span className="absolute -top-0.5 -right-0.5 w-3 h-3 bg-pink-500 text-white text-[8px] rounded-[2px] flex items-center justify-center border border-background">
-															{entry.count}
-														</span>
+															<span className="absolute -top-0.5 -right-0.5 w-3 h-3 bg-pink-500 text-white text-[8px] rounded-[2px] flex items-center justify-center border border-background">
+																{entry.count}
+															</span>
 														)}
 													</span>
 												),
@@ -2970,9 +2990,7 @@ function PiPartRenderer({
 	hideHeader?: boolean;
 }) {
 	const stripAnsi = (value: string): string =>
-		value
-			.replace(/\u001b\[[0-9;]*m/g, "")
-			.replace(/\u001b\[[0-9;]*[A-Za-z]/g, "");
+		value.replace(ANSI_SGR_RE, "").replace(ANSI_CSI_RE, "");
 
 	const formatToolResultOutput = (content: unknown): string | undefined => {
 		const decodeBytes = (bytes: Uint8Array): string | undefined => {
@@ -2980,8 +2998,9 @@ function PiPartRenderer({
 				const text = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
 				const printable = text
 					.split("")
-					.filter((ch) => ch === "\n" || ch === "\r" || ch === "\t" || ch >= " ")
-					.length;
+					.filter(
+						(ch) => ch === "\n" || ch === "\r" || ch === "\t" || ch >= " ",
+					).length;
 				if (text.length === 0) return "";
 				if (printable / text.length < 0.7) {
 					return undefined;
@@ -2994,7 +3013,9 @@ function PiPartRenderer({
 
 		if (typeof content === "string") return stripAnsi(content);
 		if (content instanceof Uint8Array) {
-			return decodeBytes(content) ?? `[binary data: ${content.byteLength} bytes]`;
+			return (
+				decodeBytes(content) ?? `[binary data: ${content.byteLength} bytes]`
+			);
 		}
 		if (Array.isArray(content)) {
 			const byteArray =
@@ -3003,7 +3024,8 @@ function PiPartRenderer({
 					: null;
 			if (byteArray) {
 				return (
-					decodeBytes(byteArray) ?? `[binary data: ${byteArray.byteLength} bytes]`
+					decodeBytes(byteArray) ??
+					`[binary data: ${byteArray.byteLength} bytes]`
 				);
 			}
 			const textBlocks = content
@@ -3133,13 +3155,10 @@ function PiPartRenderer({
 			);
 
 		case "image": {
-			const imgPart = part as Extract<
-				typeof part,
-				{ type: "image" }
-			>;
+			const imgPart = part as Extract<typeof part, { type: "image" }>;
 			const src = imgPart.data
 				? `data:${imgPart.mimeType ?? "image/png"};base64,${imgPart.data}`
-				: imgPart.url ?? "";
+				: (imgPart.url ?? "");
 			if (!src) return null;
 			return (
 				<img
@@ -3217,86 +3236,86 @@ function TextWithFileReferences({
  * Card for displaying a @file reference with preview.
  * Only renders if the file exists on disk.
  */
-	export const FileReferenceCard = memo(function FileReferenceCard({
-		filePath,
-		workspacePath,
-		directUrl,
-		label,
+export const FileReferenceCard = memo(function FileReferenceCard({
+	filePath,
+	workspacePath,
+	directUrl,
+	label,
 }: {
 	filePath: string;
 	workspacePath: string;
 	directUrl?: string;
 	label?: string;
 }) {
-		const [isLoading, setIsLoading] = useState(true);
-		const [error, setError] = useState<string | null>(null);
-		const [imageLoaded, setImageLoaded] = useState(false);
-		const [fileExists, setFileExists] = useState<boolean | null>(null);
-		const [fileUrl, setFileUrl] = useState<string | null>(null);
-		const objectUrlRef = useRef<string | null>(null);
+	const [isLoading, setIsLoading] = useState(true);
+	const [error, setError] = useState<string | null>(null);
+	const [imageLoaded, setImageLoaded] = useState(false);
+	const [fileExists, setFileExists] = useState<boolean | null>(null);
+	const [fileUrl, setFileUrl] = useState<string | null>(null);
+	const objectUrlRef = useRef<string | null>(null);
 
-		const fileInfo = useMemo(() => getFileTypeInfo(filePath), [filePath]);
-		const isImage = fileInfo.category === "image";
-		const isVideo = fileInfo.category === "video";
-		const fileName = label || filePath.split("/").pop() || filePath;
+	const fileInfo = useMemo(() => getFileTypeInfo(filePath), [filePath]);
+	const isImage = fileInfo.category === "image";
+	const isVideo = fileInfo.category === "video";
+	const fileName = label || filePath.split("/").pop() || filePath;
 
-		useEffect(() => {
-			let cancelled = false;
-			setIsLoading(true);
-			setError(null);
-			setFileExists(null);
-			setImageLoaded(false);
-			setFileUrl(directUrl ?? null);
+	useEffect(() => {
+		let cancelled = false;
+		setIsLoading(true);
+		setError(null);
+		setFileExists(null);
+		setImageLoaded(false);
+		setFileUrl(directUrl ?? null);
 
+		if (objectUrlRef.current) {
+			URL.revokeObjectURL(objectUrlRef.current);
+			objectUrlRef.current = null;
+		}
+
+		if (!workspacePath && !directUrl) {
+			setFileExists(false);
+			setIsLoading(false);
+			return;
+		}
+
+		const run = async () => {
+			try {
+				if (!directUrl && workspacePath) {
+					await statPathMux(workspacePath, filePath);
+				}
+
+				if (cancelled) return;
+				setFileExists(true);
+
+				if ((isImage || isVideo) && !directUrl && workspacePath) {
+					const result = await readFileMux(workspacePath, filePath);
+					if (cancelled) return;
+					const blob = new Blob([result.data]);
+					const url = URL.createObjectURL(blob);
+					objectUrlRef.current = url;
+					setFileUrl(url);
+				}
+			} catch {
+				if (cancelled) return;
+				setFileExists(false);
+				setError("File not found");
+				setIsLoading(false);
+			} finally {
+				if (!cancelled && !isImage && !isVideo) {
+					setIsLoading(false);
+				}
+			}
+		};
+
+		void run();
+		return () => {
+			cancelled = true;
 			if (objectUrlRef.current) {
 				URL.revokeObjectURL(objectUrlRef.current);
 				objectUrlRef.current = null;
 			}
-
-			if (!workspacePath && !directUrl) {
-				setFileExists(false);
-				setIsLoading(false);
-				return;
-			}
-
-			const run = async () => {
-				try {
-					if (!directUrl && workspacePath) {
-						await statPathMux(workspacePath, filePath);
-					}
-
-					if (cancelled) return;
-					setFileExists(true);
-
-					if ((isImage || isVideo) && !directUrl && workspacePath) {
-						const result = await readFileMux(workspacePath, filePath);
-						if (cancelled) return;
-						const blob = new Blob([result.data]);
-						const url = URL.createObjectURL(blob);
-						objectUrlRef.current = url;
-						setFileUrl(url);
-					}
-				} catch {
-					if (cancelled) return;
-					setFileExists(false);
-					setError("File not found");
-					setIsLoading(false);
-				} finally {
-					if (!cancelled && (!isImage && !isVideo)) {
-						setIsLoading(false);
-					}
-				}
-			};
-
-			void run();
-			return () => {
-				cancelled = true;
-				if (objectUrlRef.current) {
-					URL.revokeObjectURL(objectUrlRef.current);
-					objectUrlRef.current = null;
-				}
-			};
-		}, [directUrl, filePath, isImage, isVideo, workspacePath]);
+		};
+	}, [directUrl, filePath, isImage, isVideo, workspacePath]);
 
 	// Don't render anything if file doesn't exist
 	if (fileExists === false) {
@@ -3308,9 +3327,9 @@ function TextWithFileReferences({
 		return null;
 	}
 
-		if ((isImage || isVideo) && !fileUrl) {
-			return null;
-		}
+	if ((isImage || isVideo) && !fileUrl) {
+		return null;
+	}
 
 	// For images, render inline preview
 	if (isImage) {
@@ -3332,7 +3351,7 @@ function TextWithFileReferences({
 						</div>
 					) : (
 						<img
-								src={fileUrl ?? ""}
+							src={fileUrl ?? ""}
 							alt={fileName}
 							className={cn(
 								"max-w-full h-auto",
@@ -3361,8 +3380,8 @@ function TextWithFileReferences({
 					<FileVideo className="w-4 h-4 text-muted-foreground" />
 					<span className="text-xs font-medium truncate">{fileName}</span>
 				</div>
-					<video
-						src={fileUrl ?? ""}
+				<video
+					src={fileUrl ?? ""}
 					controls
 					playsInline
 					className="max-w-full h-auto"
@@ -3380,24 +3399,24 @@ function TextWithFileReferences({
 	}
 
 	// For non-images/videos, render a compact file reference link
-		const FileIcon = fileInfo.category === "code" ? FileCode : FileText;
-		return (
-			<button
-				type="button"
-				onClick={() => {
-					if (directUrl) {
-						window.open(directUrl, "_blank", "noopener");
-						return;
-					}
-					if (!workspacePath) return;
-					void downloadFileMux(workspacePath, filePath, fileName);
-				}}
-				className="inline-flex items-center gap-2 px-3 py-1.5 border border-border bg-muted/20 rounded hover:bg-muted/40 transition-colors text-sm"
-			>
-				<FileIcon className="w-4 h-4 text-muted-foreground" />
-				<span className="font-medium">{fileName}</span>
-				<span className="text-xs text-muted-foreground">{filePath}</span>
-				<ExternalLink className="w-3 h-3 text-muted-foreground" />
-			</button>
-		);
-	});
+	const FileIcon = fileInfo.category === "code" ? FileCode : FileText;
+	return (
+		<button
+			type="button"
+			onClick={() => {
+				if (directUrl) {
+					window.open(directUrl, "_blank", "noopener");
+					return;
+				}
+				if (!workspacePath) return;
+				void downloadFileMux(workspacePath, filePath, fileName);
+			}}
+			className="inline-flex items-center gap-2 px-3 py-1.5 border border-border bg-muted/20 rounded hover:bg-muted/40 transition-colors text-sm"
+		>
+			<FileIcon className="w-4 h-4 text-muted-foreground" />
+			<span className="font-medium">{fileName}</span>
+			<span className="text-xs text-muted-foreground">{filePath}</span>
+			<ExternalLink className="w-3 h-3 text-muted-foreground" />
+		</button>
+	);
+});

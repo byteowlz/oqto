@@ -899,9 +899,7 @@ export function ToolCallCard({
 			{!hideHeader && (
 				<button
 					type="button"
-					onClick={() =>
-						collapsible && hasContent && setIsOpen(!isOpen)
-					}
+					onClick={() => collapsible && hasContent && setIsOpen(!isOpen)}
 					disabled={!hasContent || !collapsible}
 					className={cn(
 						"w-full flex items-center gap-2 px-3 py-2 text-left",

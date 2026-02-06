@@ -83,7 +83,10 @@ function setCachedTree(
 	treeCache.set(key, { data, timestamp: Date.now() });
 }
 
-async function fetchFileTree(workspacePath: string, path = "."): Promise<FileNode[]> {
+async function fetchFileTree(
+	workspacePath: string,
+	path = ".",
+): Promise<FileNode[]> {
 	const key = getTreeCacheKey(workspacePath, path);
 	const existing = treeInFlight.get(key);
 	if (existing) return existing;
@@ -412,7 +415,8 @@ export function FileTreeView({
 		event: React.ChangeEvent<HTMLInputElement>,
 	) => {
 		const files = event.target.files;
-		if (!files || files.length === 0 || !normalizedWorkspacePath || !cacheKey) return;
+		if (!files || files.length === 0 || !normalizedWorkspacePath || !cacheKey)
+			return;
 
 		setUploading(true);
 		setError("");
@@ -445,7 +449,8 @@ export function FileTreeView({
 	};
 
 	const handleDownloadSelected = () => {
-		if (!normalizedWorkspacePath || !cacheKey || selectedFiles.size === 0) return;
+		if (!normalizedWorkspacePath || !cacheKey || selectedFiles.size === 0)
+			return;
 
 		if (selectedFiles.size === 1) {
 			const path = Array.from(selectedFiles)[0];
@@ -473,7 +478,8 @@ export function FileTreeView({
 	};
 
 	const handleDeleteSelected = async () => {
-		if (!normalizedWorkspacePath || !cacheKey || selectedFiles.size === 0) return;
+		if (!normalizedWorkspacePath || !cacheKey || selectedFiles.size === 0)
+			return;
 
 		try {
 			for (const path of selectedFiles) {
@@ -819,55 +825,55 @@ export function FileTreeView({
 						No files found.
 					</div>
 				) : viewMode === "tree" ? (
-						<TreeView
-							nodes={tree}
-							expanded={expanded}
-							onToggle={toggle}
-							selectedFiles={selectedFiles}
-							onSelectFile={handleSelectFile}
-							onNavigateToFolder={handleNavigateToFolder}
-							onDownload={handleDownload}
-							onDelete={handleDelete}
-							onRename={handleStartRename}
-							onCopy={handleCopy}
-							onMove={handleMove}
-							renamingPath={renamingPath}
-							onRenameConfirm={handleConfirmRename}
-							onRenameCancel={handleCancelRename}
-							onOpenInCanvas={onOpenInCanvas}
-						/>
+					<TreeView
+						nodes={tree}
+						expanded={expanded}
+						onToggle={toggle}
+						selectedFiles={selectedFiles}
+						onSelectFile={handleSelectFile}
+						onNavigateToFolder={handleNavigateToFolder}
+						onDownload={handleDownload}
+						onDelete={handleDelete}
+						onRename={handleStartRename}
+						onCopy={handleCopy}
+						onMove={handleMove}
+						renamingPath={renamingPath}
+						onRenameConfirm={handleConfirmRename}
+						onRenameCancel={handleCancelRename}
+						onOpenInCanvas={onOpenInCanvas}
+					/>
 				) : viewMode === "list" ? (
-						<ListView
-							files={tree}
-							selectedFiles={selectedFiles}
-							onSelectFile={handleSelectFile}
-							onNavigateToFolder={handleNavigateToFolder}
-							onDownload={handleDownload}
-							onDelete={handleDelete}
-							onRename={handleStartRename}
-							onCopy={handleCopy}
-							onMove={handleMove}
-							renamingPath={renamingPath}
-							onRenameConfirm={handleConfirmRename}
-							onRenameCancel={handleCancelRename}
-							onOpenInCanvas={onOpenInCanvas}
-						/>
+					<ListView
+						files={tree}
+						selectedFiles={selectedFiles}
+						onSelectFile={handleSelectFile}
+						onNavigateToFolder={handleNavigateToFolder}
+						onDownload={handleDownload}
+						onDelete={handleDelete}
+						onRename={handleStartRename}
+						onCopy={handleCopy}
+						onMove={handleMove}
+						renamingPath={renamingPath}
+						onRenameConfirm={handleConfirmRename}
+						onRenameCancel={handleCancelRename}
+						onOpenInCanvas={onOpenInCanvas}
+					/>
 				) : (
-						<GridView
-							files={tree}
-							selectedFiles={selectedFiles}
-							onSelectFile={handleSelectFile}
-							onNavigateToFolder={handleNavigateToFolder}
-							onDownload={handleDownload}
-							onDelete={handleDelete}
-							onRename={handleStartRename}
-							onCopy={handleCopy}
-							onMove={handleMove}
-							renamingPath={renamingPath}
-							onRenameConfirm={handleConfirmRename}
-							onRenameCancel={handleCancelRename}
-							onOpenInCanvas={onOpenInCanvas}
-						/>
+					<GridView
+						files={tree}
+						selectedFiles={selectedFiles}
+						onSelectFile={handleSelectFile}
+						onNavigateToFolder={handleNavigateToFolder}
+						onDownload={handleDownload}
+						onDelete={handleDelete}
+						onRename={handleStartRename}
+						onCopy={handleCopy}
+						onMove={handleMove}
+						renamingPath={renamingPath}
+						onRenameConfirm={handleConfirmRename}
+						onRenameCancel={handleCancelRename}
+						onOpenInCanvas={onOpenInCanvas}
+					/>
 				)}
 			</div>
 		</div>

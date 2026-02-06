@@ -3,16 +3,17 @@
 /**
  * URLs for accessing session services.
  */
-export type SessionUrls = { 
-/**
- * URL for opencode API.
- */
-opencode: string, 
-/**
- * URL for file server.
- */
-fileserver: string, 
-/**
- * URL for terminal WebSocket.
- */
-terminal: string, };
+export type SessionUrls = {
+	/**
+	 * URL for opencode API.
+	 */
+	opencode: string;
+	/**
+	 * URL for file server.
+	 */
+	fileserver: string;
+	/**
+	 * URL for terminal WebSocket.
+	 */
+	terminal: string;
+};

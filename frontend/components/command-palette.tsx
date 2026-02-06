@@ -234,7 +234,6 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
 						);
 					})}
 				</CommandGroup>
-
 			</CommandList>
 		</CommandDialog>
 	);

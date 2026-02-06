@@ -124,7 +124,7 @@ export const FileMentionPopup = memo(function FileMentionPopup({
 			.finally(() => {
 				setLoading(false);
 			});
-	}, [isOpen, workspacePath]);
+	}, [isOpen, normalizedWorkspacePath]);
 
 	// Filter and sort files based on query
 	const filteredFiles = files

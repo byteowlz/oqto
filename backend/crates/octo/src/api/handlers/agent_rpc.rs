@@ -362,35 +362,17 @@ pub struct InSessionSearchResult {
 /// Search within a specific Pi session using hstry.
 ///
 /// GET /api/agents/sessions/{session_id}/search?q=query&limit=20
-#[instrument(skip(state, user))]
+///
+/// Note: Legacy MainChatPiService search removed. Returns empty results.
+/// In-session search should go through hstry directly.
+#[instrument(skip(_state, _user))]
 pub async fn agents_session_search(
-    State(state): State<AppState>,
-    user: CurrentUser,
-    Path(session_id): Path<String>,
-    Query(query): Query<InSessionSearchQuery>,
+    State(_state): State<AppState>,
+    _user: CurrentUser,
+    Path(_session_id): Path<String>,
+    Query(_query): Query<InSessionSearchQuery>,
 ) -> ApiResult<Json<Vec<InSessionSearchResult>>> {
-    let pi_service = state
-        .main_chat_pi
-        .as_ref()
-        .ok_or_else(|| ApiError::internal("Main Chat Pi service not enabled"))?;
-
-    let results = pi_service
-        .search_in_session(user.id(), &session_id, &query.q, query.limit)
-        .await
-        .map_err(|e| ApiError::internal(format!("Search failed: {}", e)))?;
-
-    let response: Vec<InSessionSearchResult> = results
-        .into_iter()
-        .map(|r| InSessionSearchResult {
-            line_number: r.line_number,
-            score: r.score,
-            snippet: r.snippet,
-            title: r.title,
-            match_type: r.match_type,
-            created_at: r.created_at,
-            message_id: r.message_id,
-        })
-        .collect();
-
-    Ok(Json(response))
+    // Legacy MainChatPiService session search removed.
+    // In-session search now goes through hstry.
+    Ok(Json(vec![]))
 }

@@ -171,23 +171,6 @@ pub async fn validate_workspace_path(
     Ok(canonical)
 }
 
-/// Check if a path is within a Main Chat workspace directory.
-pub(super) fn is_main_chat_path(state: &AppState, path: &std::path::Path) -> bool {
-    let Some(main_chat) = state.main_chat.as_ref() else {
-        return false;
-    };
-
-    // Get the Main Chat workspace root (parent of individual user directories)
-    // Main Chat paths are like: data_dir/users/{user_id}/...
-    // The service's workspace_dir is data_dir/users
-    let main_chat_root = main_chat.workspace_dir();
-    let canonical_main_chat_root = main_chat_root
-        .canonicalize()
-        .unwrap_or_else(|_| main_chat_root.to_path_buf());
-
-    path.starts_with(&canonical_main_chat_root)
-}
-
 /// Execute trx command in a validated workspace directory.
 async fn exec_trx_command(
     state: &AppState,

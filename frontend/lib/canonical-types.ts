@@ -51,18 +51,34 @@ export type Part =
 			durationMs?: number;
 	  }
 	// --- Media ---
-	| { type: "file_ref"; id: string; uri: string; label?: string; range?: FileRange }
-	| { type: "image"; id: string; alt?: string } & MediaSource
-	| { type: "audio"; id: string; durationSec?: number; transcript?: string } & MediaSource
-	| { type: "video"; id: string; durationSec?: number } & MediaSource
 	| {
+			type: "file_ref";
+			id: string;
+			uri: string;
+			label?: string;
+			range?: FileRange;
+	  }
+	| ({ type: "image"; id: string; alt?: string } & MediaSource)
+	| ({
+			type: "audio";
+			id: string;
+			durationSec?: number;
+			transcript?: string;
+	  } & MediaSource)
+	| ({ type: "video"; id: string; durationSec?: number } & MediaSource)
+	| ({
 			type: "attachment";
 			id: string;
 			filename?: string;
 			sizeBytes?: number;
-	  } & MediaSource
+	  } & MediaSource)
 	// --- Extensions ---
-	| { type: `x-${string}`; id: string; payload?: unknown; meta?: Record<string, unknown> };
+	| {
+			type: `x-${string}`;
+			id: string;
+			payload?: unknown;
+			meta?: Record<string, unknown>;
+	  };
 
 // ============================================================================
 // Identity (who produced a message)
@@ -221,13 +237,28 @@ export type EventPayload =
 	// Agent state
 	| { event: "agent.idle" }
 	| { event: "agent.working"; phase: AgentPhase; detail?: string }
-	| { event: "agent.error"; error: string; recoverable: boolean; phase?: AgentPhase }
+	| {
+			event: "agent.error";
+			error: string;
+			recoverable: boolean;
+			phase?: AgentPhase;
+	  }
 	| { event: "agent.input_needed"; request: InputRequest }
 	| { event: "agent.input_resolved"; request_id: string }
 	// Streaming
 	| { event: "stream.message_start"; message_id: string; role: string }
-	| { event: "stream.text_delta"; message_id: string; delta: string; content_index: number }
-	| { event: "stream.thinking_delta"; message_id: string; delta: string; content_index: number }
+	| {
+			event: "stream.text_delta";
+			message_id: string;
+			delta: string;
+			content_index: number;
+	  }
+	| {
+			event: "stream.thinking_delta";
+			message_id: string;
+			delta: string;
+			content_index: number;
+	  }
 	| {
 			event: "stream.tool_call_start";
 			message_id: string;
@@ -253,7 +284,12 @@ export type EventPayload =
 	| { event: "stream.done"; reason: StopReason }
 	// Tool execution
 	| { event: "tool.start"; tool_call_id: string; name: string; input?: unknown }
-	| { event: "tool.progress"; tool_call_id: string; name: string; partial_output: unknown }
+	| {
+			event: "tool.progress";
+			tool_call_id: string;
+			name: string;
+			partial_output: unknown;
+	  }
 	| {
 			event: "tool.end";
 			tool_call_id: string;
@@ -263,10 +299,26 @@ export type EventPayload =
 			duration_ms?: number;
 	  }
 	// Auto-recovery
-	| { event: "retry.start"; attempt: number; max_attempts: number; delay_ms: number; error: string }
-	| { event: "retry.end"; success: boolean; attempt: number; final_error?: string }
+	| {
+			event: "retry.start";
+			attempt: number;
+			max_attempts: number;
+			delay_ms: number;
+			error: string;
+	  }
+	| {
+			event: "retry.end";
+			success: boolean;
+			attempt: number;
+			final_error?: string;
+	  }
 	| { event: "compact.start"; reason: CompactReason }
-	| { event: "compact.end"; success: boolean; will_retry: boolean; error?: string }
+	| {
+			event: "compact.end";
+			success: boolean;
+			will_retry: boolean;
+			error?: string;
+	  }
 	// Config changes
 	| { event: "config.model_changed"; provider: string; model_id: string }
 	| { event: "config.thinking_level_changed"; level: string }
@@ -274,10 +326,27 @@ export type EventPayload =
 	| { event: "notify"; level: NotifyLevel; message: string }
 	| { event: "status"; key: string; text: string | null }
 	// Delegation
-	| { event: "delegate.start"; request_id: string; target_session_id: string; target_runner_id: string; mode: DelegateMode }
+	| {
+			event: "delegate.start";
+			request_id: string;
+			target_session_id: string;
+			target_runner_id: string;
+			mode: DelegateMode;
+	  }
 	| { event: "delegate.delta"; request_id: string; delta: string }
-	| { event: "delegate.end"; request_id: string; response: Message; responder: Sender; duration_ms?: number }
-	| { event: "delegate.error"; request_id: string; error: string; code: DelegateErrorCode }
+	| {
+			event: "delegate.end";
+			request_id: string;
+			response: Message;
+			responder: Sender;
+			duration_ms?: number;
+	  }
+	| {
+			event: "delegate.error";
+			request_id: string;
+			error: string;
+			code: DelegateErrorCode;
+	  }
 	// Messages sync
 	| { event: "messages"; messages: Message[] }
 	| { event: "persisted"; message_count: number }
@@ -453,7 +522,13 @@ export type EventType = EventPayload["event"];
 export type CommandType = CommandPayload["cmd"];
 
 /** Helper to narrow an EventPayload by its event type. */
-export type EventOfType<T extends EventType> = Extract<EventPayload, { event: T }>;
+export type EventOfType<T extends EventType> = Extract<
+	EventPayload,
+	{ event: T }
+>;
 
 /** Helper to narrow a CommandPayload by its cmd type. */
-export type CommandOfType<T extends CommandType> = Extract<CommandPayload, { cmd: T }>;
+export type CommandOfType<T extends CommandType> = Extract<
+	CommandPayload,
+	{ cmd: T }
+>;

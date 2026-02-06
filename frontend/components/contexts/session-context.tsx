@@ -38,8 +38,8 @@ export {
 } from "./chat-context";
 
 import { useChatContext } from "./chat-context";
-import { useWorkspaceContext } from "./workspace-context";
 import { ChatProvider } from "./chat-context";
+import { useWorkspaceContext } from "./workspace-context";
 import { WorkspaceProvider } from "./workspace-context";
 
 export interface SessionContextValue {
@@ -55,7 +55,9 @@ export interface SessionContextValue {
 	projectDefaultAgents: Record<string, string>;
 	setProjectDefaultAgents: Dispatch<SetStateAction<Record<string, string>>>;
 	refreshWorkspaceSessions: () => Promise<void>;
-	ensureWorkspaceRunning: (workspacePath?: string) => Promise<WorkspaceSession | null>;
+	ensureWorkspaceRunning: (
+		workspacePath?: string,
+	) => Promise<WorkspaceSession | null>;
 	stopWorkspaceSession: (sessionId: string) => Promise<boolean>;
 	deleteWorkspaceSession: (sessionId: string) => Promise<boolean>;
 	upgradeWorkspaceSession: (sessionId: string) => Promise<boolean>;

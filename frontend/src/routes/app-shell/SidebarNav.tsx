@@ -111,39 +111,39 @@ export const SidebarNav = memo(function SidebarNav({
 				>
 					<Settings className="w-4 h-4" />
 				</Button>
-			{isAdmin && (
-				<Button
-					type="button"
-					variant="ghost"
-					size="icon"
-					rounded="full"
-					onClick={() => onToggleApp("admin")}
-					aria-label="Admin"
-					className="w-9 h-9 flex items-center justify-center transition-colors"
-					style={{
-						backgroundColor: activeAppId === "admin" ? navActiveBg : navIdle,
-						border:
-							activeAppId === "admin"
-								? `1px solid ${navActiveBorder}`
-								: "1px solid transparent",
-						color: activeAppId === "admin" ? navActiveText : navText,
-					}}
-					onMouseEnter={(e) => {
-						if (activeAppId !== "admin") {
-							e.currentTarget.style.backgroundColor = sidebarHover;
-							e.currentTarget.style.border = `1px solid ${sidebarHoverBorder}`;
-						}
-					}}
-					onMouseLeave={(e) => {
-						if (activeAppId !== "admin") {
-							e.currentTarget.style.backgroundColor = navIdle;
-							e.currentTarget.style.border = "1px solid transparent";
-						}
-					}}
-				>
-					<Shield className="w-4 h-4" />
-				</Button>
-			)}
+				{isAdmin && (
+					<Button
+						type="button"
+						variant="ghost"
+						size="icon"
+						rounded="full"
+						onClick={() => onToggleApp("admin")}
+						aria-label="Admin"
+						className="w-9 h-9 flex items-center justify-center transition-colors"
+						style={{
+							backgroundColor: activeAppId === "admin" ? navActiveBg : navIdle,
+							border:
+								activeAppId === "admin"
+									? `1px solid ${navActiveBorder}`
+									: "1px solid transparent",
+							color: activeAppId === "admin" ? navActiveText : navText,
+						}}
+						onMouseEnter={(e) => {
+							if (activeAppId !== "admin") {
+								e.currentTarget.style.backgroundColor = sidebarHover;
+								e.currentTarget.style.border = `1px solid ${sidebarHoverBorder}`;
+							}
+						}}
+						onMouseLeave={(e) => {
+							if (activeAppId !== "admin") {
+								e.currentTarget.style.backgroundColor = navIdle;
+								e.currentTarget.style.border = "1px solid transparent";
+							}
+						}}
+					>
+						<Shield className="w-4 h-4" />
+					</Button>
+				)}
 				<Button
 					type="button"
 					variant="ghost"

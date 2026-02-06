@@ -80,10 +80,7 @@ function shortenModelRef(modelRef: string): string {
 
 export function StatusBar() {
 	const { data: user } = useCurrentUser();
-	const {
-		workspaceSessions,
-		selectedChatSessionId,
-	} = useApp();
+	const { workspaceSessions, selectedChatSessionId } = useApp();
 
 	const isAdmin = user?.role === "admin";
 

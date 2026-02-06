@@ -12,10 +12,10 @@ use super::config::{OnboardingTemplatesConfig, TemplatePreset, UserTemplateOverr
 
 /// Embedded fallback templates (compiled into binary).
 mod embedded {
-    pub const ONBOARD: &str = include_str!("../main_chat/templates/ONBOARD.md");
-    pub const PERSONALITY: &str = include_str!("../main_chat/templates/PERSONALITY.md");
-    pub const USER: &str = include_str!("../main_chat/templates/USER.md");
-    pub const AGENTS: &str = include_str!("../main_chat/templates/AGENTS.md");
+    pub const ONBOARD: &str = include_str!("embedded/ONBOARD.md");
+    pub const PERSONALITY: &str = include_str!("embedded/PERSONALITY.md");
+    pub const USER: &str = include_str!("embedded/USER.md");
+    pub const AGENTS: &str = include_str!("embedded/AGENTS.md");
 }
 
 /// Template types.

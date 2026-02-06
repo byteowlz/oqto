@@ -272,7 +272,12 @@ async function saveFileContent(
 	content: string,
 ): Promise<void> {
 	const encoder = new TextEncoder();
-	await writeFileMux(workspacePath, path, encoder.encode(content).buffer, false);
+	await writeFileMux(
+		workspacePath,
+		path,
+		encoder.encode(content).buffer,
+		false,
+	);
 }
 
 export function PreviewView({
@@ -419,7 +424,10 @@ export function PreviewView({
 
 		const filename = filePath.split("/").pop() || filePath;
 		const isBinary =
-			isPdf(filename) || isImage(filename) || isVideo(filename) || isAudio(filename);
+			isPdf(filename) ||
+			isImage(filename) ||
+			isVideo(filename) ||
+			isAudio(filename);
 		if (!isBinary) {
 			setBinaryLoading(false);
 			return;
@@ -476,12 +484,7 @@ export function PreviewView({
 		} finally {
 			setSaving(false);
 		}
-	}, [
-		workspacePath,
-		filePath,
-		editedContent,
-		cacheKeyPrefix,
-	]);
+	}, [workspacePath, filePath, editedContent, cacheKeyPrefix]);
 
 	const handleCancel = useCallback(() => {
 		setEditedContent(content);

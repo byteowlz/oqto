@@ -27,15 +27,14 @@ pub fn parse_workspace_meta(contents: &str) -> Option<WorkspaceMeta> {
 
 pub fn workspace_display_name(workspace_root: &Path) -> Option<String> {
     let meta = load_workspace_meta(workspace_root)?;
-    meta.display_name
-        .and_then(|name| {
-            let trimmed = name.trim().to_string();
-            if trimmed.is_empty() {
-                None
-            } else {
-                Some(trimmed)
-            }
-        })
+    meta.display_name.and_then(|name| {
+        let trimmed = name.trim().to_string();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed)
+        }
+    })
 }
 
 pub fn write_workspace_meta(workspace_root: &Path, meta: &WorkspaceMeta) -> Result<PathBuf> {

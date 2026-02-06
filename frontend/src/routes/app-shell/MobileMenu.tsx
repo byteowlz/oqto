@@ -68,7 +68,7 @@ export interface MobileMenuProps {
 	onPinSession: (sessionId: string) => void;
 	onRenameSession: (sessionId: string) => void;
 	onDeleteSession: (sessionId: string) => void;
-	onBulkDeleteSessions: (sessionIds: string[]) => Promise<string[] | void>;
+	onBulkDeleteSessions: (sessionIds: string[]) => Promise<string[] | undefined>;
 	onPinProject: (projectKey: string) => void;
 	onRenameProject: (projectKey: string, currentName: string) => void;
 	onDeleteProject: (projectKey: string, projectName: string) => void;
@@ -371,24 +371,24 @@ export const MobileMenu = memo(function MobileMenu({
 					>
 						<Settings className="w-5 h-5" />
 					</Button>
-				{isAdmin && (
-					<Button
-						type="button"
-						variant="ghost"
-						size="icon"
-						rounded="full"
-						onClick={() => onToggleApp("admin")}
-						aria-label="Admin"
-						className={cn(
-							"hover:bg-sidebar-accent",
-							activeAppId === "admin"
-								? "text-primary"
-								: "text-muted-foreground hover:text-primary",
-						)}
-					>
-						<Shield className="w-5 h-5" />
-					</Button>
-				)}
+					{isAdmin && (
+						<Button
+							type="button"
+							variant="ghost"
+							size="icon"
+							rounded="full"
+							onClick={() => onToggleApp("admin")}
+							aria-label="Admin"
+							className={cn(
+								"hover:bg-sidebar-accent",
+								activeAppId === "admin"
+									? "text-primary"
+									: "text-muted-foreground hover:text-primary",
+							)}
+						>
+							<Shield className="w-5 h-5" />
+						</Button>
+					)}
 					<Button
 						type="button"
 						variant="ghost"
